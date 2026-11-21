@@ -213,6 +213,13 @@ impl Product<'_, '_> {
 
     /// The hidden valuations of position `q` with the abstract transitions
     /// enabled from each.
+    ///
+    /// This reads the untimed abstract state only, which is all the
+    /// liveness half admits: `check_timed_refinement` refuses it for a hidden
+    /// field under a timed abstract side. The seam for a provider of
+    /// per-candidate clock valuations and guard-split enabledness is the
+    /// prefill of `candidates` in `unfair_candidate_loop`, which the rest of
+    /// the search reads only through `candidates_of`, by vertex.
     fn candidates_at(
         &self,
         run: &Run<'_, '_, '_>,
@@ -364,20 +371,40 @@ fn arc_relation(
     Ok(relation)
 }
 
-/// `relation` raised to the power at which squaring changes nothing.
+/// The least power of `relation` that is idempotent, charged and polled as
+/// the run requires.
 fn idempotent_power(
     run: &mut Run<'_, '_, '_>,
     relation: &CandidateRelation,
 ) -> Result<CandidateRelation, Halt> {
+    idempotent_power_by(relation, |amount| {
+        run.poll()?;
+        charge(run, amount)
+    })
+}
+
+/// The least power `R^k`, `k >= 1`, of `relation` with `R^k . R^k = R^k`,
+/// calling `pay` with the compositions each step costs before it is taken.
+///
+/// The relations over a finite candidate set and finite labels are a finite
+/// monoid, so the sequence `R, R^2, R^3, ...` is eventually periodic and
+/// some power in it is idempotent, which this reaches. Squaring instead
+/// (`R, R^2, R^4, ...`) need not: over a candidate 3-cycle `R^4 = R`, so it
+/// alternates between `R` and `R^2` and never meets `R^3`.
+fn idempotent_power_by<E>(
+    relation: &CandidateRelation,
+    mut pay: impl FnMut(usize) -> Result<(), E>,
+) -> Result<CandidateRelation, E> {
     let mut power = relation.clone();
     loop {
-        run.poll()?;
         let (squared, work) = compose_candidate_relations(&power, &power);
-        charge(run, work.max(1))?;
+        pay(work.max(1))?;
         if squared == power {
             return Ok(power);
         }
-        power = squared;
+        let (next, work) = compose_candidate_relations(&power, relation);
+        pay(work.max(1))?;
+        power = next;
     }
 }
 
@@ -389,4 +416,56 @@ fn charge(run: &mut Run<'_, '_, '_>, amount: usize) -> Result<(), Halt> {
         run.escape_edge();
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use ix_trace_rs::trace;
+
+    use super::*;
+
+    fn cycle_of_three() -> CandidateRelation {
+        let mut relation = CandidateRelation::new();
+        for (from, to) in [(b"a", b"b"), (b"b", b"c"), (b"c", b"a")] {
+            insert_relation_label(
+                &mut relation,
+                (from.to_vec(), to.to_vec()),
+                neutral_label(1),
+            );
+        }
+        relation
+    }
+
+    /// FR-899: over a candidate 3-cycle with equal fair labels the powers by
+    /// squaring alternate between `R` and `R^2` for ever; consecutive powers
+    /// reach `R^3`, the identity on the three candidates.
+    #[trace("TC-2536")]
+    #[test]
+    fn a_candidate_three_cycle_reaches_its_idempotent_power() {
+        let relation = cycle_of_three();
+        let idempotent =
+            idempotent_power_by(&relation, |_| Ok::<(), ()>(())).expect("no budget to exhaust");
+        let pairs: Vec<_> = idempotent.keys().cloned().collect();
+        assert_eq!(
+            pairs,
+            [
+                (b"a".to_vec(), b"a".to_vec()),
+                (b"b".to_vec(), b"b".to_vec()),
+                (b"c".to_vec(), b"c".to_vec()),
+            ]
+        );
+    }
+
+    /// FR-899: the power search pays for every composition and ends with the
+    /// payer's refusal when it cannot.
+    #[trace("TC-2536")]
+    #[test]
+    fn the_power_search_ends_when_its_budget_does() {
+        let mut left = 4_usize;
+        let ended = idempotent_power_by(&cycle_of_three(), |amount| {
+            left = left.checked_sub(amount).ok_or("budget")?;
+            Ok(())
+        });
+        assert_eq!(ended, Err("budget"));
+    }
 }

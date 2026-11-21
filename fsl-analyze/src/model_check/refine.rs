@@ -3450,6 +3450,7 @@ mod cas_fixture;
 mod tests {
     use ix_trace_rs::trace;
 
+    use super::super::fair_summary::at_least_as_fair;
     use super::cas_fixture::{cas_refines_counter, World, UNLIMITED};
     use super::*;
 
