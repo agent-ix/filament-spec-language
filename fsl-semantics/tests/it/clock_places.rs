@@ -18,8 +18,7 @@ use crate::timed_model::{
 };
 use fsl_semantics::model::intake::meaning;
 
-#[path = "../../../tests/support/ring_queue.rs"]
-mod ring_queue;
+use crate::ring_queue;
 
 /// `ix://example/config-version/<name>`.
 fn package(name: &str) -> String {
@@ -3826,9 +3825,10 @@ fn a_population_ref_lowers_with_the_binder_as_owner() {
 /// FR-1040-AC-3 (refinement-row form), FR-230 "Clock references": in a
 /// refinement row over `calls`, `only(c in C::calls where c.n = 1: ref(c.x))`
 /// and `count(c in C::calls where ref(c.x) = ref(self.x)) >= 0` check and lower
-/// with the binder `c` as the owner term of the `clock_reference.ref`
-/// application, whose place is the timed `Call`'s `clock_place` node.
-#[trace("TC-3084", "FR-1040-AC-3", "FR-230-AC-11")]
+/// with the binder `c`, typed `Reference<Call>`, as the owner term of the
+/// `clock_reference.ref` application, whose place is the `clock_place` node
+/// the timed model lists for `Call.x`.
+#[trace("TC-3084", "FR-1040-AC-3")]
 #[test]
 fn a_refinement_row_ref_lowers_with_the_binder_as_owner() {
     use ring_queue::{check_clock_refinement, clock_refinement};
@@ -3837,41 +3837,80 @@ fn a_refinement_row_ref_lowers_with_the_binder_as_owner() {
         "busy = count(c in C::calls where ref(c.x) = ref(self.x)) >= 0;",
     ] {
         let graph = check_clock_refinement(&clock_refinement(row))
-            .unwrap_or_else(|refusals| panic!("{row}: {refusals:?}"));
-        let refs = applications_of(&graph, "filament.op.clock_reference.ref");
-        assert!(
-            refs.iter().any(|arguments| {
-                matches!(arguments.as_slice(), [place, owner, ..]
-                    if form_of(&graph, place) == "clock_place"
-                        && form_of(&graph, owner) == "parameter"
-                        && parameter_name(&graph, owner) == "c")
-            }),
-            "{row}: a ref of the member's clock place owned by the binder c in {refs:?}"
+            .unwrap_or_else(|refusals| {
+                panic!(
+                    "{row}: {:?}",
+                    refusals.iter().map(|r| &r.refusal).collect::<Vec<_>>()
+                )
+            })
+            .graph;
+        let timed = graph.timed_model("C").expect("the timed model");
+        assert_eq!(
+            timed.clocks().len(),
+            1,
+            "{row}: the member's one clock place"
         );
-        let places = graph.timed_model("C").expect("the timed model").clocks();
-        assert_eq!(places.len(), 1, "{row}: the member's one clock place");
+        let refs = applications_of(&graph, "filament.op.clock_reference.ref");
+        let owned_by_binder = refs.iter().any(|arguments| {
+            let [place, owner, ..] = arguments.as_slice() else {
+                return false;
+            };
+            let MemberTerm::Leaf(LeafTerm::Reference { target }) = place else {
+                return false;
+            };
+            let semantic = graph.semantic_graph();
+            let binder_type = match owner {
+                MemberTerm::Leaf(LeafTerm::Reference { target }) => semantic
+                    .node(target.admitted().expect("admitted owner").clone())
+                    .and_then(|node| node.semantic_type())
+                    .and_then(|ty| semantic.node(ty)),
+                _ => None,
+            };
+            form_of(&graph, place) == "clock_place"
+                && target
+                    .admitted()
+                    .is_some_and(|key| timed.place_nodes().contains(key))
+                && form_of(&graph, owner) == "parameter"
+                && parameter_name(&graph, owner) == "c"
+                && binder_type.is_some_and(|ty| ty.semantic_form().contains("object"))
+        });
+        assert!(
+            owned_by_binder,
+            "{row}: a ref of the timed model's place owned by the binder c in {refs:?}"
+        );
     }
 }
 
-/// FR-1040-AC-3 (refinement-row form), negative: a refinement row whose
-/// population form reads the clock itself is outside FSpec FR-430's timed
-/// refinement and refuses with the refinement's existing `ClockRead` cause.
-#[trace("TC-3084", "FR-1040-AC-3", "FR-230-AC-11")]
+/// FR-1040-AC-6 (refinement-row form), FR-430 "Timed refinement": in a
+/// refinement row, `sum(c in C::calls: c.x) >= 0` refuses
+/// `unsupported_construct`/`expression-form` at `c.x`.
+#[trace("TC-3084", "FR-1040-AC-6")]
 #[test]
 fn a_refinement_row_clock_read_is_refused() {
     use fsl_semantics::check::{CheckCause, RefinementCause};
     use ring_queue::{check_clock_refinement, clock_refinement};
     let row = "busy = sum(c in C::calls: c.x) >= 0;";
-    let refusals =
-        check_clock_refinement(&clock_refinement(row)).expect_err("the row reads a clock");
-    assert!(
-        refusals.iter().any(|refusal| matches!(
-            &refusal.cause,
-            CheckCause::Refinement(refinement)
-                if matches!(refinement.cause, RefinementCause::ClockRead)
-        )),
-        "{refusals:?}"
+    let Err(refusals) = check_clock_refinement(&clock_refinement(row)) else {
+        panic!("the row reads a clock");
+    };
+    let clock_reads: Vec<_> = refusals
+        .iter()
+        .filter(|found| {
+            matches!(&found.refusal.cause, CheckCause::Refinement(refinement)
+                if matches!(refinement.cause, RefinementCause::ClockRead))
+        })
+        .collect();
+    let [found] = clock_reads.as_slice() else {
+        panic!(
+            "one clock-read refusal: {:?}",
+            refusals.iter().map(|r| &r.refusal).collect::<Vec<_>>()
+        );
+    };
+    assert_eq!(
+        (found.refusal.cause.code(), found.refusal.cause.cause()),
+        (Code::UnsupportedConstruct, Some("expression-form"))
     );
+    assert_eq!(found.at, "c.x");
 }
 
 /// FR-1040-AC-6: the negative population forms. A clock read as the summand
