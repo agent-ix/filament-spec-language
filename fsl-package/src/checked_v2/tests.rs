@@ -2578,7 +2578,7 @@ fn binder_groups(
 
     match term {
         CheckedTerm::Aggregate { members } => members.iter().flat_map(binder_groups).collect(),
-        CheckedTerm::Binding { name, value } if name.as_ref() == "binders" => {
+        CheckedTerm::Binding { name, value, .. } if name.as_ref() == "binders" => {
             let CheckedTerm::Aggregate { members } = value.as_ref() else {
                 panic!("a binder binding contains an aggregate");
             };

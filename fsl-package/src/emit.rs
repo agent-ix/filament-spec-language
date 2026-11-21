@@ -1764,6 +1764,17 @@ impl BodyNames {
             }
             BodyTerm::Leaf(_) | BodyTerm::Aggregate(_) => {}
         }
+        // FSpec FR-322 "The binder link": a `let` depends on its binder node,
+        // read by its body or not.
+        if let BodyTerm::Application(application) = body {
+            for argument in &application.arguments {
+                if let MemberTerm::Binding(binding) = argument {
+                    if let Some(binder) = &binding.binder {
+                        names.dependencies.insert(admitted(binder)?);
+                    }
+                }
+            }
+        }
         for leaf in body.leaves() {
             match leaf {
                 LeafTerm::Literal { ty, .. } => {
@@ -2344,6 +2355,7 @@ fn extension_term(
             .map(|clause| {
                 Ok(CheckedTerm::Binding {
                     name: clause.name().into(),
+                    binder: None,
                     value: Box::new(CheckedTerm::Reference {
                         target: admitted_id(ids, clause.value())?,
                     }),
@@ -2388,6 +2400,7 @@ fn group_term(ids: &StructuralIds, group: &GroupTerm) -> Result<CheckedTerm, Emi
                 GroupMember::Leaf(leaf) => leaf_term(ids, leaf),
                 GroupMember::Binding(binding) => Ok(CheckedTerm::Binding {
                     name: binding.name.as_str().into(),
+                    binder: None,
                     value: Box::new(leaf_term(ids, &binding.value)?),
                 }),
             })
@@ -2432,6 +2445,11 @@ fn member_term(ids: &StructuralIds, member: &MemberTerm) -> Result<CheckedTerm, 
             };
             CheckedTerm::Binding {
                 name: binding.name.as_str().into(),
+                binder: binding
+                    .binder
+                    .as_ref()
+                    .map(|binder| admitted_id(ids, binder))
+                    .transpose()?,
                 value: Box::new(value),
             }
         }
@@ -5308,6 +5326,7 @@ fn quantity_spelling(value: &filament_exact::Rational) -> String {
 fn claim_binding(name: &str, value: CheckedTerm) -> CheckedTerm {
     CheckedTerm::Binding {
         name: name.into(),
+        binder: None,
         value: Box::new(value),
     }
 }
@@ -6118,7 +6137,7 @@ fn timed_body_operands(
                 timed_body_operands(member, operands)?;
             }
         }
-        CheckedTerm::Binding { name, value } => {
+        CheckedTerm::Binding { name, value, .. } => {
             operands.push(PathSegment::Text(name.as_ref().to_owned()));
             timed_body_operands(value, operands)?;
         }

@@ -202,6 +202,7 @@ fn binding_value<'a>(term: &'a CheckedTerm, name: &str) -> Option<&'a CheckedTer
         CheckedTerm::Binding {
             name: binding,
             value,
+            ..
         } => {
             if matches!(binding.kind(), CheckedBindingNameKind::Other(found) if found == name) {
                 Some(value)

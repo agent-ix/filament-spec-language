@@ -375,7 +375,7 @@ fn binding_value<'a>(term: &'a CheckedTerm, binding_name: &str) -> Option<&'a Ch
         return None;
     };
     members.iter().find_map(|member| match member {
-        CheckedTerm::Binding { name, value } if name.as_ref() == binding_name => {
+        CheckedTerm::Binding { name, value, .. } if name.as_ref() == binding_name => {
             Some(value.as_ref())
         }
         _ => None,

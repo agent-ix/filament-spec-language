@@ -86,6 +86,7 @@ mod protocol_retry_bound;
 mod protocol_slots;
 mod qualification_vectors_from_source;
 mod qualified_bounded_monitor;
+mod quantity_class_convert;
 mod quantity_literals;
 mod quantity_negation;
 mod quantity_power;

@@ -632,7 +632,9 @@ fn anchor_member<'t>(term: &'t CheckedTerm, name: &str) -> Option<&'t CheckedTer
         return None;
     };
     body.members.iter().find_map(|member| match member {
-        CheckedTerm::Binding { name: bound, value } if &**bound == name => Some(&**value),
+        CheckedTerm::Binding {
+            name: bound, value, ..
+        } if &**bound == name => Some(&**value),
         _ => None,
     })
 }

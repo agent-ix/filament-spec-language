@@ -160,7 +160,9 @@ fn member<'t>(
         _ => return None,
     };
     members.iter().find_map(|term| match term {
-        CheckedTerm::Binding { name: bound, value } if &**bound == name => Some(&**value),
+        CheckedTerm::Binding {
+            name: bound, value, ..
+        } if &**bound == name => Some(&**value),
         _ => None,
     })
 }
@@ -266,7 +268,7 @@ impl<'a> PackageProtocolProgram<'a> {
                     .and_then(|node| match &node.body {
                         fsl_package::CheckedTerm::Application { arguments, .. } => {
                             arguments.iter().find_map(|argument| match argument {
-                                fsl_package::CheckedTerm::Binding { name, value }
+                                fsl_package::CheckedTerm::Binding { name, value, .. }
                                     if &**name == "mode" =>
                                 {
                                     match value.literal_read().map(|literal| literal.value) {
