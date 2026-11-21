@@ -668,7 +668,9 @@ fn hp1_false_and_undefined_rejections_keep_complete_first_tuples() {
 #[trace("FR-163-AC-12")]
 #[test]
 fn hp1_coalesced_results_and_typed_null_remain_distinct() {
-    let vault = Vault::Custom("post Step using v on V::Vault::step { self.l = 0 }\n");
+    let vault = Vault::Custom(
+        "post Step using v on V::Vault::step { (result = 0 or result = 1) and self.l = 0 }\n",
+    );
     let true_text = "relation Result using v over (x: V::Vault::step, y: V::Vault::step) { true }";
     let false_text = "relation Result using v over (x: V::Vault::step, y: V::Vault::step) { x.result = y.result }";
     let proof = Fixture::from_parts(package_and_relation_with_document(
@@ -682,11 +684,11 @@ fn hp1_coalesced_results_and_typed_null_remain_distinct() {
         vault,
         false_text,
     ));
-    let ProductClosureCheck::Rejected(rejection) = fixture
+    let checked = fixture
         .check(&proof, ModelCheckLimits::default())
-        .expect("result check")
-    else {
-        panic!("unequal results refute");
+        .expect("result check");
+    let ProductClosureCheck::Rejected(rejection) = checked else {
+        panic!("unequal results refute: {checked:?}");
     };
     assert_eq!(rejection.rule, CertificateRule::ViolatingMember);
     let CertificateLocus::HyperTransitionTuple(tuple) = rejection.at else {
