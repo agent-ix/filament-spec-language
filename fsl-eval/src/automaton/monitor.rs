@@ -18,6 +18,7 @@ use std::rc::Rc;
 
 use crate::automaton::error::AutomatonError;
 use crate::automaton::gba::{Gba, Transition};
+use crate::automaton::key_state::Configuration;
 use crate::automaton::letter::Letter;
 use crate::automaton::numbering::Numbering;
 use crate::automaton::state::StateId;
@@ -60,6 +61,23 @@ pub trait SafetyAutomaton {
     /// keeps no counters.
     fn owes_eventuality(&self, _state: StateId) -> bool {
         false
+    }
+
+    /// The FR-338 elementary configuration of `state`, which only a
+    /// translated clause has: an explicit automaton keeps no occurrences.
+    ///
+    /// # Errors
+    ///
+    /// [`AutomatonError::Invariant`] for an automaton with no structural
+    /// state; otherwise as [`PropertyAutomaton::configuration`].
+    fn configuration(
+        &self,
+        _state: StateId,
+        _max_key_bytes: u64,
+    ) -> Result<Configuration, AutomatonError> {
+        Err(AutomatonError::Invariant {
+            invariant: "automaton-has-structural-states",
+        })
     }
 }
 
@@ -122,6 +140,14 @@ impl SafetyAutomaton for PropertyAutomaton {
     fn owes_eventuality(&self, state: StateId) -> bool {
         PropertyAutomaton::owes_eventuality(self, state)
     }
+
+    fn configuration(
+        &self,
+        state: StateId,
+        max_key_bytes: u64,
+    ) -> Result<Configuration, AutomatonError> {
+        PropertyAutomaton::configuration(self, state, max_key_bytes)
+    }
 }
 
 impl<A: SafetyAutomaton + ?Sized> SafetyAutomaton for Box<A> {
@@ -146,6 +172,14 @@ impl<A: SafetyAutomaton + ?Sized> SafetyAutomaton for Box<A> {
 
     fn owes_eventuality(&self, state: StateId) -> bool {
         (**self).owes_eventuality(state)
+    }
+
+    fn configuration(
+        &self,
+        state: StateId,
+        max_key_bytes: u64,
+    ) -> Result<Configuration, AutomatonError> {
+        (**self).configuration(state, max_key_bytes)
     }
 }
 
@@ -328,6 +362,26 @@ impl<A: SafetyAutomaton> Monitor<A> {
     /// The automaton states `state` stands for.
     pub fn members(&self, state: StateId) -> Option<&BTreeSet<StateId>> {
         self.subsets.key(state)
+    }
+
+    /// The elementary configurations monitor state `state` stands for, one
+    /// per viable automaton state: FR-338's `["safety", branches]` state of
+    /// the formula itself, empty for the rejecting state.
+    ///
+    /// # Errors
+    ///
+    /// [`AutomatonError::UnknownState`] when `state` is not a monitor state,
+    /// or the automaton's refusal to project a member.
+    pub fn configurations(
+        &self,
+        state: StateId,
+        max_key_bytes: u64,
+    ) -> Result<Vec<Configuration>, AutomatonError> {
+        self.members(state)
+            .ok_or(AutomatonError::UnknownState { state })?
+            .iter()
+            .map(|member| self.automaton.configuration(*member, max_key_bytes))
+            .collect()
     }
 
     /// The number of monitor states numbered so far.

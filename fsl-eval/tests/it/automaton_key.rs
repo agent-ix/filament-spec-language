@@ -17,9 +17,9 @@
 use filament_exact::{Origin, Role};
 use fsl_eval::automaton::{
     BuchiPhase, BuchiState, BuchiStates, Configuration, ContextActivation, DistanceBucket,
-    HistoryOperand, KeyRefusal, Letter, Obligation, Occurrence, PastMemory, PastOperator, Polarity,
-    SafetyState, SafetyStates, SafetyTranslation, StateContext, SubjectKind, TranslationRefusal,
-    Window,
+    HistoryOperand, KeyRefusal, Letter, Monitor, Obligation, Occurrence, PastMemory, PastOperator,
+    Polarity, SafetyState, SafetyStates, SafetyTranslation, StateContext, SubjectKind,
+    TranslationRefusal, Window,
 };
 use fsl_foundation::source::provenance::OccurrenceKey;
 use fsl_semantics::check::ProtocolNodeId;
@@ -1317,6 +1317,65 @@ fn reached_tp4_engine_states_resolve_to_fr338_keys() {
             different_ids_for_same_key.get(&(past, protocol)),
             Some(&true)
         );
+    }
+}
+
+/// FR-338 TP-3: every state a TP-3 clause's bad-prefix monitor reaches after
+/// a position resolves, through the viable members' elementary
+/// configurations, to a context-admitted `["safety", branches]` key, including
+/// past history and interval windows; distinct live facts give distinct keys,
+/// and the rejecting state is the empty branch set.
+#[trace("TC-525")]
+#[test]
+fn reached_tp3_monitor_states_resolve_to_fr338_keys() {
+    for body in [
+        "always (holds(p) implies once[1,1] holds(q))",
+        "always (holds(p) implies eventually[0,2] holds(q))",
+        "always (holds(p) implies once[1,2] holds(q))",
+    ] {
+        let fixture = fixture(INFINITE, "c: Counter", "on origin", body);
+        let context = StateContext::clause(&fixture.clause, occurrence(0), Vec::new());
+        let keys = SafetyStates::clause(&fixture.clause, &context, SubjectKind::Ordinary)
+            .expect("the TP-3 key context translates");
+        let automaton =
+            fsl_eval::automaton::translate(&fixture.clause, 256).expect("the clause translates");
+        let mut monitor = Monitor::bad_prefix(automaton, 256).expect("a safety automaton");
+        let initial = monitor.initial().expect("initial state fits");
+        let mut reached = BTreeSet::new();
+        let mut distinct = BTreeSet::new();
+        let mut pending = Vec::new();
+        for bits in 0..4 {
+            pending.push(
+                monitor
+                    .step(initial, Letter::from_bits(bits))
+                    .expect("steps"),
+            );
+        }
+        while let Some(from) = pending.pop() {
+            if !reached.insert(from) {
+                continue;
+            }
+            let configurations = monitor
+                .configurations(from, keys.max_key_bytes())
+                .expect("the monitor state resolves structurally");
+            let key = keys
+                .key(&configurations)
+                .unwrap_or_else(|error| panic!("{body} state {configurations:?}: {error}"));
+            let (admitted, _) = keys.admit(key.as_bytes()).expect("the key admits back");
+            assert_eq!(admitted, key);
+            assert_eq!(
+                configurations.is_empty(),
+                monitor.is_rejecting(from).expect("a monitor state"),
+                "{body}"
+            );
+            distinct.insert(key.as_bytes().to_vec());
+            for bits in 0..4 {
+                pending.push(monitor.step(from, Letter::from_bits(bits)).expect("steps"));
+            }
+        }
+        assert!(distinct.len() > 1, "{body} reaches {} keys", distinct.len());
+        let rejecting = keys.key(&[]).expect("the rejecting state encodes");
+        assert!(distinct.contains(rejecting.as_bytes()), "{body}");
     }
 }
 

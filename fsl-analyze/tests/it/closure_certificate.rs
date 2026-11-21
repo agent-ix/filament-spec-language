@@ -680,29 +680,146 @@ fn a_request_whose_clause_root_does_not_resolve_settles_failed() {
     assert_eq!(record.execution, Execution::Failed);
 }
 
-/// A TP-3 proof has no canonical closure certificate until its translation
-/// states have FR-338 keys (QSL-878): over the Counter subject,
-/// `always eventually[0,1] holds(c.value <= 3)` under infinite-trace holds
-/// with an empty certificate, which settles `Failed`, never `Proved`.
-#[test]
-fn a_safety_proof_with_an_empty_certificate_settles_failed_never_proved() {
-    let world = world(CONTRACT, &[("c", 0)]);
-    let claim = world.invariant("always eventually[0,1] holds(c.value <= 3)", |v| {
-        Some(v <= 3)
-    });
-    let outcome = claim.run(&world);
-    assert!(certificate(&outcome).states.is_empty());
-    let record = settle_model_check(
-        &outcome,
+/// The settlement of `outcome` for `claim` over `world`.
+fn settled(
+    world: &World,
+    claim: &Invariant,
+    outcome: &ModelCheckOutcome,
+) -> fsl_replay::ModelCheckRecord {
+    settle_model_check(
+        outcome,
         &ModelCheckLimits::default(),
-        &claim.request(&world, UNLIMITED),
+        &claim.request(world, UNLIMITED),
         &Cancel::new(),
         |_| panic!("a proof replays nothing"),
+    )
+}
+
+/// A TP-3 past clause is keyed by its monitor's viable configurations: over
+/// the Counter subject (values 0 to 3, then the terminal stutter),
+/// `always (once[1,1] p or historically p)` holds with a non-empty
+/// certificate whose keys carry the past memory, so the origin and the later
+/// positions have distinct keys; the core checker accepts it and the proof
+/// settles `proved`, `Certified`. The certificate with the value-1 product
+/// state removed is rejected `SuccessorMissing` at it, and with the value-1
+/// state's past memory replaced by the origin's, `SuccessorMissing` at the
+/// value-1 state the monitor actually reaches.
+#[trace("TC-525", "FR-127-AC-1")]
+#[test]
+fn a_past_clause_proof_carries_monitor_keys_the_core_accepts() {
+    let world = world(CONTRACT, &[("c", 0)]);
+    let claim = world.invariant(
+        "always (once[1,1] holds(c.value <= 3) or historically holds(c.value <= 3))",
+        |v| Some(v <= 3),
     );
-    assert_eq!(record.value, TerminalValue::Failed);
+    let outcome = claim.run(&world);
+    let full = certificate(&outcome);
+    let keys: std::collections::BTreeSet<_> = full
+        .states
+        .iter()
+        .map(|state| state.automaton_state.clone())
+        .collect();
+    assert!(keys.len() > 1, "the past memory is part of the key");
+    let request = claim.request(&world, UNLIMITED);
+    assert_eq!(check(&request, &full), TemporalCertificateCheck::Accepted);
     assert_eq!(
-        (record.label, record.execution),
-        (ResultLabel::Failed, Execution::Failed)
+        settled(&world, &claim, &outcome).value,
+        TerminalValue::Proved {
+            basis: ProofBasis::Exhaustive,
+            certification: Certification::Certified,
+        }
+    );
+
+    let one = world.state_key(&[1]);
+    let origin = world.state_key(&[0]);
+    let at_origin = full
+        .states
+        .iter()
+        .find(|state| state.model_state == origin)
+        .expect("the origin is certified")
+        .clone();
+    let at = full
+        .states
+        .iter()
+        .find(|state| state.model_state == one)
+        .expect("value 1 is certified")
+        .clone();
+    assert_ne!(at.automaton_state, at_origin.automaton_state);
+
+    let mut removed = full.clone();
+    removed.states.retain(|state| *state != at);
+    assert_eq!(
+        check(&request, &removed),
+        rejected(CertificateRule::SuccessorMissing, at.clone())
+    );
+
+    let mut wrong = full.clone();
+    for state in &mut wrong.states {
+        if *state == at {
+            state.automaton_state = at_origin.automaton_state.clone();
+        }
+    }
+    assert_eq!(
+        check(&request, &wrong),
+        rejected(CertificateRule::SuccessorMissing, at)
+    );
+}
+
+/// A TP-3 interval clause is keyed the same way: `always (not p implies
+/// eventually[0,2] p)` with `p` true from value 2 holds with a certificate
+/// whose pending deadline distinguishes values 0 and 1 from 2 and 3, which
+/// the core checker accepts; the proof settles `Certified`. An empty
+/// certificate for it is rejected `InitialMissing` at the initial product
+/// state, so the proof never settles `proved`.
+#[trace("TC-525", "FR-127-AC-1")]
+#[test]
+fn an_interval_clause_proof_carries_monitor_keys_the_core_accepts() {
+    let world = world(CONTRACT, &[("c", 0)]);
+    let claim = world.invariant(
+        "always (not holds(c.value >= 2) implies eventually[0,2] holds(c.value >= 2))",
+        |v| Some(v >= 2),
+    );
+    let outcome = claim.run(&world);
+    let full = certificate(&outcome);
+    let keys = |values: &[i64]| -> std::collections::BTreeSet<_> {
+        let model = world.state_key(values);
+        full.states
+            .iter()
+            .filter(|state| state.model_state == model)
+            .map(|state| state.automaton_state.clone())
+            .collect()
+    };
+    assert_ne!(keys(&[1]), keys(&[2]), "a pending deadline is part of the key");
+    assert_eq!(keys(&[2]), keys(&[3]));
+    let request = claim.request(&world, UNLIMITED);
+    assert_eq!(check(&request, &full), TemporalCertificateCheck::Accepted);
+    assert_eq!(
+        settled(&world, &claim, &outcome).value,
+        TerminalValue::Proved {
+            basis: ProofBasis::Exhaustive,
+            certification: Certification::Certified,
+        }
+    );
+
+    let ModelCheckOutcome::Holds { stats, .. } = outcome else {
+        panic!("a proof");
+    };
+    let at = full
+        .states
+        .iter()
+        .find(|state| state.model_state == world.state_key(&[0]))
+        .expect("the origin is certified")
+        .clone();
+    let emptied = ModelCheckOutcome::Holds {
+        certificate: ProofCertificate::Closure(ClosureCertificate { states: Vec::new() }),
+        stats,
+    };
+    assert_eq!(
+        settled(&world, &claim, &emptied).value,
+        TerminalValue::Inconclusive(InconclusiveCause::CertificateRejected {
+            rule: CertificateRule::InitialMissing,
+            at: CertificateLocus::ProductState(at),
+        })
     );
 }
 
