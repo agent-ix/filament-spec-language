@@ -395,6 +395,7 @@ fn run_d10(checked: &spine::CheckedUnit) -> (String, u64) {
         receiver_pre: None,
         receiver_post: None,
         parameters: vec![],
+        value_origins: Default::default(),
         result: None,
         created: vec![],
         deleted: vec![],

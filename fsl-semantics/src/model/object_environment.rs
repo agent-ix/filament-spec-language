@@ -79,6 +79,9 @@ pub struct ReferenceOrigins {
     locus: Option<Arc<ReferenceOriginLocus>>,
 }
 
+type FieldOriginIndex = BTreeMap<NodeKey, BTreeMap<String, BTreeMap<FieldRef, ReferenceOrigins>>>;
+type ContextOriginIndex = BTreeMap<ObjectReference, BTreeMap<FieldRef, ReferenceOrigins>>;
+
 impl ReferenceOrigins {
     /// Move the existing admission walk's validated facts into shared storage.
     pub fn from_parts(
@@ -210,6 +213,8 @@ pub struct ObjectEnvironment {
     population_completeness: BTreeMap<String, bool>,
     /// Exact declared population nodes and their normalized member types.
     population_provenance: BTreeMap<NodeKey, PopulationProvenance>,
+    field_origins: Option<Arc<FieldOriginIndex>>,
+    context_origins: Option<Arc<ContextOriginIndex>>,
     /// The FR-106 check-7 population closure rooted at each declared
     /// population, retaining the snapshot's exact reference provenance.
     population_reference_closures: BTreeMap<String, Vec<String>>,
@@ -251,6 +256,8 @@ impl ObjectEnvironment {
             population_members: BTreeMap::new(),
             population_completeness: BTreeMap::new(),
             population_provenance: BTreeMap::new(),
+            field_origins: None,
+            context_origins: None,
             population_reference_closures: BTreeMap::new(),
             history: BTreeMap::new(),
             read_log: None,
@@ -376,6 +383,72 @@ impl ObjectEnvironment {
     /// model population.
     pub fn population_provenance(&self, node: &NodeKey) -> Option<&PopulationProvenance> {
         self.population_provenance.get(node)
+    }
+
+    /// The admitted field's exact targets and unavailable subtrees, addressed
+    /// by its explicitly declared holder population, local key and field.
+    pub fn field_reference_origins(
+        &self,
+        population: &NodeKey,
+        owner: &str,
+        field: &FieldRef,
+    ) -> Option<&ReferenceOrigins> {
+        self.field_origins
+            .as_ref()?
+            .get(population)?
+            .get(owner)?
+            .get(field)
+    }
+
+    /// The field origins of the context explicitly attached by this snapshot.
+    pub fn context_field_reference_origins(
+        &self,
+        owner: &ObjectReference,
+        field: &FieldRef,
+    ) -> Option<&ReferenceOrigins> {
+        self.context_origins.as_ref()?.get(owner)?.get(field)
+    }
+
+    pub(crate) fn with_field_reference_origins(
+        mut self,
+        rows: impl IntoIterator<Item = (NodeKey, String, FieldRef, ReferenceOrigins)>,
+    ) -> Self {
+        let mut index: FieldOriginIndex = BTreeMap::new();
+        for (population, owner, field, origins) in rows {
+            if !origins.is_empty() {
+                let origins = origins.with_locus(ReferenceOriginLocus::ObjectField {
+                    population: population.clone(),
+                    owner: owner.clone(),
+                    field: field.clone(),
+                });
+                index
+                    .entry(population)
+                    .or_default()
+                    .entry(owner)
+                    .or_default()
+                    .insert(field, origins);
+            }
+        }
+        self.field_origins = (!index.is_empty()).then(|| Arc::new(index));
+        self
+    }
+
+    pub(crate) fn with_context_reference_origins(
+        mut self,
+        rows: impl IntoIterator<Item = (ObjectReference, FieldRef, ReferenceOrigins)>,
+    ) -> Self {
+        let mut index: ContextOriginIndex = BTreeMap::new();
+        for (owner, field, origins) in rows {
+            if !origins.is_empty() {
+                let origins = origins.with_locus(ReferenceOriginLocus::ContextField {
+                    owner: owner.clone(),
+                    field: field.clone(),
+                });
+                index.entry(owner).or_default().insert(field, origins);
+            }
+        }
+        self.context_origins = (!index.is_empty()).then(|| Arc::new(index));
+        self
     }
 
     /// The node key of a population by its exact declaration identity.

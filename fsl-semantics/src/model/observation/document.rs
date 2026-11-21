@@ -20,7 +20,10 @@ use super::{
     OutOfRange, PathStep, PostStateRange, RawForm, RawNative, RawNativeKind, RawValue, ReadMeter,
     SelectedObject, SnapshotValue,
 };
-use crate::model::object_environment::ObjectEnvironment;
+use crate::model::object_environment::{
+    ObjectEnvironment, ReferenceOccurrence, ReferenceOriginLocus, ReferenceOrigins,
+    UnavailableReferenceOrigin,
+};
 use crate::model::operation::OperationDeclaration;
 use filament_checked::key::DeclarationKey;
 use filament_semantic_value::declaration::{
@@ -1185,6 +1188,11 @@ pub(super) struct References<'a> {
     unresolved: Vec<(String, ObjectReference)>,
     /// Validated data references to declared clock places, never objects.
     clock_references: Vec<(String, ObjectReference)>,
+    population_nodes: BTreeMap<String, filament_exact::NodeKey>,
+    origins: Vec<ReferenceOccurrence>,
+    unavailable_origins: Vec<UnavailableReferenceOrigin>,
+    pub(super) parameter_origins: BTreeMap<String, ReferenceOrigins>,
+    pub(super) result_origins: ReferenceOrigins,
     /// The declaration key of each selected record value type by its IR
     /// node identity, built on first use.
     record_keys: Option<BTreeMap<String, filament_exact::NodeKey>>,
@@ -1201,7 +1209,23 @@ impl<'a> References<'a> {
         views: &'a [ModelView],
         types: &'a TypeEnvironment,
         populations: &'a [RawPopulation],
-    ) -> Self {
+    ) -> Result<Self, AdmissionFailure> {
+        let mut population_nodes = BTreeMap::new();
+        for view in views {
+            for record in &view.view.domain_package().records {
+                if let crate::model::domain_package::DomainPackageRecord::Population(population) =
+                    record
+                {
+                    let node = crate::model::key::population_node_key(&population.key)
+                        .map_err(|_| fault("population-declaration-node-key"))?;
+                    // Preserve the same explicit declaration-URI precedence
+                    // as find_population; no reference membership is searched.
+                    population_nodes
+                        .entry(population.key.node.clone())
+                        .or_insert(node);
+                }
+            }
+        }
         let mut admitted = BTreeMap::new();
         let mut completeness = BTreeMap::new();
         for population in populations {
@@ -1222,15 +1246,53 @@ impl<'a> References<'a> {
                     .or_insert(reference);
             }
         }
-        Self {
+        Ok(Self {
             views,
             types,
             admitted,
             completeness,
             unresolved: Vec::new(),
             clock_references: Vec::new(),
+            population_nodes,
+            origins: Vec::new(),
+            unavailable_origins: Vec::new(),
+            parameter_origins: BTreeMap::new(),
+            result_origins: ReferenceOrigins::default(),
             record_keys: None,
             variant_keys: None,
+        })
+    }
+
+    fn take_origins(&mut self) -> ReferenceOrigins {
+        ReferenceOrigins::from_parts(
+            std::mem::take(&mut self.origins),
+            std::mem::take(&mut self.unavailable_origins),
+        )
+    }
+
+    fn retain_origin(
+        &mut self,
+        reference: &SelectedObject,
+        path: &[PathStep],
+        boundary: Option<(usize, CollectionKind)>,
+    ) {
+        if let Some((depth, collection)) = boundary {
+            let subtree = &path[..depth];
+            if !self
+                .unavailable_origins
+                .iter()
+                .any(|prior| prior.path == subtree && prior.collection == collection)
+            {
+                self.unavailable_origins.push(UnavailableReferenceOrigin {
+                    path: subtree.to_vec(),
+                    collection,
+                });
+            }
+        } else if let Some(population) = self.population_nodes.get(&reference.population) {
+            self.origins.push(ReferenceOccurrence {
+                path: path.to_vec(),
+                population: population.clone(),
+            });
         }
     }
 
@@ -2041,6 +2103,7 @@ enum Admit<'w, 'v> {
         presence: filament_exact::Presence,
         field: bool,
         canonical: bool,
+        origin_boundary: Option<(usize, CollectionKind)>,
     },
     /// Descend one step of the value path.
     Enter(PathStep),
@@ -2091,6 +2154,7 @@ fn admit_value<'a: 'w, 'w>(
         presence,
         field: false,
         canonical: false,
+        origin_boundary: None,
     }];
     let mut done: Vec<FieldValue> = Vec::new();
     let mut path: Vec<PathStep> = Vec::new();
@@ -2161,6 +2225,7 @@ fn admit_value<'a: 'w, 'w>(
                 presence,
                 field,
                 canonical,
+                origin_boundary,
             } => {
                 if presence == filament_exact::Presence::Required {
                     if let filament_exact::ValueType::Collection(collection) = value_type {
@@ -2186,6 +2251,7 @@ fn admit_value<'a: 'w, 'w>(
                                 presence: filament_exact::Presence::Required,
                                 field: false,
                                 canonical,
+                                origin_boundary,
                             });
                             work.push(Admit::Enter(PathStep::OptionValue));
                         }
@@ -2219,6 +2285,7 @@ fn admit_value<'a: 'w, 'w>(
                             presence: filament_exact::Presence::Required,
                             field: false,
                             canonical,
+                            origin_boundary,
                         });
                         work.push(Admit::Enter(PathStep::OptionValue));
                     }
@@ -2259,6 +2326,13 @@ fn admit_value<'a: 'w, 'w>(
                                         collection.kind(),
                                         CollectionKind::Set | CollectionKind::Bag
                                     ),
+                                origin_boundary: origin_boundary.or_else(|| {
+                                    matches!(
+                                        collection.kind(),
+                                        CollectionKind::Set | CollectionKind::Bag
+                                    )
+                                    .then_some((path.len(), collection.kind()))
+                                }),
                             });
                             work.push(Admit::Enter(PathStep::Index(index)));
                         }
@@ -2318,11 +2392,16 @@ fn admit_value<'a: 'w, 'w>(
                                 presence: field.presence(),
                                 field: true,
                                 canonical,
+                                origin_boundary,
                             });
                             work.push(Admit::Enter(PathStep::Field(field.name().to_owned())));
                         }
                     }
                     (form, value_type) => {
+                        let raw_reference = match &form {
+                            RawForm::Reference(reference) => Some(*reference),
+                            _ => None,
+                        };
                         let mut value =
                             admit_leaf(references, form, value_type, witness.as_deref_mut())
                                 .map_err(|record| {
@@ -2333,6 +2412,9 @@ fn admit_value<'a: 'w, 'w>(
                                     full.extend(record.path.iter().cloned());
                                     record.at(full)
                                 })?;
+                        if let Some(reference) = raw_reference {
+                            references.retain_origin(reference, &path, origin_boundary);
+                        }
                         if canonical {
                             if let Value::Decimal(decimal) = &value {
                                 value =
@@ -2384,6 +2466,11 @@ pub fn admit_record_sample(
         completeness: BTreeMap::new(),
         unresolved: Vec::new(),
         clock_references: Vec::new(),
+        population_nodes: BTreeMap::new(),
+        origins: Vec::new(),
+        unavailable_origins: Vec::new(),
+        parameter_origins: BTreeMap::new(),
+        result_origins: ReferenceOrigins::default(),
         record_keys: Some(BTreeMap::from([(RECORD_SAMPLE.to_owned(), record.clone())])),
         variant_keys: None,
     };
@@ -2980,6 +3067,8 @@ pub(super) struct PopulationValues<'t> {
     objects: Vec<(ObjectReference, Vec<(&'t str, FieldValue)>)>,
     /// The wire population that lists each object of `objects`, in step.
     holders: Vec<String>,
+    field_origins: Vec<(filament_exact::NodeKey, String, FieldRef, ReferenceOrigins)>,
+    context_origins: Vec<(ObjectReference, FieldRef, ReferenceOrigins)>,
     pub(super) completeness: BTreeMap<String, bool>,
     pub(super) keys_by_population: BTreeMap<String, BTreeSet<String>>,
     /// The entries of the snapshot's `relationships` member that passed
@@ -3019,6 +3108,7 @@ pub(super) struct ReadContext<'t> {
     /// The most-specific machine's effective identity.
     pub(super) effective: filament_exact::EffectiveId,
     attributes: Vec<(&'t str, FieldValue)>,
+    field_origins: Vec<(FieldRef, ReferenceOrigins)>,
     /// The reference values of its fields, in effective field order.
     references: Vec<ContextReference>,
     /// Each post-state integer admitted outside its declared range.
@@ -3080,6 +3170,12 @@ impl<'t> PopulationValues<'t> {
             UniverseId::new(context_universe_key(&context.effective)?),
             context.effective,
             object,
+        );
+        self.context_origins.extend(
+            context
+                .field_origins
+                .into_iter()
+                .map(|(field, origins)| (reference.clone(), field, origins)),
         );
         self.out_of_range.extend(
             context
@@ -3270,10 +3366,11 @@ pub(super) fn admit_population_values<'t>(
     let populations = &snapshot.populations[..];
     let mut objects: Vec<(ObjectReference, Vec<(&str, FieldValue)>)> = Vec::new();
     let mut holders: Vec<String> = Vec::new();
+    let mut field_origins = Vec::new();
     let mut listed = super::relationships::Listed::new();
     let mut completeness = BTreeMap::new();
     let mut keys_by_population: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
-    let mut references = References::over(views, types, populations);
+    let mut references = References::over(views, types, populations)?;
     let mut out_of_range: Vec<OutOfRange> = Vec::new();
     // FSpec FR-154 "Unit bounds": a supplied value that violates a bound
     // refuses; a post-state one is the successor's, which records it.
@@ -3291,6 +3388,11 @@ pub(super) fn admit_population_values<'t>(
                     .with("population", entry.population.clone()),
             ));
         };
+        let holder_population = references
+            .population_nodes
+            .get(&entry.population)
+            .cloned()
+            .ok_or_else(|| fault("listed-population-has-declared-origin"))?;
         let seen = keys_by_population
             .entry(entry.population.clone())
             .or_default();
@@ -3526,6 +3628,15 @@ pub(super) fn admit_population_values<'t>(
                                     .with("path", refusal_path),
                             )
                         })?;
+                let origins = references.take_origins();
+                if !origins.is_empty() {
+                    field_origins.push((
+                        holder_population.clone(),
+                        object.key.clone(),
+                        attribute.identity(),
+                        origins,
+                    ));
+                }
                 if let (false, FieldValue::Present(value)) = (bounds.is_empty(), &field_value) {
                     let key = super::initial::field_key(views, attribute)?;
                     if let Some(record) = unit_bound_refusal(&bounds, &key, value, types) {
@@ -3592,6 +3703,8 @@ pub(super) fn admit_population_values<'t>(
     Ok(PopulationValues {
         objects,
         holders,
+        field_origins,
+        context_origins: Vec::new(),
         completeness,
         keys_by_population,
         extents,
@@ -3727,6 +3840,7 @@ fn admit_contexts<'t>(
             }
         }
         let mut attributes = Vec::with_capacity(declared.len());
+        let mut field_origins = Vec::new();
         let mut breaches = Vec::new();
         let mut context_references = Vec::new();
         for attribute in declared {
@@ -3764,6 +3878,10 @@ fn admit_contexts<'t>(
                         entry,
                     )
                 })?;
+            let origins = references.take_origins();
+            if !origins.is_empty() {
+                field_origins.push((attribute.identity(), origins));
+            }
             breaches.extend(
                 found
                     .into_iter()
@@ -3796,6 +3914,7 @@ fn admit_contexts<'t>(
                 entry,
                 effective,
                 attributes,
+                field_origins,
                 references: context_references,
                 breaches,
             });
@@ -4240,6 +4359,8 @@ pub(super) fn finish_populations(
     .with_population_members(members)
     .with_population_completeness(values.completeness.clone())
     .with_population_provenance(population_provenance)
+    .with_field_reference_origins(values.field_origins)
+    .with_context_reference_origins(values.context_origins)
     .with_population_reference_closures(population_reference_closures);
     Ok(AdmittedEnvironment {
         environment,
@@ -4623,6 +4744,12 @@ pub(super) fn admit_parameters(
         references
             .check_typed_closure(raw, value_type)
             .map_err(refuse)?;
+        let origins = references
+            .take_origins()
+            .with_locus(ReferenceOriginLocus::Parameter(name.clone()));
+        if !origins.is_empty() {
+            references.parameter_origins.insert(name.clone(), origins);
+        }
         admitted.push((name.clone(), value));
     }
     for (name, _) in parameters {
@@ -4672,6 +4799,9 @@ pub(super) fn admit_result(
             references
                 .check_typed_closure(raw, value_type)
                 .map_err(refuse)?;
+            references.result_origins = references
+                .take_origins()
+                .with_locus(ReferenceOriginLocus::Result);
             Ok(Some(value))
         }
     }
@@ -4808,10 +4938,12 @@ mod tests {
         )
         .with_optional_parameters(&[true]);
         let types = TypeEnvironment::new([], []).expect("an empty environment admits");
-        let mut omitted_references = References::over(&[], &types, &[]);
+        let mut omitted_references =
+            References::over(&[], &types, &[]).expect("empty declared catalog");
         let omitted = admit_parameters(&mut omitted_references, &operation, &[])
             .expect("an optional argument may be omitted");
-        let mut explicit_references = References::over(&[], &types, &[]);
+        let mut explicit_references =
+            References::over(&[], &types, &[]).expect("empty declared catalog");
         let explicit = admit_parameters(
             &mut explicit_references,
             &operation,
@@ -4857,7 +4989,8 @@ mod tests {
             empty_population("partial", false),
         ];
         let types = TypeEnvironment::new([], []).expect("an empty environment admits");
-        let references = References::over(&[], &types, &populations);
+        let references =
+            References::over(&[], &types, &populations).expect("empty declared catalog");
 
         let record = references
             .check_closure(&SnapshotValue::present(reference("complete", "k")))
@@ -4909,7 +5042,7 @@ mod tests {
     #[test]
     fn an_out_of_range_integer_with_no_witness_sink_refuses() {
         let types = TypeEnvironment::new([], []).expect("an empty environment admits");
-        let mut references = References::over(&[], &types, &[]);
+        let mut references = References::over(&[], &types, &[]).expect("empty declared catalog");
         let record = admit_form(
             &mut references,
             snapshot(r#"{"integer":"-1"}"#).form(),
@@ -4935,7 +5068,7 @@ mod tests {
     #[test]
     fn an_out_of_range_integer_with_a_witness_sink_is_admitted_exactly() {
         let types = TypeEnvironment::new([], []).expect("an empty environment admits");
-        let mut references = References::over(&[], &types, &[]);
+        let mut references = References::over(&[], &types, &[]).expect("empty declared catalog");
         let mut found = Vec::new();
         let admitted = admit_form(
             &mut references,
@@ -4966,7 +5099,7 @@ mod tests {
     #[test]
     fn an_out_of_range_sequence_element_is_witnessed_at_its_index() {
         let types = TypeEnvironment::new([], []).expect("an empty environment admits");
-        let mut references = References::over(&[], &types, &[]);
+        let mut references = References::over(&[], &types, &[]).expect("empty declared catalog");
         let sequence = filament_exact::ValueType::collection(filament_exact::CollectionType::new(
             CollectionKind::Sequence,
             range_0_1000(),
@@ -5064,6 +5197,11 @@ mod tests {
                     completeness: BTreeMap::new(),
                     unresolved: Vec::new(),
                     clock_references: Vec::new(),
+                    population_nodes: BTreeMap::new(),
+                    origins: Vec::new(),
+                    unavailable_origins: Vec::new(),
+                    parameter_origins: BTreeMap::new(),
+                    result_origins: ReferenceOrigins::default(),
                     record_keys: None,
                     variant_keys: None
                 },
