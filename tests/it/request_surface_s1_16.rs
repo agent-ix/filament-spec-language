@@ -3696,27 +3696,40 @@ fn package_remainder_window_shared_atoms_match_source_and_require_caller_bytes()
         );
         assert_eq!(expected.1["basis"], "closed-scope");
         let models = compile_handoff_with_clocks(directory.path(), &unit, Some(clocks.clone()));
-        let package: Value =
-            serde_json::from_slice(&std::fs::read(directory.path().join("package.json")).unwrap())
-                .unwrap();
-        let atom_ids: Vec<&Value> = package["semantic_graph"]["nodes"]
-            .as_array()
+        let package_bytes = std::fs::read(directory.path().join("package.json")).unwrap();
+        let package = fsl_package::admit_checked_package(
+            &package_bytes,
+            &Default::default(),
+            fsl_package::V2ReadLimits::default(),
+        )
+        .expect("the genuine package strictly admits");
+        let row = package
+            .temporal_clause_names()
             .unwrap()
             .iter()
-            .filter(|node| node["body"]["operation"]["identity"] == "filament.op.temporal.holds")
-            .map(|node| &node["node_id"])
-            .collect();
-        assert_eq!(atom_ids.len(), 1, "one actual shared atom: {package}");
-        // The emitter's occurrence rows independently prove that the shared
-        // fixture reached the required source-provenance shape.
-        let expression_regions: usize = package["source_map"]
-            .as_array()
-            .unwrap()
+            .find(|row| row.name.as_ref() == "StampedPulse")
+            .unwrap();
+        let view =
+            fsl_package::checked_views::temporal_subject(&package, &row.declaration).unwrap();
+        let atom = view
+            .formula_graph()
             .iter()
-            .filter(|entry| entry["node_id"] == *atom_ids[0] && entry["role"] == "expression")
-            .map(|entry| entry["regions"].as_array().unwrap().len())
+            .find(|entry| entry.kind() == Some(fsl_package::checked_views::FormulaOperation::Holds))
+            .unwrap()
+            .node;
+        let expression_regions: usize = package
+            .source_map()
+            .iter()
+            .filter(|entry| {
+                entry.node_id == *atom
+                    && entry.role == filament_contract_model::CheckedOccurrenceRole::Expression
+            })
+            .map(|entry| entry.regions.len())
             .sum();
-        assert_eq!(expression_regions, candidates, "{body}: {package}");
+        assert_eq!(
+            expression_regions, candidates,
+            "{body}: the admitted shared node's actual source rows"
+        );
         std::fs::write(directory.path().join("caller.native"), &unit).unwrap();
         let mut caller = source("unit.native");
         caller["file"] = json!("caller.native");
