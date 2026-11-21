@@ -335,10 +335,12 @@ fn derived_kinds(reading: &SubjectReading) -> Vec<Derived> {
                 repeat: *repeat,
                 models: models.to_vec(),
             });
-            derived.push(Derived::LoopTermination {
-                repeat: *repeat,
-                models: models.to_vec(),
-            });
+            if reading.protocol_loop_termination_required(*repeat) {
+                derived.push(Derived::LoopTermination {
+                    repeat: *repeat,
+                    models: models.to_vec(),
+                });
+            }
         }
     }
     derived

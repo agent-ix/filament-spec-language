@@ -73,3 +73,42 @@ Reverse-gap/stub inspection covered changed public items and their callers acros
 - `fsl-semantics/src/check/protocol_obligation/tests.rs`
 - `fsl-semantics/src/check/protocol_slots.rs`
 - `fsl-semantics/src/check/refusal.rs`
+
+## Dispositions
+
+### Round 1
+
+Reviewed fix delta `65dfdca3d2..87c121d9` at frozen head `87c121d9f286074619792730fef7d0eb35801a6d`. Original findings above remain historical and unedited.
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | accepted-no-change | Architecture ruling supplied by the code lead: retain FR-730 checked-source loop items; arch will amend FSpec FR-368-AC-13 and coordinate the next reader pin, without holding this PR for that spec PR. The fix rejects both loop kinds on the package route as typed PendingFamily variants before claim lookup (package_run.rs:687-703); package tests assert unsupported_construct/not-yet-implemented, exit 21 and no earlier item execution. The normative text change is owned by arch and is intentionally outside this branch. Architecture also explicitly permits source-backed JSON and typed Rust to serve FR-730 in full; only package-backed documents must refuse. |
+| FND-002 | fixed | protocol_slots.rs:2158-2160 now checks immediate members; runtime components match integer values directly and the S3 fixture refuses Nested(Pair(1, 2), 3). |
+| FND-003 | fixed | protocol.rs:1567-1575 retains entry failures; steps.rs:765-770 retains reached post-body failures. The new undecided_guards fixture covers false/undefined invariants and undefined variants at entry and post-body decisions, checks exact LoopProofFailure, and requires refutation plus reproduced replay. |
+
+#### FND-002 after excerpt
+
+```rust
+CompositeShape::Tuple(types) => types
+    .iter()
+    .all(|member| matches!(member, ValueType::Integer | ValueType::Int(_))),
+```
+
+#### FND-003 after excerpt
+
+```rust
+roles::Started::Undecided { instance, finding } => {
+    let instances = if instance.loop_proof_violation.is_some() {
+        BTreeMap::from([(0, *instance)])
+    } else {
+        BTreeMap::new()
+    };
+    (instances, vec![*finding])
+}
+```
+
+### Current disposition verdict
+
+**CONDITIONAL** — all findings have final dispositions, and static inspection found no new regression in the fix delta. No still-open finding remains. Focused runtime execution remains pending with the assigned lane; this reviewer ran no Cargo/build/tests or matrix. The reported compile-only checks are lead-provided evidence, not independently rerun. The known terminal_two_models failure still has no main baseline or resolution in this review. `git diff --check 65dfdca3d2..87c121d9` passed and the source worktree was clean.
+
+Arch owns the FSpec amendment/reader pin. Architecture confirmed that source-backed typed Rust and JSON serve FR-730 in full, and only package-backed documents must return typed unsupported until the amended FR-368 pin. The extended existing source resolver and regression fixture match that ruling; no architecture hold remains.

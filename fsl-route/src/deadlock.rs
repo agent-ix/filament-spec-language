@@ -37,7 +37,7 @@
 //!
 //! [`ReachableInvariant`]: filament_semantic_value::fairness::PropertyForm::ReachableInvariant
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use filament_exact::NodeKey;
 use filament_exact::{Origin, Role};
@@ -254,6 +254,8 @@ struct ProtocolReading {
     races: bool,
     /// Each repeat with an authored loop proof, in checked source order.
     loop_proofs: Vec<fsl_semantics::check::ProtocolNodeId>,
+    /// Proof-carrying repeats that need a variant proof rather than a maximum.
+    unbounded_loop_proofs: BTreeSet<fsl_semantics::check::ProtocolNodeId>,
 }
 
 impl ProtocolReading {
@@ -350,6 +352,17 @@ impl SubjectReading {
         self.protocol
             .as_ref()
             .map_or(&[], |protocol| protocol.loop_proofs.as_slice())
+    }
+
+    /// Whether this repeat's termination must be established by its loop
+    /// proof: a repeat with a maximum terminates by that maximum (FR-730).
+    pub fn protocol_loop_termination_required(
+        &self,
+        repeat: fsl_semantics::check::ProtocolNodeId,
+    ) -> bool {
+        self.protocol
+            .as_ref()
+            .is_some_and(|protocol| protocol.unbounded_loop_proofs.contains(&repeat))
     }
 
     /// The checked-node occurrence used to key a loop-proof item.
@@ -489,6 +502,14 @@ impl<S: Clone> ProtocolTemporalItem<'_, S> {
     /// model's `terminal` is not read.
     pub fn reading(&self) -> SubjectReading {
         let weak = self.models.iter().any(|(_, model)| model.is_weak());
+        let loop_proofs: BTreeMap<_, _> = self
+            .protocol
+            .slots
+            .repeats
+            .iter()
+            .filter(|repeat| repeat.loop_proof.is_some())
+            .map(|repeat| (repeat.node, repeat.max))
+            .collect();
         SubjectReading {
             roots: BTreeSet::new(),
             opted_out: matches!(self.protocol.slots.terminal, CheckedTerminalMember::Any),
@@ -500,11 +521,16 @@ impl<S: Clone> ProtocolTemporalItem<'_, S> {
                 races: weak && self.non_atomic_access,
                 loop_proofs: self
                     .protocol
-                    .slots
-                    .repeats
+                    .controls
+                    .controls
                     .iter()
-                    .filter(|repeat| repeat.loop_proof.is_some())
-                    .map(|repeat| repeat.node)
+                    .filter(|control| loop_proofs.contains_key(&control.node))
+                    .map(|control| control.node)
+                    .collect(),
+                unbounded_loop_proofs: loop_proofs
+                    .iter()
+                    .filter(|(_, maximum)| maximum.is_none())
+                    .map(|(node, _)| *node)
                     .collect(),
             }),
         }

@@ -52,6 +52,67 @@ fn two_loop_proofs_derive_four_items_once_and_bounded_repeat_derives_none() {
     assert_eq!(loop_items_for_request_count(&body, 2), four);
 }
 
+/// Loop items follow the untimed SC subject's deadlock item, grouped by
+/// sibling repeat in tree order rather than sorted by repeat name.
+#[trace("TC-2022", "FR-730-AC-4")]
+#[test]
+fn sibling_loop_items_follow_tree_order_after_freedom_items() {
+    let body = multiple_repeat_unit()
+        .replace("First", "Zulu")
+        .replace("Second", "Alpha")
+        .replace(
+            "max 1 while",
+            "max 1 invariant { true } variant { 1 } while",
+        );
+    let checked = crate::fill::package_with(crate::fill::PROTOCOL_PROFILE, &body);
+    let protocol = checked.graph().protocol("P").expect("P");
+    let repeat = |name| {
+        protocol
+            .controls
+            .controls
+            .iter()
+            .find(|control| control.name == name)
+            .expect("named repeat")
+            .node
+    };
+    let zulu = u64::try_from(repeat("Zulu").0).expect("repeat ordinal");
+    let alpha = u64::try_from(repeat("Alpha").0).expect("repeat ordinal");
+    let bounded = u64::try_from(repeat("Bounded").0).expect("repeat ordinal");
+    let occurrence = crate::model_settle::protocol_anchor(&checked, "P").1;
+    let item = ProtocolTemporalItem {
+        occurrence: &occurrence,
+        subject: &"P",
+        protocol,
+        models: &[],
+        non_atomic_access: false,
+    };
+    for count in [1, 2] {
+        let written = crate::derived_request::protocol_request(&vec![item; count]);
+        let actual: Vec<_> = written
+            .items()
+            .iter()
+            .filter(|item| item.derived_limits().is_some())
+            .map(|item| {
+                (
+                    item.item_kind().expect("derived kind"),
+                    item.occurrence().origin().ordinal(),
+                )
+            })
+            .collect();
+        assert_eq!(
+            actual,
+            [
+                (ItemKind::DeadlockFreedom, 0),
+                (ItemKind::LoopInvariant, zulu),
+                (ItemKind::LoopTermination, zulu),
+                (ItemKind::LoopInvariant, alpha),
+                (ItemKind::LoopTermination, alpha),
+                (ItemKind::LoopInvariant, bounded),
+            ]
+        );
+    }
+}
+
 /// FR-730 "Obligations": a repeat without a loop proof derives neither
 /// obligation.
 #[trace("TC-2022", "FR-730")]
@@ -385,6 +446,37 @@ fn assert_refuted(items: &[(ItemKind, TerminalValue, bool)], wanted: ItemKind) {
     );
 }
 
+/// A maximum discharges termination independently of a constant variant;
+/// the authored invariant still gets checked and replayed when false.
+#[trace("TC-2022", "FR-730-AC-5")]
+#[test]
+fn a_bounded_repeat_with_a_proof_derives_only_its_invariant() {
+    for invariant in ["true", "false"] {
+        let body = loop_unit(invariant, "0", "got.left > 0", "dec").replacen(
+            "visible (got.left)",
+            "visible (got.left) max 3",
+            1,
+        );
+        assert_eq!(loop_items(&body), ["loop-invariant"]);
+        let case = Case::new(&body, &[2]);
+        let items = analyze_case_items(
+            &case,
+            &DerivedLimits::default(),
+            Some((ItemKind::LoopInvariant, LoopProofFailure::InvariantFalse)),
+            &[ItemKind::LoopInvariant],
+        );
+        if invariant == "false" {
+            assert_refuted(&items, ItemKind::LoopInvariant);
+        } else {
+            let [(ItemKind::LoopInvariant, value, replayed)] = items.as_slice() else {
+                panic!("only the invariant item: {items:?}");
+            };
+            assert!(matches!(value, TerminalValue::Proved { .. }), "{value:?}");
+            assert!(!replayed);
+        }
+    }
+}
+
 /// Tuple order uses the first unequal component, and consults later
 /// components when the earlier ones are equal.
 #[trace("TC-2022", "FR-730", "FR-218-AC-43")]
@@ -526,7 +618,7 @@ fn undecided_guards_preserve_initial_and_post_body_loop_proof_failures() {
 
 /// FR-730's source-backed request document resolves both loop kinds to
 /// the repeat and evaluates them through the source checker.
-#[trace("TC-2022", "FR-730", "FR-620")]
+#[trace("TC-2022", "FR-730-AC-5", "FR-730-AC-6", "FR-620")]
 #[test]
 fn source_loop_proof_documents_settle_both_item_kinds() {
     use crate::analyze_cli_support::{analyze, label, request_over, Workspace};
@@ -561,5 +653,57 @@ fn source_loop_proof_documents_settle_both_item_kinds() {
         let item = run.item(index);
         assert_eq!(label(&item), "proved", "{item}");
         assert_eq!(item["request"]["temporal"]["item_kind"], kind, "{item}");
+        assert!(
+            item["request"]["temporal"].get("max_depth").is_none(),
+            "{item}"
+        );
     }
+
+    let original: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&path).expect("source request"))
+            .expect("request JSON");
+    let mut limited = original.clone();
+    for item in limited["request"]["items"].as_array_mut().expect("items") {
+        item["temporal"]["limits"] = json!({"max_states": 1});
+    }
+    let stopped = analyze(&ws.write("limited.json", limited.to_string().as_bytes()));
+    assert_eq!(stopped.exit, 22, "{}", stopped.document());
+    for index in 0..2 {
+        let item = stopped.item(index);
+        assert_eq!(label(&item), "incomplete", "{item}");
+        assert_eq!(item["record"]["cause"]["limit"], "max_states", "{item}");
+        assert_eq!(item["record"]["cause"]["value"], 1, "{item}");
+        assert!(
+            item["request"]["temporal"].get("max_depth").is_none(),
+            "{item}"
+        );
+    }
+
+    let mut horizon = original.clone();
+    for item in horizon["request"]["items"].as_array_mut().expect("items") {
+        item["temporal"]["max_depth"] = json!(1);
+    }
+    let refused = analyze(&ws.write("horizon.json", horizon.to_string().as_bytes()));
+    assert_eq!(refused.exit, 20, "{}", refused.document());
+    for index in 0..2 {
+        let item = refused.item(index);
+        assert_eq!(
+            item["record"]["diagnostic"]["code"], "invalid_runtime_input",
+            "{item}"
+        );
+        assert_eq!(
+            item["record"]["diagnostic"]["detail"]["member"], "temporal.max_depth",
+            "{item}"
+        );
+    }
+
+    let bounded = unit.replacen("visible (got.left)", "visible (got.left) max 3", 1);
+    ws.write("program.fsl", bounded.as_bytes());
+    let bounded = analyze(&path);
+    assert_eq!(bounded.exit, 20, "{}", bounded.document());
+    assert_eq!(label(&bounded.item(0)), "proved");
+    assert_eq!(
+        bounded.item(1)["record"]["diagnostic"]["cause"],
+        "inapplicable-kind"
+    );
 }

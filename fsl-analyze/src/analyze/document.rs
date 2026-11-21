@@ -2527,6 +2527,9 @@ fn resolve_protocol_freedom(
                 .repeats
                 .iter()
                 .find(|repeat| repeat.node == control.node && repeat.loop_proof.is_some())?;
+            if kind == ItemKind::LoopTermination && repeat.max.is_some() {
+                return Some(invalid_kind(index, Some(name), "inapplicable-kind"));
+            }
             if temporal.max_depth.is_some() {
                 return Some(invalid_value(index, name, "temporal.max_depth"));
             }

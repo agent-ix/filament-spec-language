@@ -72,3 +72,40 @@ Reverse-gap/stub inspection covered changed public items and their callers acros
 - `fsl-semantics/src/check/protocol_obligation/tests.rs`
 - `fsl-semantics/src/check/protocol_slots.rs`
 - `fsl-semantics/src/check/refusal.rs`
+
+## Dispositions
+
+### Round 1
+
+Reviewed fix delta `65dfdca3d2..87c121d9` at frozen head `87c121d9f286074619792730fef7d0eb35801a6d`. Original findings above remain historical and unedited.
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | The no-proof fixture now traces the owning prose requirement. The separate four-item fixture keeps its AC-4 tag. |
+| FND-002 | fixed | loop_proof.rs adds lexicographic success/refutation cases, scalar/tuple negative-floor refutations, undefined invariant/variant refutations, and simultaneous undefined guards at entry/post-body decisions. Helpers assert terminal counts, exact failure kind, Refuted and reproduced replay. Static evidence closes the missing assertions; execution is pending the assigned test lane. |
+
+#### FND-001 after excerpt
+
+```rust
+#[trace("TC-2022", "FR-730")]
+#[test]
+fn a_repeat_without_a_variant_derives_no_loop_proof_items() {
+```
+
+#### FND-002 after excerpt
+
+```rust
+fn tuple_variants_use_lexicographic_order_in_checker_and_replay() {
+    for (variant, proved) in [
+        ("Pair(got.left, 3 - got.left)", true),
+        ("Pair(0, got.left)", true),
+        ("Pair(3 - got.left, got.left)", false),
+        ("Pair(0, 3 - got.left)", false),
+    ] {
+```
+
+### Current disposition verdict
+
+**CONDITIONAL** — all findings have final dispositions, and static inspection found no new regression in the fix delta. No still-open finding remains. Focused runtime execution remains pending with the assigned lane; this reviewer ran no Cargo/build/tests or matrix. The reported compile-only checks are lead-provided evidence, not independently rerun. The known terminal_two_models failure still has no main baseline or resolution in this review. `git diff --check 65dfdca3d2..87c121d9` passed and the source worktree was clean.
+
+Arch owns the FSpec amendment/reader pin. Architecture confirmed that source-backed typed Rust and JSON serve FR-730 in full, and only package-backed documents must return typed unsupported until the amended FR-368 pin. The extended existing source resolver and regression fixture match that ruling; no architecture hold remains.
