@@ -509,9 +509,9 @@ mod tests {
             CheckedNodePathSegment::Name("scalar_type".into()),
             CheckedNodePathSegment::Name("dimension_equivalence".into()),
         ];
-        for dimension in dimension_ids {
-            path.push(CheckedNodePathSegment::Name(dimension.package));
-            path.extend(dimension.path);
+        for dimension in &dimension_ids {
+            path.push(CheckedNodePathSegment::Name(dimension.package.clone()));
+            path.extend(dimension.path.iter().cloned());
             path.push(CheckedNodePathSegment::Name(
                 dimension.ordinal.to_string().into(),
             ));
