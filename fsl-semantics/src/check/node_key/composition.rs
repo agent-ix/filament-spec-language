@@ -153,6 +153,7 @@ impl ClauseEntry {
         &self.clause
     }
 
+    /// The FR-491 canonical component and clause ordering key.
     pub(crate) fn sort_key(&self) -> (&str, &NodeRef) {
         (&self.component, &self.clause)
     }
@@ -174,6 +175,7 @@ impl PremiseEntry {
         &self.on
     }
 
+    /// The FR-491 canonical first-clause then peer-clause ordering key.
     pub(crate) fn sort_key(&self) -> ((&str, &NodeRef), (&str, &NodeRef)) {
         (self.guarantee.sort_key(), self.on.sort_key())
     }
@@ -210,6 +212,7 @@ impl SupplyEntry {
         &self.operation
     }
 
+    /// The FR-491 canonical scheduling-constraint ordering key.
     pub(crate) fn sort_key(&self) -> (&NodeRef, &str, &str, &str) {
         (
             &self.context,

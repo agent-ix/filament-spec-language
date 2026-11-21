@@ -696,7 +696,7 @@ impl CheckedComposition {
 
     /// Exact authored spans in the canonical body-array concatenation order
     /// used by generated occurrence ordinals (FSpec FR-491).
-    pub fn canonical_member_spans(&self) -> Vec<Span> {
+    pub(super) fn canonical_member_spans(&self) -> Vec<Span> {
         self.term_and_member_spans().1
     }
 

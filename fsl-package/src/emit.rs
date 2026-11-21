@@ -9040,12 +9040,31 @@ fn claim_name_rows(
                    name: &str,
                    span: fsl_foundation::Span|
      -> Result<(), EmitRefusal> {
-        let declaration_region = declaration_region(source_map, &declaration, &occurrence, span)?;
+        let named_node = nodes.iter().find(|node| node.node_id == declaration);
+        let declaration_region = if named_node.is_some_and(|node| {
+            node.node_tag.as_ref() == CheckedNodeTag::Correspondence.as_wire()
+                && node.semantic_form.as_ref() == "component_composition"
+        }) {
+            // The declaration occurrence already carries the complete region
+            // mapped to its actual source, including an embedding's offset.
+            source_map
+                .iter()
+                .find(|entry| {
+                    entry.node_id == declaration
+                        && entry.role == occurrence.role
+                        && entry.ordinal == occurrence.ordinal
+                })
+                .and_then(|entry| match entry.regions.as_slice() {
+                    [region] => Some(region.clone()),
+                    _ => None,
+                })
+                .ok_or(EmitRefusal::SourceMapInvariant)?
+        } else {
+            declaration_region(source_map, &declaration, &occurrence, span)?
+        };
         // FSpec FR-322 "Hyper clause source unit": a `hyperproperty` row names
         // the locked source unit that declares the clause; no other row does.
-        let source_unit = nodes
-            .iter()
-            .find(|node| node.node_id == declaration)
+        let source_unit = named_node
             .filter(|node| {
                 CheckedNodeTag::from_wire(&node.node_tag)
                     .and_then(|tag| CheckedNodeKind::decode(tag, &node.semantic_form))
