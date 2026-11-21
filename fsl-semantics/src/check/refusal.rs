@@ -3017,7 +3017,6 @@ pub struct PlanParameterOrigin {
 
 impl std::hash::Hash for PlanParameterOrigin {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        use std::hash::Hash;
         self.artifact.hash(state);
         self.path.hash(state);
         self.span.hash(state);

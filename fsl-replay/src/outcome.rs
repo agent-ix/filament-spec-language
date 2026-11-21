@@ -38,6 +38,7 @@ pub use counterexample::{
 };
 
 use crate::hybrid::{BoundDimension, SolverHorizon};
+pub use crate::spine::{read_outcome_diagnostics, OutcomeDiagnosticRead};
 use filament_exact::{CancelCause, Integer, NodeKey};
 use filament_semantic_value::catalog::Category;
 use filament_semantic_value::location::ExpressionLocation;

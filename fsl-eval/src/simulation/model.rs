@@ -745,7 +745,7 @@ pub enum NativeCandidateEvent<'a> {
         /// The admitted runtime receiver, retaining its full reference identity.
         receiver: &'a ObjectReference,
         /// The admitted runtime arguments, in parameter declaration order.
-        arguments: &'a [Value],
+        arguments: &'a [filament_exact::Value],
         /// The runtime post-state, not yet admitted by the search.
         state: &'a ModelSimState,
         /// Present exactly when this invocation has several outcomes; zero based.
