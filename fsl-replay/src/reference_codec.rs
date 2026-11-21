@@ -1501,7 +1501,7 @@ impl<'c, 'm, 'r> ReferenceCodec<'c, 'm, 'r> {
     fn encode_reference_in(
         &self,
         reference: &ObjectReference,
-        scope: &mut Scope<'_, '_>,
+        scope: &mut Scope<'_, 'm>,
     ) -> Result<Value, ReferenceCodecError> {
         let previous_owner = scope.normalization_owner;
         let result = (|| {
