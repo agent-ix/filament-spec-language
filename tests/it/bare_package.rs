@@ -833,20 +833,79 @@ fn from_package_returns_only_the_ambiguous_name_mismatch() {
 #[trace("FR-532-AC-9", "TC-1332")]
 #[test]
 fn the_evaluator_reads_the_clause_only_through_the_facts() {
-    let directory =
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("fsl-eval/src/temporal/evidence");
-    for entry in std::fs::read_dir(&directory).expect("the evidence sources") {
-        let path = entry.expect("entry").path();
-        let text = std::fs::read_to_string(&path).expect("source");
-        for forbidden in ["SourceIdentity", "CheckedTemporalClause"] {
-            let code: String = text
+    fn violations(directory: &std::path::Path) -> Vec<(std::path::PathBuf, &'static str)> {
+        let mut pending = vec![directory.to_owned()];
+        let mut sources = Vec::new();
+        while let Some(directory) = pending.pop() {
+            let mut entries: Vec<_> = std::fs::read_dir(&directory)
+                .unwrap_or_else(|error| panic!("{}: {error}", directory.display()))
+                .map(|entry| {
+                    entry.unwrap_or_else(|error| panic!("{}: {error}", directory.display()))
+                })
+                .collect();
+            entries.sort_by_key(std::fs::DirEntry::file_name);
+            for entry in entries {
+                let path = entry.path();
+                let kind = entry
+                    .file_type()
+                    .unwrap_or_else(|error| panic!("{}: {error}", path.display()));
+                if kind.is_dir() {
+                    pending.push(path);
+                } else if kind.is_file() {
+                    sources.push(path);
+                } else {
+                    panic!("unexpected source entry kind: {}", path.display());
+                }
+            }
+        }
+        sources.sort();
+        assert!(!sources.is_empty(), "{}: no sources", directory.display());
+        let mut found = Vec::new();
+        for path in sources {
+            let text = std::fs::read_to_string(&path)
+                .unwrap_or_else(|error| panic!("{}: {error}", path.display()));
+            let code = text
                 .lines()
                 .filter(|line| !line.trim_start().starts_with("//"))
                 .collect::<Vec<_>>()
                 .join("\n");
-            assert!(!code.contains(forbidden), "{}: {forbidden}", path.display());
+            for forbidden in ["SourceIdentity", "CheckedTemporalClause"] {
+                if code.contains(forbidden) {
+                    found.push((path.clone(), forbidden));
+                }
+            }
         }
+        found
     }
+
+    // Module subdirectories and every regular file retain the same forbidden
+    // type checks; neither directory nor extension filtering may hide a read.
+    let fixture = tempfile::tempdir().expect("source-layout fixture");
+    let nested = fixture.path().join("nested");
+    std::fs::create_dir(&nested).expect("nested module directory");
+    let nested_source = nested.join("mod.rs");
+    std::fs::write(
+        &nested_source,
+        "pub struct SourceIdentity;\npub struct CheckedTemporalClause;\n",
+    )
+    .expect("nested forbidden-type source");
+    std::fs::write(fixture.path().join("mod.rs"), "mod nested;\n").expect("root source");
+    let other_source = fixture.path().join("other.inc");
+    std::fs::write(&other_source, "pub struct SourceIdentity;\n")
+        .expect("a source without an rs extension");
+    assert_eq!(
+        violations(fixture.path()),
+        vec![
+            (nested_source.clone(), "SourceIdentity"),
+            (nested_source, "CheckedTemporalClause"),
+            (other_source, "SourceIdentity"),
+        ]
+    );
+
+    let directory =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("fsl-eval/src/temporal/evidence");
+    let forbidden = violations(&directory);
+    assert!(forbidden.is_empty(), "{forbidden:?}");
     let ledger = read_source("fsl-eval/src/temporal/ledger.rs");
     let binding = ledger
         .split("pub struct LedgerBinding")
