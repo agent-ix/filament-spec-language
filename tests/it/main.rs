@@ -107,6 +107,7 @@ mod record_sample_counterexample;
 mod replay_request_file;
 mod string_edge_marker;
 mod value_parity_profile_selections;
+mod workflow_population_aggregates;
 // The handoff writer is behind its feature; the all-features lane runs this.
 #[cfg(feature = "checked-handoff")]
 mod bare_equality;

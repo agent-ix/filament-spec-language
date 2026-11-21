@@ -2411,6 +2411,28 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
         }
     }
 
+    /// FR-106 check 7 / FR-046-AC-6: no population query may return a
+    /// successful value from a snapshot that does not establish complete
+    /// membership. Both explicit function arguments and named model
+    /// populations apply this rule to their own selected observation.
+    fn require_complete_population(
+        objects: &ObjectEnvironment,
+        population: &DeclarationKey,
+    ) -> Result<(), Halt> {
+        let listed = objects
+            .population_completeness()
+            .contains_key(&population.node);
+        if !objects.population_complete(&population.node) {
+            return Err(Halt::Family(FamilyResult::Refused(Box::new(
+                NamedPopulationIncomplete {
+                    population: population.node.clone(),
+                    listed,
+                },
+            ))));
+        }
+        Ok(())
+    }
+
     /// Charge one nested value-function body against FR-484's `max_cases`.
     fn enter_function_case(&mut self) -> Result<(), Halt> {
         let Some(limit) = self.function_case_limit else {
@@ -4136,6 +4158,8 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
                 };
                 let binding = self.resolve_population(population_id, *maximum)?;
                 let binding = self.select_anchor(binding)?;
+                let objects = self.objects_for(node)?;
+                Self::require_complete_population(objects, binding.population_key())?;
                 self.log_membership_read(binding, None);
                 evaluate_all_instances(binding, collection_type, self.meter)?
             }
@@ -4525,15 +4549,7 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
         population: &DeclarationKey,
     ) -> Result<&'a [ObjectReference], Halt> {
         let objects = self.objects_for(node)?;
-        let listed = objects.population_completeness().get(&population.node);
-        if listed != Some(&true) {
-            return Err(Halt::Family(FamilyResult::Refused(Box::new(
-                NamedPopulationIncomplete {
-                    population: population.node.clone(),
-                    listed: listed.is_some(),
-                },
-            ))));
-        }
+        Self::require_complete_population(objects, population)?;
         objects
             .population_members(&population.node)
             .ok_or_else(|| invariant("named-population-unobserved"))
