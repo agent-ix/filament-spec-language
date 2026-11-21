@@ -1068,7 +1068,7 @@ fn refusal(directory: &Path, requirements: Value) -> (Value, u8) {
 
 /// FR-960 "Inputs", FSL FR-621 "Node ids in an item": a claim a result wrote
 /// names its item when supplied back, and settles it on the named backend.
-#[trace("TC-2700", "FR-960-AC-2")]
+#[trace("TC-2700", "FR-960-AC-5")]
 #[test]
 fn a_claim_written_by_a_result_names_its_item_when_supplied_back() {
     let directory = tempfile::tempdir().unwrap();
@@ -1083,7 +1083,7 @@ fn a_claim_written_by_a_result_names_its_item_when_supplied_back() {
 
 /// FR-960 "Inputs": a claim in FSpec FR-331's structural spelling names its
 /// item and settles it on its named backend.
-#[trace("TC-2700", "FR-960-AC-2")]
+#[trace("TC-2700", "FR-960-AC-5")]
 #[test]
 fn a_structural_claim_names_its_item() {
     let directory = tempfile::tempdir().unwrap();
@@ -1098,7 +1098,7 @@ fn a_structural_claim_names_its_item() {
 
 /// FR-960 "Inputs": a held entry and a structural entry naming two different
 /// items each settle on their own backend.
-#[trace("TC-2700", "FR-960-AC-2")]
+#[trace("TC-2700", "FR-960-AC-5")]
 #[test]
 fn a_held_entry_and_a_structural_entry_name_their_own_items() {
     let directory = tempfile::tempdir().unwrap();
@@ -1117,7 +1117,7 @@ fn a_held_entry_and_a_structural_entry_name_their_own_items() {
 
 /// FR-960 "Refusals before the call": one claim written in both forms is two
 /// entries naming one claim, refused at the later entry.
-#[trace("TC-2700", "FR-960-AC-3")]
+#[trace("TC-2700", "FR-960-AC-6")]
 #[test]
 fn one_claim_written_in_both_forms_refuses_as_a_duplicate() {
     let directory = tempfile::tempdir().unwrap();
@@ -1139,7 +1139,7 @@ fn one_claim_written_in_both_forms_refuses_as_a_duplicate() {
 /// A held claim whose index segment the package graph does not have, or that
 /// is no index, refuses `invalid-request` at stage `request`, naming that
 /// segment's `node` member.
-#[trace("TC-2700", "FR-960-AC-3")]
+#[trace("TC-2700", "FR-960-AC-7")]
 #[test]
 fn a_held_claim_with_a_bad_index_refuses_at_its_node_member() {
     let directory = tempfile::tempdir().unwrap();
@@ -1169,7 +1169,7 @@ fn a_held_claim_with_a_bad_index_refuses_at_its_node_member() {
 /// A held claim that resolves but names no item of the call stays
 /// `missing_declaration` at stage `call`, and the diagnostic names the claim
 /// as the caller supplied it.
-#[trace("TC-2700", "FR-960-AC-3")]
+#[trace("TC-2700", "FR-960-AC-8")]
 #[test]
 fn a_held_claim_naming_no_item_of_the_call_is_an_unknown_claim() {
     let directory = tempfile::tempdir().unwrap();

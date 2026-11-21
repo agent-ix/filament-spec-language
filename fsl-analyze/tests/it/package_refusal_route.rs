@@ -65,7 +65,7 @@ fn a_package_the_reader_refuses_settles_the_model_check_route_as_its_own_refusal
 /// the same strict read: a package the reader refuses is that refusal, with
 /// its own code, and never a resource limit.
 #[test]
-#[trace("FR-286-AC-2")]
+#[trace("TC-2700", "FR-960-AC-9")]
 fn the_document_graph_of_a_package_the_reader_refuses_is_the_readers_refusal() {
     let document = document(false);
     let checked = package(&document, CONTRACT);
