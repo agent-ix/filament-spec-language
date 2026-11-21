@@ -684,6 +684,8 @@ fn elapsed_quantile_at_most_is_certified() {
     let doc = document(&record);
     assert_eq!(doc["objective"]["timed"]["form"], "elapsed-quantile");
     assert_eq!(doc["objective"]["timed"]["route"], "digital");
+    assert_eq!(proved_value(&record), ratio(2, 5));
+    assert_eq!(doc["kind"], "exact");
     assert!(accepted(&world, "AtMostTwo", &doc));
 }
 
@@ -706,31 +708,20 @@ fn elapsed_quantile_altered_transform_value_is_rejected() {
     );
 }
 
-/// FR-877-AC-2: `<= 1 ms` is refuted; a tampered transform value rejects.
+/// FR-877-AC-2: `<= 1 ms` is refuted.
 #[trace("TC-2494", "FR-877-AC-2")]
 #[trace("FSpec-TC-1820", "FSpec-FR-753-AC-4")]
-#[ignore = "QSL-2156: elapsed-time quantile claims are not routed to the timed product yet (QSL-2158 source interface)"]
+#[ignore = "QSL-2156: refutation needs the timed witness replay"]
 #[test]
 fn elapsed_quantile_at_most_refutes() {
     let world = quantiles();
     assert!(is_refuted(&settle(&world, "AtMostOne")));
-    let tampered = settle_tampered(&world, "AtMostTwo", |certificate| {
-        for entry in &mut certificate.values {
-            if entry.value == ratio(2, 5) {
-                entry.value = ratio(1, 2);
-            }
-        }
-    });
-    assert_eq!(
-        rejected_item_rule(&tampered),
-        CertificateRule::InequalityFails
-    );
 }
 
 /// FR-877-AC-3: `>= 1 ms` is proved by a region `upper` document of `-1/2`.
 #[trace("TC-2494", "FR-877-AC-3")]
 #[trace("FSpec-TC-1820", "FSpec-FR-753-AC-5")]
-#[ignore = "QSL-2156: elapsed-time quantile claims are not routed to the timed product yet (QSL-2158 source interface)"]
+#[ignore = "QSL-2156: the region route for >= is not implemented yet"]
 #[test]
 fn elapsed_quantile_at_least_is_certified_over_regions() {
     let world = quantiles();
@@ -748,7 +739,7 @@ fn elapsed_quantile_at_least_is_certified_over_regions() {
 /// FR-877-AC-4: at a transform maximum of exactly 0 the tight search reaches
 /// the activated initial state, so the claim is refuted, never proved.
 #[trace("TC-2494", "FR-877-AC-4")]
-#[ignore = "QSL-2156: elapsed-time quantile claims are not routed to the timed product yet (QSL-2158 source interface)"]
+#[ignore = "QSL-2156: the region route for >= is not implemented yet"]
 #[test]
 fn elapsed_quantile_tight_search_refutes() {
     let world = quantiles();

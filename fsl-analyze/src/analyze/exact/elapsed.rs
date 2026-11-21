@@ -12,7 +12,12 @@ use crate::exact_probabilistic::{MeasurePhase, MonitorState, MonitorVerdict};
 /// measure's terminal reward `[M op c] - q`, otherwise the minimum over the
 /// state's choices of the expected successor value. `None` when the product
 /// has a cycle, a pending dead end or a decided state that is no measure's end.
-fn transform_values(product: &ProbProduct, q: &Rational) -> Option<Vec<Rational>> {
+fn transform_values(
+    product: &ProbProduct,
+    q: &Rational,
+    cancel: &Cancel,
+    tripped: &mut Option<filament_exact::CancelCause>,
+) -> Option<Vec<Rational>> {
     let count = product.states.len();
     let decided: BTreeMap<usize, MonitorVerdict> = product
         .decided
@@ -46,6 +51,10 @@ fn transform_values(product: &ProbProduct, q: &Rational) -> Option<Vec<Rational>
         }
         let mut stack = vec![(root, false)];
         while let Some((state, done)) = stack.pop() {
+            if let Some(cause) = cancel.tripped() {
+                *tripped = Some(cause);
+                return None;
+            }
             if done {
                 colour[state] = 2;
                 let value = match terminal(state)? {
@@ -170,7 +179,12 @@ pub(super) fn run(
     let [(_, _, start)] = product.initial.as_slice() else {
         return not_yet();
     };
-    let Some(values) = transform_values(&product, q) else {
+    let mut tripped = None;
+    let values = transform_values(&product, q, cancel, &mut tripped);
+    if let Some(cause) = tripped {
+        return settled(&ExactProbBuildIssue::Cancelled(cause), subject);
+    }
+    let Some(values) = values else {
         return not_yet();
     };
     let Some(value) = values.get(start.index()) else {
