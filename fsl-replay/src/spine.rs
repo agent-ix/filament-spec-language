@@ -290,7 +290,7 @@ pub use native_result::{
     write_clause_run_result_for_with_extraction, CallLocationRead, CallLocusRead, CallOriginRead,
     ClauseRunRecord, ClosureRead, CommandErrorRecord, CounterexampleRead, DimensionRead,
     EffectiveIdRead, FairnessGranularityRead, FairnessKindRead, FairnessOperationRead,
-    FairnessRead, GuardRead, IndeterminateReasonRead, ModelBindingRead, ModelStepRead,
+    FairnessRead, GuardRead, IndeterminateReasonRead, LocatedRead, ModelBindingRead, ModelStepRead,
     ModelTransitionRead, NativeRunLimits, NativeRunOutcome, NativeRunReadError, NativeRunResult,
     NativeRunResultError, PositionRead, ProgressValueRead, ProtocolAnalysisKind,
     ProtocolAnalysisRecord, ProtocolIncompleteCause, ProtocolInconclusiveCause, ProtocolProofBasis,
@@ -730,6 +730,21 @@ impl CompileRefusal {
         }
     }
 
+    /// The offending parameter's own imported origin. An outer `Some`
+    /// identifies this refusal even when the parameter has no origin.
+    pub fn unbounded_parameter_origin(
+        &self,
+    ) -> Option<Option<&fsl_semantics::check::PlanParameterOrigin>> {
+        let refusals = match self {
+            Self::Check { refusals, .. } | Self::CheckDiagnostics { refusals, .. } => refusals,
+            _ => return None,
+        };
+        refusals.iter().find_map(|refusal| match &refusal.cause {
+            CheckCause::PlanUnboundedParameter { origin, .. } => Some(origin.as_deref()),
+            _ => None,
+        })
+    }
+
     /// Project every retained cause as an outcome diagnostic in source or
     /// intake, assembly or checker order.
     pub fn outcome_diagnostics(&self) -> Vec<crate::outcome::OutcomeDiagnostic> {
@@ -777,18 +792,20 @@ impl CompileRefusal {
             Self::CheckDiagnostics { refusals, regions } => refusals
                 .iter()
                 .zip(regions)
-                .map(|(refusal, region)| {
-                    let locus = region
-                        .as_ref()
-                        .map(|region| OutcomeLocus::from(&Locus::Region(region.clone())));
-                    OutcomeDiagnostic::new(
-                        refusal.cause.cause(),
-                        refusal.cause.code().as_str(),
-                        locus,
-                        check_message_one(refusal),
-                    )
-                })
+                .map(|(refusal, region)| checked_diagnostic(refusal, region.as_ref()))
                 .collect(),
+            Self::Check { refusals, region } if self.unbounded_parameter_origin().is_some() => {
+                refusals
+                    .iter()
+                    .enumerate()
+                    .map(|(index, refusal)| {
+                        checked_diagnostic(
+                            refusal,
+                            (index == 0).then_some(region.as_ref()).flatten(),
+                        )
+                    })
+                    .collect()
+            }
             _ => vec![OutcomeDiagnostic::from_compile_refusal(self)],
         }
     }
@@ -1331,6 +1348,29 @@ fn check_message(refusals: &[CheckRefusal]) -> String {
         .map(check_message_one)
         .collect::<Vec<_>>()
         .join("\n")
+}
+
+fn checked_diagnostic(
+    refusal: &CheckRefusal,
+    region: Option<&SourceRegion>,
+) -> crate::outcome::OutcomeDiagnostic {
+    use crate::outcome::{OutcomeDiagnostic, OutcomeLocus};
+    let locus = match &refusal.cause {
+        CheckCause::PlanUnboundedParameter { origin, .. } => {
+            origin.as_ref().map(|origin| OutcomeLocus::ImportedLocated {
+                file: origin.path.clone(),
+                source_identity: origin.artifact.clone(),
+                span: origin.span,
+            })
+        }
+        _ => region.map(|region| OutcomeLocus::from(&Locus::Region(region.clone()))),
+    };
+    OutcomeDiagnostic::new(
+        refusal.cause.cause(),
+        refusal.cause.code().as_str(),
+        locus,
+        check_message_one(refusal),
+    )
 }
 
 fn check_message_one(first: &CheckRefusal) -> String {

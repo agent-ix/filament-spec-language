@@ -3009,10 +3009,10 @@ pub struct PlanParameterOrigin {
     pub artifact: String,
     /// The original model source path.
     pub path: String,
-    /// Its source identity, when encoded by the native source compiler.
-    pub source: Option<fsl_foundation::source::provenance::RawSourceRef>,
     /// The authored line and column; FCD origins do not supply byte offsets.
-    pub span: fsl_foundation::LocatedSpan,
+    pub span: fsl_foundation::SourceCoordinates,
+    /// The complete retained origin, including any partial end coordinates.
+    pub original: serde_json::Value,
 }
 
 impl std::hash::Hash for PlanParameterOrigin {
@@ -3020,12 +3020,7 @@ impl std::hash::Hash for PlanParameterOrigin {
         use std::hash::Hash;
         self.artifact.hash(state);
         self.path.hash(state);
-        self.source.hash(state);
-        for position in [self.span.start, self.span.end] {
-            position.byte.hash(state);
-            position.line.hash(state);
-            position.column.hash(state);
-        }
+        self.span.hash(state);
     }
 }
 

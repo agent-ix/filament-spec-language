@@ -1046,12 +1046,7 @@ pub enum RefusalLocusRead {
         end: u64,
     },
     /// Source path and line-column span.
-    Located {
-        /// Source path.
-        file: String,
-        /// Source span.
-        span: SpanRead,
-    },
+    Located(LocatedRead),
     /// Named occurrence.
     Occurrence {
         /// Occurrence identifier.
@@ -1092,6 +1087,42 @@ pub enum RefusalLocusRead {
         #[serde(default, deserialize_with = "present")]
         member: Option<Option<String>>,
     },
+}
+
+/// The two closed located forms: native bytes or imported coordinates.
+#[derive(Deserialize)]
+#[serde(untagged, deny_unknown_fields)]
+pub enum LocatedRead {
+    /// A native source span with real byte offsets and no imported URI.
+    Native {
+        /// Authored path.
+        file: String,
+        /// Native byte-bearing span.
+        span: SpanRead,
+    },
+    /// An imported origin, without any native label pair or byte offsets.
+    Imported {
+        /// Authored path.
+        file: String,
+        /// Exact admitted FCD source identity URI.
+        #[serde(rename = "sourceIdentity", deserialize_with = "source_identity_uri")]
+        source_identity: String,
+        /// Byte-free authored coordinates.
+        span: fsl_foundation::SourceCoordinates,
+    },
+}
+
+fn source_identity_uri<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<String, D::Error> {
+    let value = String::deserialize(deserializer)?;
+    if fsl_semantics::model::intake::is_source_identity_uri(&value) {
+        Ok(value)
+    } else {
+        Err(serde::de::Error::custom(
+            "an admitted FCD source identity URI",
+        ))
+    }
 }
 
 #[derive(Deserialize)]
@@ -1867,7 +1898,20 @@ fn validate_refusal_locus(value: &RefusalLocusRead) -> Result<(), NativeRunReadE
                 return Err(invalid());
             }
         }
-        RefusalLocusRead::Located { .. } | RefusalLocusRead::Occurrence { .. } => {}
+        RefusalLocusRead::Located(LocatedRead::Native { span, .. }) => {
+            if [
+                span.start.line,
+                span.start.column,
+                span.end.line,
+                span.end.column,
+            ]
+            .contains(&0)
+            {
+                return Err(invalid());
+            }
+        }
+        RefusalLocusRead::Located(LocatedRead::Imported { .. })
+        | RefusalLocusRead::Occurrence { .. } => {}
     }
     Ok(())
 }
@@ -2052,6 +2096,22 @@ fn validate_command_details(
     code: Code,
 ) -> Result<(), NativeRunReadError> {
     let invalid = |member, reason| NativeRunReadError::Invalid { member, reason };
+    if code == Code::UnsupportedProjection
+        && document.stage == "check"
+        && document.cause.as_deref() == Some("unbounded-extent")
+    {
+        if matches!(details.node(), Node::Null) {
+            return Ok(());
+        }
+        let _: ImportedCommandDetails =
+            serde_json::from_str(document._details.get()).map_err(|_| {
+                invalid(
+                    "details",
+                    "closed imported-source details without bytes or native labels",
+                )
+            })?;
+        return Ok(());
+    }
     let Node::Object(members) = details.node() else {
         return Err(invalid("details", "expected an object"));
     };
@@ -2198,6 +2258,17 @@ fn validate_command_details(
         _ => {}
     }
     Ok(())
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ImportedCommandDetails {
+    #[serde(rename = "path")]
+    _path: String,
+    #[serde(rename = "span")]
+    _span: fsl_foundation::SourceCoordinates,
+    #[serde(rename = "sourceIdentity", deserialize_with = "source_identity_uri")]
+    _source_identity: String,
 }
 
 /// Keep the potentially deep deciding element in the canonical arena while

@@ -1411,6 +1411,11 @@ pub(crate) fn origin_locus(origin: &Value) -> (Option<String>, Option<LocatedSpa
     (artifact, span)
 }
 
+/// Whether a source URI obeys the admitted FCD semantic-identity grammar.
+pub fn is_source_identity_uri(value: &str) -> bool {
+    agent_ix_semantic_ir::diag::is_semantic_identity(value)
+}
+
 /// Validates a parsed [`PackageDocument`] against `agent-ix-semantic-ir`'s
 /// own independent reader before [`read_records`] walks a single node. That
 /// crate decides `conformance/schema/input-bundle.schema.json` by wrapping

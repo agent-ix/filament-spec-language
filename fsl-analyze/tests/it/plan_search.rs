@@ -2366,7 +2366,7 @@ impl<'a> PlanRules for CancelPotentialAdd<'a, '_> {
     fn merges_prefixes(&self) -> bool {
         self.source.merges_prefixes()
     }
-    fn step_key(&self, step: &ModelTransition) -> Self::StepKey {
+    fn step_key(&mut self, step: &PlanStep) -> Result<Self::StepKey, RuleStop> {
         self.source.step_key(step)
     }
     fn native_operations(&self) -> Option<std::sync::Arc<[(filament_exact::EffectiveId, String)]>> {

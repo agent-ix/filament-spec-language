@@ -447,25 +447,22 @@ pub(crate) fn declare(
                     .plan_parameter_origins
                     .get(&(declaring.clone(), name.clone(), parameter.clone()))
                     .and_then(|origin| {
-                        let (_, span) = crate::model::intake::origin_locus(origin);
-                        let path = origin.get("source")?.get("path")?.as_str()?;
-                        // model_unit::source_origin writes this exact source
-                        // identity encoding; the authored path is not an ID.
-                        let artifact = origin.get("source")?.get("sourceIdentity")?.as_str()?;
-                        let source = artifact
-                            .strip_prefix("ix://")
-                            .and_then(|identity| identity.split_once('/'))
-                            .and_then(|(authority, identity)| {
-                                fsl_foundation::source::provenance::RawSourceRef::new(
-                                    authority, identity,
-                                )
-                                .ok()
-                            });
+                        let source = origin.get("source")?;
+                        let path = source.get("path")?.as_str()?;
+                        let artifact = source.get("sourceIdentity")?.as_str()?;
+                        let point = |line, column| {
+                            Some(fsl_foundation::SourcePoint {
+                                line: core::num::NonZeroU64::new(source.get(line)?.as_u64()?)?,
+                                column: core::num::NonZeroU64::new(source.get(column)?.as_u64()?)?,
+                            })
+                        };
+                        let start = point("startLine", "startColumn")?;
+                        let end = point("endLine", "endColumn").unwrap_or(start);
                         Some(Box::new(super::refusal::PlanParameterOrigin {
                             artifact: artifact.to_owned(),
                             path: path.to_owned(),
-                            span: span?,
-                            source,
+                            span: fsl_foundation::SourceCoordinates { start, end },
+                            original: origin.clone(),
                         }))
                     });
                 return Err(CheckRefusal {
