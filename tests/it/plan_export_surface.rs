@@ -571,14 +571,14 @@ fn a_nonconstant_suffix_on_an_explicit_sum_remains_general() {
             "6",
         ),
         (
-            "minimize let costs: Sequence<Integer>[2,2] = [1,2] in sum<SumTotal>(s in costs: s) + 7",
+            "minimize let costs: Costs = sequence[1,2] in sum<SumTotal>(s in costs: s) + 7",
             "10",
         ),
     ] {
         let (exit, value) = plan(
             &plan_unit("Int[0, 3]", objective, "Reach.length >= 2").replace(
                 "type Lengths",
-                "type SumTotal = Integer;\ntype Lengths",
+                "type SumTotal = Integer;\ntype Costs = Sequence<Integer>[2,2];\ntype Lengths",
             ),
             json!({}),
         );

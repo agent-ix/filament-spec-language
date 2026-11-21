@@ -1869,16 +1869,17 @@ fn lambda_objective_arithmetic_distinguishes_cancellation_from_accounting() {
             assert_eq!(outcome, Err(RuleStop::Cancelled(cause)), "{operation}");
         }
     }
-    system.begin_plan_replay(UNLIMITED);
+    let accounting_limits = ScalarLimits {
+        work_units: 0,
+        ..UNLIMITED
+    };
+    system.begin_plan_replay(accounting_limits);
     let mut rules = SourcePlan::new(
         &world.package,
         synthesis,
         &system,
         vec![],
-        ScalarLimits {
-            work_units: 0,
-            ..UNLIMITED
-        },
+        accounting_limits,
     )
     .unwrap();
     assert_eq!(

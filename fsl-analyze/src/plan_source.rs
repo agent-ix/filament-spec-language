@@ -582,11 +582,26 @@ impl<'a> SourcePlan<'a> {
         }
     }
 
+    /// Literal and implicit objective values can return without a charge.
+    /// Observe the shared meter's cancellation without consuming its budget.
+    fn poll_cancellation(&self) -> Result<(), RuleStop> {
+        match self
+            .system
+            .evaluation_meter()
+            .cancel()
+            .and_then(filament_exact::Cancel::cause)
+        {
+            Some(cause) => Err(RuleStop::Cancelled(cause)),
+            None => Ok(()),
+        }
+    }
+
     fn evaluate(&mut self, body: &CheckedBody, plan: Value) -> Result<Evaluated, RuleStop> {
         self.evaluate_node(body.root(), plan)
     }
 
     fn evaluate_node(&mut self, node: CheckedNode<'_>, plan: Value) -> Result<Evaluated, RuleStop> {
+        self.poll_cancellation()?;
         let evaluation = fsl_eval::value::evaluate_plan_node(
             self.package,
             self.plan.scope(),
@@ -700,6 +715,7 @@ impl<'a> SourcePlan<'a> {
         plan: &PlanView<'_>,
         index: usize,
     ) -> Result<Option<Value>, RuleStop> {
+        self.poll_cancellation()?;
         let Some(body) = self.synthesis.objective() else {
             return Ok(Some(Value::Integer(Integer::one())));
         };
@@ -1095,6 +1111,7 @@ impl PlanRules for SourcePlan<'_> {
     }
 
     fn objective_offset(&mut self, plan: &PlanView<'_>) -> Result<Option<Rational>, RuleStop> {
+        self.poll_cancellation()?;
         let Some(body) = self.synthesis.objective() else {
             return Ok(Some(Rational::from_integer(Integer::zero())));
         };
@@ -1134,6 +1151,7 @@ impl PlanRules for SourcePlan<'_> {
     }
 
     fn objective(&mut self, plan: &PlanView<'_>) -> Result<Option<Rational>, RuleStop> {
+        self.poll_cancellation()?;
         let Some(body) = self.synthesis.objective() else {
             return Ok(Some(Rational::from_integer(Integer::from(
                 i64::try_from(plan.length()).unwrap_or(i64::MAX),
