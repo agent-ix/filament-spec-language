@@ -2205,10 +2205,27 @@ fn package_parallel_send_preserves_message_identity() {
 
 /// A projection of the model's singleton bounded Tally payload survives strict
 /// admission and has the same analysis record through both public routes.
-#[trace("TC-2958", "FR-940-AC-6", "FR-093", "FR-094")]
+#[trace("TC-2958", "FR-940-AC-6", "FR-093", "FR-094", "FSpec-FR-322-AC-31")]
 #[test]
 fn package_send_preserves_bounded_tally_projection() {
     let ws = Workspace::new("package-send-bounded-tally-projection");
+    let original: Value =
+        serde_json::from_slice(&crate::fill::document()).expect("the original Fill model");
+    let tally = original["types"]
+        .as_array()
+        .expect("model types")
+        .iter()
+        .find(|node| node["identity"] == "ix://test/fill/Tally")
+        .expect("the original singleton Tally type")
+        .clone();
+    let mut model = finite_channel_model();
+    let types = model["types"].as_array_mut().expect("model types");
+    types.push(tally);
+    let attempt = types
+        .iter_mut()
+        .find(|node| node["identity"] == "ix://test/fill/Attempt")
+        .expect("the original payload record");
+    attempt["fields"][0]["typeRef"] = json!("ix://test/fill/Tally");
     let writer = crate::fill::attempt("Write", "set", "SetPost", "written", "true")
         .replace("by w", "by Planning");
     let reader = channel_send("Read", "observed_payload", "observed_payload.n <= k.v");
@@ -2220,7 +2237,7 @@ fn package_send_preserves_bounded_tally_projection() {
     );
     let path = channel_request(
         &ws,
-        serde_json::from_slice(&crate::fill::document()).expect("the original Fill model"),
+        model,
         "ordering unordered delivery exactly-once-premise capacity 1 overflow block",
         &controls,
         "closing",
