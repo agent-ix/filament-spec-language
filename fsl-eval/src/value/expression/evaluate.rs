@@ -1569,7 +1569,7 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
             tracked.push_frame(Vec::new(), frame.len());
         }
         let mut origins = std::mem::take(&mut self.root_reference_origins);
-        origins.resize(frame.len(), None);
+        origins.resize_with(frame.len(), ReferenceOrigins::default);
         self.frame_reference_origins.push(origins);
         self.frames.push(frame);
         self.frame_guard_provenance.push(provenance);
@@ -1611,7 +1611,7 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
             (occurrences, total.unwrap_or(u64::MAX))
         };
         provenance.resize(frame.len(), false);
-        reference_origins.resize(frame.len(), None);
+        reference_origins.resize_with(frame.len(), ReferenceOrigins::default);
         if let Some(tracked) = self.owners.as_mut() {
             tracked.push_frame(owners, frame.len());
         }
@@ -1989,7 +1989,7 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
     }
 
     fn push_value(&mut self, value: Value, provenance: bool) {
-        self.push_value_with_origins(value, provenance, None);
+        self.push_value_with_origins(value, provenance, ReferenceOrigins::default());
     }
 
     fn push_value_with_origins(
@@ -2273,7 +2273,7 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
         value: Value,
         provenance: bool,
     ) -> Result<(), Halt> {
-        self.bind_with_origins(slot, value, provenance, None)
+        self.bind_with_origins(slot, value, provenance, ReferenceOrigins::default())
     }
 
     fn bind_with_origins(
