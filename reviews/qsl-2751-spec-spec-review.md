@@ -137,3 +137,18 @@ scope:
   role: context_only
   excerpt: "4. **Premises.** The first slot, in slot order, whose result is not `proved`\n   settles `inconclusive`, `unsettled`, `premise-unproved{premise, result}`,\n   naming the slot index and its FR-331 result value; `unsupported`,\n   `incomplete`, `refuted`, `inconclusive` and `failed` premises all settle\n   this way (FR-380-AC-5)."
 ```
+
+## New findings (disposition pass 1)
+
+| ID | Severity | Summary | Refs | Escape Cause |
+| --- | --- | --- | --- | --- |
+| FND-004 | low | The fix extends FR-1031's existing `select` row, which always writes `details` `{"declared": D, "given": G}`, to a refinement that declares a protocol abstract subject, but it does not say what `D` is for that subject. FR-135-AC-10 reads `abstract Spec::Twice` as model alias `Spec` plus protocol `Twice`. If an implementer writes `declared` as the model alias, the refusal reads `{"declared": "Spec", "given": "Spec"}`, which contradicts the refusal it explains, and FR-1031-AC-5 and TC-2921 step 5 pin no `details`. State `D` for a protocol abstract subject, for example the FSpec FR-375 `abstract-subject` spelling `Spec::Twice`, and assert it in AC-5. The refusal code, stage, pointer and exit are otherwise consistent with the owning row and the slice-1 boundary, and add no request member. | spec/functional/FR-1031-refuse-a-refinement-transfer-request-by-stage.md:35 | wrong-requirement |
+
+## Dispositions
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | Verified at fix head 40c49fb70a21cb4ea2a904c9b206f6e9d37df15a: the fixed text is quoted in the dispositions comment's after_excerpt. |
+| FND-002 | fixed | Verified at fix head 40c49fb70a21cb4ea2a904c9b206f6e9d37df15a: the fixed text is quoted in the dispositions comment's after_excerpt. |
+| FND-003 | fixed | Verified at fix head 40c49fb70a21cb4ea2a904c9b206f6e9d37df15a: the fixed text is quoted in the dispositions comment's after_excerpt. |
+| FND-004 | still-open | New this round (disposition pass 1); it is routed to the same author for a fix round and is not yet fixed. |
