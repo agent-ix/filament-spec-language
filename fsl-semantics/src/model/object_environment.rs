@@ -69,38 +69,163 @@ pub enum ReferenceOriginLocus {
     },
 }
 
+/// One position in the admission walk's flat typed-prefix arena.
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub struct ReferenceOriginPrefix(usize);
+
+#[derive(Clone, Debug)]
+struct OriginPrefix {
+    parent: ReferenceOriginPrefix,
+    step: PathStep,
+}
+
+/// The flat metadata built by the existing typed admission walk. Each
+/// visited path step is retained once; occurrences share their ancestors.
+#[derive(Debug, Default)]
+pub struct ReferenceOriginBuilder {
+    prefixes: Vec<OriginPrefix>,
+    fields: BTreeMap<ReferenceOriginPrefix, BTreeMap<String, ReferenceOriginPrefix>>,
+    options: BTreeMap<ReferenceOriginPrefix, ReferenceOriginPrefix>,
+    indices: BTreeMap<ReferenceOriginPrefix, BTreeMap<usize, ReferenceOriginPrefix>>,
+    references: BTreeMap<ReferenceOriginPrefix, NodeKey>,
+    unavailable: BTreeMap<ReferenceOriginPrefix, filament_exact::CollectionKind>,
+}
+
+impl ReferenceOriginBuilder {
+    /// The admitted value's root, before any typed path step.
+    pub fn root(&self) -> ReferenceOriginPrefix {
+        ReferenceOriginPrefix(0)
+    }
+
+    /// Enter the actual typed walk's next step. Repeated supplied paths
+    /// reuse the same prefix; raw admission calls this once per entered step.
+    pub fn enter(
+        &mut self,
+        parent: ReferenceOriginPrefix,
+        step: PathStep,
+    ) -> ReferenceOriginPrefix {
+        if let Some(prefix) = self.child(parent, &step) {
+            return prefix;
+        }
+        let prefix = ReferenceOriginPrefix(self.prefixes.len() + 1);
+        match &step {
+            PathStep::Field(name) => {
+                self.fields
+                    .entry(parent)
+                    .or_default()
+                    .insert(name.clone(), prefix);
+            }
+            PathStep::OptionValue => {
+                self.options.insert(parent, prefix);
+            }
+            PathStep::Index(index) => {
+                self.indices
+                    .entry(parent)
+                    .or_default()
+                    .insert(*index, prefix);
+            }
+        }
+        self.prefixes.push(OriginPrefix { parent, step });
+        prefix
+    }
+
+    /// Retain the explicitly validated population of this occurrence.
+    pub fn reference(&mut self, prefix: ReferenceOriginPrefix, population: NodeKey) {
+        self.references.insert(prefix, population);
+    }
+
+    /// Mark only the actual canonicalized Set or Bag subtree unavailable.
+    pub fn unavailable(
+        &mut self,
+        prefix: ReferenceOriginPrefix,
+        kind: filament_exact::CollectionKind,
+    ) {
+        self.unavailable.insert(prefix, kind);
+    }
+
+    fn child(
+        &self,
+        parent: ReferenceOriginPrefix,
+        step: &PathStep,
+    ) -> Option<ReferenceOriginPrefix> {
+        match step {
+            PathStep::Field(name) => self.fields.get(&parent)?.get(name).copied(),
+            PathStep::OptionValue => self.options.get(&parent).copied(),
+            PathStep::Index(index) => self.indices.get(&parent)?.get(index).copied(),
+        }
+    }
+
+    /// Publish one immutable backing without retaining empty ordinary values.
+    pub fn finish(self) -> ReferenceOrigins {
+        if self.references.is_empty() && self.unavailable.is_empty() {
+            return ReferenceOrigins::default();
+        }
+        let root = self.root();
+        let blocked = self.unavailable.get(&root).copied();
+        ReferenceOrigins {
+            backing: Some(Arc::new(self)),
+            prefix: root,
+            blocked,
+            locus: None,
+        }
+    }
+}
+
 /// Immutable flat occurrence metadata shared by admission and call frames.
-/// Empty ordinary values allocate no backing; unavailable subtrees never
-/// acquire a population from another occurrence's membership.
-#[derive(Clone, Debug, Default)]
+/// A selection holds a prefix index; Local reads and calls clone only Arc
+/// handles. No value or wire identity is changed by this metadata.
+#[derive(Clone, Debug)]
 pub struct ReferenceOrigins {
-    references: Option<Arc<[ReferenceOccurrence]>>,
-    unavailable: Option<Arc<[UnavailableReferenceOrigin]>>,
+    backing: Option<Arc<ReferenceOriginBuilder>>,
+    prefix: ReferenceOriginPrefix,
+    blocked: Option<filament_exact::CollectionKind>,
     locus: Option<Arc<ReferenceOriginLocus>>,
+}
+
+impl Default for ReferenceOrigins {
+    fn default() -> Self {
+        Self {
+            backing: None,
+            prefix: ReferenceOriginPrefix(0),
+            blocked: None,
+            locus: None,
+        }
+    }
 }
 
 type FieldOriginIndex = BTreeMap<NodeKey, BTreeMap<String, BTreeMap<FieldRef, ReferenceOrigins>>>;
 type ContextOriginIndex = BTreeMap<ObjectReference, BTreeMap<FieldRef, ReferenceOrigins>>;
 
 impl ReferenceOrigins {
-    /// Move the existing admission walk's validated facts into shared storage.
+    /// Move existing validated supplied paths into the shared prefix arena.
     pub fn from_parts(
         references: Vec<ReferenceOccurrence>,
         unavailable: Vec<UnavailableReferenceOrigin>,
     ) -> Self {
-        Self {
-            references: (!references.is_empty()).then(|| references.into()),
-            unavailable: (!unavailable.is_empty()).then(|| unavailable.into()),
-            locus: None,
+        let mut builder = ReferenceOriginBuilder::default();
+        for occurrence in references {
+            let mut prefix = builder.root();
+            for step in occurrence.path {
+                prefix = builder.enter(prefix, step);
+            }
+            builder.reference(prefix, occurrence.population);
         }
+        for marker in unavailable {
+            let mut prefix = builder.root();
+            for step in marker.path {
+                prefix = builder.enter(prefix, step);
+            }
+            builder.unavailable(prefix, marker.collection);
+        }
+        builder.finish()
     }
 
-    /// Move an exact occurrence list into shared storage.
+    /// Move an exact validated occurrence list into shared storage once.
     pub fn from_occurrences(references: Vec<ReferenceOccurrence>) -> Self {
         Self::from_parts(references, Vec::new())
     }
 
-    /// Retain the value root once, without copying its occurrence paths.
+    /// Retain the admitted value root once, without copying occurrence paths.
     pub fn with_locus(mut self, locus: ReferenceOriginLocus) -> Self {
         if !self.is_empty() {
             self.locus = Some(Arc::new(locus));
@@ -108,25 +233,107 @@ impl ReferenceOrigins {
         self
     }
 
-    /// Exact occurrence facts outside unavailable subtrees.
-    pub fn occurrences(&self) -> &[ReferenceOccurrence] {
-        self.references.as_deref().unwrap_or(&[])
+    /// Select one stable typed child through the flat edge index. Lookup is
+    /// logarithmic in the recorded edges and does not copy ancestor paths.
+    pub fn select(&self, step: &PathStep) -> Self {
+        if self.blocked.is_some() {
+            return self.clone();
+        }
+        let Some(backing) = &self.backing else {
+            return self.clone();
+        };
+        let Some(prefix) = backing.child(self.prefix, step) else {
+            return Self {
+                locus: self.locus.clone(),
+                ..Self::default()
+            };
+        };
+        Self {
+            backing: self.backing.clone(),
+            prefix,
+            blocked: backing.unavailable.get(&prefix).copied(),
+            locus: self.locus.clone(),
+        }
     }
 
-    /// Subtrees that require the existing typed unsupported result when used
-    /// as the source of a clock owner.
-    pub fn unavailable(&self) -> &[UnavailableReferenceOrigin] {
-        self.unavailable.as_deref().unwrap_or(&[])
+    /// The exact population at the selected scalar reference, never one
+    /// inferred from a reference's membership in an environment.
+    pub fn population(&self) -> Option<&NodeKey> {
+        if self.blocked.is_some() {
+            return None;
+        }
+        self.backing.as_ref()?.references.get(&self.prefix)
     }
 
-    /// The original binding or field, independent of a helper's frame names.
+    /// The population at a known stable path below this selected value.
+    pub fn population_at_path(&self, path: &[PathStep]) -> Option<&NodeKey> {
+        if self.blocked.is_some() {
+            return None;
+        }
+        let backing = self.backing.as_ref()?;
+        let mut prefix = self.prefix;
+        for step in path {
+            prefix = backing.child(prefix, step)?;
+            if backing.unavailable.contains_key(&prefix) {
+                return None;
+            }
+        }
+        backing.references.get(&prefix)
+    }
+
+    /// A Set or Bag ancestor preventing attribution of this selected owner.
+    pub fn unavailable_selection(&self) -> Option<filament_exact::CollectionKind> {
+        self.blocked
+    }
+
+    /// Number of exact facts in this value root's immutable backing.
+    pub fn occurrence_count(&self) -> usize {
+        self.backing
+            .as_ref()
+            .map_or(0, |backing| backing.references.len())
+    }
+
+    /// Number of shared typed prefixes retained for this admitted value root.
+    pub fn prefix_count(&self) -> usize {
+        self.backing
+            .as_ref()
+            .map_or(0, |backing| backing.prefixes.len())
+    }
+
+    /// Number of affected subtrees in this value root's immutable backing.
+    pub fn unavailable_count(&self) -> usize {
+        self.backing
+            .as_ref()
+            .map_or(0, |backing| backing.unavailable.len())
+    }
+
+    /// Reconstruct only a diagnostic path, by walking the selected prefix's
+    /// actual depth. Normal selection and forwarding do not reconstruct it.
+    pub fn selected_path(&self) -> Vec<PathStep> {
+        let Some(backing) = &self.backing else {
+            return Vec::new();
+        };
+        let mut prefix = self.prefix;
+        let mut path = Vec::new();
+        while let Some(index) = prefix.0.checked_sub(1) {
+            let Some(node) = backing.prefixes.get(index) else {
+                break;
+            };
+            path.push(node.step.clone());
+            prefix = node.parent;
+        }
+        path.reverse();
+        path
+    }
+
+    /// Original binding or field, independent of a helper's frame names.
     pub fn locus(&self) -> Option<&ReferenceOriginLocus> {
         self.locus.as_deref()
     }
 
-    /// Whether the value has neither exact facts nor unavailable subtrees.
+    /// Whether the value carries no exact or unavailable origin metadata.
     pub fn is_empty(&self) -> bool {
-        self.references.is_none() && self.unavailable.is_none()
+        self.backing.is_none()
     }
 }
 

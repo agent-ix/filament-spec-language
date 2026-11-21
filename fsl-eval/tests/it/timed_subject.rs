@@ -909,11 +909,12 @@ fn clock_reference_world(
     clock_reference_world_with_profiles(document, "", unit)
 }
 
-/// Two populations of the same declared type can list the same local key;
-/// population attribution must survive admission before any ref is evaluated.
-#[trace("TC-3084", "FR-1040-AC-9", "TC-464", "FR-106-AC-74")]
+/// The current shared closure cannot store two population occurrences with
+/// the same native object identity. Admission names that boundary explicitly;
+/// one population and two populations with distinct owner keys still admit.
+#[trace("TC-464")]
 #[test]
-fn same_type_populations_retain_each_listed_owner_before_clock_evaluation() {
+fn same_type_populations_refuse_colliding_owner_keys_before_clock_evaluation() {
     let mut document: Json = serde_json::from_slice(&clocked_document(true, &[])).expect("JSON");
     let mut archive = document["populations"][0].clone();
     archive["identity"] = json!(ident("archive"));
@@ -958,6 +959,41 @@ fn same_type_populations_retain_each_listed_owner_before_clock_evaluation() {
         world.initial.clone(),
         serde_json::to_vec(&snapshot).expect("JSON"),
     );
+    let failure = fsl_semantics::model::observation::admit_current_snapshot(
+        world.package.graph().model_inputs(),
+        world.package.graph().scope().types(),
+        &world.packages,
+        ModelNormalizationLimits::default(),
+        &world.snapshots,
+        &world.initial,
+        ObservationLimits::default(),
+    )
+    .expect_err("equal native owner identities need population-qualified storage");
+    let fsl_semantics::model::observation::AdmissionFailure::Refused(record) = failure else {
+        panic!("the current boundary is a typed refusal: {failure:?}");
+    };
+    assert_eq!(record.catalog.code(), "unknown_required_feature");
+    assert_eq!(record.catalog.cause(), "unsupported-feature");
+    assert_eq!(
+        record.fields.get("reason").map(String::as_str),
+        Some("population-qualified-object-identity")
+    );
+    assert_eq!(record.fields.get("population"), Some(&ident("archive")));
+    assert_eq!(record.fields.get("other_population"), Some(&ident("calls")));
+    assert_eq!(record.fields.get("object").map(String::as_str), Some("c"));
+    assert_eq!(
+        record.path,
+        [
+            fsl_semantics::model::observation::PathStep::Field("populations".to_owned()),
+            fsl_semantics::model::observation::PathStep::Index(1),
+        ]
+    );
+
+    snapshot["populations"][1]["objects"][0]["key"] = json!("d");
+    world.snapshots.insert(
+        world.initial.clone(),
+        serde_json::to_vec(&snapshot).expect("JSON"),
+    );
     let (environment, _) = fsl_semantics::model::observation::admit_current_snapshot(
         world.package.graph().model_inputs(),
         world.package.graph().scope().types(),
@@ -967,7 +1003,7 @@ fn same_type_populations_retain_each_listed_owner_before_clock_evaluation() {
         &world.initial,
         ObservationLimits::default(),
     )
-    .expect("both explicitly attributed population occurrences admit");
+    .expect("two explicit populations with distinct native keys admit");
     let calls = environment
         .population_members(&ident("calls"))
         .expect("calls");
@@ -977,10 +1013,13 @@ fn same_type_populations_retain_each_listed_owner_before_clock_evaluation() {
     assert_eq!(calls.len(), 1);
     assert_eq!(archive.len(), 1);
     assert_eq!(calls[0].object().as_str(), "c");
-    assert_eq!(archive[0].object().as_str(), "c");
-    assert_eq!(
-        calls[0], archive[0],
-        "the existing K2 reference is not population attribution"
+    assert_eq!(archive[0].object().as_str(), "d");
+    assert_eq!(calls[0].object_type(), archive[0].object_type());
+    assert_eq!(calls[0].universe(), archive[0].universe());
+    assert_ne!(calls[0], archive[0]);
+    assert_ne!(
+        environment.population_node(&ident("calls")),
+        environment.population_node(&ident("archive"))
     );
 }
 
@@ -989,7 +1028,7 @@ fn same_type_populations_retain_each_listed_owner_before_clock_evaluation() {
 #[trace("TC-464")]
 #[test]
 fn raw_reference_field_origins_keep_the_target_population_beside_the_holder() {
-    use fsl_semantics::model::object_environment::{ReferenceOccurrence, ReferenceOriginLocus};
+    use fsl_semantics::model::object_environment::ReferenceOriginLocus;
     use fsl_semantics::model::observation::PathStep;
 
     let mut document: Json = serde_json::from_slice(&clocked_document(false, &[])).expect("JSON");
@@ -1070,14 +1109,12 @@ fn raw_reference_field_origins_keep_the_target_population_beside_the_holder() {
     let origins = environment
         .field_reference_origins(holder, "c", &field)
         .expect("retained field origin");
+    assert_eq!(origins.occurrence_count(), 1);
     assert_eq!(
-        origins.occurrences(),
-        &[ReferenceOccurrence {
-            path: vec![PathStep::OptionValue],
-            population: target.clone()
-        }]
+        origins.population_at_path(&[PathStep::OptionValue]),
+        Some(target)
     );
-    assert!(origins.unavailable().is_empty());
+    assert_eq!(origins.unavailable_count(), 0);
     assert!(
         matches!(origins.locus(), Some(ReferenceOriginLocus::ObjectField { population, owner, field: original }) if population == holder && owner == "c" && original == &field)
     );
@@ -1093,6 +1130,152 @@ fn raw_reference_field_origins_keep_the_target_population_beside_the_holder() {
             .is_none(),
         "a different population is not the field's holder"
     );
+}
+
+/// A deep record/Option spine above a wide reference sequence retains the
+/// spine once. Public admission and stable selection preserve the explicitly
+/// different target population at every sequence position.
+#[trace("TC-464")]
+#[test]
+fn raw_reference_origins_share_deep_prefixes_across_a_wide_sequence() {
+    use fsl_semantics::model::observation::PathStep;
+    const DEPTH: usize = 8;
+    const WIDTH: usize = 16;
+    let mut document: Json = serde_json::from_slice(&clocked_document(false, &[])).expect("JSON");
+    document["constructs"]
+        .as_array_mut()
+        .expect("constructs")
+        .push(json!({
+            "kind": {"module": PACKAGE, "name": "value_record"}, "moduleVersion": "1.0.0",
+            "construct": {"identity": "none", "shape": "record", "members": {},
+                "meaning": meaning::RECORD_VALUE_TYPE}
+        }));
+    for level in 0..DEPTH {
+        let name = format!("Links{level}");
+        let field_name = if level == 0 { "refs" } else { "next" };
+        let target = if level == 0 {
+            ident("Call")
+        } else {
+            ident(&format!("Links{}", level - 1))
+        };
+        let mut field = wire_field(field_name, &target);
+        let member = ident(&format!("{name}/{field_name}"));
+        field["identity"] = json!(member);
+        field["origin"] = origin(&member);
+        if level == 0 {
+            field["multiplicity"] = json!({"lower":0,"upper":WIDTH,"ordered":true,"unique":false});
+        } else {
+            field["presence"] = json!("optional");
+        }
+        document["types"]
+            .as_array_mut()
+            .expect("types")
+            .push(wire_type(
+                &ident(&name),
+                "value_record",
+                json!({"fields":[field]}),
+            ));
+    }
+    let mut links = wire_field("links", &ident(&format!("Links{}", DEPTH - 1)));
+    links["presence"] = json!("optional");
+    document["types"][1]["fields"]
+        .as_array_mut()
+        .expect("Call fields")
+        .push(links);
+    let mut archive = document["populations"][0].clone();
+    archive["identity"] = json!(ident("archive"));
+    archive["displayName"] = json!(ident("archive"));
+    archive["origin"] = origin(&ident("archive"));
+    document["populations"]
+        .as_array_mut()
+        .expect("populations")
+        .push(archive);
+    let reference = json!({"reference":{"population":ident("archive"),"key":"d"}});
+    let mut value = json!({"record":{"type":ident("Links0"),"fields":{
+        "refs":{"sequence":vec![reference; WIDTH]}
+    }}});
+    for level in 1..DEPTH {
+        value = json!({"record":{"type":ident(&format!("Links{level}")),"fields":{
+            "next":{"present":value}
+        }}});
+    }
+    let mut world = world_holding(
+        serde_json::to_vec(&document).expect("JSON"),
+        "",
+        "",
+        json!({"links":{"present":value}}),
+    );
+    let mut snapshot: Json =
+        serde_json::from_slice(world.snapshots.get(&world.initial).expect("snapshot"))
+            .expect("JSON");
+    let mut archive = snapshot["populations"][0].clone();
+    archive["population"] = json!(ident("archive"));
+    archive["objects"][0]["key"] = json!("d");
+    archive["objects"][0]["fields"]["links"] = json!({"absent":{}});
+    snapshot["populations"]
+        .as_array_mut()
+        .expect("populations")
+        .push(archive);
+    world.snapshots.insert(
+        world.initial.clone(),
+        serde_json::to_vec(&snapshot).expect("JSON"),
+    );
+    let (environment, _) = fsl_semantics::model::observation::admit_current_snapshot(
+        world.package.graph().model_inputs(),
+        world.package.graph().scope().types(),
+        &world.packages,
+        ModelNormalizationLimits::default(),
+        &world.snapshots,
+        &world.initial,
+        ObservationLimits::default(),
+    )
+    .expect("actual nested reference input admits");
+    let holder = environment
+        .population_node(&ident("calls"))
+        .expect("holder");
+    let target = environment
+        .population_node(&ident("archive"))
+        .expect("target");
+    assert_ne!(holder, target);
+    let owner = &environment
+        .population_members(&ident("calls"))
+        .expect("calls")[0];
+    let field = world
+        .package
+        .graph()
+        .scope()
+        .types()
+        .attribute(owner.object_type().clone(), "links")
+        .expect("links")
+        .identity();
+    let origins = environment
+        .field_reference_origins(holder, "c", &field)
+        .expect("retained origins");
+    assert_eq!(origins.occurrence_count(), WIDTH);
+    assert!(
+        origins.prefix_count() <= 2 * DEPTH + WIDTH + 2,
+        "shared spine, not WIDTH copies of DEPTH ancestors"
+    );
+    let mut selected = origins.select(&PathStep::OptionValue);
+    for _ in 1..DEPTH {
+        selected = selected
+            .select(&PathStep::Field("next".to_owned()))
+            .select(&PathStep::OptionValue);
+    }
+    selected = selected.select(&PathStep::Field("refs".to_owned()));
+    for index in 0..WIDTH {
+        let leaf = selected.select(&PathStep::Index(index));
+        assert_eq!(leaf.population(), Some(target));
+        assert!(leaf.unavailable_selection().is_none());
+        let path = leaf.selected_path();
+        assert_eq!(path.first(), Some(&PathStep::OptionValue));
+        assert_eq!(path.last(), Some(&PathStep::Index(index)));
+        assert_eq!(leaf.locus(), origins.locus());
+    }
+    assert!(selected
+        .select(&PathStep::Index(WIDTH))
+        .population()
+        .is_none());
 }
 
 fn clock_reference_world_with_profiles(
