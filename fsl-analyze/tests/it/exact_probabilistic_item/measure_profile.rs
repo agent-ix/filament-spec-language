@@ -2373,7 +2373,8 @@ fn zero_weight_fraction_replays_its_tentative_value_before_an_outside_window_pre
 #[trace("FR-185-AC-4")]
 #[test]
 fn object_parameter_reward_candidates_are_checked_before_runtime() {
-    use fsl_semantics::check::{CheckCause, IllTypedCause, Obligation};
+    use filament_exact::IllTypedCause;
+    use fsl_semantics::check::{CheckCause, Obligation};
     let source = |expression: &str| {
         let mut model = retry(&claim("Q", "Steady", "probability >= 0.5 [accumulate duration from holds(true) until holds(m.delivered) within 2 <= 1]"));
         model
