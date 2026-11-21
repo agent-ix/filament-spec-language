@@ -1911,7 +1911,9 @@ fn transfer_run(members: &[(&str, Value)], supply_spec: bool) -> (u8, Value) {
     transfer_run_over(members, supply_spec, false)
 }
 
-/// [`transfer_run`] over the closure transfer unit when `closure_unit`.
+/// [`transfer_run`] over the emittable unit, without the configured clause
+/// `BoundedTwo`, when `closure_unit`: the unit for native outcomes that need
+/// held node ids.
 fn transfer_run_over(
     members: &[(&str, Value)],
     supply_spec: bool,
@@ -2052,7 +2054,7 @@ fn transfer_premise(identity: &Value, result: &str) -> Value {
 #[trace("TC-2870", "FR-1020-AC-1")]
 #[trace("FSpec-TC-2000", "FSpec-FR-820-AC-1")]
 fn a_step_for_step_refinement_transfers_previous_and_interval_clauses_proved() {
-    let (exit, value) = transfer_run(
+    let (exit, value) = transfer_run_over(
         &[(
             "refinement_transfer",
             transfer_member(
@@ -2061,6 +2063,7 @@ fn a_step_for_step_refinement_transfers_previous_and_interval_clauses_proved() {
                 &["PrevSafe", "SoonTwo"],
             ),
         )],
+        true,
         true,
     );
     assert_eq!(exit, 0, "{value}");
@@ -2093,7 +2096,7 @@ fn a_step_for_step_refinement_transfers_previous_and_interval_clauses_proved() {
 #[trace("FSpec-TC-1042", "FSpec-FR-380-AC-9")]
 #[trace("FSpec-TC-2000", "FSpec-FR-820-AC-2")]
 fn previous_transfers_only_through_a_step_for_step_refinement() {
-    let (exit, value) = transfer_run(
+    let (exit, value) = transfer_run_over(
         &[(
             "refinement_transfer",
             transfer_member(
@@ -2102,6 +2105,7 @@ fn previous_transfers_only_through_a_step_for_step_refinement() {
                 &["PrevSafe", "SoonTwo", "AtMostTwo"],
             ),
         )],
+        true,
         true,
     );
     assert_eq!(exit, 0, "{value}");
@@ -2120,11 +2124,12 @@ fn previous_transfers_only_through_a_step_for_step_refinement() {
         );
     }
 
-    let (exit, value) = transfer_run(
+    let (exit, value) = transfer_run_over(
         &[(
             "refinement_transfer",
             transfer_member("ThirdRefinesSpec", ("Spec", "Third"), &["PrevStutter"]),
         )],
+        true,
         true,
     );
     assert_eq!(exit, 22, "{value}");
@@ -2135,7 +2140,7 @@ fn previous_transfers_only_through_a_step_for_step_refinement() {
     assert_eq!(result["cause"]["result"], "refuted", "{value}");
     assert_eq!(result["slots"][1]["value"], "refuted", "{value}");
 
-    let (exit, value) = transfer_run(
+    let (exit, value) = transfer_run_over(
         &[(
             "refinement_transfer",
             transfer_member(
@@ -2144,6 +2149,7 @@ fn previous_transfers_only_through_a_step_for_step_refinement() {
                 &["PrevSafe", "SoonTwo", "AtMostTwo", "PastTwo"],
             ),
         )],
+        true,
         true,
     );
     assert_eq!(exit, 22, "{value}");
