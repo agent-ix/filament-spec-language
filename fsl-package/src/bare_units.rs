@@ -20,6 +20,14 @@ use fsl_semantics::value::{
 
 use crate::checked_v2::wire_graph;
 
+/// Admitted nominal definitions retained for the complete runtime world.
+#[derive(Clone, Debug, Default)]
+pub(crate) struct UnitDefinitions {
+    dimensions: Vec<(DimensionPreimage, NodeKey)>,
+    units: Vec<(UnitPreimage, NodeKey)>,
+    owners: Vec<NodeOwner>,
+}
+
 /// Why the selected source-unit rows are no unit table.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum UnitDefinitionRefusal {
@@ -80,10 +88,10 @@ pub(crate) fn read_unit_table(
     package: &CheckedPackageV2,
     rows: &[SelectedSourceUnitRow],
     budget: &mut NativeJoinBudget,
-) -> Result<UnitTable, UnitDefinitionRefusal> {
+) -> Result<UnitDefinitions, UnitDefinitionRefusal> {
     use UnitDefinitionRefusal::{Graph, Read, Unjoined};
     if rows.is_empty() {
-        return Ok(UnitTable::default());
+        return Ok(UnitDefinitions::default());
     }
     let wire = wire_graph(package).map_err(|_| Graph)?;
     let key = |id: &filament_contract_model::CheckedNodeId| -> Result<NodeKey, _> {
@@ -156,14 +164,107 @@ pub(crate) fn read_unit_table(
         units.push((preimage, unit_key));
     }
     // The owners the package selected: its locked raw sources.
-    let selected = OwnerSelection::new(package.lock().sources.iter().map(|source| {
-        NodeOwner::Source(OwnerSubject::new(
-            &*source.authority,
-            &*source.identity,
-            package.name(),
-        ))
-    }));
-    admit(dimensions, units, &selected)
+    let owners: Vec<_> = package
+        .lock()
+        .sources
+        .iter()
+        .map(|source| {
+            NodeOwner::Source(OwnerSubject::new(
+                &*source.authority,
+                &*source.identity,
+                package.name(),
+            ))
+        })
+        .collect();
+    admit(
+        dimensions.clone(),
+        units.clone(),
+        &OwnerSelection::new(owners.clone()),
+    )?;
+    Ok(UnitDefinitions {
+        dimensions,
+        units,
+        owners,
+    })
+}
+
+/// Rebuild the world's graph from its admitted package definitions, then apply
+/// the same equivalence classes and runtime projection as the source route.
+pub(crate) fn world_units(
+    package: &crate::bare::BarePackage<'_>,
+) -> Result<UnitTable, UnitDefinitionRefusal> {
+    use filament_contract_model::{CheckedDimensionOperand, CheckedNodeKind, CheckedTerm};
+    use fsl_semantics::check::EquivalenceClasses;
+    use UnitDefinitionRefusal::Graph;
+
+    let mut dimensions = std::collections::BTreeMap::new();
+    let mut units = std::collections::BTreeMap::new();
+    let mut owners = Vec::new();
+    let mut pairs = Vec::new();
+    for view in std::iter::once(package).chain(package.dependency_views()) {
+        for (definition, key) in &view.units.dimensions {
+            dimensions.insert(key.clone(), definition.clone());
+        }
+        for (definition, key) in &view.units.units {
+            units.insert(key.clone(), definition.clone());
+        }
+        owners.extend(view.units.owners.iter().cloned());
+        let admitted = view.package();
+        for node in &admitted.resolved_graph().nodes {
+            let Some(CheckedTerm::NominalBody(body)) = admitted.term(&node.node_id) else {
+                continue;
+            };
+            let Some(([first, second], ratio)) = body.dimension_equivalence_details() else {
+                continue;
+            };
+            let resolve = |operand: &CheckedDimensionOperand| {
+                let (owner, id) = match operand {
+                    CheckedDimensionOperand::Local(id) => (admitted, id),
+                    CheckedDimensionOperand::Package(reference) => (
+                        admitted
+                            .direct_dependencies()
+                            .find(|dependency| dependency.name() == reference.package.as_ref())
+                            .ok_or(Graph)?,
+                        reference.node.node_id(),
+                    ),
+                };
+                // Resolve in the exact owning package, never the importer's
+                // node table or a guessed transitive edge.
+                if owner.term(id).is_none()
+                    || !matches!(
+                        owner.node_kind(id),
+                        Some(CheckedNodeKind::ScalarType(
+                            filament_contract_model::ScalarTypeForm::Dimension
+                        ))
+                    )
+                {
+                    return Err(Graph);
+                }
+                wire_graph(owner)
+                    .map_err(|_| Graph)?
+                    .key(id)
+                    .map_err(|_| Graph)
+            };
+            pairs.push((
+                resolve(first)?,
+                resolve(second)?,
+                rational(ratio).ok_or(Graph)?,
+            ));
+        }
+    }
+    let graph = admit_unit_graph(
+        dimensions
+            .into_iter()
+            .map(|(key, definition)| (definition, key)),
+        units.into_iter().map(|(key, definition)| (definition, key)),
+        &OwnerSelection::new(owners),
+    )
+    .map_err(|_| Graph)?;
+    let classes = EquivalenceClasses::from_pairs(&pairs);
+    let graph = graph
+        .with_dimension_equivalences(&classes.memberships())
+        .map_err(|_| Graph)?;
+    Ok(UnitTable::declared(&graph))
 }
 
 /// The unit table of the dimension and unit nodes, admitted as the source
@@ -269,5 +370,336 @@ mod tests {
         assert!(rational(&spelled("2", "4")).is_none());
         assert!(rational(&spelled("0", "1")).is_some());
         assert!(rational(&spelled("0", "3")).is_none());
+    }
+
+    fn admitted_units(
+        name: &str,
+        declarations: &str,
+    ) -> (crate::Emission, std::sync::Arc<CheckedPackageV2>) {
+        use filament_contract_model::CheckedPackageEvidence;
+        use filament_semantic_value::checking::{CheckMode, CheckingLimits};
+        use fsl_semantics::check::PackageDeclarations;
+        use fsl_semantics::library::LibraryName;
+        let source = format!("language \"ix:native\" edition \"1-draft\";\nprofile v = \"filament.value.complete/v1\";\n{declarations}");
+        let parsed = fsl_cst::parse(
+            fsl_foundation::SourceIdentity::new("fixture", name),
+            "unit.native",
+            source.as_bytes(),
+            fsl_cst::Limits::default(),
+        )
+        .expect("the source parses");
+        let declarations = PackageDeclarations::assemble(
+            parsed.source().reference().clone(),
+            name.to_owned(),
+            fsl_forms::build_unit(&parsed).expect("the unit forms"),
+            Vec::new(),
+            Vec::new(),
+        )
+        .expect("the unit assembles");
+        let checked = crate::CheckedPackage::link(
+            declarations
+                .check(
+                    CheckMode::Linked,
+                    CheckingLimits::default(),
+                    &fsl_semantics::check::test_support::ZeroRewardEvaluator,
+                )
+                .expect("the unit checks"),
+        );
+        let emission = crate::emit_checked(&checked, crate::EmitLimits::fixture())
+            .expect("the declarations emit");
+        let wire: serde_json::Value =
+            serde_json::from_slice(emission.package().bytes()).expect("the emitted wire");
+        let mut evidence = CheckedPackageEvidence::new();
+        for feature in wire["lock"]["required_features"]
+            .as_array()
+            .expect("the selected features")
+        {
+            evidence.support_feature(feature.as_str().expect("a feature identity"));
+        }
+        let crate::checked_v2::Read::Verified { admitted, .. } = crate::checked_v2::read_v2(
+            emission.package().bytes(),
+            LibraryName::new(emission.package().name()).expect("the package name"),
+            crate::V2ReadLimits::fixture(),
+            &evidence,
+        ) else {
+            panic!("the actual emitted declarations must admit");
+        };
+        (emission, admitted)
+    }
+
+    /// FR-533-AC-23: an equivalence's package operand reads the exact admitted
+    /// direct dependency, and the resulting world converts into its actual unit.
+    /// Source-library quantity exports remain owned by their producer contract.
+    #[trace("FR-533-AC-23", "TC-1333", "FSpec-FR-142-AC-26")]
+    #[test]
+    fn a_package_equivalence_resolves_its_admitted_direct_dependency() {
+        use filament_contract_model::{
+            encode_checked_package_v2, CheckedDeclaredNodeId, CheckedDependencySelection,
+            CheckedDimensionOperand, CheckedNodeId, CheckedNodeKind, CheckedNodePathSegment,
+            CheckedOccurrence, CheckedOccurrenceRole, CheckedPackageEvidence,
+            CheckedPackageNodeRef, CheckedPackageSidecarsRef,
+            CheckedPackageSourceCorrespondenceRef, CheckedTerm, NominalBody, ScalarTypeForm,
+        };
+        use filament_exact::{Meter, Outcome, Quantity, ScalarLimits, UnitId};
+        use filament_semantic_value::quantity::{convert_quantity, QuantityTarget};
+        use fsl_semantics::library::LibraryName;
+        let (dependency_emission, dependency) = admitted_units(
+            "time-library",
+            "dimension Time; unit s : Time = rational(1, 1);",
+        );
+        let (root_emission, root) = admitted_units(
+            "importing-unit",
+            "dimension Beat; unit beat : Beat = rational(1, 1);",
+        );
+        let dimension = |package: &CheckedPackageV2| {
+            package
+                .resolved_graph()
+                .nodes
+                .iter()
+                .position(|node| {
+                    matches!(
+                        package.node_kind(&node.node_id),
+                        Some(CheckedNodeKind::ScalarType(ScalarTypeForm::Dimension))
+                    )
+                })
+                .expect("the declared dimension")
+        };
+        let local_index = dimension(&root);
+        let foreign_index = dimension(&dependency);
+        let local = root.resolved_graph().nodes[local_index].node_id.clone();
+        let foreign = dependency.resolved_graph().nodes[foreign_index]
+            .node_id
+            .clone();
+        assert!(
+            matches!(&dependency.resolved_graph().nodes[foreign_index].owner,
+            Some(CheckedNodeOwner::Source { authority, identity }) if &**authority == "fixture" && &**identity == "time-library")
+        );
+        let local_key = wire_graph(&root)
+            .expect("the root keys")
+            .key(&local)
+            .expect("the local dimension key");
+        let foreign_key = wire_graph(&dependency)
+            .expect("the dependency keys")
+            .key(&foreign)
+            .expect("the exact dependency dimension key");
+        let quarter = Rational::new(Integer::from(1_i64), Integer::from(4_i64)).expect("a quarter");
+        let foreign_operand = CheckedDimensionOperand::Package(CheckedPackageNodeRef {
+            package: dependency.name().into(),
+            node: CheckedDeclaredNodeId::try_new(foreign.clone())
+                .expect("the actual declared dimension"),
+        });
+        let local_operand = CheckedDimensionOperand::Local(local.clone());
+        let (operands, dimension_ids, ratio) = if local_key < foreign_key {
+            (
+                [local_operand, foreign_operand],
+                [local.clone(), foreign],
+                quarter,
+            )
+        } else {
+            (
+                [foreign_operand, local_operand],
+                [foreign, local.clone()],
+                Rational::from_integer(Integer::from(4_i64)),
+            )
+        };
+        // As in IR's mixed dimension-operand fixture, the producer-selected
+        // anchor path names the two genuine declared dimensions. The body
+        // carries the typed Package reference authenticated during admission.
+        let mut path = vec![
+            CheckedNodePathSegment::Name("scalar_type".into()),
+            CheckedNodePathSegment::Name("dimension_equivalence".into()),
+        ];
+        for dimension in &dimension_ids {
+            path.push(CheckedNodePathSegment::Name(dimension.package.clone()));
+            path.extend(dimension.path.iter().cloned());
+            path.push(CheckedNodePathSegment::Name(
+                dimension.ordinal.to_string().into(),
+            ));
+        }
+        let id = CheckedNodeId {
+            package: root.name().into(),
+            path,
+            ordinal: 0,
+        };
+        let mut graph = root.graph().clone();
+        let mut equivalence = graph.nodes[local_index].clone();
+        equivalence.node_id = id.clone();
+        equivalence.semantic_type = id.clone();
+        equivalence.semantic_form = "dimension_equivalence".into();
+        equivalence.dependencies = vec![local.clone()];
+        equivalence.declaration = None;
+        equivalence.occurrences = vec![CheckedOccurrence {
+            role: CheckedOccurrenceRole::Anchor,
+            ordinal: 0,
+        }];
+        equivalence.body = CheckedTerm::NominalBody(Box::new(
+            NominalBody::try_dimension_equivalence(
+                operands,
+                CheckedRational {
+                    numerator: ratio.numerator().to_string().into(),
+                    denominator: ratio.denominator().to_string().into(),
+                },
+            )
+            .expect("the admitted dimension pair"),
+        ));
+        graph.nodes.push(equivalence);
+        graph.operand_rows.push(Vec::new());
+        let mut source_map = root.source_map().to_vec();
+        let mut occurrence = source_map
+            .iter()
+            .find(|entry| entry.node_id == local)
+            .expect("the local source occurrence")
+            .clone();
+        occurrence.node_id = id;
+        occurrence.role = CheckedOccurrenceRole::Anchor;
+        occurrence.ordinal = 0;
+        source_map.push(occurrence);
+        let mut lock = root.lock().clone();
+        lock.dependency_selections.push(CheckedDependencySelection {
+            identity: dependency.name().into(),
+        });
+        let bytes = encode_checked_package_v2(
+            root.name(),
+            &lock,
+            &graph,
+            CheckedPackageSourceCorrespondenceRef {
+                source_map: &source_map,
+                refinement_step_rows: None,
+            },
+            CheckedPackageSidecarsRef {
+                checked_term_data: root.checked_term_data(),
+                temporal_bindings: root.temporal_bindings(),
+                temporal_clause_names: root.temporal_clause_names(),
+                claim_names: root.claim_names(),
+                schedulability_claims: None,
+                operation_effects: None,
+                operation_bodies: None,
+            },
+            root.capability_report(),
+            root.diagnostics(),
+            crate::EmitLimits::fixture().canonical(),
+        )
+        .expect("the real IR writer encodes the selected package");
+        let mut evidence = CheckedPackageEvidence::new();
+        for feature in &lock.required_features {
+            evidence.support_feature(&**feature);
+        }
+        evidence
+            .insert_dependency_package(dependency.name(), (*dependency).clone())
+            .expect("the actual admitted dependency evidence");
+        let read = crate::checked_v2::read_v2(
+            &bytes,
+            LibraryName::new(root.name()).expect("the importing identity"),
+            crate::V2ReadLimits::fixture(),
+            &evidence,
+        );
+        let crate::checked_v2::Read::Verified { admitted, .. } = read else {
+            panic!("the selected dependency package must admit: {read:?}");
+        };
+        assert_eq!(admitted.direct_dependencies().len(), 1);
+        let last = admitted
+            .resolved_graph()
+            .nodes
+            .last()
+            .expect("the equivalence");
+        let Some(CheckedTerm::NominalBody(body)) = admitted.term(&last.node_id) else {
+            panic!("the admitted nominal body");
+        };
+        let (operands, _) = body
+            .dimension_equivalence_details()
+            .expect("the actual shared accessor");
+        assert_eq!(
+            operands
+                .iter()
+                .filter(|operand| matches!(operand, CheckedDimensionOperand::Package(_)))
+                .count(),
+            1
+        );
+        let mut budget = crate::V2ReadLimits::fixture().native_join_budget();
+        let root_equality = root_emission
+            .equality_witness(&admitted, &mut budget)
+            .expect("the original root's unit witnesses");
+        let identities = dependency_emission
+            .identity_rows(&dependency, &mut budget)
+            .expect("dependency identities");
+        let equality = dependency_emission
+            .equality_witness(&dependency, &mut budget)
+            .expect("dependency unit witnesses");
+        let artifacts = [crate::DependencyArtifact {
+            identity: dependency.name().to_owned(),
+            bytes: dependency_emission.package().bytes().into(),
+            identity_bytes: identities
+                .to_bytes(&dependency)
+                .expect("identity bytes")
+                .into(),
+            equality_bytes: equality
+                .to_bytes(&dependency)
+                .expect("equality bytes")
+                .into(),
+            package: dependency,
+            identities,
+            equality,
+        }];
+        let mut bare = crate::BarePackage::new(&admitted)
+            .with_dependency_artifacts(&artifacts, &mut budget)
+            .expect("the actual dependency artifacts join");
+        bare.units = read_unit_table(&admitted, root_equality.source_units(), &mut budget)
+            .expect("the admitted local unit definitions");
+        let table = world_units(&bare).expect("the Package operand reconstructs the runtime graph");
+        let declared_unit = |package: &CheckedPackageV2| {
+            let node = package
+                .resolved_graph()
+                .nodes
+                .iter()
+                .find(|node| {
+                    matches!(
+                        package.node_kind(&node.node_id),
+                        Some(CheckedNodeKind::ScalarType(ScalarTypeForm::Unit))
+                    )
+                })
+                .expect("the actual declared unit");
+            UnitId::declared(
+                wire_graph(package)
+                    .expect("the keys")
+                    .key(&node.node_id)
+                    .expect("the unit key"),
+            )
+        };
+        let source = Quantity::new(
+            Rational::from_integer(Integer::one()),
+            declared_unit(&admitted),
+        );
+        let target = declared_unit(&artifacts[0].package);
+        let mut meter = Meter::new(ScalarLimits {
+            integer_bits: u64::MAX,
+            decimal_digits: u64::MAX,
+            scale_expansion: u64::MAX,
+            text_input_bytes: u64::MAX,
+            text_scalars: u64::MAX,
+            normalized_scalars: u64::MAX,
+            unit_edges: u64::MAX,
+            value_occurrences: u64::MAX,
+            work_units: u64::MAX,
+            result_units: u64::MAX,
+        });
+        let Outcome::Completed(converted) = convert_quantity(
+            table.resolve(&source).expect("the local source unit"),
+            table
+                .get(target.clone())
+                .expect("the actual dependency unit"),
+            &QuantityTarget::Exact,
+            &mut meter,
+        )
+        .expect("the class conversion is eligible") else {
+            panic!("the exact conversion completes");
+        };
+        let (quantity, _) = converted
+            .identified_quantity()
+            .expect("the exact target quantity");
+        assert_eq!(
+            quantity.magnitude(),
+            &Rational::new(Integer::from(1_i64), Integer::from(4_i64)).expect("a quarter")
+        );
+        assert_eq!(quantity.unit(), &target);
     }
 }

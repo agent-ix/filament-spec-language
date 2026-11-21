@@ -337,15 +337,6 @@ fn unsupported_construct(what: &'static str) -> Halt {
     })))
 }
 
-fn quantity_unit(value_type: &ValueType) -> Option<&filament_exact::UnitId> {
-    match value_type {
-        ValueType::Quantity(unit) => Some(unit),
-        ValueType::BoundedQuantity(quantity) => Some(quantity.unit()),
-        ValueType::CarriedQuantity(quantity) => Some(quantity.unit()),
-        _ => None,
-    }
-}
-
 /// An FSL-owned invariant at its detecting producer (FR-090).
 fn invariant(identifier: &'static str) -> Halt {
     Halt::Fault(InternalFault::new("S6a", identifier))
@@ -3274,64 +3265,6 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
                 else {
                     return Err(unresolved_unit());
                 };
-                if matches!(self.world, World::Bytes(_))
-                    && matches!(
-                        operator,
-                        ArithmeticOperator::Multiply | ArithmeticOperator::Divide
-                    )
-                {
-                    let operation = match operator {
-                        ArithmeticOperator::Multiply => {
-                            filament_semantic_value::quantity::UnitOperation::Multiply
-                        }
-                        ArithmeticOperator::Divide => {
-                            filament_semantic_value::quantity::UnitOperation::Divide
-                        }
-                        ArithmeticOperator::Add | ArithmeticOperator::Subtract => {
-                            return Err(invariant("compound-quantity-operation-expected"));
-                        }
-                    };
-                    let nominal = filament_semantic_value::quantity::result_unit(
-                        operation,
-                        l.unit(),
-                        r.unit(),
-                    )
-                    .map_err(|_| invariant("quantity-operation-rejected"))?;
-                    let expected = match node.value_type() {
-                        ValueType::Quantity(unit) => unit,
-                        ValueType::Boolean
-                        | ValueType::Integer
-                        | ValueType::Int(_)
-                        | ValueType::Rational(_)
-                        | ValueType::Decimal(_)
-                        | ValueType::Float(_)
-                        | ValueType::CarriedQuantity(_)
-                        | ValueType::Text(_)
-                        | ValueType::String
-                        | ValueType::Bytes
-                        | ValueType::JsonObject
-                        | ValueType::Uuid
-                        | ValueType::Timestamp
-                        | ValueType::Enum(_)
-                        | ValueType::Option(_)
-                        | ValueType::Composite(_)
-                        | ValueType::Collection(_)
-                        | ValueType::Map(_)
-                        | ValueType::BoundedQuantity(_)
-                        | ValueType::Reference(_)
-                        | ValueType::Population(_) => {
-                            return Err(invariant("quantity-result-type-expected"));
-                        }
-                    };
-                    let nominal = nominal
-                        .id()
-                        .map_err(|_| invariant("quantity-result-unit-keyed"))?;
-                    if &nominal != expected {
-                        return Err(unsupported_construct(
-                            "dimension-equivalence-package-reconstruction",
-                        ));
-                    }
-                }
                 let operation = match operator {
                     ArithmeticOperator::Add => QuantityOperation::Add(l, r),
                     ArithmeticOperator::Subtract => QuantityOperation::Subtract(l, r),
@@ -3430,34 +3363,6 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
                 let Some(unit_base) = self.units.resolve(&base) else {
                     return Err(unresolved_unit());
                 };
-                if matches!(self.world, World::Bytes(_)) {
-                    // The shared operation determines its result unit before
-                    // its first charge. As in the checker's power typing,
-                    // deny that charge on a separate meter: no power value
-                    // is computed and the caller's meter is untouched.
-                    let mut type_meter = Meter::new(filament_exact::ScalarLimits {
-                        integer_bits: 0,
-                        decimal_digits: 0,
-                        scale_expansion: 0,
-                        text_input_bytes: 0,
-                        text_scalars: 0,
-                        normalized_scalars: 0,
-                        unit_edges: 0,
-                        value_occurrences: 0,
-                        work_units: 0,
-                        result_units: 0,
-                    });
-                    let (_, nominal) = evaluate_quantity_unit(
-                        QuantityOperation::Power(unit_base, &exponent),
-                        &mut type_meter,
-                    )
-                    .map_err(|_| invariant("quantity-operation-rejected"))?;
-                    if quantity_unit(node.value_type()) != Some(&nominal.id()) {
-                        return Err(unsupported_construct(
-                            "dimension-equivalence-package-reconstruction",
-                        ));
-                    }
-                }
                 let (outcome, unit) = evaluate_quantity_unit(
                     QuantityOperation::Power(unit_base, &exponent),
                     self.meter,
@@ -3877,22 +3782,6 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
                 let target_type = node.value_type();
                 let carried_conversion = matches!(source_type, ValueType::CarriedQuantity(_))
                     || matches!(target_type, ValueType::CarriedQuantity(_));
-                if matches!(self.world, World::Bytes(_)) {
-                    let source = quantity_unit(source_type);
-                    let target = quantity_unit(target_type);
-                    if let (Some(source), Some(target)) = (source, target) {
-                        let source = self.units.get(source.clone());
-                        let target = self.units.get(target.clone());
-                        if source
-                            .zip(target)
-                            .is_some_and(|(source, target)| !source.converts_to(target))
-                        {
-                            return Err(unsupported_construct(
-                                "dimension-equivalence-package-reconstruction",
-                            ));
-                        }
-                    }
-                }
                 if let ValueType::Float(float) = target_type {
                     self.convert_to_float(node, &value, *float)?
                 } else if carried_conversion {

@@ -104,10 +104,10 @@ fn package() -> CheckedPackage {
 }
 
 /// Selected model enums evaluate actual values from source and the bytes-only
-/// carrier, preserving aliases, canonical ranks and return charge sequences.
+/// carrier, preserving aliases, canonical ranks and equality charge sequences.
 #[trace("FR-531-AC-8", "FR-531-AC-42", "FR-360-AC-8")]
 #[test]
-fn selected_model_enum_return_values_match_source_and_bare_evaluation() {
+fn selected_model_enum_values_match_source_and_bare_evaluation() {
     use fsl_eval::value::QualifiedName;
     use fsl_package::{BarePackage, BareSupply, ReadIdentityRows};
     use fsl_semantics::library::LibraryName;
@@ -119,7 +119,7 @@ fn selected_model_enum_return_values_match_source_and_bare_evaluation() {
     let models = package_input([document_bytes.as_slice()]).unwrap();
     let mut first = std::collections::BTreeMap::new();
     for alias in ["M", "Renamed"] {
-        let functions = format!("function pick using v(): {alias}::Tier pure {{ {alias}::Tier::Gold }}\nfunction pass using v(t: {alias}::Tier): {alias}::Tier pure {{ t }}\nfunction forwarded using v(): {alias}::Tier pure {{ pass({alias}::Tier::Standard) }}");
+        let functions = format!("function pick using v(): {alias}::Tier pure {{ {alias}::Tier::Gold }}\nfunction same using v(): Boolean pure {{ pick() = {alias}::Tier::Gold }}\nfunction other using v(): Boolean pure {{ pick() = {alias}::Tier::Standard }}\nfunction different using v(): Boolean pure {{ pick() != {alias}::Tier::Standard }}\nfunction not_same using v(): Boolean pure {{ pick() != {alias}::Tier::Gold }}\nfunction pass using v(t: {alias}::Tier): {alias}::Tier pure {{ t }}\nfunction forwarded using v(): {alias}::Tier pure {{ pass({alias}::Tier::Standard) }}");
         let package = package_functions(&document, alias, &functions);
         let emission = fsl_package::emit_checked(&package, fsl_package::EmitLimits::fixture())
             .expect("selected enums emit");
@@ -155,7 +155,14 @@ fn selected_model_enum_return_values_match_source_and_bare_evaluation() {
                 &mut budget(),
             )
             .unwrap();
-        for name in ["pick", "forwarded"] {
+        for (name, expected) in [
+            ("pick", None),
+            ("forwarded", None),
+            ("same", Some(true)),
+            ("other", Some(false)),
+            ("different", Some(true)),
+            ("not_same", Some(false)),
+        ] {
             let call = |route: &dyn CheckedPackageEvaluation| {
                 let mut meter = Meter::new(UNLIMITED);
                 let evaluation = route
@@ -176,21 +183,31 @@ fn selected_model_enum_return_values_match_source_and_bare_evaluation() {
             let FamilyOutcome::Evaluated(Outcome::Completed(bare_value)) = bytes.outcome else {
                 panic!("bare value: {bytes:?}")
             };
-            let (Value::Enum(source), Value::Enum(member)) = (&source_value, &bare_value) else {
-                panic!("{alias}::{name} returns an enum on both routes")
-            };
-            assert_eq!(source, member);
-            let (case, rank) = if name == "pick" {
-                ("Gold", 0)
+            if let Some(expected) = expected {
+                let (Value::Boolean(source), Value::Boolean(bytes)) = (&source_value, &bare_value)
+                else {
+                    panic!("{alias}::{name} returns Boolean on both routes");
+                };
+                assert_eq!(source, &expected);
+                assert_eq!(bytes, source);
             } else {
-                ("Standard", 1)
-            };
-            assert_eq!(member.variant().case(), case);
-            assert_eq!(member.rank(), rank);
-            if let Some(previous) = first.get(name) {
-                assert_eq!(previous, member, "alias-independent opaque identity");
+                let (Value::Enum(source), Value::Enum(member)) = (&source_value, &bare_value)
+                else {
+                    panic!("{alias}::{name} returns an enum on both routes")
+                };
+                assert_eq!(source, member);
+                let (case, rank) = if name == "pick" {
+                    ("Gold", 0)
+                } else {
+                    ("Standard", 1)
+                };
+                assert_eq!(member.variant().case(), case);
+                assert_eq!(member.rank(), rank);
+                if let Some(previous) = first.get(name) {
+                    assert_eq!(previous, member, "alias-independent opaque identity");
+                }
+                first.insert(name, member.clone());
             }
-            first.insert(name, member.clone());
             assert_eq!(
                 source_meter.admitted_charges(),
                 bytes_meter.admitted_charges(),
