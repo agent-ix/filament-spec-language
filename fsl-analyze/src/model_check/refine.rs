@@ -2733,6 +2733,16 @@ impl Run<'_, '_> {
                                     fault("candidate-summary-agrees-with-lasso-check").into()
                                 );
                             }
+                            // Enabledness here is read from the abstract model
+                            // state, not from the protocol configuration the
+                            // class fires from, so a refutation over a
+                            // protocol subject may be spurious and decides
+                            // nothing.
+                            if self.abstract_protocol.is_some() {
+                                return Err(End::Undecided(SafetyUndecided::Undetermined(
+                                    Undetermined::UndecidedSuccessor,
+                                )));
+                            }
                             let failing = self.first_unsatisfied_fairness_prefix(
                                 &next_path,
                                 &idempotent,
