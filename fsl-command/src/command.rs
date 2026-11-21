@@ -4022,8 +4022,12 @@ const TRANSFER_EXCLUSIVE: [(&str, fn(&wire::Request) -> bool); 9] = [
     ("clause", |request| request.clause.is_some()),
     ("items", |request| request.items.is_some()),
     ("tl_lowering", |request| request.tl_lowering.is_some()),
-    ("model_based_test", |request| request.model_based_test.is_some()),
-    ("verification_plan", |request| request.verification_plan.is_some()),
+    ("model_based_test", |request| {
+        request.model_based_test.is_some()
+    }),
+    ("verification_plan", |request| {
+        request.verification_plan.is_some()
+    }),
     ("synthesis", |request| request.synthesis.is_some()),
     ("export_evidence", |_| false),
 ];
@@ -4128,7 +4132,11 @@ fn validate_transfer_member(
             }
         }
     }
-    if request.models.iter().any(|model| !is_model_input_format(model)) {
+    if request
+        .models
+        .iter()
+        .any(|model| !is_model_input_format(model))
+    {
         return Err(RunCause::CompleteRunSelection(
             CompleteRunSelection::NativeModel,
         ));
