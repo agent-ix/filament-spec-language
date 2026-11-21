@@ -393,6 +393,19 @@ reference as data, without resolving it as an object or population member.
 The same rule applies inside `Option` and `Sequence` values, retaining their
 presence and element order. No additional snapshot value form is introduced.
 
+> Implementation boundary (QSL-2178 STEP1): the admission requirement above
+> and AC-72/AC-73 remain unmet. Source and Bare raw snapshot, context,
+> parameter and record-sample admission refuse external Clock references as
+> `unknown_required_feature`/`unsupported-feature`, naming
+> `missing-route-neutral-place-identity`, before interpreting a place ID.
+> The typed Rust `StateModel::observation` and `protocol_observation`
+> interfaces accept only states produced or already admitted within the same
+> model run; handcrafted Clock references are outside that trusted interface
+> contract. They do not authenticate hostile Rust caller values or references
+> transported from another model or run. Route-neutral identity is deferred
+> to STEP2, including map-keyed Clock-reference identities, which remain
+> unsupported. This note does not relax the required admission behavior.
+
 A set, bag or ordered-set value is the native spelling of FSpec FR-181's
 `set`, `bag` and `ordered-set` forms, with FSpec FR-144's "Supplied
 collection values" admission:

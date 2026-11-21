@@ -568,7 +568,7 @@ fn clock_reference_snapshot_refuses_an_undeclared_place() {
 fn clock_reference_external_observations_are_explicitly_unsupported() {
     use filament_semantic_value::admission::ObservationAdmission;
     use fsl_semantics::model::observation::{AdmissionFailure, ObservationLimits};
-    use serde_json::{json, Value as Json};
+    use serde_json::json;
     let checked = clock_reference_fixture(true);
     let package = CheckedPackage::link(checked.graph);
     let read = fsl_package::read_evaluation_package(
@@ -765,7 +765,15 @@ fn clock_reference_external_observations_are_explicitly_unsupported() {
     assert_unsupported(&record);
 
     let ordinary = check_clock_refinement(&clock_refinement("used = 0; busy = false;"))
-        .expect("ordinary fixture");
+        .unwrap_or_else(|refusals| {
+            panic!(
+                "ordinary fixture: {:?}",
+                refusals
+                    .iter()
+                    .map(|refusal| &refusal.refusal)
+                    .collect::<Vec<_>>()
+            )
+        });
     let ordinary_package = CheckedPackage::link(ordinary.graph);
     let ordinary_read = fsl_package::read_evaluation_package(
         &ordinary_package,
