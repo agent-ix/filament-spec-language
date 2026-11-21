@@ -32,11 +32,7 @@ pub fn normalize(
     }
     let mut path = Vec::new();
     for (position, (step, row)) in steps.iter().zip(rows).enumerate() {
-        let carrier = carrier(
-            &normalize_text(&row.member_type),
-            &steps[position + 1..],
-            &scope_of,
-        )?;
+        let carrier = carrier(&row.member_type, &steps[position + 1..], &scope_of)?;
         if position + 1 == steps.len() && carrier.leaf != CarrierLeaf::Clock {
             return Err(fault("clock-path-ends-in-validated-native-clock"));
         }
@@ -49,7 +45,7 @@ pub fn normalize(
                     }
                 } else {
                     let rendered = normalize_text(&row.declaring_type);
-                    let declaring = scope_of(without_optional(&rendered))?
+                    let declaring = scope_of(without_optional(&row.declaring_type))?
                         .ok_or_else(|| fault("clock-field-has-original-declaring-scope"))?;
                     let member =
                         normalize_member(without_optional(&rendered), &row.member_identity)?;
