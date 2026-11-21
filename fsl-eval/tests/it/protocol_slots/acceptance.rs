@@ -5312,11 +5312,11 @@ fn assert_guard_true_on_both_routes(source: &str, expected: &str) {
     charges_and_usage_match(expected, &checked_meter, &reader_meter);
 }
 
-/// FR-390-AC-28, FR-533: a bounded `Rational` literal keeps its exact
+/// FR-390-AC-75: a bounded `Rational` literal keeps its exact
 /// fraction through the reader view; `0 < 1/2 < 1` cannot hold if the literal
 /// is truncated to an integer.
 #[test]
-#[trace("TC-1070", "FR-390-AC-28")]
+#[trace("TC-1070", "FR-390-AC-75")]
 fn reader_backed_activation_guard_keeps_a_bounded_rational_literal_fraction() {
     let source = guard_source(
         "",
@@ -5326,11 +5326,11 @@ fn reader_backed_activation_guard_keeps_a_bounded_rational_literal_fraction() {
     assert_guard_true_on_both_routes(&source, "0 < rational(1, 2) < 1");
 }
 
-/// FR-390-AC-28, FR-533: dividing two `Rational` operands whose quotient is
+/// FR-390-AC-75: dividing two `Rational` operands whose quotient is
 /// not an integer gives the same value, outcome and charge log through the
 /// reader view as through the checked package.
 #[test]
-#[trace("TC-1070", "FR-390-AC-28")]
+#[trace("TC-1070", "FR-390-AC-75")]
 fn reader_backed_activation_guard_keeps_rational_division_fractional() {
     let source = guard_source(
         "",
@@ -5340,11 +5340,11 @@ fn reader_backed_activation_guard_keeps_rational_division_fractional() {
     assert_guard_true_on_both_routes(&source, "rational(1, 1) / rational(2, 1) = rational(1, 2)");
 }
 
-/// FR-390-AC-28, FR-533: integer `div` under the truncating law gives the same
+/// FR-390-AC-75: integer `div` under the truncating law gives the same
 /// value, outcome and charge log through the reader view as through the
 /// checked package.
 #[test]
-#[trace("TC-1070", "FR-390-AC-28")]
+#[trace("TC-1070", "FR-390-AC-75")]
 fn reader_backed_activation_guard_runs_integer_division() {
     let source = guard_source(
         "profile d = \"filament.value.integer-division.truncating/v1\";",
@@ -5354,11 +5354,11 @@ fn reader_backed_activation_guard_runs_integer_division() {
     assert_guard_true_on_both_routes(&source, "7 div 2 = 3 and -7 div 2 = -3");
 }
 
-/// FR-390-AC-28, FR-533: integer operands of `/` with a `Rational` result
+/// FR-390-AC-75: integer operands of `/` with a `Rational` result
 /// (the expected type promotes them exactly) give the same value, outcome and
 /// charge log through the reader view as through the checked package.
 #[test]
-#[trace("TC-1070", "FR-390-AC-28")]
+#[trace("TC-1070", "FR-390-AC-75")]
 fn reader_backed_activation_guard_keeps_integer_slash_fractional() {
     let source = guard_source(
         "",
