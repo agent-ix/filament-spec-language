@@ -652,16 +652,16 @@ mod tests {
             })
         );
 
-        let not_markov = settle(&StatisticalOutcome::Unsupported {
+        let not_markov_record = settle(&StatisticalOutcome::Unsupported {
             cause: StatisticalUnsupported::NotMarkov(Box::new(not_markov())),
             provenance: provenance(),
         });
         assert_eq!(
-            not_markov.value,
+            not_markov_record.value,
             TerminalValue::Unsupported(UnavailabilityCause::NotMarkov(Box::new(not_markov())))
         );
-        assert_eq!(not_markov.category(), Category::Unsupported);
-        assert!(wire(not_markov).get("basis").is_none());
+        assert_eq!(not_markov_record.category(), Category::Unsupported);
+        assert!(wire(not_markov_record).get("basis").is_none());
         let total = Integer::from(7_i64);
         let range = settle(&StatisticalOutcome::Unsupported {
             cause: StatisticalUnsupported::TotalAboveDrawRange {

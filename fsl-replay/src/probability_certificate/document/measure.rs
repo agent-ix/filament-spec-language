@@ -842,10 +842,15 @@ fn enumerate(
                         cancel,
                     )
                     .map_err(|error| distribution_error(error, &mut admission))?
-                    .map_err(|_| {
-                        ProbabilityDocumentError::Build(Box::new(
-                            crate::ExactProbBuildIssue::NotMarkov,
-                        ))
+                    .map_err(|stop| {
+                        ProbabilityDocumentError::Build(Box::new(match stop {
+                            fsl_eval::simulation::model::Unsteppable::NotMarkov(cause) => {
+                                crate::ExactProbBuildIssue::NotMarkov(Box::new(cause))
+                            }
+                            fsl_eval::simulation::model::Unsteppable::UndecidedSuccessor(_) => {
+                                crate::ExactProbBuildIssue::UndecidedSuccessor
+                            }
+                        }))
                     })?;
                 action_labels.push(None);
                 vec![steps
@@ -884,8 +889,28 @@ fn enumerate(
                         let mut distribution = Vec::new();
                         for draw in action.draws {
                             if draw.successors.is_empty() {
+                                let state = system
+                                    .state_key_bytes_with_budget(
+                                        &model,
+                                        fsl_foundation::IdentityLimits::default(),
+                                        &mut admission,
+                                        cancel,
+                                    )
+                                    .map_err(|error| admission.refusal(error))?;
                                 return Err(ProbabilityDocumentError::Build(Box::new(
-                                    crate::ExactProbBuildIssue::NotMarkov,
+                                    crate::ExactProbBuildIssue::NotMarkov(Box::new(
+                                        fsl_eval::simulation::model::NotMarkov {
+                                            state:
+                                                fsl_eval::simulation::StateKey::from_canonical_bytes(
+                                                    state,
+                                                ),
+                                            transition: action.identity,
+                                            drawn_transition: draw.transition,
+                                            random: draw.random,
+                                            post_states: 0,
+                                            post_state_examples: Vec::new(),
+                                        },
+                                    )),
                                 )));
                             }
                             if draw.successors.len() == 1 {
