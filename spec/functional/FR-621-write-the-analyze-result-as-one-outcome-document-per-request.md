@@ -129,6 +129,32 @@ Each item, in request order, carries:
 | `accounting` | The item's FSpec FR-331 accounting record: the limits applied, the method and seed where they apply, the limits the run reached (`reached`), and `settled_by`. With `exploration` it is the item's budget use. |
 | `exploration` | For an item whose engine explores states: `{"states", "transitions", "automaton_states"}`, the states stored, transitions expanded and claim-automaton states, each an ASCII decimal count. Absent for a closed-form or provider item. |
 | `axes` | The four outcome axes of FR-622, for an item that has an activation scope. Every `monitor` item has one, the activation of the clause it monitors, so every `monitor` item carries `axes` as FR-622 and FR-286 state; a `simulation` item carries FR-634's members instead. |
+| `notes` | The item's non-fatal notes: facts about how the item was written that change neither its settlement nor its category and that a reader would otherwise lose. Present exactly when the item has at least one note, a non-empty array of closed objects `{"code", "details"}`, ascending by `code` and then by the `details` members in the order the table below lists them. Each `code` is one of the closed list below; `details` is that code's closed object. |
+
+### Item notes
+
+Some facts about an item are worth reporting and are not failures: an
+engine found more sampled witnesses than the request keeps, or it holds a
+witness it cannot write in the FSpec wire form. Before this member the
+analyze document had no place for them. The FSpec FR-331 record and
+counterexample carry only what their schemas name, and the document-level
+FR-286 `diagnostic` describes a refusal and has closed `details` with no item
+index, so a writer had to drop the fact or turn it into a failure. `notes`
+is the one carrier for such facts on an item:
+
+| `code` | `details` | Written when |
+| --- | --- | --- |
+| `witnesses-beyond-limit` | `{"kept", "found"}`, each an ASCII decimal count | A statistical item's engine found `found` sampled witnesses (FR-193) and the item's FSpec FR-410 verdict keeps the first `kept` of them in trace-index order, `kept` being the request's `max_witnesses`, with `found > kept`. |
+| `witness-omitted` | `{"test", "trace", "at"}`: the witness's FR-410 `test` index and trace index as ASCII decimal counts, and `at` the RFC 6901 pointer, rooted at the witness object, of the first member that has no FSpec FR-410 spelling | A sampled witness the engine kept is not written to the verdict's `witnesses`, because one of its members has no wire spelling. One note per such witness, so the verdict's `witnesses` and the item's `witness-omitted` notes together account for every kept witness. |
+
+A note SHALL change nothing else: the item's record, category, settlement,
+exit code contribution (FR-285), certificate and counterexample are what
+they are without it, and no FSpec obligation, result or replay identity
+reads `notes`. The writer SHALL write a note exactly when its condition
+holds and SHALL NOT write a note for a fact a record member already carries.
+A document whose items have no notes is byte-identical to one written
+before this member, and every note's bytes are a function of the item, so
+equal requests still give byte-identical documents (FR-620).
 
 The settlement of an item is its record's `settled_by` together with, for a
 disposition record, the negotiation disposition and diagnostic the record
@@ -257,6 +283,7 @@ The Counter fixture is FR-620's.
 | FR-621-AC-12 | A malformed `native-analyze/1` document gives `last_stage` `null`; a program the checker refuses gives `S3`; a snapshot naming the undeclared population `ix://test/counter/nowhere` gives `S4`; and a request cancelled before its first item gives `null`. | Test (TC-2382) |
 | FR-621-AC-13 | A request over FR-246-AC-1's `Ctl` with the third WCET 6 and the items `CtlFp` and `CtlEdf` gives two `refuted` items, category `violation`, exit 10, each with a `counterexample` entry whose `counterexample` is FSpec FR-419's `schedulability-miss`: for `CtlFp` `analysis` `fixed-priority` and `miss` `{"kind": "response", "task": "c", "job": "0", "iterates": [6, 10, 13], "response": 13, "bound": 12}` in unit `ms`, for `CtlEdf` `analysis` `edf` and `miss` `{"kind": "utilization", "utilization": 13/12}`; neither carries `replay`, the document's `last_stage` is `S7`, and no item is refused for a missing counterexample. Over the unchanged `Ctl` both items are `proved` with no `counterexample`. | Test (TC-2960) |
 | FR-621-AC-14 | A hybrid item whose `bounded-solver` proof FSpec FR-193 settles `insufficient-horizon` and whose entry carries a `flowpipe` writes `certificate` with exactly `identity` and `form`; a refuted hybrid item that exact replay reproduces and whose provider entry carried a `validated-witness` writes `certificate` with exactly `identity` and `form`; FSpec FR-652-AC-5's accepted certificate writes `checker`, `accepted` `true` and `form`; its `[1, 10]` variant writes `accepted` `false`, `rule` `jump` and `at` `/certificate/steps/160`; a witness check the work limit stops writes the `incomplete` item with `accepted` `false`, `rule` `work-limit` and an `at` rooted at `/certificate`. | Test (TC-3035) |
+| FR-621-AC-15 | A statistical `probability` item over FR-193's violating model with `max_witnesses` 2, whose engine finds five sampled witnesses, writes a `measured` record with two `witnesses`, the first two in trace-index order, and `notes` `[{"code": "witnesses-beyond-limit", "details": {"kept": "2", "found": "5"}}]`; with `max_witnesses` 8 the item has no `notes` member. A kept witness with a member that has no FSpec FR-410 spelling is left out of `witnesses` and named by one `witness-omitted` note holding its `test`, its `trace` and the pointer `at` of that member, and the notes sort by `code` then `test` then `trace`. In each case the item's record, category, exit code and every identity are those of the same item with `notes` removed. | Test (TC-3136) |
 
 ## Dependencies
 
