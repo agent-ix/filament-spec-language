@@ -3,6 +3,7 @@
 //! definedness obligation at check, `Kernel` records none and leaves it to
 //! the evaluator. Every assertion compares typed causes and locations.
 
+use filament_exact::IllTypedCause;
 use filament_semantic_value::checking::{CheckMode, CheckingLimits};
 use filament_semantic_value::location::ExpressionOwner as Origin;
 use fsl_forms::build_unit;
@@ -267,7 +268,8 @@ fn an_unproved_nonempty_reduction_checks_only_under_kernel() {
 fn a_count_range_in_a_state_clause_refuses_under_both_modes() {
     let clause = "type Zero = Int[0, 0];\n\
                   invariant I using v on Config::ConfigVersion at current { \
-                  count<Zero>(m in sequence[self.versionNumber]: m >= 0) = 0 }\n";
+                  let q: Sequence<Integer>[0, 1] = sequence[self.versionNumber] in \
+                  count<Zero>(m in q: m >= 0) = 0 }\n";
     for mode in [CheckMode::Linked, CheckMode::Kernel] {
         let refusals = crate::model_operations::admit_and_assemble_with_body(
             &crate::model_operations::tc465_document(),
@@ -296,4 +298,38 @@ fn a_count_range_in_a_state_clause_refuses_under_both_modes() {
          count<Int[0, 0]>(m in q: m >= 0) }",
         |found| matches!(found, Obligation::Range { .. }),
     );
+}
+
+/// FR-766-AC-9 (TC-2240): a collection literal is `count`'s source with no
+/// expected type, so it refuses `ill_typed`/`ambiguous-literal` in a declared
+/// state clause under both modes.
+#[trace("TC-2240", "FR-766-AC-9")]
+#[test]
+fn an_unannotated_literal_count_source_is_an_ambiguous_literal() {
+    let clause = "type Zero = Int[0, 0];\n\
+                  invariant I using v on Config::ConfigVersion at current { \
+                  count<Zero>(m in sequence[self.versionNumber]: m >= 0) = 0 }\n";
+    for mode in [CheckMode::Linked, CheckMode::Kernel] {
+        let refusals = crate::model_operations::admit_and_assemble_with_body(
+            &crate::model_operations::tc465_document(),
+            clause,
+        )
+        .unwrap_or_else(|refusal| panic!("assembly succeeds: {refusal:?}"))
+        .check(
+            mode,
+            CheckingLimits::default(),
+            &crate::reward_evaluator::ZeroRewardEvaluator,
+        )
+        .expect_err("a bare literal source has no type");
+        assert!(
+            matches!(
+                refusals.as_slice(),
+                [CheckRefusal {
+                    cause: CheckCause::IllTyped(IllTypedCause::AmbiguousLiteral),
+                    ..
+                }]
+            ),
+            "{mode:?}: {refusals:?}"
+        );
+    }
 }
