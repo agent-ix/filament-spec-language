@@ -155,6 +155,29 @@ fn canonical_run_values_refuse_legacy_and_malformed_inputs() {
     assert_eq!(plain(&path).exit, 20);
 }
 
+/// A value-only call has no model work to charge, even when its result is
+/// emitted through the borrowed canonical writer.
+#[test]
+#[trace("FR-650-AC-23")]
+fn canonical_run_without_models_preserves_zero_model_work_limit() {
+    let (_case, path) = remaining();
+    let mut limits = fsl_replay::spine::SpineLimits::default();
+    limits.model.work_units = 0;
+    let outcome = run(
+        &path,
+        RunLimits::default(),
+        &RequestOverrides {
+            limits: Some(&limits),
+            ..RequestOverrides::default()
+        },
+    );
+    let document = outcome.expect("execute", "success", 0);
+    assert_eq!(
+        document["result"]["value"],
+        json!({"type":"integer","value":"12"})
+    );
+}
+
 /// Native selections retain their index and order through the owned runner.
 #[test]
 #[trace("FSpec-FR-550-AC-3", "FR-651-AC-1")]
@@ -202,11 +225,7 @@ fn canonical_run_values_items_keep_selection_order_and_individual_results() {
     }
 }
 
-/// Population materialization keeps document order internally, while native
-/// population arguments retain their declared form and references can be reused.
-#[test]
-#[trace("FR-650-AC-15", "FR-651-AC-2")]
-fn canonical_run_population_materialization_and_reference_roundtrip() {
+fn reference_call_world() -> (Case, Value, &'static str) {
     let case = Case::new();
     case.write("domain.json", config_domain::DOMAIN_PACKAGE.as_bytes());
     let source = format!("language \"ix:native\" edition \"1-draft\";\nprofile v = \"filament.model.complete/v1\";\nmodel Config = {:?};\nfunction Keep using v(x: Config::ConfigVersion): Config::ConfigVersion pure {{ x }}\nfunction Find using v(p: Population<Config::ConfigVersion>[4], r: Config::ConfigVersion): Config::ConfigVersion pure {{ lookup<Config::ConfigVersion>(p, r) absent refused }}\n", config_domain::PACKAGE_IDENTITY);
@@ -232,6 +251,15 @@ fn canonical_run_population_materialization_and_reference_roundtrip() {
         "file":"domain.json","authority":"test","identity":"domain",
         "document":"Domain","formal_revision":1
     }}]);
+    (case, job, population)
+}
+
+/// Population materialization keeps document order internally, while native
+/// population arguments retain their declared form and references can be reused.
+#[test]
+#[trace("FR-650-AC-15", "FR-651-AC-2")]
+fn canonical_run_population_materialization_and_reference_roundtrip() {
+    let (case, mut job, population) = reference_call_world();
     let body = job["request"].as_object_mut().unwrap();
     body.remove("call");
     body.insert(
@@ -276,6 +304,56 @@ fn canonical_run_population_materialization_and_reference_roundtrip() {
     job["request"]["call"] = json!({"function":"Keep","snapshot":"current.json",
         "arguments":[{"parameter":"x","value":{"reference":{"population":population,"key":"root"}}}]});
     assert_eq!(plain(&case.json("legacy-reference.json", &job)).exit, 20);
+}
+
+/// The package route retains the genuine snapshot normalization owners and
+/// strict artifact identities, then reads its own canonical reference result.
+#[test]
+#[trace("FR-945-AC-1", "FR-650-AC-22")]
+fn canonical_run_package_reference_roundtrip_uses_retained_snapshot_owners() {
+    let (case, mut job, population) = reference_call_world();
+    let mut compile = job["request"].clone();
+    compile.as_object_mut().unwrap().remove("call");
+    compile["output"] = json!({"package":"package.json"});
+    compile["handoff"] = json!({"directory":"handoff","package_name":"canonical-world",
+        "native_join":{"work_units":1_000_000,"storage":16_777_216}});
+    fsl_command::command::compile(&case.json(
+        "compile.json",
+        &json!({
+            "format":"native-compile/1","request":compile
+        }),
+    ))
+    .expect("the genuine checked package and its identity witnesses are emitted");
+    let body = job["request"].as_object_mut().unwrap();
+    body.remove("call");
+    body.insert(
+        "items".into(),
+        json!({"observations":{"current":"current.json"},
+            "selections":[{"call":{"function":"Keep","snapshot":"current",
+                "arguments":[{"parameter":"x","value":{"each":{"population":population}}}]}}]
+        }),
+    );
+    let source = plain(&case.json("source-reference.json", &job));
+    assert_eq!(source.exit, 0, "{}", source.document);
+    let reference = source.document["items"][0]["result"]["outcome"]["value"].clone();
+    assert_eq!(reference["type"], "reference");
+    std::fs::remove_file(case.path("world.native")).unwrap();
+    let body = job["request"].as_object_mut().unwrap();
+    body.remove("program");
+    body.remove("items");
+    body.insert("package".into(), json!({"directory":"handoff"}));
+    body.insert(
+        "call".into(),
+        json!({"function":"Keep","snapshot":"current.json",
+        "arguments":[{"parameter":"x","value":reference}]}),
+    );
+    let first = plain(&case.json("package-reference.json", &job));
+    assert_eq!(first.exit, 0, "{}", first.document);
+    assert_eq!(first.document["result"]["value"], reference);
+    job["request"]["call"]["arguments"][0]["value"] = first.document["result"]["value"].clone();
+    let second = plain(&case.json("package-reference-again.json", &job));
+    assert_eq!(second.exit, 0, "{}", second.document);
+    assert_eq!(second.document["result"]["value"], reference);
 }
 
 /// Run the owner-maintained corpus in place; the source checkout is never

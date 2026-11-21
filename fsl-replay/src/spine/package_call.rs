@@ -204,7 +204,13 @@ fn run_package_resolving(
     let catalog = match (call.canonical_values, views, joins) {
         (true, Some(models), Some(joins)) => Some(
             fsl_package::ReferenceCatalog::from_admitted_call(package.package(), models, joins)
-                .map_err(super::run_value::catalog_refusal)?,
+                .map_err(|cause| {
+                    cancel.poll();
+                    match cancel.tripped() {
+                        Some(cause) => Box::new(RunRefusal::Cancelled(cause)),
+                        None => super::run_value::catalog_refusal(cause),
+                    }
+                })?,
         ),
         _ => None,
     };

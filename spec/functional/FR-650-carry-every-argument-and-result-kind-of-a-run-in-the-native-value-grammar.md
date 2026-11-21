@@ -112,6 +112,9 @@ declaration, at `reference.catalog` or `reference.result`. Snapshot admission
 SHALL retain each model's original owner; selecting a declaration SHALL NOT
 substitute the first model's owner or create a fresh allowance. A denied
 charge SHALL preserve its typed normalization refusal and charge point.
+With no snapshot, canonical output SHALL NOT spend model-normalization work
+or construct a reference catalog; its borrowed writer retains physical
+allocation admission.
 
 The native forms below remain the internal admission representation and
 the contract of the separately exposed spine and clause readers. They are
@@ -471,6 +474,8 @@ function id_opt using v(a: Option<Int[0, 9]>): Option<Int[0, 9]> pure { a }
 | FR-650-AC-19 | The public run command refuses an untagged integer, a bare integer, a tagged integer with noncanonical decimal spelling, an unknown member, and an out-of-domain integer, each with exit 20. Request and dependent-byte exhaustion remain incomplete with no completed value. | Test |
 | FR-650-AC-20 | Genuine canonical argument membership and execution each fit a supplied admission-work limit independently, but their combined work on the same supplied run exceeds it and returns the typed supplied-value limit refusal. Reference codec conversion retains its separately cumulative conversion-work counter on that same run. | Test |
 | FR-650-AC-21 | A genuine checked-call reference catalog exhausts its original normalization owner's remaining work allowance and returns `NormalizationIncomplete` at `reference.catalog`, retaining the configured limit, prior consumption and denied charge. | Test |
+| FR-650-AC-22 | A checked-package call over a genuine admitted snapshot accepts a canonical reference and returns that same canonical reference; feeding the result into another package call completes unchanged after the original program file is removed. The catalog and writer use the same snapshot admission's retained normalization owners. | Test |
+| FR-650-AC-23 | A call with no models and no snapshot completes with its canonical value when `model.work_units` is zero; canonical output does not introduce model work into that value-only call. | Test |
 
 ## Dependencies
 

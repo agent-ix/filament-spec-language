@@ -5,6 +5,7 @@ use filament_exact::{IntegerDecimalBudget, Reservation, ReservationDenied};
 use fsl_eval::simulation::model::ModelKeyError;
 use fsl_foundation::diagnostic::Code;
 
+use crate::reference_budget::{NormalizationReferenceBudget, PhysicalReferenceBudget};
 use crate::reference_codec::{ReferenceCodecError, ReferenceFailure};
 
 pub(crate) fn catalog_refusal(
@@ -35,7 +36,13 @@ pub(crate) fn catalog_error_code(cause: &fsl_package::ReferenceCatalogError) -> 
             filament_contract_model::ExactTypeProjectionErrorCode::UnsupportedExactType => {
                 Code::UnknownRequiredFeature
             }
-            _ => Code::InvalidPackage,
+            filament_contract_model::ExactTypeProjectionErrorCode::UnknownNode
+            | filament_contract_model::ExactTypeProjectionErrorCode::ForeignNode
+            | filament_contract_model::ExactTypeProjectionErrorCode::UnavailableIdentityWitness
+            | filament_contract_model::ExactTypeProjectionErrorCode::IncompleteIdentityWitness
+            | filament_contract_model::ExactTypeProjectionErrorCode::MismatchedIdentityWitness
+            | filament_contract_model::ExactTypeProjectionErrorCode::ConflictingIdentityWitness
+            | filament_contract_model::ExactTypeProjectionErrorCode::UnresolvedSelectedDeclaration => Code::InvalidPackage,
         },
         ReferenceCatalogError::UnknownDeclaration
         | ReferenceCatalogError::ConflictingMapping
@@ -95,6 +102,12 @@ pub(crate) fn write_run_value(
         budget,
         cancel,
     );
+    cancel.poll();
+    if let Some(cause) = cancel.tripped() {
+        return Err(super::WriteStop::Refusal(Box::new(
+            super::super::RunRefusal::Cancelled(cause),
+        )));
+    }
     if let Some(refusal) = take_normalization_refusal(budget) {
         return Err(super::WriteStop::Refusal(refusal));
     }
@@ -112,6 +125,12 @@ pub(crate) fn write_run_value(
             crate::reference_codec::admit_native_value_bytes(&written, budget, cancel, usize::MAX)
         }
     };
+    cancel.poll();
+    if let Some(cause) = cancel.tripped() {
+        return Err(super::WriteStop::Refusal(Box::new(
+            super::super::RunRefusal::Cancelled(cause),
+        )));
+    }
     if let Some(refusal) = take_normalization_refusal(budget) {
         return Err(super::WriteStop::Refusal(refusal));
     }
@@ -165,8 +184,6 @@ impl IntegerDecimalBudget for SuppliedReferenceAdmission<'_> {
         Ok(())
     }
 }
-
-use crate::reference_budget::{NormalizationReferenceBudget, PhysicalReferenceBudget};
 
 pub(crate) fn take_normalization_refusal(
     budget: &mut NormalizationReferenceBudget<'_>,

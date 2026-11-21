@@ -1079,7 +1079,7 @@ pub(crate) fn run_compiled(
         models.selected_models(),
         fsl_semantics::model::accounting::ChargePoint::ReferenceCatalog,
     );
-    let catalog_result = if call.canonical_values {
+    let catalog_result = if call.canonical_values && call.snapshot.is_some() {
         Some(fsl_package::ReferenceCatalog::from_checked_call(
             package,
             models.selected_models(),
@@ -1088,6 +1088,10 @@ pub(crate) fn run_compiled(
     } else {
         None
     };
+    cancel.poll();
+    if let Some(cause) = cancel.tripped() {
+        return Err(Box::new(RunRefusal::Cancelled(cause)));
+    }
     if let Some(refusal) = super::run_value::take_normalization_refusal(&mut reference_joins) {
         return Err(refusal);
     }
@@ -1125,10 +1129,13 @@ pub(crate) fn run_compiled(
         }
     };
     let encode_value = |value: &Value| {
-        let mut admission = super::run_value::NormalizationReferenceBudget::source(
-            models.selected_models(),
-            fsl_semantics::model::accounting::ChargePoint::ReferenceResult,
-        );
+        let mut admission = match &reference_catalog {
+            Some(_) => super::run_value::NormalizationReferenceBudget::source(
+                models.selected_models(),
+                fsl_semantics::model::accounting::ChargePoint::ReferenceResult,
+            ),
+            None => super::run_value::NormalizationReferenceBudget::physical(),
+        };
         super::run_value::write_run_value(
             value,
             package.graph().scope().types(),
@@ -1155,7 +1162,6 @@ pub(crate) fn run_compiled(
         package.graph().scope().types(),
         package.graph().scope().enums(),
     )
-    .with_variants(package.graph().scope().variant_types())
     .with_canonical_writer(&encode_value)
     .in_world(own_package, world.as_ref());
     let supplied = admit_wire_arguments(&forms, selected.parameters, call, &supplied_run)?;
