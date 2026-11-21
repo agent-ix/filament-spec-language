@@ -424,16 +424,16 @@ fn bounded_raw_cycle_has_distinct_real_horizons_and_exact_ranks() {
         .as_array()
         .unwrap()
         .iter()
-        .filter(|row| key(&row["state"])[3][1][2][0] == "bounded")
+        .filter(|row| key(&row["state"])[5][1][2][0] == "bounded")
         .collect();
     assert_eq!(running.len(), 2);
     let first = key(&running[0]["state"]);
     let second = key(&running[1]["state"]);
     assert_eq!(
-        first[2], second[2],
+        first[4], second[4],
         "raw model state is the same on both visits"
     );
-    assert_ne!(first[3], second[3]);
+    assert_ne!(first[5], second[5]);
     let mut ranks: Vec<_> = running
         .iter()
         .map(|row| row["rank"].as_u64().unwrap())
@@ -554,12 +554,12 @@ fn bounded_altered_horizon_binding_and_rank_never_certify_the_original_claim() {
     for alteration in ["horizon", "binding", "local-id", "absent"] {
         let changed = mutate(&request, |doc| {
             alter_keys(doc, |state| {
-                if state[3][1][2][0] == "bounded" {
+                if state[5][1][2][0] == "bounded" {
                     match alteration {
-                        "binding" => state[3][1][1][3] = json!([]),
-                        "horizon" => state[3][1][2][1][1] = json!("9"),
-                        "local-id" => state[3][1] = json!(1),
-                        "absent" => state[3] = Value::Null,
+                        "binding" => state[5][1][1][3] = json!([]),
+                        "horizon" => state[5][1][2][1][1] = json!("9"),
+                        "local-id" => state[5][1] = json!(1),
+                        "absent" => state[5] = Value::Null,
                         _ => unreachable!("closed test cases"),
                     }
                 }

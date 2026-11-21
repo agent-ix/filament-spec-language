@@ -430,7 +430,8 @@ pub use probability_certificate::{
 };
 pub use probability_certificate::{
     admit_expected_reward_certificate_subject, check_claim_exact_reachability,
-    check_probability_certificate_document, check_probability_certificate_source, claim_binding,
+    check_probability_certificate_document, check_probability_certificate_package,
+    check_probability_certificate_source, claim_binding,
     cyclic_mdp_probability_certificate_document,
     cyclic_mdp_reward_probability_certificate_document, digital_probability_product_key,
     long_run_probability_certificate_document, probabilistic_claim_identity,
@@ -452,7 +453,8 @@ pub use probability_certificate::{
     ProbabilityProductKey, ProbabilityProofDocument, ProbabilityRewardObjective,
     TimedProbabilityForm, TimedProbabilityObjective, TimedProbabilityRoute,
     RegionClockKey, RegionDeadlineKey, RegionKeyKind, RegionProductKeyInput,
-    ProbabilitySourceError, ProbabilitySourceLimits, ProbabilitySourceRequest,
+    ProbabilityPackageRequest, ProbabilitySourceError, ProbabilitySourceLimits,
+    ProbabilitySourceRequest,
     ProbabilityStateEvent, ProbabilityWitnessError, ProbabilityWitnessPath,
     ProbabilityWitnessReplay, ProbabilityWitnessStep, ReproducedProbabilityWitness,
     WeightedLongRunProbabilityDocument,

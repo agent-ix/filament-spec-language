@@ -498,14 +498,14 @@ fn a_formula_product_embeds_the_real_complete_monitor_without_inner_transport() 
     .expect("both owner keys admit");
     let parsed: serde_json::Value = serde_json::from_slice(key.as_bytes()).unwrap();
     assert_eq!(
-        parsed[2],
+        parsed[4],
         serde_json::json!([
             "filament.simulation.state-key/v1",
             serde_json::from_slice::<serde_json::Value>(model.as_bytes()).unwrap()
         ])
     );
     assert_eq!(
-        parsed[3],
+        parsed[5],
         serde_json::json!([
             "formula",
             serde_json::from_slice::<serde_json::Value>(monitor.as_bytes()).unwrap()

@@ -349,7 +349,17 @@ fn product_key(node: NodeRef<'_>) -> Result<ProbabilityProductKey, ProductAction
         items.first().map(NodeRef::node),
         Some(Node::String(PRODUCT_KEY_TAG))
     );
-    if !tagged || items.len() != 6 {
+    if !tagged || items.len() != 8 {
+        return Err(ProductActionRefusal::Shape);
+    }
+    let instance = matches!(items[2].node(), Node::Null | Node::Array(_));
+    let activation = matches!(
+        items[3].node(),
+        Node::Null | Node::String("waiting" | "active")
+    );
+    // FR-196 pairs the `on each` instance with its activation phase.
+    let paired = matches!(items[2].node(), Node::Null) == matches!(items[3].node(), Node::Null);
+    if !instance || !activation || !paired {
         return Err(ProductActionRefusal::Shape);
     }
     let bytes = to_vec(&node, LIMITS).map_err(|_| ProductActionRefusal::NotCanonical)?;
@@ -678,7 +688,7 @@ mod tests {
     #[test]
     fn every_body_round_trips_through_its_jcs_octets() {
         let rows = format!(r#"[[[[{A},"9"]],[[{B},"1"]]],[[[{A},"10"]],[[{B},"2"]]]]"#);
-        let key = r#"["filament.probability-product-key/v1",null,["m"],null,null,null]"#;
+        let key = r#"["filament.probability-product-key/v1",null,null,null,["m"],null,null,null]"#;
         for text in [
             body(&rows),
             format!(r#"["identity",{A}]"#),

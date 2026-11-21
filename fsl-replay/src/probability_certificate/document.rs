@@ -572,11 +572,11 @@ fn decode_key(
     let quire_canonical::Node::Array(parts) = key.root().node() else {
         return Err(ProbabilityDocumentError::Malformed);
     };
-    if parts.len() != 6 {
+    if parts.len() != 8 {
         return Err(ProbabilityDocumentError::Unsupported);
     }
     let parts = parts.collect::<Vec<_>>();
-    if parts.len() != 6
+    if parts.len() != 8
         || !parts.first().is_some_and(|part| {
             matches!(
                 part.node(),

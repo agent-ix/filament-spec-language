@@ -229,6 +229,32 @@ fn not_yet() -> EngineReport {
     EngineReport::Refused(Refusal::Unsupported(NOT_YET))
 }
 
+/// How a failed unbounded solve settles: a reached limit names itself, any
+/// other fault is the engine's.
+fn unbounded_failure(
+    error: UnboundedError,
+    limits: &crate::exact_probabilistic::ExactProbLimits,
+    subject: SubjectLimits<'_>,
+) -> EngineReport {
+    match error {
+        UnboundedError::MaxPolicyIterations => settled(
+            &ExactProbBuildIssue::Limit {
+                limit: ModelCheckLimit::ExactProbMaxPolicyIterations,
+                value: limits.max_policy_iterations,
+            },
+            subject,
+        ),
+        UnboundedError::MaxRationalBits => settled(
+            &ExactProbBuildIssue::Limit {
+                limit: ModelCheckLimit::ExactProbMaxRationalBits,
+                value: limits.max_rational_bits,
+            },
+            subject,
+        ),
+        _ => broken(),
+    }
+}
+
 fn broken() -> EngineReport {
     EngineReport::Refused(Refusal::Failed(BROKEN))
 }
@@ -1029,25 +1055,7 @@ fn run(
         };
         let solved = match result {
             Ok(solved) => solved,
-            Err(UnboundedError::MaxPolicyIterations) => {
-                return settled(
-                    &ExactProbBuildIssue::Limit {
-                        limit: ModelCheckLimit::ExactProbMaxPolicyIterations,
-                        value: limits.max_policy_iterations,
-                    },
-                    subject,
-                );
-            }
-            Err(UnboundedError::MaxRationalBits) => {
-                return settled(
-                    &ExactProbBuildIssue::Limit {
-                        limit: ModelCheckLimit::ExactProbMaxRationalBits,
-                        value: limits.max_rational_bits,
-                    },
-                    subject,
-                );
-            }
-            Err(_) => return broken(),
+            Err(error) => return unbounded_failure(error, &limits, subject),
         };
         (solved.values, solved.policy)
     };
@@ -1864,21 +1872,42 @@ fn replay_refutation(
             crate::exact_probabilistic::WitnessError::InvalidState
         })
     };
-    let produced = if let Some(stopped) = stopped.as_deref() {
-        crate::exact_probabilistic::produce_witness_stopping(
-            product,
-            policy,
-            scope,
-            initial,
-            &accepting,
-            Some(stopped),
-            &past,
-            limits,
-            &mut control,
-        )
-    } else {
-        produce_witness(product, policy, scope, initial, &accepting, &past, limits)
+    let mut produce = |policy: &[Option<usize>]| {
+        if let Some(stopped) = stopped.as_deref() {
+            crate::exact_probabilistic::produce_witness_stopping(
+                product,
+                policy,
+                scope,
+                initial,
+                &accepting,
+                Some(stopped),
+                &past,
+                limits,
+                &mut control,
+            )
+        } else {
+            produce_witness(product, policy, scope, initial, &accepting, &past, limits)
+        }
     };
+    let mut produced = produce(policy);
+    if matches!(produced, Ok(None)) {
+        // Actions tied at the optimal value need not reach a failure: a
+        // minimizing scheduler may loop where it is free to lose. Whatever
+        // scheduler's failure paths outweigh `past` refutes the bound, so
+        // retry with the one that reaches a failure most, never continuing
+        // past a state a direct event has already decided.
+        let retried = match stopped.as_deref() {
+            None => decide_reachability(product, &accepting, UnboundedObjective::Max, limits),
+            Some(stopped) => {
+                let open = stopped.iter().map(|stopped| !stopped).collect::<Vec<_>>();
+                decide_until(product, &open, &accepting, UnboundedObjective::Max, limits)
+            }
+        };
+        match retried {
+            Ok(result) => produced = produce(&result.policy),
+            Err(error) => return unbounded_failure(error, limits, subject),
+        }
+    }
     if cancel.poll() {
         if let Some(cause) = cancel.tripped() {
             return settled(&ExactProbBuildIssue::Cancelled(cause), subject);

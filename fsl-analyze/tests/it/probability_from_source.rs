@@ -4,6 +4,7 @@
 //! `Link` model (random losses on two sends, a `cost` reward and the
 //! workload `Even`), which S4 emits as a checked package (FR-740).
 
+use ix_trace_rs::trace;
 use serde_json::{json, Value};
 
 use crate::prob_world::{self, World};
@@ -232,22 +233,22 @@ fn statistical_method_from_source(method: &str, method_selection: Value) {
     );
 }
 
-#[ix_trace_rs::trace("TC-2066", "FR-741-AC-1")]
-#[ix_trace_rs::trace("FSpec-TC-1564", "FSpec-FR-641-AC-1")]
+#[trace("TC-2066", "FR-741-AC-1")]
+#[trace("FSpec-TC-1564", "FSpec-FR-641-AC-1")]
 #[test]
 fn statistical_okamoto_from_source() {
     statistical_method_from_source("okamoto", json!({"type": "okamoto"}));
 }
 
-#[ix_trace_rs::trace("TC-2066", "FR-741-AC-1")]
-#[ix_trace_rs::trace("FSpec-TC-1564", "FSpec-FR-641-AC-1")]
+#[trace("TC-2066", "FR-741-AC-1")]
+#[trace("FSpec-TC-1564", "FSpec-FR-641-AC-1")]
 #[test]
 fn statistical_sprt_from_source() {
     statistical_method_from_source("sprt", json!({"type": "sprt"}));
 }
 
-#[ix_trace_rs::trace("TC-2066", "FR-741-AC-1")]
-#[ix_trace_rs::trace("FSpec-TC-1564", "FSpec-FR-641-AC-1")]
+#[trace("TC-2066", "FR-741-AC-1")]
+#[trace("FSpec-TC-1564", "FSpec-FR-641-AC-1")]
 #[test]
 fn statistical_regenerative_from_source() {
     statistical_method_from_source(
@@ -290,7 +291,7 @@ fn timed_sampling_from_source() {
 
 /// FR-741-AC-3 (timed half): a timed probabilistic source claim uses the exact EN-5
 /// digital-clock product and retains its independently checkable certificate.
-#[ix_trace_rs::trace("TC-2066", "FR-741-AC-3")]
+#[trace("TC-2066", "FR-741-AC-3")]
 #[test]
 #[ignore = "QSL-2156: EN-5 timed digital-clock dispatch and certificates (PR #3204) not landed yet"]
 fn pta_from_source() {
@@ -311,9 +312,9 @@ fn pta_from_source() {
 /// FR-741-AC-2: an exact unbounded reachability item settles `proved` with
 /// the exact value `391/400` and carries its accepted `exact` certificate
 /// document in the item result.
-#[ix_trace_rs::trace("TC-2066", "FR-741-AC-2")]
-#[ix_trace_rs::trace("FSpec-TC-1564", "FSpec-FR-641-AC-2")]
-#[ix_trace_rs::trace("TC-2065", "FR-203-AC-8")]
+#[trace("TC-2066", "FR-741-AC-2")]
+#[trace("FSpec-TC-1564", "FSpec-FR-641-AC-2")]
+#[trace("TC-2065", "FR-203-AC-8")]
 #[test]
 fn an_exact_item_settles_proved_with_its_certificate() {
     let document = run(
@@ -372,8 +373,8 @@ fn exact_finite_horizon_from_source() {
 
 /// FR-741-AC-3 (negative): an exact item whose value misses its threshold
 /// settles `refuted` with a counterexample whose replay reproduced it.
-#[ix_trace_rs::trace("TC-2066", "FR-741-AC-3")]
-#[ix_trace_rs::trace("TC-2065", "FR-203-AC-8")]
+#[trace("TC-2066", "FR-741-AC-3")]
+#[trace("TC-2065", "FR-203-AC-8")]
 #[test]
 fn probability_refuted_from_source() {
     let document = run(
@@ -456,8 +457,8 @@ fn probabilistic_witness_replays() {
 /// FR-741-AC-4 (negative): an unbounded exact-only claim requested with
 /// statistical evidence settles `unsupported` `exact-only-form` with no
 /// sample drawn.
-#[ix_trace_rs::trace("TC-2066", "FR-741-AC-4")]
-#[ix_trace_rs::trace("FSpec-TC-1564", "FSpec-FR-641-AC-3")]
+#[trace("TC-2066", "FR-741-AC-4")]
+#[trace("FSpec-TC-1564", "FSpec-FR-641-AC-3")]
 #[test]
 fn an_exact_only_claim_with_statistical_evidence_is_unsupported() {
     let document = run(
@@ -479,8 +480,8 @@ fn an_exact_only_claim_with_statistical_evidence_is_unsupported() {
 
 /// FR-186-AC-10 (TC-2167): an `on each` probabilistic claim compiles and
 /// settles a verdict per instance from source, never `unsupported`.
-#[ix_trace_rs::trace("TC-2167", "FR-186-AC-10")]
-#[ix_trace_rs::trace("FSpec-TC-1650", "FSpec-FR-407-AC-17")]
+#[trace("TC-2167", "FR-186-AC-10")]
+#[trace("FSpec-TC-1650", "FSpec-FR-407-AC-17")]
 #[test]
 #[ignore = "QSL-2151: the `on each` activation of a probabilistic claim not checked yet"]
 fn probabilistic_on_each_settles_per_instance() {
@@ -545,8 +546,8 @@ fn run_from(name: &str, claims: &str, start: Vec<u8>, items: Value) -> Value {
 
 /// FR-875-AC-1 (TC-2485): an `on each` claim over an empty population settles
 /// `inconclusive` with `no-instance`, never `proved` and never `unsupported`.
-#[ix_trace_rs::trace("TC-2485", "FR-875-AC-1")]
-#[ix_trace_rs::trace("FSpec-TC-1650", "FSpec-FR-407-AC-17")]
+#[trace("TC-2485", "FR-875-AC-1")]
+#[trace("FSpec-TC-1650", "FSpec-FR-407-AC-17")]
 #[test]
 #[ignore = "QSL-2151: an on-each probabilistic claim over an empty population settling inconclusive no-instance not implemented yet"]
 fn probabilistic_on_each_empty_population() {
@@ -563,8 +564,8 @@ fn probabilistic_on_each_empty_population() {
 
 /// FR-875-AC-2 (TC-2486): an instance that never activates holds vacuously
 /// and is never the failing instance.
-#[ix_trace_rs::trace("TC-2486", "FR-875-AC-2")]
-#[ix_trace_rs::trace("FSpec-TC-1650", "FSpec-FR-407-AC-17")]
+#[trace("TC-2486", "FR-875-AC-2")]
+#[trace("FSpec-TC-1650", "FSpec-FR-407-AC-17")]
 #[test]
 #[ignore = "QSL-2151: a never-activating on-each instance holding vacuously from source not implemented yet"]
 fn probabilistic_on_each_never_activating_instance_is_vacuous() {
@@ -592,7 +593,7 @@ fn probabilistic_on_each_never_activating_instance_is_vacuous() {
 
 /// FR-875-AC-3 (TC-2487): a refuted `on each` item names its first failing
 /// instance in key order, and a rerun gives the same item.
-#[ix_trace_rs::trace("TC-2487", "FR-875-AC-3")]
+#[trace("TC-2487", "FR-875-AC-3")]
 #[test]
 #[ignore = "QSL-2151: naming the first failing on-each instance from source not implemented yet"]
 fn probabilistic_on_each_names_first_failing_instance() {
@@ -616,7 +617,7 @@ fn probabilistic_on_each_names_first_failing_instance() {
 /// FR-741-AC-5 (TC-3062): an `on each` proof carries a `conditional`
 /// certificate, and its refutation names the failing instance in the
 /// counterexample's `instance` member.
-#[ix_trace_rs::trace("TC-3062", "FR-741-AC-5")]
+#[trace("TC-3062", "FR-741-AC-5")]
 #[test]
 #[ignore = "QSL-2151: conditional certificates and the counterexample instance member not implemented yet"]
 fn probabilistic_on_each_reports_conditional_certificate_and_instance() {
@@ -696,9 +697,8 @@ fn run_unit(name: &str, source: &str) -> Value {
 
 /// FR-876-AC-1 (TC-2488): a unit without `random` lines compiles with no
 /// diagnostic about them, and its every-scheduler item reaches a verdict.
-#[ix_trace_rs::trace("TC-2488", "FR-876-AC-1")]
+#[trace("TC-2488", "FR-876-AC-1")]
 #[test]
-#[ignore = "QSL-2159: every-scheduler claims over a unit without random lines settling from source not implemented yet"]
 fn every_scheduler_without_random_compiles() {
     let source = without_random();
     assert!(!source.contains("random "), "{source}");
@@ -711,10 +711,9 @@ fn every_scheduler_without_random_compiles() {
 /// FR-876-AC-2 (TC-2488, negative): without `random` lines the scheduler may
 /// lose both sends, so the minimum is 0 and the item is refuted with a
 /// replayed counterexample.
-#[ix_trace_rs::trace("TC-2488", "FR-876-AC-2")]
-#[ix_trace_rs::trace("FSpec-TC-1766", "FSpec-FR-724-AC-1")]
+#[trace("TC-2488", "FR-876-AC-2")]
+#[trace("FSpec-TC-1766", "FSpec-FR-724-AC-1")]
 #[test]
-#[ignore = "QSL-2159: refuting an every-scheduler claim over a unit without random lines not implemented yet"]
 fn every_scheduler_without_random_is_refuted() {
     let document = run_unit("every-no-random-refuted", &without_random());
     let item = &document["items"][0];
@@ -722,10 +721,92 @@ fn every_scheduler_without_random_is_refuted() {
     assert_eq!(item["replay"]["reproduced"], true, "{item}");
 }
 
+/// FR-876-AC-2: the refutation's value is 0. The replayed witness paths are
+/// the scheduler's losses and carry the whole mass, so the claim's event has
+/// probability 0.
+#[trace("TC-2488", "FR-876-AC-2")]
+#[test]
+fn the_refutation_without_random_has_value_zero() {
+    let mut model = prob_world::link(EVERY);
+    model.body = model
+        .body
+        .lines()
+        .filter(|line| !line.starts_with("random "))
+        .collect::<Vec<_>>()
+        .join("\n")
+        + "\n";
+    let world = World::new(&model);
+    let engines = Engines::fsl().expect("the linked engines register");
+    let record = analyze_items(
+        &engines,
+        vec![exact_probabilistic_item(
+            RequestIndex::new(0),
+            world.request("Every", ModelCheckLimits::default()),
+        )],
+        &Cancel::new(),
+    )
+    .remove(0);
+    let witness = record
+        .probabilistic_counterexample
+        .expect("the refutation retains replayed witness evidence");
+    assert_eq!(
+        witness.mass(),
+        &filament_exact::Rational::from_integer(1_i64.into())
+    );
+}
+
+/// FR-876-AC-2 for a state-predicate form: an every-scheduler `always` claim
+/// without `random` lines is refuted with a replayed counterexample too.
+#[trace("TC-2488", "FR-876-AC-2")]
+#[test]
+fn every_scheduler_always_without_random_is_refuted() {
+    let claim = "probabilistic StaysUp using inf on M over (m: M::Msg) under every scheduler \
+         on origin { probability >= rational(9, 10) [ always holds(m.attempts = 0 or m.delivered) ] }";
+    let source = unit(claim)
+        .lines()
+        .filter(|line| !line.starts_with("random "))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let ws = Workspace::new("every-always-no-random-refuted");
+    let request = request_over(
+        &ws,
+        &source,
+        LINK_MODEL,
+        &[LINK_START.to_vec()],
+        json!({"items": [{"claim": "StaysUp", "probabilistic": {"evidence": "exact"}}]}),
+    );
+    let document = analyze(&request).document();
+    let item = &document["items"][0];
+    assert_eq!(label(item), "refuted", "{item}");
+    assert_eq!(item["replay"]["reproduced"], true, "{item}");
+}
+
+/// FR-741-AC-2: §15.3's long-run item through `fsl analyze` settles with an
+/// accepted certificate of kind `long-run`.
+#[trace("TC-2066", "FR-741-AC-2")]
+#[test]
+fn a_long_run_item_settles_with_a_long_run_certificate() {
+    let claim = "probabilistic LongRun using inf on M over (m: M::Msg) under Even on origin \
+         { long_run_fraction holds(m.delivered) >= rational(391, 400) }";
+    let ws = Workspace::new("long-run-from-source");
+    let request = request_over(
+        &ws,
+        &unit(claim),
+        LINK_MODEL,
+        &[LINK_START.to_vec()],
+        json!({"items": [{"claim": "LongRun", "probabilistic": {"evidence": "exact"}}]}),
+    );
+    let document = analyze(&request).document();
+    let item = &document["items"][0];
+    assert_eq!(label(item), "proved", "{item}");
+    assert_eq!(item["certificate"]["accepted"], true, "{item}");
+    assert_eq!(item["certificate"]["kind"], "long-run", "{item}");
+}
+
 /// FR-876-AC-3 (TC-2488): with its `random` lines the same claim's minimum
 /// over schedulers is `24/25` and the item is proved.
-#[ix_trace_rs::trace("TC-2488", "FR-876-AC-3")]
-#[ix_trace_rs::trace("FSpec-TC-1766", "FSpec-FR-724-AC-2")]
+#[trace("TC-2488", "FR-876-AC-3")]
+#[trace("FSpec-TC-1766", "FSpec-FR-724-AC-2")]
 #[test]
 fn exact_every_scheduler_from_source() {
     let document = run_unit("every-random-proved", &unit(EVERY));
@@ -778,8 +859,8 @@ fn exact_fair_scheduler_from_source() {
     );
 }
 
-#[ix_trace_rs::trace("TC-2066", "FR-741-AC-1")]
-#[ix_trace_rs::trace("FSpec-TC-1564", "FSpec-FR-641-AC-1")]
+#[trace("TC-2066", "FR-741-AC-1")]
+#[trace("FSpec-TC-1564", "FSpec-FR-641-AC-1")]
 #[test]
 fn statistical_clopper_pearson_from_source() {
     statistical_method_from_source("clopper-pearson", json!({"type": "clopper-pearson"}));
@@ -794,7 +875,7 @@ const MEAN_DELIVERED: &str =
 /// FR-741-AC-4 (negative): a `mean of` claim requested with `sprt` settles
 /// `invalid-request` `not-statistical`, and `statistical.max_samples` 10
 /// settles `incomplete` `LimitReached` naming `statistical.max_samples`.
-#[ix_trace_rs::trace("TC-2066", "FR-741-AC-4")]
+#[trace("TC-2066", "FR-741-AC-4")]
 #[test]
 fn statistical_refusals_and_budgets_from_source() {
     let document = run(
@@ -833,7 +914,7 @@ fn statistical_refusals_and_budgets_from_source() {
 /// FR-741 request members: an absent method of a long-run fraction is
 /// `regenerative` with `min_cycles` 100, of a bounded form `okamoto`; FSL
 /// writes every budget the caller leaves out at its published default.
-#[ix_trace_rs::trace("TC-2066", "FR-741-AC-1")]
+#[trace("TC-2066", "FR-741-AC-1")]
 #[test]
 fn absent_probabilistic_members_take_their_published_defaults() {
     let long_run = run_health_long_run(
@@ -884,7 +965,7 @@ fn delay_weighting_from_source_is_not_yet_implemented_not_a_method_error() {
 
 /// FR-741 "Request": an item with no `probabilistic` member at all reaches a
 /// verdict, and its request echo carries every default FSL wrote.
-#[ix_trace_rs::trace("TC-2066", "FR-741-AC-1")]
+#[trace("TC-2066", "FR-741-AC-1")]
 #[test]
 fn an_item_with_no_probabilistic_member_takes_every_default() {
     let document = run(
@@ -931,7 +1012,7 @@ fn assert_valid(compiled: &jsonschema::JSONSchema, instance: &Value, what: &str)
 /// against FSpec's backend-provider schema (`StatisticalVerdict`); the exact
 /// `proved` item's certificate carries the members FR-621 names, and its
 /// schema validation is an open spelling gap (see the comments below).
-#[ix_trace_rs::trace("TC-2066", "FR-741-AC-1", "FR-741-AC-2")]
+#[trace("TC-2066", "FR-741-AC-1", "FR-741-AC-2")]
 #[test]
 fn measured_and_proved_items_validate_against_the_backend_provider_schema() {
     let measured = run(
@@ -984,7 +1065,7 @@ fn measured_and_proved_items_validate_against_the_backend_provider_schema() {
 /// FR-410: a `measured` verdict spells each test's `over` binding as a typed
 /// reference and its `instance` as null; no witness is written until every
 /// member of it has a schema-valid spelling.
-#[ix_trace_rs::trace("TC-2066", "FR-741-AC-1")]
+#[trace("TC-2066", "FR-741-AC-1")]
 #[test]
 fn a_verdict_spells_its_bindings_and_instances() {
     let document = run(
@@ -1008,7 +1089,7 @@ fn a_verdict_spells_its_bindings_and_instances() {
 /// `probabilistic.limits` reach EN-5, so `max_states` 1 settles
 /// `incomplete` naming `exact_prob.max_states`, and an unknown limit member
 /// is an invalid value of the item.
-#[ix_trace_rs::trace("TC-2066", "FR-741-AC-2")]
+#[trace("TC-2066", "FR-741-AC-2")]
 #[test]
 fn exact_limits_from_source_reach_the_engine() {
     let document = run(
