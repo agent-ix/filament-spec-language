@@ -317,7 +317,7 @@ pub use model_check::hyper_replay::{
     replay_model_relation_tuple, HyperReplay, ModelRelationReplay, ModelRelationReplayInput,
 };
 pub use model_check::hyper_settle::{
-    settle_hyper_check, settle_hyper_form, settle_hyper_smt, HyperRecord, HyperSettleRefusal,
+    settle_hyper_check, settle_hyper_form, settle_hyper_smt, settle_model_relation_check, HyperRecord, HyperSettleRefusal,
     LimitOrigin, ProductMember, UsedLimit,
 };
 pub use model_check::hyper_smt_outcome::{HyperSmtOutcome, HyperSmtResult, SmtMethod};

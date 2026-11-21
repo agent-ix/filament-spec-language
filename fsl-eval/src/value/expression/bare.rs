@@ -1946,3 +1946,67 @@ mod tests {
         );
     }
 }
+
+/// FR-940: run an HP-1 body using only its admitted reader projection.
+pub(crate) fn evaluate_model_relation_tuple(
+    package: &BarePackage<'_>,
+    relation: &crate::simulation::model::ModelRelationDescriptor,
+    tuple: crate::simulation::model::ModelRelationTuple<'_>,
+    meter: &mut Meter,
+) -> Result<super::ModelRelationEvaluation, InternalFault> {
+    use fsl_package::AnalysisView;
+    use fsl_semantics::model::clause_observation::Observation;
+    let fault = || InternalFault::new("S6a", "relation-package-form-projects");
+    let declaration = package
+        .package()
+        .resolved_graph()
+        .nodes
+        .iter()
+        .find(|node| package.node_key(&node.node_id).as_ref() == Some(relation.occurrence().node()))
+        .ok_or_else(fault)?
+        .node_id
+        .clone();
+    let claim = fsl_package::ClaimOccurrence {
+        declaration,
+        occurrence: fsl_package::CheckedOccurrence {
+            role: fsl_package::CheckedOccurrenceRole::Claim,
+            ordinal: relation.occurrence().origin().ordinal(),
+        },
+    };
+    let form = package.model_relation_form(&claim).map_err(|_| fault())?;
+    let body = package.project_model_relation(&form).map_err(|_| fault())?;
+    if body.executions() != relation.executions()
+        || body.parameters() != relation.parameters()
+        || tuple.pre.len() != relation.executions().len()
+        || tuple.post.len() != tuple.pre.len()
+    {
+        return Err(fault());
+    }
+    let arguments = super::bind_model_relation_transitions(
+        relation.executions(),
+        body.parameters(),
+        tuple.transitions,
+        tuple.results,
+    )?;
+    let current = tuple.post.first().copied().ok_or_else(fault)?;
+    let world = package.world().map_err(|_| fault())?;
+    let observations = body
+        .projection()
+        .pre_read_locations()
+        .into_iter()
+        .map(|location| (location, Observation::Pre))
+        .collect::<BTreeMap<_, _>>();
+    let evaluation = Machine::with_world(World::Bytes(&world), current, None, None, meter, &[])
+        .with_components(super::evaluate::ComponentReads {
+            environments: tuple.post,
+            pre_environments: Some(tuple.pre),
+            reads: body.components(),
+            observations: Some(&observations),
+        })
+        .run(
+            ReaderNode::root(body.projection()),
+            body.projection().frame_slots(),
+            arguments,
+        )?;
+    super::settle_model_relation_evaluation(evaluation)
+}

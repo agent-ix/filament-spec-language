@@ -46,9 +46,16 @@ pub use composition_view::{
 #[cfg(feature = "std")]
 pub mod occurrence_source;
 #[cfg(feature = "std")]
+mod model_relation_form;
+#[cfg(feature = "std")]
 pub use analysis_view::{AnalysisView, ClaimOccurrence, DependencyClosure};
 #[cfg(feature = "std")]
 pub use model_input_form::UnreadModelForm;
+#[cfg(feature = "std")]
+pub use model_relation_form::{
+    BareModelRelation, ModelRelationFormRefusal, ModelRelationRead, ModelRelationSubject,
+    PackageModelRelationForm,
+};
 #[cfg(feature = "std")]
 mod bare;
 #[cfg(feature = "std")]

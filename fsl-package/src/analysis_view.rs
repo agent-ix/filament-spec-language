@@ -214,8 +214,15 @@ pub trait AnalysisView: sealed::Sealed {
         self.package().temporal_clause_names().unwrap_or_default()
     }
 
-    /// The admitted `claim_names` rows, in package order (FR-940 "Claim
-    /// names"). Empty when the package carries none.
+    /// Select the HP-1 model form from an already admitted claim occurrence.
+    fn model_relation_form(
+        &self,
+        claim: &ClaimOccurrence,
+    ) -> Result<crate::PackageModelRelationForm, crate::ModelRelationFormRefusal> {
+        crate::model_relation_form::model_relation_form(self.package(), claim)
+    }
+
+    /// The admitted claim-name rows, in package order.
     fn claim_names(&self) -> &[ClaimNameRow] {
         self.package().claim_names().unwrap_or_default()
     }

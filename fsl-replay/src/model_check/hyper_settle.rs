@@ -212,6 +212,53 @@ pub fn settle_hyper_check(
     cancel: &Cancel,
     replay: impl FnOnce(&HyperCounterexample) -> Result<ModelTraceSettlement, ReplayRefusal>,
 ) -> Result<HyperRecord, HyperSettleRefusal> {
+    settle_hyper_check_with(
+        outcome,
+        limits,
+        requested,
+        certificate.map(CertificateInputs::Product),
+        cancel,
+        replay,
+    )
+}
+
+/// Settle HP-1 evidence through the same map using source-free originals.
+///
+/// # Errors
+///
+/// As [`settle_hyper_check`], using the independent relation checker.
+pub fn settle_model_relation_check(
+    outcome: &HyperOutcome,
+    limits: &ModelCheckLimits,
+    requested: &[ModelCheckLimit],
+    certificate: &crate::ModelRelationClosureRequest<'_>,
+    cancel: &Cancel,
+    replay: impl FnOnce(&HyperCounterexample) -> Result<ModelTraceSettlement, ReplayRefusal>,
+) -> Result<HyperRecord, HyperSettleRefusal> {
+    settle_hyper_check_with(
+        outcome,
+        limits,
+        requested,
+        Some(CertificateInputs::Relation(certificate)),
+        cancel,
+        replay,
+    )
+}
+
+#[derive(Clone, Copy)]
+enum CertificateInputs<'a, 'p> {
+    Product(&'a crate::ProductClosureRequest<'p>),
+    Relation(&'a crate::ModelRelationClosureRequest<'p>),
+}
+
+fn settle_hyper_check_with(
+    outcome: &HyperOutcome,
+    limits: &ModelCheckLimits,
+    requested: &[ModelCheckLimit],
+    certificate: Option<CertificateInputs<'_, '_>>,
+    cancel: &Cancel,
+    replay: impl FnOnce(&HyperCounterexample) -> Result<ModelTraceSettlement, ReplayRefusal>,
+) -> Result<HyperRecord, HyperSettleRefusal> {
     let mut counterexample = None;
     let mut depth = None;
     let mut covers = None;
@@ -244,13 +291,30 @@ pub fn settle_hyper_check(
         HyperOutcome::Holds { certificates, .. }
         | HyperOutcome::HoldsReduced { certificates, .. } => {
             let request = certificate.ok_or(HyperSettleRefusal::CertificateRequestMissing)?;
-            crate::certificate::product::complete_scope(request, certificates)?;
+            match request {
+                CertificateInputs::Product(originals) => {
+                    crate::certificate::product::complete_scope(originals, certificates)?
+                }
+                CertificateInputs::Relation(_)
+                    if certificates.len() == 1 && certificates[0].instance.is_empty() => {}
+                CertificateInputs::Relation(_) => {
+                    return Err(crate::ProductClosureRefusal::Input("certificate-scope").into())
+                }
+            }
             if certificates.is_empty() {
                 return Err(crate::ProductClosureRefusal::Input("empty-certificates").into());
             }
             let mut stopped = None;
             for proof in certificates {
-                match crate::check_product_closure(request, proof, limits, cancel)? {
+                let checked = match request {
+                    CertificateInputs::Product(originals) => {
+                        crate::check_product_closure(originals, proof, limits, cancel)?
+                    }
+                    CertificateInputs::Relation(originals) => {
+                        crate::check_model_relation_closure(originals, proof, limits, cancel)?
+                    }
+                };
+                match checked {
                     crate::ProductClosureCheck::Accepted => {}
                     crate::ProductClosureCheck::Rejected(rejection) => {
                         stopped = Some(Row::inconclusive(InconclusiveCause::CertificateRejected {
