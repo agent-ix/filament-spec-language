@@ -1279,8 +1279,15 @@ fn read_wire(
         ));
     }
     let mut values = Vec::new();
-    for row in wire.values {
-        let state = decode_state(&row.state, limits, cancel, storage)?;
+    eprintln!(
+        "QSL2158-DIAG measure depth={depth} values begin rows={} storage={storage}",
+        wire.values.len()
+    );
+    for (index, row) in wire.values.into_iter().enumerate() {
+        let state = decode_state(&row.state, limits, cancel, storage).map_err(|error| {
+            eprintln!("QSL2158-DIAG values row={index} storage={storage}: {error:?}");
+            error
+        })?;
         let value = parse_rational(row.value, meter)?;
         if values
             .last()
@@ -1298,9 +1305,16 @@ fn read_wire(
         )?;
         values.push(ExactProbabilityValue { state, value });
     }
+    eprintln!(
+        "QSL2158-DIAG measure depth={depth} values end storage={storage}; ranking begin rows={}",
+        wire.ranking.len()
+    );
     let mut ranking = Vec::new();
-    for row in wire.ranking {
-        let state = decode_state(&row.state, limits, cancel, storage)?;
+    for (index, row) in wire.ranking.into_iter().enumerate() {
+        let state = decode_state(&row.state, limits, cancel, storage).map_err(|error| {
+            eprintln!("QSL2158-DIAG ranking row={index} storage={storage}: {error:?}");
+            error
+        })?;
         if row.rank > MAX_COUNT
             || ranking
                 .last()
@@ -1388,8 +1402,14 @@ fn decode_measure_probability_certificate(
     )?;
     let wire: WireDocument =
         serde_json::from_slice(bytes).map_err(|_| ProbabilityDocumentError::Malformed)?;
+    eprintln!(
+        "QSL2158-DIAG measure decode read_wire begin bytes={} storage={storage}",
+        bytes.len()
+    );
     let document = read_wire(wire, limits, cancel, meter, storage, 0)?;
+    eprintln!("QSL2158-DIAG measure decode canonical begin storage={storage}");
     let canonical = encode_with_storage(&document, limits, cancel, storage)?;
+    eprintln!("QSL2158-DIAG measure decode end storage={storage}");
     if canonical != bytes {
         return Err(ProbabilityDocumentError::Noncanonical);
     }
@@ -2065,6 +2085,7 @@ pub(super) fn check(
             (numerator, ProbabilityCertificatePart::Numerator),
             (denominator, ProbabilityCertificatePart::Denominator),
         ] {
+            eprintln!("QSL2158-DIAG ratio part={part_name:?} begin storage={storage}");
             let part_plan = plan_for_part(
                 system,
                 claim,
@@ -2329,6 +2350,7 @@ fn charge(storage: &mut u64, bound: u64, bytes: u64) -> Result<(), ProbabilityDo
         .checked_add(bytes)
         .ok_or(ProbabilityDocumentError::KeySizeOverflow)?;
     if actual > bound {
+        eprintln!("QSL2158-DIAG measure storage denied used={storage} next={bytes} bound={bound} actual={actual}");
         return Err(exceeded(
             ProbabilityDocumentLimit::StorageBytes,
             bound,

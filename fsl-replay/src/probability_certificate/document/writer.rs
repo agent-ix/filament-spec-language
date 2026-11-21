@@ -41,6 +41,10 @@ impl<'a> Admission<'a> {
         }
         let actual = self.used.saturating_add(bytes as u64);
         if actual > self.bound {
+            eprintln!(
+                "QSL2158-DIAG writer storage denied used={} next={bytes} bound={} actual={actual}",
+                self.used, self.bound
+            );
             self.stopped = Some(exceeded(
                 ProbabilityDocumentLimit::StorageBytes,
                 self.bound,

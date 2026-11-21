@@ -661,3 +661,29 @@ Exact df2460d71671b173a71a9b0fc7e38ace62030c43 compile-only all seven touched pa
 Plan completion: not assessed
 
 No new gap analysis or matrix run; earlier scoped qualifications remain.
+
+## Targeted Binding compiler verification round 6
+
+Frozen source `e7787487c512f4f40662d291d0bc8422d7bffe9b`; same independent Codex reviewer.
+
+**Latest targeted source verdict: PASS. Overall CONDITIONAL pending compile-only and focused runtime.**
+
+Targeted test compiler correction only. The entire source delta is four added `..` rest patterns in existing Binding destructures in fsl-replay/src/spine/clause/tests.rs. Each continues to bind exactly the same name/value or context/frame values; it now permits the additional binder field without attempting to match it. All existing pattern alternatives, literal checks, names, reference targets, panic paths and assertions remain verbatim. The fifth Binding pattern already had a rest pattern. No production change, fixture change, weakened assertion, unrelated warning cleanup or expanded review. Source inspection clears the four reported E0027 sites; it does not establish compilation/runtime acceptance.
+
+Every prior source clearance and fixed/rejected/deferred finding outcome remains preserved, including CR023 fixed, CR021/022 fixed under the accepted prepaid interval, CR002 rejected and generic GA002 architecture-deferred. No new finding, full code/gap/BASE/matrix/global analysis or source mutation. Earlier artifacts remain verbatim prefixes. Source remains clean/frozen; read-only diff --check passes.
+
+Parent reports prior df246 architecture-directed seven-package --tests check exit101 with exactly four E0027 at spine/clause/tests.rs3841/3951/4452/5114, Binding patterns omit binder; raw /private/tmp/qsl-3285-df24-compile.log. Same seven-package compile-only queued at exacte778; focused46 runtime is HOLD. Compile/runtime results pending, no46-test acceptance or merge clearance. No local cargo/tests/gates run.
+
+Plan completion: not assessed
+
+No new gap analysis; existing scoped qualifications remain unchanged.
+
+## Actual e778 compile and runtime evidence
+
+**Latest overall verdict: FAIL, runtime acceptance blocked.** Earlier targeted static compiler/source clearances remain historical source findings outcomes; they are not runtime acceptance.
+
+Exact e7787487c512f4f40662d291d0bc8422d7bffe9b seven-touched-package --tests compile-only EXIT0/13.09s, remote /private/tmp/qsl-3285-e778-compile.log. First focused measure_profile module:30 selected,1 passed,29 failed,0 ignored,2578 filtered,0.25s,exit101; commands2–17 held/not run. Verified raw runtime /tmp/qsl-3285-e778-runtime-1.log. No46-test acceptance or merge clearance.
+
+Observed failure clusters are S1 `expected (` in mean/fraction fixtures; `delivered` wrong-value-kind admissions/producer Declined InvalidInput; residual Undefined expected Refuted but actual Failed runtime_invariant; vacuity control expectation failure; and P95 emitted-package independent checker StorageBytes bound8000000 actual8000015. Only `an_undefined_measure_after_merged_draws_replays_a_real_positive_draw` passed. These are observed failures, not established common root causes. The raw log was read for this evidence update.
+
+Per parent direction, no new source review, finding hunt, test rerun or source mutation was performed. No failing test was bent/deleted and no budget was raised. Coder is diagnosing the clusters read-only; parent requested an architecture ruling before corrections because29 failures exceed the standing single-test scope. Await later bounded authorization/frozen head before targeted verification. All prior fixed/rejected/deferred source dispositions remain preserved; no mergeable claim.

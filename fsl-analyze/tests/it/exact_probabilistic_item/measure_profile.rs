@@ -12,7 +12,7 @@ fn retry(claims: &str) -> prob_world::Model {
         fields:vec![("delivered",prob_world::BOOLEAN.into())],
         operations:["fast","slow"].into_iter().map(|name| prob_world::Operation { name,parameters:vec![("lost","ix://test/retry/Lost".into())],modifies:vec!["delivered"],deletes:false }).collect(),
         body:format!("pre Fast using v on M::Msg::fast {{ not self.delivered }}\npost FastDone using v on M::Msg::fast {{ self.delivered = (lost = 1) }}\npre Slow using v on M::Msg::slow {{ not self.delivered }}\npost SlowDone using v on M::Msg::slow {{ self.delivered = (lost = 1) }}\nrandom Msg::fast(lost) ~ {{ 0:1,1:1 }};\nrandom Msg::slow(lost) ~ {{ 0:3,1:1 }};\nworkload Steady on M {{ weight Msg::fast=1; weight Msg::slow=0; }}\nterminal Done using v on M when {{ self.delivered }};\n{claims}"),
-        initial:json!({"delivered":false}),
+        initial:json!({"delivered":{"boolean":false}}),
     }
 }
 fn claim(name: &str, scheduler: &str, body: &str) -> String {
@@ -274,7 +274,7 @@ fn comparison_event_and_fraction_mean_use_distinct_exact_payoffs() {
         ) + &claim(
             "Mean",
             "Steady",
-            "mean of fraction holds(m.delivered) over [0,2] >= rational(2,5)",
+            "mean of (fraction holds(m.delivered) over [0,2]) >= rational(2,5)",
         )),
     ));
     let event = proof(&world, "Event", ratio(3, 4));
@@ -398,7 +398,7 @@ fn a_draw_with_multiple_post_states_retains_its_full_pending_control() {
 #[trace("TC-3152", "FR-1043-AC-5", "FR-196-AC-11")]
 #[test]
 fn a_completed_fraction_does_not_read_an_outside_window_deleted_object() {
-    let model=prob_world::coin("probabilistic Mean using ev on M over (c:M::Coin) under Even on origin { mean of fraction holds(c.v = 0) over [0,0] >= rational(1,2) }");
+    let model=prob_world::coin("probabilistic Mean using ev on M over (c:M::Coin) under Even on origin { mean of (fraction holds(c.v = 0) over [0,0]) >= rational(1,2) }");
     let world = World::new(&model);
     proof(&world, "Mean", ratio(1, 1));
 }
@@ -409,7 +409,7 @@ fn measure_and_fraction_undefined_reads_replay_the_unadvanced_control() {
     for form in [
         "probability >= 0.5 [steps from holds(c.v = 0) until holds(c.v = 1) within 2 <= 1]",
         "quantile 0.5 of (steps from holds(c.v = 0) until holds(c.v = 1) within 2) <= 1",
-        "mean of fraction holds(c.v = 0) over [0,2] >= rational(1,2)",
+        "mean of (fraction holds(c.v = 0) over [0,2]) >= rational(1,2)",
     ] {
         let source = format!(
             "probabilistic Q using ev on M over (c:M::Coin) under Even on origin {{ {form} }}"
@@ -999,15 +999,15 @@ fn workload_mean_refutation_uses_a_checked_subsystem_and_equality_never_refutes(
     let claims = claim(
         "No",
         "Steady",
-        "mean of fraction holds(m.delivered) over [0,2] >= rational(1,2)",
+        "mean of (fraction holds(m.delivered) over [0,2]) >= rational(1,2)",
     ) + &claim(
         "EqualGe",
         "Steady",
-        "mean of fraction holds(m.delivered) over [0,2] >= rational(5,12)",
+        "mean of (fraction holds(m.delivered) over [0,2]) >= rational(5,12)",
     ) + &claim(
         "EqualLe",
         "Steady",
-        "mean of fraction holds(m.delivered) over [0,2] <= rational(5,12)",
+        "mean of (fraction holds(m.delivered) over [0,2]) <= rational(5,12)",
     );
     let world = World::new(&retry(&claims));
     let record = settle(&world, "No", ModelCheckLimits::default());
@@ -1134,11 +1134,11 @@ fn every_scheduler_exact_mean_witness_attains_the_deciding_extremum() {
     let claims = claim(
         "MinNo",
         "every scheduler",
-        "mean of fraction holds(m.delivered) over [0,2] >= rational(1,2)",
+        "mean of (fraction holds(m.delivered) over [0,2]) >= rational(1,2)",
     ) + &claim(
         "MaxNo",
         "every scheduler",
-        "mean of fraction holds(m.delivered) over [0,2] <= rational(1,3)",
+        "mean of (fraction holds(m.delivered) over [0,2]) <= rational(1,3)",
     );
     let world = World::new(&retry(&claims));
     let system = ModelSystem::new(world.subject().simulation).unwrap();
@@ -1339,11 +1339,11 @@ fn bounded_mean_refutation_roles_accept_upper_minimum_and_partial_lower_maximum(
             &(claim(
                 "Min",
                 scheduler,
-                "mean of fraction holds(m.delivered) over [0,2] >= rational(1,2)",
+                "mean of (fraction holds(m.delivered) over [0,2]) >= rational(1,2)",
             ) + &claim(
                 "Max",
                 scheduler,
-                "mean of fraction holds(m.delivered) over [0,2] <= rational(1,3)",
+                "mean of (fraction holds(m.delivered) over [0,2]) <= rational(1,3)",
             )),
         ));
         for (name, lower) in [("Min", false), ("Max", true)] {
@@ -1490,7 +1490,7 @@ fn bounded_fair_measure_proofs_and_native_refutations_keep_the_same_optimum() {
     ) + &claim(
         "MeanNo",
         "every scheduler fair strong Msg::fast",
-        "mean of fraction holds(m.delivered) over [0,2] >= rational(1,2)",
+        "mean of (fraction holds(m.delivered) over [0,2]) >= rational(1,2)",
     );
     let world = World::new(&retry(&claims));
     let document = proof(&world, "Q", ratio(57, 320));
@@ -1514,11 +1514,11 @@ fn weighted_fraction_keeps_exact_sums_and_checks_its_mean_independently() {
         &(claim(
             "Yes",
             "Steady",
-            "mean of fraction holds(m.delivered) over [0,2] weighted by effort >= rational(29,100)",
+            "mean of (fraction holds(m.delivered) over [0,2] weighted by effort) >= rational(29,100)",
         ) + &claim(
             "No",
             "Steady",
-            "mean of fraction holds(m.delivered) over [0,2] weighted by effort >= rational(3,10)",
+            "mean of (fraction holds(m.delivered) over [0,2] weighted by effort) >= rational(3,10)",
         )),
     );
     model.body = model
@@ -1566,11 +1566,11 @@ fn mean_bound_policy_hints_constrain_search_and_absence_reconstructs_internal_ch
     let claims = claim(
         "Min",
         "every scheduler",
-        "mean of fraction holds(m.delivered) over [0,2] >= rational(1,2)",
+        "mean of (fraction holds(m.delivered) over [0,2]) >= rational(1,2)",
     ) + &claim(
         "Max",
         "every scheduler",
-        "mean of fraction holds(m.delivered) over [0,2] <= rational(1,3)",
+        "mean of (fraction holds(m.delivered) over [0,2]) <= rational(1,3)",
     );
     let world = World::new(&retry(&claims));
     let minimum = settle(&world, "Min", ModelCheckLimits::default());
@@ -1759,11 +1759,11 @@ fn valid_mean_bounds_on_the_threshold_and_wrong_bound_roles_are_rejected() {
         &(claim(
             "Ge",
             "Steady",
-            "mean of fraction holds(m.delivered) over [0,2] >= rational(1,2)",
+            "mean of (fraction holds(m.delivered) over [0,2]) >= rational(1,2)",
         ) + &claim(
             "Le",
             "Steady",
-            "mean of fraction holds(m.delivered) over [0,2] <= rational(2,5)",
+            "mean of (fraction holds(m.delivered) over [0,2]) <= rational(2,5)",
         )),
     ));
     for (name, lower, value) in [
@@ -1823,11 +1823,11 @@ fn valid_mean_bounds_on_the_threshold_and_wrong_bound_roles_are_rejected() {
         &(claim(
             "Min",
             "every scheduler",
-            "mean of fraction holds(m.delivered) over [0,2] >= rational(1,2)",
+            "mean of (fraction holds(m.delivered) over [0,2]) >= rational(1,2)",
         ) + &claim(
             "Max",
             "every scheduler",
-            "mean of fraction holds(m.delivered) over [0,2] <= rational(1,3)",
+            "mean of (fraction holds(m.delivered) over [0,2]) <= rational(1,3)",
         )),
     ));
     for (name, correct_lower) in [("Min", false), ("Max", true)] {
@@ -2052,7 +2052,7 @@ fn a_slack_mean_bound_emits_the_checked_policy_and_refuses_the_old_optimizer_pol
     let world = World::new(&retry(&claim(
         "Q",
         "every scheduler",
-        "mean of fraction holds(m.delivered) over [0,2] >= rational(1,2)",
+        "mean of (fraction holds(m.delivered) over [0,2]) >= rational(1,2)",
     )));
     let record = settle(&world, "Q", ModelCheckLimits::default());
     let old = record
@@ -2170,7 +2170,7 @@ fn a_live_mean_bound_checker_limit_or_cancellation_cannot_produce_a_token() {
     let world = World::new(&retry(&claim(
         "Q",
         "Steady",
-        "mean of fraction holds(m.delivered) over [0,2] >= rational(1,2)",
+        "mean of (fraction holds(m.delivered) over [0,2]) >= rational(1,2)",
     )));
     let record = settle(&world, "Q", ModelCheckLimits::default());
     let mut offered = record
@@ -2239,7 +2239,7 @@ fn a_live_mean_bound_checker_limit_or_cancellation_cannot_produce_a_token() {
 #[test]
 fn zero_weight_fraction_replays_its_tentative_value_before_an_outside_window_predicate() {
     for scheduler in ["Even", "every scheduler"] {
-        let source = format!("probabilistic Q using ev on M over (c:M::Coin) under {scheduler} on origin {{ mean of fraction holds(c.v = 0) over [0,0] weighted by duration >= rational(1,2) }}");
+        let source = format!("probabilistic Q using ev on M over (c:M::Coin) under {scheduler} on origin {{ mean of (fraction holds(c.v = 0) over [0,0] weighted by duration) >= rational(1,2) }}");
         let mut model = prob_world::coin(&source);
         model.body += "\nreward duration on Coin::drop = 0;\n";
         let world = World::new(&model);
@@ -2421,7 +2421,10 @@ fn mixed_initial_quantile_settles_only_activating_initial_one() {
     let model = retry(&claim("Mixed", "Steady", "quantile 0.5 of (steps from holds(not m.delivered) until holds(m.delivered) within 4) <= 2"));
     let world = World::with_initials(
         &model,
-        &[json!({"delivered":true}), json!({"delivered":false})],
+        &[
+            json!({"delivered":{"boolean":true}}),
+            json!({"delivered":{"boolean":false}}),
+        ],
     );
     let record = settle(&world, "Mixed", ModelCheckLimits::default());
     let terminal = record
@@ -2470,14 +2473,14 @@ fn terminal_initial_undecided_fraction_synthesizes_stutter_without_a_hint() {
     let claims = claim(
         "Min",
         "every scheduler",
-        "mean of fraction holds(false) over [0,2] >= rational(1,2)",
+        "mean of (fraction holds(false) over [0,2]) >= rational(1,2)",
     ) + &claim(
         "Max",
         "every scheduler",
-        "mean of fraction holds(false) over [0,2] <= 0",
+        "mean of (fraction holds(false) over [0,2]) <= 0",
     );
     let mut model = retry(&claims);
-    model.initial = json!({"delivered":true});
+    model.initial = json!({"delivered":{"boolean":true}});
     let world = World::new(&model);
     let record = settle(&world, "Min", ModelCheckLimits::default());
     assert_eq!(record.terminal().unwrap().value(), &TerminalValue::Refuted);
@@ -2538,7 +2541,7 @@ fn a_partial_lower_expands_only_named_states_and_their_immediate_successors() {
     let world = World::new(&retry(&claim(
         "Q",
         "every scheduler",
-        "mean of fraction holds(m.delivered) over [0,2] <= rational(1,4)",
+        "mean of (fraction holds(m.delivered) over [0,2]) <= rational(1,4)",
     )));
     let baseline = settle(&world, "Q", ModelCheckLimits::default());
     assert_eq!(
@@ -2616,7 +2619,7 @@ fn measure_and_vacuity_limits_settle_incomplete_without_certification() {
         &(claim(
             "Mean",
             "every scheduler",
-            "mean of fraction holds(m.delivered) over [0,2] >= 0",
+            "mean of (fraction holds(m.delivered) over [0,2]) >= 0",
         ) + &claim(
             "Vacuous",
             "Steady",
@@ -2753,7 +2756,7 @@ fn partial_lower_restores_detached_terminal_undecided_and_pending_rows() {
         let mut model = retry(&claim(
             "Q",
             "every scheduler",
-            "mean of fraction holds(m.delivered) over [0,2] <= rational(1,4)",
+            "mean of (fraction holds(m.delivered) over [0,2]) <= rational(1,4)",
         ));
         if residual {
             model.body = model.body.replace("self.delivered = (lost = 1)", "true");

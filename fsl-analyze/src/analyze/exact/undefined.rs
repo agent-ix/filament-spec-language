@@ -70,12 +70,19 @@ pub(super) fn run(
                 &|state| system.state_key(state).ok().map(|(_, key)| key),
                 &scheduler,
             );
+            if let Err(error) = &wire {
+                eprintln!("QSL2158-DIAG undefined wire: {error:?}");
+            }
             EngineReport::Exact(Box::new(ExactReport::Refuted(token, Box::new(wire))))
         }
         Ok(ProbabilityWitnessReplay::Parity) => {
+            eprintln!("QSL2158-DIAG undefined replay: parity");
             EngineReport::Exact(Box::new(ExactReport::ReplayParity))
         }
-        Err(error) => failure(error, subject, limits),
+        Err(error) => {
+            eprintln!("QSL2158-DIAG undefined replay: {error:?}");
+            failure(error, subject, limits)
+        }
     }
 }
 
@@ -135,7 +142,10 @@ fn materialize(
     limits: &crate::exact_probabilistic::ExactProbLimits,
     cancel: &Cancel,
 ) -> Result<(ProbabilityUndefinedWitness, SpelledScheduler), ProducerFailure> {
-    materialize_inner(system, claim, path, monitor, limits, cancel).map_err(ProducerFailure::from)
+    materialize_inner(system, claim, path, monitor, limits, cancel).map_err(|error| {
+        eprintln!("QSL2158-DIAG undefined materialize: {error:?}");
+        ProducerFailure::from(error)
+    })
 }
 
 fn materialize_inner(
@@ -333,12 +343,20 @@ fn materialize_inner(
         ProbabilityProductKey::for_model_state_with_limits(reference, &raw, limits.document, cancel)
             .map_err(ProbabilityWitnessError::from)?
     };
+    eprintln!(
+        "QSL2158-DIAG undefined initial-key ready measured={measured} steps={}",
+        path.steps.len()
+    );
     let mut state = initial.clone();
     let mut steps = Vec::new();
     let mut scheduler = std::collections::BTreeMap::new();
     let mut spelled = Vec::new();
     let mut source_key = initial_key.clone();
     for step in &path.steps {
+        eprintln!(
+            "QSL2158-DIAG undefined physical-step begin resolved={}",
+            step.resolved.is_some()
+        );
         if let Some(cause) = cancel.tripped() {
             return Err(ProbabilityWitnessError::Graph(
                 ExactProbabilityGraphError::Cancelled(cause),
@@ -403,8 +421,10 @@ fn materialize_inner(
             }
         }
         let Some((transition, post, draw)) = matched else {
+            eprintln!("QSL2158-DIAG undefined physical-step no matching actual draw/post");
             return Err(ProbabilityWitnessError::Refused);
         };
+        eprintln!("QSL2158-DIAG undefined physical-step matched");
         let post_key = key(&step.target)?;
         if measured && step.resolved.is_some() && matches!(claim.scheduler, ProbScheduler::Every) {
             let (control, sums) = measure_source
@@ -453,6 +473,7 @@ fn materialize_inner(
                 pending,
                 fsl_replay::ProductAction::PostState(post_key.clone()),
             );
+            eprintln!("QSL2158-DIAG undefined pending selection retained");
         }
         if measured {
             measure_source = Some((
