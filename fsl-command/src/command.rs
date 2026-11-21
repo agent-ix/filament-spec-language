@@ -1645,12 +1645,11 @@ impl Intake<'_> {
             path: path.clone(),
             error,
         })?;
-        let read_limit = u64::try_from(byte_limit.saturating_add(1)).map_err(|error| {
-            RunCause::Io {
+        let read_limit =
+            u64::try_from(byte_limit.saturating_add(1)).map_err(|error| RunCause::Io {
                 path: path.clone(),
                 error: io::Error::other(error),
-            }
-        })?;
+            })?;
         let mut bytes = Vec::new();
         file.by_ref()
             .take(read_limit)
@@ -1674,9 +1673,7 @@ impl Intake<'_> {
             .map_err(|refusal| {
                 RunCause::Source(Box::new(SourceFailure {
                     native: fsl_foundation::diagnostic::source_refusal(
-                        &refusal,
-                        &bytes,
-                        byte_limit,
+                        &refusal, &bytes, byte_limit,
                     ),
                     diagnostic: fsl_cst::diagnostic::source_refusal(*refusal, byte_limit),
                 }))

@@ -180,7 +180,10 @@ fn check_dependent_bytes_excludes_source_and_counts_selected_library() {
     assert_eq!(diagnostic["locus"], Value::Null, "{below}");
     let message = diagnostic["message"].as_str().unwrap();
     assert!(message.contains("dependent_bytes"), "{below}");
-    assert!(message.contains(&(library_bytes - 1).to_string()), "{below}");
+    assert!(
+        message.contains(&(library_bytes - 1).to_string()),
+        "{below}"
+    );
     assert!(message.contains("--dependent-bytes"), "{below}");
     assert_ne!(below["category"], "success", "{below}");
 }
