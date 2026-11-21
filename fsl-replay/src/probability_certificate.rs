@@ -1880,7 +1880,7 @@ fn internal_nonprogressive_choice(
 fn timed_key_progresses(from: &ProbabilityProductKey, to: &ProbabilityProductKey) -> bool {
     fn timed_model(key: &ProbabilityProductKey) -> Option<Value> {
         let root: Value = serde_json::from_slice(key.as_bytes()).ok()?;
-        Some(root.get(2)?.get(1)?.clone())
+        Some(root.get(4)?.get(1)?.clone())
     }
     let (Some(from_model), Some(to_model)) = (timed_model(from), timed_model(to)) else {
         return false;
@@ -1923,14 +1923,14 @@ fn timed_key_progresses(from: &ProbabilityProductKey, to: &ProbabilityProductKey
 
 fn timed_clock_count(key: &ProbabilityProductKey) -> Option<usize> {
     let root: Value = serde_json::from_slice(key.as_bytes()).ok()?;
-    root.get(2)?.get(1)?.get(4)?.as_array().map(Vec::len)
+    root.get(4)?.get(1)?.get(4)?.as_array().map(Vec::len)
 }
 
 fn timed_has_deadline(key: &ProbabilityProductKey) -> bool {
     let Some(root) = serde_json::from_slice::<Value>(key.as_bytes()).ok() else {
         return false;
     };
-    root.get(2)
+    root.get(4)
         .and_then(|model| model.get(1))
         .and_then(|timed| timed.get(5))
         .and_then(Value::as_array)
