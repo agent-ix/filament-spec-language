@@ -1053,6 +1053,61 @@ fn a_package_hyper_form_refuses_unknown_traces_and_the_reader_refuses_duplicate_
     }
 }
 
+/// An otherwise typed function call can carry two trace roots into a model
+/// read. Admission retains it, but projection must refuse ambiguous ownership.
+#[trace("FR-940-AC-19")]
+#[test]
+fn a_package_hyper_atom_refuses_an_admitted_mixed_component_receiver() {
+    let declarations = "function first using v(x: Reference<V::ConfigVersion>, \
+        y: Reference<V::ConfigVersion>): Reference<V::ConfigVersion> pure { x }\n\
+        hyper Equal using t over behaviours (c: V::ConfigVersion) \
+        forall trace a of V forall trace b of V \
+        { always holds(deref(first(c, c)).versionNumber @ a <= 3 and c.versionNumber @ b <= 3) }";
+    let built = build(INFINITE, &["V"], declarations);
+    let original = admitted(&built);
+    let root = hyper_roots(&original).expect("hyper roots").remove(0);
+    supplied_hyper(&built, &original, |bare| {
+        let form = bare
+            .hyper_clause_form(root.occurrence())
+            .expect("unmodified form");
+        assert!(bare
+            .project_hyper_holds(root.occurrence(), form.atoms[0].0)
+            .is_ok());
+    });
+    let mut changed = built.wire.clone();
+    let slot_b = slots(&changed)["slot_sc_sb"]["node_id"].clone();
+    let call = changed["semantic_graph"]["nodes"]
+        .as_array_mut()
+        .expect("nodes")
+        .iter_mut()
+        .find(|node| node["body"]["operation"]["identity"] == "filament.op.function.call")
+        .expect("the receiver's pure function call");
+    call["body"]["arguments"][2]["target"] = slot_b;
+    assert_eq!(strict_verdict(&built, &changed), None);
+    let mut evidence = read_evidence(&built.emission);
+    for document in &built.documents {
+        evidence
+            .insert_domain_package_document(package_identity(document), document.clone())
+            .expect("model evidence");
+    }
+    let admitted = crate::checked_v2::read_checked_package_v2(
+        &jcs(&changed),
+        library(),
+        V2ReadLimits::fixture(),
+        &evidence,
+    )
+    .expect("strict FSL reader admits")
+    .into_value()
+    .admitted;
+    let root = hyper_roots(&admitted).expect("hyper roots").remove(0);
+    supplied_hyper(&built, &admitted, |bare| {
+        assert!(matches!(bare.project_hyper_holds(root.occurrence(), 1),
+            Err(crate::BareClauseRefusal::Selection(crate::bare_slot::BareSelectionFailure::Slot(
+                crate::protocol_selection::SlotSelectionFailure::MalformedNode(node))))
+                if &node == root.occurrence().node()));
+    });
+}
+
 /// A constructor rejects inconsistent atoms rather than granting a checked
 /// clause with a missing predicate or a foreign slot count.
 #[trace("FR-940-AC-16")]
