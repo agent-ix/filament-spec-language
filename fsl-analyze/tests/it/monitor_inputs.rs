@@ -9,6 +9,7 @@ use std::sync::{Arc, OnceLock};
 
 use filament_exact::{Cancel, CancelCause, FieldValue, Integer, Rational, Value, ValueType};
 use filament_semantic_value::catalog::Category;
+use filament_semantic_value::checking::CheckMode;
 use fsl_analyze::monitor::{
     monitor, MonitorClause, MonitorLimits, MonitorOutcome, MonitorRecord, MonitorRefusal,
     MonitorRequest, MonitorTrace, MonitorVerdict, TRACE_FORMAT,
@@ -16,7 +17,6 @@ use fsl_analyze::monitor::{
 use fsl_foundation::diagnostic::StageFailure;
 use fsl_foundation::{Source, SourceIdentity};
 use fsl_package::{ClockConfiguration, TemporalClockSelection};
-use filament_semantic_value::checking::CheckMode;
 use fsl_replay::spine::{
     self, run_package_temporal, CallOutcome, CallRefusal, ClauseDisposition, DependencyInput,
     OverObject, PackageTemporalRequest, ParseRequest, ProgressAssertion, ProgressClosure,
