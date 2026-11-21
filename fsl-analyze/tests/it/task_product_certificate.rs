@@ -27,8 +27,31 @@ use fsl_replay::{
 };
 use ix_trace_rs::trace;
 
-use crate::task_automaton_crosscheck::world_for;
-use crate::timed_world::World;
+use crate::timed_world::{document, world, World, DENSE};
+use crate::zone_search::TIMED;
+
+/// A source of one guard-free state: each task is released by its own
+/// operation, which changes nothing, so the product's size is the
+/// scheduler's.
+fn world_for(set: &str, tasks: &[&str], declarations: &str) -> World {
+    let names: Vec<String> = tasks.iter().map(|task| format!("fire_{task}")).collect();
+    let operations: Vec<(&str, &[&str])> =
+        names.iter().map(|name| (name.as_str(), &["phase"][..])).collect();
+    let releases: String = tasks
+        .iter()
+        .map(|task| {
+            format!(
+                "post Fire_{task} using v on M::Call::fire_{task} {{ self.phase = pre(self.phase) }}\n\
+                 release {set}.{task} on M::Call::fire_{task};\n"
+            )
+        })
+        .collect();
+    world(
+        &document(&[], &operations),
+        TIMED,
+        &format!("{DENSE}{declarations}{releases}"),
+    )
+}
 
 type Certificate = ZoneCertificate<OccurrenceKey>;
 
@@ -83,6 +106,12 @@ fn build(world: &World, claim_name: &str) -> Built {
             Err(other) => panic!("the quotient does not build: {other:?}"),
         }
     };
+    println!(
+        "quotient of {claim_name}: {} vertices, {} discrete, {} time",
+        quotient.vertices.len(),
+        quotient.discrete.len(),
+        quotient.time.len()
+    );
     // One node per product key: the hull of its regions, in discovery order.
     let mut node_of_key = BTreeMap::new();
     let mut nodes: Vec<CertNode> = Vec::new();
