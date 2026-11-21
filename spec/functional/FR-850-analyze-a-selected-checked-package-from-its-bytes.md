@@ -316,7 +316,7 @@ serves the complete write, not one fresh budget per dependency.
   typed cause and the JSON pointer it names, exit 20, before any item is
   resolved and before any engine runs.
 - A request carrying both `package` and `program`, or `package` with a
-  non-empty `libraries`, `refinement_internals` or `integer_division`,
+  non-empty `libraries`, `clocks`, `refinement_internals` or `integer_division`,
   SHALL refuse the whole request `invalid-request` at the request stage,
   exit 20, naming the second member. These members configure a compile, and
   the package was already compiled.
