@@ -1347,7 +1347,8 @@ fn convert_across_a_dimension_equivalence_class_checks() {
 #[trace("FR-093-AC-46")]
 #[test]
 fn convert_between_unrelated_dimensions_refuses_type_mismatch() {
-    use fsl_semantics::check::{CheckCause, IllTypedCause};
+    use filament_exact::IllTypedCause;
+    use fsl_semantics::check::CheckCause;
     let causes = convert_causes(
         "dimension A ~ B by 1 ua = 1 ub;",
         "convert<Quantity<uc>>(3 ua) = 3 uc",
