@@ -38,7 +38,7 @@ pub(super) fn validate_bytes(bytes: &[u8]) -> Result<()> {
             impl<'de> Visitor<'de> for ProvisionsVisitor<'_> {
                 type Value = Provisions;
                 fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-                    f.write_str("a run request object")
+                    f.write_str("a JSON object")
                 }
                 fn visit_map<M: MapAccess<'de>>(
                     self,
