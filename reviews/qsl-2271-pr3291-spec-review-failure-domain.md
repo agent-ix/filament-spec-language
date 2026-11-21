@@ -446,3 +446,11 @@ scope:
 PASS: identity ownership, graph topology, refusal and confined-path boundaries are explicit.
 
 Checked direct/transitive/diamond closure, conflicting identities, unreachable rows, missing selections/files, foreign/unjoined witnesses, root exception versus dependency witness requirement, cycles, UTF-8 ordering, canonical index/path, symlink components/non-regular files, aggregate intake/work/storage budgets, retained owner supplies and replay. The input contract bounds bytes/files and work without per-dependency resets. Physical unrelated handoff files are outside selected intake; the loader must not discover alternate supply from unlisted directories.
+
+## Disposition review round 1
+
+Reviewed the two requirement/test-case fixes from 515cb5ec8514357124c4a83dc98311f502cd1a8a to db5f47ed1da1b100c15d011434ba101ce35d9c66. Original findings and original verdict remain unchanged above. Both original findings are fixed; no regression or additional finding was identified in the bounded fix diff. Supplemental AC-13 specifies raw repeated JSON keys, malformed/missing/unknown/wrong-kind fields, unknown format, omitted selection versus missing selected file, and exact pointers. Supplemental AC-15 distinguishes aggregate transitive replay bytes from initial intake, tests root-fitting P versus exact closure total R, preserves item-local typed refusal and a proved sibling, and keeps source controls before source deletion. TC-2410 explicitly executes these cases.
+
+Current specification verdict: PASS; no open review findings. Merge remains held for the QSL-2717 producer handoff under the lead's architecture priority. This review does not release that hold or claim implementation/test completion. No Cargo or runtime tests ran.
+
+No original findings required dispositions for this method. No new findings.
