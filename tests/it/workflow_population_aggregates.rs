@@ -232,7 +232,6 @@ fn an_incomplete_refund_population_cannot_settle_a_recovery_aggregate() {
     let output = run(false, false);
     assert_eq!(output.status.code(), Some(22), "{output:?}");
     let document = outcome(&output);
-    assert_eq!(document["category"], "incomplete", "{document}");
     assert_eq!(document["outcome"]["kind"], "refused", "{document}");
     assert_eq!(
         document["outcome"]["code"], "incomplete_population",
@@ -242,7 +241,12 @@ fn an_incomplete_refund_population_cannot_settle_a_recovery_aggregate() {
         document["outcome"]["cause"], "incomplete-scope",
         "{document}"
     );
-    assert_ne!(document["outcome"]["value"], json!({"boolean": true}));
+    assert_eq!(
+        document["outcome"]["fields"]["population"], REFUNDS,
+        "{document}"
+    );
+    assert!(document["outcome"]["location"].is_object(), "{document}");
+    assert!(document["outcome"].get("value").is_none(), "{document}");
 }
 
 #[test]

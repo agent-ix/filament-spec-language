@@ -500,7 +500,6 @@ fn an_aggregate_over_an_incomplete_population_is_not_a_total() {
 
     assert_eq!(output.status.code(), Some(22), "{output:?}");
     let document: Value = serde_json::from_slice(&output.stdout).unwrap();
-    assert_eq!(document["category"], "incomplete", "{document}");
     assert_eq!(document["outcome"]["kind"], "refused", "{document}");
     assert_eq!(
         document["outcome"]["code"], "incomplete_population",
@@ -510,7 +509,9 @@ fn an_aggregate_over_an_incomplete_population_is_not_a_total() {
         document["outcome"]["cause"], "incomplete-scope",
         "{document}"
     );
-    assert_ne!(document["outcome"]["value"], json!({"integer": "3"}));
+    assert_eq!(document["outcome"]["fields"]["population"], population());
+    assert!(document["outcome"]["location"].is_object(), "{document}");
+    assert!(document["outcome"].get("value").is_none(), "{document}");
 }
 
 #[test]
