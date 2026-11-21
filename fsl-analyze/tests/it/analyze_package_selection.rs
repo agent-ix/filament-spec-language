@@ -81,7 +81,7 @@ fn a_package_analyze_refuses_request_clocks_before_file_intake() {
         serde_json::from_slice(&std::fs::read(&source).expect("source request"))
             .expect("request JSON");
     source["request"]["clocks"] =
-        json!({"Clocked": {"kind": "event_position", "sequence_authority": "events"}});
+        json!({"events": {"kind": "event_position", "sequence_authority": "events"}});
     let source = analyze(&ws.write("source-clocks.json", source.to_string().as_bytes()));
     assert_eq!(source.exit, 0, "{}", source.document());
 }
