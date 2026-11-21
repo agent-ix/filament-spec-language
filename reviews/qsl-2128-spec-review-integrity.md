@@ -32,3 +32,7 @@ Author reports targeted Quire validation and diff check pass. Reviewer inspected
 ### Round 1
 
 PASS for the bounded specification delta at 25634322fcdcf4b27b3abb9f2141376fb681ccf7. FND-001 fixed: ModelRelationFormRefusal::MissingSubjectDeclarationOrder is a typed semantic form-selection result independent of ViewFailure/UnsupportedView. It maps to existing item UnsupportedWithDetail and retains owning package/relation-key diagnostics. FR-390 view creation, read_node completeness and deterministic projection reason inventory/order remain unchanged. No other semantic change or new finding in this narrow disposition. Implementation remains conditional on the owned Contract IR member contract and coherent dependency update; no code/runtime/coverage pass is claimed.
+
+### Owner contract alignment
+
+Inspected the exact reader-owner-approved path refinement e61a3cc9 and citation correction f0a8e7f69406305c31152c1a8ac7c372e4aedaa4. The specified invalid_semantic_graph/no-cause diagnostics, fifth-member paths, supplied-entry precedence and omission-last rule match the owner agreement. The body ownership citation now explicitly names filament-contract-ir FR-351; unrelated seven-field prose was removed. No changed semantic finding or additional full review. The bounded contract remains clear; runtime and implementation review remain separate.

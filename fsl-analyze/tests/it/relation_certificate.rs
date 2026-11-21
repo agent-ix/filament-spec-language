@@ -989,14 +989,13 @@ fn hp1_relation_port_preserves_certificate_rejection_and_fresh_budget() {
     closure_mut(&mut tampered)[0].executions[0]
         .transitions
         .remove(0);
-    assert!(matches!(
+    assert_eq!(
         check_model_relation_closure(
             &request,
             &tampered,
             &ModelCheckLimits::default(),
             &Cancel::new()
-        )
-        .expect("a malformed closure has a certificate verdict"),
-        ProductClosureCheck::Rejected(_)
-    ));
+        ),
+        Err(fsl_replay::ProductClosureRefusal::Input("execution-edges"))
+    );
 }
