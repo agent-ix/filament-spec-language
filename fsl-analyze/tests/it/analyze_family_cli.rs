@@ -491,6 +491,133 @@ fn ctl_body(c: u32, claims: &str) -> String {
     )
 }
 
+/// The request must agree with EN-7's actual manifest before the settlement
+/// double runs; the double alone does not check negotiation modes.
+struct ClosedFormNegotiation(std::cell::Cell<usize>);
+
+impl fsl_analyze::analyze::document::Negotiate for ClosedFormNegotiation {
+    fn negotiate(
+        &self,
+        item: &fsl_analyze::analyze::ClaimItem,
+        candidates: &fsl_route::CandidateOutcome,
+    ) -> (
+        fsl_route::routing::Disposition,
+        Option<fsl_analyze::analyze::Diagnostic>,
+    ) {
+        assert_eq!(
+            item.extent,
+            fsl_route::request::ExtentClassification::Unbounded {
+                finite_bound_available: false,
+            },
+            "closed-form schedule requests must reach negotiation as unbounded"
+        );
+        let engines = fsl_analyze::analyze::Engines::fsl().expect("linked manifests");
+        let en7 = engines
+            .registrations()
+            .find(|descriptor| descriptor.id().as_str() == "en-7")
+            .expect("EN-7 is registered");
+        assert!(en7
+            .advertises()
+            .any(|pair| pair == (item.kind, fsl_route::Mode::Unbounded)));
+        assert!(!en7
+            .advertises()
+            .any(|pair| pair == (item.kind, fsl_route::Mode::Bounded)));
+        assert_eq!(item.candidates.len(), 1);
+        assert_eq!(item.candidates[0].id().as_str(), "en-7");
+        self.0.set(self.0.get() + 1);
+        crate::analyze_cli_support::Fr290.negotiate(item, candidates)
+    }
+}
+
+/// Check one claim-only route from source before and after negotiation.
+fn closed_form_schedule_request(claim: &str, expected: &str, exit: i32, analysis: &str) {
+    let source = "language \"ix:native\" edition \"1-draft\";\n\
+        profile t = \"filament.temporal.complete/v1\";\n\
+        dimension Time;\nunit ms : Time = rational(1, 1);\n\
+        taskset Full {\n\
+        task a periodic 10 ms deadline 10 ms wcet 5 ms priority 1 lo;\n\
+        task b periodic 20 ms deadline 20 ms wcet 10 ms priority 2 lo;\n}\n\
+        taskset Over {\n\
+        task a periodic 10 ms deadline 10 ms wcet 6 ms priority 1 lo;\n\
+        task b periodic 20 ms deadline 20 ms wcet 10 ms priority 2 lo;\n}\n\
+        taskset Ctl {\n\
+        task a periodic 4 ms deadline 4 ms wcet 1 ms priority 1 lo;\n\
+        task b periodic 6 ms deadline 6 ms wcet 2 ms priority 2 lo;\n\
+        task c periodic 12 ms deadline 12 ms wcet 5 ms priority 3 lo;\n}\n\
+        schedulable FullEdf on Full under edf;\n\
+        schedulable CtlFp on Ctl under fixed_priority;\n\
+        schedulable OverEdf on Over under edf;\n\
+        response AResponse5 on Full.a <= 5 ms under fixed_priority;\n\
+        response AResponse4 on Full.a <= 4 ms under fixed_priority;\n";
+    let ws = Workspace::new(&format!("schedule-negotiation-{claim}"));
+    let path = request_over(
+        &ws,
+        source,
+        &crate::counter::document(false),
+        &[],
+        json!({"models": [], "items": [{"claim": claim}]}),
+    );
+    let negotiation = ClosedFormNegotiation(std::cell::Cell::new(0));
+    let result = fsl_command::command::analyze(&path, &negotiation, &filament_exact::Cancel::new())
+        .expect("a valid schedule request");
+    assert_eq!(negotiation.0.get(), 1, "{claim}");
+    assert_eq!(i32::from(result.exit_code), exit, "{}", result.value);
+    let document: Value =
+        serde_json::from_str(&result.value.to_string()).expect("an outcome document");
+    let item = &document["items"][0];
+    assert_eq!(label(item), expected, "{item}");
+    assert_eq!(item["request"]["extent"]["classification"], "unbounded");
+    assert_eq!(item["request"]["candidates"]["backends"], json!(["en-7"]));
+    assert!(item["request"].get("backend").is_none());
+    if expected == "proved" {
+        assert_eq!(item["record"]["backend"], "en-7");
+        assert_eq!(item["record"]["basis"]["type"], "closed-form");
+        assert_eq!(item["record"]["basis"]["analysis"], analysis);
+        assert_eq!(item["record"]["certification"], "certified");
+    } else {
+        let miss = &item["counterexample"]["counterexample"];
+        assert_eq!(miss["type"], "schedulability-miss", "{miss}");
+        if claim == "OverEdf" {
+            assert_eq!(miss["miss"]["utilization"]["numerator"], "11");
+            assert_eq!(miss["miss"]["utilization"]["denominator"], "10");
+        } else {
+            assert_eq!(miss["miss"]["task"], "a");
+            assert_eq!(miss["miss"]["response"]["numerator"], "5");
+            assert_eq!(miss["miss"]["bound"]["numerator"], "4");
+        }
+    }
+}
+
+#[trace("TC-1593", "FR-633-AC-3")]
+#[test]
+fn schedulability_edf_full_matches_en7_before_negotiation() {
+    closed_form_schedule_request("FullEdf", "proved", 0, "edf");
+}
+
+#[trace("TC-1593", "FR-247-AC-2")]
+#[test]
+fn schedulability_edf_over_matches_en7_before_negotiation() {
+    closed_form_schedule_request("OverEdf", "refuted", 10, "edf");
+}
+
+#[trace("TC-1593", "FR-633-AC-2")]
+#[test]
+fn schedulability_response_meets_matches_en7_before_negotiation() {
+    closed_form_schedule_request("AResponse5", "proved", 0, "fixed-priority");
+}
+
+#[trace("TC-1593", "FR-633-AC-2")]
+#[test]
+fn schedulability_response_misses_matches_en7_before_negotiation() {
+    closed_form_schedule_request("AResponse4", "refuted", 10, "fixed-priority");
+}
+
+#[trace("TC-1593", "FR-633-AC-1")]
+#[test]
+fn fixed_priority_schedulable_matches_en7_before_negotiation() {
+    closed_form_schedule_request("CtlFp", "proved", 0, "fixed-priority");
+}
+
 /// FR-633-AC-1, AC-2: `Ctl` proves on EN-7 and a response bound one below
 /// the fixpoint refutes with the miss evidence.
 #[trace("TC-1593", "FR-633-AC-1")]
