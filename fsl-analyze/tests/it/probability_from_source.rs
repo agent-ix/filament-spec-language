@@ -1085,7 +1085,13 @@ fn native_probability_items_preserve_caller_accounting_limits() {
     }
 }
 
-#[trace("TC-2066", "FR-120-AC-35", "FR-191-AC-8", "FR-192-AC-1", "FR-203-AC-7")]
+#[trace(
+    "TC-2066",
+    "FR-120-AC-35",
+    "FR-191-AC-8",
+    "FR-192-AC-1",
+    "FR-203-AC-13"
+)]
 #[test]
 fn native_probability_items_share_work_across_expansions_and_start_fresh_per_item() {
     use fsl_eval::simulation::TransitionSystem;

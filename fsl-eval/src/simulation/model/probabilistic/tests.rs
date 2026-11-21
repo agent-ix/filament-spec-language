@@ -290,7 +290,7 @@ fn probability_candidate_then_claim_predicate_and_reward_use_the_same_allowance(
     });
 }
 
-#[trace("FR-120-AC-35", "FR-107-AC-1")]
+#[trace("FR-120-AC-35")]
 #[test]
 fn probability_clause_factory_preserves_precondition_short_circuit_and_whole_set_refusal() {
     use super::super::{contracts, walk};

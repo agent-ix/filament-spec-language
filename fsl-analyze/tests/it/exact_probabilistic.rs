@@ -2624,7 +2624,7 @@ fn a_budget_equal_to_the_product_size_completes() {
 /// Observe the real relation and full-target construction boundaries, rather
 /// than inferring admission from the final product's size.
 #[cfg(feature = "test-support")]
-#[trace("TC-631", "FR-203-AC-7", "FR-196-AC-3", "FR-196-AC-4")]
+#[trace("TC-631", "FR-203-AC-14")]
 #[test]
 fn untimed_exact_admits_edges_before_relation_and_target_construction() {
     use fsl_analyze::exact_probabilistic::{
@@ -2693,7 +2693,7 @@ fn untimed_exact_admits_edges_before_relation_and_target_construction() {
 }
 
 #[cfg(feature = "test-support")]
-#[trace("TC-631", "FR-203-AC-7", "FR-196-AC-3", "FR-196-AC-4")]
+#[trace("TC-631", "FR-203-AC-14")]
 #[test]
 fn untimed_exact_counts_distinct_pending_keys_and_reuses_full_state_capacity() {
     use fsl_analyze::exact_probabilistic::{

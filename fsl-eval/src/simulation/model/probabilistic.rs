@@ -665,6 +665,7 @@ impl ModelSystem<'_> {
 
     /// Check the same rewards while preserving the owner's original scalar
     /// stop for the probability constructor's existing engine settlement.
+    /// Check the rewards while retaining an owner's original scalar stop.
     pub(super) fn check_rewards_metered(
         &self,
         cancel: Option<&filament_exact::Cancel>,
