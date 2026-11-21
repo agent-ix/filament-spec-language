@@ -14,7 +14,7 @@ use fsl_foundation::{Source, SourceIdentity};
 use fsl_package::{ClockConfiguration, TemporalClockSelection};
 use fsl_replay::spine::{
     self, ClauseDisposition, DependencyInput, ParseRequest, SpineLimits,
-    StateClauseExecutionPoints, TemporalVerdict,
+    StateClauseExecutionPoints, TemporalVerdict, TraceInput,
 };
 use fsl_semantics::check::FormulaNodeId;
 use fsl_semantics::model::accounting::ModelNormalizationLimits;
@@ -345,9 +345,9 @@ fn config_units_document() -> Vec<u8> {
     serde_json::to_vec(&domain).expect("the real package plus its declared units remains JSON")
 }
 
-#[trace("TC-1295", "FR-283-AC-19")]
-#[test]
-fn equivalent_config_duration_bounds_name_the_checked_normalized_window() {
+const DURATION_LABEL: &str = "count where holds(e.v > 1) over past[rational(0, 1) ix://example/config-version/unit/ms, rational(3000, 1) ix://example/config-version/unit/ms] min_count 1 >= 1";
+
+fn duration_case() -> (Documents, Compiled) {
     let documents = Documents::new(config_units_document());
     let first = "count where holds(e.v > 1) over past[0 Config::s, 3 Config::s] >= 1";
     let second =
@@ -363,15 +363,19 @@ fn equivalent_config_duration_bounds_name_the_checked_normalized_window() {
             timestamp_unit: "ix://example/config-version/unit/ms".into(),
         },
     );
+    (documents, compiled)
+}
+
+#[trace("TC-1295", "FR-283-AC-19")]
+#[test]
+fn equivalent_config_duration_bounds_name_the_checked_normalized_window() {
+    let (_, compiled) = duration_case();
     let (atoms, _, declaration) = aggregate_candidates(&compiled, 2);
     for index in atoms {
         let rendered =
             spine::render_clause_atom(compiled.unit.package(), &compiled.sources, "Window", index)
                 .expect("the actual checked duration aggregate is rendered");
-        assert_eq!(
-            rendered.name,
-            "count where holds(e.v > 1) over past[rational(0, 1) ix://example/config-version/unit/ms, rational(3000, 1) ix://example/config-version/unit/ms] min_count 1 >= 1"
-        );
+        assert_eq!(rendered.name, DURATION_LABEL);
         assert_eq!(rendered.region, declaration);
     }
 }
@@ -428,4 +432,95 @@ fn canonical_aggregate_names_never_replace_missing_or_invalid_caller_sources() {
         assert_eq!(clause, "Window");
         assert_eq!(source, identity());
     }
+}
+
+/// The compiled-source entry accepts timestamped record samples even though
+/// the higher-level monitor's `Samples` adapter only takes event positions.
+#[trace("TC-1295", "FR-283-AC-19")]
+#[test]
+fn timestamped_duration_aggregate_retains_its_actual_shortage_and_locus() {
+    let (documents, compiled) = duration_case();
+    let (atoms, _, declaration) = aggregate_candidates(&compiled, 2);
+    let trace = TraceInput::Timestamped {
+        observations: vec![spine::TimestampedObservation {
+            document: spine::sample_position(
+                &json!({"v": {"integer": "0"}, "w": {"integer": "1"}}).to_string(),
+            ),
+            stamp: 0,
+            order_key: None,
+        }],
+        progress: spine::ProgressAssertion {
+            watermark: 0,
+            completeness: spine::ProgressCompleteness::Complete { through: 0 },
+            scope: spine::ProgressClosure::Closed,
+            execution: spine::ProgressClosure::Closed,
+        },
+        window: Box::new(spine::TimestampedWindow {
+            binding: Some(spine::TraceBinding {
+                profile: TIMESTAMPED.to_owned(),
+                clock_name: "events".to_owned(),
+                parameters: ClockConfiguration::TimestampedEvent {
+                    timestamp_unit: "ix://example/config-version/unit/ms".into(),
+                },
+            }),
+            authoritative_origin: true,
+            cover: None,
+            missing_valuations: Vec::new(),
+            late: Default::default(),
+        }),
+    };
+    let report = spine::run_package_temporal(&spine::PackageTemporalRequest {
+        package: compiled.unit.package(),
+        packages: &documents.packages,
+        model_limits: ModelNormalizationLimits::default(),
+        snapshots: &documents.snapshots,
+        observation_limits: ObservationLimits::default(),
+        accounting: UNLIMITED,
+        name: "Window",
+        trace: &trace,
+        over: None,
+        ledger: None,
+        sources: &compiled.sources,
+        authentication: None,
+        cancel: &Cancel::new(),
+    });
+    let ClauseDisposition::Temporal(TemporalVerdict::Undefined {
+        at,
+        cause:
+            spine::TemporalUndefinedCause::InsufficientData {
+                atom,
+                count,
+                min_count,
+            },
+    }) = &report.disposition
+    else {
+        panic!(
+            "the real timestamped aggregate's shortage, got {:?}",
+            report.disposition
+        );
+    };
+    assert_eq!((*at, *count, *min_count), (0, 0, 1));
+    assert!(
+        atoms.contains(atom),
+        "the result names an actual checked aggregate"
+    );
+    assert_eq!(report.category(), Category::Undefined);
+    assert_eq!(report.basis.as_str(), "unavailable");
+    let window = report
+        .finite_window
+        .as_ref()
+        .expect("the actual finite-window report");
+    assert_eq!(window.basis.as_str(), "unavailable");
+    assert_eq!(
+        window
+            .atom_regions
+            .get(&FormulaNodeId::from_arena_index(*atom)),
+        Some(&declaration),
+        "the result retains the shared aggregate's selected declaration locus",
+    );
+    let rendered =
+        spine::render_clause_atom(compiled.unit.package(), &compiled.sources, "Window", *atom)
+            .expect("the result's actual aggregate is rendered");
+    assert_eq!(rendered.name, DURATION_LABEL);
+    assert_eq!(rendered.region, declaration);
 }
