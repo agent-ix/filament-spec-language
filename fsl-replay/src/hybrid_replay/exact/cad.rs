@@ -69,9 +69,8 @@ impl Polynomial {
             poly.coefficients()
                 .iter()
                 .enumerate()
-                .filter_map(|(i, c)| {
-                    (!c.is_zero()).then(|| (if i == 0 { vec![] } else { vec![i] }, c.clone()))
-                })
+                .filter(|(_, c)| !c.is_zero())
+                .map(|(i, c)| (if i == 0 { vec![] } else { vec![i] }, c.clone()))
                 .collect(),
         )
     }
@@ -666,7 +665,8 @@ fn determinant(rows: &[Vec<Polynomial>], meter: &mut HybridReplayMeter) -> Resul
             .map(|row| {
                 row.iter()
                     .enumerate()
-                    .filter_map(|(i, p)| (i != column).then(|| p.clone()))
+                    .filter(|(i, _)| *i != column)
+                    .map(|(_, p)| p.clone())
                     .collect()
             })
             .collect::<Vec<_>>();
