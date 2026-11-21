@@ -824,6 +824,15 @@ fn run(
     tamper: Option<&dyn Fn(&mut ExactProbabilityCertificate)>,
     tamper_witness: Option<&dyn Fn(&mut ProbabilisticCounterexample)>,
 ) -> EngineReport {
+    if matches!(
+        &request.claim.form,
+        ProbForm::Quantile {
+            measure: fsl_semantics::check::BoundedMeasure::Elapsed { .. },
+            ..
+        }
+    ) {
+        return elapsed::run(request, cancel, tamper);
+    }
     if request.claim.bounded_measure() {
         return measure::run(request, cancel, tamper, tamper_witness);
     }
@@ -841,15 +850,6 @@ fn run(
         }
     ) {
         return run_timed(request, cancel, tamper);
-    }
-    if matches!(
-        &request.claim.form,
-        ProbForm::Quantile {
-            measure: fsl_semantics::check::BoundedMeasure::Elapsed { .. },
-            ..
-        }
-    ) {
-        return elapsed::run(request, cancel, tamper);
     }
     if matches!(request.claim.form, ProbForm::LongRunFraction { .. }) {
         return long_run::run(request, cancel, tamper);

@@ -1900,6 +1900,7 @@ fn check_exact_terminal_rewards(
     }
     Ok(ExactProbabilityCertificateCheck::Accepted(
         ExactProbabilityAcceptance {
+            initial_values: None,
             document: None,
             value: initial.clone(),
             certificate: certificate.clone(),
