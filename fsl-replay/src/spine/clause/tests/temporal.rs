@@ -4117,7 +4117,7 @@ fn a_finite_window_open_scope_with_every_guard_false_is_not_decided() {
 #[test]
 fn a_finite_window_undefined_on_each_guard_retains_its_cause_and_locus() {
     for closed in [true, false] {
-        let request = timestamped_named(
+        let mut request = timestamped_named(
             Unit::GuardUndefined,
             "GuardUndefined",
             &[0, 10],
@@ -4125,6 +4125,14 @@ fn a_finite_window_undefined_on_each_guard_retains_its_cause_and_locus() {
             12,
             Some(12),
         );
+        let bytes = program_source_bytes(&mut request);
+        *bytes = String::from_utf8(bytes.clone())
+            .unwrap()
+            .replace(
+                "filament.temporal.event-position.false-extension/v1",
+                "filament.temporal.timestamped-event.finite-window/v1",
+            )
+            .into_bytes();
         let window = report(timestamped_changed(request, |trace| {
             trace.progress.scope = closure(closed);
         }));
