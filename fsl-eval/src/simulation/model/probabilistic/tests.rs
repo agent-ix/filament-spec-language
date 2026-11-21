@@ -26,6 +26,64 @@ fn probability_link_fixture() -> world::Model {
     model
 }
 
+/// Diagnose an already failed Link expansion through its actual lower ports.
+/// These independent meters do not change the failed run's work prefix.
+fn probability_expansion_diagnostics(
+    system: &mut super::ModelSystem<'_>,
+    state: &ModelSimState,
+) -> String {
+    let scope = system.probability_work.take();
+    let ordinary = match system.actions(state) {
+        Ok(Ok(actions)) => format!("completed({} actions)", actions.len()),
+        Ok(Err(undecided)) => format!("undecided({undecided:?})"),
+        Err(stop) => format!("stopped({stop:?})"),
+    };
+    system.probability_work = scope;
+    let walk = super::super::walk::walk_of(system, state, None)
+        .expect("the failed expansion's observation");
+    let mut ports = Vec::new();
+    for info in system
+        .clauses
+        .preconditions
+        .iter()
+        .chain(&system.clauses.postconditions)
+    {
+        let mut observations = super::super::contracts::invariant_observations(&walk, info, 0);
+        observations.pre = observations.current.take();
+        observations.parameters = vec![("lost".to_owned(), Value::Boolean(false))];
+        let precondition = system
+            .clauses
+            .preconditions
+            .iter()
+            .any(|pre| pre.identity == info.identity);
+        if precondition {
+            let result = system.evaluator().evaluate_clause(
+                &info.qualified,
+                &observations,
+                &mut filament_exact::Meter::new(system.meter_limits()),
+            );
+            ports.push(format!("pre {}: {result:?}", info.name));
+        } else {
+            observations.post = Some(walk.observation.clone());
+            let result = system.evaluator().evaluate_post_targets(
+                &info.qualified,
+                &observations,
+                &mut || filament_exact::Meter::new(system.meter_limits()),
+            );
+            ports.push(match result {
+                Ok(found) => format!(
+                    "post-target {}: completed({} targets, names_result={})",
+                    info.name,
+                    found.targets.len(),
+                    found.names_result
+                ),
+                Err(failure) => format!("post-target {}: {failure:?}", info.name),
+            });
+        }
+    }
+    format!("ordinary_same_input={ordinary}; {}", ports.join("; "))
+}
+
 #[trace("FR-120-AC-35", "FR-120-AC-36")]
 #[test]
 fn probability_work_scope_accumulates_real_expansions_on_source_and_package_routes() {
@@ -37,8 +95,9 @@ fn probability_work_scope_accumulates_real_expansions_on_source_and_package_rout
         let first = system
             .actions(&start)
             .unwrap_or_else(|stop| {
+                let diagnostic = probability_expansion_diagnostics(&mut system, &start);
                 panic!(
-                    "{route}: initial ample expansion stopped: {stop:?}; work={}/{}",
+                    "{route}: initial ample expansion stopped: {stop:?}; work={}/{}; {diagnostic}",
                     ample.consumed_work(),
                     system.meter_limits().work_units
                 )
@@ -284,8 +343,9 @@ fn probability_candidate_then_claim_predicate_and_reward_use_the_same_allowance(
         system
             .actions(&start)
             .unwrap_or_else(|stop| {
+                let diagnostic = probability_expansion_diagnostics(&mut system, &start);
                 panic!(
-                    "{route}: initial ample expansion stopped: {stop:?}; work={}/{}",
+                    "{route}: initial ample expansion stopped: {stop:?}; work={}/{}; {diagnostic}",
                     scope.consumed_work(),
                     system.meter_limits().work_units
                 )
