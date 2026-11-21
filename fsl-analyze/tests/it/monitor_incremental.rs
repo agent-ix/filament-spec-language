@@ -8,7 +8,7 @@ use fsl_analyze::monitor::{
     MonitorClause, MonitorLimits, MonitorRefusal, MonitorVerdict, DEFAULT_RETAINED_POSITIONS,
 };
 use fsl_analyze::monitor_session::{
-    MonitorObservation, MonitorOpen, MonitorPosition, MonitorSession, MonitorStamp,
+    MonitorObservation, MonitorOpen, MonitorPosition, MonitorSession, MonitorStamp, MonitorState,
     MonitorTraceKind,
 };
 use fsl_foundation::diagnostic::StageFailure;
@@ -420,6 +420,7 @@ fn a_regressing_stamp_is_refused_and_the_ledger_equals_the_batch_run() {
         .expect("opens");
     let cancel = Cancel::new();
     let mut last = None;
+    let mut pending_checkpoint = None;
     for (stamp, level) in [(0, 0), (2, 0), (5, 1), (7, 0)] {
         let observed = text(level);
         session
@@ -429,20 +430,80 @@ fn a_regressing_stamp_is_refused_and_the_ledger_equals_the_batch_run() {
             // The decisive observation has settled T, before G5 is asserted.
             // Its metadata-only ledger continuation survives a checkpoint.
             let checkpoint = session.checkpoint().expect("checkpoints after settlement");
+            let open = || MonitorOpen {
+                clauses: clauses(&["T"]),
+                kind: MonitorTraceKind::Timestamped,
+                lower_boundary: ProgressLowerBoundary::AuthoritativeOrigin,
+                binding: Some(stamped_binding()),
+                cover: None,
+                ledger: None,
+                packages: &world.packages,
+                sources: &world.sources,
+                temporal_selections: &world.selections,
+            };
+            for mutation in 0..5 {
+                let mut altered: serde_json::Value =
+                    serde_json::from_slice(checkpoint.as_bytes()).unwrap();
+                match mutation {
+                    0 => altered["clauses"][0]["progress_state"] = serde_json::Value::Null,
+                    1 => {
+                        altered["clauses"][0]
+                            .as_object_mut()
+                            .unwrap()
+                            .remove("progress_state");
+                    }
+                    2 | 3 => {
+                        let mut tracker: serde_json::Value = serde_json::from_str(
+                            altered["clauses"][0]["progress_state"].as_str().unwrap(),
+                        )
+                        .unwrap();
+                        if mutation == 2 {
+                            tracker["first"] = altered["seen"].clone();
+                            tracker["positions"] = serde_json::json!([]);
+                            tracker["fixed"] = serde_json::json!(0);
+                        } else {
+                            tracker["fixed"] =
+                                serde_json::json!(tracker["positions"].as_array().unwrap().len());
+                        }
+                        altered["clauses"][0]["progress_state"] =
+                            serde_json::json!(serde_json::to_string(&tracker).unwrap());
+                    }
+                    4 => {
+                        let tracker = altered["clauses"][0]["progress_state"].as_str().unwrap();
+                        let mut tracker: serde_json::Value = serde_json::from_str(tracker).unwrap();
+                        tracker["positions"].as_array_mut().unwrap().pop();
+                        altered = serde_json::from_slice(
+                            pending_checkpoint
+                                .as_ref()
+                                .expect("the pending checkpoint")
+                                .as_bytes(),
+                        )
+                        .unwrap();
+                        altered["clauses"][0]["progress_state"] =
+                            serde_json::json!(serde_json::to_string(&tracker).unwrap());
+                    }
+                    _ => unreachable!(),
+                }
+                let altered = MonitorState::from_bytes(serde_json::to_vec(&altered).unwrap());
+                let refused = MonitorSession::resume(
+                    world.unit.package(),
+                    &altered,
+                    open(),
+                    &limits(DEFAULT_RETAINED_POSITIONS),
+                    &cancel,
+                );
+                assert!(
+                    matches!(
+                        refused,
+                        Err(StageFailure::Refused(MonitorRefusal::State { .. }))
+                    ),
+                    "checkpoint mutation {mutation} must not lose pending progress facts"
+                );
+            }
             session = MonitorSession::resume(
                 world.unit.package(),
                 &checkpoint,
-                MonitorOpen {
-                    clauses: clauses(&["T"]),
-                    kind: MonitorTraceKind::Timestamped,
-                    lower_boundary: ProgressLowerBoundary::AuthoritativeOrigin,
-                    binding: Some(stamped_binding()),
-                    cover: None,
-                    ledger: None,
-                    packages: &world.packages,
-                    sources: &world.sources,
-                    temporal_selections: &world.selections,
-                },
+                open(),
                 &limits(DEFAULT_RETAINED_POSITIONS),
                 &cancel,
             )
@@ -454,6 +515,7 @@ fn a_regressing_stamp_is_refused_and_the_ledger_equals_the_batch_run() {
                 .expect("progress"),
         );
         if stamp == 2 {
+            pending_checkpoint = Some(session.checkpoint().expect("checkpoints while pending"));
             let late = text(1);
             let refused = session
                 .step(stamped(&late, 2), &cancel)
@@ -474,6 +536,8 @@ fn a_regressing_stamp_is_refused_and_the_ledger_equals_the_batch_run() {
     // FR-643 "Batch equality": a settled clause "SHALL report exactly B(s)".
     // The step at 5 settles under G2; later real assertions advance the
     // session ledger, independently of that frozen report.
+    // FR-643 "Settling": finite-window settles on "a verdict FR-501 reports
+    // with a decisive basis", so the witness settles before G5 is asserted.
     let authentication = spine::authenticate_emission(
         world.unit.package(),
         &world.selections,

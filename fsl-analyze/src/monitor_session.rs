@@ -1444,7 +1444,15 @@ impl<'a> MonitorSession<'a> {
             let step = saved["settled_step"].as_u64();
             let slot = &mut session.slots[index];
             slot.announced = saved["announced"].as_bool().ok_or_else(state_mismatch)?;
-            slot.progress = match &saved["progress_state"] {
+            let progress_state = saved.get("progress_state").ok_or_else(state_mismatch)?;
+            let needs_progress =
+                session.request.kind.carries_progress() && saved["trigger"].as_str().is_some();
+            if needs_progress != progress_state.is_string()
+                || (!needs_progress && !progress_state.is_null())
+            {
+                return Err(state_mismatch());
+            }
+            slot.progress = match progress_state {
                 Json::Null => None,
                 Json::String(bytes) => Some(
                     ClauseProgress::from_bytes(
@@ -1457,6 +1465,7 @@ impl<'a> MonitorSession<'a> {
                 ),
                 _ => return Err(state_mismatch()),
             };
+            let mut deciding_progress = None;
             match saved["trigger"].as_str() {
                 None => {
                     let bytes = saved["state"].as_str().ok_or_else(state_mismatch)?;
@@ -1515,6 +1524,7 @@ impl<'a> MonitorSession<'a> {
                 Some("decided") => {
                     let bytes = saved["decided_state"].as_str().ok_or_else(state_mismatch)?;
                     let decided = restore(bytes)?;
+                    deciding_progress = Some(decided.progress_tracker());
                     slot.record = record_of(
                         package,
                         session.request.sources,
@@ -1530,6 +1540,24 @@ impl<'a> MonitorSession<'a> {
                     });
                 }
                 Some(_) => return Err(state_mismatch()),
+            }
+            if let Some(progress) = &slot.progress {
+                let source = session.request.sources.first().ok_or_else(state_mismatch)?;
+                let binding = LedgerBinding {
+                    package: source.identity().identity.clone(),
+                    clause: node.identity(),
+                    occurrence: node.claim().ordinal(),
+                    clock: node.clause().clock().to_owned(),
+                    profile: node.clause().profile().identity().to_owned(),
+                };
+                progress
+                    .validate_checkpoint(
+                        deciding_progress.as_ref(),
+                        session.ledger.as_ref(),
+                        session.request.ledger.as_ref(),
+                        &binding,
+                    )
+                    .map_err(clause_failure)?;
             }
         }
         Ok(session)

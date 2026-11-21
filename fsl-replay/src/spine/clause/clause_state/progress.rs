@@ -66,6 +66,100 @@ impl ClauseProgress {
         u64::try_from(self.positions.len()).unwrap_or(u64::MAX)
     }
 
+    /// Check that a checkpoint drops only positions the real ledger covers,
+    /// and preserves the metadata of the state that decided the clause.
+    ///
+    /// # Errors
+    /// `StateMismatch` for an invented covered prefix or sorting boundary.
+    pub fn validate_checkpoint(
+        &self,
+        decided: Option<&Self>,
+        ledger: Option<&ProgressLedger>,
+        opening: Option<&ProgressLedger>,
+        binding: &LedgerBinding,
+    ) -> Result<(), ClauseRefusal> {
+        let mismatch = || ClauseRefusal::StateMismatch;
+        let entry = ledger.and_then(|ledger| ledger.entry(binding));
+        let opening_watermark = opening
+            .and_then(|ledger| ledger.entry(binding))
+            .map(|entry| entry.watermark());
+        let covered_count = entry.map_or(0, |entry| {
+            entry
+                .covered()
+                .filter(|position| {
+                    position.stamp <= entry.watermark()
+                        && opening_watermark.is_none_or(|watermark| position.stamp > watermark)
+                })
+                .count()
+        });
+        if self.first != 0 && self.first != u64::try_from(covered_count).unwrap_or(u64::MAX) {
+            return Err(mismatch());
+        }
+        if let Some(decided) = decided {
+            let fixed = if self.first == 0 { decided.fixed } else { 0 };
+            if self.fixed != fixed || self.positions.get(..fixed) != decided.positions.get(..fixed)
+            {
+                return Err(mismatch());
+            }
+            let mut pending = self.positions.clone();
+            let mut covered = entry
+                .map(|entry| entry.covered().collect::<Vec<_>>())
+                .unwrap_or_default();
+            for position in &decided.positions {
+                if let Some(index) = pending.iter().position(|held| held == position) {
+                    pending.remove(index);
+                    continue;
+                }
+                let Some(entry) = entry.filter(|entry| position.stamp <= entry.watermark()) else {
+                    return Err(mismatch());
+                };
+                let fingerprint = if position.reference.authority == SAMPLE_AUTHORITY {
+                    match indexed_sample(&position.reference) {
+                        Some((_, fingerprint)) => fingerprint.map(str::to_owned),
+                        None => Some(
+                            sample_fingerprint_with(&position.reference.identity, &position.absent)
+                                .map_err(ClauseRefusal::Fault)?,
+                        ),
+                    }
+                } else {
+                    None
+                };
+                let found = covered
+                    .iter()
+                    .position(|held| {
+                        held.stamp == position.stamp
+                            && held.stamp <= entry.watermark()
+                            && held.fingerprint == fingerprint
+                            && (fingerprint.is_some()
+                                || held.identity == document_identity(&position.reference))
+                    })
+                    .ok_or_else(mismatch)?;
+                covered.remove(found);
+            }
+        }
+        for (offset, position) in self.positions.iter().take(self.fixed).enumerate() {
+            let entry = entry.ok_or_else(mismatch)?;
+            if position.stamp > entry.watermark() {
+                return Err(mismatch());
+            }
+            let fingerprint = indexed_sample(&position.reference)
+                .and_then(|(_, fingerprint)| fingerprint.map(str::to_owned));
+            if indexed_sample(&position.reference).is_some_and(|(index, _)| {
+                index
+                    != self
+                        .first
+                        .saturating_add(u64::try_from(offset).unwrap_or(u64::MAX))
+            }) || !entry.covered().any(|held| {
+                held.stamp == position.stamp
+                    && held.identity == document_identity(&position.reference)
+                    && held.fingerprint == fingerprint
+            }) {
+                return Err(mismatch());
+            }
+        }
+        Ok(())
+    }
+
     /// Append an already admitted observation, without reading its value.
     pub fn observe(&mut self, position: &AdmittedPosition<'_>) {
         let mut absent = position.absent.clone();

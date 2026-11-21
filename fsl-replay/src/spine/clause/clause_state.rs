@@ -219,7 +219,7 @@ impl Reading {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 struct Seen {
     reference: DocumentRef,
     stamp: u64,
