@@ -36,3 +36,12 @@ Results:
 - AC-48 is atomic.
 
 EARS is not applicable, because no requirement statement changed. Hidden-assumption probes for external tools, APIs or concurrency do not apply.
+
+## Dispositions
+
+Disposition round 2. Head 7cfd1558f632b5f26841cdcc218f21b07638e1be. Same reviewer, run 59b28e57-7cbb-423a-b6ed-b607ed3538ff.
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | The new FR-531 body section "Selected model union producer" (`FR-531...md:399-427`) uses SHALL for each of these: retention on `SemanticGraph::selected_model_unions`, `VariantRecord.position` semantics, Clock/Data/None classification, the typed refusals `UnsupportedUnionPayload`/`MissingUnionVariant` with no row retained, `Emission::selected_model_union_rows` and its complete row contents, and no empty stand-in or caller-built row. It also states the monitor-plan rekey, the `SelectedMonitorClosureRows::model_unions` use, and that this producer adds no `identities.json` member and no `Value::Clock`. Each statement matches `model_union_payloads`, `union_payload_form`, `model_union_rows` and `carry_rows` at this head. AC-45 to AC-49 are now each derived from a body statement. |
+| FND-002 | fixed | AC-47 (`FR-531...md:1129`) now states classification only and does not repeat itself. The fault outcome (typed refusal, no row retained, no silent omission) is stated in the body and in the atomic AC-49 (`FR-531...md:1131`, Inspection). `model.rs:2954-2974` raises it through `fault(...)`. |

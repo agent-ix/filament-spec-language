@@ -42,3 +42,12 @@ Trace bindings checked:
 - AC-48: variant_type.rs:316.
 
 Computed matrix: not run. A prior attempt did not complete within 300 s, so the matrix axis is unassessed. Receipts read, not rerun: qsl2743fix1-c (2 passed), d (1), e (1), f (30), g (15).
+
+## Dispositions
+
+Disposition round 2. Head 7cfd1558f632b5f26841cdcc218f21b07638e1be. Same reviewer, run 59b28e57-7cbb-423a-b6ed-b607ed3538ff. This round changed spec text, TC text and four trace tags; no production code changed.
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | AC-45 (`FR-531...md:1127`) no longer has the untested writer-fault and no-budget-charge clauses. It now states only the row and case contents. Those contents are asserted by `emission_model_union_rows_are_joined_by_the_native_monitor_closure`: the document, rank, position, name and payload kind directly, and the type handle through the projected `Composite(type_handle)`. The original case identity, settled key, sealed member and Data original type are checked by the native closure join against the package's selected model. The typed lowering faults moved to the atomic AC-49, verified by Inspection. |
+| FND-002 | fixed | AC-45 to AC-48 now read `Test (TC-1331)`. TC-1331's scope names AC-45 to AC-48, and the procedure gains rows 25 to 27 plus a "Model union producer" paragraph. Row 26 matches the classifier test's eight inputs and outcomes, and is qualified as making no end-to-end admission claim. The four tests carry `TC-1331` with their union ACs. The AC-30 enum tags are unchanged. AC-49 reads `Inspection` with no TC while AC-11 and AC-25 read `Inspection (TC-1331)`. The TC-1331 paragraph names AC-49's inspection target, so I record this as a style difference, not a defect. |
