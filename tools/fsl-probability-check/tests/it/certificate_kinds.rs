@@ -117,7 +117,7 @@ fn value_bounds_certificates_are_accepted() {
 
 /// A finite-horizon quantile over every scheduler: its certificate is
 /// accepted by the checker.
-#[trace("TC-2065", "FR-201-AC-51")]
+#[trace("TC-2065", "FR-201-AC-51", "FR-1043-AC-6")]
 #[test]
 fn a_finite_horizon_quantile_certificate_is_accepted() {
     let source = likely(

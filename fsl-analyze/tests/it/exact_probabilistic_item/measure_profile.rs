@@ -577,6 +577,45 @@ fn p95_quantity_ratio_is_accepted_from_its_emitted_package_and_two_ms_refutes() 
     assert_eq!(numerator["objective"]["measure"]["kind"], "accumulate");
     assert_eq!(numerator["objective"]["measure"]["reward"][1], "duration");
     assert!(!numerator["objective"]["measure"]["unit"].is_null());
+    assert_eq!(
+        numerator["objective"]["measure"]["threshold"],
+        json!({"numerator":"5","denominator":"1"})
+    );
+    let reward = world
+        .package
+        .graph()
+        .probabilistic_model()
+        .rewards()
+        .iter()
+        .find(|reward| reward.name() == "duration")
+        .unwrap();
+    let filament_exact::ValueType::Quantity(unit) = reward.value_type() else {
+        panic!("the duration reward must retain its actual unit");
+    };
+    let mut unit_bytes = Vec::new();
+    let mut writer =
+        quire_canonical::Writer::new(&mut unit_bytes, quire_canonical::Limits::new(4096));
+    fsl_foundation::scalar_wire::unit(Some(unit), &mut writer, |integer, writer| {
+        fsl_foundation::scalar_wire::integer(integer, 4096, None, writer)
+    })
+    .unwrap();
+    drop(writer);
+    let actual_unit: Value = serde_json::from_slice(&unit_bytes).unwrap();
+    assert_eq!(numerator["objective"]["measure"]["unit"], actual_unit);
+    let denominator = &document["conditional"]["denominator"];
+    let initial = denominator["ranking"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|row| row["rank"] == 10)
+        .unwrap();
+    let initial = denominator["values"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|row| row["state"] == initial["state"])
+        .unwrap();
+    assert_eq!(initial["value"], json!({"numerator":"1","denominator":"1"}));
     let emitted = fsl_package::emit_checked(
         &world.package,
         fsl_replay::spine::SpineLimits::default().package.emit(),
@@ -1087,8 +1126,43 @@ fn every_scheduler_exact_mean_witness_attains_the_deciding_extremum() {
         "mean of fraction holds(m.delivered) over [0,2] <= rational(1,3)",
     );
     let world = World::new(&retry(&claims));
-    for name in ["MinNo", "MaxNo"] {
-        refuted(&world, name);
+    let system = ModelSystem::new(world.subject().simulation).unwrap();
+    let initial = system.initial().remove(0);
+    let actions = system.actions(&initial).unwrap().unwrap();
+    let [fast, slow] = actions.as_slice() else {
+        panic!("expected exactly fast and slow: {actions:?}");
+    };
+    assert_ne!(fast.identity.operation, slow.identity.operation);
+    for (name, expected, action) in [
+        ("MinNo", ratio(11, 48), &slow.identity),
+        ("MaxNo", ratio(5, 12), &fast.identity),
+    ] {
+        let record = settle(&world, name, ModelCheckLimits::default());
+        assert_eq!(record.terminal().unwrap().value(), &TerminalValue::Refuted);
+        let token = record.probabilistic_counterexample.as_ref().unwrap();
+        let witness = token.evidence();
+        let document: Value =
+            serde_json::from_slice(witness.subsystem.as_ref().unwrap().as_bytes()).unwrap();
+        let root = URL_SAFE_NO_PAD.encode(witness.initial_key.as_bytes());
+        let value = document["values"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|row| row["state"] == root)
+            .unwrap();
+        assert_eq!(
+            value["value"],
+            json!({"numerator":expected.numerator().to_string(),"denominator":expected.denominator().to_string()})
+        );
+        let selected = witness
+            .scheduler
+            .iter()
+            .find(|(key, _)| key == &witness.initial_key)
+            .unwrap();
+        assert_eq!(
+            selected.1,
+            fsl_replay::ProductAction::Identity(fsl_replay::Schedule::of(&system, action).unwrap())
+        );
     }
     let baseline = settle(&world, "MinNo", ModelCheckLimits::default());
     let token = baseline.probabilistic_counterexample.as_ref().unwrap();
@@ -1465,7 +1539,13 @@ fn weighted_fraction_keeps_exact_sums_and_checks_its_mean_independently() {
     refuted(&world, "No");
 }
 
-#[trace("FR-1043-AC-8", "FR-1043-AC-9", "FR-202-AC-28")]
+#[trace(
+    "FR-1043-AC-8",
+    "FR-1043-AC-9",
+    "FR-202-AC-28",
+    "FR-1042-AC-13",
+    "FR-1042-AC-14"
+)]
 #[test]
 fn mean_bound_policy_hints_constrain_search_and_absence_reconstructs_internal_choices() {
     let claims = claim(
@@ -2374,5 +2454,73 @@ fn mixed_initial_quantile_settles_only_activating_initial_one() {
     assert!(
         matches!(rejected, Ok(ExactProbabilityCertificateCheck::Rejected(_))),
         "{rejected:?}"
+    );
+}
+
+#[trace("TC-3152", "FR-1043-AC-8", "FR-1043-AC-9", "FR-202-AC-28")]
+#[test]
+fn terminal_initial_undecided_fraction_synthesizes_stutter_without_a_hint() {
+    let claims = claim(
+        "Min",
+        "every scheduler",
+        "mean of fraction holds(false) over [0,2] >= rational(1,2)",
+    ) + &claim(
+        "Max",
+        "every scheduler",
+        "mean of fraction holds(false) over [0,2] <= 0",
+    );
+    let mut model = retry(&claims);
+    model.initial = json!({"delivered":true});
+    let world = World::new(&model);
+    let record = settle(&world, "Min", ModelCheckLimits::default());
+    assert_eq!(record.terminal().unwrap().value(), &TerminalValue::Refuted);
+    let witness = record
+        .probabilistic_counterexample
+        .as_ref()
+        .unwrap()
+        .evidence();
+    let root: Value = serde_json::from_slice(witness.initial_key.as_bytes()).unwrap();
+    assert_eq!(root[5], json!(["fraction", "3"]));
+    let mut upper = mean_bound(witness, false, true);
+    upper.as_object_mut().unwrap().remove("policy");
+    assert!(upper["values"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .all(|row| row["value"] == json!({"numerator":"0","denominator":"1"})));
+    let mut no_policy = witness.clone();
+    no_policy.scheduler.clear();
+    let replay = replay_mean_document(&world, &no_policy, &upper);
+    let Ok(fsl_replay::ProbabilityWitnessReplay::Reproduced(token)) = replay else {
+        panic!("{replay:?}");
+    };
+    assert!(token
+        .evidence()
+        .scheduler
+        .iter()
+        .any(|(key, action)| key == &witness.initial_key
+            && matches!(action, fsl_replay::ProductAction::TerminalStutter)));
+
+    // Lower(Maximum)=0 satisfies every local inequality/rank condition. At
+    // the admitted threshold zero it cannot strictly refute the claim.
+    let mut lower = proof(&world, "Max", ratio(0, 1));
+    let base = lower["objective"].take();
+    lower["objective"] =
+        json!({"profile":"filament.probability-objective/value-bounds/v1", "base":base});
+    lower["kind"] = json!("lower");
+    lower.as_object_mut().unwrap().remove("policy");
+    no_policy.item = fsl_replay::probabilistic_claim_identity(world.claim("Max")).unwrap();
+    let rejected = replay_mean_document(&world, &no_policy, &lower);
+    assert!(
+        matches!(
+            rejected,
+            Err(fsl_replay::ProbabilityWitnessError::CertificateRejected(
+                ProbabilityCertificateRejection {
+                    rule: ProbabilityCertificateRule::ThresholdMissed,
+                    ..
+                }
+            ))
+        ),
+        "valid local Lowermax0 equality: {rejected:?}"
     );
 }
