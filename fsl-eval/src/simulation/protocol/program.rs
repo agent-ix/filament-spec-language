@@ -1020,7 +1020,7 @@ impl<'a> Program<'a> {
     /// evaluator.
     pub(super) fn new_package(
         model: &ModelSystem<'_>,
-        package: &super::PackageProtocolProgram<'_>,
+        package: &super::PackageProtocolProgram<'a>,
     ) -> Result<Self, ProtocolRefusal> {
         // A control's text includes each structural branch or case label,
         // which the package's declaration path omits.
