@@ -27,7 +27,7 @@ basis, and that a refused `holds` condition settles as a refusal at its
 position.
 
 Scope: FR-312-AC-7, FR-312-AC-8, FR-267-AC-13, FR-267-AC-14, FR-267-AC-15, FR-267-AC-16, FR-267-AC-18, FR-267-AC-24, FR-266-AC-4,
-FR-327-AC-6, FR-330-AC-7.
+FR-327-AC-6, FR-330-AC-7, FR-267-AC-30, FR-267-AC-31 and FR-267-AC-32.
 
 ## Test Procedure
 
@@ -60,6 +60,38 @@ clause `Fair`, TC-847's undefined and `GuardUndefined` clauses, FR-328-AC-1's
 8. Write and read back FR-267-AC-24's `window-limit-reached` and
    `progress-limit-reached` rows, then read each with `value` a JSON number
    and with `value` `"02"`.
+
+9. Write TC-840 step 7's model reports from both routes, read each through
+   the native strict reader and compare the typed payloads and RFC 8785
+   re-encoded bytes. Include the later failing activation and initially
+   terminal case. Write TC-840 step 8's model undefined report without a
+   counterexample; when an undefined model witness is carried, also read
+   and re-encode its finite prefix and state-key envelope. Keep step 2 and
+   FR-330-AC-18's sample witness as observed-arm controls.
+10. Independently apply each malformed edit of FR-267-AC-31 to step 9's
+    model documents and the observed control; strictly read every edited
+    document. Test document and sample steps in both prefix and loop, mixed
+    step members, null and mistyped initial indexes and bindings, malformed
+    state keys and transition members, misplaced undefined identity members,
+    changed `trace_position`, and omission of a violated row's witness.
+    Keep well-shaped but semantically foreign keys and bindings for TC-523's
+    replay checks rather than treating structural read as subject validation.
+11. Retain the actual producer's model references in step 9's reports. Assert
+    the explicit native shape at `over_binding`, transition receivers and
+    reference arguments, including references inside existing recursive
+    typed-value containers: exactly `type`, `universe`, `object_type` and
+    `identity`, with `type` `reference`, the actual universe `NodeId`, native
+    `EffectiveId` object type and identity UTF-8 text. Use the admitted
+    `test/counters` model from `fsl-eval/tests/it/model_simulation.rs` for this
+    reference control. Its Counter object `a` has `object_type` exactly
+    `{"owner_effective_type":null,"original":{"package":"test/counters","node":"ix://test/counters/Counter"}}`
+    and `identity` exactly `"a"`. Read and re-encode the produced documents.
+    Independently apply the missing/extra member, wrong-kind universe,
+    backend-node object type, malformed effective identity, non-text identity
+    and FR-650 wrapper mutations of FR-267-AC-32 at each reference position.
+    Preserve all other model-arm members in each mutation. Use independent
+    literal expectations for these fields, never a call to the producer as
+    the expected-value oracle.
 
 Tag the tests `#[trace("TC-1160", "<criterion>")]` with the criterion each
 step asserts.
@@ -97,3 +129,22 @@ step asserts.
   11; each edited document refuses naming the member.
 - Step 8: both rows read back equal with `value` `"2"` and `"4"`; each
   edited row refuses naming `disposition.temporal.value`.
+- Step 9: equal typed model payloads and canonical bytes retain the actual
+  initial index, binding, fairness, taken transitions, post-state keys,
+  prefix/loop boundary, interval and report position. No-witness model
+  undefined retains its reason and position; a carried witness retains the
+  actual finite prefix and state-key envelope. The observed controls retain
+  their existing closed observed shapes.
+- Step 10: every malformed document refuses with a located diagnostic naming
+  the offending member. Removing a violated row's counterexample refuses;
+  accepting the existing model undefined omission does not make that witness
+  optional. Semantic replay controls remain separately asserted by TC-523.
+- Step 11: the actual native reference form strictly reads and round-trips
+  equal typed payloads and canonical bytes; each malformed reference refuses
+  at its offending member. These are native reader assertions. The current
+  native reference is not a backend `TypedValue.reference` conformance
+  fixture and SHALL NOT be submitted to the backend schema and reported as
+  passing it. QSL-2726's remaining package-bound canonical reference conversion
+  and replay restoration cover projection, outcome counterexamples and
+  task-product wires separately. Step 9's model invariants and TC-523's
+  semantic replay authentication remain required.

@@ -639,6 +639,12 @@ pub(super) fn declaration_text(key: &DeclarationKey, limits: Limits) -> Result<S
     DeclarationRecord::of_key(key).text(limits)
 }
 
+pub(super) fn node_declaration_text(key: &NodeKey) -> Option<String> {
+    DeclarationRecord::of_node(key)?
+        .text(Limits::new(super::identity_limits().input_bytes))
+        .ok()
+}
+
 /// FR-181's reference triple.
 pub(crate) fn reference_enc(reference: &ObjectReference) -> Enc {
     projection::reference(reference)

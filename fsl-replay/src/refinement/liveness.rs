@@ -38,6 +38,20 @@ pub struct CandidateFairStep {
     pub transition: Option<Identity>,
     /// Candidate key at the next lasso position.
     pub post_state: Vec<u8>,
+    /// The steps after `transition` when the edge runs through intermediate
+    /// configurations (a protocol trace's internal closure), in order; empty
+    /// for a single step.
+    pub interior: Vec<CandidateFairHop>,
+}
+
+/// One further step of a candidate edge that passes through intermediate
+/// configurations.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CandidateFairHop {
+    /// Abstract transitions enabled at the configuration this hop leaves.
+    pub enabled: Vec<Identity>,
+    /// The abstract transition the hop takes, or `None` for a step of no class.
+    pub transition: Option<Identity>,
 }
 
 /// Why a hidden-candidate lasso could not be checked.
@@ -84,13 +98,23 @@ pub fn candidate_lasso_has_fair_run(
                 .get(&(next_position, row.post_state.clone()))
                 .copied()
                 .ok_or(CandidateLivenessError::InvalidGraph)?;
+            // The edge runs through its intermediate configurations, each a
+            // vertex enabling what the protocol enables there.
+            let label = |transition: Option<Identity>| {
+                transition.map_or(EdgeLabel::Stutter, EdgeLabel::Transition)
+            };
+            let mut source = from;
+            let mut leaving = label(row.transition);
+            for hop in &row.interior {
+                let middle = graph.add_vertex(hop.enabled.iter().copied());
+                graph
+                    .add_edge(source, middle, leaving)
+                    .map_err(|_| CandidateLivenessError::InvalidGraph)?;
+                source = middle;
+                leaving = label(hop.transition);
+            }
             graph
-                .add_edge(
-                    from,
-                    to,
-                    row.transition
-                        .map_or(EdgeLabel::Stutter, EdgeLabel::Transition),
-                )
+                .add_edge(source, to, leaving)
                 .map_err(|_| CandidateLivenessError::InvalidGraph)?;
         }
     }
@@ -214,7 +238,9 @@ pub fn abstract_classes(
 
 #[cfg(test)]
 mod candidate_tests {
-    use super::{candidate_lasso_has_fair_run, CandidateFairState, CandidateFairStep};
+    use super::{
+        candidate_lasso_has_fair_run, CandidateFairHop, CandidateFairState, CandidateFairStep,
+    };
     use filament_exact::Cancel;
     use fsl_eval::fairness::{Constraint, Identity};
     use ix_trace_rs::trace;
@@ -231,7 +257,22 @@ mod candidate_tests {
             pre_state: pre.to_vec(),
             transition,
             post_state: post.to_vec(),
+            interior: Vec::new(),
         }
+    }
+
+    /// A one-candidate loop whose edge runs through one intermediate
+    /// configuration enabling `middle`, the second hop taking `taken`.
+    fn through(middle: &[Identity], taken: Option<Identity>) -> Vec<Vec<CandidateFairStep>> {
+        vec![vec![CandidateFairStep {
+            pre_state: b"c".to_vec(),
+            transition: None,
+            post_state: b"c".to_vec(),
+            interior: vec![CandidateFairHop {
+                enabled: middle.to_vec(),
+                transition: taken,
+            }],
+        }]]
     }
 
     #[test]
@@ -290,6 +331,59 @@ mod candidate_tests {
             &positions,
             &steps,
             &[Constraint::weak([fire])],
+            &Cancel::new(),
+        )
+        .expect("the candidate graph is closed"));
+    }
+
+    #[test]
+    #[trace("TC-2536", "FR-899-AC-10")]
+    fn a_strong_class_enabled_only_inside_a_trace_edge_is_owed() {
+        // The class is enabled at the intermediate configuration of every
+        // loop iteration and no hop takes it: strong fairness is violated.
+        let owed = Identity::new(1);
+        let positions = vec![vec![state(b"c", &[])]];
+        let steps = through(&[owed], None);
+        assert!(!candidate_lasso_has_fair_run(
+            &positions,
+            &steps,
+            &[Constraint::strong([owed])],
+            &Cancel::new(),
+        )
+        .expect("the candidate graph is closed"));
+        // A hop that takes it discharges the obligation.
+        let steps = through(&[owed], Some(owed));
+        assert!(candidate_lasso_has_fair_run(
+            &positions,
+            &steps,
+            &[Constraint::strong([owed])],
+            &Cancel::new(),
+        )
+        .expect("the candidate graph is closed"));
+    }
+
+    #[test]
+    #[trace("TC-2536", "FR-899-AC-10")]
+    fn a_weak_class_is_enabled_everywhere_only_when_every_configuration_enables_it() {
+        let owed = Identity::new(1);
+        // Enabled at the start and the intermediate configuration, never
+        // taken: weak fairness is violated.
+        let positions = vec![vec![state(b"c", &[owed])]];
+        let steps = through(&[owed], None);
+        assert!(!candidate_lasso_has_fair_run(
+            &positions,
+            &steps,
+            &[Constraint::weak([owed])],
+            &Cancel::new(),
+        )
+        .expect("the candidate graph is closed"));
+        // Disabled at the intermediate configuration: the class is not
+        // enabled at every position, so the run is fair.
+        let steps = through(&[], None);
+        assert!(candidate_lasso_has_fair_run(
+            &positions,
+            &steps,
+            &[Constraint::weak([owed])],
             &Cancel::new(),
         )
         .expect("the candidate graph is closed"));

@@ -2503,7 +2503,9 @@ fn timestamped_guarded_on_each_activations_are_evaluated() {
         report(request)
     }
 
-    assert_eq!(outcome(&guarded(&[0, 0])), &TemporalVerdict::Holds);
+    // Every guard is false over a closed, complete scope: no activation exists
+    // (FR-044-AC-7), so the clause is inactive, not a true obligation.
+    assert_eq!(outcome(&guarded(&[0, 0])), &TemporalVerdict::Inactive);
     assert_eq!(
         outcome(&guarded(&[1, 0])),
         &TemporalVerdict::Violated { at: 0 }
@@ -4030,35 +4032,137 @@ fn a_finite_trace_and_a_lasso_report_no_authenticated_selection() {
     assert!(progressed.authenticated_temporal_selection.is_some());
 }
 
-/// FR-044-AC-7, FR-501-AC-10 (TC-1295): an `on each` guard that cannot be
-/// established is an incomplete activation naming that guard, not a false
-/// guard and not a violation.
-#[trace("TC-1295", "FR-501-AC-10")]
+/// FR-044-AC-7: incomplete scope evidence cannot establish inactivity even
+/// when every observed guard is false.
+#[trace("TC-1295", "FR-044-AC-7")]
 #[test]
-fn timestamped_undefined_guard_reports_a_named_incomplete_activation() {
-    let mut request = timestamped_with(Unit::TimestampedEach, &[0, 10], &[2, 2], 12, Some(12));
+fn timestamped_incomplete_guard_scope_remains_unknown() {
+    let mut request = timestamped_with(Unit::TimestampedEach, &[0, 10], &[0, 0], 12, None);
     let bytes = program_source_bytes(&mut request);
     let source = String::from_utf8(bytes.clone()).unwrap();
     *bytes = source
         .replace(
             "on each (q: Counters::Counter) { eventually[0,2] holds(c.value > 0) }",
-            "on each (q: Counters::Counter) when (3 mod (2 - q.value) >= 0) { eventually[0,2] holds(c.value > 0) }",
+            "on each (q: Counters::Counter) when (q.value = 1) { eventually[0,2] holds(c.value > 0) }",
         )
         .into_bytes();
     let report = report(request);
-    assert_eq!(report.category_label(), "incomplete");
-    assert_eq!(report.disposition.exit_code(), 22);
+    assert_eq!(outcome(&report), &TemporalVerdict::Pending);
     assert_eq!(report.disposition.truth(), None);
-    let ClauseDisposition::Temporal(TemporalVerdict::ActivationIncomplete { at, guard }) =
-        &report.disposition
-    else {
-        panic!(
-            "expected a named incomplete activation, got {:?}",
-            report.disposition
+}
+
+/// The finite-window request of `TimestampedEach` with the guard `guard`.
+fn timestamped_guarded_by(guard: &str, values: &[i64], closed: bool) -> ClauseRunReport {
+    let mut request = timestamped_with(Unit::TimestampedEach, &[0, 10], values, 12, Some(12));
+    let bytes = program_source_bytes(&mut request);
+    let source = String::from_utf8(bytes.clone()).unwrap();
+    *bytes = source
+        .replace(
+            "on each (q: Counters::Counter) { eventually[0,2] holds(c.value > 0) }",
+            &format!(
+                "on each (q: Counters::Counter) when ({guard}) {{ eventually[0,2] holds(c.value > 0) }}"
+            ),
+        )
+        .into_bytes();
+    report(timestamped_changed(request, |trace| {
+        trace.progress.scope = closure(closed);
+    }))
+}
+
+/// FR-044-AC-5, FR-044-AC-7, FR-267-AC-28 (TC-1278): a closed, complete scope
+/// whose every guard is false is inactive on the finite-window path as on the
+/// batch path; an open scope in the same shape is not decided; a true guard
+/// still evaluates.
+#[trace("TC-1278", "FR-044-AC-7")]
+#[test]
+fn a_finite_window_scope_with_every_guard_false_matches_the_batch_inactive_result() {
+    let batch = report(finite(Unit::Guarded, "Guarded", &[0, 0, 0]));
+    assert_eq!(outcome(&batch), &TemporalVerdict::Inactive);
+
+    let closed = timestamped_guarded_by("q.value = 1", &[0, 0], true);
+    assert_eq!(outcome(&closed), outcome(&batch));
+    assert_eq!(closed.category_label(), batch.category_label());
+    assert_eq!(closed.disposition.truth(), None);
+    assert_eq!(closed.axes().activation, crate::ActivationAxis::Inactive);
+    assert_eq!(closed.axes().truth, None);
+    assert_eq!(window_report(&closed).basis, SettlementBasis::ClosedScope);
+
+    // The guard becomes true at one position: the clause is active again.
+    let active = timestamped_guarded_by("q.value = 1", &[0, 1], true);
+    assert!(
+        !matches!(outcome(&active), TemporalVerdict::Inactive),
+        "{:?}",
+        active.disposition
+    );
+    assert_eq!(active.axes().activation, crate::ActivationAxis::Active);
+}
+
+/// FR-044 "Outputs": an open scope whose every guard is false may still
+/// activate; the finite-window path does not decide it and reports no truth.
+#[trace("TC-1278", "FR-044-AC-5")]
+#[test]
+fn a_finite_window_open_scope_with_every_guard_false_is_not_decided() {
+    let open = timestamped_guarded_by("q.value = 1", &[0, 0], false);
+    assert_eq!(outcome(&open), &TemporalVerdict::Pending);
+    assert_eq!(open.disposition.truth(), None);
+    assert_eq!(open.axes().activation, crate::ActivationAxis::Unknown);
+    assert_eq!(open.axes().truth, Some(crate::TruthAxis::Pending));
+    assert_eq!(window_report(&open).basis, SettlementBasis::Unsettled);
+}
+
+/// A defined undefined guard retains its position, guard locus and cause
+/// in both closed and open finite-window scopes.
+#[trace("TC-1278", "FR-267-AC-14", "FR-331-AC-9", "FR-044-AC-7")]
+#[test]
+fn a_finite_window_undefined_on_each_guard_retains_its_cause_and_locus() {
+    for closed in [true, false] {
+        let mut request = timestamped_named(
+            Unit::GuardUndefined,
+            "GuardUndefined",
+            &[0, 10],
+            &[2, 2],
+            12,
+            Some(12),
         );
-    };
-    assert_eq!(*at, 0);
-    assert!(guard.path().is_empty());
+        let bytes = program_source_bytes(&mut request);
+        *bytes = String::from_utf8(bytes.clone())
+            .unwrap()
+            .replace(
+                "filament.temporal.event-position.false-extension/v1",
+                "filament.temporal.timestamped-event.finite-window/v1",
+            )
+            .into_bytes();
+        let window = report(timestamped_changed(request, |trace| {
+            trace.progress.scope = closure(closed);
+        }));
+        assert_eq!(
+            outcome(&window),
+            &TemporalVerdict::Undefined {
+                at: 0,
+                cause: crate::spine::TemporalUndefinedCause::Kernel(
+                    filament_exact::Undefined::DivisionByZero,
+                ),
+            },
+            "closed={closed}",
+        );
+        assert_eq!(window.disposition.exit_code(), 10);
+        assert_eq!(window.disposition.truth(), None);
+        let counterexample = window
+            .counterexample
+            .as_ref()
+            .expect("undefined guard evidence");
+        assert_eq!(counterexample.trace_position.index(), 0);
+        assert_eq!(counterexample.prefix.len(), 1);
+        assert_eq!(
+            counterexample.kind,
+            crate::ObservedTemporalKind::UndefinedEvaluation {
+                locus: fsl_eval::temporal::ObservedLocus::Activation,
+                cause: fsl_eval::temporal::UndefinedCause::Kernel(
+                    filament_exact::Undefined::DivisionByZero,
+                ),
+            },
+        );
+    }
 }
 
 /// FR-330-AC-9, FR-502 (TC-1295, TC-1296): a finite-window request that

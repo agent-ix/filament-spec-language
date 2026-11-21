@@ -138,7 +138,7 @@ fn evaluate_invariants(
                     findings.push(ModelFinding::InvariantUndetermined {
                         clause: clause.name.clone(),
                         self_object: reference.clone(),
-                        anchor: walk.state.anchor.clone(),
+                        anchor: walk.state.required_anchor()?.clone(),
                         evaluation: ClauseOutcome::Stopped(BROKEN),
                     });
                     continue;
@@ -159,18 +159,18 @@ fn evaluate_invariants(
                 Verdict::False => findings.push(ModelFinding::InvariantViolated {
                     clause: clause.name.clone(),
                     self_object: reference.clone(),
-                    anchor: walk.state.anchor.clone(),
+                    anchor: walk.state.required_anchor()?.clone(),
                 }),
                 Verdict::Undecided(outcome) => findings.push(ModelFinding::InvariantUndetermined {
                     clause: clause.name.clone(),
                     self_object: reference.clone(),
-                    anchor: walk.state.anchor.clone(),
+                    anchor: walk.state.required_anchor()?.clone(),
                     evaluation: outcome,
                 }),
             }
         }
     }
-    findings.extend(bound_findings(system, walk.state, &walk.rows, &order));
+    findings.extend(bound_findings(system, walk.state, &walk.rows, &order)?);
     Ok(findings)
 }
 
@@ -202,13 +202,13 @@ pub(super) fn stopped_invariants(
                 findings.push(ModelFinding::InvariantUndetermined {
                     clause: clause.name.clone(),
                     self_object: reference.clone(),
-                    anchor: state.anchor.clone(),
+                    anchor: state.required_anchor()?.clone(),
                     evaluation: ClauseOutcome::Stopped(cause),
                 });
             }
         }
     }
-    findings.extend(bound_findings(system, state, &rows, &order));
+    findings.extend(bound_findings(system, state, &rows, &order)?);
     Ok(findings)
 }
 
@@ -219,7 +219,7 @@ fn bound_findings(
     state: &ModelSimState,
     rows: &[Row],
     order: &[usize],
-) -> Vec<ModelFinding> {
+) -> Result<Vec<ModelFinding>, ExpansionStop> {
     let mut findings = Vec::new();
     for bound in &system.member_bounds {
         for row in order {
@@ -236,12 +236,12 @@ fn bound_findings(
                 findings.push(ModelFinding::InvariantViolated {
                     clause: bound.constraint.node.clone(),
                     self_object: row.reference.clone(),
-                    anchor: state.anchor.clone(),
+                    anchor: state.required_anchor()?.clone(),
                 });
             }
         }
     }
-    findings
+    Ok(findings)
 }
 
 /// The conjunction of a set of clauses of one kind (FR-120 "Contract

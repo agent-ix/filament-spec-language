@@ -200,6 +200,8 @@ relationships:
     type: contains
   - target: ix://agent-ix/filament-spec-language/FR-110
     type: contains
+  - target: ix://agent-ix/filament-spec-language/FR-1045
+    type: contains
   - target: ix://agent-ix/filament-spec-language/FR-111
     type: contains
   - target: ix://agent-ix/filament-spec-language/FR-112
@@ -1098,6 +1100,7 @@ The full task is tmp/formalization-agent-a-language-core.md in the workspace. Th
 | [FR-108](functional/FR-108-run-the-configversion-spine-corpus.md) | FR |
 | [FR-109](functional/FR-109-run-a-state-clause-through-the-spine.md) | FR |
 | [FR-110](functional/FR-110-resolve-header-profile-selections-at-e3.md) | FR |
+| [FR-1045](functional/FR-1045-admit-native-run-relationships-through-the-observation-resolver.md) | FR |
 | [FR-111](functional/FR-111-link-a-complete-v1-definition-bundle.md) | FR |
 | [FR-112](functional/FR-112-build-protocol-scoped-anchor-forms.md) | FR |
 | [FR-113](functional/FR-113-resolve-scoped-anchors-in-nested-control-scopes.md) | FR |

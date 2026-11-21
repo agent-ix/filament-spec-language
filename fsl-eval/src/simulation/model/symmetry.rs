@@ -226,11 +226,7 @@ impl ModelSystem<'_> {
         permutation: &Permutation,
     ) -> Result<ModelSimState, ExpansionStop> {
         if permutation.is_identity() {
-            return Ok(ModelSimState {
-                state: state.state.clone(),
-                anchor: state.anchor.clone(),
-                reached_by: None,
-            });
+            return Ok(state.without_effect(state.state.clone()));
         }
         let renaming = self.renaming(permutation);
         let populations = state
@@ -267,14 +263,10 @@ impl ModelSystem<'_> {
                 extent
             })
             .collect();
-        Ok(ModelSimState {
-            state: ModelState {
-                populations,
-                extents,
-            },
-            anchor: state.anchor.clone(),
-            reached_by: None,
-        })
+        Ok(state.without_effect(ModelState {
+            populations,
+            extents,
+        }))
     }
 
     /// ADR-021 SYM-1: `permutation` applied to `transition`: its receiver

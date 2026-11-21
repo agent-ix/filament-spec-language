@@ -253,9 +253,29 @@ location SHALL be FSpec FR-322's relative form `{origin, up, down}`: the
 checker's path of the term written against the path of the term the walk
 visits just before it, with the least `up`. The rows of a body therefore
 hold a number of entries linear in the body, and S4 SHALL charge
-`emit.output_bytes` for the rows it writes in that form, so a body nested
-100,000 deep (a 100,000-term sum, 100,000 nested `let`s) emits within the
-default output limit instead of refusing `OutputLimit`. Every
+`emit.output_bytes` for the canonical bytes it writes. For AC-41's two
+deep-body families, the complete canonical artifact size and the charged
+native strict-read and location-reconstruction work SHALL have linear upper
+bounds derived from the checked input's node and edge counts, source and
+identifier byte lengths, and the fixed schema and body-walk structure. The
+relative entry count is one `up` entry per row plus the number of `down`
+entries; it SHALL not exceed the BL-D1 and BL-D2 bounds of FSpec
+FR-322-AC-510. The caller SHALL
+state finite byte, work and read-storage ceilings from those bounds before
+emission. The bound coefficients SHALL be independent of body depth and of
+the term or binding count; neither the ceilings nor their coefficients are
+derived from the completed artifact or its measured consumption. Qualification SHALL record
+each artifact's actual canonical byte length, relative entry count and
+charged native work against its declared bounds. Success at one size alone
+is not evidence of a linear bound.
+
+Those explicit ceilings do not change the published default. With the same
+checked input and the other stage ceilings unchanged, an artifact that
+exceeds the default `emit.output_bytes` SHALL refuse `OutputLimit`, naming
+that setting, its configured bound and the first unpaid byte, with no
+partial package. The source occurrence attached to that refusal does not
+identify the wire member or source offset of the denied byte. Default-limit
+refusal alone does not qualify AC-41's explicit-limit positive case. Every
 S4 path that writes a package writes the carrier: `emit_checked` writes the
 rows from the checked graph, and `emit_timed_models`, which re-encodes a base
 package with typed timed models, SHALL carry the base package's
@@ -355,7 +375,31 @@ equal inputs.
 | `source_operations` | every final emission's source-operation identity row (FR-390 "Source-declared operation calls from the reader"), in producer order: `{ "structural_node", "source_authority", "source_identity", "anchor_id" }`, with `structural_node` the wire node id string of the source-declared `state`/`operation_anchor` node, `source_authority` the source authority of the declaring source unit, `source_identity` the original source operation identity (the operation name as the source declares it, qualified by its declaring source type) and `anchor_id` the full anchor id of that node |
 | `source_objects` | every final emission's source-object identity row (FR-569 "Source-object identity rows"), in ascending order of their `structural_node`s: `{ "structural_node", "source_authority", "source_identity", "abstract", "supertypes", "identity_fields", "members", "populations", "operations" }`, with `structural_node` the wire node id string of the source-declared `model`/`object_type` node, `source_identity` the type's qualified source name, `abstract` a boolean, `supertypes` the wire node id strings of its direct supertype nodes in source order, `identity_fields` its identity field names in declared order, `members` one member entry per field of its effective view (inherited fields first in `extends` order, then its own in source order; its data entries are exactly its node body's bindings in order, and each clock field is a clock entry), each in the `source_records` member-entry encoding above with `original_member_identity` and `admitted_name` the field name, and `populations` its own populations in source order, each `{ "name", "symmetric" }`, and `operations` its own operations in source order, each `{ "identity", "query", "clock_parameters" }` with `identity` the string `<type>::<operation>`, `query` a boolean and `clock_parameters` the names of its parameters whose declared type is `Clock` or an alias of it, in declaration order (FR-569 "Source-object identity rows") |
 
-A document whose `format` is `filament.checked-handoff.identities/4` or `/3` is refused as the old format, with no read of its rows and no fallback to an empty `source_tuples`, `source_operations` or `source_objects`, or to members without clock entries. All eight members are required. The reader SHALL reject `/1`, `/2`, `/3`, `/4`, an absent member, a member entry with both or neither of `type_node` and `member_type`, a `value_type` present without `type_node` or absent with it, a clock entry whose `member_type` is no clock rendering or that names a binding of its node,
+| `model_enum_declarations` | every final emission's `SelectedModelEnumDeclarationRow`: `{ "structural_node", "selected_document", "original_identity", "node_key" }` |
+| `model_enum_members` | every final emission's `SelectedModelEnumMemberRow`: `{ "structural_node", "declaration_node", "selected_document", "enum_original_identity", "member_original_identity", "case", "member_key" }` |
+| `model_enum_shapes` | every final emission's `SelectedModelEnumShapeRow`: `{ "structural_node", "node_key", "selected_document", "original_identity", "shape", "cases" }`; `shape` uses the original Exact value-type encoding below with `kind: "enum"`; each case is `{ "case", "structural_node", "member_key", "member_original_identity", "variant" }`, with `variant` `{ "owner", "case" }`. All opaque keys, including a variant's owner, use the original structural-key encoding below. |
+
+These three model-enum channels carry only payload-free selected model variant
+types, including unused declarations and every real case node. A case with a
+Clock payload is not payload-free. The writer retains the checked shape and
+variant identities, never derives them from case keys, and orders cases by the
+shape's canonical rank, independently of authored source positions or model
+aliases. Contract IR's `SelectedExactIdentities::with_admitted_model_enum_rows`
+joins all three channels against this package's selected model documents under
+the invocation's cumulative native work and storage budget. Missing, foreign,
+conflicting or noncanonical witnesses refuse before a partial enum view is
+exposed. Full runtime projection and bare evaluation consume those same joined
+shapes; an enum is never represented as a record or a union. Every producer-owned
+copy and runtime enum-member materialization is charged before copying.
+
+Enum return values are available through these joined shapes. Enum `=` and `!=`
+evaluation remains unmet: the native equality witness reader currently treats a
+held model declaration's original document package as foreign to the application
+package. Its original identity is not graph locality. Closing that gap requires
+the native equality reader fix and its consuming operation/fact projection; this
+carrier adds no alternate equality admission or rewritten node identity.
+
+A document whose `format` is `filament.checked-handoff.identities/4` or `/3` is refused as the old format, with no read of its rows and no fallback to an empty `source_tuples`, `source_operations` or `source_objects`, or to members without clock entries. All eleven members are required, including empty arrays for empty producer channels. The reader SHALL reject `/1`, `/2`, `/3`, `/4`, an absent member, a member entry with both or neither of `type_node` and `member_type`, a `value_type` present without `type_node` or absent with it, a clock entry whose `member_type` is no clock rendering or that names a binding of its node,
 an unknown or repeated member and a malformed row; it SHALL NOT supply an empty
 default, read a legacy variant or silently omit a row that cannot be represented.
 The writer SHALL emit an empty `source_records` array only when the admitted
@@ -1049,7 +1093,10 @@ outcome map. Each carries a "Consumer entry" section that points here.
 | FR-531-AC-38 | For FR-531-AC-36's `f` at `2.0`, `2.0` and `2.0`, with `U` the `work_units` the source route's completed call spends, each call with a `work_units` limit from `0` to `U - 1` returns `Incomplete` naming `work_units` on both routes, with equal `Evaluation.location` and equal charge logs on the two routes at every limit; the locations over the sweep include `Body { function: "f", index: 0 }` path `[1]`, the denied charge of the second `sqrt`, which a bare route that derives locations from the lowered body reports as `[1, 0]`. | Test (TC-3133) |
 | FR-531-AC-39 | Over the `Config` domain fixture of `tests/it/dispatch_emission.rs`, the unit holding its three `size` bodies, `pre rootCall using v on Config::ConfigVersion::probe { self.size() > 0 }` (`rootCall`'s call of `size` is what makes `sqrtPre` a clause function: the checker builds a clause function only for an operation a dispatch candidate reaches, and no candidate reaches `probe`) and `pre sqrtPre using v on Config::ConfigVersion::size { filament::value::ieee::sqrt(float64(bits: 0x4000000000000000)) <= filament::value::ieee::sqrt(float64(bits: 0x4000000000000000)) }` emits, for the precondition's clause function (a `function` node with a `clause` binding `precondition` and a `body` binding), one `body_locations` row per term of its body walk, every row's origin carrying the checker's `Body` owner `function` and `index` of that clause function, and the two `sqrt` rows the paths `[0]` and `[1]` that the checked graph's locations of those two nodes hold (the lowered body holds them at `[0]` and `[1, 0]`); each `size` body, a literal with no term, has no row. The strict reader admits the package, and refuses it at `/checked_term_data/body_locations` once the second `sqrt`'s row is removed. | Test (TC-3133) |
 | FR-531-AC-40 | FR-531-AC-39's unit with `ConfigVersion` declared in the unit's own source as `object ConfigVersion { versionNumber: Integer; operation probe(): Integer; operation size(): Integer; }` with its three `size` bodies (`SourceOwner` identity `I`), in place of the selected `Config` model, and with `rootCall` and `sqrtPre` written `on ConfigVersion::probe` and `on ConfigVersion::size`: the `body_locations` rows of the precondition's clause function carry a `name` `F` beginning `ix://I/`, and no row and no other byte of the package holds `ix://source/`. Evaluating that clause function at `size`'s pre-state on the source route and on the `BarePackage` of the unit's written bytes with the same remaining budget returns two `IeeeFlags` losses with the inexact flag on each route, located at `Body { function: F, index: k }` paths `[0]` and `[1]`, with the same `F` and `k` on both routes, and equal `Evaluation.location` under every `work_units` limit below the completed call's spend (FR-531-AC-38's sweep). A source route that reports the checker's `ix://source/<unit>/...` name fails the equality. A declared function `f` keeps the location `Body { function: "f", index: 0 }` on both routes (FR-531-AC-36). | Test (TC-3133) |
-| FR-531-AC-41 | S4 writes the `body_locations` rows of `function d(x: Integer): Integer pure { x + x + ... + x }` with 100,000 `+` applications, and of a body of 100,000 nested `let`s each binding the previous binder plus 1, in FSpec FR-322's relative form (FSpec FR-322-AC-510's BL-D1 and BL-D2 rows exactly), on a small stack and within the default `emit.output_bytes` limit, with no `OutputLimit` refusal; the strict reader admits each package, and the bare route's typed read of each row returns the checker's path. A row written with a whole `path` is refused `malformed_wire` at its `location`. | Test (TC-3133) |
+| FR-531-AC-41 | For two separate units, one holding `function d(x: Integer): Integer pure { x + x + ... + x }` with 100,000 `+` applications (100,001 terms), the other holding 100,000 nested `let`s whose first binding is `x + 1`, each subsequent binding is the previous binder plus 1 and the result is the last binder, S4 writes complete packages and their `body_locations` on a 512 KiB stack under finite explicit caller ceilings chosen before emission from the checked input and the declared linear bounds above. The actual complete canonical byte lengths, relative entry counts and charged native strict-read and lending-cursor work are recorded separately for the two units and do not exceed those bounds. The rows use FSpec FR-322's relative form (FSpec FR-322-AC-510's BL-D1 and BL-D2 rows exactly); the strict reader admits each package, and each typed path lent in body-walk order equals the checker's path without retaining all expanded paths. With the same checked units and other stage ceilings unchanged, setting only `emit.output_bytes` to the published default 16,777,216 instead refuses `OutputLimit` with setting `emit.output_bytes`, configured bound 16,777,216 and first unpaid byte 16,777,217, and no partial package. A row written with a whole `path` is refused `malformed_wire` at its `location`. | Test |
+| FR-531-AC-42 | A selected model with `Tier` cases `Gold`, `Standard` and an unused payload-free variant with non-identifier cases in noncanonical authored order writes all three required model-enum channels in identities/5. Reading the file preserves every original declaration, member and shape; full runtime projection retains both enums, and the bare world resolves every case to its authenticated canonical rank and member identity. Calling enum-valued functions, including a nested typed parameter round trip, from source and the bytes gives equal variants, ranks and semantic charge logs; renaming the model alias changes no enum value identity. Enum equality and inequality remain the unmet capability stated above. | Test (TC-1331) |
+| FR-531-AC-43 | Omitting or repeating any required enum channel, an unknown channel, or identities/4 refuses without a partial read. Foreign selected-document claims, missing or repeated members, reversed shape variants, and reordered canonical case rows each fail the native witness join. | Test (TC-1331) |
+| FR-531-AC-44 | For original model-enum rows, one cumulative native budget covers producer materialization, native identity join and full runtime projection. The exact measured work and storage ceilings succeed with the same consumed totals; zero and one-less work or storage ceilings refuse with the original first-unpaid resource and no partial enum view. | Test (TC-1331) |
 
 ## Dependencies
 

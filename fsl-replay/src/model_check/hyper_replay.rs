@@ -192,7 +192,7 @@ pub fn replay_model_relation_tuple(
         {
             return Err(shape_error("does not name the checked execution tuple"));
         }
-        let positions = match reexecute(system, trace)? {
+        let positions = match reexecute(system, trace, TraceEdges::Relation(replay.cancel))? {
             Some(positions) => positions,
             None => return Ok(no_value()),
         };
@@ -530,7 +530,7 @@ fn execute(
 ) -> Result<Option<Vec<Vec<Position>>>, ReplayRefusal> {
     let mut executed = Vec::with_capacity(counterexample.traces.len());
     for (trace, system) in counterexample.traces.iter().zip(&replay.systems) {
-        match reexecute(system, trace)? {
+        match reexecute(system, trace, TraceEdges::Ordinary)? {
             Some(positions) => executed.push(positions),
             None => return Ok(None),
         }
@@ -538,10 +538,18 @@ fn execute(
     Ok(Some(executed))
 }
 
+/// The edge semantics of the checked claim whose trace is replayed.
+#[derive(Clone, Copy)]
+enum TraceEdges<'a> {
+    Ordinary,
+    Relation(&'a Cancel),
+}
+
 /// Re-execute `trace` from its initial state (FR-128's rules).
 fn reexecute(
     system: &ModelSystem<'_>,
     trace: &HyperTrace,
+    edges: TraceEdges<'_>,
 ) -> Result<Option<Vec<Position>>, ReplayRefusal> {
     if !trace.results.is_empty() && trace.results.len() != trace.steps.len() {
         return Err(shape_error("has one result slot per transition"));
@@ -557,7 +565,36 @@ fn reexecute(
     let mut positions = vec![Position { state, state_key }];
     for (index, step) in trace.steps.iter().enumerate() {
         let current = positions.last().ok_or_else(|| fault("a-position-exists"))?;
-        let Ok(expansion) = expand(system, &current.state)? else {
+        let expanded = match edges {
+            TraceEdges::Ordinary => expand(system, &current.state)?,
+            TraceEdges::Relation(cancel) => {
+                if cancel.poll() {
+                    if let Some(cause) = cancel.cause() {
+                        return Err(ReplayRefusal::Cancelled(cause));
+                    }
+                }
+                match system.relation_successors(&current.state, cancel) {
+                    Ok(expansion) => Ok(fsl_eval::simulation::Expansion {
+                        successors: expansion
+                            .successors
+                            .into_iter()
+                            .map(|(edge, state)| (edge.transition, state))
+                            .collect(),
+                        findings: expansion.findings,
+                    }),
+                    Err(stop) => {
+                        if let Some(cause) = cancel.cause() {
+                            return Err(ReplayRefusal::Cancelled(cause));
+                        }
+                        if stop.is_internal_failure() {
+                            return Err(fault("model-expansion"));
+                        }
+                        Err(stop)
+                    }
+                }
+            }
+        };
+        let Ok(expansion) = expanded else {
             return Ok(None);
         };
         let next = match step {

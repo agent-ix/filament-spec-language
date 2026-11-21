@@ -198,11 +198,22 @@ pub enum PastWindow { Positions { a: u64, b: u64 }, Duration { a: Quantity, b: Q
   stamp is at or below `t0 + Hf`, which completeness then covers, so every
   aggregate it reads is definite. This rule is sound and incomplete: it
   never reads a partial window as final, and it does not look for the cases
-  where every continuation would keep the comparison's value. A position
+  where every continuation would keep the comparison's value. The rule
+  applies to duration windows under the timestamped-event profile; under
+  event-position a later observation is always a later position, never a
+  member of an existing position's window, so a position window's aggregate
+  is always the singleton of its comparison or the `Undefined` or
+  `Incomplete` result below. A position
   admitted inside a window whose observation holds no valuation of a field
   the filter, the value expression or the `fraction` predicate reads makes
   the atom `MissingValuation` (both possibilities, FR-501 "Verdicts"),
-  never `invalid-value` and never a value over the other positions. The
+  never `invalid-value` and never a value over the other positions. A
+  `missing` entry (FR-641) naming the aggregate atom at the member's
+  position marks that observation as holding no valuation the aggregate
+  reads. A carried state (FR-820) takes the atoms an observation holds no
+  valuation of with the observation, holds them with its position, and
+  counts them as content of the position (FR-993): a changed absence at a
+  covered index is a `Completeness` contradiction. The
   carried route (FR-820), which holds an open activation's window positions
   by value, and a run over a progressed trace (FR-502) SHALL give each
   aggregate atom the same possibility set as the whole-trace evaluation of
@@ -280,8 +291,8 @@ pub enum PastWindow { Positions { a: u64, b: u64 }, Duration { a: Quantity, b: Q
 | FR-194-AC-13 | Through `command::run`, a unit declaring `record Resp { latency: Quantity<ms>; }` and `temporal P using w over (r: Resp) clock "plant-ms" on origin { always[0, 300000] (quantile 0.95 of r.latency over past[0 ms, 300 s] <= 5 ms) }` under the timestamped-event profile (the operator interval a tick interval in the clock unit `ms`, FR-326-AC-6, and the aggregate window a duration), its role configured `{"kind": "timestamped_event", "timestamp_unit": "ms"}` (FR-640), over AC-1's 20 latencies stamped 0 to 19 ms as a closed `timestamped` trace complete through 300000 (FR-641), reports `violated`, exit 10; with `quantile 0.9` it reports `holds`, exit 0. The model-subject refusal `unsupported_construct`/`expression-form` of AC-7 has category `unsupported`, exit 21 (FR-330-AC-8). | Test (TC-2387) |
 | FR-194-AC-14 | Closed ends. Under timestamped-event over events stamped 0, 5000 and 10000 ms, at position 2 `count over past[5 s, 10 s]` is 2 (positions 0 and 1, both ends admitted), `count over past[5001 ms, 10 s]` is 1 (position 0), `count over past[0 ms, 4999 ms]` is 1 (position 2 itself) and `count over past[0 ms, 5 s]` is 2 (positions 1 and 2). Under event-position over five positions, `count over past[1, 3]` at position 4 reads positions 1, 2 and 3 and is 3. | Test (TC-629) |
 | FR-194-AC-15 | Same stamp. Under timestamped-event over three events all stamped 7 ms, with order keys 1, 2 and 3 of one order authority and listed in the order 3, 1, 2, `count over past[0 ms, 0 ms]` is 1 at canonical position 0, 2 at position 1 and 3 at position 2, and `count over past[0 ms, 0 ms] >= 3` holds only at position 2: an event of the anchor's stamp that sorts after the anchor is not in its window. Listing the events in any other order gives the same values. | Test (TC-629) |
-| FR-194-AC-16 | A window not asserted complete. Through `command::run`, AC-13's unit over AC-1's 20 latencies stamped 0 to 19 ms with watermark 19 and completeness `{"complete": {"through": 9}}` reports `pending-window` with `deadline` 300000, never `violated`: the atom at position 19, whose window reaches stamps 10 to 19, has both possibilities with reason `IncompleteInput`, while the atoms at positions 0 to 9, whose windows end at or below stamp 9, are definite and true. With completeness through 19 the same run reports `violated`, exit 10, from position 19. With `min_count 30` added and completeness through 9 no position reports `InsufficientData`; with completeness through 300000 and watermark 300000 the clause is undefined with `InsufficientData{count: 20, min_count: 30}`. The carried route (FR-820) over the same input gives the same atom possibilities and the same result. | Test (TC-629) |
-| FR-194-AC-17 | A missing valuation in a window. AC-1's trace with the response stamped 18 ms holding no `latency` valuation, complete through 300000 with watermark 300000, gives the `quantile 0.95` atom at position 19 the value `MissingValuation` (both possibilities), so AC-13's run reports `indeterminate` with reason `MissingValuation`, never `invalid-value` and never a quantile over the other 19 values. | Test (TC-629) |
+| FR-194-AC-16 | A window not asserted complete. Through `command::run`, AC-13's unit over AC-1's 20 latencies stamped 0 to 19 ms with watermark 19 and completeness `{"complete": {"through": 9}}` reports `pending-window` with `deadline` 300000, never `violated`: the atom at position 19, whose window reaches stamps 10 to 19, has both possibilities with reason `IncompleteInput`, while the atoms at positions 0 to 9, whose windows end at or below stamp 9, are definite and true. With completeness through 19 the same run reports `violated`, exit 10, from position 19. With `min_count 30` added and completeness through 9, the atoms at positions 0 to 9 are `Undefined(InsufficientData{count: i + 1, min_count: 30})` at position `i`, the atoms at positions 10 to 19 have both possibilities with reason `IncompleteInput` and are never `InsufficientData`, and the run reports `insufficient-data` at position 0 with count 1 and `min_count` 30, because FR-501 returns an undefined atom in evaluation order before any pending activation; with completeness through 300000 and watermark 300000 the run reports the same `InsufficientData{where: position 0, count: 1, min_count: 30}`. At completeness through 9 the activation is not settled: a later assertion that admits enough late events at stamps 10 to 19 can still make it false and the run `violated`. The carried route (FR-820) over the same input gives the same atom possibilities and the same result. | Test (TC-629) |
+| FR-194-AC-17 | A missing valuation in a window. AC-1's trace with the response stamped 18 ms holding no `latency` valuation, complete through 300000 with watermark 300000, gives the `quantile 0.95` atom at positions 18 and 19, whose windows hold position 18, the value `MissingValuation` (both possibilities), so AC-13's run reports `indeterminate` with reason `MissingValuation { position: 18, atom: <the aggregate atom> }`, never `invalid-value` and never a quantile over the other values. | Test (TC-629) |
 
 ## Dependencies
 

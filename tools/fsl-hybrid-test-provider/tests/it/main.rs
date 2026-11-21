@@ -3,6 +3,7 @@
 //! process, the scripted `fsl-hybrid-test-provider` executable, through the
 //! command adapter's analyze entry.
 
+mod exchange_stop;
 mod host;
 mod process_provider;
 mod support;

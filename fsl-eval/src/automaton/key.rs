@@ -788,6 +788,23 @@ pub(super) fn is_tp4(clause: &CheckedTemporalClause) -> bool {
     )
 }
 
+/// The formula shape of a clause [`SafetyStates`] translates: an
+/// infinite-trace safety clause with no timed interval and within the path
+/// bound. A TP-4 clause is keyed by [`BuchiStates`](super::BuchiStates)
+/// instead.
+fn safety_shape(clause: &CheckedTemporalClause) -> Option<FormulaShape> {
+    if clause.profile() != TemporalProfile::InfiniteTrace || is_tp4(clause) {
+        return None;
+    }
+    FormulaShape::of(clause.formula(), Polarity::Positive)
+}
+
+/// Whether [`SafetyStates::clause`] translates `clause`, under any context
+/// of its profile.
+pub fn is_safety_translated(clause: &CheckedTemporalClause) -> bool {
+    safety_shape(clause).is_some()
+}
+
 /// The kind of subject a clause ranges over: FR-338 fixes its past-window
 /// and acceptance forms by it.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -832,16 +849,10 @@ impl SafetyStates {
         subject: SubjectKind,
     ) -> Result<Self, TranslationRefusal> {
         let not_translated = || TranslationRefusal::NotTranslated(NotTranslated);
-        if clause.profile() != TemporalProfile::InfiniteTrace || context.profile != clause.profile()
-        {
+        if context.profile != clause.profile() {
             return Err(not_translated());
         }
-        let shape =
-            FormulaShape::of(clause.formula(), Polarity::Positive).ok_or_else(not_translated)?;
-        // A TP-4 clause is keyed by `BuchiStates`, not as a safety state.
-        if is_tp4(clause) {
-            return Err(not_translated());
-        }
+        let shape = safety_shape(clause).ok_or_else(not_translated)?;
         let max_bytes = IdentityLimits::default().input_bytes;
         let (context, context_octets) = context
             .encoded(max_bytes)
@@ -853,6 +864,11 @@ impl SafetyStates {
             shape,
             subject,
         })
+    }
+
+    /// The maximum canonical state-key byte length for this context.
+    pub const fn max_key_bytes(&self) -> u64 {
+        self.max_bytes
     }
 
     /// The canonical key of the state whose viable configurations are

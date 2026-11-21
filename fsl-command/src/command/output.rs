@@ -36,6 +36,11 @@ impl NativeResult {
         Self(document)
     }
 
+    /// A lifecycle capability refusal with no semantic result or export package.
+    pub(super) fn capability_document(document: Value) -> Self {
+        Self(document)
+    }
+
     /// The FR-1038 plan run result: FSpec FR-824's outcome as the
     /// `verification_plan` member.
     pub(super) fn plan_document(document: Value) -> Self {
@@ -375,7 +380,6 @@ pub(super) fn error(error: &RunError, artifact: bool) -> Result<Value, serde_jso
         | RunCause::AnalyzeRequest { .. }
         | RunCause::AnalyzeMemory { .. }
         | RunCause::AnalyzeUniverse(_)
-        | RunCause::AnalyzePackage { .. }
         | RunCause::AnalyzeNotYetImplemented { .. }
         | RunCause::AnalyzeRefused(_)
         | RunCause::MonitorRefused(_)
@@ -383,6 +387,15 @@ pub(super) fn error(error: &RunError, artifact: bool) -> Result<Value, serde_jso
         | RunCause::IntegerDivisionLaw { .. }
         | RunCause::TlClause { .. }
         | RunCause::TlSubject(_) => (types::Stage::Request, types::Details::None),
+        RunCause::AnalyzePackage { pointer, .. } => (
+            types::Stage::Request,
+            pointer.as_ref().map_or(types::Details::None, |pointer| {
+                types::Details::Object(serde_json::Map::from_iter([(
+                    "path".to_owned(),
+                    Value::String(pointer.clone()),
+                )]))
+            }),
+        ),
         RunCause::TlFault(_) => (types::Stage::Output, types::Details::None),
         RunCause::AnalyzeFault | RunCause::MonitorFault | RunCause::MonitorCancelled => {
             (types::Stage::Output, types::Details::None)
@@ -461,6 +474,7 @@ pub(super) fn error(error: &RunError, artifact: bool) -> Result<Value, serde_jso
         stage,
         code: error.cause.code().as_str(),
         cause: match &error.cause {
+            RunCause::AnalyzePackage { cause, .. } => cause.as_deref(),
             RunCause::Spine(failure) => failure.refusal.cause(),
             RunCause::Replay(failure) => failure.refusal.cause(),
             RunCause::SpineRun(refusal) => match refusal.as_ref() {

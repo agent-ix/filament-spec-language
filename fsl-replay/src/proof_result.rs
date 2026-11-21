@@ -949,6 +949,8 @@ pub enum InconclusiveCause {
         cause: &'static str,
         /// The setting that raises the bound.
         setting: &'static str,
+        /// The original numeric byte bound and full attempted input size.
+        exceeded: crate::BoundExceeded,
     },
     /// A requested package or refinement identity differs from the current
     /// package or refinement identity (FR-149, FR-282, FR-331).
@@ -1188,11 +1190,12 @@ impl InconclusiveCause {
     /// `replay.input_bytes` bound refused it (FR-940-AC-22).
     pub fn from_replay_refusal(refusal: &ReplayRefusal) -> Self {
         match refusal {
-            ReplayRefusal::Request(crate::ReplayRequestRefusal::BoundExceeded(_)) => {
+            ReplayRefusal::Request(crate::ReplayRequestRefusal::BoundExceeded(exceeded)) => {
                 Self::ReplayRefusedAtBound {
                     code: refusal.code(),
                     cause: "input-bytes-exceeded",
                     setting: "replay.input_bytes",
+                    exceeded: *exceeded,
                 }
             }
             _ => Self::ReplayRefused(refusal.code()),
@@ -1686,24 +1689,71 @@ impl TerminalRecord {
         extremum: Option<Extremum>,
         binding: Option<ExactBinding>,
     ) -> Option<Self> {
+        if let crate::ExactProbabilityCertificateCheck::AcceptedVacuous(accepted) = check {
+            let mut record = Self::with_backend(
+                request_index,
+                backend,
+                TerminalValue::Proved {
+                    basis: ProofBasis::Exhaustive,
+                    certification: Certification::Certified,
+                },
+            );
+            record.exact_certificate_document = Some(accepted.document().into());
+            return Some(record);
+        }
         let crate::probability_certificate::ExactProbabilityCertificateCheck::Accepted(accepted) =
             check
         else {
             return None;
         };
         let value = ExactRational::new(accepted.value().clone());
+        let entries = match accepted.initial_values() {
+            Some(coverage) => {
+                if coverage.is_empty()
+                    || coverage
+                        .iter()
+                        .enumerate()
+                        .any(|(index, (initial, _))| usize::try_from(*initial).ok() != Some(index))
+                {
+                    return None;
+                }
+                let entries = coverage
+                    .iter()
+                    .filter_map(|(initial, value)| {
+                        value.as_ref().map(|value| ExactEntry {
+                            initial: *initial,
+                            binding: binding.clone(),
+                            value: ExactOrBounds::Exact {
+                                value: ExactRational::new(value.clone()),
+                            },
+                            extremum,
+                        })
+                    })
+                    .collect::<Vec<_>>();
+                if entries.is_empty() {
+                    return None;
+                }
+                entries
+            }
+            None => vec![ExactEntry {
+                initial: 0,
+                binding,
+                value: ExactOrBounds::Exact {
+                    value: value.clone(),
+                },
+                extremum,
+            }],
+        };
+        if !accepted.initial_entries_match(&entries) {
+            return None;
+        }
         let mut record = Self::with_backend(
             request_index,
             backend,
             TerminalValue::Proved {
                 basis: ProofBasis::ExactValue {
                     value: value.clone(),
-                    entries: vec![ExactEntry {
-                        initial: 0,
-                        binding,
-                        value: ExactOrBounds::Exact { value },
-                        extremum,
-                    }],
+                    entries,
                     reductions: Vec::new(),
                 },
                 certification: Certification::Certified,

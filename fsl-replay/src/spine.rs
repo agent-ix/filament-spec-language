@@ -231,8 +231,8 @@ pub use call::{
 #[cfg(test)]
 pub(crate) use call::{run_compiled, CallSources};
 pub(crate) use call::{run_reading, run_reading_with_integer_division};
-pub use identity_form::{effective_form, node_key_form, universe_form};
 pub(crate) use identity_form::is_effective_form;
+pub use identity_form::{effective_form, node_key_form, universe_form};
 pub use package_call::run_package;
 pub use run_value::ArgumentDefect;
 
@@ -1618,6 +1618,9 @@ fn check_message_one(first: &CheckRefusal) -> String {
                 ),
                 ProtocolAnchorCause::RoleModel { role, context, .. } => format!(
                     "{message}: role `{role}` is on `{context}`, which is not a type a role takes"
+                ),
+                ProtocolAnchorCause::ConnectionAdmission { connection, detail, .. } => format!(
+                    "{message}: connection {}: {}", connection.node, detail
                 ),
                 ProtocolAnchorCause::JoinList {
                     parallel, fault, ..

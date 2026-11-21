@@ -69,8 +69,8 @@ pub trait WindowCharge {
 enum Stop {
     Incomplete(Incomplete),
     WindowLimit(WindowLimitReached),
-    /// An `on each` guard that cannot be established at a position.
-    GuardUnresolved(TemporalPosition),
+    /// An `on each` guard that is undefined at a position.
+    GuardUndefined(UndefinedEvaluation),
     Undefined(UndefinedEvaluation),
     /// A `holds` condition, an `on each` guard or a capture was refused at
     /// this position (FR-327 "Refused condition").
@@ -158,6 +158,8 @@ pub(super) struct Prior {
     /// The union of the decision supports of the true activations, before
     /// any false or open one.
     holds: std::collections::BTreeSet<SupportPair>,
+    /// Whether any activation was summarized: a guard admitted it.
+    activated: bool,
 }
 
 impl Prior {
@@ -167,6 +169,7 @@ impl Prior {
         run: &Run<'_, L>,
         finished: &Finished,
     ) -> Result<(), InternalFault> {
+        self.activated = true;
         if self.first_false.is_some() {
             return Ok(());
         }
@@ -213,7 +216,7 @@ pub(super) enum Entry {
 #[derive(Clone, Debug)]
 pub(super) enum Tail {
     Done,
-    GuardUnresolved(TemporalPosition),
+    GuardUndefined(UndefinedEvaluation),
     Undefined(UndefinedEvaluation),
     Incomplete(Incomplete),
     WindowLimit(WindowLimitReached),
@@ -248,6 +251,10 @@ pub(super) struct Run<'a, L: TemporalLetters> {
     /// The valuations read, by (position, atom class).
     cells: HashMap<(usize, usize), Cell>,
     undefined: BTreeMap<(usize, usize), UndefinedCause>,
+    /// The aggregate valuations whose window is not asserted complete
+    /// (FR-194-AC-16): each is a missing valuation with reason
+    /// `IncompleteInput`, never read.
+    incomplete: HashSet<(usize, usize)>,
     frames: HashMap<(usize, usize), ScanFrame>,
     /// The `temporal.visit` charges admitted so far.
     visits: u64,
@@ -429,6 +436,7 @@ impl<'a, L: TemporalLetters> Run<'a, L> {
             classes,
             cells: seed.cells,
             undefined: seed.undefined,
+            incomplete: HashSet::new(),
             frames: HashMap::new(),
             visits: 0,
         })
@@ -449,7 +457,7 @@ impl<'a, L: TemporalLetters> Run<'a, L> {
             Ok(()) => Tail::Done,
             Err(Stop::Incomplete(incomplete)) => Tail::Incomplete(incomplete),
             Err(Stop::WindowLimit(limit)) => Tail::WindowLimit(limit),
-            Err(Stop::GuardUnresolved(at)) => Tail::GuardUnresolved(at),
+            Err(Stop::GuardUndefined(undefined)) => Tail::GuardUndefined(undefined),
             Err(Stop::Undefined(undefined)) => Tail::Undefined(undefined),
             // In evaluation order: an atom undefined at an earlier position, or
             // an activation that ended false before the refused condition, is
@@ -693,9 +701,9 @@ impl<L: TemporalLetters> Run<'_, L> {
                 {
                     AtomReading::True => {}
                     AtomReading::False => continue,
-                    // A guard that cannot be established is an incomplete
-                    // activation, never a false guard (FR-044-AC-7).
-                    AtomReading::Undefined(_) => return Err(Stop::GuardUnresolved(at)),
+                    AtomReading::Undefined(cause) => {
+                        return Err(Stop::GuardUndefined(UndefinedEvaluation { at, cause }));
+                    }
                 }
             }
             let captured = match self.clause.capture_site() {
@@ -813,6 +821,13 @@ impl<L: TemporalLetters> Run<'_, L> {
             .node_id(class)
             .ok_or_else(|| fault("atom-has-node-id"))?;
         let at = position_of(member)?;
+        // FR-194-AC-16: a window the completeness does not reach the latest
+        // stamp of may still gain a member.
+        let unfinished = member < self.trace.observed
+            && match self.letters.aggregate_lag(id) {
+                Some(lag) => !self.established(self.stamp(member)?.saturating_sub(lag), 0),
+                None => false,
+            };
         let Run {
             letters,
             meter,
@@ -831,10 +846,25 @@ impl<L: TemporalLetters> Run<'_, L> {
             *visits = visits.saturating_add(1);
             Ok(())
         };
-        match letters
+        let valuation = letters
             .valuation_with_window_visits(id, at, meter, &mut aggregate_visit)
-            .map_err(|stop| Stop::at(stop, at, Some(class)))?
-        {
+            .map_err(|stop| Stop::at(stop, at, Some(class)))?;
+        let valuation = match valuation {
+            // Both possibilities with reason `IncompleteInput`; a window
+            // short of `min_count` is then two-valued, never
+            // `InsufficientData`. An undefined filter, value or predicate at a
+            // present position stays undefined: no continuation removes it.
+            Valuation::True
+            | Valuation::False
+            | Valuation::Undefined(UndefinedCause::InsufficientData(_))
+                if unfinished =>
+            {
+                self.incomplete.insert((member, class));
+                Valuation::Missing
+            }
+            other => other,
+        };
+        match valuation {
             Valuation::True => self.set_cell((member, class), Cell::True),
             Valuation::False => self.set_cell((member, class), Cell::False),
             Valuation::Missing => self.set_cell((member, class), Cell::Missing),
@@ -1157,7 +1187,18 @@ impl<L: TemporalLetters> Run<'_, L> {
             .map(|(position, node, cell)| (*position, Some((*node, *cell))))
             .chain(straddled.iter().map(|position| (*position, None)))
             .collect();
-        sources.sort_by_key(|(position, source)| (*position, source.map(|(node, _)| node)));
+        // Completeness before a valuation (FR-501 "Verdicts"): an aggregate
+        // whose window is not asserted complete comes first.
+        let unfinished = |position: usize, source: Option<(usize, Cell)>| {
+            source.is_some_and(|(node, _)| self.incomplete.contains(&(position, node)))
+        };
+        sources.sort_by_key(|(position, source)| {
+            (
+                !unfinished(*position, *source),
+                *position,
+                source.map(|(node, _)| node),
+            )
+        });
         let describe = |position: usize, source: Option<(usize, Cell)>| match source {
             Some((node, Cell::Conflicting)) => {
                 let atom = self
@@ -1169,6 +1210,9 @@ impl<L: TemporalLetters> Run<'_, L> {
                     position: position_of(position)?,
                     atom,
                 })
+            }
+            Some((node, _)) if self.incomplete.contains(&(position, node)) => {
+                Ok(IndeterminateReason::IncompleteInput)
             }
             Some((node, _)) => {
                 let atom = self
@@ -1318,8 +1362,8 @@ impl<L: TemporalLetters> Run<'_, L> {
             )
         } else {
             match tail {
-                Tail::GuardUnresolved(at) => (
-                    WindowVerdict::ActivationIncomplete { at },
+                Tail::GuardUndefined(undefined) => (
+                    WindowVerdict::Undefined(undefined),
                     Basis::Unavailable,
                     Vec::new(),
                 ),
@@ -1380,6 +1424,38 @@ impl<L: TemporalLetters> Run<'_, L> {
                             };
                             (verdict, basis, support)
                         }
+                        None if self.anchors.guarded && !prior.activated && done.is_empty() => {
+                            // Every guard read false (FR-044 "Outputs"): no
+                            // instance exists, so the clause has no truth.
+                            // A closed, complete scope is inactive; any other
+                            // scope may still activate and is unknown.
+                            // The observations this run holds start at `base`;
+                            // a carried state that dropped them all keeps the
+                            // stamp of the last one.
+                            let held = self.trace.observed.saturating_sub(self.base);
+                            let last = self
+                                .stamps
+                                .iter()
+                                .take(held)
+                                .max()
+                                .copied()
+                                .or(self.trace.last_observed.map(i128::from));
+                            let complete = last.is_some_and(|last| {
+                                covers(
+                                    self.trace.asserted.completeness,
+                                    last.saturating_add(self.margin),
+                                )
+                            });
+                            if scope_closed && complete {
+                                (WindowVerdict::Inactive, Basis::ClosedScope, Vec::new())
+                            } else {
+                                (
+                                    WindowVerdict::ActivationUnknown,
+                                    Basis::Unsettled,
+                                    Vec::new(),
+                                )
+                            }
+                        }
                         None => {
                             // Every summarized activation is established.
                             let established = done.iter().all(|a| a.established);
@@ -1403,6 +1479,8 @@ impl<L: TemporalLetters> Run<'_, L> {
             | WindowVerdict::WindowLimitReached(_)
             | WindowVerdict::ActivationIncomplete { .. } => Assessment::Failed,
             WindowVerdict::Holds
+            | WindowVerdict::Inactive
+            | WindowVerdict::ActivationUnknown
             | WindowVerdict::Violated { .. }
             | WindowVerdict::Pending { .. }
             | WindowVerdict::PendingNextEvent { .. }

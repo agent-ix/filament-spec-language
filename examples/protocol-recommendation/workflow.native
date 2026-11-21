@@ -1,0 +1,21 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+language "ix:native" edition "1-draft";
+profile v = "filament.value.complete/v1";
+profile P = "filament.protocol.finite-global/v1";
+model M = "test/counter";
+
+pre SpaceAvailable using v on M::Counter::inc { self.value < 2 }
+post AppendOne using v on M::Counter::inc { self.value - pre(self.value) = 1 }
+
+protocol Review using P over (view: M::Counter) on origin {
+  observe role Auditor on M::Counter;
+  role Seller on M::Counter;
+  run sequence Main {
+    recommend Advise by Auditor on M::Counter::inc contracts [SpaceAvailable]
+        as (advice: Boolean) { true };
+    attempt Apply by Seller on M::Counter::inc contracts [SpaceAvailable, AppendOne]
+        as (applied: Boolean) { true };
+    check Blocked using v { false };
+  }
+  finish Closed as (closed: Boolean) { true };
+}

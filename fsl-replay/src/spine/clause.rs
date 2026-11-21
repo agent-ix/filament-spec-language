@@ -1536,6 +1536,13 @@ impl ClauseRunReport {
             ClauseDisposition::Temporal(TemporalVerdict::ActivationIncomplete { .. }) => {
                 ActivationAxis::Unknown
             }
+            // FR-044: a finite-window scope with no activation yet that is open
+            // or not complete is `unknown`, whose verdict is `Pending`.
+            ClauseDisposition::Temporal(TemporalVerdict::Pending)
+                if self.finite_window.is_some() =>
+            {
+                ActivationAxis::Unknown
+            }
             ClauseDisposition::Evaluate(_)
             | ClauseDisposition::FrameViolation(_)
             | ClauseDisposition::OperationContractViolation(_)

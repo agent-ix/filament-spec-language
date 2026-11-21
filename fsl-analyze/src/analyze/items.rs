@@ -39,8 +39,9 @@ use crate::model_check::{
 use crate::statistical::{check_statistical, manifest as en4, StatisticalRequest};
 use crate::zone_check::{
     certificate_item, check_timed_model, check_timed_refinement, manifest as en6,
-    settle_timed_refinement, settle_zone_check, TimedRefinementRefusal, TimedRefinementRequest,
-    ZoneCheckItem, ZoneCheckLimits, ZoneCheckRefusal, ZoneCheckRequest, ZoneItem,
+    settle_timed_refinement, settle_zone_check, TimedLivenessHalf, TimedRefinementOutcome,
+    TimedRefinementRefusal, TimedRefinementRequest, TimedSafetyOutcome, ZoneCheckItem,
+    ZoneCheckLimits, ZoneCheckRefusal, ZoneCheckRequest, ZoneItem,
 };
 
 /// The FR-396/FR-399 negotiation seam for a routed hyper item. HP-4 calls
@@ -1004,6 +1005,10 @@ pub fn timed_refinement_item<'a, S: Clone + Eq + 'a>(
             } = item;
             let obligation = request.obligation.clone();
             match check_timed_refinement(request, cancel) {
+                Ok(TimedRefinementOutcome {
+                    safety: TimedSafetyOutcome::Holds { .. },
+                    liveness: Some(TimedLivenessHalf::Refused(refusal)),
+                }) => EngineReport::Refused(zone_refusal(&refusal)),
                 Ok(outcome) => EngineReport::Zone(
                     Box::new(settle_timed_refinement(
                         &outcome,
@@ -1036,7 +1041,8 @@ pub(super) fn zone_refusal(refusal: &ZoneCheckRefusal) -> Refusal {
         // The forms EN-6 does not decide yet.
         ZoneCheckRefusal::UnsupportedForm
         | ZoneCheckRefusal::CarriedClocks
-        | ZoneCheckRefusal::HiddenFieldTimedAbstract => Refusal::Unsupported(NOT_YET),
+        | ZoneCheckRefusal::HiddenFieldTimedAbstract
+        | ZoneCheckRefusal::HiddenFieldTimedAbstractLiveness => Refusal::Unsupported(NOT_YET),
         // A request defect: an obligation that is not the item's.
         ZoneCheckRefusal::ObligationMismatch => Refusal::Failed(INVALID_VALUE),
         // Engine defects, and refusals whose types name no catalog code:
@@ -1090,6 +1096,40 @@ pub(crate) fn admission(failure: &AdmissionFailure) -> Refusal {
             declined(ProofRefusalCause::IncompleteInput, record)
         }
         AdmissionFailure::Fault(fault) => Refusal::Failed(fault.catalog_code()),
+    }
+}
+
+/// Preserve a package parameter's projection refusal and admitted locus.
+pub(super) fn package_parameter_type_refusal(
+    package: &str,
+    node: &fsl_package::CheckedNodeId,
+    failure: &fsl_package::BareSelectionFailure,
+) -> Refusal {
+    let mut detail = serde_json::Map::new();
+    detail.insert("fact".to_owned(), serde_json::json!("parameter-type"));
+    detail.insert("node".to_owned(), serde_json::json!(node));
+    match failure.clone().into_view(package) {
+        Ok(view) => {
+            let (code, cause) = view.catalog();
+            detail.insert("package".to_owned(), serde_json::json!(view.package()));
+            detail.insert("reason".to_owned(), serde_json::json!(view.reason().name()));
+            let locus = match view.locus().key() {
+                Some(key) => match fsl_foundation::node_wire::node_key_to_json(key) {
+                    Ok(value) => value,
+                    Err(_) => return Refusal::Failed(BROKEN),
+                },
+                None => serde_json::json!({"type": "package"}),
+            };
+            detail.insert("locus".to_owned(), locus);
+            Refusal::UnsupportedWithDetail(CatalogCode::new(code, cause), detail)
+        }
+        Err(failure) => {
+            detail.insert(
+                "selection".to_owned(),
+                serde_json::json!(format!("{failure:?}")),
+            );
+            Refusal::FailedWithDetail(BROKEN, detail)
+        }
     }
 }
 
@@ -1189,6 +1229,11 @@ pub(super) fn model_refusal(refusal: &ModelCheckRefusal) -> Refusal {
             "role",
             role.clone(),
         ),
+        ModelCheckRefusal::Protocol(ProtocolRefusal::PackageParameterType {
+            package,
+            node,
+            failure,
+        }) => package_parameter_type_refusal(package, node, failure),
         // Engine defects, and refusals whose types name no catalog code
         // (a spec point for STD-444's follow-up): `failed` with the
         // broken-invariant diagnostic.

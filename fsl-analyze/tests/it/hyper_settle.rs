@@ -60,7 +60,7 @@ fn settle_under(
         .collect::<Vec<_>>();
     let certificate = fsl_replay::ProductClosureRequest {
         package: &world.package,
-        clause: &world.clause,
+        clause: fsl_replay::ProductClosureClause::Hyper(&world.clause),
         subjects: &subjects,
         meter: crate::counter::UNLIMITED,
     };

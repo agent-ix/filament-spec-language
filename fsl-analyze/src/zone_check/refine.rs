@@ -173,6 +173,9 @@ pub struct TimedRefinementOutcome<S> {
 pub enum TimedLivenessHalf {
     /// The second phase ran on the symbolic product.
     Checked(TimedLivenessOutcome),
+    /// The liveness half is not decided for this subject: a timed abstract
+    /// side with a hidden abstract field (the safety half is decided).
+    Refused(ZoneCheckRefusal),
 }
 
 /// The second phase's outcome over a timed concrete subject: only
@@ -267,6 +270,15 @@ pub fn check_free_delay_refinement<S>(
     check_refinement_with_time_source(request, cancel, true)
 }
 
+fn timed_subject_refusal(refusal: TimedSubjectRefusal) -> TimedRefinementRefusal {
+    match refusal {
+        // Keep the existing requires-bound/resource refusal envelope when
+        // the profile-aware constructor performs the preflight.
+        TimedSubjectRefusal::NotSimulated(cause) => not_simulated(cause).into(),
+        other => TimedRefinementRefusal::Timed(other),
+    }
+}
+
 fn check_refinement_with_time_source<S>(
     request: TimedRefinementRequest<'_, S>,
     cancel: &Cancel,
@@ -284,14 +296,14 @@ fn check_refinement_with_time_source<S>(
         request.abstract_initial.clone(),
     )
     .map_err(TimedRefinementRefusal::Subject)?;
-    check_model_bounds(&concrete, BOUND_POSITIONS).map_err(not_simulated)?;
-    check_model_bounds(&abstract_system, BOUND_POSITIONS).map_err(not_simulated)?;
+    // Timed constructors classify data domains with their actual clock
+    // profile bound. An untimed abstract subject keeps the generic preflight.
     let timed = if free_delay {
         TimedSystem::free_delay(&concrete, fsl_eval::simulation::model::DEFAULT_MAX_CLOCKS)
     } else {
         TimedSystem::new(&concrete, refinement.concrete_model())
     }
-    .map_err(TimedRefinementRefusal::Timed)?;
+    .map_err(timed_subject_refusal)?;
     if timed.carries_clocks() {
         return Err(ZoneCheckRefusal::CarriedClocks.into());
     }
@@ -302,19 +314,24 @@ fn check_refinement_with_time_source<S>(
     {
         Some(
             TimedSystem::new(&abstract_system, refinement.abstract_model())
-                .map_err(TimedRefinementRefusal::Timed)?,
+                .map_err(timed_subject_refusal)?,
         )
     } else {
+        check_model_bounds(&abstract_system, BOUND_POSITIONS).map_err(not_simulated)?;
         None
     };
-    if auxiliary_timed.is_some()
+    // The liveness half reads class enabledness from the untimed abstract
+    // state: `abstract_enabled` in `refine/live.rs` applies no abstract clock
+    // guard and does not split the cells by the guards of the `F_A` classes
+    // (FR-899 "Timed subjects"), for any timed abstract side. With a hidden
+    // abstract field, whose candidates each carry their own clock behaviour,
+    // the half is refused rather than answered from enabledness it did not
+    // read; the safety half is still decided and reported.
+    let liveness_refused = auxiliary_timed.is_some()
         && refinement
             .objects()
             .iter()
-            .any(|object| !object.hidden.is_empty())
-    {
-        return Err(ZoneCheckRefusal::HiddenFieldTimedAbstract.into());
-    }
+            .any(|object| !object.hidden.is_empty());
     let mut run = Run::new(
         &timed,
         Judged::Refinement,
@@ -384,10 +401,16 @@ fn check_refinement_with_time_source<S>(
     let liveness = if refinement.abstract_operation_fairness().next().is_some()
         && matches!(safety, TimedSafetyOutcome::Holds { .. })
     {
-        Some(TimedLivenessHalf::Checked(liveness(
-            &mut product,
-            &mut run,
-        )?))
+        if liveness_refused {
+            Some(TimedLivenessHalf::Refused(
+                ZoneCheckRefusal::HiddenFieldTimedAbstractLiveness,
+            ))
+        } else {
+            Some(TimedLivenessHalf::Checked(liveness(
+                &mut product,
+                &mut run,
+            )?))
+        }
     } else {
         None
     };
@@ -887,15 +910,35 @@ impl Product<'_, '_> {
             .positions
             .get(q)
             .ok_or(ZoneCheckRefusal::Fault("auxiliary-position"))?;
+        let constraints = Self::uniform_invariants(run, timed, position)?;
+        let shifted = auxiliary_constraints(run.timed.places().len(), &constraints);
+        run.constrain(zone, &shifted)?;
+        Ok(())
+    }
+
+    /// The abstract time invariants every candidate of `position` reads. The
+    /// product keeps one abstract clock valuation per position, so candidates
+    /// whose invariants differ cannot be followed together: that is the
+    /// narrowed refusal, never an intersection that would drop behaviour.
+    fn uniform_invariants(
+        run: &Run<'_, '_, '_>,
+        timed: &TimedSystem<'_, '_>,
+        position: &RefinementPosition,
+    ) -> Result<Vec<PlaceConstraint>, Halt> {
+        let mut agreed: Option<Vec<PlaceConstraint>> = None;
         for candidate in &position.abstract_states {
             let state = timed
                 .system()
                 .pre_state(candidate.clone(), timed.system().declared_anchor());
-            let constraints = run.timed(timed.invariants(&state))?;
-            let shifted = auxiliary_constraints(run.timed.places().len(), &constraints);
-            run.constrain(zone, &shifted)?;
+            let mut constraints = run.timed(timed.invariants(&state))?;
+            constraints.sort();
+            match &agreed {
+                None => agreed = Some(constraints),
+                Some(first) if *first == constraints => {}
+                Some(_) => return Err(ZoneCheckRefusal::HiddenFieldTimedAbstract.into()),
+            }
         }
-        Ok(())
+        Ok(agreed.unwrap_or_default())
     }
 
     /// A point in `zone` at which the mapped abstract invariant is false.
@@ -913,11 +956,9 @@ impl Product<'_, '_> {
             .get(q)
             .ok_or(ZoneCheckRefusal::Fault("auxiliary-position"))?;
         let offset = run.timed.places().len();
-        for candidate in &position.abstract_states {
-            let state = timed
-                .system()
-                .pre_state(candidate.clone(), timed.system().declared_anchor());
-            let invariants = auxiliary_constraints(offset, &run.timed(timed.invariants(&state))?);
+        {
+            let invariants =
+                auxiliary_constraints(offset, &Self::uniform_invariants(run, timed, position)?);
             let mut prefix = zone.clone();
             for constraint in &invariants {
                 for op in negations(constraint.op()) {
@@ -962,24 +1003,9 @@ impl Product<'_, '_> {
         let Some(timed) = run.auxiliary_timed else {
             return Ok((None, None));
         };
-        if let Taken::Abstract(transitions) = taken {
-            let source_position = self
-                .positions
-                .get(source)
-                .ok_or(ZoneCheckRefusal::Fault("auxiliary-source"))?;
-            let mut matched = None;
-            'candidates: for candidate in &source_position.abstract_states {
-                let state = timed
-                    .system()
-                    .pre_state(candidate.clone(), timed.system().declared_anchor());
-                for step in run.timed(timed.guarded_steps(&state))? {
-                    if transitions.contains(step.transition()) {
-                        matched = Some(step);
-                        break 'candidates;
-                    }
-                }
-            }
-            if let Some(step) = matched {
+        if matches!(taken, Taken::Abstract(_) | Taken::CandidateSteps(_)) {
+            let matched = self.matched_auxiliary_step(run, timed, source, taken)?;
+            if let Matched::Step(step) = matched {
                 let concrete_places = run.timed.places().len();
                 let failed = self
                     .auxiliary_guard_complement(run, zone, &step)?
@@ -1026,12 +1052,88 @@ impl Product<'_, '_> {
                     zone.constrain(0, 0, Bound::lt(0.into()))?;
                 }
                 return Ok((failed, Some(transform)));
-            } else {
+            } else if matches!(matched, Matched::Missing) {
                 return Ok((Some((zone.clone(), "mapped-operation".to_owned())), None));
             }
         }
         self.auxiliary_invariants(run, target, zone)?;
         Ok((None, None))
+    }
+
+    /// The abstract step whose clock guard, carries and resets the product
+    /// applies for `taken`. With a hidden field the rows are per candidate;
+    /// the single clock set of the product can follow them only when every
+    /// row yields the same clock behaviour, otherwise the combination is
+    /// refused.
+    fn matched_auxiliary_step(
+        &self,
+        run: &Run<'_, '_, '_>,
+        timed: &TimedSystem<'_, '_>,
+        source: usize,
+        taken: &Taken,
+    ) -> Result<Matched, Halt> {
+        let source_position = self
+            .positions
+            .get(source)
+            .ok_or(ZoneCheckRefusal::Fault("auxiliary-source"))?;
+        let mut candidate_states = Vec::with_capacity(source_position.abstract_states.len());
+        for candidate in &source_position.abstract_states {
+            let key = self
+                .abstract_system
+                .state_key_of(candidate)
+                .map_err(|_| Halt::from(ZoneCheckRefusal::Fault("position-key")))?
+                .0;
+            let state = timed
+                .system()
+                .pre_state(candidate.clone(), timed.system().declared_anchor());
+            candidate_states.push((key, state));
+        }
+        match taken {
+            Taken::Abstract(transitions) => {
+                for (_, state) in &candidate_states {
+                    for step in run.timed(timed.guarded_steps(state))? {
+                        if transitions.contains(step.transition()) {
+                            return Ok(Matched::Step(Box::new(step)));
+                        }
+                    }
+                }
+                Ok(Matched::Missing)
+            }
+            Taken::CandidateSteps(rows) => {
+                let mut chosen: Option<GuardedStep> = None;
+                let mut stutters = false;
+                for row in rows {
+                    let Some(transition) = &row.transition else {
+                        stutters = true;
+                        continue;
+                    };
+                    let (_, state) = candidate_states
+                        .iter()
+                        .find(|(key, _)| *key == row.pre_state)
+                        .ok_or(ZoneCheckRefusal::Fault("auxiliary-candidate"))?;
+                    let step = run
+                        .timed(timed.guarded_steps(state))?
+                        .into_iter()
+                        .find(|step| step.transition() == transition)
+                        .ok_or(ZoneCheckRefusal::Fault("auxiliary-candidate-step"))?;
+                    match &chosen {
+                        None => chosen = Some(step),
+                        Some(first)
+                            if first.parts() == step.parts()
+                                && first.carries() == step.carries()
+                                && first.resets() == step.resets() => {}
+                        Some(_) => return Err(ZoneCheckRefusal::HiddenFieldTimedAbstract.into()),
+                    }
+                }
+                match chosen {
+                    Some(_) if stutters => Err(ZoneCheckRefusal::HiddenFieldTimedAbstract.into()),
+                    Some(step) => Ok(Matched::Step(Box::new(step))),
+                    None if stutters => Ok(Matched::Stutter),
+                    None => Ok(Matched::Missing),
+                }
+            }
+            _ => Ok(Matched::Missing),
+        }
     }
 
     /// Find a zone point outside every convex part of an abstract guard.
@@ -1349,4 +1451,14 @@ fn refuted(
         blocked: Vec::new(),
         final_delay: None,
     }
+}
+
+/// The abstract step an edge's clock behaviour follows.
+enum Matched {
+    /// One guarded step.
+    Step(Box<GuardedStep>),
+    /// Every candidate stutters: no clock guard, carry or reset.
+    Stutter,
+    /// The row's operation has no guarded step.
+    Missing,
 }

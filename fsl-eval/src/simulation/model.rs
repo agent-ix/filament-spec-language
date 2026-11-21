@@ -55,6 +55,8 @@ pub use behaviours::{model_behaviours, BehaviourState, BehavioursEnd};
 pub use key_budget::{ModelKeyBudget, ModelKeyError, ModelKeyExpansionError};
 pub(crate) mod probabilistic;
 mod reference_bindings;
+mod restore;
+pub use restore::{ModelRestoreBudget, ModelRestoreError};
 mod refine;
 mod state_predicate;
 mod symbolic;
@@ -229,31 +231,105 @@ impl<'a> ModelSimulationRequest<'a> {
     }
 }
 
-/// A model state with its anchor (FR-120 "State, state key and anchor"). The
-/// anchor, and the effect of the step that reached the state, are not part of
-/// its key.
+/// Provenance of a model state, separate from its canonical search identity.
+#[derive(Clone, Debug)]
+pub enum ModelStateProvenance {
+    /// A state admitted from an actual anchored observation or declared pre-state.
+    Anchored {
+        /// The admitted observation's anchor.
+        anchor: SelectedAnchor,
+        /// The actual step that produced it, absent for an admitted pre-state.
+        effect: Option<StepEffect>,
+    },
+    /// A checked state restored from its canonical key. It carries no anchor
+    /// and cannot stand for an initial observation or native witness provenance.
+    RestoredFromKey {
+        /// A subsequent real step, when this restored state was expanded.
+        effect: Option<StepEffect>,
+    },
+}
+
+/// A model state and its explicit provenance. Provenance is not part of its key.
 #[derive(Clone, Debug)]
 pub struct ModelSimState {
     state: ModelState,
-    anchor: SelectedAnchor,
-    reached_by: Option<StepEffect>,
+    provenance: ModelStateProvenance,
 }
 
 impl ModelSimState {
+    fn anchored(state: ModelState, anchor: SelectedAnchor) -> Self {
+        Self {
+            state,
+            provenance: ModelStateProvenance::Anchored {
+                anchor,
+                effect: None,
+            },
+        }
+    }
+
+    fn reached(&self, state: ModelState, anchor: SelectedAnchor, effect: StepEffect) -> Self {
+        let provenance = match self.provenance {
+            ModelStateProvenance::Anchored { .. } => ModelStateProvenance::Anchored {
+                anchor,
+                effect: Some(effect),
+            },
+            ModelStateProvenance::RestoredFromKey { .. } => ModelStateProvenance::RestoredFromKey {
+                effect: Some(effect),
+            },
+        };
+        Self { state, provenance }
+    }
+
+    fn without_effect(&self, state: ModelState) -> Self {
+        let provenance = match &self.provenance {
+            ModelStateProvenance::Anchored { anchor, .. } => ModelStateProvenance::Anchored {
+                anchor: anchor.clone(),
+                effect: None,
+            },
+            ModelStateProvenance::RestoredFromKey { .. } => {
+                ModelStateProvenance::RestoredFromKey { effect: None }
+            }
+        };
+        Self { state, provenance }
+    }
+
     /// The closed population state.
     pub fn state(&self) -> &ModelState {
         &self.state
     }
 
-    /// The initialization or handler this state is anchored to.
-    pub fn anchor(&self) -> &SelectedAnchor {
-        &self.anchor
+    /// The state's admitted provenance, including explicit key restoration.
+    pub fn provenance(&self) -> &ModelStateProvenance {
+        &self.provenance
     }
 
-    /// The effect of the step that reached this state; `None` for an initial
-    /// state.
+    /// The actual initialization or handler anchor. A restored state has none.
+    pub fn anchor(&self) -> Option<&SelectedAnchor> {
+        match &self.provenance {
+            ModelStateProvenance::Anchored { anchor, .. } => Some(anchor),
+            ModelStateProvenance::RestoredFromKey { .. } => None,
+        }
+    }
+
+    /// Require actual observation provenance for an API that consumes an anchor.
+    ///
+    /// # Errors
+    /// A key-restored state has no initialization or handler provenance.
+    pub fn required_anchor(&self) -> Result<&SelectedAnchor, ExpansionStop> {
+        self.anchor().ok_or_else(|| {
+            walk::stop(CatalogCode::new(
+                "invalid_runtime_input",
+                "missing-required-artifact",
+            ))
+        })
+    }
+
+    /// The actual step that reached the state, absent when none was executed.
     pub fn reached_by(&self) -> Option<&StepEffect> {
-        self.reached_by.as_ref()
+        match &self.provenance {
+            ModelStateProvenance::Anchored { effect, .. }
+            | ModelStateProvenance::RestoredFromKey { effect } => effect.as_ref(),
+        }
     }
 }
 
@@ -287,6 +363,31 @@ pub struct StepEffect {
     /// "Collection-valued writes"), each with the provenance of every slot
     /// of its post-state value.
     pub written: Vec<WrittenSlots>,
+}
+
+/// A labelled model transition whose result participates in canonical edge order.
+/// Distinct results remain distinct when they reach the same model state.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ModelRelationTransition {
+    /// The operation, receiver and arguments.
+    pub transition: ModelTransition,
+    /// The observed result in the existing typed canonical value spelling.
+    pub result: Option<String>,
+}
+
+impl quire_canonical::Encode for ModelRelationTransition {
+    fn encode_into<S: quire_canonical::Sink + ?Sized>(
+        &self,
+        writer: &mut quire_canonical::Writer<'_, S>,
+    ) -> Result<(), quire_canonical::Error> {
+        writer.begin_array()?;
+        quire_canonical::Encode::encode_into(&self.transition, writer)?;
+        writer.bool(self.result.is_some())?;
+        if let Some(result) = &self.result {
+            writer.string(result)?;
+        }
+        writer.end_array()
+    }
 }
 
 /// A clock collection a step wrote whole, and where each of its post-state
@@ -976,13 +1077,23 @@ impl<'a> ModelSystem<'a> {
         field: &StateField,
         references: &[ObjectReference],
     ) -> Option<domain::Domain> {
+        self.field_domain_with_clock_selectors(type_key, field, references, None)
+    }
+
+    fn field_domain_with_clock_selectors(
+        &self,
+        type_key: &DeclarationKey,
+        field: &StateField,
+        references: &[ObjectReference],
+        selectors: Option<&domain::ClockSelectorMaxima>,
+    ) -> Option<domain::Domain> {
         let infeasible = self.clock_counts.iter().any(|(key, count, min, max)| {
             key == type_key && count.key == field.key && max.is_some_and(|max| max < *min)
         });
         if infeasible {
             return Some(domain::Domain::Listed(Vec::new()));
         }
-        self.value_domain(&field.value_type, references)
+        self.value_domain_with_clock_selectors(&field.value_type, references, selectors)
     }
 
     pub(crate) fn typing(&self) -> encode::Typing<'_> {
@@ -1170,7 +1281,12 @@ impl<'a> ModelSystem<'a> {
         let input = request.input;
         let types = input.types;
         let only = selections.selections();
-        let model = StateModel::new(selections, types, request.packages, request.normalization)?;
+        let model = StateModel::new(
+            selections.with_clock_places(input.timed_models),
+            types,
+            request.packages,
+            request.normalization,
+        )?;
         let populations = model.populations();
 
         let mut universes = BTreeMap::new();
@@ -1254,11 +1370,7 @@ impl<'a> ModelSystem<'a> {
                     ));
                 }
             }
-            initial.push(ModelSimState {
-                state,
-                anchor,
-                reached_by: None,
-            });
+            initial.push(ModelSimState::anchored(state, anchor));
         }
 
         let reference_bindings = if let Some(package) = input.source_package() {
@@ -1561,6 +1673,34 @@ impl<'a> ModelSystem<'a> {
         crate::simulation::key::canonical_bytes(transition, identity_limits())
     }
 
+    /// Expand an HP-1 subject with every satisfying operation result retained.
+    /// Results participate in edge identity even when the operation, arguments
+    /// and post-state coincide. Ordinary [`TransitionSystem::successors`] keeps
+    /// its first-result state-reachability semantics.
+    ///
+    /// # Errors
+    /// Stops on candidate or evaluation exhaustion or cancellation. A stopped
+    /// expansion returns no partial successor set.
+    pub fn relation_successors(
+        &self,
+        state: &ModelSimState,
+        cancel: &filament_exact::Cancel,
+    ) -> Result<Expansion<ModelRelationTransition, ModelSimState, ModelFinding>, ExpansionStop>
+    {
+        let expanded = walk::expand_relation_state(self, state, cancel)?;
+        Ok(Expansion {
+            successors: expanded
+                .successors
+                .into_iter()
+                .map(|(transition, state)| {
+                    let result = state.reached_by().and_then(|effect| effect.result.clone());
+                    (ModelRelationTransition { transition, result }, state)
+                })
+                .collect(),
+            findings: expanded.findings,
+        })
+    }
+
     /// FR-187's canonical order key of a scheduled identity: the canonical
     /// bytes of its transition identity without random arguments, the order
     /// of [`Self::actions`]'s identities.
@@ -1578,6 +1718,22 @@ impl<'a> ModelSystem<'a> {
             &identity.arguments,
             self.typing(),
         )
+    }
+
+    /// Canonical FR-196 drawn-state identity under cumulative caller admission.
+    /// The actual scheduled identity and drawn vector retain their typed values.
+    ///
+    /// # Errors
+    /// The identity owner's original denial, cancellation or encoding failure.
+    pub fn pending_key_bytes_with_budget(
+        &self,
+        scheduled: &ScheduledIdentity,
+        random: &[filament_exact::Value],
+        identity: IdentityLimits,
+        budget: &mut dyn ModelKeyBudget,
+        cancel: &filament_exact::Cancel,
+    ) -> Result<Vec<u8>, ModelKeyError> {
+        encode::bounded::pending_bytes(scheduled, random, self.typing(), identity, budget, cancel)
     }
 
     /// The operation text a transition of `operation` carries (FR-181): the
@@ -1746,6 +1902,15 @@ impl<'a> ModelSystem<'a> {
         value_type: &ValueType,
         objects: &[ObjectReference],
     ) -> Option<domain::Domain> {
+        self.value_domain_with_clock_selectors(value_type, objects, None)
+    }
+
+    fn value_domain_with_clock_selectors(
+        &self,
+        value_type: &ValueType,
+        objects: &[ObjectReference],
+        selectors: Option<&domain::ClockSelectorMaxima>,
+    ) -> Option<domain::Domain> {
         let bits = match self
             .max_value_bits
             .load(std::sync::atomic::Ordering::Relaxed)
@@ -1753,7 +1918,17 @@ impl<'a> ModelSystem<'a> {
             0 => None,
             bits => Some(bits),
         };
-        domain::Domain::of_bounded(value_type, objects, self.types, &self.record_orders, bits)
+        domain::Domain::of_bounded_with_clock_places(
+            value_type,
+            objects,
+            self.types,
+            &self.record_orders,
+            bits,
+            domain::ClockDomains {
+                models: self.input.timed_models,
+                maxima: selectors,
+            },
+        )
     }
 
     pub(super) fn reset_value_bound_cuts(&self) {
@@ -2499,12 +2674,92 @@ pub fn check_model_bounds(
     system: &ModelSystem<'_>,
     position_limit: u64,
 ) -> Result<(), NotSimulated> {
-    let domains = system.rooted_domains();
-    let roots: Vec<(NodeKey, Vec<u32>, &ValueType)> = domains
+    check_model_bounds_with_clock_selectors(system, position_limit, None)
+}
+
+fn check_model_bounds_with_clock_selectors(
+    system: &ModelSystem<'_>,
+    position_limit: u64,
+    selectors: Option<&domain::ClockSelectorMaxima>,
+) -> Result<(), NotSimulated> {
+    use fsl_semantics::family::ClaimExtent;
+    let roots = system.rooted_domains();
+    let borrowed: Vec<_> = roots
         .iter()
-        .map(|(id, base, value_type)| (id.clone(), base.clone(), value_type))
+        .map(|(node, path, value_type)| (node.clone(), path.clone(), value_type))
         .collect();
-    crate::simulation::not_simulated::check_requires_bound(&roots, system.types, position_limit)
+    let extent = fsl_semantics::family::classify_extent_at(&borrowed, system.types, position_limit)
+        .map_err(NotSimulated::Extent)?;
+    let domains = match extent {
+        ClaimExtent::Bounded => None,
+        ClaimExtent::Unbounded(domains) => Some(domains),
+    };
+    let clock_references = clock_reference_domains(system, &roots, selectors);
+    if domains.is_none() && clock_references.is_empty() {
+        Ok(())
+    } else {
+        Err(NotSimulated::RequiresBound(
+            crate::simulation::RequiresBound {
+                domains,
+                capacities: Vec::new(),
+                clock_references,
+            },
+        ))
+    }
+}
+
+/// Clock selector requirements under already classified, actual subject roots.
+/// A caller's one generic classification owns its resource ceiling and errors.
+pub(super) fn clock_reference_domains(
+    system: &ModelSystem<'_>,
+    roots: &[(NodeKey, Vec<u32>, ValueType)],
+    selectors: Option<&domain::ClockSelectorMaxima>,
+) -> Vec<crate::simulation::ClockReferenceDomain> {
+    use fsl_foundation::bound::DomainKey;
+    // Use original member types: finite composite roots may have been reduced
+    // to Boolean by the ordinary classifier, while still carrying references.
+    let generated = system.generation_domains();
+    let mut clock_references = Vec::new();
+    for (node, base, classified_type) in roots {
+        let value_type = generated
+            .iter()
+            .find(|(actual, path, _)| actual == node && path == base)
+            .map_or(classified_type, |(_, _, original)| original);
+        for path in domain::clock_reference_paths(value_type, system.types) {
+            let mut member_path = base.clone();
+            member_path.extend(path);
+            for timed in system.input.timed_models {
+                for (clock, template) in timed.clocks().iter().zip(timed.place_nodes()) {
+                    if selectors.is_some_and(|maxima| maxima.contains_key(template))
+                        || clock.slots().any(|shape| shape.map)
+                    {
+                        continue;
+                    }
+                    for (at, step) in clock.path().iter().enumerate() {
+                        if !matches!(step, fsl_semantics::check::PlaceStep::Slot(shape) if shape.max.is_none())
+                        {
+                            continue;
+                        }
+                        let Ok(at) = u32::try_from(at) else {
+                            continue;
+                        };
+                        let slot = vec![at];
+                        clock_references.push(crate::simulation::ClockReferenceDomain {
+                            member: DomainKey::Node {
+                                node: node.clone(),
+                                path: member_path.clone(),
+                            },
+                            clock: template.clone(),
+                            slot,
+                        });
+                    }
+                }
+            }
+        }
+    }
+    clock_references.sort();
+    clock_references.dedup();
+    clock_references
 }
 
 /// FR-101's `explore_request` over `system`, its [`ModelSystem::domains`] and
@@ -2520,6 +2775,7 @@ pub fn explore_model(
     limits: Limits,
     poll: impl FnMut() -> bool,
 ) -> Result<Exploration<ModelFinding>, NotSimulated> {
+    check_model_bounds(system, position_limit)?;
     let domains = system.rooted_domains();
     let roots: Vec<(NodeKey, Vec<u32>, &ValueType)> = domains
         .iter()
@@ -2577,6 +2833,7 @@ pub(super) fn sample_model_with_omitted_clause(
     max_steps: usize,
     omitted_clause: Option<NodeKey>,
 ) -> Result<ModelTrace, ModelSampleError> {
+    check_model_bounds(system, position_limit)?;
     let domains = system.rooted_domains();
     let roots: Vec<(NodeKey, Vec<u32>, &ValueType)> = domains
         .iter()
@@ -2956,6 +3213,7 @@ pub fn sample_model_runs(
     mut poll: impl FnMut() -> bool,
 ) -> Result<SampledDraw, NotSimulated> {
     use filament_exact::{length_amount, Charge, ChargePoint};
+    check_model_bounds(system, position_limit)?;
     let domains = system.rooted_domains();
     let roots: Vec<(NodeKey, Vec<u32>, &ValueType)> = domains
         .iter()
@@ -3051,7 +3309,7 @@ impl WalkMemo {
         ) else {
             return system.successors(state);
         };
-        let at = (bytes, format!("{:?}", state.anchor));
+        let at = (bytes, format!("{:?}", state.anchor()));
         if let Some(found) = self.expansions.borrow().get(&at) {
             return Ok(found.clone());
         }
@@ -3129,6 +3387,7 @@ pub fn sample_model_walk(
         start,
         memo,
     };
+    check_model_bounds(system, position_limit)?;
     let domains = system.rooted_domains();
     let roots: Vec<(NodeKey, Vec<u32>, &ValueType)> = domains
         .iter()
@@ -3192,7 +3451,7 @@ fn effects_of_with_omitted_clause(
             .filter(|successor| successor.transition == step.transition)
             .nth(step.ordinal)
             .ok_or_else(missing)?;
-        effects.push(matched.state.reached_by.clone().ok_or_else(missing)?);
+        effects.push(matched.state.reached_by().cloned().ok_or_else(missing)?);
         current = matched.state;
     }
     Ok(effects)

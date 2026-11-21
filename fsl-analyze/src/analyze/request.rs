@@ -16,6 +16,7 @@ use super::Diagnostic;
 #[derive(Clone, Default, Eq, PartialEq)]
 pub struct SourceProvision {
     entries: BTreeMap<(String, String), Vec<u8>>,
+    temporal_selections: Vec<fsl_package::TemporalClockSelection>,
 }
 
 impl std::fmt::Debug for SourceProvision {
@@ -31,6 +32,21 @@ impl std::fmt::Debug for SourceProvision {
 }
 
 impl SourceProvision {
+    /// Retain the actual clock selections admitted with these source units.
+    #[must_use]
+    pub fn with_temporal_selections(
+        mut self,
+        selections: Vec<fsl_package::TemporalClockSelection>,
+    ) -> Self {
+        self.temporal_selections = selections;
+        self
+    }
+
+    /// The clock selections of the checked acquisition, without inferred defaults.
+    pub fn temporal_selections(&self) -> &[fsl_package::TemporalClockSelection] {
+        &self.temporal_selections
+    }
+
     /// Provide the bytes under their declared source label.
     pub fn insert(&mut self, source: &RawSourceRef, bytes: Vec<u8>) {
         self.entries.insert(

@@ -12,6 +12,8 @@ use fsl_eval::simulation::model::{ClockValuation, ModelSimState, TimedState, Tim
 use num_traits::Zero;
 use serde_json::{json, Value as JsonValue};
 
+mod elapsed;
+
 pub(super) fn check(
     system: &ModelSystem<'_>,
     claims: &[CheckedProbabilisticClaim],
@@ -47,6 +49,21 @@ pub(super) fn check(
     }
     if objective.form == TimedProbabilityForm::ExpectedElapsed {
         return check_expected_elapsed(
+            system,
+            claim,
+            bytes,
+            document,
+            &timed,
+            route,
+            scale,
+            limits,
+            cancel,
+            &mut meter,
+            &mut storage,
+        );
+    }
+    if objective.form == TimedProbabilityForm::ElapsedQuantile {
+        return elapsed::check(
             system,
             claim,
             bytes,
@@ -96,14 +113,15 @@ pub(super) fn check(
         TimedProbabilityRoute::Digital => enumerate_digital_deadline(
             system,
             &timed,
-            claim,
             binding.as_ref(),
-            predicate,
+            &Watch::Deadline(predicate),
+            time_bound(claim, objective.scale)?,
             objective.scale,
             limits,
             cancel,
             &mut meter,
             &mut storage,
+            &mut BTreeMap::new(),
         )?,
         TimedProbabilityRoute::Region => enumerate_region_deadline(
             system,
@@ -506,6 +524,7 @@ fn check_mean_time_values(
     }
     Ok(ExactProbabilityCertificateCheck::Accepted(
         ExactProbabilityAcceptance {
+            initial_values: None,
             value: initial.clone(),
             side: match bound {
                 Bound::AtLeast(_) => ProbabilityBoundSide::AtLeast,
@@ -1060,6 +1079,7 @@ fn mean_region_key(
         monitor: None,
         accumulator: None,
         pending: None,
+        elapsed: None,
         kind: crate::RegionKeyKind::BoundaryRegion,
         corner,
     })
@@ -1204,6 +1224,115 @@ enum Phase {
     Pending,
     Accepted,
     Rejected,
+    /// An elapsed measure before `A` held.
+    Inactive,
+    /// An elapsed measure after `A`, before `B`.
+    Active,
+    /// `B` ended an activated elapsed measure.
+    Complete,
+    /// The elapsed clock passed the window first.
+    Censored,
+}
+
+impl Phase {
+    fn decided(self) -> bool {
+        !matches!(self, Self::Pending | Self::Inactive | Self::Active)
+    }
+}
+
+/// FR-877's elapsed measure and its quantile transform, as the checker
+/// reads them from the checked claim.
+struct ElapsedWatch<'a> {
+    from: &'a fsl_semantics::check::CheckedPredicate,
+    until: &'a fsl_semantics::check::CheckedPredicate,
+    q: Rational,
+    threshold: u64,
+    strict: bool,
+}
+
+/// What the enumerator observes along a run: FR-204's deadline event, or
+/// FR-877's elapsed measure.
+enum Watch<'a> {
+    Deadline(&'a fsl_semantics::check::CheckedPredicate),
+    Elapsed(ElapsedWatch<'a>),
+}
+
+impl Watch<'_> {
+    fn start(&self) -> Phase {
+        match self {
+            Self::Deadline(_) => Phase::Pending,
+            Self::Elapsed(_) => Phase::Inactive,
+        }
+    }
+
+    /// The phase and the clock after reading `state`, `previous` being the
+    /// phase before the move and `elapsed` the clock after it.
+    #[allow(clippy::too_many_arguments)]
+    fn observe(
+        &self,
+        system: &ModelSystem<'_>,
+        binding: Option<&filament_exact::ObjectReference>,
+        state: &ModelSimState,
+        previous: Phase,
+        elapsed: u64,
+        deadline: u64,
+        cancel: &Cancel,
+    ) -> Result<(Phase, u64), ProbabilityDocumentError> {
+        let watch = match self {
+            Self::Deadline(predicate) => {
+                let phase = phase_at(system, predicate, binding, state, elapsed, deadline, cancel)?;
+                return Ok((phase, elapsed));
+            }
+            Self::Elapsed(watch) => watch,
+        };
+        let holds = |predicate| -> Result<bool, ProbabilityDocumentError> {
+            let readings = system
+                .state_predicates_with_cancel(state, &[(predicate, binding)], cancel)
+                .map_err(|_| ProbabilityDocumentError::Unsupported)?;
+            match readings.as_slice() {
+                [fsl_eval::simulation::model::PredicateReading::True] => Ok(true),
+                [fsl_eval::simulation::model::PredicateReading::False] => Ok(false),
+                _ => Err(ProbabilityDocumentError::Unsupported),
+            }
+        };
+        Ok(match previous {
+            Phase::Inactive => {
+                if !holds(watch.from)? {
+                    (Phase::Inactive, 0)
+                } else if holds(watch.until)? {
+                    (Phase::Complete, 0)
+                } else {
+                    (Phase::Active, 0)
+                }
+            }
+            Phase::Active => {
+                if elapsed > deadline {
+                    (Phase::Censored, deadline.saturating_add(1))
+                } else if holds(watch.until)? {
+                    (Phase::Complete, elapsed)
+                } else {
+                    (Phase::Active, elapsed)
+                }
+            }
+            other => (other, elapsed),
+        })
+    }
+
+    /// FR-877's terminal reward `[M <= c] - q` (`[M < c] - q` when strict) of
+    /// a decided elapsed measure; a censored measure exceeds every threshold.
+    fn reward(&self, phase: Phase, elapsed: u64) -> Option<(Rational, bool)> {
+        let Self::Elapsed(watch) = self else {
+            return None;
+        };
+        let within = match phase {
+            Phase::Complete if watch.strict => elapsed < watch.threshold,
+            Phase::Complete => elapsed <= watch.threshold,
+            Phase::Censored => false,
+            _ => return None,
+        };
+        let hit = if within { one() } else { zero() };
+        Some((hit.sub(&watch.q), within))
+    }
 }
 
 #[derive(Clone)]
@@ -1221,16 +1350,16 @@ struct RegionState {
 fn enumerate_digital_deadline(
     system: &ModelSystem<'_>,
     timed: &TimedSystem<'_, '_>,
-    claim: &CheckedProbabilisticClaim,
     binding: Option<&filament_exact::ObjectReference>,
-    predicate: &fsl_semantics::check::CheckedPredicate,
+    watch: &Watch<'_>,
+    deadline: u64,
     key_scale: u64,
     limits: ProbabilityDocumentLimits,
     cancel: &Cancel,
     meter: &mut filament_exact::Meter,
     storage: &mut u64,
+    terminals: &mut BTreeMap<ProbabilityProductKey, (Rational, bool)>,
 ) -> Result<CheckerGraph, ProbabilityDocumentError> {
-    let deadline = time_bound(claim, key_scale)?;
     let mut caps = Vec::with_capacity(timed.places().len());
     for place in timed.places() {
         let mut largest = 0_u64;
@@ -1254,18 +1383,18 @@ fn enumerate_digital_deadline(
         return Err(ProbabilityDocumentError::Unsupported);
     }
     let state = initial.pop().ok_or(ProbabilityDocumentError::Unsupported)?;
-    let phase = phase_at(
+    let (phase, elapsed) = watch.observe(
         system,
-        predicate,
         binding,
         state.discrete(),
+        watch.start(),
         0,
         deadline,
         cancel,
     )?;
     let first = RegionState {
         timed: state,
-        elapsed: 0,
+        elapsed,
         phase,
         tail: DigitalTail::Running,
     };
@@ -1318,12 +1447,28 @@ fn enumerate_digital_deadline(
                 )?;
                 continue;
             }
-            Phase::Pending => {}
+            Phase::Complete | Phase::Censored => {
+                if let Some(reward) = watch.reward(current.phase, current.elapsed) {
+                    terminals.insert(key.clone(), reward);
+                }
+                insert_checker_state(
+                    key,
+                    CheckerState {
+                        terminal: Some(false),
+                        choices: Vec::new(),
+                    },
+                    &mut states,
+                    storage,
+                    limits,
+                )?;
+                continue;
+            }
+            Phase::Pending | Phase::Inactive | Phase::Active => {}
         }
         if current.tail != DigitalTail::Running {
             let mut choices = Vec::new();
             if let Some((target, delayed)) = digital_idle_delay(
-                system, timed, predicate, binding, &current, &caps, key_scale, deadline, cancel,
+                system, timed, watch, binding, &current, &caps, key_scale, deadline, cancel,
             )? {
                 admit_region_state(
                     target.clone(),
@@ -1387,7 +1532,7 @@ fn enumerate_digital_deadline(
                 let (choice, admitted_edges) = digital_discrete_delay_choice(
                     system,
                     timed,
-                    predicate,
+                    watch,
                     binding,
                     &current,
                     action,
@@ -1420,6 +1565,10 @@ fn enumerate_digital_deadline(
             .iter()
             .any(|action| discrete_delay(system, &action.identity.operation).is_none());
         if given_actions == 0 && !has_free_action && !can_delay {
+            if current.phase == Phase::Active {
+                // A time-lock under a running measure has no specified reward.
+                return Err(ProbabilityDocumentError::Unsupported);
+            }
             insert_checker_state(
                 key,
                 CheckerState {
@@ -1438,7 +1587,7 @@ fn enumerate_digital_deadline(
         let mut choices = Vec::new();
         if given_actions == 0 {
             if let Some((delayed_key, delayed)) = next_digital_delay(
-                system, timed, predicate, binding, &current, &caps, key_scale, deadline, cancel,
+                system, timed, watch, binding, &current, &caps, key_scale, deadline, cancel,
             )? {
                 admit_region_state(
                     delayed_key.clone(),
@@ -1463,7 +1612,7 @@ fn enumerate_digital_deadline(
                 .map_err(|_| ProbabilityDocumentError::Unsupported)?;
             if invariants.is_empty() && !urgent {
                 if let Some((target, idle)) = digital_idle_delay(
-                    system, timed, predicate, binding, &current, &caps, key_scale, deadline, cancel,
+                    system, timed, watch, binding, &current, &caps, key_scale, deadline, cancel,
                 )? {
                     admit_region_state(
                         target.clone(),
@@ -1516,18 +1665,18 @@ fn enumerate_digital_deadline(
                 let clocks = quantized_clocks(timed_post, &caps, key_scale)?;
                 let post =
                     TimedState::new(timed_post.discrete().clone(), ClockValuation::new(clocks));
-                let phase = phase_at(
+                let (phase, elapsed) = watch.observe(
                     system,
-                    predicate,
                     binding,
                     post.discrete(),
+                    current.phase,
                     current.elapsed,
                     deadline,
                     cancel,
                 )?;
                 let reached_state = RegionState {
                     timed: post,
-                    elapsed: current.elapsed,
+                    elapsed,
                     phase,
                     tail: DigitalTail::Running,
                 };
@@ -1569,6 +1718,9 @@ fn enumerate_digital_deadline(
                 bound: u64::try_from(limits.edges).unwrap_or(u64::MAX),
                 actual: edges,
             });
+        }
+        if choices.is_empty() && current.phase == Phase::Active {
+            return Err(ProbabilityDocumentError::Unsupported);
         }
         insert_checker_state(
             key,
@@ -1704,6 +1856,7 @@ fn enumerate_region_deadline(
                 continue;
             }
             Phase::Pending => {}
+            _ => return Err(ProbabilityDocumentError::Unsupported),
         }
         let mut choices = Vec::new();
         if let Some((delayed_key, delayed)) = next_region_delay(
@@ -2021,6 +2174,7 @@ fn region_key(
         Phase::Pending => "pending",
         Phase::Accepted => "accept",
         Phase::Rejected => "reject",
+        _ => return Err(ProbabilityDocumentError::Unsupported),
     };
     let mut keyed_clocks = clocks
         .into_iter()
@@ -2175,10 +2329,18 @@ fn digital_key(
             cap: *cap,
         });
     }
+    let measure = match state.phase {
+        Phase::Inactive => Some(("inactive", None)),
+        Phase::Active => Some(("active", Some(state.elapsed))),
+        Phase::Complete => Some(("complete", Some(state.elapsed))),
+        Phase::Censored => Some(("censored", Some(state.elapsed))),
+        _ => None,
+    };
     let phase = match state.phase {
         Phase::Pending => "pending",
         Phase::Accepted => "accept",
         Phase::Rejected => "reject",
+        _ => "",
     };
     digital_probability_product_key(DigitalProductKeyInput {
         binding,
@@ -2186,14 +2348,18 @@ fn digital_key(
         unit,
         scale,
         clocks,
-        deadline: Some(DigitalDeadlineKey {
+        deadline: measure.is_none().then_some(DigitalDeadlineKey {
             limit: deadline,
             elapsed: state.elapsed,
         }),
         tail: state.tail,
-        monitor: Some(json!(["deadline", "eventually", phase])),
+        monitor: Some(match measure {
+            Some((name, _)) => json!(["measure", null, name]),
+            None => json!(["deadline", "eventually", phase]),
+        }),
         accumulator: None,
         pending: None,
+        elapsed: measure.map(|(_, value)| (deadline, value)),
     })
     .map_err(ProbabilityDocumentError::Graph)
 }
@@ -2205,7 +2371,7 @@ fn digital_key(
 fn next_digital_delay(
     system: &ModelSystem<'_>,
     timed: &TimedSystem<'_, '_>,
-    predicate: &fsl_semantics::check::CheckedPredicate,
+    watch: &Watch<'_>,
     binding: Option<&filament_exact::ObjectReference>,
     current: &RegionState,
     caps: &[u64],
@@ -2232,11 +2398,11 @@ fn next_digital_delay(
             .min(deadline.saturating_add(1));
         let clocks = quantized_clocks(&delayed, caps, scale)?;
         let delayed = TimedState::new(delayed.discrete().clone(), ClockValuation::new(clocks));
-        let phase = phase_at(
+        let (phase, elapsed) = watch.observe(
             system,
-            predicate,
             binding,
             delayed.discrete(),
+            state.phase,
             elapsed,
             deadline,
             cancel,
@@ -2251,6 +2417,10 @@ fn next_digital_delay(
         if key != current_key {
             return Ok(Some((key, reached)));
         }
+        if reached.phase == Phase::Inactive {
+            // An unactivated measure has no clock to move: no later delay differs.
+            return Ok(None);
+        }
         state = reached;
     }
     Ok(None)
@@ -2260,7 +2430,7 @@ fn next_digital_delay(
 fn digital_idle_delay(
     system: &ModelSystem<'_>,
     timed: &TimedSystem<'_, '_>,
-    predicate: &fsl_semantics::check::CheckedPredicate,
+    watch: &Watch<'_>,
     binding: Option<&filament_exact::ObjectReference>,
     current: &RegionState,
     caps: &[u64],
@@ -2283,11 +2453,11 @@ fn digital_idle_delay(
         delayed.discrete().clone(),
         ClockValuation::new(quantized_clocks(&delayed, caps, scale)?),
     );
-    let phase = phase_at(
+    let (phase, elapsed) = watch.observe(
         system,
-        predicate,
         binding,
         delayed.discrete(),
+        current.phase,
         elapsed,
         deadline,
         cancel,
@@ -2322,7 +2492,7 @@ fn discrete_delay(system: &ModelSystem<'_>, operation: &str) -> Option<Vec<(Rati
 fn digital_discrete_delay_choice(
     system: &ModelSystem<'_>,
     timed: &TimedSystem<'_, '_>,
-    predicate: &fsl_semantics::check::CheckedPredicate,
+    watch: &Watch<'_>,
     binding: Option<&filament_exact::ObjectReference>,
     current: &RegionState,
     action: &fsl_eval::simulation::model::Action,
@@ -2342,12 +2512,12 @@ fn digital_discrete_delay_choice(
         poll(cancel)?;
         let ticks = time_units(&delay, scale).ok_or(ProbabilityDocumentError::Unsupported)?;
         let Some(state) = digital_state_after_delay(
-            system, timed, predicate, binding, current, caps, scale, deadline, ticks, cancel,
+            system, timed, watch, binding, current, caps, scale, deadline, ticks, cancel,
         )?
         else {
             continue;
         };
-        if state.phase != Phase::Pending {
+        if state.phase.decided() {
             outcomes.push((ticks, weight, state));
             continue;
         }
@@ -2375,7 +2545,7 @@ fn digital_discrete_delay_choice(
         let delay_probability = weight
             .div(&total)
             .ok_or(ProbabilityDocumentError::Unsupported)?;
-        if delayed.phase != Phase::Pending {
+        if delayed.phase.decided() {
             let target = digital_key(system, timed, binding, &delayed, caps, scale, deadline)?;
             admit_region_state(target.clone(), delayed, reached, pending, limits, storage)?;
             append_checker_edge(
@@ -2442,11 +2612,11 @@ fn digital_discrete_delay_choice(
                             timed_post.discrete().clone(),
                             ClockValuation::new(quantized_clocks(timed_post, caps, scale)?),
                         );
-                        let phase = phase_at(
+                        let (phase, elapsed) = watch.observe(
                             system,
-                            predicate,
                             binding,
                             post.discrete(),
+                            state.phase,
                             state.elapsed,
                             deadline,
                             cancel,
@@ -2455,7 +2625,7 @@ fn digital_discrete_delay_choice(
                             branch_probability.mul(&draw.probability),
                             RegionState {
                                 timed: post,
-                                elapsed: state.elapsed,
+                                elapsed,
                                 phase,
                                 tail: DigitalTail::Running,
                             },
@@ -2557,7 +2727,7 @@ fn digital_enabled_actions(
 fn digital_state_after_delay(
     system: &ModelSystem<'_>,
     timed: &TimedSystem<'_, '_>,
-    predicate: &fsl_semantics::check::CheckedPredicate,
+    watch: &Watch<'_>,
     binding: Option<&filament_exact::ObjectReference>,
     current: &RegionState,
     caps: &[u64],
@@ -2584,11 +2754,11 @@ fn digital_state_after_delay(
             delayed.discrete().clone(),
             ClockValuation::new(quantized_clocks(&delayed, caps, scale)?),
         );
-        let phase = phase_at(
+        let (phase, elapsed) = watch.observe(
             system,
-            predicate,
             binding,
             delayed.discrete(),
+            state.phase,
             elapsed,
             deadline,
             cancel,
@@ -2599,7 +2769,7 @@ fn digital_state_after_delay(
             phase,
             tail: current.tail,
         };
-        if state.phase != Phase::Pending {
+        if state.phase.decided() {
             return Ok(Some(state));
         }
     }
@@ -2792,23 +2962,24 @@ fn region_route(
             constraint.op(),
             fsl_semantics::check::ClockOp::Less | fsl_semantics::check::ClockOp::Greater
         )
-    }) || matches!(
-        &claim.form,
-        fsl_semantics::check::ProbForm::Probability {
-            event: fsl_semantics::check::Event::Formula { formula, .. },
-            ..
-        } if formula.formula().nodes().iter().any(|node| match node {
-            fsl_semantics::check::FormulaNode::Unary {
-                interval: Some(fsl_semantics::check::CheckedInterval::Timed(interval)),
+    }) || elapsed::query(claim).is_some_and(|query| matches!(query.bound, Bound::AtLeast(_)))
+        || matches!(
+            &claim.form,
+            fsl_semantics::check::ProbForm::Probability {
+                event: fsl_semantics::check::Event::Formula { formula, .. },
                 ..
-            }
-            | fsl_semantics::check::FormulaNode::Binary {
-                interval: Some(fsl_semantics::check::CheckedInterval::Timed(interval)),
-                ..
-            } => !interval.upper_closed() || !interval.lower_closed(),
-            _ => false,
-        })
-    )
+            } if formula.formula().nodes().iter().any(|node| match node {
+                fsl_semantics::check::FormulaNode::Unary {
+                    interval: Some(fsl_semantics::check::CheckedInterval::Timed(interval)),
+                    ..
+                }
+                | fsl_semantics::check::FormulaNode::Binary {
+                    interval: Some(fsl_semantics::check::CheckedInterval::Timed(interval)),
+                    ..
+                } => !interval.upper_closed() || !interval.lower_closed(),
+                _ => false,
+            })
+        )
 }
 
 fn clock_constraints<'a>(
@@ -2867,6 +3038,15 @@ fn certificate_scale(
     {
         denominators.push(horizon.denominator().as_big().clone());
     }
+    if let Some(query) = elapsed::query(claim) {
+        denominators.push(query.within.denominator().as_big().clone());
+        denominators.push(
+            elapsed::threshold(&query.bound)
+                .denominator()
+                .as_big()
+                .clone(),
+        );
+    }
     if let fsl_semantics::check::ProbForm::MeanTime { bound, .. } = &claim.form {
         let value = match bound {
             Bound::AtLeast(value) | Bound::AtMost(value) => value,
@@ -2889,16 +3069,17 @@ fn certificate_scale(
         .filter(|scale| *scale > 0)
         .ok_or(ProbabilityDocumentError::Unsupported)?;
     let subdivisions = if route == TimedProbabilityRoute::Region {
-        let has_deadline = matches!(
-            &claim.form,
-            fsl_semantics::check::ProbForm::Probability {
-                event: fsl_semantics::check::Event::Formula {
-                    timed_horizon: Some(_),
+        let has_deadline = elapsed::query(claim).is_some()
+            || matches!(
+                &claim.form,
+                fsl_semantics::check::ProbForm::Probability {
+                    event: fsl_semantics::check::Event::Formula {
+                        timed_horizon: Some(_),
+                        ..
+                    },
                     ..
-                },
-                ..
-            }
-        );
+                }
+            );
         u64::try_from(timed.places().len())
             .ok()
             .and_then(|clocks| clocks.checked_add(if has_deadline { 1 } else { 0 }))

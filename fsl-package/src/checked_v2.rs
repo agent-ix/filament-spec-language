@@ -44,7 +44,7 @@ pub(crate) mod tests;
 mod timed_model;
 
 pub use clause_root::{clause_roots, resolve_clause_root, ClauseRoot, ClauseRootUnresolved};
-pub(crate) use hybrid::float_rounding_type;
+pub(crate) use hybrid::{decimal_range_type, float_rounding_type};
 pub use hybrid::{read_hybrids, HybridRead, HybridReadError, ReadHybridClaim, ReadHybridModel};
 pub use hyper_root::{hyper_roots, resolve_hyper_root, HyperRoot, HyperRootUnresolved};
 pub use schedulability_root::{
@@ -1162,8 +1162,8 @@ impl EvaluationWitnessSupplier for SourceWitnessSupplier {
                 crate::IdentityJoinFailure::Exhausted(denial) => exhausted(*denial),
                 crate::IdentityJoinFailure::Witness(_) => WitnessSupplyFailure::Fault,
             })?;
-        // The complete selection: the model tuples and source units, then the
-        // source tuples and enums the emission carries.
+        // Identity rows already carry source tuples. Complete the selection
+        // with model tuples, source units and source enums.
         let identities = identities
             .with_admitted_type_rows(
                 admitted,
@@ -1171,13 +1171,6 @@ impl EvaluationWitnessSupplier for SourceWitnessSupplier {
                 self.emission.selected_source_unit_rows(),
                 budget,
             )
-            .and_then(|joined| {
-                joined.with_source_tuple_rows(
-                    admitted,
-                    self.emission.selected_source_tuple_rows().iter().cloned(),
-                    budget,
-                )
-            })
             .map_err(exhausted)?;
         let enum_rows = self
             .emission
@@ -1384,12 +1377,23 @@ impl AdmittedPackageRead<'_> {
                     Code::UnsupportedExactType => fault(),
                 }
             })?;
+        let mut held = BTreeMap::new();
+        hold_closure(self.source, &mut held);
+        let dependencies = held
+            .iter()
+            .map(|(identity, source)| {
+                let admitted = self.dependencies.package(identity).ok_or_else(fault)?;
+                let emission = source.remembered_emission().ok_or_else(fault)?;
+                Ok((admitted, emission))
+            })
+            .collect::<Result<Vec<_>, ViewFailure>>()?;
         let slots = project_package(
             &self.read.admitted,
             &self.emission,
             self.emission.package.name(),
             self.slot_requests(),
             identities,
+            &dependencies,
             &mut budget,
         )
         .map_err(|refusal| match refusal {
@@ -1479,6 +1483,11 @@ fn reader_node_keys(package: &CheckedPackageV2) -> Result<BTreeSet<NodeKey>, Wir
 pub struct AdmittedPackages(BTreeMap<LibraryName, Arc<CheckedPackageV2>>);
 
 impl AdmittedPackages {
+    /// Share an already authenticated library without re-reading or copying
+    /// its graph. Handoff persistence retains this same acquisition.
+    pub fn shared_package(&self, name: &LibraryName) -> Option<Arc<CheckedPackageV2>> {
+        self.0.get(name).map(Arc::clone)
+    }
     /// The package a [`read_import_view`] call admitted at `name`.
     pub fn package(&self, name: &LibraryName) -> Option<&CheckedPackageV2> {
         self.0.get(name).map(Arc::as_ref)
@@ -1542,12 +1551,20 @@ impl ClosureReader<'_> {
         package: &CheckedPackage,
         identity: LibraryName,
     ) -> Result<V2Read, ImportViewRefusal> {
-        let emission =
-            emit_checked(package, self.emit).map_err(|refusal| ImportViewRefusal::Emission {
-                package: identity.clone(),
-                refusal: Some(Box::new(refusal)),
-            })?;
-        self.read_emitted(package, &emission, identity)
+        let fresh;
+        let emission = match package.remembered_emission() {
+            Some(emission) => emission,
+            None => {
+                fresh = emit_checked(package, self.emit).map_err(|refusal| {
+                    ImportViewRefusal::Emission {
+                        package: identity.clone(),
+                        refusal: Some(Box::new(refusal)),
+                    }
+                })?;
+                &fresh
+            }
+        };
+        self.read_emitted(package, emission, identity)
     }
 
     /// `package`'s `emission`, read under `identity`, with its closure's

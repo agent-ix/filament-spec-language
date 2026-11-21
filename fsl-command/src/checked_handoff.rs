@@ -50,7 +50,9 @@ mod inventory;
 mod selection;
 mod tree;
 
+use std::collections::BTreeMap;
 use std::path::Path;
+use std::sync::Arc;
 
 use filament_contract_model::{
     read_checked_package, CheckedPackageDispatchResult, CheckedPackageEvidence,
@@ -71,6 +73,32 @@ pub const INVENTORY_FORMAT: &str = "filament.checked-handoff.inventory/1";
 
 /// The format of `mutations/manifest.json`.
 pub const MUTATIONS_FORMAT: &str = "filament.checked-handoff.mutations/1";
+
+const DEPENDENCIES_FORMAT: &str = "filament.checked-handoff.dependencies/1";
+
+#[derive(serde::Serialize)]
+struct DependencyManifest<'a> {
+    format: &'static str,
+    dependencies: Vec<DependencyRow<'a>>,
+}
+
+#[derive(serde::Serialize)]
+struct DependencyRow<'a> {
+    identity: &'a str,
+    directory: String,
+}
+
+fn json_file(value: &impl serde::Serialize, what: &'static str) -> Result<Vec<u8>, Error> {
+    let mut bytes =
+        serde_json::to_vec_pretty(value).map_err(|source| Error::Encode { what, source })?;
+    bytes.push(b'\n');
+    Ok(bytes)
+}
+
+struct DependencyArtifact {
+    emission: fsl_package::Emission,
+    package: Arc<CheckedPackageV2>,
+}
 
 /// Which adverse corpus the writer adds (FR-518).
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -376,7 +404,7 @@ fn write_compiled(
     command_source_file: Option<&str>,
 ) -> Result<(), Error> {
     let bytes = compiled.emitted.package().bytes().to_vec();
-    let evidence = read_evidence(&compiled)?;
+    let (evidence, dependencies) = acquire_evidence(&compiled)?;
     let package = admit(environment.read(&bytes, READ_LIMITS, &evidence))?;
     let selection = Selection::derive(&compiled, &request.emit, &bytes, command_source_file)?;
     environment
@@ -390,6 +418,46 @@ fn write_compiled(
     files.insert("selection.json", selection.to_bytes()?)?;
     files.insert("inventory.json", inventory_file(&compiled, &bytes)?)?;
     let mut budget = request.native_join.budget();
+    let manifest = DependencyManifest {
+        format: DEPENDENCIES_FORMAT,
+        dependencies: dependencies
+            .keys()
+            .enumerate()
+            .map(|(index, identity)| DependencyRow {
+                identity,
+                directory: format!("dependencies/{index}"),
+            })
+            .collect(),
+    };
+    files.insert(
+        "dependencies.json",
+        json_file(&manifest, "dependencies.json")?,
+    )?;
+    for (index, (_, dependency)) in dependencies.iter().enumerate() {
+        let directory = format!("dependencies/{index}");
+        files.insert(
+            &format!("{directory}/checked-package.json"),
+            dependency.emission.package().bytes().to_vec(),
+        )?;
+        files.insert(
+            &format!("{directory}/identities.json"),
+            emission_identity_file(
+                &dependency.emission,
+                &dependency.package,
+                &mut budget,
+                request.native_join,
+            )?,
+        )?;
+        files.insert(
+            &format!("{directory}/equality.json"),
+            emission_equality_file(
+                &dependency.emission,
+                &dependency.package,
+                &mut budget,
+                request.native_join,
+            )?,
+        )?;
+    }
     files.insert(
         "identities.json",
         identity_file(&compiled, &package, &mut budget, request.native_join)?,
@@ -491,6 +559,7 @@ pub fn compile(directory: &Path) -> Result<CompiledHandoff, Error> {
     let bytes = tree::read(directory, "checked-package.json", package_ceiling)?;
     let inputs = selection
         .inputs(|file| tree::read(directory, file, fsl_foundation::source::MAX_SOURCE_BYTES))?;
+    let named_selections = inputs.temporal_selections.clone();
     let compiled = emit_checked_v2::compile_inputs(inputs)?;
     if compiled.emitted.package().bytes() != bytes.as_slice() {
         return Err(Error::ReadBackDiffers {
@@ -502,7 +571,9 @@ pub fn compile(directory: &Path) -> Result<CompiledHandoff, Error> {
     selection
         .check(&admitted)
         .map_err(Error::SelectionMismatch)?;
-    let mut sources = fsl_analyze::analyze::SourceProvision::default();
+    let mut sources = fsl_analyze::analyze::SourceProvision::default().with_temporal_selections(
+        emit_checked_v2::clock_selections(&compiled.checked, &named_selections)?,
+    );
     let unit_source = compiled.checked.source().identity();
     let unit_ref = fsl_foundation::source::provenance::RawSourceRef::new(
         unit_source.authority.clone(),
@@ -571,10 +642,17 @@ fn identity_file(
     budget: &mut filament_contract_model::NativeJoinBudget,
     limits: fsl_package::NativeJoinLimits,
 ) -> Result<Vec<u8>, Error> {
+    emission_identity_file(compiled.emitted.emission(), package, budget, limits)
+}
+
+fn emission_identity_file(
+    emission: &fsl_package::Emission,
+    package: &CheckedPackageV2,
+    budget: &mut filament_contract_model::NativeJoinBudget,
+    limits: fsl_package::NativeJoinLimits,
+) -> Result<Vec<u8>, Error> {
     let unnameable = |what: String| Error::Unnameable { what };
-    compiled
-        .emitted
-        .emission()
+    emission
         .identity_rows(package, budget)
         .map_err(|refused| match refused {
             fsl_package::IdentityFileRefusal::Rows(rows) => match limits.refusal(rows, budget) {
@@ -600,27 +678,29 @@ fn identity_file(
 /// equality application, in the order the emitter holds them.
 fn equality_file(
     compiled: &Compiled,
-    request: &CheckedHandoffRequest,
+    _request: &CheckedHandoffRequest,
     package: &filament_contract_model::CheckedPackageV2,
     budget: &mut filament_contract_model::NativeJoinBudget,
     limits: fsl_package::NativeJoinLimits,
 ) -> Result<Vec<u8>, Error> {
+    emission_equality_file(compiled.emitted.emission(), package, budget, limits)
+}
+
+fn emission_equality_file(
+    emission: &fsl_package::Emission,
+    package: &CheckedPackageV2,
+    budget: &mut filament_contract_model::NativeJoinBudget,
+    limits: fsl_package::NativeJoinLimits,
+) -> Result<Vec<u8>, Error> {
     let unnameable = |what: String| Error::Unnameable { what };
-    let selections =
-        emit_checked_v2::clock_selections(&compiled.checked, &request.emit.temporal_selections)?;
-    fsl_package::emit_checked_with_temporal_selections(
-        compiled.checked.package(),
-        &selections,
-        compiled.emit,
-    )
-    .map_err(|refusal| unnameable(format!("equality witness: {refusal}")))?
-    .equality_witness(package, budget)
-    .map_err(|error| match limits.refusal(error, budget) {
-        Some(denial) => Error::NativeJoinExhausted(Box::new(denial)),
-        None => unnameable("equality adapter refused without a resource denial".to_owned()),
-    })?
-    .to_bytes(package)
-    .map_err(|refused| unnameable(format!("equality file: {refused}")))
+    emission
+        .equality_witness(package, budget)
+        .map_err(|error| match limits.refusal(error, budget) {
+            Some(denial) => Error::NativeJoinExhausted(Box::new(denial)),
+            None => unnameable("equality adapter refused without a resource denial".to_owned()),
+        })?
+        .to_bytes(package)
+        .map_err(|refused| unnameable(format!("equality file: {refused}")))
 }
 
 /// The exact input bytes under `sources/` and `models/`.
@@ -655,6 +735,12 @@ pub fn evidence(request: &CheckedHandoffRequest) -> Result<CheckedPackageEvidenc
 /// The compiler's evidence, the domain package documents the writer holds,
 /// and the admitted package of every library the unit imports.
 fn read_evidence(compiled: &Compiled) -> Result<CheckedPackageEvidence, Error> {
+    acquire_evidence(compiled).map(|(evidence, _)| evidence)
+}
+
+fn acquire_evidence(
+    compiled: &Compiled,
+) -> Result<(CheckedPackageEvidence, BTreeMap<String, DependencyArtifact>), Error> {
     let documents =
         fsl_semantics::model::intake::package_input(compiled.models.iter().map(Vec::as_slice))
             .map_err(|refused| Error::Unnameable {
@@ -662,13 +748,68 @@ fn read_evidence(compiled: &Compiled) -> Result<CheckedPackageEvidence, Error> {
             })?;
     let mut evidence = compiled.emitted.evidence().clone();
     supply_documents(&mut evidence, &documents, "the unit")?;
-    admit_dependencies(
-        compiled.checked.package(),
-        &mut evidence,
-        &documents,
-        compiled.emit,
-    )?;
-    Ok(evidence)
+    let root = compiled.checked.package();
+    let mut held = BTreeMap::new();
+    let mut pending = vec![root];
+    while let Some(package) = pending.pop() {
+        for (identity, dependency) in package.dependencies() {
+            if held
+                .insert(identity.as_str().to_owned(), dependency.as_ref())
+                .is_none()
+            {
+                pending.push(dependency);
+            }
+        }
+    }
+    let mut artifacts: BTreeMap<String, DependencyArtifact> = BTreeMap::new();
+    for (identity, dependency) in held {
+        let emission = dependency
+            .remembered_emission()
+            .ok_or_else(|| Error::Dependency {
+                identity: identity.clone(),
+                detail: "the checked acquisition retained no library emission".to_owned(),
+            })?
+            .clone();
+        let selected = fsl_semantics::library::LibraryName::new(&identity).map_err(|error| {
+            Error::Dependency {
+                identity: identity.clone(),
+                detail: error.to_string(),
+            }
+        })?;
+        let package = compiled
+            .checked
+            .admitted_libraries()
+            .shared_package(&selected)
+            .ok_or_else(|| Error::Dependency {
+                identity: identity.clone(),
+                detail: "the checked acquisition retained no library admission".to_owned(),
+            })?;
+        artifacts.insert(identity, DependencyArtifact { emission, package });
+    }
+    insert_direct_dependencies(root, &artifacts, &mut evidence)?;
+    Ok((evidence, artifacts))
+}
+
+fn insert_direct_dependencies(
+    package: &fsl_package::CheckedPackage,
+    artifacts: &BTreeMap<String, DependencyArtifact>,
+    evidence: &mut CheckedPackageEvidence,
+) -> Result<(), Error> {
+    for (identity, _) in package.direct_dependency_selections() {
+        let artifact = artifacts
+            .get(identity.as_str())
+            .ok_or_else(|| Error::Dependency {
+                identity: identity.as_str().to_owned(),
+                detail: "selected dependency was not admitted".to_owned(),
+            })?;
+        evidence
+            .insert_dependency_package(identity.as_str(), Arc::clone(&artifact.package))
+            .map_err(|conflict| Error::Dependency {
+                identity: identity.as_str().to_owned(),
+                detail: format!("{conflict:?}"),
+            })?;
+    }
+    Ok(())
 }
 
 fn supply_documents(
@@ -687,31 +828,78 @@ fn supply_documents(
     Ok(())
 }
 
-/// Admit each library of `package`'s closure and supply it to `evidence`.
-fn admit_dependencies(
-    package: &fsl_package::CheckedPackage,
-    evidence: &mut CheckedPackageEvidence,
-    documents: &fsl_semantics::model::intake::PackageInput,
-    emit: fsl_package::EmitLimits,
-) -> Result<(), Error> {
-    for (identity, dependency) in package.dependencies() {
-        let failed = |detail: String| Error::Dependency {
-            identity: identity.as_str().to_owned(),
-            detail,
+#[cfg(test)]
+mod dependency_projection_tests {
+    use ix_trace_rs::trace;
+    #[test]
+    #[trace("FR-517-AC-2", "FR-850-AC-12", "TC-1312", "TC-2410")]
+    fn source_protocol_projection_uses_each_imported_librarys_retained_witnesses() {
+        use super as checked_handoff;
+        use super::emit_checked_v2;
+        use std::path::Path;
+        let directory = tempfile::tempdir().unwrap();
+        let model = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .unwrap()
+            .join("tests/fixtures/spine-model.semantic-ir.json");
+        let source = directory.path().join("unit.native");
+        let library = directory.path().join("library.native");
+        std::fs::write(
+            &source,
+            r#"language "ix:native" edition "1-draft";
+profile v = "filament.model.complete/v1";
+profile p = "filament.protocol.finite-global/v1";
+import "test/ready" as L;
+model M = "acme/orders";
+protocol Flow using p over (input: M::Widget) on origin {
+    role R on M::Widget;
+    run sequence Main { event Tick by R as (tick: Boolean) { L::Ready(tick) }; }
+    finish End as (outcome: Boolean) { L::Ready(outcome) };
+}
+"#,
+        )
+        .unwrap();
+        std::fs::write(
+            &library,
+            r#"language "ix:native" edition "1-draft";
+profile v = "filament.value.complete/v1";
+predicate Ready using v (ready: Boolean): Boolean { ready }
+"#,
+        )
+        .unwrap();
+        let request = checked_handoff::CheckedHandoffRequest {
+            emit: emit_checked_v2::Request {
+                source,
+                package_name: "ready-protocol".to_owned(),
+                models: vec![model],
+                libraries: vec![("test/ready".to_owned(), library)],
+                execution_points: None,
+                temporal_selections: vec![],
+                out: None,
+            },
+            corpus: checked_handoff::Corpus::None,
+            native_join: fsl_package::NativeJoinLimits::new(1 << 40, 1 << 28),
         };
-        let emission = fsl_package::emit_checked(dependency, emit)
-            .map_err(|refusal| failed(refusal.to_string()))?;
-        let mut own = emission.evidence().clone();
-        supply_documents(&mut own, documents, identity.as_str())?;
-        admit_dependencies(dependency, &mut own, documents, emit)?;
-        let CheckedPackageDispatchResult::AdmittedV2(admitted) =
-            read_checked_package(emission.package().bytes(), READ_LIMITS, &own)
-        else {
-            return Err(failed("the reader did not admit it".to_owned()));
-        };
-        evidence
-            .insert_dependency_package(identity.as_str(), admitted)
-            .map_err(|conflict| failed(format!("{conflict:?}")))?;
+        let handoff = directory.path().join("handoff");
+        checked_handoff::write(&request, &handoff)
+            .expect("the protocol writes its dependency artifacts");
+        let compiled = checked_handoff::compile(&handoff)
+            .expect("the explicit source entry recompiles the same protocol");
+        let emission = compiled.compiled.emitted.emission();
+        let read = fsl_package::read_evaluation_emission(
+            compiled.checked(),
+            emission,
+            fsl_semantics::library::LibraryName::of_package(compiled.admitted()),
+            compiled.packages(),
+            fsl_package::V2ReadLimits::bounded(1 << 28),
+            compiled.emit_limits(),
+            fsl_package::SourceWitnessSupplier::new(emission),
+        )
+        .expect("the same admitted closure supplies the source evaluation view");
+        let view = read.evaluation_view().expect(
+            "imported predicates in event and finish slots project through their own package",
+        );
+        assert!(view.is_reader_backed());
+        assert!(view.is_for_package(compiled.checked()));
     }
-    Ok(())
 }

@@ -569,7 +569,7 @@ pub(crate) struct TimedStateWire {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
-struct TimedTransitionWire {
+pub(crate) struct TimedTransitionWire {
     #[serde(rename = "type")]
     kind: &'static str,
     operation: serde_json::Value,
@@ -1001,10 +1001,13 @@ impl ItemCause {
                 code,
                 cause,
                 setting,
+                exceeded,
             }) => {
                 item.code = Some(code.as_str().to_owned());
                 item.cause = Some((*cause).to_owned());
                 item.setting = Some(setting);
+                item.bound = Some(exceeded.bound.to_string());
+                item.message = Some(exceeded.to_string());
             }
             ReportedInconclusiveCause::Cause(InconclusiveCause::StaleDependency {
                 requested,

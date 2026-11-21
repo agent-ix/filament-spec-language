@@ -665,6 +665,7 @@ impl<'a> MonitorSession<'a> {
             stamp,
             order_key: observation_in.order_key.clone(),
             value,
+            absent: Vec::new(),
         })
     }
 

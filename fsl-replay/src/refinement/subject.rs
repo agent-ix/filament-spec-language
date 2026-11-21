@@ -205,13 +205,14 @@ pub fn open_protocol_systems<'a>(
     let model = ModelSystem::over_model(systems.abstract_request.clone(), &systems.abstract_model)
         .map_err(|failure| SubjectRefusal::Admission(Box::new(failure)))?;
     let model = if mapped {
-        model.with_initial_states(
-            systems
-                .abstract_system
-                .initial_states()
-                .iter()
-                .map(|state| (state.state().clone(), state.anchor().clone())),
-        )
+        let initial = systems
+            .abstract_system
+            .initial_states()
+            .iter()
+            .map(|state| Ok((state.state().clone(), state.required_anchor()?.clone())))
+            .collect::<Result<Vec<_>, ExpansionStop>>()
+            .map_err(SubjectRefusal::Stopped)?;
+        model.with_initial_states(initial)
     } else {
         model
     };
@@ -322,14 +323,11 @@ fn mapped_initial(
                 )
             })
             .collect();
+        let anchor = initial.required_anchor().map_err(SubjectRefusal::Stopped)?;
         let states = abstract_system
-            .complete_open_fields(&mapped.visible, initial.anchor(), &slots, &mut budget)
+            .complete_open_fields(&mapped.visible, anchor, &slots, &mut budget)
             .map_err(SubjectRefusal::Stopped)?;
-        images.extend(
-            states
-                .into_iter()
-                .map(|state| (state, initial.anchor().clone())),
-        );
+        images.extend(states.into_iter().map(|state| (state, anchor.clone())));
     }
     Ok(images)
 }

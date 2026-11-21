@@ -16,8 +16,6 @@ use super::{output, wire, FileCounts, Result, RunCause, RunResult};
 
 /// The FR-517 files a `{directory}` selection reads.
 const PACKAGE_FILE: &str = "checked-package.json";
-const IDENTITIES_FILE: &str = "identities.json";
-const EQUALITY_FILE: &str = "equality.json";
 
 /// The contract version the package route runs (FR-1039).
 const CONTRACT_VERSION: &str = "filament.checked-package/v2";
@@ -25,6 +23,7 @@ const CONTRACT_VERSION: &str = "filament.checked-package/v2";
 /// A prepared call over a selected checked package: the admitted package,
 /// its handoff witness rows when the selection is a directory, and the call.
 pub struct PreparedPackageRun {
+    dependencies: Vec<fsl_package::DependencyArtifact>,
     package: filament_contract_model::CheckedPackageV2,
     identities: Option<fsl_package::ReadIdentityRows>,
     equality: Option<fsl_package::ReadEqualityRows>,
@@ -70,6 +69,7 @@ struct ClauseWork {
 /// export route shares this reader so package execution and mapping apply the
 /// same strict V2 admission and file/directory handoff rules.
 pub(super) struct AdmittedPackage {
+    pub(super) dependencies: Vec<fsl_package::DependencyArtifact>,
     pub(super) package: filament_contract_model::CheckedPackageV2,
     pub(super) identities: Option<fsl_package::ReadIdentityRows>,
     pub(super) equality: Option<fsl_package::ReadEqualityRows>,
@@ -104,12 +104,25 @@ fn package_refusal(refusal: fsl_package::PackageAdmissionRefusal) -> RunCause {
         cause,
         pointer,
         identity,
+        ..
     } = refusal;
     let label = match &cause {
         Some(cause) => format!("{}/{cause}", code.as_str()),
         None => code.as_str().to_owned(),
     };
     if let Some(identity) = identity {
+        if let Some(pointer) = pointer
+            .as_deref()
+            .filter(|pointer| pointer.starts_with("/lock/dependency_selections/"))
+        {
+            let pointer = format!("/request/package{pointer}");
+            return RunCause::AnalyzePackage {
+                code,
+                cause,
+                pointer: Some(pointer.clone()),
+                message: format!("{label} at {pointer}: no artifact evidence supplies {identity}"),
+            };
+        }
         // FR-1039: a recorded model selection with no `models` entry.
         return RunCause::AnalyzePackage {
             code,
@@ -216,6 +229,7 @@ pub(super) fn prepare(
     }
     Ok(PreparedPackageRun {
         package: admitted.package,
+        dependencies: admitted.dependencies,
         identities: admitted.identities,
         equality: admitted.equality,
         budget: admitted.budget,
@@ -368,6 +382,7 @@ fn prepare_clause(
     };
     Ok(PreparedPackageRun {
         package: admitted.package,
+        dependencies: admitted.dependencies,
         identities: admitted.identities,
         equality: admitted.equality,
         budget: admitted.budget,
@@ -495,6 +510,7 @@ fn prepare_lowering(
     let admitted = admit(directory, request, package, dependent_bytes, initial)?;
     Ok(PreparedPackageRun {
         package: admitted.package,
+        dependencies: admitted.dependencies,
         identities: admitted.identities,
         equality: admitted.equality,
         budget: admitted.budget,
@@ -612,7 +628,7 @@ pub(super) fn admit_files(
         FileCounts {
             programs: match handoff {
                 Selected::File(_) => 1 + usize::from(equality_file.is_some()),
-                Selected::Directory(_) => 3,
+                Selected::Directory(_) => 2,
             },
             models: request.models.len(),
             observations: files.len(),
@@ -624,13 +640,18 @@ pub(super) fn admit_files(
         Selected::File(file) => file.clone(),
         Selected::Directory(handoff) => format!("{handoff}/{PACKAGE_FILE}"),
     };
-    if !directory.join(&package_path).is_file() {
+    if matches!(&handoff, Selected::File(_)) && !directory.join(&package_path).is_file() {
         return Err(invalid(
             "package",
             format!("no checked package is at {package_path}"),
         ));
     }
-    let bytes = intake.file(&package_path, intake.remaining)?;
+    let bytes = match &handoff {
+        Selected::Directory(handoff) => {
+            super::handoff::read_file(&mut intake, handoff, PACKAGE_FILE, false)?
+        }
+        Selected::File(_) => intake.file(&package_path, intake.remaining)?,
+    };
     require_contract_version(&bytes)?;
     let documents = request
         .models
@@ -646,28 +667,41 @@ pub(super) fn admit_files(
     )?;
     let limits =
         fsl_package::V2ReadLimits::bounded(fsl_replay::spine::I2_NATIVE_JOIN_STORAGE_DEFAULT);
-    let admitted =
-        fsl_package::admit_checked_package(&bytes, &supplied, limits).map_err(package_refusal)?;
-    // FR-1039: a `models` entry the package records no selection of.
-    let identities = supplied.keys().collect::<Vec<_>>();
-    if let Some((index, identity)) = identities.iter().enumerate().find(|(_, identity)| {
-        !admitted
-            .selected_model_packages()
-            .any(|recorded| recorded == identity.as_str())
-    }) {
-        return Err(invalid(
-            &format!("/request/models/{index}"),
-            format!("the package records no model selection {identity}"),
-        ));
-    }
-    let mut budget = limits.native_join_limits().budget();
-    let (identities, equality) = match &handoff {
-        Selected::File(_) => (
-            None,
-            read_equality_file(directory, &mut intake, equality_file.as_deref(), &admitted)?,
-        ),
+    let (admitted, identities, equality, budget, dependencies) = match &handoff {
         Selected::Directory(handoff) => {
-            read_witness(directory, &mut intake, handoff, &admitted, &mut budget)?
+            let loaded = super::handoff::admit(&mut intake, handoff, bytes, &supplied, limits)
+                .map_err(super::handoff::AdmissionFailure::for_run)?;
+            (
+                loaded.package,
+                Some(loaded.identities),
+                loaded.equality,
+                loaded.budget,
+                loaded.dependencies,
+            )
+        }
+        Selected::File(_) => {
+            let admitted = fsl_package::admit_checked_package(&bytes, &supplied, limits)
+                .map_err(package_refusal)?;
+            for (index, identity) in supplied.keys().enumerate() {
+                if !admitted
+                    .selected_model_packages()
+                    .any(|recorded| recorded == identity)
+                {
+                    return Err(invalid(
+                        &format!("/request/models/{index}"),
+                        format!("the package records no model selection {identity}"),
+                    ));
+                }
+            }
+            let equality =
+                read_equality_file(directory, &mut intake, equality_file.as_deref(), &admitted)?;
+            (
+                admitted,
+                None,
+                equality,
+                limits.native_join_limits().budget(),
+                Vec::new(),
+            )
         }
     };
     let observations = files
@@ -675,6 +709,7 @@ pub(super) fn admit_files(
         .map(|file| intake.file(file, intake.remaining))
         .collect::<Result<Vec<_>>>()?;
     Ok(AdmittedPackage {
+        dependencies,
         package: admitted,
         identities,
         equality,
@@ -787,47 +822,6 @@ fn read_equality_file(
         })
 }
 
-/// The handoff directory's identity rows, and its equality rows when the
-/// producer wrote them (FR-850 "Admission", FR-531).
-fn read_witness(
-    directory: &Path,
-    intake: &mut super::Intake<'_>,
-    handoff: &str,
-    package: &filament_contract_model::CheckedPackageV2,
-    budget: &mut filament_contract_model::NativeJoinBudget,
-) -> Result<(
-    Option<fsl_package::ReadIdentityRows>,
-    Option<fsl_package::ReadEqualityRows>,
-)> {
-    let witness = |file: &str, detail: String| RunCause::AnalyzePackage {
-        code: fsl_foundation::Code::InvalidPackage,
-        cause: Some("native-witness".to_owned()),
-        pointer: Some("/request/package/directory".to_owned()),
-        message: format!("invalid_package/native-witness: {file}: {detail}"),
-    };
-    let identities_path = format!("{handoff}/{IDENTITIES_FILE}");
-    if !directory.join(&identities_path).is_file() {
-        return Err(invalid(
-            "package",
-            format!("the handoff directory {handoff} holds no {IDENTITIES_FILE}"),
-        ));
-    }
-    let identity_bytes = intake.file(&identities_path, intake.remaining)?;
-    let identities = fsl_package::ReadIdentityRows::read(&identity_bytes, package, budget)
-        .map_err(|refusal| witness(IDENTITIES_FILE, refusal.to_string()))?;
-    let equality_path = format!("{handoff}/{EQUALITY_FILE}");
-    let equality = if directory.join(&equality_path).is_file() {
-        let equality_bytes = intake.file(&equality_path, intake.remaining)?;
-        Some(
-            fsl_package::ReadEqualityRows::read(&equality_bytes, package)
-                .map_err(|refusal| witness(EQUALITY_FILE, refusal.to_string()))?,
-        )
-    } else {
-        None
-    };
-    Ok((Some(identities), equality))
-}
-
 /// Run a prepared package call (FR-945): build the bare package over the
 /// admitted bytes and its witness rows, call the function and render the
 /// result as the source route renders it.
@@ -837,6 +831,7 @@ pub(super) fn execute(prepared: PreparedPackageRun) -> Result<RunResult> {
         identities,
         equality,
         mut budget,
+        dependencies,
         packages,
         model_limits,
         work,
@@ -856,20 +851,25 @@ pub(super) fn execute(prepared: PreparedPackageRun) -> Result<RunResult> {
         )
     });
     let bare = fsl_package::BarePackage::new(&package)
-        .with_supply(
-            fsl_package::BareSupply {
-                identities: &identities,
-                equality: equality.as_ref(),
-            },
-            &mut budget,
-        )
+        .with_dependency_artifacts(&dependencies, &mut budget)
+        .and_then(|package| {
+            package.with_supply(
+                fsl_package::BareSupply {
+                    identities: &identities,
+                    equality: equality.as_ref(),
+                },
+                &mut budget,
+            )
+        })
         .map_err(|failure| {
             let setting = failure
                 .setting()
                 .map_or_else(|| "i2.work_units".to_owned(), |setting| setting.to_string());
             RunCause::AnalyzePackage {
                 code: fsl_foundation::Code::StageLimitExceeded,
-                cause: None,
+                cause: failure
+                    .limit()
+                    .map(|limit| limit.kind().catalog_cause().to_owned()),
                 pointer: None,
                 message: format!("stage_limit_exceeded: {setting}: {failure:?}"),
             }

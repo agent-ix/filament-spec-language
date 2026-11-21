@@ -34,14 +34,13 @@ pub struct BareWorld {
 }
 
 impl BareWorld {
-    /// The package's record and source union declarations.
+    /// The package's record, source tuple and source union declarations.
     pub fn types(&self) -> &TypeEnvironment {
         &self.types
     }
 
-    /// The enumeration members the package's equality decisions carry; the
-    /// index of the declared enumerations the source route holds is not a
-    /// property of the bytes (FR-533 "Types the bytes cannot project").
+    /// Every selected model enum member authenticated by the package-local
+    /// identity join, including members of unused selected declarations.
     pub fn enum_members(&self) -> &EnumMemberIndex {
         &self.enum_members
     }
@@ -229,6 +228,34 @@ impl BarePackage<'_> {
                 ),
             ));
         }
+        for tuple in identities.source_tuple_rows() {
+            if tuple
+                .positions
+                .iter()
+                .any(|position| position.member_type.is_some())
+            {
+                continue;
+            }
+            if !matches!(
+                self.exact_type_projections().get(&tuple.structural_node),
+                Some(Ok(_))
+            ) {
+                continue;
+            }
+            let positions = tuple
+                .positions
+                .iter()
+                .filter_map(|position| position.value_type.clone())
+                .collect();
+            composites.push((
+                &tuple.structural_node,
+                CompositeDeclaration::new(
+                    tuple.type_handle.clone(),
+                    tuple.qualified_declaration.join("::"),
+                    CompositeShape::Tuple(positions),
+                ),
+            ));
+        }
         for union in identities.source_union_rows() {
             if !matches!(
                 self.exact_type_projections().get(&union.structural_node),
@@ -282,14 +309,48 @@ impl BarePackage<'_> {
                     .map_err(|_| fault("source-object-rows-are-a-closed-environment"))?,
             );
         }
-        let types =
-            TypeEnvironment::new(closed_composites(self, composites, object_nodes), objects)
-                .map_err(|_| fault("bare-composites-are-a-closed-environment"))?
-                .with_units(self.units.clone());
+        let mut composites: BTreeMap<_, _> = closed_composites(self, composites, object_nodes)
+            .into_iter()
+            .map(|declaration| (declaration.key(), declaration))
+            .collect();
+        let mut objects: BTreeMap<_, _> = objects
+            .into_iter()
+            .map(|declaration| (declaration.key(), declaration))
+            .collect();
+        let mut units = self.units.clone();
+        for dependency in self.dependency_views() {
+            let world = dependency.world_of(source_objects)?;
+            for declaration in world.types.composites() {
+                if composites
+                    .get(&declaration.key())
+                    .is_some_and(|held| held != declaration)
+                {
+                    return Err(fault("authenticated-composite-declarations-agree"));
+                }
+                composites
+                    .entry(declaration.key())
+                    .or_insert_with(|| declaration.clone());
+            }
+            for declaration in world.types.object_types() {
+                if objects
+                    .get(&declaration.key())
+                    .is_some_and(|held| held != declaration)
+                {
+                    return Err(fault("authenticated-object-declarations-agree"));
+                }
+                objects
+                    .entry(declaration.key())
+                    .or_insert_with(|| declaration.clone());
+            }
+            units.append(world.types.units().clone());
+        }
+        let types = TypeEnvironment::new(composites.into_values(), objects.into_values())
+            .map_err(|_| fault("bare-composites-are-a-closed-environment"))?
+            .with_units(units);
         let ieee = fsl_semantics::value::DefinitionRole::IeeeProfile.identity();
         Ok(BareWorld {
             types,
-            enum_members: EnumMemberIndex::default(),
+            enum_members: self.enum_members.clone(),
             ieee_profile: package
                 .lock()
                 .definition_selections

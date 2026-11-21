@@ -6,7 +6,15 @@ use base64::Engine;
 use serde::{Deserialize, Serialize};
 
 use super::*;
+use crate::ExactProbLimits;
 
+pub(super) mod measure;
+pub use measure::{
+    conditional_measure_probability_certificate, measure_probability_certificate_document,
+    measure_probability_objective, measure_probability_product_key,
+    read_measure_probability_certificate, vacuous_measure_probability_certificate_document,
+    write_measure_probability_certificate, MeasurePayoffKind, MeasureProbabilityDocument,
+};
 mod fairness;
 #[cfg(feature = "test-support")]
 pub use fairness::BoundedFairProbabilityPhase;
@@ -216,6 +224,21 @@ pub struct ProbabilityDocumentLimits {
     pub accounting: filament_exact::ScalarLimits,
 }
 
+impl ProbabilityDocumentLimits {
+    /// Project the existing exact-probability ceilings into the document checker
+    /// while retaining the caller's actual scalar accounting scope.
+    pub fn for_exact(limits: &ExactProbLimits, accounting: filament_exact::ScalarLimits) -> Self {
+        Self {
+            bytes: limits.document.bytes,
+            storage_bytes: limits.document.storage_bytes,
+            states: limits.model.limits.max_states,
+            edges: limits.model.limits.max_transitions,
+            scalar_bits: limits.max_rational_bits,
+            accounting,
+        }
+    }
+}
+
 /// A document never becomes accepted evidence when one of these occurs.
 #[derive(Clone, Debug, Eq, PartialEq, thiserror::Error)]
 pub enum ProbabilityDocumentError {
@@ -294,6 +317,20 @@ pub enum ProbabilityDocumentError {
     /// Subject expansion or predicate admission retained its actual stop cause.
     #[error("probability certificate subject stopped: {0:?}")]
     Build(Box<crate::ExactProbBuildIssue>),
+}
+
+impl From<fsl_eval::probabilistic::MeasureError> for ProbabilityDocumentError {
+    fn from(error: fsl_eval::probabilistic::MeasureError) -> Self {
+        match error {
+            fsl_eval::probabilistic::MeasureError::Undefined(cause) => {
+                Self::Build(Box::new(crate::ExactProbBuildIssue::Predicate(
+                    fsl_eval::simulation::model::ClauseOutcome::KernelUndefined(*cause),
+                )))
+            }
+            fsl_eval::probabilistic::MeasureError::Accounting(error) => Self::Accounting(error),
+            fsl_eval::probabilistic::MeasureError::Broken(_) => Self::Malformed,
+        }
+    }
 }
 
 impl From<ExactProbabilityGraphError> for ProbabilityDocumentError {
@@ -432,6 +469,7 @@ fn poll(cancel: &Cancel) -> Result<(), ProbabilityDocumentError> {
 
 #[derive(Clone, Copy, Eq, PartialEq)]
 enum ProfileDispatch {
+    Measure,
     Exact,
     Timed,
     LongRun,
@@ -473,6 +511,7 @@ fn profile_dispatch(
             Some(quire_canonical::Node::String(profile)) if long_run::is_profile(profile) => {
                 ProfileDispatch::LongRun
             }
+            Some(quire_canonical::Node::String(measure::PROFILE)) => ProfileDispatch::Measure,
             Some(quire_canonical::Node::String(TIMED_PROFILE)) => ProfileDispatch::Timed,
             Some(quire_canonical::Node::String(CYCLIC_MDP_PROFILE)) => ProfileDispatch::CyclicMdp,
             Some(quire_canonical::Node::String(CYCLIC_MDP_REWARD_PROFILE)) => {
@@ -624,6 +663,21 @@ fn reward_ratio(
     }
     let value = ratio_checked(wire, bits, meter, cancel, false)?;
     if value < rational(0) {
+        return Err(ProbabilityDocumentError::Malformed);
+    }
+    Ok(value)
+}
+
+/// FR-877: a quantile transform value `E[[activated] * ([M <= c] - q)]` lies in
+/// `[-1, 1]`.
+fn signed_unit_ratio(
+    wire: WireRational,
+    bits: u64,
+    meter: &mut filament_exact::Meter,
+    cancel: &Cancel,
+) -> Result<Rational, ProbabilityDocumentError> {
+    let value = ratio_checked(wire, bits, meter, cancel, false)?;
+    if value < rational(-1) || value > rational(1) {
         return Err(ProbabilityDocumentError::Malformed);
     }
     Ok(value)
@@ -885,6 +939,9 @@ fn read_document_profile(
     let extended_timed_value_profile = timed
         .as_ref()
         .is_some_and(|objective| objective.form == TimedProbabilityForm::ExpectedElapsed);
+    let signed_unit_profile = timed
+        .as_ref()
+        .is_some_and(|objective| objective.form == TimedProbabilityForm::ElapsedQuantile);
     let reward = match (wire.objective.reward, wire.objective.unit) {
         (Some((model, name)), Some(unit)) => Some(ProbabilityRewardObjective {
             model: fsl_foundation::node_wire::node_key_from_text(model.get())
@@ -939,13 +996,17 @@ fn read_document_profile(
         poll(cancel)?;
         values.push(ExactProbabilityValue {
             state: decode_key(&row.state, limits)?,
-            value: reward_ratio(
-                row.value,
-                limits.scalar_bits,
-                reward_profile || extended_timed_value_profile,
-                meter,
-                cancel,
-            )?,
+            value: if signed_unit_profile {
+                signed_unit_ratio(row.value, limits.scalar_bits, meter, cancel)?
+            } else {
+                reward_ratio(
+                    row.value,
+                    limits.scalar_bits,
+                    reward_profile || extended_timed_value_profile,
+                    meter,
+                    cancel,
+                )?
+            },
         });
     }
     ordered(values.iter().map(|row| row.state.clone())).map_err(|error| {
@@ -1631,6 +1692,9 @@ fn check_document_with_control(
     fair_control: &fairness::Control<'_>,
 ) -> Result<ExactProbabilityCertificateCheck, ProbabilityDocumentError> {
     match profile_dispatch(bytes, limits, cancel)? {
+        ProfileDispatch::Measure => {
+            return measure::check(system, claims, item, bytes, limits, cancel)
+        }
         ProfileDispatch::Timed => return timed::check(system, claims, item, bytes, limits, cancel),
         ProfileDispatch::LongRun => {
             return long_run::check(system, claims, item, bytes, limits, cancel);
@@ -2018,6 +2082,7 @@ fn check_threshold(
     poll(cancel)?;
     Ok(ExactProbabilityCertificateCheck::Accepted(
         ExactProbabilityAcceptance {
+            initial_values: None,
             certificate: ExactProbabilityCertificate {
                 values: values
                     .iter()
@@ -2061,6 +2126,9 @@ pub(super) fn certificate_identity(
     limits: ProbabilityDocumentLimits,
     cancel: &Cancel,
 ) -> Result<ObligationIdentity, ProbabilityDocumentError> {
+    if profile_dispatch(bytes, limits, cancel)? == ProfileDispatch::Measure {
+        return measure::identity(bytes, limits, cancel);
+    }
     if profile_dispatch(bytes, limits, cancel)? == ProfileDispatch::LongRun {
         return long_run::certificate_identity(bytes, limits, cancel);
     }

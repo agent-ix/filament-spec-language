@@ -6,6 +6,7 @@
 //! product, the step check and replay all call these, so a verdict and its
 //! replay never disagree about what the abstract model saw.
 
+mod clock_rows;
 mod failure;
 mod history;
 mod liveness;
@@ -17,6 +18,7 @@ mod step;
 mod step_view;
 mod subject;
 
+pub use clock_rows::{row_clock_step, InvariantReading, RowClockStep};
 pub use failure::{
     AssumptionIdentity, AssumptionOrigin, AssumptionSelectedMember, AssumptionSide,
     AssumptionTarget, ObservationField, ObservationLabel, PairedAssumptionPath,
@@ -26,8 +28,8 @@ pub use failure::{
 };
 pub use history::{initial_history, step_history, HistoryValues};
 pub use liveness::{
-    abstract_classes, candidate_lasso_has_fair_run, AbstractClass, CandidateFairState,
-    CandidateFairStep, CandidateLivenessError,
+    abstract_classes, candidate_lasso_has_fair_run, AbstractClass, CandidateFairHop,
+    CandidateFairState, CandidateFairStep, CandidateLivenessError,
 };
 pub use map::{
     map_state, EvalFailure, HiddenSlot, MappedState, MappingFailure, MappingRowRef,

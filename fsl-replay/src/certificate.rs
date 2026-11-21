@@ -131,9 +131,20 @@ pub enum CertificateRule {
 pub enum CertificateLocus {
     /// The complete canonical hyper product key, including its witness set.
     HyperProductState(StateKey),
+    /// An HP-1 state member, with no temporal automaton or witness set.
+    HyperState(StateKey),
+    /// The complete labelled transition tuple of an HP-1 body evaluation.
+    HyperTransitionTuple(product::HyperTransitionTuple),
     /// The complete probabilistic product identity at which a rule failed
     /// (FR-201), transported as base64url canonical octets.
     ProbabilityProductState(crate::ProbabilityProductKey),
+    /// A conditional probability certificate's complete key and failing part.
+    ProbabilityProductPart {
+        /// Complete probabilistic product identity.
+        key: crate::ProbabilityProductKey,
+        /// Independently checked conditional component.
+        part: crate::ProbabilityCertificatePart,
+    },
     /// The product state of a closure certificate at which a rule failed.
     ProductState(ProductStateRef),
     /// The query whose encoding or certificate shape failed.
@@ -201,10 +212,26 @@ impl Serialize for CertificateLocus {
                 object.serialize_field("product_key", &key)?;
                 object.end()
             }
+            Self::ProbabilityProductPart { key, part } => {
+                use base64::Engine as _;
+                let mut object = serializer.serialize_struct("CertificateLocus", 2)?;
+                let key = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(key.as_bytes());
+                object.serialize_field("product_key", &key)?;
+                object.serialize_field("part", part.as_str())?;
+                object.end()
+            }
             Self::ProductState(state) => state.serialize(serializer),
             Self::HyperProductState(state) => product::product_key_wire(state)
                 .map_err(serde::ser::Error::custom)?
                 .serialize(serializer),
+            Self::HyperState(state) => {
+                use base64::Engine as _;
+                let mut object = serializer.serialize_struct("HyperState", 1)?;
+                let key = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(state.as_bytes());
+                object.serialize_field("states", &[key])?;
+                object.end()
+            }
+            Self::HyperTransitionTuple(tuple) => tuple.serialize(serializer),
             Self::ModelState(state) => {
                 use base64::Engine as _;
                 base64::engine::general_purpose::URL_SAFE_NO_PAD

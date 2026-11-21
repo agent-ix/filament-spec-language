@@ -35,7 +35,7 @@ use super::footprints::ReadCheck;
 use super::walk::{stop, Applied, Budget, ContractFinding, FindingCase, Row, Selected, Walk};
 use super::{
     handler_anchor, identity_limits, state_document, Application, ClauseInfo, ClauseOutcome,
-    FieldChange, ModelFinding, ModelSimState, StepEffect, WrittenSlots, BROKEN, EXHAUSTED,
+    FieldChange, ModelFinding, ModelSystem, StepEffect, WrittenSlots, BROKEN, EXHAUSTED,
 };
 use crate::simulation::expansion::ExpansionStop;
 use crate::simulation::footprint::Footprint;
@@ -107,7 +107,7 @@ fn argument_domains(
                 position,
             ) {
                 Some(support) => Some(Domain::Listed(support.values())),
-                None => system.value_domain(value_type, &references),
+                None => walk.value_domain(value_type, &references),
             }
         })
         .collect::<Option<Vec<_>>>()
@@ -200,6 +200,7 @@ pub(super) fn apply(
                 successors: &mut *outputs.successors,
                 enabled: outputs.enabled.as_deref_mut(),
                 enabled_transitions: outputs.enabled_transitions.as_deref_mut(),
+                recommendations: outputs.recommendations.as_deref_mut(),
                 selected_transitions: outputs.selected_transitions,
                 charged: outputs.charged.as_deref_mut(),
             },
@@ -225,6 +226,7 @@ fn apply_argument(
         successors,
         mut enabled,
         mut enabled_transitions,
+        mut recommendations,
         selected_transitions,
         mut charged,
     } = outputs;
@@ -242,6 +244,7 @@ fn apply_argument(
         quire_canonical::to_vec(&transition, text_limits()).map_err(|_| stop(BROKEN))?;
     let footprint = walk
         .enforcement
+        .filter(|_| recommendations.is_none())
         .map(|enforcement| {
             enforcement.footprint_of(system, application, &row.reference, &args, &transition)
         })
@@ -294,6 +297,15 @@ fn apply_argument(
             }
             return Ok(());
         }
+    }
+
+    if let Some(recommendations) = recommendations.as_deref_mut() {
+        recommendations.push(super::application::RecommendedApplication {
+            operation: application.text.clone(),
+            receiver: row.reference.clone(),
+            arguments: args.into_iter().map(|(_, value)| value).collect(),
+        });
+        return Ok(());
     }
 
     let application_run = Run {
@@ -426,6 +438,7 @@ pub(super) fn visit_operation(
                     successors: &mut successors,
                     enabled: None,
                     enabled_transitions: None,
+                    recommendations: None,
                     selected_transitions: None,
                     charged: None,
                 },
@@ -609,6 +622,8 @@ pub(super) fn precondition_cases(
 /// Where [`apply`] records what one application found: its contract
 /// findings, its successors and, when given, its enabled argument vectors.
 pub(super) struct Outputs<'o> {
+    /// Preconditions-only calls; when present, no post-state is computed.
+    pub(super) recommendations: Option<&'o mut Vec<super::application::RecommendedApplication>>,
     /// The contract findings.
     pub(super) contract: &'o mut Vec<ContractFinding>,
     /// The successors.
@@ -1044,10 +1059,7 @@ impl Run<'_, '_, '_> {
         let result = match self.application.declaration.result() {
             None => None,
             Some(result_type) => {
-                let domain = self
-                    .walk
-                    .system
-                    .value_domain(result_type, &self.walk.references());
+                let domain = self.walk.value_domain(result_type, &self.walk.references());
                 match domain.and_then(|domain| domain.nth(0)) {
                     Some(value) => Some(value),
                     None => return Ok(None),
@@ -1113,9 +1125,7 @@ impl Run<'_, '_, '_> {
                                 .map(|candidate| &candidate.value_type);
                             if field_type
                                 .and_then(|field_type| {
-                                    self.walk
-                                        .system
-                                        .value_domain(field_type, &self.walk.references())
+                                    self.walk.value_domain(field_type, &self.walk.references())
                                 })
                                 .is_some_and(|domain| match value.as_ref() {
                                     Some(value @ Value::Integer(_)) => {
@@ -1293,7 +1303,8 @@ impl Run<'_, '_, '_> {
                 {
                     continue;
                 }
-                let domain = system
+                let domain = self
+                    .walk
                     .field_domain(&member.type_key, field, &post_references)
                     .ok_or_else(|| stop(BROKEN))?;
                 // `None` marks a field whose targets send the whole
@@ -1346,7 +1357,7 @@ impl Run<'_, '_, '_> {
             budget.charge()?;
             let candidate =
                 self.build(deleted, &members, plan.slots, created, &dimensions, &digits)?;
-            if !is_closed(&candidate, &post_references)? {
+            if !is_closed(&candidate, &post_references, system)? {
                 continue;
             }
             let Ok(delta) = self.decide_touched(&candidate, Some(&touched))? else {
@@ -1613,7 +1624,7 @@ impl Run<'_, '_, '_> {
                 // A field with no finite domain (an `Integer`, a string, an
                 // unbounded collection) is bounded by no frame that grants it,
                 // so it cannot be written here.
-                let Some(domain) = system.value_domain(&field.value_type, &references) else {
+                let Some(domain) = self.walk.value_domain(&field.value_type, &references) else {
                     continue;
                 };
                 let mut different: Option<Option<Value>> = None;
@@ -1759,7 +1770,6 @@ impl Run<'_, '_, '_> {
         };
         let domain = self
             .walk
-            .system
             .value_domain(result_type, post_references)
             .ok_or_else(|| stop(BROKEN))?;
         if domain.len() > RESULT_ORDER_LIMIT {
@@ -2000,7 +2010,6 @@ impl Run<'_, '_, '_> {
                 .result()
                 .map(|result_type| {
                     self.walk
-                        .system
                         .value_domain(result_type, post_references)
                         .ok_or_else(|| stop(BROKEN))
                 })
@@ -2047,11 +2056,11 @@ impl Run<'_, '_, '_> {
                         .transpose()?;
                     let applied = Applied {
                         transition: self.transition.clone(),
-                        state: ModelSimState {
-                            state: candidate.clone(),
-                            anchor: handler_anchor(&self.application.text),
-                            reached_by: Some(effect.clone()),
-                        },
+                        state: self.walk.state.reached(
+                            candidate.clone(),
+                            handler_anchor(&self.application.text),
+                            effect.clone(),
+                        ),
                         receiver: self.row.reference.clone(),
                         arguments: self.args.iter().map(|(_, value)| value.clone()).collect(),
                         result,
@@ -2062,8 +2071,13 @@ impl Run<'_, '_, '_> {
                         successors.push(applied);
                         continue;
                     }
-                    successors.push(applied);
-                    return Ok(());
+                    match self.walk.result_policy {
+                        super::walk::ResultPolicy::FirstResult => {
+                            successors.push(applied);
+                            return Ok(());
+                        }
+                        super::walk::ResultPolicy::AllResults => successors.push(applied),
+                    }
                 }
                 Conjunction::False(_) => {}
                 Conjunction::Undecided(undecided) => {
@@ -2182,10 +2196,12 @@ fn frame_objects(objects: &BTreeMap<String, StateObject>) -> Vec<FrameObject<'_,
         .collect()
 }
 
-/// Whether every reference of `candidate` names one of `references`.
+/// Whether candidate references name present objects or declared clock places
+/// owned by those objects. The frame decision still checks each field's type.
 fn is_closed(
     candidate: &ModelState,
     references: &[ObjectReference],
+    system: &ModelSystem<'_>,
 ) -> Result<bool, ExpansionStop> {
     let mut named = Vec::new();
     for object in candidate.populations.values().flat_map(BTreeMap::values) {
@@ -2199,9 +2215,14 @@ fn is_closed(
         return Ok(true);
     }
     let present: BTreeSet<&ObjectReference> = references.iter().collect();
-    Ok(named
-        .into_iter()
-        .all(|reference| present.contains(reference)))
+    let clocks =
+        fsl_semantics::model::clock_reference::DeclaredClockPlaces::new(system.input.timed_models);
+    Ok(named.into_iter().all(|reference| {
+        present.contains(reference)
+            || references
+                .iter()
+                .any(|owner| clocks.contains(reference, owner, system.types))
+    }))
 }
 
 /// Every object reference `value` holds.

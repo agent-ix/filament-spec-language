@@ -45,6 +45,7 @@ const UNIT: &str = "language \"ix:native\" edition \"1-draft\";\n\
     unit ms : Time = rational(1, 1000) * s;\n\
     temporal Counted using w over (r: Reading) clock \"plant-ms\" on origin { always[0,5] (count over past[0 ms, 3 ms] min_count 0 <= 9) }\n\
     temporal Twos using w over (r: Reading) clock \"plant-ms\" on origin { always[0,5] (count where holds(r.level = 2) over past[0 ms, 3 ms] min_count 0 <= 1) }\n\
+    temporal TwosMin using w over (r: Reading) clock \"plant-ms\" on origin { always[2,5] (sum of r.level where holds(r.level = 2) over past[0 ms, 3 ms] min_count 2 <= 100) }\n\
     temporal Median using w over (r: Reading) clock \"plant-ms\" on origin { always[0,5] (quantile 0.5 of r.level over past[0 ms, 3 ms] <= 1) }\n\
     temporal E using e over (r: Reading) clock \"events\" on origin { eventually[0,2] holds(r.level = 2) }\n\
     temporal T using w over (r: Reading) clock \"plant-ms\" on origin { eventually[0,5] holds(r.level > 0) }\n\
@@ -1563,6 +1564,7 @@ fn admitted(world: &World, name: &str, text: &str, index: u64) -> AdmittedPositi
         stamp: index,
         order_key: None,
         value: AdmittedValue::Sample(value),
+        absent: Vec::new(),
     }
 }
 
@@ -2780,6 +2782,7 @@ fn each_snapshot_advance_reports_the_batch_report_over_the_prefix() {
         stamp: index as u64,
         order_key: None,
         value: AdmittedValue::Snapshot(bytes[index]),
+        absent: Vec::new(),
     };
     let cancel = Cancel::new();
     for name in ["Bounded", "Reaches", "Small"] {
@@ -2934,6 +2937,7 @@ fn a_progressed_snapshot_state_reports_the_batch_report() {
                         reference: refs[index].clone(),
                         stamp: index as u64,
                         order_key: None,
+                        absent: Vec::new(),
                         value: AdmittedValue::Snapshot(
                             provision.get(&refs[index]).expect("provisioned"),
                         ),
@@ -2978,9 +2982,11 @@ fn a_progressed_snapshot_state_reports_the_batch_report() {
 }
 
 /// How many sample values `bytes` (or a report's debug form) spell: each
-/// sample's canonical text names its `level` member.
+/// sample's canonical text gives its `level` member a value
+/// (`"level":{...}`). The field name alone, which a clause's identity in an
+/// evidence key spells (`"level",` among the clause JSON), is no sample value.
 fn spelled_samples(text: &str) -> usize {
-    text.matches(r#"\"level\""#).count()
+    text.matches(r#"\"level\":{"#).count()
 }
 
 /// FR-330-AC-18, FR-643 Decision, FR-820 "Identities" (TC-2320): every
@@ -2998,6 +3004,11 @@ fn spelled_samples(text: &str) -> usize {
 #[trace("TC-2320", "FR-820-AC-1", "FR-643-AC-9", "FR-330-AC-18")]
 fn every_reading_cites_its_samples_by_index() {
     let world = world();
+    // The oracle sees a sample value: one sample spells one.
+    assert_eq!(
+        spelled_samples(&format!("{:?}", spine::sample_position(&text(2)))),
+        1
+    );
     let cancel = Cancel::new();
     let count: u64 = 30;
     let level = |index: u64| i64::try_from(index % 3).expect("a level");
@@ -3606,6 +3617,16 @@ fn a_carried_timestamped_state_reads_a_window_aggregate_as_the_one_shot_run() {
 /// The `Timestamped` batch trace of `levels` stamped 0, 1, 2 and so on, under
 /// `progress`.
 fn stamped_levels(levels: &[i64], progress: ProgressAssertion) -> TraceInput {
+    stamped_levels_missing(levels, progress, &[])
+}
+
+/// [`stamped_levels`] with `missing` entries: `(position, atom)` valuations
+/// the observations hold none of (FR-641).
+fn stamped_levels_missing(
+    levels: &[i64],
+    progress: ProgressAssertion,
+    missing: &[(u64, u64)],
+) -> TraceInput {
     TraceInput::Timestamped {
         observations: levels
             .iter()
@@ -3621,7 +3642,13 @@ fn stamped_levels(levels: &[i64], progress: ProgressAssertion) -> TraceInput {
             binding: Some(stamped_binding()),
             authoritative_origin: true,
             cover: None,
-            missing_valuations: Vec::new(),
+            missing_valuations: missing
+                .iter()
+                .map(|(position, atom)| spine::TimestampedMissingValuation {
+                    position: *position,
+                    atom: *atom,
+                })
+                .collect(),
             late: spine::LateInputs::default(),
         }),
     }
@@ -3691,20 +3718,19 @@ fn a_long_carried_timestamped_stream_holds_only_its_windows() {
     }
 }
 
-/// The carried report and the batch report of `Twos` over `levels` with
-/// completeness asserted only through 2 and the watermark at 5.
-fn twos_complete_through_two(levels: &[i64]) -> (std::sync::Arc<ClauseRunReport>, ClauseRunReport) {
+/// The carried report and the batch report of clause `name` over `levels` after each
+/// progress assertion of `steps` (completeness `through`, `watermark`), the
+/// assertions made one after another on one carried state.
+fn clause_progressed(
+    name: &str,
+    levels: &[i64],
+    steps: &[(u64, u64)],
+) -> Vec<(std::sync::Arc<ClauseRunReport>, ClauseRunReport)> {
     let world = world();
     let cancel = Cancel::new();
-    let incomplete = ProgressAssertion {
-        watermark: 5,
-        completeness: ProgressCompleteness::Complete { through: 2 },
-        scope: ProgressClosure::Open,
-        execution: ProgressClosure::Open,
-    };
     let mut state = ClauseState::open(
         world.unit.package(),
-        clause_node(&world, "Twos"),
+        clause_node(&world, name),
         &clause_open(
             &world,
             ClauseTraceKind::Timestamped,
@@ -3715,17 +3741,46 @@ fn twos_complete_through_two(levels: &[i64]) -> (std::sync::Arc<ClauseRunReport>
     .expect("opens");
     for (index, level) in levels.iter().enumerate() {
         state
-            .advance(
-                admitted(&world, "Twos", &text(*level), index as u64),
-                &cancel,
-            )
+            .advance(admitted(&world, name, &text(*level), index as u64), &cancel)
             .expect("advances");
     }
-    let advance = state
-        .assert_progress(&incomplete, &cancel)
-        .expect("progress");
-    let batch = batch_over(&world, "Twos", &stamped_levels(levels, incomplete));
-    (advance.report, batch)
+    steps
+        .iter()
+        .map(|(through, watermark)| {
+            let assertion = ProgressAssertion {
+                watermark: *watermark,
+                completeness: ProgressCompleteness::Complete { through: *through },
+                scope: ProgressClosure::Open,
+                execution: ProgressClosure::Open,
+            };
+            let advance = state
+                .assert_progress(&assertion, &cancel)
+                .expect("progress");
+            let batch = batch_over(&world, name, &stamped_levels(levels, assertion));
+            (advance.report, batch)
+        })
+        .collect()
+}
+
+/// [`clause_progressed`] for `Twos`.
+fn twos_progressed(
+    levels: &[i64],
+    steps: &[(u64, u64)],
+) -> Vec<(std::sync::Arc<ClauseRunReport>, ClauseRunReport)> {
+    clause_progressed("Twos", levels, steps)
+}
+
+/// The carried report and the batch report of `Twos` over `levels` with
+/// completeness asserted only through 2 and the watermark at 5.
+fn twos_complete_through_two(levels: &[i64]) -> (std::sync::Arc<ClauseRunReport>, ClauseRunReport) {
+    twos_progressed(levels, &[(2, 5)]).remove(0)
+}
+
+fn is_violated(report: &ClauseRunReport) -> bool {
+    matches!(
+        report.disposition,
+        spine::ClauseDisposition::Temporal(spine::TemporalVerdict::Violated { .. })
+    )
 }
 
 /// FR-194-AC-16, carried route: with completeness asserted only through 2 and
@@ -3739,21 +3794,259 @@ fn a_carried_window_not_asserted_complete_equals_the_batch() {
 
 /// FR-194-AC-16: the atom at stamp 3 reaches stamps the completeness through 2
 /// does not cover, so a later event could still enter its window and the
-/// result is never a final `violated`. The engine does not yet implement the
-/// two-valued rule on this route: the batch run reports `Violated`.
+/// result is never a final `violated`. The levels refute the clause only at
+/// stamps 3, 4 and 5, where the window is not asserted complete (`[2, 0, 2, ..]`
+/// would refute it at the covered stamp 2, which is final: see
+/// `a_refutation_by_a_complete_atom_stays_final`).
 #[test]
-#[ignore = "QSL-2138: FR-194-AC-16 incomplete-window rule"]
 #[trace("TC-629", "FR-194-AC-16")]
 fn a_window_not_asserted_complete_is_never_a_final_violation() {
-    let (carried, batch) = twos_complete_through_two(&[2, 0, 2, 2, 1, 1]);
+    let (carried, batch) = twos_complete_through_two(&[2, 0, 0, 2, 2, 1]);
     for report in [&*carried, &batch] {
-        assert!(
-            !matches!(
-                report.disposition,
-                spine::ClauseDisposition::Temporal(spine::TemporalVerdict::Violated { .. })
-            ),
-            "{:?}",
-            report.disposition
+        assert!(!is_violated(report), "{:?}", report.disposition);
+    }
+    assert_eq!(members(&carried), members(&batch));
+}
+
+/// FR-194-AC-16: an atom whose window the completeness covers is definite, so
+/// its refutation is final whatever the uncovered atoms read.
+#[test]
+#[trace("TC-629", "FR-194-AC-16")]
+fn a_refutation_by_a_complete_atom_stays_final() {
+    let (carried, batch) = twos_complete_through_two(&[2, 0, 2, 2, 1, 1]);
+    assert!(is_violated(&batch), "{:?}", batch.disposition);
+    assert_eq!(members(&carried), members(&batch));
+}
+
+/// FR-194-AC-16, progressed trace: the same open carried state first asserted
+/// complete through 2 reports no violation, then asserted complete through 5
+/// becomes the final `violated` the batch reports, and at every assertion the
+/// carried report equals the batch report.
+#[test]
+#[trace("TC-629", "FR-194-AC-16", "FR-820-AC-1")]
+fn a_window_becomes_a_final_verdict_once_completeness_covers_it() {
+    let reports = twos_progressed(&[2, 0, 0, 2, 2, 1], &[(2, 5), (3, 5), (5, 5)]);
+    let finality: Vec<bool> = reports
+        .iter()
+        .map(|(carried, batch)| {
+            assert_eq!(members(carried), members(batch));
+            is_violated(batch)
+        })
+        .collect();
+    assert_eq!(finality, [false, true, true]);
+}
+
+/// FR-194-AC-16, `min_count`: `TwosMin` sums the 2s of `past[0 ms, 3 ms]`
+/// with `min_count 2` at stamps 2 to 5. Over levels `[2, 0, 2, 0, 1, 1]` the
+/// windows at stamps 4 and 5 hold one value, short of 2. With completeness
+/// through 5 that is `InsufficientData`; with completeness through 2 those
+/// windows are not asserted complete, so the atoms are two-valued, never
+/// `InsufficientData`, and the result is indeterminate with reason
+/// `IncompleteInput`, not undefined.
+#[test]
+#[trace("TC-629", "FR-194-AC-16")]
+fn an_incomplete_window_short_of_min_count_is_two_valued() {
+    let levels = [2, 0, 2, 0, 1, 1];
+    let covered = clause_progressed("TwosMin", &levels, &[(5, 5)]).remove(0);
+    assert_eq!(members(&covered.0), members(&covered.1));
+    assert!(
+        matches!(
+            covered.1.disposition,
+            spine::ClauseDisposition::Temporal(spine::TemporalVerdict::Undefined { .. })
+        ),
+        "{:?}",
+        covered.1.disposition
+    );
+    let (carried, batch) = clause_progressed("TwosMin", &levels, &[(2, 5)]).remove(0);
+    assert_eq!(members(&carried), members(&batch));
+    assert!(
+        !format!("{:?}", batch.disposition).contains("InsufficientData"),
+        "{:?}",
+        batch.disposition
+    );
+    assert!(
+        !matches!(
+            batch.disposition,
+            spine::ClauseDisposition::Temporal(spine::TemporalVerdict::Undefined { .. })
+        ),
+        "{:?}",
+        batch.disposition
+    );
+}
+
+/// `Twos`'s aggregate atom, under `always` (node 0).
+const TWOS_AGGREGATE: u64 = 1;
+
+/// `admitted`, the observation holding no valuation of the atoms `absent`.
+fn admitted_absent(
+    world: &World,
+    name: &str,
+    text: &str,
+    index: u64,
+    absent: &[u64],
+) -> AdmittedPosition<'static> {
+    AdmittedPosition {
+        absent: absent.to_vec(),
+        ..admitted(world, name, text, index)
+    }
+}
+
+/// FR-194-AC-17, carried route: a state whose observation at position 1
+/// holds no valuation of the aggregate atom reports, at every step and after a
+/// `from_bytes` restore taken mid-stream, what the batch run over the same
+/// `missing` entry reports; the atoms whose windows hold position 1 are
+/// `MissingValuation` and the closed run is `indeterminate` with reason
+/// `missing-valuation` at position 1.
+#[test]
+#[trace("TC-629", "FR-194-AC-17", "FR-820-AC-1")]
+fn a_carried_window_member_without_a_valuation_equals_the_batch() {
+    let world = world();
+    let cancel = Cancel::new();
+    let levels = [1_i64; 14];
+    let open = clause_open(
+        &world,
+        ClauseTraceKind::Timestamped,
+        Some(stamped_binding()),
+        ProgressLowerBoundary::AuthoritativeOrigin,
+    );
+    let mut state =
+        ClauseState::open(world.unit.package(), clause_node(&world, "Twos"), &open).expect("opens");
+    for (index, level) in levels.iter().enumerate() {
+        if index == 4 {
+            let bytes = state.to_bytes().expect("writes");
+            let before = state.retained();
+            state = ClauseState::from_bytes(
+                world.unit.package(),
+                clause_node(&world, "Twos"),
+                &open,
+                &bytes,
+                &cancel,
+            )
+            .expect("reads back");
+            assert_eq!(state.retained(), before, "a restore holds the same");
+            assert_eq!(state.to_bytes().expect("writes"), bytes);
+            // The reader is strict: an absence list is ascending without repeats.
+            let text = String::from_utf8(bytes.clone()).expect("UTF-8");
+            assert!(text.contains(r#""absent":[1]"#), "{text}");
+            for bad in [r#""absent":[1,1]"#, r#""absent":[2,1]"#] {
+                let tampered = text.replace(r#""absent":[1]"#, bad);
+                assert!(
+                    ClauseState::from_bytes(
+                        world.unit.package(),
+                        clause_node(&world, "Twos"),
+                        &open,
+                        tampered.as_bytes(),
+                        &cancel,
+                    )
+                    .is_err(),
+                    "{bad}"
+                );
+            }
+        }
+        let stamp = index as u64;
+        let absent: &[u64] = if index == 1 { &[TWOS_AGGREGATE] } else { &[] };
+        state
+            .advance(
+                admitted_absent(&world, "Twos", &text(*level), stamp, absent),
+                &cancel,
+            )
+            .expect("advances");
+        let advance = state
+            .assert_progress(&progress(stamp), &cancel)
+            .expect("progress");
+        let missing: Vec<(u64, u64)> = (index >= 1)
+            .then_some((1, TWOS_AGGREGATE))
+            .into_iter()
+            .collect();
+        let batch = batch_over(
+            &world,
+            "Twos",
+            &stamped_levels_missing(&levels[..=index], progress(stamp), &missing),
+        );
+        assert_eq!(members(&advance.report), members(&batch), "at {index}");
+        if index == levels.len() - 1 {
+            let shown = format!("{:?}", batch.disposition);
+            assert!(shown.contains("MissingValuation"), "{shown}");
+            assert!(shown.contains("position: 1"), "{shown}");
+        }
+    }
+}
+
+/// FR-993, FR-194-AC-17: an absence is content of its position, so a state
+/// that delivers a position without the absence the covered ledger holds for
+/// it is refused as a `Completeness` contradiction, before and after a
+/// `from_bytes` restore.
+#[test]
+#[trace("TC-629", "FR-194-AC-17", "FR-993-AC-1")]
+fn a_changed_absence_at_a_covered_index_is_a_completeness_contradiction() {
+    let world = world();
+    let cancel = Cancel::new();
+    let levels = [1_i64; 4];
+    let held = batch_from(
+        &world,
+        "Twos",
+        &stamped_levels_missing(&levels, progress(3), &[(1, TWOS_AGGREGATE)]),
+        None,
+    )
+    .ledger
+    .expect("the retained ledger");
+    for restored in [false, true] {
+        let mut open = clause_open(
+            &world,
+            ClauseTraceKind::Timestamped,
+            Some(stamped_binding()),
+            ProgressLowerBoundary::AuthoritativeOrigin,
+        );
+        open.ledger = Some(held.clone());
+        let mut state = ClauseState::open(world.unit.package(), clause_node(&world, "Twos"), &open)
+            .expect("opens");
+        state
+            .advance(admitted(&world, "Twos", &text(1), 0), &cancel)
+            .expect("advances");
+        if restored {
+            let bytes = state.to_bytes().expect("writes");
+            state = ClauseState::from_bytes(
+                world.unit.package(),
+                clause_node(&world, "Twos"),
+                &open,
+                &bytes,
+                &cancel,
+            )
+            .expect("reads back");
+        }
+        for index in 1..4_u64 {
+            // The covered index 1 arrives without its absence.
+            state
+                .advance(admitted(&world, "Twos", &text(1), index), &cancel)
+                .expect("advances");
+        }
+        let refused = state.assert_progress(&progress(3), &cancel);
+        let Err(spine::ClauseRefusal::Contradiction(contradiction)) = refused else {
+            panic!("restored {restored}: a contradiction, got {refused:?}");
+        };
+        assert_eq!(
+            contradiction.contradiction.dimension,
+            ContradictedDimension::Completeness,
+            "restored {restored}"
         );
     }
+}
+
+/// FR-194: only a `Timestamped` state evaluates absent valuations, so any
+/// other kind refuses a position that names some, before changing anything.
+#[test]
+#[trace("TC-629", "FR-194-AC-17")]
+fn an_absent_valuation_needs_a_timestamped_state() {
+    let world = world();
+    let mut state = finite_state(&world, "Past");
+    let before = state.to_bytes().expect("writes");
+    let refused = state.advance(
+        admitted_absent(&world, "Past", &text(1), 0, &[1]),
+        &Cancel::new(),
+    );
+    assert!(
+        matches!(refused, Err(spine::ClauseRefusal::Fault(_))),
+        "{refused:?}"
+    );
+    assert_eq!(state.to_bytes().expect("writes"), before);
 }

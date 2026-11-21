@@ -56,7 +56,7 @@ pub(super) struct Attempt<'a> {
     pub(super) binds: Option<usize>,
 }
 
-/// One checked recommendation's operation call and optional result filter.
+/// One checked recommendation's operation call and result-free constraint.
 pub(super) struct Recommendation<'a> {
     pub(super) role: String,
     pub(super) declaring: EffectiveId,
@@ -64,7 +64,6 @@ pub(super) struct Recommendation<'a> {
     pub(super) receiver: EffectiveId,
     pub(super) contracts: std::sync::Arc<BTreeSet<NodeKey>>,
     pub(super) constraint: Option<&'a CheckedBody>,
-    pub(super) binds: Option<usize>,
 }
 
 /// One `parallel`'s join (ADR-027 ST-6, ST-7).
@@ -83,9 +82,15 @@ pub(super) struct Loop<'a> {
     pub(super) exhausted: Option<ProtocolNodeId>,
     pub(super) max: Option<u64>,
     pub(super) post_test: bool,
-    pub(super) guard: &'a CheckedBody,
+    pub(super) guard: LoopGuard<'a>,
     /// The checked proof attached to this repeat, when present.
     pub(super) proof: Option<&'a fsl_semantics::check::CheckedLoopProof>,
+}
+
+/// The admitted expression used at a repeat decision.
+pub(super) enum LoopGuard<'a> {
+    Source(&'a CheckedBody),
+    Package,
 }
 
 /// One `await` (ADR-027 ST-8): its matched event node, its `then` control
@@ -652,12 +657,6 @@ impl<'a> Program<'a> {
         let mut recommendations = BTreeMap::new();
         for recommendation in &protocol.recommendations {
             let node = ProtocolNodeId(recommendation.declaration);
-            let binder = binder_of.get(&node).copied();
-            let binds = binder.filter(|slot| {
-                protocol.slots.binders.get(*slot).is_some_and(|binder| {
-                    recommendation.operation.declaration.result() == Some(&binder.value_type)
-                })
-            });
             recommendations.insert(
                 node,
                 Recommendation {
@@ -669,7 +668,6 @@ impl<'a> Program<'a> {
                         recommendation.contracts.iter().cloned().collect(),
                     ),
                     constraint: body_of(node),
-                    binds,
                 },
             );
         }
@@ -733,7 +731,7 @@ impl<'a> Program<'a> {
                     exhausted,
                     max: repeat.max,
                     post_test: repeat.post_test,
-                    guard: &repeat.guard,
+                    guard: LoopGuard::Source(&repeat.guard),
                     proof: repeat.loop_proof.as_ref(),
                 },
             );
@@ -998,7 +996,7 @@ impl<'a> Program<'a> {
         Ok(program)
     }
 
-    /// Build the sequence/parallel/attempt/send/receive program from the admitted
+    /// Build the sequence/parallel/attempt/send/receive/repeat/await program from the admitted
     /// package form. Package execution keeps expression slots out of the
     /// source `CheckedBody` fields; callers evaluate them through the package
     /// evaluator.
@@ -1036,6 +1034,8 @@ impl<'a> Program<'a> {
                 fsl_package::protocol_view::ControlOperation::Attempt => ControlStep::Attempt,
                 fsl_package::protocol_view::ControlOperation::Send => ControlStep::Send,
                 fsl_package::protocol_view::ControlOperation::Receive => ControlStep::Receive,
+                fsl_package::protocol_view::ControlOperation::Repeat => ControlStep::Repeat,
+                fsl_package::protocol_view::ControlOperation::Await => ControlStep::Await,
                 operation => {
                     return Err(ProtocolRefusal::Unsupported(
                         super::Unsupported::PackageControl(operation),
@@ -1285,9 +1285,38 @@ impl<'a> Program<'a> {
             recommendations: BTreeMap::new(),
             related: BTreeMap::new(),
             joins,
-            loops: BTreeMap::new(),
+            loops: package
+                .loops
+                .iter()
+                .map(|(node, repeat)| {
+                    (
+                        *node,
+                        Loop {
+                            body: repeat.body,
+                            exhausted: repeat.exhausted,
+                            max: repeat.max,
+                            post_test: repeat.post_test,
+                            guard: LoopGuard::Package,
+                            proof: None,
+                        },
+                    )
+                })
+                .collect(),
             choices: BTreeMap::new(),
-            awaits: BTreeMap::new(),
+            awaits: package
+                .awaits
+                .iter()
+                .map(|(node, awaited)| {
+                    (
+                        *node,
+                        Await {
+                            event: awaited.event,
+                            then: awaited.then,
+                            timeout: awaited.timeout,
+                        },
+                    )
+                })
+                .collect(),
             checks: BTreeMap::new(),
             fences: BTreeMap::new(),
             events: BTreeMap::new(),
@@ -1311,7 +1340,28 @@ impl<'a> Program<'a> {
             spans: BTreeMap::new(),
             reader_positions: Vec::new(),
             loop_of: BTreeMap::new(),
-            replicated: Vec::new(),
+            replicated: package
+                .roles
+                .iter()
+                .filter(|role| role.replicated)
+                .map(|role| {
+                    let owns = package
+                        .controls
+                        .values()
+                        .filter(|control| control.role.as_ref() == Some(&role.node))
+                        .map(|control| control.id)
+                        .collect();
+                    Ok(Replicated {
+                        name: role.name.clone(),
+                        object: role.model_identity.clone(),
+                        max: role.maximum.ok_or_else(|| {
+                            ProtocolRefusal::fault("a-package-replicated-role-has-a-maximum")
+                        })?,
+                        lifetime: Lifetime::Workflow,
+                        owns,
+                    })
+                })
+                .collect::<Result<Vec<_>, ProtocolRefusal>>()?,
             acting: BTreeMap::new(),
             activation: None,
             activation_slot: None,
@@ -1319,6 +1369,11 @@ impl<'a> Program<'a> {
             captures,
             capture_slots,
         };
+        for (index, role) in program.replicated.iter().enumerate() {
+            for node in &role.owns {
+                program.acting.insert(*node, index);
+            }
+        }
         program.spans = program.spans()?;
         program.loop_of = program.enclosing_loops()?;
         program.reader_positions = program

@@ -17,19 +17,19 @@ use filament_eval::{FamilyOutcome, FamilyResult};
 use filament_exact::{Charge, ChargePoint, Meter, ObjectReference, Outcome, Rational, Value};
 use filament_semantic_value::catalog::InternalFault;
 use fsl_package::CheckedPackage;
-use fsl_semantics::check::{FormulaNode, FormulaNodeId, TemporalClauseNode};
+use fsl_semantics::check::{AggregateWindow, FormulaNode, FormulaNodeId, TemporalClauseNode};
 use fsl_semantics::model::object_environment::ObjectEnvironment;
 
 use super::engine::DecisiveSearch;
-use super::finite_window::{TimestampedTrace, Valuation, WindowEvaluation, evaluate_finite_window};
+use super::finite_window::{evaluate_finite_window, TimestampedTrace, Valuation, WindowEvaluation};
 use super::observed_aggregate;
 use super::tape::{TapeEntry, TapeLetter, TapeReading};
-use super::window::{AggregateAtom, DEFAULT_MAX_WINDOW_VALUES, WindowTrace};
+use super::window::{AggregateAtom, WindowTrace, DEFAULT_MAX_WINDOW_VALUES};
 use super::{
     AtomReading, CaptureReading, LetterStop, TemporalLetters, TemporalOutcome, TemporalPosition,
     TemporalRefusal, TemporalTrace, UndefinedCause, UndefinedEvaluation,
 };
-use crate::value::{CheckedPackageEvaluation, evaluate_capture};
+use crate::value::{evaluate_capture, CheckedPackageEvaluation};
 use filament_eval::{CallFailure, Evaluation};
 
 /// Why a `holds` condition stopped the run without a reading, kept whole so
@@ -1179,6 +1179,23 @@ impl TemporalLetters for ObservedLetters<'_> {
         self.valuation(atom, position, meter)
     }
 
+    fn aggregate_lag(&self, atom: FormulaNodeId) -> Option<i128> {
+        let checked = self.clause.clause().aggregates().get(&atom.index())?;
+        let AggregateWindow::Duration(window) = &checked.window else {
+            return None;
+        };
+        let lower = &window.lower;
+        // A bound that does not convert reads as 0, the latest window end:
+        // the most conservative reading, never a window taken as complete.
+        let ceiling = || {
+            let denominator = filament_exact::NonZeroInteger::try_from(lower.denominator()).ok()?;
+            let (whole, rest) = lower.numerator().div_rem_truncating(denominator);
+            let whole = i128::from(whole.to_u64()?);
+            Some(if rest.is_zero() { whole } else { whole + 1 })
+        };
+        Some(ceiling().unwrap_or(0))
+    }
+
     fn valuation(
         &mut self,
         atom: FormulaNodeId,
@@ -1338,6 +1355,8 @@ impl ObservedLetters<'_> {
             trigger: self.clause.clause().trigger().is_some(),
             captures: &captures,
             refused: None,
+            absent: self.absent,
+            atom: u64::try_from(atom.index()).map_err(|_| stop("atom-in-u64"))?,
         };
         let valuation = aggregate.evaluate_valuation_with_visits(
             windows,
@@ -2207,13 +2226,17 @@ pub fn letters_valuation<L: TemporalLetters>(
 /// are still held: each `holds` atom and each window aggregate atom, the
 /// aggregate read against the stamps of `trace`. `None` for a clause with a
 /// guard or captures, and for a reading that does not reduce to a letter (an
-/// undefined atom or a refused condition), which keep the sample.
+/// undefined atom or a refused condition), which keep the sample. `absent`
+/// names the `(position, atom)` valuations the observations hold none of: a
+/// window holding such a member, or an anchor missing an atom, reads no
+/// letter (FR-194-AC-17), so it keeps its sample.
 pub fn read_anchor_letter(
     package: &CheckedPackage,
     clause: &TemporalClauseNode,
     tape: &super::tape::LetterTape,
     trace: &TimestampedTrace,
     at: u64,
+    absent: &[(u64, u64)],
     meter: &mut Meter,
 ) -> Option<TapeLetter> {
     let checked = clause.clause();
@@ -2233,6 +2256,7 @@ pub fn read_anchor_letter(
             len: u64::try_from(trace.len()).ok()?,
         },
     );
+    letters.absent = absent;
     letters.windows = Some(trace.timed_window_trace().ok()?);
     let formula = checked.formula();
     let mut atoms = Vec::new();
@@ -2242,6 +2266,9 @@ pub fn read_anchor_letter(
             FormulaNode::Holds { .. } | FormulaNode::Aggregate { .. }
         ) {
             let id = formula.node_id(index)?;
+            if absent.contains(&(at, u64::try_from(index).ok()?)) {
+                return None;
+            }
             let reading = letters.atom(id, TemporalPosition::new(at), meter).ok()?;
             atoms.push((index, super::tape::TapeReading::of(&reading)?));
         }

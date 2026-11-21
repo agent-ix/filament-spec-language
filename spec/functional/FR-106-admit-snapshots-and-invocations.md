@@ -313,7 +313,15 @@ Snapshot, format `filament.state.snapshot/v1`:
   only for a relationship one of whose ends declares `ordered: true`, a
   `positions` object whose members are exactly the ordered ends, `source`
   and/or `target`, each a non-negative decimal integer string (FR-364
-  "Positions of an ordered end"). An instance links a source object to a
+  "Positions of an ordered end"). An instance MAY also carry `identity`, the
+  non-empty lowercase-hex spelling of its producer-supplied
+  `RelationshipIdentity` bytes, as reference identity bytes are encoded in
+  FSpec FR-181 and FR-480. The reader SHALL decode those bytes exactly, without
+  parsing, trimming, normalizing or deriving them. This member is optional for
+  ordinary snapshot admission. When a `call.relationships` selection reads the
+  instance as a candidate, `identity` SHALL be present and valid lowercase
+  hex; otherwise admission SHALL refuse `invalid-request` at that instance's
+  `identity` path, exit 20, before evaluation. An instance links a source object to a
   target object through the relationship; the entry's order and its
   instances' order carry no meaning (only `positions` order an ordered end),
   and a link between the same two objects listed twice is two instances. An
@@ -381,6 +389,30 @@ Snapshot, format `filament.state.snapshot/v1`:
   digits>"}`, `{"kind": "float64", "bits": "<16 hex digits>"}` and
   `{"kind": "quantity", "unit": "<unit>", "magnitude": <Rational or Decimal
   object>}`.
+
+A stored clock-place reference uses the same `reference` value form above:
+`population` names the owner's population and `key` carries the instance's
+clock-place identity, rather than an object key. When its static declared
+type is `Reference<Clock>` (the `scalar_type`/`clock_reference` node of
+[FR-1040](FR-1040-check-and-lower-clock-place-references-and-presence-in-population-forms.md)),
+admission SHALL resolve that identity against the selected model's declared
+clock places for that owner instance and selectors. It SHALL retain the
+reference as data, without resolving it as an object or population member.
+The same rule applies inside `Option` and `Sequence` values, retaining their
+presence and element order. No additional snapshot value form is introduced.
+
+> Implementation boundary (QSL-2178 STEP1): the admission requirement above
+> and AC-72/AC-73 remain unmet. Source and Bare raw snapshot, context,
+> parameter and record-sample admission refuse external Clock references as
+> `unknown_required_feature`/`unsupported-feature`, naming
+> `missing-route-neutral-place-identity`, before interpreting a place ID.
+> The typed Rust `StateModel::observation` and `protocol_observation`
+> interfaces accept only states produced or already admitted within the same
+> model run; handcrafted Clock references are outside that trusted interface
+> contract. They do not authenticate hostile Rust caller values or references
+> transported from another model or run. Route-neutral identity is deferred
+> to STEP2, including map-keyed Clock-reference identities, which remain
+> unsupported. This note does not relax the required admission behavior.
 
 A set, bag or ordered-set value is the native spelling of FSpec FR-181's
 `set`, `bag` and `ordered-set` forms, with FSpec FR-144's "Supplied
@@ -826,7 +858,10 @@ instance of a listed relationship whose other end names an object of a required
 population, in the observations the clause reads, and every population the clause names by `M::P` ([FR-391](FR-391-name-a-population-in-a-state-clause.md)).
 A required population absent from its snapshot is not marked `complete`. A
 parameter reference naming no declared population makes no population
-required; check 10 settles it.
+required; check 10 settles it. A statically `Reference<Clock>`-typed value
+does not name a population member and adds no required population through
+its target; its declared-place validation is independent of population
+completeness.
 
 1. Read check. For each selected document (the snapshot of `Current` or
    `PreCall`; the invocation and then its `pre` and `post` snapshots for a
@@ -932,7 +967,10 @@ required; check 10 settles it.
       `invalid-value`. A `reference` value fits a declared `Reference<T>`
       exactly when its target object's type conforms to `T` (FSpec FR-151:
       the same type, or a chain of declared supertypes leads from it to
-      `T`).
+      `T`). For `Reference<Clock>`, the document reader instead checks the
+      target against the selected model's declared clock places as specified
+      above; the object-conformance rule continues to apply to every ordinary
+      object reference.
       For a record value, admission SHALL resolve its `type` to an admitted
       record declaration, check conformance to the expected record type,
       require exactly its effective fields, and validate each field value
@@ -981,7 +1019,11 @@ required; check 10 settles it.
    7. For each entry: admission SHALL decide FR-364's extent conditions 1 and 2
       at the entry: a `relationship` that names no navigation relationship of
       the package (a connection and an unknown identity included) refuses
-      `invalid_runtime_input`/`wrong-role-mapping`, and a second entry for one
+      `invalid_runtime_input`/`wrong-role-mapping`, except that when the
+      `call.relationships` correlation selection is active, an unknown
+      relationship declaration refuses `invalid-request` at that reference's
+      exact member path after snapshot read and before resolver evaluation. A
+      second entry for one
       relationship refuses `invalid_runtime_input`/`conflicting-identity` at
       the later entry.
    8. For each instance of an entry, in document order: if a member of the
@@ -1034,7 +1076,9 @@ required; check 10 settles it.
        Decimal, Rational, Float and Quantity objects, and the nested path, which here starts at the context (root
        the machine, then the field). A reference value fits a `Reference<T>`
        field by the conformance rule of 6.5, and its target is resolved in
-       check 8 against the objects of the same snapshot. The post-state
+       check 8 against the objects of the same snapshot, except that a
+       `Reference<Clock>` target is checked against declared clock places
+       under the same rule as an object field. The post-state
        range witness of 6.5 applies to a context field of a `post` snapshot
        exactly as to an object field, and `OutOfRange` names the machine, the
        field, the declared range and the observed value.
@@ -1063,7 +1107,16 @@ required; check 10 settles it.
    `"complete": false`, or an unlisted relationship, admits, and navigation
    returns `incomplete_population`/`incomplete-scope` when a clause reads it
    (FR-364).
-8. Closure check. If a `reference` value names a key absent from its complete
+8. Closure check. Admission SHALL tolerate a stored reference outside object
+   closure only when its static type is `Reference<Clock>` and its target
+   identity denotes a clock place declared by the selected model for the
+   named owner instance and selectors. If such a typed reference names an
+   undeclared clock place, admission SHALL refuse `dangling_reference`/
+   `absent-target-in-complete-population`, naming the document, owner
+   population and object, field and nested value path, and the target
+   identity; it SHALL admit no observation and return no truth value.
+   This exception does not relax any ordinary object-reference dangling
+   check. If an ordinary object `reference` value names a key absent from its complete
    population, then admission SHALL refuse `dangling_reference`/
    `absent-target-in-complete-population`, naming the first such reference
    in walk order and its population. After the `reference` values, an instance
@@ -1316,6 +1369,10 @@ required; check 10 settles it.
 | FR-106-AC-69 | Over TC-1171's fixture, `order: OrderedSet<Int[0, 9]>[0, 3]` written `{"ordered-set": 1}`, `ids` written `[]`, and `ids` written `{"bag": []}` each refuse `wrong-value-kind` (naming the tag for the non-array, the field otherwise). This is the native counterpart of FSpec FR-144-AC-16's wrong-kind tag. | Test (TC-1171) |
 | FR-106-AC-70 | One snapshot's content admitted under two distinct document references gives two observations whose `identity` values are those two references, each holding the same populations, completeness flags and `ObjectEnvironment`, with the selected `self` object carrying the same universe, object type and object identifier in both. The same holds for the `pre` and `post` observations of one invocation admitted under two pairs of references. Neither observation reports the other's document identity. | Test (TC-1308) |
 | FR-106-AC-71 | Over FSpec TC-2054's `test/refunds` unit and a pre snapshot holding `Staff` objects `s1` (`badge` `1`) and `s2`, an invocation of `Order.note` with `parameters` `{firstApprover: s1, secondApprover: {"absent": {}}}`, one with `secondApprover` `{"present": <reference to s2>}`, and one omitting `secondApprover` are admitted, the third with `secondApprover` absent, so `NoteBy` evaluates false for the first and third and true for the second. The same invocation with `secondApprover` a bare `{"reference": ...}` refuses `invalid_runtime_input`/`wrong-value-kind` at `parameters.secondApprover`, and one omitting `firstApprover` refuses `invalid_runtime_input`/`missing-member` at `parameters.firstApprover`. | Test (TC-3040) |
+| FR-106-AC-72 | Over [TC-464](../test-cases/TC-464-snapshots-and-invocations-admit.md) step 7's dense-time `Call` fixture, a raw snapshot storing the actual per-instance place identities of `c1.x` and `c2.x` in `r: Reference<Clock>`, `maybe: Option<Reference<Clock>>` and `refs: Sequence<Reference<Clock>>` admits, retaining those identities as data, the optional presence and the sequence order. Neither place identity is an object key, and neither target is resolved as a population member. Reading the admitted fields distinguishes `c1.x` from `c2.x`; the required evaluation of the stored `self.r` under FR-1040-AC-3 and FR-1040-AC-8 remains in force. | Test (TC-464) |
+| FR-106-AC-73 | Over [TC-464](../test-cases/TC-464-snapshots-and-invocations-admit.md) step 8's model variant without `x`, storing the formerly declared `c1.x` identity in `r`, in the present value of `maybe`, or at element 0 of `refs` refuses `dangling_reference`/`absent-target-in-complete-population`, naming the snapshot, owner population `calls`, object `c1`, the affected field and nested value path, and that undeclared target identity, with no admitted observation or truth value. A target's clock-reference static type or native Clock target alone does not make it declared. | Test (TC-464) |
+| FR-106-AC-74 | A relationship instance with producer-supplied identity bytes written in lowercase hex preserves the exact decoded bytes as `RelationshipIdentity`; ordinary snapshot admission accepts an instance without `identity`, but a `call.relationships` selection that reads the instance as a candidate (its entry is mapped by `relationship_identities`) with an absent, empty, non-string, uppercase, odd-length or invalid lowercase-hex identity refuses `invalid-request` at that instance's `identity` path after snapshot read and before resolver evaluation. | Test (`tests/it/native_run_relationships.rs::relationship_identity_is_optional_without_correlation`, `tests/it/native_run_relationships.rs::snapshot_relationship_identity_round_trips_exact_bytes`, `tests/it/native_run_relationships.rs::invalid_relationship_identity_refuses_after_snapshot_read`) |
+| FR-106-AC-75 | A relationship declaration absent from the selected package refuses `invalid-request` at its exact snapshot reference path after read and before resolver evaluation when `call.relationships` is selected; with no correlation selection the same reference keeps `invalid_runtime_input`/`wrong-role-mapping`. | Test (`tests/it/native_run_relationships.rs::unknown_relationship_type_in_correlation_is_invalid_request_after_snapshot_read`, `tests/it/native_run_relationships.rs::unknown_relationship_type_without_correlation_keeps_wrong_role_mapping`) |
 
 ## Dependencies
 

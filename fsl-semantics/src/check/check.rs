@@ -3513,7 +3513,24 @@ impl<'a> Typer<'a> {
         location: &Location,
         kind: LocalKind,
     ) -> Result<Slot, CheckRefusal> {
-        if let Some(refusal) = reserved_slot_refusal(name, None, location) {
+        self.bind_declared(name, value_type, location, kind, None)
+    }
+
+    /// [`Self::bind`] for a binder whose name token is the `ordinal`th binder
+    /// of the expression node at `site`, so a reserved name is refused at the
+    /// identifier itself.
+    pub(crate) fn bind_declared(
+        &mut self,
+        name: &str,
+        value_type: ValueType,
+        location: &Location,
+        kind: LocalKind,
+        site: Option<(&Location, usize)>,
+    ) -> Result<Slot, CheckRefusal> {
+        if let Some(mut refusal) = reserved_slot_refusal(name, None, location) {
+            if let CheckCause::ReservedSlotName(cause) = &mut refusal.cause {
+                cause.binder = site.map(|(node, ordinal)| (node.clone(), ordinal));
+            }
             return Err(refusal);
         }
         if kind == LocalKind::Bound
@@ -4578,6 +4595,8 @@ impl<'a> Typer<'a> {
         location: &Location,
     ) -> Result<Node, CheckRefusal> {
         let (left_type, right_type) = (left.value_type.clone(), right.value_type.clone());
+        let left_literal = super::facts::rational_literal_domain(left.kind());
+        let right_literal = super::facts::rational_literal_domain(right.kind());
         let (left_box, right_box) = (self.push(left), self.push(right));
         let (kind, value_type) = match (&left_type, &right_type, operator) {
             (ValueType::Quantity(unit), factor, ArithmeticOperator::Multiply)
@@ -4656,7 +4675,10 @@ impl<'a> Typer<'a> {
             (ValueType::Rational(l), ValueType::Rational(r), _) => {
                 let domain = match hint {
                     Some(ValueType::Rational(expected)) => expected.clone(),
-                    _ => super::facts::rational_result_of(l, operator, r),
+                    _ => left_literal
+                        .as_ref()
+                        .unwrap_or(l)
+                        .result_of(operator, right_literal.as_ref().unwrap_or(r)),
                 };
                 (
                     NodeKind::Rational {
@@ -6271,11 +6293,12 @@ impl<'a> Typer<'a> {
             return Err(mismatch(location));
         };
         let source_type = source_type.clone();
-        let slot = self.bind(
+        let slot = self.bind_declared(
             binder,
             source_type.element().clone(),
             location,
             LocalKind::Bound,
+            Some((location, 0)),
         )?;
         Ok((slot, source_type))
     }
@@ -6437,13 +6460,19 @@ impl<'a> Typer<'a> {
         if form == Accumulation::Reduce && source_type.element() != value_type {
             return Err(mismatch(location));
         }
-        let accumulator_slot =
-            self.bind(accumulator, value_type.clone(), location, LocalKind::Bound)?;
-        let binder_slot = self.bind(
+        let accumulator_slot = self.bind_declared(
+            accumulator,
+            value_type.clone(),
+            location,
+            LocalKind::Bound,
+            Some((location, 0)),
+        )?;
+        let binder_slot = self.bind_declared(
             binder,
             source_type.element().clone(),
             location,
             LocalKind::Bound,
+            Some((location, 1)),
         )?;
         Ok((accumulator_slot, binder_slot, source_type))
     }
@@ -6650,6 +6679,7 @@ pub(crate) fn reserved_slot_cause(name: &str, span: Option<Span>) -> Option<Chec
         name: name.to_owned(),
         tag: SlotTag::of(name)?,
         span,
+        binder: None,
     })))
 }
 

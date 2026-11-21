@@ -744,7 +744,9 @@ impl<M: MemoryModel> ProtocolSystem<'_, M> {
                 }
             }
             ControlStep::Event if self.program.recommendations.contains_key(&step.node) => {
-                self.recommend(state, step, after, gathered)?;
+                if self.gate(state, step.path, GatedStep::Attempt) {
+                    self.recommend(state, step, after, gathered)?;
+                }
             }
             ControlStep::Event => self.event(
                 state,
@@ -1634,31 +1636,33 @@ impl<M: MemoryModel> ProtocolSystem<'_, M> {
         let observed = self.memory.observe(&state.memory, step.path, &state.model);
         let applications =
             self.model
-                .apply_operation(&observed, &operation, &select, &mut gathered.budget)?;
+                .recommend_operation(&observed, &operation, &select, &mut gathered.budget)?;
         gathered
             .findings
             .extend(applications.findings.iter().cloned());
-        let text = self.program.text(step.node)?.to_owned();
+        if applications.applications.is_empty() {
+            return Ok(());
+        }
         let instance = Self::instance(state, step.ordinal)?;
-        for application in applications.successors {
-            let admitted = match (recommendation.binds, application.result.as_ref()) {
-                (Some(slot), Some(result)) => self.admits(
-                    Reader {
-                        instance,
-                        path: step.path,
-                        node: step.node,
-                    },
-                    recommendation.constraint,
-                    slot,
-                    result,
-                    &state.model,
-                    &mut gathered.findings,
-                )?,
-                _ => true,
-            };
-            if !admitted {
-                continue;
+        let frame = self.frame(instance, step.path, step.node);
+        let constraint = if let Some(constraint) = recommendation.constraint {
+            self.evaluate(constraint, frame, &observed)?
+        } else {
+            self.evaluate_package_control(step.node, frame, &observed)?
+                .unwrap_or(Verdict::True)
+        };
+        match constraint {
+            Verdict::True => {}
+            Verdict::False => return Ok(()),
+            Verdict::Undecided(outcome) => {
+                gathered
+                    .findings
+                    .push(undetermined(self.program.text(step.node)?, outcome));
+                return Ok(());
             }
+        }
+        let text = self.program.text(step.node)?.to_owned();
+        for application in applications.applications {
             let mut next = state.clone();
             if self.place(
                 &mut next,
@@ -1673,7 +1677,7 @@ impl<M: MemoryModel> ProtocolSystem<'_, M> {
                         step.path.clone(),
                         text.clone(),
                         recommendation.role.clone(),
-                        recommendation.operation.clone(),
+                        application.operation,
                         reference_enc(&application.receiver),
                         application
                             .arguments
