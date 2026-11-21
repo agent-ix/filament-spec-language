@@ -117,9 +117,9 @@ fn selected_model_enum_values_match_source_and_bare_evaluation() {
     )]);
     let document_bytes = serde_json::to_vec(&document).unwrap();
     let models = package_input([document_bytes.as_slice()]).unwrap();
-    let mut first = None;
+    let mut first = std::collections::BTreeMap::new();
     for alias in ["M", "Renamed"] {
-        let functions = format!("function pick using v(): {alias}::Tier pure {{ {alias}::Tier::Gold }}\nfunction same using v(): Boolean pure {{ pick() = {alias}::Tier::Gold }}\nfunction other using v(): Boolean pure {{ pick() = {alias}::Tier::Standard }}\nfunction pass using v(t: {alias}::Tier): {alias}::Tier pure {{ t }}");
+        let functions = format!("function pick using v(): {alias}::Tier pure {{ {alias}::Tier::Gold }}\nfunction same using v(): Boolean pure {{ pick() = {alias}::Tier::Gold }}\nfunction other using v(): Boolean pure {{ pick() = {alias}::Tier::Standard }}\nfunction pass using v(t: {alias}::Tier): {alias}::Tier pure {{ t }}\nfunction forwarded using v(): {alias}::Tier pure {{ pass({alias}::Tier::Standard) }}");
         let package = package_functions(&document, alias, &functions);
         let emission = fsl_package::emit_checked(&package, fsl_package::EmitLimits::fixture())
             .expect("selected enums emit");
@@ -156,7 +156,12 @@ fn selected_model_enum_values_match_source_and_bare_evaluation() {
                 &mut budget(),
             )
             .unwrap();
-        for (name, expected) in [("pick", None), ("same", Some(true)), ("other", Some(false))] {
+        for (name, expected) in [
+            ("pick", None),
+            ("forwarded", None),
+            ("same", Some(true)),
+            ("other", Some(false)),
+        ] {
             let call = |route: &dyn CheckedPackageEvaluation| {
                 let mut meter = Meter::new(UNLIMITED);
                 let evaluation = route
@@ -184,12 +189,17 @@ fn selected_model_enum_values_match_source_and_bare_evaluation() {
                 let Value::Enum(member) = &bare_value else {
                     panic!("pick returns an enum")
                 };
-                assert_eq!(member.variant().case(), "Gold");
-                assert_eq!(member.rank(), 0);
-                if let Some(previous) = &first {
+                let (case, rank) = if name == "pick" {
+                    ("Gold", 0)
+                } else {
+                    ("Standard", 1)
+                };
+                assert_eq!(member.variant().case(), case);
+                assert_eq!(member.rank(), rank);
+                if let Some(previous) = first.get(name) {
                     assert_eq!(previous, &bare_value, "alias-independent opaque identity");
                 }
-                first = Some(bare_value);
+                first.insert(name, bare_value);
             }
             assert_eq!(
                 source_meter.admitted_charges(),
