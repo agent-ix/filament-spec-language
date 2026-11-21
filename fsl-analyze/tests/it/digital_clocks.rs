@@ -348,15 +348,25 @@ fn discrete_delays_under_a_workload_are_a_chain() {
 fn not_markov_evidence_uses_the_actual_filtered_digital_posts() {
     use fsl_eval::simulation::TransitionSystem;
 
-    let world = retx_with(
-        &[("send", &["late", "x", "phase"])],
+    let mut document: serde_json::Value =
+        serde_json::from_slice(&retx_document(&[("send", &["late", "x", "phase"])]))
+            .expect("the timed fixture is JSON");
+    document["types"][1]["fields"]
+        .as_array_mut()
+        .expect("Call fields")
+        .push(timed_world::wire_field("y", "ix://filament/native/Clock"));
+    let document = serde_json::to_vec(&document).expect("serializes");
+    // The unreset y advances to 1 ms while x resets to zero. Upper bounds
+    // are the admitted invariant syntax, so y <= 0 removes phases 2 and 3.
+    let body = retx_body(
         GUARD,
         true,
         "delay M::Call::send ~ discrete { 1 ms: 1 };\n\
          workload One on M { weight Call::send = 1; }\n\
-         time invariant Filter when { self.phase >= 2 } { self.x >= 1 ms }\n",
+         time invariant Filter when { self.phase >= 2 } { self.y <= 0 ms }\n",
         &deadline_claim("Under", "under One", ">= 0.99", "eventually"),
     );
+    let world = timed_world::world(&document, PROFILES, &body);
     let ProductRefusal::NotMarkov(cause) = refusal(&world, "Under") else {
         panic!("two filtered model posts still break the Markov condition");
     };
@@ -399,7 +409,7 @@ fn not_markov_evidence_uses_the_actual_filtered_digital_posts() {
                 .1
         })
         .collect::<Vec<_>>();
-    assert_eq!(expected.len(), 2, "reset to zero rules out phase 2 and 3");
+    assert_eq!(expected.len(), 2, "unreset y rules out phase 2 and 3");
     assert_eq!(cause.post_state_examples, expected);
     assert_ne!(cause.post_state_examples[0], cause.post_state_examples[1]);
 }
