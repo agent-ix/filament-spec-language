@@ -19,6 +19,7 @@ fn refuse(member: &str, cause: &'static str, reason: impl Into<String>) -> RunCa
 
 /// Validate only the declared evidence input. No artifact or source is read,
 /// and no package identity or proof claim is inferred from this admission.
+#[ix_trace_rs::string_edge]
 pub(super) fn run(
     bytes: &[u8],
     member: &Value,

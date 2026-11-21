@@ -4048,9 +4048,11 @@ fn prepare_run_bytes_with_sources(
     prepared
 }
 
+type SelectionPresence = fn(&wire::Request) -> bool;
+
 /// The request members FR-1031's first row names beside `export`, in the
 /// order a refusal lists them, each with its presence in a typed request.
-const TRANSFER_EXCLUSIVE: [(&str, fn(&wire::Request) -> bool); 9] = [
+const TRANSFER_EXCLUSIVE: [(&str, SelectionPresence); 9] = [
     ("package", |request| request.package.is_some()),
     ("call", |request| request.call.is_some()),
     ("clause", |request| request.clause.is_some()),
