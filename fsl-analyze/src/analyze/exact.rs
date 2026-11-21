@@ -466,10 +466,7 @@ fn run_timed(
                 cancel,
             )
         })();
-        if !matches!(
-            checked,
-            Err(ProbabilityDocumentError::OptimizationMismatch)
-        ) {
+        if !matches!(checked, Err(ProbabilityDocumentError::OptimizationMismatch)) {
             break;
         }
     }

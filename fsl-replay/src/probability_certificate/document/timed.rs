@@ -3358,9 +3358,8 @@ fn digital_workload_choices(
             .iter()
             .map(|(delay, weight)| (*delay, weight.clone(), ()))
             .collect();
-        let conditioned = condition_on_window(draws, |delay, ()| {
-            Ok(window.contains(delay, reach))
-        })?;
+        let conditioned =
+            condition_on_window(draws, |delay, ()| Ok(window.contains(delay, reach)))?;
         if conditioned.is_empty() {
             continue;
         }
@@ -4328,8 +4327,15 @@ fn price_witness_paths(
                     if let Some(choice) = state.choices.get(*index) {
                         for edge in choice.iter().filter(|edge| edge.probability > zero()) {
                             match mass_of(
-                                graph, candidates, picked, failing, &edge.target, memo, on_path,
-                                cancel, check_bits,
+                                graph,
+                                candidates,
+                                picked,
+                                failing,
+                                &edge.target,
+                                memo,
+                                on_path,
+                                cancel,
+                                check_bits,
                             ) {
                                 Ok(child) => {
                                     sum = sum.add(&edge.probability.mul(&child));
