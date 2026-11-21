@@ -15,8 +15,8 @@ use fsl_analyze::zone_check::{
 use fsl_eval::simulation::model::{TaskAutomaton, TaskProductSystem, TimedSystem};
 use fsl_foundation::source::provenance::OccurrenceKey;
 use fsl_replay::{
-    CertificateCheckLimits, CertificateRule, DivergenceWitness, DivergentTarget, QuotientIdentity,
-    Zone, ZoneCertificate, ZoneCertificateVerdict,
+    CertificateCheckLimits, CertificateRule, DivergentTarget, QuotientIdentity, Zone,
+    ZoneCertificate, ZoneCertificateVerdict,
 };
 use ix_trace_rs::trace;
 use serde_json::{json, Value};
@@ -187,14 +187,12 @@ fn set(name: &str) -> World {
     }
 }
 
-/// The emitted certificate is read back unchanged, and a witness the wire
-/// would decode differently (a cycle that is two laps of itself reads back as
-/// one lap behind a one-lap path) is refused, so `proved` never rests on a
-/// certificate other than the one built.
+/// The emitted certificate is read back unchanged. The wire omits the
+/// divergent target, so changing a witness to name a different quiescent
+/// target must be refused even when encoding and decoding both succeed.
 #[trace("TC-371")]
 #[test]
 fn a_witness_the_wire_decodes_differently_is_not_read_back_unchanged() {
-    let mut refused = 0;
     for (name, claim) in SETS {
         let world = set(name);
         let (_, certificate) = engine_graph(&world, claim);
@@ -203,31 +201,23 @@ fn a_witness_the_wire_decodes_differently_is_not_read_back_unchanged() {
             read_back_unchanged(&certificate, json!({}), &occurrence).is_some(),
             "{claim}"
         );
-        let Some(DivergenceWitness {
-            start,
-            path,
-            target: DivergentTarget::Cycle(cycle),
-        }) = certificate.admitted.clone()
-        else {
-            continue;
-        };
-        let mut flat = path;
-        flat.extend(&cycle);
-        let mut doubled = flat.clone();
-        doubled.extend(&flat);
         let mut changed = certificate.clone();
-        changed.admitted = Some(DivergenceWitness {
-            start,
-            path: Vec::new(),
-            target: DivergentTarget::Cycle(doubled),
-        });
+        changed
+            .admitted
+            .as_mut()
+            .expect("a divergence witness")
+            .target = DivergentTarget::Quiescent(certificate.nodes.len());
+        let wire = changed
+            .to_wire(json!({}))
+            .expect("the target is not encoded");
+        let (read, _) =
+            ZoneCertificate::from_wire(&wire, occurrence.clone()).expect("the wire still decodes");
+        assert_ne!(read.admitted, changed.admitted, "{claim}");
         assert!(
             read_back_unchanged(&changed, json!({}), &occurrence).is_none(),
             "{claim}"
         );
-        refused += 1;
     }
-    assert!(refused > 0, "no set carried a cycle witness to change");
 }
 
 /// FR-418: the engine's closed quotient (its own DBM and region walk) equals
