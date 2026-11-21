@@ -791,7 +791,7 @@ fn timed_hidden_a_landing_lock_is_judged_after_the_delay() {
     node.locked = true;
     node.automaton_state = reserved;
     // The undelayed landing zone: x at most 2.
-    let two = Integer::from(2_i64) * forged.scale.clone();
+    let two = Integer::from_big(forged.scale.as_big() + forged.scale.as_big());
     forged.nodes[landed]
         .zone
         .constrain(1, 0, &two, false)
