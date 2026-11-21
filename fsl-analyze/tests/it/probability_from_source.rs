@@ -1038,6 +1038,51 @@ fn statistical_refusals_and_budgets_from_source() {
     );
 }
 
+/// A probability item's finite expansion default preserves the caller's
+/// accounting bound for both evidence kinds, including its reported value.
+#[trace("TC-2066", "FR-741-AC-6", "FR-255-AC-23", "FR-192-AC-1", "FR-203-AC-7")]
+#[test]
+fn native_probability_items_preserve_caller_accounting_limits() {
+    for work_units in [0, 1] {
+        let ws = Workspace::new(&format!("probability-accounting-{work_units}"));
+        let request = request_over(
+            &ws,
+            &unit(&format!("{DELIVERED}\n{EVENTUALLY}")),
+            LINK_MODEL,
+            &[LINK_START.to_vec()],
+            json!({
+                "items": [
+                    {"claim": "Delivered", "probabilistic": {
+                        "evidence": "statistical", "workers": 4}},
+                    {"claim": "Eventually", "probabilistic": {"evidence": "exact"}}
+                ],
+                "limits": {"accounting": {"work_units": work_units}}
+            }),
+        );
+        let run = analyze(&request);
+        assert_eq!(run.exit, 22, "work_units={work_units}");
+        let document = run.document();
+        let items = document["items"].as_array().expect("settled items");
+        assert_eq!(items.len(), 2, "{document}");
+        for (item, backend) in items.iter().zip(["en-4", "en-5"]) {
+            assert_eq!(label(item), "incomplete", "{item}");
+            let record = &item["record"];
+            assert_eq!(record["settled_by"], "result", "{item}");
+            assert_eq!(record["backend"], backend, "{item}");
+            assert_eq!(record["cause"]["kind"], "limit-reached", "{item}");
+            assert_eq!(record["cause"]["limit"], "work_units", "{item}");
+            assert_eq!(record["cause"]["value"], work_units, "{item}");
+            assert_eq!(
+                record["cause"]["setting"], "accounting.work_units",
+                "{item}"
+            );
+            assert!(record.get("truth").is_none(), "{item}");
+            assert!(item.get("verdict").is_none(), "{item}");
+        }
+        assert_eq!(items[0]["request"]["probabilistic"]["workers"], 4);
+    }
+}
+
 /// FR-741 request members: an absent method of a long-run fraction is
 /// `regenerative` with `min_cycles` 100, of a bounded form `okamoto`; FSL
 /// writes every budget the caller leaves out at its published default.
