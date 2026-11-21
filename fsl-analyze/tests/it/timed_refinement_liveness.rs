@@ -630,10 +630,7 @@ fn timed_hidden_free_initial_valuation_holds_over_every_fair_loop() {
         matches!(
             outcome.liveness,
             Some(TimedLivenessHalf::Checked(
-                TimedLivenessOutcome::Undecided {
-                    cause: TimedRefinementUndecided::Zone(ZoneUndecided::LassoNotConcretized),
-                    ..
-                }
+                TimedLivenessOutcome::Holds { .. }
             ))
         ),
         "{:?}",
@@ -691,10 +688,7 @@ fn timed_hidden_strong_send_with_invariant_holds() {
         matches!(
             outcome.liveness,
             Some(TimedLivenessHalf::Checked(
-                TimedLivenessOutcome::Undecided {
-                    cause: TimedRefinementUndecided::Zone(ZoneUndecided::LassoNotConcretized),
-                    ..
-                }
+                TimedLivenessOutcome::Holds { .. }
             ))
         ),
         "{:?}",
@@ -1223,7 +1217,12 @@ fn a_timed_abstract_side_under_a_tick_source_refuses_its_liveness_half() {
 /// other: a check of a single chosen loop of the component settles by
 /// whichever it picks. `idle` modifies `h` and constrains it by no
 /// postcondition, so after a `tock` the candidates are both `h` values and
-/// the next concrete step of either kind still matches one.
+/// the next concrete step of either kind still matches one. While not in
+/// flight `x <= 1 ms` bounds each wait, so no behaviour idles for ever in a
+/// quiescent state taking neither `tock` nor `send`: an idle tail refutes a
+/// weak class it leaves enabled (`TimedSystem::is_quiescent`, and
+/// `an_idle_tail_that_never_takes_an_enabled_class_refutes`). Positive-delay
+/// `poll` and `tock` loops stay admitted, and after `send` the tail is fair.
 fn two_loop_world(with_poll: bool) -> Refining {
     let mut abstract_document: serde_json::Value = serde_json::from_slice(&document(
         &[],
@@ -1267,6 +1266,7 @@ fn two_loop_world(with_poll: bool) -> Refining {
          pre MTock using v on M::Call::tock {{ not self.inflight }}\n\
          post MTocked using v on M::Call::tock {{ self.x = 0 ms }}\n"
     );
+    let progress = "time invariant Progress when { not self.inflight } { self.x <= 1 ms }\n";
     let body = refinement("self.inflight").replace(
         "step M::Call::send -> A::Call::send(self);",
         &format!(
@@ -1278,7 +1278,7 @@ fn two_loop_world(with_poll: bool) -> Refining {
     refining(
         &abstract_document,
         &concrete,
-        &format!("{DENSE}{contracts}{body}"),
+        &format!("{DENSE}{contracts}{progress}{body}"),
     )
     .unwrap_or_else(|refusals| panic!("{refusals:?}"))
     .with_abstract_hidden_initials(&abstract_document, &[false, true])
