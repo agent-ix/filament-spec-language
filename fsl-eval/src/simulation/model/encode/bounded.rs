@@ -1058,6 +1058,7 @@ pub(crate) fn pending_bytes(
         identity,
         refused: RefCell::new(None),
     };
+    scope.bytes(scheduled.operation.len())?;
     scope
         .work(u64::try_from(scheduled.operation.len()).map_err(|_| ModelKeyError::SizeOverflow)?)?;
     scope.admit(scheduled.operation.len())?;
