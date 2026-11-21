@@ -30,11 +30,25 @@ fn probability_link_fixture() -> world::Model {
 #[test]
 fn probability_work_scope_accumulates_real_expansions_on_source_and_package_routes() {
     let world = World::new(&probability_link_fixture());
-    let exercise = |mut system: super::ModelSystem<'_>| {
+    let exercise = |route: &str, mut system: super::ModelSystem<'_>| {
         let ample = filament_exact::WorkScope::new(system.meter_limits());
         system.probability_work = Some(ample.clone());
         let start = initial(&system);
-        let first = system.actions(&start).unwrap().unwrap();
+        let first = system
+            .actions(&start)
+            .unwrap_or_else(|stop| {
+                panic!(
+                    "{route}: initial ample expansion stopped: {stop:?}; work={}/{}",
+                    ample.consumed_work(),
+                    system.meter_limits().work_units
+                )
+            })
+            .unwrap_or_else(|undecided| {
+                panic!(
+                    "{route}: initial ample expansion undecided: {undecided:?}; work={}",
+                    ample.consumed_work()
+                )
+            });
         assert_eq!(first.len(), 2);
         let work = ample.consumed_work();
         assert!(work > 1);
@@ -42,13 +56,21 @@ fn probability_work_scope_accumulates_real_expansions_on_source_and_package_rout
         limits.work_units = work * 2 - 1;
         let scope = filament_exact::WorkScope::new(limits);
         system.probability_work = Some(scope.clone());
-        assert_eq!(system.actions(&start).unwrap().unwrap().len(), 2);
-        let stopped = system.actions(&start).unwrap_err();
+        let paid = system.actions(&start).unwrap_or_else(|stop| panic!("{route}: first bounded expansion stopped: {stop:?}; work={}/{}, ample_expansion={work}", scope.consumed_work(), limits.work_units)).unwrap_or_else(|undecided| panic!("{route}: first bounded expansion undecided: {undecided:?}; work={}", scope.consumed_work()));
+        assert_eq!(paid.len(), 2);
+        let stopped = system.actions(&start).expect_err(&format!(
+            "{route}: second expansion must stop; work={}/{}, ample_expansion={work}",
+            scope.consumed_work(),
+            limits.work_units
+        ));
         assert_eq!(
             stopped.limit,
             Some(crate::simulation::ExpansionLimit::EvaluationMeter(
                 filament_exact::LimitKind::WorkUnits
-            ))
+            )),
+            "{route}: actual stop={stopped:?}; work={}/{}, ample_expansion={work}",
+            scope.consumed_work(),
+            limits.work_units
         );
         assert!(scope.consumed_work() >= work);
         assert!(scope.consumed_work() <= limits.work_units);
@@ -63,9 +85,9 @@ fn probability_work_scope_accumulates_real_expansions_on_source_and_package_rout
             "a new item starts fresh"
         );
     };
-    exercise(world.system());
+    exercise("source", world.system());
     through_the_wire(&world, |input| {
-        exercise(world.admit_input(input, 1_000_000).unwrap())
+        exercise("package", world.admit_input(input, 1_000_000).unwrap())
     });
 }
 
@@ -255,11 +277,25 @@ fn probability_candidate_then_claim_predicate_and_reward_use_the_same_allowance(
     else {
         panic!("eventually")
     };
-    let exercise = |mut system: super::ModelSystem<'_>| {
+    let exercise = |route: &str, mut system: super::ModelSystem<'_>| {
         let start = initial(&system);
         let scope = WorkScope::new(system.meter_limits());
         system.probability_work = Some(scope.clone());
-        system.actions(&start).unwrap().unwrap();
+        system
+            .actions(&start)
+            .unwrap_or_else(|stop| {
+                panic!(
+                    "{route}: initial ample expansion stopped: {stop:?}; work={}/{}",
+                    scope.consumed_work(),
+                    system.meter_limits().work_units
+                )
+            })
+            .unwrap_or_else(|undecided| {
+                panic!(
+                    "{route}: initial ample expansion undecided: {undecided:?}; work={}",
+                    scope.consumed_work()
+                )
+            });
         let expansion = scope.consumed_work();
         let walk = super::super::walk::walk_of(&system, &start, None).unwrap();
         let binding = walk.rows[0].reference.clone();
@@ -275,7 +311,20 @@ fn probability_candidate_then_claim_predicate_and_reward_use_the_same_allowance(
         limits.work_units = expansion;
         let stopped = WorkScope::new(limits);
         system.probability_work = Some(stopped.clone());
-        system.actions(&start).unwrap().unwrap();
+        system
+            .actions(&start)
+            .unwrap_or_else(|stop| {
+                panic!(
+                    "{route}: repeated bounded expansion stopped: {stop:?}; work={}/{expansion}",
+                    stopped.consumed_work()
+                )
+            })
+            .unwrap_or_else(|undecided| {
+                panic!(
+                    "{route}: repeated bounded expansion undecided: {undecided:?}; work={}",
+                    stopped.consumed_work()
+                )
+            });
         assert_eq!(stopped.consumed_work(), expansion);
         assert_eq!(
             system
@@ -295,9 +344,9 @@ fn probability_candidate_then_claim_predicate_and_reward_use_the_same_allowance(
         );
         assert_eq!(stopped.consumed_work(), expansion);
     };
-    exercise(world.system());
+    exercise("source", world.system());
     through_the_wire(&world, |input| {
-        exercise(world.admit_input(input, 1_000_000).unwrap())
+        exercise("package", world.admit_input(input, 1_000_000).unwrap())
     });
 }
 
