@@ -461,11 +461,13 @@ impl From<quire_canonical::Error> for EmitRefusal {
 
 /// The `emit.output_bytes` outcome for a package whose canonical bytes reach
 /// `actual` under `bound`.
-fn output_limit(bound: u64, _actual: u128) -> fsl_foundation::diagnostic::LimitExceeded {
+fn output_limit(bound: u64, actual: u128) -> fsl_foundation::diagnostic::LimitExceeded {
     fsl_foundation::diagnostic::LimitExceeded::new(
         fsl_foundation::Setting::EmitOutputBytes,
         bound,
-        u128::from(bound) + 1,
+        // A row or writer fragment can straddle the ceiling. Report the
+        // first unpaid byte, rather than that fragment's complete length.
+        actual.min(u128::from(bound) + 1),
     )
 }
 

@@ -295,7 +295,7 @@ fn small_explicit_limit_families_check_actual_paths_and_relative_rows() {
 #[trace("FR-531-AC-41", "TC-3133")]
 #[test]
 fn row_preflight_names_the_first_unpaid_byte_and_legacy_whole_path_refuses() {
-    let (_, package) = super::super::super::package_from_text(
+    let (_, package) = super::super::package_from_text(
         "function d using v(x: Integer): Integer pure { x + x + x }\n",
     );
     let failure = crate::emit::emit_checked(&package, crate::EmitLimits::new(1))
@@ -317,7 +317,7 @@ fn row_preflight_names_the_first_unpaid_byte_and_legacy_whole_path_refuses() {
     location.remove("up");
     location.remove("down");
     location.insert("path".to_owned(), json!([]));
-    let bytes = super::super::super::wire_bytes(&wire).unwrap();
+    let bytes = super::super::wire_bytes(&wire).unwrap();
     let result = CheckedPackageV2::read_with_budget(
         &bytes,
         CheckedPackageReadLimits::bounded(),
