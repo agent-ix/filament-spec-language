@@ -644,10 +644,10 @@ fn package_equivalence_resolves_an_admitted_direct_dependency_dimension() {
         Vec::new(),
     ));
     let root = imported_package("importing-unit", "\
-        import \"time-library\" as chronos;\n\
+        import \"time-library\" as clock;\n\
         dimension Beat; unit beat : Beat = rational(1, 1);\n\
-        dimension Beat ~ chronos::Time by 1 beat = rational(1, 4) chronos::s;\n\
-        function cross using v(): Quantity<chronos::s> pure { convert<Quantity<chronos::s>>(1 beat) }\n",
+        dimension Beat ~ clock::Time by 1 beat = rational(1, 4) clock::s;\n\
+        function cross using v(): Quantity<clock::s> pure { convert<Quantity<clock::s>>(1 beat) }\n",
         vec![fsl_package::Import { identity: LibraryName::new("time-library").expect("a name"), package: dependency }]);
     with_bare(&root, |bare| {
         let mut package_operands = 0;
