@@ -2725,7 +2725,7 @@ impl Run<'_, '_> {
                                     abstract_fairness,
                                     &abstract_numbers,
                                     &abstract_constraints,
-                                    None,
+                                    FairScope::Through(abstract_fairness.len().saturating_sub(1)),
                                 )?
                             };
                             if fair_candidate {
@@ -2754,7 +2754,7 @@ impl Run<'_, '_> {
                                 abstract_fairness,
                                 &abstract_numbers,
                                 &abstract_constraints,
-                                None,
+                                FairScope::Through(abstract_fairness.len().saturating_sub(1)),
                             )?
                         };
                         if !fair_candidate {
@@ -3116,7 +3116,7 @@ impl Run<'_, '_> {
         abstract_fairness: &[FairnessConstraint],
         numbered: &BTreeMap<&ModelTransition, Identity>,
         constraints: &[Constraint],
-        through: Option<usize>,
+        scope: FairScope,
     ) -> Result<bool, End> {
         let mut positions = Vec::with_capacity(path.len());
         let mut steps = Vec::with_capacity(path.len());
@@ -3171,11 +3171,10 @@ impl Run<'_, '_> {
                     .collect::<Result<Vec<_>, End>>()?,
             );
         }
-        let prefix = through.map_or(abstract_fairness.len().saturating_sub(1), |index| index);
         let selected = classes
             .iter()
             .enumerate()
-            .filter(|(_, class)| class.constraint() <= prefix)
+            .filter(|(_, class)| scope.covers(class.constraint()))
             .filter_map(|(index, _)| constraints.get(index).cloned())
             .collect::<Vec<_>>();
         match candidate_lasso_has_fair_run(&positions, &steps, &selected, self.cancel) {
@@ -3201,25 +3200,36 @@ impl Run<'_, '_> {
         numbered: &BTreeMap<&ModelTransition, Identity>,
         constraints: &[Constraint],
     ) -> Result<FairnessConstraint, End> {
-        if self.abstract_protocol.is_some() {
-            for (index, constraint) in abstract_fairness.iter().enumerate() {
-                if !idempotent_has_fair_candidate_prefix(summary, classes, abstract_fairness, index)
-                {
-                    return Ok(constraint.clone());
-                }
+        // FR-899's naming rule: the first constraint every candidate cycle
+        // violates on its own; when each is satisfiable alone, the least
+        // prefix no candidate cycle satisfies jointly.
+        let fair_in = |scope: FairScope| -> Result<bool, End> {
+            if self.abstract_protocol.is_some() {
+                Ok(idempotent_has_fair_candidate_in(
+                    summary,
+                    classes,
+                    abstract_fairness,
+                    scope,
+                ))
+            } else {
+                self.candidate_lasso_has_fair_run(
+                    path,
+                    enabled,
+                    classes,
+                    abstract_fairness,
+                    numbered,
+                    constraints,
+                    scope,
+                )
             }
-            return Err(fault("an-unsatisfied-protocol-fairness-prefix-exists").into());
+        };
+        for (index, constraint) in abstract_fairness.iter().enumerate() {
+            if !fair_in(FairScope::Only(index))? {
+                return Ok(constraint.clone());
+            }
         }
         for (index, constraint) in abstract_fairness.iter().enumerate() {
-            if !self.candidate_lasso_has_fair_run(
-                path,
-                enabled,
-                classes,
-                abstract_fairness,
-                numbered,
-                constraints,
-                Some(index),
-            )? {
+            if !fair_in(FairScope::Through(index))? {
                 return Ok(constraint.clone());
             }
         }
@@ -3591,14 +3601,31 @@ fn concrete_label_is_fair(label: &[FairMark], constraints: &[Constraint]) -> boo
         })
 }
 
+/// The abstract constraints a candidate run must satisfy: the first
+/// `through + 1` of them jointly, or one alone.
+#[derive(Clone, Copy)]
+enum FairScope {
+    Through(usize),
+    Only(usize),
+}
+
+impl FairScope {
+    fn covers(self, constraint: usize) -> bool {
+        match self {
+            Self::Through(last) => constraint <= last,
+            Self::Only(only) => constraint == only,
+        }
+    }
+}
+
 fn candidate_label_is_fair(
     label: &[FairMark],
     classes: &[AbstractClass],
     fairness: &[FairnessConstraint],
-    through: usize,
+    scope: FairScope,
 ) -> bool {
     label.iter().zip(classes).all(|(mark, class)| {
-        if class.constraint() > through {
+        if !scope.covers(class.constraint()) {
             return true;
         }
         match fairness
@@ -3617,19 +3644,19 @@ fn idempotent_has_fair_candidate(
     classes: &[AbstractClass],
     fairness: &[FairnessConstraint],
 ) -> bool {
-    idempotent_has_fair_candidate_prefix(
+    idempotent_has_fair_candidate_in(
         relation,
         classes,
         fairness,
-        fairness.len().saturating_sub(1),
+        FairScope::Through(fairness.len().saturating_sub(1)),
     )
 }
 
-fn idempotent_has_fair_candidate_prefix(
+fn idempotent_has_fair_candidate_in(
     relation: &CandidateRelation,
     classes: &[AbstractClass],
     fairness: &[FairnessConstraint],
-    through: usize,
+    scope: FairScope,
 ) -> bool {
     relation.iter().any(|((_, middle), _)| {
         relation
@@ -3637,7 +3664,7 @@ fn idempotent_has_fair_candidate_prefix(
             .is_some_and(|labels| {
                 labels
                     .iter()
-                    .any(|label| candidate_label_is_fair(label, classes, fairness, through))
+                    .any(|label| candidate_label_is_fair(label, classes, fairness, scope))
             })
     })
 }

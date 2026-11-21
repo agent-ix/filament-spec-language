@@ -1614,12 +1614,12 @@ fn replay_lasso(
                 _ => Err(fault("hidden-liveness-loop-retains-candidate-steps")),
             })
             .collect::<Result<Vec<_>, ReplayRefusal>>()?;
-        let fair_through = |through: usize| -> Result<bool, ReplayRefusal> {
+        let fair_in = |scope: ConstraintScope| -> Result<bool, ReplayRefusal> {
             let constraints = replay_candidate_constraints(
                 &systems.abstract_system,
                 &abstract_fairness,
                 &numbered,
-                through,
+                scope,
             )?;
             candidate_lasso_has_fair_run(
                 &candidate_positions,
@@ -1629,18 +1629,39 @@ fn replay_lasso(
             )
             .map_err(|_| fault("candidate-lasso-check-replays"))
         };
-        let mut violated = false;
-        for prefix in 0..=index {
-            let has_fair_candidate = fair_through(prefix)?;
-            if prefix < index && !has_fair_candidate {
-                return Ok(RefinementTraceSettlement::Inconclusive(disagreement(
-                    Category::Success,
-                )));
-            }
-            if prefix == index {
-                violated = !has_fair_candidate;
-            }
+        // FR-899's naming rule: the first constraint every candidate cycle
+        // violates on its own; when each is satisfiable alone, the least
+        // prefix no candidate cycle satisfies jointly.
+        let mut alone = Vec::with_capacity(abstract_fairness.len());
+        for constraint in 0..abstract_fairness.len() {
+            alone.push(fair_in(ConstraintScope::Only(constraint))?);
         }
+        let named = match alone.iter().position(|fair| !fair) {
+            Some(first) => first,
+            None => {
+                let mut least = None;
+                for prefix in 0..abstract_fairness.len() {
+                    if !fair_in(ConstraintScope::Through(prefix))? {
+                        least = Some(prefix);
+                        break;
+                    }
+                }
+                match least {
+                    Some(prefix) => prefix,
+                    None => {
+                        return Ok(RefinementTraceSettlement::Inconclusive(disagreement(
+                            Category::Success,
+                        )));
+                    }
+                }
+            }
+        };
+        if named < index {
+            return Ok(RefinementTraceSettlement::Inconclusive(disagreement(
+                Category::Success,
+            )));
+        }
+        let violated = named == index;
         violated
     } else {
         let mut enabled = Vec::with_capacity(loop_trail.len());
@@ -1944,14 +1965,29 @@ enum Enabledness {
     Stopped(ReachedLimit),
 }
 
+/// The abstract constraints a replayed candidate run must satisfy: the first
+/// `Through + 1` jointly, or one alone.
+#[derive(Clone, Copy)]
+enum ConstraintScope {
+    Through(usize),
+    Only(usize),
+}
+
 fn replay_candidate_constraints(
     system: &fsl_eval::simulation::model::ModelSystem<'_>,
     fairness: &[filament_semantic_value::fairness::FairnessConstraint],
     numbered: &BTreeMap<ModelTransition, Identity>,
-    through: usize,
+    scope: ConstraintScope,
 ) -> Result<Vec<Constraint>, ReplayRefusal> {
     let mut constraints = Vec::new();
-    for constraint in fairness.iter().take(through.saturating_add(1)) {
+    for (position, constraint) in fairness.iter().enumerate() {
+        let covered = match scope {
+            ConstraintScope::Through(last) => position <= last,
+            ConstraintScope::Only(only) => position == only,
+        };
+        if !covered {
+            continue;
+        }
         let operation = constraint.operation();
         let name = system
             .operation_text(operation.declaring_type(), operation.name())
