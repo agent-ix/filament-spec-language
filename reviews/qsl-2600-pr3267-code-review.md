@@ -35,3 +35,20 @@ Ticket: QSL-2600. Code review with the rust-review lane folded in, scoped to `gi
 ## Verdict
 
 The grammar change is sound: no switched word creates an ambiguity in any position where its declaration is valid, and `backtracking_star` is the right fix for the event and machine terminators. Two medium findings must be fixed in this PR. FND-001 is the FR-710 spec text and an AC. FND-002 is model-unit-internal identifier coverage. FND-003 and FND-004 are low.
+
+## New findings (disposition pass 1)
+
+| ID | Severity | Summary | Refs |
+| --- | --- | --- | --- |
+| FND-005 | low | The new Grammar text says the ten listed words are reserved and "every other model-unit word" is contextual. Read literally, that covers `record`, `map`, `invariant`, `pre`, `post`, `in`, `on`, `when`, `from` and `to`. These appear in the model-unit EBNF, stay `x(...)` reserved terminals, and are in neither list. Only the parenthetical enumeration limits the claim. | spec/functional/FR-710-author-a-domain-package-in-an-fsl-model-unit.md:73 |
+
+## Dispositions
+
+Disposition pass 1, checked at frozen head 6f7bd3b1c8 by reading the code. No build or test was run.
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | FR-710 Grammar now names the ten reserved words and lists all 26 contextual words, which match exactly the 26 `contextual(...)` terminals in fsl-cst/src/grammar.rs:438-746. FR-710-AC-10 states the identifier behaviour. The residual literal-reading gap is FND-005. |
+| FND-002 | still-open | The new test `model_unit_words_are_identifiers_inside_model_unit_bodies` (fsl-cst/tests/it/model_unit.rs:188) writes `step first: begin;`. `first` is an `x("first")` terminal of complete-V1 (grammar.rs:2492, Compensation) and a vocabulary keyword (token.rs:174), so `complete_reserved_words` reserves it. The model unit is parsed inside `CompleteUnit` with that same reserved set (grammar.rs:383, parser.rs:2272), and `Terminal::Identifier` refuses reserved spellings (parser.rs:2711-2714). syntax_messages.rs:100 already asserts that `first` is refused as an identifier. The process body therefore refuses and the test's `is_admissible` assertion fails, so the in-body coverage is not delivered. Fix: rename the step, for example `step go: begin;`. |
+| FND-003 | fixed | The test is retagged `#[trace("FR-710-AC-10", "TC-1942")]`. |
+| FND-004 | fixed | `contextual_spellings()` collects every `ContextualWord` terminal of complete-V1, and `analyze_document` adds the result as `GrammarToken` candidates. tests/it/complete_editor.rs asserts that `machine`, `step`, `population` and `occurs` are offered. |

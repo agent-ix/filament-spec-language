@@ -70,11 +70,11 @@ A model unit is written in the shared-grammar notation; `header`, `field`,
 `record-decl`, `enum-decl`, `tuple-decl`, `union-decl`, `alias-decl`,
 `dimension-decl` and `unit-decl` are the existing productions. The model-unit words
 `domain`, `extends`, `identity`, `redefines`, `relationship`, `ordered`, `unique`,
-`event`, `transition` and `symmetric` are reserved spellings. Every other model-unit
-word (`abstract`, `allocate`, `connection`, `consumes`, `emits`, `inout`,
+`event`, `transition` and `symmetric` are reserved spellings. The contextual
+model-unit words are `abstract`, `allocate`, `connection`, `consumes`, `emits`, `inout`,
 `interface`, `inverse`, `machine`, `members`, `namespace`, `object`, `occurs`,
 `open`, `operation`, `out`, `part`, `persists`, `population`, `port`, `process`,
-`states`, `step`, `store`, `subsets`, `term`) is contextual: a keyword only where
+`states`, `step`, `store`, `subsets` and `term`. Each is a keyword only where
 its declaration or clause begins, and an ordinary identifier everywhere else,
 including inside model-unit bodies.
 

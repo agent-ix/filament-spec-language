@@ -29,3 +29,18 @@ The matrix shows FR-710-AC-1 to AC-9 as all `tagged`. AC-3's binders now include
 ## Verdict
 
 CONDITIONAL. The tests that exist are real, but the behaviour has no owning AC and the new test is traced to the wrong AC.
+
+## New findings (disposition pass 1)
+
+| ID | Severity | Summary | Refs |
+| --- | --- | --- | --- |
+| FND-003 | low | FR-710-AC-10 claims that each contextual word of the Grammar section works as a record field, a parameter and an expression operand. The bound test `model_unit_words_parse_as_identifiers_outside_their_declarations` lists only 23 of the 26 words. It omits `population`, `interface` and `part`, so that clause of AC-10 is not covered for those three words. | fsl-cst/tests/it/model_unit.rs:136 |
+
+## Dispositions
+
+Disposition pass 1, checked at frozen head 6f7bd3b1c8 by reading the code. No build or test was run.
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | FR-710 Grammar now names the contextual words. FR-710-AC-10 owns the behaviour and binds both new tests. The in-body test fails at `step first` (SR-60054 FND-002, still-open). |
+| FND-002 | fixed | The test is retagged FR-710-AC-10, so AC-3's binders no longer include it. |

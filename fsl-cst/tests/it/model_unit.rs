@@ -140,6 +140,7 @@ fn model_unit_words_parse_as_identifiers_outside_their_declarations() {
         "consumes",
         "emits",
         "inout",
+        "interface",
         "inverse",
         "machine",
         "members",
@@ -149,7 +150,9 @@ fn model_unit_words_parse_as_identifiers_outside_their_declarations() {
         "open",
         "operation",
         "out",
+        "part",
         "persists",
+        "population",
         "port",
         "process",
         "states",
@@ -185,7 +188,7 @@ fn model_unit_words_are_identifiers_inside_model_unit_bodies() {
         "{HEADER}domain \"example/words\";\n\
          event Placed {{ occurs: Integer; timestamp: Timestamp; occurs timestamp; }}\n\
          machine Gate {{ states: Integer; states (Open, Shut); transition Open -> Shut on toggle; }}\n\
-         process Flow {{ step: Integer; step first: begin; }}\n\
+         process Flow {{ step: Integer; step go: begin; }}\n\
          object store {{ machine: Integer; }}\n\
          machine process {{ states (Open); }}\n\
          interface Pump {{ rate: Integer; }}\n\
