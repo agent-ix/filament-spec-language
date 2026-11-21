@@ -1114,6 +1114,32 @@ fn a_package_hyper_atom_refuses_an_admitted_mixed_component_receiver() {
     });
 }
 
+/// A model read in a separate function context has no admitted atom-slot
+/// owner and cannot silently observe the first trace component.
+#[trace("FR-940")]
+#[test]
+fn a_package_hyper_atom_refuses_unowned_function_body_reads() {
+    let declarations = "function read_ref using v(x: Reference<V::ConfigVersion>): Integer \
+        pure { deref(x).versionNumber }\n\
+        hyper Equal using t over behaviours (c: V::ConfigVersion) \
+        forall trace a of V forall trace b of V \
+        { always holds(read_ref(c) @ a <= 3 and c.versionNumber @ b <= 3) }";
+    let built = build(INFINITE, &["V"], declarations);
+    let admitted = admitted(&built);
+    let root = hyper_roots(&admitted).expect("hyper roots").remove(0);
+    supplied_hyper(&built, &admitted, |bare| {
+        let form = bare
+            .hyper_clause_form(root.occurrence())
+            .expect("the package form");
+        assert!(
+            matches!(bare.project_hyper_holds(root.occurrence(), form.atoms[0].0),
+            Err(crate::BareClauseRefusal::Selection(crate::bare_slot::BareSelectionFailure::Slot(
+                crate::protocol_selection::SlotSelectionFailure::MalformedNode(node))))
+                if &node == root.occurrence().node())
+        );
+    });
+}
+
 /// A constructor rejects inconsistent atoms rather than granting a checked
 /// clause with a missing predicate or a foreign slot count.
 #[trace("FR-940-AC-16")]

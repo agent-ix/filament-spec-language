@@ -33,7 +33,7 @@ fn slots(clause: &CheckedHyperClause, components: &[&ObjectEnvironment]) -> Vec<
 #[trace("TC-2958", "FR-940-AC-6", "FR-487-AC-3")]
 #[test]
 fn package_hyper_atom_has_source_values_and_complete_charge_logs() {
-    let (_ws, handoff, mut budget) = handoff_of("package-hyper-atom", ASYMMETRIC);
+    let (ws, handoff, mut budget) = handoff_of("package-hyper-atom", ASYMMETRIC);
     let bare = BarePackage::new(&handoff.admitted)
         .with_supply(
             BareSupply {
@@ -52,6 +52,8 @@ fn package_hyper_atom_has_source_values_and_complete_charge_logs() {
         CheckedHyperClause::of_package_form(form, bare.world().expect("world").types(), 1_000_000)
             .expect("the package clause");
     assert!(rebuilt.condition(atom(&rebuilt)).is_none());
+    std::fs::write(ws.path("program.fsl"), b"not a native unit").expect("overwrite source");
+    std::fs::remove_dir_all(ws.path(HANDOFF).join("sources")).expect("remove retained sources");
     for (left, right, expected) in [(0, 3, false), (3, 0, true), (0, 2, true), (3, 3, false)] {
         let environments = [objects(&handoff, left), objects(&handoff, right)];
         let components = [&environments[0], &environments[1]];
