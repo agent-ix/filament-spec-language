@@ -320,7 +320,7 @@ FR-093-AC-5/6's closed, complete scope with no activation.
 | `inactive` | A closed, complete scope (a lasso or a closed finite trace) of a guarded clause whose every delivery has a false guard (FSpec FR-093-AC-5/6) | none | `success`, absent, `closed-scope` | absent |
 | `holds` | `Completed(true)` | none | `success`, `true`, `closed-scope` | absent |
 | `violated` | `Completed(false)` | `position`, `counterexample` | `violation`, `false`, `closed-scope` | absent |
-| `undefined` | `Undefined` with a kernel or family cause | `position`, `counterexample` | `violation`, `false`, `closed-scope` | `{"kind": "undefined", "reason": R}`, `R` the undefined value's FR-100 reason |
+| `undefined` | `Undefined` with a kernel or family cause | `position`, `counterexample` (may be absent for a model trace's `Undefined`, FR-330) | `violation`, `false`, `closed-scope` | `{"kind": "undefined", "reason": R}`, `R` the undefined value's FR-100 reason |
 | `insufficient-data` | `InsufficientData` (FR-327) | `position`, `count`, `min_count` | `undefined`, absent, `unavailable` | `{"kind": "undefined", "reason": "insufficient-data"}` |
 | `pending` | `Pending` | none | `pending`, absent, `unsettled` | absent |
 | `pending-window` | FR-501's `Pending` of a finite-window activation | `position`, `deadline` | `pending`, absent, `unsettled` | absent |
@@ -376,7 +376,8 @@ FR-093-AC-5/6's closed, complete scope with no activation.
 - `constraint` is FSpec FR-364's fairness member form `{kind, operation,
   granularity}`.
 - `counterexample` is the report's `TemporalCounterexample` (FR-330
-  Outputs), written as FSpec FR-364's observed arm (`trace: "observed"`,
+  Outputs). For snapshot and record-sample traces it is written as
+  FSpec FR-364's observed arm (`trace: "observed"`,
   `initial_state: null`, `over_binding: null`), as FR-331 reads it. The
   writer writes it as the report holds it and derives none of its members.
   Its `trace_position` is FSpec's backend-provider `Count` form, an unsigned
@@ -395,14 +396,49 @@ FR-093-AC-5/6's closed, complete scope with no activation.
   activation; or `{"capture": C}`, `C` the name of a capture whose
   initializer is undefined (FR-337). FR-331 replays an atom locus only
   (FR-331-AC-9): a guard or capture counterexample settles `inconclusive`
-  there. A run whose `Undefined` verdict has no recorded first undefined
-  reading at its position, or whose violation has no counterexample, is
-  reported as an internal failure rather than written without one.
+  there. An observed run whose `Undefined` verdict has no recorded first
+  undefined reading at its position, or any `Completed(false)` violation
+  whose counterexample is absent, is reported as an internal failure rather
+  than written without one. The model `Undefined` exception below preserves
+  its existing cause and position without requiring an observed witness.
   `interval` for `violated` is the `{"lower", "upper"}` decimal strings
   (`upper` `"*"` when open) of the first operator, in operator order, that
   carries a step interval; a time-bounded operator's interval is in clock
   ticks, not trace positions, so it is skipped, and a clause with no step
   interval writes `null`. `interval` is `null` for `undefined`.
+- For a `TraceInput::Model` result, `counterexample` SHALL use FSpec
+  FR-364's model arm and the existing native `interval` member. The pinned
+  backend-provider schema's `TemporalCounterexample`, `ModelStep`, `State`
+  and `TransitionIdentity` definitions specify the model members: non-null
+  `initial_state` in `Count` form; non-null `over_binding` holding the actual
+  typed reference for this authored clause; and closed steps
+  `{transition, post_state}`, with `post_state` the closed `{key}` containing
+  unpadded base64url canonical state-key octets. An ordinary transition has
+  exactly `type: "transition"`, `operation`, `receiver` and `arguments` in
+  their existing typed forms; a terminal stutter has exactly
+  `{"type":"terminal-stutter"}`. FR-330 supplies these members from the
+  verified taken behaviour, including the actual key of an initially
+  terminal state; the writer SHALL NOT derive them from invented observations
+  or unvalidated request keys. `trace_position` retains the report's
+  `position`, never a model serializer's default. A carried undefined model
+  envelope names `state_key` in place of `document` or `sample` and retains
+  the actual truncated prefix, locus and cause. A model trace's `Undefined`
+  MAY omit `counterexample` while keeping its reason and position; a
+  `violated` row SHALL always carry one. This authored-clause binding rule
+  does not change the null binding of FSpec's generic deadlock arm, which is
+  not a temporal clause-run result.
+- The native reader SHALL discriminate counterexample arms by `trace` and
+  restore the equal typed payload. It SHALL refuse, naming the offending
+  member, a model arm with null or non-`Count` `initial_state`, null or
+  malformed typed-reference `over_binding`, a `document` or `sample` step,
+  a malformed transition or state key, or an undefined envelope carrying
+  `document` or `sample`; an observed arm with a model step, non-null
+  `initial_state` or `over_binding`, or an envelope carrying `state_key`;
+  and any mixed step or extra member. Existing observed-step validation
+  remains unchanged. Structural reading checks the closed typed shape;
+  request-bound initial-state membership, binding/type compatibility,
+  enabledness, successor selection, fairness and loop closure are checked
+  by FR-128 replay against the same admitted subject and package.
 - `variant` names the `TemporalRefusal` variant, and the members beside it
   carry its payload, so the document reads back to an equal refusal. The
   empty finite trace and the empty lasso loop have no variant here: FR-645
@@ -428,7 +464,8 @@ FR-093-AC-5/6's closed, complete scope with no activation.
   than `evaluate`; a `temporal` on the disposition of a selection that is
   not `Temporal`; a `temporal` together with a top-level `witness`, a
   `frame_witness`, an `internal_fault` or a `refusal`; an unknown `kind` or `variant`; a
-  member the row does not list, or one it lists absent or `null`; a
+  member the row does not list, or one it lists absent or `null` except
+  the expressly permitted model `Undefined` counterexample omission; a
   `category`, `truth`, `basis` or `outcome` other than the row's; and a
   `counterexample` that FSpec FR-364's replayer refuses before replay, whose
   `trace_position` is not a `Count` (a JSON integer from 0 to
@@ -551,7 +588,7 @@ condition is false; the reader refuses `null` or a default in its place.
 | Temporal | `guard` | FR-501 | FR-100 outcome `location` form | Restore guard location |
 | Temporal | `dimension`, `clock`, `retained`, `asserted` | FR-502 | Contradicted dimension, clock name, two closed progress values | Restore typed contradiction and check `outcome.fields` |
 | Temporal | `position` | FR-327 | Unsigned trace position | Restore position |
-| Temporal | `counterexample` | FSpec FR-364, FR-330, FR-331 | Observed-arm `TemporalCounterexample` the report holds | Restore and check against FR-364 |
+| Temporal | `counterexample` | FSpec FR-364, FR-330, FR-128, FR-331 | Observed- or model-arm `TemporalCounterexample` the report holds, selected by trace input | Restore the closed typed arm; replay authenticates subject semantics |
 | Temporal | `count`, `min_count` | FR-327 | Unsigned counts | Restore counts |
 | Temporal | `constraint` | FSpec FR-364 | Fairness member `{kind, operation, granularity}` | Restore constraint |
 | Temporal | `limit`, `value`, `setting` | FR-194 | Limit name, value as a decimal string, setting name | Restore limit |
@@ -656,6 +693,8 @@ disposition kinds the document carries are the ones FSpec FR-352 registers.
 | FR-267-AC-27 | Through `command::run`, the AC-25 run whose snapshot replaces the payload object of a field of `child` with one whose `kind` is the JSON number `1` refuses `invalid_runtime_input`/`wrong-value-kind` (FR-106 payload check 1) with a `document` locus: the snapshot's labels and path, `pointer` to that `kind` member, `object` `{config_history, child}` and `member` `kind`; it reads back equal. A replay request whose member names no member of its package refuses with a `document` locus whose `pointer` is that request member and whose `member` is its name, never an `artifact` locus; an absent request file keeps a `null` locus. | Test (TC-3081) |
 | FR-267-AC-28 | A closed, complete scope (a lasso or a closed finite trace) of a guarded clause with every guard false writes `temporal` as `{"kind":"inactive"}`, no disposition `truth` or `outcome`, and axes activation `inactive`, execution `completed` and truth `null`; the reader restores the inactive verdict. Adding disposition truth `true` refuses. | Test |
 | FR-267-AC-29 | A locus `{"kind": "input", "member": "selection.json", "operand": "handoff", "pointer": null}` in AC-25's refused document reads back equal, and so does `{"kind": "input", "member": null, "operand": "handoff", "pointer": null}`; the reader refuses, naming `disposition.refusal.locus`, an `input` locus without `member`, one without `pointer`, one whose `operand` is `null`, one carrying `identity` beside its three members, and one whose `pointer` is `selection` (not an RFC 6901 pointer); a locus whose `kind` is `file` is refused as outside the six rows. | Test (TC-3081) |
+| FR-267-AC-30 | FR-330-AC-19's model violations write canonical `native-run-result/2` documents and read back equal typed model-arm counterexamples, preserving initial index, typed binding, fairness, transition identities, state keys, loop boundary, interval and report `trace_position`; a later failing activation keeps its nonzero position. The initially terminal case round-trips its actual terminal key. A model `Undefined` document with no counterexample reads back with its reason and position; any carried undefined witness round-trips the model state-key envelope and actual truncated prefix. AC-13's snapshot and FR-330-AC-18's sample documents retain their observed-arm forms. | Test (TC-1160) |
+| FR-267-AC-31 | The strict reader refuses AC-30's model document with `initial_state` null, a decimal string, negative or above the `Count` maximum; with null or malformed typed-reference binding; with a document or sample step in either prefix or loop; with a mixed step, unknown member, missing transition member or malformed base64url state key; or with `trace_position` unequal to the report position. It refuses a carried undefined model envelope with `document` or `sample` instead of `state_key`, and AC-13's observed document with a model step, non-null initial state or non-null binding. Removing `counterexample` from a `violated` row still refuses. A well-shaped foreign key or binding is subjected to FR-128's semantic replay checks, independently of this structural read. | Test (TC-1160) |
 
 ## Dependencies
 
