@@ -296,8 +296,17 @@ fn a_refinement_count_reads_the_stored_clock_reference() {
                 .insert(key(CLOCKS, "Call/r"), Value::Reference(reference.clone()));
         }
     };
+    let state_model = StateModel::new(
+        package.graph().model_inputs(),
+        package.graph().scope().types(),
+        &checked.packages,
+        ModelNormalizationLimits::default(),
+    )
+    .expect("source model");
     for (reference, receiver, expected_busy) in [(c1, "c2", false), (c2, "c1", true)] {
         set_reference(&mut state, reference);
+        state_model.protocol_observation(&state,DocumentRef{authority:"test".to_owned(),identity:"run-generated-clock-state".to_owned()})
+            .expect("the actual run-generated Clock state observes without requiring Clock object holders");
         let Value::Integer(count) =
             evaluate_row(&package, &checked.packages, USED, receiver, &state)
         else {
