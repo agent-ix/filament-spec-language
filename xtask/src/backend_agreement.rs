@@ -158,10 +158,10 @@ fn definite(candidate: &mut CandidateRecord) -> Option<Definite> {
         return None;
     }
     let record = candidate.record.as_ref()?;
-    let terminal = record.get("record").unwrap_or(record);
+    let terminal = record.get("record")?;
     match (
         terminal.get("result")?.as_str()?,
-        terminal.get("category")?.as_str()?,
+        record.get("category")?.as_str()?,
     ) {
         ("proved", "success") => Some(Definite::Proved),
         ("refuted", "violation") => match candidate.replay {
@@ -243,10 +243,8 @@ pub fn compare(candidates: &mut [CandidateRecord]) -> Settlement {
         (candidate.disposition == Negotiated::Supported && candidate.record.is_none())
             || matches!(candidate.replay, Some(Recheck::Fault { .. }))
             || candidate.record.as_ref().is_some_and(|record| {
-                record
-                    .pointer("/record/result")
-                    .or_else(|| record.get("result"))
-                    == Some(&json!("failed"))
+                record.pointer("/record/result") == Some(&json!("failed"))
+                    || record.get("category").and_then(Value::as_str) == Some("internal-failure")
             })
     });
     if failed {

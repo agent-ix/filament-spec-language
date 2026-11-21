@@ -192,8 +192,10 @@ mod backend_agreement {
                 fsl_foundation::node_wire::node_key_to_json(&target.parameters()[0].wire())
                     .unwrap();
             let record = json!({
-                "record":{"request_index":item.claim.item.request_index.get(), "backend":backend.as_str(),
-                    "result":result,"category":if result == "proved" {"success"} else if result == "refuted" {"violation"} else {"inconclusive"},
+                "request_index":item.claim.item.request_index.get(),
+                "category":if result == "proved" {"success"} else if result == "refuted" {"violation"} else {"inconclusive"},
+                "record":{"backend":backend.as_str(), "settled_by":"result",
+                    "result":result,
                     "basis":{"type":"exhaustive"},"cause":if result == "inconclusive" {json!({"kind":"replay-parity"})} else {Value::Null}},
                 "counterexample":{"type":"assignments","values":[{"parameter":parameter,"value":{"type":"integer","value":"4"}}]}
             });
@@ -300,7 +302,7 @@ mod backend_agreement {
             backend: result.to_owned(),
             disposition: Negotiated::Supported,
             record: Some(
-                json!({"record":{"result":result,"category":if result == "proved" {"success"} else {"violation"}},
+                json!({"category":if result == "proved" {"success"} else {"violation"},"record":{"result":result},
                 "counterexample":{"values":[{"parameter":"x","value":{"value":"12"}}]}}),
             ),
             declared_domain: None,
@@ -338,7 +340,7 @@ mod backend_agreement {
         assert_eq!(gate::compare(&mut records), Settlement::Conflict);
         for category in ["inconclusive", "incomplete", "unsupported", "tested"] {
             let mut other = record("inconclusive");
-            other.record.as_mut().unwrap()["record"]["category"] = json!(category);
+            other.record.as_mut().unwrap()["category"] = json!(category);
             let mut records = [record("proved"), other];
             assert_eq!(gate::compare(&mut records), Settlement::NotCompared);
             assert!(records[1].not_compared.as_ref().unwrap().contains(category));
@@ -457,6 +459,25 @@ mod backend_agreement {
         assert_eq!(outcome.code, 1);
         assert_eq!(document(&outcome)["counts"]["tool-failure"], 1);
         assert_eq!(document(&outcome)["counts"]["agree"], 2);
+    }
+
+    #[test]
+    #[trace("TC-1193", "FR-448-AC-6", "FR-448-AC-8")]
+    fn compiled_vectors_without_verification_items_remain_in_the_report() {
+        let provider = FixtureProvider::new(Plan::Reference, 2);
+        let mut corpus = Corpus::new();
+        corpus.add("D", "language \"ix:native\" edition \"1-draft\";\nprofile v = \"filament.value.complete/v1\";\nrecord Data { x: Integer; }\n");
+        let outcome = corpus.run(&provider, &[]).unwrap();
+        let report = document(&outcome);
+        assert_eq!(outcome.code, 0, "{}", outcome.stdout);
+        assert_eq!(report["entries"].as_array().unwrap().len(), 3);
+        assert_eq!(report["entries"][0]["vector"], "D");
+        assert_eq!(report["entries"][0]["settlement"], "not-compared");
+        assert_eq!(
+            report["entries"][0]["failure"]["reason"],
+            "no-resolved-verification-item"
+        );
+        assert_eq!(report["counts"]["agree"], 2);
     }
 
     #[test]

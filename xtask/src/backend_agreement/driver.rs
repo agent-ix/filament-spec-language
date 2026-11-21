@@ -57,6 +57,102 @@ impl Driver {
             outcome_schema,
         })
     }
+
+    #[ix_trace_rs::string_edge]
+    fn read_response(
+        &self,
+        item: &Item<'_>,
+        backend: &BackendId,
+        bytes: &[u8],
+    ) -> Result<CandidateRecord> {
+        let document: Value = serde_json::from_slice(bytes).map_err(|error| {
+            refusal(format!(
+                "{} emitted no analyze outcome: {error}",
+                backend.as_str()
+            ))
+        })?;
+        if let Err(mut errors) = self.outcome_schema.validate(&document) {
+            let reason = errors
+                .next()
+                .map(|error| error.to_string())
+                .unwrap_or_default();
+            return Err(refusal(format!(
+                "driver emitted an invalid outcome document: {reason}"
+            )));
+        }
+        if document.get("format").and_then(Value::as_str) != Some("filament-outcome/1")
+            || document.get("operation").and_then(Value::as_str) != Some("analyze")
+        {
+            return Err(refusal("driver emitted an unrelated outcome document"));
+        }
+        let [record] = document
+            .get("items")
+            .and_then(Value::as_array)
+            .map(Vec::as_slice)
+            .unwrap_or_default()
+        else {
+            return Err(refusal("driver did not return the one requested item"));
+        };
+        let expected = item
+            .claim
+            .item
+            .request_item_wire(&item.claim.subject)
+            .map_err(|error| {
+                refusal(format!("cannot encode requested item identity: {error:?}"))
+            })?;
+        let echo = record
+            .get("request")
+            .ok_or_else(|| refusal("driver omitted the request echo"))?;
+        if record.get("claim_name").and_then(Value::as_str) != Some(item.claim.claim_name.as_str())
+            || record.get("request_index").and_then(Value::as_u64) != Some(0)
+            || echo.get("request_index").and_then(Value::as_u64) != Some(0)
+            || echo.get("claim") != expected.get("claim")
+            || echo.get("kind") != expected.get("kind")
+            || echo.get("extent") != expected.get("extent")
+            || echo.get("backend").and_then(Value::as_str) != Some(backend.as_str())
+        {
+            return Err(refusal("driver response does not match the requested claim, capability, extent, backend or single-item index"));
+        }
+        let terminal = record
+            .get("record")
+            .ok_or_else(|| refusal("driver omitted the terminal record"))?;
+        let disposition =
+            if terminal.get("settled_by").and_then(Value::as_str) == Some("disposition") {
+                match (
+                    terminal.get("result").and_then(Value::as_str),
+                    record.get("category").and_then(Value::as_str),
+                ) {
+                    (_, Some("refusal")) => Negotiated::InvalidRequest,
+                    (Some("unsupported"), Some("unsupported")) => {
+                        if terminal.pointer("/diagnostic/code").and_then(Value::as_str)
+                            == Some("requires_bound")
+                        {
+                            Negotiated::RequiresBound
+                        } else {
+                            Negotiated::Unsupported
+                        }
+                    }
+                    _ => {
+                        return Err(refusal(
+                            "driver returned an unrecognized negotiated disposition",
+                        ))
+                    }
+                }
+            } else {
+                if terminal.get("backend").and_then(Value::as_str) != Some(backend.as_str()) {
+                    return Err(refusal("driver's terminal record names another backend"));
+                }
+                Negotiated::Supported
+            };
+        Ok(CandidateRecord {
+            backend: backend.as_str().to_owned(),
+            disposition,
+            record: Some(record.clone()),
+            declared_domain: declared_domain(item)?,
+            replay: None,
+            not_compared: None,
+        })
+    }
 }
 
 impl Provider for Driver {
@@ -106,68 +202,7 @@ impl Provider for Driver {
         let output = command
             .output()
             .map_err(|error| refusal(error.to_string()))?;
-        let document: Value = serde_json::from_slice(&output.stdout).map_err(|error| {
-            refusal(format!(
-                "{} emitted no analyze outcome ({:?}): {error}",
-                backend.as_str(),
-                output.status.code()
-            ))
-        })?;
-        if let Err(mut errors) = self.outcome_schema.validate(&document) {
-            let reason = errors
-                .next()
-                .map(|error| error.to_string())
-                .unwrap_or_default();
-            return Err(refusal(format!(
-                "driver emitted an invalid outcome document: {reason}"
-            )));
-        }
-        if document.get("format").and_then(Value::as_str) != Some("filament-outcome/1")
-            || document.get("operation").and_then(Value::as_str) != Some("analyze")
-        {
-            return Err(refusal("driver emitted an unrelated outcome document"));
-        }
-        let entries = document
-            .get("items")
-            .and_then(Value::as_array)
-            .filter(|items| items.len() == 1)
-            .ok_or_else(|| refusal("driver did not return the one requested item"))?;
-        let mut record = entries
-            .first()
-            .cloned()
-            .ok_or_else(|| refusal("driver omitted the requested item"))?;
-        let terminal = record.get("record").unwrap_or(&record);
-        let disposition =
-            if terminal.get("settled_by").and_then(Value::as_str) == Some("disposition") {
-                match terminal.get("result").and_then(Value::as_str) {
-                    Some("requires-bound") => Negotiated::RequiresBound,
-                    Some("unsupported") => Negotiated::Unsupported,
-                    Some("invalid-request" | "declined") => Negotiated::InvalidRequest,
-                    _ => {
-                        return Err(refusal(
-                            "driver returned an unrecognized negotiated disposition",
-                        ))
-                    }
-                }
-            } else {
-                if terminal.get("backend").and_then(Value::as_str) != Some(backend.as_str()) {
-                    return Err(refusal("driver's terminal record names another backend"));
-                }
-                Negotiated::Supported
-            };
-        record["request_index"] = json!(item.claim.item.request_index.get());
-        if let Some(terminal) = record.get_mut("record") {
-            terminal["request_index"] = json!(item.claim.item.request_index.get());
-        }
-        let declared_domain = declared_domain(item)?;
-        Ok(CandidateRecord {
-            backend: backend.as_str().to_owned(),
-            disposition,
-            record: Some(record),
-            declared_domain,
-            replay: None,
-            not_compared: None,
-        })
+        self.read_response(item, backend, &output.stdout)
     }
 
     fn replay(&self, item: &Item<'_>, record: &CandidateRecord) -> Recheck {
@@ -279,6 +314,76 @@ struct CompiledVector {
     checked: CheckedUnit,
     claims: Vec<fsl_analyze::analyze::document::ResolvedClaim>,
     request: Value,
+    unresolved: Vec<Entry>,
+}
+
+fn retain_resolution(
+    vector: &Vector,
+    resolved: Vec<ResolvedItem>,
+) -> (
+    Vec<fsl_analyze::analyze::document::ResolvedClaim>,
+    Vec<Entry>,
+) {
+    let mut claims = Vec::new();
+    let mut entries = Vec::new();
+    for item in resolved {
+        let (index, detail, tool_failure) = match item {
+            ResolvedItem::Claim(claim) => {
+                claims.push(*claim);
+                continue;
+            }
+            ResolvedItem::Settled { claim_name, record } => {
+                let written = fsl_replay::OutcomeItem::from_terminal(&record);
+                let failed = written.category()
+                    == filament_semantic_value::catalog::Category::InternalFailure;
+                (
+                    record.request_index().get(),
+                    json!({"reason":"settled-before-negotiation","claim_name":claim_name,"record":written}),
+                    failed,
+                )
+            }
+            ResolvedItem::Simulation(item) => (
+                item.index.get(),
+                json!({"reason":"simulation-is-not-a-verification-item"}),
+                false,
+            ),
+            ResolvedItem::Composition(item) => {
+                let written = item
+                    .settled
+                    .as_ref()
+                    .map(|record| fsl_replay::OutcomeItem::from_terminal(record));
+                let failed = written.as_ref().is_some_and(|written| {
+                    written.category()
+                        == filament_semantic_value::catalog::Category::InternalFailure
+                });
+                (
+                    item.claim.item.request_index.get(),
+                    json!({"reason":"composition-replay-not-supported","claim_name":item.claim.claim_name,"record":written}),
+                    failed,
+                )
+            }
+        };
+        entries.push(Entry {
+            vector: vector.id.clone(),
+            request_index: Some(index),
+            capability: vector.capability_id.clone(),
+            settlement: if tool_failure {
+                Settlement::ToolFailure
+            } else {
+                Settlement::NotCompared
+            },
+            candidates: Vec::new(),
+            failure: Some(detail),
+        });
+    }
+    if claims.is_empty() && entries.is_empty() {
+        entries.push(failed_vector(
+            vector,
+            Settlement::NotCompared,
+            json!({"reason":"no-resolved-verification-item"}),
+        ));
+    }
+    (claims, entries)
 }
 
 fn failed_vector(vector: &Vector, settlement: Settlement, failure: Value) -> Entry {
@@ -402,13 +507,7 @@ fn compile(
         &binding,
         &AnalyzeLimits::unbounded(),
     );
-    let claims = resolved
-        .into_iter()
-        .filter_map(|item| match item {
-            ResolvedItem::Claim(claim) => Some(*claim),
-            _ => None,
-        })
-        .collect();
+    let (claims, unresolved) = retain_resolution(vector, resolved);
     let models = inputs.iter().filter(|(input,_,_)| input.kind == InputKind::Model).map(|(input,path,_)| json!({"format":"semantic-ir/2.0.0","source":{"file":path,"authority":"agent-ix","identity":input.path,"document":input.path,"formal_revision":1}})).collect::<Vec<_>>();
     let request = json!({"format":"native-analyze/1","request":{
         "program":{"source":{"file":source.1,"authority":"agent-ix","identity":source.0.path,"document":source.0.path,"formal_revision":1}},"models":models,
@@ -419,6 +518,7 @@ fn compile(
         checked,
         claims,
         request,
+        unresolved,
     })
 }
 
@@ -484,6 +584,7 @@ pub(super) fn execute(operands: &[OsString], provider: &dyn Provider) -> Result<
     }
     provider.preflight(&backends.into_iter().collect::<Vec<_>>())?;
     for vector in compiled {
+        entries.extend(vector.unresolved);
         for claim in &vector.claims {
             let item = Item {
                 checked: &vector.checked,
@@ -501,7 +602,7 @@ pub(super) fn execute(operands: &[OsString], provider: &dyn Provider) -> Result<
                     capability: vector.capability.clone(),
                     settlement: Settlement::NotCompared,
                     candidates: Vec::new(),
-                    failure: Some(json!({"reason":"fewer-than-two-candidates"})),
+                        failure: Some(json!({"reason":"fewer-than-two-candidates","candidates":claim.item.candidates.iter().map(|candidate| candidate.id().as_str()).collect::<Vec<_>>()})),
                 });
                 continue;
             }
@@ -556,4 +657,164 @@ pub(super) fn execute(operands: &[OsString], provider: &dyn Provider) -> Result<
         }
     }
     super::report(entries, prepared.args.text)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ix_trace_rs::trace;
+
+    const REFUTED: &[u8] =
+        include_bytes!("../../tests/fixtures/backend-agreement-native-refuted.json");
+    const UNSUPPORTED: &[u8] =
+        include_bytes!("../../tests/fixtures/backend-agreement-native-unsupported.json");
+
+    fn with_item(test: impl FnOnce(&Driver, &Item<'_>)) {
+        let directory = tempfile::tempdir().unwrap();
+        fs::write(directory.path().join("source.native"),
+            "language \"ix:native\" edition \"1-draft\";\nprofile v = \"filament.value.complete/v1\";\nfunction Claim using v(x: Int[0,10]): Boolean pure { x < 0 }\n").unwrap();
+        let vector: Vector = serde_json::from_value(json!({
+            "id":"native", "capability_id":"V1-TOOL-004", "class":"positive",
+            "subject":{"consumer_type":"language","operation":"compile"},
+            "applicability":{"consumer_types":["language"]},
+            "input":{"files":[{"kind":"source","path":"source.native"}]},
+            "expected":{"disposition":"value","value":{}}
+        }))
+        .unwrap();
+        let driver = Driver::new(Path::new("/unused/fsl")).unwrap();
+        let limits = fsl_replay::CallerLimits::default();
+        let root = directory.path().canonicalize().unwrap();
+        let compiled = compile(&vector, &root, &limits, driver.registry()).unwrap();
+        let claim = compiled.claims.first().expect("the Boolean claim resolves");
+        let item = Item {
+            checked: &compiled.checked,
+            claim,
+            request: &compiled.request,
+            limits: &limits,
+            overrides: &[],
+        };
+        test(&driver, &item);
+    }
+
+    #[test]
+    #[trace("TC-1193", "FR-448-AC-1", "FR-448-AC-2", "FR-448-AC-4")]
+    fn native_driver_items_use_the_authoritative_category_and_replay() {
+        with_item(|driver, item| {
+            let document: Value = serde_json::from_slice(REFUTED).unwrap();
+            let backend = BackendId::new("value-checker");
+            let mut refutation = driver.read_response(item, &backend, REFUTED).unwrap();
+            assert_eq!(refutation.record.as_ref().unwrap(), &document["items"][0]);
+            assert!(refutation
+                .record
+                .as_ref()
+                .unwrap()
+                .pointer("/record/category")
+                .is_none());
+            assert!(refutation
+                .record
+                .as_ref()
+                .unwrap()
+                .pointer("/record/request_index")
+                .is_none());
+            refutation.replay = Some(driver.replay(item, &refutation));
+            assert_eq!(
+                refutation.replay,
+                Some(Recheck::ReproducedWithEvaluatedWitness)
+            );
+            let mut agreeing = [refutation.clone(), refutation.clone()];
+            assert_eq!(super::super::compare(&mut agreeing), Settlement::Agree);
+
+            let mut wrong_proof = refutation.clone();
+            let record = wrong_proof.record.as_mut().unwrap();
+            record["category"] = json!("success");
+            record["record"]["result"] = json!("proved");
+            record["record"]["basis"] = json!({"type":"exhaustive"});
+            record.as_object_mut().unwrap().remove("counterexample");
+            wrong_proof.replay = None;
+            let mut conflicting = [refutation, wrong_proof];
+            assert_eq!(
+                super::super::compare(&mut conflicting),
+                Settlement::Conflict
+            );
+
+            let unsupported = driver
+                .read_response(item, &BackendId::new("en-1"), UNSUPPORTED)
+                .unwrap();
+            assert_eq!(unsupported.disposition, Negotiated::Unsupported);
+            let mut uncomparable = [unsupported, conflicting[1].clone()];
+            assert_eq!(
+                super::super::compare(&mut uncomparable),
+                Settlement::NotCompared
+            );
+        });
+    }
+
+    #[test]
+    #[trace("TC-1193", "FR-448-AC-2", "FR-448-AC-5")]
+    fn native_driver_rejects_foreign_claims_capabilities_extents_and_indices() {
+        with_item(|driver, item| {
+            let original: Value = serde_json::from_slice(REFUTED).unwrap();
+            for (pointer, replacement) in [
+                ("/items/0/claim_name", json!("OtherClaim")),
+                ("/items/0/request/claim/node/package", json!("foreign")),
+                ("/items/0/request/kind", json!("operation-contract")),
+                (
+                    "/items/0/request/extent",
+                    json!({"classification":"unbounded","finite_bound_available":true}),
+                ),
+                ("/items/0/request_index", json!(1)),
+                ("/items/0/request/request_index", json!(1)),
+                ("/items/0/request/backend", json!("other-backend")),
+                ("/items/0/record/backend", json!("other-backend")),
+            ] {
+                let mut document = original.clone();
+                *document.pointer_mut(pointer).unwrap() = replacement;
+                assert!(
+                    driver
+                        .read_response(
+                            item,
+                            &BackendId::new("value-checker"),
+                            &serde_json::to_vec(&document).unwrap()
+                        )
+                        .is_err(),
+                    "accepted a changed identity at {pointer}"
+                );
+            }
+        });
+    }
+
+    #[test]
+    #[trace("TC-1193", "FR-448-AC-8")]
+    fn already_settled_resolution_records_are_retained() {
+        let vector: Vector = serde_json::from_value(json!({
+            "id":"settled", "capability_id":"V1-TOOL-004", "class":"positive",
+            "subject":{"consumer_type":"language","operation":"compile"},
+            "applicability":{"consumer_types":["language"]},"input":{"files":[]},
+            "expected":{"disposition":"value","value":{}}
+        }))
+        .unwrap();
+        let record = fsl_replay::TerminalRecord::disposition_invalid_request(
+            fsl_foundation::RequestIndex::new(7),
+            filament_semantic_value::catalog::CatalogCode::new(
+                "invalid_capability",
+                "unknown-claim",
+            ),
+            serde_json::Map::new(),
+        );
+        let (claims, entries) = retain_resolution(
+            &vector,
+            vec![ResolvedItem::Settled {
+                claim_name: Some("Absent".into()),
+                record: Box::new(record),
+            }],
+        );
+        assert!(claims.is_empty());
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].request_index, Some(7));
+        assert_eq!(entries[0].settlement, Settlement::NotCompared);
+        assert_eq!(
+            entries[0].failure.as_ref().unwrap()["record"]["diagnostic"]["code"],
+            "invalid_capability"
+        );
+    }
 }
