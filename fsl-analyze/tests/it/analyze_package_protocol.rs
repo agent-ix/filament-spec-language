@@ -79,6 +79,15 @@ fn parallel_request(ws: &Workspace, run: &str) -> std::path::PathBuf {
                 Some("ix://test/fill/Level" | "ix://test/fill/Cell" | "ix://test/fill/Idle")
             )
         });
+    model["constructs"]
+        .as_array_mut()
+        .expect("model constructs")
+        .retain(|construct| {
+            matches!(
+                construct["kind"]["name"].as_str(),
+                Some("value_type" | "object_type" | "population")
+            )
+        });
     let model = serde_json::to_vec(&model).expect("the parallel model serializes");
     crate::analyze_cli_support::request_over(
         ws,
