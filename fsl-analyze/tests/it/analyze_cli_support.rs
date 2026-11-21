@@ -28,7 +28,6 @@ impl Run {
                 self.exit
             )
         });
-        assert_no_nested_node_ids(&document);
         document
     }
 

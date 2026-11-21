@@ -23,8 +23,8 @@ use ix_trace_rs::trace;
 use serde_json::{json, Value};
 
 use crate::analyze_cli_support::{
-    analyze, analyze_with_providers, counter_snapshot, label, package_selection, request_members,
-    Workspace,
+    analyze, analyze_with_providers, assert_no_nested_node_ids, counter_snapshot, label,
+    package_selection, request_members, Workspace,
 };
 use crate::counter::{clause_text, document};
 
@@ -417,6 +417,8 @@ fn an_unassumed_proof_does_not_discharge_an_assumed_guarantee() {
     // items over the request's own package carry no such member.
     assert!(items[2]["package"].is_string(), "{document}");
     assert!(items[3]["package"].is_string(), "{document}");
+    assert_no_nested_node_ids(&items[2]);
+    assert_no_nested_node_ids(&items[3]);
     assert!(items[0].get("package").is_none(), "{document}");
     assert_eq!(label(&items[3]), "proved", "{document}");
     assert_eq!(items[4]["claim_name"], "Capped", "{document}");

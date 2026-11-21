@@ -21,9 +21,10 @@ pub enum HeldIdentityError {
     /// the graph the item is written against.
     #[error("a node id of the result has no place in its package graph: {0}")]
     NotInGraph(String),
-    /// The item holds node ids and the run read no package graph for it.
-    #[error("the item holds node ids and its package emitted no graph")]
-    NoGraph,
+    /// The item holds node ids and its package has no graph to write them
+    /// against.
+    #[error("the item holds node ids and its package has no graph: {0:?}")]
+    NoGraph(crate::analyze::GraphUnavailable),
 }
 
 /// Whether `value` is a FR-412 `{node_id, model, ordinal}` identity.
@@ -69,9 +70,10 @@ pub(super) fn hold(
     graph: &WireGraph,
     model: Option<&str>,
 ) -> Result<Value, HeldIdentityError> {
-    let mut held = graph
-        .document_value(value)
-        .map_err(HeldIdentityError::NotInGraph)?;
+    let mut held = match graph.document_value(value) {
+        Ok(held) => held,
+        Err(_) => hold_each(value, graph)?,
+    };
     if let Some(model) = model {
         let mut pending = vec![&mut held];
         while let Some(current) = pending.pop() {
@@ -83,6 +85,35 @@ pub(super) fn hold(
                 Value::Array(items) => pending.extend(items.iter_mut()),
                 _ => {}
             }
+        }
+    }
+    Ok(held)
+}
+
+/// `value` with each nested node id the graph can name written in the held
+/// form. An id with an operand that is no node of `graph` stays structural:
+/// the pinned `NodeId` path takes only a string, a `{"node": i}` index and an
+/// operand slot, so it has no spelling for a node of another package's graph.
+/// A composition's own claim over a component's nodes is such an id; FSpec
+/// FR-322 does not yet say how a result names it.
+fn hold_each(value: &Value, graph: &WireGraph) -> Result<Value, HeldIdentityError> {
+    let mut held = value.clone();
+    let mut pending = vec![&mut held];
+    while let Some(current) = pending.pop() {
+        let nested = current
+            .get("path")
+            .and_then(Value::as_array)
+            .is_some_and(|path| path.iter().any(|segment| segment.get("package").is_some()));
+        if nested {
+            if let Ok(id) = graph.document_value(current) {
+                *current = id;
+            }
+            continue;
+        }
+        match current {
+            Value::Object(object) => pending.extend(object.values_mut()),
+            Value::Array(items) => pending.extend(items.iter_mut()),
+            _ => {}
         }
     }
     Ok(held)

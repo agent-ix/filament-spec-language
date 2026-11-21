@@ -1096,7 +1096,7 @@ fn a_refuted_item_names_its_claim_in_the_document_held_form() {
         "the refuted item's claim locus",
     );
     assert_valid(
-        &provider_definition("CounterexampleEntry"),
+        &provider_definition("ProbabilisticCounterexample"),
         &item["counterexample"],
         "the refuted item's counterexample",
     );

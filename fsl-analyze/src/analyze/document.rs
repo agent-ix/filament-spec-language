@@ -4374,10 +4374,11 @@ fn hold_item(
         return Ok(());
     }
     let graph = match dependency {
-        Some(_) => graphs.components.get(&index),
-        None => graphs.own.as_ref(),
+        Some(_) => graphs.components.get(&index).unwrap_or(&graphs.own),
+        None => &graphs.own,
     }
-    .ok_or(held_identity::HeldIdentityError::NoGraph)?;
+    .as_ref()
+    .map_err(|cause| held_identity::HeldIdentityError::NoGraph(cause.clone()))?;
     let model = echo
         .and_then(|echo| echo.identity.as_ref())
         .and_then(|identity| identity["model"].as_str())
