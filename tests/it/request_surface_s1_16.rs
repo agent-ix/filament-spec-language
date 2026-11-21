@@ -3094,6 +3094,31 @@ fn package_clause_selection_outcomes(
             assert_eq!(actual, expected, "{clause}");
             fsl_replay::spine::read_native_run_result(&serde_json::to_vec(&actual.1).unwrap())
                 .expect("the result reads through the native result reader");
+            if clause["selection"]["temporal"]["trace"]
+                .get("model")
+                .is_some()
+            {
+                for limit in [
+                    json!("0"),
+                    json!("01"),
+                    json!("9007199254740992"),
+                    json!(1),
+                    Value::Null,
+                ] {
+                    let mut malformed = actual.1.clone();
+                    malformed["limits"]["expansion.max_candidates"] = limit;
+                    assert!(fsl_replay::spine::read_native_run_result(
+                        &serde_json::to_vec(&malformed).unwrap()
+                    )
+                    .is_err());
+                }
+                let mut malformed = actual.1.clone();
+                malformed["limits"]["unknown"] = json!("1");
+                assert!(fsl_replay::spine::read_native_run_result(
+                    &serde_json::to_vec(&malformed).unwrap()
+                )
+                .is_err());
+            }
             if expected.0 == 10
                 && clause["selection"]["temporal"]["trace"]
                     .get("model")
