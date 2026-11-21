@@ -17,7 +17,9 @@ scope: agent-ix/filament-spec-language; fsl-analyze/src/analyze/clause_item.rs, 
   fsl-package/src/bare_term.rs, fsl-package/src/checked_v2.rs, fsl-package/src/emit/tests/protocol_view.rs,
   fsl-package/src/model_input_form.rs, fsl-package/src/protocol_view.rs, fsl-replay/src/certificate/closure.rs,
   fsl-replay/src/lib.rs, fsl-replay/src/model_check/replay.rs, fsl-replay/src/model_check/settle.rs,
-  fsl-replay/src/spine/protocol_structure.rs
+  fsl-replay/src/spine/protocol_structure.rs, fsl-eval/src/value/expression/mod.rs,
+  fsl-eval/src/value/mod.rs, fsl-package/src/bare/observation.rs, fsl-semantics/src/model/observation.rs,
+  fsl-semantics/src/model/observation/population_document.rs, fsl-semantics/src/model/state.rs
 review_set: subset
 relationships:
 - target: ix://agent-ix/filament-spec-language/FR-940
@@ -32,7 +34,7 @@ Reviewed PR #3276 at frozen head 373f3ecdfd6630918de1fe947f81f91236ec7123 agains
 
 ## Verdict
 
-CONDITIONAL — one low traceability defect; scoped reverse-gap/stub checks otherwise clear.
+PASS — disposition round 1: all original findings for this method are fixed, no new demonstrated regression, and authoritative exact-head focused checks pass. Mergeable within the approved bounded QSL-2405/QSL-2406 scope; QSL-2271 remains open for deferred protocol work.
 
 ## Findings
 
@@ -160,3 +162,40 @@ bindings:
 
 
 Oracle inspection: ProtocolRun::decide (check.rs:1207) forwards to Run::decide (check.rs:2134), which invokes explore. Its nonboundary queue expansion (check.rs:2380) calls system.successors_bounded independent of the constant true monitor. No constant-claim success shortcut was found; a successful source search must expand the A/B sequence. The measured source exploration has 4 states and 3 transitions; the failing package result is reported above.
+
+
+## Dispositions
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | Round 1: The execution-view test now carries FR-519-AC-5. A fresh computed matrix at the disposition candidate binds its actual Rust test symbol at line1174 to that criterion; the test assertions are unchanged. |
+
+## Disposition pass 1 evidence
+
+Candidate d633b321c49449d7776d2b356160e4d9fde44afe. FINAL: all six original findings have latest outcome fixed; no open or new finding remains. Exact-head focused verification is green, and this bounded PR is mergeable. No Cargo or branch edits by reviewer. No new demonstrated regression found in the inspected fixes. Original Findings and Findings data are preserved byte-for-byte.
+
+Rechecked code-review/Rust conventions and scoped gap traceability. The observation adapter reuses StateModel/observe_state and the canonical map-reference walker; it validates reference/relationship closure, uses the package evaluator authority and observed state, and does not introduce a source-checked graph. Source scalar evaluation and binder-meter paths are unchanged. Draco reported authoritative exact-head verification at d633b321c49449d7776d2b356160e4d9fde44afe: all three serial commands exited 0, each with zero failed and zero ignored tests. `cargo test -p fsl-analyze --test it -- analyze_package_protocol`: 10 passed; `cargo test -p fsl-semantics --lib -- model::observation::population_document::tests::map_references_follow_canonical_key_order`: 1 passed; `cargo test -p fsl-package --lib -- the_execution_view_reads_attempt_facts_from_package_nodes`: 1 passed. Logs are on Draco at `/private/tmp/qsl-3276-d633-1.log`, `/private/tmp/qsl-3276-d633-2.log`, `/private/tmp/qsl-3276-d633-3.log`; the reviewer received the lead's confirmed results and did not claim local access to those remote logs. This is the final focused verification for the candidate, not a whole-repository gate. No Cargo, full gates, workspace Clippy, whole-crate tests or unrelated baseline cleanup were run by this reviewer, per the dispatch constraints. No further test round is required by this review.
+
+No spec/plan requirement changed in the fix round, so spec-review/sub-analyses do not apply. QSL-2271 exclusions remain in effect. Plan completion: not assessed.
+
+## Disposition data
+
+```yaml
+round: 1
+head: d633b321c49449d7776d2b356160e4d9fde44afe
+dispositions:
+- fnd: FND-001
+  outcome: fixed
+  after_excerpt: '#[trace("FR-519", "FR-519-AC-5", "TC-1314")]'
+  path: fsl-package/src/emit/tests/protocol_view.rs
+  lines: '1172'
+  reason: The execution-view test now carries FR-519-AC-5. A fresh computed matrix
+    at the disposition candidate binds its actual Rust test symbol at line1174 to
+    that criterion; the test assertions are unchanged.
+```
+
+
+Mechanical correction within round 1: Draco first attempted the three focused commands at 4109a4e3b1592c393f9e049c98399fd4309305e8; all stopped before tests on E0308 (RelationshipExtents versus CheckedExtent slice). The replacement d633b321c49449d7776d2b356160e4d9fde44afe removes that invalid call. observe_state still admits/validates extents before any closure building (initial.rs:183-196); the adapter resolves each typed relationship endpoint in the current holder catalog and adds both population directions before transitive closure. No validation, cast or source-graph reconstruction was substituted. The replacement passed the authoritative exact-head focused checks recorded above.
+
+
+Fix-round source/test inventory examined: fsl-analyze/src/analyze/clause_item.rs, fsl-analyze/src/analyze/document/package_run.rs, fsl-analyze/tests/it/analyze_package_protocol.rs, fsl-command/src/command/analyze.rs, fsl-eval/src/simulation/model/input.rs, fsl-eval/src/simulation/protocol.rs, fsl-eval/src/simulation/protocol/package_program.rs, fsl-eval/src/simulation/protocol/program.rs, fsl-eval/src/simulation/protocol/steps.rs, fsl-eval/src/value/expression/mod.rs, fsl-eval/src/value/mod.rs, fsl-package/src/bare/observation.rs, fsl-package/src/emit/tests/protocol_view.rs, fsl-semantics/src/model/observation.rs, fsl-semantics/src/model/observation/population_document.rs, fsl-semantics/src/model/state.rs. Observation/state additions are governed by FR-940 package/source evaluation equality and FR-106 recursive reference admission; no new standalone requirement or plan is claimed.
