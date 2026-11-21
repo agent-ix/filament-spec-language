@@ -1689,9 +1689,7 @@ fn prepare(
         // The derived items read one atom, true at every position, so they
         // share an automaton.
         let derived = match (item, counting) {
-            (ModelCheckItem::Invariant { clause }, _) => Item::Invariant {
-                name: clause.name(),
-            },
+            (ModelCheckItem::Invariant { clause }, _) => Item::Invariant { name: clause.name },
             (ModelCheckItem::LoopInvariant { repeat }, Counting::ByKind) => {
                 Item::LoopInvariant { repeat }
             }
