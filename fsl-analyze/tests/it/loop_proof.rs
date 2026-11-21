@@ -34,7 +34,7 @@ fn loop_unit(invariant: &str, variant: &str, guard: &str, operation: &str) -> St
         _ => "TouchPre",
     };
     let run = format!(
-        "sequence Main {{ repeat Retry by w visible () invariant {{ {invariant} }} \
+        "sequence Main {{ repeat Retry by w visible (got.left) invariant {{ {invariant} }} \
          variant {{ {variant} }} while {{ {guard} }} \
          sequence Body {{ {} event Seen by w as (got: Left) {{ got.left = k.v }}; }} }}",
         crate::fill::attempt("T", operation, contracts, "t", "true")
@@ -192,7 +192,9 @@ fn a_state_limit_leaves_both_loop_items_incomplete_naming_it() {
 /// A protocol with two proof-carrying repeats and one repeat with only a
 /// maximum.
 fn two_proofs_and_a_bounded_repeat() -> String {
-    let attempt = |node: &str| crate::fill::attempt(node, "dec", "DecPre, DecPost", "t", "true");
+    let attempt = |node: &str, binder: &str| {
+        crate::fill::attempt(node, "dec", "DecPre, DecPost", binder, "true")
+    };
     let run = format!(
         "sequence Main {{ \
          repeat First by w visible () invariant {{ true }} variant {{ 1 }} while {{ false }} \
@@ -202,9 +204,9 @@ fn two_proofs_and_a_bounded_repeat() -> String {
          repeat Bounded by w visible () max 1 while {{ false }} \
            sequence BoundedBody {{ {} }} \
            exhausted check Out using v {{ true }}; }}",
-        attempt("FirstStep"),
-        attempt("SecondStep"),
-        attempt("BoundedStep"),
+        attempt("FirstStep", "first"),
+        attempt("SecondStep", "second"),
+        attempt("BoundedStep", "bounded"),
     );
     loop_pieces(&run)
 }

@@ -122,7 +122,6 @@ fn a_supplied_trace_replays_or_is_declined_at_its_step() {
 /// message budget stops the run incomplete.
 #[trace("TC-1596", "FR-636-AC-4")]
 #[test]
-#[ignore = "QSL-2224: protocol analysis items are not reachable through fsl analyze yet"]
 fn parallel_join_overflow_and_message_budget() {
     let body = "record Ack { ok: Boolean; }\n\
         protocol Burst using pp over (k: M::Core) on origin {\n\
