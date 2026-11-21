@@ -330,6 +330,11 @@ impl<'p> BarePackage<'p> {
             }
         }
         if self.identities().is_some() {
+            // The join above authenticated every shape against this package's
+            // selected model documents. Enum members remain available even
+            // when another selected declaration has no runtime projection.
+            self.enum_members =
+                model_enum::runtime_members(&supply.identities.model_enum_shapes, budget)?;
             self.equality = crate::reader_protocol_projection::admit_equality_decisions(
                 self.package,
                 crate::reader_protocol_projection::ProjectionSource::Bytes {
@@ -365,7 +370,6 @@ impl<'p> BarePackage<'p> {
             .project_selected_type_declarations(identities, &[], source_units, budget)
         {
             Ok(declarations) => {
-                self.enum_members = model_enum::runtime_members(declarations.enums(), budget)?;
                 self.objects = Ok(declarations
                     .objects()
                     .iter()

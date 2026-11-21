@@ -73,6 +73,14 @@ fn checked_unit_with_profile(
         &["Gold Plus", "Café", "2x"],
     )]))
     .expect("the fixture serializes");
+    checked_document(unit_body, profile, document)
+}
+
+fn checked_document(
+    unit_body: &str,
+    profile: &str,
+    document: Vec<u8>,
+) -> (fsl_semantics::check::CheckedGraph, Vec<u8>) {
     let packages = fsl_semantics::model::intake::package_input([document.as_slice()]).unwrap();
     let unit = format!(
         "language \"ix:native\" edition \"1-draft\";\n\
@@ -107,6 +115,26 @@ fn emitted_from(emission: Emission, document: Vec<u8>) -> Emitted {
         wire,
         evidence,
     }
+}
+
+fn bare_enums() -> Emitted {
+    let document = serde_json::to_vec(&fixture::package(
+        vec![
+            fixture::variant_type("Tier", &["Gold", "Standard"]),
+            fixture::variant_type("Odd", &["Gold Plus", "Café", "2x"]),
+        ],
+        false,
+    ))
+    .unwrap();
+    let (graph, document) = checked_document(
+        "function keep using v(): Boolean pure { true }",
+        "filament.value.complete/v1",
+        document,
+    );
+    emitted_from(
+        emit_checked(&CheckedPackage::link(graph)).expect("real selected enums emit"),
+        document,
+    )
 }
 
 impl Emitted {
@@ -206,13 +234,18 @@ fn selected_model_enum_rows_join_and_refuse_missing_mismatched_duplicate_and_for
     };
     let declarations = emitted.emission.selected_model_enum_declaration_rows();
     let members = emitted.emission.selected_model_enum_member_rows();
-    assert_eq!(declarations.len(), 2);
-    assert_eq!(members.len(), 5);
+    assert_eq!(declarations.len(), 4);
+    assert_eq!(members.len(), 9);
     for row in declarations {
         assert_eq!(row.selected_document.as_ref(), fixture::PACKAGE);
-        assert!([fixture::id("Tier"), fixture::id("Odd")]
-            .iter()
-            .any(|identity| identity.as_str() == row.original_identity.as_ref()));
+        assert!([
+            fixture::id("Tier"),
+            fixture::id("Odd"),
+            fixture::id("Level"),
+            fixture::id("Grade")
+        ]
+        .iter()
+        .any(|identity| identity.as_str() == row.original_identity.as_ref()));
         let selected = emitted
             .emission
             .selected_model_enums(&admitted, 128)
@@ -231,6 +264,16 @@ fn selected_model_enum_rows_join_and_refuse_missing_mismatched_duplicate_and_for
             "Standard" if row.enum_original_identity.as_ref() == fixture::id("Tier").as_str() => {
                 ("Tier", "variant/Tier-Standard")
             }
+            "Gold" if row.enum_original_identity.as_ref() == fixture::id("Level").as_str() => {
+                ("Level", "variant/Level-Gold")
+            }
+            "Gold" if row.enum_original_identity.as_ref() == fixture::id("Grade").as_str() => {
+                ("Grade", "variant/Grade-Gold")
+            }
+            "Standard" if row.enum_original_identity.as_ref() == fixture::id("Grade").as_str() => {
+                ("Grade", "variant/Grade-Standard")
+            }
+            "Bronze" => ("Grade", "variant/Grade-Bronze"),
             "2x" => ("Odd", "variant/Odd-2x"),
             "Café" => ("Odd", "variant/Odd-Caf"),
             "Gold Plus" => ("Odd", "variant/Odd-Gold-Plus"),
@@ -492,8 +535,8 @@ fn an_identifier_cased_variant_type_emits_and_reports_enum_member_witness() {
     let emitted = emit_unit(TIER_UNIT);
     assert_eq!(
         node_where(&emitted.wire, "model", "variant_type").len(),
-        2,
-        "both selected payload-free enums are retained, including unused Odd"
+        4,
+        "every selected payload-free enum is retained, including unused Level, Grade and Odd"
     );
     assert!(emitted.wire["operation_effects"].is_array());
     assert_enum_equality_reader_outcomes(&emitted);
@@ -573,7 +616,7 @@ fn a_model_enum_shape_row_pairs_the_checked_shape_with_the_final_node_ids() {
         panic!("the emitted model enums are admitted")
     };
     let rows = emitted.emission.selected_model_enum_shape_rows();
-    assert_eq!(rows.len(), 2, "one shape row per model enum");
+    assert_eq!(rows.len(), 4, "one shape row per selected model enum");
     let declarations = emitted.emission.selected_model_enum_declaration_rows();
     let members = emitted.emission.selected_model_enum_member_rows();
     for (name, expected) in [
@@ -640,7 +683,7 @@ fn a_model_enum_shape_row_refuses_an_unemitted_case_or_declaration() {
         ids.insert(row.member_key.clone(), row.structural_node.clone());
     }
     let rows = super::super::model_enum_shape_rows(&graph, &ids).expect("complete ids give rows");
-    assert_eq!(rows.len(), 2);
+    assert_eq!(rows.len(), 4);
     let odd = rows
         .iter()
         .find(|row| row.original_identity.as_ref() == fixture::id("Odd"))
@@ -671,7 +714,7 @@ fn a_model_enum_shape_row_refuses_an_unemitted_case_or_declaration() {
 fn model_enums_round_trip_unused_declarations_and_canonical_runtime_members() {
     use crate::{BarePackage, BareSupply, ReadIdentityRows};
     use filament_contract_model::NativeJoinBudget;
-    let emitted = emit_unit("function keep using v(): Boolean pure { true }");
+    let emitted = bare_enums();
     let Read::Verified { admitted, .. } = emitted.read(emitted.emission.package.bytes()) else {
         panic!("the selected model admits")
     };
@@ -730,7 +773,7 @@ fn model_enums_round_trip_unused_declarations_and_canonical_runtime_members() {
 fn model_enum_carrier_refuses_missing_repeated_foreign_and_conflicting_evidence() {
     use crate::{IdentityFileRefusal, ReadIdentityRows};
     use filament_contract_model::NativeJoinBudget;
-    let emitted = emit_unit("function keep using v(): Boolean pure { true }");
+    let emitted = bare_enums();
     let Read::Verified { admitted, .. } = emitted.read(emitted.emission.package.bytes()) else {
         panic!("selected model admits")
     };
@@ -828,7 +871,7 @@ fn model_enum_carrier_refuses_missing_repeated_foreign_and_conflicting_evidence(
 #[test]
 fn model_enum_identity_and_full_projection_budgets_are_cumulative() {
     use filament_contract_model::{NativeJoinBudget, NativeJoinChargeKind};
-    let emitted = emit_unit("function keep using v(): Boolean pure { true }");
+    let emitted = bare_enums();
     let Read::Verified { admitted, .. } = emitted.read(emitted.emission.package.bytes()) else {
         panic!("selected model admits")
     };
