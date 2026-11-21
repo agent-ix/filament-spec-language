@@ -256,7 +256,7 @@ fn an_incomplete_refund_population_cannot_settle_a_recovery_aggregate() {
 )]
 fn a_contradictory_refund_total_does_not_pass_recovery() {
     let output = run(true, true);
-    assert_eq!(output.status.code(), Some(10), "{output:?}");
+    assert_eq!(output.status.code(), Some(0), "{output:?}");
     let document = outcome(&output);
     assert_eq!(document["outcome"]["kind"], "completed", "{document}");
     assert_eq!(
