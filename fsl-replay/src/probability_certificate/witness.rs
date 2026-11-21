@@ -7,14 +7,14 @@ use crate::{ExactProbLimits, ModelCheckLimit};
 use filament_exact::Value as SemanticValue;
 use filament_semantic_value::model_transition::ModelTransition;
 use fsl_eval::simulation::model::{
-    PredicateReading, ScheduledIdentity, TimedSubjectRefusal, TimedSystem, TransitionId,
-    same_values,
+    same_values, PredicateReading, ScheduledIdentity, TimedSubjectRefusal, TimedSystem,
+    TransitionId,
 };
 use fsl_package::CheckedPackage;
 
 mod bounded;
 mod undefined;
-pub use undefined::{ProbabilityUndefinedWitness, replay_probabilistic_undefined};
+pub use undefined::{replay_probabilistic_undefined, ProbabilityUndefinedWitness};
 
 /// A semantic operation, draw and resulting state in a finite witness.
 #[derive(Clone, Debug)]
@@ -597,7 +597,11 @@ fn replay_probabilistic_witness_impl(
     let evidence = witness.clone();
     poll_cancel(cancel)?;
     Ok(ProbabilityWitnessReplay::Reproduced(Box::new(
-        ReproducedProbabilityWitness { evidence, mass, undefined: None },
+        ReproducedProbabilityWitness {
+            evidence,
+            mass,
+            undefined: None,
+        },
     )))
 }
 

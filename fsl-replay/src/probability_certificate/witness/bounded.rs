@@ -337,7 +337,11 @@ pub(super) fn replay(
     let evidence = witness.clone();
     poll_cancel(cancel)?;
     Ok(ProbabilityWitnessReplay::Reproduced(Box::new(
-        ReproducedProbabilityWitness { evidence, mass, undefined: None },
+        ReproducedProbabilityWitness {
+            evidence,
+            mass,
+            undefined: None,
+        },
     )))
 }
 

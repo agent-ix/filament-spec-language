@@ -401,7 +401,7 @@ pub use outcome::{
     assignments_wire, certificate_identity_wire, claim_locus_wire, graph_evidence_wire,
     omitted_witnesses, sampled_witness_wire, OmittedWitness, WitnessOmission,
     hyper_counterexample_wire,
-    probabilistic_wire, protocol_temporal_wire, read_task_temporal_counterexample,
+    probabilistic_wire, probabilistic_undefined_wire, protocol_temporal_wire, read_task_temporal_counterexample,
     read_task_temporal_document, read_temporal_counterexample, replay_model_trace_document,
     state_key_wire, task_product_transition_wire, ReadCounterexample, TraceAlphabet,
     replay_task_product_trace, task_source_transition_wire, task_temporal_wire,

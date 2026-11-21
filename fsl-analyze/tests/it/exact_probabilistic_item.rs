@@ -629,7 +629,6 @@ fn p95_settles_proved_with_its_exact_value() {
 /// `refuted` with its replayed undefined path, whatever the threshold.
 #[trace("TC-641", "FR-203-AC-5")]
 #[test]
-#[ignore = "QSL-2158: FR-202 (checked-subject undefined-evaluation witness entry) not implemented yet"]
 fn an_undefined_evaluation_settles_refuted_whatever_the_threshold() {
     for threshold in ["0.5", "0.01"] {
         let claim = format!(
@@ -651,6 +650,279 @@ fn an_undefined_evaluation_settles_refuted_whatever_the_threshold() {
         assert!(
             text.contains("AbsentKey") || text.contains("absent-key"),
             "{text}"
+        );
+    }
+}
+
+fn undefined_evidence(world: &World, claim: &str) -> fsl_replay::ProbabilityUndefinedWitness {
+    let record = settle(world, claim, ModelCheckLimits::default());
+    assert_eq!(
+        record.terminal().expect("terminal").value(),
+        &TerminalValue::Refuted
+    );
+    let found = record
+        .probabilistic_counterexample
+        .expect("reproduced evidence");
+    assert_eq!(
+        found.wire.as_ref().expect("wire")["evidence"]["type"],
+        "undefined-path"
+    );
+    found.found.undefined().expect("undefined token").clone()
+}
+
+#[trace("TC-3153", "FR-202-AC-24", "FR-202-AC-26")]
+#[test]
+fn undefined_replay_checks_first_read_location_control_and_package_ownership() {
+    use fsl_replay::{
+        replay_probabilistic_undefined, ProbabilityWitnessError, ProbabilityWitnessReplay,
+    };
+    let claims = "probabilistic Open using ev on M over (c: M::Coin) under Even on origin \
+        { probability >= 0.5 [ always[0,3] holds(c.v = 0) ] }\n\
+        probabilistic Decided using ev on M over (c: M::Coin) under Even on origin \
+        { probability >= 0.5 [ always[0,3] holds(c.v = 1) ] }";
+    let world = World::new(&prob_world::coin(claims));
+    let system = ModelSystem::new(world.subject().simulation).unwrap();
+    let witness = undefined_evidence(&world, "Open");
+    let limits = world.request("Open", ModelCheckLimits::default()).limits;
+    let replay = |witness: &fsl_replay::ProbabilityUndefinedWitness| {
+        replay_probabilistic_undefined(
+            &world.package,
+            &system,
+            &witness.path.item,
+            witness,
+            &limits,
+            &Cancel::new(),
+        )
+    };
+    assert!(matches!(
+        replay(&witness),
+        Ok(ProbabilityWitnessReplay::Reproduced(_))
+    ));
+    assert_eq!(witness.evaluation.site.position, 1);
+    let mut forged = witness.clone();
+    forged.evaluation.site.position = 0;
+    assert!(matches!(
+        replay(&forged),
+        Ok(ProbabilityWitnessReplay::Parity)
+    ));
+    let mut forged = witness.clone();
+    forged.product_state = forged.path.initial_key.clone();
+    assert!(matches!(
+        replay(&forged),
+        Ok(ProbabilityWitnessReplay::Parity)
+    ));
+    let mut forged = witness.clone();
+    forged.evaluation.site.locus =
+        fsl_replay::UndefinedLocus::ClaimPredicate(fsl_replay::ClaimPredicate::Target);
+    assert!(matches!(
+        replay(&forged),
+        Ok(ProbabilityWitnessReplay::Parity)
+    ));
+    let mut decided = witness.clone();
+    decided.path.item = fsl_replay::probabilistic_claim_identity(world.claim("Decided")).unwrap();
+    assert!(matches!(
+        replay(&decided),
+        Ok(ProbabilityWitnessReplay::Parity)
+    ));
+    let other = World::new(&prob_world::coin(claims));
+    assert!(matches!(
+        replay_probabilistic_undefined(
+            &other.package,
+            &system,
+            &witness.path.item,
+            &witness,
+            &limits,
+            &Cancel::new()
+        ),
+        Err(ProbabilityWitnessError::Refused)
+    ));
+    let wrong_item = fsl_replay::probabilistic_claim_identity(world.claim("Decided")).unwrap();
+    assert!(matches!(
+        replay_probabilistic_undefined(
+            &world.package,
+            &system,
+            &wrong_item,
+            &witness,
+            &limits,
+            &Cancel::new()
+        ),
+        Err(ProbabilityWitnessError::Refused)
+    ));
+}
+
+#[trace("TC-3153", "FR-202-AC-25", "FR-202-AC-26")]
+#[test]
+fn undefined_replay_distinguishes_workload_repeated_keys_and_scheduler_choices() {
+    use fsl_eval::simulation::model::TransitionId;
+    use fsl_replay::{
+        replay_probabilistic_undefined, ProbabilityWitnessError, ProbabilityWitnessReplay,
+    };
+    let claims = "probabilistic Work using inf on M over (c: M::Coin) under Even on origin \
+        { probability >= 0.5 [ eventually holds(c.v = 1) ] }\n\
+        probabilistic Every using inf on M over (c: M::Coin) under every scheduler on origin \
+        { probability >= 0.5 [ eventually holds(c.v = 1) ] }";
+    let mut model = prob_world::coin(claims);
+    model.operations.push(prob_world::Operation {
+        name: "keep",
+        parameters: vec![],
+        modifies: vec![],
+        deletes: false,
+    });
+    let world = World::new(&model);
+    let system = ModelSystem::new(world.subject().simulation).unwrap();
+    let mut workload = undefined_evidence(&world, "Work");
+    let every = undefined_evidence(&world, "Every");
+    let limits = world.request("Work", ModelCheckLimits::default()).limits;
+    let initial = system.initial().remove(0);
+    let workload_decl = system.input().probabilistic.workload("Even").unwrap();
+    let returning = system.weighted_steps_with_cancel(&initial, workload_decl, &Cancel::new()).unwrap().unwrap().into_iter().find(|step| matches!(step.random.as_slice(), [filament_exact::Value::Integer(value)] if value == &Integer::from(1_i64))).unwrap();
+    let TransitionId::Operation(transition) = returning.transition else {
+        panic!("operation");
+    };
+    let action = returning.identity.unwrap();
+    let first = fsl_replay::ProbabilityWitnessStep {
+        choice: fsl_replay::ProductAction::Identity(
+            fsl_replay::Schedule::of(&system, &action).unwrap(),
+        ),
+        action: Some(action),
+        transition: Some(transition),
+        draw: Some(returning.random),
+        post: returning.post,
+        post_key: workload.path.initial_key.clone(),
+        elapsed: ratio(0, 1),
+    };
+    workload.path.paths[0].steps.insert(0, first);
+    workload.evaluation.site.position = 2;
+    let replay = |witness: &fsl_replay::ProbabilityUndefinedWitness| {
+        replay_probabilistic_undefined(
+            &world.package,
+            &system,
+            &witness.path.item,
+            witness,
+            &limits,
+            &Cancel::new(),
+        )
+    };
+    let Ok(ProbabilityWitnessReplay::Reproduced(token)) = replay(&workload) else {
+        panic!("workload permits the returning key");
+    };
+    assert_eq!(token.mass(), &ratio(1, 4));
+    let mut repeated = workload;
+    repeated.path.item = every.path.item.clone();
+    repeated.path.scheduler = every.path.scheduler.clone();
+    assert!(matches!(
+        replay(&repeated),
+        Ok(ProbabilityWitnessReplay::Parity)
+    ));
+    let keep = system
+        .actions_with_cancel(&initial, &Cancel::new())
+        .unwrap()
+        .unwrap()
+        .into_iter()
+        .find(|action| action.identity.operation.contains("keep"))
+        .unwrap();
+    let mut wrong = every.clone();
+    wrong.path.scheduler[0].1 = fsl_replay::ProductAction::Identity(
+        fsl_replay::Schedule::of(&system, &keep.identity).unwrap(),
+    );
+    assert!(matches!(
+        replay(&wrong),
+        Err(ProbabilityWitnessError::Refused)
+    ));
+    let wrong_item = fsl_replay::probabilistic_claim_identity(world.claim("Work")).unwrap();
+    assert!(TerminalRecord::refuted_by_probability_witness(
+        RequestIndex::new(0),
+        fsl_foundation::BackendId::new("en-5"),
+        &wrong_item,
+        &token
+    )
+    .is_some());
+    let other_item = fsl_replay::probabilistic_claim_identity(world.claim("Every")).unwrap();
+    assert!(TerminalRecord::refuted_by_probability_witness(
+        RequestIndex::new(0),
+        fsl_foundation::BackendId::new("en-5"),
+        &other_item,
+        &token
+    )
+    .is_none());
+}
+
+#[trace("TC-3153", "FR-202-AC-26")]
+#[test]
+fn undefined_replay_preserves_limits_and_cancellation_at_the_final_poll() {
+    use fsl_replay::{
+        replay_probabilistic_undefined, ProbabilityWitnessError, ProbabilityWitnessReplay,
+    };
+    let claim = "probabilistic Dropped using inf on M over (c: M::Coin) under Even on origin \
+        { probability >= 0.5 [ eventually holds(c.v = 1) ] }";
+    let world = World::new(&prob_world::coin(claim));
+    let system = ModelSystem::new(world.subject().simulation).unwrap();
+    let witness = undefined_evidence(&world, "Dropped");
+    let limits = world.request("Dropped", ModelCheckLimits::default()).limits;
+    let run = |limits: &fsl_analyze::exact_probabilistic::ExactProbLimits, cancel: &Cancel| {
+        replay_probabilistic_undefined(
+            &world.package,
+            &system,
+            &witness.path.item,
+            &witness,
+            limits,
+            cancel,
+        )
+    };
+    let mut stopped = limits;
+    stopped.model.limits.max_states = 0;
+    assert!(matches!(
+        run(&stopped, &Cancel::new()),
+        Err(ProbabilityWitnessError::Graph(
+            ExactProbabilityGraphError::LimitReached
+        ))
+    ));
+    let mut stopped = limits;
+    stopped.model.limits.max_transitions = 0;
+    assert!(matches!(
+        run(&stopped, &Cancel::new()),
+        Err(ProbabilityWitnessError::Graph(
+            ExactProbabilityGraphError::EdgeLimitReached
+        ))
+    ));
+    let mut stopped = limits;
+    stopped.document.storage_bytes = 0;
+    assert!(matches!(
+        run(&stopped, &Cancel::new()),
+        Err(ProbabilityWitnessError::Limit {
+            limit: ModelCheckLimit::CertificateMaxWorkingBytes,
+            value: 0
+        })
+    ));
+    let polls = Arc::new(AtomicU32::new(0));
+    let count = Arc::clone(&polls);
+    let counting = Cancel::observing(move || {
+        count.fetch_add(1, Ordering::Relaxed);
+    });
+    assert!(matches!(
+        run(&limits, &counting),
+        Ok(ProbabilityWitnessReplay::Reproduced(_))
+    ));
+    let final_poll = polls.load(Ordering::Relaxed);
+    assert!(final_poll > 0);
+    for cause in [CancelCause::Requested, CancelCause::Deadline] {
+        let cancelled = Cancel::new();
+        cancelled.cancel(cause);
+        assert!(
+            matches!(run(&limits, &cancelled), Err(ProbabilityWitnessError::Graph(ExactProbabilityGraphError::Cancelled(found))) if found == cause)
+        );
+        let slot = Arc::new(OnceLock::<Cancel>::new());
+        let weak = Arc::downgrade(&slot);
+        let seen = Arc::new(AtomicU32::new(0));
+        let count = Arc::clone(&seen);
+        let cancel = Cancel::observing(move || {
+            if count.fetch_add(1, Ordering::Relaxed) + 1 == final_poll {
+                weak.upgrade().unwrap().get().unwrap().cancel(cause);
+            }
+        });
+        slot.set(cancel.clone()).unwrap();
+        assert!(
+            matches!(run(&limits, &cancel), Err(ProbabilityWitnessError::Graph(ExactProbabilityGraphError::Cancelled(found))) if found == cause)
         );
     }
 }

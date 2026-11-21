@@ -28,7 +28,7 @@ pub mod hint;
 pub use counterexample::{
     CounterexampleWireError, ProtocolWire, assignments_wire, graph_evidence_wire,
     hyper_counterexample_wire,
-    sampled_witness_wire, probabilistic_wire, protocol_temporal_wire, task_temporal_wire, temporal_wire,
+    sampled_witness_wire, probabilistic_wire, probabilistic_undefined_wire, protocol_temporal_wire, task_temporal_wire, temporal_wire,
     task_temporal_wire_with_queue_growth,
     task_source_transition_wire, task_transition_wire,
     replay_model_trace_document, state_key_wire, task_product_transition_wire, ReadCounterexample,
