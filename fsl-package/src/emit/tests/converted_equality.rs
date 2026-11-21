@@ -1734,3 +1734,37 @@ fn equality_fact_witness_rows_omit_only_foreign_package_keys() {
         Err(EmitRefusal::MissingEqualityIdentityContext { .. })
     ));
 }
+
+/// FR-495-AC-24: an equality operand that lowers at `Integer` (an integer
+/// division, or a control node over one) retains `Integer` as its Source
+/// operand-type witness, never the checked interval.
+#[trace("FR-495-AC-24", "TC-2873")]
+#[test]
+fn integer_division_operands_retain_integer_source_witnesses() {
+    for (body, positions) in [
+        ("(if c then n mod 3 else n mod 2) = 0", vec![0]),
+        ("n mod 3 = n mod 3", vec![0, 1]),
+    ] {
+        let emission = emitted(&format!(
+            "function f using v(n: Int[0, 100], c: Boolean): Boolean pure {{ {body} }}"
+        ));
+        let sources: Vec<_> = emission
+            .equality_fact_witness_rows()
+            .iter()
+            .filter_map(|row| match row.fact() {
+                EqualityFactWitness::OperandType {
+                    position,
+                    role: EqualityOperandTypeRole::Source,
+                } => Some((*position, row.value_type().cloned())),
+                _ => None,
+            })
+            .collect();
+        for position in positions {
+            assert!(
+                sources.iter().any(|(at, value_type)| *at == position
+                    && value_type == &Some(filament_exact::ValueType::Integer)),
+                "{body}: operand {position} keeps an Integer Source witness, got {sources:?}"
+            );
+        }
+    }
+}

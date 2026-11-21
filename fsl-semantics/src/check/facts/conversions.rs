@@ -7,7 +7,7 @@ use crate::check::refusal::{CheckRefusal, Obligation, OperandText};
 use filament_checked::node::{CheckedLiteral, NodeKind};
 use filament_exact::{
     ArithmeticOperator, DecimalType, Integer, IntegerInterval, NonZeroInteger, RationalDomain,
-    Value, ValueType,
+    RoundingMode, Value, ValueType,
 };
 use filament_semantic_value::declaration::admits_equality_conversion;
 use filament_semantic_value::quantity::{UnitScope, UnitTable};
@@ -236,7 +236,7 @@ impl DecimalBounds {
                 ..
             } => {
                 let (left, right) = (Self::of(node.at(*left))?, Self::of(node.at(*right))?);
-                match operator {
+                let bounds = match operator {
                     ArithmeticOperator::Add => Some(Self {
                         lower: left.lower.add(&right.lower),
                         upper: left.upper.add(&right.upper),
@@ -266,13 +266,44 @@ impl DecimalBounds {
                     }
                     // A quotient has no exact decimal interval.
                     ArithmeticOperator::Divide => None,
-                }
+                }?;
+                // A node whose own type rounds stores a grid value at its maximum
+                // scale, which lies between the exact bounds rounded outward onto
+                // that grid.
+                Some(match node.value_type() {
+                    ValueType::Decimal(own) if own.rounding() != RoundingMode::Exact => {
+                        bounds.rounded_outward(own.max_scale())?
+                    }
+                    _ => bounds,
+                })
             }
             _ => match node.value_type() {
                 ValueType::Decimal(declared) => Some(Self::declared(declared)),
                 _ => None,
             },
         }
+    }
+
+    /// These bounds with the lower rounded down and the upper rounded up onto
+    /// the grid of multiples of `10^-scale`.
+    fn rounded_outward(self, scale: u32) -> Option<Self> {
+        let onto_grid = |value: Scaled, up: bool| -> Option<Scaled> {
+            if value.scale <= scale {
+                return Some(value);
+            }
+            let power = Integer::power_of_ten(u64::from(value.scale - scale));
+            let divisor = NonZeroInteger::try_from(&power).ok()?;
+            let numerator = if up {
+                value.numerator.neg().div_mod_floor(divisor).0.neg()
+            } else {
+                value.numerator.div_mod_floor(divisor).0
+            };
+            Some(Scaled { numerator, scale })
+        };
+        Some(Self {
+            lower: onto_grid(self.lower, false)?,
+            upper: onto_grid(self.upper, true)?,
+        })
     }
 
     /// The values a declared `Decimal[..]` type admits: its coefficient
