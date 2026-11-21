@@ -159,12 +159,6 @@ fn the_package_records_the_observe_boundary() {
     assert!(nodes(&plain)
         .iter()
         .all(|node| !argument_names(node).contains(&"boundary")));
-    let ids = |wire: &Value| -> Vec<Value> {
-        nodes(wire)
-            .iter()
-            .map(|node| node["node_id"].clone())
-            .collect()
-    };
     // FR-322: a node id holds graph indexes, so the two packages compare
     // their nodes by structural key.
     use fsl_semantics::check::wire_id::WireGraph;

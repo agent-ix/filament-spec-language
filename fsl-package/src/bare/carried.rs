@@ -256,6 +256,18 @@ impl SourceRecordJson {
                 .members
                 .into_iter()
                 .map(|member| {
+                    // FR-531: exactly a data entry (both type members, no clock
+                    // members) or exactly a clock entry (neither, a `member_type`).
+                    let data = member.type_node.is_some()
+                        && member.value_type.is_some()
+                        && member.member_type.is_none()
+                        && member.collections.is_empty();
+                    let clock = member.type_node.is_none()
+                        && member.value_type.is_none()
+                        && member.member_type.is_some();
+                    if !(data || clock) {
+                        return Err(malformed());
+                    }
                     Ok(SelectedSourceRecordMemberRow {
                         original_member_identity: member.original_member_identity.into(),
                         admitted_name: member.admitted_name.into(),

@@ -612,7 +612,7 @@ dependencies = [
 [[package]]
 name = "filament-contract-model"
 version = "0.1.2"
-source = "git+https://github.com/agent-ix/filament-contract-ir?rev=3a4bc36d6edd6eed0e717227fede9a0ca7fc2b6f#3a4bc36d6edd6eed0e717227fede9a0ca7fc2b6f"
+source = "git+https://github.com/agent-ix/filament-contract-ir?rev=c353c3f38239935b601c2e5730c83bf30ed21993#c353c3f38239935b601c2e5730c83bf30ed21993"
 dependencies = [
  "filament-exact",
  "filament-semantic-value",

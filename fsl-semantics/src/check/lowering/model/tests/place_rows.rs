@@ -119,7 +119,7 @@ fn a_package_map_of_clocks_lists_a_key_selected_place() {
         (rows[0].minimum.as_str(), rows[0].maximum.as_str()),
         ("0", "2")
     );
-    assert!(rows[1].member_identity.ends_with("[key]"));
+    assert!(rows[1].member_identity.ends_with("[slot]"));
 
     let timers = places.iter().find(|p| p.name() == "t.[key].x").unwrap();
     let rows = timers.rows();

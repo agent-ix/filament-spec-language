@@ -234,7 +234,12 @@ pub(crate) fn clock_type_identity(
                 pending.push(Part::Text(">"));
                 pending.push(Part::Value(map.values()));
                 pending.push(Part::Text(", "));
-                pending.push(Part::Value(map.key()));
+                // FSpec FR-789 "Rendering": a scalar key renders as its bare name.
+                if matches!(map.key(), ValueType::String) {
+                    pending.push(Part::Text("Text"));
+                } else {
+                    pending.push(Part::Value(map.key()));
+                }
             }
             ValueType::Boolean => output.push_str("ix://filament/native/Boolean"),
             ValueType::Integer => output.push_str("ix://filament/native/Integer"),
@@ -301,7 +306,7 @@ impl PackagePlace {
                 }
                 PlaceStep::Slot(shape) if shape.map => {
                     let parent = previous.unwrap_or_default();
-                    (parent.clone(), format!("{parent}[key]"))
+                    (parent.clone(), format!("{parent}[slot]"))
                 }
                 PlaceStep::Slot(_) => {
                     let parent = previous.unwrap_or_default();
