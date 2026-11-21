@@ -835,29 +835,43 @@ mod dependency_projection_tests {
         use super::emit_checked_v2;
         use std::path::Path;
         let directory = tempfile::tempdir().unwrap();
-        let recipe = Path::new(env!("CARGO_MANIFEST_DIR"))
+        let model = Path::new(env!("CARGO_MANIFEST_DIR"))
             .parent()
             .unwrap()
-            .join("examples/checked-handoff");
+            .join("tests/fixtures/spine-model.semantic-ir.json");
+        let source = directory.path().join("unit.native");
+        let library = directory.path().join("library.native");
+        std::fs::write(
+            &source,
+            r#"language "ix:native" edition "1-draft";
+profile v = "filament.model.complete/v1";
+profile p = "filament.protocol.finite-global/v1";
+import "test/ready" as L;
+model M = "acme/orders";
+protocol Flow using p over (input: M::Widget) on origin {
+    role R on M::Widget;
+    run sequence Main { event Tick by R as (tick: Boolean) { L::Ready(tick) }; }
+    finish End as (outcome: Boolean) { L::Ready(outcome) };
+}
+"#,
+        )
+        .unwrap();
+        std::fs::write(
+            &library,
+            r#"language "ix:native" edition "1-draft";
+profile v = "filament.value.complete/v1";
+predicate Ready using v (ready: Boolean): Boolean { ready }
+"#,
+        )
+        .unwrap();
         let request = checked_handoff::CheckedHandoffRequest {
             emit: emit_checked_v2::Request {
-                source: recipe.join("unit-event-position.native"),
-                package_name: "recipe".to_owned(),
-                models: vec![recipe.join("model.semantic-ir.json")],
-                libraries: vec![(
-                    "agent-ix/checked-handoff-library".to_owned(),
-                    recipe.join("library.native"),
-                )],
+                source,
+                package_name: "ready-protocol".to_owned(),
+                models: vec![model],
+                libraries: vec![("test/ready".to_owned(), library)],
                 execution_points: None,
-                temporal_selections: ["Full", "Partial", "Due", "DueLate"]
-                    .into_iter()
-                    .map(|clause| emit_checked_v2::ClockSelection {
-                        clause: clause.to_owned(),
-                        clock: filament_contract_model::ClockConfiguration::EventPosition {
-                            sequence_authority: "events-authority".into(),
-                        },
-                    })
-                    .collect(),
+                temporal_selections: vec![],
                 out: None,
             },
             corpus: checked_handoff::Corpus::None,
@@ -865,9 +879,9 @@ mod dependency_projection_tests {
         };
         let handoff = directory.path().join("handoff");
         checked_handoff::write(&request, &handoff)
-            .expect("the real recipe writes its dependency artifacts");
+            .expect("the protocol writes its dependency artifacts");
         let compiled = checked_handoff::compile(&handoff)
-            .expect("the explicit source entry recompiles the same recipe");
+            .expect("the explicit source entry recompiles the same protocol");
         let emission = compiled.compiled.emitted.emission();
         let read = fsl_package::read_evaluation_emission(
             compiled.checked(),
@@ -880,7 +894,7 @@ mod dependency_projection_tests {
         )
         .expect("the same admitted closure supplies the source evaluation view");
         let view = read.evaluation_view().expect(
-            "imported predicates in effect and finish slots project through their own package",
+            "imported predicates in event and finish slots project through their own package",
         );
         assert!(view.is_reader_backed());
         assert!(view.is_for_package(compiled.checked()));
