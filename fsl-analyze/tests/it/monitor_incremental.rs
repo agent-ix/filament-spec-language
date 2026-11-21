@@ -4126,6 +4126,7 @@ fn qsl_2750_trace(
 fn qsl_2750_missing_window_matches_batch_and_checkpoint() {
     let world = qsl_2750_world();
     qsl_2750_uncovered_reordering(&world);
+    qsl_2750_late_values_do_not_settle_early(&world);
     let cancel = Cancel::new();
     let atom = qsl_2750_atom(&world);
     for absent in [false, true] {
@@ -4137,6 +4138,7 @@ fn qsl_2750_missing_window_matches_batch_and_checkpoint() {
                 &cancel,
             )
             .unwrap();
+            let mut frozen = None;
             let mut observed = Vec::new();
             let mut missing = Vec::new();
             let mut assertion = ProgressAssertion {
@@ -4181,21 +4183,9 @@ fn qsl_2750_missing_window_matches_batch_and_checkpoint() {
                     "MissingQuantile",
                     &qsl_2750_trace(observed.clone(), missing.clone(), assertion),
                 );
-                assert_eq!(
-                    members(step.statuses[0].1.record().report()),
-                    members(&batch),
-                    "step {index} absent={absent} restore={restore}"
-                );
+                qsl_2750_assert_status(&step.statuses[0].1, &batch, &mut frozen);
                 if restore && index == 18 {
-                    let state = session.checkpoint().unwrap();
-                    session = MonitorSession::resume(
-                        world.unit.package(),
-                        &state,
-                        qsl_2750_open(&world),
-                        &limits(100),
-                        &cancel,
-                    )
-                    .unwrap();
+                    session = qsl_2750_restore_report(&world, session, &batch, &frozen, &cancel);
                 }
                 assertion = progress(index);
                 let step = session.assert_progress(assertion, &cancel).unwrap();
@@ -4204,11 +4194,10 @@ fn qsl_2750_missing_window_matches_batch_and_checkpoint() {
                     "MissingQuantile",
                     &qsl_2750_trace(observed.clone(), missing.clone(), assertion),
                 );
-                assert_eq!(
-                    members(step.statuses[0].1.record().report()),
-                    members(&batch),
-                    "progress {index}"
-                );
+                qsl_2750_assert_status(&step.statuses[0].1, &batch, &mut frozen);
+                if restore && index == 18 {
+                    session = qsl_2750_restore_report(&world, session, &batch, &frozen, &cancel);
+                }
             }
             assertion = ProgressAssertion {
                 watermark: 300000,
@@ -4222,12 +4211,9 @@ fn qsl_2750_missing_window_matches_batch_and_checkpoint() {
                 "MissingQuantile",
                 &qsl_2750_trace(observed, missing, assertion),
             );
-            assert_eq!(
-                members(step.statuses[0].1.record().report()),
-                members(&batch)
-            );
+            qsl_2750_assert_status(&step.statuses[0].1, &batch, &mut frozen);
             let final_report = session.finish(&cancel).unwrap();
-            assert_eq!(members(final_report.records[0].report()), members(&batch));
+            qsl_2750_assert_finished(&final_report.records[0], &batch, &frozen);
             if absent {
                 assert!(
                     matches!(
@@ -4394,8 +4380,8 @@ fn qsl_2750_uncovered_reordering(world: &World) {
             &qsl_2750_trace(observed.clone(), missing.clone(), initial),
         );
         assert_eq!(
-            members(step.statuses[0].1.record().report()),
-            members(&batch),
+            qsl_2750_report_fields(step.statuses[0].1.record().report()),
+            qsl_2750_report_fields(&batch),
             "uncovered step {index}"
         );
         let checkpoint = session.checkpoint().unwrap();
@@ -4447,10 +4433,196 @@ fn qsl_2750_uncovered_reordering(world: &World) {
         &qsl_2750_trace(observed, missing, covered),
     );
     assert_eq!(
-        members(step.statuses[0].1.record().report()),
-        members(&batch),
+        qsl_2750_report_fields(step.statuses[0].1.record().report()),
+        qsl_2750_report_fields(&batch),
         "the real assertion canonicalizes all original evidence"
     );
     let finished = session.finish(&cancel).unwrap();
-    assert_eq!(members(finished.records[0].report()), members(&batch));
+    assert_eq!(
+        qsl_2750_report_fields(finished.records[0].report()),
+        qsl_2750_report_fields(&batch)
+    );
+}
+
+/// Every ClauseRunReport field except usage, which FR-643 explicitly excludes
+/// from batch equality. The deciding report is captured from the batch oracle.
+fn qsl_2750_report_fields(report: &ClauseRunReport) -> String {
+    format!(
+        "{:?}",
+        (
+            &report.disposition,
+            &report.basis,
+            &report.witness,
+            &report.state_clause_counterexample,
+            &report.frame_field_values,
+            &report.consequent_source_events,
+            &report.ledger,
+            &report.finite_window,
+            &report.counterexample,
+            &report.decisive,
+            &report.authenticated_temporal_selection,
+            &report.refused_at
+        )
+    )
+}
+
+fn qsl_2750_assert_status(
+    status: &fsl_analyze::monitor_session::ClauseStatus,
+    current: &ClauseRunReport,
+    frozen: &mut Option<String>,
+) {
+    let record = status.record();
+    assert_eq!(
+        record.category,
+        current.disposition.category(),
+        "category agrees over every extension"
+    );
+    assert_eq!(
+        record.report().disposition.truth(),
+        current.disposition.truth(),
+        "truth agrees over every extension"
+    );
+    let batch = qsl_2750_report_fields(current);
+    let expected = if status.is_settled() {
+        frozen.get_or_insert(batch)
+    } else {
+        assert!(frozen.is_none(), "a settled clause never becomes pending");
+        &batch
+    };
+    assert_eq!(
+        &qsl_2750_report_fields(record.report()),
+        expected,
+        "pending reports equal B(k); settled reports retain every member of B(s)"
+    );
+}
+
+fn qsl_2750_assert_finished(
+    record: &fsl_analyze::monitor::MonitorRecord,
+    current: &ClauseRunReport,
+    frozen: &Option<String>,
+) {
+    assert_eq!(record.category, current.disposition.category());
+    assert_eq!(
+        record.report().disposition.truth(),
+        current.disposition.truth()
+    );
+    let batch = qsl_2750_report_fields(current);
+    assert_eq!(
+        &qsl_2750_report_fields(record.report()),
+        frozen.as_ref().unwrap_or(&batch)
+    );
+}
+
+/// Inspect the resumed report through finish on an independent resume, so the
+/// primary session can continue without introducing a new counted call.
+fn qsl_2750_restore_report<'a>(
+    world: &'a World,
+    session: MonitorSession<'a>,
+    batch: &ClauseRunReport,
+    frozen: &Option<String>,
+    cancel: &Cancel,
+) -> MonitorSession<'a> {
+    let checkpoint = session.checkpoint().unwrap();
+    let resume = || {
+        MonitorSession::resume(
+            world.unit.package(),
+            &checkpoint,
+            qsl_2750_open(world),
+            &limits(100),
+            cancel,
+        )
+        .unwrap()
+    };
+    let probe = resume().finish(cancel).unwrap();
+    qsl_2750_assert_finished(&probe.records[0], batch, frozen);
+    let resumed = resume();
+    assert_eq!(
+        resumed.checkpoint().unwrap().as_bytes(),
+        checkpoint.as_bytes()
+    );
+    resumed
+}
+
+/// Without completeness, later on-time window members can change the
+/// quantile. Reporting a prefix must not turn its provisional value final.
+fn qsl_2750_late_values_do_not_settle_early(world: &World) {
+    let cancel = Cancel::new();
+    let mut session = MonitorSession::open(
+        world.unit.package(),
+        qsl_2750_open(world),
+        &limits(100),
+        &cancel,
+    )
+    .unwrap();
+    let default = ProgressAssertion {
+        watermark: 0,
+        completeness: ProgressCompleteness::Incomplete,
+        scope: ProgressClosure::Open,
+        execution: ProgressClosure::Open,
+    };
+    let covered = ProgressAssertion {
+        watermark: 600000,
+        completeness: ProgressCompleteness::Complete { through: 600000 },
+        scope: ProgressClosure::Closed,
+        execution: ProgressClosure::Closed,
+    };
+    let mut observed = Vec::new();
+    let mut frozen = None;
+    for (index, stamp) in std::iter::once(200000_u64).chain(1..=20).enumerate() {
+        let sample = qsl_2750_response(if index == 0 { 6 } else { 1 });
+        let step = session
+            .step(
+                MonitorObservation {
+                    position: MonitorPosition::Sample(&sample),
+                    stamp: Some(MonitorStamp::Tick(stamp)),
+                    order_key: None,
+                    missing: &[],
+                },
+                &cancel,
+            )
+            .unwrap();
+        observed.push(TimestampedObservation {
+            document: spine::sample_position(&sample),
+            stamp,
+            order_key: None,
+        });
+        let batch = batch_over(
+            world,
+            "MissingQuantile",
+            &qsl_2750_trace(observed.clone(), Vec::new(), default),
+        );
+        qsl_2750_assert_status(&step.statuses[0].1, &batch, &mut frozen);
+        assert!(
+            !step.statuses[0].1.is_settled(),
+            "uncovered quantile can still change at arrival {index}"
+        );
+        if index == 0 {
+            // The first value would refute a completed trace, but no such
+            // completeness has been asserted on the live session.
+            let closed = batch_over(
+                world,
+                "MissingQuantile",
+                &qsl_2750_trace(observed.clone(), Vec::new(), covered),
+            );
+            assert_eq!(
+                closed.disposition.category(),
+                filament_semantic_value::catalog::Category::Violation
+            );
+            session = qsl_2750_restore_report(world, session, &batch, &frozen, &cancel);
+        }
+    }
+    let step = session.assert_progress(covered, &cancel).unwrap();
+    let batch = batch_over(
+        world,
+        "MissingQuantile",
+        &qsl_2750_trace(observed, Vec::new(), covered),
+    );
+    assert_eq!(
+        batch.disposition.category(),
+        filament_semantic_value::catalog::Category::Success,
+        "twenty late values of one change the quantile from six to one"
+    );
+    qsl_2750_assert_status(&step.statuses[0].1, &batch, &mut frozen);
+    let finished = session.finish(&cancel).unwrap();
+    qsl_2750_assert_finished(&finished.records[0], &batch, &frozen);
 }
