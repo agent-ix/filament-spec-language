@@ -19,7 +19,7 @@ use crate::simulation::protocol::UnboundCapacity;
 pub const BOUND_POSITIONS: u64 = 1 << 20;
 
 /// A generated data member whose clock-reference domain needs a selector bound.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub struct ClockReferenceDomain {
     /// The actual field or parameter type position.
     pub member: fsl_foundation::bound::DomainKey,

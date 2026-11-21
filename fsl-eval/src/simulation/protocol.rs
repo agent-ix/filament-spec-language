@@ -880,12 +880,24 @@ pub fn check_protocol_bounds(
         }
         other => other,
     };
-    check_requires_bound(&roots(&domains), model.types(), position_limit)
-        .map_err(with_capacities)?;
-    // The generic type classifier treats references as finite; the model
-    // preflight additionally checks declared clock-selector domains. Protocol
-    // attempts carry no timed-profile bound for those selectors.
-    super::model::check_model_bounds(model, position_limit).map_err(with_capacities)?;
+    let ordinary = match check_requires_bound(&roots(&domains), model.types(), position_limit) {
+        Ok(()) => None,
+        Err(NotSimulated::RequiresBound(bound)) => bound.domains,
+        Err(other) => return Err(other),
+    };
+    // Retain the complete generic list before collecting the clock sites.
+    // Extent/resource failures above remain immediate; this pass neither
+    // reclassifies the generic roots nor spends another position ceiling.
+    let clock_references = super::model::clock_reference_domains(model, &domains, None);
+    if ordinary.is_some() || !clock_references.is_empty() {
+        return Err(with_capacities(NotSimulated::RequiresBound(
+            RequiresBound {
+                domains: ordinary,
+                capacities: Vec::new(),
+                clock_references,
+            },
+        )));
+    }
     check_attempt_types(model, protocol, evaluator).map_err(with_capacities)?;
     if capacities.unbound().is_empty() {
         Ok(())
