@@ -34,3 +34,13 @@ Reverse-gap and stub inspection: every changed behavior belongs to FR-940's pack
 Examined: FR-940's hyper inputs/normal form/malformed-node boundary and the Equal subset of AC-16, unknown-trace/strict-duplicate-level subset of AC-19; all eight files listed in SR-21282001. Context only: full AC-16 and AC-19 remaining cases, AC-18 source-free certificate journey and FSpec FR-402's seven-binding facts. None of those remaining acceptance journeys is claimed complete. PR3395's stale refusal prose is under separate spec review; implementation must preserve the pinned strict duplicate-level refusal.
 
 The matrix limitation is an assurance observation, not a request to change production code, broaden this PR, invent a baseline, or implement the named later AC-18 slice. The lead owns disposition of that limitation and custody of this artifact.
+
+## Dispositions
+
+Pass 1 examined frozen 6c702fe86e5e4c3f1ba86de57a8a158ffbd57f7a. The original Findings table above is unchanged.
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | deferred | The dispatch explicitly retains the known 25-second matrix timeout as an audit limitation outside this code fix and prohibits a repeat attempt. Repository-wide criterion reconciliation therefore remains uncompleted assurance work; no criterion totals, engine-backed repository PASS or code remediation are asserted. |
+
+Current status: incomplete repository audit, with its limitation retained and explicitly deferred by the lead's bounded-review instruction. Reverse-gap/stub inspection of the fix delta found no new unowned production behavior, stubs, ignored tests or false full-acceptance claim. One new untagged budget regression is reported as code-review SR-21282001 FND-004 rather than duplicated here. No additional gap method finding was added. Plan completion: not assessed.

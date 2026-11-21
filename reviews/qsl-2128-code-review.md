@@ -44,3 +44,59 @@ All changed public types/methods, temporal helper extraction, exact occurrence l
 The positive test exercises real emission, strict admission, identity supply and reconstruction. Its assertions compare name/span/aliases/parameters/quantifiers/arena/operators/copy group to S3, require [a,b] and atoms [0], and require source conditions absent with package atoms present. Its holds-only loop is preceded by exact arena equality and an exact one-atom assertion, so it is not an unguarded vacuous success. Negative tests check strict unknown-trace admission followed by the typed form refusal, pinned-reader duplicate-level rejection, and three constructor Shape refusals. They do not test the new findings.
 
 Inspected implementation logs record the three new focused runtime passes and the existing four-temporal-clause parity pass before rebase. Package/analyzer test compilation passed before rebase; package library clippy passed after rebase. The semantics library log has three unchanged-main errors (typing.rs:2193,2197 wildcard_enum_match_arm; synthesis.rs:148 too_many_arguments). These are producer logs, not fresh reviewer executions or an exact-final-head gate. The temporal arena helper is a direct extraction with unchanged traversal, bounds, operators and horizon application. Reviewer git diff --check passed. The lead retains the final exact-head aggregate check.
+
+## New findings (disposition pass 1)
+
+| ID | Severity | Summary | Refs |
+| --- | --- | --- | --- |
+| FND-004 | low | The new encoding-boundary regression has no trace attribute or Trace comment, so its real assertions do not bind to the required criterion under the repository's traceability convention. | fsl-package/src/checked_views/hyper/normal.rs:647 |
+
+This is the new `encoding_checks_the_complete_size_before_spending_or_allocating` test. Its nearest doc comment describes budget admission and its sole attribute is `#[test]`. The adjacent atom-free budget regression correctly has `#[trace("FR-940-AC-16")]`. Rust Style, Testing, "Placement and traceability" requires every new test in a traced repository to bind the criterion it asserts with the declared tag form. Add the appropriate criterion tag to the encoding-boundary test; do not add a handwritten matrix or change the oracle. This is a static missing-tag finding, not a claim that the unavailable matrix returned an untracked symbol.
+
+## Dispositions
+
+Pass 1 examined frozen 6c702fe86e5e4c3f1ba86de57a8a158ffbd57f7a. Local and GitHub heads match and the worktree is clean. The original Findings table above is unchanged.
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | The reader now uses only the claim declaration region for Holds spans; a valid expression-region mutation is strictly admitted and asserted to leave the complete formula, atoms, copy group, normal bytes and claim span unchanged. The source comparison canonicalizes only Holds annotations under separately reviewed PR3395; no production source or temporal constructor spans are changed. |
+| FND-002 | fixed | Formula visits, swap trials, atom lookup, comparisons, variable copies, metadata serialization, output sizes and sorting now consume one cumulative finite work/storage Budget before variable-sized output allocations; atom-free and unary-growth regressions assert typed Pending refusal and a positive small-swap control. |
+| FND-003 | fixed | Classes must contain disjoint known quantifier variables in order, share an alias, and exactly match ordered consecutive-pair generators; emitted Equal mutations cover ghost, overlap, missing/reversed/extra groups and cross-alias swaps with Shape refusals. |
+| FND-004 | still-open | The new encoding boundary test at normal.rs:647 has no declared trace tag in this frozen head. |
+
+### Fixed excerpts (pass 1)
+
+FND-001 after_excerpt:
+
+```rust
+let region = &row.declaration_region;
+```
+
+FND-002 after_excerpt:
+
+```rust
+let size = std::iter::once(tag)
+    .chain(parts.iter().map(Vec::as_slice))
+    .try_fold(0usize, |total, part| {
+        total.checked_add(8)?.checked_add(part.len())
+    })
+    .ok_or_else(|| pending(budget.node, "hyper-normal-form-work"))?;
+budget.charge(size, size)?;
+let mut bytes = Vec::with_capacity(size);
+```
+
+FND-003 after_excerpt:
+
+```rust
+let index = quantifiers
+    .iter()
+    .position(|q| &q.variable == variable)
+    .ok_or(Shape)?;
+if !seen.insert(index) || indices.last().is_some_and(|last| *last >= index) {
+    return Err(Shape);
+}
+```
+
+### Pass 1 validation and current status
+
+CONDITIONAL: original three medium defects fixed; new low FND-004 remains open for the second allowed coder fix round. No other new behavioral defect found in the fix delta. All seven named runtime logs under implementation/fix-1 record one selected test passing each, including the four new regressions; focused test compilation and package library clippy pass in producer logs. The exact-size regression checks both refusal paths leave the counters intact and the exact allowance succeeds; the atom-free regression has independent positive and work/storage-negative controls. The positive Equal comparison retains exact semantic-node/operator/operand checks and normalizes only diagnostic Holds spans, with source and rebuilt declaration spans already compared equal. No temporal production delta was added in fix 1. Reviewer diff --check passed; no build, benchmark or matrix retry was run. Rebase after PR3395/main, affected temporal parity and the lead's exact-final-head gate remain pending.

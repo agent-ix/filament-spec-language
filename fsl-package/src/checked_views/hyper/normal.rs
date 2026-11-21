@@ -644,6 +644,7 @@ mod tests {
 
     /// Encoding admission precedes allocation and leaves both counters intact
     /// if either limit cannot admit the complete output.
+    #[trace("FR-940-AC-16")]
     #[test]
     fn encoding_checks_the_complete_size_before_spending_or_allocating() {
         let root: CheckedNodeId = serde_json::from_value(serde_json::json!({
