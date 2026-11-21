@@ -128,6 +128,8 @@ pub enum Unsupported {
     PackageControl(fsl_package::protocol_view::ControlOperation),
     /// A package control's correlation premises have no executable form yet.
     PackageCorrelation,
+    /// A package repeat's loop proof has no executable package form yet.
+    PackageRepeatProof,
     /// A package protocol declares a replicated role this program does not
     /// step yet.
     PackageReplicatedRole,
@@ -141,6 +143,7 @@ impl Unsupported {
             Self::UnenumerableRecord => "step binder of an unenumerable record type",
             Self::PackageControl(_) => "package protocol control",
             Self::PackageCorrelation => "package protocol correlation",
+            Self::PackageRepeatProof => "package repeat proof",
             Self::PackageReplicatedRole => "package replicated role",
         }
     }
@@ -149,6 +152,16 @@ impl Unsupported {
 /// Why [`ProtocolSystem::new`] built no system (FR-205 "Subject").
 #[derive(Clone, Debug, Eq, PartialEq, thiserror::Error)]
 pub enum ProtocolRefusal {
+    /// A package binder's exact type has its original projection refusal.
+    #[error("package parameter type projection failed at {node:?}: {failure:?}")]
+    PackageParameterType {
+        /// The package whose admitted binder is being read.
+        package: String,
+        /// The admitted binder whose type could not be projected.
+        node: fsl_package::CheckedNodeId,
+        /// The original typed selection or projection refusal.
+        failure: Box<fsl_package::BareSelectionFailure>,
+    },
     /// The request names a protocol that is not a protocol clause of the
     /// package (`invalid_runtime_input`/`invalid-value`).
     #[error("invalid_runtime_input/invalid-value: no protocol {protocol}")]
@@ -225,6 +238,10 @@ impl ProtocolRefusal {
     /// The refusal's catalog code.
     pub fn code(&self) -> Code {
         match self {
+            Self::PackageParameterType { failure, .. } => match &**failure {
+                fsl_package::BareSelectionFailure::Slot(_) => Code::RuntimeInvariant,
+                _ => Code::UnknownRequiredFeature,
+            },
             Self::UnknownProtocol { .. }
             | Self::RoleMapping { .. }
             | Self::OverBinding { .. }
@@ -244,6 +261,10 @@ impl ProtocolRefusal {
     /// The refusal's catalog cause.
     pub fn cause(&self) -> &'static str {
         match self {
+            Self::PackageParameterType { failure, .. } => match &**failure {
+                fsl_package::BareSelectionFailure::Slot(_) => "established-invariant-broken",
+                _ => "unsupported-feature",
+            },
             Self::UnknownProtocol { .. }
             | Self::OverBinding { .. }
             | Self::RolePopulation { .. }
@@ -1603,6 +1624,18 @@ impl<'a, M: MemoryModel> ProtocolSystem<'a, M> {
                 PackageProgramRefusal::Correlation { .. } => {
                     ProtocolRefusal::Unsupported(Unsupported::PackageCorrelation)
                 }
+                PackageProgramRefusal::RepeatProof { .. } => {
+                    ProtocolRefusal::Unsupported(Unsupported::PackageRepeatProof)
+                }
+                PackageProgramRefusal::ParameterType {
+                    package,
+                    node,
+                    failure,
+                } => ProtocolRefusal::PackageParameterType {
+                    package,
+                    node,
+                    failure,
+                },
                 _ => ProtocolRefusal::fault("a-selected-package-protocol-builds"),
             })?;
         if let Some(binding) = subject.capacities.first() {

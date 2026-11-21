@@ -1345,8 +1345,17 @@ pub trait ModelEvaluator: sealed::Sealed + Sync {
     }
 
     /// FR-531: the admitted value type of a package protocol binder.
-    fn package_protocol_parameter_type(&self, _binder: &CheckedNodeId) -> Option<ValueType> {
-        None
+    ///
+    /// # Errors
+    ///
+    /// The original package selection or projection refusal.
+    fn package_protocol_parameter_type(
+        &self,
+        _binder: &CheckedNodeId,
+    ) -> Result<ValueType, fsl_package::BareSelectionFailure> {
+        Err(fsl_package::BareSelectionFailure::Slot(
+            fsl_package::SlotSelectionFailure::Fault(PACKAGE_FORM),
+        ))
     }
 
     /// The admitted node keys of the protocol `name`.
@@ -2425,8 +2434,11 @@ impl ModelEvaluator for BarePackage<'_> {
         self.protocol_role_model(model).ok()
     }
 
-    fn package_protocol_parameter_type(&self, binder: &CheckedNodeId) -> Option<ValueType> {
-        self.protocol_parameter_type(binder).ok()
+    fn package_protocol_parameter_type(
+        &self,
+        binder: &CheckedNodeId,
+    ) -> Result<ValueType, fsl_package::BareSelectionFailure> {
+        self.protocol_parameter_type(binder)
     }
 
     fn protocol_node_keys(&self, _name: &str) -> Option<&CheckedProtocolNodeKeys> {

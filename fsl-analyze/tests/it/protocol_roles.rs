@@ -2502,6 +2502,7 @@ fn no_required_construct_settles_unsupported() {
             }
             Unsupported::PackageControl(_)
             | Unsupported::PackageCorrelation
+            | Unsupported::PackageRepeatProof
             | Unsupported::PackageReplicatedRole => false,
         }
     }
