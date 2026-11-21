@@ -294,6 +294,8 @@ pub(super) struct Tables {
     /// Every reward name of the model, ascending, with the zero of its type
     /// (the type of its first declaration).
     names: Vec<(Identifier, Value)>,
+    /// Every reward of the model in canonical order.
+    rewards: Vec<RewardSlot>,
 }
 
 impl Tables {
@@ -329,7 +331,11 @@ impl Tables {
         if read_rewards.map_or(0, PackageRewards::len) != model.read_rewards().len() {
             return Err(super::fault("reward-projections"));
         }
-        for reward in DeclaredReward::of(model, read_rewards) {
+        let rewards = DeclaredReward::order(model, read_rewards);
+        for reward in rewards
+            .iter()
+            .filter_map(|slot| DeclaredReward::at(*slot, model, read_rewards))
+        {
             if !names.contains_key(reward.name()) {
                 let value_type = reward
                     .value_type()
@@ -346,7 +352,11 @@ impl Tables {
                     .map_err(|_| super::fault("reward-name"))
             })
             .collect::<Result<_, _>>()?;
-        Ok(Self { random, names })
+        Ok(Self {
+            random,
+            names,
+            rewards,
+        })
     }
 
     /// The random parameter at `position` of the operation `name` that
@@ -383,30 +393,56 @@ enum DeclaredReward<'m> {
     },
 }
 
+/// Where a reward sits in its route's declarations.
+#[derive(Clone, Copy)]
+enum RewardSlot {
+    Source(usize),
+    Read(usize),
+}
+
 impl<'m> DeclaredReward<'m> {
     /// Every reward of `model` in canonical order: by operation key, then
     /// name. A package carries no declaration order, so both routes order
     /// their rewards alike, and a model with several negative rewards
     /// refuses at the same one on either.
-    fn of(model: &'m CheckedProbabilisticModel, read: Option<&'m PackageRewards>) -> Vec<Self> {
-        let mut rewards: Vec<Self> = model.rewards().iter().map(Self::Source).collect();
-        if let Some(projected) = read {
-            rewards.extend(
-                model
-                    .read_rewards()
-                    .iter()
-                    .enumerate()
-                    .map(|(index, reward)| Self::Read {
-                        reward,
-                        projected,
-                        index,
-                    }),
-            );
+    fn order(
+        model: &'m CheckedProbabilisticModel,
+        read: Option<&'m PackageRewards>,
+    ) -> Vec<RewardSlot> {
+        let mut slots: Vec<RewardSlot> = (0..model.rewards().len())
+            .map(RewardSlot::Source)
+            .collect();
+        if read.is_some() {
+            slots.extend((0..model.read_rewards().len()).map(RewardSlot::Read));
         }
-        rewards.sort_by(|left, right| {
-            (left.operation().key(), left.name()).cmp(&(right.operation().key(), right.name()))
+        slots.sort_by(|left, right| {
+            let (left, right) = (
+                Self::at(*left, model, read),
+                Self::at(*right, model, read),
+            );
+            match (left, right) {
+                (Some(left), Some(right)) => (left.operation().key(), left.name())
+                    .cmp(&(right.operation().key(), right.name())),
+                _ => std::cmp::Ordering::Equal,
+            }
         });
-        rewards
+        slots
+    }
+
+    /// The reward at `slot`.
+    fn at(
+        slot: RewardSlot,
+        model: &'m CheckedProbabilisticModel,
+        read: Option<&'m PackageRewards>,
+    ) -> Option<Self> {
+        match slot {
+            RewardSlot::Source(index) => model.rewards().get(index).map(Self::Source),
+            RewardSlot::Read(index) => Some(Self::Read {
+                reward: model.read_rewards().get(index)?,
+                projected: read?,
+                index,
+            }),
+        }
     }
 
     fn name(&self) -> &str {
@@ -500,8 +536,10 @@ impl ModelSystem<'_> {
     }
 
     /// Every reward of the model, in canonical order.
-    fn declared_rewards(&self) -> Vec<DeclaredReward<'_>> {
-        DeclaredReward::of(self.declarations(), self.input.read_rewards)
+    fn declared_rewards(&self) -> impl Iterator<Item = DeclaredReward<'_>> {
+        self.probabilistic.rewards.iter().filter_map(|slot| {
+            DeclaredReward::at(*slot, self.declarations(), self.input.read_rewards)
+        })
     }
 
     /// The reward `reward` evaluated on `arguments`.
@@ -554,7 +592,7 @@ impl ModelSystem<'_> {
             .names
             .iter()
             .map(|(reward_name, zero)| {
-                let declared = self.declared_rewards().into_iter().find(|reward| {
+                let declared = self.declared_rewards().find(|reward| {
                     reward.operation().declaring() == declaring
                         && reward.operation().name() == name
                         && reward.name() == reward_name.as_str()

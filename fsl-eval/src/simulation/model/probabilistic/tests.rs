@@ -880,12 +880,9 @@ fn the_package_route_rebuilds_the_probabilistic_model_of_the_emitted_package() {
     }
 }
 
-/// `use_input` over the package route's input for `world`'s package: emitted,
-/// read back from the wire bytes, and rebuilt from the nodes.
-fn through_the_wire<T>(
-    world: &World,
-    use_input: impl FnOnce(crate::simulation::model::ModelCheckInput<'_>) -> T,
-) -> T {
+/// `use_bare` over `world`'s package emitted and read back from the wire
+/// bytes.
+fn with_bare<T>(world: &World, use_bare: impl FnOnce(&fsl_package::BarePackage<'_>) -> T) -> T {
     let read = fsl_package::read_evaluation_package(
         &world.package,
         fsl_semantics::library::LibraryName::new("fixture").expect("a library name"),
@@ -910,13 +907,24 @@ fn through_the_wire<T>(
             &mut join_budget,
         )
         .expect("the bytes view admits its supply");
-    let input = crate::simulation::model::PackageModelInput::of(
-        &bare,
-        world.packages(),
-        fsl_semantics::model::accounting::ModelNormalizationLimits::default(),
-    )
-    .unwrap_or_else(|pending| panic!("the package route builds its input: {pending}"));
-    use_input(input.input())
+    use_bare(&bare)
+}
+
+/// `use_input` over the package route's input for `world`'s package: emitted,
+/// read back from the wire bytes, and rebuilt from the nodes.
+fn through_the_wire<T>(
+    world: &World,
+    use_input: impl FnOnce(crate::simulation::model::ModelCheckInput<'_>) -> T,
+) -> T {
+    with_bare(world, |bare| {
+        let input = crate::simulation::model::PackageModelInput::of(
+            bare,
+            world.packages(),
+            fsl_semantics::model::accounting::ModelNormalizationLimits::default(),
+        )
+        .unwrap_or_else(|pending| panic!("the package route builds its input: {pending}"));
+        use_input(input.input())
+    })
 }
 
 /// Admission of `world`'s model through the package route.
@@ -1015,6 +1023,55 @@ fn both_routes_refuse_the_same_first_of_several_negative_rewards() {
     let wire = refusal(wire_admission(&world));
     assert_eq!(source, wire);
     assert_eq!(wire.1.get("reward").map(String::as_str), Some("alpha"));
+}
+
+/// FR-187-AC-4: the order across operations is by operation key before
+/// reward name, on both routes: the reward on `cash` is named before the one
+/// on `pay`, though `pay`'s is written first and sorts first by name.
+#[trace("TC-622", "FR-187-AC-4")]
+#[test]
+fn both_routes_order_negative_rewards_by_operation_before_name() {
+    let mut model = world::refund();
+    let amount = model.ident("Amount");
+    model.operations.push(world::Operation {
+        name: "cash",
+        parameters: vec![("n", amount)],
+        modifies: vec![],
+    });
+    model.body = "reward alpha on Account::pay = n - 3;\n\
+                  reward zeta on Account::cash = n - 4;\n\
+                  workload Unit on M { weight Account::pay = 1; weight Account::cash = 1; }\n"
+        .to_owned();
+    let world = World::with_s3_reward_signs_unchecked(&model);
+    let source = refusal(world.admit().map(|_| ()));
+    let wire = refusal(wire_admission(&world));
+    assert_eq!(source, wire);
+    assert_eq!(wire.1.get("reward").map(String::as_str), Some("zeta"));
+    assert_eq!(wire.1.get("operation"), Some(&model.ident("Account/cash")));
+}
+
+/// A reward whose `expression` names no function does not project: the
+/// package route refuses the node with the typed selection failure, which
+/// `PackageModelInput::of` gives as `PendingPackageForm::Reward`.
+#[test]
+fn a_reward_whose_function_is_missing_does_not_project() {
+    let world = World::with_s3_reward_signs_unchecked(&world::refund());
+    with_bare(&world, |bare| {
+        let input = crate::simulation::model::PackageModelInput::of(
+            bare,
+            world.packages(),
+            fsl_semantics::model::accounting::ModelNormalizationLimits::default(),
+        )
+        .unwrap_or_else(|pending| panic!("the package route builds its input: {pending}"));
+        let mut reward = input.input().probabilistic.read_rewards()[0].clone();
+        reward.function = reward.value_type.clone();
+        assert!(matches!(
+            crate::value::ProjectedReward::of(bare, &reward),
+            Err(fsl_package::BareSelectionFailure::Slot(
+                fsl_package::SlotSelectionFailure::MissingNode(_)
+            ))
+        ));
+    });
 }
 
 /// The steps of the `scored` model's one state under `Unit`, as (non-random
