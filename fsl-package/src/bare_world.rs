@@ -34,14 +34,13 @@ pub struct BareWorld {
 }
 
 impl BareWorld {
-    /// The package's record and source union declarations.
+    /// The package's record, source tuple and source union declarations.
     pub fn types(&self) -> &TypeEnvironment {
         &self.types
     }
 
-    /// The enumeration members the package's equality decisions carry; the
-    /// index of the declared enumerations the source route holds is not a
-    /// property of the bytes (FR-533 "Types the bytes cannot project").
+    /// Every selected model enum member authenticated by the package-local
+    /// identity join, including members of unused selected declarations.
     pub fn enum_members(&self) -> &EnumMemberIndex {
         &self.enum_members
     }
