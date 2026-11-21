@@ -1364,3 +1364,82 @@ fn a_timed_predicate_population_is_the_one_shared_reference_node() {
     };
     assert_eq!((timed.invariants.len(), timed.urgencies.len()), (1, 2));
 }
+
+/// QSL-2768, FSpec FR-322 "Timed-model nodes": a model-document `time Config
+/// dense unit ms` and a source `time Order dense unit ms` have one content
+/// (`kind`, `unit`), so they are ONE `time_source` node with one `expression`
+/// occurrence at each declaration, and the one package emits and strictly
+/// reads.
+#[trace("TC-685")]
+#[test]
+fn two_time_declarations_of_equal_content_are_one_source_with_two_occurrences() {
+    let document = clocked_document_with(false);
+    let packages = fsl_semantics::model::intake::package_input([document.as_slice()]).unwrap();
+    let unit = clocked_unit(
+        "object Order { n: Integer; operation step() modifies self.n; }\n\
+         time Order dense unit ms;\n",
+    );
+    let graph = assemble_with_models(unit.as_bytes(), &packages)
+        .expect("the unit assembles")
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &fsl_semantics::check::test_support::ZeroRewardEvaluator,
+        )
+        .unwrap_or_else(|refusals| panic!("two time declarations check: {refusals:?}"));
+    assert_eq!(graph.time_sources().len(), 2);
+    let emission = emit_checked(&CheckedPackage::link(graph)).expect("the package emits");
+    let wire = wire(&emission);
+    let sources: Vec<&Value> = nodes(&wire)
+        .iter()
+        .filter(|node| node["semantic_form"] == "time_source")
+        .collect();
+    assert_eq!(sources.len(), 1, "equal content is one node");
+    let id = &sources[0]["node_id"];
+    let mut regions: Vec<(u64, u64, u64)> = wire["source_map"]
+        .as_array()
+        .expect("source_map")
+        .iter()
+        .filter(|entry| &entry["node_id"] == id)
+        .map(|entry| {
+            assert_eq!(entry["role"], "expression");
+            let region = &entry["regions"][0];
+            (
+                entry["ordinal"].as_u64().unwrap(),
+                region["start"].as_u64().unwrap(),
+                region["end"].as_u64().unwrap(),
+            )
+        })
+        .collect();
+    regions.sort();
+    assert_eq!(
+        regions.iter().map(|r| r.0).collect::<Vec<_>>(),
+        [0, 1],
+        "{regions:?}"
+    );
+    assert_ne!((regions[0].1, regions[0].2), (regions[1].1, regions[1].2));
+    for (_, start, end) in &regions {
+        let text = &unit.as_bytes()[*start as usize..*end as usize];
+        assert!(
+            String::from_utf8_lossy(text).starts_with("time "),
+            "{}",
+            String::from_utf8_lossy(text)
+        );
+    }
+    let mut evidence = CheckedPackageEvidence::new();
+    for feature in wire["lock"]["required_features"].as_array().unwrap() {
+        evidence.support_feature(feature.as_str().unwrap());
+    }
+    evidence
+        .insert_domain_package_document(package_identity(&document), document.clone())
+        .expect("a fresh evidence key");
+    let read = read_checked_package_v2(
+        emission.package.bytes(),
+        library(),
+        V2ReadLimits::fixture(),
+        &evidence,
+    )
+    .unwrap_or_else(|failure| panic!("the strict read admits the package: {failure:?}"));
+    let typed = CheckedTimedModel::from_admitted(&read.into_value().admitted).expect("read back");
+    assert_eq!(typed.len(), 2);
+}

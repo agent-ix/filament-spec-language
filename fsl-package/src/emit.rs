@@ -7522,6 +7522,7 @@ fn emit_package_inner(
             &mut source_map,
             &mut None,
         )?);
+        merge_equal_timed_nodes(&mut nodes, &mut source_map);
         // FSpec FR-322 "Aggregate order": the lists are written in declared
         // order, which reads the nodes' regions and structure alone, and
         // the nodes whose lists moved are rekeyed.
@@ -10374,4 +10375,49 @@ fn collection_layers(
             .upper
             .map_or_else(|| "unbounded".into(), |upper| upper.to_string().into()),
     }]
+}
+
+/// FSpec FR-322 "Timed-model nodes" and "Every node has one or more exact
+/// source occurrences": timed nodes of equal content are one node, so two
+/// declarations that write one body (two `time` declarations of one kind and
+/// unit) are one node with one occurrence at each declaration. Each later
+/// node of an id is dropped, and its source-map entries continue the
+/// occurrence ordinals of the node kept, per role, in the declared order
+/// they were written.
+fn merge_equal_timed_nodes(
+    nodes: &mut Vec<CheckedSemanticNodeV2>,
+    source_map: &mut [CheckedSourceMapEntry],
+) {
+    let mut seen: BTreeSet<CheckedNodeId> = BTreeSet::new();
+    let mut repeated: BTreeSet<CheckedNodeId> = BTreeSet::new();
+    for node in nodes.iter().filter(|node| {
+        CheckedNodeTag::from_wire(&node.node_tag) == Some(CheckedNodeTag::TimedModel)
+    }) {
+        if !seen.insert(node.node_id.clone()) {
+            repeated.insert(node.node_id.clone());
+        }
+    }
+    if repeated.is_empty() {
+        return;
+    }
+    let mut kept: BTreeSet<CheckedNodeId> = BTreeSet::new();
+    nodes.retain(|node| !repeated.contains(&node.node_id) || kept.insert(node.node_id.clone()));
+    for id in &repeated {
+        let mut next: BTreeMap<String, u64> = BTreeMap::new();
+        let mut occurrences = Vec::new();
+        for entry in source_map.iter_mut().filter(|entry| entry.node_id == *id) {
+            let counter = next
+                .entry(crate::checked_v2::role_spelling(&entry.role).to_owned())
+                .or_default();
+            entry.ordinal = *counter;
+            *counter += 1;
+            occurrences.push(CheckedOccurrence {
+                role: entry.role.clone(),
+                ordinal: entry.ordinal,
+            });
+        }
+        if let Some(node) = nodes.iter_mut().find(|node| node.node_id == *id) {
+            node.occurrences = occurrences;
+        }
+    }
 }
