@@ -87,3 +87,40 @@ findings:
     and this path drops the evidence needed for the required Completeness contradiction.
     Distinguish observation/readback projection from actual explicit assertion.'
 ```
+
+## Dispositions
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | Round1 at3f6c967f96100391b72da02c1eee74359cf1ac6e: At3f6c967f96 only a present preview input ledger replaces report.ledger; when no ledger was held, the fresh output computed by the unchanged batch run survives. The existing twelve-field QSL2750 oracle remains unchanged. |
+| FND-002 | fixed | Round1 at3f6c967f96100391b72da02c1eee74359cf1ac6e: Actual assert_progress calls evaluate with asserting_progress=true, retaining self.ledger for real watermark/fingerprint/completeness admission even when newest exceeds the assertion. advance and from_bytes explicitly pass false. Outer mark/restore still restores all state on refusal/cancellation. |
+
+## Fix round 1 verdict
+
+CLEAR for the original bounded static findings at3f6c967f96100391b72da02c1eee74359cf1ac6e. Original findings and FAIL verdict above are retained as the original review; all of their current dispositions are fixed. No new defect identified in this narrow correction. Final acceptance remains CONDITIONAL pending the parent's exact-head four runtime tests and owned merge checks.
+
+The bounded delta25895d7615..3f6c967f96 adds an explicit call-origin boolean to the existing private evaluate/provisional path. advance passes false, assert_progress passes true, and from_bytes provisional regeneration passes false. A true call keeps its input ledger available to the existing run and does not replace the resulting output ledger. A preview may temporarily take a held ledger to avoid treating partial redelivery/default G0 as a new assertion; it restores a present held ledger to the report, while a computed fresh ledger survives when input was None. The existing mark/restore always runs before propagating the result, with cached listings truncated to the committed prefix. No strict watermark or fingerprint condition in the underlying evaluator is weakened. Non-Timestamped evaluate branches, including Progressed, are unchanged.
+
+The original real changed-absence control still requires Completeness rather than a fabricated success. It now covers both before/after checkpoint restoration and both fully covered/extra uncovered stamp5 delivery, and checks exact checkpoint-byte rollback after each refusal. Report ledger assertions before and after restoration remain. The original QSL2750 twelve-field batch oracle and its ordering/absence/late-input assertions are untouched and are included in the parent's corrected runtime selection. The correction copies the original reviewer artifacts without rewriting their findings.
+
+Reviewer ran no Cargo, runtime, matrix, metric, broad gate, source edit, pin edit or Linear operation. git diff --check passes. No final corrected-head runtime or merge-gate result has been received in this artifact yet; the old25895 selection is historical only. This is not a whole-repository assurance PASS or a new full review.
+
+```yaml
+dispositions:
+- fnd: FND-001
+  outcome: fixed
+  after_excerpt: "                if ledger.is_some() {\n                    report.ledger\
+    \ = ledger;\n                }"
+  reason: At3f6c967f96 only a present preview input ledger replaces report.ledger;
+    when no ledger was held, the fresh output computed by the unchanged batch run
+    survives. The existing twelve-field QSL2750 oracle remains unchanged.
+- fnd: FND-002
+  outcome: fixed
+  after_excerpt: "                let ledger = if asserting_progress {\n         \
+    \           None\n                } else {\n                    self.ledger.take()\n\
+    \                };"
+  reason: Actual assert_progress calls evaluate with asserting_progress=true, retaining
+    self.ledger for real watermark/fingerprint/completeness admission even when newest
+    exceeds the assertion. advance and from_bytes explicitly pass false. Outer mark/restore
+    still restores all state on refusal/cancellation.
+```
