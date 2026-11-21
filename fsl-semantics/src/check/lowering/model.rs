@@ -575,30 +575,28 @@ impl AdmittedModel {
         })
     }
 
-    /// The effective object types at the ends of an admitted FR-152
-    /// connection. `None` means the declaration is not a connection, its
-    /// endpoints do not resolve to their owner types, or the connection's
-    /// admission rule refuses it.
-    pub(crate) fn admitted_connection_ends(&self, key: &DeclarationKey) -> Option<[ValueType; 2]> {
+    /// Check a systems Connection, retaining its substantive failures and ceilings.
+    /// `None` means the declaration does not classify as a Connection.
+    pub(crate) fn connection_admission(
+        &self,
+        key: &DeclarationKey,
+    ) -> Option<crate::model::systems::ConnectionCheckOutcome> {
         use crate::model::accounting::Meter;
-        use crate::model::systems::{
-            check_connection, ConnectionCheckOutcome, ConnectionOutcome, Kind,
-        };
-
-        let DomainPackageRecord::Relationship(relationship) = self.records.get(key)? else {
-            return None;
-        };
+        use crate::model::systems::{check_connection, Kind};
         let systems = self.systems.as_ref()?;
         if systems.actual_kind(key) != Kind::Connection {
             return None;
         }
         let mut meter = Meter::new(self.normalization_limits);
-        if !matches!(
-            check_connection(&self.index, systems, key, &mut meter),
-            ConnectionCheckOutcome::Completed(ConnectionOutcome::Admitted)
-        ) {
+        Some(check_connection(&self.index, systems, key, &mut meter))
+    }
+
+    /// Resolve the effective object types owning a Connection's two Ports.
+    /// The caller checks admission separately to retain failures and ceilings.
+    pub(crate) fn connection_ends(&self, key: &DeclarationKey) -> Option<[ValueType; 2]> {
+        let DomainPackageRecord::Relationship(relationship) = self.records.get(key)? else {
             return None;
-        }
+        };
         let endpoint_owner = |endpoint: &DeclarationKey| {
             let DomainPackageRecord::Endpoint(port) = self.records.get(endpoint)? else {
                 return None;

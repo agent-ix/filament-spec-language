@@ -221,6 +221,19 @@ pub enum ProtocolAnchorCause {
         /// The object type's own span.
         span: Span,
     },
+    /// A systems Connection failed its existing model admission rule.
+    ConnectionAdmission {
+        /// The selected Connection's declaration key.
+        connection: Box<filament_checked::key::DeclarationKey>,
+        /// The model owner's original code.
+        code: Code,
+        /// The model owner's catalog cause tag.
+        cause: &'static str,
+        /// The model owner's detail, retaining the offending condition.
+        detail: String,
+        /// The relationship's model member reference.
+        span: Span,
+    },
     /// An `attempt`'s `by` role names no role of the protocol.
     MissingRole {
         /// The role as written.
@@ -1149,6 +1162,7 @@ impl ProtocolAnchorCause {
             | Self::MissingProfile { span, .. }
             | Self::WrongProfileKind { span, .. }
             | Self::MissingRoleType { span, .. }
+            | Self::ConnectionAdmission { span, .. }
             | Self::MissingRole { span, .. }
             | Self::BinderType { span, .. }
             | Self::AttemptBinderRead { span, .. }
@@ -1201,6 +1215,7 @@ impl ProtocolAnchorCause {
     /// This cause's catalog code.
     pub fn code(&self) -> Code {
         match self {
+            Self::ConnectionAdmission { code, .. } => *code,
             Self::Missing { .. }
             | Self::MissingContract { .. }
             | Self::MissingProfile { .. }
@@ -1269,6 +1284,7 @@ impl ProtocolAnchorCause {
     /// protocol-specific catalog code exists).
     pub fn tag(&self) -> &'static str {
         match self {
+            Self::ConnectionAdmission { cause, .. } => cause,
             Self::Missing { .. }
             | Self::MissingContract { .. }
             | Self::MissingProfile { .. }

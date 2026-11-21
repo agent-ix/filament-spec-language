@@ -4649,7 +4649,8 @@ impl PackageDeclarations {
             match anchored {
                 Ok((mut checked, bound)) => {
                     refusals.extend(profile_refusals.into_iter().map(|(_, refusal)| refusal));
-                    let content = protocol_clause::content(protocol, &self.alias_names, &scope);
+                    let content =
+                        protocol_clause::content(protocol, &self.alias_names, &scope, &self.models);
                     let content_refused = !content.is_empty();
                     refusals.extend(content);
                     match protocol_requirement::check(

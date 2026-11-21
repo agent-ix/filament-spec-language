@@ -10,9 +10,8 @@
 //! export's declaration key. A checked relationship is bound to its
 //! export's declaration key and the types of its two ends in the order the
 //! model declares them (source, then target), never to the written name.
-//! A relationship whose ends are not both object types (a systems
-//! connection between endpoints) has no end a value can fill, which no
-//! requirement types yet: it is refused as not yet implemented. Two
+//! Systems Connections retain their Port ends and admission failures for
+//! channel binding. Two
 //! relationships of one name refuse `ambiguous_declaration`/
 //! `ambiguous-name` at each declaration; relationships and channels have
 //! separate namespaces.
@@ -168,34 +167,74 @@ pub(crate) fn check(
             continue;
         };
         let end = |key: &DeclarationKey| model.object_type_id(key).map(ValueType::Reference);
-        let connection = model
-            .admitted_connection_ends(&record.key)
-            .and_then(|ends| {
-                let source_port = model.declaration_record(&record.source.type_identity)?;
-                let target_port = model.declaration_record(&record.target.type_identity)?;
-                let (
-                    crate::model::domain_package::DomainPackageRecord::Endpoint(source_port),
-                    crate::model::domain_package::DomainPackageRecord::Endpoint(target_port),
-                ) = (source_port, target_port)
-                else {
-                    return None;
-                };
-                Some((
-                    ends,
-                    CheckedConnection {
-                        ports: [
-                            record.source.type_identity.clone(),
-                            record.target.type_identity.clone(),
-                        ],
-                        direction: record.direction,
-                        model_selection: model.selection().identity.clone(),
-                        interfaces: [
-                            model.object_type_id(&source_port.value_type)?,
-                            model.object_type_id(&target_port.value_type)?,
-                        ],
+        use crate::model::systems::{ConnectionCheckOutcome, ConnectionOutcome};
+        match model.connection_admission(&record.key) {
+            Some(ConnectionCheckOutcome::Completed(ConnectionOutcome::Refused(failures))) => {
+                for failure in failures {
+                    refusals.push((
+                        target.span,
+                        refusal(ProtocolAnchorCause::ConnectionAdmission {
+                            connection: Box::new(record.key.clone()),
+                            code: failure.code,
+                            cause: failure.cause.as_str(),
+                            detail: failure.detail,
+                            span: target.span,
+                        }),
+                    ));
+                }
+                continue;
+            }
+            Some(ConnectionCheckOutcome::Refused(cause)) => {
+                refusals.push((
+                    target.span,
+                    refusal(ProtocolAnchorCause::ConnectionAdmission {
+                        connection: Box::new(record.key.clone()),
+                        code: cause.code,
+                        cause: cause.cause.as_str(),
+                        detail: cause.detail,
+                        span: target.span,
+                    }),
+                ));
+                continue;
+            }
+            Some(ConnectionCheckOutcome::Incomplete(denial)) => {
+                refusals.push((
+                    target.span,
+                    CheckRefusal {
+                        location: Location::root(Origin::Expression),
+                        cause: CheckCause::ModelIncomplete(denial),
                     },
-                ))
-            });
+                ));
+                continue;
+            }
+            Some(ConnectionCheckOutcome::Completed(ConnectionOutcome::Admitted)) | None => {}
+        }
+        let connection = model.connection_ends(&record.key).and_then(|ends| {
+            let source_port = model.declaration_record(&record.source.type_identity)?;
+            let target_port = model.declaration_record(&record.target.type_identity)?;
+            let (
+                crate::model::domain_package::DomainPackageRecord::Endpoint(source_port),
+                crate::model::domain_package::DomainPackageRecord::Endpoint(target_port),
+            ) = (source_port, target_port)
+            else {
+                return None;
+            };
+            Some((
+                ends,
+                CheckedConnection {
+                    ports: [
+                        record.source.type_identity.clone(),
+                        record.target.type_identity.clone(),
+                    ],
+                    direction: record.direction,
+                    model_selection: model.selection().identity.clone(),
+                    interfaces: [
+                        model.object_type_id(&source_port.value_type)?,
+                        model.object_type_id(&target_port.value_type)?,
+                    ],
+                },
+            ))
+        });
         let ends = match (
             end(&record.source.type_identity),
             end(&record.target.type_identity),
