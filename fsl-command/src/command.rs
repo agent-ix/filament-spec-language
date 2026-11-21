@@ -929,6 +929,11 @@ pub enum RunCause {
     /// The request's extension definition catalog is invalid.
     #[error("the request's extension definitions are refused: {0}")]
     ExtensionCatalog(String),
+    /// An extension names a capability outside the closed complete-V1
+    /// inventory; it cannot be dropped, so the request is unsupported rather
+    /// than malformed.
+    #[error("the request's extension names an unknown required capability: {0}")]
+    UnknownExtensionCapability(String),
     /// Spine compile of a `1-draft` program refused at one stage.
     #[error("{}", .0.refusal)]
     Spine(Box<SpineFailure>),
@@ -1161,6 +1166,7 @@ impl RunCause {
             Self::ExtractionFailure { code, .. } => *code,
             Self::Spine(failure) => failure.refusal.code(),
             Self::ExtensionCatalog(_) => Code::InvalidPackage,
+            Self::UnknownExtensionCapability(_) => Code::UnknownRequiredFeature,
             Self::SpineRun(refusal) => refusal.code(),
             Self::UnknownRequirementClaim { .. } => Code::MissingDeclaration,
             Self::TemporalCorrection(_) => Code::InvalidRuntimeInput,
@@ -1412,6 +1418,7 @@ impl RunError {
             | RunCause::EmptyCompileProgram
             | RunCause::Libraries(_)
             | RunCause::ExtensionCatalog(_)
+            | RunCause::UnknownExtensionCapability(_)
             | RunCause::CompleteRunSelection(_)
             | RunCause::AnalyzeRequest { .. }
             | RunCause::AnalyzeUniverse(_)
@@ -1426,6 +1433,7 @@ impl RunError {
                 .with_diagnostics(vec![OutcomeDiagnostic::new(
                     match &self.cause {
                         RunCause::IntegerDivisionLaw { .. } => Some("unsupported-selection"),
+                        RunCause::UnknownExtensionCapability(_) => Some("unknown-feature"),
                         _ => None,
                     },
                     self.cause.code().as_str(),
@@ -3527,10 +3535,7 @@ fn extension_catalog(
         let capabilities = extension
             .capabilities
             .iter()
-            .map(|capability| {
-                CapabilityId::complete(capability)
-                    .map_err(|error| RunCause::ExtensionCatalog(error.to_string()))
-            })
+            .map(|capability| CapabilityId::complete(capability).map_err(extension_catalog_cause))
             .collect::<Result<std::collections::BTreeSet<_>>>()?;
         definitions.push(ExtensionDefinitionSource {
             authority: extension.authority.clone(),
@@ -3541,7 +3546,19 @@ fn extension_catalog(
         });
     }
     fsl_semantics::library::bundle::DefinitionCatalog::read_extensions(definitions)
-        .map_err(|error| RunCause::ExtensionCatalog(error.to_string()))
+        .map_err(extension_catalog_cause)
+}
+
+/// The refusal of an extension catalogue failure: a capability outside the
+/// closed inventory is an unknown required feature, every other failure a
+/// malformed catalogue.
+fn extension_catalog_cause(error: fsl_semantics::library::bundle::PackageError) -> RunCause {
+    match error {
+        fsl_semantics::library::bundle::PackageError::UnknownCapability(_) => {
+            RunCause::UnknownExtensionCapability(error.to_string())
+        }
+        other => RunCause::ExtensionCatalog(other.to_string()),
+    }
 }
 
 /// Validate extension labels and logical identity uniqueness before intake

@@ -253,7 +253,7 @@ pub(super) fn error(error: &RunError, artifact: bool) -> Result<Value, serde_jso
         | RunCause::OutputGivenTwice
         | RunCause::OutputExists { .. }
         | RunCause::ExtractionRequiresRun => (types::Stage::Request, types::Details::None),
-        RunCause::ExtensionCatalog(_) => (
+        RunCause::ExtensionCatalog(_) | RunCause::UnknownExtensionCapability(_) => (
             types::Stage::Spine(fsl_replay::spine::SpineStage::Forms),
             types::Details::None,
         ),
@@ -436,6 +436,7 @@ pub(super) fn error(error: &RunError, artifact: bool) -> Result<Value, serde_jso
             }
             RunCause::TlClause { .. } => Some("missing-name"),
             RunCause::TlSubject(record) => Some(record.catalog.cause()),
+            RunCause::UnknownExtensionCapability(_) => Some("unknown-feature"),
             _ => None,
         },
         message: error.to_string(),
