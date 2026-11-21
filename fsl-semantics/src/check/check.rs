@@ -1166,6 +1166,10 @@ pub struct Scope {
     index: ScopeIndex,
     /// Each admitted import by its qualifier (ADR-015 D-5).
     imports: BTreeMap<String, super::AdmittedImport>,
+    /// The unit's dimension equivalence classes (FR-091, FSpec FR-142
+    /// "Dimension equivalence"): a `convert` between units of two dimensions
+    /// of one class is admitted (FR-093).
+    dimension_classes: super::assemble::EquivalenceClasses,
 }
 
 fsl_foundation::debug_with_struct!(Scope, "Scope" { types: plain, model_records: with, relationships: plain, enums: plain, variant_types: with, operations: plain, ieee_profile: plain, ieee_operation: plain, integer_division: plain, complete_value: plain, known_populations: plain, clock_places: plain, clock_presence_places: plain, clock_reading: plain, history_names: plain, complete_model: plain, dispatch_operations: plain, symmetric_objects: plain, index: plain, imports: values });
@@ -1538,6 +1542,7 @@ impl Scope {
             symmetric_objects: BTreeMap::new(),
             index,
             imports: BTreeMap::new(),
+            dimension_classes: super::assemble::EquivalenceClasses::default(),
         }
     }
 
@@ -1883,6 +1888,35 @@ impl Scope {
         units.append(declared);
         self.types = std::mem::take(&mut self.types).with_units(units);
         self
+    }
+
+    /// This scope with the unit's admitted dimension equivalences (FR-091):
+    /// a `convert` across one class is admitted (FR-093).
+    pub(crate) fn with_dimension_equivalences(
+        mut self,
+        equivalences: &[super::assemble::DimensionEquivalence],
+    ) -> Self {
+        self.dimension_classes = super::assemble::EquivalenceClasses::new(equivalences);
+        self
+    }
+
+    /// Whether a quantity of `source` converts to `target`: the kernel's
+    /// same-dimension relation, or two declared units whose dimension nodes
+    /// share an equivalence class (FR-093 "Dimension equivalence").
+    pub(crate) fn units_convert(
+        &self,
+        source: &filament_semantic_value::quantity::QuantityUnit,
+        target: &filament_semantic_value::quantity::QuantityUnit,
+    ) -> bool {
+        use filament_semantic_value::quantity::QuantityUnit;
+        source.converts_to(target)
+            || match (source, target) {
+                (QuantityUnit::Declared(source), QuantityUnit::Declared(target)) => {
+                    self.dimension_classes.class(source.dimension_node()).0
+                        == self.dimension_classes.class(target.dimension_node()).0
+                }
+                (QuantityUnit::Compound(_), _) | (_, QuantityUnit::Compound(_)) => false,
+            }
     }
 
     /// The unit `name`, written in the source unit `source`, names as a
@@ -6059,7 +6093,7 @@ impl<'a> Typer<'a> {
                     .units
                     .get(source_unit.clone())
                     .zip(self.units.get(target_unit.clone()))
-                    .is_some_and(|(source, target)| source.converts_to(target));
+                    .is_some_and(|(source, target)| self.scope.units_convert(source, target));
                 if !compatible {
                     return Err(mismatch(location));
                 }
