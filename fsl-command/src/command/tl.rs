@@ -21,7 +21,7 @@ use tl_syntax::{
 
 use super::{Result, RunCause};
 
-mod canonical;
+use fsl_replay::canonical_atom as canonical;
 mod package_observed;
 pub(super) use package_observed::PackageRun;
 

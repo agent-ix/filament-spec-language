@@ -958,9 +958,16 @@ pub(super) fn execute(prepared: PreparedPackageRun) -> Result<RunResult> {
     } else {
         fsl_semantics::model::object_environment::ObjectEnvironment::default()
     };
-    let outcome =
-        fsl_replay::spine::run_package(&bare, &call, &objects, &filament_exact::Cancel::new())
-            .map_err(|refusal| RunCause::SpineRun(Box::new(*refusal)))?;
+    let called = fsl_replay::spine::run_package_with_sources(
+        &bare,
+        &call,
+        &objects,
+        &sources,
+        &filament_exact::Cancel::new(),
+    );
+    let outcome = called
+        .outcome
+        .map_err(|refusal| RunCause::SpineRun(Box::new(*refusal)))?;
     let mut result = output::spine_run_result_for_package(&selection, &call.function, outcome)?;
     result.sources = crate::Sources::from_sources(models.into_iter().chain(sources));
     Ok(result)

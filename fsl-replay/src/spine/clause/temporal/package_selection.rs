@@ -511,7 +511,7 @@ fn run_model(
     let (disposition, _, decisive) = super::with_decisive_by(
         violated.then_some(decisive).flatten(),
         disposition,
-        None,
+        None::<crate::ObservedTemporalCounterexample>,
         |atom, meter| {
             let observed = observation
                 .as_ref()

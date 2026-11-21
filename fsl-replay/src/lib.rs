@@ -52,6 +52,8 @@ mod build_inventory;
 mod call_replay_context;
 mod call_requirements;
 mod call_site;
+/// Canonical checked-expression atom labels shared by lowering and reporting.
+pub mod canonical_atom;
 mod certificate;
 mod clause_evaluation;
 mod compile;

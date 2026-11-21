@@ -22,7 +22,8 @@ struct ExpressionNode {
 }
 
 #[derive(Default)]
-pub(super) struct CanonicalRows {
+/// Package-owned declaration rows used by the canonical checked-expression printer.
+pub struct CanonicalRows {
     declarations: BTreeMap<NodeKey, String>,
     functions: BTreeMap<usize, String>,
     record_fields: BTreeMap<NodeKey, Vec<String>>,
@@ -32,7 +33,7 @@ pub(super) struct CanonicalRows {
 impl CanonicalRows {
     /// Build the declaration and function spellings a package-backed
     /// expression needs from its FR-940 read projection and the package's declared composites.
-    pub(super) fn from_projection(
+    pub fn from_projection(
         projection: &fsl_package::ReaderProtocolProjection,
         declared: &[fsl_package::DeclaredComposite],
     ) -> Result<Self, String> {
@@ -1120,8 +1121,8 @@ fn canonical_identity(key: &NodeKey) -> Result<String, String> {
 
 /// Build labels solely from the retained checked source conditions and their
 /// positional clause binders. Source slices are deliberately not involved.
-pub(super) fn source_labels(
-    valuation: &fsl_replay::spine::TemporalValuation,
+pub fn source_labels(
+    valuation: &crate::spine::TemporalValuation,
 ) -> Result<BTreeMap<fsl_semantics::check::FormulaNodeId, String>, String> {
     let clause = &valuation.clause;
     let mut binders = vec![clause.over().0.clone()];
@@ -1150,7 +1151,7 @@ pub(super) fn source_labels(
 /// Binder names and slot identities come only from the admitted package
 /// projection and clause form; the caller supplies the package-derived type
 /// rows used by the shared printer.
-pub(super) fn package_label(
+pub fn package_label(
     term: &fsl_package::BareClauseTerm,
     rows: &CanonicalRows,
 ) -> Result<String, String> {
