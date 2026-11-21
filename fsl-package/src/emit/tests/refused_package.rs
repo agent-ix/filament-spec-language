@@ -47,6 +47,7 @@ fn a_refused_read_carries_the_readers_code_cause_and_pointer() {
 #[trace("FR-286-AC-2")]
 fn a_refusal_spells_the_readers_cause_or_its_codes_default() {
     let refusal = |code, cause: Option<&str>| PackageAdmissionRefusal {
+        limit: None,
         code,
         cause: cause.map(str::to_owned),
         pointer: Some("/claim_names/2".to_owned()),
