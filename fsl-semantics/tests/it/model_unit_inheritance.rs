@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-//! QSL-2737: a model unit's `extends`, field `subsets` and `redefines`, and
+//! A model unit's `extends`, field `subsets` and `redefines`, and
 //! operation `redefines` (FR-710 grammar) reach the checked model, where
 //! FR-081 and FR-082 decide them.
 
@@ -7,11 +7,11 @@ use filament_semantic_value::checking::{CheckMode, CheckingLimits};
 use fsl_semantics::check::PackageDeclarations;
 use fsl_semantics::model::accounting::ModelNormalizationLimits;
 use fsl_semantics::model::domain_package::DomainPackageRecord;
-use fsl_semantics::model::intake::{admit, admit_unit, package_input, read_records, PackageInput};
+use fsl_semantics::model::intake::{PackageInput, admit, admit_unit, package_input, read_records};
 use ix_trace_rs::trace;
 
 /// Two object types, `Child` specializing `Base` with one subsetting field,
-/// one narrowing field redefinition and one operation redefinition.
+/// one field redefinition and one operation redefinition.
 const SHOP: &str = "language \"ix:native\" edition \"1-draft\";
 domain \"example/shop\";
 object Base identity (id) {
@@ -21,6 +21,7 @@ object Base identity (id) {
   operation bump(): Boolean modifies self.total;
 }
 object Child extends Base {
+  total: Int redefines Base::total;
   few: Int [0, 2] subsets items;
   operation bump(): Boolean redefines Base::bump modifies self.total;
 }
@@ -94,7 +95,7 @@ fn check_causes(packages: &PackageInput) -> Vec<&'static str> {
         ModelNormalizationLimits::default(),
     ) {
         Ok(models) => models,
-        Err(refusal) => return vec![refusal_cause(&refusal)],
+        Err(refusal) => return vec![refusal.cause.cause().expect("a catalogued intake refusal")],
     };
     let mut declarations = match PackageDeclarations::assemble(
         parsed.source().reference().clone(),
@@ -109,7 +110,7 @@ fn check_causes(packages: &PackageInput) -> Vec<&'static str> {
                 .errors
                 .iter()
                 .map(|error| error.cause.catalog_code().cause())
-                .collect()
+                .collect();
         }
     };
     let pending = match declarations.link_dispatch(ModelNormalizationLimits::default()) {
@@ -132,11 +133,6 @@ fn causes(refusals: &[fsl_semantics::check::CheckRefusal]) -> Vec<&'static str> 
         .filter_map(|refusal| refusal.cause.catalog_code())
         .map(|code| code.cause())
         .collect()
-}
-
-fn refusal_cause(refusal: &impl std::fmt::Debug) -> &'static str {
-    let text = format!("{refusal:?}");
-    Box::leak(text.into_boxed_str())
 }
 
 #[trace("FR-710-AC-3", "TC-1942")]
@@ -176,6 +172,21 @@ fn a_model_unit_writes_supertypes_subsets_and_redefinitions_into_the_document() 
     });
     let redefines = bump.and_then(|op| op.redefines.as_ref());
     assert!(redefines.is_some_and(|key| key.node.ends_with("/Base/bump")));
+    let total = records
+        .iter()
+        .find_map(|record| match record {
+            DomainPackageRecord::FieldMember(field) if field.key.node.ends_with("/Child/total") => {
+                Some(field)
+            }
+            _ => None,
+        })
+        .expect("Child.total is a field");
+    assert!(
+        total
+            .redefines
+            .as_ref()
+            .is_some_and(|key| key.node == "ix://example/shop/Base/total")
+    );
 }
 
 #[trace("FR-082-AC-2", "TC-1942")]
@@ -202,6 +213,7 @@ fn a_subsets_or_redefines_that_finds_no_member_refuses_at_the_name() {
         ("subsets items", "subsets ghost", "ghost"),
         ("redefines Base::bump", "redefines Base::ghost", "ghost"),
         ("redefines Base::bump", "redefines Ghost::bump", "Ghost"),
+        ("redefines Base::total", "redefines Base::ghost", "ghost"),
     ] {
         let model = SHOP.replace(from, to);
         assert_eq!(
@@ -253,8 +265,114 @@ fn a_redefinition_that_widens_the_frame_refuses_effect_escape() {
     );
     let packages = compile(&model).expect("the model unit compiles");
     let found = check_causes(&packages);
-    assert!(
-        found.iter().any(|cause| cause.contains("effect")),
-        "{found:?}"
+    assert!(found.contains(&"effect-escape"), "{found:?}");
+}
+
+#[trace("FR-710-AC-3", "TC-1942")]
+#[test]
+fn inheritance_resolves_forward_declarations_and_transitive_members() {
+    let model = SHOP.replace("object Child extends Base", "object Child extends Middle")
+        + "object Middle extends Base {}\n";
+    let packages = compile(&model).expect("the later supertype is resolved");
+    assert_eq!(check_causes(&packages), Vec::<&str>::new());
+    let (_, document) = admit(
+        "example/shop",
+        &packages,
+        ModelNormalizationLimits::default().intake,
+    )
+    .expect("the compiled document admits");
+    let records = read_records("example/shop", &document).expect("records are read");
+    let few = records
+        .iter()
+        .find_map(|record| match record {
+            DomainPackageRecord::FieldMember(field)
+                if field.key.node == "ix://example/shop/Child/few" =>
+            {
+                Some(field)
+            }
+            _ => None,
+        })
+        .expect("the subset field is declared");
+    assert_eq!(few.subsets.len(), 1);
+    assert_eq!(few.subsets[0].node, "ix://example/shop/Base/items");
+}
+
+#[trace("FR-710-AC-3", "TC-1942")]
+#[test]
+fn a_field_can_subset_a_field_on_its_own_type() {
+    let model = SHOP.replace(
+        "  items: Int [0, 5];",
+        "  items: Int [0, 5];\n  some: Int [0, 2] subsets items;",
     );
+    let packages = compile(&model).expect("the local subset compiles");
+    assert_eq!(check_causes(&packages), Vec::<&str>::new());
+}
+
+const MACHINES_AND_PROCESSES: &str = "language \"ix:native\" edition \"1-draft\";
+domain \"example/shop\";
+machine BaseMachine { active: Boolean; states (Ready); }
+machine ChildMachine extends BaseMachine { states (Done); }
+process BaseProcess { id: Integer; operation go(); }
+process ChildProcess extends BaseProcess { operation stop(); }
+object Child extends Base { }
+object Base { total: Integer; }
+population children: Child;
+";
+
+#[trace("FR-710-AC-3", "TC-1942")]
+#[test]
+fn machine_and_process_inheritance_keeps_the_declared_supertype() {
+    let packages =
+        compile(MACHINES_AND_PROCESSES).expect("machine and process inheritance compiles");
+    let (_, document) = admit(
+        "example/shop",
+        &packages,
+        ModelNormalizationLimits::default().intake,
+    )
+    .expect("FR-154 admits the inherited constructs");
+    let records = read_records("example/shop", &document).expect("records are read");
+    let machine = records
+        .iter()
+        .find_map(|record| match record {
+            DomainPackageRecord::StateMachine(machine)
+                if machine.key.node == "ix://example/shop/ChildMachine" =>
+            {
+                Some(machine)
+            }
+            _ => None,
+        })
+        .expect("the child machine is retained");
+    assert_eq!(machine.supertypes.len(), 1);
+    assert_eq!(machine.supertypes[0].node, "ix://example/shop/BaseMachine");
+    let process = records
+        .iter()
+        .find_map(|record| match record {
+            DomainPackageRecord::Process(process)
+                if process.key.node == "ix://example/shop/ChildProcess" =>
+            {
+                Some(process)
+            }
+            _ => None,
+        })
+        .expect("the child process is retained");
+    assert_eq!(process.supertypes.len(), 1);
+    assert_eq!(process.supertypes[0].node, "ix://example/shop/BaseProcess");
+    assert!(process.identity_fields_declared);
+    assert!(
+        process.identity_fields.is_empty(),
+        "the subtype inherits its process key"
+    );
+    assert_eq!(check_causes(&packages), Vec::<&str>::new());
+}
+
+#[trace("FR-710-AC-4", "TC-1943")]
+#[test]
+fn missing_machine_and_process_supertypes_refuse_at_the_name() {
+    for parent in ["BaseMachine", "BaseProcess"] {
+        let model = MACHINES_AND_PROCESSES.replace(&format!("extends {parent}"), "extends Ghost");
+        assert_eq!(
+            compile_refusals(&model),
+            [("missing-name", "Ghost".to_owned())]
+        );
+    }
 }

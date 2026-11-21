@@ -4,7 +4,7 @@
 use fsl_forms::cst::{self, CompleteCause, CompleteCode, CompleteDiagnostic, ParsedSource};
 use fsl_foundation::diagnostic::{Code, Diagnostic};
 use fsl_foundation::{Phase, Source, SourceIdentity, Span};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use crate::model::accounting::ModelNormalizationLimits;
 
@@ -536,8 +536,7 @@ pub fn compile_model_unit_with_causes(
                 index = next;
             }
             Some("machine") => {
-                let Some((node, name, next)) =
-                    read_state_machine(&tokens, index, &identity, parsed)
+                let Some((machine, next)) = read_state_machine(&tokens, index, &identity, parsed)
                 else {
                     return Err(vec![diagnostic(
                         parsed,
@@ -547,22 +546,26 @@ pub fn compile_model_unit_with_causes(
                         "invalid state machine declaration",
                     )]);
                 };
-                if !declaration_names.insert(name.clone()) {
+                if !declaration_names.insert(machine.name.clone()) {
                     return Err(vec![diagnostic(
                         parsed,
                         CompleteCode::AmbiguousDeclaration,
                         CompleteCause::AmbiguousName,
                         tokens[declaration_start + 1].span,
-                        format!("declaration {name} is declared more than once"),
+                        format!("declaration {} is declared more than once", machine.name),
                     )]);
                 }
-                types.push(node);
+                supertype_references.extend(machine.links.supertypes.iter().cloned());
+                types.extend(machine.additional_types);
+                let mut links = machine.links;
+                links.type_index = types.len();
+                object_links.push(links);
+                types.push(machine.wire);
                 has_state_machine = true;
                 index = next;
             }
             Some("process") => {
-                let Some((node, name, next)) = read_process(&tokens, index, &identity, parsed)
-                else {
+                let Some((process, next)) = read_process(&tokens, index, &identity, parsed) else {
                     return Err(vec![diagnostic(
                         parsed,
                         CompleteCode::InvalidSyntax,
@@ -571,16 +574,21 @@ pub fn compile_model_unit_with_causes(
                         "invalid process declaration",
                     )]);
                 };
-                if !declaration_names.insert(name.clone()) {
+                if !declaration_names.insert(process.name.clone()) {
                     return Err(vec![diagnostic(
                         parsed,
                         CompleteCode::AmbiguousDeclaration,
                         CompleteCause::AmbiguousName,
                         tokens[declaration_start + 1].span,
-                        format!("declaration {name} is declared more than once"),
+                        format!("declaration {} is declared more than once", process.name),
                     )]);
                 }
-                types.push(node);
+                supertype_references.extend(process.links.supertypes.iter().cloned());
+                types.extend(process.additional_types);
+                let mut links = process.links;
+                links.type_index = types.len();
+                object_links.push(links);
+                types.push(process.wire);
                 has_process = true;
                 index = next;
             }
@@ -938,7 +946,11 @@ pub fn compile_model_unit_with_causes(
         let empty = wire["identityFields"]
             .as_array()
             .is_some_and(|fields| fields.is_empty());
-        if empty {
+        let inherited_process = wire["kind"]["name"] == "process"
+            && wire["supertypes"]
+                .as_array()
+                .is_some_and(|types| !types.is_empty());
+        if empty && !inherited_process {
             if let Some(object) = wire.as_object_mut() {
                 object.remove("identityFields");
             }
@@ -1037,7 +1049,7 @@ fn read_identity(tokens: &[Token], cursor: &mut usize) -> Option<String> {
 
 /// Writes each `subsets` and `redefines` of the unit's objects into its wire
 /// as the identity of the member it names, found on the object that declares
-/// it (FR-081): a field `subsets` name is looked up on the supertypes, a
+/// it (FR-081): a field `subsets` name is looked up on its owner and supertypes, a
 /// `redefines Owner::member` on `Owner` and its supertypes. A name that finds
 /// no member is `missing_declaration` at the name; whether `Owner` is a
 /// supertype of the redefining object is the model checker's decision (FR-082).
@@ -1065,7 +1077,8 @@ fn link_inheritance(
             let wire = &mut types[object.type_index]["fields"][position];
             if let Some((name, span)) = &field.subsets {
                 let mut subsets = Vec::new();
-                match declaring(&by_name, &object.supertypes, name, MemberKind::Field) {
+                let start = [(object.name.clone(), *span)];
+                match declaring(&by_name, &start, name, MemberKind::Field) {
                     Some(owner) => subsets.push(format!("ix://{package}/{owner}/{name}")),
                     None => return Err(missing(*span, "subsetted field", name)),
                 }
@@ -2103,7 +2116,7 @@ fn read_state_machine(
     index: usize,
     package: &str,
     parsed: &ParsedSource,
-) -> Option<(Value, String, usize)> {
+) -> Option<(ObjectRead, usize)> {
     let (mut machine, next) = read_object(tokens, index, package, parsed)?;
     let name = machine.name.clone();
     let states_index = (index..next).find(|candidate| tokens[*candidate].text == "states")?;
@@ -2174,10 +2187,9 @@ fn read_state_machine(
     }
     machine.wire["kind"]["name"] = json!("machine");
     machine.wire["identityFields"] = json!([]);
-    machine.wire["supertypes"] = json!([]);
     machine.wire["states"] = json!(states);
     machine.wire["transitions"] = json!(transitions);
-    Some((machine.wire, name, next))
+    Some((machine, next))
 }
 
 fn read_process(
@@ -2185,7 +2197,7 @@ fn read_process(
     index: usize,
     package: &str,
     parsed: &ParsedSource,
-) -> Option<(Value, String, usize)> {
+) -> Option<(ObjectRead, usize)> {
     let (mut process, next) = read_object(tokens, index, package, parsed)?;
     let name = process.name.clone();
     let mut steps = Vec::new();
@@ -2243,15 +2255,20 @@ fn read_process(
         cursor += 1;
     }
     process.wire["kind"]["name"] = json!("process");
-    process.wire["identityFields"] = json!(process.wire["fields"]
-        .as_array()?
-        .iter()
-        .filter_map(|field| field.get("identity").and_then(Value::as_str))
-        .map(str::to_owned)
-        .collect::<Vec<_>>());
-    process.wire["supertypes"] = json!([]);
+    process.wire["identityFields"] = if process.links.supertypes.is_empty() {
+        json!(
+            process.wire["fields"]
+                .as_array()?
+                .iter()
+                .filter_map(|field| field.get("identity").and_then(Value::as_str))
+                .map(str::to_owned)
+                .collect::<Vec<_>>()
+        )
+    } else {
+        json!([])
+    };
     process.wire["steps"] = json!(steps);
-    Some((process.wire, name, next))
+    Some((process, next))
 }
 
 fn read_store(
