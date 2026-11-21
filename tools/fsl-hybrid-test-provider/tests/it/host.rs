@@ -12,7 +12,7 @@ use std::sync::mpsc::{self, Receiver, RecvTimeoutError};
 use std::time::{Duration, Instant};
 
 use filament_exact::{Cancel, CancelCause};
-use fsl_analyze::analyze::HybridProcessExchange;
+use fsl_analyze::analyze::{HybridExchangeError, HybridProcessExchange};
 use fsl_analyze::provider::ProviderLimits;
 use fsl_replay::ToolFailure;
 use quire_canonical::Limits;
@@ -37,25 +37,22 @@ enum Frame {
 pub struct StdioHost {
     program: PathBuf,
     script: PathBuf,
-    backend: String,
     limits: ProviderLimits,
+    /// Whether the child has been waited on successfully before returning.
+    pub reaped: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    /// Result frames observed before deciding the exchange's return value.
+    pub results: std::sync::Arc<std::sync::atomic::AtomicUsize>,
 }
 
 impl StdioHost {
-    pub fn new(program: PathBuf, script: PathBuf, backend: &str, limits: ProviderLimits) -> Self {
+    pub fn new(program: PathBuf, script: PathBuf, limits: ProviderLimits) -> Self {
         Self {
             program,
             script,
-            backend: backend.to_owned(),
             limits,
+            reaped: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            results: std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0)),
         }
-    }
-
-    /// The outcome stage a host writes for the item the provider left open.
-    fn incomplete(&self, cause: &Value) -> Vec<u8> {
-        let entry = json!({"request_index": 0, "backend": self.backend,
-            "kind": "temporal-satisfaction", "result": "incomplete", "cause": cause});
-        encode(&crate::support::stage(vec![entry], Vec::new()))
     }
 
     fn failure_after_end(child: &mut Child) -> ToolFailure {
@@ -68,7 +65,7 @@ impl StdioHost {
 }
 
 impl HybridProcessExchange for StdioHost {
-    fn exchange(&self, request: &[u8], cancel: &Cancel) -> Result<Vec<u8>, ToolFailure> {
+    fn exchange(&self, request: &[u8], cancel: &Cancel) -> Result<Vec<u8>, HybridExchangeError> {
         let body: Value =
             serde_json::from_slice(request).map_err(|_| ToolFailure::MalformedBody)?;
         let deadline_ms = body["request"]["deadline_ms"]
@@ -101,9 +98,15 @@ impl HybridProcessExchange for StdioHost {
         if result.is_err() || child.try_wait().ok().flatten().is_none() {
             let _ = child.kill();
         }
-        let _ = child.wait();
+        if child.wait().is_ok() {
+            self.reaped
+                .store(true, std::sync::atomic::Ordering::Release);
+        }
         let _ = drain.join();
-        result
+        match cancel.cause() {
+            Some(source) => Err(HybridExchangeError::Cancelled { source }),
+            None => result,
+        }
     }
 }
 
@@ -118,14 +121,14 @@ impl StdioHost {
         started: Instant,
         deadline: Duration,
         cancel: &Cancel,
-    ) -> Result<Vec<u8>, ToolFailure> {
+    ) -> Result<Vec<u8>, HybridExchangeError> {
         match self.next(child, frames, started, deadline, cancel) {
             Next::Frame(Frame::Envelope { kind, .. }) if kind == "hello" => {}
-            Next::Frame(Frame::Envelope { .. }) => return Err(ToolFailure::UnknownFrameKind),
+            Next::Frame(Frame::Envelope { .. }) => return Err(ToolFailure::UnknownFrameKind.into()),
             // A cancel before the hello leaves nothing to ask the provider to
             // stop: the host ends it and settles the item cancelled.
             Next::Cancelled(cause) => {
-                return Ok(self.incomplete(&json!({"type": "cancelled", "source": source(cause)})));
+                return Err(HybridExchangeError::Cancelled { source: cause });
             }
             other => return self.settle_without_frame(child, other),
         }
@@ -135,24 +138,26 @@ impl StdioHost {
             match self.next(child, frames, started, deadline, cancel) {
                 Next::Frame(Frame::Envelope { id, kind, body }) => {
                     if kind != "result" {
-                        return Err(ToolFailure::UnknownFrameKind);
+                        return Err(ToolFailure::UnknownFrameKind.into());
                     }
                     if id != 1 {
-                        return Err(ToolFailure::UnknownRequestId);
+                        return Err(ToolFailure::UnknownRequestId.into());
                     }
+                    self.results
+                        .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                     // FSpec FR-462 "Cancellation": a cancelled request settles
                     // `incomplete`/`cancelled`, whatever a late result says.
-                    if let Some((_, cause)) = cancelled_at {
+                    if let Some(cause) = cancel.cause() {
                         write_frame(stdin, 2, "shutdown", &json!({}));
-                        return Ok(
-                            self.incomplete(&json!({"type": "cancelled", "source": source(cause)}))
-                        );
+                        return Err(HybridExchangeError::Cancelled { source: cause });
                     }
                     write_frame(stdin, 2, "shutdown", &json!({}));
                     return match child.wait() {
                         Ok(status) if status.success() => Ok(encode(&body)),
-                        Ok(status) if status.code().is_some() => Err(ToolFailure::NonzeroExit),
-                        _ => Err(ToolFailure::Crash),
+                        Ok(status) if status.code().is_some() => {
+                            Err(ToolFailure::NonzeroExit.into())
+                        }
+                        _ => Err(ToolFailure::Crash.into()),
                     };
                 }
                 Next::Cancelled(cause) => match cancelled_at {
@@ -163,25 +168,32 @@ impl StdioHost {
                     Some((at, cause))
                         if at.elapsed() >= Duration::from_millis(self.limits.grace_ms) =>
                     {
-                        return Ok(
-                            self.incomplete(&json!({"type": "cancelled", "source": source(cause)}))
-                        );
+                        return Err(HybridExchangeError::Cancelled { source: cause });
                     }
                     Some(_) => {}
                 },
+                Next::Frame(Frame::Closed) if cancelled_at.is_some() => {
+                    if let Some((_, source)) = cancelled_at {
+                        return Err(HybridExchangeError::Cancelled { source });
+                    }
+                }
                 other => return self.settle_without_frame(child, other),
             }
         }
     }
 
     /// FR-462 "Failures": what ends a conversation without a result.
-    fn settle_without_frame(&self, child: &mut Child, next: Next) -> Result<Vec<u8>, ToolFailure> {
+    fn settle_without_frame(
+        &self,
+        child: &mut Child,
+        next: Next,
+    ) -> Result<Vec<u8>, HybridExchangeError> {
         match next {
-            Next::Frame(Frame::Refused(failure)) => Err(failure),
-            Next::Frame(Frame::Closed) => Err(Self::failure_after_end(child)),
-            Next::TimedOut => Ok(self.incomplete(&json!({"type": "timed-out"}))),
+            Next::Frame(Frame::Refused(failure)) => Err(failure.into()),
+            Next::Frame(Frame::Closed) => Err(Self::failure_after_end(child).into()),
+            Next::TimedOut => Err(HybridExchangeError::TimedOut),
             Next::Frame(Frame::Envelope { .. }) | Next::Cancelled(_) => {
-                Err(ToolFailure::EnvelopeMember)
+                Err(ToolFailure::EnvelopeMember.into())
             }
         }
     }
@@ -195,16 +207,24 @@ impl StdioHost {
         cancel: &Cancel,
     ) -> Next {
         loop {
-            match frames.recv_timeout(POLL) {
-                Ok(frame) => return Next::Frame(frame),
-                Err(RecvTimeoutError::Timeout) => {}
-                Err(RecvTimeoutError::Disconnected) => return Next::Frame(Frame::Closed),
+            if let Some(cause) = cancel.cause() {
+                // Observe cancellation before queued bytes or the provider's
+                // independent deadline, while still draining an acknowledgement.
+                if let Ok(frame) = frames.recv_timeout(POLL) {
+                    return match frame {
+                        Frame::Envelope { .. } | Frame::Closed => Next::Frame(frame),
+                        Frame::Refused(_) => Next::Cancelled(cause),
+                    };
+                }
+                return Next::Cancelled(cause);
             }
             if started.elapsed() >= deadline {
                 return Next::TimedOut;
             }
-            if let Some(cause) = cancel.cause() {
-                return Next::Cancelled(cause);
+            match frames.recv_timeout(POLL) {
+                Ok(frame) => return Next::Frame(frame),
+                Err(RecvTimeoutError::Timeout) => {}
+                Err(RecvTimeoutError::Disconnected) => return Next::Frame(Frame::Closed),
             }
         }
     }
@@ -214,13 +234,6 @@ enum Next {
     Frame(Frame),
     TimedOut,
     Cancelled(CancelCause),
-}
-
-fn source(cause: CancelCause) -> &'static str {
-    match cause {
-        CancelCause::Deadline => "deadline",
-        _ => "requested",
-    }
 }
 
 fn encode(value: &Value) -> Vec<u8> {

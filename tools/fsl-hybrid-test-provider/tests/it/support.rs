@@ -200,7 +200,6 @@ pub fn engine_at(id: &str, program: &Path, script: &Path, limits: ProviderLimits
         Box::new(StdioHost::new(
             program.to_owned(),
             script.to_owned(),
-            id,
             limits,
         )),
     )
@@ -261,10 +260,12 @@ fn settle(
     cancel: &filament_exact::Cancel,
 ) -> Value {
     ws.write("unit.fsl", unit.as_bytes());
+    let multiple = item.is_array();
+    let items = if multiple { item } else { json!([item]) };
     let mut members = json!({
         "program": {"source": {"file": "unit.fsl", "authority": "test",
             "identity": "hybrid-unit", "document": "HybridUnit", "formal_revision": 1}},
-        "items": [item]});
+        "items": items});
     if let Some((identity, text)) = library {
         ws.write("library.fsl", text.as_bytes());
         members["libraries"] = json!([{"identity": identity, "source": {
@@ -289,7 +290,11 @@ fn settle(
             .expect("the outcome document serializes"),
     };
     let document: Value = serde_json::from_slice(&bytes).expect("one JSON document");
-    document["items"][0].clone()
+    if multiple {
+        document
+    } else {
+        document["items"][0].clone()
+    }
 }
 
 /// [`run`] over `unit` importing the library `identity` whose source is

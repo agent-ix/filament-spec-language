@@ -186,23 +186,58 @@ pub struct Engine {
 /// The transport of one process hybrid provider (FR-750, FR-635): it takes
 /// the FR-447 process request frame bytes and the run's cancellation token
 /// and returns the provider's FSpec FR-331 result frame bytes or a typed
-/// tool failure. FSL writes the request and reads the result; starting the
+/// exchange error. FSL writes the request and reads the result; starting the
 /// process, FR-462 framing, limits, the deadline and cancellation belong to
-/// the implementor, the driver's plugin host. A deadline overrun or a
-/// cancellation is returned as a result frame whose entry is `incomplete`
-/// with cause `timed-out` or `cancelled` (FSpec FR-462).
+/// the implementor, the driver's plugin host. Host stops return typed errors
+/// after cleanup, without manufacturing an FR-331 result frame.
 pub trait HybridProcessExchange: std::fmt::Debug + Send + Sync {
     /// Exchange one request frame for its result frame.
     ///
     /// # Errors
     ///
-    /// The [`fsl_replay::ToolFailure`] FSpec FR-462's failure table names.
+    /// A genuine tool failure or a host deadline/cancellation stop.
     fn exchange(
         &self,
         request: &[u8],
         cancel: &filament_exact::Cancel,
-    ) -> Result<Vec<u8>, fsl_replay::ToolFailure>;
+    ) -> Result<Vec<u8>, HybridExchangeError>;
 }
+
+/// A process exchange failure or host stop (FR-750).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum HybridExchangeError {
+    /// A genuine failure from FSpec FR-462's failure table.
+    ToolFailure(fsl_replay::ToolFailure),
+    /// The provider deadline expired; the caller's cancellation stays live.
+    TimedOut,
+    /// The caller cancelled while the exchange was open.
+    Cancelled {
+        /// The actual cause observed by the host.
+        source: filament_exact::CancelCause,
+    },
+}
+
+impl From<fsl_replay::ToolFailure> for HybridExchangeError {
+    fn from(failure: fsl_replay::ToolFailure) -> Self {
+        Self::ToolFailure(failure)
+    }
+}
+
+impl std::fmt::Display for HybridExchangeError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::ToolFailure(failure) => {
+                write!(formatter, "hybrid provider tool failure: {failure:?}")
+            }
+            Self::TimedOut => formatter.write_str("hybrid provider timed out"),
+            Self::Cancelled { source } => {
+                write!(formatter, "hybrid provider cancelled: {source:?}")
+            }
+        }
+    }
+}
+
+impl std::error::Error for HybridExchangeError {}
 
 impl Engine {
     /// The engine a descriptor describes: only the crate's own adapters name
@@ -519,7 +554,9 @@ impl Engine {
 /// [`Engine::hybrid`] was given a descriptor that is no hybrid provider's
 /// (FR-750): `invalid_capability`/`invalid-dynamics`.
 #[derive(Clone, Debug, Eq, PartialEq, thiserror::Error)]
-#[error("invalid-dynamics: {backend:?} does not publish `hybrid` dynamics for temporal-satisfaction")]
+#[error(
+    "invalid-dynamics: {backend:?} does not publish `hybrid` dynamics for temporal-satisfaction"
+)]
 pub struct NotHybrid {
     /// The backend whose descriptor was refused.
     pub backend: BackendId,
@@ -3059,7 +3096,9 @@ fn settle(
             None,
         ),
         EngineReport::Refused(Refusal::FailedWithDetail(code, detail)) => record(
-            terminal(TerminalRecord::failed_with(index, backend, code).with_diagnostic_detail(detail)),
+            terminal(
+                TerminalRecord::failed_with(index, backend, code).with_diagnostic_detail(detail),
+            ),
             None,
         ),
         EngineReport::Refused(Refusal::UnsupportedConstruct(mut detail)) => {
