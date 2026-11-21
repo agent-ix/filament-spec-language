@@ -28,14 +28,20 @@ build the settlement request from those results. Then:
 3. Supply, one per run, the dependency's guarantee over `Consumer`, a weaker
    `Producer` clause, a safety guarantee, and a same-named `Sends` from a
    third package (FR-530-AC-2).
-4. Add the mutual dependency; then select the lattice-declaring profile and
-   fill the fixed-point slot with a `proved`, then an `inconclusive`, FR-176
-   result (FR-530-AC-4, FR-530-AC-5).
+4. Add the mutual dependency under each of the four rules, with and without a
+   registered provider; then select the lattice-declaring profile and offer a
+   `proved` fixed-point result (FR-530-AC-4, FR-530-AC-5).
 5. Run FSpec TC-983 case 5 (FR-530-AC-6).
 6. Add a discharge record naming no pool entry, one whose pool entry is over
    another subject, and one naming an `inconclusive` result (FR-530-AC-7).
 7. Add a forged slot, then a premise result for another slot's identity
-   (FR-530-AC-8).
+   (FR-530-AC-8), then one for the same guarantee under other assumptions or
+   none (FR-530-AC-10).
+8. Declare a `rely` on a peer clause no `guarantee` covers; a peer guarantee
+   conditional on a fairness constraint nothing supplied implies; a `weaker` at
+   slot 3 with an `absent` at slot 4; two `absent` slots; and, with the
+   interface declared and not weaker, a peer result absent, `tested`,
+   `inconclusive`, of another subject and of another clause (FR-530-AC-9).
 
 Compile an unrelated supported clause in the composing package and settle it
 in every run. The TL-9 algorithm, FR-348 negotiation and FR-380 transfer are
@@ -51,12 +57,16 @@ the tests `#[trace("TC-1330", "<AC id>")]` and `#[trace("FSpec-TC-983")]` or
 2. `proved`, `decisive-witness`, with the discharge record.
 3. Each `inconclusive`, `premise-unproved` naming the liveness-dependency
    slot.
-4. The item refused `invalid_model_binding`/`malformed-declaration` naming
-   both guarantees; with the profile, `proved` carrying the FR-176 result,
-   then `inconclusive`, `premise-unproved` naming the fixed-point slot.
+4. Each item `unsupported`, `unsupported-requested-capability`, kind
+   `composition`, form `fixed-point`, both guarantees in edge order, with no slot
+   read, no provider called and no `fixed-point` slot; the same with the profile.
 5. FSpec TC-983 case 5's five distinct outcomes.
 6. The first two refused `invalid_runtime_input`/`invalid-value` at the
    record; the third discharges nothing.
 7. Each refused `invalid_runtime_input`/`invalid-value`.
+8. `refuted`, `decisive-counterexample`, `mismatch` naming the peer, the clause,
+   the slot and `absent`/`weaker`, with the complete slot list; the slot 4
+   `absent` for the mixed case and the lower slot for two `absent`; each
+   not-weaker case `inconclusive`, `premise-unproved`, never `refuted`.
 
 The unrelated clause settles unchanged in every run.
