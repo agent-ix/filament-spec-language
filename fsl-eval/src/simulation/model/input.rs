@@ -2033,11 +2033,11 @@ const NO_SOURCE_FOOTPRINT: FootprintRefusal = FootprintRefusal::Unresolved {
 impl ModelEvaluator for BarePackage<'_> {
     fn evaluate_model_relation(
         &self,
-        _relation: &super::ModelRelationDescriptor,
-        _tuple: super::ModelRelationTuple<'_>,
-        _meter: &mut Meter,
+        relation: &super::ModelRelationDescriptor,
+        tuple: super::ModelRelationTuple<'_>,
+        meter: &mut Meter,
     ) -> Result<crate::value::ModelRelationEvaluation, InternalFault> {
-        Err(SOURCE_FORM)
+        crate::value::evaluate_model_relation_tuple(self, relation, tuple, meter)
     }
 
     fn package_protocol_observation(

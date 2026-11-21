@@ -1105,8 +1105,18 @@ pub(super) fn package_parameter_type_refusal(
     node: &fsl_package::CheckedNodeId,
     failure: &fsl_package::BareSelectionFailure,
 ) -> Refusal {
+    package_projection_refusal(package, node, "parameter-type", failure)
+}
+
+/// Preserve a selected package form's existing typed projection refusal.
+pub(super) fn package_projection_refusal(
+    package: &str,
+    node: &fsl_package::CheckedNodeId,
+    fact: &str,
+    failure: &fsl_package::BareSelectionFailure,
+) -> Refusal {
     let mut detail = serde_json::Map::new();
-    detail.insert("fact".to_owned(), serde_json::json!("parameter-type"));
+    detail.insert("fact".to_owned(), serde_json::json!(fact));
     detail.insert("node".to_owned(), serde_json::json!(node));
     match failure.clone().into_view(package) {
         Ok(view) => {

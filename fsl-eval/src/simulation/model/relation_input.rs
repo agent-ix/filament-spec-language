@@ -22,6 +22,7 @@ pub struct ModelRelationDescriptor {
     execution_aliases: Vec<String>,
     aliases: Vec<String>,
     identities: BTreeMap<String, String>,
+    parameters: Vec<(String, filament_exact::ValueType)>,
 }
 
 impl ModelRelationDescriptor {
@@ -69,7 +70,95 @@ impl ModelRelationDescriptor {
             execution_aliases: selected.execution_aliases().to_vec(),
             aliases: selected.aliases().to_vec(),
             identities,
+            parameters: selected.body_parameters().to_vec(),
         })
+    }
+
+    /// Cross-check source execution facts against the run's one admitted view.
+    ///
+    /// # Errors
+    ///
+    /// The emission's order evidence or execution bindings differ from S3.
+    pub fn of_source_form(
+        package: &CheckedPackage,
+        relation: &CheckedModelRelation,
+        form: &fsl_package::PackageModelRelationForm,
+    ) -> Result<Self, InternalFault> {
+        let selected = Self::of_source(package, relation)?;
+        let aliases: Vec<_> = form
+            .subjects()
+            .iter()
+            .map(|subject| subject.alias.clone())
+            .collect();
+        let identities: BTreeMap<_, _> = form
+            .subjects()
+            .iter()
+            .map(|subject| (subject.alias.clone(), subject.identity.clone()))
+            .collect();
+        let variables: Vec<_> = form
+            .body()
+            .executions
+            .iter()
+            .map(|execution| execution.variable.as_ref())
+            .collect();
+        if form.occurrence() != selected.occurrence()
+            || aliases != selected.aliases
+            || identities != selected.identities
+            || !variables
+                .into_iter()
+                .eq(selected.executions.iter().map(|(name, _)| name.as_str()))
+            || !form
+                .body()
+                .executions
+                .iter()
+                .map(|execution| execution.alias.as_ref())
+                .eq(selected.execution_aliases.iter().map(String::as_str))
+        {
+            return Err(InternalFault::new(
+                "S6a",
+                "relation-source-form-matches-emission",
+            ));
+        }
+        Ok(selected)
+    }
+
+    /// Read the execution facts of an admitted package form.
+    ///
+    /// # Errors
+    ///
+    /// A body that cannot be projected or a claim with no structural key.
+    pub fn of_package(
+        package: &fsl_package::BarePackage<'_>,
+        form: &fsl_package::PackageModelRelationForm,
+    ) -> Result<Self, fsl_package::BareSelectionFailure> {
+        let projected = package.project_model_relation(form)?;
+        Ok(Self {
+            occurrence: form.occurrence().clone(),
+            name: form.name().to_owned(),
+            executions: projected.executions().to_vec(),
+            execution_aliases: form
+                .body()
+                .executions
+                .iter()
+                .map(|execution| execution.alias.to_string())
+                .collect(),
+            aliases: form
+                .subjects()
+                .iter()
+                .map(|subject| subject.alias.clone())
+                .collect(),
+            identities: form
+                .subjects()
+                .iter()
+                .map(|subject| (subject.alias.clone(), subject.identity.clone()))
+                .collect(),
+            parameters: projected.parameters().to_vec(),
+        })
+    }
+
+    /// Receiver, result and argument types in execution-slot order.
+    pub fn parameters(&self) -> &[(String, filament_exact::ValueType)] {
+        &self.parameters
     }
 
     /// The claim occurrence that keys tuple evaluation.

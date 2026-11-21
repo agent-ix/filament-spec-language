@@ -978,6 +978,7 @@ fn work<'a>(
                 &item.claim,
                 item.request_index,
                 form,
+                shared,
             )
             .unwrap_or_else(absent)
         }
