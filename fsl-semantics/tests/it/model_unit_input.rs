@@ -1318,12 +1318,12 @@ fn inline_integer_machine_and_process_fields_preserve_admitted_intervals() {
     use fsl_semantics::model::domain_package::{DomainPackageRecord, ScalarValueDomain};
     for (declaration, kind, meaning) in [
         (
-            "machine Level { count: Int[-2,3]; states (Idle); }",
+            "machine Level { number: Int[-2,3]; operation toggle(); states (Open, Shut); transition Open -> Shut on toggle; }",
             "machine",
             "filament.meaning.model.state-machine/v1",
         ),
         (
-            "process Level { count: Int[-2,3]; step start: begin; }",
+            "process Level { number: Int[-2,3]; operation go(); step start: begin; }",
             "process",
             "filament.meaning.model.process/v1",
         ),
@@ -1341,6 +1341,8 @@ fn inline_integer_machine_and_process_fields_preserve_admitted_intervals() {
         let packages = package_input([compiled.bytes()]).unwrap();
         let document: serde_json::Value =
             serde_json::from_slice(&packages["example/bounded"]).unwrap();
+        // States, transitions and steps are nested members; only the owner
+        // and its generated scalar use custom kinds in these documents.
         let constructs = document["constructs"]
             .as_array()
             .unwrap()
@@ -1366,11 +1368,11 @@ fn inline_integer_machine_and_process_fields_preserve_admitted_intervals() {
             .unwrap();
         assert_eq!(
             owner["fields"][0]["typeRef"],
-            "ix://example/bounded/LevelCount"
+            "ix://example/bounded/LevelNumber"
         );
         let scalar = types
             .iter()
-            .find(|node| node["identity"] == "ix://example/bounded/LevelCount")
+            .find(|node| node["identity"] == "ix://example/bounded/LevelNumber")
             .unwrap();
         let start = declaration.find("Int[-2,3]").unwrap() + 1;
         let origin = serde_json::json!({"source": {
@@ -1425,14 +1427,17 @@ fn inline_integer_machine_and_process_fields_preserve_admitted_intervals() {
 #[trace("FR-710-AC-3", "TC-1942", "FSpec-FR-154")]
 fn inline_integer_machine_and_process_fields_refuse_invalid_intervals() {
     for (kind, body) in [
-        ("machine", "states (Idle);"),
-        ("process", "step start: begin;"),
+        (
+            "machine",
+            "operation toggle(); states (Open, Shut); transition Open -> Shut on toggle;",
+        ),
+        ("process", "operation go(); step start: begin;"),
     ] {
         for interval in [
             "Int[3,0]",
             "Int[-170141183460469231731687303715884105729,3]",
         ] {
-            let source = format!("language \"ix:native\" edition \"1-draft\"; domain \"example/bounded\"; {kind} Level {{ count: {interval}; {body} }}");
+            let source = format!("language \"ix:native\" edition \"1-draft\"; domain \"example/bounded\"; {kind} Level {{ number: {interval}; {body} }}");
             assert_inline_integer_refusal(
                 &source,
                 fsl_cst::CompleteCode::InvalidModelBinding,
@@ -1449,13 +1454,16 @@ fn inline_integer_machine_and_process_fields_refuse_invalid_intervals() {
 #[trace("FR-710-AC-3", "TC-1942", "FSpec-FR-154")]
 fn inline_integer_machine_and_process_fields_refuse_identity_collisions() {
     for (kind, body) in [
-        ("machine", "states (Idle);"),
-        ("process", "step start: begin;"),
+        (
+            "machine",
+            "operation toggle(); states (Open, Shut); transition Open -> Shut on toggle;",
+        ),
+        ("process", "operation go(); step start: begin;"),
     ] {
-        let bounded = format!("{kind} Level {{ count: Int[0,3]; {body} }}");
+        let bounded = format!("{kind} Level {{ number: Int[0,3]; {body} }}");
         for declarations in [
-            format!("type LevelCount = Int[0,9]; {bounded}"),
-            format!("{bounded} type LevelCount = Int[0,9];"),
+            format!("type LevelNumber = Int[0,9]; {bounded}"),
+            format!("{bounded} type LevelNumber = Int[0,9];"),
             format!("{kind} A {{ bC: Int[0,3]; {body} }} {kind} AB {{ c: Int[0,3]; {body} }}"),
         ] {
             let source = format!("language \"ix:native\" edition \"1-draft\"; domain \"example/bounded\"; {declarations}");

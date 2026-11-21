@@ -112,3 +112,16 @@ scope:
   role: examined
   excerpt: '//! QSL-1978: the plan search engine (FR-755, FR-1011, FR-1012) over FSpec'
 ```
+
+
+## Disposition round 1 evidence
+
+Reviewed frozen head `d01d8c1c41547bb937bc21c403a2ee4e38145463` against initial head `1f7de6b7fab1a8569f07e379dff72c7a26ebdf3d`. Initial IDs, findings rows and all original review text remain verbatim above. No new finding was established in this round.
+
+FND-001: object, machine and process now use existing push_model_type, which moves inline_integers before additional types and preserves each owner's wire index and inheritance links. Every read_object-consuming assembly branch now propagates the metadata to the common used-kind, interval and identity-collision checks. The new positive machine/process test requires exactly their own meaning plus value_type (no incidental named scalar), resolves LevelCount from the field, checks exact source endpoints and constraint origins, then reads the admitted ScalarValueDomain::Integer [-2,3] and admitted field-to-scalar key. Shared object controls continue to assert constraint identities. New negative tests cover reversed and overflow bounds and authored collisions in both orders plus actual generated/generated collisions for each family, requiring exact diagnostic code/cause and the inline source slice. No optional/nominal/native ordinal control is removed.
+
+FND-002: the false fifth row is replaced by A.bC and AB.c, both of which mint ABC. The authoritative minter and all four other negative rows are unchanged. Required authored source orders and exact diagnostics are retained; no producer behavior was changed to manufacture a collision between distinct names.
+
+Static disposition: both original defects are fixed; no new defect found. Focused production cargo check success was supplied by the lead; this reviewer ran no cargo, runtime tests, build, Kani or matrix. Own git diff --check passed. The six affected inline_integer_ runtime functions on this exact head remain pending at the time of this review; there is no claim that they passed. The previous exact-head initial result remains 31 passed and 1 failed at the initial head, not a current-head runtime result. If all six affected functions pass, the retained combined focused inventory is 35 distinct test functions (33 semantics and 2 analyze), not 37. Landing remains conditional on actual current-head runtime evidence, predecessor integration and the lead's final gate.
+
+Gap assurance remains bounded and CONDITIONAL: the initial matrix accepted-size refusal is unresolved, no repeated oversized matrix request was run, and no engine-backed repository PASS is asserted. The new source behavior is still owned by FR-710 Compilation, FSpec FR-154 scalar/constraints and FCD FR-095 identity rules. No new schema, kind, identity namespace or numeric family was added. Plan completion: not assessed.
