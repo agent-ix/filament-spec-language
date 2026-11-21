@@ -51,8 +51,9 @@ impl Budget {
         }
     }
 
-    /// A lazy visitor retains no candidate collection. Its caller gates
-    /// invocation work; raw frame/result trials poll cancellation only.
+    /// A lazy visitor retains at most one invocation's outcome collection.
+    /// Its caller gates invocation work; raw frame/result trials charge
+    /// evaluation work and poll cancellation independently of plan work.
     pub(super) fn visiting(
         cancel: Option<&filament_exact::Cancel>,
         system: &ModelSystem<'_>,

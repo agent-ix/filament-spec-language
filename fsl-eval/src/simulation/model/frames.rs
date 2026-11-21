@@ -2125,7 +2125,11 @@ impl Run<'_, '_, '_> {
 }
 
 /// Bound the retained outcome collection before allocating another entry.
-/// Its semantic size includes object/field containers, values and the result.
+/// This is one implicit sequence per invocation: its highwater size includes
+/// the sequence root, each state/population/object container, every field value
+/// occurrence and each result. ValueOccurrences bounds that one collection;
+/// ResultRetain charges newly retained occurrences cumulatively. Duplicate raw
+/// outcomes count until deduplication, so sorting cannot hide retained memory.
 fn retain_outcome(walk: &Walk<'_, '_>, next: &Applied) -> Result<(), ExpansionStop> {
     let occurrences = |applied: &Applied| {
         let mut count = filament_exact::Integer::one();
