@@ -358,8 +358,8 @@ fn a_field_can_subset_a_field_on_its_own_type() {
 
 const MACHINES_AND_PROCESSES: &str = "language \"ix:native\" edition \"1-draft\";
 domain \"example/shop\";
-machine BaseMachine { active: Boolean; states (Ready); }
-machine ChildMachine extends BaseMachine { states (Done); }
+machine BaseMachine { active: Boolean; operation toggle(); states (Ready); transition Ready -> Ready on toggle; }
+machine ChildMachine extends BaseMachine { operation turn(); states (Done); transition Done -> Done on turn; }
 process BaseProcess { id: Integer; operation go(); step start: begin; }
 process ChildProcess extends BaseProcess { operation stop(); step last: begin; }
 object Child extends Base { }
