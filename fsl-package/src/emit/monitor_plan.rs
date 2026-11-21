@@ -1336,6 +1336,12 @@ fn finish(
         .collect::<Vec<_>>()
     });
     let rekey = Rekey(changes);
+    let mut checked_term_data = base.checked_term_data().cloned();
+    if let Some(data) = &mut checked_term_data {
+        for (old, new) in changes {
+            super::replace_term_data_node(data, old, new);
+        }
+    }
     let operation_bodies = base.operation_body_rows().map(|rows| {
         let mut rows = rows.to_vec();
         for row in &mut rows {
@@ -1364,7 +1370,7 @@ fn finish(
                 refinement_step_rows: base.refinement_step_rows(),
             },
             CheckedPackageSidecarsRef {
-                checked_term_data: base.checked_term_data(),
+                checked_term_data: checked_term_data.as_ref(),
                 temporal_bindings: base.temporal_bindings(),
                 temporal_clause_names: base.temporal_clause_names(),
                 claim_names: base.claim_names(),
@@ -1446,7 +1452,148 @@ fn binding_reference<'t>(term: &'t CheckedTerm, name: &str) -> Option<&'t Checke
 #[cfg(test)]
 mod tests {
     use super::*;
-    use filament_contract_model::CheckedDeclaration;
+    use filament_contract_model::{
+        read_checked_package, CheckedBodyLocationOrigin, CheckedDeclaration,
+        CheckedPackageDispatchResult, CheckedPackageRefusalCause, CheckedPackageRefusalCode,
+    };
+
+    /// The production final writer rekeys body origins with all four entries,
+    /// keeping helper rows and checker coordinates intact. Scalar bodies let
+    /// the strict reader check this independently of record-value traversal.
+    #[ix_trace_rs::trace("FR-251-AC-9", "FSpec-FR-322-AC-309")]
+    #[test]
+    fn final_writer_rekeys_four_entry_body_origins_and_refuses_a_stale_origin() {
+        let (_, checked) = super::super::tests::package_from_text(
+            "function init using v(x: Integer): Integer pure { x + 1 }\n\
+             function on_event using v(x: Integer): Integer pure { x + 2 }\n\
+             function on_watermark using v(x: Integer): Integer pure { x + 3 }\n\
+             function on_gap using v(x: Integer): Integer pure { x + 4 }\n\
+             function helper using v(x: Integer): Integer pure { x + 5 }\n",
+        );
+        let limits = crate::checked::EmitLimits::new(1 << 20);
+        let retained = super::super::emit_checked(&checked, limits).expect("scalar functions emit");
+        let read_limits = crate::checked_v2::V2ReadLimits::fixture().for_ir();
+        let base = match read_checked_package(
+            retained.package().bytes(),
+            read_limits,
+            retained.evidence(),
+        ) {
+            CheckedPackageDispatchResult::AdmittedV2(package) => package,
+            other => panic!("the authentic scalar base must read: {other:?}"),
+        };
+        let mut nodes = base.resolved_graph().nodes.clone();
+        let mut source_map = base.source_map().to_vec();
+        let mut changes = Vec::new();
+        for name in ["init", "on_event", "on_watermark", "on_gap"] {
+            let at = declared(&nodes, name, "a scalar entry is declared").unwrap();
+            let (parameters, body) = param_targets(&nodes[at]).unwrap();
+            let position = |id: &CheckedNodeId| -> u64 {
+                u64::try_from(nodes.iter().position(|node| node.node_id == *id).unwrap()).unwrap()
+            };
+            let parameters: Vec<_> = parameters.iter().map(position).collect();
+            let new = declaration_less_function_id(
+                base.name(),
+                &nodes[at].semantic_form,
+                &parameters,
+                position(&body),
+            );
+            let old = nodes[at].node_id.clone();
+            assert_ne!(old, new);
+            nodes[at].declaration = None;
+            nodes[at].owner = None;
+            nodes[at].occurrences = vec![CheckedOccurrence {
+                role: CheckedOccurrenceRole::Generated,
+                ordinal: 0,
+            }];
+            for entry in source_map.iter_mut().filter(|entry| entry.node_id == old) {
+                entry.role = CheckedOccurrenceRole::Generated;
+                entry.ordinal = 0;
+            }
+            changes.push((old, new));
+        }
+        rekey(&mut nodes, &mut source_map, &changes);
+        let final_emission = finish(
+            &base,
+            &retained,
+            &changes,
+            nodes,
+            source_map,
+            retained.source_map.clone(),
+            limits,
+        )
+        .expect("the actual final writer emits rekeyed scalar functions");
+        let final_package = match read_checked_package(
+            final_emission.package().bytes(),
+            read_limits,
+            final_emission.evidence(),
+        ) {
+            CheckedPackageDispatchResult::AdmittedV2(package) => package,
+            other => panic!("the final writer's body origins must read: {other:?}"),
+        };
+        let before = base.checked_term_data().expect("authentic body locations");
+        let after = final_package
+            .checked_term_data()
+            .expect("retained body locations");
+        assert_eq!(before.body_locations.len(), after.body_locations.len());
+        let mut seen = [false; 4];
+        let mut helper_seen = false;
+        let mut stale_origin = None;
+        for (row_index, (before, after)) in before
+            .body_locations
+            .iter()
+            .zip(&after.body_locations)
+            .enumerate()
+        {
+            let mut expected = before.clone();
+            let CheckedBodyLocationOrigin::FunctionBody { function, name, .. } =
+                &mut expected.location.origin;
+            if let Some(at) = changes.iter().position(|(old, _)| old == function) {
+                if stale_origin.is_none() {
+                    stale_origin = Some((row_index, function.clone()));
+                }
+                *function = changes[at].1.clone();
+                seen[at] = true;
+            } else if name.as_ref() == "helper" {
+                helper_seen = true;
+            }
+            assert_eq!(*after, expected, "only entry origin identities change");
+            assert_eq!(after.application, before.application);
+        }
+        assert_eq!(seen, [true; 4]);
+        assert!(helper_seen, "the declared helper retains genuine body rows");
+        let (row_index, old_function) = stale_origin.expect("a rekeyed origin to corrupt");
+        let mut stale: serde_json::Value =
+            serde_json::from_slice(final_emission.package().bytes()).unwrap();
+        stale["checked_term_data"]["body_locations"][row_index]["location"]["origin"]["function"] =
+            serde_json::to_value(old_function).unwrap();
+        let stale_bytes = serde_json::to_vec(&stale).unwrap();
+        let refusal =
+            match read_checked_package(&stale_bytes, read_limits, final_emission.evidence()) {
+                CheckedPackageDispatchResult::Refused(refusal) => refusal,
+                other => panic!("the stale function origin must be refused: {other:?}"),
+            };
+        assert_eq!(
+            refusal.code,
+            CheckedPackageRefusalCode::InvalidPackage,
+            "{refusal:?}"
+        );
+        assert_eq!(
+            refusal.cause,
+            Some(CheckedPackageRefusalCause::InvalidValue),
+            "{refusal:?}"
+        );
+        let expected_path =
+            format!("/checked_term_data/body_locations/{row_index}/location/origin/function");
+        assert_eq!(
+            refusal
+                .loci
+                .first()
+                .and_then(|locus| locus.path.as_ref())
+                .map(|path| path.as_str()),
+            Some(expected_path.as_str()),
+            "{refusal:?}"
+        );
+    }
 
     fn node(name: &str, form: &str) -> CheckedSemanticNodeV2 {
         let id = CheckedNodeId {
