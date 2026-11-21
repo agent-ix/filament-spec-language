@@ -145,7 +145,7 @@ fn identities(
                 Some(fsl_package::NativeJoinFailure::from((**native).clone()))
             }
             fsl_package::IdentityFileRefusal::Rows(rows) => {
-                Some(fsl_package::NativeJoinFailure::from(rows.clone()))
+                Some(fsl_package::NativeJoinFailure::from(*rows))
             }
             _ => None,
         };
