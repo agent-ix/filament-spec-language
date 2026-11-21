@@ -3461,41 +3461,10 @@ pub enum ExecutionPointRefusal {
     OperationMismatch,
 }
 
-/// A shared dimension-class projection refusal retained by the checker's
-/// hashable fault vocabulary. Equality preserves the complete shared record;
-/// hashing uses its dimension and closed typed cause, not diagnostic text.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct DimensionClassProjectionRefusal {
-    /// The original shared refusal, including its exact dimension and cause.
-    pub shared: filament_semantic_value::unit::DimensionEquivalenceRefusal,
-}
-
-impl std::hash::Hash for DimensionClassProjectionRefusal {
-    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        use filament_semantic_value::unit::DimensionEquivalenceCause;
-
-        std::hash::Hash::hash(&self.shared.dimension, state);
-        let cause: u8 = match self.shared.cause {
-            DimensionEquivalenceCause::UnknownDimension => 0,
-            DimensionEquivalenceCause::DuplicateDimension => 1,
-            DimensionEquivalenceCause::MissingRoot => 2,
-            DimensionEquivalenceCause::MissingRepresentative => 3,
-            DimensionEquivalenceCause::NonCanonicalRepresentative => 4,
-            DimensionEquivalenceCause::NonPositiveScale => 5,
-            DimensionEquivalenceCause::NonIdentityRepresentative => 6,
-            DimensionEquivalenceCause::IncompatibleClass => 7,
-        };
-        std::hash::Hash::hash(&cause, state);
-    }
-}
-
 /// The invariant [`CheckCause::InternalFault`] names, with the value that
 /// broke it.
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub enum KeyFault {
-    /// Admitted dimension classes could not be projected onto their unit
-    /// graph before checking the package's quantities.
-    DimensionClassProjection(DimensionClassProjectionRefusal),
     /// An accepted execution point its clause cannot carry (FSpec FR-341,
     /// FR-342): the variant is inapplicable to the clause kind, or its
     /// operation is not the clause's.
@@ -3609,7 +3578,6 @@ impl KeyFault {
     /// The violated invariant's stable identifier (ADR-013 T-4).
     pub fn invariant(&self) -> &'static str {
         match self {
-            Self::DimensionClassProjection(_) => "dimension-classes-project-on-admitted-units",
             Self::MissingAdmittedModel(_) => "intake-owner-has-assembled-model",
             Self::PendingField(_) => "conformance-reads-admitted-member-pair",
             Self::UnknownEffectiveId(_) => "reference-target-admitted",

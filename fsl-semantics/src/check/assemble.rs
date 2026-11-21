@@ -5848,8 +5848,11 @@ impl PackageDeclarations {
         package.sources = sources;
         package.source_owners = source_owners;
         package.execution_point_keys = execution_points.keys().cloned().collect();
-        let mut type_units = types.units().clone();
-        type_units.append(names.unit_table.into_inner());
+        // The names table holds the admitted runtime projection and any
+        // compound units formed by aliases. Other types contribute only
+        // units absent from that authoritative table.
+        let mut type_units = names.unit_table.into_inner();
+        type_units.append(types.units().clone());
         package.types = types.with_units(type_units);
         package.operations = operations;
         package.operation_clauses = operation_clauses;

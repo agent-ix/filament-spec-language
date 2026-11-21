@@ -1322,7 +1322,7 @@ fn convert_causes(
 /// FR-093 "Dimension equivalence" (QSL-2734): `convert<Quantity<ub>>(3 ua)`
 /// is admitted when `dimension A ~ B` puts the dimensions of `ua` and `ub`
 /// in one class, directly or through a third dimension.
-#[trace("FR-093-AC-46", "FR-091-AC-60")]
+#[trace("FR-093-AC-46")]
 #[test]
 fn convert_across_a_dimension_equivalence_class_checks() {
     let direct = "dimension A ~ B by 1 ua = 1000 ub;";
@@ -1331,7 +1331,7 @@ fn convert_across_a_dimension_equivalence_class_checks() {
         Ok(())
     );
     assert_eq!(
-        convert_causes(direct, "convert<Quantity<ua>>(3 ub) = 3 ua"),
+        convert_causes(direct, "convert<Quantity<ua>>(1000 ub) = 1 ua"),
         Ok(())
     );
     let chained = "dimension A ~ B by 1 ua = 1 ub;\ndimension B ~ C by 1 ub = 1000 uc;";
@@ -1344,7 +1344,7 @@ fn convert_across_a_dimension_equivalence_class_checks() {
 /// FR-093 "Dimension equivalence": a conversion between units of two
 /// dimension nodes no equivalence relates still refuses
 /// `ill_typed`/`type-mismatch`.
-#[trace("FR-093-AC-46")]
+#[trace("FR-093")]
 #[test]
 fn convert_between_unrelated_dimensions_refuses_type_mismatch() {
     use filament_exact::IllTypedCause;

@@ -336,71 +336,142 @@ fn with_bare<T>(
     run(&bare)
 }
 
-/// FR-533-AC-23: until the IR reader exposes equivalence definitions, the
-/// bytes-only route reports the bounded unsupported construct at the
-/// conversion, while ordinary and affine conversions still evaluate.
-#[trace("FR-533-AC-23")]
-#[test]
-fn a_package_class_conversion_is_typed_unsupported_until_reconstruction() {
-    use filament_semantic_value::catalog::CatalogCode;
-
-    let program = format!(
+fn boundary_program() -> String {
+    format!(
         "{}\
          unit shifted : Beat = rational(1, 1) * beat + rational(2, 1);\n\
          function cross using v(): Quantity<s> pure {{ convert<Quantity<s>>(1 beat) }}\n\
          function affine_class using v(): Quantity<s> pure {{ convert<Quantity<s>>(1 shifted) }}\n\
          function quotient using v(): Boolean pure {{ 6 s / 3 beat = 8 s / 1 s }}\n\
+         function product using v(): Boolean pure {{ 6 s * 3 beat = rational(9, 2) s * 1 s }}\n\
+         function power_s using v(): Boolean pure {{ 2 s ^ 2 = 4 s * 1 s }}\n\
+         function power_beat using v(): Boolean pure {{ 2 beat ^ 2 = rational(1, 4) s * 1 s }}\n\
+         dimension Length;\n\
+         unit m : Length = rational(1, 1);\n\
+         function ordinary_power using v(): Boolean pure {{ 2 m ^ 2 = 4 m * 1 m }}\n\
          function same using v(): Quantity<s> pure {{ convert<Quantity<s>>(1000 ms) }}\n\
          function affine_same using v(): Quantity<beat> pure {{ convert<Quantity<beat>>(1 shifted) }}\n",
         units(QUARTER)
-    );
-    let package = package_with(&program).expect("the unit checks");
+    )
+}
+
+fn assert_unsupported_at(
+    package: &CheckedPackage,
+    program: &str,
+    evaluation: &Evaluation,
+    meter: &Meter,
+    expression: &str,
+    depth: usize,
+) {
+    use filament_semantic_value::catalog::CatalogCode;
+    let FamilyOutcome::FamilyEvaluated(FamilyResult::Refused(cause)) = &evaluation.outcome else {
+        panic!("a typed unsupported conversion, got {evaluation:?}");
+    };
     assert_eq!(
-        quantity(&call(&package, "affine_class", &mut Meter::new(UNLIMITED))).magnitude(),
-        &fraction(3, 4)
+        cause.catalog_code(),
+        CatalogCode::new("unsupported_construct", "not-yet-implemented")
     );
+    let fields = cause
+        .catalog_fields()
+        .expect("the unsupported construct payload");
+    assert_eq!(
+        fields.get("what").map(String::as_str),
+        Some("dimension-equivalence-package-reconstruction")
+    );
+    let location = evaluation
+        .location
+        .as_ref()
+        .expect("the conversion's location");
+    assert_eq!(location.depth(), depth);
+    let region = package
+        .graph()
+        .region(location)
+        .expect("the source conversion span");
+    let prefix = "language \"ix:native\" edition \"1-draft\";\nprofile v = \"filament.value.complete/v1\";\n";
+    let full = format!("{prefix}{program}");
+    let start = usize::try_from(region.start()).expect("the source start fits");
+    let end = usize::try_from(region.end()).expect("the source end fits");
+    let expected_start = full
+        .find(expression)
+        .expect("the specified source operation");
+    assert_eq!(
+        start, expected_start,
+        "the first specified operation's start"
+    );
+    assert_eq!(
+        end,
+        expected_start + expression.len(),
+        "the exact operation's end"
+    );
+    assert_eq!(&full[start..end], expression);
+    assert!(
+        meter.admitted_charges().iter().all(|charge| !matches!(
+            charge.point,
+            ChargePoint::UnitIdentityRead
+                | ChargePoint::UnitEdge
+                | ChargePoint::UnitRationalArithmetic
+                | ChargePoint::UnitTargetDomain
+                | ChargePoint::UnitResultRetain
+        )),
+        "no quantity-kernel charge before refusal: {:?}",
+        meter.admitted_charges()
+    );
+}
+
+fn boundary_limits() -> [filament_exact::ScalarLimits; 5] {
+    use filament_exact::ScalarLimits;
+    [
+        UNLIMITED,
+        ScalarLimits {
+            work_units: 1,
+            ..UNLIMITED
+        },
+        ScalarLimits {
+            unit_edges: 0,
+            ..UNLIMITED
+        },
+        ScalarLimits {
+            integer_bits: 0,
+            ..UNLIMITED
+        },
+        ScalarLimits {
+            result_units: 0,
+            ..UNLIMITED
+        },
+    ]
+}
+
+/// FR-533-AC-23: until the IR reader exposes equivalence definitions, the
+/// bytes-only route reports the bounded unsupported construct at the
+/// conversion, while ordinary and affine conversions still evaluate.
+#[trace("FR-533-AC-23", "TC-1333")]
+#[test]
+fn a_package_class_conversion_is_typed_unsupported_until_reconstruction() {
+    let program = boundary_program();
+    let package = package_with(&program).expect("the unit checks");
+    for (name, expected) in [
+        ("cross", fraction(1, 4)),
+        ("affine_class", fraction(3, 4)),
+        ("same", fraction(1, 1)),
+        ("affine_same", fraction(3, 1)),
+    ] {
+        assert_eq!(
+            quantity(&call(&package, name, &mut Meter::new(UNLIMITED))).magnitude(),
+            &expected
+        );
+    }
     with_bare(&package, |bare| {
         for (name, expression) in [
             ("cross", "convert<Quantity<s>>(1 beat)"),
             ("affine_class", "convert<Quantity<s>>(1 shifted)"),
             ("quotient", "6 s / 3 beat"),
         ] {
-            let mut meter = Meter::new(UNLIMITED);
-            let evaluation = call(bare, name, &mut meter);
-            let FamilyOutcome::FamilyEvaluated(FamilyResult::Refused(cause)) = &evaluation.outcome
-            else {
-                panic!("a typed unsupported conversion, got {evaluation:?}");
-            };
-            assert_eq!(
-                cause.catalog_code(),
-                CatalogCode::new("unsupported_construct", "not-yet-implemented")
-            );
-            let fields = cause
-                .catalog_fields()
-                .expect("the unsupported construct payload");
-            assert_eq!(
-                fields.get("what").map(String::as_str),
-                Some("dimension-equivalence-package-reconstruction")
-            );
-            let location = evaluation
-                .location
-                .as_ref()
-                .expect("the conversion's location");
-            let depth = if name == "quotient" { 1 } else { 0 };
-            assert_eq!(location.depth(), depth);
-            let region = package
-                .graph()
-                .region(location)
-                .expect("the source conversion span");
-            let prefix = "language \"ix:native\" edition \"1-draft\";\nprofile v = \"filament.value.complete/v1\";\n";
-            let full = format!("{prefix}{program}");
-            let start = usize::try_from(region.start()).expect("the source start fits");
-            let end = usize::try_from(region.end()).expect("the source end fits");
-            assert_eq!(&full[start..end], expression);
-            assert!(!meter
-                .admitted_charges()
-                .iter()
-                .any(|charge| charge.point == ChargePoint::UnitRationalArithmetic));
+            for limits in boundary_limits() {
+                let mut meter = Meter::new(limits);
+                let evaluation = call(bare, name, &mut meter);
+                let depth = if name == "quotient" { 1 } else { 0 };
+                assert_unsupported_at(&package, &program, &evaluation, &meter, expression, depth);
+            }
         }
         assert_eq!(
             quantity(&call(bare, "same", &mut Meter::new(UNLIMITED))).magnitude(),
@@ -409,6 +480,80 @@ fn a_package_class_conversion_is_typed_unsupported_until_reconstruction() {
         assert_eq!(
             quantity(&call(bare, "affine_same", &mut Meter::new(UNLIMITED))).magnitude(),
             &fraction(3, 1)
+        );
+    });
+}
+
+/// FR-533-AC-23: a product across both nominal roots and a power of the
+/// noncanonical member refuse before the quantity kernel sees the caller's
+/// meter. The source route and an unrelated ordinary power still evaluate.
+#[trace("FR-533-AC-23", "TC-1333")]
+#[test]
+fn bare_class_products_and_noncanonical_powers_refuse_before_kernel_charges() {
+    use filament_exact::UnitId;
+    use filament_semantic_value::quantity::QuantityUnit;
+
+    let program = boundary_program();
+    let package = package_with(&program).expect("the unit checks");
+    for name in [
+        "product",
+        "quotient",
+        "power_s",
+        "power_beat",
+        "ordinary_power",
+    ] {
+        let evaluation = call(&package, name, &mut Meter::new(UNLIMITED));
+        assert!(
+            matches!(
+                evaluation.outcome,
+                FamilyOutcome::Evaluated(Outcome::Completed(Value::Boolean(true)))
+            ),
+            "{name}: the source value matches the specified same-unit product: {evaluation:?}"
+        );
+    }
+
+    let units = package.graph().scope().types().units();
+    let mut noncanonical = Vec::new();
+    for (name, function, expression) in [
+        ("s", "power_s", "2 s ^ 2"),
+        ("beat", "power_beat", "2 beat ^ 2"),
+    ] {
+        let id = units
+            .ids()
+            .find(|id| match id {
+                UnitId::Declared(key) => units
+                    .nominal_node(key)
+                    .is_some_and(|node| node.declaration.qualified_declaration == [name]),
+                UnitId::Compound(_) => false,
+            })
+            .expect("the declared nominal root unit");
+        let Some(QuantityUnit::Declared(unit)) = units.get(id.clone()) else {
+            panic!("{name} has its declared runtime unit");
+        };
+        if id != UnitId::declared(unit.root()) {
+            assert_eq!(unit.path().len(), 1, "one class identification edge");
+            noncanonical.push((function, expression));
+        }
+    }
+    let [(power, power_expression)] = noncanonical.as_slice() else {
+        panic!("exactly one declared root differs from the class root: {noncanonical:?}");
+    };
+
+    with_bare(&package, |bare| {
+        for (function, expression) in [("product", "6 s * 3 beat"), (*power, *power_expression)] {
+            for limits in boundary_limits() {
+                let mut meter = Meter::new(limits);
+                let evaluation = call(bare, function, &mut meter);
+                assert_unsupported_at(&package, &program, &evaluation, &meter, expression, 1);
+            }
+        }
+        let evaluation = call(bare, "ordinary_power", &mut Meter::new(UNLIMITED));
+        assert!(
+            matches!(
+                evaluation.outcome,
+                FamilyOutcome::Evaluated(Outcome::Completed(Value::Boolean(true)))
+            ),
+            "an unrelated ordinary power is unchanged: {evaluation:?}"
         );
     });
 }

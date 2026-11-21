@@ -3431,19 +3431,40 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
                 let Some(unit_base) = self.units.resolve(&base) else {
                     return Err(unresolved_unit());
                 };
+                if matches!(self.world, World::Bytes(_)) {
+                    // The shared operation determines its result unit before
+                    // its first charge. As in the checker's power typing,
+                    // deny that charge on a separate meter: no power value
+                    // is computed and the caller's meter is untouched.
+                    let mut type_meter = Meter::new(filament_exact::ScalarLimits {
+                        integer_bits: 0,
+                        decimal_digits: 0,
+                        scale_expansion: 0,
+                        text_input_bytes: 0,
+                        text_scalars: 0,
+                        normalized_scalars: 0,
+                        unit_edges: 0,
+                        value_occurrences: 0,
+                        work_units: 0,
+                        result_units: 0,
+                    });
+                    let (_, nominal) = evaluate_quantity_unit(
+                        QuantityOperation::Power(unit_base, &exponent),
+                        &mut type_meter,
+                    )
+                    .map_err(|_| invariant("quantity-operation-rejected"))?;
+                    if quantity_unit(node.value_type()) != Some(&nominal.id()) {
+                        return Err(unsupported_construct(
+                            "dimension-equivalence-package-reconstruction",
+                        ));
+                    }
+                }
                 let (outcome, unit) = evaluate_quantity_unit(
                     QuantityOperation::Power(unit_base, &exponent),
                     self.meter,
                 )
                 .map_err(|_| invariant("quantity-operation-rejected"))?;
                 let quantity = outcome_into_stop(outcome)?;
-                if matches!(self.world, World::Bytes(_))
-                    && quantity_unit(node.value_type()) != Some(quantity.unit())
-                {
-                    return Err(unsupported_construct(
-                        "dimension-equivalence-package-reconstruction",
-                    ));
-                }
                 self.units.form(unit);
                 Value::Quantity(quantity)
             }
