@@ -179,7 +179,7 @@ impl<'a> SourcePlan<'a> {
     }
 
     /// The operation of `step` in the plan value's operation list.
-    fn operation(&self, step: &ModelTransition) -> Option<&PlanOperation> {
+    pub fn operation(&self, step: &ModelTransition) -> Option<&PlanOperation> {
         self.operations
             .get(step.operation())
             .and_then(|index| self.plan.shape().operations.get(*index))
@@ -445,6 +445,12 @@ fn reads_field(body: &CheckedBody, record: &filament_exact::NodeKey, field: &str
 /// step it is evaluated for (FSpec FR-802 "Classification").
 fn is_step_sum(body: &CheckedBody, plan: &filament_exact::NodeKey) -> bool {
     let root = body.root();
+    if matches!(
+        root.kind(),
+        NodeKind::Field { field, .. } if field.name() == "length" && &field.declaration() == plan
+    ) {
+        return true;
+    }
     let NodeKind::Query {
         visit: Visit::Sum,
         source,

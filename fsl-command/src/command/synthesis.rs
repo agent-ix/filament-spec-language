@@ -434,11 +434,9 @@ fn unchecked(
 /// Run the bounded search in cost order through `searcher`, check the reported
 /// candidate through `checker`, and finish FSpec FR-823's outcome document and
 /// exit code. Both the source and the package route end here, so one request
-/// has one outcome whichever route read it. On the source route `checker` is
-/// the emitted package's strict read; on the package route there is no other
-/// route, so it is a second strict read of the node with its own meter, a
-/// re-read and re-evaluation check. A candidate is `validated` only when the
-/// two evaluations agree on it.
+/// has one outcome whichever route read it. `checker` is a different
+/// evaluation of the declaration than `searcher`, so a candidate is `validated`
+/// only when two evaluations agree on it.
 pub(super) fn run_value_synthesis(
     run: ValueRun<'_>,
     searcher: &mut impl CandidateEvaluator,
@@ -631,13 +629,55 @@ fn completed(
 }
 
 struct Selection {
-    declaration: Option<String>,
-    /// The first plan-only member (`initial`, `policy`, `dwell_grid`) the
-    /// member names, refused once the selected declaration is known.
-    plan_member: Option<String>,
     limits: SearchLimits,
     accounting: super::wire::Accounting,
-    deadline_ms: Option<u64>,
+}
+
+/// The `synthesis` member as the caller sent it. Only the declaration is
+/// read before the package is checked: the selected declaration decides
+/// whether the rest is a value synthesis's members or a plan request's
+/// (FSpec FR-805).
+struct Requested {
+    declaration: Option<String>,
+    member: Value,
+    started: Instant,
+}
+
+impl Requested {
+    fn read(member: Value, started: Instant) -> super::Result<Self> {
+        let Some(object) = member.as_object() else {
+            return Err(wrong_kind("/request/synthesis", "an object"));
+        };
+        let declaration = read_declaration(object)?;
+        let requested = Self {
+            declaration,
+            member,
+            started,
+        };
+        // A member without `initial` is a value synthesis's: its refusals
+        // come before the package is read. A plan request always names its
+        // initial snapshot.
+        if !requested.has_initial() {
+            requested.value()?;
+        }
+        Ok(requested)
+    }
+
+    /// Whether the member names an initial snapshot, a plan request's file.
+    fn has_initial(&self) -> bool {
+        self.member.get("initial").is_some()
+    }
+
+    /// The members of a value synthesis, with its deadline counted from the
+    /// start of the run.
+    fn value(&self) -> super::Result<Selection> {
+        let (mut selection, deadline_ms) = read_selection(self.member.clone())?;
+        selection.limits.deadline = deadline_ms.and_then(|milliseconds| {
+            self.started
+                .checked_add(Duration::from_millis(milliseconds))
+        });
+        Ok(selection)
+    }
 }
 
 /// Run the native-run/1 synthesis selection when present.
@@ -660,14 +700,11 @@ pub(super) fn run_bytes(
     let Some(member) = body.remove("synthesis") else {
         return Ok(None);
     };
-    let mut selection = read_selection(member)?;
+    let requested = Requested::read(member, started)?;
     let request_bytes = serde_json::to_vec(&document).map_err(super::RunCause::Output)?;
     let request: super::wire::Request = super::request(&request_bytes)?;
-    selection.limits.deadline = selection
-        .deadline_ms
-        .and_then(|milliseconds| started.checked_add(Duration::from_millis(milliseconds)));
     if request.package.is_some() {
-        return run_package_synthesis(directory, &request, &selection, run_limits.dependent_bytes)
+        return run_package_synthesis(directory, &request, &requested, run_limits.dependent_bytes)
             .map(Some);
     }
     exclusive_member(&request)?;
@@ -702,7 +739,7 @@ pub(super) fn run_bytes(
     let counts = super::FileCounts {
         programs: request.libraries.len().saturating_add(1),
         models: request.models.len(),
-        observations: 0,
+        observations: usize::from(requested.has_initial()),
         extensions: 0,
     };
     let mut intake = super::intake_with_bytes(directory, counts, run_limits.dependent_bytes)?;
@@ -754,8 +791,13 @@ pub(super) fn run_bytes(
         },
         other => refused("/request/synthesis", other.to_string()),
     })?;
-    let model_documents =
-        super::package_input_from_selected_models(&request.models, &model_sources)?;
+    let mut model_documents = std::collections::BTreeMap::new();
+    for (selection, model) in request.models.iter().zip(&model_sources) {
+        model_documents.insert(
+            selection.source.identity.identity.clone(),
+            model.source().text().as_bytes().to_vec(),
+        );
+    }
     let read_limits =
         fsl_package::V2ReadLimits::bounded(fsl_replay::spine::I2_NATIVE_JOIN_STORAGE_DEFAULT);
     let admitted = fsl_package::admit_checked_package(
@@ -769,7 +811,7 @@ pub(super) fn run_bytes(
             format!("checked package admission failed: {failure:?}"),
         )
     })?;
-    let claim = select_claim(&admitted, selection.declaration.as_deref())?;
+    let claim = select_claim(&admitted, requested.declaration.as_deref())?;
     let graph = compiled.checked.package().graph();
     let checked = graph
         .syntheses()
@@ -782,9 +824,30 @@ pub(super) fn run_bytes(
         })
         .ok_or_else(|| missing_name("the declaration is not a checked synthesis"))?;
     if matches!(checked.grammar(), ValueType::Reference(_)) {
-        return Err(plan_not_routed());
+        let (exit_code, document) = super::plan_synthesis::run(
+            super::plan_synthesis::PlanRun {
+                package_name: &package_name,
+                declaration: claim.name.as_ref(),
+                package: compiled.checked.package(),
+                checked,
+                member: &requested.member,
+                packages: &model_documents,
+                intake: &mut intake,
+            },
+            super::call_accounting(&super::wire::Accounting::default()),
+            requested.started,
+        )?;
+        return Ok(Some(super::RunResult {
+            exit_code,
+            value: super::output::NativeResult::synthesis_document(serde_json::json!({
+                "synthesis": document
+            })),
+            outcome: None,
+            requirements: None,
+            sources: crate::Sources::from_sources(intake.sources.iter().cloned()),
+        }));
     }
-    refuse_plan_member(&selection)?;
+    let selection = requested.value()?;
     let ValueType::Int(domain) = checked.domain() else {
         return Err(refused(
             "/request/synthesis/declaration",
@@ -807,19 +870,19 @@ pub(super) fn run_bytes(
             is_candidate: checked.objective_is_candidate(),
         }),
     };
+    let identities = fsl_package::ReadIdentityRows::of_rows(
+        &admitted,
+        Vec::new(),
+        Vec::new(),
+        Vec::new(),
+        Vec::new(),
+    );
     let mut budget = read_limits.native_join_limits().budget();
-    let emission = compiled.emitted.emission();
-    let identities = emission
-        .identity_rows(&admitted, &mut budget)
-        .map_err(|failure| refused("/request/synthesis", format!("identity rows: {failure:?}")))?;
-    let equality = emission
-        .equality_witness(&admitted, &mut budget)
-        .map_err(|failure| refused("/request/synthesis", format!("equality rows: {failure:?}")))?;
     let bare = fsl_package::BarePackage::new(&admitted)
         .with_supply(
             fsl_package::BareSupply {
                 identities: &identities,
-                equality: Some(&equality),
+                equality: None,
             },
             &mut budget,
         )
@@ -908,7 +971,7 @@ impl CandidateEvaluator for SourceEvaluator<'_> {
 fn run_package_synthesis(
     directory: &Path,
     request: &super::wire::Request,
-    selection: &Selection,
+    requested: &Requested,
     dependent_bytes: usize,
 ) -> super::Result<super::RunResult> {
     exclusive_member(request)?;
@@ -949,11 +1012,11 @@ fn run_package_synthesis(
                 format!("package admission: {failure:?}"),
             )
         })?;
-    let claim = select_claim(&admitted.package, selection.declaration.as_deref())?;
+    let claim = select_claim(&admitted.package, requested.declaration.as_deref())?;
     if fsl_package::is_plan_synthesis(&admitted.package, &claim.declaration) {
         return Err(plan_not_routed());
     }
-    refuse_plan_member(selection)?;
+    let selection = requested.value()?;
     let (world, projected) = read_value_synthesis(&bare, &claim.declaration)?;
     let (check_world, check_projected) = read_value_synthesis(&bare, &claim.declaration)?;
     let package_name = admitted.package.name().to_owned();
@@ -1063,44 +1126,30 @@ impl CandidateEvaluator for PackageEvaluator<'_> {
     }
 }
 
-/// The members only a plan synthesis reads (FSpec FR-823's member table).
-const PLAN_MEMBERS: [&str; 3] = ["initial", "policy", "dwell_grid"];
-/// The members a value synthesis reads.
-const VALUE_MEMBERS: [&str; 4] = ["declaration", "limits", "accounting", "deadline_ms"];
-
-/// A value synthesis refuses the plan-only members at their pointers.
-fn refuse_plan_member(selection: &Selection) -> super::Result<()> {
-    match &selection.plan_member {
-        Some(key) => Err(unknown_member(&format!("/request/synthesis/{key}"))),
-        None => Ok(()),
+fn read_declaration(object: &serde_json::Map<String, Value>) -> super::Result<Option<String>> {
+    match object.get("declaration") {
+        None => Ok(None),
+        Some(Value::String(name)) if !name.is_empty() => Ok(Some(name.clone())),
+        Some(Value::String(_)) => Err(invalid_value(
+            "/request/synthesis/declaration",
+            "expected a non-empty name",
+        )),
+        Some(_) => Err(wrong_kind("/request/synthesis/declaration", "a name")),
     }
 }
 
-fn read_selection(member: Value) -> super::Result<Selection> {
+/// The members of a value synthesis (FSpec FR-823) and its deadline.
+fn read_selection(member: Value) -> super::Result<(Selection, Option<u64>)> {
     let Some(object) = member.as_object() else {
         return Err(wrong_kind("/request/synthesis", "an object"));
     };
     if let Some(key) = object
         .keys()
-        .find(|key| !PLAN_MEMBERS.contains(&key.as_str()) && !VALUE_MEMBERS.contains(&key.as_str()))
+        .find(|key| !["declaration", "limits", "accounting", "deadline_ms"].contains(&key.as_str()))
     {
         return Err(unknown_member(&format!("/request/synthesis/{key}")));
     }
-    let plan_member = object
-        .keys()
-        .find(|key| PLAN_MEMBERS.contains(&key.as_str()))
-        .cloned();
-    let declaration = match object.get("declaration") {
-        None => None,
-        Some(Value::String(name)) if !name.is_empty() => Some(name.clone()),
-        Some(Value::String(_)) => {
-            return Err(invalid_value(
-                "/request/synthesis/declaration",
-                "expected a non-empty name",
-            ));
-        }
-        Some(_) => return Err(wrong_kind("/request/synthesis/declaration", "a name")),
-    };
+    read_declaration(object)?;
     let mut limits = SearchLimits::default();
     if let Some(value) = object.get("limits") {
         let Some(object) = value.as_object() else {
@@ -1145,13 +1194,7 @@ fn read_selection(member: Value) -> super::Result<Selection> {
                 })?,
         ),
     };
-    Ok(Selection {
-        declaration,
-        plan_member,
-        limits,
-        accounting,
-        deadline_ms,
-    })
+    Ok((Selection { limits, accounting }, deadline_ms))
 }
 
 fn read_limit(
@@ -1313,12 +1356,13 @@ fn missing_name(reason: &str) -> super::RunCause {
     )
 }
 
-/// A plan synthesis is selected through this member too, but the planner is
-/// not behind it yet; it never runs through the value enumerator.
+/// A plan synthesis selected through a package: the planner judges the
+/// checked source's bodies, which a package does not carry, and a plan never
+/// runs through the value enumerator.
 fn plan_not_routed() -> super::RunCause {
     not_routed(
         "/request/synthesis/declaration",
-        "a plan synthesis is not routed to the planner yet",
+        "a plan synthesis needs the checked source; select it with a program, not a package",
     )
 }
 
@@ -1337,11 +1381,10 @@ fn exclusive_member(request: &super::wire::Request) -> super::Result<()> {
         || request.clause.is_some()
         || request.items.is_some()
         || request.tl_lowering.is_some()
-        || request.verification_plan.is_some()
     {
         return Err(refused(
             "/request/synthesis",
-            "is mutually exclusive with call, clause, items, tl_lowering and verification_plan",
+            "is mutually exclusive with call, clause, items and tl_lowering",
         ));
     }
     Ok(())
@@ -1714,7 +1757,7 @@ mod tests {
     /// FSpec FR-823: a checker that disagrees with the search rejects the
     /// candidate with both evaluations in the record, exit 30.
     #[test]
-    #[trace("FSpec-TC-2038", "FSpec-FR-823-AC-5")]
+    #[trace("FSpec-TC-2038", "FSpec-FR-823-AC-1")]
     fn a_checker_that_disagrees_rejects_the_candidate() {
         let mut searcher = pick(|c| c >= 3, |c| c, None);
         let mut checker = pick(|c| c >= 4, |c| c, None);
