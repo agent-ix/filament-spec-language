@@ -677,7 +677,7 @@ dependencies = [
 [[package]]
 name = "filament-semantic-value"
 version = "0.1.5"
-source = "git+https://github.com/agent-ix/filament-semantic-value?rev=f5c913bd4fc8880b45e02e3918e02360c530320c#f5c913bd4fc8880b45e02e3918e02360c530320c"
+source = "git+https://github.com/agent-ix/filament-semantic-value?rev=6e809434d5fd7bde4c5b88ec40cd809efcca595d#6e809434d5fd7bde4c5b88ec40cd809efcca595d"
 dependencies = [
  "filament-exact",
  "quire-canonical",
@@ -1190,7 +1190,7 @@ dependencies = [
 [[package]]
 name = "fsv-failing-allocator"
 version = "0.0.0"
-source = "git+https://github.com/agent-ix/filament-semantic-value?rev=f5c913bd4fc8880b45e02e3918e02360c530320c#f5c913bd4fc8880b45e02e3918e02360c530320c"
+source = "git+https://github.com/agent-ix/filament-semantic-value?rev=6e809434d5fd7bde4c5b88ec40cd809efcca595d#6e809434d5fd7bde4c5b88ec40cd809efcca595d"
 
 [[package]]
 name = "futures-core"

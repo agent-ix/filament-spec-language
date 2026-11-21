@@ -14,7 +14,7 @@ quire-canonical = { git = "https://github.com/agent-ix/quire-canonical", tag = "
 # The shared no_std exact-value kernel and the semantic-value leaf above it,
 # each its own repository so IR, RT and CG depend on them without the FSL repo.
 filament-exact = { git = "https://github.com/agent-ix/filament-exact", rev = "b26a8e4c592503fccdc4a0e3d2cce23dd8487616", features = ["json-object"] }
-filament-semantic-value = { git = "https://github.com/agent-ix/filament-semantic-value", rev = "f5c913bd4fc8880b45e02e3918e02360c530320c" }
+filament-semantic-value = { git = "https://github.com/agent-ix/filament-semantic-value", rev = "6e809434d5fd7bde4c5b88ec40cd809efcca595d" }
 # ADR-011 §6.1 layer W: the shared no_std walker toolkit (ADR-030 D-1 item 2),
 # its own repository so IR, RT and CG depend on it without the FSL repo.
 filament-walk = { git = "https://github.com/agent-ix/filament-walk", tag = "v0.1.1" }

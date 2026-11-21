@@ -3805,21 +3805,7 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
                 let target_type = node.value_type();
                 let carried_conversion = matches!(source_type, ValueType::CarriedQuantity(_))
                     || matches!(target_type, ValueType::CarriedQuantity(_));
-                let across_class = match (&value, source_type, target_type) {
-                    (Value::Quantity(quantity), ValueType::Quantity(_), ValueType::Quantity(to)) => {
-                        let source = self.units.get(quantity.unit().clone());
-                        let target = self.units.get(to.clone());
-                        source.zip(target).and_then(|(source, target)| {
-                            self.world
-                                .class_convert(quantity.magnitude(), source, target)
-                                .map(|magnitude| Quantity::new(magnitude, to.clone()))
-                        })
-                    }
-                    _ => None,
-                };
-                if let Some(converted) = across_class {
-                    Value::Quantity(converted)
-                } else if let ValueType::Float(float) = target_type {
+                if let ValueType::Float(float) = target_type {
                     self.convert_to_float(node, &value, *float)?
                 } else if carried_conversion {
                     let Value::Quantity(quantity) = &value else {

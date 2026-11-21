@@ -52,20 +52,20 @@ use super::check::{
 };
 use super::check::{UntypedKind, UntypedMember};
 use super::layer::LayerAdmission;
-use super::lowering::{AdmittedModel, model_declaration_key, strongly_connected};
+use super::lowering::{model_declaration_key, strongly_connected, AdmittedModel};
 use super::model_gate::{self, ModelGateRefusal};
-use super::model_spelling::{ModelName, ModelSpellings, PackageNames, Spelled, package_names};
+use super::model_spelling::{package_names, ModelName, ModelSpellings, PackageNames, Spelled};
 use super::node_key::{NodeKeyRefusal, NodeTag, SourceOwner};
 use super::operation_body::OperationBodyDeclaration;
 use super::operation_clause::OperationClauseDeclaration;
 use super::refusal::{AliasKind, TimedConstruct};
 use super::state_clause::{
-    AttemptDeclaration, ClauseOperation, StateClauseDeclaration, population_of,
+    population_of, AttemptDeclaration, ClauseOperation, StateClauseDeclaration,
 };
 use super::state_graph_claim::StateGraphDeclaration;
 use super::terminal::{TerminalClauseDeclaration, TerminalClauseKind};
 use super::type_form::{
-    TypeFormError, TypeFormFault, TypeNames, native_scalar_named, parse_rounding_mode, resolve_form,
+    native_scalar_named, parse_rounding_mode, resolve_form, TypeFormError, TypeFormFault, TypeNames,
 };
 use super::type_invariant::{TypeInvariantDeclaration, TypeSlot};
 use crate::library::{ImportView, LibraryName};
@@ -81,15 +81,15 @@ pub use equivalence::{
     DimensionEquivalence, EquivalenceClasses, EquivalenceFault, EquivalenceRetained,
 };
 
-use super::CheckedGraph;
 use super::navigation::{EndDeclaration, RelationshipDeclaration, Relationships};
+use super::CheckedGraph;
 use crate::model::domain_package::{
-    AliasTypeRecord, DomainPackage, DomainPackageRecord, FieldMemberRecord, MapTypeRecord,
-    Multiplicity, NativeValueType, OperationMemberRecord, OptionTypeRecord, RelationshipEnd,
-    ScalarValueDomain, SequenceTypeRecord, ValueTypeRef, unaliased,
+    unaliased, AliasTypeRecord, DomainPackage, DomainPackageRecord, FieldMemberRecord,
+    MapTypeRecord, Multiplicity, NativeValueType, OperationMemberRecord, OptionTypeRecord,
+    RelationshipEnd, ScalarValueDomain, SequenceTypeRecord, ValueTypeRef,
 };
 use crate::model::intake::{
-    SelectedModel, SelectedModels, member_identity_name, type_identity_segment,
+    member_identity_name, type_identity_segment, SelectedModel, SelectedModels,
 };
 use crate::model::operation::{OperationDeclaration, OperationLookup, OperationTable};
 use crate::value::enumeration::{
@@ -97,7 +97,7 @@ use crate::value::enumeration::{
 };
 use crate::value::environment_stage::stage_limit;
 use crate::value::layer::{HeaderLayer, LayerForm};
-use crate::value::semantic_node::{NominalRefusal, OwnerSelection, identity_limit};
+use crate::value::semantic_node::{identity_limit, NominalRefusal, OwnerSelection};
 use filament_checked::key::DeclarationKey;
 use filament_semantic_value::declaration::{
     CompositeDeclaration, CompositeShape, DeclarationCause, EnvironmentFailure, FieldDeclaration,
@@ -478,6 +478,9 @@ pub enum AssemblyCause {
     /// refused a form the checks above admitted: a broken invariant of
     /// `check`, never a property of the source.
     NominalAdmission(InvalidSemanticGraph),
+    /// Admitted dimension classes could not be projected onto their own
+    /// unit graph: an invariant of assembly, not a source-language refusal.
+    DimensionClassProjection(filament_semantic_value::unit::DimensionEquivalenceRefusal),
     /// A type position names a declaration of an imported library
     /// (`a::R` for an import qualifier `a`): an imported name stands only
     /// as a callee (ADR-015 D-5; `ill_typed`/`operator-ineligible`).
@@ -702,7 +705,9 @@ impl AssemblyCause {
             Self::IdentityAllocation { .. }
             | Self::StorageAllocation { .. }
             | Self::StorageCapacity { .. } => Code::ResourceExhausted,
-            Self::Handle(_) | Self::NominalAdmission(_) => Code::RuntimeInvariant,
+            Self::Handle(_) | Self::NominalAdmission(_) | Self::DimensionClassProjection(_) => {
+                Code::RuntimeInvariant
+            }
             Self::UnsupportedLayerForm { .. }
             | Self::UnselectedModelConstruct(_)
             | Self::TimedNotChecked(_) => Code::UnsupportedConstruct,
@@ -815,7 +820,9 @@ impl AssemblyCause {
             Self::TypeLimit(limit) | Self::IdentityLimit(limit) => limit.kind().catalog_cause(),
             Self::IdentityAllocation { .. } | Self::StorageAllocation { .. } => "allocation-failed",
             Self::StorageCapacity { .. } => "reservation-size-overflow",
-            Self::Handle(_) | Self::NominalAdmission(_) => "established-invariant-broken",
+            Self::Handle(_) | Self::NominalAdmission(_) | Self::DimensionClassProjection(_) => {
+                "established-invariant-broken"
+            }
             Self::UnsupportedLayerForm { form, .. } => form.refusal_cause(),
             Self::UnselectedModelConstruct(refusal) => refusal.family.refusal_cause(),
             Self::TimedNotChecked(_) => "not-yet-implemented",
@@ -5137,7 +5144,7 @@ impl PackageDeclarations {
         // packages, in FR-091's phases: the base pairs before the first
         // dimension turn, every other pair after the last.
         let owners = quantity_owners;
-        let (quantities, equivalences) = match quantity_result {
+        let (mut quantities, equivalences) = match quantity_result {
             Ok(quantities) => {
                 let equivalences = equivalence::assemble(
                     &unit.equivalences,
@@ -5186,6 +5193,21 @@ impl PackageDeclarations {
                 (None, Vec::new())
             }
         };
+
+        if let Some(quantities) = quantities.as_mut() {
+            let classes = EquivalenceClasses::new(&equivalences);
+            quantities.graph = quantities
+                .graph
+                .with_dimension_equivalences(&classes.memberships())
+                .map_err(|refusal| AssemblyRefusal {
+                    errors: vec![AssemblyError {
+                        span: equivalences
+                            .first()
+                            .map_or(Span { start: 0, end: 0 }, |equivalence| equivalence.span),
+                        cause: AssemblyCause::DimensionClassProjection(refusal),
+                    }],
+                })?;
+        }
 
         let mut names = Names {
             unit_table: std::cell::RefCell::new(
@@ -5959,7 +5981,7 @@ impl PackageDeclarations {
         // condition's expression tree.
         let mut declared_site_spans = BTreeMap::new();
         for (index, clause) in unit.temporal_clauses.iter().enumerate() {
-            use super::lowering::{TemporalSite, temporal_site};
+            use super::lowering::{temporal_site, TemporalSite};
             let form = &clause.form;
             let temporal_owner = package.source_owners.get(&form.name.name).cloned();
             let mut temporal_sites = vec![TemporalSite::Claim, TemporalSite::Over];
@@ -6063,7 +6085,7 @@ impl PackageDeclarations {
             let super::hyper_clause::HyperDeclaration::Behaviours(form) = declaration else {
                 continue;
             };
-            use super::hyper_clause::lowering::{Site, hyper_site};
+            use super::hyper_clause::lowering::{hyper_site, Site};
             declared_type_spans.insert(hyper_site(behaviours, Site::Claim), form.name.span);
             declared_type_spans.insert(hyper_site(behaviours, Site::Body), form.span);
             for (id, node) in form.body.iter() {
@@ -6101,7 +6123,7 @@ impl PackageDeclarations {
         // each mode's clause and each transition's clause; a hybrid claim's
         // nodes at its declared name and its `over` parameter's name.
         for (model, declaration) in package.hybrids.iter().enumerate() {
-            use super::lowering::{HybridSite, hybrid_site};
+            use super::lowering::{hybrid_site, HybridSite};
             let form = &declaration.form;
             declared_type_spans.insert(hybrid_site(HybridSite::Model(model)), form.name.span);
             for (mode, written) in form.modes.iter().enumerate() {
@@ -6116,7 +6138,7 @@ impl PackageDeclarations {
             }
         }
         for (claim, declaration) in package.hybrid_claims.iter().enumerate() {
-            use super::lowering::{HybridSite, hybrid_site};
+            use super::lowering::{hybrid_site, HybridSite};
             let form = &declaration.form;
             declared_type_spans.insert(hybrid_site(HybridSite::Claim(claim)), form.name.span);
             declared_type_spans.insert(hybrid_site(HybridSite::Over(claim)), form.over.name.span);
@@ -6126,7 +6148,7 @@ impl PackageDeclarations {
         // tree; the constant `true` an omitted `from` stands for is located
         // at the claim.
         for (index, declaration) in package.state_graph_claims.iter().enumerate() {
-            use super::state_graph_claim::{Site, state_graph_site};
+            use super::state_graph_claim::{state_graph_site, Site};
             let form = &declaration.form;
             declared_type_spans.insert(state_graph_site(index, Site::Claim), form.name.span);
             if let Some(over) = &form.over {
