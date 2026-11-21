@@ -4826,7 +4826,6 @@ mod order_tests {
                     function zero using v(p: Population<M::Widget>[0]): Boolean pure { true }\n\
                     function maximum using v(p: Population<M::Widget>[18446744073709551615]): Boolean pure { true }\n\
                     function reference using v(p: Reference<M::Widget>): Boolean pure { true }\n\
-                    function nested using v(p: Option<Population<M::Widget>[1]>): Boolean pure { true }\n\
                     function population using v(p: Population<M::Widget>[0]): Population<M::Widget>[0] pure { p }\n\
                     function tally using v(p: Population<M::Gadget>[1]): Integer pure { size(allInstances<M::Gadget>(p)) }\n";
         let parsed = fsl_cst::parse(
@@ -4897,13 +4896,6 @@ mod order_tests {
                 "{name}"
             );
         }
-        assert!(
-            matches!(
-                package.project_function("nested"),
-                Err(crate::BareSelectionFailure::FunctionParameterType { position: 0, .. })
-            ),
-            "a population nested under Option has no run value form"
-        );
         let projection = package.project_function("population").unwrap().unwrap();
         assert_eq!(
             projection.selected_function().unwrap().result_type,
@@ -4919,6 +4911,30 @@ mod order_tests {
             &projection.selected_function().unwrap().parameters[0].value_type,
             &checked.graph().callable("reference").unwrap().parameters[0].1,
             "the package retains the source-selected object identity"
+        );
+        let empty_rows = crate::ReadIdentityRows::of_rows(
+            &admitted,
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+        );
+        let no_identities = empty_rows.selected(&admitted, &mut budget).unwrap();
+        let index = WireIndex::new(
+            std::borrow::Cow::Owned(BTreeMap::new()),
+            std::borrow::Cow::Owned(no_identities),
+            &admitted,
+            std::borrow::Cow::Borrowed(package.exact_type_projections()),
+        )
+        .unwrap();
+        let projection = package.project_function("zero").unwrap().unwrap();
+        let parameter = &projection.selected_function().unwrap().parameters[0].node;
+        assert!(
+            matches!(
+                node_value_type(&index.types(), index.ids[parameter]),
+                Err(TypeError::Unsupported)
+            ),
+            "population projection requires the selected object identity witness"
         );
     }
 
