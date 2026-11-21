@@ -27,7 +27,7 @@ use ix_trace_rs::trace;
 
 use crate::refinement_aux::{
     halting_refinement, hidden_register_history, int, pair_refinement, probe_contracts,
-    probe_refinement, register_history_ensured, Unit, World as AuxWorld, NEVER,
+    probe_refinement, register_history_ensured, Shape as AuxShape, Unit, World as AuxWorld, NEVER,
     UNLIMITED as AUX_UNLIMITED,
 };
 use crate::refinement_fixture::{
@@ -43,7 +43,7 @@ struct Subject<'w> {
     refinement: &'w CheckedRefinement,
     package: &'w CheckedPackage,
     concrete: ModelSimulationRequest<'w>,
-    abstract_initial: DocumentRef,
+    abstract_initials: Vec<DocumentRef>,
 }
 
 fn cas(world: &World) -> Subject<'_> {
@@ -51,7 +51,7 @@ fn cas(world: &World) -> Subject<'_> {
         refinement: world.refinement(),
         package: world.package(),
         concrete: world.concrete_request(UNLIMITED),
-        abstract_initial: world.abstract_initial(),
+        abstract_initials: vec![world.abstract_initial()],
     }
 }
 
@@ -64,7 +64,7 @@ fn ring_with(world: &RingWorld, meter: filament_exact::ScalarLimits) -> Subject<
         refinement: world.refinement(),
         package: world.package(),
         concrete: world.concrete_request(meter),
-        abstract_initial: world.abstract_initial(),
+        abstract_initials: vec![world.abstract_initial()],
     }
 }
 
@@ -73,7 +73,7 @@ fn aux<'w>(world: &'w AuxWorld<'_>) -> Subject<'w> {
         refinement: world.refinement(),
         package: world.package(),
         concrete: world.concrete_request(AUX_UNLIMITED),
-        abstract_initial: world.abstract_initial(),
+        abstract_initials: world.abstract_initials(),
     }
 }
 
@@ -90,7 +90,7 @@ fn outcome(subject: &Subject<'_>) -> RefinementOutcome {
                 proof_bounds: Vec::new(),
             },
             abstract_package: subject.package,
-            abstract_initial: vec![subject.abstract_initial.clone()].into(),
+            abstract_initial: subject.abstract_initials.clone().into(),
             abstract_protocol_binding: None,
             max_depth: None,
             limits: ModelCheckLimits::default(),
@@ -115,7 +115,7 @@ fn replay(
         subject.refinement,
         &subject.concrete,
         subject.package,
-        vec![subject.abstract_initial.clone()],
+        subject.abstract_initials.clone(),
     )
     .expect("the subjects open");
     replay_refinement_trace(subject.refinement, &systems, payload)
@@ -136,7 +136,7 @@ fn certified<'w>(subject: &Subject<'w>) -> SimulationCertificateRequest<'w> {
         refinement: subject.refinement,
         concrete: subject.concrete.clone(),
         abstract_package: subject.package,
-        abstract_initial: vec![subject.abstract_initial.clone()].into(),
+        abstract_initial: subject.abstract_initials.clone().into(),
     }
 }
 
@@ -168,7 +168,7 @@ fn the_lost_update_counterexample_replays_with_its_mapped_values() {
         subject.refinement,
         &subject.concrete,
         subject.package,
-        vec![subject.abstract_initial.clone()],
+        subject.abstract_initials.clone(),
     )
     .expect("the subjects open");
     let keys: Vec<Vec<u8>> = mapped
@@ -687,27 +687,122 @@ fn a_proved_liveness_half_is_uncertified_and_a_replayed_lasso_refutes() {
     assert_eq!(settled.liveness, Some(TerminalValue::Refuted));
 }
 
-/// FR-144-AC-3 (TC-549 step 3): the hidden-field refinement with its
-/// `ensure` row settles `unsupported`, `unavailable`,
-/// `Unsupported(unsupported-requested-capability)`, with the safety half
-/// `Proved{Exhaustive, Certified}` on the record.
-#[trace("TC-549", "FR-144-AC-3")]
+/// FR-899-AC-1/AC-5 (TC-2536/TC-550): a hidden-field peek loop refutes with
+/// `HiddenUnfair`, and FR-145 reproduces it from the counterexample.
+#[trace("TC-2536", "FR-899-AC-1", "FR-899-AC-5")]
 #[test]
-fn liveness_through_a_hidden_field_settles_unsupported_beside_a_proved_safety_half() {
-    let unit = Unit::register();
-    let world = unit.world(&hidden_register_history());
+fn a_hidden_unfair_peek_lasso_replays_and_settles_refuted() {
+    let unit = Unit::registers(&["r"], &["r"], AuxShape::Peeker);
+    let refinement = hidden_register_history().replace(
+        "step Impl::Register::write",
+        "step Impl::Register::peek -> stutter;\nstep Impl::Register::write",
+    );
+    let world = unit.world(&refinement);
     let subject = aux(&world);
+    let payload = lasso(outcome(&subject));
+    assert!(matches!(
+        payload.refinement.as_ref(),
+        Some(RefinementFailure::HiddenUnfair { .. })
+    ));
+    let (failure, _) = reproduced(replay(&subject, &payload));
+    assert_eq!(Some(failure), payload.refinement);
     let settled = settle_item(&subject, &outcome(&subject));
-    let cause = TerminalValue::Unsupported(UnavailabilityCause::HiddenFieldLiveness);
-    assert_eq!(settled.record.value, cause);
-    assert_eq!(settled.record.label, ResultLabel::Unsupported);
-    assert_eq!(settled.record.basis, SettlementBasis::Unavailable);
+    assert_eq!(settled.record.value, TerminalValue::Refuted);
+    assert_eq!(settled.record.label, ResultLabel::Refuted);
+    assert_eq!(
+        settled.record.basis,
+        SettlementBasis::DecisiveCounterexample
+    );
     assert_eq!(settled.safety, Some(proved(Certification::Certified)));
-    assert_eq!(settled.liveness, Some(cause));
-    let TerminalValue::Unsupported(cause) = &settled.record.value else {
-        panic!("unsupported");
+    assert_eq!(settled.liveness, Some(TerminalValue::Refuted));
+}
+
+/// FR-899-AC-7 (TC-2536/TC-550): `F_A = [fire1, fire2, fire3]` where `fire1`
+/// and `fire2` are each satisfiable by some candidate cycle but not jointly,
+/// and every candidate cycle violates `fire3`. The first constraint every
+/// candidate cycle violates is `fire3`, not the joint prefix's `fire2`; replay
+/// reproduces that name and does not reproduce another.
+#[trace("TC-2536", "FR-899-AC-7")]
+#[test]
+fn the_first_constraint_every_candidate_cycle_violates_is_named_and_replays() {
+    let contracts = "post Fire1Step using v on Spec::M::fire1 {\n\
+          (pre(self.h) = 0 and self.h = 0 and self.v = pre(self.v)) or\n\
+          (pre(self.h) != 0 and self.h = pre(self.h) and self.v = 1)\n\
+        }\n\
+        post Fire2Step using v on Spec::M::fire2 {\n\
+          (pre(self.h) = 1 and self.h = 1 and self.v = pre(self.v)) or\n\
+          (pre(self.h) != 1 and self.h = pre(self.h) and self.v = 1)\n\
+        }\n\
+        post Fire3Step using v on Spec::M::fire3 { self.v = 1 and self.h = pre(self.h) }\n";
+    let unit = Unit::hidden_fairness_model(2, 0, &["fire1", "fire2", "fire3"], contracts)
+        .with_hidden_initials(&[1]);
+    let refinement = "refinement HiddenTick using inf abstract Spec concrete Impl {\n\
+         population Spec::ms from Impl::ms;\n\
+         object Spec::M from Impl::M { v = self.v; }\n\
+         step Impl::M::tick -> any;\n\
+         ensure fair weak Spec::M::fire1;\n\
+         ensure fair weak Spec::M::fire2;\n\
+         ensure fair weak Spec::M::fire3;\n}";
+    let world = unit.world(refinement);
+    let subject = aux(&world);
+    let payload = lasso(outcome(&subject));
+    let Some(RefinementFailure::HiddenUnfair { constraint }) = payload.refinement.as_ref() else {
+        panic!("a hidden-unfair lasso: {:?}", payload.refinement);
     };
-    assert_eq!(cause.as_str(), "unsupported-requested-capability");
+    assert_eq!(constraint.operation().name(), "fire3");
+    let (failure, _) = reproduced(replay(&subject, &payload));
+    assert_eq!(Some(failure), payload.refinement);
+
+    let fire2 = world
+        .refinement()
+        .abstract_operation_fairness()
+        .find(|constraint| constraint.operation().name() == "fire2")
+        .cloned()
+        .expect("the fire2 constraint");
+    let mut renamed = payload.clone();
+    renamed.refinement = Some(RefinementFailure::HiddenUnfair { constraint: fire2 });
+    assert!(
+        matches!(
+            replay(&subject, &renamed),
+            Ok(RefinementTraceSettlement::Inconclusive(_))
+        ),
+        "replay does not reproduce the joint-prefix name"
+    );
+}
+
+/// FR-899-AC-7 (TC-2536): the same three constraints from the single initial
+/// valuation `h = 0`. No candidate has `h = 1`, so `fire2` is unsatisfiable
+/// alone as well, and the first constraint every candidate cycle violates is
+/// `fire2`; the second initial valuation is what makes `fire3` the first.
+#[trace("TC-2536", "FR-899-AC-7")]
+#[test]
+fn a_single_initial_valuation_names_fire2_as_the_first_violated_constraint() {
+    let contracts = "post Fire1Step using v on Spec::M::fire1 {\n\
+          (pre(self.h) = 0 and self.h = 0 and self.v = pre(self.v)) or\n\
+          (pre(self.h) != 0 and self.h = pre(self.h) and self.v = 1)\n\
+        }\n\
+        post Fire2Step using v on Spec::M::fire2 {\n\
+          (pre(self.h) = 1 and self.h = 1 and self.v = pre(self.v)) or\n\
+          (pre(self.h) != 1 and self.h = pre(self.h) and self.v = 1)\n\
+        }\n\
+        post Fire3Step using v on Spec::M::fire3 { self.v = 1 and self.h = pre(self.h) }\n";
+    let unit = Unit::hidden_fairness_model(2, 0, &["fire1", "fire2", "fire3"], contracts);
+    let refinement = "refinement HiddenTick using inf abstract Spec concrete Impl {\n\
+         population Spec::ms from Impl::ms;\n\
+         object Spec::M from Impl::M { v = self.v; }\n\
+         step Impl::M::tick -> any;\n\
+         ensure fair weak Spec::M::fire1;\n\
+         ensure fair weak Spec::M::fire2;\n\
+         ensure fair weak Spec::M::fire3;\n}";
+    let world = unit.world(refinement);
+    let subject = aux(&world);
+    let payload = lasso(outcome(&subject));
+    let Some(RefinementFailure::HiddenUnfair { constraint }) = payload.refinement.as_ref() else {
+        panic!("a hidden-unfair lasso: {:?}", payload.refinement);
+    };
+    assert_eq!(constraint.operation().name(), "fire2");
+    let (failure, _) = reproduced(replay(&subject, &payload));
+    assert_eq!(Some(failure), payload.refinement);
 }
 
 /// The steps of `operations`, each the first successor of the state before
@@ -945,23 +1040,77 @@ fn a_loop_open_in_the_concrete_model_is_refused() {
     assert_eq!(*refusal, ModelTraceRefusal::LoopOpen { entry: 0, steps: 1 });
 }
 
-/// FR-145 "Lasso" (TC-550): replay reads an `F_A` constraint as weak, so a
-/// lasso that records a strong one is never reproduced.
-#[trace("TC-550")]
+/// FR-899-AC-5 (TC-2537): replay reproduces a strong-fairness lasso when the
+/// abstract class is enabled at some loop state and no loop edge takes it.
+#[trace("TC-2537", "FR-899-AC-5")]
 #[test]
-fn a_lasso_of_a_strong_constraint_is_not_reproduced() {
+fn a_lasso_of_a_strong_constraint_replays_when_enabled_at_some_loop_state() {
     let unit = Unit::probe_pair(
         probe_contracts(["", NEVER, NEVER, ""], ["", "", ""]),
         &[(0, 0)],
     );
     let strong = "ensure fair strong whole Spec::Pair::flipB;";
+    assert!(agrees(replay_probe(&unit, &[strong], &["peek"], 0, unfair)));
+
+    let taking = Unit::probe_pair(
+        probe_contracts(["", "", NEVER, ""], ["", "", ""]),
+        &[(0, 0)],
+    );
     assert!(!agrees(replay_probe(
-        &unit,
+        &taking,
         &[strong],
-        &["peek"],
+        &["flipB", "flipB"],
         0,
-        divergence
+        unfair
     )));
+}
+
+/// FR-899-AC-5 (TC-2537): the strong abstract-fairness lasso reproduces, but
+/// a loop that takes the constrained abstract transition does not.
+#[trace("TC-2537", "FR-899-AC-5")]
+#[test]
+fn strong_abstract_unfairness_replays_and_rejects_a_fair_loop() {
+    let unit = Unit::probe_pair(
+        probe_contracts(["", "self.a = 0", "", ""], ["", "self.a = 0", ""]),
+        &[(0, 0)],
+    );
+    let rows = [
+        "assume fair weak each Impl::Pair::flipA;",
+        "ensure fair strong whole Spec::Pair::flipB;",
+    ];
+    let world = unit.world(&probe_refinement(&rows));
+    let subject = aux(&world);
+    let checked = outcome(&subject);
+    let payload = match checked.liveness {
+        Some(LivenessHalf::Checked(ModelCheckOutcome::Violated { counterexample, .. })) => {
+            *counterexample
+        }
+        other => panic!("strong fairness refutation: {other:?}"),
+    };
+    assert!(matches!(
+        payload.refinement.as_ref(),
+        Some(RefinementFailure::AbstractUnfair { .. })
+    ));
+    assert!(agrees(replay(&subject, &payload)));
+
+    let system = world.concrete_system(AUX_UNLIMITED);
+    let steps = walk(
+        &system,
+        &pair_operations(&unit, &["flipB", "flipB", "flipA", "flipA"]),
+    );
+    let constraint = world
+        .refinement()
+        .abstract_operation_fairness()
+        .next()
+        .expect("the strong abstract fairness constraint")
+        .clone();
+    let edited = handmade(
+        steps,
+        0,
+        false,
+        RefinementFailure::AbstractUnfair { constraint },
+    );
+    assert!(!agrees(replay(&subject, &edited)));
 }
 
 /// FR-144 Settlement (TC-549): a liveness half that a limit stops settles
@@ -1030,9 +1179,7 @@ fn an_unsupported_liveness_half_does_not_replace_a_safety_half_that_is_not_prove
                 cause: SafetyUndecided::NoInitialState,
                 stats: RunStats::default(),
             },
-            liveness: Some(LivenessHalf::Unsupported(
-                UnavailabilityCause::HiddenFieldLiveness,
-            )),
+            liveness: Some(LivenessHalf::Unsupported(UnavailabilityCause::SolverAbsent)),
         },
     );
     assert_eq!(
@@ -1043,7 +1190,7 @@ fn an_unsupported_liveness_half_does_not_replace_a_safety_half_that_is_not_prove
     assert_eq!(
         settled.liveness,
         Some(TerminalValue::Unsupported(
-            UnavailabilityCause::HiddenFieldLiveness
+            UnavailabilityCause::SolverAbsent
         ))
     );
 }

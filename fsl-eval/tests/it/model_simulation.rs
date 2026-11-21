@@ -11,13 +11,13 @@ use filament_exact::{IntegerInterval, ObjectId, ObjectReference, ScalarLimits, V
 use filament_semantic_value::catalog::CatalogCode;
 use filament_semantic_value::checking::CheckingLimits;
 use fsl_eval::simulation::model::{
-    ClauseOutcome, ExpansionLimits, ModelBoundaryKind, ModelFinding, ModelSampleError,
-    ModelSimulationRequest, ModelSystem, PopulationUniverse, StepEffect, UndecidedSuccessor,
-    Unsteppable, explore_model, sample_model,
+    explore_model, sample_model, ClauseOutcome, ExpansionLimits, ModelBoundaryKind, ModelFinding,
+    ModelSampleError, ModelSimulationRequest, ModelSystem, PopulationUniverse, StepEffect,
+    UndecidedSuccessor, Unsteppable,
 };
 use fsl_eval::simulation::{
-    Exploration, Limits, NotSimulated, Outcome, ReplayError, SampleStop, StopReason,
-    TransitionSystem, replay, sample_probabilistic,
+    replay, sample_probabilistic, Exploration, Limits, NotSimulated, Outcome, ReplayError,
+    SampleStop, StopReason, TransitionSystem,
 };
 use fsl_foundation::diagnostic::Code;
 use fsl_foundation::selection::DefinitionRef;
@@ -26,18 +26,18 @@ use fsl_semantics::check::PackageDeclarations;
 use fsl_semantics::model::accounting::ModelNormalizationLimits;
 use fsl_semantics::model::intake::{admit_unit, meaning, package_input};
 use fsl_semantics::model::observation::{
-    AdmissionFailure, AnchorKind, DocumentRef, ObservationLimits, PathStep, SelectedAnchor,
-    declared_type_universe_for,
+    declared_type_universe_for, AdmissionFailure, AnchorKind, DocumentRef, ObservationLimits,
+    PathStep, SelectedAnchor,
 };
 use fsl_semantics::model::state::{ModelState, StateModel};
 use ix_trace_rs::trace;
-use serde_json::{Value as Json, json};
+use serde_json::{json, Value as Json};
 
+mod evaluator_closure_cases;
 #[path = "mbt_generate.rs"]
 mod mbt_generate;
 #[path = "mbt_shrink.rs"]
 mod mbt_shrink;
-mod evaluator_closure_cases;
 #[path = "model_simulation/model_based_run.rs"]
 mod model_based_run;
 #[path = "model_simulation/reference_literals.rs"]
@@ -702,11 +702,9 @@ fn an_unconstrained_increment_has_one_successor_per_value() {
     for (transition, state) in &successors {
         assert_eq!(transition, &identity);
         assert_eq!(int_field(&state.0, "c1", "label"), "0");
-        assert!(
-            !state.0.populations[&counters()]["c1"]
-                .fields
-                .contains_key(&field("next"))
-        );
+        assert!(!state.0.populations[&counters()]["c1"]
+            .fields
+            .contains_key(&field("next")));
     }
 }
 
@@ -1044,14 +1042,12 @@ fn an_exhausted_budget_is_undetermined_or_stops_the_run() {
     assert_eq!(stats(&exploration).0, 3);
     assert_eq!(exploration.findings.len(), 3);
     for entry in &exploration.findings {
-        let [
-            ModelFinding::InvariantUndetermined {
-                clause,
-                self_object,
-                evaluation,
-                ..
-            },
-        ] = &entry.findings[..]
+        let [ModelFinding::InvariantUndetermined {
+            clause,
+            self_object,
+            evaluation,
+            ..
+        }] = &entry.findings[..]
         else {
             panic!("one undetermined invariant per state: {:?}", entry.findings)
         };
@@ -1368,20 +1364,16 @@ fn a_sampled_trace_replays_and_two_equal_runs_agree() {
         first_change.post.as_deref(),
         Some(r#"{"type":"integer","value":"1"}"#)
     );
-    assert!(
-        sampled.effects[0]
-            .changed
-            .iter()
-            .any(|change| change.field == "mode")
-    );
-    assert!(
-        replay(
-            &system,
-            &sampled.trace,
-            fsl_foundation::IdentityLimits::default()
-        )
-        .is_ok()
-    );
+    assert!(sampled.effects[0]
+        .changed
+        .iter()
+        .any(|change| change.field == "mode"));
+    assert!(replay(
+        &system,
+        &sampled.trace,
+        fsl_foundation::IdentityLimits::default()
+    )
+    .is_ok());
 
     let mut missing = sampled.trace.clone();
     missing.findings.clear();
@@ -1478,12 +1470,10 @@ fn a_query_result_is_step_effect_data() {
             effect.created.is_empty() && effect.deleted.is_empty() && effect.changed.is_empty()
         );
     }
-    assert!(
-        system
-            .domains()
-            .iter()
-            .any(|(_, value_type)| matches!(value_type, filament_exact::ValueType::Boolean))
-    );
+    assert!(system
+        .domains()
+        .iter()
+        .any(|(_, value_type)| matches!(value_type, filament_exact::ValueType::Boolean)));
 }
 
 /// FR-120-AC-11 (TC-473): increment, spawn and remove steps carry their
@@ -1815,14 +1805,12 @@ fn an_undecided_precondition_is_a_contract_finding() {
 
     let (successors, findings, _) = run("pre Low using v on M::A::ready { self.ready() }");
     assert_eq!(successors, 0, "an undecided precondition enables nothing");
-    let [
-        ModelFinding::ContractUndetermined {
-            candidate,
-            clause,
-            evaluation,
-            ..
-        },
-    ] = &findings[..]
+    let [ModelFinding::ContractUndetermined {
+        candidate,
+        clause,
+        evaluation,
+        ..
+    }] = &findings[..]
     else {
         panic!("one contract finding: {findings:?}")
     };
@@ -1973,12 +1961,10 @@ fn an_ungranted_unbounded_field_is_neither_probed_nor_a_root() {
     let s0 = world.start("s0", &[Obj("c1", 0, 0, None)]);
     let system = self::system(&world, vec![s0], &["c1"], UNLIMITED);
     assert_eq!(successors_of(&system, 0).len(), 3);
-    assert!(
-        system
-            .domains()
-            .iter()
-            .all(|(_, value_type)| !matches!(value_type, filament_exact::ValueType::Integer))
-    );
+    assert!(system
+        .domains()
+        .iter()
+        .all(|(_, value_type)| !matches!(value_type, filament_exact::ValueType::Integer)));
     assert_eq!(stats(&explore(&system)).0, 3);
 }
 
@@ -3091,7 +3077,11 @@ fn float_snapshot_decoder_refuses_malformed_bits_and_wrong_slots() {
         let AdmissionFailure::Refused(record) = failure else {
             panic!("case {name} refuses with a diagnostic record");
         };
-        assert_eq!(record.catalog.code(), "invalid_runtime_input", "case {name}");
+        assert_eq!(
+            record.catalog.code(),
+            "invalid_runtime_input",
+            "case {name}"
+        );
         assert_eq!(record.catalog.cause(), cause, "case {name}");
         assert_eq!(
             record.fields.get("member").map(String::as_str),

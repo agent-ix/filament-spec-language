@@ -1826,17 +1826,17 @@ fn mixed_program_batch_compiles_once_for_call_and_value_invariants() {
     };
     let selections = vec![
         ProgramBatchSelection::Call {
-            call,
+            call: Box::new(call),
             include_requirements: false,
         },
-        ProgramBatchSelection::ValueInvariants(ValueInvariantsBatchRequest {
+        ProgramBatchSelection::ValueInvariants(Box::new(ValueInvariantsBatchRequest {
             snapshots,
             invocations: BTreeMap::new(),
             snapshot: reference,
             invocation: None,
             observation_limits: ObservationLimits::default(),
             accounting: default_accounting(1_000_000),
-        }),
+        })),
     ];
     let compilations = Cell::new(0);
     let results = run_program_batch_with_compile(compilation, selections, |request, temporal| {

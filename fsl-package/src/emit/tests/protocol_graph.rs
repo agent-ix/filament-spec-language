@@ -820,7 +820,13 @@ fn a_fifo_key_the_reader_compares_is_admitted() {
 /// FR-880-AC-10 / FR-881-AC-2, FSpec FR-726: equality-stable model-owned
 /// variant keys and a bounded-integer model value type `PartId` are emitted
 /// and admitted by the reader.
-#[trace("TC-2503", "TC-2504", "FR-880-AC-10", "FR-881-AC-2", "FSpec-FR-726-AC-2")]
+#[trace(
+    "TC-2503",
+    "TC-2504",
+    "FR-880-AC-10",
+    "FR-881-AC-2",
+    "FSpec-FR-726-AC-2"
+)]
 #[test]
 fn model_owned_fifo_keys_are_emitted_and_variant_types_are_carried() {
     use super::variant_types::fixture;
@@ -842,7 +848,8 @@ fn model_owned_fifo_keys_are_emitted_and_variant_types_are_carried() {
         part_id["kind"]["name"] = serde_json::json!("bounded");
         part_id.as_object_mut().unwrap().remove("target");
         part_id["scalar"] = serde_json::json!("integer");
-        part_id["constraints"] = serde_json::json!([constraint("min", "0"), constraint("max", "99")]);
+        part_id["constraints"] =
+            serde_json::json!([constraint("min", "0"), constraint("max", "99")]);
         let mut document = fixture::with_types(vec![
             fixture::variant_type("Odd", &["2x", "Café", "Gold Plus"]),
             part_id,
@@ -855,7 +862,10 @@ fn model_owned_fifo_keys_are_emitted_and_variant_types_are_carried() {
             "members": {},
             "meaning": fsl_semantics::model::intake::meaning::VALUE_TYPE,
         });
-        document["constructs"].as_array_mut().unwrap().push(bounded_kind);
+        document["constructs"]
+            .as_array_mut()
+            .unwrap()
+            .push(bounded_kind);
         crate::emit::tests::wire_bytes(&document).unwrap()
     };
     let package = (fixture::PACKAGE, "1");
@@ -1860,7 +1870,13 @@ fn a_channel_carrying_a_bounded_type_is_admitted() {
 /// FR-880-AC-10 / FR-881-AC-2, FSpec FR-726-AC-2: bounded, quantity, and
 /// record keys without float leaves are written and admitted by the reader.
 #[test]
-#[trace("TC-2503", "TC-2504", "FR-880-AC-10", "FR-881-AC-2", "FSpec-FR-726-AC-2")]
+#[trace(
+    "TC-2503",
+    "TC-2504",
+    "FR-880-AC-10",
+    "FR-881-AC-2",
+    "FSpec-FR-726-AC-2"
+)]
 fn a_fifo_key_stable_key_is_written() {
     for (carries, key) in [
         ("Int[0, 99]", "m"),

@@ -14,8 +14,8 @@ use fsl_semantics::check::{
 
 use crate::bare::BarePackage;
 use crate::bare_slot::BareSelectionFailure;
-use crate::bare_term::{BareClauseRefusal, fault, walk_failure};
-use crate::checked_v2::{StateGraphKind, StateGraphRoot, resolve_state_graph_root, wire_graph};
+use crate::bare_term::{fault, walk_failure, BareClauseRefusal};
+use crate::checked_v2::{resolve_state_graph_root, wire_graph, StateGraphKind, StateGraphRoot};
 use crate::protocol_selection::SlotSelectionFailure;
 use crate::protocol_view::{group_member, text};
 use crate::reader_protocol_projection::{BareWalker, ReaderProtocolProjection, UnsupportedView};

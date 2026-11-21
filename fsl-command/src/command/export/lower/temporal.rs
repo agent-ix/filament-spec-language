@@ -339,7 +339,7 @@ pub(super) fn read(
             .find(|row| &row.clause == *protocol && row.required_temporal == node.node_id)
         {
             if let CheckedProtocolActivation::Each { trigger } = &row.activation {
-                let trigger_position = at_node(graph, &trigger)?;
+                let trigger_position = at_node(graph, trigger)?;
                 let trigger_node = graph.node(trigger_position);
                 let construct = format!("{}/{}", trigger_node.node_tag, trigger_node.semantic_form);
                 return defer_at(

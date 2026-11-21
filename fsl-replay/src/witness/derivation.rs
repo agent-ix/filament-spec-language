@@ -399,17 +399,16 @@ pub(crate) fn derive_separating_witness(
 
 /// Follow the clause's decision path and return its stopped quantifier, or
 /// its authored comparison and the occurrence keys on the path to it.
+type DecisionEnd<'e> = (
+    Option<&'e StopReport>,
+    Option<(&'e fsl_eval::value::ComparisonReport, Vec<OccurrenceKey>)>,
+);
+
 fn decision_end<'e>(
     graph: &CheckedGraph,
     root: CheckedNode<'_>,
     evaluation: &'e ClauseEvaluation,
-) -> Result<
-    (
-        Option<&'e StopReport>,
-        Option<(&'e fsl_eval::value::ComparisonReport, Vec<OccurrenceKey>)>,
-    ),
-    InternalFault,
-> {
+) -> Result<DecisionEnd<'e>, InternalFault> {
     let mut node = root;
     let mut path = Vec::new();
     loop {

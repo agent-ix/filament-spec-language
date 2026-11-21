@@ -17,12 +17,12 @@ use filament_checked::key::DeclarationKey;
 use filament_exact::{EffectiveId, NodeKey, ObjectReference, Value, ValueType};
 use filament_semantic_value::declaration::{CompositeDeclaration, CompositeShape, TypeEnvironment};
 use filament_semantic_value::model_transition::ModelTransition;
-use fsl_semantics::check::CheckedNode;
 use fsl_semantics::check::footprint::{
-    FootprintObject, FootprintRefusal, SymbolicFootprint, SymbolicLocation,
     derive_attempt_footprint_fallback_with_reference_literals,
-    derive_selected_footprint_with_reference_literals, reference_literals_of,
+    derive_selected_footprint_with_reference_literals, reference_literals_of, FootprintObject,
+    FootprintRefusal, SymbolicFootprint, SymbolicLocation,
 };
+use fsl_semantics::check::CheckedNode;
 use fsl_semantics::model::clause_observation::Observation;
 use fsl_semantics::model::object_environment::{ObservedRead, ReadLog};
 use fsl_semantics::model::observation::AdmittedObservations;
@@ -32,7 +32,7 @@ use crate::model_subject::ModelInstance;
 
 use super::encode::{parse_optional_reference, parse_reference};
 use super::walk::stop;
-use super::{Application, BROKEN, BodyReads, ModelSimState, ModelSystem, ReferenceBinding};
+use super::{Application, BodyReads, ModelSimState, ModelSystem, ReferenceBinding, BROKEN};
 use crate::simulation::expansion::{Expansion, ExpansionStop};
 use crate::simulation::footprint::{Footprint, Location};
 

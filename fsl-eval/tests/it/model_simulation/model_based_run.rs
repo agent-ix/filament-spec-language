@@ -5,13 +5,13 @@ use super::*;
 use unicode_normalization::UnicodeNormalization;
 
 use fsl_eval::simulation::model::{
+    run_model_based_state_invariant, run_model_based_state_invariant_with_value_bits,
+    run_model_based_test_with_system as run_model_based_test, run_model_based_test_with_value_bits,
     ModelBasedCounterexample, ModelBasedTestCause, ModelBasedTestDiscardCount,
     ModelBasedTestDiscardReason, ModelBasedTestError, ModelBasedTestEvidence,
     ModelBasedTestRequest, ModelBasedTestSubject, ModelOperationCoverageReason,
     ModelOperationCoverageReasonKind, ModelOperationCoverageStatus,
     ModelOperationCoverageSummaryStatus, NativeAdmission, RootAdmission,
-    run_model_based_state_invariant, run_model_based_state_invariant_with_value_bits,
-    run_model_based_test_with_system as run_model_based_test, run_model_based_test_with_value_bits,
 };
 
 const INC: &str = "pre CanInc using v on M::Counter::inc { self.value < 5 }\n\
@@ -595,12 +595,10 @@ fn an_unbounded_integer_parameter_uses_and_records_max_value_bits() {
     assert_eq!(result.provenance.size_bounded.len(), 1);
     assert_eq!(result.provenance.size_bounded[0].values, "15");
     assert_eq!(result.provenance.len(), 8);
-    assert!(
-        result
-            .provenance
-            .iter()
-            .all(|case| case.max_value_bits == Some(3))
-    );
+    assert!(result
+        .provenance
+        .iter()
+        .all(|case| case.max_value_bits == Some(3)));
     let bounded_domain = IntegerInterval::new((-7_i64).into(), 7_i64.into())
         .expect("three size bits bound the parameter to [-7, 7]");
     let partitions: Vec<_> = result
@@ -1333,12 +1331,10 @@ fn contract_cases_start_with_ordered_domain_partitions() {
     assert!(result.checks.evaluated >= result.counts.passing);
     assert!(result.checks.skipped.values().all(|count| *count == 0));
     assert_eq!(result.partition_coverage.uncovered["precondition-false"], 1);
-    assert!(
-        !result
-            .partition_coverage
-            .uncovered
-            .contains_key("no-check-point")
-    );
+    assert!(!result
+        .partition_coverage
+        .uncovered
+        .contains_key("no-check-point"));
 
     let bounded = run_model_based_test(
         &system,
@@ -1359,12 +1355,10 @@ fn contract_cases_start_with_ordered_domain_partitions() {
         bounded.counts.passing + bounded.counts.failing + bounded.counts.discarded
     );
     assert_eq!(bounded.counts.generated, 100);
-    assert!(
-        bounded
-            .partition_coverage
-            .uncovered
-            .contains_key("undetermined")
-    );
+    assert!(bounded
+        .partition_coverage
+        .uncovered
+        .contains_key("undetermined"));
 
     let expected = [
         (vec![0, 2], "-1".to_owned(), ModelBoundaryKind::LowerRefusal),
@@ -1628,13 +1622,11 @@ fn text_domain_work_limits_settle_a_record_before_any_case() {
             assert_eq!(result.counts.generated, 30);
             assert_eq!(result.counts.discarded, 1);
             assert_eq!(result.checks.evaluated, 29);
-            assert!(
-                result
-                    .discarded_by
-                    .values()
-                    .filter(|entry| entry.count == 0)
-                    .all(|entry| entry.first_case.is_none())
-            );
+            assert!(result
+                .discarded_by
+                .values()
+                .filter(|entry| entry.count == 0)
+                .all(|entry| entry.first_case.is_none()));
         }
     }
 }

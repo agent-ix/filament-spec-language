@@ -31,6 +31,7 @@ mod scc;
 mod state_graph;
 
 pub use ample::{Atoms, Por};
+pub(crate) use check::check_model_with_stutter_closure;
 pub use check::{
     check_model, check_protocol, check_protocol_constrained, ModelCheckRefusal, ModelCheckRequest,
     ProtocolCheckRequest,

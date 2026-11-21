@@ -126,7 +126,7 @@ impl<S: LiveSubject> Run<'_, S> {
                 .iter()
                 .filter_map(|edge| match &edge.transition {
                     ProductTransition::Model(transition) => Some(transition),
-                    ProductTransition::TerminalStutter => None,
+                    ProductTransition::TerminalStutter | ProductTransition::StutterClosure => None,
                 });
             let enabled = graph.states().iter().flat_map(|state| {
                 state.findings.iter().flat_map(|finding| match finding {

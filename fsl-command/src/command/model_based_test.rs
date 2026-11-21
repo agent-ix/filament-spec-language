@@ -6,8 +6,8 @@ use serde_json::Value;
 use fsl_foundation::Code;
 
 use super::{
-    FormalSource, Intake, PreparedModelBasedTestRun, PreparedRun, Result, RunCause, package_name,
-    wire,
+    package_name, wire, FormalSource, Intake, PreparedModelBasedTestRun, PreparedRun, Result,
+    RunCause,
 };
 
 /// Limits and selection admitted by the direct model-based test member.
@@ -484,14 +484,9 @@ pub(super) fn prepare(
     )
     .map_err(failure)?
     .into_value();
-    let admitted = fsl_replay::spine::select(
-        &parsed,
-        &packages,
-        limits.model,
-        &cancel,
-    )
-    .map_err(failure)?
-    .into_value();
+    let admitted = fsl_replay::spine::select(&parsed, &packages, limits.model, &cancel)
+        .map_err(failure)?
+        .into_value();
     let checked = match &integer_division {
         Some(law) => fsl_replay::spine::check_with_integer_division(
             &parsed,
@@ -530,14 +525,10 @@ pub(super) fn prepare(
         if callable.result != &filament_exact::ValueType::Boolean {
             return Err(refuse("clause", "invalid-value"));
         }
-        if callable
-            .parameters
-            .iter()
-            .any(|(_, value_type)| {
-                value_type != &filament_exact::ValueType::Integer
-                    && !matches!(value_type, filament_exact::ValueType::Int(_))
-            })
-        {
+        if callable.parameters.iter().any(|(_, value_type)| {
+            value_type != &filament_exact::ValueType::Integer
+                && !matches!(value_type, filament_exact::ValueType::Int(_))
+        }) {
             return Err(refuse("clause", "invalid-value"));
         }
     }

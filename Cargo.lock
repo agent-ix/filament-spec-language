@@ -5,9 +5,9 @@ version = 4
 [[package]]
 name = "agent-ix-extraction-frontend"
 version = "0.2.1"
-source = "git+https://github.com/agent-ix/filament-core-data?tag=agent-ix-extraction-frontend-v0.2.1#c23980ea9943fc61a1c2b489322e77dec85f3d9d"
+source = "git+https://github.com/agent-ix/filament-core-data?rev=424ba49ebca649906dd9d0f5f3cd2f8e7f3e0194#424ba49ebca649906dd9d0f5f3cd2f8e7f3e0194"
 dependencies = [
- "agent-ix-semantic-ir 0.1.1 (git+https://github.com/agent-ix/filament-core-data?tag=agent-ix-extraction-frontend-v0.2.1)",
+ "agent-ix-semantic-ir",
  "clap",
  "quire-rs 0.53.0",
  "serde",
@@ -17,12 +17,7 @@ dependencies = [
 [[package]]
 name = "agent-ix-semantic-ir"
 version = "0.1.1"
-source = "git+https://github.com/agent-ix/filament-core-data?tag=agent-ix-extraction-frontend-v0.2.1#c23980ea9943fc61a1c2b489322e77dec85f3d9d"
-
-[[package]]
-name = "agent-ix-semantic-ir"
-version = "0.1.1"
-source = "git+https://github.com/agent-ix/filament-core-data?tag=agent-ix-semantic-ir-v0.1.1#c23980ea9943fc61a1c2b489322e77dec85f3d9d"
+source = "git+https://github.com/agent-ix/filament-core-data?rev=424ba49ebca649906dd9d0f5f3cd2f8e7f3e0194#424ba49ebca649906dd9d0f5f3cd2f8e7f3e0194"
 
 [[package]]
 name = "agent-ix-semantic-schema"
@@ -1134,7 +1129,7 @@ name = "fsl-semantics"
 version = "0.1.0"
 dependencies = [
  "agent-ix-extraction-frontend",
- "agent-ix-semantic-ir 0.1.1 (git+https://github.com/agent-ix/filament-core-data?tag=agent-ix-semantic-ir-v0.1.1)",
+ "agent-ix-semantic-ir",
  "filament-checked",
  "filament-contract-model",
  "filament-exact",

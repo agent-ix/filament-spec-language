@@ -29,7 +29,7 @@ use fsl_forms::{ExprId, ExprNode, Expression, ExpressionSpans, StepLabelForm};
 use fsl_foundation::Span;
 
 use crate::check::abstraction::OperationKey;
-use crate::check::check::{HyperTyping, NamedScope, Scope, StateContext, Typer, bind_parameters};
+use crate::check::check::{bind_parameters, HyperTyping, NamedScope, Scope, StateContext, Typer};
 use crate::check::facts::Definedness;
 use crate::check::ir::{CheckedBody, CheckedNode};
 use crate::check::observation::Observations;
@@ -148,6 +148,10 @@ pub(crate) enum Site {
     Existential(usize),
     /// The clause's declared name: its `hyperproperty` `claim` occurrence.
     Claim,
+    /// A finite trace population domain.
+    FiniteDomain,
+    /// One finite trace body's field parameter.
+    FiniteSlot(usize),
     /// The body wrapper's `claim` occurrence (FR-488 "The body").
     Body,
     /// The formula node at this arena index.
@@ -180,6 +184,8 @@ pub(crate) fn hyper_site(clause: usize, site: Site) -> String {
         Site::Universal(index) => format!("hyper {clause} match {index}"),
         Site::Existential(index) => format!("hyper {clause} match exists {index}"),
         Site::Claim => format!("hyper {clause}"),
+        Site::FiniteDomain => format!("hyper {clause} finite domain"),
+        Site::FiniteSlot(slot) => format!("hyper {clause} finite slot {slot}"),
         Site::Body => format!("hyper {clause} body"),
         Site::Node(node) => format!("hyper {clause} node {node}"),
         Site::Slot(slot) => format!("hyper {clause} slot {slot}"),

@@ -10,18 +10,18 @@ use std::path::Path;
 
 use filament_exact::{Cancel, CancelCause};
 use fsl_analyze::analyze::document::{
-    AnalyzeDocumentError, AnalyzeRun, ItemSelection, Negotiate, PackageRun, PackageRunError,
-    SettledRun, SubjectSelection, resolve_items, settle_package_run, settle_run,
+    resolve_items, settle_package_run, settle_run, AnalyzeDocumentError, AnalyzeRun, ItemSelection,
+    Negotiate, PackageRun, PackageRunError, SettledRun, SubjectSelection,
 };
 use fsl_analyze::analyze::{AnalyzeLimits, DeadlineSupply, Engine, Engines, SourceProvision};
 use fsl_analyze::provider::ProviderOptions;
+use fsl_eval::simulation::protocol::{MemorySelection, MemorySelectionRefusal, ResolvedMemory};
 use fsl_semantics::model::observation::DocumentProvision;
 
 use super::settle::Settle;
 use super::{
-    FileCounts, FormalSource, NativeResult, Result, RunCause, RunError, RunLimits, RunResult,
     check_sources, intake_with_bytes, request, request_integer_division, require_native_header,
-    wire,
+    wire, FileCounts, FormalSource, NativeResult, Result, RunCause, RunError, RunLimits, RunResult,
 };
 
 fn invalid(member: &str, reason: impl Into<String>) -> RunCause {
@@ -165,11 +165,7 @@ pub fn prepare_analyze(
     })
 }
 
-fn prepare_bytes(
-    directory: &Path,
-    bytes: &[u8],
-    limits: RunLimits,
-) -> Result<PreparedAnalyze> {
+fn prepare_bytes(directory: &Path, bytes: &[u8], limits: RunLimits) -> Result<PreparedAnalyze> {
     match read(directory, bytes, limits)? {
         Readout::Source(input, _) => Ok(PreparedAnalyze {
             input: Box::new(input),
@@ -204,9 +200,7 @@ struct PackageSelection {
 /// FR-850, FR-940: analyze a `package` request over the `BarePackage` of
 /// its admitted package, read through `AnalysisView`, never compiling
 /// source, with the caller's `negotiate` under `cancel` and its deadline.
-/// An item whose engine family has no package form yet refuses the request
-/// whole, as not yet implemented and naming the family, rather than settle
-/// `unsupported`.
+/// Each item reads the admitted package form its engine family supports.
 fn run_package(
     selection: PackageSelection,
     negotiate: &dyn Negotiate,
@@ -232,16 +226,6 @@ fn run_package(
         identity_bytes,
         equality_bytes,
     } = admitted;
-    // FSL FR-1033: the package route binds no protocol subject yet, so no
-    // `memory` entry is read over it.
-    if !memory.is_empty() {
-        return Err(RunCause::AnalyzeNotYetImplemented {
-            member: "package",
-            detail: ": the memory member names a protocol subject, which has no package form yet"
-                .to_owned(),
-            locus: None,
-        });
-    }
     let package = fsl_package::BarePackage::new(&admitted)
         .with_supply(
             fsl_package::BareSupply {
@@ -265,9 +249,18 @@ fn run_package(
         })?;
     let RunMembers {
         documents,
-        subject,
+        mut subject,
         limits,
     } = *members;
+    check_memory_using(&memory, |protocol, entries| {
+        use fsl_package::AnalysisView;
+        package
+            .protocol_execution_named(protocol)
+            .ok()
+            .flatten()
+            .map(|form| ResolvedMemory::resolve_package(&form, entries))
+    })?;
+    subject.memory = memory;
     let binding = subject.binding(&supplied, &documents);
     let run = PackageRun {
         package: &package,
@@ -359,7 +352,7 @@ fn read<'d>(directory: &'d Path, bytes: &[u8], limits: RunLimits) -> Result<Read
         refinement_internals: request.refinement_internals,
         libraries: Some(request.libraries),
         extensions: Vec::new(),
-        clocks: None,
+        clocks: (!request.clocks.is_empty()).then_some(request.clocks),
         output: None,
         handoff: None,
         integer_division: None,
@@ -978,11 +971,28 @@ fn check_memory(
     package: &fsl_package::CheckedPackage,
     memory: &[fsl_eval::simulation::protocol::MemorySelection],
 ) -> Result<()> {
+    check_memory_using(memory, |protocol, entries| {
+        package
+            .graph()
+            .protocol(protocol)
+            .map(|checked| ResolvedMemory::resolve(checked, entries))
+    })
+}
+
+/// Admit every request memory entry before resolving any item, using the
+/// selected route's protocol facts and the same refusal pointers.
+fn check_memory_using(
+    memory: &[MemorySelection],
+    resolve: impl Fn(
+        &str,
+        &[MemorySelection],
+    ) -> Option<std::result::Result<ResolvedMemory, MemorySelectionRefusal>>,
+) -> Result<()> {
     let refused = |member: String, reason: String| RunCause::AnalyzeMemory { member, reason };
     let mut protocols: Vec<&str> = Vec::new();
     for (position, entry) in memory.iter().enumerate() {
         let protocol = entry.parallel.split("::").next().unwrap_or_default();
-        if package.graph().protocol(protocol).is_none() {
+        if resolve(protocol, &[]).is_none() {
             return Err(refused(
                 format!("/memory/{position}/parallel"),
                 format!("{} names no protocol of the package", entry.parallel),
@@ -993,17 +1003,12 @@ fn check_memory(
         }
     }
     for protocol in protocols {
-        let Some(checked) = package.graph().protocol(protocol) else {
-            continue;
-        };
         let entries: Vec<_> = memory
             .iter()
             .filter(|entry| entry.parallel.split("::").next() == Some(protocol))
             .cloned()
             .collect();
-        if let Err(refusal) =
-            fsl_eval::simulation::protocol::ResolvedMemory::resolve(checked, &entries)
-        {
+        if let Some(Err(refusal)) = resolve(protocol, &entries) {
             let member = memory
                 .iter()
                 .position(|entry| entries.first().is_some_and(|first| first == entry))

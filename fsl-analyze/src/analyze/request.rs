@@ -97,6 +97,8 @@ pub struct ItemOptions {
     pub max_task_product_work: Option<std::num::NonZeroU64>,
     /// The provisioned document a `finite-replay` item replays.
     pub trace: Option<fsl_semantics::model::observation::DocumentRef>,
+    /// The provisioned FR-739 finite trace population for a finite hyper item.
+    pub traces: Option<fsl_semantics::model::observation::DocumentRef>,
     /// The provisioned FR-737 execution assessed by `global-conformance`.
     pub recording: Option<fsl_semantics::model::observation::DocumentRef>,
     /// The caller's activated role population for a recording assessment.
@@ -184,7 +186,13 @@ impl ClaimItem {
                 .claims()
                 .iter()
                 .any(|checked| checked.occurrence().as_ref() == Some(&claim));
-        let wrong_authored_occurrence = names_other_occurrence(graph, &claim);
+        let wrong_authored_occurrence = names_other_occurrence(graph, &claim)
+            || graph
+                .finite_hyper_clauses()
+                .iter()
+                .find(|clause| clause.identity() == Some(claim.node()))
+                .and_then(|clause| clause.occurrence())
+                .is_some_and(|occurrence| occurrence != &claim);
         if !occurs
             || wrong_authored_occurrence
             || family.is_none_or(|family| !kind.applies_to_declaration(family))
@@ -193,13 +201,23 @@ impl ClaimItem {
         }
         Ok(Self {
             request_index,
-            claim,
+            claim: claim.clone(),
             kind,
             extent,
             backend: None,
             candidates: Vec::new(),
             options: ItemOptions::default(),
-            form: None,
+            form: if kind == Capability::TemporalSatisfaction {
+                graph
+                    .finite_hyper_clauses()
+                    .iter()
+                    .find(|clause| clause.identity() == Some(claim.node()))
+                    .cloned()
+                    .map(FiniteHyperItem::from)
+                    .map(ItemForm::FiniteHyper)
+            } else {
+                None
+            },
         })
     }
 }
@@ -217,6 +235,21 @@ pub enum ItemForm {
     Probabilistic(ProbabilisticItem),
     /// A hybrid-dynamics request; only an engine implementing this form runs it.
     Hybrid(HybridItem),
+    /// A checked FR-898 clause over a request-supplied finite trace population.
+    FiniteHyper(FiniteHyperItem),
+}
+
+/// The checked finite-hyper clause selected by a temporal-satisfaction item.
+#[derive(Clone)]
+pub struct FiniteHyperItem {
+    /// The checked clause whose body is evaluated over the selected traces.
+    pub clause: fsl_semantics::check::CheckedFiniteHyperClause,
+}
+
+impl From<fsl_semantics::check::CheckedFiniteHyperClause> for FiniteHyperItem {
+    fn from(clause: fsl_semantics::check::CheckedFiniteHyperClause) -> Self {
+        Self { clause }
+    }
 }
 
 /// Hybrid item settings kept distinct from temporal and probabilistic forms.
@@ -702,7 +735,6 @@ fn protocol_analysis_work<'a>(
     let model_input = &analysis.model;
     let over = super::protocol_item::over_instance(binding, over);
     let Ok(subject) = super::protocol_item::subject_of(
-        analysis.package,
         model_input,
         binding,
         limits,
@@ -757,7 +789,8 @@ fn work<'a>(
     let item = &negotiated.item;
     let temporal_kind = match &item.form {
         Some(ItemForm::Temporal(form)) => form.item_kind,
-        Some(ItemForm::Probabilistic(_) | ItemForm::Hybrid(_)) | None => ItemKind::Formula,
+        Some(ItemForm::FiniteHyper(_) | ItemForm::Probabilistic(_) | ItemForm::Hybrid(_))
+        | None => ItemKind::Formula,
     };
     let family = if item.kind == Capability::GlobalConformance {
         Some(fsl_semantics::check::DeclarationFamily::Protocol)
@@ -775,6 +808,9 @@ fn work<'a>(
         .get(crate::zone_check::manifest::METHOD)
         .is_some_and(|method| method == crate::model_check::manifest::METHOD_DIGITAL_CLOCKS);
     let mut built = match &item.form {
+        Some(ItemForm::FiniteHyper(form)) if item.kind == Capability::TemporalSatisfaction => {
+            super::finite_hyper_item::item(analysis, binding, item, form, limits)
+        }
         Some(ItemForm::Temporal(_))
             if matches!(
                 item.kind,
@@ -1014,7 +1050,10 @@ fn work<'a>(
                 limits.deadline,
                 engines.options().provider_limits,
                 engines.manifest_wire(),
-                item.candidates.iter().map(|candidate| candidate.id().clone()).collect(),
+                item.candidates
+                    .iter()
+                    .map(|candidate| candidate.id().clone())
+                    .collect(),
                 super::hybrid_item::Spelling {
                     packages: binding.packages,
                     emit: limits.emit,
@@ -1168,9 +1207,10 @@ fn work<'a>(
         {
             let form = match &item.form {
                 Some(ItemForm::Temporal(form)) => form.clone(),
-                Some(ItemForm::Probabilistic(_) | ItemForm::Hybrid(_)) | None => {
-                    TemporalItem::default()
-                }
+                Some(
+                    ItemForm::FiniteHyper(_) | ItemForm::Probabilistic(_) | ItemForm::Hybrid(_),
+                )
+                | None => TemporalItem::default(),
             };
             super::invariant_item::invariant_item(
                 analysis,
@@ -1283,6 +1323,7 @@ fn work<'a>(
             Some(crate::zone_check::manifest::BACKEND_ID)
         }
         Some(ItemForm::Temporal(_)) => Some(crate::model_check::manifest::BACKEND_ID),
+        Some(ItemForm::FiniteHyper(_)) => Some(crate::model_check::manifest::BACKEND_ID),
         Some(ItemForm::Probabilistic(form)) => match form.evidence {
             EvidenceKind::Exact => Some(crate::exact_probabilistic::manifest::BACKEND_ID),
             EvidenceKind::Statistical => Some(crate::statistical::manifest::BACKEND_ID),
@@ -1347,27 +1388,6 @@ fn work<'a>(
     )
 }
 
-#[cfg(test)]
-mod tests {
-    use ix_trace_rs::trace;
-
-    use super::SourceProvision;
-    use fsl_foundation::source::provenance::RawSourceRef;
-
-    #[trace("TC-2804", "FR-992-AC-1")]
-    #[test]
-    fn source_provision_entries_are_in_label_order() {
-        let mut provision = SourceProvision::default();
-        let z = RawSourceRef::new("b", "z").expect("valid source label");
-        let a = RawSourceRef::new("a", "a").expect("valid source label");
-        provision.insert(&z, b"z".to_vec());
-        provision.insert(&a, b"a".to_vec());
-
-        let entries: Vec<_> = provision.entries().collect();
-        assert_eq!(entries, vec![("a", "a", &b"a"[..]), ("b", "z", &b"z"[..])]);
-    }
-}
-
 /// FR-940 "Claim occurrence ordinals": whether `claim` names a node an
 /// authored temporal clause or probabilistic claim declares, at an
 /// occurrence none of that node's declarations owns. Structurally equal
@@ -1393,4 +1413,25 @@ fn names_other_occurrence(
     };
     (temporal().next().is_some() && !temporal().any(|clause| clause.claim() == claim.origin()))
         || (probabilistic().next().is_some() && !probabilistic().any(|checked| checked == claim))
+}
+
+#[cfg(test)]
+mod tests {
+    use ix_trace_rs::trace;
+
+    use super::SourceProvision;
+    use fsl_foundation::source::provenance::RawSourceRef;
+
+    #[trace("TC-2804", "FR-992-AC-1")]
+    #[test]
+    fn source_provision_entries_are_in_label_order() {
+        let mut provision = SourceProvision::default();
+        let z = RawSourceRef::new("b", "z").expect("valid source label");
+        let a = RawSourceRef::new("a", "a").expect("valid source label");
+        provision.insert(&z, b"z".to_vec());
+        provision.insert(&a, b"a".to_vec());
+
+        let entries: Vec<_> = provision.entries().collect();
+        assert_eq!(entries, vec![("a", "a", &b"a"[..]), ("b", "z", &b"z"[..])]);
+    }
 }

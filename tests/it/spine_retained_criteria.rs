@@ -68,9 +68,7 @@ fn map_key_guards_refuse_unmatched_keys_at_the_lookup() {
         let declaration = format!(
             "function f using v(m: Map<Int[0,9],Integer>[0,3], n: Map<Int[0,9],Integer>[0,3], k: Int[0,9]): Integer pure {{ {body} }}"
         );
-        let refusal = spine_check(&declaration)
-            .err()
-            .expect("unproved map presence must refuse");
+        let refusal = spine_check(&declaration).expect_err("unproved map presence must refuse");
         assert_eq!(
             refusal.code(),
             fsl_foundation::Code::UndefinedExpression,

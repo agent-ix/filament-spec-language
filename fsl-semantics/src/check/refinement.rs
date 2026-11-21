@@ -267,13 +267,6 @@ pub enum RefinementCause {
         /// The selected profile identity.
         profile: String,
     },
-    /// The abstract model is timed: it declares a time source (FSpec FR-430
-    /// "Timed refinement"): `unsupported_construct`/`declaration-form` at
-    /// the refinement's abstract model reference.
-    TimedAbstract {
-        /// The abstract model's alias.
-        model: String,
-    },
     /// A row reads a clock field of the concrete model, so the mapped
     /// abstract state would not be a function of the discrete state alone
     /// (FSpec FR-430 "Timed refinement"): `unsupported_construct`/
@@ -361,7 +354,6 @@ impl RefinementCause {
             Self::Unsupported { .. }
             | Self::UnsupportedRowForm { .. }
             | Self::AbstractRelationships { .. }
-            | Self::TimedAbstract { .. }
             | Self::ClockRead => Code::UnsupportedConstruct,
             Self::PopulationBound { .. }
             | Self::NodeArgumentCount { .. }
@@ -387,9 +379,7 @@ impl RefinementCause {
             Self::Malformed { .. } => Some("malformed-declaration"),
             Self::Unsupported { .. } => Some("not-yet-implemented"),
             Self::UnsupportedRowForm { .. } | Self::ClockRead => Some("expression-form"),
-            Self::AbstractRelationships { .. } | Self::TimedAbstract { .. } => {
-                Some("declaration-form")
-            }
+            Self::AbstractRelationships { .. } => Some("declaration-form"),
             Self::PopulationBound { .. } | Self::NodeArgumentType { .. } => Some("type-mismatch"),
             Self::NodeArgumentCount { .. } => Some("operator-ineligible"),
             Self::Check(cause) => cause.cause(),
@@ -1780,6 +1770,20 @@ impl CheckedRefinement {
         &self.steps
     }
 
+    /// Whether this model refinement's step map is step-for-step. The caller
+    /// supplies whether the selected concrete subject declares dense time;
+    /// no concrete behavior is explored. Every row must map a concrete
+    /// operation to an abstract operation step. Protocol rows, `stutter`, `any`, and dense-time
+    /// subjects do not preserve the step positions required by `previous`
+    /// and bounded interval operators.
+    pub fn is_step_for_step(&self, concrete_time_is_dense: bool) -> bool {
+        !concrete_time_is_dense
+            && self.steps.iter().all(|row| {
+                matches!(&row.class, StepClass::Operation(_))
+                    && matches!(&row.target, StepTarget::Abstract { .. })
+            })
+    }
+
     /// Every authored step row's source region in source-row order.
     pub fn step_sources(&self) -> &[RefinementStepSource] {
         &self.step_sources
@@ -1855,12 +1859,10 @@ impl CheckedRefinement {
     /// their catalogued FR-322 operations.
     pub(crate) fn rows_have_nodes(&self) -> bool {
         self.rows().all(|row| {
-            row.body().descendants().into_iter().all(|node| {
-                !matches!(
-                    node.kind(),
-                    NodeKind::History { .. }
-                )
-            })
+            row.body()
+                .descendants()
+                .into_iter()
+                .all(|node| !matches!(node.kind(), NodeKind::History { .. }))
         })
     }
 
@@ -2377,21 +2379,6 @@ pub(crate) fn check_refinement<'f: 'c, 'a, 'c>(
         );
         return (RefinementCheck::Refused(findings.refusals), nodes);
     }
-    // FSpec FR-430: a timed concrete model refines an untimed abstract one;
-    // a timed abstract model has no reading as a refinement's abstract side.
-    if env
-        .time_sources
-        .iter()
-        .any(|source| source.times(abstract_side.model))
-    {
-        findings.refuse(
-            abstract_alias.span,
-            RefinementCause::TimedAbstract {
-                model: abstract_side.alias.to_owned(),
-            },
-        );
-        return (RefinementCheck::Refused(findings.refusals), nodes);
-    }
     let subject = match &form.abstract_side {
         AbstractSideForm::Model(_) => ListSubject::Model,
         AbstractSideForm::Protocol { clause, .. } => resolve_protocol(
@@ -2604,9 +2591,6 @@ pub(crate) struct RefinementEnv<'e> {
     /// Whether an abstract protocol header is intentionally deferred because
     /// another unit refusal stops the check before protocol clauses run.
     pub(crate) defer_abstract_protocol_resolution: bool,
-    /// The unit's time sources: a model one of them times is timed (FSpec
-    /// FR-430).
-    pub(crate) time_sources: &'e [super::temporal_clause::ModelTimeSource],
     /// The unit's clock-reading declarations, whose calls read clocks
     /// (FR-230).
     pub(crate) clock_reading: &'e [super::assemble::ClockReadingDeclaration],
@@ -3300,6 +3284,25 @@ impl<'c, 'a> Checker<'c, 'a> {
         let mut complete = true;
         for field in &row.fields {
             let written = field.field.name.as_str();
+            // FSpec FR-900: an abstract clock's value is derived from the
+            // mapped step row, so a field row cannot assign it. Clock fields
+            // are not ordinary attributes, so reject them before resolving
+            // the ordinary row field.
+            if self
+                .abstract_side
+                .model
+                .clock_field(target.id.clone(), written)
+                .is_some()
+            {
+                self.findings.refuse(
+                    field.span,
+                    RefinementCause::Malformed {
+                        name: written.to_owned(),
+                    },
+                );
+                complete = false;
+                continue;
+            }
             let Some(attribute) = types.attribute(target.id.clone(), written) else {
                 // The protocol's state takes no row (FR-147 "Abstract side").
                 if self
@@ -4268,7 +4271,10 @@ fn population_uses(
                 visit: Visit::Count,
                 source,
                 ..
-            } => (source_population(query.at(*source))?, PopulationValue::Count),
+            } => (
+                source_population(query.at(*source))?,
+                PopulationValue::Count,
+            ),
             NodeKind::Query {
                 visit: Visit::Sum,
                 source,
@@ -4276,13 +4282,10 @@ fn population_uses(
                 ..
             } => {
                 let summand = query.at(*summand);
-                let range = static_integer_range(
-                    (summand.kind(), summand.value_type()),
-                    &|id| {
-                        let found = body.node(id);
-                        Some((found.kind(), found.value_type()))
-                    },
-                )
+                let range = static_integer_range((summand.kind(), summand.value_type()), &|id| {
+                    let found = body.node(id);
+                    Some((found.kind(), found.value_type()))
+                })
                 .and_then(|(lower, upper)| IntegerInterval::new(lower, upper).ok())?;
                 (
                     source_population(query.at(*source))?,

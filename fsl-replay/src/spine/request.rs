@@ -21,8 +21,8 @@ use super::{
     sample_position, ClauseArgument, ClauseArgumentValue, ClauseRunRequest, ClauseRunSelection,
     ClauseRunSource, DependencyInput, LateInputs, OperationName, OverObject, ProgressAssertion,
     ProgressClosure, ProgressCompleteness, ProgressLedger, ProgressLowerBoundary, RunRelation,
-    SpineLimits, TimedObservation, TimestampedCover, TimestampedMissingValuation, TimestampedObservation,
-    TimestampedOrderKey, TimestampedWindow, TraceBinding, TraceInput,
+    SpineLimits, TimedObservation, TimestampedCover, TimestampedMissingValuation,
+    TimestampedObservation, TimestampedOrderKey, TimestampedWindow, TraceBinding, TraceInput,
 };
 
 /// A selected observation whose bytes and document identity were admitted by

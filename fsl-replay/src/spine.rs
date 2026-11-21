@@ -583,6 +583,11 @@ impl CompileRefusal {
             Self::UnitList(_) => SpineStage::Intake,
             Self::Source(_) | Self::SourceDiagnostics { .. } => SpineStage::Source,
             Self::Forms { .. } => SpineStage::Forms,
+            Self::Intake { refusal, .. }
+                if refusal.cause.cause() == Some(MISSING_SELECTION_CAUSE) =>
+            {
+                SpineStage::Compile
+            }
             Self::Intake { .. }
             | Self::OperationClause { .. }
             | Self::TypeInvariant { .. }
@@ -918,6 +923,9 @@ impl UnitListRefusal {
     }
 }
 
+/// The catalogued cause of a model whose package the request omits.
+const MISSING_SELECTION_CAUSE: &str = "missing-selection";
+
 /// The spine stage a [`CompileRefusal`] comes from.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum SpineStage {
@@ -927,6 +935,8 @@ pub enum SpineStage {
     Forms,
     /// I1: `model::intake::admit_unit`.
     Intake,
+    /// A model the unit selects whose package the request does not supply.
+    Compile,
     /// The FR-091 assembler.
     Assembly,
     /// S3: `PackageDeclarations::check`.
@@ -942,6 +952,7 @@ impl SpineStage {
             Self::Source => "source",
             Self::Forms => "forms",
             Self::Intake => "intake",
+            Self::Compile => "compile",
             Self::Assembly => "assembly",
             Self::Check => "check",
             Self::Emit => "emit",

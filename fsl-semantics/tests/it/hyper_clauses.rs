@@ -2042,61 +2042,141 @@ fn a_relation_body_reading_a_member_of_no_checked_type_refuses_operator_ineligib
 
 /// The finite trace-set clause of FR-898: `Obs` is the record of one trace
 /// state, and the traces come with the request.
-const FINITE_DET: &str = "record Obs { inp: Int[0, 3]; out: Int[0, 3]; }\n\
+const FINITE_DET: &str = "record Obs { inp: Int[0, 3]; res: Int[0, 3]; }\n\
     hyper Det using inf over t in Obs bounded 3 forall trace a forall trace b \
-    { (a.inp = b.inp) -> (a.out = b.out) }";
+    { (a.inp = b.inp) implies (a.res = b.res) }";
 
 /// FR-898-AC-1 (TC-2534): a `hyper` clause over a declared finite trace
 /// domain checks under a finite-trace profile; S3 never answers it with the
 /// blanket `FiniteDomain` refusal.
 #[trace("TC-2534", "FR-898-AC-1")]
 #[test]
-#[ignore = "QSL-2239: a hyper clause over a finite trace domain refuses FiniteDomain instead of checking"]
 fn a_finite_trace_set_hyperproperty_checks() {
     let (_, outcome) = check_under(&[], EVENT, FINITE_DET);
     assert!(outcome.is_ok(), "the finite clause checks: {outcome:?}");
 }
 
 /// FR-898-AC-2 (TC-2534): each defect of a finite clause refuses with its
-/// own named cause at its own span, never `FiniteDomain`.
+/// own named cause at its own span, never `FiniteDomain`. The cause kinds are
+/// `invalid-value` (a zero bound), `missing-name`, `wrong-export` (a tuple and
+/// an object type are no record) and `ambiguous-name` (a repeated variable).
 #[trace("TC-2534", "FR-898-AC-2")]
 #[test]
-#[ignore = "QSL-2239: finite trace-set clause defects refuse FiniteDomain instead of their named causes"]
 fn a_finite_trace_set_defect_refuses_with_its_named_cause() {
-    let cases = [
+    let tuple = FINITE_DET
+        .replace("hyper Det", "tuple NotRecord(Int[0, 3]);\nhyper Det")
+        .replace("in Obs", "in NotRecord");
+    let object = FINITE_DET.replace("in Obs", "in V::ConfigVersion");
+    let cases: [(String, Vec<&str>, Code, &str, fn(&str) -> Span); 5] = [
         (
             FINITE_DET.replace("bounded 3", "bounded 0"),
+            Vec::new(),
             Code::InvalidPackage,
-            "0",
+            "invalid-value",
+            |text: &str| after(text, "bounded ", "0"),
         ),
         (
             FINITE_DET.replace("in Obs", "in Nowhere"),
+            Vec::new(),
             Code::MissingDeclaration,
-            "Nowhere",
+            "missing-name",
+            |text: &str| after(text, "over t in ", "Nowhere"),
         ),
         (
-            FINITE_DET.replace("b.out)", "c.out)"),
-            Code::MissingDeclaration,
-            "c.out",
+            tuple,
+            Vec::new(),
+            Code::InvalidModelBinding,
+            "wrong-export",
+            |text: &str| after(text, "over t in ", "NotRecord"),
+        ),
+        (
+            object,
+            vec!["V"],
+            Code::InvalidModelBinding,
+            "wrong-export",
+            |text: &str| after(text, "over t in ", "V::ConfigVersion"),
+        ),
+        (
+            FINITE_DET.replace("forall trace b", "forall trace a"),
+            Vec::new(),
+            Code::AmbiguousDeclaration,
+            "ambiguous-name",
+            |text: &str| {
+                let start = text.rfind("trace a").expect("the repeated variable") + "trace ".len();
+                Span {
+                    start,
+                    end: start + 1,
+                }
+            },
         ),
     ];
-    for (declaration, code, at) in cases {
-        let (text, outcome) = check_under(&[], EVENT, &declaration);
+    for (declaration, aliases, code, tag, span) in cases {
+        let (text, outcome) = check_under(&aliases, EVENT, &declaration);
         let Err(StageFailure::Refused(refusal)) = outcome else {
             panic!("{declaration}: a refusal, not {outcome:?}");
         };
+        let CheckCause::Hyper(cause) = &refusal.cause else {
+            panic!("{declaration}: a hyper cause, not {:?}", refusal.cause);
+        };
         assert!(
-            !matches!(&refusal.cause, CheckCause::Hyper(cause) if matches!(**cause, HyperCause::FiniteDomain { .. })),
+            !matches!(**cause, HyperCause::FiniteDomain { .. }),
             "{declaration}: {refusal:?}"
         );
-        assert_eq!(refusal.cause.code(), code, "{declaration}");
-        assert!(text.contains(at));
+        assert_eq!(cause.code(), code, "{declaration}");
+        assert_eq!(cause.tag(), tag, "{declaration}");
+        assert_eq!(cause.span(), Some(span(&text)), "{declaration}");
     }
-    let (_, outcome) = check_under(&[], INFINITE, FINITE_DET);
-    let Err(StageFailure::Refused(refusal)) = outcome else {
-        panic!("an infinite-trace profile refuses: {outcome:?}");
+    // The refusals located by the body or by the profile alias: each is a
+    // hyper cause with its code, tag and exact span.
+    let in_text = |text: &str, needle: &str, within: &str| {
+        let at = text.find(within).expect("the source holds the text")
+            + within
+                .find(needle)
+                .expect("the needle is within its context");
+        Span {
+            start: at,
+            end: at + needle.len(),
+        }
     };
-    assert_eq!(refusal.cause.code(), Code::IllTyped);
+    let body_cases = [
+        (
+            FINITE_DET.replace("b.res)", "c.res)"),
+            EVENT,
+            Code::MissingDeclaration,
+            "missing-name",
+            "c",
+            "c.res",
+        ),
+        (
+            FINITE_DET.replace("(a.inp = b.inp) implies (a.res = b.res)", "a.res"),
+            EVENT,
+            Code::IllTyped,
+            "type-mismatch",
+            "a.res",
+            "a.res",
+        ),
+        (
+            FINITE_DET.to_owned(),
+            INFINITE,
+            Code::IllTyped,
+            "type-mismatch",
+            "inf",
+            "using inf over",
+        ),
+    ];
+    for (declaration, profile, code, tag, needle, within) in body_cases {
+        let (text, outcome) = check_under(&[], profile, &declaration);
+        let Err(StageFailure::Refused(refusal)) = outcome else {
+            panic!("{declaration}: a refusal, not {outcome:?}");
+        };
+        let CheckCause::Hyper(cause) = &refusal.cause else {
+            panic!("{declaration}: a hyper cause, not {:?}", refusal.cause);
+        };
+        assert_eq!(cause.code(), code, "{declaration}");
+        assert_eq!(cause.tag(), tag, "{declaration}");
+        let span = cause.span().expect("the refusal is located");
+        assert_eq!(span, in_text(&text, needle, within), "{declaration}");
+    }
 }
 
 /// FR-173 "Event-position form" with FR-326: a temporal operator with no

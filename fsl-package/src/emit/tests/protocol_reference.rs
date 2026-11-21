@@ -1180,7 +1180,7 @@ fn a_reference_to_an_attempt_protocol_is_written() {
     let position = |matches: &dyn Fn(&Value) -> bool, description: &str| {
         nodes
             .iter()
-            .position(|node| matches(node))
+            .position(matches)
             .unwrap_or_else(|| panic!("{description} is written: {nodes:?}"))
     };
     let state_clause = position(

@@ -268,7 +268,7 @@ fn inductive_braking(moving_upper: &str, stopped_a: (&str, &str)) -> Value {
 fn sixteenths(n: u32) -> String {
     let divisor = (1..=16_u32)
         .rev()
-        .find(|d| n % d == 0 && 16 % d == 0)
+        .find(|d| n.is_multiple_of(*d) && 16_u32.is_multiple_of(*d))
         .unwrap_or(1);
     match 16 / divisor {
         1 => (n / divisor).to_string(),

@@ -250,6 +250,7 @@ impl Invariant {
                 limits,
                 reductions: Default::default(),
             },
+            stutter_closure: false,
             certificate: self.request(world, UNLIMITED),
             replay: Box::new(replay),
         }

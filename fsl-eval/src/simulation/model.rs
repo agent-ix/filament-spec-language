@@ -27,8 +27,8 @@ mod frames;
 mod input;
 pub use input::{
     BodyReads, ModelCheckInput, ModelEvaluator, ModelTerminal, ModelTerminalDeclaration,
-    PackageModelInput, PackageRewards, PendingClauseForm, PendingPackageForm, StateClauseEntry,
-    TerminalWhen,
+    PackageModelInput, PackageRewards, PendingClauseForm, PendingPackageForm, ProtocolDefinition,
+    StateClauseEntry, TerminalWhen,
 };
 mod operation_coverage;
 pub use operation_coverage::{
@@ -3146,10 +3146,7 @@ mod tests {
     fn text_boundary_partitions_follow_length_then_content_order() {
         let text_type = filament_exact::TextType::new(0, 2, filament_exact::TextProfile::Nfc)
             .expect("ordered Text bounds");
-        let actual: Vec<_> = text_boundary_specs(&text_type)
-            .into_iter()
-            .map(|(kind, length, text)| (kind, length, text))
-            .collect();
+        let actual = text_boundary_specs(&text_type);
         assert_eq!(
             actual,
             [

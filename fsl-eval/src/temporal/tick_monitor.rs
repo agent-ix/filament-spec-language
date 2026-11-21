@@ -441,7 +441,8 @@ impl<'f> TickMonitorReference<'f> {
         }
         if self.spec.exact {
             let (lo, hi) = (q(dmin), q(dmax));
-            let at_lower = |d: &Rational| *d > bound.lower || (*d == bound.lower && bound.lower_closed);
+            let at_lower =
+                |d: &Rational| *d > bound.lower || (*d == bound.lower && bound.lower_closed);
             let at_upper = |d: &Rational| {
                 bound
                     .upper
@@ -1161,8 +1162,7 @@ impl<'f> TickMonitorReference<'f> {
                 .map_or(Val::TRUE, |left| polar(self.expr(left, position)));
             let distance = self.events[position].tick - self.events[elem.pos].tick;
             let same = elem.pos == position;
-            let member =
-                Self::member_val(self.member(elem.node, distance, distance, same));
+            let member = Self::member_val(self.member(elem.node, distance, distance, same));
             let phi = self.guard(elem.node, phi, distance, distance, same);
             folded.push((
                 at,

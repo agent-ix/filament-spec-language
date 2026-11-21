@@ -15,6 +15,7 @@ mod mapping;
 pub(crate) mod predicate;
 mod subject;
 
+pub use crate::protocol_occurrence::SubjectKind;
 pub use mapping::{
     mapping_support, support_of, AuthenticatedSelection, Classification, Closure, MappingRefusal,
     Retained, Support, Target, Unmatched, OUTSTANDING_PREMISES,
@@ -23,7 +24,6 @@ pub use predicate::{
     checked_predicate, instance_bound_atoms, CheckedPredicateView, PredicateKind,
     PredicateSelection,
 };
-pub use crate::protocol_occurrence::SubjectKind;
 #[cfg(test)]
 pub(crate) use subject::temporal_subject_within;
 pub use subject::{

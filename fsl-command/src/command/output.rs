@@ -5,8 +5,8 @@ mod types;
 
 use super::{LimitKind, RunCause, RunError, RunResult};
 use crate::formal_source::FormalSource;
-use fsl_foundation::Diagnostic;
 use fsl_foundation::source::SourceReadCause;
+use fsl_foundation::Diagnostic;
 use serde_json::Value;
 
 /// Immutable JSON produced from the typed native result schema.
@@ -259,6 +259,14 @@ pub(super) fn error(error: &RunError, artifact: bool) -> Result<Value, serde_jso
         | RunCause::OutputGivenTwice
         | RunCause::OutputExists { .. }
         | RunCause::ExtractionRequiresRun => (types::Stage::Request, types::Details::None),
+        RunCause::TransferSelection { stage, details, .. } => (
+            types::Stage::SpineRun(stage),
+            if details.is_empty() {
+                types::Details::None
+            } else {
+                types::Details::Object(details.clone())
+            },
+        ),
         RunCause::ExtensionCatalog(_) | RunCause::UnknownExtensionCapability(_) => (
             types::Stage::Spine(fsl_replay::spine::SpineStage::Forms),
             types::Details::None,
@@ -436,6 +444,7 @@ pub(super) fn error(error: &RunError, artifact: bool) -> Result<Value, serde_jso
             | RunCause::SynthesisRequest { cause, .. }
             | RunCause::ModelBasedTestRequest { cause, .. } => Some(*cause),
             RunCause::ExportOutput { .. } => Some("output-failure"),
+            RunCause::TransferSelection { cause, .. } => Some(cause),
             RunCause::TemporalCorrection(_) => Some("invalid-value"),
             RunCause::ModelPackageInput(refusal) => Some(refusal.cause.as_str()),
             RunCause::TlCorrespondence { .. } | RunCause::IntegerDivisionLaw { .. } => {
@@ -680,10 +689,10 @@ fn spine_origin(origin: &filament_semantic_value::location::ExpressionOwner) -> 
 
 #[cfg(all(test, feature = "quire-extraction"))]
 mod extraction_tests {
-    use super::{RunCause, extraction_regions_for_locus};
+    use super::{extraction_regions_for_locus, RunCause};
     use crate::command::ExtractionFailureStage;
     use fsl_foundation::{Source, SourceIdentity};
-    use serde_json::{Value, json};
+    use serde_json::{json, Value};
 
     fn verified_map() -> fsl_foundation::source_map::SourceMap {
         let markdown = "# Doc\n\n## Invariants\n\n### valid_clause\n```ix:native\nopaque\n```\n";

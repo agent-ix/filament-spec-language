@@ -4,12 +4,12 @@
 //! the members, category, basis and outcome of its FSpec FR-352 row, and a
 //! temporal kind outside FR-352's sixteen refuses.
 
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 
 use super::*;
 use crate::spine::{
-    NativeRunReadError, NativeRunResult, TemporalIndeterminateReason, read_native_run_result,
-    write_clause_run_result,
+    read_native_run_result, write_clause_run_result, NativeRunReadError, NativeRunResult,
+    TemporalIndeterminateReason,
 };
 
 fn document(report: &ClauseRunReport) -> Value {

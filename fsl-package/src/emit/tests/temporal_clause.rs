@@ -2490,10 +2490,7 @@ fn an_unbounded_operator_has_no_interval_operand_and_a_bounded_one_has_its_text(
     let free = paths(&compiled.wire);
     assert!(!free.is_empty());
     assert!(free.iter().all(|path| !path.contains("steps:")), "{free:?}");
-    let bounded = compile(&unit(
-        EVENT,
-        &declared("Bound", "always[0,2] holds(true)"),
-    ));
+    let bounded = compile(&unit(EVENT, &declared("Bound", "always[0,2] holds(true)")));
     let bounded = paths(&bounded.wire);
     assert!(
         bounded.iter().any(|path| path.contains("\"steps:0..2\"")),

@@ -5,7 +5,7 @@
 
 use super::admission_corpus::config_version_unit;
 use super::*;
-use crate::checked_v2::{CheckedTimedModel, read_checked_package_v2};
+use crate::checked_v2::{read_checked_package_v2, CheckedTimedModel};
 use crate::emit::timed_models_of;
 use filament_contract_model::CheckedPackageEvidence;
 use filament_semantic_value::checking::CheckMode;

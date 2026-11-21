@@ -799,6 +799,9 @@ pub struct ItemSelection {
     /// A `finite-replay` item's supplied trace.
     #[serde(default)]
     pub trace: Option<DocumentSelection>,
+    /// An FR-739 finite trace population for a finite hyper item.
+    #[serde(default)]
+    pub traces: Option<DocumentSelection>,
     /// A `global-conformance` item's supplied FR-737 recording.
     #[serde(default)]
     pub recording: Option<DocumentSelection>,
@@ -841,6 +844,8 @@ struct ItemSelectionWire {
     assessed_root: Option<Value>,
     #[serde(default)]
     trace: Option<DocumentSelection>,
+    #[serde(default)]
+    traces: Option<DocumentSelection>,
     #[serde(default)]
     recording: Option<DocumentSelection>,
     #[serde(default, deserialize_with = "present_json_value")]
@@ -897,6 +902,7 @@ impl TryFrom<ItemSelectionWire> for ItemSelection {
             premises: wire.premises,
             assessed_root: wire.assessed_root,
             trace: wire.trace,
+            traces: wire.traces,
             recording: wire.recording,
             population: wire.population,
             simulation: wire.simulation,
@@ -1379,6 +1385,12 @@ fn declarations(package: &CheckedPackage) -> BTreeMap<String, filament_exact::No
             .map(|clause| (clause.name().to_owned(), clause.identity())),
     );
     names.extend(
+        graph
+            .finite_hyper_clauses()
+            .iter()
+            .filter_map(|clause| Some((clause.name().to_owned(), clause.identity()?.clone()))),
+    );
+    names.extend(
         graph.state_graph_claims().iter().filter_map(|claim| {
             Some((claim.name().to_owned(), claim.occurrence()?.node().clone()))
         }),
@@ -1493,6 +1505,13 @@ fn claim_occurrence(
             clause.identity(),
             clause.claim().clone(),
         ));
+    }
+    if let Some(clause) = graph
+        .finite_hyper_clauses()
+        .iter()
+        .find(|clause| clause.identity() == Some(node))
+    {
+        return clause.occurrence().cloned();
     }
     let body = graph
         .semantic_graph()
@@ -1711,6 +1730,7 @@ fn resolve_call_item(
             max_cases: None,
             max_task_product_work: None,
             trace: None,
+            traces: None,
             recording: None,
             population: None,
             backend_options: call_item.options.clone(),
@@ -2093,7 +2113,7 @@ fn resolve_one(
                 }
             }
             (Some(_), _) if protocol_analysis_kind => {
-                return invalid_member(index, name, "temporal.subject.protocol")
+                return invalid_member(index, name, "temporal.subject.protocol");
             }
             (Some(_), _) => return invalid_value(index, name, "temporal.subject.protocol"),
             (None, _) => None,
@@ -2146,6 +2166,20 @@ fn resolve_one(
         }))
     } else if let Some(probabilistic) = probabilistic {
         Some(ItemForm::Probabilistic(probabilistic))
+    } else if let Some(clause) = (kind == Capability::TemporalSatisfaction)
+        .then(|| {
+            package
+                .graph()
+                .finite_hyper_clauses()
+                .iter()
+                .find(|clause| clause.identity() == Some(claim.node()))
+                .cloned()
+        })
+        .flatten()
+    {
+        Some(ItemForm::FiniteHyper(super::request::FiniteHyperItem {
+            clause,
+        }))
     } else if kind == Capability::TemporalSatisfaction
         || kind == Capability::GlobalConformance
         || protocol_analysis_kind
@@ -2172,6 +2206,7 @@ fn resolve_one(
                 .limits
                 .and_then(|limits| limits.max_task_product_work),
             trace: selection.trace.as_ref().map(DocumentSelection::reference),
+            traces: selection.traces.as_ref().map(DocumentSelection::reference),
             recording: selection
                 .recording
                 .as_ref()
@@ -2347,6 +2382,7 @@ fn resolve_derived(
         max_cases: None,
         max_task_product_work: None,
         trace: None,
+        traces: None,
         recording: None,
         population: None,
         backend_options,
@@ -2434,6 +2470,7 @@ fn resolve_schedule_claim(
                     .and_then(|temporal| temporal.limits)
                     .and_then(|limits| limits.max_task_product_work),
                 trace: None,
+                traces: None,
                 recording: None,
                 population: selection.population.clone(),
                 backend_options,
@@ -2614,6 +2651,7 @@ fn resolve_protocol_freedom(
                 max_cases: None,
                 max_task_product_work: None,
                 trace: None,
+                traces: selection.traces.as_ref().map(DocumentSelection::reference),
                 recording: None,
                 population: selection.population.clone(),
                 backend_options,
@@ -3097,6 +3135,7 @@ fn derived_claim(
                 max_cases: None,
                 max_task_product_work: None,
                 trace: None,
+                traces: None,
                 recording: None,
                 population: None,
                 backend_options: BTreeMap::new(),
@@ -3250,6 +3289,12 @@ impl ClaimItem {
             item.insert(
                 "trace".to_owned(),
                 json!({"authority": trace.authority, "identity": trace.identity}),
+            );
+        }
+        if let Some(traces) = &self.options.traces {
+            item.insert(
+                "traces".to_owned(),
+                json!({"authority": traces.authority, "identity": traces.identity}),
             );
         }
         if let Some(recording) = &self.options.recording {
@@ -4083,6 +4128,7 @@ fn replay_target(found: &super::ItemCounterexample, name: &str) -> Option<Value>
         | super::Counterexample::GlobalConformance(_)
         | super::Counterexample::Hybrid(_)
         | super::Counterexample::TaskProduct(_) => json!({"state_clause": qualified}),
+        super::Counterexample::FiniteHyper(_) => json!({"hyperproperty": qualified}),
         super::Counterexample::ScheduleMiss(_) => return None,
     })
 }

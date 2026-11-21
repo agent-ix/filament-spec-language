@@ -16,8 +16,8 @@ use fsl_foundation::{SourceIdentity, Span};
 use ix_trace_rs::trace;
 
 use super::{
-    AssemblyCause, AssemblyError, AssemblyRefusal, TopologyFault, Unmapped, admit_types_with,
-    model_field, model_operation, model_value_type,
+    admit_types_with, model_field, model_operation, model_value_type, AssemblyCause, AssemblyError,
+    AssemblyRefusal, TopologyFault, Unmapped,
 };
 use crate::check::{CheckCause, Owner, PackageDeclarations, SourceOwner, TypeFormFault};
 use crate::model::accounting::ModelNormalizationLimits;
@@ -30,7 +30,7 @@ use crate::model::domain_package::{
     TuplePositionRecord, TupleValueTypeRecord, ValueTypeRef, VariantRecord,
 };
 use crate::model::intake::SelectedModel;
-use crate::model::normalize::{NormalizeOutcome, normalize};
+use crate::model::normalize::{normalize, NormalizeOutcome};
 use crate::value::layer::{HeaderLayer, LayerForm};
 use filament_checked::key::DeclarationKey;
 use filament_exact::Cancel;
@@ -541,12 +541,10 @@ fn the_assembler_reports_every_error() {
     );
 
     let (_, found) = errors("type A = B;\ntype B = A;");
-    let [
-        AssemblyError {
+    let [AssemblyError {
         cause: AssemblyCause::AliasCycle { edges },
         ..
-        },
-    ] = found.as_slice()
+    }] = found.as_slice()
     else {
         panic!("one alias cycle, not {found:?}");
     };
@@ -1060,12 +1058,10 @@ fn using_aliases_resolve_to_the_units_profile_selections() {
     );
     match assemble_as("a", "u", &text) {
         Err(refusal) => {
-            let [
-                AssemblyError {
+            let [AssemblyError {
                 cause: AssemblyCause::DuplicateAlias { alias, spans },
                 ..
-                },
-            ] = refusal.errors.as_slice()
+            }] = refusal.errors.as_slice()
             else {
                 panic!("one duplicate-alias error, not {refusal:?}");
             };
@@ -1986,10 +1982,10 @@ fn option_type_projects_through_signature_alias_sequence_map_tuple_variant_unit_
             owner: DeclarationKey::fixture("model.Holder"),
             parameters: vec![
                 OperationParameterRecord {
-                key: parameter_key,
-                value_type: ValueTypeRef::Package(option_key.clone()),
-                multiplicity: mult(1, Some(1), false, true),
-                presence: filament_exact::Presence::Required,
+                    key: parameter_key,
+                    value_type: ValueTypeRef::Package(option_key.clone()),
+                    multiplicity: mult(1, Some(1), false, true),
+                    presence: filament_exact::Presence::Required,
                 },
                 OperationParameterRecord {
                     key: DeclarationKey::fixture("model.Holder/read/maybe"),
@@ -2862,12 +2858,10 @@ fn name_and_number_errors_are_reported_and_the_topology_does_not_run() {
             ),
         ]
     );
-    assert!(
-        found
+    assert!(found
         .iter()
         .any(|error| error.cause == AssemblyCause::ZeroDenominator
-                && error.span == last(&text, "rational(1, 0)"))
-    );
+            && error.span == last(&text, "rational(1, 0)")));
 
     // Without those three, the topology runs and reports the first defect
     // alone: `Length`'s turn, before `Area`'s `Width` and the `P`/`Q` cycle.

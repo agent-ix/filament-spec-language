@@ -142,7 +142,7 @@ pub enum TaskProductTransition {
     /// A source transition that activates no checked task.
     Source(ModelTransition),
     /// A source-synchronized or autonomous scheduler action.
-    Task(TaskTransitionIdentity),
+    Task(Box<TaskTransitionIdentity>),
     /// The timed source is quiescent and lets time elapse forever without a
     /// discrete source or scheduler step (FR-181 terminal stutter).
     TerminalStutter,
@@ -337,7 +337,7 @@ impl TaskProductSourceStep {
             self.activations
                 .iter()
                 .cloned()
-                .map(TaskProductTransition::Task)
+                .map(|identity| TaskProductTransition::Task(Box::new(identity)))
                 .collect()
         }
     }
@@ -355,7 +355,7 @@ pub struct TaskProductDerivedStep {
 impl TaskProductDerivedStep {
     /// The FR-364 replay transition carried by this scheduler move.
     pub fn transition(&self) -> TaskProductTransition {
-        TaskProductTransition::Task(self.identity.clone())
+        TaskProductTransition::Task(Box::new(self.identity.clone()))
     }
 }
 
@@ -1641,7 +1641,7 @@ impl<'a> TaskProductPlan<'a> {
                     Arrival::Periodic { period } => period,
                     Arrival::Sporadic { min_interarrival } => min_interarrival,
                 };
-                let max_jobs = candidate_max_jobs(&interarrival, &task.deadline)
+                let max_jobs = candidate_max_jobs(interarrival, &task.deadline)
                     .ok_or(TaskProductPlanRefusal::TaskQueueBoundOverflow)?;
                 let releases = releases
                     .iter()

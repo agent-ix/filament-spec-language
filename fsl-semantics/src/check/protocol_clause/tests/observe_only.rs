@@ -4,7 +4,7 @@
 
 use ix_trace_rs::trace;
 
-use super::rules::{TRIED, located_refusals, protocol};
+use super::rules::{located_refusals, protocol, TRIED};
 use crate::check::{CheckCause, CheckRefusal};
 
 fn catalog(refusal: &CheckRefusal) -> (&'static str, Option<&'static str>) {
@@ -172,7 +172,7 @@ fn a_side_effect_under_observe_only_refuses() {
     let sent = protocol(
         "",
         "role R on M::Actor; role S on M::Actor;",
-        &format!("observe sequence Review {{ send Sent via Note as (sent: Boolean) {{ true }}; }}"),
+        "observe sequence Review { send Sent via Note as (sent: Boolean) { true }; }",
     )
     .replace("run observe", &format!("{channel}\nrun observe"));
     let found = located_refusals(&sent);
@@ -278,11 +278,9 @@ fn a_side_effect_under_observe_only_refuses() {
         ],
         "the role boundary reports each performed action once in source order"
     );
-    assert!(
-        refusals[0]
-            .2
-            .starts_with("compensate Undo for Main::Applied")
-    );
+    assert!(refusals[0]
+        .2
+        .starts_with("compensate Undo for Main::Applied"));
 }
 
 /// FR-218-AC-47: a recommendation's result binder is never a decision fact.

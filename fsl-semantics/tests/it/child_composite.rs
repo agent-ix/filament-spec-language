@@ -114,8 +114,9 @@ fn a_child_is_accepted_at_a_parent_typed_function_argument() {
 #[trace("FR-359-AC-1", "TC-998")]
 #[test]
 fn a_parent_typed_read_of_a_child_field_is_refused() {
-    let refusals = check("function promised using v(e: M::OrderPlaced): Integer pure { e.promised_by }")
-        .expect_err("the unit does not check");
+    let refusals =
+        check("function promised using v(e: M::OrderPlaced): Integer pure { e.promised_by }")
+            .expect_err("the unit does not check");
     assert_eq!(refusals.len(), 1, "{refusals:?}");
     let cause = &refusals[0].cause;
     assert_eq!(cause.code(), fsl_foundation::diagnostic::Code::IllTyped);

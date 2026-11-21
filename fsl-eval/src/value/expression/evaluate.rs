@@ -1611,7 +1611,7 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
             let total = self.live_occurrences.checked_add(occurrences);
             if enforce_limit
                 && (admitted_occurrences.is_none()
-                    || total.map_or(true, |total| total > self.live_occurrences_limit))
+                    || total.is_none_or(|total| total > self.live_occurrences_limit))
             {
                 return Err(Halt::Stop(Stop::Incomplete(Incomplete {
                     limit_kind: LimitKind::LiveOccurrences,

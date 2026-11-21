@@ -751,7 +751,7 @@ fn untimed_beside_timed(
             "identity": identity, "document": document, "formal_revision": 1}})
     };
     let mut models = vec![source("a.json", "a-model", "A")];
-    let mut documents = vec![json!({"file": "snap-a.json"})];
+    let documents = vec![json!({"file": "snap-a.json"})];
     if timed_m {
         models.push(source("m.json", "m-model", "M"));
     }

@@ -8,8 +8,8 @@
 //! `temporal-aggregate-vectors.json`, read in place from `$pinned FSpec fixture view`.
 
 use super::temporal_clause::{
-    EVENT, check_graph, clause_node, compile, document, formula_root, node_key, parameter_named,
-    reaches, target, unit,
+    check_graph, clause_node, compile, document, formula_root, node_key, parameter_named, reaches,
+    target, unit, EVENT,
 };
 use super::*;
 use filament_semantic_value::checking::CheckMode;

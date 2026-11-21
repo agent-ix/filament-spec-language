@@ -26,17 +26,14 @@
 mod counterexample;
 pub mod hint;
 pub use counterexample::{
-    CounterexampleWireError, ProtocolWire, assignments_wire, graph_evidence_wire,
-    hyper_counterexample_wire,
-    sampled_witness_wire, probabilistic_wire, protocol_temporal_wire, task_temporal_wire, temporal_wire,
-    task_temporal_wire_with_queue_growth,
-    task_source_transition_wire, task_transition_wire,
-    replay_model_trace_document, state_key_wire, task_product_transition_wire, ReadCounterexample,
-    TraceAlphabet,
-    read_temporal_counterexample, TemporalCounterexampleReadRefusal,
-    replay_task_product_trace, TaskProductTraceReplayRefusal,
-    read_task_temporal_counterexample,
-    read_task_temporal_document, TaskProductCounterexampleDocument,
+    assignments_wire, graph_evidence_wire, hyper_counterexample_wire, probabilistic_undefined_wire,
+    probabilistic_wire, protocol_temporal_wire, read_task_temporal_counterexample,
+    read_task_temporal_document, read_temporal_counterexample, replay_model_trace_document,
+    replay_task_product_trace, sampled_witness_wire, state_key_wire, task_product_transition_wire,
+    task_source_transition_wire, task_temporal_wire, task_temporal_wire_with_queue_growth,
+    task_transition_wire, temporal_wire, CounterexampleWireError, ProtocolWire, ReadCounterexample,
+    TaskProductCounterexampleDocument, TaskProductTraceReplayRefusal,
+    TemporalCounterexampleReadRefusal, TraceAlphabet,
 };
 
 use crate::hybrid::{BoundDimension, SolverHorizon};
@@ -169,7 +166,7 @@ impl From<SpineStage> for OutcomeStage {
         match stage {
             SpineStage::Source => Self::S1,
             SpineStage::Forms => Self::S2,
-            SpineStage::Intake => Self::I1,
+            SpineStage::Intake | SpineStage::Compile => Self::I1,
             SpineStage::Assembly | SpineStage::Check => Self::S3,
             SpineStage::Emit => Self::S4,
         }
@@ -184,7 +181,7 @@ impl From<SpineStage> for OutcomeStage {
 /// from clause runs"), written only on an item whose category is that
 /// category, which only a clause run gives
 /// ([`OutcomeItem::from_clause_run`]).
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ItemLabel {
     /// The claim was proved.
@@ -1363,10 +1360,8 @@ impl OutcomeItem {
                     | UnavailabilityCause::Disposition
                     | UnavailabilityCause::MissingFairnessPremise { .. }
                     | UnavailabilityCause::UnsupportedReduction { .. }
-                    | UnavailabilityCause::HiddenFieldLiveness
                     | UnavailabilityCause::UnsupportedHyperForm { .. }
                     | UnavailabilityCause::UnsupportedSmtFragment
-                    | UnavailabilityCause::StrongAbstractFairness
                     | UnavailabilityCause::NotMarkov
                     | UnavailabilityCause::ConfidenceBeyondPrecision
                     | UnavailabilityCause::PunctualInterval { .. } => {}
@@ -1890,7 +1885,8 @@ fn statistical_verdict_wire(
                 result.insert("estimate".to_owned(), estimate);
             }
             None if test.undefined.is_some()
-                || test.decision == Decision::Undecided(statistical::UndecidedCause::UndecidedSuccessor) => {}
+                || test.decision
+                    == Decision::Undecided(statistical::UndecidedCause::UndecidedSuccessor) => {}
             None => return Err(CounterexampleWireError::Unspelled("test estimate")),
         }
         if let Some(interval) = statistical_interval_wire(test.interval.as_ref()) {
@@ -3574,7 +3570,6 @@ mod tests {
         let generic =
             OutcomeDiagnostic::new(None, Code::InvalidRequest.as_str(), None, "invalid request");
         assert_eq!(generic.hint, None);
-
     }
 
     /// FR-181 source transitions retain their canonical operation node when

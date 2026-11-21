@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
-use crate::support::config_version_spine::{Case, spine};
-use fsl_replay::spine::{ClauseRunSelection, ClauseRunSource, ClauseRunStage, run_clause};
+use crate::support::config_version_spine::{spine, Case};
+use fsl_replay::spine::{run_clause, ClauseRunSelection, ClauseRunSource, ClauseRunStage};
 use ix_trace_rs::trace;
 
 fn custom_post(case: Case, body: &str) -> fsl_replay::spine::ClauseRunReport {

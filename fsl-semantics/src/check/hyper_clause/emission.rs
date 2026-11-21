@@ -5,9 +5,9 @@
 //! order the requirement states.
 //!
 //! The refusals are ordered by precedence, and a clause stops at the first:
-//! a timed clause, an alias that binds no object parameter, a fairness set
-//! under a bounded profile, a constraint declared by a systems interface, and
-//! a model read with no encodable component.
+//! a timed clause, a fairness set under a bounded profile, a constraint
+//! declared by a systems interface, and a model read with no encodable
+//! component.
 
 use filament_checked::node::NodeKind;
 use std::collections::BTreeMap;
@@ -46,23 +46,13 @@ pub(crate) fn unemitted(
     if clause.profile() == TemporalProfile::Timed {
         return Some(refusal(clause, clause.span()));
     }
-    // 2. An alias that binds no object parameter: its subject node is
-    // undefined.
-    if clause.aliases().iter().any(|alias| {
-        !clause
-            .parameters()
-            .iter()
-            .any(|parameter| &parameter.alias == alias)
-    }) {
-        return Some(refusal(clause, clause.span()));
-    }
-    // 3. A fairness set under a profile whose fairness argument is empty.
+    // 2. A fairness set under a profile whose fairness argument is empty.
     if clause.profile().is_bounded() {
         if let Some(span) = constraints(clause).next().map(|(_, span, _)| span) {
             return Some(refusal(clause, span));
         }
     }
-    // 4. A constraint whose declaring node is a systems interface.
+    // 3. A constraint whose declaring node is a systems interface.
     for (constraint, span, alias) in constraints(clause) {
         let declaring = constraint.operation().declaring_type();
         // The model the clause's own unit binds the alias to (FR-480
@@ -74,7 +64,7 @@ pub(crate) fn unemitted(
             return Some(refusal(clause, span));
         }
     }
-    // 5. A model read with no encodable component.
+    // 4. A model read with no encodable component.
     unencodable_read(clause).map(|span| refusal(clause, span))
 }
 

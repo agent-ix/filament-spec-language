@@ -1010,7 +1010,7 @@ impl<'t> Typing<'t> {
                 let authored = name.parse::<usize>().ok()?;
                 match self
                     .tuple_positions
-                    .and_then(|positions| positions.get(&composite.declaration()))
+                    .and_then(|positions| positions.get(composite.declaration()))
                 {
                     Some(positions) => positions.get(authored).copied().flatten()?,
                     None => authored,

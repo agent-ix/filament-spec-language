@@ -84,10 +84,10 @@ comparing copied source references.
    `behaviours` is emitted as one `claim`/`hyperproperty` node (FR-488). Neither
    is refused `NotEmitted` for being a `relation` or `hyper` clause. A `hyper`
    clause is refused `NotEmitted`, the typed temporal cause (FR-488 "Clauses S4
-   does not emit"), only when it is under the timed profile, has an alias that
-   binds no object parameter, has a fairness set under a bounded profile or a
-   constraint declared by a systems interface, or has a model read with no
-   encodable component. A checked `temporal` clause that S4 does not write
+   does not emit"), only when it is under the timed profile, has a fairness set under a bounded
+   profile or a constraint declared by a systems interface, or has a model read with no
+   encodable component. A clause whose alias binds no object parameter is
+   emitted (FR-631-AC-4 ruling, as FR-488 states). A checked `temporal` clause that S4 does not write
    (FR-337 "Clauses S4 does not emit") is refused the same way. A clause with a
    fault keeps the refusal of its own fault (FR-172, FR-173), a typed hyper
    cause or, for its temporal operators, fairness and profile selection, a

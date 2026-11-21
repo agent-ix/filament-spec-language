@@ -234,7 +234,10 @@ mod tests {
             member: Some("selection.json".into()),
             pointer: None,
         };
-        assert_eq!(input.to_string(), "input `./out/handoff` member `selection.json`");
+        assert_eq!(
+            input.to_string(),
+            "input `./out/handoff` member `selection.json`"
+        );
         assert_eq!(input.regions(&map), Err(UnresolvedLocus::Input));
     }
 

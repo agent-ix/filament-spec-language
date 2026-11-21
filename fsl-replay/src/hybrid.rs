@@ -36,9 +36,9 @@ pub use locus::{
     hybrid_counterexample_locus, hybrid_locus_site, hybrid_locus_wire, hybrid_term_at_locus,
 };
 pub use process_request::{
-    AdmittedHybridProcessItem, AdmittedHybridProcessRequest, HybridProcessDependencyPackage,
-    HybridProcessDependency, HybridProcessItem, HybridProcessPackageContext, HybridProcessRequest,
-    HybridProcessRequestRefusal, HybridProcessStage,
+    AdmittedHybridProcessItem, AdmittedHybridProcessRequest, HybridProcessDependency,
+    HybridProcessDependencyPackage, HybridProcessItem, HybridProcessPackageContext,
+    HybridProcessRequest, HybridProcessRequestRefusal, HybridProcessStage,
 };
 pub use provider::{
     HybridAnswer, HybridEntryRefusal, HybridProvider, HybridSolveRequest, HybridVerdict,
@@ -1297,8 +1297,10 @@ mod tests {
 
     fn process_stage() -> HybridProcessStage {
         HybridProcessStage {
-            manifest: vec![json!({"backend": "hybrid-fixture", "tool": {"name": "fixture", "version": "1"},
-                "advertises": [{"kind": "temporal-satisfaction", "mode": "bounded"}]})],
+            manifest: vec![
+                json!({"backend": "hybrid-fixture", "tool": {"name": "fixture", "version": "1"},
+                "advertises": [{"kind": "temporal-satisfaction", "mode": "bounded"}]}),
+            ],
             dependencies: Vec::new(),
         }
     }
@@ -1691,7 +1693,8 @@ mod tests {
                 Some(position as u64)
             );
             let mut ambiguous: serde_json::Value = serde_json::from_slice(request.bytes()).unwrap();
-            ambiguous["request"]["items"][0]["claim"]["node"] = raw_nodes[position]["node_id"].clone();
+            ambiguous["request"]["items"][0]["claim"]["node"] =
+                raw_nodes[position]["node_id"].clone();
             assert!(
                 matches!(
                     HybridProcessRequest::read(&serde_json::to_vec(&ambiguous).unwrap(), &context),
@@ -1717,13 +1720,23 @@ mod tests {
             .expect("the budget is admitted");
         let item = process_item(package_bytes, budget);
         let context = process_package_context();
-        let request = HybridProcessRequest::compose(package_bytes, &context, 20_000, &[item], &process_stage())
-            .expect("the process request composes");
+        let request = HybridProcessRequest::compose(
+            package_bytes,
+            &context,
+            20_000,
+            &[item],
+            &process_stage(),
+        )
+        .expect("the process request composes");
         let wire: serde_json::Value =
             serde_json::from_slice(request.bytes()).expect("the request is JSON");
         use base64::Engine as _;
         let carried_package = base64::engine::general_purpose::URL_SAFE_NO_PAD
-            .decode(wire["request"]["package"].as_str().expect("package base64url"))
+            .decode(
+                wire["request"]["package"]
+                    .as_str()
+                    .expect("package base64url"),
+            )
             .expect("the package decodes");
         assert_eq!(carried_package, package_bytes);
         assert_eq!(
@@ -1853,8 +1866,14 @@ mod tests {
         let unset = SolverBudget::from_request(None, None).expect("unset budget is valid");
         let item = process_item(package_bytes, unset);
         let context = process_package_context();
-        let request = HybridProcessRequest::compose(package_bytes, &context, 20_000, &[item], &process_stage())
-            .expect("the process request composes");
+        let request = HybridProcessRequest::compose(
+            package_bytes,
+            &context,
+            20_000,
+            &[item],
+            &process_stage(),
+        )
+        .expect("the process request composes");
         let admitted = HybridProcessRequest::read(request.bytes(), &context)
             .expect("the process request admits its v2 package");
         let request_wire: serde_json::Value =

@@ -444,7 +444,8 @@ fn big(value: u64) -> Integer {
 /// `task_product`.
 #[test]
 fn a_member_that_differs_from_its_recomputation_is_malformed() {
-    let tampers: Vec<(&str, &str, Box<dyn Fn(&mut Certificate)>)> = vec![
+    type Tamper = (&'static str, &'static str, Box<dyn Fn(&mut Certificate)>);
+    let tampers: Vec<Tamper> = vec![
         (
             "max_jobs + 1",
             "SFp",

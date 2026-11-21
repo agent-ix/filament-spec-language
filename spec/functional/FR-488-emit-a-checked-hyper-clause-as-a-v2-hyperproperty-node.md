@@ -427,19 +427,19 @@ FR-337 refuses a clause it does not emit. The checks run per clause in unit
 order, and a clause stops at its first refusal, in this order:
 
 1. a clause under the timed profile (FR-234), at the clause;
-2. a clause with an alias that binds no object parameter, at the clause:
-   FSpec FR-402 gives such an alias its package's `model_root` as subject,
-   and the refusal stays only until the emitter writes the `model_root`
-   subject this requirement now states in place of the earlier subject, the
-   object type of the alias's first object parameter, which such an alias
-   lacks (Remaining work: QSL-1094);
-3. a clause whose quantifier has a non-empty fairness set under a profile
+2. a clause whose quantifier has a non-empty fairness set under a profile
    that FSpec FR-370's profile fit gives an empty fairness argument (the
    three bounded profiles), at the constraint, when S3 admitted it;
-4. a clause with a constraint whose declaring node is a `systems_interface`
+3. a clause with a constraint whose declaring node is a `systems_interface`
    (§ "The node and its aggregate"), at the constraint;
-5. a clause with a model read that has no encodable component, at the read
+4. a clause with a model read that has no encodable component, at the read
    (the first in atom arena order, then source order).
+
+A clause with an alias that binds no object parameter is not refused: FSpec
+FR-402 gives such an alias its package's `model_root` as subject, and the
+emitter writes that subject (FR-631-AC-4 requires such a clause to emit and
+settle, which wins over the earlier refusal of this requirement; ruling on
+finding FND-005 of the review of PR #2957).
 
 A read's **roots** are the slots in its lowered object operand's subtree,
 with a `let`-bound name replaced by its initializer's subtree. The read is
@@ -533,7 +533,7 @@ in FR-487. "Admitted" means FSL's I2 admission of the emitted package
 | FR-488-AC-15 | The body wrapper is not among the I2 reader's temporal clause roots, looking it up as a clause root returns `clause-root-unresolved`, and FR-338's resolution of the wrapper's triple does the same. | Test (TC-1266) |
 | FR-488-AC-16 | `Linked` with `B` = `(let r = v.next in present(r) and deref(value(r)).l = 1) @ a` emits. | Test (TC-1266) |
 | FR-488-AC-17 | `Linked` with `B` = `(let r = (v.next @ a) in present(r) and deref(value(r)).l = 1) @ b` is refused `unsupported_construct`/`not-yet-implemented` at the read of `l`, and so is an atom whose read has no slot root (the object operand a call result) and one rooted in slots of two components. No package is produced. | Test (TC-1266) |
-| FR-488-AC-18 | A clause under the timed profile is refused `unsupported_construct`/`not-yet-implemented` at the clause. A timed clause with an alias that binds no object parameter is refused at the clause, as the timed profile is checked first; the alias case alone is refused at the clause too. A clause with two refusals reports the first in the order of "Clauses S4 does not emit". | Test (TC-1266) |
+| FR-488-AC-18 | A clause under the timed profile is refused `unsupported_construct`/`not-yet-implemented` at the clause. A clause with an alias that binds no object parameter is not refused and emits (FR-631-AC-4 ruling). A clause with two refusals reports the first in the order of "Clauses S4 does not emit". | Test (TC-1266) |
 | FR-488-AC-19 | An event-position false-extension clause with body `always[0,3] holds(...)` emits a wrapper whose law is that profile's row and an `always` node with the interval `{lower: "0", upper: "3"}`; an infinite-trace `v.l @ a = 0 until v.l @ b = 1` clause emits `filament.op.temporal.until` with a `null` interval and `eventually[2,*]` emits `{lower: "2", upper: null}`. All are admitted. | Test (TC-1266) |
 | FR-488-AC-20 | A bounded-profile clause with `fair weak V::Vault::step` on `a`, which S3 admits, is refused `unsupported_construct`/`not-yet-implemented` at the constraint. | Test (TC-1266) |
 | FR-488-AC-21 | The nodes this requirement mints count toward the package node ceiling: with a ceiling one node below `NonInterference`'s emission, compiling is refused with the ceiling's existing refusal, and at the ceiling it compiles. | Test (TC-1266) |

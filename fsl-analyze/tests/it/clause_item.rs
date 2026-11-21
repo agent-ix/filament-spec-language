@@ -725,7 +725,9 @@ fn a_failed_replay_emission_settles_failed_with_the_package_emission_fault() {
     let terminal = records[0].terminal().expect("a terminal record");
     assert_eq!(terminal.value(), &TerminalValue::Failed, "{terminal:?}");
     assert_eq!(
-        terminal.diagnostic().map(|code| (code.code(), code.cause())),
+        terminal
+            .diagnostic()
+            .map(|code| (code.code(), code.cause())),
         Some(("runtime_invariant", "established-invariant-broken")),
         "{terminal:?}"
     );

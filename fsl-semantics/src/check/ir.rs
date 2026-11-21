@@ -91,7 +91,10 @@ pub struct Node {
 }
 
 impl Node {
-    pub(in crate::check) fn with_binder_annotation(mut self, annotation: Option<ValueType>) -> Self {
+    pub(in crate::check) fn with_binder_annotation(
+        mut self,
+        annotation: Option<ValueType>,
+    ) -> Self {
         self.binder_annotation = annotation;
         self
     }

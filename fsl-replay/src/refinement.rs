@@ -25,7 +25,10 @@ pub use failure::{
     Undetermined,
 };
 pub use history::{initial_history, step_history, HistoryValues};
-pub use liveness::{abstract_classes, AbstractClass};
+pub use liveness::{
+    abstract_classes, candidate_lasso_has_fair_run, AbstractClass, CandidateFairState,
+    CandidateFairStep, CandidateLivenessError,
+};
 pub use map::{
     map_state, EvalFailure, HiddenSlot, MappedState, MappingFailure, MappingRowRef,
     MappingUndetermined, ObjectKey, StepArgument,

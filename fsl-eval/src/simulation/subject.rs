@@ -103,6 +103,10 @@ pub enum ConstraintError {
     Unnumbered,
 }
 
+/// A canonical protocol edge lifted to its concrete transition and target
+/// state; `None` when the subject's edges are already concrete.
+pub type LiftedEdge<T, S> = Option<(T, S)>;
+
 /// A subject's transition system as EN-1 and replay read it.
 pub trait SubjectSystem:
     TransitionSystem<Finding = ModelFinding, State: Clone, TransitionId: SubjectTransition>
@@ -145,7 +149,7 @@ pub trait SubjectSystem:
         _source: &Self::State,
         _transition: &Self::TransitionId,
         _target: &Self::State,
-    ) -> Result<Option<(Self::TransitionId, Self::State)>, ExpansionStop> {
+    ) -> Result<LiftedEdge<Self::TransitionId, Self::State>, ExpansionStop> {
         Ok(None)
     }
 

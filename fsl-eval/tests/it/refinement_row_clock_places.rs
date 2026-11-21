@@ -10,11 +10,11 @@ use filament_exact::{Integer, Meter, ObjectId, ObjectReference, Outcome, ScalarL
 use fsl_eval::value::evaluate_refinement_row;
 use fsl_package::CheckedPackage;
 use fsl_semantics::model::accounting::ModelNormalizationLimits;
-use fsl_semantics::model::observation::{DocumentRef, declared_type_universe_for};
+use fsl_semantics::model::observation::{declared_type_universe_for, DocumentRef};
 use fsl_semantics::model::state::{ModelState, StateModel, StateObject};
 use ix_trace_rs::trace;
 
-use crate::ring_queue::{CLOCKS, check_clock_refinement, clock_refinement, key};
+use crate::ring_queue::{check_clock_refinement, clock_refinement, key, CLOCKS};
 
 const UNLIMITED: ScalarLimits = ScalarLimits {
     integer_bits: 1 << 20,

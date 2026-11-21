@@ -8,8 +8,8 @@ use fsl_semantics::check::PackageDeclarations;
 use fsl_semantics::model::accounting::ModelNormalizationLimits;
 use fsl_semantics::model::domain_package::DomainPackage;
 use fsl_semantics::model::intake::{
-    PackageInput, admit, admit_unit, compile_model_unit, package_input, package_input_from_sources,
-    read_domain_package, read_records,
+    admit, admit_unit, compile_model_unit, package_input, package_input_from_sources,
+    read_domain_package, read_records, PackageInput,
 };
 use ix_trace_rs::trace;
 
@@ -77,7 +77,7 @@ fn selected_unit_declarations(
     let built = fsl_forms::build_unit(&parsed).expect("S2 builds the unit");
     let models = admit_unit(
         &built.selections().models,
-        &packages,
+        packages,
         ModelNormalizationLimits::default(),
     )
     .map_err(|refusal| format!("{refusal:?}"))?;
@@ -324,7 +324,9 @@ population nodes: Node;
     assert_eq!(relationship["sourceEnd"]["role"], "next");
     assert!(relationship["targetEnd"].get("role").is_none());
     assert_eq!(relationship["sourceEnd"]["multiplicity"]["lower"], 0);
-    assert!(relationship["sourceEnd"]["multiplicity"].get("upper").is_none());
+    assert!(relationship["sourceEnd"]["multiplicity"]
+        .get("upper")
+        .is_none());
     assert_eq!(document["populations"][0]["extent"], "closed");
     let packages = package_input([source.as_bytes()]).expect("model unit becomes package input");
     let (_, admitted) = admit(
@@ -365,7 +367,14 @@ population nodes: Node;
 #[test]
 fn a_model_unit_names_every_native_type() {
     let natives = [
-        "Boolean", "Integer", "Timestamp", "UUID", "String", "Bytes", "Duration", "JsonObject",
+        "Boolean",
+        "Integer",
+        "Timestamp",
+        "UUID",
+        "String",
+        "Bytes",
+        "Duration",
+        "JsonObject",
         "Decimal[0, 2; 10, 2; exact]",
     ];
     let fields = natives
@@ -1018,11 +1027,9 @@ allocate Alloc from pump to pump;
     let option_identity = node["fields"][1]["typeRef"]
         .as_str()
         .expect("Option field references its option type");
-    assert!(
-        types.iter().any(|ty| {
-            ty["identity"].as_str() == Some(option_identity) && ty["kind"] == "option"
-        })
-    );
+    assert!(types
+        .iter()
+        .any(|ty| { ty["identity"].as_str() == Some(option_identity) && ty["kind"] == "option" }));
     let connection = type_named("Pipe");
     assert_eq!(connection["sourceEnd"]["type"], "ix://example/all/out_port");
     assert_eq!(connection["targetEnd"]["type"], "ix://example/all/in_port");

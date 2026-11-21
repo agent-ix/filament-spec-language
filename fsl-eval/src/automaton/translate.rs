@@ -165,7 +165,7 @@ impl PropertyAutomaton {
         })
     }
 
-    /// The actual pending deadline of a single-interval eventuality after
+    /// The actual pending horizon of a single-interval eventually or always after
     /// reading a position. Only the qualified monitor's checked constructor
     /// calls this projection.
     pub(super) fn bounded_deadline(&self, state: StateId) -> Result<u64, AutomatonError> {
@@ -178,11 +178,12 @@ impl PropertyAutomaton {
             || !config.memory.is_empty()
             || config.counters.len() != 1
         {
-            return Err(invariant("qualified-eventually-single-deadline"));
+            return Err(invariant("qualified-bounded-single-deadline"));
         }
         match config.counters.values().next() {
             Some(Counter::Deadline(counter)) if counter.is_pending() => Ok(counter.remaining()),
-            _ => Err(invariant("qualified-eventually-pending-deadline")),
+            Some(Counter::Extent(counter)) if counter.is_pending() => Ok(counter.remaining()),
+            _ => Err(invariant("qualified-bounded-pending-deadline")),
         }
     }
     /// Which representation the property got.

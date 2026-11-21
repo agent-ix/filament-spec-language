@@ -28,13 +28,13 @@ use fsl_foundation::MemoryModelName;
 use fsl_semantics::check::AccessOrdering;
 use fsl_semantics::check::{AccessClass, CheckedProtocol, ControlStep, ProtocolNodeId};
 
+use super::ProtocolRefusal;
 use super::identity::ThreadPath;
 use super::program::Program;
-use super::ProtocolRefusal;
 use crate::simulation::expansion::ExpansionStop;
 use crate::simulation::footprint::Location;
-use crate::simulation::model::encode::{reference_enc, Enc};
 use crate::simulation::model::FootprintError;
+use crate::simulation::model::encode::{Enc, reference_enc};
 use crate::simulation::model::{Cell, ModelSimState, ModelSystem, OperationRef};
 
 /// What one instantiated attempt is (ADR-025 MA-2, MA-4).
@@ -593,6 +593,58 @@ pub(crate) fn classify(
     over: &Value,
     mode: ClassificationMode,
 ) -> Result<WeakAccesses, ProtocolRefusal> {
+    classify_with(
+        model,
+        ClassificationSource::Checked(protocol),
+        program,
+        governing,
+        initial,
+        over,
+        mode,
+    )
+}
+
+/// FR-940 package form of EN-1 classification. The package program carries
+/// its access orderings and no source slot bodies.
+pub(crate) fn classify_package(
+    model: &ModelSystem<'_>,
+    program: &Program<'_>,
+    governing: &BTreeMap<ProtocolNodeId, MemoryModelName>,
+    initial: Option<&ModelSimState>,
+    over: &Value,
+    mode: ClassificationMode,
+    orderings: &BTreeMap<ProtocolNodeId, Option<AccessOrdering>>,
+) -> Result<WeakAccesses, ProtocolRefusal> {
+    classify_with(
+        model,
+        ClassificationSource::Package(orderings),
+        program,
+        governing,
+        initial,
+        over,
+        mode,
+    )
+}
+
+/// The selected route's source of binders and attempt orderings.
+enum ClassificationSource<'a> {
+    Checked(&'a CheckedProtocol),
+    Package(&'a BTreeMap<ProtocolNodeId, Option<AccessOrdering>>),
+}
+
+fn classify_with(
+    model: &ModelSystem<'_>,
+    source: ClassificationSource<'_>,
+    program: &Program<'_>,
+    governing: &BTreeMap<ProtocolNodeId, MemoryModelName>,
+    initial: Option<&ModelSimState>,
+    over: &Value,
+    mode: ClassificationMode,
+) -> Result<WeakAccesses, ProtocolRefusal> {
+    let (protocol, package_orderings) = match source {
+        ClassificationSource::Checked(protocol) => (Some(protocol), None),
+        ClassificationSource::Package(orderings) => (None, Some(orderings)),
+    };
     let Some(initial) = initial else {
         return Ok(WeakAccesses::default());
     };
@@ -626,9 +678,8 @@ pub(crate) fn classify(
     let mut node_reads: BTreeMap<ProtocolNodeId, BTreeSet<Location>> = BTreeMap::new();
     let mut reader_chains: BTreeMap<ProtocolNodeId, Chain> = BTreeMap::new();
     let parameters: Vec<(String, ValueType)> = protocol
-        .slots
-        .binders
-        .iter()
+        .into_iter()
+        .flat_map(|protocol| protocol.slots.binders.iter())
         .map(|binder| (binder.name.clone(), binder.value_type.clone()))
         .collect();
     let constraints = program
@@ -795,12 +846,14 @@ pub(crate) fn classify(
         }
     }
 
-    let ordering_of: BTreeMap<ProtocolNodeId, Option<AccessOrdering>> = protocol
-        .memory
-        .accesses
-        .iter()
-        .map(|access| (access.node, access.ordering))
-        .collect();
+    let ordering_of: BTreeMap<ProtocolNodeId, Option<AccessOrdering>> =
+        package_orderings.cloned().unwrap_or_else(|| {
+            protocol
+                .into_iter()
+                .flat_map(|protocol| protocol.memory.accesses.iter())
+                .map(|access| (access.node, access.ordering))
+                .collect()
+        });
     let mut attempts = BTreeMap::new();
     for (node, instances) in footprints {
         let Some((parallel, _)) = chains.get(&node) else {
@@ -883,6 +936,53 @@ pub(crate) fn classify_enabled_state(
     applications: Vec<EnabledApplication>,
     readers: Vec<EnabledReader>,
 ) -> Result<StateWeakAccesses, ProtocolRefusal> {
+    let ordering_of = protocol
+        .memory
+        .accesses
+        .iter()
+        .map(|access| (access.node, access.ordering))
+        .collect();
+    classify_enabled_with_orderings(
+        model,
+        program,
+        weak_ancestors,
+        observed,
+        applications,
+        readers,
+        &ordering_of,
+    )
+}
+
+/// FR-940 package form of the state-local EN-1 classification.
+pub(crate) fn classify_enabled_package_state(
+    model: &ModelSystem<'_>,
+    program: &Program<'_>,
+    weak_ancestors: &BTreeMap<ProtocolNodeId, Vec<WeakAncestor>>,
+    observed: &ModelSimState,
+    applications: Vec<EnabledApplication>,
+    readers: Vec<EnabledReader>,
+    orderings: &BTreeMap<ProtocolNodeId, Option<AccessOrdering>>,
+) -> Result<StateWeakAccesses, ProtocolRefusal> {
+    classify_enabled_with_orderings(
+        model,
+        program,
+        weak_ancestors,
+        observed,
+        applications,
+        readers,
+        orderings,
+    )
+}
+
+fn classify_enabled_with_orderings(
+    model: &ModelSystem<'_>,
+    program: &Program<'_>,
+    weak_ancestors: &BTreeMap<ProtocolNodeId, Vec<WeakAncestor>>,
+    observed: &ModelSimState,
+    applications: Vec<EnabledApplication>,
+    readers: Vec<EnabledReader>,
+    ordering_of: &BTreeMap<ProtocolNodeId, Option<AccessOrdering>>,
+) -> Result<StateWeakAccesses, ProtocolRefusal> {
     let chain_of = |node: ProtocolNodeId| {
         weak_ancestors
             .get(&node)
@@ -940,12 +1040,6 @@ pub(crate) fn classify_enabled_state(
         Ok(false)
     };
 
-    let ordering_of: BTreeMap<ProtocolNodeId, Option<AccessOrdering>> = protocol
-        .memory
-        .accesses
-        .iter()
-        .map(|access| (access.node, access.ordering))
-        .collect();
     let mut footprints: BTreeMap<ThreadAttempt, Vec<Footprinted>> = BTreeMap::new();
     for application in applications {
         if !in_weak(application.key.node)? {

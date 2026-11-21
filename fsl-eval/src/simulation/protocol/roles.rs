@@ -27,8 +27,8 @@ use super::program::{Cursor, Lifetime};
 use super::settle::{SettleError, Settled};
 use super::steps::Gathered;
 use super::{
-    undetermined, Bound, Disposition, Instance, ProtocolRefusal, ProtocolState, ProtocolSystem,
-    RoleStatus, Status, Thread,
+    Bound, Disposition, Instance, ProtocolRefusal, ProtocolState, ProtocolSystem, RoleStatus,
+    Status, Thread, undetermined,
 };
 use crate::simulation::expansion::ExpansionStop;
 use crate::simulation::model::encode::value_enc;
@@ -81,7 +81,7 @@ impl<M: MemoryModel> ProtocolSystem<'_, M> {
             let mut frame = vec![Some(instance.over.clone())];
             frame.extend(self.activation_value(&instance));
             frame.extend(Self::protocol_values(&instance));
-            let owner = format!("{}::{}", self.protocol.name, capture.name);
+            let owner = format!("{}::{}", self.protocol_name, capture.name);
             match self.decide_body(&owner, capture.initializer, frame, model)? {
                 Decided::Value(value) => instance.captures.push(Bound {
                     enc: value_enc(&value, self.model.typing()),
@@ -363,7 +363,7 @@ impl<M: MemoryModel> ProtocolSystem<'_, M> {
                     Verdict::Undecided(outcome) => {
                         gathered
                             .findings
-                            .push(undetermined(&self.protocol.name, outcome));
+                            .push(undetermined(&self.protocol_name, outcome));
                         continue;
                     }
                 }

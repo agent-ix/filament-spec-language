@@ -21,14 +21,14 @@ use fsl_eval::simulation::model::{
     ModelSystem, MoveRefusal, PopulationUniverse, TaskReleaseBinding, TimedBehaviour, TimedState,
     TimedStop, TimedSystem,
 };
-use fsl_eval::simulation::{BOUND_POSITIONS, NotSimulated};
+use fsl_eval::simulation::{NotSimulated, BOUND_POSITIONS};
 use fsl_package::CheckedPackage;
 use fsl_semantics::check::PackageDeclarations;
 use fsl_semantics::model::accounting::ModelNormalizationLimits;
 use fsl_semantics::model::intake::{admit_unit, meaning, package_input};
 use fsl_semantics::model::observation::{DocumentRef, ObservationLimits};
 use ix_trace_rs::trace;
-use serde_json::{Value as Json, json};
+use serde_json::{json, Value as Json};
 
 const PACKAGE: &str = "test/rpc";
 
@@ -432,12 +432,10 @@ fn rpc_delays_and_steps_read_exact_clock_values() {
     let [initial] = &timed.initial()[..] else {
         panic!("one initial state");
     };
-    assert!(
-        timed
-            .delay(initial, &exact(7, 1))
-            .expect("decided")
-            .is_some()
-    );
+    assert!(timed
+        .delay(initial, &exact(7, 1))
+        .expect("decided")
+        .is_some());
 
     let mut behaviour = TimedBehaviour::new(initial.clone());
     let send = transition(&timed, &behaviour, "send");
@@ -445,18 +443,14 @@ fn rpc_delays_and_steps_read_exact_clock_values() {
         .advance(&timed, &exact(0, 1), &send)
         .expect("send at 0");
     let waiting = behaviour.last().state().clone();
-    assert!(
-        timed
-            .delay(&waiting, &exact(3, 1))
-            .expect("decided")
-            .is_some()
-    );
-    assert!(
-        timed
-            .delay(&waiting, &exact(3001, 1000))
-            .expect("decided")
-            .is_none()
-    );
+    assert!(timed
+        .delay(&waiting, &exact(3, 1))
+        .expect("decided")
+        .is_some());
+    assert!(timed
+        .delay(&waiting, &exact(3001, 1000))
+        .expect("decided")
+        .is_none());
     let reply = transition(&timed, &behaviour, "reply");
     let enabled_after = |delay: Rational| {
         let delayed = timed
@@ -922,18 +916,14 @@ fn an_urgent_state_admits_no_positive_delay() {
         .expect("send at 0");
     let waiting = behaviour.last().state().clone();
     assert!(timed.is_urgent(waiting.discrete()).expect("decided"));
-    assert!(
-        timed
-            .delay(&waiting, &exact(1, 1000))
-            .expect("decided")
-            .is_none()
-    );
-    assert!(
-        timed
-            .delay(&waiting, &exact(0, 1))
-            .expect("decided")
-            .is_some()
-    );
+    assert!(timed
+        .delay(&waiting, &exact(1, 1000))
+        .expect("decided")
+        .is_none());
+    assert!(timed
+        .delay(&waiting, &exact(0, 1))
+        .expect("decided")
+        .is_some());
 
     // Without urgency `reply` comes after a delay of 1 and reaches the
     // quiescent `Replied` state.
@@ -945,23 +935,19 @@ fn an_urgent_state_admits_no_positive_delay() {
     behaviour
         .advance(&timed, &exact(0, 1), &send)
         .expect("send");
-    assert!(
-        !timed
-            .is_quiescent(behaviour.last().state().discrete())
-            .expect("decided")
-    );
+    assert!(!timed
+        .is_quiescent(behaviour.last().state().discrete())
+        .expect("decided"));
     let reply = transition(&timed, &behaviour, "reply");
     behaviour
         .advance(&timed, &exact(1, 1), &reply)
         .expect("reply");
     let replied = behaviour.last().state();
     assert!(timed.is_quiescent(replied.discrete()).expect("decided"));
-    assert!(
-        timed
-            .delay(replied, &exact(100, 1))
-            .expect("decided")
-            .is_some()
-    );
+    assert!(timed
+        .delay(replied, &exact(100, 1))
+        .expect("decided")
+        .is_some());
 }
 
 /// Part of FR-231-AC-2 (TC-686): a behaviour of `Rpc` that ends at the
@@ -975,7 +961,7 @@ fn an_urgent_state_admits_no_positive_delay() {
 fn a_quiescent_end_reads_as_an_idle_tail() {
     use fsl_eval::model_subject::ModelInstance;
     use fsl_eval::simulation::model::BehaviourLetters;
-    use fsl_eval::temporal::{TemporalOutcome, TemporalPosition, evaluate_timed_at};
+    use fsl_eval::temporal::{evaluate_timed_at, TemporalOutcome, TemporalPosition};
 
     let world = world_with(
         "profile tt = \"filament.temporal.timed/v1\";\n",
@@ -1049,7 +1035,7 @@ fn a_quiescent_end_reads_as_an_idle_tail() {
 fn under_event_position_the_execution_closes_at_its_last_position() {
     use fsl_eval::model_subject::ModelInstance;
     use fsl_eval::simulation::model::BehaviourLetters;
-    use fsl_eval::temporal::{TemporalOutcome, TemporalPosition, TemporalTrace, evaluate_at};
+    use fsl_eval::temporal::{evaluate_at, TemporalOutcome, TemporalPosition, TemporalTrace};
 
     let world = world_with(
         "profile ep = \"filament.temporal.event-position.false-extension/v1\";\n",
@@ -1144,12 +1130,10 @@ fn a_tick_source_stamps_positions_by_tick_count() {
     let system = system(&world);
     let timed = TimedSystem::new(&system, "M").expect("a timed subject");
     let mut behaviour = TimedBehaviour::new(timed.initial().remove(0));
-    assert!(
-        timed
-            .delay(behaviour.last().state(), &exact(1, 1))
-            .expect("decided")
-            .is_none()
-    );
+    assert!(timed
+        .delay(behaviour.last().state(), &exact(1, 1))
+        .expect("decided")
+        .is_none());
     for name in ["work", "tick", "work", "tick"] {
         let step = transition(&timed, &behaviour, name);
         behaviour
@@ -1212,13 +1196,11 @@ fn every_object_holds_its_own_clock_of_every_clock_field() {
         huge
     );
     let initial = timed.initial().remove(0);
-    assert!(
-        initial
-            .clocks()
-            .values()
-            .iter()
-            .all(|value| value == &exact(0, 1))
-    );
+    assert!(initial
+        .clocks()
+        .values()
+        .iter()
+        .all(|value| value == &exact(0, 1)));
 }
 
 /// Part of FR-231-AC-4 (TC-686): `always holds(not c.late)` reads the same
@@ -1233,7 +1215,7 @@ fn a_claim_reads_alike_with_and_without_time_stamps() {
     use fsl_eval::model_subject::ModelInstance;
     use fsl_eval::simulation::model::BehaviourLetters;
     use fsl_eval::temporal::{
-        TemporalOutcome, TemporalPosition, TemporalTrace, evaluate_at, evaluate_timed_at,
+        evaluate_at, evaluate_timed_at, TemporalOutcome, TemporalPosition, TemporalTrace,
     };
 
     let instance = ModelInstance {
@@ -1293,11 +1275,9 @@ fn a_claim_reads_alike_with_and_without_time_stamps() {
         " clock \"model-steps\"",
     );
     assert_eq!(with_time, without_time);
-    assert!(
-        with_time
-            .iter()
-            .all(|reading| reading == &TemporalOutcome::Holds)
-    );
+    assert!(with_time
+        .iter()
+        .all(|reading| reading == &TemporalOutcome::Holds));
 }
 
 /// FSpec FR-181 "Timed subjects" (TC-686): a clock of an object a step makes
@@ -1429,12 +1409,10 @@ fn a_stall_that_only_pings_is_a_non_local_time_lock() {
         .delay(&initial, &exact(1, 1))
         .expect("decided")
         .expect("admissible");
-    assert!(
-        timed
-            .delay(&stuck, &exact(1, 1000))
-            .expect("decided")
-            .is_none()
-    );
+    assert!(timed
+        .delay(&stuck, &exact(1, 1000))
+        .expect("decided")
+        .is_none());
     assert_eq!(timed.steps(&stuck).expect("decided").len(), 1);
     assert_eq!(
         timed.time_lock(&stuck, 64).expect("decided"),
@@ -1725,12 +1703,11 @@ fn a_record_holding_state_steps() {
     };
     for (step, post) in &steps {
         assert!(step.operation().contains("Call/send\""));
-        assert!(
-            post.clocks()
-                .values()
-                .iter()
-                .all(|value| value == &exact(2, 1))
-        );
+        assert!(post
+            .clocks()
+            .values()
+            .iter()
+            .all(|value| value == &exact(2, 1)));
         let (filament_exact::Value::Composite(before), filament_exact::Value::Composite(after)) =
             (t_of(&later), t_of(post))
         else {
@@ -2076,12 +2053,11 @@ fn every_slot_of_a_record_sequence_holds_its_own_clocks() {
         .expect("a collection-holding state steps");
     assert!(!steps.is_empty());
     for (_, post) in &steps {
-        assert!(
-            post.clocks()
-                .values()
-                .iter()
-                .all(|value| value == &exact(2, 1))
-        );
+        assert!(post
+            .clocks()
+            .values()
+            .iter()
+            .all(|value| value == &exact(2, 1)));
         timed.state_key(post).expect("a state_key");
     }
 }
@@ -2800,18 +2776,14 @@ fn a_max_constraint_on_a_clock_alias_bounds_the_live_places() {
             ("ts.[slot].x".to_owned(), vec![0]),
         ]
     );
-    assert!(
-        timed
-            .delay(initial, &exact(3, 1))
-            .expect("decided")
-            .is_some()
-    );
-    assert!(
-        timed
-            .delay(initial, &exact(4, 1))
-            .expect("decided")
-            .is_none()
-    );
+    assert!(timed
+        .delay(initial, &exact(3, 1))
+        .expect("decided")
+        .is_some());
+    assert!(timed
+        .delay(initial, &exact(4, 1))
+        .expect("decided")
+        .is_none());
     let past = TimedState::new(
         initial.discrete().clone(),
         initial.clocks().delayed(&exact(4, 1)),
@@ -3117,12 +3089,10 @@ fn cells_document(
             Some("tick") => tick,
             _ => continue,
         };
-        operation["frame"]["modifies"] = json!(
-            granted
-                .iter()
-                .map(|field| ident(&format!("Call/{field}")))
-                .collect::<Vec<_>>()
-        );
+        operation["frame"]["modifies"] = json!(granted
+            .iter()
+            .map(|field| ident(&format!("Call/{field}")))
+            .collect::<Vec<_>>());
     }
     let constructs = document["constructs"].as_array_mut().expect("constructs");
     constructs.push(json!({
@@ -3284,11 +3254,9 @@ fn a_record_of_finite_components_is_a_finite_domain() {
             .all(|value| value.contains("Boolean(false)")),
         "{values:#?}"
     );
-    assert!(
-        values[3..]
-            .iter()
-            .all(|value| value.contains("Boolean(true)"))
-    );
+    assert!(values[3..]
+        .iter()
+        .all(|value| value.contains("Boolean(true)")));
     assert_eq!(counts("w").len(), 18);
     assert_eq!(counts("r1").len(), 12);
     let colors = counts("col");
@@ -3895,9 +3863,9 @@ fn a_candidate_slot_keeps_its_matched_clock_or_is_fresh() {
 #[trace("TC-1270")]
 #[test]
 fn exploration_reaches_every_value_of_a_bounded_clock_collection() {
+    use fsl_eval::simulation::model::explore_model;
     use fsl_eval::simulation::Limits;
     use fsl_eval::simulation::Outcome;
-    use fsl_eval::simulation::model::explore_model;
 
     let world = world_holding(
         cells_document(
@@ -4382,10 +4350,9 @@ fn a_granted_record_keeps_its_clocks_unless_reset() {
     let kept = clocks_after("");
     // 4 values of `t`, 1 of `sw`, 8 of `mx`: one successor each.
     assert_eq!(kept.len(), 32);
-    assert!(
-        kept.iter()
-            .all(|(_, clocks)| clocks.iter().all(|(_, value)| *value == exact(5, 1)))
-    );
+    assert!(kept
+        .iter()
+        .all(|(_, clocks)| clocks.iter().all(|(_, value)| *value == exact(5, 1))));
 }
 
 /// FR-120-AC-25 (TC-1270), the model-variant union: a granted `choice:
@@ -4739,11 +4706,9 @@ fn a_model_union_clock_is_live_only_in_its_active_case() {
             armed.discrete().clone(),
             armed.clocks().delayed(&exact(1, 1)),
         );
-        assert!(
-            offered(&due)
-                .iter()
-                .any(|(step, _)| step.operation().contains("Call/reply\""))
-        );
+        assert!(offered(&due)
+            .iter()
+            .any(|(step, _)| step.operation().contains("Call/reply\"")));
         let drops: Vec<_> = offered(&due)
             .into_iter()
             .filter(|(step, _)| step.operation().contains("Call/tick\""))
@@ -4756,11 +4721,9 @@ fn a_model_union_clock_is_live_only_in_its_active_case() {
             timed.live_clocks(dropped.discrete()),
             if alias { 6 } else { 5 }
         );
-        assert!(
-            offered(dropped)
-                .iter()
-                .all(|(step, _)| !step.operation().contains("Call/reply\""))
-        );
+        assert!(offered(dropped)
+            .iter()
+            .all(|(step, _)| !step.operation().contains("Call/reply\"")));
     }
 }
 
@@ -4849,12 +4812,10 @@ fn a_model_tuple_clock_keeps_the_authored_data_position_at_run_time() {
         )
         .expect("zero data");
     let zero = clock_fixture_state(&world, &held, &timed, vec![("slot", zero)]);
-    assert!(
-        timed
-            .steps(&zero)
-            .expect("the data guard is checked")
-            .is_empty()
-    );
+    assert!(timed
+        .steps(&zero)
+        .expect("the data guard is checked")
+        .is_empty());
 }
 
 /// A nonterminal tuple position reaches every collection clock after a removed Clock slot.
@@ -5082,12 +5043,10 @@ fn clock_operation_document(
 ) -> Vec<u8> {
     let mut document: Json = serde_json::from_slice(&rpc_document(true)).expect("JSON");
     let fields = |names: &[&str]| {
-        json!(
-            names
-                .iter()
-                .map(|field| ident(&format!("Call/{field}")))
-                .collect::<Vec<_>>()
-        )
+        json!(names
+            .iter()
+            .map(|field| ident(&format!("Call/{field}")))
+            .collect::<Vec<_>>())
     };
     for operation in document["types"][1]["operations"]
         .as_array_mut()
@@ -5932,12 +5891,10 @@ fn an_option_clock_has_a_presence_bit() {
     assert_model_key_fields_are_unique(&key(present));
     assert_eq!(timed.live_clocks(absent.discrete()), 1);
     assert_eq!(timed.live_clocks(present.discrete()), 2);
-    assert!(
-        timed
-            .invariants(absent.discrete())
-            .expect("decided")
-            .is_empty()
-    );
+    assert!(timed
+        .invariants(absent.discrete())
+        .expect("decided")
+        .is_empty());
     assert_eq!(
         timed.invariants(present.discrete()).expect("decided").len(),
         1
@@ -6636,12 +6593,10 @@ fn a_predicate_naming_the_population_reads_the_state_once() {
         let system = system_over(&world, &two);
         let timed = TimedSystem::new(&system, "M").expect("a timed subject");
         let state = timed.initial().remove(0);
-        assert!(
-            timed
-                .delay(&state, &exact(1, 1))
-                .expect("decided")
-                .is_some()
-        );
+        assert!(timed
+            .delay(&state, &exact(1, 1))
+            .expect("decided")
+            .is_some());
     }
 
     // `CallsExist` makes the state urgent; with `c2.late` false it does not.

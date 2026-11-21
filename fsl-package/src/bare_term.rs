@@ -14,7 +14,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use filament_contract_model::{CheckedNodeId, CheckedSemanticNodeV2, CheckedTerm};
-use filament_exact::NodeKey;
+use filament_exact::{EffectiveId, NodeKey};
 use filament_semantic_value::catalog::InternalFault;
 
 use crate::bare::BarePackage;
@@ -327,6 +327,69 @@ pub struct BareFrameOperation {
 }
 
 impl<'p> BarePackage<'p> {
+    /// The declaring type and operation selected by a protocol attempt's
+    /// admitted `operation_anchor` node (FR-531/FR-940).
+    pub fn protocol_operation(
+        &self,
+        anchor_id: &CheckedNodeId,
+    ) -> Result<BareFrameOperation, BareSelectionFailure> {
+        let package = self.package();
+        let (_supply, identities) = self.witness()?;
+        let nodes = &package.resolved_graph().nodes;
+        let malformed = || fault("protocol-operation-anchor-is-admitted");
+        let graph = wire_graph(package).map_err(|_| malformed())?;
+        let anchor_key = graph.key(anchor_id).map_err(|_| malformed())?;
+        let anchor = nodes
+            .iter()
+            .find(|node| {
+                node.semantic_form.as_ref() == "operation_anchor"
+                    && graph
+                        .key(&node.node_id)
+                        .map(|key| key == anchor_key)
+                        .unwrap_or(false)
+            })
+            .ok_or_else(malformed)?;
+        let context = anchor_member(&anchor.body, "context")
+            .and_then(crate::protocol_view::reference)
+            .ok_or_else(malformed)?;
+        let operation = anchor_member(&anchor.body, "operation")
+            .and_then(text)
+            .ok_or_else(malformed)?;
+        let declaring = identities
+            .declaration_rows()
+            .find(|row| row.structural_node == *context)
+            .and_then(|row| match &row.exact_identity {
+                filament_contract_model::SelectedExactIdentity::Object(identity) => {
+                    Some(identity.clone())
+                }
+                _ => None,
+            })
+            .ok_or_else(malformed)?;
+        Ok(BareFrameOperation {
+            declaring,
+            operation: operation.to_owned(),
+        })
+    }
+
+    /// The exact object type selected by one protocol role's model node
+    /// (FR-531 static-role selection).
+    pub fn protocol_role_model(
+        &self,
+        model: &CheckedNodeId,
+    ) -> Result<EffectiveId, BareSelectionFailure> {
+        let (_supply, identities) = self.witness()?;
+        identities
+            .declaration_rows()
+            .find(|row| row.structural_node == *model)
+            .and_then(|row| match &row.exact_identity {
+                filament_contract_model::SelectedExactIdentity::Object(identity) => {
+                    Some(identity.clone())
+                }
+                _ => None,
+            })
+            .ok_or_else(|| fault("protocol-role-model-is-selected"))
+    }
+
     /// The operation whose frame node key is `frame` (FR-940 "Package forms
     /// of the source-checked evaluators": the frame body read from the
     /// admitted checked nodes). Charges nothing.
