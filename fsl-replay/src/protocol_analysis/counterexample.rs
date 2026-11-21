@@ -17,7 +17,7 @@ use crate::CounterexampleWireError;
 mod key;
 use key::KeyWire;
 
-/// A decisive, natively replayed protocol-analysis counterexample.
+/// The native decisive evidence of a protocol-analysis refutation.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ProtocolAnalysisCounterexample {
     /// The realizability arena's refuting evidence.
@@ -27,7 +27,7 @@ pub enum ProtocolAnalysisCounterexample {
 }
 
 impl ProtocolAnalysisCounterexample {
-    /// The native analysis key that the refutation was replayed under.
+    /// The native analysis key of the refutation.
     #[must_use]
     pub fn key(&self) -> &ProtocolAnalysisKey {
         match self {

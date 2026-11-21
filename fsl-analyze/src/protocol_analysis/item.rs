@@ -36,7 +36,7 @@ pub enum ProtocolAnalysisArtifact {
 }
 
 impl ProtocolAnalysisArtifact {
-    /// The decisive counterexample, retaining the native replayed evidence.
+    /// The decisive counterexample, retaining the native decisive evidence.
     #[must_use]
     pub fn counterexample(&self) -> Option<ProtocolAnalysisCounterexample> {
         match self {
