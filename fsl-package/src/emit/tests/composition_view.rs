@@ -578,11 +578,11 @@ fn fair_clause_readback_preserves_constraints_and_key_fairness() {
     assert_eq!(
         rebuilt
             .claim()
-            .requirements_over(fsl_semantics::family::ClaimExtent::Unbounded),
+            .requirements_over(fsl_semantics::family::ClaimExtent::Bounded),
         source
             .clause()
             .claim()
-            .requirements_over(fsl_semantics::family::ClaimExtent::Unbounded)
+            .requirements_over(fsl_semantics::family::ClaimExtent::Bounded)
     );
     let paid = budget.consumed();
     for (work, storage, code) in [
