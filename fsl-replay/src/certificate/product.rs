@@ -458,7 +458,7 @@ fn check(
         .map(|q| q.variable.as_str())
         .collect();
     let mut product = Product::build(ProductBuild {
-        clause: clause,
+        clause,
         instance: &instance,
         systems: variable_systems.clone(),
         letters: &letters,

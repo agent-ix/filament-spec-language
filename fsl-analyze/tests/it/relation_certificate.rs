@@ -386,6 +386,23 @@ fn hp1_checker_owns_its_tuple_allowance_and_names_first_unpaid_tuple() {
         max_relation_tuples: 63,
         ..limits
     };
+    let engine_stop = check_model_relation(
+        ModelRelationCheckRequest {
+            relation: &fixture.relation,
+            package: &fixture.package,
+            subjects: fixture.subjects(),
+            limits: tight,
+            max_depth: None,
+            meter: UNLIMITED,
+        },
+        &Cancel::new(),
+    )
+    .expect("engine 63-tuple allowance");
+    let ModelRelationOutcome::Stopped { count, stats, .. } = engine_stop else {
+        panic!("engine must stop before tuple 64");
+    };
+    assert_eq!(count, Some(64));
+    assert_eq!(stats.relation_tuples, 63);
     let ProductClosureCheck::Stopped {
         cause,
         tuple: Some(tuple),
@@ -401,6 +418,25 @@ fn hp1_checker_owns_its_tuple_allowance_and_names_first_unpaid_tuple() {
         }
     );
     assert_eq!(tuple.count, 64);
+    let false_at_last = Fixture::new(Vault::Secure,
+        "relation Det using v over (x: V::Vault::step, y: V::Vault::step) { not (pre(x.self.h) = 1 and pre(x.self.l) = 1 and x.i = 1 and pre(y.self.h) = 1 and pre(y.self.l) = 1 and y.i = 1) }");
+    assert!(matches!(
+        false_at_last
+            .check(&proof, tight)
+            .expect("last tuple unpaid"),
+        ProductClosureCheck::Stopped { tuple: Some(_), .. }
+    ));
+    let ProductClosureCheck::Rejected(last) = false_at_last
+        .check(&proof, limits)
+        .expect("last tuple paid")
+    else {
+        panic!("the 64th tuple must actually be evaluated under allowance 64");
+    };
+    assert_eq!(last.rule, CertificateRule::ViolatingMember);
+    assert_eq!(
+        last.at,
+        CertificateLocus::HyperTransitionTuple(tuple.first_unpaid.clone())
+    );
     let executions = &closure(&proof)[0].executions;
     assert_eq!(
         tuple.first_unpaid.transitions,
