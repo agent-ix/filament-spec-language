@@ -10,40 +10,42 @@
 
 mod candidate;
 mod long_run;
+mod undefined;
 
 use filament_exact::{Cancel, ObjectReference, Rational};
-use fsl_eval::simulation::TransitionSystem;
 use fsl_eval::simulation::model::ModelSystem;
+use fsl_eval::simulation::TransitionSystem;
 use fsl_foundation::{BackendId, RequestIndex};
 use fsl_replay::statistical::SubjectLimits;
-use fsl_replay::{CertificateLocus, CertificateRule};
 use fsl_replay::{
-    ExactBinding, ExactProbBuildIssue, ExactProbBuildRecord, ExactProbabilityCertificate,
+    check_probability_certificate_document, claim_binding, probability_proof_document,
+    write_probability_certificate, write_probability_proof_document, ExactBinding,
+    ExactProbBuildIssue, ExactProbBuildRecord, ExactProbabilityCertificate,
     ExactProbabilityCertificateCheck, ExactProbabilityGraphError, ExactProbabilityValue, Extremum,
     ModelCheckLimit, ProbabilityBoundSide, ProbabilityCertificateDocument,
     ProbabilityDocumentError, ProbabilityDocumentLimits, ProbabilityObjective,
     ProbabilityProductKey, TerminalRecord, TimedProbabilityForm, TimedProbabilityObjective,
-    TimedProbabilityRoute, check_probability_certificate_document, claim_binding,
-    probability_proof_document, write_probability_certificate, write_probability_proof_document,
+    TimedProbabilityRoute,
 };
-use fsl_replay::{InconclusiveCause, ProbabilityCertificateLocus, ProbabilityCertificateRule};
 use fsl_replay::{
-    ProbabilisticCounterexample, ProbabilityWitnessError, ProbabilityWitnessPath,
-    ProbabilityWitnessReplay, ProbabilityWitnessStep, ReproducedProbabilityWitness,
-    replay_probabilistic_witness,
+    replay_probabilistic_witness, ProbabilisticCounterexample, ProbabilityWitnessError,
+    ProbabilityWitnessPath, ProbabilityWitnessReplay, ProbabilityWitnessStep,
+    ReproducedProbabilityWitness,
 };
+use fsl_replay::{CertificateLocus, CertificateRule};
+use fsl_replay::{InconclusiveCause, ProbabilityCertificateLocus, ProbabilityCertificateRule};
 use fsl_route::Mode;
 use fsl_semantics::check::{
     Bound, Capability, DeclarationFamily, Event, ProbForm, ProbScheduler, ReachTarget,
 };
 
-use super::items::{BROKEN, NOT_YET, admission};
+use super::items::{admission, BROKEN, NOT_YET};
 use super::{AnalyzeItem, EngineReport, Refusal};
 use crate::exact_probabilistic::{
-    ExtRational, FhError, FhResult, ProbBuild, ProbProduct, ProductRefusal, ProductRequest,
-    UnboundedError, UnboundedObjective, build_retaining_monitor, decide_always,
-    decide_bounded_event, decide_expected_reward, decide_reachability, decide_until,
-    manifest as en5, settle_product_refusal,
+    build_retaining_monitor, decide_always, decide_bounded_event, decide_expected_reward,
+    decide_reachability, decide_until, manifest as en5, settle_product_refusal, ExtRational,
+    FhError, FhResult, ProbBuild, ProbProduct, ProductRefusal, ProductRequest, UnboundedError,
+    UnboundedObjective,
 };
 
 /// The certificate EN-5 produced and the core's checker accepted for a
@@ -833,7 +835,7 @@ fn run_timed_mean(
 }
 
 fn run(
-    request: ProductRequest<'_>,
+    mut request: ProductRequest<'_>,
     cancel: &Cancel,
     tamper: Option<&dyn Fn(&mut ExactProbabilityCertificate)>,
     tamper_witness: Option<&dyn Fn(&mut ProbabilisticCounterexample)>,
@@ -943,7 +945,10 @@ fn run(
         else {
             return not_yet();
         };
-        if !fsl_eval::automaton::QualifiedBoundedMonitor::supports(formula.formula(), profile) {
+        if !fsl_eval::automaton::QualifiedBoundedMonitor::supports_observations(
+            formula.formula(),
+            profile,
+        ) {
             return not_yet();
         }
     }
@@ -964,21 +969,34 @@ fn run(
         .then(|| candidate::CandidateBudget::new(document_limits, cancel));
     let built = if let Some(budget) = candidate_budget.as_mut() {
         use crate::exact_probabilistic::{
-            BudgetedProductError, build_retaining_monitor_with_budget,
+            build_retaining_monitor_with_budget, BudgetedProductError,
         };
         let identity = budget.identity;
         let mut admission = budget.admission();
+        let proof_bounds = std::mem::take(&mut request.subject.proof_bounds);
         match build_retaining_monitor_with_budget(request, identity, &mut admission, cancel) {
             Ok(built) => built,
             Err(BudgetedProductError::Product(error)) => return build_refusal(error, subject),
             Err(BudgetedProductError::Key(error)) => {
                 return document_failure(admission.refusal(error), subject);
             }
-            Err(BudgetedProductError::Undefined(cause)) => {
-                return document_failure(
-                    ProbabilityDocumentError::UndefinedPredicate(cause),
-                    subject,
-                );
+            Err(BudgetedProductError::Undefined(_)) => {
+                // The proof-only budgeted builder does not retain a failing path.
+                // Re-explore only that case under the same finite state, edge,
+                // expansion and evaluation limits; keys are bounded by the
+                // model identity owner, then admitted again by native replay.
+                let undefined_request = ProductRequest {
+                    subject: fsl_eval::model_subject::ModelSubject {
+                        simulation: simulation.clone(),
+                        proof_bounds,
+                    },
+                    claim,
+                    limits,
+                };
+                match build_retaining_monitor(undefined_request, cancel) {
+                    Ok(built) => built,
+                    Err(error) => return build_refusal(error, subject),
+                }
             }
         }
     } else {
@@ -989,8 +1007,29 @@ fn run(
     };
     let (product, monitor) = match built {
         (ProbBuild::Built(product), monitor) => (product, monitor),
-        (ProbBuild::Undefined(_), _) => return not_yet(),
+        (ProbBuild::Undefined(path), monitor) => {
+            return undefined::run(
+                simulation,
+                claim,
+                path,
+                monitor,
+                &limits,
+                cancel,
+                subject,
+                tamper_witness,
+            )
+        }
     };
+    if let Some(formula) = bounded_formula {
+        let Some(profile) =
+            fsl_semantics::check::TemporalProfile::from_identity(claim.profile.identity())
+        else {
+            return not_yet();
+        };
+        if !fsl_eval::automaton::QualifiedBoundedMonitor::supports(formula.formula(), profile) {
+            return not_yet();
+        }
+    }
     let [(_, _, start)] = product.initial.as_slice() else {
         return not_yet();
     };
@@ -1680,7 +1719,7 @@ fn replay_refutation(
     tamper: Option<&dyn Fn(&mut ProbabilisticCounterexample)>,
 ) -> EngineReport {
     use crate::exact_probabilistic::{
-        FormulaState, MonitorState, MonitorVerdict, ProductAction, WitnessScope, produce_witness,
+        produce_witness, FormulaState, MonitorState, MonitorVerdict, ProductAction, WitnessScope,
     };
     let mut producer_meter =
         filament_exact::Meter::new(system.meter_limits()).with_cancel(cancel.clone());

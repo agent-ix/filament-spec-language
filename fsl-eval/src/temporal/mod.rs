@@ -77,12 +77,13 @@ pub use ledger::{
 pub use letters::{AtomReading, CaptureReading, LetterStop, TemporalLetters, UndefinedCause};
 pub use observed::{
     descend_positions, evaluate_observed, evaluate_observed_at, evaluate_observed_decisive,
-    evaluate_observed_timed,
-    evaluate_observed_finite_window, evaluate_positions, evaluate_positions_finite_window,
-    evaluate_sampled, evaluate_sampled_finite_window, letters_valuation, observed_valuation,
-    push_object, push_sample, read_anchor_letter, read_object_stop, read_sample_stop, CarriedWindow, DescentSlice,
-    FirstUndefined, HoldsStop, ObservedLocus, ObservedPositions, ObservedRun, ObservedValuation,
-    ObservedWindowRun, SampleStop, ValuationStop, WindowValuations,
+    evaluate_observed_finite_window, evaluate_observed_timed, evaluate_package_positions,
+    evaluate_positions, evaluate_positions_finite_window, evaluate_sampled,
+    evaluate_sampled_finite_window, letters_valuation, observed_valuation,
+    package_observed_valuation, push_object, push_sample, read_anchor_letter, read_object_stop,
+    read_sample_stop, CarriedWindow, DescentSlice, FirstUndefined, HoldsStop, ObservedLocus,
+    ObservedPositions, ObservedRun, ObservedValuation, ObservedWindowRun, SampleStop,
+    ValuationStop, WindowValuations,
 };
 pub use observed_window::{ObservedWindowExpressions, ObservedWindowSource};
 pub use outcome::{

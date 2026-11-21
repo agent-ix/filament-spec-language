@@ -733,7 +733,6 @@ fn a_derived_item_over_a_name_that_is_no_model_alias_is_an_unknown_claim() {
 /// receive it is refuted with the deadlock.
 #[trace("TC-2532", "FR-896-AC-1", "FR-896-AC-2")]
 #[test]
-#[ignore = "QSL-2209: a global-conformance item settles unsupported with a pending obligation instead of being decided"]
 fn global_conformance_is_decided_over_every_behaviour() {
     for (receive, expected) in [(true, "proved"), (false, "refuted")] {
         let ws = Workspace::new(&format!("cli-conformance-{receive}"));

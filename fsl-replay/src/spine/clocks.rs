@@ -156,12 +156,12 @@ impl RequestClocks {
     }
 
     /// The selection of every clock-bearing temporal clause, hyper clause,
-    /// protocol `await` and `compensate` template of `checked`, in source
-    /// order, or the FR-640 refusal at stage `emit`. `parsed` are the
-    /// program's parsed units,
-    /// which locate a refusal at the declaration's `clock` argument. A member
-    /// is unused when no declaration of the program or of any library unit
-    /// it compiles with (FR-099) takes its configuration from `clocks`.
+    /// finite trace-set hyper clause, protocol `await` and `compensate`
+    /// template of `checked`, in source order, or the FR-640 refusal at stage
+    /// `emit`. `parsed` are the program's parsed units, which locate a refusal
+    /// at the declaration's clock argument or finite hyper domain binder. A
+    /// member is unused when no declaration of the program or of any library
+    /// unit it compiles with (FR-099) takes its configuration from `clocks`.
     pub fn package_selections(
         &self,
         checked: &CheckedUnit,
@@ -370,13 +370,12 @@ impl RequestClocks {
 }
 
 /// What the parsed units of one checked package tell a clock selection that
-/// its checked graph does not: where each `temporal` clause's and protocol
-/// `await`'s `clock` argument is, which locates a refusal. Built before the
-/// check consumes the parsed units.
+/// its checked graph does not: where each `temporal` clause's or protocol
+/// `await`'s clock argument, or a finite hyper clause's domain binder, is,
+/// which locates a refusal. Built before the check consumes the parsed units.
 #[derive(Clone, Debug, Default)]
 pub(crate) struct ClockLocator {
-    /// Each `temporal` clause and protocol `await`'s source, declaration span
-    /// and `clock` span.
+    /// Each clock-bearing declaration's source, declaration span and role span.
     clocks: Vec<(RawSourceRef, Span, Span)>,
 }
 
@@ -403,6 +402,11 @@ impl ClockLocator {
                             ));
                         }
                     }
+                    fsl_forms::DeclarationForm::HyperFinite(hyper) => locator.clocks.push((
+                        source.clone(),
+                        form.span(),
+                        hyper.domain.variable.span,
+                    )),
                     _ => {}
                 }
             }
@@ -410,8 +414,8 @@ impl ClockLocator {
         locator
     }
 
-    /// The span of the `clock` argument of the `temporal` clause declared at
-    /// `span` in `source`, or `span` itself when no parsed clause matches.
+    /// The span of a declaration's clock role at `span` in `source`, or
+    /// `span` itself when no parsed declaration matches.
     fn clock_span(&self, source: &RawSourceRef, span: Span) -> Span {
         self.clocks
             .iter()
@@ -432,8 +436,8 @@ fn emit_refusal(
 }
 
 /// Every clock-bearing declaration of `package`'s own graph, in source
-/// order: its temporal clauses, hyper clauses, protocol `await`s and
-/// `compensate` templates.
+/// order: its temporal clauses, hyper clauses, finite trace-set hyper
+/// clauses, protocol `await`s and `compensate` templates.
 fn declarations(package: &pkg::CheckedPackage) -> Vec<Declaration<'_>> {
     let graph = package.graph();
     let mut declarations = Vec::new();
@@ -506,6 +510,23 @@ fn declarations(package: &pkg::CheckedPackage) -> Vec<Declaration<'_>> {
                     .map(|quantifier| quantifier.variable.clone())
                     .collect(),
             ),
+            source,
+            span: hyper.span(),
+        });
+    }
+    for hyper in graph.finite_hyper_clauses() {
+        let source = hyper
+            .occurrence()
+            .and_then(|occurrence| graph.occurrence(occurrence.node().clone(), occurrence.origin()))
+            .and_then(|location| graph.region(location))
+            .map(|region| region.source().clone())
+            .unwrap_or_else(|| graph.source().clone());
+        declarations.push(Declaration {
+            name: hyper.name(),
+            profile: hyper.profile(),
+            clock: hyper.domain_clock(),
+            model: None,
+            trace_aliases: None,
             source,
             span: hyper.span(),
         });

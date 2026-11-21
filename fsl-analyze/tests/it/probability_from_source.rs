@@ -483,7 +483,7 @@ fn an_exact_only_claim_with_statistical_evidence_is_unsupported() {
 #[trace("TC-2167", "FR-186-AC-10")]
 #[trace("FSpec-TC-1650", "FSpec-FR-407-AC-17")]
 #[test]
-#[ignore = "QSL-2151: the `on each` activation of a probabilistic claim not checked yet"]
+#[ignore = "QSL-2158: source-route on-each probabilistic claims settle internal-failure (runtime_invariant, established-invariant-broken) before the expected per-instance verdict"]
 fn probabilistic_on_each_settles_per_instance() {
     let claim = "probabilistic E using inf on M under Even \
          on each (k: M::Msg) when (not k.delivered) \
@@ -549,7 +549,7 @@ fn run_from(name: &str, claims: &str, start: Vec<u8>, items: Value) -> Value {
 #[trace("TC-2485", "FR-875-AC-1")]
 #[trace("FSpec-TC-1650", "FSpec-FR-407-AC-17")]
 #[test]
-#[ignore = "QSL-2151: an on-each probabilistic claim over an empty population settling inconclusive no-instance not implemented yet"]
+#[ignore = "QSL-2158: source-route on-each probabilistic claims settle internal-failure (runtime_invariant, established-invariant-broken) before the expected per-instance verdict"]
 fn probabilistic_on_each_empty_population() {
     let document = run_from(
         "on-each-empty",
@@ -567,7 +567,7 @@ fn probabilistic_on_each_empty_population() {
 #[trace("TC-2486", "FR-875-AC-2")]
 #[trace("FSpec-TC-1650", "FSpec-FR-407-AC-17")]
 #[test]
-#[ignore = "QSL-2151: a never-activating on-each instance holding vacuously from source not implemented yet"]
+#[ignore = "QSL-2158: source-route on-each probabilistic claims settle internal-failure (runtime_invariant, established-invariant-broken) before the expected per-instance verdict"]
 fn probabilistic_on_each_never_activating_instance_is_vacuous() {
     let start = || link_start(&[("m", false), ("n", true)]);
     let proved = run_from(
@@ -595,7 +595,7 @@ fn probabilistic_on_each_never_activating_instance_is_vacuous() {
 /// instance in key order, and a rerun gives the same item.
 #[trace("TC-2487", "FR-875-AC-3")]
 #[test]
-#[ignore = "QSL-2151: naming the first failing on-each instance from source not implemented yet"]
+#[ignore = "QSL-2158: source-route on-each probabilistic claims settle internal-failure (runtime_invariant, established-invariant-broken) before the expected per-instance verdict"]
 fn probabilistic_on_each_names_first_failing_instance() {
     let once = || {
         run_from(

@@ -20,6 +20,7 @@ mod requirements;
 mod settle;
 mod synthesis;
 mod tl;
+mod transfer;
 mod wire;
 
 pub use analyze::{
@@ -647,6 +648,8 @@ pub enum PreparedRun {
     Package(Box<package_run::PreparedPackageRun>),
     /// FSpec FR-190: the result of the direct model-based testing request.
     ModelBasedTest(PreparedModelBasedTestRun),
+    /// FR-1030: a refinement transfer, settled by the native run executor.
+    RefinementTransfer(Box<transfer::PreparedTransfer>),
 }
 
 /// The direct model-based test record and sources admitted to produce it.
@@ -707,6 +710,9 @@ impl PreparedRun {
             Self::TlLowering(prepared) => prepared.sources.clone(),
             Self::Package(prepared) => prepared.sources(),
             Self::ModelBasedTest(prepared) => prepared.sources.clone(),
+            Self::RefinementTransfer(prepared) => {
+                crate::Sources::from_sources([prepared.source.source().clone()])
+            }
         }
     }
 }
@@ -851,6 +857,23 @@ pub enum RunCause {
     RequiresDirectory {
         /// The wire member that needs the handoff rows.
         member: String,
+    },
+    /// FR-1031: a native-run transfer declaration failed after compilation
+    /// while names, relationships, and clause families were being selected.
+    #[error("refinement transfer {stage} refused at {member}: {message}")]
+    TransferSelection {
+        /// The spine stage the refusal belongs to: `select` or `admit`.
+        stage: &'static str,
+        /// The selected request member.
+        member: String,
+        /// The stable selection cause.
+        cause: &'static str,
+        /// The catalogued diagnostic code.
+        code: Code,
+        /// Why this member was refused.
+        message: String,
+        /// The refusal's `details` members.
+        details: serde_json::Map<String, serde_json::Value>,
     },
     /// Typed output serialization failed.
     #[error("cannot serialize native result: {0}")]
@@ -1179,6 +1202,7 @@ impl RunCause {
             Self::Output(_) | Self::ClauseOutput(_) | Self::ExportOutput { .. } => {
                 Code::OutputFailure
             }
+            Self::TransferSelection { code, .. } => *code,
             Self::Format => Code::UnknownWire,
             Self::Limit(_) => Code::ResourceExhausted,
             Self::Identifier { .. } => Code::InvalidIdentifier,
@@ -1464,6 +1488,7 @@ impl RunError {
             | RunCause::ClauseRequest { .. }
             | RunCause::RequiresDirectory { .. }
             | RunCause::IntegerDivisionLaw { .. }
+            | RunCause::TransferSelection { .. }
             | RunCause::TlCorrespondence { .. }
             | RunCause::TlClause { .. }
             | RunCause::TlSubject(_)
@@ -3895,6 +3920,8 @@ fn prepare_run_bytes_with_sources(
     admitted_sources: &mut crate::Sources,
 ) -> Result<PreparedRun> {
     let request: wire::Request = request_with_overrides(bytes, overrides)?;
+    // FR-1031: the first refusal in table order is the selection conflict.
+    refuse_transfer_selection_conflict(&request)?;
     // FR-100, FR-1039: a selected checked package runs from its own records,
     // refusing every member that would restate them before any file is read.
     if let Some(package) = &request.package {
@@ -3936,6 +3963,34 @@ fn prepare_run_bytes_with_sources(
             member: "model_based_test".to_owned(),
             reason: "model_based_test and tl_lowering are mutually exclusive".to_owned(),
         });
+    }
+    if let Some(transfer) = &request.refinement_transfer {
+        validate_transfer_member(&request, transfer)?;
+        let mut intake = intake_with_bytes(
+            directory,
+            FileCounts {
+                programs: request.libraries.len().saturating_add(1),
+                models: request.models.len(),
+                observations: transfer
+                    .observations
+                    .values()
+                    .collect::<std::collections::BTreeSet<_>>()
+                    .len(),
+                extensions: request.extensions.len(),
+            },
+            dependent_bytes,
+        )?;
+        let source = intake.source(&program.source, "program.source")?;
+        require_native_header(source.source())?;
+        return Ok(PreparedRun::RefinementTransfer(Box::new(
+            transfer::PreparedTransfer {
+                directory: directory.to_path_buf(),
+                dependent_bytes,
+                request,
+                source,
+                integer_division,
+            },
+        )));
     }
     if request.items.is_some() {
         return Err(RunCause::ClauseRequest {
@@ -4000,6 +4055,130 @@ fn prepare_run_bytes_with_sources(
     prepared
 }
 
+/// The request members FR-1031's first row names beside `export`, in the
+/// order a refusal lists them, each with its presence in a typed request.
+/// `export_evidence` is read from the raw request body only, so it is never
+/// present in a typed request.
+const TRANSFER_EXCLUSIVE: [(&str, fn(&wire::Request) -> bool); 9] = [
+    ("package", |request| request.package.is_some()),
+    ("call", |request| request.call.is_some()),
+    ("clause", |request| request.clause.is_some()),
+    ("items", |request| request.items.is_some()),
+    ("tl_lowering", |request| request.tl_lowering.is_some()),
+    ("model_based_test", |request| request.model_based_test.is_some()),
+    ("verification_plan", |request| request.verification_plan.is_some()),
+    ("synthesis", |request| request.synthesis.is_some()),
+    ("export_evidence", |_| false),
+];
+
+/// FR-1031's first row: `refinement_transfer` beside any other selection
+/// member refuses at `request`, naming every selection member present.
+fn refuse_transfer_selection_conflict(request: &wire::Request) -> Result<()> {
+    if request.refinement_transfer.is_none() {
+        return Ok(());
+    }
+    let present: Vec<_> = TRANSFER_EXCLUSIVE
+        .into_iter()
+        .filter_map(|(name, is_present)| is_present(request).then_some(name))
+        .collect();
+    if present.is_empty() {
+        return Ok(());
+    }
+    Err(transfer_conflict(&present))
+}
+
+/// The refusal of `refinement_transfer` beside the selection members
+/// `present`.
+fn transfer_conflict(present: &[&str]) -> RunCause {
+    RunCause::ClauseRequest {
+        member: "refinement_transfer".to_owned(),
+        reason: format!(
+            "refinement_transfer is exclusive with {}",
+            present.join(", ")
+        ),
+    }
+}
+
+fn validate_transfer_member(
+    request: &wire::Request,
+    member: &wire::RefinementTransfer,
+) -> Result<()> {
+    if member.refinement.is_empty() {
+        return Err(RunCause::ClauseRequest {
+            member: "/refinement_transfer/refinement".to_owned(),
+            reason: "expected a non-empty refinement name".to_owned(),
+        });
+    }
+    if member.clauses.is_empty() {
+        return Err(RunCause::ClauseRequest {
+            member: "/refinement_transfer/clauses".to_owned(),
+            reason: "expected a non-empty clause list".to_owned(),
+        });
+    }
+    let mut clauses = std::collections::BTreeSet::new();
+    for (index, clause) in member.clauses.iter().enumerate() {
+        if clause.is_empty() {
+            return Err(RunCause::ClauseRequest {
+                member: format!("/refinement_transfer/clauses/{index}"),
+                reason: "expected a non-empty clause name".to_owned(),
+            });
+        }
+        if !clauses.insert(clause) {
+            return Err(RunCause::ClauseRequest {
+                member: format!("/refinement_transfer/clauses/{index}"),
+                reason: "a clause name occurs more than once".to_owned(),
+            });
+        }
+    }
+    for (side, subject) in [
+        ("abstract", &member.abstract_subject),
+        ("concrete", &member.concrete),
+    ] {
+        if subject.model.is_empty() {
+            return Err(RunCause::ClauseRequest {
+                member: format!("/refinement_transfer/{side}/model"),
+                reason: "expected a non-empty model alias".to_owned(),
+            });
+        }
+        if subject.initial.is_empty() {
+            return Err(RunCause::ClauseRequest {
+                member: format!("/refinement_transfer/{side}/initial"),
+                reason: "expected a non-empty initial snapshot list".to_owned(),
+            });
+        }
+        for (index, initial) in subject.initial.iter().enumerate() {
+            if initial.is_empty() {
+                return Err(RunCause::ClauseRequest {
+                    member: format!("/refinement_transfer/{side}/initial/{index}"),
+                    reason: "expected a non-empty snapshot key".to_owned(),
+                });
+            }
+            if !member.observations.contains_key(initial) {
+                return Err(RunCause::ClauseRequest {
+                    member: format!("/refinement_transfer/{side}/initial/{index}"),
+                    reason: "initial snapshot key is absent from observations".to_owned(),
+                });
+            }
+        }
+    }
+    if let Some(premises) = &member.premises {
+        for name in premises.claims.keys() {
+            if !member.clauses.contains(name) {
+                return Err(RunCause::ClauseRequest {
+                    member: format!("/refinement_transfer/premises/claims/{name}"),
+                    reason: "premise clause is absent from clauses".to_owned(),
+                });
+            }
+        }
+    }
+    if request.models.iter().any(|model| !is_model_input_format(model)) {
+        return Err(RunCause::CompleteRunSelection(
+            CompleteRunSelection::NativeModel,
+        ));
+    }
+    Ok(())
+}
+
 /// FR-931: prepare a `tl_lowering` request. Its clause is read through
 /// FR-312's clause-run reader as a `temporal` selection over the trace to
 /// cross-evaluate (or an empty one), so the compile, the trace's admission
@@ -4023,7 +4202,7 @@ fn prepare_lowering(
     let run = clause::read(intake, request, &clause, source, observation_override)?;
     let behaviours = match &lowering.cross {
         Some(tl::CrossEvaluate::Initial { max_steps, .. }) => {
-            Some(initial_subject(&run, *max_steps)?)
+            Some(initial_subject(&run.snapshots, *max_steps)?)
         }
         Some(tl::CrossEvaluate::Trace { .. }) | None => None,
     };
@@ -4043,10 +4222,10 @@ fn prepare_lowering(
 /// refuses `incomplete_population` naming it, as FR-620 refuses a universe
 /// snapshot's.
 fn initial_subject(
-    run: &fsl_replay::spine::ClauseRunRequest,
+    provision: &fsl_semantics::model::observation::DocumentProvision,
     max_steps: u64,
 ) -> Result<(fsl_semantics::model::observation::DocumentRef, usize)> {
-    let mut snapshots = run.snapshots.keys();
+    let mut snapshots = provision.keys();
     let (Some(initial), None) = (snapshots.next(), snapshots.next()) else {
         return Err(RunCause::ClauseRequest {
             member: "tl_lowering.cross_evaluate.initial".to_owned(),
@@ -4062,7 +4241,7 @@ fn initial_subject(
             "proof_bounds": [],
         }))?;
     subject
-        .check_universes(&run.snapshots)
+        .check_universes(provision)
         .map_err(RunCause::AnalyzeUniverse)?;
     let max_steps = usize::try_from(max_steps).map_err(|_| RunCause::ClauseRequest {
         member: "tl_lowering.cross_evaluate.max_steps".to_owned(),
@@ -4337,6 +4516,9 @@ fn execute_prepared(prepared: PreparedRun, settle: &settle::Settle<'_>) -> Resul
                 requirements: None,
                 sources: prepared.sources,
             });
+        }
+        PreparedRun::RefinementTransfer(prepared) => {
+            return transfer::execute(*prepared, settle);
         }
         PreparedRun::Clause(request) => {
             let selection = request.selection.clone();

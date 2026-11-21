@@ -34,6 +34,7 @@ use filament_checked::node::NodeKind;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use filament_exact::{IllTypedCause, ValueType};
+use filament_semantic_value::declaration::CompositeShape;
 use filament_semantic_value::location::{
     ExpressionLocation as Location, ExpressionOwner as Origin,
 };
@@ -1495,22 +1496,35 @@ pub(crate) fn check(
             });
         }
         let loop_proof = repeat.loop_proof.as_ref().map(|proof| {
-            (
-                decision(
-                    &mut checker,
-                    &proof.invariant,
-                    SlotKind::Invariant,
-                    Goal::Boolean,
-                    false,
-                ),
-                decision(
-                    &mut checker,
-                    &proof.variant,
-                    SlotKind::Variant,
-                    Goal::Infer,
-                    false,
-                ),
-            )
+            let invariant = decision(
+                &mut checker,
+                &proof.invariant,
+                SlotKind::Invariant,
+                Goal::Boolean,
+                false,
+            );
+            let variant = decision(
+                &mut checker,
+                &proof.variant,
+                SlotKind::Variant,
+                Goal::Infer,
+                false,
+            );
+            let variant = variant.filter(|body| {
+                let actual = body.root().value_type();
+                let well_founded = is_well_founded(checker.declarations.scope, actual);
+                if !well_founded {
+                    let span = decision_span(&proof.variant).unwrap_or(repeat.name.span);
+                    checker.refuse(ProtocolAnchorCause::VariantType {
+                        repeat: repeat.name.name.clone(),
+                        expected: Box::new(ValueType::Integer),
+                        actual: Box::new(actual.clone()),
+                        span,
+                    });
+                }
+                well_founded
+            });
+            (invariant, variant)
         });
         if checker.refusals.len() != before
             || !visible_are_expressions
@@ -2131,6 +2145,26 @@ fn partition(
 
 /// The span of a decision slot's whole expression: the site its tree is
 /// rooted at (FR-096).
+/// FR-218-AC-43: whether a loop variant of `value_type` has a well-founded
+/// order: an integer, or a tuple of integers compared lexicographically.
+fn is_well_founded(scope: &Scope, value_type: &ValueType) -> bool {
+    match value_type {
+        ValueType::Integer | ValueType::Int(_) => true,
+        ValueType::Composite(key) => {
+            scope
+                .types()
+                .composite(key.clone())
+                .is_some_and(|declaration| match declaration.shape() {
+                    CompositeShape::Tuple(types) => types
+                        .iter()
+                        .all(|member| matches!(member, ValueType::Integer | ValueType::Int(_))),
+                    CompositeShape::Record(_) | CompositeShape::Union(_) => false,
+                })
+        }
+        _ => false,
+    }
+}
+
 pub(crate) fn decision_span(form: &ExpressionForm) -> Option<Span> {
     form.spans.span(form.spans.root())
 }

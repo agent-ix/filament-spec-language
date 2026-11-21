@@ -494,6 +494,10 @@ pub enum ItemKindSelection {
     RaceFreedom,
     /// A refinement item.
     Refinement,
+    /// A repeat's invariant obligation (FR-730).
+    LoopInvariant,
+    /// A repeat's termination obligation (FR-730).
+    LoopTermination,
 }
 
 impl ItemKindSelection {
@@ -504,6 +508,8 @@ impl ItemKindSelection {
             Self::TimeLockFreedom => ItemKind::TimeLockFreedom,
             Self::RaceFreedom => ItemKind::RaceFreedom,
             Self::Refinement => ItemKind::Refinement,
+            Self::LoopInvariant => ItemKind::LoopInvariant,
+            Self::LoopTermination => ItemKind::LoopTermination,
         }
     }
 }
@@ -793,6 +799,9 @@ pub struct ItemSelection {
     /// A `finite-replay` item's supplied trace.
     #[serde(default)]
     pub trace: Option<DocumentSelection>,
+    /// An FR-739 finite trace population for a finite hyper item.
+    #[serde(default)]
+    pub traces: Option<DocumentSelection>,
     /// A `global-conformance` item's supplied FR-737 recording.
     #[serde(default)]
     pub recording: Option<DocumentSelection>,
@@ -835,6 +844,8 @@ struct ItemSelectionWire {
     assessed_root: Option<Value>,
     #[serde(default)]
     trace: Option<DocumentSelection>,
+    #[serde(default)]
+    traces: Option<DocumentSelection>,
     #[serde(default)]
     recording: Option<DocumentSelection>,
     #[serde(default, deserialize_with = "present_json_value")]
@@ -891,6 +902,7 @@ impl TryFrom<ItemSelectionWire> for ItemSelection {
             premises: wire.premises,
             assessed_root: wire.assessed_root,
             trace: wire.trace,
+            traces: wire.traces,
             recording: wire.recording,
             population: wire.population,
             simulation: wire.simulation,
@@ -1373,6 +1385,12 @@ fn declarations(package: &CheckedPackage) -> BTreeMap<String, filament_exact::No
             .map(|clause| (clause.name().to_owned(), clause.identity())),
     );
     names.extend(
+        graph
+            .finite_hyper_clauses()
+            .iter()
+            .filter_map(|clause| Some((clause.name().to_owned(), clause.identity()?.clone()))),
+    );
+    names.extend(
         graph.state_graph_claims().iter().filter_map(|claim| {
             Some((claim.name().to_owned(), claim.occurrence()?.node().clone()))
         }),
@@ -1487,6 +1505,13 @@ fn claim_occurrence(
             clause.identity(),
             clause.claim().clone(),
         ));
+    }
+    if let Some(clause) = graph
+        .finite_hyper_clauses()
+        .iter()
+        .find(|clause| clause.identity() == Some(node))
+    {
+        return clause.occurrence().cloned();
     }
     let body = graph
         .semantic_graph()
@@ -1705,6 +1730,7 @@ fn resolve_call_item(
             max_cases: None,
             max_task_product_work: None,
             trace: None,
+            traces: None,
             recording: None,
             population: None,
             backend_options: call_item.options.clone(),
@@ -2087,7 +2113,7 @@ fn resolve_one(
                 }
             }
             (Some(_), _) if protocol_analysis_kind => {
-                return invalid_member(index, name, "temporal.subject.protocol")
+                return invalid_member(index, name, "temporal.subject.protocol");
             }
             (Some(_), _) => return invalid_value(index, name, "temporal.subject.protocol"),
             (None, _) => None,
@@ -2140,6 +2166,20 @@ fn resolve_one(
         }))
     } else if let Some(probabilistic) = probabilistic {
         Some(ItemForm::Probabilistic(probabilistic))
+    } else if let Some(clause) = (kind == Capability::TemporalSatisfaction)
+        .then(|| {
+            package
+                .graph()
+                .finite_hyper_clauses()
+                .iter()
+                .find(|clause| clause.identity() == Some(claim.node()))
+                .cloned()
+        })
+        .flatten()
+    {
+        Some(ItemForm::FiniteHyper(super::request::FiniteHyperItem {
+            clause,
+        }))
     } else if kind == Capability::TemporalSatisfaction
         || kind == Capability::GlobalConformance
         || protocol_analysis_kind
@@ -2166,6 +2206,7 @@ fn resolve_one(
                 .limits
                 .and_then(|limits| limits.max_task_product_work),
             trace: selection.trace.as_ref().map(DocumentSelection::reference),
+            traces: selection.traces.as_ref().map(DocumentSelection::reference),
             recording: selection
                 .recording
                 .as_ref()
@@ -2341,6 +2382,7 @@ fn resolve_derived(
         max_cases: None,
         max_task_product_work: None,
         trace: None,
+        traces: None,
         recording: None,
         population: None,
         backend_options,
@@ -2428,6 +2470,7 @@ fn resolve_schedule_claim(
                     .and_then(|temporal| temporal.limits)
                     .and_then(|limits| limits.max_task_product_work),
                 trace: None,
+                traces: None,
                 recording: None,
                 population: selection.population.clone(),
                 backend_options,
@@ -2484,10 +2527,9 @@ fn invalid_member_cause(
     }
 }
 
-/// FSL FR-1033 "Selecting the subject of an item": a `race-freedom` item
-/// whose `claim` is the scoped path of an outermost `parallel` is decided over
-/// the protocol its path names. `None` when the item is no such item, so the
-/// caller resolves it as every other item.
+/// FSL FR-1033 and FR-730: a protocol freedom or loop-proof item whose
+/// `claim` names the scoped control path is decided over that protocol.
+/// `None` when the selection names no eligible control.
 fn resolve_protocol_freedom(
     package: &CheckedPackage,
     subject: &SubjectSelection,
@@ -2497,19 +2539,44 @@ fn resolve_protocol_freedom(
     name: &str,
 ) -> Option<ResolvedItem> {
     let temporal = selection.temporal.as_ref()?;
-    if temporal.item_kind?.kind() != ItemKind::RaceFreedom {
-        return None;
-    }
+    let kind = temporal.item_kind?.kind();
     let owner = name.split("::").next()?;
     let checked = package.graph().protocol(owner)?;
-    let outermost = fsl_eval::simulation::protocol::ResolvedMemory::resolve(checked, &[]).ok()?;
-    if !outermost
-        .parallels()
-        .iter()
-        .any(|parallel| parallel.parallel == name)
-    {
-        return None;
-    }
+    let repeat = match kind {
+        ItemKind::RaceFreedom => {
+            let outermost =
+                fsl_eval::simulation::protocol::ResolvedMemory::resolve(checked, &[]).ok()?;
+            if !outermost
+                .parallels()
+                .iter()
+                .any(|parallel| parallel.parallel == name)
+            {
+                return None;
+            }
+            None
+        }
+        ItemKind::LoopInvariant | ItemKind::LoopTermination => {
+            let (_, path) = name.split_once("::")?;
+            let path = path.split("::").collect::<Vec<_>>();
+            let control = checked.controls.at_path(&path)?;
+            let repeat = checked
+                .slots
+                .repeats
+                .iter()
+                .find(|repeat| repeat.node == control.node && repeat.loop_proof.is_some())?;
+            if kind == ItemKind::LoopTermination && repeat.max.is_some() {
+                return Some(invalid_kind(index, Some(name), "inapplicable-kind"));
+            }
+            if temporal.max_depth.is_some() {
+                return Some(invalid_value(index, name, "temporal.max_depth"));
+            }
+            Some(repeat.node)
+        }
+        ItemKind::Formula
+        | ItemKind::DeadlockFreedom
+        | ItemKind::TimeLockFreedom
+        | ItemKind::Refinement => return None,
+    };
     let own_subject = temporal
         .subject
         .clone()
@@ -2550,7 +2617,19 @@ fn resolve_protocol_freedom(
     ) {
         return Some(refused);
     }
-    let claim = OccurrenceKey::declaration(node);
+    let declaration = OccurrenceKey::declaration(node);
+    let claim = match repeat {
+        Some(repeat) => fsl_route::deadlock::ProtocolTemporalItem {
+            occurrence: &declaration,
+            subject: &binding,
+            protocol: checked,
+            models: &binding.effective,
+            non_atomic_access: false,
+        }
+        .reading()
+        .protocol_loop_anchor(repeat)?,
+        None => declaration,
+    };
     let candidates = registry.restrict_to_timing(
         registry.candidates(Capability::TemporalSatisfaction, named.as_ref()),
         false,
@@ -2572,6 +2651,7 @@ fn resolve_protocol_freedom(
                 max_cases: None,
                 max_task_product_work: None,
                 trace: None,
+                traces: selection.traces.as_ref().map(DocumentSelection::reference),
                 recording: None,
                 population: selection.population.clone(),
                 backend_options,
@@ -3055,6 +3135,7 @@ fn derived_claim(
                 max_cases: None,
                 max_task_product_work: None,
                 trace: None,
+                traces: None,
                 recording: None,
                 population: None,
                 backend_options: BTreeMap::new(),
@@ -3208,6 +3289,12 @@ impl ClaimItem {
             item.insert(
                 "trace".to_owned(),
                 json!({"authority": trace.authority, "identity": trace.identity}),
+            );
+        }
+        if let Some(traces) = &self.options.traces {
+            item.insert(
+                "traces".to_owned(),
+                json!({"authority": traces.authority, "identity": traces.identity}),
             );
         }
         if let Some(recording) = &self.options.recording {
@@ -4041,6 +4128,7 @@ fn replay_target(found: &super::ItemCounterexample, name: &str) -> Option<Value>
         | super::Counterexample::GlobalConformance(_)
         | super::Counterexample::Hybrid(_)
         | super::Counterexample::TaskProduct(_) => json!({"state_clause": qualified}),
+        super::Counterexample::FiniteHyper(_) => json!({"hyperproperty": qualified}),
         super::Counterexample::ScheduleMiss(_) => return None,
     })
 }

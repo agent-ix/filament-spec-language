@@ -40,64 +40,64 @@ macro_rules! differential_clauses {
             $clock,
             " on origin \
              { always[0,2] (holds(3 mod (2 - c.value) >= 0) and \
-             holds(count<Zero>(m in ints(sequence[c.value]): m > 0) = 0)) }\n",
+             holds(refusingCount(c.value) = 0)) }\n",
             "temporal D1 using t over (c: Counters::Counter) clock ",
             $clock,
             " on origin \
-             { always[0,2] (holds(count<Zero>(m in ints(sequence[c.value]): m > 0) = 0) and \
+             { always[0,2] (holds(refusingCount(c.value) = 0) and \
              holds(3 mod (2 - c.value) >= 0)) }\n",
             "temporal D2 using t over (c: Counters::Counter) clock ",
             $clock,
             " on origin \
              { always[0,2] (holds(c.value = 0) and \
-             holds(count<Zero>(m in ints(sequence[c.value]): m > 0) = 0)) }\n",
+             holds(refusingCount(c.value) = 0)) }\n",
             "temporal D3 using t over (c: Counters::Counter) clock ",
             $clock,
             " on origin \
-             { always[0,2] holds(count<Zero>(m in ints(sequence[c.value]): m > 0) = 0) }\n",
+             { always[0,2] holds(refusingCount(c.value) = 0) }\n",
             "temporal D4 using t over (c: Counters::Counter) clock ",
             $clock,
             " \
              on each (q: Counters::Counter) \
-             { once[0,2] holds(count<Zero>(m in ints(sequence[c.value]): m > 0) = 0) }\n",
+             { once[0,2] holds(refusingCount(c.value) = 0) }\n",
             "temporal D5 using t over (c: Counters::Counter) clock ",
             $clock,
             " on origin \
              { eventually[0,2] (holds(3 mod (2 - c.value) >= 0) and \
-             holds(count<Zero>(m in ints(sequence[c.value]): m > 0) = 0)) }\n",
+             holds(refusingCount(c.value) = 0)) }\n",
             "temporal D6 using t over (c: Counters::Counter) clock ",
             $clock,
             " on origin \
-             { eventually[0,2] holds(count<Zero>(m in ints(sequence[c.value]): m > 0) = 0) }\n",
+             { eventually[0,2] holds(refusingCount(c.value) = 0) }\n",
             "temporal D7 using t over (c: Counters::Counter) clock ",
             $clock,
             " \
              on each (q: Counters::Counter) \
              { always[0,0] (holds(3 mod (2 - c.value) >= 0) and \
-             holds(count<Zero>(m in ints(sequence[c.value]): m > 0) = 0)) }\n",
+             holds(refusingCount(c.value) = 0)) }\n",
             "temporal D8 using t over (c: Counters::Counter) clock ",
             $clock,
             " \
              on each (q: Counters::Counter) \
              { once[0,2] (holds(c.value = 0) and \
-             holds(count<Zero>(m in ints(sequence[c.value]): m > 0) = 0)) }\n",
+             holds(refusingCount(c.value) = 0)) }\n",
             "temporal D9 using t over (c: Counters::Counter) clock ",
             $clock,
             " \
              on each (q: Counters::Counter) \
              { once[0,2] (holds(3 mod (2 - c.value) >= 0) and \
-             holds(count<Zero>(m in ints(sequence[c.value]): m > 0) = 0)) }\n",
+             holds(refusingCount(c.value) = 0)) }\n",
             "temporal D10 using t over (c: Counters::Counter) clock ",
             $clock,
             " \
              on each (q: Counters::Counter) \
-             when (count<Zero>(m in ints(sequence[q.value mod 2]): m > 0) = 0) \
+             when (refusingCount(q.value mod 2) = 0) \
              { always[0,0] holds(c.value = 0) }\n",
             "temporal D11 using t over (c: Counters::Counter) clock ",
             $clock,
             " \
              on each (q: Counters::Counter) \
-             { capture z: Zero = count<Zero>(m in ints(sequence[q.value mod 2]): m > 0); \
+             { capture z: Zero = refusingCount(q.value mod 2); \
              always[0,0] holds(c.value = 0) }\n",
             "temporal D12 using t over (c: Counters::Counter) clock ",
             $clock,
@@ -107,39 +107,39 @@ macro_rules! differential_clauses {
             $clock,
             " on origin \
              { eventually[0,2] (holds(3 mod (2 - c.value) >= 0) or \
-             holds(count<Zero>(m in ints(sequence[c.value]): m > 0) = 0)) }\n",
+             holds(refusingCount(c.value) = 0)) }\n",
             "temporal D15 using t over (c: Counters::Counter) clock ",
             $clock,
             " on origin \
-             { eventually[0,2] (holds(count<Zero>(m in ints(sequence[c.value]): m > 0) = 0) or \
+             { eventually[0,2] (holds(refusingCount(c.value) = 0) or \
              holds(3 mod (2 - c.value) >= 0)) }\n",
             "temporal D16 using t over (c: Counters::Counter) clock ",
             $clock,
             " \
              on each (q: Counters::Counter) \
-             { always[0,0] (holds(count<Zero>(m in ints(sequence[c.value]): m > 0) = 0) and \
+             { always[0,0] (holds(refusingCount(c.value) = 0) and \
              holds(3 mod (2 - c.value) >= 0)) }\n",
             "temporal D17 using t over (c: Counters::Counter) clock ", $clock, " \
-             on each (q: Counters::Counter) when (count<Zero>(m in ints(sequence[q.value]): m > 0) = 0) { holds(3 mod (2 - c.value) >= 0) and eventually[0,2] holds(c.value >= 0) }\n",
+             on each (q: Counters::Counter) when (refusingCount(q.value) = 0) { holds(3 mod (2 - c.value) >= 0) and eventually[0,2] holds(c.value >= 0) }\n",
             "temporal D18 using t over (c: Counters::Counter) clock ", $clock, " \
-             on each (q: Counters::Counter) when (count<Zero>(m in ints(sequence[q.value]): m > 0) = 0) { eventually[0,2] holds(c.value >= 0) and holds(3 mod (2 - c.value) >= 0) }\n",
+             on each (q: Counters::Counter) when (refusingCount(q.value) = 0) { eventually[0,2] holds(c.value >= 0) and holds(3 mod (2 - c.value) >= 0) }\n",
             "temporal D19 using t over (c: Counters::Counter) clock ", $clock, " \
-             on each (q: Counters::Counter) when (count<Zero>(m in ints(sequence[q.value]): m > 0) = 0) { holds(3 mod (2 - c.value) >= 0) and not eventually[0,2] holds(c.value < 0) }\n",
+             on each (q: Counters::Counter) when (refusingCount(q.value) = 0) { holds(3 mod (2 - c.value) >= 0) and not eventually[0,2] holds(c.value < 0) }\n",
             "temporal D20 using t over (c: Counters::Counter) clock ", $clock, " \
-             on each (q: Counters::Counter) when (count<Zero>(m in ints(sequence[q.value]): m > 0) = 0) { holds(3 mod (2 - c.value) >= 0) and once[0,2] holds(c.value >= 0) }\n",
+             on each (q: Counters::Counter) when (refusingCount(q.value) = 0) { holds(3 mod (2 - c.value) >= 0) and once[0,2] holds(c.value >= 0) }\n",
             "temporal D21 using t over (c: Counters::Counter) clock ", $clock, " \
-             on each (q: Counters::Counter) { capture z: Zero = count<Zero>(m in ints(sequence[q.value]): m > 0); holds(3 mod (2 - c.value) >= 0) and eventually[0,2] holds(c.value >= 0) }\n",
+             on each (q: Counters::Counter) { capture z: Zero = refusingCount(q.value); holds(3 mod (2 - c.value) >= 0) and eventually[0,2] holds(c.value >= 0) }\n",
             "temporal D22 using t over (c: Counters::Counter) clock ", $clock, " \
-             on each (q: Counters::Counter) { capture z: Zero = count<Zero>(m in ints(sequence[q.value]): m > 0); eventually[0,2] holds(c.value >= 0) and holds(3 mod (2 - c.value) >= 0) }\n",
+             on each (q: Counters::Counter) { capture z: Zero = refusingCount(q.value); eventually[0,2] holds(c.value >= 0) and holds(3 mod (2 - c.value) >= 0) }\n",
             "temporal D23 using t over (c: Counters::Counter) clock ", $clock, " \
-             on each (q: Counters::Counter) { capture z: Zero = count<Zero>(m in ints(sequence[q.value]): m > 0); holds(3 mod (2 - c.value) >= 0) and not eventually[0,2] holds(c.value < 0) }\n",
+             on each (q: Counters::Counter) { capture z: Zero = refusingCount(q.value); holds(3 mod (2 - c.value) >= 0) and not eventually[0,2] holds(c.value < 0) }\n",
             "temporal D24 using t over (c: Counters::Counter) clock ", $clock, " \
-             on each (q: Counters::Counter) { capture z: Zero = count<Zero>(m in ints(sequence[q.value]): m > 0); holds(3 mod (2 - c.value) >= 0) and once[0,2] holds(c.value >= 0) }\n",
+             on each (q: Counters::Counter) { capture z: Zero = refusingCount(q.value); holds(3 mod (2 - c.value) >= 0) and once[0,2] holds(c.value >= 0) }\n",
             "temporal D13 using t over (c: Counters::Counter) clock ",
             $clock,
             " \
              on each (q: Counters::Counter) \
-             { once[0,2] (holds(count<Zero>(m in ints(sequence[c.value]): m > 0) = 0) and \
+             { once[0,2] (holds(refusingCount(c.value) = 0) and \
              holds(3 mod (2 - c.value) >= 0)) }\n",
         )
     };
@@ -361,7 +361,7 @@ impl Unit {
                  pure { xs }\n",
                 "temporal Window using t over (c: Counters::Counter) clock \"model-steps\" \
                  on origin { always[0,10] holds(3 mod (2 - c.value) >= 0 and \
-                 count<Zero>(m in ints(sequence[c.value mod 2]): m > 0) = 0) }\n",
+                 refusingCount(c.value mod 2) = 0) }\n",
             ),
             Self::TimestampedRefusing => concat!(
                 "type Zero = Int[0, 0];\n",
@@ -369,7 +369,7 @@ impl Unit {
                  pure { xs }\n",
                 "temporal Window using t over (c: Counters::Counter) clock \"model-steps\" \
                  on each (q: Counters::Counter) { always[0,0] holds(c.value = 1 and \
-                 count<Zero>(m in ints(sequence[c.value]): m > 0) = 0) }\n",
+                 refusingCount(c.value) = 0) }\n",
             ),
             Self::TimestampedEach => {
                 "temporal Window using t over (c: Counters::Counter) clock \"model-steps\" \
@@ -451,19 +451,19 @@ impl Unit {
                  pure { xs }\n",
                 "temporal RefusedAfterTrue using t over (c: Counters::Counter) \
                  clock \"model-steps\" on origin \
-                 { always[0,2] holds(count<Zero>(m in ints(sequence[c.value]): m > 0) = 0) }\n",
+                 { always[0,2] holds(refusingCount(c.value) = 0) }\n",
                 "temporal FalseThenRefused using t over (c: Counters::Counter) \
                  clock \"model-steps\" on origin \
                  { always[0,2] holds(c.value = 1 and \
-                 count<Zero>(m in ints(sequence[c.value]): m > 0) = 0) }\n",
+                 refusingCount(c.value) = 0) }\n",
                 "temporal UndefinedThenRefused using t over (c: Counters::Counter) \
                  clock \"model-steps\" on origin \
                  { always[0,2] holds(3 mod (2 - c.value) >= 0 and \
-                 count<Zero>(m in ints(sequence[c.value mod 2]): m > 0) = 0) }\n",
+                 refusingCount(c.value mod 2) = 0) }\n",
                 "temporal UndefinedBesideRefused using t over (c: Counters::Counter) \
                  clock \"model-steps\" on origin \
                  { always[0,2] (holds(3 mod (2 - c.value) >= 0) and \
-                 holds(count<Zero>(m in ints(sequence[c.value]): m > 0) = 0)) }\n",
+                 holds(refusingCount(c.value) = 0)) }\n",
             ),
             Self::RefusingInfinite => concat!(
                 "type Zero = Int[0, 0];\n",
@@ -471,7 +471,7 @@ impl Unit {
                  pure { xs }\n",
                 "temporal RefusedWhole using t over (c: Counters::Counter) \
                  clock \"model-steps\" on origin \
-                 { always holds(count<Zero>(m in ints(sequence[c.value]): m > 0) = 0) }\n",
+                 { always holds(refusingCount(c.value) = 0) }\n",
             ),
             Self::Decisive => {
                 "function ints using v(xs: Sequence<Integer>[0, 3]): Sequence<Integer>[0, 3] \
@@ -616,6 +616,9 @@ fn request(
     assert!(text.contains(header), "{text}");
     let mut text = text.replacen(header, &format!("{header}{}", unit.profile()), 1);
     text.push_str(unit.clauses());
+    if text.contains("refusingCount(") {
+        text.push_str("function refusingCount using v(n: Integer): Zero pure { count<Zero>(m in ints(sequence[n]): m > 0) }\n");
+    }
     let documents: Vec<(DocumentRef, Vec<u8>)> = values
         .iter()
         .enumerate()
@@ -713,6 +716,12 @@ pub(in crate::spine::clause::tests) fn report(mut request: ClauseRunRequest) -> 
             temporal_clock_selections(body.identity(), body.path(), body.text().as_bytes())
         }
     };
+    let has_kernel_count = request
+        .source
+        .unit()
+        .bytes
+        .windows(b"refusingCount(".len())
+        .any(|part| part == b"refusingCount(");
     let has_kernel_mod = match &mut request.source {
         ClauseRunSource::Program { bytes, .. } => {
             let source = String::from_utf8(bytes.clone()).expect("test source is UTF-8");
@@ -739,11 +748,19 @@ pub(in crate::spine::clause::tests) fn report(mut request: ClauseRunRequest) -> 
         #[cfg(feature = "quire-extraction")]
         ClauseRunSource::Extracted(_) => false,
     };
-    if has_kernel_mod {
-        let modes = BTreeMap::from([(
-            "temporal_mod_undefined".to_owned(),
-            filament_semantic_value::checking::CheckMode::Kernel,
-        )]);
+    if has_kernel_mod || has_kernel_count {
+        let mut modes = BTreeMap::new();
+        for (needed, name) in [
+            (has_kernel_mod, "temporal_mod_undefined"),
+            (has_kernel_count, "refusingCount"),
+        ] {
+            if needed {
+                modes.insert(
+                    name.to_owned(),
+                    filament_semantic_value::checking::CheckMode::Kernel,
+                );
+            }
+        }
         let temporal_selections = match &request.source {
             ClauseRunSource::Program {
                 identity,
@@ -4557,7 +4574,7 @@ fn window_and_next_event_pending_runs_are_bare_pending_items() {
 /// `native-run-result/2` writer's spelling; the closed-scope run holds none.
 #[trace("TC-770", "FR-286-AC-10")]
 #[test]
-#[ignore = "QSL-2173/QSL-2391: the witness helper compiles the ConfigVersion fixture with float equality clauses; re-enable when the FR-650 equality schedule is emitted."]
+#[ignore = "QSL-2173 completed; current blocker has no assigned owner: a pending Reaches item still carries a witness where the test asserts none"]
 fn a_violated_item_carries_a_witness_exactly_when_the_report_holds_one() {
     let mut run = report(finite(Unit::Bounded, "Bounded", &[0, 1, 2]));
     assert!(run.witness.is_none());

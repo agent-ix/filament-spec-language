@@ -67,7 +67,7 @@ pub mod cst {
         CompleteCause, CompleteCode, CompleteDiagnostic, Limits, ParsedSource, TokenClass, parse,
         parse_source,
     };
-    pub use fsl_cst::diagnostic::{error, read_source};
+    pub use fsl_cst::diagnostic::{error, read_source, resource_exhausted};
 }
 
 pub use abstraction_declaration::{

@@ -1177,7 +1177,6 @@ fn an_await_selects_protocol_and_temporal_profiles() {
 /// the one temporal profile its `using` alias names, though the header
 /// selects two.
 #[trace("FR-383-AC-7", "TC-1061")]
-#[ignore = "QSL-2391: Contract IR refuses await-linked temporal_bindings with TimedNodeReference; re-enable when QSL-2391 adds this node-reference support."]
 #[test]
 fn an_emitted_await_selects_exactly_one_temporal_profile() {
     let profiles = format!(
@@ -1880,7 +1879,7 @@ fn a_nested_repeat_with_a_stepping_body_is_written() {
 /// guard is written as one carrier and the package is admitted.
 #[test]
 #[trace("TC-2501", "FR-880-AC-3", "FSpec-FR-728-AC-1")]
-#[ignore = "QSL-2219: a protocol reference in a protocol body is refused at S4 instead of written"]
+#[ignore = "QSL-2219 completed; current blocker has no assigned owner: the check still refuses a protocol reference in a protocol body with ProtocolReference(NotEmitted { construct: ProtocolReferenceInBody }) instead of writing it"]
 fn a_protocol_reference_in_a_body_is_written() {
     emitted(&format!(
         "protocol Other using p over (input: M::Order) on origin {{\n\
@@ -1897,7 +1896,7 @@ fn a_protocol_reference_in_a_body_is_written() {
 /// written as one recursion group.
 #[test]
 #[trace("TC-2501", "FR-880-AC-5")]
-#[ignore = "QSL-2219: a protocol reference cycle is refused at S4 instead of written as a recursion group"]
+#[ignore = "QSL-2219 completed; current blocker has no assigned owner: the check still refuses a self-referring protocol with ProtocolReference(NotEmitted { construct: ProtocolReferenceInBody }) instead of writing a recursion group"]
 fn a_self_referring_protocol_is_written_as_one_recursion_group() {
     let lowered = emitted(&flow(
         "sequence Main { repeat Loop by Buyer visible () while { protocol Flow } \

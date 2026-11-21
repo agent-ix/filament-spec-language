@@ -240,9 +240,8 @@ pub fn settle_zone_check<S>(
                     CounterexampleKind::Formula
                     | CounterexampleKind::Deadlock
                     | CounterexampleKind::Race(_)
-                    | CounterexampleKind::UndefinedEvaluation(_) => {
-                        SettlementBasis::DecisiveCounterexample
-                    }
+                    | CounterexampleKind::UndefinedEvaluation(_)
+                    | CounterexampleKind::LoopProof(_) => SettlementBasis::DecisiveCounterexample,
                 };
                 ZoneCheckRecord {
                     counterexample: Some(counterexample.as_ref().clone()),
@@ -408,14 +407,6 @@ pub fn settle_timed_refinement<S>(
         (safety, _) => return timed_safety(safety, cancel, check, replay),
     };
     match liveness {
-        // ADR-020 AX-5: the second phase did not run.
-        TimedLivenessHalf::Unsupported(cause) => ZoneCheckRecord::row(
-            TerminalValue::Unsupported(cause.clone()),
-            ResultLabel::Unsupported,
-            SettlementBasis::Unavailable,
-            Execution::Completed,
-            Truth::Unavailable,
-        ),
         // No core checker covers the liveness half (ADR-020 CT-4).
         TimedLivenessHalf::Checked(TimedLivenessOutcome::Holds { .. }) => ZoneCheckRecord::row(
             TerminalValue::Proved {

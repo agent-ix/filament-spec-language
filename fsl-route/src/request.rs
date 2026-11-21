@@ -96,7 +96,9 @@ impl ExtentClassification {
 }
 
 /// FSpec FR-368 "Item kinds": the `item_kind` of a `temporal-satisfaction`
-/// item over a model subject. These five are the only kinds: a transfer
+/// item over a model subject, extended by FR-730's source-checked loop
+/// obligations. The package wire route refuses those two kinds until its
+/// contract admits them. A transfer
 /// item (FSpec FR-380) is evaluated by the verification planner and is no
 /// request item, so it has none.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
@@ -111,16 +113,22 @@ pub enum ItemKind {
     RaceFreedom,
     /// A refinement item, one per checked refinement declaration (FR-144).
     Refinement,
+    /// FR-730's invariant obligation for one protocol repeat.
+    LoopInvariant,
+    /// FR-730's termination obligation for one protocol repeat.
+    LoopTermination,
 }
 
 impl ItemKind {
     /// Every kind, in FR-368's table order.
-    pub const ALL: [Self; 5] = [
+    pub const ALL: [Self; 7] = [
         Self::Formula,
         Self::DeadlockFreedom,
         Self::TimeLockFreedom,
         Self::RaceFreedom,
         Self::Refinement,
+        Self::LoopInvariant,
+        Self::LoopTermination,
     ];
 
     /// The FR-368 `item_kind` spelling.
@@ -131,6 +139,8 @@ impl ItemKind {
             Self::TimeLockFreedom => "time-lock-freedom",
             Self::RaceFreedom => "race-freedom",
             Self::Refinement => "refinement",
+            Self::LoopInvariant => "loop-invariant",
+            Self::LoopTermination => "loop-termination",
         }
     }
 }
@@ -1906,14 +1916,15 @@ mod tests {
         );
     }
 
-    /// FSpec FR-368-AC-21, and the producer half of AC-13 (the five
-    /// spellings FSL writes; refusing another spelling is the reader's): a
-    /// temporal item over a model subject has one of exactly five kinds, `formula`, `deadlock-freedom`,
-    /// `time-lock-freedom`, `race-freedom` and `refinement`; `transfer` is
-    /// none of them.
+    /// FSpec FR-368-AC-21, and the producer half of AC-13 (the spellings FSL
+    /// writes; refusing another spelling is the reader's): a temporal item
+    /// over a model subject has one of the kinds `formula`,
+    /// `deadlock-freedom`, `time-lock-freedom`, `race-freedom` and
+    /// `refinement`, or one of the two protocol loop-proof kinds of FR-730,
+    /// `loop-invariant` and `loop-termination`; `transfer` is none of them.
     #[trace("FSpec-TC-431", "FSpec-FR-368-AC-21")]
     #[test]
-    fn a_model_items_kind_is_one_of_five_spellings() {
+    fn a_model_items_kind_is_one_of_the_written_spellings() {
         let spelled: Vec<_> = ItemKind::ALL.into_iter().map(ItemKind::to_wire).collect();
         assert_eq!(
             spelled,
@@ -1922,7 +1933,9 @@ mod tests {
                 "deadlock-freedom",
                 "time-lock-freedom",
                 "race-freedom",
-                "refinement"
+                "refinement",
+                "loop-invariant",
+                "loop-termination"
             ]
         );
         assert!(!spelled.contains(&"transfer"));

@@ -1000,7 +1000,7 @@ fn reordering_two_delays_changes_no_delay_node() {
 /// orders it after `send` with no probability lost to the order draw.
 #[trace("FSpec-TC-1561", "FSpec-FR-420-AC-8")]
 #[test]
-#[ignore = "QSL-1991: weight-0 operations in timed race ties not implemented yet"]
+#[ignore = "QSL-1991 completed; current blocker has no assigned owner: exact-probabilistic-digital still fails with an internal fault (invariant workload-weights-sum) on a weight-0 tie"]
 fn a_weight_zero_operation_takes_its_turn_last_in_a_tie() {
     let world = retx_with(
         &[("send", &["late", "x"]), ("tick", &["retried"])],
@@ -1107,7 +1107,6 @@ fn time_locked_state_is_terminal() {
 /// an `elapsed` measure and a time window each check.
 #[trace("TC-2169", "FR-186-AC-12")]
 #[test]
-#[ignore = "QSL-2152: time forms of probabilistic claims not checked yet"]
 fn time_forms_over_a_timed_model_check() {
     let claims = "probabilistic MeanLate using ev on M over (c: M::Call) under every scheduler on origin \
          { expected elapsed until holds(c.late) <= 3 ms }\n\

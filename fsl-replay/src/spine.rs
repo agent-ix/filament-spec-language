@@ -223,7 +223,7 @@ mod identity_form;
 mod package_call;
 mod run_value;
 pub use call::{
-    default_accounting, run, run_with_profile_catalog,
+    default_accounting, run, run_with_integer_division, run_with_profile_catalog,
     run_with_profile_catalog_and_integer_division, Call, CallArgument, CallIncomplete, CallLocus,
     CallOutcome, CallRefusal, CallSnapshot, CallValue, RunRefusal, WireArgument,
     DEFAULT_LIVE_OCCURRENCES, DEFAULT_WORK_UNITS,
@@ -239,12 +239,12 @@ pub(crate) mod clause;
 pub use clause::{
     admit_progress, assertion_json, assertion_of, authenticate_emission,
     authenticate_package_trace, clause_trace_binding, incomplete_json, incomplete_of,
-    name_clause_atom, pending_report, read_evidence_ledger, read_ledger, run_clause,
-    run_clause_batch, run_clause_with_temporal_selections, run_package_temporal,
-    run_package_temporal_bounded, run_package_trace_subject, run_program_batch,
-    run_temporal_behaviours, run_temporal_valuation, run_trace_subject_clause, sample_position,
-    settle_correction, settle_run_correction, temporal_batch_exit_code, temporal_batch_outcome,
-    write_ledger, AdmittedLate, AdmittedPosition, AdmittedValue, Advance,
+    name_clause_atom, pending_report, profile_reads, read_evidence_ledger, read_ledger, run_clause,
+    run_clause_batch, run_clause_with_temporal_selections, disposition_report, run_package_behaviours, run_package_sampled, run_package_valuation,
+    run_package_temporal, run_package_temporal_bounded, run_package_trace_subject,
+    run_program_batch, run_temporal_behaviours, run_temporal_valuation, run_trace_subject_clause,
+    sample_position, settle_correction, settle_run_correction, temporal_batch_exit_code,
+    temporal_batch_outcome, write_ledger, AdmittedLate, AdmittedPosition, AdmittedValue, Advance,
     AuthenticatedTemporalSelection, AuthenticationFailure, ClauseArgument, ClauseArgumentValue,
     ClauseDisposition, ClauseLimits, ClauseMark, ClauseOpen, ClauseRefusal, ClauseRunBatchOutcome,
     ClauseRunBatchRefusal, ClauseRunRefusal, ClauseRunReport, ClauseRunRequest, ClauseRunSelection,
@@ -253,7 +253,7 @@ pub use clause::{
     ContradictedDimension, CorrectionRecord, CorrectionRefusal, EvidenceLedgerFile,
     EvidenceLedgerReadError, FiniteWindowAssessment, FiniteWindowPremises, FiniteWindowReport,
     FiniteWindowSupport, LateEntry, LateInputs, LedgerBinding, LedgerReadError, ObservedPosition,
-    OperationName, OverObject, PackageAuthentication, PackageTemporalRequest,
+    OperationName, OverObject, PackageAuthentication, PackageBehaviours, PackageSampledRequest, PackageTemporalRequest,
     PackageTraceSubjectRequest, PackagesStage, ProgramBatchCallOutcome, ProgramBatchItemResult,
     ProgramBatchOutcome, ProgramBatchRefusal, ProgramBatchSelection, ProgramCompilationRequest,
     ProgressAssertion, ProgressClosure, ProgressCompleteness, ProgressContradiction,
@@ -298,13 +298,13 @@ pub use protocol_proof::{
 pub mod query_proof;
 mod request;
 pub use request::{
-    read_clause_run_request, read_cover, read_lower_boundary, read_progress_assertion,
-    read_sample_text, read_trace_binding, AnchorWire, BindingWire, ClauseArgumentWire,
-    ClauseRequestParts, ClauseRequestReadError, ClauseRunSelectionWire, ClauseSelectionParts,
-    ClauseSelectionPartsKind, ClauseSelectionWire, CoverWire, FrameSelectionWire,
-    FunctionSelectionWire, LowerBoundaryWire, ObjectReferenceWire, ObservationLimitsWire,
-    OrderKeyWire, ProgressWire, RelationWire, SuppliedObservation, TemporalTraceParts,
-    TimestampedParts,
+    read_clause_run_request, read_clause_selection, read_cover, read_lower_boundary,
+    read_progress_assertion, read_sample_text, read_trace_binding, AnchorWire, BindingWire,
+    ClauseArgumentWire, ClauseRequestParts, ClauseRequestReadError, ClauseRunSelectionWire,
+    ClauseSelectionParts, ClauseSelectionPartsKind, ClauseSelectionWire, CoverWire,
+    FrameSelectionWire, FunctionSelectionWire, LowerBoundaryWire, ObjectReferenceWire,
+    ObservationLimitsWire, OrderKeyWire, ProgressWire, RelationWire, SuppliedObservation,
+    TemporalTraceParts, TimestampedParts,
 };
 // FR-116: FR-115's frame run, shared with the frame replay (`crate::execute`).
 pub(crate) use clause::{check_clause_admitted, check_frame, ClauseCheck, CompiledRun, FrameCheck};
@@ -580,6 +580,11 @@ impl CompileRefusal {
             Self::UnitList(_) => SpineStage::Intake,
             Self::Source(_) | Self::SourceDiagnostics { .. } => SpineStage::Source,
             Self::Forms { .. } => SpineStage::Forms,
+            Self::Intake { refusal, .. }
+                if refusal.cause.cause() == Some(MISSING_SELECTION_CAUSE) =>
+            {
+                SpineStage::Compile
+            }
             Self::Intake { .. }
             | Self::OperationClause { .. }
             | Self::TypeInvariant { .. }
@@ -915,6 +920,9 @@ impl UnitListRefusal {
     }
 }
 
+/// The catalogued cause of a model whose package the request omits.
+const MISSING_SELECTION_CAUSE: &str = "missing-selection";
+
 /// The spine stage a [`CompileRefusal`] comes from.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum SpineStage {
@@ -924,6 +932,8 @@ pub enum SpineStage {
     Forms,
     /// I1: `model::intake::admit_unit`.
     Intake,
+    /// A model the unit selects whose package the request does not supply.
+    Compile,
     /// The FR-091 assembler.
     Assembly,
     /// S3: `PackageDeclarations::check`.
@@ -939,6 +949,7 @@ impl SpineStage {
             Self::Source => "source",
             Self::Forms => "forms",
             Self::Intake => "intake",
+            Self::Compile => "compile",
             Self::Assembly => "assembly",
             Self::Check => "check",
             Self::Emit => "emit",
@@ -1691,6 +1702,10 @@ fn check_message_one(first: &CheckRefusal) -> String {
                      requires {}",
                     value_type_source(actual),
                     value_type_source(expected)
+                ),
+                ProtocolAnchorCause::VariantType { repeat, .. } => format!(
+                    "{message}: the variant of repeat `{repeat}` is neither an integer nor a \
+                     tuple of integers"
                 ),
                 ProtocolAnchorCause::CarriesMismatch { channel, .. } => format!(
                     "{message}: the binder's type is not the type channel `{channel}` carries"

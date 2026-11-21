@@ -428,8 +428,55 @@ fn exported_text(body: &str, target: Target) -> String {
     exported_text_from(body, target, None)
 }
 
+fn checked_export_node(
+    path: &std::path::Path,
+    find: impl Fn(&Value, &[Value]) -> bool,
+) -> (Value, Value) {
+    let directory = path.parent().unwrap();
+    let mut compile: Value = serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();
+    compile["format"] = json!("native-compile/1");
+    let request = &mut compile["request"];
+    request.as_object_mut().unwrap().remove("export");
+    request["output"] = json!({"package": "package.json"});
+    request["handoff"] = json!({
+        "directory": "handoff", "package_name": "test:w21:unit.native",
+        "native_join": {"work_units": 1_u64 << 40, "storage": 1_u64 << 24}
+    });
+    let compile_path = directory.join("lamp-compile.json");
+    std::fs::write(&compile_path, compile.to_string()).unwrap();
+    fsl_command::command::compile(&compile_path).expect("the Lamp checked package compiles");
+    let mut checked: Value =
+        serde_json::from_slice(&std::fs::read(directory.join("package.json")).unwrap()).unwrap();
+    // FR-322 uses document-held IDs for export outcomes and source maps.
+    fsl_semantics::check::wire_id::resolve_operand_slots(&mut checked)
+        .expect("checked operand slots resolve to graph indexes");
+    let nodes = checked["semantic_graph"]["nodes"].as_array().unwrap();
+    let node = nodes
+        .iter()
+        .find(|node| find(node, nodes))
+        .expect("the checked graph has the expected node");
+    let locus = checked["source_map"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|entry| entry["node_id"] == node["node_id"])
+        .find_map(|entry| entry["regions"].as_array()?.first())
+        .map_or(Value::Null, |region| {
+            let mut region = region.clone();
+            region["kind"] = json!("region");
+            region
+        });
+    (node.clone(), locus)
+}
+
+fn node_text(checked: &Value) -> String {
+    let id: fsl_package::CheckedNodeId =
+        serde_json::from_value(checked["node_id"].clone()).unwrap();
+    fsl_replay::protocol_analysis::node_text(&id).unwrap()
+}
+
 mod dense_time {
-    use super::{counter_request, json, Target, Value};
+    use super::{checked_export_node, counter_request, json, node_text, Target, Value};
     use crate::plan_export_surface::counter_model;
     use ix_trace_rs::trace;
     use std::path::{Path, PathBuf};
@@ -498,45 +545,6 @@ mod dense_time {
         }
     }
 
-    fn lamp_checked_node(path: &Path, find: impl Fn(&Value) -> bool) -> Value {
-        let directory = path.parent().unwrap();
-        let mut compile: Value = serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();
-        compile["format"] = json!("native-compile/1");
-        let request = &mut compile["request"];
-        request.as_object_mut().unwrap().remove("export");
-        request["output"] = json!({"package": "package.json"});
-        request["handoff"] = json!({
-            "directory": "handoff", "package_name": "test:w21:unit.native",
-            "native_join": {"work_units": 1_u64 << 40, "storage": 1_u64 << 24}
-        });
-        let compile_path = directory.join("lamp-compile.json");
-        std::fs::write(&compile_path, compile.to_string()).unwrap();
-        fsl_command::command::compile(&compile_path).expect("the Lamp checked package compiles");
-        let checked: Value =
-            serde_json::from_slice(&std::fs::read(directory.join("package.json")).unwrap())
-                .unwrap();
-        let (row, node) = checked["semantic_graph"]["nodes"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .enumerate()
-            .find(|(_, node)| find(node))
-            .expect("the checked graph has the expected node");
-        // FR-322 gives export outcomes document-held IDs. Resolve this node's
-        // operand slots through its own row before comparing the outcome.
-        let graph = fsl_semantics::check::wire_id::WireGraph::of_package_value(&checked)
-            .expect("the checked package has a valid operand table");
-        graph
-            .document_value_in_row(row, node)
-            .expect("the checked node's operand slots resolve to graph indexes")
-    }
-
-    fn node_text(checked: &Value) -> String {
-        let id: fsl_package::CheckedNodeId =
-            serde_json::from_value(checked["node_id"].clone()).unwrap();
-        fsl_replay::protocol_analysis::node_text(&id).unwrap()
-    }
-
     #[trace("FSpec-FR-813-AC-18", "FSpec-TC-1972")]
     #[test]
     fn a_dense_subject_emits_clock_updates_urgency_and_quiescence() {
@@ -567,7 +575,7 @@ mod dense_time {
         };
         assert_eq!(condition["type"], "real-valued-time", "{condition}");
         assert_eq!(condition["clause"], "T", "{condition}");
-        let root = lamp_checked_node(&path, |node| {
+        let (root, _) = checked_export_node(&path, |node, _| {
             node["node_tag"] == "timed_model" && node["semantic_form"] == "timed_model"
         });
         assert_eq!(condition["node"], node_text(&root), "{condition}");
@@ -635,7 +643,7 @@ mod dense_time {
         let refusal = &value["export"]["refusal"];
         assert_eq!(refusal["code"], "unimplemented_capability", "{refusal}");
         assert_eq!(refusal["cause"], "unimplemented-meaning", "{refusal}");
-        let checked = lamp_checked_node(&path, |node| {
+        let (checked, _) = checked_export_node(&path, |node, _| {
             node["body"]["operation"]["identity"] == operation
         });
         let construct = format!(
@@ -2909,9 +2917,8 @@ fn clause_tail(body: &str) -> String {
     format!("{HEAD} {body} }}\n")
 }
 
-/// FSpec FR-813-AC-24 (FND-011): a future operator inside a future operator
-/// has no deterministic monitor, so TLA+ refuses it at the inner operator's
-/// node; Lean states the clause directly.
+/// Future clauses that have a deterministic monitor can still be refused
+/// while that lowering is missing.
 #[test]
 #[trace("FSpec-TC-1972", "FSpec-FR-813-AC-24")]
 fn a_nested_future_operator_is_refused_in_tla_and_defined_in_lean() {
@@ -2926,6 +2933,354 @@ fn a_nested_future_operator_is_refused_in_tla_and_defined_in_lean() {
         let text = value["export"]["target_text"].as_str().unwrap();
         assert!(text.contains("def holds_T"), "{text}");
     }
+}
+
+fn tableau_export(limit: u64, target: Target) -> (u8, Value) {
+    let (_dir, path) = tableau_request(limit, target, &["c"]);
+    run_tableau(&path)
+}
+
+fn tableau_request(
+    limit: u64,
+    target: Target,
+    keys: &[&str],
+) -> (tempfile::TempDir, std::path::PathBuf) {
+    tableau_request_with_formula(
+        target,
+        keys,
+        &format!(
+            "(eventually always holds(l.safe)) and (always eventually holds(l.seen)) and \
+         (always (holds(l.pending) implies eventually[{limit}, {limit}] holds(l.ready)))"
+        ),
+    )
+}
+
+fn tableau_request_with_formula(
+    target: Target,
+    keys: &[&str],
+    formula: &str,
+) -> (tempfile::TempDir, std::path::PathBuf) {
+    let dir = tempfile::tempdir().unwrap();
+    let path = counter_request(
+        dir.path(),
+        json!({"profile": target.profile(), "obligations": ["T"]}),
+    );
+    let model_path = dir.path().join("counter.json");
+    let model = std::fs::read_to_string(&model_path)
+        .unwrap()
+        .replace("Counter", "Lamp");
+    let mut model: Value = serde_json::from_str(&model).unwrap();
+    let object = &mut model["types"][1];
+    let fields = object["fields"].as_array_mut().unwrap();
+    let template = fields[0].clone();
+    let snapshot_path = dir.path().join("counter-0.json");
+    let mut snapshot: Value =
+        serde_json::from_slice(&std::fs::read(&snapshot_path).unwrap()).unwrap();
+    let row = &mut snapshot["populations"][0]["objects"][0];
+    let identity = "ix://example/counter-third/Lamp";
+    row["type"] = json!(identity);
+    let values = &mut row["fields"];
+    for name in ["safe", "seen", "pending", "ready"] {
+        let mut field = template.clone();
+        field["identity"] = json!(format!("{identity}/{name}"));
+        field["name"] = json!(name);
+        field["typeRef"] = json!("ix://filament/native/Boolean");
+        fields.push(field);
+        values[name] = json!({"boolean": false});
+    }
+    let objects: Vec<_> = keys
+        .iter()
+        .map(|key| {
+            let mut object = row.clone();
+            object["key"] = json!(key);
+            object
+        })
+        .collect();
+    snapshot["populations"][0]["objects"] = json!(objects);
+    let mut light = object["operations"][0].clone();
+    light["identity"] = json!(format!("{identity}/light"));
+    light["name"] = json!("light");
+    light["frame"]["modifies"] = json!([
+        format!("{identity}/safe"),
+        format!("{identity}/seen"),
+        format!("{identity}/pending"),
+    ]);
+    let mut noop = light.clone();
+    noop["identity"] = json!(format!("{identity}/noop"));
+    noop["name"] = json!("noop");
+    noop["frame"]["modifies"] = json!([]);
+    object["operations"] = json!([light, noop]);
+    std::fs::write(model_path, model.to_string()).unwrap();
+    std::fs::write(snapshot_path, snapshot.to_string()).unwrap();
+    let unit = format!(
+        "language \"ix:native\" edition \"1-draft\";\n\
+         profile v = \"filament.value.complete/v1\";\n\
+         profile t = \"filament.temporal.infinite-trace/v1\";\n\
+         model Lamp = \"example/counter-third\";\n\
+         pre CanLight using v on Lamp::Lamp::light {{ not self.safe }}\n\
+         post Light using v on Lamp::Lamp::light {{ self.safe and self.seen and not self.pending }}\n\
+         post Keep using v on Lamp::Lamp::noop {{ true }}\n\
+         temporal T using t over (l: Lamp::Lamp) clock \"model-steps\" on origin {{ {formula} }}\n"
+    );
+    std::fs::write(dir.path().join("unit.native"), unit).unwrap();
+    (dir, path)
+}
+
+fn run_tableau(path: &std::path::Path) -> (u8, Value) {
+    match fsl_command::command::run(path, &crate::negotiation::Fr290) {
+        Ok(result) => (
+            result.exit_code,
+            serde_json::from_str(&result.value.to_string()).unwrap(),
+        ),
+        Err(error) => (error.category().exit_code(), error.value().unwrap()),
+    }
+}
+
+fn tableau_window_node(path: &std::path::Path, bound: u64) -> (Value, Value) {
+    let interval = json!({"lower": bound.to_string(), "upper": bound.to_string()});
+    checked_export_node(path, |node, _| {
+        let op = &node["body"]["operation"];
+        op["identity"] == "filament.op.temporal.eventually" && op["member"]["interval"] == interval
+    })
+}
+
+/// FR-813-AC-6: the mixed acceptance clause checks for an accepting run
+/// of its negation without letting a bad guess block the model steps.
+#[test]
+#[trace("FSpec-TC-1972", "FSpec-FR-813-AC-6")]
+fn tableau_checks_mixed_acceptance_over_the_total_product() {
+    let (_dir, path) = tableau_request(1, Target::Tla, &["c"]);
+    let (exit, tla) = run_tableau(&path);
+    assert_eq!(exit, 0, "{tla}");
+    let text = tla["export"]["target_text"].as_str().unwrap();
+    for fragment in [
+        "m_T \\in [Ids_Lamp -> F_bits_T]",
+        "m_T' \\in [Ids_Lamp -> F_bits_T]",
+        "F_check_T(o_l, q, r) ==",
+        "m_T_h0' = [o_l \\in Ids_Lamp |->",
+        "m_T_h0[o_l] /\\ F_check_T(o_l, m_T[o_l], m_T'[o_l])",
+        "m_T_h1' = [o_l \\in Ids_Lamp |-> ~m_T_h1[o_l]]",
+        "n_T_0 \\in [Ids_Lamp -> 0..1]",
+        "n_T_0 = [o_l \\in Ids_Lamp |-> 0]",
+        "n_T_0' = [o_l \\in Ids_Lamp |-> IF n_T_0[o_l] < 1 THEN n_T_0[o_l] + 1 ELSE 1]",
+        "m_T_r0' = [o_l \\in Ids_Lamp |-> [i \\in 1..1 |-> IF i = 1 THEN (IF ok_T(o_l) THEN v_Lamp[o_l].fld_pending ELSE FALSE) ELSE m_T_r0[o_l][i - 1]]]",
+        "n_T_0[o_l] = 1 /\\ m_T_r0[o_l][1] /\\ ~(v_Lamp[o_l].fld_ready)",
+        "F_progress_T(m_T_c0[o_l], m_T[o_l])",
+        "Next_T == (Next \\/ (~ENABLED Next /\\ UNCHANGED vars)) /\\ Mon_T",
+        "WF_vars_T(Next_T)",
+        "~([]<>accept_T(o_l))",
+    ] {
+        assert!(text.contains(fragment), "missing {fragment}: {text}");
+    }
+    let variables = text
+        .lines()
+        .find(|line| line.starts_with("VARIABLES "))
+        .unwrap();
+    assert!(
+        variables.split([',', ' ']).any(|name| name == "n_T_0"),
+        "{variables}"
+    );
+    let record = &tla["export"]["records"][0];
+    assert_eq!(record["disposition"], "conditional", "{record}");
+    let [condition] = record["conditions"].as_array().unwrap().as_slice() else {
+        panic!("one condition: {record}");
+    };
+    assert_eq!(condition["type"], "nondeterministic-monitor", "{condition}");
+    assert_eq!(condition["clause"], "T", "{condition}");
+    let names = tla["export"]["name_map"].as_array().unwrap();
+    for name in [
+        "m_T",
+        "m_T_h0",
+        "m_T_h1",
+        "m_T_c0",
+        "F_bits_T",
+        "F_check_T",
+        "F_progress_T",
+    ] {
+        let matches: Vec<_> = names.iter().filter(|entry| entry["name"] == name).collect();
+        let [entry] = matches.as_slice() else {
+            panic!("expected one name map entry for {name}: {names:?}");
+        };
+        assert_eq!(condition["node"], entry["node"], "{entry}");
+        assert!(entry.get("binding").is_none(), "{entry}");
+    }
+    let (window, _) = tableau_window_node(&path, 1);
+    let window_node = node_text(&window);
+    for name in ["n_T_0", "m_T_r0"] {
+        let entries: Vec<_> = names.iter().filter(|entry| entry["name"] == name).collect();
+        let [entry] = entries.as_slice() else {
+            panic!("expected one name map entry for {name}: {names:?}");
+        };
+        assert_eq!(entry["node"], window_node, "{entry}");
+        assert!(entry.get("binding").is_none(), "{entry}");
+    }
+    let (exit, lean) = tableau_export(1, Target::Lean);
+    assert_eq!(exit, 0, "{lean}");
+    let text = lean["export"]["target_text"].as_str().unwrap();
+    assert!(text.contains("def holds_T"), "{text}");
+    assert_eq!(
+        lean["export"]["records"][0]["disposition"], "preserved",
+        "{lean}"
+    );
+}
+
+#[test]
+#[trace("FSpec-FR-813-AC-6", "FSpec-TC-1972")]
+fn tableau_phase_is_a_function_over_two_or_zero_identities() {
+    for (keys, universe) in [(&["c", "d"][..], "{<<99>>, <<100>>}"), (&[][..], "{}")] {
+        let (_dir, path) = tableau_request(1, Target::Tla, keys);
+        let (exit, value) = run_tableau(&path);
+        assert_eq!(exit, 0, "{value}");
+        let text = value["export"]["target_text"].as_str().unwrap();
+        let identities = format!("Ids_Lamp == {universe}");
+        assert!(text.lines().any(|line| line == identities), "{text}");
+        for fragment in [
+            "m_T_h1 \\in [Ids_Lamp -> BOOLEAN]",
+            "m_T_h1 = [o_l \\in Ids_Lamp |-> FALSE]",
+            "m_T_h1' = [o_l \\in Ids_Lamp |-> ~m_T_h1[o_l]]",
+            "WF_vars_T(Next_T) /\\ WF_vars(Next)",
+            "\\A o_l \\in Ids_Lamp : [](ok_T(o_l)) /\\ ~([]<>accept_T(o_l))",
+        ] {
+            assert!(text.contains(fragment), "missing {fragment}: {text}");
+        }
+    }
+}
+
+#[test]
+#[trace("FSpec-FR-812-AC-1", "FSpec-FR-813-AC-6", "FSpec-TC-1972")]
+fn tableau_keeps_source_fairness_when_lamp_has_a_noop() {
+    use filament_contract_model::CheckedNodePathSegment::Name;
+    use fsl_replay::protocol_analysis::read_node_text;
+
+    let (exit, tla) = tableau_export(1, Target::Tla);
+    assert_eq!(exit, 0, "{tla}");
+    let text = tla["export"]["target_text"].as_str().unwrap();
+    let names = tla["export"]["name_map"].as_array().unwrap();
+    let mapped_operation = |source_name: &str| {
+        let mut entries = names.iter().filter_map(|entry| {
+            let name = entry["name"].as_str()?;
+            if !name.starts_with("op_") {
+                return None;
+            }
+            let node = read_node_text(entry["node"].as_str()?).ok()?;
+            let [Name(tag), Name(form), _, Name(operation)] = node.path.as_slice() else {
+                return None;
+            };
+            (&**tag == "state" && &**form == "operation_anchor" && &**operation == source_name)
+                .then_some(name)
+        });
+        let name = entries
+            .next()
+            .unwrap_or_else(|| panic!("missing operation {source_name} in {names:?}"));
+        assert!(
+            entries.next().is_none(),
+            "duplicate operation {source_name}: {names:?}"
+        );
+        assert_eq!(name, format!("op_Lamp_{source_name}"));
+        name
+    };
+    let body = |header: &str| {
+        let needle = format!("\n{header}\n");
+        text.split_once(needle.as_str())
+            .unwrap_or_else(|| panic!("missing definition {header}: {text}"))
+            .1
+            .split("\n\n")
+            .next()
+            .unwrap()
+    };
+    assert!(text.lines().any(|line| line == "vars == <<v_Lamp>>"));
+    let init = body("Init ==");
+    for field in ["pending", "safe", "seen"] {
+        assert!(init.contains(&format!("fld_{field} |-> FALSE")), "{init}");
+    }
+    let noop_name = mapped_operation("noop");
+    let noop = body(&format!("{noop_name}(r_self) =="));
+    for field in ["pending", "ready", "safe", "seen", "value"] {
+        assert!(
+            noop.contains(&format!("v_Lamp'[k].fld_{field} = v_Lamp[k].fld_{field}")),
+            "{noop}"
+        );
+    }
+    let light_name = mapped_operation("light");
+    let light = body(&format!("{light_name}(r_self) =="));
+    for constraint in [
+        "~v_Lamp[r_self].fld_safe",
+        "v_Lamp'[r_self].fld_safe",
+        "v_Lamp'[r_self].fld_seen",
+        "~v_Lamp'[r_self].fld_pending",
+    ] {
+        assert!(light.contains(constraint), "missing {constraint}: {light}");
+    }
+    let next = body("Next ==");
+    assert!(next.contains(&format!("{noop_name}(r_self)")), "{next}");
+    assert!(next.contains(&format!("{light_name}(r_self)")), "{next}");
+    let spec = r"Spec_T == Init_T /\ [][Next_T]_vars_T /\ WF_vars_T(Next_T) /\ WF_vars(Next)";
+    assert!(text.lines().any(|line| line == spec), "{text}");
+}
+
+#[test]
+#[trace("FSpec-TC-1972", "FSpec-FR-813-AC-24")]
+fn tableau_above_its_finite_closure_limit_has_a_typed_refusal() {
+    let (_dir, path) = tableau_request(18, Target::Tla, &["c"]);
+    let (exit, tla) = run_tableau(&path);
+    assert_eq!(exit, 21, "{tla}");
+    let refusal = &tla["export"]["refusal"];
+    assert_eq!(refusal["code"], "unimplemented_capability", "{refusal}");
+    assert_eq!(refusal["cause"], "unimplemented-meaning", "{refusal}");
+    assert_eq!(refusal["construct"], "temporal/formula", "{refusal}");
+    assert_eq!(
+        refusal["capability"], "export:tla:temporal/formula",
+        "{refusal}"
+    );
+    let (window, locus) = tableau_window_node(&path, 18);
+    assert!(
+        locus.is_object(),
+        "the checked window must have a region: {window}"
+    );
+    assert_eq!(refusal["node"], node_text(&window), "{refusal}");
+    assert_eq!(refusal["locus"], locus, "{refusal}");
+    let (exit, lean) = tableau_export(18, Target::Lean);
+    assert_eq!(exit, 0, "{lean}");
+    assert_eq!(
+        lean["export"]["records"][0]["disposition"], "preserved",
+        "{lean}"
+    );
+}
+
+#[test]
+#[trace("FSpec-TC-1972", "FSpec-FR-813-AC-24")]
+fn tableau_aggregate_closure_overflow_names_the_operator_allocated_last() {
+    let first = "(always (holds(l.pending) implies eventually[1, 1] holds(l.ready)))";
+    let second = "(always (holds(l.ready) implies eventually[1, 1] holds(l.pending)))";
+    let third = "(always (holds(l.pending) implies eventually[1, 1] holds(l.pending)))";
+    let persistence = "(eventually always holds(l.safe))";
+    let recurrence = "(always eventually holds(l.seen))";
+    let formula =
+        format!("((({first} and {second}) and {third}) and {persistence}) and {recurrence}");
+    let (_dir, path) = tableau_request_with_formula(Target::Tla, &["c"], &formula);
+    let (exit, value) = run_tableau(&path);
+    assert_eq!(exit, 21, "{value}");
+    let (operator, locus) = checked_export_node(&path, |node, nodes| {
+        node["body"]["operation"]["identity"] == "filament.op.temporal.always"
+            && nodes.iter().any(|operand| {
+                operand["node_id"] == node["body"]["arguments"][0]["target"]
+                    && operand["body"]["operation"]["identity"] == "filament.op.temporal.eventually"
+            })
+    });
+    let refusal = &value["export"]["refusal"];
+    assert_eq!(refusal["code"], "unimplemented_capability", "{refusal}");
+    assert_eq!(refusal["cause"], "unimplemented-meaning", "{refusal}");
+    assert_eq!(refusal["construct"], "temporal/formula", "{refusal}");
+    assert_eq!(
+        refusal["capability"], "export:tla:temporal/formula",
+        "{refusal}"
+    );
+    assert!(
+        locus.is_object(),
+        "the checked operator has a source region: {operator}"
+    );
+    assert_eq!(refusal["node"], node_text(&operator), "{refusal}");
+    assert_eq!(refusal["locus"], locus, "{refusal}");
 }
 
 /// FSpec FR-813-AC-24: a future operator inside a past operator is refused in

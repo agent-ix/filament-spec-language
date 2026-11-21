@@ -96,6 +96,8 @@ pub enum Shape {
     Lifecycle,
     /// Also a subtype `SubRegister` that declares a field `last`.
     Subtype,
+    /// Also a non-mutating `peek` operation, for an infinite stutter loop.
+    Peeker,
 }
 
 /// The operations of the concrete `Register`.
@@ -116,6 +118,9 @@ fn concrete_register_operations(package: &str, shape: Shape) -> Vec<Json> {
         remove["frame"]["deletes"] = json!([node(package, "Register")]);
         operations.extend([spawn, remove]);
     }
+    if shape == Shape::Peeker {
+        operations.push(operation(package, "Register", "peek", &[], None, &[]));
+    }
     operations
 }
 
@@ -127,6 +132,8 @@ const PAIR_SPEC: &str = "example/pair-spec";
 const PAIR_IMPL: &str = "example/pair-impl";
 const COIN_SPEC: &str = "example/coin-spec";
 const COIN_IMPL: &str = "example/coin-impl";
+const HIDDEN_FAIRNESS_SPEC: &str = "example/hidden-fairness-spec";
+const HIDDEN_FAIRNESS_IMPL: &str = "example/hidden-fairness-impl";
 
 fn integer_field(value: i64) -> Json {
     json!({"integer": value.to_string()})
@@ -272,6 +279,86 @@ impl Unit {
             concrete_initials: vec![json!({"value": integer_field(0)})],
             abstract_extra: Vec::new(),
         }
+    }
+
+    /// A concrete `tick` that stutters visibly and an abstract `M` with a
+    /// bounded hidden `h` field and the named abstract operations. The
+    /// operation clauses are supplied by hidden-field liveness fixtures.
+    pub fn hidden_fairness_model(
+        hidden_max: u32,
+        hidden_initial: i64,
+        abstract_operations: &[&str],
+        contracts: &str,
+    ) -> Self {
+        let model = |package: &'static str, abstract_side: bool| {
+            let level = node(package, "Level");
+            let bit = node(package, "Bit");
+            let operations = if abstract_side {
+                abstract_operations
+                    .iter()
+                    .map(|name| operation(package, "M", name, &[], None, &["v", "h"]))
+                    .collect()
+            } else {
+                vec![operation(package, "M", "tick", &[], None, &[])]
+            };
+            let object = if abstract_side {
+                object_type(
+                    package,
+                    "M",
+                    vec![
+                            single(package, "M", "v", &bit),
+                        single(package, "M", "h", &level),
+                    ],
+                    operations,
+                )
+            } else {
+                object_type(
+                    package,
+                    "M",
+                    vec![single(package, "M", "v", &bit)],
+                    operations,
+                )
+            };
+            document(
+                package,
+                vec![bounded(package, "Bit", 1), bounded(package, "Level", hidden_max), object],
+                vec![population(package, "ms", "M")],
+            )
+        };
+        Self {
+            kernel: false,
+            keys: vec!["m"],
+            present: vec!["m"],
+            abstract_package: HIDDEN_FAIRNESS_SPEC,
+            concrete_package: HIDDEN_FAIRNESS_IMPL,
+            object: "M",
+            population: "ms",
+            documents: (
+                model(HIDDEN_FAIRNESS_SPEC, true),
+                model(HIDDEN_FAIRNESS_IMPL, false),
+            ),
+            contracts: contracts.to_owned(),
+            abstract_fields: json!({
+                "v": integer_field(0),
+                "h": integer_field(hidden_initial),
+            }),
+            concrete_initials: vec![json!({"v": integer_field(0)})],
+            abstract_extra: Vec::new(),
+        }
+    }
+
+    /// Add further abstract snapshots that differ only in hidden `h`.
+    pub fn with_hidden_initials(mut self, hidden_values: &[i64]) -> Self {
+        self.abstract_extra = hidden_values
+            .iter()
+            .map(|hidden| {
+                json!({
+                    "v": integer_field(0),
+                    "h": integer_field(*hidden),
+                })
+            })
+            .collect();
+        self
     }
 
     /// FR-143-AC-3's `Pair`: abstract and concrete `Pair` with `a` and `b` in
@@ -533,6 +620,22 @@ impl Unit {
     ///
     /// Every refusal, each with the text at its region.
     pub fn check(&self, body: &str) -> Result<CheckedGraph, Vec<Refused>> {
+        self.check_with_mode(
+            body,
+            if self.kernel {
+                CheckMode::Kernel
+            } else {
+                CheckMode::Linked
+            },
+        )
+    }
+
+    /// The checked graph under `mode`, or the located refusals.
+    pub fn check_with_mode(
+        &self,
+        body: &str,
+        mode: CheckMode,
+    ) -> Result<CheckedGraph, Vec<Refused>> {
         let packages = self.packages();
         let text = self.text(&packages, body);
         let parsed = fsl_cst::parse(
@@ -566,11 +669,7 @@ impl Unit {
         let regions = declarations.regions();
         declarations
             .check(
-                if self.kernel {
-                    CheckMode::Kernel
-                } else {
-                    CheckMode::Linked
-                },
+                mode,
                 CheckingLimits::default(),
                 &fsl_eval::value::S6aRewardEvaluator,
             )
@@ -605,6 +704,14 @@ impl Unit {
     /// The world of the unit with `body`, which must check.
     pub fn world(&self, body: &str) -> World<'_> {
         let graph = self.check(body).unwrap_or_else(|refusals| {
+            panic!("{body}: the unit checks: {refusals:?}");
+        });
+        World::new(self, graph)
+    }
+
+    /// The world checked under `mode`.
+    pub fn world_with_mode(&self, body: &str, mode: CheckMode) -> World<'_> {
+        let graph = self.check_with_mode(body, mode).unwrap_or_else(|refusals| {
             panic!("{body}: the unit checks: {refusals:?}");
         });
         World::new(self, graph)

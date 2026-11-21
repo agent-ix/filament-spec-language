@@ -15,7 +15,7 @@ use std::sync::{Arc, Mutex, RwLock};
 
 use filament_exact::{
     EffectiveId, FieldValue, NodeKey, ObjectReference, OriginalDeclarationKey, PathSegmentView,
-    UniverseId, Value,
+    UniverseId, Value, ValueType,
 };
 use filament_semantic_value::declaration::{CompositeDeclaration, CompositeShape, TypeEnvironment};
 use fsl_foundation::node_wire::node_key_from_json;
@@ -909,6 +909,16 @@ impl<'t> Typing<'t> {
             names: None,
             state_fields: None,
             tuple_positions: None,
+        }
+    }
+
+    /// The declared positions of a tuple type, when `key` names one.
+    pub(crate) fn tuple_types(&self, key: &filament_exact::NodeKey) -> Option<&[ValueType]> {
+        let declaration = self.types?.composite(key.clone())?;
+        match declaration.shape() {
+            filament_semantic_value::declaration::CompositeShape::Tuple(types) => Some(types),
+            filament_semantic_value::declaration::CompositeShape::Record(_)
+            | filament_semantic_value::declaration::CompositeShape::Union(_) => None,
         }
     }
 

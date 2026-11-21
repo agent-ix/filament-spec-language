@@ -1135,7 +1135,6 @@ fn the_package_route_gives_the_rewards_of_a_two_parameter_reward_as_the_source_r
 /// probability is a behaviour of the model.
 #[trace("FSpec-TC-351", "FSpec-FR-406-AC-6")]
 #[test]
-#[ignore = "QSL-1991: weight-0 workloads keep behaviours inside the state graph not implemented yet"]
 fn a_weight_zero_workload_keeps_every_step_inside_the_state_graph() {
     let mut link = world::link();
     link.body

@@ -26,7 +26,7 @@ use fsl_replay::TerminalRecord;
 use fsl_route::request::{ExtentClassification, ItemKind};
 use fsl_route::{CandidateOutcome, Registry};
 use fsl_semantics::check::{Capability, DeclarationFamily};
-use serde_json::{json, Map};
+use serde_json::{Map, json};
 
 use super::super::{
     AnalyzeItem, AnalyzeLimits, ClaimItem, ClauseItemRefusal, ClauseLimits, Engines, ItemForm,
@@ -34,10 +34,10 @@ use super::super::{
     PackageInvariantSubject, PackageItemInputs, PackageStateGraphSubject, SubjectBinding,
 };
 use super::{
-    candidate_list, invalid_kind, negotiate_items, negotiated_routes, temporal_settings,
-    unknown_claim, unknown_option, write_run, AnalyzeDocumentError, ItemReads, ItemSelection,
-    Negotiate, Negotiation, ResolvedClaim, ResolvedItem, SettledParts, SettledRun,
-    SubjectSelection,
+    AnalyzeDocumentError, ItemReads, ItemSelection, Negotiate, Negotiation, ResolvedClaim,
+    ResolvedItem, SettledParts, SettledRun, SubjectSelection, candidate_list, invalid_kind,
+    negotiate_items, negotiated_routes, temporal_settings, unknown_claim, unknown_option,
+    write_run,
 };
 
 /// A `package` request (FR-850) whose item names a family the package route
@@ -134,6 +134,10 @@ pub enum PendingFamily {
     /// A derived item other than a model subject's deadlock-freedom item
     /// (FSpec FR-368).
     Derived,
+    /// FR-730's invariant item, pending the package wire contract.
+    LoopInvariant,
+    /// FR-730's termination item, pending the package wire contract.
+    LoopTermination,
     /// A named declaration.
     Declaration,
     /// A name the package carries no row for while it holds a claim whose
@@ -163,6 +167,8 @@ impl PendingFamily {
         match self {
             Self::Simulation => "simulation",
             Self::Derived => "derived",
+            Self::LoopInvariant => "loop-invariant",
+            Self::LoopTermination => "loop-termination",
             Self::Declaration => "declaration",
             Self::UnnamedClaim => "unnamed-claim",
             Self::ProtocolSubject => "protocol-subject",
@@ -673,14 +679,30 @@ fn resolve_names<'s>(
         .map(|(position, selection)| {
             let index = RequestIndex::new(position);
             let pending = |family| pending(Some(index), family);
-            let Some(name) = selection.claim.as_deref() else {
-                return Err(pending(PendingFamily::Simulation));
-            };
             let item_kind = selection
                 .temporal
                 .as_ref()
                 .and_then(|temporal| temporal.item_kind)
                 .map(super::ItemKindSelection::kind);
+            // FR-730 runs from checked source. Its loop item kinds have no
+            // admitted package wire contract yet, regardless of the claim.
+            match item_kind {
+                Some(ItemKind::LoopInvariant) => return Err(pending(PendingFamily::LoopInvariant)),
+                Some(ItemKind::LoopTermination) => {
+                    return Err(pending(PendingFamily::LoopTermination))
+                }
+                Some(
+                    ItemKind::Formula
+                    | ItemKind::DeadlockFreedom
+                    | ItemKind::TimeLockFreedom
+                    | ItemKind::RaceFreedom
+                    | ItemKind::Refinement,
+                )
+                | None => {}
+            }
+            let Some(name) = selection.claim.as_deref() else {
+                return Err(pending(PendingFamily::Simulation));
+            };
             let derived = item_kind.is_some_and(|kind| kind != ItemKind::Formula);
             if let Some(row) = clauses.iter().find(|row| row.name.as_ref() == name) {
                 if derived {
@@ -1160,6 +1182,10 @@ impl<'r, 'a: 'r> ClaimReads<'r, 'a> {
                 max_cases: None,
                 max_task_product_work: None,
                 trace: None,
+                traces: selection
+                    .traces
+                    .as_ref()
+                    .map(super::DocumentSelection::reference),
                 recording: None,
                 population: None,
                 backend_options,
@@ -1353,6 +1379,10 @@ fn options(selection: &ItemSelection, backend_options: BTreeMap<String, String>)
             .trace
             .as_ref()
             .map(super::DocumentSelection::reference),
+        traces: selection
+            .traces
+            .as_ref()
+            .map(super::DocumentSelection::reference),
         recording: selection
             .recording
             .as_ref()
@@ -1421,7 +1451,8 @@ impl<'a> WorkInputs<'_, 'a> {
         let item = &negotiated.item;
         let temporal_kind = match &item.form {
             Some(ItemForm::Temporal(form)) => form.item_kind,
-            Some(ItemForm::Probabilistic(_) | ItemForm::Hybrid(_)) | None => ItemKind::Formula,
+            Some(ItemForm::FiniteHyper(_) | ItemForm::Probabilistic(_) | ItemForm::Hybrid(_))
+            | None => ItemKind::Formula,
         };
         let family = (self.family)(temporal_kind, &item.claim);
         let mut built = match (&item.form, route) {
@@ -1460,9 +1491,10 @@ impl<'a> WorkInputs<'_, 'a> {
             {
                 let form = match &item.form {
                     Some(ItemForm::Temporal(form)) => form.clone(),
-                    Some(ItemForm::Probabilistic(_) | ItemForm::Hybrid(_)) | None => {
-                        super::super::TemporalItem::default()
-                    }
+                    Some(
+                        ItemForm::FiniteHyper(_) | ItemForm::Probabilistic(_) | ItemForm::Hybrid(_),
+                    )
+                    | None => super::super::TemporalItem::default(),
                 };
                 PackageInvariantSubject::new(
                     PackageItemInputs {
@@ -1487,7 +1519,8 @@ impl<'a> WorkInputs<'_, 'a> {
                 Some(crate::protocol_analysis::manifest::BACKEND_ID)
             }
             Some(ItemForm::Temporal(_)) => Some(crate::model_check::manifest::BACKEND_ID),
-            Some(ItemForm::Probabilistic(_) | ItemForm::Hybrid(_)) | None => None,
+            Some(ItemForm::FiniteHyper(_) | ItemForm::Probabilistic(_) | ItemForm::Hybrid(_))
+            | None => None,
         };
         if let (Some(expected), fsl_route::routing::Disposition::Supported(candidate)) =
             (expected, &negotiated.disposition)

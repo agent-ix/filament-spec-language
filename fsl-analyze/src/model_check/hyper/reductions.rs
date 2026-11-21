@@ -4,11 +4,17 @@
 //! before any state is expanded.
 //!
 //! A reduction applies exactly where ADR-023 §5's row for the item's form
-//! reads "yes". A row that reads "no" settles the item V-6
-//! `ReductionNotPreserving`; a row that reads "yes" for a reduction this
-//! engine does not offer for a hyper item settles it V-8 `unsupported`, as
+//! reads "yes" and the item meets FR-174's hyper reduction eligibility rule,
+//! which admits an HP-2 item alone: its product state is a tuple of component
+//! states advanced in lockstep, the state both reductions act on. A row that
+//! reads "no" settles the item V-6 `ReductionNotPreserving`; a row that reads
+//! "yes" for an item the rule does not admit settles it V-8 `unsupported`, as
 //! ADR-021 RV-6 does. Copy-swap is not selected, so it has no place here: the
 //! compiler applies it when the clause has the symmetry.
+//!
+//! The closed finite-execution route does not execute selected reductions.
+//! Its preserving selections settle `unsupported` before admission or expansion;
+//! executing those selections remains an FR-174 eligibility gap.
 
 use filament_semantic_value::fairness::FairnessGranularity;
 use fsl_foundation::ReductionKind;
@@ -69,9 +75,11 @@ fn preserves(reduction: ReductionKind, row: Row, clause: &CheckedHyperClause) ->
 /// The cause that settles the item before any expansion, when the request
 /// selects a reduction EN-1 does not admit for `clause`: the first selected
 /// reduction, in the order symmetry, partial-order, constraint, whose row
-/// reads "no"; failing that, the first selected reduction the engine does not
-/// offer for a hyper item. `None` when the request selects none, or the clause
-/// is not one this engine decides.
+/// reads "no"; failing that, the first selected reduction when the item is
+/// not an infinite-trace HP-2 item, the product on which the engine executes
+/// reductions. A finite HP-2 selection is explicitly unsupported, rather than
+/// ignored by closed enumeration. `None` when the request selects none, or
+/// the clause is not one this engine decides.
 pub(super) fn refusal(
     reductions: &Reductions,
     clause: &CheckedHyperClause,
@@ -87,6 +95,9 @@ pub(super) fn refusal(
             reduction,
             form: clause.form().cloned()?,
         });
+    }
+    if matches!(row, Row::Universal) && !super::uses_closed_executions(clause) {
+        return None;
     }
     selected
         .first()

@@ -11,12 +11,12 @@ use fsl_semantics::check::CheckedGraph;
 use fsl_semantics::family::ClaimExtent;
 
 use super::population_bound::{self, assert_population_node, population_nodes, type_occurrences};
-use super::reachability::{applications, lower_over, model_node, Lowered};
+use super::reachability::{Lowered, applications, lower_over, model_node};
 use super::*;
 
 /// The structural key of the unbounded `reaches(self, self, trail)` node over
-/// `Order`, as `origin/main` computes it (TC-1047 row 3).
-const TRAIL_REACHES_KEY: &str = "NodeKey(pkg:[\"expression\",\"reachability\",node(pkg:[\"value\",\"parameter\",\"name\",node(pkg:[\"scalar_type\",\"text\",]:0),\"self\",\"level\",node(pkg:[\"scalar_type\",\"integer\",]:0),\"0\",node(pkg:[\"composite_type\",\"reference\",node(acme/orders:[\"model\",\"object_type\",\"ix://acme/orders/Order\",]:0),]:0),]:0),\"filament.op.model.reaches_field\",\"reaches\",node(pkg:[\"scalar_type\",\"boolean\",]:0),]:0)";
+/// `Order`, retaining both operand positions (TC-1047 row 3).
+const TRAIL_REACHES_KEY: &str = "NodeKey(pkg:[\"expression\",\"reachability\",node(pkg:[\"value\",\"parameter\",\"name\",node(pkg:[\"scalar_type\",\"text\",]:0),\"self\",\"level\",node(pkg:[\"scalar_type\",\"integer\",]:0),\"0\",node(pkg:[\"composite_type\",\"reference\",node(acme/orders:[\"model\",\"object_type\",\"ix://acme/orders/Order\",]:0),]:0),]:0),node(pkg:[\"value\",\"parameter\",\"name\",node(pkg:[\"scalar_type\",\"text\",]:0),\"self\",\"level\",node(pkg:[\"scalar_type\",\"integer\",]:0),\"0\",node(pkg:[\"composite_type\",\"reference\",node(acme/orders:[\"model\",\"object_type\",\"ix://acme/orders/Order\",]:0),]:0),]:0),\"filament.op.model.reaches_field\",\"reaches\",node(pkg:[\"scalar_type\",\"boolean\",]:0),node(pkg:[\"scalar_type\",\"boolean\",]:0),]:0)";
 
 const BOUND: &str = "bound OrdersBound on M::orders [4]";
 const FAV_LOOP: &str = "invariant FavLoop using v on M::Person at current \
@@ -47,9 +47,9 @@ fn sequence(mut field: Value, lower: u64, upper: u64) -> Value {
 }
 
 fn population(name: &str, member: &str) -> Value {
-    let mut population = serde_json::from_slice::<Value>(&population_bound::document()).unwrap()
-        ["populations"][0]
-        .clone();
+    let mut population =
+        serde_json::from_slice::<Value>(&population_bound::document()).unwrap()["populations"][0]
+            .clone();
     let identity = format!("ix://acme/orders/{name}");
     population["identity"] = json!(identity);
     population["displayName"] = json!(identity);
@@ -257,8 +257,8 @@ fn an_unbounded_field_edge_keeps_its_member_and_node_identity() {
         assert_eq!(population_nodes(&lowered.wire), Vec::<&Value>::new());
     }
     // The application's node id is the one TC-1047 row 3 records: the
-    // structural key `origin/main` gives the same clause, pinned here, so a
-    // change that re-keys field members fails.
+    // structural key preserves both self operands and the result and semantic
+    // type positions, so an accidental change to any field member fails.
     let lowered = lower(&Populations::R, &loop_over("trail"));
     let wire = &lowered.wire;
     let id = &applications(wire, "filament.op.model.reaches_field")[0]["node_id"];

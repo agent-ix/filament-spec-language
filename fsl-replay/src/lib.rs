@@ -161,9 +161,10 @@ pub use certificate::closed_form::task_set::{
     TaskSetRefusal, TimeMember, Wcet,
 };
 pub use certificate::closure::{
-    check_closure, check_components, check_protocol_closure, check_protocol_components,
-    CertificateRejection, CertificateRequest, ClosureCertificate, ClosureRefusal, ProductStateRef,
-    ProtocolCertificateRequest, TemporalCertificateCheck,
+    check_closure, check_components, check_components_over_stutter_closure,
+    check_protocol_closure, check_protocol_components, CertificateRejection, CertificateRequest,
+    ClosureCertificate, ClosureRefusal, ProductStateRef, ProtocolCertificateRequest,
+    TemporalCertificateCheck,
 };
 pub use certificate::scc::{Component, ComponentCertificate, ComponentWitness, ProofCertificate};
 pub use certificate::simulation::{
@@ -187,7 +188,7 @@ pub use certificate::task_product::{
 };
 pub use certificate::zone::{LuBounds, Zone, ZoneError};
 pub use certificate::zone_certificate::{
-    check_zone_certificate, explore_task_product, recomputed_member, AcceptanceSet, CertEdge,
+    check_free_delay_zone_certificate, check_zone_certificate, explore_task_product, recomputed_member, AcceptanceSet, CertEdge,
     CertNode, CertificateCheckLimits, CertificateItem, CertifiedItem, CheckerFault,
     ComponentReason, Components, DivergenceWitness, DivergentTarget, FairnessMember, ItemIdentity,
     NonZeno, ProductMark, QuotientEdge, QuotientIdentity, QuotientInitial, QuotientStop,
@@ -265,11 +266,16 @@ pub use identity::{
 };
 pub use limits::{AccountingLimits, CallerLimits, EngineLimits, RenderLimits};
 pub use model_check::counterexample::{
-    undefined_finding, ClaimPredicate, CounterexampleKind, Lasso, MappingSite, ModelStep,
+    undefined_finding, ClaimPredicate, CounterexampleKind, Lasso, LoopProofCounterexample,
+    LoopProofFailure, LoopProofObligation, MappingSite, ModelStep,
     ObservedTemporalCounterexample, ObservedTemporalKind, ObservedTemporalStep, Race,
     TemporalCounterexample, TimedPoint, UndefinedEvaluation, UndefinedLocus, UndefinedSite,
 };
 pub use model_check::existential_outcome::{ExistentialInstanceOutcome, ExistentialOutcome};
+pub use model_check::finite_hyper_replay::{
+    replay_finite_hyper_refutation, reproduce_finite_hyper_refutation,
+    ReproducedFiniteHyperRefutation,
+};
 pub use model_check::graph_replay::{
     replay_model_graph, replay_model_graph_from_package, replay_model_graph_with_cancel,
     replay_model_graph_with_cancel_and_temporal_selections,
@@ -314,7 +320,8 @@ pub use model_check::outcome::{
     MemoryCause, ModelCheckOutcome, ReductionCause, RunStats, UndecidedCause,
 };
 pub use model_check::refinement_replay::{
-    replay_protocol_assumption_witness, replay_refinement_trace, replay_timed_refinement_trace,
+    replay_free_delay_refinement_trace, replay_protocol_assumption_witness,
+    replay_refinement_trace, replay_timed_refinement_trace,
     ProtocolAssumptionReplaySettlement, RefinementTraceSettlement,
 };
 pub use model_check::refinement_settle::{
@@ -335,8 +342,9 @@ pub use model_check::replay::{
     ProtocolTraceRun, ProtocolTraceSubject, StrongFairnessHint, TimedReplay,
 };
 pub use model_check::settle::{
-    settle_model_check, settle_protocol_check, CertificateChecker, Execution, ModelCheckRecord,
-    RecordWarning, ResultLabel, Truth, EXPLICIT_STATE, K_INDUCTION,
+    settle_model_check, settle_model_check_over_stutter_closure, settle_protocol_check,
+    CertificateChecker, Execution, ModelCheckRecord, RecordWarning, ResultLabel, Truth,
+    EXPLICIT_STATE, K_INDUCTION,
 };
 pub use model_check::smt_query::{
     encode_smt_query, Refusal, SmtEncodingLimits, SmtEncodingRefusal, SmtQueryKind,
@@ -371,7 +379,8 @@ pub use refinement_query::{
 };
 
 pub use refinement::{
-    abstract_classes, check_initial, check_protocol_initial, check_protocol_state_relations,
+    abstract_classes, candidate_lasso_has_fair_run, CandidateFairState, CandidateFairStep,
+    CandidateLivenessError, check_initial, check_protocol_initial, check_protocol_state_relations,
     check_protocol_step, check_step, initial_history, map_state, open_protocol_systems,
     open_systems, protocol_observation_label, protocol_transition_class, step_history,
     step_view_over, AbstractClass, AbstractInitial, AbstractProtocolSystem, AssumptionIdentity,
@@ -400,7 +409,7 @@ pub use outcome::{
     assignments_wire, certificate_identity_wire, claim_locus_wire, graph_evidence_wire,
     omitted_witnesses, sampled_witness_wire, OmittedWitness, WitnessOmission,
     hyper_counterexample_wire,
-    probabilistic_wire, protocol_temporal_wire, read_task_temporal_counterexample,
+    probabilistic_wire, probabilistic_undefined_wire, protocol_temporal_wire, read_task_temporal_counterexample,
     read_task_temporal_document, read_temporal_counterexample, replay_model_trace_document,
     state_key_wire, task_product_transition_wire, ReadCounterexample, TraceAlphabet,
     replay_task_product_trace, task_source_transition_wire, task_temporal_wire,
@@ -457,6 +466,7 @@ pub use probability_certificate::{
     ProbabilitySourceRequest,
     ProbabilityStateEvent, ProbabilityWitnessError, ProbabilityWitnessPath,
     ProbabilityWitnessReplay, ProbabilityWitnessStep, ReproducedProbabilityWitness,
+    ProbabilityUndefinedWitness, replay_probabilistic_undefined,
     WeightedLongRunProbabilityDocument,
 };
 #[cfg(feature = "test-support")]

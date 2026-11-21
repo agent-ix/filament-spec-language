@@ -81,11 +81,6 @@ const CLAUSES: &[(&str, &str)] = &[
         "MappedAll",
         "forall(n in map(m in ints(sequence[0, self.versionNumber]): m + 1): n < 500)",
     ),
-    (
-        "RefusedDomain",
-        "forall(n in ints(sequence[0, count<Zero>(m in ints(sequence[self.versionNumber]): m > 0)]): \
-         n < 500)",
-    ),
     ("FloatOrder", "fl(ONE) < fl(TWO)"),
     ("FloatNot", "not (fl(ONE) < fl(TWO))"),
     ("FloatLet", "let k = 500 in fl(ONE) < fl(TWO)"),
@@ -153,18 +148,18 @@ fn tc_3121_unit_text() -> String {
             !line.starts_with("invariant ")
                 || line.starts_with("invariant AllBelow ")
                 || line.starts_with("invariant NotAllBelow ")
-                || line.starts_with("invariant RefusedDomain ")
                 || line.starts_with("invariant MatchesParent ")
                 || line.starts_with("invariant AtLeastParent ")
         })
         .collect::<Vec<_>>()
         .join("\n");
-    let direct_refusal = "forall(n in ints(sequence[0, count<Zero>(m in ints(sequence[self.versionNumber]): m > 0)]): n < 500)";
-    let function_refusal = "forall(n in ints(sequence[0, z(self.versionNumber)]): n < 500)";
-    unit = unit.replace(direct_refusal, function_refusal);
     unit.push_str(
         "\nfunction z using v(x: Integer): Int[0, 0] pure { \
          count<Zero>(m in ints(sequence[x]): m > 0) }\n",
+    );
+    unit.push_str(
+        "invariant RefusedDomain using v on Config::ConfigVersion at current { \
+         forall(n in ints(sequence[0, z(self.versionNumber)]): n < 500) }\n",
     );
     unit
 }
@@ -369,7 +364,6 @@ fn comparison_witness_unit() -> Unit {
 
 #[trace("FR-003-AC-9")]
 #[test]
-#[ignore = "QSL-2173/QSL-2391: Float equality schedules are not emitted for the ConfigVersion witness fixture; re-enable when the FR-650 IR support lands."]
 fn private_witness_and_codec_sources_keep_format_identity() {
     let _ = witness_unit();
     let _ = codec_unit();
@@ -629,7 +623,7 @@ fn assert_snapshot_refusal(
 /// pointer for snapshot defects; a valid snapshot has no admission item.
 #[trace("TC-465", "FR-106-AC-3")]
 #[test]
-#[ignore = "QSL-2173/QSL-2391: Float equality schedules are not emitted for the ConfigVersion witness fixture; re-enable when the FR-650 IR support lands."]
+#[ignore = "QSL-2173 completed; current blocker has no assigned owner: the missing-member snapshot refusal for the ConfigVersion fixture is not produced as the test expects; admission refuses with invalid_runtime_input/missing-member at a different member and path"]
 fn snapshot_admission_refusal_witnesses_name_object_member_and_path() {
     assert_snapshot_refusal(
         "missing-member",
@@ -712,7 +706,6 @@ pub(super) fn decisive_witness_wire() -> serde_json::Value {
 /// scalar payload or path identity is outside the canonical domain.
 #[trace("TC-742", "FR-267-AC-2")]
 #[test]
-#[ignore = "QSL-2173/QSL-2391: Float equality schedules are not emitted for the ConfigVersion witness fixture; re-enable when the FR-650 IR support lands."]
 fn native_result_two_reader_rejects_invalid_witness_scalar_and_path() {
     let report = run("AllBelow", Snapshot::High, "mid");
     let bytes = crate::spine::write_clause_run_result(&report).unwrap();
@@ -754,7 +747,6 @@ fn native_result_two_reader_rejects_invalid_witness_scalar_and_path() {
 /// decisive record, while closed and exhausted runs omit the record.
 #[trace("TC-742", "FR-267-AC-1")]
 #[test]
-#[ignore = "QSL-2173/QSL-2391: Float equality schedules are not emitted for the ConfigVersion witness fixture; re-enable when the FR-650 IR support lands."]
 fn native_result_two_writes_decisive_closed_and_unavailable_reports() {
     for (report, basis, has_witness) in [
         (
@@ -833,7 +825,6 @@ fn native_result_two_reader_rejects_category_verdict_mismatch() {
 /// deletion, `null` and a wrong shape refuse at that member.
 #[trace("TC-742", "FR-267-AC-1", "FR-267-AC-2", "FR-267-AC-9")]
 #[test]
-#[ignore = "QSL-2173/QSL-2391: Float equality schedules are not emitted for the ConfigVersion witness fixture; re-enable when the FR-650 IR support lands."]
 fn native_result_two_member_inventory_refuses_independent_edits() {
     let report = run("AllBelow", Snapshot::High, "mid");
     let bytes = crate::spine::write_clause_run_result(&report).unwrap();
@@ -929,7 +920,6 @@ fn native_result_two_member_inventory_refuses_independent_edits() {
 /// its separating record, or attach a record to a closed-scope report.
 #[trace("TC-742", "FR-267-AC-1")]
 #[test]
-#[ignore = "QSL-2173/QSL-2391: Float equality schedules are not emitted for the ConfigVersion witness fixture; re-enable when the FR-650 IR support lands."]
 fn native_result_two_writer_refuses_inconsistent_basis_and_witness() {
     let mut decisive = run("AllBelow", Snapshot::High, "mid");
     decisive.witness = None;
@@ -950,7 +940,6 @@ fn native_result_two_writer_refuses_inconsistent_basis_and_witness() {
 /// refuses at the member it changed.
 #[trace("TC-742", "FR-267-AC-2")]
 #[test]
-#[ignore = "QSL-2173/QSL-2391: Float equality schedules are not emitted for the ConfigVersion witness fixture; re-enable when the FR-650 IR support lands."]
 fn native_result_two_reader_refuses_witness_basis_and_version_edits() {
     let report = run("AllBelow", Snapshot::High, "mid");
     let bytes = crate::spine::write_clause_run_result(&report).unwrap();
@@ -1000,7 +989,6 @@ fn native_result_two_reader_refuses_witness_basis_and_version_edits() {
 /// element through its canonical arena and resolves it with the package.
 #[trace("TC-742", "FR-267-AC-9")]
 #[test]
-#[ignore = "QSL-2173/QSL-2391: Float equality schedules are not emitted for the ConfigVersion witness fixture; re-enable when the FR-650 IR support lands."]
 fn native_result_two_reader_keeps_deciding_element_beyond_128_levels() {
     let unit = witness_unit();
     let report = run("AllBelow", Snapshot::High, "mid");
@@ -1195,7 +1183,6 @@ fn native_result_two_retains_internal_fault() {
 /// FR-267-AC-9: selection failures retain the FR-109 refusal record.
 #[trace("TC-742", "FR-267-AC-9")]
 #[test]
-#[ignore = "QSL-2173/QSL-2391: Float equality schedules are not emitted for the ConfigVersion witness fixture; re-enable when the FR-650 IR support lands."]
 fn native_result_two_retains_selection_refusal_record() {
     let report = run("Missing", Snapshot::Low, "child");
     let bytes = crate::spine::write_clause_run_result(&report).unwrap();
@@ -1445,7 +1432,6 @@ fn closed() -> Option<Derived> {
 /// `closed-scope` and no record.
 #[trace("TC-740", "FR-265-AC-1")]
 #[test]
-#[ignore = "QSL-2173/QSL-2391: Float equality schedules are not emitted for the ConfigVersion witness fixture; re-enable when the FR-650 IR support lands."]
 fn tc_740_a_refuted_forall_derives_its_record_and_visits_nothing_after_the_stop() {
     let unit = witness_unit();
     assert_eq!(
@@ -1471,7 +1457,7 @@ fn tc_740_a_refuted_forall_derives_its_record_and_visits_nothing_after_the_stop(
 /// `closed-scope`.
 #[trace("TC-740", "FR-265-AC-2")]
 #[test]
-#[ignore = "QSL-2173/QSL-2391: Float equality schedules are not emitted for the ConfigVersion witness fixture; re-enable when the FR-650 IR support lands."]
+#[ignore = "QSL-2173 completed; current blocker has no assigned owner: the float-ordering ConfigVersion clause derives a DecisiveCounterexample record where the test expects a ClosedScope derivation with no record"]
 fn tc_740_a_satisfied_exists_or_negated_forall_derives_a_decisive_witness() {
     let unit = witness_unit();
     assert_eq!(
@@ -1549,42 +1535,36 @@ fn a_float_ordering_ends_the_path(clause: &str, truth: bool) {
 
 #[trace("TC-740", "FR-265-AC-3")]
 #[test]
-#[ignore = "QSL-2173/QSL-2391: Float equality schedules are not emitted for the ConfigVersion witness fixture; re-enable when the FR-650 IR support lands."]
 fn tc_740_a_float_ordering_clause_ends_the_path_at_closed_scope() {
     a_float_ordering_ends_the_path("FloatOrder", true);
 }
 
 #[trace("TC-740", "FR-265-AC-3")]
 #[test]
-#[ignore = "QSL-2173/QSL-2391: Float equality schedules are not emitted for the ConfigVersion witness fixture; re-enable when the FR-650 IR support lands."]
 fn tc_740_a_float_ordering_under_not_ends_the_path_at_closed_scope() {
     a_float_ordering_ends_the_path("FloatNot", false);
 }
 
 #[trace("TC-740", "FR-265-AC-3")]
 #[test]
-#[ignore = "QSL-2173/QSL-2391: Float equality schedules are not emitted for the ConfigVersion witness fixture; re-enable when the FR-650 IR support lands."]
 fn tc_740_a_float_ordering_under_let_ends_the_path_at_closed_scope() {
     a_float_ordering_ends_the_path("FloatLet", true);
 }
 
 #[trace("TC-740", "FR-265-AC-3")]
 #[test]
-#[ignore = "QSL-2173/QSL-2391: Float equality schedules are not emitted for the ConfigVersion witness fixture; re-enable when the FR-650 IR support lands."]
 fn tc_740_a_float_ordering_as_a_walked_or_operand_ends_the_path_at_closed_scope() {
     a_float_ordering_ends_the_path("FloatOrOperand", true);
 }
 
 #[trace("TC-740", "FR-265-AC-3")]
 #[test]
-#[ignore = "QSL-2173/QSL-2391: Float equality schedules are not emitted for the ConfigVersion witness fixture; re-enable when the FR-650 IR support lands."]
 fn tc_740_a_float_ordering_as_a_walked_and_operand_ends_the_path_at_closed_scope() {
     a_float_ordering_ends_the_path("FloatAndOperand", true);
 }
 
 #[trace("TC-740", "FR-265-AC-3")]
 #[test]
-#[ignore = "QSL-2173/QSL-2391: Float equality schedules are not emitted for the ConfigVersion witness fixture; re-enable when the FR-650 IR support lands."]
 fn tc_740_a_float_ordering_as_an_implies_consequent_ends_the_path_at_closed_scope() {
     a_float_ordering_ends_the_path("FloatImpliesOperand", true);
 }
@@ -1593,7 +1573,7 @@ fn tc_740_a_float_ordering_as_an_implies_consequent_ends_the_path_at_closed_scop
 /// and `or`.
 #[trace("TC-740", "FR-265-AC-3")]
 #[test]
-#[ignore = "QSL-2173/QSL-2391: Float equality schedules are not emitted for the ConfigVersion witness fixture; re-enable when the FR-650 IR support lands."]
+#[ignore = "QSL-2173 completed; current blocker has no assigned owner: the ConfigVersion clause derives a DecisiveCounterexample record where the test expects a ClosedScope derivation with no record"]
 fn tc_740_the_decision_path_reaches_the_decisive_quantifier() {
     let unit = witness_unit();
     let Some(Derived {
@@ -1642,7 +1622,6 @@ fn tc_740_the_decision_path_reaches_the_decisive_quantifier() {
 /// element 0 at index 0, and no inner occurrence.
 #[trace("TC-740", "FR-265-AC-4")]
 #[test]
-#[ignore = "QSL-2173/QSL-2391: Float equality schedules are not emitted for the ConfigVersion witness fixture; re-enable when the FR-650 IR support lands."]
 fn tc_740_a_nested_forall_records_the_outer_occurrence() {
     let unit = witness_unit();
     assert_eq!(
@@ -1667,7 +1646,6 @@ fn tc_740_a_nested_forall_records_the_outer_occurrence() {
 /// value, each on the built literal's path.
 #[trace("TC-740", "FR-265-AC-5")]
 #[test]
-#[ignore = "QSL-2173/QSL-2391: Float equality schedules are not emitted for the ConfigVersion witness fixture; re-enable when the FR-650 IR support lands."]
 fn tc_740_computed_domains_record_the_source_position() {
     let unit = witness_unit();
     assert_eq!(
@@ -1706,7 +1684,6 @@ fn tc_740_computed_domains_record_the_source_position() {
 /// an empty filtered domain derives `closed-scope`.
 #[trace("TC-740", "FR-265-AC-6")]
 #[test]
-#[ignore = "QSL-2173/QSL-2391: Float equality schedules are not emitted for the ConfigVersion witness fixture; re-enable when the FR-650 IR support lands."]
 fn tc_740_no_boolean_derives_no_basis() {
     let unit = witness_unit();
     let (_, evaluation, _) = evaluate(&unit, "AllBelow", Snapshot::High, "mid", 0);
@@ -1734,7 +1711,6 @@ fn tc_740_no_boolean_derives_no_basis() {
 /// and record, and two runs give equal ones.
 #[trace("TC-741", "FR-266-AC-1")]
 #[test]
-#[ignore = "QSL-2173/QSL-2391: Float equality schedules are not emitted for the ConfigVersion witness fixture; re-enable when the FR-650 IR support lands."]
 fn tc_741_clause_reports_carry_the_derived_basis_and_witness() {
     let unit = witness_unit();
     let refuted = run("AllBelow", Snapshot::High, "mid");
@@ -2758,7 +2734,6 @@ fn witness_arm(result: &StateClauseReplayResult) -> &crate::WitnessArmResult {
 /// the `Input` arm; nested and filtered domains reproduce too.
 #[trace("TC-743", "FR-268-AC-1")]
 #[test]
-#[ignore = "QSL-2173/QSL-2391: Float equality schedules are not emitted for the ConfigVersion witness fixture; re-enable when the FR-650 IR support lands."]
 fn tc_743_a_matching_record_that_separates_reproduces() {
     let unit = witness_unit();
     let record = all_below_record(&unit);
@@ -2838,7 +2813,6 @@ fn after_stop_record(unit: &Unit) -> SeparatingWitnessRecord {
 /// `inconclusive` with a `Witness` cause holding both records.
 #[trace("TC-743", "FR-268-AC-2")]
 #[test]
-#[ignore = "QSL-2173/QSL-2391: Float equality schedules are not emitted for the ConfigVersion witness fixture; re-enable when the FR-650 IR support lands."]
 fn tc_743_a_differing_or_missing_record_settles_inconclusive() {
     let unit = witness_unit();
     let derived = all_below_record(&unit);
@@ -2893,7 +2867,6 @@ fn unmet(step: SeparationStep) -> SeparationOutcome {
 /// element step (ADR-031 SW-5 as amended by ADR-036 PA-24).
 #[trace("TC-1414")]
 #[test]
-#[ignore = "QSL-2173/QSL-2391: Float equality schedules are not emitted for the ConfigVersion witness fixture; re-enable when the FR-650 IR support lands."]
 fn a_protocol_record_or_a_quantifierless_record_fails_the_element_step() {
     let unit = witness_unit();
     let state = all_below_record(&unit);
@@ -2923,7 +2896,6 @@ fn a_protocol_record_or_a_quantifierless_record_fails_the_element_step() {
 /// separation check, called on its own.
 #[trace("TC-743", "FR-268-AC-3")]
 #[test]
-#[ignore = "QSL-2173/QSL-2391: Float equality schedules are not emitted for the ConfigVersion witness fixture; re-enable when the FR-650 IR support lands."]
 fn tc_743_the_separation_check_names_its_failing_step() {
     let unit = witness_unit();
     let record = all_below_record(&unit);
@@ -2976,22 +2948,59 @@ fn tc_743_the_separation_check_names_its_failing_step() {
         assert_eq!(check(&unit, "AllBelow", failing, 1_000_000), unmet(step));
     }
 
-    // A domain refused on `high`: `count<Zero>` of one element.
-    let refused = SeparatingWitnessRecord {
-        quantifier: Some(occurrence(&unit, "RefusedDomain", &[], Operator::Quantify)),
-        ..record.clone()
-    };
-    let SeparationOutcome::Failed(SeparationStep::Domain, SeparationReason::Refused(refusal)) =
-        check(&unit, "RefusedDomain", &refused, 1_000_000)
-    else {
-        panic!("a refused domain fails step 2 with its refusal record");
-    };
-    assert_eq!(refusal.code, "integer_out_of_domain");
-
+    assert_count_refusal_fails_the_domain_step();
     assert_eq!(
         check(&unit, "AllBelow", &record, 0),
         SeparationOutcome::Exhausted
     );
+}
+
+/// A kernel function's refused count retains the separation domain failure.
+#[trace("TC-743", "FR-268-AC-3")]
+#[test]
+fn count_refusal_in_a_called_kernel_function_fails_the_domain_step() {
+    assert_count_refusal_fails_the_domain_step();
+}
+
+fn assert_count_refusal_fails_the_domain_step() {
+    let (base, packages) = config_version_unit_and_packages();
+    let text = base + "type Zero = Int[0, 0];\n\
+        function z using v(x: Integer): Zero pure { count<Zero>(m in ints(sequence[x]): m > 0) }\n\
+        function ints using v(xs: Sequence<Integer>[0, 3]): Sequence<Integer>[0, 3] pure { xs }\n\
+        invariant RefusedDomain using v on Config::ConfigVersion at current { forall(n in ints(sequence[0, z(self.versionNumber)]): n < 500) }\n";
+    let compiled = crate::spine::lifecycle::compose_in_mode(
+        source(),
+        "witness.native",
+        text.as_bytes(),
+        &packages,
+        &DependencyInput::default(),
+        SpineLimits::default(),
+        crate::spine::lifecycle::ComposeModes {
+            check_mode: Some(CheckMode::Linked),
+            function_modes: &BTreeMap::from([("z".to_owned(), CheckMode::Kernel)]),
+        },
+    )
+    .expect("only the called function's count needs kernel checking");
+    let unit = Unit {
+        bytes: text.into_bytes(),
+        domain_document: config_version_domain_document(),
+        compiled,
+    };
+    let refused = built_record(
+        &unit,
+        "RefusedDomain",
+        &[],
+        &[0, 0],
+        integer(600),
+        1,
+        Snapshot::High,
+    );
+    let SeparationOutcome::Failed(SeparationStep::Domain, SeparationReason::Refused(refusal)) =
+        check(&unit, "RefusedDomain", &refused, 1_000_000)
+    else {
+        panic!("a refused count must fail separation step 2 with its refusal record");
+    };
+    assert_eq!(refusal.code, "integer_out_of_domain");
 }
 
 /// TC-744 step 2 (FR-269-AC-2): an `undefined` step evaluation maps to
@@ -3001,7 +3010,6 @@ fn tc_743_the_separation_check_names_its_failing_step() {
 /// evaluation such a step would return.
 #[trace("TC-744", "FR-269-AC-2")]
 #[test]
-#[ignore = "QSL-2173/QSL-2391: Float equality schedules are not emitted for the ConfigVersion witness fixture; re-enable when the FR-650 IR support lands."]
 fn tc_744_an_undefined_step_maps_to_undefined_evaluation() {
     let unit = witness_unit();
     let at = filament_semantic_value::location::ExpressionLocation::at(
@@ -3037,7 +3045,6 @@ fn tc_744_an_undefined_step_maps_to_undefined_evaluation() {
 /// refuses at decode; replaying one envelope twice gives equal results.
 #[trace("TC-743", "FR-268-AC-4")]
 #[test]
-#[ignore = "QSL-2173/QSL-2391: Float equality schedules are not emitted for the ConfigVersion witness fixture; re-enable when the FR-650 IR support lands."]
 fn tc_743_an_oversized_record_refuses_and_replay_is_deterministic() {
     let unit = witness_unit();
     let mut oversized = all_below_record(&unit);
@@ -3068,7 +3075,6 @@ fn tc_743_an_oversized_record_refuses_and_replay_is_deterministic() {
 /// result carries no record.
 #[trace("TC-744", "FR-269-AC-1")]
 #[test]
-#[ignore = "QSL-2173/QSL-2391: Float equality schedules are not emitted for the ConfigVersion witness fixture; re-enable when the FR-650 IR support lands."]
 fn tc_744_a_mismatch_holds_both_records_and_no_result_record() {
     let unit = witness_unit();
     let violation = Verdict::from_category(Category::Violation);
@@ -3095,7 +3101,6 @@ fn tc_744_a_mismatch_holds_both_records_and_no_result_record() {
 /// differing only in `derived` compare unequal.
 #[trace("TC-744", "FR-269-AC-3")]
 #[test]
-#[ignore = "QSL-2173/QSL-2391: Float equality schedules are not emitted for the ConfigVersion witness fixture; re-enable when the FR-650 IR support lands."]
 fn tc_744_the_witness_cause_round_trips_and_reads_strictly() {
     let unit = witness_unit();
     let result = replay_with(
@@ -3168,7 +3173,6 @@ fn tc_744_the_witness_cause_round_trips_and_reads_strictly() {
 /// one that holds agrees; an exhausted check settles no witness check.
 #[trace("TC-744", "FR-269-AC-2")]
 #[test]
-#[ignore = "QSL-2173/QSL-2391: Float equality schedules are not emitted for the ConfigVersion witness fixture; re-enable when the FR-650 IR support lands."]
 fn tc_744_a_failed_separation_check_disagrees_naming_its_step() {
     let unit = witness_unit();
     let record = all_below_record(&unit);
@@ -3261,7 +3265,6 @@ fn cause_deciding(unit: &Unit, element: Value) -> DisagreementCause {
 /// same stack.
 #[trace("TC-744", "FR-269-AC-4")]
 #[test]
-#[ignore = "QSL-2173/QSL-2391: Float equality schedules are not emitted for the ConfigVersion witness fixture; re-enable when the FR-650 IR support lands."]
 fn a_100000_deep_deciding_element_round_trips_on_a_small_stack() {
     const DEEP: usize = 100_000;
     let unit = codec_unit();
@@ -3331,7 +3334,6 @@ fn a_100000_deep_deciding_element_round_trips_on_a_small_stack() {
 /// does not hold refuses.
 #[trace("TC-744", "FR-269-AC-3")]
 #[test]
-#[ignore = "QSL-2173/QSL-2391: Float equality schedules are not emitted for the ConfigVersion witness fixture; re-enable when the FR-650 IR support lands."]
 fn tc_744_every_deciding_element_kind_round_trips() {
     use filament_exact::{
         CardinalityBound, CollectionKind, CollectionType, Decimal, FieldValue, IeeeValue,
@@ -3593,7 +3595,7 @@ fn metre_package() -> (fsl_package::CheckedPackage, filament_exact::UnitId) {
 /// unit table holds round-trips; the declared unit resolves by lookup.
 #[trace("TC-744", "FR-269-AC-3")]
 #[test]
-#[ignore = "QSL-2173/QSL-2391: Float equality schedules are not emitted for the ConfigVersion witness fixture; re-enable when the FR-650 IR support lands."]
+#[ignore = "QSL-2173 completed; current blocker has no assigned owner: the unit-table fixture package checks as an EmptyPackage refusal, so no unit quantity is built"]
 fn tc_744_a_declared_unit_quantity_round_trips() {
     let unit = witness_unit();
     let (package, metre) = metre_package();
@@ -3621,7 +3623,6 @@ fn tc_744_a_declared_unit_quantity_round_trips() {
 /// a field step and a member step of the same name read back distinct.
 #[trace("TC-744", "FR-269-AC-3")]
 #[test]
-#[ignore = "QSL-2173/QSL-2391: Float equality schedules are not emitted for the ConfigVersion witness fixture; re-enable when the FR-650 IR support lands."]
 fn tc_744_member_option_value_and_field_steps_round_trip() {
     let unit = witness_unit();
     let package = &unit.compiled.package;
@@ -3675,7 +3676,6 @@ fn tc_744_member_option_value_and_field_steps_round_trip() {
 /// cause or a field name is empty or not a catalog spelling, refuses.
 #[trace("TC-744", "FR-269-AC-3")]
 #[test]
-#[ignore = "QSL-2173/QSL-2391: Float equality schedules are not emitted for the ConfigVersion witness fixture; re-enable when the FR-650 IR support lands."]
 fn tc_744_a_refusal_reads_only_catalog_spellings() {
     let unit = witness_unit();
     let package = &unit.compiled.package;
@@ -3724,7 +3724,6 @@ fn tc_744_a_refusal_reads_only_catalog_spellings() {
 /// measured by those lengths and refuses past the reader bound.
 #[trace("TC-743", "FR-268-AC-4")]
 #[test]
-#[ignore = "QSL-2173/QSL-2391: Float equality schedules are not emitted for the ConfigVersion witness fixture; re-enable when the FR-650 IR support lands."]
 fn tc_743_long_text_or_object_identity_exceeds_the_reader_bound() {
     let unit = witness_unit();
     let long = "x".repeat(crate::bounds::DEFAULT_INPUT_BYTES + 1);
@@ -3778,7 +3777,6 @@ fn tc_743_long_text_or_object_identity_exceeds_the_reader_bound() {
 /// producer lands (QSL-1895).
 #[trace("FR-574-AC-2", "FR-574-AC-6", "TC-1414")]
 #[test]
-#[ignore = "QSL-2173/QSL-2391: Float equality schedules are not emitted for the ConfigVersion witness fixture; re-enable when the FR-650 IR support lands."]
 fn a_state_record_round_trips_unchanged_and_a_protocol_record_omits_quantifier_and_index() {
     use crate::result::CauseCodecError;
     let unit = codec_unit();
@@ -3927,7 +3925,6 @@ fn a_state_record_round_trips_unchanged_and_a_protocol_record_omits_quantifier_a
 /// `GuardedAll` are read at the built-list subject, at their index.
 #[trace("TC-1040", "FR-107-AC-12")]
 #[test]
-#[ignore = "QSL-2173/QSL-2391: Float equality schedules are not emitted for the ConfigVersion witness fixture; re-enable when the FR-650 IR support lands."]
 fn tc_1040_the_elements_of_a_built_list_are_read_at_their_index() {
     let unit = witness_unit();
     let (mid, evaluation, _) = evaluate(&unit, "GuardedAll", Snapshot::High, "mid", 1_000_000);

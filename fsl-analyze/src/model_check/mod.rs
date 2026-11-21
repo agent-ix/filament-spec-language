@@ -35,6 +35,7 @@ pub use check::{
     check_model, check_protocol, check_protocol_constrained, ModelCheckRefusal, ModelCheckRequest,
     ProtocolCheckRequest,
 };
+pub(crate) use check::check_model_with_stutter_closure;
 pub use fsl_replay::SubjectIdentity;
 pub use graph::{
     retain, retain_reduced, Ample, Choice, GraphExploration, ProductStateId, RetainedEdge,

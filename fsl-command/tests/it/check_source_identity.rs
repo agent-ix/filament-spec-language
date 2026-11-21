@@ -46,7 +46,6 @@ fn assert_named_by_path(outcome: &command::CheckOutcome, path: &str) {
 /// refusal names the same identity.
 #[test]
 #[trace("TC-2977", "FR-866-AC-6")]
-#[ignore = "QSL-2423: check_outcome names the checked source fsl-command/check-source instead of filament and the path as given"]
 fn a_check_refusal_names_the_supplied_file() {
     let directory = tempfile::tempdir().unwrap();
     let file = directory.path().join("malformed.fsl");

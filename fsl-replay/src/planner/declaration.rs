@@ -308,7 +308,7 @@ impl EnvSupplies {
 /// one only a `weak` one, and the granularity is equal or the needed
 /// constraint is the `whole` form of a supplied `each` constraint. The
 /// operation match is the caller's.
-pub(crate) fn strength_implies(
+pub fn strength_implies(
     (supplied_kind, supplied_granularity): (FairnessKind, FairnessGranularity),
     (needed_kind, needed_granularity): (FairnessKind, FairnessGranularity),
 ) -> bool {

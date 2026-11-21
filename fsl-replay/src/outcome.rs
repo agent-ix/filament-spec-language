@@ -28,7 +28,7 @@ pub mod hint;
 pub use counterexample::{
     CounterexampleWireError, ProtocolWire, assignments_wire, graph_evidence_wire,
     hyper_counterexample_wire,
-    sampled_witness_wire, probabilistic_wire, protocol_temporal_wire, task_temporal_wire, temporal_wire,
+    sampled_witness_wire, probabilistic_wire, probabilistic_undefined_wire, protocol_temporal_wire, task_temporal_wire, temporal_wire,
     task_temporal_wire_with_queue_growth,
     task_source_transition_wire, task_transition_wire,
     replay_model_trace_document, state_key_wire, task_product_transition_wire, ReadCounterexample,
@@ -169,7 +169,7 @@ impl From<SpineStage> for OutcomeStage {
         match stage {
             SpineStage::Source => Self::S1,
             SpineStage::Forms => Self::S2,
-            SpineStage::Intake => Self::I1,
+            SpineStage::Intake | SpineStage::Compile => Self::I1,
             SpineStage::Assembly | SpineStage::Check => Self::S3,
             SpineStage::Emit => Self::S4,
         }
@@ -184,7 +184,7 @@ impl From<SpineStage> for OutcomeStage {
 /// from clause runs"), written only on an item whose category is that
 /// category, which only a clause run gives
 /// ([`OutcomeItem::from_clause_run`]).
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ItemLabel {
     /// The claim was proved.
@@ -1363,10 +1363,8 @@ impl OutcomeItem {
                     | UnavailabilityCause::Disposition
                     | UnavailabilityCause::MissingFairnessPremise { .. }
                     | UnavailabilityCause::UnsupportedReduction { .. }
-                    | UnavailabilityCause::HiddenFieldLiveness
                     | UnavailabilityCause::UnsupportedHyperForm { .. }
                     | UnavailabilityCause::UnsupportedSmtFragment
-                    | UnavailabilityCause::StrongAbstractFairness
                     | UnavailabilityCause::NotMarkov
                     | UnavailabilityCause::ConfidenceBeyondPrecision
                     | UnavailabilityCause::PunctualInterval { .. } => {}
@@ -2147,6 +2145,10 @@ fn clause_run_cause(report: &ClauseRunReport, clause: &str) -> Option<ItemCause>
                 "resource_exhausted",
                 Some("resource_exhausted"),
             ))
+        }
+        ClauseDisposition::Evaluate(CallOutcome::Refused(refusal)) => {
+            let (CallRefusal::Record { code, .. } | CallRefusal::Family { code, .. }) = refusal;
+            Some(catalog(code.code(), code.cause()))
         }
         _ => classify_clause_run(report)
             .classification

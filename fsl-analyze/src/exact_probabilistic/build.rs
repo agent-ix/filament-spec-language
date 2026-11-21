@@ -434,7 +434,13 @@ impl Builder<'_, '_, '_, '_> {
             Err(Halt::Refusal(refusal)) => Err(BudgetedProductError::Product(refusal)),
             Err(Halt::Key(error)) => Err(BudgetedProductError::Key(error)),
             Err(Halt::UndefinedReading(cause)) => Err(BudgetedProductError::Undefined(cause)),
-            Err(Halt::Undefined(path)) => Ok((ProbBuild::Undefined(*path), None)),
+            Err(Halt::Undefined(path)) => {
+                let monitor = match self.plan {
+                    Plan::Formula(monitor) => Some(*monitor),
+                    _ => None,
+                };
+                Ok((ProbBuild::Undefined(*path), monitor))
+            }
         }
     }
 

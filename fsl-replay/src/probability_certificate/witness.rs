@@ -7,12 +7,15 @@ use crate::{ExactProbLimits, ModelCheckLimit};
 use filament_exact::Value as SemanticValue;
 use filament_semantic_value::model_transition::ModelTransition;
 use fsl_eval::simulation::model::{
-    PredicateReading, ScheduledIdentity, TimedSubjectRefusal, TimedSystem, TransitionId,
-    same_values,
+    same_values, PredicateReading, ScheduledIdentity, TimedSubjectRefusal, TimedSystem,
+    TransitionId,
 };
 use fsl_package::CheckedPackage;
 
 mod bounded;
+mod step;
+mod undefined;
+pub use undefined::{replay_probabilistic_undefined, ProbabilityUndefinedWitness};
 
 /// A semantic operation, draw and resulting state in a finite witness.
 #[derive(Clone, Debug)]
@@ -83,9 +86,14 @@ pub struct ProbabilisticCounterexample {
 pub struct ReproducedProbabilityWitness {
     evidence: ProbabilisticCounterexample,
     mass: Rational,
+    undefined: Option<Box<ProbabilityUndefinedWitness>>,
 }
 
 impl ReproducedProbabilityWitness {
+    /// The independently reproduced undefined evaluation, when this is an undefined path.
+    pub fn undefined(&self) -> Option<&ProbabilityUndefinedWitness> {
+        self.undefined.as_deref()
+    }
     /// The exact independently recomputed path-set mass.
     pub fn mass(&self) -> &Rational {
         &self.mass
@@ -126,6 +134,12 @@ pub enum ProbabilityWitnessError {
 impl From<ExactProbabilityGraphError> for ProbabilityWitnessError {
     fn from(value: ExactProbabilityGraphError) -> Self {
         Self::Graph(value)
+    }
+}
+
+impl From<fsl_eval::automaton::QualifiedBoundedError> for ProbabilityWitnessError {
+    fn from(error: fsl_eval::automaton::QualifiedBoundedError) -> Self {
+        bounded::monitor_error(error)
     }
 }
 
@@ -590,7 +604,11 @@ fn replay_probabilistic_witness_impl(
     let evidence = witness.clone();
     poll_cancel(cancel)?;
     Ok(ProbabilityWitnessReplay::Reproduced(Box::new(
-        ReproducedProbabilityWitness { evidence, mass },
+        ReproducedProbabilityWitness {
+            evidence,
+            mass,
+            undefined: None,
+        },
     )))
 }
 
@@ -677,5 +695,32 @@ fn check_bits(value: &Rational, max: u64) -> Result<(), ProbabilityWitnessError>
         })
     } else {
         Ok(())
+    }
+}
+
+impl From<ProbabilityDocumentError> for ProbabilityWitnessError {
+    fn from(error: ProbabilityDocumentError) -> Self {
+        match error {
+            ProbabilityDocumentError::Limit { limit, bound, .. } => Self::Limit {
+                limit: limit.model_limit(),
+                value: bound,
+            },
+            ProbabilityDocumentError::Cancelled(cause) => {
+                Self::Graph(ExactProbabilityGraphError::Cancelled(cause))
+            }
+            ProbabilityDocumentError::Graph(error) => Self::Graph(error),
+            ProbabilityDocumentError::Build(issue) => Self::Build(issue),
+            ProbabilityDocumentError::Accounting(incomplete) => Self::Limit {
+                limit: ModelCheckLimit::EvaluationMeter {
+                    counter: incomplete.limit_kind,
+                },
+                value: incomplete.limit,
+            },
+            ProbabilityDocumentError::IntegerText { bit_bound, .. } => Self::Limit {
+                limit: ModelCheckLimit::ExactProbMaxRationalBits,
+                value: bit_bound,
+            },
+            _ => Self::Refused,
+        }
     }
 }

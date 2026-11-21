@@ -554,7 +554,7 @@ fn supplied_dependency_internal_lists_reach_the_library_semantic_owner() {
 /// proof ran under and gives the same value as a library with no clause.
 #[trace("FR-640-AC-8", "FR-640-AC-9")]
 #[test]
-#[ignore = "QSL-2274: replay has no source for the clock selections only a library unit uses"]
+#[ignore = "QSL-2274 completed; current blocker has no assigned owner: replay still refuses a library whose bounded temporal rule `Late` has no selected clock configuration"]
 fn a_replay_recompiles_a_library_that_uses_its_own_clock() {
     let clocked = library(
         "test/units",

@@ -288,7 +288,6 @@ fn parse_takes_caller_limits_as_given() {
 /// two independent syntax errors at S1, exit 20, carrying both diagnostics.
 #[test]
 #[trace("TC-2154", "FR-762-AC-7")]
-#[ignore = "QSL-2195: declaration-level recovery after a syntax error not implemented yet"]
 fn a_recovered_unit_refuses_at_s1_with_both_diagnostics() {
     let text = "language \"ix:native\" edition \"1-draft\";\n\
          record A { x: Integer y: Integer; }\n\

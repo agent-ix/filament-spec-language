@@ -44,7 +44,8 @@ use filament_semantic_value::fairness::PropertyForm;
 use fsl_foundation::source::provenance::OccurrenceKey;
 use fsl_foundation::IdentityLimits;
 use fsl_semantics::check::{
-    Activation, CheckedTemporalClause, FormulaNode, FormulaNodeId, TemporalProfile, UnaryTemporal,
+    Activation, CheckedTemporalClause, FormulaNode, FormulaNodeId, ProtocolNodeId, TemporalProfile,
+    UnaryTemporal,
 };
 use quire_canonical::{Limits, Node, NodeRef};
 
@@ -138,6 +139,10 @@ pub enum ContextRoot {
     /// An invariant item (FR-951), by its `state`/`state_clause` node and
     /// `claim` occurrence: `["invariant", node, role, ordinal]`.
     Invariant(OccurrenceKey),
+    /// A protocol repeat's loop-invariant item, by checked repeat node.
+    LoopInvariant(ProtocolNodeId),
+    /// A protocol repeat's loop-termination item, by checked repeat node.
+    LoopTermination(ProtocolNodeId),
 }
 
 /// A context's activation: `"origin"` or `"each"` for a bounded monitor,
@@ -260,6 +265,26 @@ impl StateContext {
         }
     }
 
+    /// A protocol repeat's loop-invariant item.
+    pub fn loop_invariant(repeat: ProtocolNodeId) -> Self {
+        Self {
+            root: ContextRoot::LoopInvariant(repeat),
+            profile: TemporalProfile::InfiniteTrace,
+            activation: ContextActivation::Infinite,
+            binding: Vec::new(),
+        }
+    }
+
+    /// A protocol repeat's loop-termination item.
+    pub fn loop_termination(repeat: ProtocolNodeId) -> Self {
+        Self {
+            root: ContextRoot::LoopTermination(repeat),
+            profile: TemporalProfile::InfiniteTrace,
+            activation: ContextActivation::Infinite,
+            binding: Vec::new(),
+        }
+    }
+
     /// The context of `clause` at `occurrence` under `binding`: its profile
     /// and activation are the checked clause's own.
     pub fn clause(
@@ -311,6 +336,14 @@ impl StateContext {
                 node_enc(occurrence.node()),
                 Enc::text(occurrence.origin().role().as_str()),
                 Enc::text(occurrence.origin().ordinal().to_string()),
+            ]),
+            ContextRoot::LoopInvariant(repeat) => Enc::Array(vec![
+                Enc::text("loop-invariant"),
+                Enc::text(repeat.0.to_string()),
+            ]),
+            ContextRoot::LoopTermination(repeat) => Enc::Array(vec![
+                Enc::text("loop-termination"),
+                Enc::text(repeat.0.to_string()),
             ]),
         };
         let binding = self
@@ -392,6 +425,10 @@ pub enum SafetyItem {
     /// letter: its checked body true for every object of the state whose
     /// type conforms to its context type.
     StateInvariant,
+    /// FR-730's invariant obligation for one protocol repeat.
+    LoopInvariant,
+    /// FR-730's termination obligation for one protocol repeat.
+    LoopTermination,
 }
 
 /// A clause this module does not translate.
@@ -500,6 +537,22 @@ impl SafetyTranslation {
         Self::new(
             SafetyItem::StateInvariant,
             &StateContext::invariant(occurrence),
+        )
+    }
+
+    /// The safety-state key translation for a protocol repeat's invariant.
+    pub fn loop_invariant(repeat: ProtocolNodeId) -> Result<Self, KeyRefusal> {
+        Self::new(
+            SafetyItem::LoopInvariant,
+            &StateContext::loop_invariant(repeat),
+        )
+    }
+
+    /// The safety-state key translation for a protocol repeat's termination.
+    pub fn loop_termination(repeat: ProtocolNodeId) -> Result<Self, KeyRefusal> {
+        Self::new(
+            SafetyItem::LoopTermination,
+            &StateContext::loop_termination(repeat),
         )
     }
 

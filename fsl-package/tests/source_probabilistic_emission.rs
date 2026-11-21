@@ -463,26 +463,6 @@ fn a_workload_on_a_source_subtype_requires_each_ambiguous_ancestor_operation() {
     );
 }
 
-/// FR-740-AC-5's literal untimed unit has a `Clock` field. FR-230 refuses a
-/// clock of an untimed model at the model's declaration, in a stage that ends
-/// checking before any probabilistic declaration is read, so S3 gives
-/// `invalid_timed_model` and the criterion's `delay-on-untimed-model` is not
-/// reached.
-#[trace("TC-3012", "FR-740-AC-5")]
-#[test]
-#[ignore = "QSL-2699: FR-230 refuses the clock of an untimed source model (invalid_timed_model) before the delay is read; FR-740-AC-5's fixture names both causes"]
-fn a_delay_beside_an_untimed_source_clock_is_refused_as_untimed() {
-    let Err(refusals) = check(&format!("{TIMED_CLOCK}delay O::step ~ uniform;\n")) else {
-        panic!("a delay on an untimed source model checks");
-    };
-    assert!(
-        refusals
-            .iter()
-            .any(|refusal| refusal.cause.cause() == Some("delay-on-untimed-model")),
-        "{refusals:?}"
-    );
-}
-
 const TIMED_CLOCK: &str = "object O { d: Clock; operation step() modifies self.d; }\n";
 
 /// The QSL-2045 shape: a source `Switch` with a Boolean random parameter, a

@@ -412,6 +412,19 @@ pub enum ProtocolAnchorCause {
         /// The binder type's span.
         span: Span,
     },
+    /// FR-218 "Choice and repeat decisions": a `repeat` loop proof's variant
+    /// that is neither an integer nor a tuple of integers.
+    /// `ill_typed`/`type-mismatch`, at the variant.
+    VariantType {
+        /// The repeat's declared name.
+        repeat: String,
+        /// The type a variant may have: `Integer`, or a tuple of integers.
+        expected: Box<filament_exact::ValueType>,
+        /// The variant's checked type.
+        actual: Box<filament_exact::ValueType>,
+        /// The variant expression's span.
+        span: Span,
+    },
     /// FR-218 "Channels": a refusal of the clause checker inside a channel's
     /// FIFO key, checked over its binder and constants only. Its code and
     /// cause are the wrapped cause's.
@@ -1152,6 +1165,7 @@ impl ProtocolAnchorCause {
             | Self::NodeRole { span, .. }
             | Self::MissingChannel { span, .. }
             | Self::CarriesMismatch { span, .. }
+            | Self::VariantType { span, .. }
             | Self::CausalCycle { span, .. }
             | Self::NoProgress { span, .. }
             | Self::RepeatMaxConflict { span, .. }
@@ -1209,6 +1223,7 @@ impl ProtocolAnchorCause {
             | Self::WrongKind { .. }
             | Self::ChannelMismatch { .. }
             | Self::CarriesMismatch { .. }
+            | Self::VariantType { .. }
             | Self::ChannelDeliveryRange { .. }
             | Self::AwaitWindow { .. }
             | Self::KeyModelState { .. }
@@ -1274,6 +1289,7 @@ impl ProtocolAnchorCause {
             Self::WrongKind { .. }
             | Self::ChannelMismatch { .. }
             | Self::CarriesMismatch { .. }
+            | Self::VariantType { .. }
             | Self::ChannelDeliveryRange { .. }
             | Self::AwaitWindow { .. }
             | Self::RelatedEnd { .. }

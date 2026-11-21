@@ -19,7 +19,7 @@ use fsl_semantics::check::PackageDeclarations;
 use fsl_semantics::model::accounting::ModelNormalizationLimits;
 use fsl_semantics::model::intake::{admit_unit, meaning, package_input};
 use fsl_semantics::model::observation::{DocumentRef, ObservationLimits};
-use serde_json::{json, Value as Json};
+use serde_json::{Value as Json, json};
 
 pub(crate) const PACKAGE: &str = "test/timed";
 
@@ -597,6 +597,8 @@ pub(crate) struct Refining {
     concrete_initials: Vec<DocumentRef>,
     /// `A`'s initial state.
     pub(crate) abstract_initial: DocumentRef,
+    /// `A`'s candidate initial states, including hidden-field valuations.
+    pub(crate) abstract_initials: Vec<DocumentRef>,
 }
 
 /// The unit over the abstract model `A`, the package `abstract_document`
@@ -620,11 +622,11 @@ pub(crate) fn refining_from(
     abstract_inflight: bool,
 ) -> Result<Refining, Vec<(String, String, String)>> {
     let packages = package_input([abstract_document, concrete_document]).unwrap();
-    let abstract_package = serde_json::from_slice::<Json>(abstract_document).expect("JSON")
-        ["package"]["identity"]
-        .as_str()
-        .expect("an identity")
-        .to_owned();
+    let abstract_package =
+        serde_json::from_slice::<Json>(abstract_document).expect("JSON")["package"]["identity"]
+            .as_str()
+            .expect("an identity")
+            .to_owned();
     let unit = format!(
         "language \"ix:native\" edition \"1-draft\";\n\
          profile v = \"filament.model.complete/v1\";\n\
@@ -689,23 +691,36 @@ pub(crate) fn refining_from(
                 .collect::<Vec<_>>()
         })?;
     let mut snapshots = BTreeMap::new();
+    let abstract_has_hidden = serde_json::from_slice::<Json>(abstract_document)
+        .ok()
+        .and_then(|document| document["types"].as_array().cloned())
+        .is_some_and(|types| {
+            types.iter().any(|ty| {
+                ty["fields"]
+                    .as_array()
+                    .is_some_and(|fields| fields.iter().any(|field| field["name"] == "h"))
+            })
+        });
     let abstract_initial = snapshot(
         &mut snapshots,
         (&abstract_package, abstract_document),
         "a0",
         [abstract_inflight, false, false],
+        abstract_has_hidden.then_some(false),
     );
     let concrete_initial = snapshot(
         &mut snapshots,
         (PACKAGE, concrete_document),
         "m0",
         [false; 3],
+        None,
     );
     Ok(Refining {
         package: CheckedPackage::link(graph),
         packages,
         snapshots,
         concrete_initials: vec![concrete_initial],
+        abstract_initials: vec![abstract_initial.clone()],
         abstract_initial,
     })
 }
@@ -718,8 +733,16 @@ fn snapshot(
     (package, _document): (&str, &[u8]),
     name: &str,
     [inflight, late, retried]: [bool; 3],
+    hidden: Option<bool>,
 ) -> DocumentRef {
     let identity = |suffix: &str| format!("ix://{package}/{suffix}");
+    let mut fields = json!({
+        "phase": {"integer": "0"}, "inflight": {"boolean": inflight},
+        "late": {"boolean": late}, "retried": {"boolean": retried}
+    });
+    if let Some(hidden) = hidden {
+        fields["h"] = json!({"boolean": hidden});
+    }
     let snapshot = json!({
         "format": "filament.state.snapshot/v1",
         "identity": {"authority": "test", "identity": name},
@@ -728,8 +751,7 @@ fn snapshot(
         "anchor": {"kind": "initialization", "name": "start"},
         "populations": [{"population": identity("calls"), "complete": true,
             "objects": [{"key": "c", "type": identity("Call"),
-                "fields": {"phase": {"integer": "0"}, "inflight": {"boolean": inflight},
-                    "late": {"boolean": late}, "retried": {"boolean": retried}}}]}],
+                "fields": fields}]}],
     });
     let bytes = snapshot.to_string().into_bytes();
     snapshots.insert(
@@ -744,6 +766,37 @@ fn snapshot(
 }
 
 impl Refining {
+    /// This world with abstract initial candidates for each hidden `h`
+    /// valuation, preserving the package and other initial flags.
+    pub(crate) fn with_abstract_hidden_initials(
+        mut self,
+        abstract_document: &[u8],
+        values: &[bool],
+    ) -> Self {
+        let abstract_package =
+            serde_json::from_slice::<Json>(abstract_document).expect("JSON")["package"]["identity"]
+                .as_str()
+                .expect("an identity")
+                .to_owned();
+        self.abstract_initials = values
+            .iter()
+            .enumerate()
+            .map(|(index, &hidden)| {
+                snapshot(
+                    &mut self.snapshots,
+                    (&abstract_package, abstract_document),
+                    &format!("a{index}"),
+                    [false; 3],
+                    Some(hidden),
+                )
+            })
+            .collect();
+        if let Some(initial) = self.abstract_initials.first() {
+            self.abstract_initial = initial.clone();
+        }
+        self
+    }
+
     /// This world with `M`'s initial states replaced by one per entry of
     /// `states`, in order: `c`'s `inflight`, `late` and `retried`.
     /// `concrete_document` is `M`'s package.
@@ -761,6 +814,7 @@ impl Refining {
                     (PACKAGE, concrete_document),
                     &format!("m{index}"),
                     state,
+                    None,
                 )
             })
             .collect();

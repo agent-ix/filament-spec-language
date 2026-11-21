@@ -844,6 +844,44 @@ impl CheckedTemporalClause {
         &self.operators
     }
 
+    /// The first operator that counts trace positions, in formula order, as
+    /// the source spells its operator and bounds: `previous` and every
+    /// interval that is not the whole future (`[0,*]`). `None` means every
+    /// temporal operator preserves the positions of an infinite trace, so an
+    /// unbounded `once` or `historically` is not named.
+    pub fn position_counting_operator(&self) -> Option<String> {
+        use fsl_foundation::bound::TemporalUpper;
+
+        self.operators.iter().find_map(|operator| {
+            let interval = match &operator.interval {
+                Some(CheckedInterval::Steps(interval)) => {
+                    match (interval.lower(), interval.upper()) {
+                        (0, TemporalUpper::Open) => None,
+                        (lower, TemporalUpper::Finite(upper)) => Some(format!("[{lower},{upper}]")),
+                        (lower, TemporalUpper::Open) => Some(format!("[{lower},*]")),
+                    }
+                }
+                Some(CheckedInterval::Timed(_)) => Some("[time]".to_owned()),
+                None => None,
+            }?;
+            let name = match operator.operator {
+                TemporalOperator::Eventually => "eventually",
+                TemporalOperator::Always => "always",
+                TemporalOperator::Once => "once",
+                TemporalOperator::Historically => "historically",
+                TemporalOperator::Until => "until",
+                TemporalOperator::Release => "release",
+                TemporalOperator::Since => "since",
+                TemporalOperator::Triggered => "triggered",
+                TemporalOperator::Not
+                | TemporalOperator::And
+                | TemporalOperator::Or
+                | TemporalOperator::Implies => "",
+            };
+            Some(format!("{name}{interval}"))
+        })
+    }
+
     /// The formula's horizon (ADR-014 TR-4): `Some` under a bounded
     /// profile, `None` under infinite-trace.
     pub fn horizon(&self) -> Option<u64> {
@@ -2365,22 +2403,10 @@ pub(crate) enum HorizonFault {
 /// before the horizon is computed.
 pub(crate) fn horizon(formula: &TemporalFormulaForm) -> Result<u64, HorizonFault> {
     let nodes = formula.nodes();
-    let mut reach = vec![0_u64; nodes.len()];
-    for (index, node) in nodes.iter().enumerate().rev() {
+    let rows = nodes.iter().enumerate().filter_map(|(index, node)| {
         let TemporalNodeForm::Operator(operator) = node else {
-            continue;
+            return None;
         };
-        let mut deepest = 0_u64;
-        for operand in &operator.operands {
-            if operand.index() <= index {
-                return Err(HorizonFault::Broken("operands-follow-operator"));
-            }
-            deepest = deepest.max(
-                *reach
-                    .get(operand.index())
-                    .ok_or(HorizonFault::Broken("operand-in-arena"))?,
-            );
-        }
         let own = match &operator.interval {
             Some(OperatorInterval::Steps(IntervalForm {
                 upper: IntervalUpper::Finite(upper),
@@ -2388,21 +2414,93 @@ pub(crate) fn horizon(formula: &TemporalFormulaForm) -> Result<u64, HorizonFault
             })) => *upper,
             Some(OperatorInterval::Steps(_) | OperatorInterval::Timed(_)) | None => 0,
         };
-        let Some(total) = deepest.checked_add(own) else {
-            return Err(HorizonFault::Overflow {
+        Some(ReachRow {
+            index,
+            operands: operator
+                .operands
+                .iter()
+                .map(|operand| operand.index())
+                .collect(),
+            own,
+        })
+    });
+    greatest_reach(nodes.len(), formula.root().index(), rows).map_err(|fault| match fault {
+        ReachFault::Overflow {
+            index,
+            deepest,
+            own,
+        } => match nodes.get(index) {
+            Some(TemporalNodeForm::Operator(operator)) => HorizonFault::Overflow {
                 span: operator.operator_span,
                 deepest,
                 own,
+            },
+            Some(_) | None => HorizonFault::Broken("operator-in-arena"),
+        },
+        ReachFault::Broken(invariant) => HorizonFault::Broken(invariant),
+    })
+}
+
+/// One operator of a formula arena, as the horizon reads it.
+struct ReachRow {
+    /// The operator's arena index.
+    index: usize,
+    /// Its operands' arena indices, each after `index`.
+    operands: Vec<usize>,
+    /// Its own interval's finite upper bound; 0 for none.
+    own: u64,
+}
+
+/// Why [`greatest_reach`] found no horizon.
+enum ReachFault {
+    /// The sum of interval upper bounds at the operator `index` passed `u64`.
+    Overflow {
+        index: usize,
+        deepest: u64,
+        own: u64,
+    },
+    /// A broken invariant of the formula's arena.
+    Broken(&'static str),
+}
+
+/// The greatest sum of interval upper bounds along a path from `root` of an
+/// arena of `len` nodes: each operator's `rows` entry, in arena order, reads
+/// its operands' reaches, which a reverse pass has already computed. The one
+/// computation behind both the source form's [`horizon`] and the package
+/// form's.
+fn greatest_reach(
+    len: usize,
+    root: usize,
+    rows: impl DoubleEndedIterator<Item = ReachRow>,
+) -> Result<u64, ReachFault> {
+    let mut reach = vec![0_u64; len];
+    for row in rows.rev() {
+        let mut deepest = 0_u64;
+        for operand in &row.operands {
+            if *operand <= row.index {
+                return Err(ReachFault::Broken("operands-follow-operator"));
+            }
+            deepest = deepest.max(
+                *reach
+                    .get(*operand)
+                    .ok_or(ReachFault::Broken("operand-in-arena"))?,
+            );
+        }
+        let Some(total) = deepest.checked_add(row.own) else {
+            return Err(ReachFault::Overflow {
+                index: row.index,
+                deepest,
+                own: row.own,
             });
         };
         *reach
-            .get_mut(index)
-            .ok_or(HorizonFault::Broken("operator-in-arena"))? = total;
+            .get_mut(row.index)
+            .ok_or(ReachFault::Broken("operator-in-arena"))? = total;
     }
     reach
-        .get(formula.root().index())
+        .get(root)
         .copied()
-        .ok_or(HorizonFault::Broken("root-in-arena"))
+        .ok_or(ReachFault::Broken("root-in-arena"))
 }
 
 /// The horizon of the clause `declaration`: a sum past `u64` is a work-budget
@@ -2544,17 +2642,21 @@ pub enum PackageFormulaNode {
     Or(usize, usize),
     /// `implies`.
     Implies(usize, usize),
-    /// An unbounded unary temporal operator.
+    /// A unary temporal operator.
     Unary {
         /// Which operator.
         operator: UnaryTemporal,
+        /// Its step interval, when it has one.
+        interval: Option<CheckedInterval>,
         /// Its operand.
         operand: usize,
     },
-    /// An unbounded binary temporal operator.
+    /// A binary temporal operator.
     Binary {
         /// Which operator.
         operator: BinaryTemporal,
+        /// Its step interval, when it has one.
+        interval: Option<CheckedInterval>,
         /// Its left operand.
         left: usize,
         /// Its right operand.
@@ -2597,13 +2699,17 @@ pub struct PackageClauseForm {
 /// package route does not read yet, never a clause built without it.
 #[derive(Clone, Debug, Eq, PartialEq, thiserror::Error)]
 pub enum PackageClauseRefusal {
-    /// The clause's profile reads bounded or timed intervals, which the
-    /// package form does not read yet.
+    /// The clause's profile reads timed intervals, which the package form
+    /// does not read yet.
     #[error("the package form does not read the {0:?} profile yet")]
     Profile(TemporalProfile),
     /// The formula's arena does not place each operator before its operands.
     #[error("the package formula is not an arena in operator order")]
     Arena,
+    /// The formula's horizon passes `u64`: the work-budget stage limit the
+    /// source form raises at the same sum.
+    #[error("the package formula's horizon exceeds the work-unit limit")]
+    Horizon(LimitExceeded),
     /// The parameter types do not classify within the position limit.
     #[error("the clause's parameter domains do not classify")]
     Domains,
@@ -2615,6 +2721,54 @@ pub enum PackageClauseRefusal {
     ClockBinding,
 }
 
+/// A bounded package formula's horizon, as [`horizon`] reads it from the
+/// source form. Each operator precedes its operands in the arena; a sum past
+/// `u64` is the work-budget stage limit the source form raises.
+fn package_horizon(nodes: &[FormulaNode]) -> Result<u64, PackageClauseRefusal> {
+    let rows = nodes.iter().enumerate().filter_map(|(index, node)| {
+        let (operands, interval) = match node {
+            FormulaNode::Constant(_)
+            | FormulaNode::Holds { .. }
+            | FormulaNode::Aggregate { .. } => return None,
+            FormulaNode::Not(operand) => (vec![operand.0], None),
+            FormulaNode::And(left, right)
+            | FormulaNode::Or(left, right)
+            | FormulaNode::Implies(left, right) => (vec![left.0, right.0], None),
+            FormulaNode::Unary {
+                interval, operand, ..
+            } => (vec![operand.0], interval.as_ref()),
+            FormulaNode::Binary {
+                interval,
+                left,
+                right,
+                ..
+            } => (vec![left.0, right.0], interval.as_ref()),
+        };
+        let own = match interval {
+            Some(CheckedInterval::Steps(steps)) => match steps.upper() {
+                TemporalUpper::Finite(upper) => upper,
+                TemporalUpper::Open => 0,
+            },
+            Some(CheckedInterval::Timed(_)) | None => 0,
+        };
+        Some(ReachRow {
+            index,
+            operands,
+            own,
+        })
+    });
+    greatest_reach(nodes.len(), 0, rows).map_err(|fault| match fault {
+        ReachFault::Overflow { deepest, own, .. } => {
+            PackageClauseRefusal::Horizon(LimitExceeded::new(
+                Setting::S3WorkUnits,
+                u64::MAX,
+                u128::from(deepest) + u128::from(own),
+            ))
+        }
+        ReachFault::Broken(_) => PackageClauseRefusal::Arena,
+    })
+}
+
 impl CheckedTemporalClause {
     /// FR-940: the model-check form of a temporal clause a checked package
     /// carries, rebuilt from `form` as S3 builds it from source: the same
@@ -2622,9 +2776,9 @@ impl CheckedTemporalClause {
     /// model checker reads an equal clause on both routes. `types` is the
     /// package's type environment and `position_limit` S3's domain limit.
     ///
-    /// Only an untimed clause over the infinite-trace profile with no
-    /// fairness, aggregate or interval is read yet; the package form of any
-    /// other clause is refused, never built without the fact it lacks.
+    /// Only an untimed clause with no fairness or aggregate is read yet,
+    /// its step intervals and bounded horizon included; the package form of
+    /// any other clause is refused, never built without the fact it lacks.
     ///
     /// # Errors
     ///
@@ -2634,9 +2788,10 @@ impl CheckedTemporalClause {
         types: &filament_semantic_value::declaration::TypeEnvironment,
         position_limit: u64,
     ) -> Result<Self, PackageClauseRefusal> {
-        if form.profile != TemporalProfile::InfiniteTrace {
+        if form.profile == TemporalProfile::Timed {
             return Err(PackageClauseRefusal::Profile(form.profile));
         }
+        let bounded = form.profile.is_bounded();
         let mut nodes = Vec::with_capacity(form.formula.len());
         let mut operators = Vec::new();
         for (index, node) in form.formula.iter().enumerate() {
@@ -2659,10 +2814,14 @@ impl CheckedTemporalClause {
                     FormulaNode::Implies(id(left), id(right)),
                     Some(TemporalOperator::Implies),
                 ),
-                PackageFormulaNode::Unary { operator, operand } => (
+                PackageFormulaNode::Unary {
+                    operator,
+                    interval,
+                    operand,
+                } => (
                     FormulaNode::Unary {
                         operator: *operator,
-                        interval: None,
+                        interval: interval.clone(),
                         operand: id(operand),
                     },
                     Some(match operator {
@@ -2674,12 +2833,13 @@ impl CheckedTemporalClause {
                 ),
                 PackageFormulaNode::Binary {
                     operator,
+                    interval,
                     left,
                     right,
                 } => (
                     FormulaNode::Binary {
                         operator: *operator,
-                        interval: None,
+                        interval: interval.clone(),
                         left: id(left),
                         right: id(right),
                     },
@@ -2698,10 +2858,16 @@ impl CheckedTemporalClause {
                 return Err(PackageClauseRefusal::Arena);
             }
             if let Some(operator) = operator {
+                let interval = match &checked {
+                    FormulaNode::Unary { interval, .. } | FormulaNode::Binary { interval, .. } => {
+                        interval.clone()
+                    }
+                    _ => None,
+                };
                 operators.push(CheckedOperator {
                     node: TemporalNodeId::from_index(index),
                     operator,
-                    interval: None,
+                    interval,
                 });
             }
             nodes.push(checked);
@@ -2709,6 +2875,7 @@ impl CheckedTemporalClause {
         if nodes.is_empty() {
             return Err(PackageClauseRefusal::Arena);
         }
+        let horizon = bounded.then(|| package_horizon(&nodes)).transpose()?;
         let formula = CheckedFormula {
             nodes,
             root: FormulaNodeId(0),
@@ -2736,11 +2903,11 @@ impl CheckedTemporalClause {
             clock: form.clock,
             clock_binding,
             operators,
-            horizon: None,
+            horizon,
             claim: TemporalClaim {
                 kind: Capability::TemporalSatisfaction,
                 parameter_domains,
-                infinite_trace: true,
+                infinite_trace: !bounded,
                 populations: form
                     .populations
                     .into_iter()

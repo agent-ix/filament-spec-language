@@ -176,6 +176,7 @@ pub fn deadlock_model_item<'a>(
         });
     Some(ModelItem {
         request,
+        stutter_closure: false,
         certificate,
         replay,
     })
@@ -271,6 +272,7 @@ impl<'a> PackageDeadlockSubject<'a> {
         };
         ModelItem {
             request,
+            stutter_closure: false,
             certificate,
             replay: Box::new(move |payload: &TemporalCounterexample| self.replay(payload)),
         }

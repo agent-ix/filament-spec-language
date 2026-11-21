@@ -84,7 +84,6 @@ macro_rules! case {
 
 #[trace("TC-1820", "FR-680-AC-1", "FSpec-FR-144-AC-31", "FSpec-FR-144-AC-32")]
 #[test]
-#[ignore = "QSL-2172: indexing a sequence and refusing a set index not implemented yet"]
 fn index_pair() {
     assert_pair(
         case!("index-accepted.native"),
@@ -96,7 +95,6 @@ fn index_pair() {
 
 #[trace("TC-1821", "FR-680-AC-2", "FSpec-FR-143-AC-22")]
 #[test]
-#[ignore = "QSL-2171: tuple position read p[n] not implemented yet"]
 fn tuple_position_pair() {
     assert_pair(
         case!("tuple-position-accepted.native"),
@@ -119,7 +117,6 @@ fn map_pair() {
 
 #[trace("TC-1823", "FR-680-AC-4", "FSpec-FR-143-AC-21")]
 #[test]
-#[ignore = "QSL-2169: a Some literal payload adopting the expected element type not implemented yet"]
 fn some_pair() {
     assert_pair(
         case!("some-accepted.native"),
@@ -131,7 +128,6 @@ fn some_pair() {
 
 #[trace("TC-1824", "FR-680-AC-5", "FSpec-FR-142-AC-41", "FSpec-FR-142-AC-42")]
 #[test]
-#[ignore = "QSL-2168: quantity scaling by an exact number not implemented yet"]
 fn scale_pair() {
     assert_pair(
         case!("scale-accepted.native"),

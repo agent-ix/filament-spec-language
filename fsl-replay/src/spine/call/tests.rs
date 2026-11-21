@@ -59,6 +59,168 @@ fn run_fixture(bytes: &str, call: &Call) -> Result<CallOutcome, Box<RunRefusal>>
     )
 }
 
+const DIVISION_FIXTURE: &str = "language \"ix:native\" edition \"1-draft\";\n\
+    profile v = \"filament.value.complete/v1\";\n\
+    function q using v(a: Int[-7, 7], b: Int[-3, 3]): Integer pure { if b != 0 then a div b else 0 }\n\
+    function r using v(a: Int[-7, 7], b: Int[-3, 3]): Integer pure { if b != 0 then a rem b else 0 }\n";
+
+fn division_call(function: &str, a: i64, b: i64) -> Call {
+    call(
+        function,
+        [("a", a), ("b", b)]
+            .into_iter()
+            .map(|(parameter, value)| CallArgument {
+                parameter: parameter.to_owned(),
+                value: Value::Integer(Integer::from(value)),
+            })
+            .collect(),
+    )
+}
+
+fn run_division_fixture(
+    bytes: &str,
+    call: &Call,
+    law: Option<crate::AdmittedIntegerDivision>,
+) -> Result<CallOutcome, Box<RunRefusal>> {
+    crate::spine::run_with_integer_division(
+        source(),
+        "fixture".to_owned(),
+        "spine-run.native",
+        bytes.as_bytes(),
+        &BTreeMap::new(),
+        &DependencyInput::default(),
+        SpineLimits::default(),
+        call,
+        &ObjectEnvironment::default(),
+        law,
+        &Cancel::new(),
+    )
+}
+
+fn division_selection(role: crate::DefinitionRole) -> crate::AdmittedIntegerDivision {
+    crate::admit_integer_division(&[role.reference()], None).expect("the owner admits its law")
+}
+
+fn assert_division_value(result: Result<CallOutcome, Box<RunRefusal>>, expected: i64) {
+    let CallOutcome::Completed(CallValue::Integer(value)) = result.expect("division executes")
+    else {
+        panic!("division must complete with an integer");
+    };
+    assert_eq!(value, Integer::from(expected));
+}
+
+#[test]
+#[trace("FR-767-AC-1")]
+fn catalog_free_integer_division_runs_each_law_without_an_extension_catalog() {
+    use crate::DefinitionRole;
+
+    for (role, cases) in [
+        (
+            DefinitionRole::IntegerDivisionEuclidean,
+            [(-7_i64, 3_i64, -3_i64, 2_i64), (7, -3, -2, 1)],
+        ),
+        (
+            DefinitionRole::IntegerDivisionFloor,
+            [(-7, 3, -3, 2), (7, -3, -3, -2)],
+        ),
+        (
+            DefinitionRole::IntegerDivisionTruncating,
+            [(-7, 3, -2, -1), (7, -3, -2, 1)],
+        ),
+    ] {
+        let law = division_selection(role);
+        for (a, b, quotient, remainder) in cases {
+            for (function, expected) in [("q", quotient), ("r", remainder)] {
+                assert_division_value(
+                    run_division_fixture(
+                        DIVISION_FIXTURE,
+                        &division_call(function, a, b),
+                        Some(law),
+                    ),
+                    expected,
+                );
+            }
+        }
+    }
+}
+
+#[test]
+#[trace("FR-767-AC-4")]
+fn catalog_free_integer_division_without_a_selection_uses_only_the_header_law() {
+    let call = division_call("q", -7, 3);
+    for result in [
+        run_division_fixture(DIVISION_FIXTURE, &call, None),
+        run_fixture(DIVISION_FIXTURE, &call),
+    ] {
+        let refusal = result.expect_err("no division law is selected by default");
+        let RunRefusal::Compile(compile) = *refusal else {
+            panic!("a missing law refuses before execution");
+        };
+        assert_eq!(compile.code(), Code::MissingDeclaration);
+        assert_eq!(compile.cause(), Some("missing-selection"));
+    }
+    let headed = DIVISION_FIXTURE.replace(
+        "profile v =",
+        "profile d = \"filament.value.integer-division.floor/v1\";\nprofile v =",
+    );
+    assert_division_value(run_division_fixture(&headed, &call, None), -3);
+    assert_division_value(run_fixture(&headed, &call), -3);
+}
+
+#[test]
+#[trace("FR-767-AC-2", "FR-670-AC-5")]
+fn catalog_free_integer_division_preserves_header_agreement_and_conflict() {
+    use crate::DefinitionRole;
+
+    let headed = DIVISION_FIXTURE.replace(
+        "profile v =",
+        "profile d = \"filament.value.integer-division.floor/v1\";\nprofile v =",
+    );
+    let call = division_call("q", -7, 3);
+    assert_division_value(
+        run_division_fixture(
+            &headed,
+            &call,
+            Some(division_selection(DefinitionRole::IntegerDivisionFloor)),
+        ),
+        -3,
+    );
+    let refusal = run_division_fixture(
+        &headed,
+        &call,
+        Some(division_selection(
+            DefinitionRole::IntegerDivisionTruncating,
+        )),
+    )
+    .expect_err("a supplied law cannot override the header");
+    let RunRefusal::Compile(compile) = *refusal else {
+        panic!("a conflicting law refuses before execution");
+    };
+    assert_eq!(compile.code(), Code::InvalidPackage);
+    assert_eq!(compile.cause(), Some("conflicting-definition"));
+    let CompileRefusal::Profile { refusals, .. } = *compile else {
+        panic!("the original header profile refusal is retained");
+    };
+    let [refusal] = refusals.as_slice() else {
+        panic!("one conflicting header selection");
+    };
+    assert_eq!(refusal.alias, "d");
+    assert_eq!(
+        refusal.selected,
+        DefinitionRole::IntegerDivisionFloor.identity()
+    );
+    assert_eq!(
+        refusal.root,
+        DefinitionRole::IntegerDivisionTruncating.reference()
+    );
+    let header_literal = format!("\"{}\"", DefinitionRole::IntegerDivisionFloor.identity());
+    assert_eq!(
+        headed.get(refusal.identity_span.start..refusal.identity_span.end),
+        Some(header_literal.as_str()),
+        "the refusal retains the header's identity literal"
+    );
+}
+
 pub(in crate::spine) struct LookupDriverFixture {
     pub(in crate::spine) source: String,
     pub(in crate::spine) packages: fsl_semantics::model::intake::PackageInput,

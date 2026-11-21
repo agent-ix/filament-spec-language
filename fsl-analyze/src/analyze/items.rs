@@ -33,8 +33,8 @@ use filament_exact::{Cancel, ObjectReference, ValueType};
 use super::{AnalyzeItem, EngineReport, Refusal};
 use crate::claim_family::{claim_family, kind_family};
 use crate::model_check::{
-    check_model, check_protocol_constrained, manifest as en1, HyperRefusal, LivenessRefusal,
-    ModelCheckRefusal, ModelCheckRequest, ProtocolCheckRequest,
+    check_model_with_stutter_closure, check_protocol_constrained, manifest as en1, HyperRefusal,
+    LivenessRefusal, ModelCheckRefusal, ModelCheckRequest, ProtocolCheckRequest,
 };
 use crate::statistical::{check_statistical, manifest as en4, StatisticalRequest};
 use crate::zone_check::{
@@ -98,6 +98,9 @@ pub(super) const INVALID_VALUE: CatalogCode =
 pub struct ModelItem<'a> {
     /// The EN-1 run.
     pub request: ModelCheckRequest<'a>,
+    /// Whether this temporal liveness item is checked over the abstract
+    /// subject's stutter closure (FR-380).
+    pub stutter_closure: bool,
     /// The closure checker's request over the same subject and item.
     pub certificate: CertificateRequest<'a>,
     /// Replays the run's counterexample.
@@ -134,6 +137,9 @@ pub fn model_item<'a>(
         ModelCheckItem::DeadlockFreedom | ModelCheckItem::RaceFreedom => {
             Err(DerivedItemMismatch::DerivedRun { index })
         }
+        ModelCheckItem::LoopInvariant { .. } | ModelCheckItem::LoopTermination { .. } => {
+            Err(DerivedItemMismatch::DerivedRun { index })
+        }
     }
 }
 
@@ -148,7 +154,9 @@ pub(super) fn run_model_item(
         ModelCheckItem::Invariant { .. } => Capability::OperationContract,
         ModelCheckItem::Clause { .. }
         | ModelCheckItem::DeadlockFreedom
-        | ModelCheckItem::RaceFreedom => Capability::TemporalSatisfaction,
+        | ModelCheckItem::RaceFreedom
+        | ModelCheckItem::LoopInvariant { .. }
+        | ModelCheckItem::LoopTermination { .. } => Capability::TemporalSatisfaction,
     };
     AnalyzeItem::new(
         index,
@@ -161,6 +169,8 @@ pub(super) fn run_model_item(
                 ModelCheckItem::Clause { clause, .. } => Some(*clause),
                 ModelCheckItem::DeadlockFreedom
                 | ModelCheckItem::RaceFreedom
+                | ModelCheckItem::LoopInvariant { .. }
+                | ModelCheckItem::LoopTermination { .. }
                 | ModelCheckItem::Invariant { .. } => None,
             };
             let simulation = item.request.subject.simulation.clone();
@@ -202,18 +212,26 @@ fn bound_over(
 pub(super) fn settle_model_item(item: ModelItem<'_>, cancel: &Cancel) -> EngineReport {
     let ModelItem {
         request,
+        stutter_closure,
         certificate,
         replay,
     } = item;
     let limits = request.limits;
-    match check_model(request, cancel) {
-        Ok(outcome) => EngineReport::Model(Box::new(fsl_replay::settle_model_check(
-            &outcome,
-            &limits,
-            &certificate,
-            cancel,
-            replay,
-        ))),
+    match check_model_with_stutter_closure(request, cancel, stutter_closure) {
+        Ok(outcome) => {
+            let record = if stutter_closure {
+                fsl_replay::settle_model_check_over_stutter_closure(
+                    &outcome,
+                    &limits,
+                    &certificate,
+                    cancel,
+                    replay,
+                )
+            } else {
+                fsl_replay::settle_model_check(&outcome, &limits, &certificate, cancel, replay)
+            };
+            EngineReport::Model(Box::new(record))
+        }
         Err(refusal) => EngineReport::Refused(model_refusal(&refusal)),
     }
 }
@@ -255,7 +273,9 @@ pub fn protocol_item<'a>(
         ModelCheckItem::Clause { .. } => Ok(run_protocol_item(index, CLAUSE_FAMILY, item)),
         ModelCheckItem::DeadlockFreedom
         | ModelCheckItem::RaceFreedom
-        | ModelCheckItem::Invariant { .. } => Err(DerivedItemMismatch::DerivedRun { index }),
+        | ModelCheckItem::Invariant { .. }
+        | ModelCheckItem::LoopInvariant { .. }
+        | ModelCheckItem::LoopTermination { .. } => Err(DerivedItemMismatch::DerivedRun { index }),
     }
 }
 
@@ -777,6 +797,8 @@ pub fn derived_protocol_item<'a, S>(
     let decides: fn(&ModelCheckItem<'_>) -> bool = match kind {
         ItemKind::DeadlockFreedom => |run| matches!(run, ModelCheckItem::DeadlockFreedom),
         ItemKind::RaceFreedom => |run| matches!(run, ModelCheckItem::RaceFreedom),
+        ItemKind::LoopInvariant => |run| matches!(run, ModelCheckItem::LoopInvariant { .. }),
+        ItemKind::LoopTermination => |run| matches!(run, ModelCheckItem::LoopTermination { .. }),
         ItemKind::Formula | ItemKind::TimeLockFreedom | ItemKind::Refinement => {
             return Err(DerivedItemMismatch::NotDerived { index })
         }
@@ -784,6 +806,28 @@ pub fn derived_protocol_item<'a, S>(
     let models = match (&obligation.kind, kind) {
         (ObligationKind::ProtocolDeadlockFreedom { models }, ItemKind::DeadlockFreedom)
         | (ObligationKind::RaceFreedom { models }, ItemKind::RaceFreedom) => models,
+        (
+            ObligationKind::ProtocolLoopInvariant { models, repeat },
+            ItemKind::LoopInvariant,
+        ) => {
+            if !matches!(item.request.item, ModelCheckItem::LoopInvariant { repeat: found } if found == *repeat)
+                || !matches!(item.certificate.item, ModelCheckItem::LoopInvariant { repeat: found } if found == *repeat)
+            {
+                return Err(DerivedItemMismatch::OtherItem { index, kind });
+            }
+            models
+        }
+        (
+            ObligationKind::ProtocolLoopTermination { models, repeat },
+            ItemKind::LoopTermination,
+        ) => {
+            if !matches!(item.request.item, ModelCheckItem::LoopTermination { repeat: found } if found == *repeat)
+                || !matches!(item.certificate.item, ModelCheckItem::LoopTermination { repeat: found } if found == *repeat)
+            {
+                return Err(DerivedItemMismatch::OtherItem { index, kind });
+            }
+            models
+        }
         _ => return Err(DerivedItemMismatch::OtherItem { index, kind }),
     };
     let over = |memory: &fsl_eval::simulation::protocol::ResolvedMemory| {
@@ -860,7 +904,11 @@ pub fn derived_zone_item<'a, S: Clone + Eq + 'a>(
             matches!(item.request.item, ZoneCheckItem::TimeLockFreedom)
                 && item.request.obligation.kind == ObligationKind::TimeLockFreedom
         }
-        ItemKind::Formula | ItemKind::RaceFreedom | ItemKind::Refinement => {
+        ItemKind::Formula
+        | ItemKind::RaceFreedom
+        | ItemKind::Refinement
+        | ItemKind::LoopInvariant
+        | ItemKind::LoopTermination => {
             return Err(DerivedItemMismatch::NotDerived { index })
         }
     };
@@ -994,7 +1042,9 @@ pub(super) fn zone_refusal(refusal: &ZoneCheckRefusal) -> Refusal {
         ZoneCheckRefusal::RequiresBound(_) => Refusal::RequiresBound,
         ZoneCheckRefusal::Symmetry(_) => symmetry(),
         // The forms EN-6 does not decide yet.
-        ZoneCheckRefusal::UnsupportedForm | ZoneCheckRefusal::CarriedClocks => {
+        ZoneCheckRefusal::UnsupportedForm
+        | ZoneCheckRefusal::CarriedClocks
+        | ZoneCheckRefusal::HiddenFieldTimedAbstract => {
             Refusal::Unsupported(NOT_YET)
         }
         // A request defect: an obligation that is not the item's.
@@ -1092,14 +1142,16 @@ pub(super) fn model_refusal(refusal: &ModelCheckRefusal) -> Refusal {
         ModelCheckRefusal::StateUnobservable(stop) => Refusal::Failed(stop.cause),
         // The forms and subjects EN-1 does not decide yet.
         ModelCheckRefusal::ProtocolRefinement
+        | ModelCheckRefusal::Liveness(LivenessRefusal::ClosureStutterLoop)
         | ModelCheckRefusal::FormNotDecided { .. }
         | ModelCheckRefusal::CaptureRead { .. }
         | ModelCheckRefusal::WeakLiveness
         | ModelCheckRefusal::ProtocolAbstractSide
         | ModelCheckRefusal::Hyper(
             HyperRefusal::FormNotDecided { .. }
-                | HyperRefusal::NotSingleExistential { .. }
-                | HyperRefusal::ClosedUndefined,
+            | HyperRefusal::NotSingleExistential { .. }
+            | HyperRefusal::ClosedUndefined
+            | HyperRefusal::ConstraintUndefined { .. },
         ) => Refusal::Unsupported(NOT_YET),
         // Clauses and operations the engine cannot read: unsupported forms.
         ModelCheckRefusal::Translation(_) | ModelCheckRefusal::Footprint(_) => {
@@ -1108,6 +1160,7 @@ pub(super) fn model_refusal(refusal: &ModelCheckRefusal) -> Refusal {
         // A request defect: an operation or subject count the request names
         // wrongly, or the race-freedom item over a model subject.
         ModelCheckRefusal::RaceOverModel
+        | ModelCheckRefusal::LoopProofOverModel
         | ModelCheckRefusal::InvariantOverProtocol
         | ModelCheckRefusal::Liveness(LivenessRefusal::UnknownOperation { .. })
         | ModelCheckRefusal::Hyper(
@@ -1213,6 +1266,7 @@ mod tests {
             | Refusal::FailedWithDetail(code, _)
             | Refusal::Failed(code) => Some(code.to_string()),
             Refusal::RequiresBound
+            | Refusal::RequiresFiniteHyperBound { .. }
             | Refusal::NotStatistical
             | Refusal::InvalidOptionValue { .. }
             | Refusal::NotEmitted
@@ -1366,6 +1420,12 @@ mod tests {
         assert_eq!(
             unsupported(ModelCheckRefusal::Hyper(
                 HyperRefusal::NotSingleExistential { form: None }
+            )),
+            not_yet
+        );
+        assert_eq!(
+            unsupported(ModelCheckRefusal::Liveness(
+                LivenessRefusal::ClosureStutterLoop
             )),
             not_yet
         );
