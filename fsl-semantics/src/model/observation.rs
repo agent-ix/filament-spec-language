@@ -2738,11 +2738,20 @@ pub(crate) fn observe_protocol_state(
         for object in objects.values() {
             for value in object.fields.values() {
                 for target in population_document::map_references(value, |reference| {
+                    // observe_state authenticated these run-local places above.
+                    // They carry data and create no object-population edge.
+                    if crate::model::clock_reference::is_clock_type(reference.object_type()) {
+                        return Ok(None);
+                    }
                     holders
                         .get(reference)
                         .cloned()
+                        .map(Some)
                         .ok_or_else(|| fault("closed-state-reference-has-a-population"))
-                })? {
+                })?
+                .into_iter()
+                .flatten()
+                {
                     if !targets.contains(&target) {
                         targets.push(target);
                     }
