@@ -65,7 +65,7 @@ use s6a::{ReferenceEvaluation, S6aFamilyKind};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
-pub(crate) use clause_set::evaluate_with_cancel as evaluate_clause_set_with_cancel;
+pub(crate) use clause_set::evaluate_with_meter_factory as evaluate_clause_set_with_meter_factory;
 pub use clause_set::{ClauseSetEntry, ClauseSetEvaluation, ClauseSetOutcome};
 pub use closure::{PackageClosure, PackageTask};
 pub use evaluate::refusal_record;

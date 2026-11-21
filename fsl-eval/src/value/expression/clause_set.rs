@@ -123,17 +123,13 @@ fn verdict(evaluation: &ClauseEvaluation) -> Verdict {
 fn run_group<H: ClauseHost + ?Sized>(
     package: &H,
     group: &[(&QualifiedName, &AdmittedObservations)],
-    limits: ScalarLimits,
+    fresh_meter: &mut dyn FnMut() -> Meter,
     short_circuit: bool,
     results: &mut Vec<ClauseSetEntry>,
     seen: &mut Vec<Verdict>,
-    cancel: Option<&filament_exact::Cancel>,
 ) -> Result<bool, CallFailure> {
     for (name, observations) in group {
-        let mut meter = Meter::new(limits);
-        if let Some(cancel) = cancel {
-            meter = meter.with_cancel(cancel.clone());
-        }
+        let mut meter = fresh_meter();
         let evaluation = package.clause(name, observations, &mut meter)?;
         let verdict = verdict(&evaluation);
         results.push(ClauseSetEntry {
@@ -175,6 +171,22 @@ pub(crate) fn evaluate_with_cancel<H: ClauseHost + ?Sized>(
     limits: ScalarLimits,
     cancel: Option<&filament_exact::Cancel>,
 ) -> Result<ClauseSetEvaluation, CallFailure> {
+    evaluate_with_meter_factory(package, clauses, &mut || {
+        let meter = Meter::new(limits);
+        match cancel {
+            Some(cancel) => meter.with_cancel(cancel.clone()),
+            None => meter,
+        }
+    })
+}
+
+/// Evaluate the same canonical clause groups using fresh ordinary meters
+/// supplied by the owning run. Only their upstream work scope may be shared.
+pub(crate) fn evaluate_with_meter_factory<H: ClauseHost + ?Sized>(
+    package: &H,
+    clauses: &[(QualifiedName, &AdmittedObservations)],
+    fresh_meter: &mut dyn FnMut() -> Meter,
+) -> Result<ClauseSetEvaluation, CallFailure> {
     // Refuse a bad set whole, before any clause is evaluated.
     let mut named = BTreeSet::new();
     for (name, _) in clauses {
@@ -203,11 +215,10 @@ pub(crate) fn evaluate_with_cancel<H: ClauseHost + ?Sized>(
         run_group(
             package,
             group,
-            limits,
+            fresh_meter,
             short_circuit,
             &mut results,
             &mut seen,
-            cancel,
         )
     };
     // Invariants never skip the clauses after them. Preconditions are a
