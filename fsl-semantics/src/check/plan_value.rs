@@ -536,10 +536,13 @@ pub(crate) fn declare(
 fn operation_enum(
     name: &str,
     synthesis: &str,
-    cases: Vec<String>,
+    mut cases: Vec<String>,
     source: &fsl_foundation::source::provenance::RawSourceRef,
     package_name: &str,
 ) -> Option<EnumBinding> {
+    // FR141: unordered nominal enum members are case-sorted. Invocation
+    // order remains the separate PlanShape.operations declaration order.
+    cases.sort();
     let subject = OwnerSubject::new(source.authority(), source.identity(), package_name);
     let owners = OwnerSelection::new([NodeOwner::Source(subject.clone())]);
     let preimage = EnumDeclarationPreimage::new(

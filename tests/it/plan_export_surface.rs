@@ -17,9 +17,11 @@ const MODEL_HEADER: &str = "language \"ix:native\" edition \"1-draft\";\n\
 
 // The domain document supplies the operation frame; the authored spine
 // postcondition constrains that frame's possible post-states.
+// The postcondition needs both object navigation and Integer conversion;
+// its model layer includes graph and value forms. The plan uses temporal v.
 const PLAN_HEADER: &str = "language \"ix:native\" edition \"1-draft\";\n\
      profile v = \"filament.temporal.infinite-trace/v1\";\n\
-     profile g = \"filament.state.graph/v1\";\n\
+     profile g = \"filament.model.complete/v1\";\n\
      model Config = \"example/config-version\";\n\
      post VersionAdvances using g on Config::ConfigVersion::attemptUpdate {\n\
        (result implies convert<Integer>(self.versionNumber) = pre(self.versionNumber) + 1)\n\
@@ -1669,20 +1671,29 @@ fn probabilistic_plans_compute_exact_probabilities() {
 fn plan_requests_refuse_at_admission() {
     let unit = format!(
         "{}type Digit = Int[0, 9];\n\
-         synthesis Pick using v grammar Digit domain Digit satisfies {{ Pick = 7 }};\n{}",
+         synthesis Pick using v grammar Digit domain Digit satisfies {{ Pick = 7 }};\n\
+         temporal OtherPolicy using p over (o: Other::Widget) clock \"model-steps\" \
+         on origin {{ always holds(true) }}\n",
         plan_unit("Int[0, 3]", "", "Reach.length >= 1").replacen(
             PLAN_HEADER,
             &PLAN_HEADER.replace(
                 "model Config",
-                "profile p = \"filament.temporal.infinite-trace/v1\";\nmodel Config"
+                "profile p = \"filament.temporal.infinite-trace/v1\";\nmodel Other = \"acme/orders\";\nmodel Config"
             ),
             1
         ),
-        BRAKING
-            .split_once("hybrid")
-            .map(|(_, rest)| format!("hybrid{rest}"))
-            .unwrap(),
     );
+    let admitted = tempfile::tempdir().unwrap();
+    spine::write(admitted.path(), Case::Healthy).unwrap();
+    crate::support::plan_model::write_initial(admitted.path(), "spine-initial.json");
+    std::fs::write(admitted.path().join("unit.native"), &unit).unwrap();
+    // A genuine existing model policy in another selected model exercises
+    // wrong binding; an unknown name separately exercises missing-name.
+    std::fs::write(
+        admitted.path().join("other-plan-model.semantic-ir.json"),
+        crate::support::spine_model::DOCUMENT,
+    )
+    .unwrap();
     for (synthesis, cause, pointer) in [
         (
             json!({"declaration": "Pick"}),
@@ -1700,12 +1711,24 @@ fn plan_requests_refuse_at_admission() {
             "/synthesis/policy/0",
         ),
         (
-            json!({"policy": ["SlowEnough"]}),
+            json!({"policy": ["OtherPolicy"]}),
             "type-mismatch",
             "/synthesis/policy/0",
         ),
     ] {
-        let (exit, value) = spine_plan(&unit, synthesis);
+        let mut member = json!({"declaration":"Reach", "initial":"spine-initial.json"});
+        for (key, value) in synthesis.as_object().unwrap() {
+            member[key] = value.clone();
+        }
+        let (exit, value) = write_request(
+            admitted.path(),
+            &json!({"format":"native-run/1", "request":{
+                "models":[
+                    {"format":"semantic-ir/2.0.0", "source":source("spine-model.semantic-ir.json")},
+                    {"format":"semantic-ir/2.0.0", "source":source("other-plan-model.semantic-ir.json")}
+                ], "program":{"source":source("unit.native")}, "synthesis":member
+            }}),
+        );
         assert_eq!(exit, 20, "{value}");
         names(&value, cause);
         names(&value, pointer);
@@ -2575,7 +2598,7 @@ fn supported_numeric_objectives_keep_their_exact_typed_values() {
     for (result_type, body, expected) in [
         ("Integer", "7", json!({"type": "integer", "value": "7"})),
         (
-            "Rational",
+            "Rational[0, 3; 1, 4]",
             "rational(3,4)",
             json!({"type": "rational", "numerator": "3", "denominator": "4"}),
         ),
@@ -2717,12 +2740,13 @@ fn positive_length_policy_planning_refuses_before_search() {
 fn a_plan_goal_reads_finite_arguments_and_step_before_and_after() {
     const MODEL: &str = r#"language "ix:native" edition "1-draft";
 domain "example/config-version";
+type Amount = Int[0,3];
 object ConfigVersion {
   versionNumber: Int[0,3];
   parent: ConfigVersion?;
-  operation assign(amount: Int[0,3], accepted: Boolean): Boolean modifies self.versionNumber;
+  operation assign(amount: Amount, accepted: Boolean): Boolean modifies self.versionNumber;
 }
-object Other { operation idle(): Boolean; }
+object Other { operation aardvark(): Boolean; }
 population config_history: ConfigVersion;
 "#;
     let directory = tempfile::tempdir().unwrap();
@@ -3063,7 +3087,7 @@ synthesis Reach using v grammar Config::ConfigVersion domain Lengths satisfies {
     assert_eq!(outcome["status"], "incomplete", "{value}");
     assert_eq!(
         outcome["cause"],
-        json!({"kind":"limit-reached", "limit":"value_occurrences", "value":6, "setting":"accounting.value_occurrences"}),
+        json!({"type":"limit-reached", "limit":"value_occurrences", "value":6, "setting":"accounting.value_occurrences"}),
         "{value}"
     );
     assert_eq!(outcome["explored"]["states"], 1, "{value}");
