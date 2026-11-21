@@ -98,14 +98,20 @@ enum ClauseTerm {
 
 /// A fairness projection preserves both the original clause refusal and a
 /// denial on the invocation's cumulative native work/storage ledger.
-#[derive(Clone, Debug, Eq, PartialEq, thiserror::Error)]
+#[derive(Debug, thiserror::Error)]
 pub enum BareFairnessRefusal {
     /// The clause or fairness target has no admitted package form.
-    #[error(transparent)]
-    Clause(#[from] BareClauseRefusal),
+    #[error("fairness clause refused: {0:?}")]
+    Clause(BareClauseRefusal),
     /// The existing native allowance was exhausted before the read or copy.
     #[error(transparent)]
     Native(#[from] NativeRowError),
+}
+
+impl From<BareClauseRefusal> for BareFairnessRefusal {
+    fn from(refusal: BareClauseRefusal) -> Self {
+        Self::Clause(refusal)
+    }
 }
 
 trait FairnessWork {
