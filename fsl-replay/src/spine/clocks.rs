@@ -145,7 +145,7 @@ impl RequestClocks {
                     .map_or(fsl_semantics::check::DEFAULT_CLOCK_ROLE, |clock| {
                         clock.text.as_str()
                     });
-                let clock = self.get_for_source(&source, role)?;
+                let clock = self.get_for_source(source, role)?;
                 matches!(
                     clock,
                     ClockConfiguration::TimestampedEvent { .. } | ClockConfiguration::Timed { .. }
@@ -597,10 +597,12 @@ struct Declaration<'a> {
 /// clauses, its quantifier alias. `None` means the profile and binding do not
 /// configure any trace. An event-position trace with no determined sequence
 /// authority refuses as `unsupported_construct`/`not-yet-implemented`.
+type DerivedConfigurations = Vec<(Option<String>, ClockConfiguration)>;
+
 fn derived_configurations(
     declaration: &Declaration<'_>,
     traces: &[Option<String>],
-) -> Result<Option<Vec<(Option<String>, ClockConfiguration)>>, Box<CompileRefusal>> {
+) -> Result<Option<DerivedConfigurations>, Box<CompileRefusal>> {
     let mut derived = Vec::with_capacity(traces.len());
     for (index, authority) in traces.iter().enumerate() {
         let clock = match authority {

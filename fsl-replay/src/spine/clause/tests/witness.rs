@@ -237,6 +237,16 @@ fn tc_3121_no_parent_unit() -> Unit {
     unit_for(unit, config_version_domain_document())
 }
 
+type VersionReplayCase = (
+    crate::ReplayRequestWire,
+    Result<WitnessEnvelope<StateClauseCounterexample>, crate::WitnessRefusal>,
+    Vec<(DocumentRef, Vec<u8>)>,
+);
+
+#[allow(
+    clippy::too_many_arguments,
+    reason = "the fixture independently selects pre/post versions, receiver, result, witness, and source"
+)]
 fn version_advances_replay_case(
     unit: &Unit,
     root_pre: i64,
@@ -247,11 +257,7 @@ fn version_advances_replay_case(
     result: bool,
     witness: Option<SeparatingWitnessRecord>,
     source: ReplaySource,
-) -> (
-    crate::ReplayRequestWire,
-    Result<WitnessEnvelope<StateClauseCounterexample>, crate::WitnessRefusal>,
-    Vec<(DocumentRef, Vec<u8>)>,
-) {
+) -> VersionReplayCase {
     let (pre, pre_bytes) = document_ref_and_bytes("tc-3121-pre", |label| {
         let objects = version_objects(root_pre, child_pre);
         super::frame::snapshot(label, "pre", &objects)

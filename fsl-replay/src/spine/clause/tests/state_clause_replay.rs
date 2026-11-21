@@ -306,6 +306,10 @@ fn case_targeting(
     )
 }
 
+#[allow(
+    clippy::too_many_arguments,
+    reason = "the replay fixture independently selects the clause, documents, witness, and tampering hook"
+)]
 fn case_targeting_with_witness(
     unit: Unit,
     clause: &str,

@@ -649,5 +649,8 @@ fn a_unit_without_imports_sends_no_dependencies() {
     let request: Value =
         serde_json::from_slice(&std::fs::read(recorded).expect("the request was recorded"))
             .expect("the request is JSON");
-    assert!(request["request"].get("dependencies").is_none(), "{request}");
+    assert!(
+        request["request"].get("dependencies").is_none(),
+        "{request}"
+    );
 }

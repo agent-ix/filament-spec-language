@@ -306,7 +306,7 @@ impl Unit {
                     package,
                     "M",
                     vec![
-                            single(package, "M", "v", &bit),
+                        single(package, "M", "v", &bit),
                         single(package, "M", "h", &level),
                     ],
                     operations,
@@ -321,7 +321,11 @@ impl Unit {
             };
             document(
                 package,
-                vec![bounded(package, "Bit", 1), bounded(package, "Level", hidden_max), object],
+                vec![
+                    bounded(package, "Bit", 1),
+                    bounded(package, "Level", hidden_max),
+                    object,
+                ],
                 vec![population(package, "ms", "M")],
             )
         };

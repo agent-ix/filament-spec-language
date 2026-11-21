@@ -22,11 +22,11 @@ use filament_semantic_value::catalog::InternalFault;
 use fsl_package::CheckedPackage;
 use fsl_semantics::check::{CheckedHyperClause, FormulaNode, FormulaNodeId};
 
-use super::contracts::{Verdict, verdict};
+use super::contracts::{verdict, Verdict};
 use super::letters::{LettersRefusal, Observed};
 use super::reference_bindings::{ReferenceBindings, ReferenceLiteralKey};
 use super::walk::{rows_of, stop};
-use super::{BROKEN, ClauseOutcome, ModelSimState, ModelSystem, state_document};
+use super::{state_document, ClauseOutcome, ModelSimState, ModelSystem, BROKEN};
 use crate::hyper::{HyperLetters, HyperSlot, ParameterBinding};
 use crate::model_subject::{AtomStop, ModelInstance};
 use crate::simulation::StateKey;

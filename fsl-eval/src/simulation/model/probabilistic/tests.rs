@@ -1076,10 +1076,7 @@ fn a_reward_whose_function_is_missing_does_not_project() {
 
 /// The steps of the `scored` model's one state under `Unit`, as (non-random
 /// arguments, reward) pairs, in ascending order, read through `system`.
-fn scored_steps(
-    system: &super::ModelSystem<'_>,
-    world: &World,
-) -> Vec<(Vec<i64>, i64)> {
+fn scored_steps(system: &super::ModelSystem<'_>, world: &World) -> Vec<(Vec<i64>, i64)> {
     let start = initial(system);
     let steps = system
         .weighted_steps(&start, world.workload("Unit"))

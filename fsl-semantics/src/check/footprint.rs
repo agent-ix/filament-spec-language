@@ -24,9 +24,9 @@ use filament_checked::node::NodeKind;
 mod read_node;
 
 pub use read_node::{
-    ClauseBody, PackageOperation, ReadNode, derive_constraint_reads_over, derive_guard_reads_over,
-    derive_node_reads_over, derive_selected_footprint_over, derive_slot_reads_over,
-    pre_observed_locations, reference_literals_of,
+    derive_constraint_reads_over, derive_guard_reads_over, derive_node_reads_over,
+    derive_selected_footprint_over, derive_slot_reads_over, pre_observed_locations,
+    reference_literals_of, ClauseBody, PackageOperation, ReadNode,
 };
 
 /// The populations each created reference literal of a subject names, by the
@@ -186,6 +186,10 @@ pub fn derive_selected_footprint(
 /// [`derive_selected_footprint`] with the subject-bound created reference
 /// literals. Fixed literals are constants; each created literal reads the
 /// membership of the population selected during FR-120 subject admission.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "the plain variant's arguments plus the subject-bound literals and the population selector"
+)]
 pub fn derive_selected_footprint_with_reference_literals(
     graph: &CheckedGraph,
     model: &StateModel,
@@ -240,6 +244,10 @@ pub fn derive_attempt_footprint_fallback(
 
 /// [`derive_attempt_footprint_fallback`] with the subject-bound created
 /// reference literals.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "the plain variant's arguments plus the subject-bound literals and the population selector"
+)]
 pub fn derive_attempt_footprint_fallback_with_reference_literals(
     graph: &CheckedGraph,
     model: &StateModel,

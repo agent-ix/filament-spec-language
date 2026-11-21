@@ -1051,7 +1051,10 @@ fn work<'a>(
                 limits.deadline,
                 engines.options().provider_limits,
                 engines.manifest_wire(),
-                item.candidates.iter().map(|candidate| candidate.id().clone()).collect(),
+                item.candidates
+                    .iter()
+                    .map(|candidate| candidate.id().clone())
+                    .collect(),
                 super::hybrid_item::Spelling {
                     packages: binding.packages,
                     emit: limits.emit,
@@ -1386,27 +1389,6 @@ fn work<'a>(
     )
 }
 
-#[cfg(test)]
-mod tests {
-    use ix_trace_rs::trace;
-
-    use super::SourceProvision;
-    use fsl_foundation::source::provenance::RawSourceRef;
-
-    #[trace("TC-2804", "FR-992-AC-1")]
-    #[test]
-    fn source_provision_entries_are_in_label_order() {
-        let mut provision = SourceProvision::default();
-        let z = RawSourceRef::new("b", "z").expect("valid source label");
-        let a = RawSourceRef::new("a", "a").expect("valid source label");
-        provision.insert(&z, b"z".to_vec());
-        provision.insert(&a, b"a".to_vec());
-
-        let entries: Vec<_> = provision.entries().collect();
-        assert_eq!(entries, vec![("a", "a", &b"a"[..]), ("b", "z", &b"z"[..])]);
-    }
-}
-
 /// FR-940 "Claim occurrence ordinals": whether `claim` names a node an
 /// authored temporal clause or probabilistic claim declares, at an
 /// occurrence none of that node's declarations owns. Structurally equal
@@ -1432,4 +1414,25 @@ fn names_other_occurrence(
     };
     (temporal().next().is_some() && !temporal().any(|clause| clause.claim() == claim.origin()))
         || (probabilistic().next().is_some() && !probabilistic().any(|checked| checked == claim))
+}
+
+#[cfg(test)]
+mod tests {
+    use ix_trace_rs::trace;
+
+    use super::SourceProvision;
+    use fsl_foundation::source::provenance::RawSourceRef;
+
+    #[trace("TC-2804", "FR-992-AC-1")]
+    #[test]
+    fn source_provision_entries_are_in_label_order() {
+        let mut provision = SourceProvision::default();
+        let z = RawSourceRef::new("b", "z").expect("valid source label");
+        let a = RawSourceRef::new("a", "a").expect("valid source label");
+        provision.insert(&z, b"z".to_vec());
+        provision.insert(&a, b"a".to_vec());
+
+        let entries: Vec<_> = provision.entries().collect();
+        assert_eq!(entries, vec![("a", "a", &b"a"[..]), ("b", "z", &b"z"[..])]);
+    }
 }

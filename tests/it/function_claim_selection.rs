@@ -6,10 +6,10 @@
 //!
 //! The fixtures are FR-108's ConfigVersion spine files.
 
-use crate::command_harness::{Output, run_file};
-use crate::support::config_version_spine::{Case, spine};
+use crate::command_harness::{run_file, Output};
+use crate::support::config_version_spine::{spine, Case};
 use ix_trace_rs::trace;
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 use std::path::Path;
 
 const FUNCTIONS: &str = "function seven using v(): Integer pure { 7 }\n\

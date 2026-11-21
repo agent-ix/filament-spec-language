@@ -5,7 +5,7 @@ use filament_exact::Cancel;
 use fsl_replay::{Operation, OutcomeDocument};
 use ix_trace_rs::trace;
 use serde::Deserialize;
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 

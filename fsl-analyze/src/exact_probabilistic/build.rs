@@ -12,13 +12,13 @@ use filament_exact::{Cancel, Identifier, Integer, ObjectReference, Rational, Val
 use filament_semantic_value::catalog::InternalFault;
 use fsl_eval::automaton::{AutomatonError, Monitor, PropertyAutomaton};
 use fsl_eval::model_subject::ModelInstance;
-use fsl_eval::simulation::StateKey;
-use fsl_eval::simulation::TransitionSystem;
 use fsl_eval::simulation::model::{
-    Action, ModelSimState, ModelSystem, NotMarkov, PredicateReading, ScheduledIdentity,
-    Unsteppable, same_rewards,
+    same_rewards, Action, ModelSimState, ModelSystem, NotMarkov, PredicateReading,
+    ScheduledIdentity, Unsteppable,
 };
 use fsl_eval::simulation::model::{TimedSubjectRefusal, TimedSystem};
+use fsl_eval::simulation::StateKey;
+use fsl_eval::simulation::TransitionSystem;
 use fsl_eval::temporal::UndefinedCause;
 use fsl_foundation::source::provenance::OccurrenceKey;
 use fsl_replay::ModelCheckLimit;
@@ -275,7 +275,7 @@ fn automaton_refusal(error: AutomatonError) -> ProductRefusal {
 
 #[cfg(test)]
 mod tests {
-    use super::{PlanFault, ProductRefusal, plan_refusal};
+    use super::{plan_refusal, PlanFault, ProductRefusal};
 
     /// FR-204-AC-4 (TC-639): the exact planner keeps the timed form refusal's source span.
     #[ix_trace_rs::trace("TC-639", "FR-204-AC-4")]

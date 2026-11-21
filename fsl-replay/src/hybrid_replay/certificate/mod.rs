@@ -219,12 +219,22 @@ pub fn probe_flowpipe_claim(
     coverage: &ProofCoverage,
     meter: &mut HybridReplayMeter,
 ) -> Result<ProbeOutcome, HybridReplayRefusal> {
-    Ok(match check_with(graph, claim, certificate, Some(coverage), None, meter, false)? {
-        CertificateOutcome::Rejected(Rejection {
-            rule: Rule::Claim, ..
-        }) => ProbeOutcome::ClaimRejected,
-        _ => ProbeOutcome::NotRejected,
-    })
+    Ok(
+        match check_with(
+            graph,
+            claim,
+            certificate,
+            Some(coverage),
+            None,
+            meter,
+            false,
+        )? {
+            CertificateOutcome::Rejected(Rejection {
+                rule: Rule::Claim, ..
+            }) => ProbeOutcome::ClaimRejected,
+            _ => ProbeOutcome::NotRejected,
+        },
+    )
 }
 
 /// What [`probe_flowpipe_claim`] found. It is never a proof: the initial
@@ -266,18 +276,16 @@ fn check_with(
         wire::Body::Inductive(boxes) => {
             inductive::check(&mut machine, &mx, model, claim, boxes).map(|()| Acceptance::Proof)
         }
-        wire::Body::Flowpipe(steps) => {
-            flowpipe::check(
-                &mut machine,
-                &mx,
-                model,
-                claim,
-                steps,
-                coverage,
-                initial_containment,
-            )
-            .map(|()| Acceptance::Proof)
-        }
+        wire::Body::Flowpipe(steps) => flowpipe::check(
+            &mut machine,
+            &mx,
+            model,
+            claim,
+            steps,
+            coverage,
+            initial_containment,
+        )
+        .map(|()| Acceptance::Proof),
         wire::Body::Witness(dwells) => match trace {
             Some(trace) => witness::check(&mut machine, &mx, model, claim, dwells, trace)
                 .map(|decisive| Acceptance::Witness(Box::new(decisive))),

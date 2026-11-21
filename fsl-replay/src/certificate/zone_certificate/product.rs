@@ -769,12 +769,12 @@ impl<O> Checker<'_, '_, O> {
         let automaton_sets = live.automaton.borrow().acceptance_set_count();
         for set in 0..automaton_sets {
             let mut members = Vec::new();
-            for node in 0..count {
+            for (node, vertex) in vertices.iter().enumerate().take(count) {
                 if self.states[node].is_some()
                     && !self.admission(node)
                     && self.in_set(node, AcceptanceSet::Automaton(set))?
                 {
-                    members.push(vertices[node]);
+                    members.push(*vertex);
                 }
             }
             graph
@@ -782,12 +782,12 @@ impl<O> Checker<'_, '_, O> {
                 .map_err(|_| fault(CheckerFault::Graph))?;
         }
         let mut positioned = Vec::new();
-        for node in 0..count {
+        for (node, vertex) in vertices.iter().enumerate().take(count) {
             if self.states[node].is_some()
                 && !self.admission(node)
                 && self.in_set(node, AcceptanceSet::Position)?
             {
-                positioned.push(vertices[node]);
+                positioned.push(*vertex);
             }
         }
         graph

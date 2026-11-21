@@ -94,27 +94,31 @@ fn a_postcondition_pre_over_1000_levels_refuses_on_a_small_stack() {
         fsl_foundation::IdentityLimits::default(),
     );
     declarations.types = filament_semantic_value::declaration::TypeEnvironment::new(
-        [filament_semantic_value::declaration::CompositeDeclaration::new(
-            marker,
-            "Marker",
-            filament_semantic_value::declaration::CompositeShape::Record(vec![
-                filament_semantic_value::declaration::FieldDeclaration::new(
-                    "ready",
-                    filament_exact::ValueType::Boolean,
-                    filament_exact::Presence::Required,
-                ),
-            ]),
-        )],
+        [
+            filament_semantic_value::declaration::CompositeDeclaration::new(
+                marker,
+                "Marker",
+                filament_semantic_value::declaration::CompositeShape::Record(vec![
+                    filament_semantic_value::declaration::FieldDeclaration::new(
+                        "ready",
+                        filament_exact::ValueType::Boolean,
+                        filament_exact::Presence::Required,
+                    ),
+                ]),
+            ),
+        ],
         [],
     )
     .expect("the minimal type fixture is admitted");
-    declarations.functions.push(crate::check::depth_forms::function(
-        "probe",
-        &[],
-        crate::check::depth_forms::boolean(),
-        None,
-        fsl_forms::Expression::boolean(true),
-    ));
+    declarations
+        .functions
+        .push(crate::check::depth_forms::function(
+            "probe",
+            &[],
+            crate::check::depth_forms::boolean(),
+            None,
+            fsl_forms::Expression::boolean(true),
+        ));
     let graph = declarations
         .check(
             CheckMode::Linked,

@@ -1565,10 +1565,10 @@ impl<O> Checker<'_, '_, O> {
             (None, None) => true,
             (None, Some(_)) => false,
         };
-        let admitted_shape_ok = match (&self.state_graph, &certificate.admitted) {
-            (Some(_), None) | (None, Some(_)) => true,
-            _ => false,
-        };
+        let admitted_shape_ok = matches!(
+            (&self.state_graph, &certificate.admitted),
+            (Some(_), None) | (None, Some(_))
+        );
         let windowed = self.window.is_some();
         let live = self.live.as_ref();
         let node_ok = |node: &CertNode| {
@@ -2875,10 +2875,11 @@ impl<O> Checker<'_, '_, O> {
                 let from = from.ok_or_else(|| fault(CheckerFault::Automaton))?;
                 let from_values = self.predicate_values(from, state_graph.over)?;
                 for (node, state) in self.states.iter().enumerate() {
-                    if state.is_some() && from_values[node] {
-                        if self.transition_path_count(node, &target_values)? != 1 {
-                            return reject(CertificateRule::CountBroken, at_node(node));
-                        }
+                    if state.is_some()
+                        && from_values[node]
+                        && self.transition_path_count(node, &target_values)? != 1
+                    {
+                        return reject(CertificateRule::CountBroken, at_node(node));
                     }
                 }
                 Ok(())

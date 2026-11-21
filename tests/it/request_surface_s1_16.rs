@@ -1099,7 +1099,10 @@ fn model_based_test_request_rules() {
         "{first}"
     );
     assert_eq!(first["model_based_test"]["status"], "tested", "{first}");
-    assert_eq!(first["model_based_test"]["cases"]["generated"], 20, "{first}");
+    assert_eq!(
+        first["model_based_test"]["cases"]["generated"], 20,
+        "{first}"
+    );
     assert!(
         partitions.iter().all(|partition| {
             partition["value"]["value"]
@@ -1129,12 +1132,42 @@ fn model_based_test_request_rules() {
         );
     }
     for (member, value, code, cause) in [
-        ("max_cases", json!(0), "invalid_runtime_input", "invalid-value"),
-        ("max_cases", json!(-1), "invalid_runtime_input", "invalid-value"),
-        ("max_value_bits", json!(256), "invalid_runtime_input", "invalid-value"),
-        ("max_value_bits", json!(-1), "invalid_runtime_input", "invalid-value"),
-        ("max_trace_length", json!(0), "invalid_runtime_input", "invalid-value"),
-        ("clause", json!("Nothing"), "invalid_runtime_input", "unknown-member"),
+        (
+            "max_cases",
+            json!(0),
+            "invalid_runtime_input",
+            "invalid-value",
+        ),
+        (
+            "max_cases",
+            json!(-1),
+            "invalid_runtime_input",
+            "invalid-value",
+        ),
+        (
+            "max_value_bits",
+            json!(256),
+            "invalid_runtime_input",
+            "invalid-value",
+        ),
+        (
+            "max_value_bits",
+            json!(-1),
+            "invalid_runtime_input",
+            "invalid-value",
+        ),
+        (
+            "max_trace_length",
+            json!(0),
+            "invalid_runtime_input",
+            "invalid-value",
+        ),
+        (
+            "clause",
+            json!("Nothing"),
+            "invalid_runtime_input",
+            "unknown-member",
+        ),
     ] {
         let mut request = bounded.clone();
         request[member] = value;
@@ -1160,7 +1193,10 @@ fn model_based_test_request_rules() {
         ),
     );
     assert_eq!(bounded_code, 20, "{bounded_value}");
-    assert_eq!(bounded_value["code"], "invalid_runtime_input", "{bounded_value}");
+    assert_eq!(
+        bounded_value["code"], "invalid_runtime_input",
+        "{bounded_value}"
+    );
     assert_eq!(bounded_value["cause"], "unknown-member", "{bounded_value}");
 
     let (code, conflict) = run_with_members(
@@ -1175,13 +1211,11 @@ fn model_based_test_request_rules() {
     assert_eq!(conflict["code"], "invalid-request", "{conflict}");
     assert_eq!(conflict["stage"], "request", "{conflict}");
     assert!(
-        conflict["message"]
-            .as_str()
-            .is_some_and(|message| {
-                message.contains("model_based_test")
-                    && message.contains("tl_lowering")
-                    && message.contains("mutually exclusive")
-            }),
+        conflict["message"].as_str().is_some_and(|message| {
+            message.contains("model_based_test")
+                && message.contains("tl_lowering")
+                && message.contains("mutually exclusive")
+        }),
         "{conflict}"
     );
 }

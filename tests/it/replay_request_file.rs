@@ -364,8 +364,7 @@ fn a_replay_outcome_carries_and_renders_its_results() {
 fn a_replay_package_member_refusal_uses_the_request_document_locus() {
     let fixture = Fixture::compile(OWN_VALUE, LIBRARY_HEAD, None);
     let path = fixture.request_file(&fixture.package);
-    let mut request: Value =
-        serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    let mut request: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
     let package = &mut request["request"]["package"];
     package
         .as_object_mut()

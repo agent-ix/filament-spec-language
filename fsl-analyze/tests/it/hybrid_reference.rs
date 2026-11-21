@@ -668,7 +668,12 @@ fn by_steps(unit: &str) -> String {
 #[test]
 #[trace("TC-2869", "FR-1019-AC-16")]
 fn a_model_steps_claim_over_drop_is_proved_with_its_jump_dwell() {
-    let unit = by_steps(&temporal(DROP, "Held", "on origin", "always [0, 1] holds(h.x <= 1)"));
+    let unit = by_steps(&temporal(
+        DROP,
+        "Held",
+        "on origin",
+        "always [0, 1] holds(h.x <= 1)",
+    ));
     let item = reference("ref-drop", &unit, one("Held"));
     let record = &item["record"];
     assert_eq!(record["result"], "proved", "{item}");
@@ -696,7 +701,12 @@ fn a_model_steps_claim_over_drop_is_proved_with_its_jump_dwell() {
 #[test]
 #[trace("TC-2869", "FR-1019-AC-16")]
 fn a_fork_is_proved_with_a_jump_step_for_each_transition() {
-    let unit = temporal(FORK, "NonNegative", "on origin", "always [0, 10] holds(h.x >= 0)");
+    let unit = temporal(
+        FORK,
+        "NonNegative",
+        "on origin",
+        "always [0, 10] holds(h.x >= 0)",
+    );
     let item = reference("ref-fork", &unit, one("NonNegative"));
     assert_eq!(item["record"]["result"], "proved", "{item}");
     assert_eq!(item["record"]["certification"], "certified", "{item}");
@@ -741,7 +751,10 @@ fn an_on_each_claim_is_proved_by_the_inductive_enclosure() {
     );
     let item = reference("ref-each", &unit, one("Zero"));
     assert_eq!(item["record"]["result"], "proved", "{item}");
-    assert_eq!(item["record"]["basis"]["type"], "inductive-solver", "{item}");
+    assert_eq!(
+        item["record"]["basis"]["type"], "inductive-solver",
+        "{item}"
+    );
 }
 
 /// FR-1019 "Refutations": the refutation root is one initial entry's box, so
@@ -759,7 +772,10 @@ fn a_refutation_tries_only_points_of_its_own_entry() {
     assert_eq!(item["record"]["result"], "refuted", "{item}");
     let trace = find(&item["counterexample"], "trace").expect("a hybrid trace");
     let lower = &trace["start"]["enclosure"]["v"]["lower"];
-    assert!(*lower == rational("0") || *lower == rational("10"), "{item}");
+    assert!(
+        *lower == rational("0") || *lower == rational("10"),
+        "{item}"
+    );
     assert_eq!(*lower, trace["start"]["enclosure"]["v"]["upper"], "{item}");
 }
 
@@ -776,7 +792,11 @@ fn the_stopped_jump_step_names_its_source_dwell_and_transition() {
         .iter()
         .find(|step| step["mode"] == "Stopped")
         .expect("a Stopped jump step");
-    assert_eq!(stopped["from"], json!({"dwell": 0, "transition": 0}), "{item}");
+    assert_eq!(
+        stopped["from"],
+        json!({"dwell": 0, "transition": 0}),
+        "{item}"
+    );
 }
 
 /// FR-1019 "Refutations" step 3: a guard first true at an irrational instant

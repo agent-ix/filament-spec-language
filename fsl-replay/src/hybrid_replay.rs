@@ -40,17 +40,15 @@ use fsl_semantics::check::{
 };
 
 pub use certificate::{
-    probe_flowpipe_claim, ProbeOutcome,
-    box_advance, box_hull, box_tube, box_within, Fired, HybridBox, InitialHull, ModelReader,
-    ReadStop,
-    check_certificate, read_certificate, Acceptance, CertificateOutcome, CertificateRefusal,
-    Decisive, Expect, HybridCertificate, ProofCoverage, RefusalCode, Rejection,
-    Rule as HybridCertificateRule,
+    box_advance, box_hull, box_tube, box_within, check_certificate, probe_flowpipe_claim,
+    read_certificate, Acceptance, CertificateOutcome, CertificateRefusal, Decisive, Expect, Fired,
+    HybridBox, HybridCertificate, InitialHull, ModelReader, ProbeOutcome, ProofCoverage, ReadStop,
+    RefusalCode, Rejection, Rule as HybridCertificateRule,
 };
 pub use class::polynomial_class_gap;
-pub use interval::{Interval, Tri};
 pub use expand::{ExpansionGap, TermLocus};
 pub use fsl_foundation::diagnostic::JsonPointer;
+pub use interval::{Interval, Tri};
 pub use real::{ExactReal, Root};
 pub use trace::{
     admit, ExactInterval, HybridTrace, TraceBefore, TraceFault, TraceJump, TraceRefusal, TraceState,

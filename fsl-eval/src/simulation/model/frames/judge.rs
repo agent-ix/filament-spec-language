@@ -20,13 +20,13 @@ use fsl_semantics::model::observation::{AnchorKind, SelectedAnchor};
 use fsl_semantics::model::state::ModelState;
 use quire_canonical::Limits as CanonicalLimits;
 
-use super::{FrameRefused, Run, pre_observations, text_limits, text_of, transition_of};
+use super::{pre_observations, text_limits, text_of, transition_of, FrameRefused, Run};
 use crate::simulation::expansion::{Expansion, ExpansionStop};
-use crate::simulation::model::contracts::{Conjunction, conjunction};
+use crate::simulation::model::contracts::{conjunction, Conjunction};
 use crate::simulation::model::domain::{Domain, Odometer};
 use crate::simulation::model::encode::{declaration_text, reference_enc};
 use crate::simulation::model::walk::{expand_state, rows_of, stop, walk_of};
-use crate::simulation::model::{BROKEN, ClauseOutcome, ModelFinding, ModelSimState, ModelSystem};
+use crate::simulation::model::{ClauseOutcome, ModelFinding, ModelSimState, ModelSystem, BROKEN};
 
 /// One abstract operation applied to `receiver` at `pre`, judged against the
 /// candidate post-state `post`.

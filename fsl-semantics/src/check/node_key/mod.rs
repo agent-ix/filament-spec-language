@@ -6,7 +6,7 @@
 //! placeholders before admission. Body terms retain typed semantic content;
 //! they no longer derive identities from canonical preimages or digests.
 
-use fsl_foundation::source::node_table::{DebugTable, DebugWith, NodeKeyDebug, With, standalone};
+use fsl_foundation::source::node_table::{standalone, DebugTable, DebugWith, NodeKeyDebug, With};
 use quire_canonical::FixedShape;
 use serde::Serialize;
 

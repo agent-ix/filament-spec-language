@@ -155,14 +155,11 @@ pub fn settle_statistical(
         // `max_samples` and the samples it counted, and no verdict is
         // written.
         StatisticalOutcome::Completed(verdict)
-            if verdict
-                .tests
-                .iter()
-                .any(|test| {
-                    test.estimate.is_none()
-                        && test.undefined.is_none()
-                        && test.decision != Decision::Undecided(UndecidedCause::UndecidedSuccessor)
-                }) =>
+            if verdict.tests.iter().any(|test| {
+                test.estimate.is_none()
+                    && test.undefined.is_none()
+                    && test.decision != Decision::Undecided(UndecidedCause::UndecidedSuccessor)
+            }) =>
         {
             StatisticalRecord::of(TerminalValue::Incomplete(IncompleteCause::LimitReached {
                 limit: ModelCheckLimit::Statistical(StatisticalLimit::MaxSamples),

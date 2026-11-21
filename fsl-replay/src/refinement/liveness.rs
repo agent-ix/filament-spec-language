@@ -14,7 +14,7 @@ use filament_semantic_value::catalog::InternalFault;
 use filament_semantic_value::fairness::{FairnessConstraint, FairnessGranularity};
 use filament_semantic_value::model_transition::ModelTransition;
 use fsl_eval::fairness::{
-    Analysis, Constraint, EdgeLabel, FairnessError, Graph, Identity, Vertex, analyze,
+    analyze, Analysis, Constraint, EdgeLabel, FairnessError, Graph, Identity, Vertex,
 };
 use fsl_eval::simulation::model::ModelSystem;
 
@@ -214,7 +214,7 @@ pub fn abstract_classes(
 
 #[cfg(test)]
 mod candidate_tests {
-    use super::{CandidateFairState, CandidateFairStep, candidate_lasso_has_fair_run};
+    use super::{candidate_lasso_has_fair_run, CandidateFairState, CandidateFairStep};
     use filament_exact::Cancel;
     use fsl_eval::fairness::{Constraint, Identity};
     use ix_trace_rs::trace;
@@ -249,15 +249,13 @@ mod candidate_tests {
             step(b"1", Some(fire), b"2"),
             step(b"2", None, b"2"),
         ]];
-        assert!(
-            !candidate_lasso_has_fair_run(
-                &positions,
-                &steps,
-                &[Constraint::weak([fire])],
-                &Cancel::new(),
-            )
-            .expect("the candidate graph is closed")
-        );
+        assert!(!candidate_lasso_has_fair_run(
+            &positions,
+            &steps,
+            &[Constraint::weak([fire])],
+            &Cancel::new(),
+        )
+        .expect("the candidate graph is closed"));
     }
 
     #[test]
@@ -273,15 +271,13 @@ mod candidate_tests {
             step(b"A", Some(fire1), b"A"),
             step(b"B", Some(fire2), b"B"),
         ]];
-        assert!(
-            !candidate_lasso_has_fair_run(
-                &positions,
-                &steps,
-                &[Constraint::weak([fire1]), Constraint::weak([fire2])],
-                &Cancel::new(),
-            )
-            .expect("the candidate graph is closed")
-        );
+        assert!(!candidate_lasso_has_fair_run(
+            &positions,
+            &steps,
+            &[Constraint::weak([fire1]), Constraint::weak([fire2])],
+            &Cancel::new(),
+        )
+        .expect("the candidate graph is closed"));
     }
 
     #[test]
@@ -290,14 +286,12 @@ mod candidate_tests {
         let fire = Identity::new(1);
         let positions = vec![vec![state(b"A", &[fire]), state(b"B", &[])]];
         let steps = vec![vec![step(b"A", None, b"A"), step(b"B", None, b"B")]];
-        assert!(
-            candidate_lasso_has_fair_run(
-                &positions,
-                &steps,
-                &[Constraint::weak([fire])],
-                &Cancel::new(),
-            )
-            .expect("the candidate graph is closed")
-        );
+        assert!(candidate_lasso_has_fair_run(
+            &positions,
+            &steps,
+            &[Constraint::weak([fire])],
+            &Cancel::new(),
+        )
+        .expect("the candidate graph is closed"));
     }
 }

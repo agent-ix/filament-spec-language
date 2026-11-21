@@ -562,7 +562,8 @@ pub(super) struct Extraction {
 pub(super) struct ExtractedBody {
     pub authority: String,
     pub identity: String,
-    pub document: String,
+    #[serde(rename = "document")]
+    pub _document: String,
 }
 
 /// One authored clause selection for an extraction.

@@ -86,7 +86,7 @@ fn interference_over(vault: Vault, keys: &[&str]) -> World {
 fn product_states(outcome: &HyperOutcome) -> u64 {
     match outcome {
         HyperOutcome::Holds { stats } | HyperOutcome::HoldsReduced { stats, .. } => {
-            stats.product_states as u64
+            stats.product_states
         }
         other => panic!("expected a holding outcome, got {other:?}"),
     }

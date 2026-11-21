@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! Authored temporal bodies read real model behaviours through the public command.
 
-use crate::analyze_cli_support::{Workspace, analyze, counter_snapshot, label, request_over};
-use crate::counter::{CONTRACT, document, unit_text};
+use crate::analyze_cli_support::{analyze, counter_snapshot, label, request_over, Workspace};
+use crate::counter::{document, unit_text, CONTRACT};
 use ix_trace_rs::trace;
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 
 struct OwnedWorkspace(Workspace);
 

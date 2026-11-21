@@ -7,14 +7,14 @@ use std::path::PathBuf;
 use filament_exact::ValueType;
 use filament_semantic_value::fairness::{FairnessConstraint, PropertyForm};
 use fsl_analyze::analyze::document::{
-    AnalyzeDocumentError, AnalyzeRun, DocumentSelection, ItemSelection, ResolvedItem,
-    SubjectSelection, analyze_document, resolve_items,
+    analyze_document, resolve_items, AnalyzeDocumentError, AnalyzeRun, DocumentSelection,
+    ItemSelection, ResolvedItem, SubjectSelection,
 };
 use fsl_analyze::analyze::{AnalyzeLimits, SourceProvision};
 use fsl_foundation::Code;
 use fsl_replay::planner::{
-    EntryOrigin, ItemKey, TransferFacts, TransferPremiseValue, TransferSettlement,
-    read_premise_item, read_result_entry, strength_implies,
+    read_premise_item, read_result_entry, strength_implies, EntryOrigin, ItemKey, TransferFacts,
+    TransferPremiseValue, TransferSettlement,
 };
 use fsl_replay::spine::CheckedUnit;
 use fsl_replay::{Certification, ItemLabel};
@@ -23,13 +23,13 @@ use fsl_semantics::check::{
 };
 use fsl_semantics::model::intake::PackageInput;
 use fsl_semantics::model::observation::{
-    AdmissionFailure, DocumentProvision, DocumentRef, ObservationLimits, document_reference,
+    document_reference, AdmissionFailure, DocumentProvision, DocumentRef, ObservationLimits,
 };
-use serde_json::{Map, Value, json};
+use serde_json::{json, Map, Value};
 
 use super::{
-    FileCounts, FormalSource, NativeResult, Result, RunCause, RunResult, Settle, check_sources,
-    intake_with_bytes, package_name, wire,
+    check_sources, intake_with_bytes, package_name, wire, FileCounts, FormalSource, NativeResult,
+    Result, RunCause, RunResult, Settle,
 };
 
 /// The request and its program source, admitted without compiling or

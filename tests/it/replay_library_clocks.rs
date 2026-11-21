@@ -153,12 +153,7 @@ fn clock_selection_cause(refusal: &CompileRefusal) -> Option<ClockSelectionCause
     }
 }
 
-fn refused(
-    package: &Value,
-    program: &str,
-    cause: ClockSelectionCause,
-    pointer: &str,
-) {
+fn refused(package: &Value, program: &str, cause: ClockSelectionCause, pointer: &str) {
     let refusal = replay(request(package, program), ReplayLimits::default())
         .expect_err("the recorded clocks do not serve the library");
     let (refusal, actual_pointer) = match refusal {

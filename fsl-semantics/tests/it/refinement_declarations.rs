@@ -1317,10 +1317,8 @@ fn every_concrete_operation_has_a_checked_step_row() {
 #[trace("FSpec-TC-1042", "FSpec-FR-380-AC-9")]
 #[test]
 fn a_step_for_step_refinement_is_decided_from_its_step_rows_and_time_kind() {
-    let step_for_step = cas_refines_counter().replace(
-        " -> stutter;",
-        " -> Spec::Counter::inc(self);",
-    );
+    let step_for_step =
+        cas_refines_counter().replace(" -> stutter;", " -> Spec::Counter::inc(self);");
     let graph = checked_counter(&step_for_step);
     assert!(only_refinement(&graph).is_step_for_step(false));
 

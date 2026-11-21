@@ -2130,7 +2130,9 @@ fn a_finite_trace_set_defect_refuses_with_its_named_cause() {
     // hyper cause with its code, tag and exact span.
     let in_text = |text: &str, needle: &str, within: &str| {
         let at = text.find(within).expect("the source holds the text")
-            + within.find(needle).expect("the needle is within its context");
+            + within
+                .find(needle)
+                .expect("the needle is within its context");
         Span {
             start: at,
             end: at + needle.len(),

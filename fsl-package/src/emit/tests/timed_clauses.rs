@@ -1882,8 +1882,7 @@ fn a_malformed_slot_domain_is_refused_at_its_locus() {
     let quantifier = index_of(&base, "filament.op.collection.forall");
     let domain_id = base["semantic_graph"]["nodes"][domain]["node_id"].clone();
     assert_eq!(
-        base["semantic_graph"]["nodes"][quantifier]["body"]["arguments"][0]["target"],
-        domain_id,
+        base["semantic_graph"]["nodes"][quantifier]["body"]["arguments"][0]["target"], domain_id,
         "the quantifier's operand 0 is the slot-domain node"
     );
     let boolean = base["semantic_graph"]["nodes"][quantifier]["body"]["result_type"].clone();
@@ -1963,8 +1962,8 @@ fn a_malformed_slot_domain_is_refused_at_its_locus() {
     // A path that embeds the clock_place node_id object.
     refused(
         &|wire| {
-            let place = wire["semantic_graph"]["nodes"][domain]["body"]["arguments"][0]["target"]
-                .clone();
+            let place =
+                wire["semantic_graph"]["nodes"][domain]["body"]["arguments"][0]["target"].clone();
             wire["semantic_graph"]["nodes"][domain]["node_id"]["path"][2] = place;
         },
         "malformed_wire",

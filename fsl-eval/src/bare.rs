@@ -6,7 +6,7 @@
 
 pub use crate::value::bare_evaluate_selected_protocol_slot as evaluate_selected_protocol_slot;
 pub use crate::value::evaluate_bare_expression;
-pub use crate::value::{PackageOperations, bare_evaluate_frame as evaluate_frame};
+pub use crate::value::{bare_evaluate_frame as evaluate_frame, PackageOperations};
 pub use fsl_package::{
     BarePackage, BareSelectionFailure, BareSlot, BareSupply, ReadEqualityRows, ReadIdentityRows,
 };

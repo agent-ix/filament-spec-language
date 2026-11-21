@@ -290,7 +290,10 @@ fn the_horizon_and_every_limit_stop_the_example_run_naming_what_stopped_it() {
     let found = Ok(with(Some(3), defaults, &live));
     let counterexample = violated(&found);
     assert_eq!(counterexample.len(), 3);
-    assert_eq!(counterexample.lasso.as_ref().map(|lasso| lasso.entry), Some(0));
+    assert_eq!(
+        counterexample.lasso.as_ref().map(|lasso| lasso.entry),
+        Some(0)
+    );
 
     let stopped = |outcome: ModelCheckOutcome| match outcome {
         ModelCheckOutcome::Stopped { cause, limit, .. } => (cause, limit),

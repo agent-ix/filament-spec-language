@@ -806,10 +806,7 @@ pub fn derived_protocol_item<'a, S>(
     let models = match (&obligation.kind, kind) {
         (ObligationKind::ProtocolDeadlockFreedom { models }, ItemKind::DeadlockFreedom)
         | (ObligationKind::RaceFreedom { models }, ItemKind::RaceFreedom) => models,
-        (
-            ObligationKind::ProtocolLoopInvariant { models, repeat },
-            ItemKind::LoopInvariant,
-        ) => {
+        (ObligationKind::ProtocolLoopInvariant { models, repeat }, ItemKind::LoopInvariant) => {
             if !matches!(item.request.item, ModelCheckItem::LoopInvariant { repeat: found } if found == *repeat)
                 || !matches!(item.certificate.item, ModelCheckItem::LoopInvariant { repeat: found } if found == *repeat)
             {
@@ -817,10 +814,7 @@ pub fn derived_protocol_item<'a, S>(
             }
             models
         }
-        (
-            ObligationKind::ProtocolLoopTermination { models, repeat },
-            ItemKind::LoopTermination,
-        ) => {
+        (ObligationKind::ProtocolLoopTermination { models, repeat }, ItemKind::LoopTermination) => {
             if !matches!(item.request.item, ModelCheckItem::LoopTermination { repeat: found } if found == *repeat)
                 || !matches!(item.certificate.item, ModelCheckItem::LoopTermination { repeat: found } if found == *repeat)
             {
@@ -908,9 +902,7 @@ pub fn derived_zone_item<'a, S: Clone + Eq + 'a>(
         | ItemKind::RaceFreedom
         | ItemKind::Refinement
         | ItemKind::LoopInvariant
-        | ItemKind::LoopTermination => {
-            return Err(DerivedItemMismatch::NotDerived { index })
-        }
+        | ItemKind::LoopTermination => return Err(DerivedItemMismatch::NotDerived { index }),
     };
     if !runs {
         return Err(DerivedItemMismatch::OtherItem { index, kind });
@@ -1044,9 +1036,7 @@ pub(super) fn zone_refusal(refusal: &ZoneCheckRefusal) -> Refusal {
         // The forms EN-6 does not decide yet.
         ZoneCheckRefusal::UnsupportedForm
         | ZoneCheckRefusal::CarriedClocks
-        | ZoneCheckRefusal::HiddenFieldTimedAbstract => {
-            Refusal::Unsupported(NOT_YET)
-        }
+        | ZoneCheckRefusal::HiddenFieldTimedAbstract => Refusal::Unsupported(NOT_YET),
         // A request defect: an obligation that is not the item's.
         ZoneCheckRefusal::ObligationMismatch => Refusal::Failed(INVALID_VALUE),
         // Engine defects, and refusals whose types name no catalog code:

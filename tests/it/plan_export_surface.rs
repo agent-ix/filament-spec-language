@@ -1472,7 +1472,8 @@ fn planning_examples_hold_only_their_envelope() {
 /// The clauses to transfer, the contracts of the third counter model and the
 /// identity refinement `ThirdRefinesSpec`, which maps the one concrete
 /// operation to the one abstract operation and so is step-for-step.
-const TRANSFER_DECLARATIONS: &str = "profile ev = \"filament.temporal.event-position.false-extension/v1\";\n\
+const TRANSFER_DECLARATIONS: &str =
+    "profile ev = \"filament.temporal.event-position.false-extension/v1\";\n\
      pre ThirdCanInc using v on Third::Counter::inc { self.value < 2 }\n\
      post ThirdInc using v on Third::Counter::inc \
      { pre(self.value) < 2 and self.value = pre(self.value) + 1 }\n\

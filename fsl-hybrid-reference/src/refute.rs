@@ -155,9 +155,7 @@ impl Run<'_, '_> {
         };
         let root = &pipe.starts[pipe.dwells[violating].root];
         for (entry, bx) in &root.entries {
-            if let Some(found) =
-                self.search(*entry, root.mode, bx, self.set.refine_depth, &ctx)?
-            {
+            if let Some(found) = self.search(*entry, root.mode, bx, self.set.refine_depth, &ctx)? {
                 return Ok(HybridAnswer {
                     verdict: HybridVerdict::Refuted(Box::new(found.counterexample)),
                     certificate: found.certificate,
@@ -175,7 +173,8 @@ impl Run<'_, '_> {
             chain.push(from);
         }
         chain.reverse();
-        let interval = |time: &(Rational, Rational)| ExactInterval::new(time.0.clone(), time.1.clone());
+        let interval =
+            |time: &(Rational, Rational)| ExactInterval::new(time.0.clone(), time.1.clone());
         let jumps = chain
             .iter()
             .skip(1)
@@ -622,7 +621,11 @@ impl Run<'_, '_> {
         Ok(None)
     }
 
-    fn check_witness(&self, trace: &HybridTrace, value: &Value) -> Option<HybridCertificateOutcome> {
+    fn check_witness(
+        &self,
+        trace: &HybridTrace,
+        value: &Value,
+    ) -> Option<HybridCertificateOutcome> {
         let certificate = read_hybrid_certificate(
             self.req.model,
             HybridCertificateExpect::Witness(trace),

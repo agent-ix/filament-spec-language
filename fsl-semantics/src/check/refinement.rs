@@ -1859,12 +1859,10 @@ impl CheckedRefinement {
     /// their catalogued FR-322 operations.
     pub(crate) fn rows_have_nodes(&self) -> bool {
         self.rows().all(|row| {
-            row.body().descendants().into_iter().all(|node| {
-                !matches!(
-                    node.kind(),
-                    NodeKind::History { .. }
-                )
-            })
+            row.body()
+                .descendants()
+                .into_iter()
+                .all(|node| !matches!(node.kind(), NodeKind::History { .. }))
         })
     }
 
@@ -4273,7 +4271,10 @@ fn population_uses(
                 visit: Visit::Count,
                 source,
                 ..
-            } => (source_population(query.at(*source))?, PopulationValue::Count),
+            } => (
+                source_population(query.at(*source))?,
+                PopulationValue::Count,
+            ),
             NodeKind::Query {
                 visit: Visit::Sum,
                 source,
@@ -4281,13 +4282,10 @@ fn population_uses(
                 ..
             } => {
                 let summand = query.at(*summand);
-                let range = static_integer_range(
-                    (summand.kind(), summand.value_type()),
-                    &|id| {
-                        let found = body.node(id);
-                        Some((found.kind(), found.value_type()))
-                    },
-                )
+                let range = static_integer_range((summand.kind(), summand.value_type()), &|id| {
+                    let found = body.node(id);
+                    Some((found.kind(), found.value_type()))
+                })
                 .and_then(|(lower, upper)| IntegerInterval::new(lower, upper).ok())?;
                 (
                     source_population(query.at(*source))?,

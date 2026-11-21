@@ -63,7 +63,7 @@ fn checked_protocol_identity_and_locus(tail: &str) -> (String, Value) {
         .find(|entry| entry["node_id"] == node_id)
         .and_then(|entry| entry["regions"].as_array())
         .and_then(|regions| regions.first())
-        .map(|region| region.clone())
+        .cloned()
         .unwrap_or(Value::Null);
     if locus.is_object() {
         locus["kind"] = json!("region");

@@ -87,7 +87,10 @@ pub const CATALOG_PAIRS: &[fsl_foundation::diagnostic::CatalogCode] = &[
     fsl_foundation::diagnostic::CatalogCode::new("missing_declaration", "missing-name"),
     fsl_foundation::diagnostic::CatalogCode::new("resource_exhausted", "insufficient-next-charge"),
     fsl_foundation::diagnostic::CatalogCode::new("resource_exhausted", "max-automaton-states"),
-    fsl_foundation::diagnostic::CatalogCode::new("runtime_invariant", "established-invariant-broken"),
+    fsl_foundation::diagnostic::CatalogCode::new(
+        "runtime_invariant",
+        "established-invariant-broken",
+    ),
     fsl_foundation::diagnostic::CatalogCode::new("unsupported_construct", "not-yet-implemented"),
     fsl_foundation::diagnostic::CatalogCode::new("unsupported_construct", "expression-form"),
     fsl_foundation::diagnostic::CatalogCode::new("unsupported_projection", "not-markov"),
@@ -161,10 +164,9 @@ pub use certificate::closed_form::task_set::{
     TaskSetRefusal, TimeMember, Wcet,
 };
 pub use certificate::closure::{
-    check_closure, check_components, check_components_over_stutter_closure,
-    check_protocol_closure, check_protocol_components, CertificateRejection, CertificateRequest,
-    ClosureCertificate, ClosureRefusal, ProductStateRef, ProtocolCertificateRequest,
-    TemporalCertificateCheck,
+    check_closure, check_components, check_components_over_stutter_closure, check_protocol_closure,
+    check_protocol_components, CertificateRejection, CertificateRequest, ClosureCertificate,
+    ClosureRefusal, ProductStateRef, ProtocolCertificateRequest, TemporalCertificateCheck,
 };
 pub use certificate::scc::{Component, ComponentCertificate, ComponentWitness, ProofCertificate};
 pub use certificate::simulation::{
@@ -179,22 +181,22 @@ pub use certificate::state_graph::{
     check_state_graph, StateGraphCertificate, StateGraphCertificateRequest,
 };
 pub use certificate::task_product::{
-    TaskArrivalKind, TaskArrivalPhase, TaskClockCeiling, TaskClosureEvidence, TaskClosureMethod,
-    TaskDiagonalConstraint, TaskDiagonalOperator, TaskJobPhase, TaskLiveJob,
-    TaskPendingBudgetChange, TaskProductCertificate, TaskProductKey, TaskProductKeyRefusal,
-    same_source_transition, TaskProductShapeReason, TaskProductShapeRefusal,
-    TaskProductWireError, TaskQueueBound,
-    TaskSchedulerControl, TaskSubtraction, TaskTimeProgress, TaskTransitionTemplate,
+    same_source_transition, TaskArrivalKind, TaskArrivalPhase, TaskClockCeiling,
+    TaskClosureEvidence, TaskClosureMethod, TaskDiagonalConstraint, TaskDiagonalOperator,
+    TaskJobPhase, TaskLiveJob, TaskPendingBudgetChange, TaskProductCertificate, TaskProductKey,
+    TaskProductKeyRefusal, TaskProductShapeReason, TaskProductShapeRefusal, TaskProductWireError,
+    TaskQueueBound, TaskSchedulerControl, TaskSubtraction, TaskTimeProgress,
+    TaskTransitionTemplate,
 };
 pub use certificate::zone::{LuBounds, Zone, ZoneError};
 pub use certificate::zone_certificate::{
-    check_free_delay_zone_certificate, check_zone_certificate, explore_task_product, recomputed_member, AcceptanceSet, CertEdge,
-    CertNode, CertificateCheckLimits, CertificateItem, CertifiedItem, CheckerFault,
-    ComponentReason, Components, DivergenceWitness, DivergentTarget, FairnessMember, ItemIdentity,
-    NonZeno, ProductMark, QuotientEdge, QuotientIdentity, QuotientInitial, QuotientStop,
-    QuotientVertex, RefinementIdentity, RefinementPart, SilentMove, StateGraphCertificateForm,
-    StateGraphPart, TaskProductQuotient, ZoneCertificate, ZoneCertificateRefusal,
-    ZoneCertificateRequest, ZoneCertificateVerdict,
+    check_free_delay_zone_certificate, check_zone_certificate, explore_task_product,
+    recomputed_member, AcceptanceSet, CertEdge, CertNode, CertificateCheckLimits, CertificateItem,
+    CertifiedItem, CheckerFault, ComponentReason, Components, DivergenceWitness, DivergentTarget,
+    FairnessMember, ItemIdentity, NonZeno, ProductMark, QuotientEdge, QuotientIdentity,
+    QuotientInitial, QuotientStop, QuotientVertex, RefinementIdentity, RefinementPart, SilentMove,
+    StateGraphCertificateForm, StateGraphPart, TaskProductQuotient, ZoneCertificate,
+    ZoneCertificateRefusal, ZoneCertificateRequest, ZoneCertificateVerdict,
 };
 pub use certificate::{CertificateLocus, CertificateMember, CertificateRule, QueryPart};
 /// FR-322 "Operand index segments": a package's graph and its wire ids.
@@ -229,36 +231,37 @@ pub use execute::{
     replay_value_parity, replay_with_cancel, replay_with_cancel_and_temporal_selections,
     replay_with_temporal_selections, settle_verified_shadow, value_parity_obligation, BoundEntries,
     DependencySelectionsCause, Domain, FrameIdentityMismatch, FrameReplayResult,
-    IdentityEncodeError, LimitAboveReader, MalformedOperationReason, ParityArgument,
-    ParityBoundRefusal, PackageReadRefusal, ParityPreimage, ReplayRefusal, ScalarIdentityMismatch, ValueParityArgument,
-    ValueParityPreimage, ValueParityReport, ValueParityResult,
+    IdentityEncodeError, LimitAboveReader, MalformedOperationReason, PackageReadRefusal,
+    ParityArgument, ParityBoundRefusal, ParityPreimage, ReplayRefusal, ScalarIdentityMismatch,
+    ValueParityArgument, ValueParityPreimage, ValueParityReport, ValueParityResult,
 };
 pub use hybrid::{
-    CertificateRecord, CertificateStatus, HYBRID_CERTIFICATE_CHECKER, hybrid_locus_site,
-    hybrid_locus_wire, settle_hybrid_candidates, AdmittedHybridProcessItem,
-    AdmittedHybridProcessRequest, BoundDimension, BudgetRefusal, ClaimHorizon, HybridAnswer,
-    HybridEntryRefusal, HybridProcessDependencyPackage, HybridProcessItem,
-    HybridProcessPackageContext, HybridProcessRequest, HybridProcessRequestRefusal,
-    HybridProcessDependency, HybridProcessStage, HybridProvider, HybridSettlement,
-    HybridSolveRequest, HybridVerdict, NegativeHorizon, OptionRefusal, SolverBudget,
-    SolverCoverage, SolverHorizon, SolverMethod, SolverOutcome, SolverResult, SolverStop,
-    UnsupportedConstruct,
+    hybrid_locus_site, hybrid_locus_wire, settle_hybrid_candidates, AdmittedHybridProcessItem,
+    AdmittedHybridProcessRequest, BoundDimension, BudgetRefusal, CertificateRecord,
+    CertificateStatus, ClaimHorizon, HybridAnswer, HybridEntryRefusal, HybridProcessDependency,
+    HybridProcessDependencyPackage, HybridProcessItem, HybridProcessPackageContext,
+    HybridProcessRequest, HybridProcessRequestRefusal, HybridProcessStage, HybridProvider,
+    HybridSettlement, HybridSolveRequest, HybridVerdict, NegativeHorizon, OptionRefusal,
+    SolverBudget, SolverCoverage, SolverHorizon, SolverMethod, SolverOutcome, SolverResult,
+    SolverStop, UnsupportedConstruct, HYBRID_CERTIFICATE_CHECKER,
 };
 pub use hybrid_replay::{
-    probe_flowpipe_claim as probe_hybrid_flowpipe_claim, ProbeOutcome as HybridProbeOutcome,
-    box_advance, box_hull, box_tube, box_within, Fired as HybridFired, HybridBox,
-    InitialHull as HybridInitialHull, Interval as HybridInterval, ModelReader as HybridModelReader,
-    ReadStop as HybridReadStop, Tri as HybridTri,
-    check_certificate as check_hybrid_certificate, read_certificate as read_hybrid_certificate,
+    admit as admit_hybrid_trace, box_advance, box_hull, box_tube, box_within,
+    check_certificate as check_hybrid_certificate, exact_replay, polynomial_class_gap,
+    probe_flowpipe_claim as probe_hybrid_flowpipe_claim,
+    read_certificate as read_hybrid_certificate, static_replay,
     Acceptance as HybridCertificateAcceptance, CertificateOutcome as HybridCertificateOutcome,
-    CertificateRefusal as HybridCertificateRefusal, Decisive as HybridDecisive, Expect as HybridCertificateExpect,
-    HybridCertificate, HybridCertificateRule, ProofCoverage as HybridProofCoverage,
-    Rejection as HybridCertificateRejection,
-    admit as admit_hybrid_trace, exact_replay, static_replay, ExactCheck, ExactGap, ExactInterval,
-    polynomial_class_gap, ExactReal, ExactRecord, ExactReplay, ExpansionGap, ExpressionLocus, ExpressionSite,
-    HybridCounterexample, HybridCounterexampleKind, HybridReplayMeter, HybridReplayRefusal,
-    HybridTrace, JsonPointer, ReplayRecord, Root, StaticCheck, StaticReplay, TermLocus,
-    TraceBefore, TraceFault, TraceJump, TraceRefusal, TraceState, UndefinedCause, UndefinedInstant,
+    CertificateRefusal as HybridCertificateRefusal, Decisive as HybridDecisive, ExactCheck,
+    ExactGap, ExactInterval, ExactReal, ExactRecord, ExactReplay, ExpansionGap,
+    Expect as HybridCertificateExpect, ExpressionLocus, ExpressionSite, Fired as HybridFired,
+    HybridBox, HybridCertificate, HybridCertificateRule, HybridCounterexample,
+    HybridCounterexampleKind, HybridReplayMeter, HybridReplayRefusal, HybridTrace,
+    InitialHull as HybridInitialHull, Interval as HybridInterval, JsonPointer,
+    ModelReader as HybridModelReader, ProbeOutcome as HybridProbeOutcome,
+    ProofCoverage as HybridProofCoverage, ReadStop as HybridReadStop,
+    Rejection as HybridCertificateRejection, ReplayRecord, Root, StaticCheck, StaticReplay,
+    TermLocus, TraceBefore, TraceFault, TraceJump, TraceRefusal, TraceState, Tri as HybridTri,
+    UndefinedCause, UndefinedInstant,
 };
 pub use identity::{
     DeclaredDomain, DefinitionSourceRef, EmptyQualifiedName, ProfileSelection, QualifiedName,
@@ -267,9 +270,9 @@ pub use identity::{
 pub use limits::{AccountingLimits, CallerLimits, EngineLimits, RenderLimits};
 pub use model_check::counterexample::{
     undefined_finding, ClaimPredicate, CounterexampleKind, Lasso, LoopProofCounterexample,
-    LoopProofFailure, LoopProofObligation, MappingSite, ModelStep,
-    ObservedTemporalCounterexample, ObservedTemporalKind, ObservedTemporalStep, Race,
-    TemporalCounterexample, TimedPoint, UndefinedEvaluation, UndefinedLocus, UndefinedSite,
+    LoopProofFailure, LoopProofObligation, MappingSite, ModelStep, ObservedTemporalCounterexample,
+    ObservedTemporalKind, ObservedTemporalStep, Race, TemporalCounterexample, TimedPoint,
+    UndefinedEvaluation, UndefinedLocus, UndefinedSite,
 };
 pub use model_check::existential_outcome::{ExistentialInstanceOutcome, ExistentialOutcome};
 pub use model_check::finite_hyper_replay::{
@@ -321,8 +324,8 @@ pub use model_check::outcome::{
 };
 pub use model_check::refinement_replay::{
     replay_free_delay_refinement_trace, replay_protocol_assumption_witness,
-    replay_refinement_trace, replay_timed_refinement_trace,
-    ProtocolAssumptionReplaySettlement, RefinementTraceSettlement,
+    replay_refinement_trace, replay_timed_refinement_trace, ProtocolAssumptionReplaySettlement,
+    RefinementTraceSettlement,
 };
 pub use model_check::refinement_settle::{
     settle_refinement, settle_refinement_refusal, settle_refinement_safety,
@@ -379,12 +382,12 @@ pub use refinement_query::{
 };
 
 pub use refinement::{
-    abstract_classes, candidate_lasso_has_fair_run, CandidateFairState, CandidateFairStep,
-    CandidateLivenessError, check_initial, check_protocol_initial, check_protocol_state_relations,
-    check_protocol_step, check_step, initial_history, map_state, open_protocol_systems,
-    open_systems, protocol_observation_label, protocol_transition_class, step_history,
-    step_view_over, AbstractClass, AbstractInitial, AbstractProtocolSystem, AssumptionIdentity,
-    AssumptionOrigin, AssumptionSelectedMember, AssumptionSide, AssumptionTarget, ConcreteStep,
+    abstract_classes, candidate_lasso_has_fair_run, check_initial, check_protocol_initial,
+    check_protocol_state_relations, check_protocol_step, check_step, initial_history, map_state,
+    open_protocol_systems, open_systems, protocol_observation_label, protocol_transition_class,
+    step_history, step_view_over, AbstractClass, AbstractInitial, AbstractProtocolSystem,
+    AssumptionIdentity, AssumptionOrigin, AssumptionSelectedMember, AssumptionSide,
+    AssumptionTarget, CandidateFairState, CandidateFairStep, CandidateLivenessError, ConcreteStep,
     EvalFailure, HiddenSlot, HistoryValues, LivenessHalf, MappedState, MappingFailure,
     MappingRowRef, MappingUndetermined, ObjectKey, ObservationField, ObservationLabel,
     PairedAssumptionPath, PairedAssumptionStep, ProtocolAssumptionFairness,
@@ -407,20 +410,19 @@ pub use fsl_foundation::{BackendId, Code, RequestIndex};
 pub use outcome::undefined_reason;
 pub use outcome::{
     assignments_wire, certificate_identity_wire, claim_locus_wire, graph_evidence_wire,
-    omitted_witnesses, sampled_witness_wire, OmittedWitness, WitnessOmission,
-    hyper_counterexample_wire,
-    probabilistic_wire, probabilistic_undefined_wire, protocol_temporal_wire, read_task_temporal_counterexample,
-    read_task_temporal_document, read_temporal_counterexample, replay_model_trace_document,
-    state_key_wire, task_product_transition_wire, ReadCounterexample, TraceAlphabet,
-    replay_task_product_trace, task_source_transition_wire, task_temporal_wire,
-    task_temporal_wire_with_queue_growth, task_transition_wire, temporal_wire, ClauseRunNotAnItem,
-    ConformanceClosureOutput, ConformanceGlobalOutput, ConformanceMessageBoundOutput,
-    ConformanceObligationOutput, ConformanceProjectionOutput, ConformanceRecordingIdentity,
-    ConformanceReplayOutput, CounterexampleWireError, ExecuteResult, ItemCause, ItemLabel,
-    Operation, OutcomeDiagnostic, OutcomeDocument, OutcomeItem, OutcomeItemError, OutcomeLocus,
-    OutcomeStage, OutcomeWriteError, ParityReason, ProtocolConformanceOutput, ProtocolWire,
+    hyper_counterexample_wire, omitted_witnesses, probabilistic_undefined_wire, probabilistic_wire,
+    protocol_temporal_wire, read_task_temporal_counterexample, read_task_temporal_document,
+    read_temporal_counterexample, replay_model_trace_document, replay_task_product_trace,
+    sampled_witness_wire, state_key_wire, task_product_transition_wire,
+    task_source_transition_wire, task_temporal_wire, task_temporal_wire_with_queue_growth,
+    task_transition_wire, temporal_wire, ClauseRunNotAnItem, ConformanceClosureOutput,
+    ConformanceGlobalOutput, ConformanceMessageBoundOutput, ConformanceObligationOutput,
+    ConformanceProjectionOutput, ConformanceRecordingIdentity, ConformanceReplayOutput,
+    CounterexampleWireError, ExecuteResult, ItemCause, ItemLabel, OmittedWitness, Operation,
+    OutcomeDiagnostic, OutcomeDocument, OutcomeItem, OutcomeItemError, OutcomeLocus, OutcomeStage,
+    OutcomeWriteError, ParityReason, ProtocolConformanceOutput, ProtocolWire, ReadCounterexample,
     ResultLimit, ResultValue, TaskProductCounterexampleDocument, TaskProductTraceReplayRefusal,
-    TemporalCounterexampleReadRefusal, OUTCOME_FORMAT,
+    TemporalCounterexampleReadRefusal, TraceAlphabet, WitnessOmission, OUTCOME_FORMAT,
 };
 pub use planner::{
     read_premise_item, read_result_entry, read_settlement_request, Budget, PlannerDeclaration,
@@ -446,9 +448,9 @@ pub use probability_certificate::{
     long_run_probability_certificate_document, probabilistic_claim_identity,
     probabilistic_formula_monitor_context, probability_certificate_document,
     probability_proof_document, read_long_run_probability_certificate,
-    region_probability_product_key,
     read_probability_certificate, read_probability_proof_document,
-    read_weighted_long_run_probability_certificate, replay_probabilistic_witness,
+    read_weighted_long_run_probability_certificate, region_probability_product_key,
+    replay_probabilistic_undefined, replay_probabilistic_witness,
     weighted_long_run_probability_certificate_document, write_long_run_probability_certificate,
     write_probability_certificate, write_probability_proof_document,
     write_weighted_long_run_probability_certificate, ClaimBinding, DigitalClockKey,
@@ -459,15 +461,13 @@ pub use probability_certificate::{
     ProbabilityCertificateLocus, ProbabilityCertificateRejection, ProbabilityCertificateRule,
     ProbabilityDocumentError, ProbabilityDocumentIoLimits, ProbabilityDocumentLimit,
     ProbabilityDocumentLimits, ProbabilityKeyAdmission, ProbabilityObjective,
-    ProbabilityProductKey, ProbabilityProofDocument, ProbabilityRewardObjective,
-    TimedProbabilityForm, TimedProbabilityObjective, TimedProbabilityRoute,
-    RegionClockKey, RegionDeadlineKey, RegionKeyKind, RegionProductKeyInput,
-    ProbabilityPackageRequest, ProbabilitySourceError, ProbabilitySourceLimits,
-    ProbabilitySourceRequest,
-    ProbabilityStateEvent, ProbabilityWitnessError, ProbabilityWitnessPath,
-    ProbabilityWitnessReplay, ProbabilityWitnessStep, ReproducedProbabilityWitness,
-    ProbabilityUndefinedWitness, replay_probabilistic_undefined,
-    WeightedLongRunProbabilityDocument,
+    ProbabilityPackageRequest, ProbabilityProductKey, ProbabilityProofDocument,
+    ProbabilityRewardObjective, ProbabilitySourceError, ProbabilitySourceLimits,
+    ProbabilitySourceRequest, ProbabilityStateEvent, ProbabilityUndefinedWitness,
+    ProbabilityWitnessError, ProbabilityWitnessPath, ProbabilityWitnessReplay,
+    ProbabilityWitnessStep, RegionClockKey, RegionDeadlineKey, RegionKeyKind,
+    RegionProductKeyInput, ReproducedProbabilityWitness, TimedProbabilityForm,
+    TimedProbabilityObjective, TimedProbabilityRoute, WeightedLongRunProbabilityDocument,
 };
 #[cfg(feature = "test-support")]
 pub use probability_certificate::{

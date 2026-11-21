@@ -3,7 +3,7 @@
 use super::{applications, nodes, one_application, package, reference_target};
 use filament_contract_model::{CheckedSemanticNodeV2, CheckedTerm};
 use ix_trace_rs::trace;
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 
 fn parameter_name(node: &Value) -> &str {
     node["body"]["members"]
@@ -305,4 +305,3 @@ fn an_if_over_contained_integer_branches_admits() {
     );
     one_application(&hull, "filament.op.control.if");
 }
-

@@ -1088,24 +1088,27 @@ impl<'a> Definedness<'a> {
         relation: Relation,
         facts: &Rc<Facts>,
     ) -> Option<Rc<Facts>> {
-        let (value, collection, bound) =
-            match (self.subject(left, facts), self.subject(right, facts), relation) {
-                (Some(Subject::Value(value)), Some(Subject::Size(collection)), Relation::Less)
-                | (Some(Subject::Size(collection)), Some(Subject::Value(value)), Relation::Greater) => {
-                    (value, collection, Integer::one().neg())
-                }
-                (
-                    Some(Subject::Value(value)),
-                    Some(Subject::Size(collection)),
-                    Relation::LessOrEqual,
-                )
-                | (
-                    Some(Subject::Size(collection)),
-                    Some(Subject::Value(value)),
-                    Relation::GreaterOrEqual,
-                ) => (value, collection, Integer::zero()),
-                _ => return None,
-            };
+        let (value, collection, bound) = match (
+            self.subject(left, facts),
+            self.subject(right, facts),
+            relation,
+        ) {
+            (Some(Subject::Value(value)), Some(Subject::Size(collection)), Relation::Less)
+            | (Some(Subject::Size(collection)), Some(Subject::Value(value)), Relation::Greater) => {
+                (value, collection, Integer::one().neg())
+            }
+            (
+                Some(Subject::Value(value)),
+                Some(Subject::Size(collection)),
+                Relation::LessOrEqual,
+            )
+            | (
+                Some(Subject::Size(collection)),
+                Some(Subject::Value(value)),
+                Relation::GreaterOrEqual,
+            ) => (value, collection, Integer::zero()),
+            _ => return None,
+        };
         let mut next = Facts::clone(facts);
         let key = (value, collection);
         let bound = match next.below_size.get(&key) {

@@ -2,7 +2,7 @@
 //! TC-1396: the `qualify` gate's verdict covers the corpus, the lifecycle
 //! matrix and the parity of the linked backends (FR-567).
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use tempfile::TempDir;
 
 use ix_trace_rs::trace;

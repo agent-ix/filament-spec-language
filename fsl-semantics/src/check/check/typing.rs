@@ -25,11 +25,10 @@ use std::sync::Arc;
 
 use super::native_literal::NativeConstructor;
 use super::{
-    LocalKind, Typer, catalogued_step, contains_pre_eligible_read, contextual, ineligible,
-    is_integer, mismatch, node, refuse,
+    catalogued_step, contains_pre_eligible_read, contextual, ineligible, is_integer, mismatch,
+    node, refuse, LocalKind, Typer,
 };
-use crate::check::DispatchOperation;
-use crate::check::call_target::{ResolvedTarget, resolve_target};
+use crate::check::call_target::{resolve_target, ResolvedTarget};
 use crate::check::family::Application;
 use crate::check::ir::{CheckedBody, IntegerRange, Node, NodeId, Slot};
 use crate::check::refusal::{
@@ -38,6 +37,7 @@ use crate::check::refusal::{
 };
 use crate::check::sum_case::{ArmHead, CaseBuilder, UnionMember, UnionRef};
 use crate::check::type_form::{IntegerOutsideI128, IntegerSite};
+use crate::check::DispatchOperation;
 use filament_exact::Cancel;
 use filament_exact::{
     ArithmeticOperator, CollectionKind, CollectionType, DecimalType, FloatType, IeeeValue,
@@ -383,7 +383,6 @@ struct CaseArms<'r> {
 struct OpenArm {
     member: usize,
     binders: Vec<Slot>,
-    names: Vec<String>,
 }
 
 /// Which operand of a pair is being typed.
@@ -756,8 +755,6 @@ struct PopulationFrame<'e> {
     source: Node,
     /// The slot the binder reads.
     slot: Slot,
-    /// The source name of the population binder.
-    binder: String,
     /// The body of `sum` and `only`.
     body: Option<ExprRef<'e>>,
     /// The typed condition, once typed.
@@ -777,7 +774,7 @@ enum SeqStage {
         high: Box<Node>,
         slot: Slot,
         maximum: Option<u64>,
-        binder_type: ValueType,
+        binder_type: Box<ValueType>,
     },
 }
 
@@ -1493,7 +1490,7 @@ impl<'a> Typer<'a> {
                         location,
                         cause: CheckCause::ReferenceLiteralTypeMismatch {
                             name: type_name.clone(),
-                            actual: declared,
+                            actual: Box::new(declared),
                         },
                     });
                 };
@@ -3496,7 +3493,6 @@ impl<'a> Typer<'a> {
                 let LetFrame {
                     branches,
                     location,
-                    name,
                     annotation,
                     ..
                 } = *frame;
@@ -3593,15 +3589,7 @@ impl<'a> Typer<'a> {
                 binders.push(self.bind(&binder.name, value_type.clone(), &at, LocalKind::Bound)?);
             }
             let goal = frame.branches.goal(frame.expression.at(arm.body), at);
-            arms.open = Some(OpenArm {
-                member,
-                binders,
-                names: arm
-                    .binders
-                    .iter()
-                    .map(|binder| binder.name.clone())
-                    .collect(),
-            });
+            arms.open = Some(OpenArm { member, binders });
             frame.stage = CaseStage::Arms(arms);
             frames.push(Frame::Case(frame));
             return Ok(Step::Descend(goal));
@@ -4244,7 +4232,6 @@ impl<'a> Typer<'a> {
                     value_type,
                     type_argument,
                     location,
-                    binder,
                     ..
                 } = *frame;
                 if matches!(visit, Visit::Sum) && !summand_of_family(&value_type, &body.value_type)
@@ -4458,7 +4445,7 @@ impl<'a> Typer<'a> {
             ),
             (None, None) => {
                 return self
-                    .finish_population(form, source, slot, binder, None, None, &location)
+                    .finish_population(form, source, slot, None, None, &location)
                     .map(Step::Typed);
             }
         };
@@ -4466,7 +4453,6 @@ impl<'a> Typer<'a> {
             form,
             source,
             slot,
-            binder: binder.to_owned(),
             body,
             typed_condition: None,
             awaiting,
@@ -4495,20 +4481,11 @@ impl<'a> Typer<'a> {
                         form,
                         source,
                         slot,
-                        binder,
                         location,
                         ..
                     } = *frame;
-                    self.finish_population(
-                        form,
-                        source,
-                        slot,
-                        &binder,
-                        Some(typed),
-                        None,
-                        &location,
-                    )
-                    .map(Step::Typed)
+                    self.finish_population(form, source, slot, Some(typed), None, &location)
+                        .map(Step::Typed)
                 }
             },
             PopulationAwait::Body => {
@@ -4516,21 +4493,12 @@ impl<'a> Typer<'a> {
                     form,
                     source,
                     slot,
-                    binder,
                     typed_condition,
                     location,
                     ..
                 } = *frame;
-                self.finish_population(
-                    form,
-                    source,
-                    slot,
-                    &binder,
-                    typed_condition,
-                    Some(typed),
-                    &location,
-                )
-                .map(Step::Typed)
+                self.finish_population(form, source, slot, typed_condition, Some(typed), &location)
+                    .map(Step::Typed)
             }
         }
     }
@@ -4544,7 +4512,6 @@ impl<'a> Typer<'a> {
         form: PopulationForm,
         source: Node,
         slot: Slot,
-        binder: &str,
         condition: Option<Node>,
         body: Option<Node>,
         location: &Location,
@@ -4702,7 +4669,7 @@ impl<'a> Typer<'a> {
                     high: Box::new(typed),
                     slot,
                     maximum,
-                    binder_type,
+                    binder_type: Box::new(binder_type),
                 };
                 frames.push(Frame::Seq(frame));
                 Ok(Step::Descend(Goal::Infer(body, None, body_location)))
@@ -4737,7 +4704,7 @@ impl<'a> Typer<'a> {
                         value_type,
                         &location,
                     )
-                    .with_binder_annotation(Some(binder_type)),
+                    .with_binder_annotation(Some(*binder_type)),
                 ))
             }
         }

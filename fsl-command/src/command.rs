@@ -6,8 +6,8 @@ mod clause;
 mod export;
 mod flow;
 mod items;
-pub mod monitor;
 mod model_based_test;
+pub mod monitor;
 mod output;
 mod output_file;
 mod package_run;
@@ -23,13 +23,13 @@ mod transfer;
 mod wire;
 
 pub use analyze::{
-    AnalyzeInput, PreparedAnalyze, analyze, analyze_with_limits, analyze_with_providers,
-    analyze_with_providers_and_limits, prepare_analyze,
+    analyze, analyze_with_limits, analyze_with_providers, analyze_with_providers_and_limits,
+    prepare_analyze, AnalyzeInput, PreparedAnalyze,
 };
-pub use flow::{FlowAnalyzeError, analyze_flow_report};
-pub use monitor::{MonitorEvent, MonitorProviders, MonitorSummary, monitor};
+pub use flow::{analyze_flow_report, FlowAnalyzeError};
+pub use monitor::{monitor, MonitorEvent, MonitorProviders, MonitorSummary};
 pub use output::NativeResult;
-pub use tl::{AtomMapping, TlRecord, record as tl_record};
+pub use tl::{record as tl_record, AtomMapping, TlRecord};
 
 use crate::formal_source::FormalSource;
 use filament_contract_model as ir;
@@ -1093,7 +1093,7 @@ pub enum RunCause {
         #[source]
         error: fsl_replay::CauseCodecError,
         /// The all-or-nothing outcome document for this failed row.
-        outcome: fsl_replay::OutcomeDocument,
+        outcome: Box<fsl_replay::OutcomeDocument>,
     },
     /// An item run violated an internal runtime invariant.
     #[error("an items run faulted")]
@@ -1313,7 +1313,8 @@ impl RunError {
         &self,
         operation: fsl_replay::Operation,
     ) -> fsl_replay::OutcomeDocument {
-        self.refusal_document(operation).with_empty_analyze_members()
+        self.refusal_document(operation)
+            .with_empty_analyze_members()
     }
 
     fn refusal_document(&self, operation: fsl_replay::Operation) -> fsl_replay::OutcomeDocument {
@@ -1330,7 +1331,7 @@ impl RunError {
             RunCause::AnalyzeRefused(refusal) => refusal.document(),
             RunCause::MonitorRefused(refusal) => refusal.document(),
             RunCause::Replay(failure) => failure.outcome.clone(),
-            RunCause::ReplayOutput { outcome, .. } => outcome.clone(),
+            RunCause::ReplayOutput { outcome, .. } => outcome.as_ref().clone(),
             RunCause::Source(failure) => OutcomeDocument::new(operation, None, self.category())
                 .with_diagnostics(vec![OutcomeDiagnostic::from_source_diagnostic(
                     &failure.diagnostic,
@@ -2219,10 +2220,9 @@ fn inspect_handoff_position(
                 .and_then(|locus| locus.path.as_ref())
                 .map(ToString::to_string),
         ),
-        Error::ReaderIncomplete(_) | Error::ReaderCatalogUnavailable(_) => (
-            Some("checked-package.json".to_owned()),
-            None,
-        ),
+        Error::ReaderIncomplete(_) | Error::ReaderCatalogUnavailable(_) => {
+            (Some("checked-package.json".to_owned()), None)
+        }
         Error::Read { path, .. } => {
             let path = Path::new(path);
             if path == directory {
@@ -2235,9 +2235,10 @@ fn inspect_handoff_position(
             (member, None)
         }
         Error::Label { label } => (Some(label.clone()), None),
-        Error::Sidecar(SelectionReadError::Format(_)) => {
-            (Some("selection.json".to_owned()), Some("/format".to_owned()))
-        }
+        Error::Sidecar(SelectionReadError::Format(_)) => (
+            Some("selection.json".to_owned()),
+            Some("/format".to_owned()),
+        ),
         Error::Sidecar(SelectionReadError::Malformed(_)) => {
             (Some("selection.json".to_owned()), None)
         }
@@ -4021,8 +4022,12 @@ const TRANSFER_EXCLUSIVE: [(&str, fn(&wire::Request) -> bool); 9] = [
     ("clause", |request| request.clause.is_some()),
     ("items", |request| request.items.is_some()),
     ("tl_lowering", |request| request.tl_lowering.is_some()),
-    ("model_based_test", |request| request.model_based_test.is_some()),
-    ("verification_plan", |request| request.verification_plan.is_some()),
+    ("model_based_test", |request| {
+        request.model_based_test.is_some()
+    }),
+    ("verification_plan", |request| {
+        request.verification_plan.is_some()
+    }),
     ("synthesis", |request| request.synthesis.is_some()),
     ("export_evidence", |_| false),
 ];
@@ -4127,7 +4132,11 @@ fn validate_transfer_member(
             }
         }
     }
-    if request.models.iter().any(|model| !is_model_input_format(model)) {
+    if request
+        .models
+        .iter()
+        .any(|model| !is_model_input_format(model))
+    {
         return Err(RunCause::CompleteRunSelection(
             CompleteRunSelection::NativeModel,
         ));
@@ -4278,7 +4287,11 @@ fn prepare_complete_run(
             sources,
         })));
     }
-    if request.models.iter().any(|model| !is_model_input_format(model)) {
+    if request
+        .models
+        .iter()
+        .any(|model| !is_model_input_format(model))
+    {
         return Err(RunCause::CompleteRunSelection(
             CompleteRunSelection::NativeModel,
         ));
@@ -4764,7 +4777,9 @@ mod tests {
         let codec = fsl_replay::CauseCodecError::Empty("result row");
         let error = RunError {
             cause: RunCause::ReplayOutput {
-                outcome: fsl_replay::OutcomeDocument::from_replay_output_failure(1, &codec),
+                outcome: Box::new(fsl_replay::OutcomeDocument::from_replay_output_failure(
+                    1, &codec,
+                )),
                 error: codec,
             },
             sources: crate::Sources::default(),

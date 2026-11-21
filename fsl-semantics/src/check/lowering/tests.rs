@@ -701,7 +701,9 @@ fn seq_lowers_as_a_map_over_its_integer_range() {
     lowering
         .expression(checked.root(), &mut binders)
         .expect("seq lowers");
-    lowering.settle_mixed_cycle(false).expect("the drafts settle");
+    lowering
+        .settle_mixed_cycle(false)
+        .expect("the drafts settle");
     let semantic = lowering.finish(&location).expect("lowering finishes").graph;
     let seq = application(&semantic, "filament.op.collection.seq");
     let arguments = &seq["body"]["arguments"];
