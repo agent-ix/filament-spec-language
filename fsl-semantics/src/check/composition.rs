@@ -45,7 +45,7 @@ use super::guarantee::{
 use super::lowering::SemanticNode;
 use super::node_key::{
     ClauseEntry, ComponentEntry, CompositionRule, CompositionTerm, EnvironmentEntry, NodeRef,
-    PremiseEntry, SuppliesEntry, SupplyEntry,
+    PremiseEntry, SourceOwner, SuppliesEntry, SupplyEntry,
 };
 use super::CheckedGraph;
 
@@ -304,6 +304,7 @@ pub struct CompositionCycle {
 #[derive(Clone, Debug, PartialEq)]
 pub struct CheckedComposition {
     name: String,
+    owner: SourceOwner,
     key: NodeKey,
     package: String,
     rule: CompositionRule,
@@ -683,7 +684,12 @@ impl CheckedComposition {
             name: declaration_origin(&self.name),
         });
         (
-            SemanticNode::component_composition(self.key.clone(), &self.name, self.term()),
+            SemanticNode::component_composition(
+                self.key.clone(),
+                &self.name,
+                self.owner.clone(),
+                self.term(),
+            ),
             location,
         )
     }
@@ -1476,6 +1482,11 @@ impl CheckedGraph {
             .sort_by(|left, right| left.reference.cmp(&right.reference));
         let cycles = members.cycles();
         CheckedComposition {
+            owner: SourceOwner::from(
+                self.source_owners
+                    .get(&declaration_origin(&name))
+                    .unwrap_or(&self.source),
+            ),
             name,
             key,
             package: self.package_name().to_owned(),
