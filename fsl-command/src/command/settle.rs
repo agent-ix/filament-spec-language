@@ -45,18 +45,19 @@ pub(super) fn settle_call(
         .map(|member| fsl_replay::claim_locus_wire(member.occurrence()))
         .collect::<std::result::Result<Vec<_>, _>>()
         .map_err(|_| RunCause::AnalyzeFault)?;
-    let selection = &resolve_held_claims(checked, packages, selection)?;
+    let resolved = resolve_held_claims(checked, packages, selection)?;
     // FR-960 "Unknown claim": a claim of no item of the call refuses the
-    // request before any item is negotiated.
-    if let Some(entry) = selection
+    // request before any item is negotiated, naming the claim as supplied.
+    if let Some(position) = resolved
         .items
         .iter()
-        .find(|entry| !claims.contains(&entry.claim))
+        .position(|entry| !claims.contains(&entry.claim))
     {
         return Err(RunCause::UnknownRequirementClaim {
-            claim: entry.claim.clone(),
+            claim: selection.items[position].claim.clone(),
         });
     }
+    let selection = resolved.as_ref();
     let items: Vec<CallItem> = members
         .members()
         .iter()
@@ -100,72 +101,72 @@ pub(super) fn settle_call(
     })
 }
 
-/// The index segments `{"node": i}` of `claim`'s node path, with their
-/// position in the path.
-fn index_segments(claim: &serde_json::Value) -> Vec<(usize, u64)> {
+/// The path segments of `claim`'s node that hold a `node` member, which is an
+/// index segment of FSL FR-621's document-held form, with their position.
+fn index_segments(claim: &serde_json::Value) -> Vec<(usize, &serde_json::Value)> {
     claim["node"]["path"]
         .as_array()
         .into_iter()
         .flatten()
         .enumerate()
-        .filter_map(|(position, segment)| Some((position, segment.get("node")?.as_u64()?)))
+        .filter_map(|(position, segment)| Some((position, segment.get("node")?)))
         .collect()
 }
 
-/// FR-960 "Inputs": an `items` claim is the claim a run outcome reports
-/// (FR-963), which FSL FR-621 "Node ids in an item" writes in the
-/// document-held form: each operand of the node's path an index segment
-/// `{"node": i}` into the request package's graph. Resolve every such claim
-/// to its structural key through that graph (`WireGraph::structural_value`,
-/// the resolver every other reader of a held id uses) so it compares with the
-/// call's own claims. A claim with no index segment is the structural
-/// FSpec FR-331 form and is kept as written.
+/// FR-960 "Inputs": an `items` claim is FSpec FR-331's structural spelling or
+/// the document-held form a run outcome reports (FR-963, FSL FR-621 "Node ids
+/// in an item"), each operand of the node's path an index segment
+/// `{"node": i}` into the graph of the request's package. Resolve every claim
+/// holding an index segment to its structural key through that graph
+/// (`WireGraph::structural_value`, the one resolver) so it compares with the
+/// call's own claims; a structural claim is kept as written.
 ///
 /// # Errors
 ///
-/// A held claim whose package has no graph refuses as the run's emission
-/// does; an index the graph does not have refuses `invalid_package` with no
-/// cause at that segment's `node` member (the FSpec FR-322 reader's
-/// `malformed_wire`, which the native catalog collapses to `invalid_package`);
-/// two entries naming one claim in either form refuse at the later entry.
-fn resolve_held_claims(
+/// A package the strict reader refuses or that does not emit refuses as the
+/// analyze route does; a malformed or out-of-range index segment refuses
+/// `invalid-request` at that segment's `node` member; two entries naming one
+/// claim in either form refuse at the later entry.
+fn resolve_held_claims<'a>(
     checked: &fsl_replay::spine::CheckedUnit,
     packages: &fsl_semantics::model::intake::PackageInput,
-    selection: &Requirements,
-) -> Result<Requirements> {
+    selection: &'a Requirements,
+) -> Result<std::borrow::Cow<'a, Requirements>> {
     if selection
         .items
         .iter()
         .all(|entry| index_segments(&entry.claim).is_empty())
     {
-        return Ok(selection.clone());
+        return Ok(std::borrow::Cow::Borrowed(selection));
     }
     let graph = fsl_analyze::analyze::DocumentGraphs::of_package(
         checked.package(),
         packages,
         AnalyzeLimits::unbounded().emit,
     )
-    .map_err(RunCause::AnalyzeEmission)?;
+    .map_err(|refusal| RunCause::AnalyzeRefused(Box::new(refusal)))?;
     let mut resolved = selection.clone();
     for (position, entry) in resolved.items.iter_mut().enumerate() {
-        let segments = index_segments(&entry.claim);
-        if segments.is_empty() {
+        if index_segments(&entry.claim).is_empty() {
             continue;
         }
         let at = format!("/call/requirements/items/{position}/claim/node");
-        let outside = segments
-            .iter()
-            .find(|(_, index)| usize::try_from(*index).map_or(true, |i| i >= graph.keys().len()));
         let node = graph
             .structural_value(&entry.claim["node"])
-            .map_err(|message| RunCause::AnalyzePackage {
-                code: fsl_foundation::Code::InvalidPackage,
-                cause: None,
-                pointer: Some(match outside {
-                    Some((segment, _)) => format!("{at}/path/{segment}/node"),
-                    None => at.clone(),
-                }),
-                message: format!("invalid_package: {at}: {message}"),
+            .map_err(|message| {
+                let bad = index_segments(&entry.claim).into_iter().find(|(_, index)| {
+                    index
+                        .as_u64()
+                        .and_then(|index| usize::try_from(index).ok())
+                        .is_none_or(|index| index >= graph.keys().len())
+                });
+                RunCause::ClauseRequest {
+                    member: bad.map_or_else(
+                        || at.clone(),
+                        |(segment, _)| format!("{at}/path/{segment}/node"),
+                    ),
+                    reason: message,
+                }
             })?;
         entry.claim["node"] = node;
     }
@@ -180,5 +181,5 @@ fn resolve_held_claims(
             });
         }
     }
-    Ok(resolved)
+    Ok(std::borrow::Cow::Owned(resolved))
 }

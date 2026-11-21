@@ -815,21 +815,33 @@ impl DocumentGraphs {
         fsl_semantics::check::wire_id::WireGraph::of_package_bytes(bytes)
             .map_err(GraphUnavailable::Unreadable)
     }
-}
 
-impl DocumentGraphs {
     /// The graph of `package`, emitted and read back through the strict
     /// reader against `packages`: the graph a result document of a run over
     /// `package` indexes, so a reader of a request can resolve a document-held
     /// id the run wrote (FSL FR-621 "Node ids in an item").
+    ///
+    /// # Errors
+    ///
+    /// [`AnalyzeRefusal::Package`] with the reader's own refusal when the
+    /// strict reader refuses the package, as the analyze route reports it;
+    /// [`AnalyzeRefusal::Emission`] when the package emits no admitted bytes
+    /// or they hold no readable graph.
     pub fn of_package(
         package: &CheckedPackage,
         packages: &fsl_semantics::model::intake::PackageInput,
         emit: fsl_package::EmitLimits,
-    ) -> Result<fsl_semantics::check::wire_id::WireGraph, GraphUnavailable> {
+    ) -> Result<fsl_semantics::check::wire_id::WireGraph, AnalyzeRefusal> {
         match crate::provider::read_package(package, packages, emit) {
-            Ok(read) => Self::of_bytes(read.emission().package().bytes()),
-            Err(_) => Err(GraphUnavailable::NotEmitted),
+            Ok(read) => {
+                Self::of_bytes(read.emission().package().bytes()).map_err(AnalyzeRefusal::Emission)
+            }
+            Err(crate::provider::NotAdmitted::Refused(refusal)) => {
+                Err(AnalyzeRefusal::Package(refusal))
+            }
+            Err(crate::provider::NotAdmitted::Other) => {
+                Err(AnalyzeRefusal::Emission(GraphUnavailable::NotEmitted))
+            }
         }
     }
 }
