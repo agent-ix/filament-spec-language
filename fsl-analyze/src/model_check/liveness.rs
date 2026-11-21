@@ -62,8 +62,8 @@
 //! concrete entry. A state constraint on a liveness clause (FR-158) cuts the
 //! product at its boundary states, which are stored and read but never
 //! expanded or stutter-extended; a run that finds no violation and stored one
-//! settles `ConstraintReached`. A protocol subject refuses it
-//! ([`ModelCheckRefusal::ReducedLiveness`]).
+//! settles `ConstraintReached`, for a protocol subject as for a model subject
+//! (FR-158 "Protocol subjects").
 //!
 //! A protocol subject under `sc` or `tso` (FR-212, FR-228) is one more
 //! [`LiveSubject`]: its products are explored and decided by the same
@@ -290,10 +290,12 @@ pub(super) fn check(
 ///
 /// [`ModelCheckRefusal`] as [`check`] returns it.
 #[derive(Clone, Copy)]
-pub(super) struct ProtocolLivenessOptions {
+pub(super) struct ProtocolLivenessOptions<'c> {
     pub(super) limits: fsl_replay::ModelCheckLimits,
     pub(super) ignore_memory_constraints: bool,
     pub(super) instance_bound: Option<InstanceBound>,
+    /// The request's state constraint (FR-158).
+    pub(super) constraint: Option<&'c str>,
 }
 
 #[allow(
@@ -307,7 +309,7 @@ pub(super) fn check_protocol<M: MemoryModel>(
     item: ModelCheckItem<'_>,
     temporal_clock_selections: &[fsl_package::TemporalClockSelection],
     max_depth: Option<usize>,
-    options: ProtocolLivenessOptions,
+    options: ProtocolLivenessOptions<'_>,
     cancel: &Cancel,
 ) -> Result<ModelCheckOutcome<ProtocolTransition>, ModelCheckRefusal> {
     let ModelCheckItem::Clause { clause, letters } = item else {
@@ -374,7 +376,7 @@ pub(super) fn check_protocol<M: MemoryModel>(
                 value,
             }),
             instance_bound: options.instance_bound,
-            constraint: None,
+            constraint: options.constraint,
             root_cancelled,
             no_initial: simulation.initial.is_empty(),
             certify: Certify {
@@ -420,7 +422,7 @@ struct Bound<'r, S: LiveSubject> {
     /// The live-instance bound a protocol liveness run explored under.
     instance_bound: Option<InstanceBound>,
     /// The cancellation that stopped the clause identity's resolution.
-    /// The request's state constraint (FR-158); `None` for a protocol subject.
+    /// The request's state constraint (FR-158).
     constraint: Option<&'r str>,
     root_cancelled: Option<CancelCause>,
     no_initial: bool,
@@ -493,6 +495,7 @@ fn decide_bindings<S: LiveSubject>(
         transitions_left: Cell::new(max_transitions),
         lifted: Cell::new(0),
         dead_limited: RefCell::new(BTreeSet::new()),
+        dead_message_limited: RefCell::new(BTreeSet::new()),
         certify: bound.certify,
     };
     run.decide(totals)
@@ -516,6 +519,13 @@ trait LiveSubject: SubjectSystem<TransitionId: Ord> + Sized {
         state: &Self::State,
         name: &str,
     ) -> Result<ConstraintValue, ExpansionStop>;
+
+    /// The steps `cut` left unexpanded, which fairness reads as enabled
+    /// (ADR-025 MF-4): a bound never makes an unfair lasso fair. A model
+    /// subject cuts none.
+    fn cut_steps(_cut: &Cut) -> Vec<Tr<Self>> {
+        Vec::new()
+    }
 
     /// The subject's symmetry, which lifts a reduced path (FR-161).
     fn permuter(&self) -> Option<PermuterOf<'_, Self>>;
@@ -638,6 +648,10 @@ impl<'a> LiveSubject for ModelSystem<'a> {
 }
 
 impl<M: MemoryModel> LiveSubject for ProtocolSystem<'_, M> {
+    fn cut_steps(cut: &Cut) -> Vec<ProtocolTransition> {
+        cut.steps.clone()
+    }
+
     fn constraint_value(
         &self,
         state: &Self::State,
@@ -1221,6 +1235,7 @@ impl<S: LiveSubject> TransitionSystem for LassoSystem<'_, S> {
             .iter()
             .map(|(transition, _)| transition.clone())
             .collect();
+        enabled.extend(S::cut_steps(&cut));
         enabled.sort();
         enabled.dedup();
         findings.push(Finding::Enabled(enabled));
@@ -1586,6 +1601,8 @@ struct Run<'r, S: LiveSubject> {
     /// The model states the memory bound cut a store of in the model-only
     /// passes.
     dead_limited: RefCell<BTreeSet<StateKey>>,
+    /// The model states whose send the channel bound cut in the model-only pass.
+    dead_message_limited: RefCell<BTreeSet<StateKey>>,
     certify: Certify<'r>,
 }
 
@@ -1727,12 +1744,13 @@ impl<'r, S: LiveSubject> Run<'r, S> {
                 }
             }
         }
-        let message_limited: BTreeSet<StateKey> = explored
+        let mut message_limited: BTreeSet<StateKey> = explored
             .iter()
             .flat_map(|run| run.graph.states())
             .filter(|state| state.findings.contains(&Finding::MessagesBoundLimited))
             .map(|state| self.state_key(&state.state.model))
             .collect::<Result<_, _>>()?;
+        message_limited.extend(self.dead_message_limited.borrow().iter().cloned());
         let mut constrained = self.dead_constrained.borrow().clone();
         for run in &explored {
             for state in run.graph.states() {
@@ -2241,6 +2259,11 @@ impl<'r, S: LiveSubject> Run<'r, S> {
             };
             if cut.memory {
                 self.dead_limited
+                    .borrow_mut()
+                    .insert(self.state_key(&model)?);
+            }
+            if cut.messages {
+                self.dead_message_limited
                     .borrow_mut()
                     .insert(self.state_key(&model)?);
             }

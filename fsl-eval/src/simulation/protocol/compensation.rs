@@ -546,6 +546,7 @@ impl<M: MemoryModel> ProtocolSystem<'_, M> {
                         Written::Applied(model, memory) => (model, memory),
                         Written::Disabled => continue,
                         Written::Cut => {
+                            gathered.cut.steps.push(identity.clone());
                             gathered.cut.memory = true;
                             continue;
                         }

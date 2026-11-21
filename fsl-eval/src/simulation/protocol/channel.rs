@@ -192,6 +192,11 @@ impl<M: MemoryModel> ProtocolSystem<'_, M> {
         }) {
             // MB-3: this send is a boundary cut before capacity and overflow
             // semantics run. Counts are scoped to this channel instance.
+            gathered.cut.steps.push(ProtocolTransition::control(
+                StepKind::Send,
+                path.clone(),
+                text,
+            ));
             gathered.cut.messages = true;
             return Ok(());
         }
