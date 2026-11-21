@@ -20,7 +20,7 @@ use std::collections::BTreeMap;
 
 use filament_exact::Rational;
 
-use super::super::poly::{midpoint, square_of_words, Poly};
+use super::super::poly::{square_of_words, Poly};
 use super::super::real::ExactReal;
 use super::super::trace::zero;
 use super::super::{HybridReplayMeter, HybridReplayRefusal};
@@ -29,6 +29,31 @@ type Result<T> = std::result::Result<T, HybridReplayRefusal>;
 
 fn one() -> Rational {
     Rational::from_integer(1_i64.into())
+}
+
+/// Keep admission and materialization in that order even when the operation
+/// allocates a dense result from sparse operands.
+fn prepaid<T>(
+    meter: &mut HybridReplayMeter,
+    weight: u64,
+    operation: impl FnOnce() -> T,
+) -> Result<T> {
+    meter.charge_by(weight)?;
+    Ok(operation())
+}
+
+/// Rational arithmetic and comparisons can cross-multiply both operands.
+/// Charge their combined word length before entering the operation.
+fn rational_step<T>(
+    meter: &mut HybridReplayMeter,
+    operands: &[&Rational],
+    operation: impl FnOnce() -> T,
+) -> Result<T> {
+    let words = operands
+        .iter()
+        .map(|q| 1 + q.max_part_bits() / 64)
+        .fold(0, u64::saturating_add);
+    prepaid(meter, square_of_words(words), operation)
 }
 
 /// Sparse rational polynomial. Trailing zero exponents and zero terms are
@@ -459,7 +484,7 @@ impl<'a> Kernel<'a> {
         low: &Rational,
         high: &Rational,
     ) -> Result<Rational> {
-        let width = high.sub(low);
+        let width = rational_step(self.meter, &[high, low], || high.sub(low))?;
         // The candidate sequence converges to low and therefore eventually
         // avoids the finitely many roots. Its rational size is metered.
         let mut denominator = Rational::from_integer(2_i64.into());
@@ -468,11 +493,16 @@ impl<'a> Kernel<'a> {
                 p.size()
                     .saturating_add(square_of_words(1 + denominator.max_part_bits() / 64)),
             )?;
-            let candidate = low.add(&width.div(&denominator).expect("a positive denominator"));
+            let offset = rational_step(self.meter, &[&width, &denominator], || {
+                width.div(&denominator).expect("a positive denominator")
+            })?;
+            let candidate = rational_step(self.meter, &[low, &offset], || low.add(&offset))?;
             if self.sign_at(p, coordinate, &Bound::At(candidate.clone()))? != Ordering::Equal {
                 return Ok(candidate);
             }
-            denominator = denominator.add(&one());
+            denominator = rational_step(self.meter, &[&denominator, &one()], || {
+                denominator.add(&one())
+            })?;
         }
     }
 
@@ -488,7 +518,7 @@ impl<'a> Kernel<'a> {
                 p.size()
                     .saturating_add(square_of_words(1 + radius.max_part_bits() / 64)),
             )?;
-            let low = radius.neg();
+            let low = rational_step(self.meter, &[&radius], || radius.neg())?;
             let high = radius.clone();
             if self.sign_at(&p, coordinate, &Bound::At(low.clone()))? != Ordering::Equal
                 && self.sign_at(&p, coordinate, &Bound::At(high.clone()))? != Ordering::Equal
@@ -501,7 +531,8 @@ impl<'a> Kernel<'a> {
             {
                 break (low, high);
             }
-            radius = radius.mul(&Rational::from_integer(2_i64.into()));
+            let two = Rational::from_integer(2_i64.into());
+            radius = rational_step(self.meter, &[&radius, &two], || radius.mul(&two))?;
         };
         let mut pending = vec![(low, high, total)];
         let mut roots = Vec::new();
@@ -552,10 +583,10 @@ impl<'a> Kernel<'a> {
         loop {
             self.meter
                 .charge_by(a.polynomial.size().saturating_add(b.polynomial.size()))?;
-            if a.high <= b.low {
+            if rational_step(self.meter, &[&a.high, &b.low], || a.high <= b.low)? {
                 return Ok(Ordering::Less);
             }
-            if b.high <= a.low {
+            if rational_step(self.meter, &[&b.high, &a.low], || b.high <= a.low)? {
                 return Ok(Ordering::Greater);
             }
             if self.tarski(
@@ -566,7 +597,9 @@ impl<'a> Kernel<'a> {
                 &Bound::At(a.high.clone()),
             )? == 0
             {
-                if a.low >= b.low && a.high <= b.high {
+                if rational_step(self.meter, &[&a.low, &b.low, &a.high, &b.high], || {
+                    a.low >= b.low && a.high <= b.high
+                })? {
                     return Ok(Ordering::Equal);
                 }
                 self.refine(&mut a, coordinate)?;
@@ -601,22 +634,43 @@ impl<'a> Kernel<'a> {
         if roots.is_empty() {
             return Ok(vec![Coordinate::Rational(zero())]);
         }
-        let mut samples = vec![Coordinate::Rational(roots[0].low.sub(&one()))];
+        let mut samples = vec![Coordinate::Rational(
+            self.sector(None, Some(&roots[0].low))?,
+        )];
         for (i, root) in roots.iter().enumerate() {
             self.meter.charge()?;
             samples.push(Coordinate::Root(root.clone()));
             if let Some(next) = roots.get(i + 1) {
                 let (mut a, mut b) = (root.clone(), next.clone());
-                while a.high > b.low {
+                while rational_step(self.meter, &[&a.high, &b.low], || a.high > b.low)? {
                     self.refine(&mut a, coordinate)?;
                     self.refine(&mut b, coordinate)?;
                 }
-                samples.push(Coordinate::Rational(midpoint(&a.high, &b.low)));
+                samples.push(Coordinate::Rational(
+                    self.sector(Some(&a.high), Some(&b.low))?,
+                ));
             } else {
-                samples.push(Coordinate::Rational(root.high.add(&one())));
+                samples.push(Coordinate::Rational(self.sector(Some(&root.high), None)?));
             }
         }
         Ok(samples)
+    }
+
+    /// A rational sector sample between finite ends, or one unit beyond a
+    /// finite end. Each individual arithmetic step prepays its operands.
+    fn sector(&mut self, low: Option<&Rational>, high: Option<&Rational>) -> Result<Rational> {
+        match (low, high) {
+            (Some(low), Some(high)) => {
+                let sum = rational_step(self.meter, &[low, high], || low.add(high))?;
+                let two = Rational::from_integer(2_i64.into());
+                rational_step(self.meter, &[&sum, &two], || {
+                    sum.div(&two).expect("two is nonzero")
+                })
+            }
+            (Some(low), None) => rational_step(self.meter, &[low, &one()], || low.add(&one())),
+            (None, Some(high)) => rational_step(self.meter, &[high, &one()], || high.sub(&one())),
+            (None, None) => Ok(zero()),
+        }
     }
 
     pub(super) fn exists(
@@ -659,17 +713,23 @@ fn determinant(rows: &[Vec<Polynomial>], meter: &mut HybridReplayMeter) -> Resul
         if entry.0.is_empty() {
             continue;
         }
-        meter.charge_by(entry.size())?;
-        let minor = rows[1..]
+        let weight = rows
             .iter()
-            .map(|row| {
-                row.iter()
-                    .enumerate()
-                    .filter(|(i, _)| *i != column)
-                    .map(|(_, p)| p.clone())
-                    .collect()
-            })
-            .collect::<Vec<_>>();
+            .flatten()
+            .map(Polynomial::size)
+            .fold(1, u64::saturating_add);
+        let minor = prepaid(meter, weight, || {
+            rows[1..]
+                .iter()
+                .map(|row| {
+                    row.iter()
+                        .enumerate()
+                        .filter(|(i, _)| *i != column)
+                        .map(|(_, p)| p.clone())
+                        .collect()
+                })
+                .collect::<Vec<_>>()
+        })?;
         let term = entry.mul(&determinant(&minor, meter)?, meter)?;
         value = if column % 2 == 0 {
             value.add(&term, meter)?
@@ -687,32 +747,47 @@ fn principal_subresultant(
     order: usize,
     meter: &mut HybridReplayMeter,
 ) -> Result<Polynomial> {
+    let rows = principal_subresultant_matrix(a, b, coordinate, order, meter)?;
+    determinant(&rows, meter)
+}
+
+fn principal_subresultant_matrix(
+    a: &Polynomial,
+    b: &Polynomial,
+    coordinate: usize,
+    order: usize,
+    meter: &mut HybridReplayMeter,
+) -> Result<Vec<Vec<Polynomial>>> {
     let (m, n) = (
         a.degree(coordinate).unwrap_or(0),
         b.degree(coordinate).unwrap_or(0),
     );
     let size = m + n - 2 * order;
-    meter.charge_by(
-        a.size()
-            .saturating_add(b.size())
-            .saturating_mul(u64::try_from(size).unwrap_or(u64::MAX)),
-    )?;
-    let mut rows = Vec::new();
-    for (shifts, p) in [(n - order, a), (m - order, b)] {
-        for shift in (0..shifts).rev() {
-            rows.push(
-                (0..size)
-                    .map(|column| {
-                        (m + n - order - 1 - column).checked_sub(shift).map_or_else(
-                            || Polynomial::constant(zero()),
-                            |power| p.coefficient(coordinate, power),
-                        )
-                    })
-                    .collect(),
-            );
+    let side = u64::try_from(size).unwrap_or(u64::MAX);
+    let weight = a
+        .size()
+        .saturating_add(b.size())
+        .saturating_mul(side.saturating_mul(side));
+    // There are size squared Polynomial cells, including zero entries;
+    // sparse input size alone cannot pay for this dense materialization.
+    prepaid(meter, weight, || {
+        let mut rows = Vec::new();
+        for (shifts, p) in [(n - order, a), (m - order, b)] {
+            for shift in (0..shifts).rev() {
+                rows.push(
+                    (0..size)
+                        .map(|column| {
+                            (m + n - order - 1 - column).checked_sub(shift).map_or_else(
+                                || Polynomial::constant(zero()),
+                                |power| p.coefficient(coordinate, power),
+                            )
+                        })
+                        .collect(),
+                );
+            }
         }
-    }
-    determinant(&rows, meter)
+        rows
+    })
 }
 
 fn keep(set: &mut Vec<Polynomial>, p: Polynomial, meter: &mut HybridReplayMeter) -> Result<()> {
@@ -821,6 +896,133 @@ mod tests {
     }
     fn c(i: i64) -> Polynomial {
         Polynomial::constant(n(i))
+    }
+
+    /// A denied prepaid operation must not enter its materialization or
+    /// arithmetic closure, even when the operation would return an error.
+    #[ix_trace_rs::trace("FR-450")]
+    #[test]
+    fn cad_denied_admission_never_enters_the_operation() {
+        let mut entered = false;
+        let mut meter = HybridReplayMeter::new(1);
+        let result = prepaid(&mut meter, 201, || {
+            entered = true;
+            vec![c(1); 49]
+        });
+        assert!(matches!(
+            result,
+            Err(HybridReplayRefusal::ResourceExhausted { .. })
+        ));
+        assert!(!entered, "denial must precede matrix materialization");
+        let mut entered = false;
+        let low = n(1);
+        let high = n(2);
+        let result = rational_step(&mut HybridReplayMeter::new(0), &[&low, &high], || {
+            entered = true;
+            high.sub(&low)
+        });
+        assert!(matches!(
+            result,
+            Err(HybridReplayRefusal::ResourceExhausted { .. })
+        ));
+        assert!(!entered, "denial must precede endpoint arithmetic");
+        assert_eq!(meter.consumed(), 0);
+    }
+
+    /// Sparse operands have one term each, but a degree-32 derivative pair
+    /// needs 63^2 dense cells. A fixed 100-unit budget admits the old linear
+    /// precharge (28 units) and denies the quadratic one before construction.
+    #[ix_trace_rs::trace("FR-450")]
+    #[test]
+    fn cad_sparse_psc_matrix_denies_dense_construction_before_materialization() {
+        let monomial = |degree: usize, coefficient: i64| {
+            Polynomial(BTreeMap::from([(vec![0, degree], n(coefficient))]))
+        };
+        let (a, b) = (monomial(32, 1), monomial(31, 32));
+        let mut meter = HybridReplayMeter::new(100);
+        let result = principal_subresultant_matrix(&a, &b, 1, 0, &mut meter);
+        assert!(matches!(
+            result,
+            Err(HybridReplayRefusal::ResourceExhausted { .. })
+        ));
+        assert_eq!(
+            meter.consumed(),
+            0,
+            "the first admission must cover every dense cell"
+        );
+
+        // Each one-term operand costs 41 scalar words plus two exponent
+        // words. A 7x7 matrix therefore prepays ceil(86*49/200)=22 units.
+        let mut meter = HybridReplayMeter::new(22);
+        let rows =
+            principal_subresultant_matrix(&monomial(4, 1), &monomial(3, 4), 1, 0, &mut meter)
+                .unwrap();
+        assert_eq!(meter.consumed(), 22);
+        assert_eq!(rows.len(), 7);
+        assert!(rows.iter().all(|row| row.len() == 7));
+        assert_eq!(rows[0][0], c(1));
+        assert_eq!(rows[3][0], c(4));
+    }
+
+    /// The endpoints carry 4097-bit denominators. Their combined word
+    /// count is 130, so subtraction alone costs ceil((130^2+40)/200)=85
+    /// units, independently of subsequent sign or root work.
+    #[ix_trace_rs::trace("FR-450")]
+    #[test]
+    fn cad_separator_and_sector_arithmetic_prepay_large_endpoint_operands() {
+        let denominator = n(2).pow(&filament_exact::Integer::from(4096_i64)).unwrap();
+        let low = n(1).div(&denominator).unwrap();
+        let high = n(3).div(&denominator).unwrap();
+        let time = ExactReal::Rational(n(0));
+        let p = c(1);
+        let mut denied = HybridReplayMeter::new(84);
+        assert!(matches!(
+            Kernel::new(&time, &mut denied).nonroot_between(&p, 1, &low, &high),
+            Err(HybridReplayRefusal::ResourceExhausted { .. })
+        ));
+        assert_eq!(
+            denied.consumed(),
+            0,
+            "endpoint subtraction must be the first admitted work"
+        );
+        let mut width_only = HybridReplayMeter::new(85);
+        assert!(matches!(
+            Kernel::new(&time, &mut width_only).nonroot_between(&p, 1, &low, &high),
+            Err(HybridReplayRefusal::ResourceExhausted { .. })
+        ));
+        assert_eq!(
+            width_only.consumed(),
+            85,
+            "the width charge cannot be dropped in favor of a later candidate charge"
+        );
+
+        for (lower, upper, budget) in [
+            (Some(&low), Some(&high), 84),
+            (Some(&low), None, 21),
+            (None, Some(&high), 21),
+        ] {
+            let mut meter = HybridReplayMeter::new(budget);
+            assert!(matches!(
+                Kernel::new(&time, &mut meter).sector(lower, upper),
+                Err(HybridReplayRefusal::ResourceExhausted { .. })
+            ));
+            assert_eq!(
+                meter.consumed(),
+                0,
+                "sector endpoint arithmetic must prepay its operands"
+            );
+        }
+        let mut small = HybridReplayMeter::new(100);
+        assert_eq!(
+            Kernel::new(&time, &mut small)
+                .nonroot_between(&p, 1, &n(1), &n(3))
+                .unwrap(),
+            n(2)
+        );
+        assert!(
+            small.consumed() < 85,
+            "equal polynomial size does not make large endpoints cheap"
+        );
     }
     fn square(p: &Polynomial, meter: &mut HybridReplayMeter) -> Polynomial {
         p.mul(p, meter).expect("unlimited algebra")
