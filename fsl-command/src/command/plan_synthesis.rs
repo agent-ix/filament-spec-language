@@ -15,23 +15,23 @@ use std::time::Duration;
 use filament_exact::{Cancel, Integer, ValueType};
 use fsl_analyze::analyze::document::{DocumentSelection, SubjectSelection};
 use fsl_analyze::plan_search::{
-    search, Direction, PlanLengths, PlanResult, PlanSearchError, PlanSearchRequest,
+    Direction, PlanLengths, PlanResult, PlanSearchError, PlanSearchRequest, search,
 };
 use fsl_analyze::plan_source::SourcePlan;
 use fsl_eval::simulation::model::{
-    declaration_identity_text, typed_value_json, ExpansionLimits, ModelCheckInput,
-    ModelSimState, ModelSimulationRequest, ModelSystem,
+    ExpansionLimits, ModelCheckInput, ModelSimState, ModelSimulationRequest, ModelSystem,
+    declaration_identity_text, typed_value_json,
 };
 use fsl_foundation::Code;
 use fsl_package::CheckedPackage;
 use fsl_semantics::check::CheckedSynthesis;
 use fsl_semantics::model::accounting::ModelNormalizationLimits;
 use fsl_semantics::model::observation::{DocumentProvision, ObservationLimits};
-use serde_json::{json, Map, Value as Json};
+use serde_json::{Map, Value as Json, json};
 
 use super::plan_request::{
-    self, OutcomeHeader, PlanObjective, PlanRequest, PlanRequestRefusal, RenderedPlan,
-    RenderedStep, ValueForm, NATIVE_RUN_POINTER,
+    self, NATIVE_RUN_POINTER, OutcomeHeader, PlanObjective, PlanRequest, PlanRequestRefusal,
+    RenderedPlan, RenderedStep, ValueForm,
 };
 use super::{Intake, RunCause};
 
@@ -222,12 +222,18 @@ pub(super) fn run(
         }
         policies.push(node);
     }
-    let mut rules = SourcePlan::new(package, checked, &system, policies, limits)
-        .map_err(|error| refusal("/request/synthesis/declaration", "invalid-value", error.to_string()))?;
+    let mut rules =
+        SourcePlan::new(package, checked, &system, policies, limits).map_err(|error| {
+            refusal(
+                "/request/synthesis/declaration",
+                "invalid-value",
+                error.to_string(),
+            )
+        })?;
     let cancel = Cancel::new();
-    let deadline = request.deadline_ms.map(|milliseconds| {
-        Duration::from_millis(milliseconds).saturating_sub(started.elapsed())
-    });
+    let deadline = request
+        .deadline_ms
+        .map(|milliseconds| Duration::from_millis(milliseconds).saturating_sub(started.elapsed()));
     let result = with_deadline(&cancel, deadline, || {
         search(
             &system,

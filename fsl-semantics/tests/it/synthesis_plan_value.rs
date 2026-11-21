@@ -33,8 +33,8 @@ fn check(lengths: &str, objective: &str, goal: &str) -> Result<CheckedSynthesis,
         fsl_cst::Limits::default().source_bytes,
     )
     .expect("the model source is admitted");
-    let packages = package_input_from_sources([("example/shop", &model)])
-        .expect("the model unit compiles");
+    let packages =
+        package_input_from_sources([("example/shop", &model)]).expect("the model unit compiles");
     let text = format!(
         "language \"ix:native\" edition \"1-draft\";\n\
          profile v = \"filament.model.complete/v1\";\n\
@@ -92,7 +92,9 @@ fn a_plan_goal_reads_the_typed_plan_value() {
         "Reach.length >= 1 and Reach.final.total >= 0 and Reach.initial.total >= 0",
     )
     .expect("the goal reads the length and the state records");
-    let plan = checked.plan().expect("a plan synthesis carries its plan value");
+    let plan = checked
+        .plan()
+        .expect("a plan synthesis carries its plan value");
     assert_eq!(
         plan.shape()
             .operations

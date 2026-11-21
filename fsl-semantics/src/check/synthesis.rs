@@ -165,7 +165,8 @@ pub(crate) fn check_forms(
         // plan lengths, never negative.
         let plan = match &grammar {
             ValueType::Reference(object) => {
-                let lengths = matches!(&domain, ValueType::Int(lengths) if !lengths.lower().is_negative());
+                let lengths =
+                    matches!(&domain, ValueType::Int(lengths) if !lengths.lower().is_negative());
                 if !lengths {
                     return Err(vec![CheckRefusal::ill_typed(
                         &location,

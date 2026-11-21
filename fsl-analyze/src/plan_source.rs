@@ -15,22 +15,20 @@ use std::collections::BTreeMap;
 
 use filament_checked::node::{NodeKind, Visit};
 use filament_exact::{
-    from_admitted, from_admitted_slots, CollectionKind, CollectionType, EnumMember, FieldValue,
-    Integer, Meter, Outcome, Rational, ScalarLimits, Value, ValueType,
+    CollectionKind, CollectionType, EnumMember, FieldValue, Integer, Meter, Outcome, Rational,
+    ScalarLimits, Value, ValueType, from_admitted, from_admitted_slots,
 };
 use filament_semantic_value::declaration::CompositeShape;
 use filament_semantic_value::model_transition::ModelTransition;
+use fsl_eval::simulation::model::{ClauseReading, read_clause};
 use fsl_eval::simulation::model::{ModelSimState, ModelSystem};
 use fsl_package::CheckedPackage;
-use fsl_eval::simulation::model::{read_clause, ClauseReading};
 use fsl_semantics::check::{
     CheckedBody, CheckedPlan, CheckedSynthesis, PlanOperation, TemporalClauseNode,
 };
 use fsl_semantics::model::state::StateObject;
 
-use crate::plan_search::{
-    Direction, MonitorStep, ObjectiveKind, PlanRules, PlanView, RuleStop,
-};
+use crate::plan_search::{Direction, MonitorStep, ObjectiveKind, PlanRules, PlanView, RuleStop};
 
 /// Why a checked synthesis cannot be judged as a plan.
 #[derive(Clone, Debug, Eq, PartialEq, thiserror::Error)]
@@ -358,7 +356,11 @@ impl<'a> SourcePlan<'a> {
         ))
     }
 
-    fn object_value(&self, object: &StateObject, record: &filament_exact::NodeKey) -> Option<Value> {
+    fn object_value(
+        &self,
+        object: &StateObject,
+        record: &filament_exact::NodeKey,
+    ) -> Option<Value> {
         let declaration = self.plan.scope().types().composite(record.clone())?;
         let CompositeShape::Record(fields) = declaration.shape() else {
             return None;
@@ -370,7 +372,10 @@ impl<'a> SourcePlan<'a> {
                     .map_or(FieldValue::Absent, FieldValue::Present)
             })
             .collect::<Vec<_>>();
-        Some(from_admitted_slots(record.clone(), slots.into_boxed_slice()))
+        Some(from_admitted_slots(
+            record.clone(),
+            slots.into_boxed_slice(),
+        ))
     }
 
     /// The value `object` holds for its attribute `name`.
@@ -412,7 +417,10 @@ impl<'a> SourcePlan<'a> {
     fn prefix(&self, monitor: &[u8]) -> Vec<ModelSimState> {
         <[u8; 8]>::try_from(monitor)
             .ok()
-            .and_then(|id| self.traces.get(usize::try_from(u64::from_le_bytes(id)).ok()?))
+            .and_then(|id| {
+                self.traces
+                    .get(usize::try_from(u64::from_le_bytes(id)).ok()?)
+            })
             .cloned()
             .unwrap_or_default()
     }

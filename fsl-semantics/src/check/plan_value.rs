@@ -20,7 +20,9 @@ use filament_checked::key::DeclarationKey;
 use filament_exact::{
     CollectionKind, CollectionType, EffectiveId, NodeKey, PathSegment, Presence, ValueType,
 };
-use filament_semantic_value::declaration::{CompositeDeclaration, CompositeShape, FieldDeclaration};
+use filament_semantic_value::declaration::{
+    CompositeDeclaration, CompositeShape, FieldDeclaration,
+};
 use filament_semantic_value::location::ExpressionLocation as Location;
 
 use super::check::{EnumBinding, NamedScope};
@@ -218,9 +220,14 @@ pub(crate) fn declare(
         .collect();
     needed.insert(grammar.clone());
     for object in &needed {
-        let declaration = types.object_type(object.clone()).ok_or_else(|| unsupported(location))?;
-        let attributes = types.attributes(object.clone()).ok_or_else(|| unsupported(location))?;
-        let record = key(&[synthesis, "object", declaration.name()]).ok_or_else(|| unsupported(location))?;
+        let declaration = types
+            .object_type(object.clone())
+            .ok_or_else(|| unsupported(location))?;
+        let attributes = types
+            .attributes(object.clone())
+            .ok_or_else(|| unsupported(location))?;
+        let record =
+            key(&[synthesis, "object", declaration.name()]).ok_or_else(|| unsupported(location))?;
         let fields = attributes
             .iter()
             .map(|attribute| {
