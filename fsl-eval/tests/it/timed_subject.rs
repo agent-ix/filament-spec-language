@@ -928,18 +928,24 @@ fn clock_reference_world_with_profiles(
         .as_array_mut()
         .expect("types")
         .push(reference);
+    let mut reference_field = wire_field("r", &ident("ClockRef"));
+    reference_field["presence"] = json!("optional");
+    reference_field["multiplicity"]["lower"] = json!(0);
     document["types"][1]["fields"]
         .as_array_mut()
         .expect("fields")
-        .push(wire_field("r", &ident("ClockRef")));
+        .push(reference_field);
     document["types"][1]["operations"]
         .as_array_mut()
         .expect("operations")
         .push(operation("point", &["r"]));
+    // Bootstrap without an external place ID. The postcondition restores
+    // the required-field post-state domain the fixture originally tested.
+    let unit = format!("{unit}\npost PointPresent using v on M::Call::point {{ present(self.r) }}");
     let mut world = world_holding(
         serde_json::to_vec(&document).expect("JSON"),
         profiles,
-        unit,
+        &unit,
         json!({}),
     );
     let graph = world.package.graph();
@@ -974,8 +980,7 @@ fn clock_reference_world_with_profiles(
     let mut snapshot: Json =
         serde_json::from_slice(world.snapshots.get(&world.initial).expect("snapshot"))
             .expect("JSON");
-    snapshot["populations"][0]["objects"][0]["fields"]["r"] =
-        json!({"reference": {"population": ident("calls"), "key": y.object().as_str()}});
+    snapshot["populations"][0]["objects"][0]["fields"]["r"] = json!({"absent": {}});
     world.snapshots.insert(
         world.initial.clone(),
         serde_json::to_vec(&snapshot).expect("JSON"),
@@ -1193,7 +1198,7 @@ fn pointing_a_clock_reference_writes_data_without_resetting_a_clock() {
         document,
         &rpc_unit(
             3,
-            "post Point using v on M::Call::point { self.r = ref(self.x) }",
+            "post Point using v on M::Call::point { present(self.r) and value(self.r) = ref(self.x) }",
         ),
     );
     let system = system(&world);

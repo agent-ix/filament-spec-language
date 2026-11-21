@@ -573,7 +573,7 @@ fn clock_reference_external_observations_are_explicitly_unsupported() {
     let package = CheckedPackage::link(checked.graph);
     let read = fsl_package::read_evaluation_package(
         &package,
-        fsl_semantics::library::LibraryName::new("clock-reference").expect("name"),
+        fsl_semantics::library::LibraryName::new(package.graph().package_name()).expect("name"),
         &checked.packages,
         fsl_package::V2ReadLimits::fixture(),
         fsl_package::EmitLimits::fixture(),
@@ -777,7 +777,8 @@ fn clock_reference_external_observations_are_explicitly_unsupported() {
     let ordinary_package = CheckedPackage::link(ordinary.graph);
     let ordinary_read = fsl_package::read_evaluation_package(
         &ordinary_package,
-        fsl_semantics::library::LibraryName::new("ordinary").expect("name"),
+        fsl_semantics::library::LibraryName::new(ordinary_package.graph().package_name())
+            .expect("name"),
         &ordinary.packages,
         fsl_package::V2ReadLimits::fixture(),
         fsl_package::EmitLimits::fixture(),
