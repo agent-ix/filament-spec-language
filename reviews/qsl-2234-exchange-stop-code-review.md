@@ -15,7 +15,7 @@ Frozen candidate: 609a4b1e264c5d4bfb14c11f30adf140d90f545e. Review merge base d2
 
 ## Verdict
 
-PASS after disposition round 1 — FND-001 is fixed on 2e1641ddf4c07370734e56ff1f2df8ed42af0a6a; no new scoped code/Rust finding. Initial review was CONDITIONAL. Full readiness remains subject only to the separate gap-assurance disposition; final-head focused regression receipts now pass.
+PASS after disposition round 1 — FND-001 is fixed on 2e1641ddf4c07370734e56ff1f2df8ed42af0a6a; no new scoped code/Rust finding. Initial review was CONDITIONAL. Overall assurance remains CONDITIONAL on the explicitly accepted unavailable-matrix limit in SR-202611210022442313144108536; final-head focused regression receipts pass.
 
 ## Findings
 
@@ -340,7 +340,7 @@ Reviewed the full three-file fix diff and current host at lines 209–232. Origi
 
 Scoped clippy still exits 101 on the two pre-existing `process_provider.rs` lint findings at lines 417 and 503; `fix1/clippy-baseline-diff.log` is empty. Format/diff receipts are clean. No additional source change, broad gate, matrix, advisor or Python command was run by this disposition.
 
-Final runtime receipts are complete: at 528d72b68bc6e52904e5a8c253a2de78ce090bd8, `final-regressions/typed-defect.log` reports `process_provider::a_misbehaving_process_provider_settles_failed_with_a_typed_defect` passed and `final-regressions/certificate.log` reports `process_provider::a_process_proof_is_trusted_unless_its_certificate_is_accepted` passed. Each run has 1 passed, 0 failed, 0 ignored, 21 filtered out. The full diff from reviewed 2e1641ddf4c07370734e56ff1f2df8ed42af0a6a to this custody head contains only the nine review artifacts; production/test source is identical. Together with the 8 exchange-stop tests, all 10 focused tests pass. The lead reports the remote duplicate lane was cancelled before starting; no duplicate execution was initiated by this reviewer. SR-202611210022442313144108536 FND-001 is unchanged pending the explicit assurance ruling; no gap PASS is claimed.
+Final runtime receipts are complete: at 528d72b68bc6e52904e5a8c253a2de78ce090bd8, `final-regressions/typed-defect.log` reports `process_provider::a_misbehaving_process_provider_settles_failed_with_a_typed_defect` passed and `final-regressions/certificate.log` reports `process_provider::a_process_proof_is_trusted_unless_its_certificate_is_accepted` passed. Each run has 1 passed, 0 failed, 0 ignored, 21 filtered out. The full diff from reviewed 2e1641ddf4c07370734e56ff1f2df8ed42af0a6a to this custody head contains only the nine review artifacts; production/test source is identical. Together with the 8 exchange-stop tests, all 10 focused tests pass. The lead reports the remote duplicate lane was cancelled before starting; no duplicate execution was initiated by this reviewer. SR-202611210022442313144108536 FND-001 is accepted-no-change under the explicit architecture ruling as an unavailable-assurance limit. Overall review remains CONDITIONAL on that one limit; no engine or full gap-audit PASS is claimed.
 
 ```yaml
 dispositions:

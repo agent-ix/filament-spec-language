@@ -15,7 +15,7 @@ Frozen candidate: 609a4b1e264c5d4bfb14c11f30adf140d90f545e. Review merge base d2
 
 ## Verdict
 
-FAIL for full gap-audit completion — computed extraction remains unavailable. Manual scoped review was performed; no full repository assurance PASS is claimed.
+CONDITIONAL after explicit architecture disposition — FND-001 is accepted-no-change as the unavailable-assurance limit of this focused-only push. Computed extraction remains unavailable; no engine PASS or full repository gap-audit PASS is claimed. Initial audit verdict was FAIL for incompleteness.
 
 ## Findings
 
@@ -327,3 +327,15 @@ bindings:
     ac_id: FR-750-AC-24
     trace: correct
 ```
+
+## Dispositions
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | accepted-no-change | Architecture explicitly accepts computed-matrix unavailability as an unavailable-assurance limit of this focused-only push: no source fix, no full gate and no new ticket. Review remains CONDITIONAL on this assurance limit; no engine PASS was computed. This is accepted-no-change, not a code fix or completed gap audit. |
+
+## Architecture disposition
+
+The dispatching lead relayed this explicit architecture ruling: “SR-536 (computed matrix unavailable) is disposed as an unavailable-assurance limit of this focused-only push: no source fix, no full gate, no new ticket; review stays CONDITIONAL on that one item and says honestly no engine PASS computed. Late-result defect real fix then merge.”
+
+The original finding above is unchanged. No source change or verification run is asserted by this disposition. The separate SR-202611210022442313144108535 late-result defect is fixed; its final source-equivalent receipts establish 10 focused tests passed. This disposition accepts the stated assurance limit and does not convert those focused tests into an engine-backed or full-audit PASS.
