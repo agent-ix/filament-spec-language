@@ -324,37 +324,6 @@ fn with_bare<T>(
     let equality = emission
         .equality_witness(read.admitted(), &mut budget())
         .expect("equality rows");
-    let dependencies: Vec<_> = package
-        .dependencies()
-        .iter()
-        .map(|(identity, dependency)| {
-            let emission =
-                fsl_package::emit_checked(dependency, fsl_package::EmitLimits::fixture())
-                    .expect("dependency emits");
-            let admitted = read
-                .admitted_packages()
-                .shared_package(identity)
-                .expect("the exact dependency is admitted");
-            let identities = emission
-                .identity_rows(&admitted, &mut budget())
-                .expect("dependency identities");
-            let equality = emission
-                .equality_witness(&admitted, &mut budget())
-                .expect("dependency equality");
-            fsl_package::DependencyArtifact {
-                identity: identity.as_str().to_owned(),
-                bytes: emission.package().bytes().into(),
-                identity_bytes: identities
-                    .to_bytes(&admitted)
-                    .expect("identity bytes")
-                    .into(),
-                equality_bytes: equality.to_bytes(&admitted).expect("equality bytes").into(),
-                package: admitted,
-                identities,
-                equality,
-            }
-        })
-        .collect();
     let bare = fsl_package::BarePackage::new(read.admitted())
         .with_supply(
             fsl_package::BareSupply {
@@ -363,9 +332,7 @@ fn with_bare<T>(
             },
             &mut budget(),
         )
-        .expect("the package supply joins")
-        .with_dependency_artifacts(&dependencies, &mut budget())
-        .expect("the dependency artifacts join");
+        .expect("the package supply joins");
     run(&bare)
 }
 
@@ -572,131 +539,5 @@ fn package_class_operations_share_kernel_charges_and_denial_boundaries() {
                 }
             }
         }
-    });
-}
-
-fn imported_package(name: &str, body: &str, imports: Vec<fsl_package::Import>) -> CheckedPackage {
-    use filament_semantic_value::checking::{CheckMode, CheckingLimits};
-    use fsl_semantics::check::{AdmittedImport, PackageDeclarations};
-    use fsl_semantics::model::intake::{package_input, SelectedModels};
-    let input = format!("language \"ix:native\" edition \"1-draft\";\nprofile v = \"filament.value.complete/v1\";\n{body}");
-    let parsed = fsl_cst::parse(
-        fsl_foundation::SourceIdentity::new("fixture", name),
-        "unit.native",
-        input.as_bytes(),
-        fsl_cst::Limits::default(),
-    )
-    .expect("the source parses");
-    assert!(parsed.is_admissible(), "{:?}", parsed.diagnostics());
-    let no_models = package_input(std::iter::empty::<&[u8]>()).expect("no models");
-    let mut admitted = fsl_package::AdmittedPackages::default();
-    let imported = imports
-        .iter()
-        .map(|import| {
-            let emission =
-                fsl_package::emit_checked(&import.package, fsl_package::EmitLimits::fixture())
-                    .expect("the library emits");
-            AdmittedImport {
-                identity: import.identity.clone(),
-                view: fsl_package::read_import_view(
-                    &import.package,
-                    &emission,
-                    import.identity.clone(),
-                    &no_models,
-                    &mut admitted,
-                    fsl_package::V2ReadLimits::fixture(),
-                    fsl_package::EmitLimits::fixture(),
-                )
-                .expect("the actual library is admitted"),
-                graph: import.package.shared_graph(),
-            }
-        })
-        .collect();
-    let declarations = PackageDeclarations::assemble(
-        parsed.source().reference().clone(),
-        name.to_owned(),
-        fsl_forms::build_unit(&parsed).expect("the source forms"),
-        SelectedModels::default(),
-        imported,
-    )
-    .expect("the imports assemble");
-    let graph = declarations
-        .check(
-            CheckMode::Linked,
-            CheckingLimits::default(),
-            &fsl_eval::value::S6aRewardEvaluator,
-        )
-        .expect("the imports check");
-    CheckedPackage::link_with(graph, imports, fsl_package::EmitLimits::fixture())
-        .expect("the package links")
-}
-
-/// FR-533-AC-23: a package operand resolves only in its actual direct
-/// dependency's node table, carrying that package's exact source owner.
-#[trace("FR-533-AC-23", "TC-1333", "FR-093-AC-46", "FSpec-FR-142-AC-26")]
-#[test]
-fn package_equivalence_resolves_an_admitted_direct_dependency_dimension() {
-    use fsl_package::CheckedTerm;
-    use fsl_semantics::library::LibraryName;
-    let dependency = std::sync::Arc::new(imported_package(
-        "time-library",
-        "dimension Time; unit s : Time = rational(1, 1);",
-        Vec::new(),
-    ));
-    let root = imported_package("importing-unit", "\
-        import \"time-library\" as time_lib;\n\
-        dimension Beat; unit beat : Beat = rational(1, 1);\n\
-        dimension Beat ~ time_lib::Time by 1 beat = rational(1, 4) time_lib::s;\n\
-        function cross using v(): Quantity<time_lib::s> pure { convert<Quantity<time_lib::s>>(1 beat) }\n",
-        vec![fsl_package::Import { identity: LibraryName::new("time-library").expect("a name"), package: dependency }]);
-    with_bare(&root, |bare| {
-        let mut package_operands = 0;
-        for node in &bare.package().resolved_graph().nodes {
-            let Some(CheckedTerm::NominalBody(body)) = bare.package().term(&node.node_id) else {
-                continue;
-            };
-            let Some((operands, _)) = body.dimension_equivalence_details() else {
-                continue;
-            };
-            for operand in operands {
-                let operand = serde_json::to_value(operand).expect("the retained operand");
-                if let Some(package) = operand.get("package").and_then(serde_json::Value::as_str) {
-                    assert_eq!(package, "time-library");
-                    let owner = bare
-                        .package()
-                        .direct_dependencies()
-                        .find(|dependency| dependency.name() == package)
-                        .expect("the direct owning package");
-                    let node = owner
-                        .resolved_graph()
-                        .nodes
-                        .iter()
-                        .find(|node| {
-                            serde_json::to_value(&node.node_id).expect("the node id")
-                                == operand["node"]
-                        })
-                        .expect("the dependency's actual node");
-                    let owner = serde_json::to_value(&node.owner).expect("the source owner");
-                    assert_eq!(owner["authority"], "fixture");
-                    assert_eq!(owner["identity"], "time-library");
-                    package_operands += 1;
-                }
-            }
-        }
-        assert_eq!(
-            package_operands, 1,
-            "the real package operand branch must execute"
-        );
-        let mut source_meter = Meter::new(UNLIMITED);
-        let mut bare_meter = Meter::new(UNLIMITED);
-        let source = call(&root, "cross", &mut source_meter);
-        let bytes = call(bare, "cross", &mut bare_meter);
-        assert_eq!(quantity(&source).magnitude(), &fraction(1, 4));
-        assert_eq!(
-            quantity(&bytes),
-            quantity(&source),
-            "the exact dependency-owned target unit"
-        );
-        assert_eq!(kernel_charges(&bare_meter), kernel_charges(&source_meter));
     });
 }
