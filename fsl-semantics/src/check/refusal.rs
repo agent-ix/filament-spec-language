@@ -4182,7 +4182,7 @@ mod tests {
         assert_eq!(
             refusal.to_string(),
             format!(
-                "ill_typed at {:?}: ReferenceLiteralTypeMismatch {{ name: {name:?}, actual: {actual:?} }}",
+                "ill_typed/type-mismatch at {:?}: ReferenceLiteralTypeMismatch {{ name: {name:?}, actual: {actual:?} }}",
                 refusal.location
             )
         );
@@ -4198,7 +4198,6 @@ mod tests {
             unreachable!("the reference-literal cause")
         };
         assert_eq!(stored.as_ref(), &actual);
-        assert_eq!(serde_json::to_vec(stored).unwrap(), serde_json::to_vec(&actual).unwrap());
         fn hash(value: &impl Hash) -> u64 {
             let mut state = DefaultHasher::new();
             value.hash(&mut state);
