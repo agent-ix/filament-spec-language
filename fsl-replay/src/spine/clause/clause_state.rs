@@ -1350,6 +1350,43 @@ impl<'a> ClauseState<'a> {
         run_package_temporal_over(&request, tape, self.open.limits.covered_positions)
     }
 
+    /// Read the current prefix without freezing the still-uncovered tail's
+    /// canonical order or discarding values a later observation can read.
+    fn provisional_advance(
+        &mut self,
+        assertion: Option<ProgressAssertion>,
+        meter: &mut Meter,
+        cancel: &Cancel,
+    ) -> Result<Advance, ClauseRefusal> {
+        let mark = self.mark();
+        let committed = self.evaluated.map_or(0, |(seen, _)| seen);
+        let evaluated = (|| {
+            self.order_covered(meter)?;
+            let report = {
+                let trace = self.trace_of(
+                    self.seen.len(),
+                    assertion.unwrap_or_else(Self::open_assertion),
+                )?;
+                self.run(&trace, self.seen.len(), false, cancel)
+            };
+            cancelled(cancel)?;
+            if let ClauseDisposition::ProgressContradiction(refusal) = report.disposition {
+                return Err(ClauseRefusal::Contradiction(refusal));
+            }
+            let report = Arc::new(report);
+            let decided = self.decided(&report, assertion, cancel)?;
+            Ok(Advance { report, decided })
+        })();
+        self.restore(mark);
+        // A temporary canonical ordering can differ even when its last
+        // identity is unchanged. Re-list the entire uncommitted tail next time.
+        truncate_listing(&mut self.trace, committed);
+        truncate_listing(&mut self.open_trace, committed);
+        let advance = evaluated?;
+        self.report = Arc::clone(&advance.report);
+        Ok(advance)
+    }
+
     /// Evaluate the clause over every position seen under `assertion`, and
     /// keep the report.
     fn evaluate(
@@ -1359,6 +1396,9 @@ impl<'a> ClauseState<'a> {
         cancel: &Cancel,
     ) -> Result<Advance, ClauseRefusal> {
         if !self.evaluable(assertion) {
+            if self.open.kind == ClauseTraceKind::Timestamped && !self.seen.is_empty() {
+                return self.provisional_advance(assertion, meter, cancel);
+            }
             return Ok(Advance {
                 report: Arc::clone(&self.report),
                 decided: None,
@@ -2157,6 +2197,13 @@ impl<'a> ClauseState<'a> {
             });
             cancelled(cancel)?;
             state.evaluated = Some((seen, assertion));
+        }
+        if state.open.kind == ClauseTraceKind::Timestamped
+            && !state.seen.is_empty()
+            && !state.evaluable(state.progress)
+        {
+            let mut meter = Meter::new(request.limits.accounting).with_cancel(cancel.clone());
+            state.provisional_advance(state.progress, &mut meter, cancel)?;
         }
         Ok(state)
     }
