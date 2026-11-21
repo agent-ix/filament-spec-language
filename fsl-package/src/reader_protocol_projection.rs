@@ -4327,6 +4327,12 @@ fn project_literal_type(type_id: &CheckedNodeId, index: &WireIndex<'_>) -> Optio
     match index.projections.get(type_id)?.as_ref() {
         Ok(projection) => Some(projection.value_type().clone()),
         Err(error) => {
+            if error.code
+                == filament_contract_model::ExactTypeProjectionErrorCode::UnsupportedExactType
+                && error.form.as_deref() == Some("bounded_domain/rational_range")
+            {
+                return rational_range_type(index.node(type_id)?).ok();
+            }
             if !matches!(
                 error.code,
                 filament_contract_model::ExactTypeProjectionErrorCode::UnsupportedExactType

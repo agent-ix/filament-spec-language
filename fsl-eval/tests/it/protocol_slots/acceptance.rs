@@ -5243,29 +5243,30 @@ fn the_bare_route_names_fixture_l_decision_slots_by_node_member_and_index() {
     assert_eq!(origin("Got", "related.to", 0), None);
 }
 
-/// FR-390-AC-28: an activation guard dividing two `Rational` operands whose
-/// quotient is not an integer gives the same value, outcome and charge log
-/// through the reader view as through the checked package. The operands come
-/// from `convert`, so no `Rational` literal is read.
-#[test]
-#[trace("TC-1070", "FR-390-AC-28")]
-fn reader_backed_activation_guard_keeps_rational_division_fractional() {
-    let source = SOURCE
+/// The TC-1070 source with the complete-value profile, the extra `headers`
+/// and `declarations` ahead of the protocol, and `guard` as the activation
+/// guard of `Refunds`.
+fn guard_source(headers: &str, declarations: &str, guard: &str) -> String {
+    SOURCE
         .replace(
             "profile P = \"filament.protocol.finite-global/v1\";",
-            "profile P = \"filament.protocol.finite-global/v1\";\n\
-             profile v = \"filament.value.complete/v1\";",
+            &format!(
+                "profile P = \"filament.protocol.finite-global/v1\";\n\
+                 profile v = \"filament.value.complete/v1\";\n{headers}"
+            ),
         )
         .replace(
             "model M = \"test/orders\";",
-            "model M = \"test/orders\";\n\
-             function restores using v(x: Rational[0, 9; 1, 1], d: Rational[1, 10; 1, 1]): Boolean pure { (x / d) * d = x }",
+            &format!("model M = \"test/orders\";\n{declarations}"),
         )
-        .replace(
-            "when (opened.ready) {",
-            "when (opened.ready and restores(convert<Rational[0, 9; 1, 1]>(opened.count), convert<Rational[1, 10; 1, 1]>(opened.count + 1))) {",
-        );
-    let (package, _) = fixture_from_source(&source);
+        .replace("when (opened.ready) {", &format!("when ({guard}) {{"))
+}
+
+/// Evaluates the `Refunds` activation guard through the checked package, then
+/// asserts it completes `true`, and only then through the reader view of the
+/// same package, comparing value, outcome and charge log.
+fn assert_guard_true_on_both_routes(source: &str, expected: &str) {
+    let (package, _) = fixture_from_source(source);
     let tick = record(
         &package,
         "Tick",
@@ -5274,7 +5275,6 @@ fn reader_backed_activation_guard_keeps_rational_division_fractional() {
     let selected = slot(&package, "Refunds", "Refunds", "activation.guard", None);
     let supplies = supply(&package, "Refunds", vec![("opened", tick)], None);
 
-    // Source route: (2 / 3) * 3 = 2 holds only if the quotient stays 2/3.
     let mut checked_meter = Meter::new(UNLIMITED);
     let checked = package.evaluate_protocol_slot(&selected, &supplies, &mut checked_meter);
     let checked_text = without_location(&checked);
@@ -5292,22 +5292,64 @@ fn reader_backed_activation_guard_keeps_rational_division_fractional() {
     );
     assert!(
         source_is_true,
-        "source route must complete true for (2/3)*3 = 2; source: {checked_text}"
+        "source route must complete true for {expected}; source: {checked_text}"
     );
 
-    // Package route.
     let read = read_checked_package(&package);
     let reader_view = match read.evaluation_view() {
         Ok(view) => view,
-        Err(refusal) => {
-            panic!("package view not constructed; source: {checked_text}; refusal: {refusal:?}")
-        }
+        Err(refusal) => panic!(
+            "package view not constructed for {expected}; source: {checked_text}; refusal: {refusal:?}"
+        ),
     };
     let mut reader_meter = Meter::new(UNLIMITED);
     let reader = reader_view.evaluate_protocol_slot(&selected, &supplies, &mut reader_meter);
     let reader_text = without_location(&reader);
     assert_eq!(
         reader_text, checked_text,
-        "package route must match the source route for Rational division; source: {checked_text}; package: {reader_text}"
+        "package route must match the source route for {expected}; source: {checked_text}; package: {reader_text}"
     );
+    charges_and_usage_match(expected, &checked_meter, &reader_meter);
+}
+
+/// FR-390-AC-28, FR-533: a bounded `Rational` literal keeps its exact
+/// fraction through the reader view; `0 < 1/2 < 1` cannot hold if the literal
+/// is truncated to an integer.
+#[test]
+#[trace("TC-1070", "FR-390-AC-28")]
+fn reader_backed_activation_guard_keeps_a_bounded_rational_literal_fraction() {
+    let source = guard_source(
+        "",
+        "",
+        "opened.ready and rational(0, 1) < rational(1, 2) and rational(1, 2) < rational(1, 1)",
+    );
+    assert_guard_true_on_both_routes(&source, "0 < rational(1, 2) < 1");
+}
+
+/// FR-390-AC-28, FR-533: dividing two `Rational` operands whose quotient is
+/// not an integer gives the same value, outcome and charge log through the
+/// reader view as through the checked package.
+#[test]
+#[trace("TC-1070", "FR-390-AC-28")]
+fn reader_backed_activation_guard_keeps_rational_division_fractional() {
+    let source = guard_source(
+        "",
+        "function half using v(x: Rational[0, 20; 1, 2], d: Rational[2, 2; 1, 1]): Rational[-100, 100; 1, 4] pure { x / d }",
+        "opened.ready and half(rational(1, 1), rational(2, 1)) = rational(1, 2)",
+    );
+    assert_guard_true_on_both_routes(&source, "rational(1, 1) / rational(2, 1) = rational(1, 2)");
+}
+
+/// FR-390-AC-28, FR-533: integer `div` under the truncating law gives the same
+/// value, outcome and charge log through the reader view as through the
+/// checked package.
+#[test]
+#[trace("TC-1070", "FR-390-AC-28")]
+fn reader_backed_activation_guard_runs_integer_division() {
+    let source = guard_source(
+        "profile d = \"filament.value.integer-division.truncating/v1\";",
+        "function q using v(a: Int[-7, 7], b: Int[1, 3]): Int[-7, 7] pure { a div b }",
+        "opened.ready and q(7, 2) = 3 and q(-7, 2) = -3",
+    );
+    assert_guard_true_on_both_routes(&source, "7 div 2 = 3 and -7 div 2 = -3");
 }
