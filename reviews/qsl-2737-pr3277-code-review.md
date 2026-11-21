@@ -31,3 +31,13 @@ Two correctness defects remain. The narrow table hands an operation `redefines` 
 ## Gates
 
 No local Cargo, fmt, clippy, test, deny, Kani or aggregate gate was run, per the review brief. Focused runtime evidence was delegated to draco:QSL:code and is reported as follows. At 12441e0197, `normalization_diagnostic_rows` passed 2 and the combined integration run passed 17 with 1 fixture failure. At a12a7f6e, `machine_and_process_inheritance_keeps_the_declared_supertype` passed 1. All runs used `--locked`, exit 0 for the covered cases. The final delta changes only the machine fixture text. No test covers FND-001 or FND-002. No CI workflow file changed. No AssuranceProfile applies.
+
+## Dispositions
+
+Disposition round 1. Fix head: a756b1f685fcd4e406a8d89c07463c9383f47b5d (one fix commit over a12a7f6e). Outcomes come from inspecting the fix diff. Draco's focused fix-head run (2 unit tests plus 32 integration tests) is queued, not green, so no runtime result or merge eligibility is claimed here.
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | Each redefinition edge now carries `inherited = member_owner(target) != Some(owner) && store.contains(owner, target)`, judged against the original redefining owner. A group is reachable only if some edge is inherited. Non-inherited edges (self, same-owner, sibling) are partitioned out and refused through `record_unreachable_redefinition_target`. For valid programs (every edge inherited), the conflict and fact charges are unchanged. Tests cover self, same-owner and mixed local-plus-descendant cases at model_unit_inheritance.rs:302. |
+| FND-002 | fixed | `validate_declaration_inheritance_syntax` rejects `extends` on record, event, interface and store, any record/event/interface header modifier, record `subsets`/`redefines`, event operations and non-operation store members. Event, interface and store links now go through `push_model_type` into `link_inheritance`. `validate_nonobject_links` runs the shared FR-154 validator before publishing and projects refusals to the declaration span. Tests start at model_unit_inheritance.rs:523. |
+| FND-003 | fixed | `declaring` now takes `start: &str` and seeds `VecDeque::from([start])`, and the three callers pass the borrowed names. |

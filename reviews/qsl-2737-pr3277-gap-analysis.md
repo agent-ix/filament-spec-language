@@ -35,3 +35,13 @@ Reconciliation used `quire matrix --scope . --format json` (/home/peter/.npm-glo
 The resolved CLIs (quoin 0.36.8, quire 0.52.0) are newer than the 2026-11-10 release notice (quoin 0.30.0, quire 0.40.0). They are the installed binaries; no older fallback was used. The quoin 0.30.0 gap-analysis skill was loaded. Module: spec-artifacts-process@v0.36.0.
 
 Reverse gap: every changed behavior has an owner. `link_inheritance`/`declaring` belong to FR-710 and FR-081, the normalize unreachable-operation refusal and the table rows to FR-082 and FR-056-AC-33, and inherited process identity to FR-056/FSpec FR-154. There are no stubs, placeholder returns, ignored tests or mocked production seams in the diff. The optional semantic review was not run (the brief did not opt in), although manual intent/test/code inspection of the changed paths informed the findings. No Cargo/test gate was run by this reviewer; focused runtime evidence is from draco:QSL:code. No AssuranceProfile applies. No spec files changed, so spec-review was not applicable.
+
+## Dispositions
+
+Disposition round 1. Fix head: a756b1f685fcd4e406a8d89c07463c9383f47b5d. The test bodies were inspected at that head; Draco's focused run of them is queued, not green, so they are not claimed as passing.
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | `same_owner_and_self_operation_redefinitions_refuse_the_original_owner` (model_unit_inheritance.rs:302, FR-082-AC-2) asserts one typed RedefinitionTarget, with exact target and redefiner keys, for self, same-owner and mixed invalid-local cases, and that the proper-ancestor SHOP form checks clean. |
+| FND-002 | fixed | `an_object_extending_another_meaning_refuses_at_its_declaration` (model_unit_inheritance.rs:485, FR-710-AC-4) asserts exactly one invalid_model_binding/malformed-declaration for an object extending a record, a machine or a process, with the span equal to the whole authored declaration. |
+| FND-003 | fixed | Six new tests (model_unit_inheritance.rs:523-723) cover extends on record, event, interface and store; record subsets/redefines; event and interface local subsets that survive intake; unresolved field and operation links on event, interface and store; non-ancestor redefinitions projected to the declaration span; and disallowed event and store members. |
