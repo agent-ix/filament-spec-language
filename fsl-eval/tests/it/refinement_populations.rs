@@ -22,8 +22,7 @@ use fsl_semantics::model::observation::{declared_type_universe_for, DocumentRef}
 use fsl_semantics::model::state::{ModelState, StateModel, StateObject};
 use ix_trace_rs::trace;
 
-#[path = "../../../tests/support/ring_queue.rs"]
-mod ring_queue;
+use crate::ring_queue;
 mod evaluator_closure_cases;
 
 use ring_queue::{
