@@ -23,6 +23,7 @@
 //!   [`PlannerResult::discharge`].
 
 mod compose;
+mod composition_graph;
 mod declaration;
 mod entry;
 mod from_package;
