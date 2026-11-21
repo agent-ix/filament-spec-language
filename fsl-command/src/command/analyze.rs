@@ -381,12 +381,12 @@ fn package_input_refusal(
     package: &str,
 ) -> RunCause {
     use fsl_eval::simulation::model::PendingPackageForm;
+    let message = refusal.to_string();
     match refusal {
         PendingPackageForm::Model(failure) => RunCause::AnalyzeRefused(Box::new(
             fsl_analyze::analyze::AnalyzeRefusal::Binding(failure),
         )),
         PendingPackageForm::World(failure) | PendingPackageForm::Reward(failure) => {
-            let message = format!("the package input could not rebuild: {failure:?}");
             let (code, cause) = match failure.into_view(package) {
                 Ok(view) => {
                     let (code, cause) = view.catalog();
@@ -427,7 +427,7 @@ fn package_input_refusal(
                     .unwrap_or(fsl_foundation::Code::RuntimeInvariant),
                 cause: catalog.map(|catalog| catalog.cause().to_owned()),
                 pointer: None,
-                message: format!("the package operations could not rebuild: {failure:?}"),
+                message,
             }
         }
         PendingPackageForm::Form { form, node } => RunCause::AnalyzeNotYetImplemented {
@@ -608,6 +608,13 @@ mod package_intake_tests {
             ),
             (refusal, 0),
         ] {
+            let fsl_analyze::analyze::ClauseItemRefusal::Build(refusal) =
+                fsl_analyze::analyze::ClauseItemRefusal::from(
+                    fsl_eval::simulation::model::PendingClauseForm::Build(refusal),
+                )
+            else {
+                panic!("a selected clause keeps its builder refusal rather than becoming unknown");
+            };
             let cause = package_clause_refusal(node.clone(), refusal);
             assert_eq!(cause.code().as_str(), "stage_limit_exceeded");
             let RunCause::AnalyzePackage { message, cause, .. } = cause else {

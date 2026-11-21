@@ -109,6 +109,21 @@ pub enum ClauseItemRefusal {
     },
 }
 
+impl From<fsl_eval::simulation::model::PendingClauseForm> for ClauseItemRefusal {
+    fn from(refusal: fsl_eval::simulation::model::PendingClauseForm) -> Self {
+        use fsl_eval::simulation::model::PendingClauseForm;
+        match refusal {
+            PendingClauseForm::Read(fsl_package::BareClauseRefusal::Pending { fact, node }) => {
+                Self::Pending { fact, node }
+            }
+            PendingClauseForm::Read(fsl_package::BareClauseRefusal::Selection(_)) => {
+                Self::UnknownClause
+            }
+            PendingClauseForm::Build(refusal) => Self::Build(refusal),
+        }
+    }
+}
+
 /// The inputs of one authored-clause item.
 #[derive(Clone)]
 pub struct ClauseSubject<'a> {
@@ -813,17 +828,7 @@ impl<'a> PackageClauseSubject<'a> {
                 claim,
                 filament_semantic_value::checking::CheckingLimits::default().nodes(),
             )
-            .map_err(|refusal| match refusal {
-                fsl_eval::simulation::model::PendingClauseForm::Read(
-                    fsl_package::BareClauseRefusal::Pending { fact, node },
-                ) => ClauseItemRefusal::Pending { fact, node },
-                fsl_eval::simulation::model::PendingClauseForm::Read(
-                    fsl_package::BareClauseRefusal::Selection(_),
-                ) => ClauseItemRefusal::UnknownClause,
-                fsl_eval::simulation::model::PendingClauseForm::Build(refusal) => {
-                    ClauseItemRefusal::Build(refusal)
-                }
-            })?;
+            .map_err(ClauseItemRefusal::from)?;
         let identity = fsl_replay::ClauseIdentity::of_admitted(admitted, &clause)
             .map_err(|_| ClauseItemRefusal::UnknownClause)?;
         named(&clause)?;

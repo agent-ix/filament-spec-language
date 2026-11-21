@@ -2704,7 +2704,7 @@ impl CheckedPackageEvaluation for CheckedPackage {
                 )));
             };
             machine = machine.with_absent_key(0, population.to_owned(), key.clone());
-            if clause.trigger().is_some() {
+            if clause.clause().trigger().is_some() {
                 machine = machine.with_absent_key(1, population.to_owned(), key.clone());
             }
         }

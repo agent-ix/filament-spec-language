@@ -477,7 +477,7 @@ impl ProbabilisticParts {
             .filter(|id| declared.iter().any(|row| row.unit_id == *id))
             .filter_map(|id| {
                 let filament_semantic_value::quantity::QuantityUnit::Declared(unit) =
-                    units.get(id)?
+                    units.get(id.clone())?
                 else {
                     return None;
                 };
@@ -1012,6 +1012,7 @@ pub trait ModelEvaluator: sealed::Sealed + Sync {
         &self,
         atom: &crate::value::HoldsAtom,
         over: Value,
+        absent_population: Option<&str>,
         captures: &[Value],
         objects: &ObjectEnvironment,
         reference_bindings: &crate::simulation::model::ReferenceBindings,
@@ -1037,6 +1038,7 @@ pub trait ModelEvaluator: sealed::Sealed + Sync {
         &self,
         clause: &NodeKey,
         over: Value,
+        absent_population: Option<&str>,
         objects: &ObjectEnvironment,
         reference_bindings: &crate::simulation::model::ReferenceBindings,
         meter: &mut Meter,
@@ -1608,6 +1610,7 @@ impl ModelEvaluator for CheckedPackage {
         &self,
         atom: &crate::value::HoldsAtom,
         over: Value,
+        absent_population: Option<&str>,
         captures: &[Value],
         objects: &ObjectEnvironment,
         reference_bindings: &crate::simulation::model::ReferenceBindings,
@@ -1617,6 +1620,7 @@ impl ModelEvaluator for CheckedPackage {
             self,
             atom,
             over,
+            absent_population,
             captures,
             objects,
             reference_bindings,
@@ -1638,6 +1642,7 @@ impl ModelEvaluator for CheckedPackage {
         &self,
         clause: &NodeKey,
         over: Value,
+        absent_population: Option<&str>,
         objects: &ObjectEnvironment,
         reference_bindings: &crate::simulation::model::ReferenceBindings,
         meter: &mut Meter,
@@ -1646,6 +1651,7 @@ impl ModelEvaluator for CheckedPackage {
             self,
             clause,
             over,
+            absent_population,
             objects,
             reference_bindings,
             meter,
@@ -2121,6 +2127,7 @@ impl ModelEvaluator for BarePackage<'_> {
         &self,
         atom: &crate::value::HoldsAtom,
         over: Value,
+        absent_population: Option<&str>,
         captures: &[Value],
         objects: &ObjectEnvironment,
         reference_bindings: &crate::simulation::model::ReferenceBindings,
@@ -2130,6 +2137,7 @@ impl ModelEvaluator for BarePackage<'_> {
             self,
             atom,
             over,
+            absent_population,
             captures,
             objects,
             reference_bindings,
@@ -2151,6 +2159,7 @@ impl ModelEvaluator for BarePackage<'_> {
         &self,
         clause: &NodeKey,
         over: Value,
+        absent_population: Option<&str>,
         objects: &ObjectEnvironment,
         reference_bindings: &crate::simulation::model::ReferenceBindings,
         meter: &mut Meter,
@@ -2159,6 +2168,7 @@ impl ModelEvaluator for BarePackage<'_> {
             self,
             clause,
             over,
+            absent_population,
             objects,
             reference_bindings,
             meter,
