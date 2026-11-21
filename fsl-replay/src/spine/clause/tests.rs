@@ -1207,8 +1207,9 @@ fn boolean_function_claim_round_trips_as_tested() {
     );
     let report = run_clause(request).expect("the claim selection is formed");
 
-    let item = crate::OutcomeItem::from_clause_run(crate::RequestIndex::new(0), "isPositive", &report)
-        .expect("a successful claim is an outcome item");
+    let item =
+        crate::OutcomeItem::from_clause_run(crate::RequestIndex::new(0), "isPositive", &report)
+            .expect("a successful claim is an outcome item");
     assert_eq!(item.result(), crate::ItemLabel::Tested);
     let item = serde_json::to_value(item).expect("the tested item serializes");
     assert!(item.get("diagnostic").is_none());
@@ -3655,7 +3656,6 @@ fn run_clause_refuses_an_extracted_fence_that_is_not_ix_native() {
     assert_eq!(report.disposition.category().exit_code(), 20);
 }
 
-
 /// FR-031-AC-9 (TC-109): an extracted body declaring two clauses refuses at
 /// compile with `extraction-clause-count` and the actual count, on the
 /// single-run route.
@@ -3686,7 +3686,9 @@ fn run_clause_batch_refuses_an_extracted_body_declaring_two_clauses() {
             report.disposition,
             ClauseDisposition::ExtractionClauseCount { actual: 2 }
         )),
-        crate::spine::ClauseRunBatchOutcome::Reports(_) => panic!("the batch must refuse at compile"),
+        crate::spine::ClauseRunBatchOutcome::Reports(_) => {
+            panic!("the batch must refuse at compile")
+        }
     }
 }
 
