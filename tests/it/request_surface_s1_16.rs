@@ -1785,63 +1785,48 @@ fn a_clause_run_over_a_handoff_directory_returns_the_source_result() {
     }
 }
 
-/// FR-1039 (TC-3019): a `holds` condition the kernel refuses inside a clause
-/// run is the caller's refusal on both routes, never an internal failure. The
-/// package route reports the source route's code and cause; only the locus
-/// differs, because the package carries no source span.
+/// FR-1039 (TC-3019): an evaluated refusal on a lasso retains its complete
+/// source disposition, including its caller-rendered region, on both routes.
 #[test]
-#[trace("TC-3019", "FR-1039")]
+#[trace("TC-3019", "FR-1039", "FR-1039-AC-11")]
 fn a_refused_condition_in_a_clause_run_has_the_same_code_and_cause_on_both_routes() {
-    // `count<Zero>` of a non-zero element leaves `Int[0, 0]`: the kernel
-    // refuses the condition at a level of 1 or more.
-    let unit = "language \"ix:native\" edition \"1-draft\";\n\
-        profile v = \"filament.value.complete/v1\";\n\
-        profile m = \"filament.model.complete/v1\";\n\
-        profile t = \"filament.temporal.infinite-trace/v1\";\n\
-        model Config = \"example/config-version\";\n\
-        record Counter { level: Int[0, 9]; }\n\
-        type Zero = Int[0, 0];\n\
-        function ints using v(xs: Sequence<Integer>[0, 3]): Sequence<Integer>[0, 3] pure { xs }\n\
-        temporal C using t over (c: Counter) clock \"steps\" on each (q: Counter) \
-        { always holds(count<Zero>(m in ints(sequence[c.level]): m > 0) = 0) }\n";
-    let clause = json!({"selection": {"temporal": {"name": "C", "trace":
-        {"lasso": {"prefix": [], "loop": [level_sample(1)]}}}}, "observations": {}});
+    let unit = package_refusal_unit("filament.temporal.infinite-trace/v1");
+    let clause = json!({"selection":{"temporal":{"name":"C","trace":
+        {"lasso":{"prefix":[],"loop":[level_sample(1)]}}}},"observations":{}});
     let directory = tempfile::tempdir().unwrap();
     spine::write(directory.path(), Case::Healthy).unwrap();
-    let models = compile_handoff(directory.path(), unit);
-    let (source_code, from_source) = run(unit, true, ("clause", clause.clone()));
-    let (code, from_package) = write_request(
+    let clocks =
+        json!({"sensor":{"kind":"event_position","sequence_authority":"counter-sequence"}});
+    let models = compile_handoff_with_clocks(directory.path(), &unit, Some(clocks.clone()));
+    std::fs::write(directory.path().join("caller.native"), &unit).unwrap();
+    let mut caller = source("unit.native");
+    caller["file"] = json!("caller.native");
+    let expected = write_request(
         directory.path(),
-        &json!({"format": "native-run/1", "request": {"models": models,
-            "package": {"directory": "handoff"}, "clause": clause}}),
+        &json!({"format":"native-run/1","request":{
+        "models":models,"program":{"source":caller},"clocks":clocks,"clause":clause}}),
     );
-    // Neither route is an internal failure, and both give the same exit code.
-    assert_ne!(source_code, 30, "{from_source}");
-    assert_eq!(code, source_code, "{from_package}\n{from_source}");
-    // The same code and cause; the locus is the one member that may differ.
-    fn without_locus(value: &Value) -> Value {
-        match value {
-            Value::Object(members) => Value::Object(
-                members
-                    .iter()
-                    .filter(|(name, _)| !matches!(name.as_str(), "locus" | "location" | "message"))
-                    .map(|(name, member)| (name.clone(), without_locus(member)))
-                    .collect(),
-            ),
-            Value::Array(items) => Value::Array(items.iter().map(without_locus).collect()),
-            other => other.clone(),
-        }
-    }
-    let disposition = |value: &Value| without_locus(&value["disposition"]);
+    assert_eq!(expected.0, 22, "{}", expected.1);
+    let refusal = &expected.1["disposition"]["outcome"];
+    assert_eq!(refusal["kind"], "refused", "{}", expected.1);
+    assert_eq!(refusal["code"], "incomplete_population");
+    assert_eq!(refusal["cause"], "missing-required-artifact");
     assert_eq!(
-        disposition(&from_package),
-        disposition(&from_source),
-        "{from_package}\n{from_source}"
+        refusal["fields"],
+        json!({"population":format!("ix://{}/config_history", spine::PACKAGE_IDENTITY)})
     );
-    assert!(
-        from_source.to_string().contains("integer_out_of_domain"),
-        "the fixture refuses a condition: {from_source}"
+    assert_eq!(refusal["locus"]["file"], "caller.native");
+    assert!(refusal["locus"]["span"].is_object());
+    let actual = write_request(
+        directory.path(),
+        &json!({"format":"native-run/1","request":{
+        "models":models,"package":{"directory":"handoff"},"sources":[caller],"clause":clause}}),
     );
+    assert_eq!(
+        actual, expected,
+        "all refusal fields and the actual source span are retained"
+    );
+    fsl_replay::spine::read_native_run_result(&serde_json::to_vec(&actual.1).unwrap()).unwrap();
 }
 
 /// FR-1039-AC-6 (FR-931-AC-6's snapshot): `cross_evaluate` `{"initial": S,
@@ -4130,13 +4115,8 @@ fn package_window_adapter_controls(
     }
 }
 
-/// Real evaluated refusals retain their source record and caller-rendered span;
-/// caller text provisioning remains a call-stage boundary on the byte route.
-#[test]
-#[trace("TC-3019", "FR-1039-AC-11", "TC-451", "FR-100-AC-9")]
-fn package_remainder_call_and_condition_refusals_keep_caller_source_loci() {
-    use fsl_foundation::{Source, SourceIdentity, Span};
-    let unit = "language \"ix:native\" edition \"1-draft\";\n\
+fn package_refusal_unit(profile: &str) -> String {
+    "language \"ix:native\" edition \"1-draft\";\n\
         profile v = \"filament.model.complete/v1\";\n\
         profile t = \"filament.temporal.event-position.false-extension/v1\";\n\
         model Config = \"example/config-version\";\n\
@@ -4149,13 +4129,22 @@ fn package_remainder_call_and_condition_refusals_keep_caller_source_loci() {
         temporal C using t over (c: Counter) clock \"sensor\" on origin \
         { always[0,5] holds(size(allInstances<Config::ConfigVersion>(Config::config_history)) >= 0) }\n\
         temporal Other using t over (c: Counter) clock \"sensor\" on origin \
-        { always[0,5] holds(size(allInstances<Config::ConfigVersion>(Config::config_history)) >= 0) }\n";
+        { always[0,5] holds(size(allInstances<Config::ConfigVersion>(Config::config_history)) >= 0) }\n".replace(EVENT_POSITION, profile)
+}
+
+/// Real evaluated refusals retain their source record and caller-rendered span;
+/// caller text provisioning remains a call-stage boundary on the byte route.
+#[test]
+#[trace("TC-3019", "FR-1039-AC-11", "TC-451", "FR-100-AC-9")]
+fn package_remainder_call_and_condition_refusals_keep_caller_source_loci() {
+    use fsl_foundation::{Source, SourceIdentity, Span};
+    let unit = package_refusal_unit(EVENT_POSITION);
     let directory = tempfile::tempdir().unwrap();
     spine::write(directory.path(), Case::Incomplete).unwrap();
-    std::fs::write(directory.path().join("caller.native"), unit).unwrap();
+    std::fs::write(directory.path().join("caller.native"), &unit).unwrap();
     let clocks =
         json!({"sensor":{"kind":"event_position","sequence_authority":"counter-sequence"}});
-    let models = compile_handoff_with_clocks(directory.path(), unit, Some(clocks.clone()));
+    let models = compile_handoff_with_clocks(directory.path(), &unit, Some(clocks.clone()));
     let offered = Source::read_typed(
         SourceIdentity::new("agent-ix", "test:s1-16:unit.native"),
         "caller.native",
@@ -4292,6 +4281,6 @@ fn package_remainder_call_and_condition_refusals_keep_caller_source_loci() {
             std::fs::write(directory.path().join("caller.native"), split).unwrap();
             assert_missing(&request);
         }
-        std::fs::write(directory.path().join("caller.native"), unit).unwrap();
+        std::fs::write(directory.path().join("caller.native"), &unit).unwrap();
     }
 }
