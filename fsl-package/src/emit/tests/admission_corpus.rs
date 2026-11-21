@@ -968,6 +968,49 @@ fn read_bytes(emitted: &Emitted, bytes: &[u8]) -> Result<V2Read, StageFailure<V2
         .map(Staged::into_value)
 }
 
+/// A selected population's artifact id admits hyphens under FSpec FR-154;
+/// its document is checked at the generated model root before graph admission.
+#[trace("FR-093-AC-19", "FSpec-FR-154", "FSpec-FR-322-AC-132")]
+#[test]
+fn config_version_with_a_hyphenated_population_emits_and_is_admitted() {
+    let mut document: Value = serde_json::from_str(config_version_unit::DOMAIN_PACKAGE).unwrap();
+    let mut second = document["populations"][0].clone();
+    let identity = format!("{}-second", second["identity"].as_str().unwrap());
+    second["identity"] = json!(identity);
+    second["displayName"] = json!(identity);
+    second["origin"]["generated"]["generatorIdentity"] = json!(identity);
+    second["origin"]["generated"]["inputIdentities"] = json!([identity]);
+    document["populations"].as_array_mut().unwrap().push(second);
+    let documents = vec![serde_json::to_vec(&document).unwrap()];
+    let unit = format!(
+        "{COMPLETE_V1_HEADER}\
+         model Config = {:?};\n\
+         function keep using v(x: Config::ConfigVersion): Config::ConfigVersion pure {{ x }}\n",
+        config_version_unit::PACKAGE_IDENTITY
+    );
+    let package = modelled_with_documents(&unit, &documents, Vec::new());
+    let emitted = Emitted::placed_owned(package, documents);
+    assert!(emitted.emission.omitted.is_empty());
+    let read = read(&emitted).expect("the strict reader admits the genuine source emission");
+    let graph = read.admitted.resolved_graph();
+    let mut roots = graph.nodes.iter().filter(|node| {
+        node.node_tag.as_ref() == "model" && node.semantic_form.as_ref() == "model_root"
+    });
+    let root = roots.next().expect("the selected ConfigVersion model root");
+    assert!(roots.next().is_none(), "one root for the selected model");
+    assert_eq!(
+        root.owner,
+        Some(filament_contract_model::CheckedNodeOwner::ModelRoot {
+            identity: config_version_unit::PACKAGE_IDENTITY.into(),
+        })
+    );
+    assert_eq!(
+        root.node_id.package.as_ref(),
+        config_version_unit::PACKAGE_IDENTITY
+    );
+    assert_eq!(root.semantic_type, root.node_id);
+}
+
 /// A selected object declaration remains valid reference data, but cannot
 /// replace the selected model root in a terminal's target role.
 #[trace("FSpec-FR-476-AC-4")]
