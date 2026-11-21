@@ -37,3 +37,33 @@ What holds:
 Outside the diff: map clock places are still spelled `{parent}[key]` with a `ix://filament/native/String` key at fsl-semantics/src/check/lowering/model.rs:302-305 and 229-236. FSpec FR-789 line 79 and contract-ir timed_model.rs:1235 require `<C>[slot]`, and FR-789 lines 67-68 a bare `Text` key. place_rows.rs:122 pins the wrong spelling, and no test sends a map clock place through the strict read. This was already true on main. The PR does not change it, so it is not a finding here.
 
 Not verifiable without a build: that the protocol_observe `structural_value` calls (with no holder row) resolve every node-held id; that the seven remaining failures fail for the reasons given; and that clippy shows no warning beyond FND-002.
+
+## Dispositions
+
+| FND | Outcome | Reason |
+| --- | --- | --- |
+| FND-001 | fixed | At e418f820, `SourceRecordJson::value` (fsl-package/src/bare/carried.rs:259-270) refuses `Malformed` unless a member is exactly a data entry (`type_node` and `value_type`, no `member_type`, empty `collections`) or exactly a clock entry (neither, `member_type` set). bare_world.rs:212-214 filters on `member_type.is_none()`. The remaining `value_type.clone()?` cannot drop a member that was read from a file. tests/it/bare_package.rs:392-417 forges both directions (`value_type` null, `type_node` null) and expects `Malformed{SourceRecords}`. Confirmed: the identity file carries no tuple rows (no `source_tuples` in bare.rs or bare/), and every `UnionClockPayloadJson` field is required with `deny_unknown_fields`, so a union entry cannot be half data and half clock. |
+| FND-002 | fixed | The unused `ids` closure is gone from fsl-package/src/emit/tests/protocol_observe.rs. |
+
+## New findings (disposition pass 1)
+
+| ID | Severity | Summary | Refs |
+| --- | --- | --- | --- |
+| FND-003 | medium | The map-key fix renders only a `String` key as bare `Text`. An `Integer`, `Boolean`, `UUID` or `Timestamp` key still renders `ix://filament/native/<Name>`. The reader's `key_rendering` (contract-ir c353c3f3 source_rendering.rs:129-138) gives every native scalar key its bare `native_name`, and FSpec FR-322 line 5403 says "`K` a native key by its name". So an `Integer`-keyed map clock place, such as place_rows.rs's `Timers`, is spelled differently from what the reader expects. | fsl-semantics/src/check/lowering/model.rs:237-243 |
+
+FND-003 fix: render every native scalar map key by its bare name (`Text` for `String`, `Integer`, `Boolean`, `UUID`, `Timestamp`), and keep the full rendering only for a non-scalar key such as a native enum.
+
+Map clock places have no strict-read test. That is accepted: no route on main emits a map clock place (map-of-Clock lowering belongs to PR #3136), and the strict read checks every `clock_place` row, so a wrong spelling is refused, never admitted. Nothing can emit one unchecked.
+
+Rulings applied in this round:
+
+- FR-093 line 938 now states ascending node-id order. This matches FR-880-AC-13 and FSpec FR-322 lines 871-874 and 1692.
+- The FR-093-AC-42 fixture `P = Decimal[0, 100000; 2, 2; exact]` gives P = [0, 1000.00], which contains R = [0, 100.0] at a higher scale, so the conversion is provable in principle. The test still fails because of a checker defect: `discharge_conversion` (fsl-semantics/src/check/facts/conversions.rs:29-127) tries only the integer interval and a literal against the target. It never tries the operand's declared type R, so a decimal operand typed R into P is refused `Unproved(Range)`. This is outside the PR.
+
+Hybrid interval path: the argument that "the two formulas merge" does not hold under FSpec. FR-322 line 1692 says the ordinal "tells apart nodes that share one `package` and `path`". Line 1696 says "A producer disambiguates other nodes sharing a package and path by distinct ordinals of its choosing; body content is not part of the path". So `always[0,2] p` and `always[0,3] p` would be two nodes, at ordinals 0 and 1. FSpec is inconsistent, though:
+
+- FR-322 line 1691 limits string operands to "a literal's text, an operator or member name", and hybrid-node-vectors.json gives `once [0,2]` the path `["temporal","formula",{operand},"filament.op.temporal.once","temporal_formula",{operand}]` with no interval.
+- FR-640 line 340 says "FR-322 keys an expression or `temporal`/`formula` node by its content", and line 346 says a claim's id changes with "a formula and its intervals".
+- With an interval-free path, a lone claim's formula stays at {path, 0} whatever its interval, so FR-640 line 346 (and FSL FR-498-AC-7) cannot hold.
+
+The FSL emitter follows FR-640 and FR-498. The change belongs in FSpec: either FR-322 line 1691 admits the canonical interval text as a formula operand and the hybrid vectors are regenerated, or FR-640 drops that claim.

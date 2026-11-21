@@ -234,11 +234,15 @@ pub(crate) fn clock_type_identity(
                 pending.push(Part::Text(">"));
                 pending.push(Part::Value(map.values()));
                 pending.push(Part::Text(", "));
-                // FSpec FR-789 "Rendering": a scalar key renders as its bare name.
-                if matches!(map.key(), ValueType::String) {
-                    pending.push(Part::Text("Text"));
-                } else {
-                    pending.push(Part::Value(map.key()));
+                // FSpec FR-789 "Rendering": a native scalar key renders as its bare
+                // name, as the reader's `key_rendering` spells it.
+                match map.key() {
+                    ValueType::String => pending.push(Part::Text("Text")),
+                    ValueType::Boolean => pending.push(Part::Text("Boolean")),
+                    ValueType::Integer => pending.push(Part::Text("Integer")),
+                    ValueType::Uuid => pending.push(Part::Text("UUID")),
+                    ValueType::Timestamp => pending.push(Part::Text("Timestamp")),
+                    key => pending.push(Part::Value(key)),
                 }
             }
             ValueType::Boolean => output.push_str("ix://filament/native/Boolean"),
