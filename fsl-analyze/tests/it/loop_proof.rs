@@ -738,8 +738,22 @@ fn source_loop_proof_documents_settle_both_item_kinds() {
     let bounded = analyze(&path);
     assert_eq!(bounded.exit, 20, "{}", bounded.document());
     let invariant = item_with_record(&bounded, 0, "bounded");
-    let termination = item_with_record(&bounded, 1, "bounded");
+    let termination = bounded.item(1);
     assert_eq!(label(&invariant), "proved", "{}", bounded.document());
+    assert_eq!(termination["request_index"], 1, "{}", bounded.document());
+    assert_eq!(termination["category"], "refusal", "{}", bounded.document());
+    assert_eq!(
+        termination["record"]["settled_by"],
+        "disposition",
+        "{}",
+        bounded.document()
+    );
+    assert_eq!(
+        termination["record"]["diagnostic"]["code"],
+        "invalid_capability",
+        "{}",
+        bounded.document()
+    );
     assert_eq!(
         termination["record"]["diagnostic"]["cause"],
         "inapplicable-kind",

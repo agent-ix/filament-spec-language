@@ -1344,12 +1344,14 @@ impl<'a> Application<'a> {
         }
     }
 
-    /// The declared parameter type at `index` when this is a call of a
-    /// declared function (local or imported).
+    /// The declared parameter type at `index` for a function call (local or
+    /// imported) or tuple constructor, whose operand types must be explicit.
     pub(crate) fn call_parameter(&self, index: usize) -> Option<ValueType> {
         match self {
-            Self::Function { .. } | Self::Imported { .. } => self.parameter(index),
-            Self::Tuple { .. } | Self::Ieee { .. } => None,
+            Self::Function { .. } | Self::Imported { .. } | Self::Tuple { .. } => {
+                self.parameter(index)
+            }
+            Self::Ieee { .. } => None,
         }
     }
 
