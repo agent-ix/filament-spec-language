@@ -9233,7 +9233,7 @@ fn temporal_binding_rows(
             .ok_or(EmitRefusal::SourceMapInvariant)?;
         let source = region.source().clone();
         let span = hyper.span();
-        let key = (source.clone(), span.start, span.end);
+        let key = (source.clone(), span.start, span.end, None);
         let Some(selection) = selected.remove(&key) else {
             missing.push((
                 MissingClockKind::Other,
@@ -9261,6 +9261,7 @@ fn temporal_binding_rows(
                 occurrence: claim_ordinal,
                 clock_name: clock_name.into(),
                 clock: clock.clone(),
+                source_unit: None,
                 trace: Some(quantifier.variable.clone().into()),
             };
             keyed.rows.push((identity.clone(), row.clone()));
