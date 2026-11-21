@@ -12,13 +12,36 @@ const SNAPSHOT: &[u8] = include_bytes!("../../../examples/protocol-recommendatio
 const MODEL: &[u8] = include_bytes!("../fixtures/cli-contract/counter.semantic-ir.json");
 
 fn run(source: &str) -> crate::cli_contract::Outcome {
+    run_with_snapshot(source, SNAPSHOT)
+}
+
+fn run_with_snapshot(source: &str, snapshot: &[u8]) -> crate::cli_contract::Outcome {
     let case = Case::new();
     case.write("workflow.native", source.as_bytes());
-    case.write("start.json", SNAPSHOT);
+    case.write("start.json", snapshot);
     case.write("counter.json", MODEL);
     let mut request: Value = serde_json::from_str(REQUEST).expect("example request");
     request["request"]["models"][0]["source"]["file"] = json!("counter.json");
     analyze(&case.json("analyze.json", &request))
+}
+
+/// The selected precondition disables the advisory call at capacity.
+#[test]
+#[trace("FSpec-FR-822-AC-3")]
+fn a_false_precondition_disables_the_recommendation() {
+    let mut snapshot: Value = serde_json::from_slice(SNAPSHOT).expect("snapshot");
+    snapshot["populations"][0]["objects"][0]["fields"]["value"]["integer"] = json!("2");
+    let outcome = run_with_snapshot(
+        SOURCE,
+        &serde_json::to_vec(&snapshot).expect("snapshot bytes"),
+    );
+    assert_eq!(outcome.exit, 10, "{}", outcome.document);
+    let counterexample = &outcome.document["items"][0]["counterexample"];
+    assert_eq!(counterexample["kind"], "deadlock");
+    assert_eq!(counterexample["prefix"], json!([]), "{counterexample}");
+    assert!(counterexample["blocked"]
+        .to_string()
+        .contains("Main/Advise"));
 }
 
 /// The driver's analysis entry returns a recommendation followed by a model
