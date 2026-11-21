@@ -7,7 +7,7 @@ use ix_trace_rs::trace;
 
 use super::assemble;
 use crate::check::refusal::ProtocolAnchorCause;
-use crate::check::CheckRefusal;
+use crate::check::{CheckCause, CheckRefusal};
 
 fn catalog(refusal: &CheckRefusal) -> (&'static str, Option<&'static str>) {
     (refusal.cause.code().as_str(), refusal.cause.cause())
@@ -132,32 +132,55 @@ fn a_guard_reads_the_input_through_a_capture_and_a_direct_read_refuses_at_the_re
     }
 }
 
-/// FR-218-AC-43: a variant of an integer type checks; a Boolean variant
-/// refuses `ill_typed`/`type-mismatch` at the variant.
+/// FR-218-AC-43: a variant of an integer type or a tuple of integers checks;
+/// a Boolean variant and a record variant each refuse
+/// `ill_typed`/`type-mismatch` at the variant.
 #[trace("TC-2022", "FR-218-AC-43", "FSpec-TC-1520", "FSpec-FR-171-AC-6")]
-#[ignore = "QSL-2222: the well-founded variant type rule is not implemented yet"]
 #[test]
 fn a_variant_without_a_well_founded_order_refuses_at_the_variant() {
+    let types = "tuple Pair(Int[0, 9], Int[0, 9]);\n\
+                 tuple Flags(Int[0, 9], Boolean);\n\
+                 record Point { x: Int[0, 9]; y: Int[0, 9]; }\n";
     let repeat = |variant: &str| {
-        protocol(
-            "",
-            "role R on M::Actor;",
-            &format!(
-                "sequence Main {{ repeat Loop by R visible () \
-                 invariant {{ true }} variant {{ {variant} }} \
-                 while {{ false }} sequence Body {{ {TRIED} }} }}"
-            ),
+        format!(
+            "{types}{}",
+            protocol(
+                "",
+                "role R on M::Actor;",
+                &format!(
+                    "sequence Main {{ repeat Loop by R visible () \
+                     invariant {{ true }} variant {{ {variant} }} \
+                     while {{ false }} sequence Body {{ {TRIED} }} }}"
+                ),
+            )
         )
     };
     super::checks(&repeat("3"));
+    super::checks(&repeat("Pair(3, 4)"));
 
-    let found = located_refusals(&repeat("true"));
-    let mismatches: Vec<&String> = found
-        .iter()
-        .filter(|(refusal, _)| catalog(refusal) == ("ill_typed", Some("type-mismatch")))
-        .map(|(_, at)| at)
-        .collect();
-    assert_eq!(mismatches, ["true"], "{found:?}");
+    for refused in ["true", "Point { x: 1, y: 2 }", "Flags(1, true)"] {
+        let found = located_refusals(&repeat(refused));
+        let mismatches: Vec<&String> = found
+            .iter()
+            .filter(|(refusal, _)| catalog(refusal) == ("ill_typed", Some("type-mismatch")))
+            .map(|(_, at)| at)
+            .collect();
+        assert_eq!(mismatches, [refused], "{found:?}");
+        let [(refusal, _)] = found.as_slice() else {
+            panic!("one refusal: {found:?}");
+        };
+        let CheckCause::ProtocolAnchor(anchor) = &refusal.cause else {
+            panic!("a protocol anchor refusal: {refusal:?}");
+        };
+        let ProtocolAnchorCause::VariantType {
+            expected, actual, ..
+        } = anchor.as_ref()
+        else {
+            panic!("a variant type refusal: {refusal:?}");
+        };
+        assert_eq!(**expected, filament_exact::ValueType::Integer);
+        assert_ne!(**actual, filament_exact::ValueType::Integer);
+    }
 }
 
 /// FR-884-AC-2 (TC-2508): an unproved-exhaustive `choice` refuses at its

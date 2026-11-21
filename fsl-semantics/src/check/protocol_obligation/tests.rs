@@ -20,6 +20,7 @@ use super::{
     CaptureOwner, CaptureStage, CheckedActivation, ObligationCause, ObligationOwner,
     ObligationStage, ReadClass, Site, Universe,
 };
+use crate::check::refusal::{ObservationReason, SlotKind};
 use crate::check::{
     CheckCause, CheckRefusal, CheckedGraph, PackageDeclarations, ProtocolAnchorCause,
 };
@@ -1247,4 +1248,131 @@ fn a_compensation_with_each_guard_and_capture_checks_as_a_template() {
         protocol.obligations.activation,
         super::CheckedActivation::OnEach { guard: Some(_), .. }
     ));
+}
+
+/// FR-218-AC-48 (TC-3038): over TC-1057's `Refunds` with a second role
+/// `Clerk` and two decisions at the end of `run`, each guard reads the
+/// protocol capture `order` at a decision of each role with an empty
+/// `visible` list and no `wrong_snapshot` refusal. A direct `over` read
+/// keeps its `operator-ineligible` refusal, an activation-binder read refuses
+/// `wrong-observation` with `ineligible-kind`, and a forward capture read
+/// refuses `missing-name`.
+#[trace("TC-3038", "FR-218-AC-48")]
+#[test]
+fn a_protocol_capture_read_needs_no_listing() {
+    let refunds = |capture: &str, by_service: &str, by_clerk: &str| {
+        format!(
+            "profile S = \"filament.state.graph/v1\";\n\
+             protocol Refunds using p over (view: M::Node) {TICK} {{\n\
+             {capture}\n\
+             role Service on M::Node;\n\
+             role Clerk on M::Node;\n\
+             run sequence Main {{\n\
+             attempt Tried by Service on M::Node::step contracts [] \
+             as (attempted: M::Flag) {{ true }};\n\
+             choice ByService by Service visible () {{ \
+             case pos when {{ {by_service} }} check A using S {{ true }}; \
+             case neg when {{ not ({by_service}) }} check B using S {{ true }}; }}\n\
+             choice ByClerk by Clerk visible () {{ \
+             case pos when {{ {by_clerk} }} check C using S {{ true }}; \
+             case neg when {{ not ({by_clerk}) }} check D using S {{ true }}; }}\n\
+             }}\n\
+             finish Closed as (closed: M::Receipt) {{ true }};\n\
+             }}"
+        )
+    };
+    let located = |source: &str| -> Vec<(CheckRefusal, String)> {
+        let (text, assembled) = assemble(source);
+        let regions = assembled.regions();
+        let found = match assembled.check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &crate::check::test_support::ZeroRewardEvaluator,
+        ) {
+            Ok(_) => Vec::new(),
+            Err(refusals) => refusals,
+        };
+        found
+            .into_iter()
+            .map(|refusal| {
+                let region = regions
+                    .refusal_region(&refusal)
+                    .unwrap_or_else(|| panic!("{refusal:?} names a region"));
+                let start = usize::try_from(region.start()).expect("a start");
+                let end = usize::try_from(region.end()).expect("an end");
+                (refusal, text[start..end].to_owned())
+            })
+            .collect()
+    };
+    let capture = "capture order: M::Total = view.total;";
+    let guard = "order >= 0";
+    assert!(
+        located(&refunds(capture, guard, guard)).is_empty(),
+        "the capture read checks at both roles"
+    );
+
+    // The `over` read keeps its own refusal, named by node and slot, at
+    // each guard that reads it.
+    let found = located(&refunds(capture, "view.total >= 0", guard));
+    assert_eq!(found.len(), 2, "{found:?}");
+    for (refusal, at) in &found {
+        assert_eq!(at, "view.total");
+        let CheckCause::ProtocolAnchor(cause) = &refusal.cause else {
+            panic!("a protocol anchor refusal, got {refusal:?}");
+        };
+        assert_eq!(
+            (cause.code(), cause.tag()),
+            (Code::IllTyped, "operator-ineligible")
+        );
+        assert!(matches!(
+            cause.as_ref(),
+            ProtocolAnchorCause::SlotModelState { node, slot, .. }
+                if node == "ByService" && *slot == SlotKind::Guard
+        ));
+    }
+
+    // The activation binder is no eligible fact of a role.
+    let found = located(&refunds(capture, guard, "opened.ready"));
+    let [(refusal, at)] = &found[..] else {
+        panic!("one refusal, got {found:?}");
+    };
+    assert_eq!(at, "opened.ready");
+    let CheckCause::ProtocolAnchor(cause) = &refusal.cause else {
+        panic!("a protocol anchor refusal, got {refusal:?}");
+    };
+    assert_eq!(
+        (cause.code(), cause.tag()),
+        (Code::WrongSnapshot, "wrong-observation")
+    );
+    assert!(matches!(
+        cause.as_ref(),
+        ProtocolAnchorCause::WrongObservation { node, owner, binder, field, reason, .. }
+            if node == "ByClerk"
+                && owner == "Clerk"
+                && binder == "opened"
+                && field.as_deref() == Some("ready")
+                && *reason == ObservationReason::IneligibleKind
+    ));
+
+    // A capture read before it is written is a forward read, never a
+    // snapshot refusal.
+    let forward = "capture order: M::Total = later;\n\
+                   capture later: M::Total = view.total;";
+    let found = located(&refunds(forward, guard, guard));
+    let [(refusal, at)] = &found[..] else {
+        panic!("one refusal, got {found:?}");
+    };
+    assert_eq!(at, "later");
+    let CheckCause::ProtocolObligation(cause) = &refusal.cause else {
+        panic!("an obligation refusal, got {refusal:?}");
+    };
+    let (name, stage, owner, read) = stage_read(cause);
+    assert_eq!(name, "later");
+    assert_eq!(stage, ObligationStage::ProtocolCapture);
+    assert_eq!(*owner, ObligationOwner::Protocol);
+    assert_eq!(read, ReadClass::Forward);
+    assert_eq!(
+        (cause.code(), cause.tag()),
+        (Code::MissingDeclaration, Some("missing-name"))
+    );
 }

@@ -22,8 +22,8 @@ fn only_locus(source: &str, expected_code: &str, expected_cause: Option<&str>) -
 
 /// FR-884-AC-5: each small accepted control below checks, and its paired
 /// rejection is located at the name, control header or join list it names.
-/// QSL-2222's variant typing and QSL-2409's attempt-result reads are excluded
-/// because their FR-218 AC-43/44 behavior is not implemented yet.
+/// QSL-2409's attempt-result reads are excluded because their FR-218 AC-44
+/// behavior is not implemented yet.
 #[trace("TC-2509", "FR-884-AC-5")]
 #[test]
 fn minimal_protocol_construct_pairs_check_and_refuse_at_their_subject() {
@@ -138,6 +138,24 @@ fn minimal_protocol_construct_pairs_check_and_refuse_at_their_subject() {
             Some("declaration-form"),
         ),
         "Loop"
+    );
+    // A loop proof's variant: an integer checks; a Boolean is refused at the
+    // variant.
+    let variant = |variant: &str| {
+        protocol(
+            "",
+            "role R on M::Actor;",
+            &format!(
+                "sequence Main {{ repeat Loop by R visible () \
+                 invariant {{ true }} variant {{ {variant} }} while {{ false }} \
+                 sequence Body {{ {TRIED} }} }}"
+            ),
+        )
+    };
+    super::checks(&variant("3"));
+    assert_eq!(
+        only_locus(&variant("true"), "ill_typed", Some("type-mismatch")),
+        "true"
     );
 
     // Parallel and join: all joined branches check; an incomplete all-list
