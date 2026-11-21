@@ -15,9 +15,15 @@
 
 use std::collections::BTreeMap;
 
-use filament_exact::{Cancel, ObjectReference};
-use fsl_eval::simulation::model::{sample_model_walk, ModelSystem, PredicateReading, WalkMemo};
-use fsl_eval::simulation::{NotSimulated, SampleProvenance, StopReason, TransitionSystem};
+use filament_exact::{
+    length_amount, Cancel, Charge, ChargePoint, Meter, ObjectReference, ScalarLimits,
+};
+use fsl_eval::simulation::model::{
+    sample_model_walk_keyed, ModelSystem, ModelWalkSettings, PredicateReading, WalkMemo,
+};
+use fsl_eval::simulation::{
+    NotSimulated, SampleProvenance, StateKey, StopReason, TransitionSystem,
+};
 use fsl_foundation::selection::DefinitionRef;
 use fsl_replay::{
     GraphWitness, ModelCheckLimit, ModelCheckLimits, ModelPath, ModelStep, WitnessSource,
@@ -40,6 +46,67 @@ type Target<'a> = (
     PredicateRole,
     Option<&'a ObjectReference>,
 );
+
+/// Stable truth readings only. Target indices identify the fixed claim,
+/// role and binding in this phase; positions and witness paths are never
+/// retained. Storage admission precedes each retained key allocation, and
+/// a full memo simply leaves subsequent readings to the evaluator.
+struct TruthMemo {
+    values: BTreeMap<StateKey, BTreeMap<usize, bool>>,
+    storage: Meter,
+}
+
+impl TruthMemo {
+    fn new(limits: ScalarLimits, cancel: &Cancel) -> Self {
+        Self {
+            values: BTreeMap::new(),
+            storage: Meter::new(limits).with_cancel(cancel.clone()),
+        }
+    }
+
+    fn get(
+        &self,
+        key: &StateKey,
+        target: usize,
+    ) -> Result<Option<bool>, filament_exact::Incomplete> {
+        let truth = self
+            .values
+            .get(key)
+            .and_then(|values| values.get(&target))
+            .copied();
+        if truth.is_some() {
+            let mut meter = Meter::new(*self.storage.limits());
+            if let Some(cancel) = self.storage.cancel() {
+                meter = meter.with_cancel(cancel.clone());
+            }
+            meter.charge(Charge::new(ChargePoint::GraphEdge))?;
+        }
+        Ok(truth)
+    }
+
+    fn retain(&mut self, key: &StateKey, target: usize, reading: &PredicateReading) {
+        let truth = match reading {
+            PredicateReading::True => true,
+            PredicateReading::False => false,
+            PredicateReading::Undefined { .. } | PredicateReading::Refused(_) => return,
+        };
+        let retained = length_amount(key.as_bytes().len())
+            .saturating_add(length_amount(std::mem::size_of::<(StateKey, usize, bool)>()))
+            .saturating_add(128);
+        if self
+            .storage
+            .charge(Charge::new(ChargePoint::GraphResultRetain).results(retained))
+            .is_ok()
+        {
+            if let Some(values) = self.values.get_mut(key) {
+                values.insert(target, truth);
+            } else {
+                self.values
+                    .insert(key.clone(), BTreeMap::from([(target, truth)]));
+            }
+        }
+    }
+}
 
 /// What phase 0 found: per `possible` instance, each initial state's sampled
 /// witness, and the count of its walks `max_walk_steps` stopped.
@@ -116,6 +183,7 @@ impl Phase<'_, '_> {
             return Ok(Err(stopped(ModelCheckLimit::WitnessSamples, samples)));
         }
         let sampler = sampler()?;
+        let mut truths = TruthMemo::new(self.budgets.meter, self.cancel);
         let mut targets: Vec<Target<'_>> = Vec::with_capacity(instances.len());
         for view in instances {
             let Some((_, Some(target))) = view
@@ -144,6 +212,8 @@ impl Phase<'_, '_> {
                     initial,
                     trace_index(initial, samples, walk_index)?,
                     &asked,
+                    &pending,
+                    &mut truths,
                 )? {
                     Ok(walk) => walk,
                     Err(halt) => return Ok(Err(halt)),
@@ -202,20 +272,25 @@ impl Phase<'_, '_> {
         initial: usize,
         trace: u64,
         targets: &[Target<'_>],
+        target_indices: &[usize],
+        truths: &mut TruthMemo,
     ) -> Result<Result<Walk, Halt>, ModelCheckRefusal> {
         let mut found: Vec<Option<Found>> = vec![None; targets.len()];
         let mut halt: Option<Result<Halt, ModelCheckRefusal>> = None;
         let mut position = 0;
-        let walked = sample_model_walk(
+        let walked = sample_model_walk_keyed(
             self.system,
             initial,
-            BOUND_POSITIONS,
-            sampler,
-            self.seed,
-            trace,
-            step_ceiling(self.limits, self.horizon),
-            Some(&self.walks),
-            |state| {
+            ModelWalkSettings {
+                position_limit: BOUND_POSITIONS,
+                sampler,
+                seed: self.seed,
+                trace,
+                max_steps: step_ceiling(self.limits, self.horizon),
+                cancel: Some(self.cancel),
+            },
+            &self.walks,
+            |state, key| {
                 let here = position;
                 position += 1;
                 if let Some(cancel) = cancelled(self.cancel) {
@@ -225,15 +300,60 @@ impl Phase<'_, '_> {
                 let open: Vec<usize> = (0..targets.len())
                     .filter(|index| found[*index].is_none())
                     .collect();
-                let asked: Vec<Target<'_>> = open.iter().map(|index| targets[*index]).collect();
-                let readings = match self.system.state_graph_predicates(state, &asked) {
+                let mut known = Vec::with_capacity(open.len());
+                let mut missing = Vec::new();
+                for index in &open {
+                    let reading = match truths.get(key, target_indices[*index]) {
+                        Ok(reading) => reading,
+                        Err(incomplete) => {
+                            halt = Some(Ok(cancelled(self.cancel).unwrap_or_else(|| {
+                                stopped(
+                                    ModelCheckLimit::EvaluationMeter {
+                                        counter: incomplete.limit_kind,
+                                    },
+                                    fsl_replay::meter_bound(
+                                        &self.budgets.meter,
+                                        incomplete.limit_kind,
+                                    ),
+                                )
+                            })));
+                            return true;
+                        }
+                    };
+                    if reading.is_none() {
+                        missing.push(*index);
+                    }
+                    known.push(reading);
+                }
+                let asked: Vec<Target<'_>> = missing.iter().map(|index| targets[*index]).collect();
+                let evaluated = if asked.is_empty() {
+                    Ok(Vec::new())
+                } else {
+                    self.system.state_graph_predicates(state, &asked)
+                };
+                let mut readings = match evaluated {
                     Ok(readings) => readings,
                     Err(stop) => {
                         halt = Some(expansion_stop(&stop, self.budgets));
                         return true;
                     }
-                };
-                for (index, reading) in open.into_iter().zip(readings) {
+                }
+                .into_iter();
+                for (index, truth) in open.into_iter().zip(known) {
+                    let reading = if let Some(truth) = truth {
+                        if truth {
+                            PredicateReading::True
+                        } else {
+                            PredicateReading::False
+                        }
+                    } else {
+                        let Some(reading) = readings.next() else {
+                            halt = Some(Err(fault("one-reading-per-target")));
+                            return true;
+                        };
+                        truths.retain(key, target_indices[index], &reading);
+                        reading
+                    };
                     found[index] = match reading {
                         PredicateReading::True => Some(Found::Target(here)),
                         PredicateReading::False => None,
@@ -275,5 +395,127 @@ impl Phase<'_, '_> {
             budget_stopped,
             provenance,
         }))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use filament_exact::{CancelCause, LimitKind};
+    use fsl_eval::simulation::model::ClauseOutcome;
+    use ix_trace_rs::trace;
+
+    use super::*;
+
+    fn limits() -> ScalarLimits {
+        ScalarLimits {
+            integer_bits: u64::MAX,
+            decimal_digits: u64::MAX,
+            scale_expansion: u64::MAX,
+            text_input_bytes: u64::MAX,
+            text_scalars: u64::MAX,
+            normalized_scalars: u64::MAX,
+            unit_edges: u64::MAX,
+            value_occurrences: u64::MAX,
+            work_units: u64::MAX,
+            result_units: u64::MAX,
+        }
+    }
+
+    /// A cached truth belongs only to its state and target instance.
+    #[trace("FR-166-AC-1")]
+    #[test]
+    fn truth_memo_separates_states_and_target_instances() {
+        let mut memo = TruthMemo::new(limits(), &Cancel::new());
+        let zero = StateKey::from_canonical_bytes(b"0".to_vec());
+        let one = StateKey::from_canonical_bytes(b"1".to_vec());
+        memo.retain(&zero, 0, &PredicateReading::False);
+        memo.retain(&zero, 1, &PredicateReading::True);
+        memo.retain(&one, 0, &PredicateReading::True);
+        assert_eq!(memo.get(&zero, 0), Ok(Some(false)));
+        assert_eq!(memo.get(&zero, 1), Ok(Some(true)));
+        assert_eq!(memo.get(&one, 0), Ok(Some(true)));
+        assert_eq!(memo.get(&one, 1), Ok(None));
+    }
+
+    /// An unreadable result is evaluated again, never reused as truth.
+    #[trace("FR-166-AC-1", "FR-166-AC-5")]
+    #[test]
+    fn truth_memo_does_not_retain_unreadable_results() {
+        let mut memo = TruthMemo::new(limits(), &Cancel::new());
+        let key = StateKey::from_canonical_bytes(b"0".to_vec());
+        memo.retain(
+            &key,
+            0,
+            &PredicateReading::Refused(ClauseOutcome::NotBoolean),
+        );
+        memo.retain(
+            &key,
+            1,
+            &PredicateReading::Undefined {
+                cause: fsl_eval::temporal::UndefinedCause::Family(
+                    filament_semantic_value::catalog::UndefinedRecord {
+                        reason: filament_semantic_value::catalog::UndefinedReason::AbsentKey,
+                        fields: BTreeMap::new(),
+                    },
+                ),
+                location: None,
+            },
+        );
+        assert_eq!(memo.get(&key, 0), Ok(None));
+        assert_eq!(memo.get(&key, 1), Ok(None));
+        assert!(memo.values.is_empty());
+        assert_eq!(memo.storage.consumed(LimitKind::ResultUnits), 0);
+    }
+
+    /// Retention denial leaves no allocated cache entry and permits fallback.
+    #[trace("FR-166-AC-1", "FR-166-AC-4")]
+    #[test]
+    fn truth_memo_admits_storage_before_retaining_keys() {
+        let mut memo = TruthMemo::new(
+            ScalarLimits {
+                result_units: 0,
+                ..limits()
+            },
+            &Cancel::new(),
+        );
+        let key = StateKey::from_canonical_bytes(b"0".to_vec());
+        memo.retain(&key, 0, &PredicateReading::False);
+        assert_eq!(memo.get(&key, 0), Ok(None));
+        assert!(memo.values.is_empty());
+        assert_eq!(memo.storage.consumed(LimitKind::ResultUnits), 0);
+    }
+
+    /// Cache hits continue to poll cancellation and admit work.
+    #[trace("FR-166-AC-4")]
+    #[test]
+    fn truth_memo_hits_admit_work_and_observe_cancellation() {
+        let cancel = Cancel::new();
+        let mut memo = TruthMemo::new(limits(), &cancel);
+        let key = StateKey::from_canonical_bytes(b"0".to_vec());
+        memo.retain(&key, 0, &PredicateReading::False);
+        assert_eq!(memo.get(&key, 0), Ok(Some(false)));
+        cancel.cancel(CancelCause::Requested);
+        assert_eq!(
+            memo.get(&key, 0).expect_err("cancelled hit").limit_kind,
+            LimitKind::WorkUnits
+        );
+
+        let mut blocked = TruthMemo::new(
+            ScalarLimits {
+                work_units: 0,
+                ..limits()
+            },
+            &Cancel::new(),
+        );
+        blocked
+            .values
+            .insert(key.clone(), BTreeMap::from([(0, false)]));
+        assert_eq!(
+            blocked
+                .get(&key, 0)
+                .expect_err("hit work admission")
+                .limit_kind,
+            LimitKind::WorkUnits
+        );
     }
 }

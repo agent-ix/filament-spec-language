@@ -3278,12 +3278,20 @@ pub fn sample_model_runs(
 #[derive(Default)]
 pub struct WalkMemo {
     expansions: std::cell::RefCell<std::collections::HashMap<MemoAt, ModelExpansion>>,
+    ordered: std::cell::RefCell<
+        std::collections::BTreeMap<
+            crate::simulation::StateKey,
+            std::collections::BTreeMap<String, OrderedModelExpansion>,
+        >,
+    >,
+    retained: std::cell::RefCell<Option<filament_exact::Meter>>,
 }
 
 /// A state's canonical key bytes and its anchor.
 type MemoAt = (Vec<u8>, String);
 
 type ModelExpansion = Expansion<ModelTransition, ModelSimState, ModelFinding>;
+type OrderedModelExpansion = std::sync::Arc<Expanded<ModelTransition, ModelSimState, ModelFinding>>;
 
 impl WalkMemo {
     /// An empty memo.
@@ -3317,6 +3325,157 @@ impl WalkMemo {
         self.expansions.borrow_mut().insert(at, expanded.clone());
         Ok(expanded)
     }
+
+    fn ordered_expansion(
+        &self,
+        system: &ModelSystem<'_>,
+        state: &ModelSimState,
+        key: &crate::simulation::StateKey,
+        cancel: Option<&filament_exact::Cancel>,
+    ) -> Result<OrderedModelExpansion, crate::simulation::EncodingRefusal> {
+        use filament_exact::{length_amount, Charge, ChargePoint, Meter};
+        let mut work = Meter::new(system.meter);
+        if let Some(cancel) = cancel {
+            work = work.with_cancel(cancel.clone());
+        }
+        if let Err(incomplete) = work.charge(Charge::new(ChargePoint::GraphEdge)) {
+            return Ok(std::sync::Arc::new(Expanded::Stopped(walk::exhausted(
+                crate::simulation::ExpansionLimit::EvaluationMeter(incomplete.limit_kind),
+            ))));
+        }
+        let anchor = format!("{:?}", state.anchor());
+        if let Some(found) = self
+            .ordered
+            .borrow()
+            .get(key)
+            .and_then(|anchors| anchors.get(&anchor))
+        {
+            return Ok(found.clone());
+        }
+        let expanded = expand(system, state, identity_limits())?;
+        let Expanded::Successors {
+            successors,
+            findings,
+        } = &expanded
+        else {
+            return Ok(std::sync::Arc::new(expanded));
+        };
+        // Refusals, undefined evaluations and incomplete readings are never
+        // stable memo values. A violated invariant is a state-and-anchor fact.
+        if findings
+            .iter()
+            .any(|finding| !matches!(finding, ModelFinding::InvariantViolated { .. }))
+        {
+            return Ok(std::sync::Arc::new(expanded));
+        }
+        let mut units = length_amount(key.as_bytes().len())
+            .saturating_add(length_amount(anchor.len()))
+            .saturating_add(256);
+        for successor in successors {
+            units = units
+                .saturating_add(length_amount(successor.key.as_bytes().len()).saturating_mul(2))
+                .saturating_add(length_amount(
+                    system.transition_key(&successor.transition)?.len(),
+                ))
+                .saturating_add(1024);
+        }
+        for finding in findings {
+            if let ModelFinding::InvariantViolated { clause, anchor, .. } = finding {
+                units = units
+                    .saturating_add(length_amount(clause.len()))
+                    .saturating_add(length_amount(anchor.name.len()))
+                    .saturating_add(length_amount(key.as_bytes().len()))
+                    .saturating_add(1024);
+            }
+        }
+        let mut retained = self.retained.borrow_mut();
+        let meter = retained.get_or_insert_with(|| {
+            let meter = Meter::new(system.meter);
+            if let Some(cancel) = cancel {
+                meter.with_cancel(cancel.clone())
+            } else {
+                meter
+            }
+        });
+        let admitted = meter
+            .charge(Charge::new(ChargePoint::GraphResultRetain).results(units))
+            .is_ok();
+        let expanded = std::sync::Arc::new(expanded);
+        if admitted {
+            let mut ordered = self.ordered.borrow_mut();
+            if let Some(anchors) = ordered.get_mut(key) {
+                anchors.insert(anchor, expanded.clone());
+            } else {
+                ordered.insert(
+                    key.clone(),
+                    std::collections::BTreeMap::from([(anchor, expanded.clone())]),
+                );
+            }
+        }
+        Ok(expanded)
+    }
+}
+
+/// The seeded model walk's limits and draw identity. A memo is scoped to
+/// this run's subject and predicate context.
+pub struct ModelWalkSettings<'a> {
+    /// The requires-bound position ceiling.
+    pub position_limit: u64,
+    /// The pinned sampler definition.
+    pub sampler: &'a DefinitionRef,
+    /// The run's seed.
+    pub seed: u64,
+    /// This walk's trace index.
+    pub trace: u64,
+    /// The greatest number of transitions drawn.
+    pub max_steps: usize,
+    /// The run's cancellation handle, polled on memo hits.
+    pub cancel: Option<&'a filament_exact::Cancel>,
+}
+
+/// [`sample_model_walk`] with the already encoded state key at each visited
+/// position and bounded reuse of canonical ordered expansions.
+///
+/// # Errors
+/// The same admission and encoding refusals as [`sample_model_walk`].
+pub fn sample_model_walk_keyed(
+    system: &ModelSystem<'_>,
+    initial: usize,
+    settings: ModelWalkSettings<'_>,
+    memo: &WalkMemo,
+    end: impl FnMut(&ModelSimState, &crate::simulation::StateKey) -> bool,
+) -> Result<Trace<ModelTransition, ModelFinding>, NotSimulated> {
+    let start = system
+        .initial
+        .get(initial)
+        .cloned()
+        .ok_or(NotSimulated::EmptyInitial)?;
+    let view = OneInitial {
+        system,
+        start,
+        memo: None,
+    };
+    check_model_bounds(system, settings.position_limit)?;
+    let domains = system.rooted_domains();
+    let roots: Vec<(NodeKey, Vec<u32>, &ValueType)> = domains
+        .iter()
+        .map(|(id, base, value_type)| (id.clone(), base.clone(), value_type))
+        .collect();
+    crate::simulation::sample::sample_request_using(
+        &view,
+        SampleRequest {
+            domains: &roots,
+            types: system.types,
+            position_limit: settings.position_limit,
+            sampler: settings.sampler,
+            seed: settings.seed,
+            trace: settings.trace,
+            max_steps: settings.max_steps,
+            identity: identity_limits(),
+        },
+        end,
+        |state, key| memo.ordered_expansion(system, state, key, settings.cancel),
+    )
 }
 
 /// `system` with one initial state.

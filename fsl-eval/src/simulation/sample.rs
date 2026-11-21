@@ -12,9 +12,9 @@ use fsl_foundation::selection::DefinitionRef;
 use crate::simulation::choice::{choose, ChoicePoint, Weights};
 use crate::simulation::expansion::StateFindings;
 use crate::simulation::explore::TransitionSystem;
-use crate::simulation::key::EncodingRefusal;
+use crate::simulation::key::{EncodingRefusal, StateKey};
 use crate::simulation::not_simulated::{check_requires_bound, NotSimulated, Root};
-use crate::simulation::order::{expand, sorted_initial, Expanded};
+use crate::simulation::order::{expand, sorted_initial, Expanded, OrderedSuccessor};
 use crate::simulation::trace::{SampleProvenance, Step, StopReason, Trace};
 use fsl_foundation::IdentityLimits;
 
@@ -98,6 +98,48 @@ impl Sampler for PinnedSampler {
 /// state, or the first encoding refusal reached.
 type SampleResult<T, F> = Result<Option<Trace<T, F>>, EncodingRefusal>;
 
+/// An owned expansion, or an immutable model-memo entry. Sampling only
+/// takes the chosen successor; an unchosen adjacency is never deep-copied.
+pub(crate) trait SampleExpansion<T, S, F> {
+    fn view(&self) -> &Expanded<T, S, F>;
+    fn take(self, index: usize) -> Option<OrderedSuccessor<T, S>>;
+}
+
+impl<T, S, F> SampleExpansion<T, S, F> for Expanded<T, S, F> {
+    fn view(&self) -> &Expanded<T, S, F> {
+        self
+    }
+
+    fn take(self, index: usize) -> Option<OrderedSuccessor<T, S>> {
+        match self {
+            Self::Successors { mut successors, .. } => Some(successors.swap_remove(index)),
+            Self::Stopped(_) => None,
+        }
+    }
+}
+
+impl<T: Clone, S: Clone, F> SampleExpansion<T, S, F> for std::sync::Arc<Expanded<T, S, F>> {
+    fn view(&self) -> &Expanded<T, S, F> {
+        self
+    }
+
+    fn take(self, index: usize) -> Option<OrderedSuccessor<T, S>> {
+        match self.as_ref() {
+            Expanded::Successors { successors, .. } => successors.get(index).cloned(),
+            Expanded::Stopped(_) => None,
+        }
+    }
+}
+
+/// One sampled walk's draw identity and limits.
+struct SamplePlan {
+    sampler: DefinitionRef,
+    seed: u64,
+    trace_index: u64,
+    max_steps: usize,
+    identity: IdentityLimits,
+}
+
 /// Draw one sampled run from `system`, starting at trace `trace_index mod m`
 /// among `system`'s `m` distinct initial states (no draw selects the
 /// start). The run ends at the first state where `end` holds, unexpanded
@@ -112,15 +154,19 @@ type SampleResult<T, F> = Result<Option<Trace<T, F>>, EncodingRefusal>;
 ///
 /// [`EncodingRefusal`] when a state or transition identity reached during
 /// the run has no RFC 8785 encoding.
-pub(crate) fn sample<S: TransitionSystem>(
+fn sample<S: TransitionSystem, E: SampleExpansion<S::TransitionId, S::State, S::Finding>>(
     system: &S,
-    sampler: DefinitionRef,
-    seed: u64,
-    trace_index: u64,
-    max_steps: usize,
-    identity: IdentityLimits,
-    mut end: impl FnMut(&S::State) -> bool,
+    plan: SamplePlan,
+    mut end: impl FnMut(&S::State, &StateKey) -> bool,
+    mut expansion: impl FnMut(&S::State, &StateKey) -> Result<E, EncodingRefusal>,
 ) -> SampleResult<S::TransitionId, S::Finding> {
+    let SamplePlan {
+        sampler,
+        seed,
+        trace_index,
+        max_steps,
+        identity,
+    } = plan;
     let mut initial = sorted_initial(system, identity)?;
     if initial.is_empty() {
         return Ok(None);
@@ -137,14 +183,15 @@ pub(crate) fn sample<S: TransitionSystem>(
     let mut steps = Vec::new();
     let mut findings = Vec::new();
     let stopped = loop {
-        if end(&current) {
+        if end(&current, &current_key) {
             break StopReason::Reached;
         }
-        let (mut successors, state_findings) = match expand(system, &current, identity)? {
+        let expanded = expansion(&current, &current_key)?;
+        let (successors, state_findings) = match expanded.view() {
             Expanded::Successors {
                 successors,
                 findings,
-            } => (successors, findings),
+            } => (successors, findings.clone()),
             Expanded::Stopped(stop) => {
                 let state_findings = system.findings_at_stop(&current);
                 if !state_findings.is_empty() {
@@ -179,7 +226,9 @@ pub(crate) fn sample<S: TransitionSystem>(
             .iter()
             .filter(|earlier| earlier.transition == successors[index].transition)
             .count();
-        let chosen = successors.swap_remove(index);
+        let chosen = expanded
+            .take(index)
+            .expect("the drawn index addresses an expanded successor");
         current = chosen.state;
         current_key = chosen.key.clone();
         steps.push(Step {
@@ -290,7 +339,28 @@ pub struct SampleRequest<'r, R: Root = (NodeKey, &'r ValueType)> {
 pub fn sample_request_until<S: TransitionSystem, R: Root>(
     system: &S,
     request: SampleRequest<'_, R>,
-    end: impl FnMut(&S::State) -> bool,
+    mut end: impl FnMut(&S::State) -> bool,
+) -> Result<Trace<S::TransitionId, S::Finding>, NotSimulated> {
+    let identity = request.identity;
+    sample_request_using(
+        system,
+        request,
+        |state, _| end(state),
+        |state, _| expand(system, state, identity),
+    )
+}
+
+/// The same admitted sampler with caller-supplied canonical expansions.
+/// The model walk uses its request-local memo without changing draw order.
+pub(crate) fn sample_request_using<
+    S: TransitionSystem,
+    R: Root,
+    E: SampleExpansion<S::TransitionId, S::State, S::Finding>,
+>(
+    system: &S,
+    request: SampleRequest<'_, R>,
+    end: impl FnMut(&S::State, &StateKey) -> bool,
+    expansion: impl FnMut(&S::State, &StateKey) -> Result<E, EncodingRefusal>,
 ) -> Result<Trace<S::TransitionId, S::Finding>, NotSimulated> {
     if !is_pinned_sampler(request.sampler) {
         return Err(NotSimulated::GeneratorMismatch {
@@ -300,12 +370,15 @@ pub fn sample_request_until<S: TransitionSystem, R: Root>(
     check_requires_bound(request.domains, request.types, request.position_limit)?;
     sample(
         system,
-        request.sampler.clone(),
-        request.seed,
-        request.trace,
-        request.max_steps,
-        request.identity,
+        SamplePlan {
+            sampler: request.sampler.clone(),
+            seed: request.seed,
+            trace_index: request.trace,
+            max_steps: request.max_steps,
+            identity: request.identity,
+        },
         end,
+        expansion,
     )?
     .ok_or(NotSimulated::EmptyInitial)
 }

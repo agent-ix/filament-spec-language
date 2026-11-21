@@ -40,6 +40,7 @@ pub(crate) fn sorted_initial<S: TransitionSystem>(
 
 /// One successor, keyed and with its transition identity's
 /// canonical bytes, ready to sort.
+#[derive(Clone)]
 pub(crate) struct OrderedSuccessor<T, S> {
     pub(crate) transition: T,
     pub(crate) state: S,
