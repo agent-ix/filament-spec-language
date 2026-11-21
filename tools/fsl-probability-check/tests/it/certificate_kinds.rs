@@ -87,7 +87,7 @@ fn accepted_then_rejected(request: &Value, kinds: &[&str]) {
 /// fairness set: an `exact` certificate the checker accepts.
 #[trace("TC-2065", "FR-201-AC-51")]
 #[test]
-#[ignore = "QSL-2158 open, FR-201-AC-51: an unbounded eventual claim under a fairness set emits no certificate that fsl-probability-check accepts; the exact route proves only the bounded fair form"]
+#[ignore = "QSL-2158: FR-1041 (unbounded fair eventual) not implemented yet"]
 fn an_unbounded_fair_eventual_certificate_is_accepted() {
     let source = likely(
         "inf",
@@ -101,7 +101,7 @@ fn an_unbounded_fair_eventual_certificate_is_accepted() {
 /// certificates the checker accepts.
 #[trace("TC-2065", "FR-201-AC-51")]
 #[test]
-#[ignore = "QSL-2158 open, FR-201-AC-51: ADR-028 15.1 at max_rational_bits 1024 must write `lower` and `upper` value-bounds certificates that fsl-probability-check accepts; none is written"]
+#[ignore = "QSL-2158: FR-1042 (lower/upper value bounds) not implemented yet"]
 fn value_bounds_certificates_are_accepted() {
     let source = likely(
         "inf",
@@ -119,7 +119,7 @@ fn value_bounds_certificates_are_accepted() {
 /// accepted by the checker.
 #[trace("TC-2065", "FR-201-AC-51")]
 #[test]
-#[ignore = "QSL-2158 open, FR-201-AC-51: a finite-horizon quantile claim emits no certificate that fsl-probability-check accepts"]
+#[ignore = "QSL-2158: FR-1043 (finite-horizon quantile) not implemented yet; the claim is false as written (quantile 0.5 <= 3 on link: Pr(M<=3) = 13/27 < 1/2) and must change when implemented"]
 fn a_finite_horizon_quantile_certificate_is_accepted() {
     let source = likely(
         "ev",
@@ -133,20 +133,57 @@ fn a_finite_horizon_quantile_certificate_is_accepted() {
 }
 
 /// The long-run kind: a long-run fraction under a workload is accepted as a
-/// `long-run` certificate.
+/// `long-run` certificate. Every run of the cyclic model ends in the
+/// terminal state where `delivered` is false, so the fraction is 0 and only
+/// the `<=` side is provable.
 #[trace("TC-2065", "FR-201-AC-51")]
 #[test]
-#[ignore = "QSL-2158 open, FR-201-AC-51: the exact long-run claim over the cyclic Link (ADR-028 15.3) settles not-yet through analyze and writes no certificate of kind `long-run` for fsl-probability-check"]
 fn a_long_run_certificate_is_accepted() {
     let source = likely(
         "inf",
         "Even",
-        "long_run_fraction holds(m.delivered) >= rational(1,2)",
+        "long_run_fraction holds(m.delivered) <= rational(1,2)",
     );
     accepted_then_rejected(
         &certified(&source, ExactProbLimits::default()),
         &["long-run"],
     );
+}
+
+/// The probabilistic unit's source with a reward, whose exact certificate
+/// is checked over the package.
+fn package_source() -> String {
+    likely(
+        "inf",
+        "Even",
+        "probability >= rational(1,2) [ eventually holds(m.delivered) ]",
+    )
+    .replace(
+        "terminal Stop",
+        "reward cost on Msg::send_a = 1;\nterminal Stop",
+    )
+}
+
+/// The request that names the package S4 emits for `source` in place of the
+/// source; its certificate is the document's bytes as the run wrote them.
+fn package_request(source: &str) -> Value {
+    let request = certified(source, ExactProbLimits::default());
+    let (checked, _) = super::bounded::compile_source_with(source, domain().as_bytes());
+    let emitted = fsl_replay::spine::package(
+        &checked,
+        fsl_replay::spine::PackageLimits::default(),
+        &filament_exact::Cancel::new(),
+    )
+    .unwrap_or_else(|failure| panic!("S4 emits the probabilistic unit: {failure:?}"))
+    .into_value();
+    let mut later = request;
+    later
+        .as_object_mut()
+        .unwrap()
+        .remove("source")
+        .expect("the source member");
+    later["package"] = json!(emitted.package().bytes().to_vec());
+    later
 }
 
 /// TC-2065 (FR-203-AC-8, FR-282-AC-20): the exact certificate `analyze`
@@ -158,45 +195,8 @@ fn a_long_run_certificate_is_accepted() {
 #[trace("TC-2065", "FR-203-AC-8")]
 #[trace("TC-2065", "FR-282-AC-20")]
 #[test]
-#[ignore = "QSL-2158 open, FR-282-AC-20: the certificate analyze writes is not yet re-checked in a later process over the emitted package, the byte provision and the subject binding"]
 fn an_analyze_certificate_is_accepted_later_over_the_emitted_package() {
-    let source = likely(
-        "inf",
-        "Even",
-        "probability >= rational(1,2) [ eventually holds(m.delivered) ]",
-    )
-    .replace(
-        "terminal Stop",
-        "reward cost on Msg::send_a = 1;\nterminal Stop",
-    );
-    let request = certified(&source, ExactProbLimits::default());
-
-    // The certificate leaves the run as bytes.
-    let directory = std::env::temp_dir().join(format!("fsl-certificate-{}", std::process::id()));
-    std::fs::create_dir_all(&directory).unwrap();
-    let saved = directory.join("certificate.json");
-    std::fs::write(&saved, request["certificate"].as_str().unwrap()).unwrap();
-
-    // S4 emits the probabilistic unit.
-    let (checked, _) = super::bounded::compile_source_with(&source, domain().as_bytes());
-    let emitted = fsl_replay::spine::package(
-        &checked,
-        fsl_replay::spine::PackageLimits::default(),
-        &filament_exact::Cancel::new(),
-    )
-    .unwrap_or_else(|failure| panic!("S4 emits the probabilistic unit: {failure:?}"))
-    .into_value();
-    let package = emitted.package().bytes().to_vec();
-
-    // A later, separate run reads the saved certificate over the package.
-    let mut later = request.clone();
-    later
-        .as_object_mut()
-        .unwrap()
-        .remove("source")
-        .expect("the source member");
-    later["package"] = json!(package);
-    later["certificate"] = json!(std::fs::read_to_string(&saved).unwrap());
+    let later = package_request(&package_source());
     let (code, output) = run(&later);
     assert_eq!(code, 0, "{output}");
 
@@ -205,4 +205,68 @@ fn an_analyze_certificate_is_accepted_later_over_the_emitted_package() {
     });
     let (code, output) = run(&altered);
     assert_ne!(code, 0, "an altered certificate is rejected: {output}");
+}
+
+/// A request the package route must refuse, never accept.
+fn refused_package(request: &Value, reason: &str) {
+    let (code, output) = run(request);
+    assert_eq!(code, 2, "{output}");
+    assert!(
+        output["reason"]
+            .as_str()
+            .is_some_and(|text| text.contains(reason)),
+        "{reason}: {output}"
+    );
+}
+
+/// FR-282-AC-20 (negative): the package the provision recompiles to must be
+/// the package the request names; a source that recompiles to other bytes is
+/// refused.
+#[trace("TC-2065", "FR-282-AC-20")]
+#[test]
+fn a_package_the_provision_does_not_recompile_to_is_refused() {
+    let mut request = package_request(&package_source());
+    let other = package_source().replace(
+        "terminal Stop",
+        "reward extra on Msg::send_a = 1;\nterminal Stop",
+    );
+    request["byte_provision"][0][2] = json!(other.as_bytes());
+    refused_package(
+        &request,
+        "conflicting_identity: probability certificate package",
+    );
+}
+
+/// FR-282-AC-20 (negative): a package that names no source, or two, and bytes
+/// that are no document, are refused with their own cause.
+#[trace("TC-2065", "FR-282-AC-20")]
+#[test]
+fn a_package_without_exactly_one_source_or_without_a_document_is_refused() {
+    let request = package_request(&package_source());
+    let bytes: Vec<u8> = serde_json::from_value(request["package"].clone()).unwrap();
+    let mut document: Value = serde_json::from_slice(&bytes).unwrap();
+    document["lock"]["sources"] = json!([]);
+    let mut none = request.clone();
+    none["package"] = json!(serde_json::to_vec(&document).unwrap());
+    refused_package(&none, "names 0 sources");
+    let mut unreadable = request;
+    unreadable["package"] = json!([255, 254]);
+    refused_package(&unreadable, "package unreadable");
+}
+
+/// FR-282-AC-20 (negative): a stated package name other than the package's
+/// own is refused, and a request names exactly one of source and package.
+#[trace("TC-2065", "FR-282-AC-20")]
+#[test]
+fn a_package_request_names_its_own_package_and_exactly_one_subject() {
+    let request = package_request(&package_source());
+    let mut renamed = request.clone();
+    renamed["package_name"] = json!("another-package");
+    refused_package(&renamed, "package name");
+    let mut neither = request.clone();
+    neither.as_object_mut().unwrap().remove("package");
+    refused_package(&neither, "exactly one of source and package");
+    let mut both = request;
+    both["source"] = json!({"authority": "test", "identity": "bounded-certificate-source", "content": package_source()});
+    refused_package(&both, "exactly one of source and package");
 }

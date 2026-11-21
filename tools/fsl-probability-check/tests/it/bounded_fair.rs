@@ -289,7 +289,7 @@ fn zero_horizon_and_legacy_bytes_keep_their_actual_context_and_closed_rows() {
         SNAPSHOT,
     );
     let wrong_context = mutate(&request, |doc| {
-        alter_keys(doc, |key| key[3][1][1][1] = json!("foreign-context"))
+        alter_keys(doc, |key| key[5][1][1][1] = json!("foreign-context"))
     });
     assert_ne!(run(&wrong_context).0, 0);
     for group in ["values", "ranking"] {
@@ -306,7 +306,6 @@ fn zero_horizon_and_legacy_bytes_keep_their_actual_context_and_closed_rows() {
 /// eight-member key, `on origin` writing null instance and activation.
 #[trace("TC-1406", "FR-201-AC-49")]
 #[test]
-#[ignore = "QSL-2151: eight-member product keys with instance and activation not emitted yet"]
 fn bounded_fair_keys_carry_all_eight_members() {
     let src = source(
         "fair weak Msg::send_a",

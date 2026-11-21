@@ -44,6 +44,28 @@ fn graph_body(graph: &CheckedGraph, name: &str) -> NodeKey {
         .expect("the body is a graph reference")
 }
 
+/// Repeated field text must retain its position in a constructed value's key.
+#[trace("TC-415", "FR-093")]
+#[test]
+fn repeated_record_operands_keep_identity_when_reordered() {
+    let first = "function makeA using v(): R pure { R { a: \"c\", b: \"b\" } }";
+    let second = "function makeB using v(): R pure { R { a: \"c\", b: \"c\" } }";
+    let emit = |declarations: [&str; 2]| {
+        let graph = source(&format!(
+            "record R {{ a: String; b: String; }}\n{}\n{}",
+            declarations[0], declarations[1]
+        ));
+        [graph_body(&graph, "makeA"), graph_body(&graph, "makeB")]
+    };
+    let forward = emit([first, second]);
+    let reversed = emit([second, first]);
+    assert_ne!(
+        forward[0], forward[1],
+        "distinct records retain distinct keys"
+    );
+    assert_eq!(forward, reversed, "each record retains its structural key");
+}
+
 fn children(node: CheckedNode<'_>) -> [CheckedNode<'_>; 2] {
     node.children().try_into().expect("a binary operation")
 }

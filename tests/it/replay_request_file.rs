@@ -319,7 +319,7 @@ fn a_replay_request_file_replays_as_the_in_process_request_does() {
 /// dependency clock selection removed refuses `missing-clock-selection`.
 #[test]
 #[trace("TC-2443", "FR-862-AC-2")]
-#[ignore = "QSL-2274: FR-640-AC-11's program does not compile yet and replay does not read library clock selections from the proving package"]
+#[ignore = "QSL-2274 completed; current blocker has no assigned owner: replay settles inconclusive with verdict disagreement (proved violation, replayed success), where the assertion expects reproduced-without-witness"]
 fn a_replay_request_file_replays_a_library_clock_from_the_package() {
     let fixture = Fixture::compile(
         PROGRAM,

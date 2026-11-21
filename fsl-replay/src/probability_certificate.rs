@@ -354,6 +354,8 @@ pub fn digital_probability_product_key(
     let product = json!([
         "filament.probability-product-key/v1",
         binding,
+        null,
+        null,
         model,
         monitor,
         accumulator,
@@ -503,6 +505,8 @@ pub fn region_probability_product_key(
     let product = json!([
         "filament.probability-product-key/v1",
         binding,
+        null,
+        null,
         model,
         monitor,
         accumulator,
@@ -1876,7 +1880,7 @@ fn internal_nonprogressive_choice(
 fn timed_key_progresses(from: &ProbabilityProductKey, to: &ProbabilityProductKey) -> bool {
     fn timed_model(key: &ProbabilityProductKey) -> Option<Value> {
         let root: Value = serde_json::from_slice(key.as_bytes()).ok()?;
-        Some(root.get(2)?.get(1)?.clone())
+        Some(root.get(4)?.get(1)?.clone())
     }
     let (Some(from_model), Some(to_model)) = (timed_model(from), timed_model(to)) else {
         return false;
@@ -1919,14 +1923,14 @@ fn timed_key_progresses(from: &ProbabilityProductKey, to: &ProbabilityProductKey
 
 fn timed_clock_count(key: &ProbabilityProductKey) -> Option<usize> {
     let root: Value = serde_json::from_slice(key.as_bytes()).ok()?;
-    root.get(2)?.get(1)?.get(4)?.as_array().map(Vec::len)
+    root.get(4)?.get(1)?.get(4)?.as_array().map(Vec::len)
 }
 
 fn timed_has_deadline(key: &ProbabilityProductKey) -> bool {
     let Some(root) = serde_json::from_slice::<Value>(key.as_bytes()).ok() else {
         return false;
     };
-    root.get(2)
+    root.get(4)
         .and_then(|model| model.get(1))
         .and_then(|timed| timed.get(5))
         .and_then(Value::as_array)
@@ -2392,6 +2396,8 @@ mod tests {
             serde_json::json!([
                 "filament.probability-product-key/v1",
                 null,
+                null,
+                null,
                 [
                     "filament.simulation.state-key/v1",
                     serde_json::from_slice::<Value>(model).unwrap()
@@ -2626,7 +2632,7 @@ mod tests {
         .expect("the complete timed key is representable");
         assert_eq!(
             key.as_bytes(),
-            br#"["filament.probability-product-key/v1",null,["filament.simulation.state-key/v1",["digital",["state",{"a":true,"z":1}],["unit","second"],"10",[[["Type","alpha",["u","object-a"]],"0","3"],[["Type","zeta",["u","object-z"]],"1","3"]],["deadline","4","1"],"idle-delayed"]],null,null,null]"#
+            br#"["filament.probability-product-key/v1",null,null,null,["filament.simulation.state-key/v1",["digital",["state",{"a":true,"z":1}],["unit","second"],"10",[[["Type","alpha",["u","object-a"]],"0","3"],[["Type","zeta",["u","object-z"]],"1","3"]],["deadline","4","1"],"idle-delayed"]],null,null,null]"#
         );
     }
 

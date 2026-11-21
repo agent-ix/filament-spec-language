@@ -1835,6 +1835,21 @@ fn selection(
     }
 }
 
+/// FR-312's selection of one temporal clause run, reconstructed against the
+/// named observation documents. It reads no source and no path.
+///
+/// # Errors
+///
+/// [`ClauseRequestReadError`] for a selection that names an unbound
+/// observation or does not fit its role.
+pub fn read_clause_selection(
+    selected: ClauseSelectionPartsKind,
+    observations: &BTreeMap<String, SuppliedObservation>,
+    ledger: Option<ProgressLedger>,
+) -> Result<ClauseRunSelection, ClauseRequestReadError> {
+    selection(selected, observations, ledger)
+}
+
 /// FR-641 `G` as the progress assertion the spine reads.
 fn progress_assertion(wire: &ProgressWire) -> Result<ProgressAssertion, ClauseRequestReadError> {
     let watermark = match wire.watermark {

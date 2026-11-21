@@ -8,8 +8,8 @@
 //! `temporal-aggregate-vectors.json`, read in place from `$pinned FSpec fixture view`.
 
 use super::temporal_clause::{
-    check_graph, clause_node, compile, document, formula_root, node_key, parameter_named, reaches,
-    target, unit, EVENT,
+    EVENT, check_graph, clause_node, compile, document, formula_root, node_key, parameter_named,
+    reaches, target, unit,
 };
 use super::*;
 use filament_semantic_value::checking::CheckMode;
@@ -225,6 +225,52 @@ fn the_aggregate_bindings_decide_the_node_identity() {
         assert_ne!(clause, base.1, "{mutated}");
         assert_ne!(graph, base.2, "{mutated}");
     }
+}
+
+/// A repeated bound value remains in its aggregate operand position.
+#[trace("TC-1267", "FR-337-AC-15")]
+#[test]
+fn repeated_window_operands_keep_identity_when_reordered() {
+    let declarations = [
+        "temporal First using t over (e: Sample) clock \"events\" on origin \
+         { always[0,3] (sum of e.v over past[0,2] min_count 0 <= 15) }",
+        "temporal Second using t over (e: Sample) clock \"events\" on origin \
+         { always[0,3] (sum of e.v over past[0,2] min_count 2 <= 15) }",
+    ];
+    let emit = |order: [usize; 2]| {
+        let compiled = compile(&unit(
+            EVENT,
+            &format!(
+                "record Sample {{ v: Int[0, 9]; }}\n{}\n{}",
+                declarations[order[0]], declarations[order[1]]
+            ),
+        ));
+        let mut ids: Vec<_> = nodes(&compiled.wire)
+            .iter()
+            .filter(|node| {
+                node["body"]["operation"]["identity"] == "filament.op.temporal.aggregate"
+            })
+            .map(|node| {
+                (
+                    bound(node, "min_count")["value"].clone(),
+                    node["node_id"].clone(),
+                )
+            })
+            .collect();
+        ids.sort_by_key(|(count, _)| count.to_string());
+        assert_eq!(ids.len(), 2, "both aggregate bodies are retained");
+        ids
+    };
+    let forward = emit([0, 1]);
+    let reversed = emit([1, 0]);
+    assert_ne!(
+        forward[0].1, forward[1].1,
+        "distinct aggregates retain distinct keys"
+    );
+    assert_eq!(
+        forward, reversed,
+        "each aggregate retains its structural key"
+    );
 }
 
 /// FR-337 "Aggregate formula emission": FSpec FR-370 writes a `duration`

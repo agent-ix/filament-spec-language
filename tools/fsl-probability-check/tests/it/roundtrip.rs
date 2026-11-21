@@ -688,7 +688,7 @@ fn a_fresh_checker_refuses_altered_values_objectives_identities_ranks_and_provis
     let mut changed = original.clone();
     change_certificate(&mut changed, |document| {
         alter_keys(document, |key| {
-            key[3] = json!("foreign-monitor");
+            key[5] = json!("foreign-monitor");
         })
     });
     cases.push(changed);
@@ -837,11 +837,11 @@ fn real_model_keys_embed_parsed_forms_and_refuse_inner_base64_transport() {
             .decode(row["state"].as_str().unwrap())
             .unwrap();
         let key: Value = serde_json::from_slice(&bytes).unwrap();
-        assert_eq!(key[2][0], "filament.simulation.state-key/v1");
-        assert_eq!(key[2][1]["type"], "simulation-state");
-        assert_eq!(key[2][1].as_object().unwrap().len(), 8);
+        assert_eq!(key[4][0], "filament.simulation.state-key/v1");
+        assert_eq!(key[4][1]["type"], "simulation-state");
+        assert_eq!(key[4][1].as_object().unwrap().len(), 8);
         assert_eq!(
-            &key.as_array().unwrap()[3..],
+            &key.as_array().unwrap()[5..],
             &[Value::Null, Value::Null, Value::Null]
         );
     }
@@ -849,8 +849,8 @@ fn real_model_keys_embed_parsed_forms_and_refuse_inner_base64_transport() {
     let mut old = original.clone();
     change_certificate(&mut old, |document| {
         alter_keys(document, |key| {
-            key[2] = json!(base64::engine::general_purpose::URL_SAFE_NO_PAD
-                .encode(serde_json::to_vec(&key[2][1]).unwrap()));
+            key[4] = json!(base64::engine::general_purpose::URL_SAFE_NO_PAD
+                .encode(serde_json::to_vec(&key[4][1]).unwrap()));
         })
     });
     let (code, result) = run(&old, &[]);

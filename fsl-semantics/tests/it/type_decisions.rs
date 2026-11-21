@@ -251,7 +251,7 @@ fn a_source_map_type_checks_with_its_guarded_read() {
 
 #[trace("TC-1823", "FR-680-AC-4", "FSpec-FR-143-AC-21", "FSpec-FR-375-AC-17")]
 #[test]
-#[ignore = "QSL-2169: a Some payload checked against the expected element type not implemented yet"]
+#[ignore = "QSL-2169 completed; current blocker has no assigned owner: `Some(3) = y` over Option<Int[0, 9]> is still refused IllTyped(TypeMismatch)"]
 fn some_takes_the_expected_bounded_element_type() {
     assert_checks("function f using v(): Option<Int[0, 9]> pure { Some(3) }");
     assert_checks("function g using v(y: Option<Int[0, 9]>): Boolean pure { Some(3) = y }");
@@ -270,7 +270,7 @@ fn some_takes_the_expected_bounded_element_type() {
     "FSpec-FR-322-AC-451"
 )]
 #[test]
-#[ignore = "QSL-2168: quantity scaling by an exact number not implemented yet"]
+#[ignore = "QSL-2168 completed; current blocker has no assigned owner: dividing a Quantity by an Integer is still refused with OperandTypeMismatch (Divide), so the scaling does not check"]
 fn a_quantity_scaled_by_a_number_keeps_its_unit() {
     let graph = check(&format!(
         "{UNITS}function f using v(d: Quantity<ms>): Quantity<ms> pure {{ d * 2 }}\n\
@@ -291,7 +291,7 @@ fn a_quantity_scaled_by_a_number_keeps_its_unit() {
 
 #[trace("TC-1824", "FR-680-AC-5", "FSpec-FR-142-AC-42")]
 #[test]
-#[ignore = "QSL-2168: quantity scaling refusals not implemented yet"]
+#[ignore = "QSL-2168 completed; current blocker has no assigned owner: dividing a Quantity by Int[0, 9] is refused IllTyped (OperandTypeMismatch) where the test expects UndefinedExpression"]
 fn an_unproved_or_ineligible_scaling_is_refused() {
     assert_refused(
         &format!(

@@ -489,7 +489,7 @@ fn claim_over(name: &str, scheduler: &str, bound: &str, event: &str) -> String {
 /// back to model units: `(clock values, deadline clock)`.
 fn digital_clocks_of(key: &fsl_analyze::exact_probabilistic::ProbKey) -> (Vec<u64>, Option<u64>) {
     let product: serde_json::Value = serde_json::from_slice(&key.model).expect("a product key");
-    let digital = &product[2][1];
+    let digital = &product[4][1];
     assert_eq!(digital[0], "digital");
     let count = |value: &serde_json::Value| -> u64 {
         value
@@ -1000,7 +1000,7 @@ fn reordering_two_delays_changes_no_delay_node() {
 /// orders it after `send` with no probability lost to the order draw.
 #[trace("FSpec-TC-1561", "FSpec-FR-420-AC-8")]
 #[test]
-#[ignore = "QSL-1991: weight-0 operations in timed race ties not implemented yet"]
+#[ignore = "QSL-1991 completed; current blocker has no assigned owner: exact-probabilistic-digital still fails with an internal fault (invariant workload-weights-sum) on a weight-0 tie"]
 fn a_weight_zero_operation_takes_its_turn_last_in_a_tie() {
     let world = retx_with(
         &[("send", &["late", "x"]), ("tick", &["retried"])],
@@ -1107,7 +1107,6 @@ fn time_locked_state_is_terminal() {
 /// an `elapsed` measure and a time window each check.
 #[trace("TC-2169", "FR-186-AC-12")]
 #[test]
-#[ignore = "QSL-2152: time forms of probabilistic claims not checked yet"]
 fn time_forms_over_a_timed_model_check() {
     let claims = "probabilistic MeanLate using ev on M over (c: M::Call) under every scheduler on origin \
          { expected elapsed until holds(c.late) <= 3 ms }\n\
@@ -1288,8 +1287,8 @@ fn formula_root(world: &World, claim: &str) -> filament_exact::NodeKey {
 #[trace("FR-498-AC-8", "TC-1288")]
 #[test]
 fn a_timed_form_shape_cause_carries_the_claim_member_path() {
-    let claims = "probabilistic Mean using ev on M over (c: M::Call) under every scheduler \
-                  on origin { expected elapsed until holds(c.late) <= 3 ms }\n\
+    let claims = "probabilistic LongRun using ev on M over (c: M::Call) under every scheduler \
+                  on origin { long_run_fraction holds(c.late) <= 0.5 }\n\
                   probabilistic Elapsed using ev on M over (c: M::Call) under every scheduler \
                   on origin { quantile 0.5 of (elapsed from holds(not c.late) until \
                   holds(c.late) within 4 ms) <= 1 ms }\n";
@@ -1304,8 +1303,8 @@ fn a_timed_form_shape_cause_carries_the_claim_member_path() {
             .expect("the claim has a package identity")
     };
 
-    let (claim, member) = timed_form_shape(&world, "Mean");
-    assert_eq!(claim, Some(identity("Mean")));
+    let (claim, member) = timed_form_shape(&world, "LongRun");
+    assert_eq!(claim, Some(identity("LongRun")));
     let member = member.expect("a member path");
     assert_eq!(member.body, ["form"]);
     assert!(member.formulas.is_empty());

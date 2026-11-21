@@ -87,6 +87,65 @@ fn claims_package(declarations: &[&str]) -> CheckedPackage {
     CheckedPackage::link(graph)
 }
 
+/// The ConfigVersion fixture with the Boolean fields used by QSL-2656's
+/// two same-path conditional expressions.
+fn repeated_operand_claims_package(declarations: &[&str]) -> (CheckedPackage, Vec<u8>) {
+    let mut document: Value = serde_json::from_str(config_version_unit::DOMAIN_PACKAGE)
+        .expect("the ConfigVersion fixture is JSON");
+    let config = "ix://example/config-version/ConfigVersion";
+    let config_type = document["types"]
+        .as_array_mut()
+        .expect("types")
+        .iter_mut()
+        .find(|ty| ty["identity"] == config)
+        .expect("ConfigVersion");
+    for name in ["ok", "done"] {
+        let identity = format!("{config}/{name}");
+        config_type["fields"]
+            .as_array_mut()
+            .expect("ConfigVersion fields")
+            .push(json!({
+                "identity": identity,
+                "name": name,
+                "typeRef": "ix://filament/native/Boolean",
+                "presence": "required",
+                "nullable": false,
+                "defaultKind": "none",
+                "multiplicity": {
+                    "lower": 1,
+                    "upper": 1,
+                    "ordered": false,
+                    "unique": true,
+                },
+                "origin": {
+                    "generated": {
+                        "generatorIdentity": identity,
+                        "generatorVersion": "1.0.0",
+                        "inputIdentities": [identity],
+                    }
+                },
+            }));
+    }
+    let document = serde_json::to_vec(&document).expect("the model stays JSON");
+    let packages = fsl_semantics::model::intake::package_input([document.as_slice()])
+        .expect("the extended model is admitted");
+    let unit = config_version_unit::unit_text().replace(
+        "profile v = \"filament.model.complete/v1\";\n",
+        "profile v = \"filament.model.complete/v1\";\n\
+         profile ev = \"filament.temporal.event-position.false-extension/v1\";\n",
+    );
+    let unit = format!("{unit}{}\n", declarations.join("\n"));
+    let graph = assemble_with_models(unit.as_bytes(), &packages)
+        .expect("the unit assembles")
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &fsl_semantics::check::test_support::ZeroRewardEvaluator,
+        )
+        .unwrap_or_else(|refusals| panic!("the repeated-operand claims check: {refusals:?}"));
+    (CheckedPackage::link(graph), document)
+}
+
 /// `probabilistic name ... { probability >= threshold [ holds(true) ] }`.
 fn claim(name: &str, threshold: &str) -> String {
     format!(
@@ -137,8 +196,14 @@ fn raw_claim_rows(package: &CheckedPackage) -> Vec<Value> {
 /// The emitted `probabilistic_claims` rows, and each `claim` node's form and
 /// occurrences by node id.
 fn emitted_claims(package: &CheckedPackage) -> (Vec<Value>, Vec<(Value, Value)>) {
+    emitted_claims_with_document(package, config_version_unit::DOMAIN_PACKAGE.as_bytes())
+}
+
+fn emitted_claims_with_document(
+    package: &CheckedPackage,
+    document: &[u8],
+) -> (Vec<Value>, Vec<(Value, Value)>) {
     let emission = emit_checked(package).expect("a claim-only package emits");
-    let document = config_version_unit::DOMAIN_PACKAGE.as_bytes();
     let mut evidence = read_evidence(&emission);
     evidence
         .insert_domain_package_document(package_identity(document), document)
@@ -303,6 +368,53 @@ fn probabilistic_claim_identity_survives_reordering() {
         &claim("Steady", "0.5"),
     ]));
     assert_eq!((rows.len(), nodes.len()), (2, 2));
+}
+
+/// FR-498-AC-1: same-path expression nodes retain repeated operand
+/// positions, so changing declaration order cannot swap their ordinals or
+/// alter the claims' checked identities.
+#[trace("TC-1288", "FR-498-AC-1")]
+#[test]
+fn probabilistic_claims_with_repeated_expression_operands_keep_identity_when_reordered() {
+    let claims = [
+        ("RepeatedTrue", "if s.ok then s.ok else s.done"),
+        ("RepeatedFalse", "if s.ok then s.done else s.done"),
+    ];
+    let declaration = |(name, expression): (&str, &str)| {
+        format!(
+            "probabilistic {name} using ev on Config over (s: Config::ConfigVersion) \
+             under every scheduler on origin \
+             {{ probability >= 0.5 [ always[0,2] holds({expression}) ] }}"
+        )
+    };
+    let emit = |order: &[usize]| {
+        let sources: Vec<_> = order.iter().map(|&at| declaration(claims[at])).collect();
+        let labels: Vec<_> = order
+            .iter()
+            .zip(&sources)
+            .map(|(&at, source)| (claims[at].0, source.as_str()))
+            .collect();
+        let (package, document) = repeated_operand_claims_package(
+            &sources.iter().map(String::as_str).collect::<Vec<_>>(),
+        );
+        let mut ids = identities(&package, &labels);
+        let (rows, nodes) = emitted_claims_with_document(&package, &document);
+        assert_eq!((rows.len(), nodes.len()), (2, 2));
+        ids.sort_by(|left, right| left.0.cmp(&right.0));
+        (ids, rows)
+    };
+
+    let (forward, forward_rows) = emit(&[0, 1]);
+    let (reversed, reversed_rows) = emit(&[1, 0]);
+    assert_ne!(
+        forward[0].1, forward[1].1,
+        "the two claims retain distinct identities"
+    );
+    assert_eq!(forward, reversed, "each claim keeps its checked identity");
+    assert_eq!(
+        forward_rows, reversed_rows,
+        "the rows remain byte-identical"
+    );
 }
 
 /// FR-940-AC-9 (TC-3015): a second probabilistic claim named as an earlier
@@ -1310,9 +1422,11 @@ fn a_claim_binds_every_random_parameter_of_its_subject() {
             randoms,
             "{name}"
         );
-        assert!(node["node_id"]["path"]
-            .to_string()
-            .contains("\"distributions\""));
+        assert!(
+            node["node_id"]["path"]
+                .to_string()
+                .contains("\"distributions\"")
+        );
     }
     for support in ["3: 1, 1: 2", "3: 1, 2: 3"] {
         let changed = random_claims_wire(support, &claims);
@@ -1357,7 +1471,10 @@ fn reward_forms() -> [(&'static str, String, bool); 5] {
         ),
         (
             "Avail",
-            on("Avail", "{ probability >= 0.5 [ always[0,2] holds(true) ] }"),
+            on(
+                "Avail",
+                "{ probability >= 0.5 [ always[0,2] holds(true) ] }",
+            ),
             false,
         ),
         (

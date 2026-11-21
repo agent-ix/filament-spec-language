@@ -81,6 +81,10 @@ impl Encode for Product<'_> {
             Some(binding) => fsl_eval::simulation::model::encode_reference(binding, writer)?,
             None => writer.null()?,
         }
+        // The `on each` instance and its activation phase: null for the
+        // `on origin` claims these profiles admit.
+        writer.null()?;
+        writer.null()?;
         writer.begin_array()?;
         writer.string("filament.simulation.state-key/v1")?;
         self.model.encode_into(writer)?;
@@ -380,7 +384,10 @@ fn automaton_key(node: NodeRef<'_>) -> bool {
 }
 
 pub(super) fn admit_parts(parts: &[NodeRef<'_>]) -> Result<(), ProbabilityDocumentError> {
-    let Node::Array(mut model) = parts[2].node() else {
+    if !matches!(parts[2].node(), Node::Null) || !matches!(parts[3].node(), Node::Null) {
+        return Err(ProbabilityDocumentError::Unsupported);
+    }
+    let Node::Array(mut model) = parts[4].node() else {
         return Err(ProbabilityDocumentError::Malformed);
     };
     if model.len() != 2
@@ -392,7 +399,7 @@ pub(super) fn admit_parts(parts: &[NodeRef<'_>]) -> Result<(), ProbabilityDocume
     {
         return Err(ProbabilityDocumentError::Malformed);
     }
-    match parts[3].node() {
+    match parts[5].node() {
         Node::Null => {}
         Node::Array(mut monitor) if monitor.len() == 2 => {
             if !matches!(
@@ -419,7 +426,7 @@ pub(super) fn admit_parts(parts: &[NodeRef<'_>]) -> Result<(), ProbabilityDocume
         }
         _ => return Err(ProbabilityDocumentError::Unsupported),
     }
-    if parts[4..]
+    if parts[6..]
         .iter()
         .any(|part| !matches!(part.node(), Node::Null))
     {
@@ -512,7 +519,7 @@ mod tests {
         let expected = make(ProbabilityDocumentIoLimits::default()).unwrap();
         let parsed: Value = serde_json::from_slice(expected.as_bytes()).unwrap();
         assert_eq!(
-            parsed[2],
+            parsed[4],
             json!([
                 "filament.simulation.state-key/v1",
                 serde_json::from_slice::<Value>(model).unwrap()

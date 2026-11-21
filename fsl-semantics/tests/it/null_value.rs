@@ -75,7 +75,6 @@ fn assert_refused(declarations: &str, code: Code, cause: &str) -> CheckRefusal {
 
 #[trace("TC-2785", "FR-986-AC-1", "FR-986-AC-2", "FSpec-FR-143-AC-20")]
 #[test]
-#[ignore = "QSL-2165: S2 refuses null as unrepresented; the check-time type error is not implemented yet"]
 fn null_outside_a_record_field_is_ill_typed_at_check() {
     for declarations in [
         "function f using v(): Option<Integer> pure { null }",
@@ -89,7 +88,6 @@ fn null_outside_a_record_field_is_ill_typed_at_check() {
 
 #[trace("TC-2785", "FR-986-AC-3")]
 #[test]
-#[ignore = "QSL-2165: the positive half lands with the null refusal; not run as a gate test yet"]
 fn a_null_field_and_the_empty_option_spellings_still_check() {
     assert_checks(
         "record P { a: Integer; b: Integer?; }\n\

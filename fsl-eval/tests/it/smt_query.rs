@@ -935,7 +935,6 @@ fn a_field_with_no_smt_sort_is_refused_by_name() {
 /// field and writes no script; it never stands in a `Real` or `Int` constant.
 #[trace("TC-3006", "FR-056-AC-61")]
 #[test]
-#[ignore = "QSL-2176: a float model field reaching the SMT encoder and refusing field-sort not implemented yet"]
 fn a_float_field_is_refused_field_sort_by_name() {
     let document = document(
         "Counter",

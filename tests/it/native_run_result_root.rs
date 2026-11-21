@@ -2,11 +2,11 @@
 //! FR-535: the bounded `native-run-result/2` boundary, through crate-root names only.
 
 use fsl_replay::{
-    read_native_run_result_bounded, write_clause_run_result, ClauseDisposition, ClauseRunReport,
-    NativeRunLimits, NativeRunReadError, NativeRunResult, SettlementBasis,
+    ClauseDisposition, ClauseRunReport, NativeRunLimits, NativeRunReadError, NativeRunResult,
+    SettlementBasis, read_native_run_result_bounded, write_clause_run_result,
 };
 use ix_trace_rs::trace;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 fn report() -> ClauseRunReport {
     ClauseRunReport {
@@ -66,7 +66,8 @@ fn tc_1340_root_api_round_trips_both_variants() {
     assert_eq!(error.message(), "unknown edition in program.native");
 }
 
-/// A genuine decisive-witness `/2` record, produced by the FR-267 writer.
+/// A decisive-witness `/2` reader input. Its structural node identifiers are
+/// opaque to this boundary; admission does not rederive compiler node keys.
 const DECISIVE: &str = include_str!("../fixtures/native-run-result-decisive.json");
 
 fn refusal(value: &Value) -> NativeRunReadError {

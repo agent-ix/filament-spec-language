@@ -138,7 +138,6 @@ fn library_units_share_the_request_clocks() {
 
 #[trace("TC-2212", "FR-640-AC-10", "FSpec-TC-1661", "FSpec-FR-322-AC-452")]
 #[test]
-#[ignore = "QSL-2274: the program package does not record its libraries' clock selections yet"]
 fn the_program_package_records_its_library_clock_selections() {
     let directory = tempfile::tempdir().unwrap();
     let library = "language \"ix:native\" edition \"1-draft\";\n\
@@ -545,7 +544,7 @@ fn reversed_prefix_hyper_clauses_emit_their_own_trace_rows() {
 /// FR-488-AC-26: the two clauses' `body` references one wrapper.
 #[trace("TC-3000", "FR-488-AC-26", "FSpec-TC-2027", "FSpec-FR-322-AC-463")]
 #[test]
-#[ignore = "QSL-2400: the slots of reversed prefixes sit at different levels, so the two clauses get two body wrappers, not one"]
+#[ignore = "QSL-2400 completed; current blocker has no assigned owner: the two compiled hyper clauses have distinct body wrapper references where the assertion requires one shared wrapper"]
 fn reversed_prefix_hyper_clauses_share_one_body_wrapper() {
     let package = reversed_prefix_package();
     let nodes = hyper_nodes(&package);
@@ -621,7 +620,7 @@ fn a_finite_domain_hyper_clause_emits_one_row_per_trace_on_its_domain_binder() {
 #[trace("TC-3007", "FR-488-AC-27")]
 #[trace("FSpec-TC-346", "FSpec-FR-402-AC-10")]
 #[test]
-#[ignore = "QSL-2400: a repeated quantifier variable refused at the hyperproperty Shape step not implemented yet"]
+#[ignore = "QSL-2497: a repeated quantifier variable is not refused at the hyperproperty Shape step yet"]
 fn a_repeated_quantifier_variable_is_refused_at_the_hyperproperty_shape() {
     use filament_contract_model::{
         CheckedPackageEvidence, CheckedPackageReadLimits, CheckedPackageRefusalCause,
