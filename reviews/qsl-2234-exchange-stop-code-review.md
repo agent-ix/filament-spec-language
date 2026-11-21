@@ -15,7 +15,7 @@ Frozen candidate: 609a4b1e264c5d4bfb14c11f30adf140d90f545e. Review merge base d2
 
 ## Verdict
 
-PASS after disposition round 1 — FND-001 is fixed on 2e1641ddf4c07370734e56ff1f2df8ed42af0a6a; no new scoped code/Rust finding. Initial review was CONDITIONAL. Full readiness remains subject to separate gap-assurance disposition and final-head regression receipts.
+PASS after disposition round 1 — FND-001 is fixed on 2e1641ddf4c07370734e56ff1f2df8ed42af0a6a; no new scoped code/Rust finding. Initial review was CONDITIONAL. Full readiness remains subject only to the separate gap-assurance disposition; final-head focused regression receipts now pass.
 
 ## Findings
 
@@ -274,7 +274,7 @@ No applicable AssuranceProfile was found. No new architecture, dependency, pin, 
 
 Independent execution of the existing compiled focused test target: `target/debug/deps/it-3f8cef2492a58159 exchange_stop --test-threads=1`: 7 passed, 0 failed, 14 filtered out. Changed Rust files pass `rustfmt --check --edition 2021 --config skip_children=true`; diff whitespace check passes. The deadline probe imports the real host source and links the cached libraries, without a source edit or Cargo build. Probe output: `deadline-probe.log`; 10/10 late successes reproduce the finding.
 
-Clippy is not green: coder logs report exit 101 with 3 unchanged replay errors, 8 unchanged analyze errors and 2 unchanged pre-existing fixture errors; saved baseline diffs are empty and reviewed locations lie outside this diff. No full/workspace/whole-crate test, aggregate gate, Cargo deny or Python run was performed under the explicit scope restrictions. Two existing process regressions are owned by the lead/draco exact-head lane and remain pending here.
+Clippy is not green: coder logs report exit 101 with 3 unchanged replay errors, 8 unchanged analyze errors and 2 unchanged pre-existing fixture errors; saved baseline diffs are empty and reviewed locations lie outside this diff. No full/workspace/whole-crate test, aggregate gate, Cargo deny or Python run was performed under the explicit scope restrictions. The two existing process regressions subsequently passed locally on the final source-equivalent custody head, as recorded below.
 
 ## Coverage
 
@@ -340,7 +340,7 @@ Reviewed the full three-file fix diff and current host at lines 209–232. Origi
 
 Scoped clippy still exits 101 on the two pre-existing `process_provider.rs` lint findings at lines 417 and 503; `fix1/clippy-baseline-diff.log` is empty. Format/diff receipts are clean. No additional source change, broad gate, matrix, advisor or Python command was run by this disposition.
 
-The earlier two process regressions target 609a4b1e and remain pending from the owning lane. Because the host receive decision has materially changed for every frame, those regressions should be run on final fixed head 2e1641ddf4c07370734e56ff1f2df8ed42af0a6a; an old-head receipt does not cover this fix. The lead owns that request and no duplicate local execution was started. SR-202611210022442313144108536 FND-001 is unchanged pending the explicit assurance ruling; no gap PASS is claimed.
+Final runtime receipts are complete: at 528d72b68bc6e52904e5a8c253a2de78ce090bd8, `final-regressions/typed-defect.log` reports `process_provider::a_misbehaving_process_provider_settles_failed_with_a_typed_defect` passed and `final-regressions/certificate.log` reports `process_provider::a_process_proof_is_trusted_unless_its_certificate_is_accepted` passed. Each run has 1 passed, 0 failed, 0 ignored, 21 filtered out. The full diff from reviewed 2e1641ddf4c07370734e56ff1f2df8ed42af0a6a to this custody head contains only the nine review artifacts; production/test source is identical. Together with the 8 exchange-stop tests, all 10 focused tests pass. The lead reports the remote duplicate lane was cancelled before starting; no duplicate execution was initiated by this reviewer. SR-202611210022442313144108536 FND-001 is unchanged pending the explicit assurance ruling; no gap PASS is claimed.
 
 ```yaml
 dispositions:
