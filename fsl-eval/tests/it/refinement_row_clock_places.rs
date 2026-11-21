@@ -38,7 +38,10 @@ const BUSY: usize = 1;
 fn state() -> ModelState {
     let call = |n: i64| StateObject {
         type_identity: key(CLOCKS, "Call"),
-        fields: BTreeMap::from([(key(CLOCKS, "Call/n"), Value::Integer(Integer::from(n)))]),
+        fields: BTreeMap::from([
+            (key(CLOCKS, "Call/n"), Value::Integer(Integer::from(n))),
+            (key(CLOCKS, "Call/d"), Value::Integer(Integer::from(0_i64))),
+        ]),
     };
     ModelState {
         populations: BTreeMap::from([(

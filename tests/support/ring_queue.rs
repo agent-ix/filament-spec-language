@@ -22,7 +22,7 @@ use filament_semantic_value::checking::CheckingLimits;
 use fsl_semantics::check::{CheckRefusal, CheckedGraph, PackageDeclarations};
 use fsl_semantics::model::accounting::ModelNormalizationLimits;
 use fsl_semantics::model::intake::{admit_unit, meaning, package_input};
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 
 /// The ring fixtures declare no reward, so the checker never asks for one.
 struct NoRewards;
@@ -511,7 +511,7 @@ pub fn refused(body: &str) -> Vec<Refused> {
     }
 }
 
-/// The timed concrete package `example/clock-calls`: `Call { n, x }` with the
+/// The timed concrete package `example/clock-calls`: `Call { n, d, x }` with the
 /// clock `x`, over the population `calls`. The refinement-row fixture of
 /// FR-1040-AC-3 (TC-3084): the same `Call` shape as FSpec FR-415-AC-15's.
 pub const CLOCKS: &str = "example/clock-calls";
@@ -526,10 +526,15 @@ pub fn clock_calls() -> Vec<u8> {
         CLOCKS,
         vec![
             bounded(CLOCKS, "Two", 2),
+            bounded(CLOCKS, "Digit", 1),
             object_type(
                 CLOCKS,
                 "Call",
-                vec![single(CLOCKS, "Call", "n", &two), clock],
+                vec![
+                    single(CLOCKS, "Call", "n", &two),
+                    single(CLOCKS, "Call", "d", &node(CLOCKS, "Digit")),
+                    clock,
+                ],
                 Vec::new(),
             ),
         ],
@@ -549,7 +554,7 @@ pub fn clock_refinement(rows: &str) -> String {
          population Q::queues from C::calls;\n\
          population Q::cells from C::calls;\n\
          object Q::Queue from C::Call {{ {rows} }}\n\
-         object Q::Cell from C::Call {{ value = 0; }}\n\
+         object Q::Cell from C::Call {{ value = self.d; }}\n\
          }}"
     )
 }
