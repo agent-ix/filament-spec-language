@@ -2,7 +2,7 @@
 //! FR-1045: native-run relationship selection request admission.
 
 use crate::workflow_relationship_navigation::{
-    instance, relationship_row, run_selected, ORDER, PAYMENTS, SHIPMENT, SHIPMENTS,
+    instance, relationship_row, run_selected, ORDER, PAYMENTS, PAYMENT_ATTEMPT, SHIPMENT, SHIPMENTS,
 };
 use filament_observation::{
     ProducerConfiguration, ProducerDigest, RelationshipDeclaration,
@@ -637,6 +637,14 @@ fn producer_bundle_admits_through_the_producer_reader() {
         document["outcome"]["reasons"][0]["code"], "missing-closure",
         "{document}"
     );
+    assert!(
+        document["outcome"]["reasons"]
+            .as_array()
+            .expect("typed incomplete reasons")
+            .iter()
+            .all(|reason| reason["code"] != "missing-relationship"),
+        "both mapped declarations satisfy their required slots: {document}"
+    );
 }
 
 #[test]
@@ -1025,7 +1033,7 @@ fn mapped_relationships_correlate_and_unmapped_relationships_are_ignored() {
 #[test]
 #[trace("FR-1045-AC-12")]
 fn two_mapped_package_relationships_use_independent_producer_declarations() {
-    let selection = relationship_selection_with_producer(
+    let mut selection = relationship_selection_with_producer(
         json!([
             {
                 "relationship": SHIPMENTS,
@@ -1045,18 +1053,50 @@ fn two_mapped_package_relationships_use_independent_producer_declarations() {
             ),
         ]),
     );
+    let authority = selection["expected_subject"]["authority"].clone();
+    selection["required_relationships"] = json!([
+        {
+            "declaration_identity": "producer:Order-ships-Shipment",
+            "source": {
+                "authority": authority,
+                "subject_kind": ORDER,
+                "authority_local_object_identity": "o1"
+            },
+            "target": {
+                "authority": authority,
+                "subject_kind": SHIPMENT,
+                "authority_local_object_identity": "s1"
+            }
+        },
+        {
+            "declaration_identity": "producer:Order-uses-PaymentAttempt",
+            "source": {
+                "authority": authority,
+                "subject_kind": ORDER,
+                "authority_local_object_identity": "o1"
+            },
+            "target": {
+                "authority": authority,
+                "subject_kind": PAYMENT_ATTEMPT,
+                "authority_local_object_identity": "p1"
+            }
+        }
+    ]);
+    selection["limits"]["max_relationships"] = json!("2");
+    selection["limits"]["max_required_relationships"] = json!("2");
     let mut shipment = instance("o1", "s1");
     shipment["identity"] = json!("01");
     let mut payment = instance("o1", "p1");
     payment["identity"] = json!("02");
+    let rows = vec![
+        relationship_row(SHIPMENTS, true, vec![shipment]),
+        relationship_row(PAYMENTS, true, vec![payment]),
+    ];
     let output = run_selected(
         "paymentAttempts",
         "o1",
-        vec![
-            relationship_row(SHIPMENTS, true, vec![shipment]),
-            relationship_row(PAYMENTS, true, vec![payment]),
-        ],
-        Some(selection),
+        rows.clone(),
+        Some(selection.clone()),
     );
     let document: Value =
         serde_json::from_slice(&output.stdout).expect("two mapped candidates reach the resolver");
@@ -1064,6 +1104,43 @@ fn two_mapped_package_relationships_use_independent_producer_declarations() {
     assert_eq!(
         document["outcome"]["reasons"][0]["code"], "missing-closure",
         "{document}"
+    );
+
+    let missing_relationships = |rows| {
+        let output = run_selected("paymentAttempts", "o1", rows, Some(selection.clone()));
+        let document: Value =
+            serde_json::from_slice(&output.stdout).expect("missing relationship result document");
+        assert_eq!(document["outcome"]["kind"], "incomplete", "{document}");
+        let reasons = document["outcome"]["reasons"]
+            .as_array()
+            .expect("typed incomplete reasons");
+        reasons
+            .iter()
+            .filter(|reason| reason["code"] == "missing-relationship")
+            .map(|reason| {
+                let required: Value = serde_json::from_str(
+                    reason["fields"]["required"]
+                        .as_str()
+                        .expect("required relationship is canonical JSON"),
+                )
+                .expect("required relationship JSON parses");
+                required["declaration_identity"]
+                    .as_str()
+                    .expect("required declaration identity")
+                    .to_owned()
+            })
+            .collect::<Vec<_>>()
+    };
+
+    assert_eq!(
+        missing_relationships(vec![rows[1].clone()]),
+        ["producer:Order-ships-Shipment"],
+        "the shipment mapping satisfies only its own required slot"
+    );
+    assert_eq!(
+        missing_relationships(vec![rows[0].clone()]),
+        ["producer:Order-uses-PaymentAttempt"],
+        "the payment mapping satisfies only its own required slot"
     );
 }
 
