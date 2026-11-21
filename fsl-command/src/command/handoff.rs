@@ -22,20 +22,20 @@ pub(super) struct Admitted {
 
 #[derive(Debug)]
 pub(super) enum AdmissionFailure {
-    Artifact(RunCause),
+    Artifact(Box<RunCause>),
     UnselectedModel { index: usize, identity: String },
 }
 
 impl From<RunCause> for AdmissionFailure {
     fn from(cause: RunCause) -> Self {
-        Self::Artifact(cause)
+        Self::Artifact(Box::new(cause))
     }
 }
 
 impl AdmissionFailure {
     pub(super) fn for_run(self) -> RunCause {
         match self {
-            Self::Artifact(cause) => cause,
+            Self::Artifact(cause) => *cause,
             Self::UnselectedModel { index, identity } => RunCause::ClauseRequest {
                 member: format!("/request/models/{index}"),
                 reason: format!("the package records no model selection {identity}"),
@@ -45,7 +45,7 @@ impl AdmissionFailure {
 
     pub(super) fn for_analyze(self) -> RunCause {
         match self {
-            Self::Artifact(cause) => cause,
+            Self::Artifact(cause) => *cause,
             Self::UnselectedModel { identity, .. } => {
                 refusal("models", "conflicting-definition", None, identity)
             }
