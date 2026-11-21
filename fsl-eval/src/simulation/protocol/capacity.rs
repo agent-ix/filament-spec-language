@@ -8,7 +8,9 @@ use std::collections::BTreeMap;
 use fsl_foundation::diagnostic::Code;
 use fsl_semantics::check::{ChannelCapacity, CheckedProtocol};
 
+use super::ProtocolRefusal;
 use crate::model_subject::CapacityBinding;
+use crate::simulation::model::ProtocolDefinition;
 
 /// Why a capacity binding was refused (FSpec FR-785 "Admission"), each
 /// `invalid_runtime_input`.
@@ -93,18 +95,71 @@ impl Capacities {
         protocol: &CheckedProtocol,
         bindings: &[CapacityBinding],
     ) -> Result<Self, CapacityRefusal> {
-        let mut names: BTreeMap<&str, Vec<String>> = BTreeMap::new();
+        let mut names: BTreeMap<String, Vec<String>> = BTreeMap::new();
         for channel in &protocol.channels {
             if let ChannelCapacity::Symbolic(name) = &channel.capacity {
                 names
-                    .entry(name.as_str())
+                    .entry(name.clone())
                     .or_default()
                     .push(format!("{}::{}", protocol.name, channel.name));
             }
         }
+        Self::bind(names, bindings)
+    }
+
+    /// Admit capacity bindings against either route's native protocol definition.
+    /// Both routes retain the same name, duplicate and unbound-capacity rules.
+    ///
+    /// # Errors
+    /// Returns the existing capacity refusal for an unknown or duplicate binding,
+    /// or a protocol fault when an admitted package's queue facts do not read.
+    pub fn admit_definition(
+        protocol: &ProtocolDefinition<'_>,
+        bindings: &[CapacityBinding],
+    ) -> Result<Self, ProtocolRefusal> {
+        let form = match protocol {
+            ProtocolDefinition::Source(protocol) => {
+                return Self::admit(protocol, bindings).map_err(ProtocolRefusal::Capacity);
+            }
+            ProtocolDefinition::Package(form) => form,
+        };
+        let mut names: BTreeMap<String, Vec<String>> = BTreeMap::new();
+        for channel in &form.channels {
+            let queue = form
+                .queues
+                .iter()
+                .find(|queue| {
+                    fsl_package::protocol_view::queue_channel(queue)
+                        .is_ok_and(|node| node == &channel.node_id)
+                })
+                .ok_or_else(|| ProtocolRefusal::fault("an-admitted-channel-has-a-queue"))?;
+            match fsl_package::protocol_view::queue_capacity(queue)
+                .map_err(|_| ProtocolRefusal::fault("an-admitted-queue-has-a-capacity"))?
+            {
+                fsl_package::protocol_view::QueueCapacity::Literal(_) => {}
+                fsl_package::protocol_view::QueueCapacity::Symbolic(name) => {
+                    let channel_name = channel
+                        .declaration
+                        .as_ref()
+                        .and_then(|declaration| declaration.qualified_name.get(2))
+                        .ok_or_else(|| ProtocolRefusal::fault("an-admitted-channel-has-a-name"))?;
+                    names
+                        .entry(name.to_owned())
+                        .or_default()
+                        .push(format!("{}::{channel_name}", form.name));
+                }
+            }
+        }
+        Self::bind(names, bindings).map_err(ProtocolRefusal::Capacity)
+    }
+
+    fn bind(
+        names: BTreeMap<String, Vec<String>>,
+        bindings: &[CapacityBinding],
+    ) -> Result<Self, CapacityRefusal> {
         let mut bound = BTreeMap::new();
         for binding in bindings {
-            if !names.contains_key(binding.name.as_str()) {
+            if !names.contains_key(&binding.name) {
                 return Err(CapacityRefusal::UnknownName {
                     name: binding.name.clone(),
                 });
@@ -117,11 +172,8 @@ impl Capacities {
         }
         let unbound = names
             .into_iter()
-            .filter(|(name, _)| !bound.contains_key(*name))
-            .map(|(name, channels)| UnboundCapacity {
-                name: name.to_owned(),
-                channels,
-            })
+            .filter(|(name, _)| !bound.contains_key(name))
+            .map(|(name, channels)| UnboundCapacity { name, channels })
             .collect();
         Ok(Self { bound, unbound })
     }

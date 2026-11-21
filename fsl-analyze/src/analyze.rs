@@ -1042,6 +1042,8 @@ pub enum Counterexample {
     TaskProduct(Box<serde_json::Value>),
     /// FR-898's reproduced trace tuple and joint position.
     FiniteHyper(Box<serde_json::Value>),
+    /// The complete native refutation of a realizability or projection item.
+    ProtocolAnalysis(Box<fsl_replay::protocol_analysis::ProtocolAnalysisCounterexample>),
 }
 
 /// What a state-graph engine run reports for one item (FR-628): the record of
@@ -1303,16 +1305,30 @@ fn item_stage(
     counterexamples: &[ItemCounterexample],
     route: Option<ItemRoute>,
 ) -> OutcomeStage {
-    // A counterexample reaches the document only once its replay reproduced
-    // it; the state-graph one is built as a typed witness and not replayed.
+    // Replayed counterexamples reach S8; state graphs, schedule misses and
+    // acting-instance projection decisions are direct typed witnesses at S7.
     if let Some(found) = counterexamples
         .iter()
         .find(|found| found.request_index == record.request_index())
     {
-        return if matches!(
-            found.counterexample,
-            Counterexample::StateGraph(_) | Counterexample::ScheduleMiss(_)
-        ) {
+        let typed_witness = match &found.counterexample {
+            Counterexample::StateGraph(_) | Counterexample::ScheduleMiss(_) => true,
+            Counterexample::ProtocolAnalysis(found) => {
+                matches!(found.as_ref(), fsl_replay::protocol_analysis::ProtocolAnalysisCounterexample::Projection(found)
+                    if matches!(found.decision, fsl_replay::protocol_analysis::ProjectionDecision::ActingInstance { .. }))
+            }
+            Counterexample::Hyper(_)
+            | Counterexample::Temporal { .. }
+            | Counterexample::Protocol { .. }
+            | Counterexample::Probabilistic(_)
+            | Counterexample::Assignments(_)
+            | Counterexample::Contract(_)
+            | Counterexample::GlobalConformance(_)
+            | Counterexample::Hybrid(_)
+            | Counterexample::TaskProduct(_)
+            | Counterexample::FiniteHyper(_) => false,
+        };
+        return if typed_witness {
             OutcomeStage::S7
         } else {
             OutcomeStage::S8
@@ -1352,6 +1368,19 @@ pub fn analyze_item(
                 .with_graph_evidence(graph.counterexample.clone(), graph.evidence.clone())
                 .with_graph_certificate_document(graph.certificate_document.clone()),
         );
+    }
+    if let Some(found) = found {
+        if let Counterexample::ProtocolAnalysis(native) = &found.counterexample {
+            if record.backend() != Some(&found.backend)
+                || record.protocol_analysis_key() != Some(native.key())
+                || record.protocol_analysis_root() != Some(&native.separating_witness().value_path)
+            {
+                return Err(OutcomeItemError::CounterexampleAssociation);
+            }
+            if found.wire.as_ref().map_err(Clone::clone)? != &native.to_wire()? {
+                return Err(OutcomeItemError::CounterexampleBodyMismatch);
+            }
+        }
     }
     let wire = found.map(|found| found.wire.clone()).transpose()?;
     let undefined = found.and_then(|found| found.counterexample.undefined_cause());
@@ -2163,6 +2192,13 @@ impl AnalyzeRecord {
         package: Option<&CheckedPackage>,
     ) -> Option<Result<serde_json::Value, CounterexampleWireError>> {
         let claim = self.claim.as_ref();
+        if let Some(wire) = self
+            .protocol_analysis
+            .as_ref()
+            .and_then(|artifact| artifact.counterexample_wire())
+        {
+            return Some(wire);
+        }
         if let Some(found) = self
             .hyper_check
             .as_ref()
@@ -2247,6 +2283,13 @@ impl AnalyzeRecord {
     /// Move out the counterexample the engine that settled this record
     /// holds.
     fn take_counterexample(&mut self) -> Option<Counterexample> {
+        if let Some(found) = self
+            .protocol_analysis
+            .as_ref()
+            .and_then(|artifact| artifact.counterexample())
+        {
+            return Some(Counterexample::ProtocolAnalysis(Box::new(found)));
+        }
         if let Some(found) = self
             .hyper_check
             .as_mut()
@@ -2422,6 +2465,7 @@ impl Counterexample {
             | Self::ScheduleMiss(_)
             | Self::Hybrid(_)
             | Self::TaskProduct(_)
+            | Self::ProtocolAnalysis(_)
             | Self::FiniteHyper(_) => None,
         }
     }

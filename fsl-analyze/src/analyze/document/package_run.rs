@@ -236,6 +236,11 @@ enum Named<'s> {
         protocol: String,
         selection: &'s ItemSelection,
     },
+    ProtocolAnalysis {
+        index: RequestIndex,
+        name: &'s str,
+        selection: &'s ItemSelection,
+    },
     StateClause {
         index: RequestIndex,
         name: &'s str,
@@ -259,6 +264,7 @@ enum Route<'a> {
         protocol: Option<ProtocolBinding>,
     },
     ProtocolFreedom(ProtocolBinding),
+    ProtocolAnalysis,
     Deadlock,
     StateClause,
     StateGraph(Box<PackageStateGraphSubject<'a>>),
@@ -366,6 +372,7 @@ pub fn settle_package_run(
     let mut clause_claims: Vec<OccurrenceKey> = Vec::new();
     let mut invariant_claims: Vec<OccurrenceKey> = Vec::new();
     let mut graph_claims: Vec<OccurrenceKey> = Vec::new();
+    let mut protocol_claims: Vec<OccurrenceKey> = Vec::new();
     for item in named {
         match item {
             Named::Settled(settled) => resolved.push(settled),
@@ -407,6 +414,18 @@ pub fn settle_package_run(
                 Resolution::Settled(settled) => resolved.push(settled),
                 Resolution::Claim(claim, protocol) => {
                     routes.insert(index, Route::ProtocolFreedom(protocol));
+                    resolved.push(ResolvedItem::Claim(claim));
+                }
+            },
+            Named::ProtocolAnalysis {
+                index,
+                name,
+                selection,
+            } => match reads.protocol_analysis(index, name, selection)? {
+                Resolution::Settled(settled) => resolved.push(settled),
+                Resolution::Claim(claim, ()) => {
+                    protocol_claims.push(claim.item.claim.clone());
+                    routes.insert(index, Route::ProtocolAnalysis);
                     resolved.push(ResolvedItem::Claim(claim));
                 }
             },
@@ -469,6 +488,7 @@ pub fn settle_package_run(
             .unwrap_or_else(|| sole_model(package))
     };
     let family = |kind: ItemKind, claim: &OccurrenceKey| match kind {
+        ItemKind::Formula if protocol_claims.contains(claim) => Some(DeclarationFamily::Protocol),
         ItemKind::Formula if invariant_claims.contains(claim) => {
             Some(DeclarationFamily::StateModel)
         }
@@ -756,6 +776,17 @@ fn resolve_names<'s>(
                 return Err(pending(PendingFamily::Simulation));
             };
             let derived = item_kind.is_some_and(|kind| kind != ItemKind::Formula);
+            if matches!(
+                selection.kind.as_deref(),
+                Some("local-projection" | "realizability")
+            ) && view.protocol_execution_named(name).ok().flatten().is_some()
+            {
+                return Ok(Named::ProtocolAnalysis {
+                    index,
+                    name,
+                    selection,
+                });
+            }
             if item_kind == Some(ItemKind::DeadlockFreedom)
                 && selection.kind.as_deref() == Some(Capability::TemporalSatisfaction.to_wire())
                 && view.protocol_execution_named(name).ok().flatten().is_some()
@@ -1145,6 +1176,115 @@ impl<'r, 'a: 'r> ClaimReads<'r, 'a> {
                 subject: Box::new(clause_subject),
                 protocol,
             },
+        ))
+    }
+
+    /// A native projection or realizability item over an admitted protocol declaration.
+    fn protocol_analysis(
+        &self,
+        index: RequestIndex,
+        name: &str,
+        selection: &ItemSelection,
+    ) -> Result<Resolution<()>, PackageRunError> {
+        let fault = || PackageRunError::Document(AnalyzeDocumentError::Fault);
+        let input = self.input.ok_or_else(fault)?;
+        let kind = match selection.kind.as_deref().map(Capability::from_wire) {
+            Some(Ok(Capability::LocalProjection)) => Capability::LocalProjection,
+            Some(Ok(Capability::Realizability)) => Capability::Realizability,
+            _ => {
+                return Ok(Resolution::Settled(invalid_kind(
+                    index,
+                    Some(name),
+                    "unknown-kind",
+                )))
+            }
+        };
+        let named = selection.backend.as_deref().map(BackendId::new);
+        let mut backend_options = selection.options.clone().unwrap_or_default();
+        let role = (kind == Capability::LocalProjection)
+            .then(|| backend_options.remove("role"))
+            .flatten();
+        if let Some(refused) = unknown_option(
+            index,
+            Some(name),
+            self.registry,
+            named.as_ref(),
+            &backend_options,
+        ) {
+            return Ok(Resolution::Settled(refused));
+        }
+        let mut settings =
+            match super::protocol_analysis_selection(index, name, selection, kind, role) {
+                Ok(settings) => settings,
+                Err(refused) => return Ok(Resolution::Settled(refused)),
+            };
+        let own_subject = self.own_subject(index, selection)?;
+        if !own_subject
+            .protocol
+            .as_ref()
+            .is_some_and(|selected| selected.protocol == name)
+        {
+            return Ok(Resolution::Settled(super::invalid_member(
+                index,
+                name,
+                "temporal.subject.protocol",
+            )));
+        }
+        let protocol = match protocol_binding(&own_subject, input) {
+            Ok(Some(protocol)) => protocol,
+            Ok(None) => {
+                return Ok(Resolution::Settled(super::invalid_member(
+                    index,
+                    name,
+                    "temporal.subject.protocol",
+                )))
+            }
+            Err(member) => {
+                return Ok(Resolution::Settled(super::invalid_value(
+                    index, name, member,
+                )))
+            }
+        };
+        let form = input
+            .package()
+            .protocol_execution_named(name)
+            .map_err(|_| fault())?
+            .ok_or_else(fault)?;
+        let key = input
+            .package()
+            .node_key(form.protocol.clause())
+            .ok_or_else(fault)?;
+        let claim = OccurrenceKey::declaration(key);
+        settings.protocol = Some(protocol.clone());
+        let candidates = self.registry.candidates(kind, named.as_ref());
+        let mut item_options = options(selection, backend_options);
+        item_options.protocol_analysis = Some(settings);
+        let temporal = selection.temporal.clone().unwrap_or_default();
+        let mut form = temporal_settings(&temporal);
+        form.protocol = Some(protocol);
+        Ok(Resolution::Claim(
+            Box::new(ResolvedClaim {
+                item: ClaimItem {
+                    request_index: index,
+                    claim,
+                    kind,
+                    extent: ExtentClassification::Unbounded {
+                        finite_bound_available: false,
+                    },
+                    backend: named,
+                    candidates: candidate_list(&candidates),
+                    options: item_options,
+                    form: Some(ItemForm::Temporal(form)),
+                },
+                claim_name: name.to_owned(),
+                candidates,
+                unrouted: selection.unrouted_routing_options(false, false)
+                    || selection.reductions.is_some()
+                    || reads_no_clocks(selection)
+                    || !own_subject.same_model(self.subject),
+                subject: own_subject,
+            }),
+            (),
         ))
     }
 
@@ -1755,6 +1895,14 @@ impl<'a> WorkInputs<'_, 'a> {
         };
         let family = (self.family)(temporal_kind, &item.claim);
         let mut built = match (&item.form, route) {
+            (_, Some(Route::ProtocolAnalysis)) => super::super::request::protocol_analysis_item(
+                Box::new(self.input.package().package().clone()),
+                &self.input.input(),
+                self.input.package().package().name(),
+                self.binding,
+                item,
+                &self.limits,
+            ),
             (
                 Some(ItemForm::Temporal(form)),
                 Some(Route::Clause {
@@ -1847,7 +1995,13 @@ impl<'a> WorkInputs<'_, 'a> {
             _ => AnalyzeItem::unadapted(item.request_index, item.kind, family),
         };
         let expected = match &item.form {
-            _ if item.kind == Capability::GlobalConformance => {
+            _ if matches!(
+                item.kind,
+                Capability::GlobalConformance
+                    | Capability::LocalProjection
+                    | Capability::Realizability
+            ) =>
+            {
                 Some(crate::protocol_analysis::manifest::BACKEND_ID)
             }
             Some(ItemForm::Temporal(_)) => Some(crate::model_check::manifest::BACKEND_ID),
