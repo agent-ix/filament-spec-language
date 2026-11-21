@@ -1207,7 +1207,7 @@ pub fn run_value_bytes(
     enums: &[EnumBinding],
     variants: &[VariantTypeDeclaration],
     identity: fsl_foundation::IdentityLimits,
-    budget: &mut dyn super::ModelKeyBudget,
+    budget: &mut dyn RunValueBudget,
     cancel: &filament_exact::Cancel,
 ) -> Result<Vec<u8>, super::ModelKeyError> {
     bounded::value_bytes(
@@ -1217,6 +1217,51 @@ pub fn run_value_bytes(
         budget,
         cancel,
     )
+}
+
+/// Resource ownership for a borrowed typed result. A reference's owning
+/// declaration is selected before its identity is inspected or copied.
+pub trait RunValueBudget: super::ModelKeyBudget {
+    /// Enter the actual reference declaration's resource owner.
+    fn begin_reference(&mut self, reference: &ObjectReference) -> Result<(), super::ModelKeyError>;
+    /// Restore the prior owner after success or failure; this performs no work.
+    fn end_reference(&mut self);
+}
+
+/// A result whose existing caller budget already owns every reference.
+pub struct SingleOwnerRunBudget<'a>(&'a mut dyn super::ModelKeyBudget);
+
+impl<'a> SingleOwnerRunBudget<'a> {
+    /// Borrow the genuine caller budget without creating an allowance.
+    pub fn new(budget: &'a mut dyn super::ModelKeyBudget) -> Self {
+        Self(budget)
+    }
+}
+
+impl filament_exact::Reservation for SingleOwnerRunBudget<'_> {
+    fn reserve(&mut self, bytes: usize) -> Result<(), filament_exact::ReservationDenied> {
+        self.0.reserve(bytes)
+    }
+}
+impl filament_exact::IntegerDecimalBudget for SingleOwnerRunBudget<'_> {
+    fn work(&mut self, units: u64) -> Result<(), filament_exact::ReservationDenied> {
+        self.0.work(units)
+    }
+}
+impl super::ModelKeyBudget for SingleOwnerRunBudget<'_> {
+    fn integer(
+        &mut self,
+        value: &filament_exact::Integer,
+    ) -> Result<(), filament_exact::ReservationDenied> {
+        self.0.integer(value)
+    }
+}
+impl RunValueBudget for SingleOwnerRunBudget<'_> {
+    fn begin_reference(&mut self, _: &ObjectReference) -> Result<(), super::ModelKeyError> {
+        // The caller's established single owner remains selected.
+        Ok(())
+    }
+    fn end_reference(&mut self) {}
 }
 
 /// The canonical declaration name of an admitted run type's structural key.
