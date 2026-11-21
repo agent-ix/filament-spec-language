@@ -1370,7 +1370,7 @@ fn a_lasso_cross_evaluation_over_a_handoff_directory_returns_the_source_record()
     spine::write(directory.path(), Case::Healthy).unwrap();
     let models = compile_handoff(directory.path(), &unit);
     for (trace, _, _) in lasso_cases() {
-        for clause in ["Safe", "Hits"] {
+        for clause in ["Prev", "PrevZero"] {
             let lower = json!({"clause": clause, "cross_evaluate": {"trace": trace}});
             let (source_code, from_source) = run(&unit, true, ("tl_lowering", lower.clone()));
             assert_eq!(source_code, 0, "{clause} {trace}: {from_source}");
@@ -1387,7 +1387,7 @@ fn a_lasso_cross_evaluation_over_a_handoff_directory_returns_the_source_record()
             assert_eq!(from_package, from_source, "{clause} {trace}");
         }
     }
-    let lower = json!({"clause": "Safe", "cross_evaluate": {"trace": lasso_cases()[0].0}});
+    let lower = json!({"clause": "Prev", "cross_evaluate": {"trace": lasso_cases()[0].0}});
     for package in [
         json!({"file": "package.json"}),
         json!({"file": "package.json", "equality": "handoff/equality.json"}),
@@ -1481,10 +1481,8 @@ fn a_refused_condition_in_a_clause_run_has_the_same_code_and_cause_on_both_route
         profile t = \"filament.temporal.infinite-trace/v1\";\n\
         model Config = \"example/config-version\";\n\
         record Counter { level: Int[0, 9]; }\n\
-        type Zero = Int[0, 0];\n\
-        function ints using v(xs: Sequence<Integer>[0, 3]): Sequence<Integer>[0, 3] pure { xs }\n\
         temporal C using t over (c: Counter) clock \"steps\" on each (q: Counter) \
-        { always holds(count<Zero>(m in ints(sequence[c.level]): m > 0) = 0) }\n";
+        { always holds(count<Int[0, 0]>(m in sequence[c.level]: m > 0) = 0) }\n";
     let clause = json!({"selection": {"temporal": {"name": "C", "trace":
         {"lasso": {"prefix": [], "loop": [level_sample(1)]}}}}, "observations": {}});
     let directory = tempfile::tempdir().unwrap();
@@ -2328,10 +2326,10 @@ fn lasso_unit() -> String {
      { eventually always not holds(c.level = 0) }\n\
      temporal Recurs using t over (c: Counter) clock \"steps\" on each (q: Counter) \
      { always eventually holds(c.level = 0) }\n\
-     temporal Safe using t over (c: Counter) clock \"steps\" on each (q: Counter) \
-     { always not holds(c.level = 0) }\n\
-     temporal Hits using t over (c: Counter) clock \"steps\" on each (q: Counter) \
-     { eventually holds(c.level = 0) }\n"
+     temporal Prev using t over (c: Counter) clock \"steps\" on each (q: Counter) \
+     { once[1,1] not holds(c.level = 0) }\n\
+     temporal PrevZero using t over (c: Counter) clock \"steps\" on each (q: Counter) \
+     { once[1,1] holds(c.level = 0) }\n"
         .to_owned()
 }
 
