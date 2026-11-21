@@ -1143,8 +1143,21 @@ impl<'a> PackageProtocolWork<'a> {
                     &self.protocol.memory,
                 ) {
                     Ok(program) => program,
-                    Err(fsl_eval::simulation::protocol::PackageProgramRefusal::Unsupported(_)) => {
-                        return unsupported();
+                    Err(fsl_eval::simulation::protocol::PackageProgramRefusal::Unsupported(
+                        operation,
+                    )) => {
+                        let mut detail = serde_json::Map::new();
+                        detail.insert(
+                            "fact".to_owned(),
+                            serde_json::json!(format!("{operation:?}")),
+                        );
+                        return EngineReport::Refused(Refusal::UnsupportedWithDetail(
+                            filament_semantic_value::catalog::CatalogCode::new(
+                                "unsupported_construct",
+                                "not-yet-implemented",
+                            ),
+                            detail,
+                        ));
                     }
                     Err(fsl_eval::simulation::protocol::PackageProgramRefusal::Correlation {
                         node,

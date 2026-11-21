@@ -1006,7 +1006,7 @@ impl<'a> Program<'a> {
         Ok(program)
     }
 
-    /// Build the sequence/parallel/attempt/send/receive/repeat/await program from the admitted
+    /// Build the sequence/parallel/attempt/recommend/check/send/receive/repeat/await program from the admitted
     /// package form. Package execution keeps expression slots out of the
     /// source `CheckedBody` fields; callers evaluate them through the package
     /// evaluator.
@@ -1042,6 +1042,8 @@ impl<'a> Program<'a> {
                 fsl_package::protocol_view::ControlOperation::Parallel => ControlStep::Parallel,
                 fsl_package::protocol_view::ControlOperation::Choice => ControlStep::Choice,
                 fsl_package::protocol_view::ControlOperation::Attempt => ControlStep::Attempt,
+                fsl_package::protocol_view::ControlOperation::Recommend => ControlStep::Event,
+                fsl_package::protocol_view::ControlOperation::Check => ControlStep::Check,
                 fsl_package::protocol_view::ControlOperation::Send => ControlStep::Send,
                 fsl_package::protocol_view::ControlOperation::Receive => ControlStep::Receive,
                 fsl_package::protocol_view::ControlOperation::Repeat => ControlStep::Repeat,
@@ -1126,6 +1128,30 @@ impl<'a> Program<'a> {
         }
 
         let mut attempts = BTreeMap::new();
+        let mut recommendations = BTreeMap::new();
+        for control in package.controls.values().filter(|control| {
+            control.operation == fsl_package::protocol_view::ControlOperation::Recommend
+        }) {
+            let operation = package
+                .operation_ref(control.id)
+                .map_err(|_| ProtocolRefusal::fault("a-package-recommendation-resolves"))?;
+            let role = package
+                .roles
+                .iter()
+                .find(|role| Some(&role.node) == control.role.as_ref())
+                .ok_or_else(|| ProtocolRefusal::fault("a-package-recommendation-has-a-role"))?;
+            recommendations.insert(
+                control.id,
+                Recommendation {
+                    role: role.name.clone(),
+                    declaring: operation.declaring,
+                    operation: operation.name.to_owned(),
+                    receiver: operation.receiver,
+                    contracts: std::sync::Arc::new(control.contract_keys.iter().cloned().collect()),
+                    constraint: None,
+                },
+            );
+        }
         let mut slots = vec![None];
         let mut package_binders = vec![Some(package.over.clone())];
         let mut binder_types = vec![package.over_type.clone()];
@@ -1320,7 +1346,7 @@ impl<'a> Program<'a> {
             root: package.root,
             controls,
             attempts,
-            recommendations: BTreeMap::new(),
+            recommendations,
             related: BTreeMap::new(),
             joins,
             loops: package
