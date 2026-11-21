@@ -1,4 +1,9 @@
-// SPDX-License-Identifier: AGPL-3.0-or-later
+    if !optimization_admitted {
+        return Err(ProbabilityDocumentError::OptimizationMismatch);
+    }
+    if !document.ranking.is_empty() {
+        return Err(ProbabilityDocumentError::ObjectiveMismatch);
+    }// SPDX-License-Identifier: AGPL-3.0-or-later
 //! FR-921's independent timed-product certificate admission.
 
 use super::*;
@@ -45,7 +50,7 @@ pub(super) fn check(
         || objective.unit != timed.source().unit_node
         || objective.scale != scale
     {
-        return Err(ProbabilityDocumentError::TimedObjectiveMismatch);
+        return Err(ProbabilityDocumentError::ObjectiveMismatch);
     }
     if objective.form == TimedProbabilityForm::ExpectedElapsed {
         return check_expected_elapsed(
@@ -78,7 +83,7 @@ pub(super) fn check(
         );
     }
     if objective.form != TimedProbabilityForm::Deadline {
-        return Err(ProbabilityDocumentError::TimedObjectiveMismatch);
+        return Err(ProbabilityDocumentError::ObjectiveMismatch);
     }
     let Some((bound, predicate)) = deadline_event(claim) else {
         return Err(ProbabilityDocumentError::Unsupported);
@@ -162,10 +167,10 @@ pub(super) fn check(
         optimization
     };
     if document.optimization != optimization {
-        return Err(ProbabilityDocumentError::ObjectiveMismatch);
+        return Err(ProbabilityDocumentError::OptimizationMismatch);
     }
     if target_keys(&graph) != document.targets {
-        return Err(ProbabilityDocumentError::TimedObjectiveMismatch);
+        return Err(ProbabilityDocumentError::ObjectiveMismatch);
     }
     let certificate = ExactProbabilityCertificate {
         values: document.values,

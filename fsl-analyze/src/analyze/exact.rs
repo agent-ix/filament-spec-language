@@ -435,7 +435,7 @@ fn run_timed(
         ProbScheduler::Workload(_) => vec![residual, ProbabilityObjective::Workload],
     };
     let mut optimization = candidates[0];
-    let mut checked = Err(ProbabilityDocumentError::ObjectiveMismatch);
+    let mut checked = Err(ProbabilityDocumentError::OptimizationMismatch);
     for candidate in candidates {
         optimization = candidate;
         let document = ProbabilityCertificateDocument {
@@ -466,7 +466,10 @@ fn run_timed(
                 cancel,
             )
         })();
-        if !matches!(checked, Err(ProbabilityDocumentError::ObjectiveMismatch)) {
+        if !matches!(
+            checked,
+            Err(ProbabilityDocumentError::OptimizationMismatch)
+        ) {
             break;
         }
     }
@@ -1430,7 +1433,7 @@ fn document_failure(error: ProbabilityDocumentError, subject: SubjectLimits<'_>)
         | ProbabilityDocumentError::Noncanonical
         | ProbabilityDocumentError::IdentityMismatch
         | ProbabilityDocumentError::ObjectiveMismatch
-        | ProbabilityDocumentError::TimedObjectiveMismatch
+        | ProbabilityDocumentError::OptimizationMismatch
         | ProbabilityDocumentError::Graph(_) => broken(),
     }
 }

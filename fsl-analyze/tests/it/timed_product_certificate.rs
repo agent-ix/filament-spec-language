@@ -882,11 +882,11 @@ fn relabelled(doc: &Value, spelling: &str) -> Value {
     altered
 }
 
-/// Whether the checker rejects `doc` as an objective mismatch.
+/// Whether the checker rejects `doc` for the spelling of its optimization.
 fn objective_mismatch(world: &World, claim: &str, doc: &Value) -> bool {
     matches!(
         check(world, claim, doc),
-        Err(ProbabilityDocumentError::ObjectiveMismatch)
+        Err(ProbabilityDocumentError::OptimizationMismatch)
     )
 }
 
@@ -1501,5 +1501,33 @@ fn proved_value_of(record: &AnalyzeRecord) -> Option<Rational> {
             ..
         } => Some(value.value().clone()),
         _ => None,
+    }
+}
+
+#[test]
+fn zz_probe() {
+    for delays in ["{ 2 ms: 1 }", "{ 1 ms: 1, 2 ms: 1 }", "{ 2 ms: 1, 3 ms: 1 }"] {
+        let claim = |name: &str, bound: &str| {
+            format!(
+                "probabilistic {name} using ev on M over (c: M::Call) under Both on origin \
+                 {{ probability {bound} [ eventually[0 ms, 5 ms] holds(c.retried) ] }}\n"
+            )
+        };
+        let world = retx_with(
+            &[("send", &["late", "x"]), ("tick", &["retried"])],
+            GUARD,
+            true,
+            &format!("delay M::Call::send ~ discrete {delays};\n\
+             pre Tick using v on M::Call::tick {{ not self.late and not self.retried and self.x >= 1 ms }}\n\
+             post Ticked using v on M::Call::tick {{ self.retried = true }}\n\
+             workload Both on M {{ weight Call::send = 1; weight Call::tick = 1; }}\n"),
+            &format!("{}{}", claim("Lo", ">= 0.001"), claim("Hi", "<= 0.999")),
+        );
+        for name in ["Lo", "Hi"] {
+            let r = settle(&world, name);
+            eprintln!("PROBE {delays} {name}: {:?} refuted={}", proved_value_of(&r), is_refuted(&r));
+            if let Some(t) = r.terminal() { eprintln!("PROBE   {:?}", std::mem::discriminant(t.value())); }
+            if let Settlement::Disposed(d) = &r.settlement { eprintln!("PROBE   disposed {:?}", d.diagnostic.as_ref().map(|x| x.code.cause().to_owned())); }
+        }
     }
 }

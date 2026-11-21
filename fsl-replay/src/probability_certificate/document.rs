@@ -305,10 +305,10 @@ pub enum ProbabilityDocumentError {
     /// Targets or optimization differ from the independently checked claim.
     #[error("invalid_runtime_input: probability certificate objective mismatch")]
     ObjectiveMismatch,
-    /// The timed document's route, unit, scale, form or targets differ from the
-    /// checker's own derivation (not its optimization spelling).
-    #[error("invalid_runtime_input: timed probability certificate objective mismatch")]
-    TimedObjectiveMismatch,
+    /// A timed document's optimization spelling is not the checker's own
+    /// (the route, unit, scale, form and targets stay `ObjectiveMismatch`).
+    #[error("invalid_runtime_input: probability certificate optimization mismatch")]
+    OptimizationMismatch,
     /// A caller byte, row or arithmetic ceiling was reached.
     #[error("probability certificate limit reached: {} ({actual} > {bound})", limit.setting())]
     Limit {
