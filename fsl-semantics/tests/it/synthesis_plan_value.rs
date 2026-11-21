@@ -37,7 +37,7 @@ fn check(lengths: &str, objective: &str, goal: &str) -> Result<CheckedSynthesis,
         package_input_from_sources([("example/shop", &model)]).expect("the model unit compiles");
     let text = format!(
         "language \"ix:native\" edition \"1-draft\";\n\
-         profile v = \"filament.model.complete/v1\";\n\
+         profile v = \"filament.temporal.infinite-trace/v1\";\n\
          model M = \"example/shop\";\n\
          type Lengths = {lengths};\n\
          synthesis Reach using v grammar M::Order domain Lengths {objective} \
@@ -122,5 +122,8 @@ fn a_plan_declaration_refuses_what_the_plan_value_does_not_have() {
     assert!(refusals.contains("TypeMismatch"), "{refusals}");
     let refusals = check("Int[0, 3]", "minimize Reach.elapsed", "Reach.length >= 1")
         .expect_err("an untimed plan has no `elapsed`");
-    assert!(refusals.contains("elapsed"), "{refusals}");
+    assert!(refusals.contains("MissingName(\"elapsed\")"), "{refusals}");
+    let refusals =
+        check("Int[0, 3]", "", "Reach.unknown = 0").expect_err("an unknown plan field is refused");
+    assert!(refusals.contains("MissingName(\"unknown\")"), "{refusals}");
 }

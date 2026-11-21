@@ -80,7 +80,7 @@ fn plan_unit(lengths: &str, objective: &str, goal: &str) -> String {
          type Lengths = {lengths};\n\
          temporal SomeTime using t over (c: Config::ConfigVersion) clock \"model-steps\" \
          on origin {{ eventually holds(c.versionNumber = 3) }}\n\
-         synthesis Reach using v grammar Config::ConfigVersion domain Lengths \
+         synthesis Reach using t grammar Config::ConfigVersion domain Lengths \
          {objective} satisfies {{ {goal} }};\n"
     )
 }
@@ -305,11 +305,9 @@ fn plan_declarations_refuse_at_check() {
 }
 
 /// FSpec FR-806-AC-2: a read of `elapsed` over an untimed model refuses
-/// `missing-name`; the checker's record-field read names it `type-mismatch`
-/// until the timed plan value (FR-808) types `elapsed`.
+/// `missing-name`.
 #[test]
 #[trace("FSpec-TC-1956", "FSpec-FR-806-AC-2")]
-#[ignore = "QSL-1978: `elapsed` and `probability` belong to the timed and probabilistic plan value (FR-808, FR-809); a read over an untimed plan refuses type-mismatch, not missing-name"]
 fn an_elapsed_read_over_an_untimed_plan_refuses_missing_name() {
     let (exit, value) = plan(
         &plan_unit("Int[0, 3]", "minimize Reach.elapsed", "Reach.length >= 1"),

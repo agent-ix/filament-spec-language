@@ -5699,10 +5699,14 @@ impl<'a> Typer<'a> {
             .ok_or_else(|| {
                 refuse(
                     location,
-                    CheckCause::UnknownField {
-                        owner: declaration.name().into(),
-                        field: field.into(),
-                        span: member_span,
+                    if key.package() == "filament.plan-value" {
+                        CheckCause::MissingName(field.into())
+                    } else {
+                        CheckCause::UnknownField {
+                            owner: declaration.name().into(),
+                            field: field.into(),
+                            span: member_span,
+                        }
                     },
                 )
             })?;

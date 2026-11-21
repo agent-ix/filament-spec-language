@@ -434,9 +434,11 @@ fn unchecked(
 /// Run the bounded search in cost order through `searcher`, check the reported
 /// candidate through `checker`, and finish FSpec FR-823's outcome document and
 /// exit code. Both the source and the package route end here, so one request
-/// has one outcome whichever route read it. `checker` is a different
-/// evaluation of the declaration than `searcher`, so a candidate is `validated`
-/// only when two evaluations agree on it.
+/// has one outcome whichever route read it. On the source route `checker` is
+/// the emitted package's strict read; on the package route there is no other
+/// route, so it is a second strict read of the node with its own meter, a
+/// re-read and re-evaluation check. A candidate is `validated` only when the
+/// two evaluations agree on it.
 pub(super) fn run_value_synthesis(
     run: ValueRun<'_>,
     searcher: &mut impl CandidateEvaluator,
@@ -791,13 +793,8 @@ pub(super) fn run_bytes(
         },
         other => refused("/request/synthesis", other.to_string()),
     })?;
-    let mut model_documents = std::collections::BTreeMap::new();
-    for (selection, model) in request.models.iter().zip(&model_sources) {
-        model_documents.insert(
-            selection.source.identity.identity.clone(),
-            model.source().text().as_bytes().to_vec(),
-        );
-    }
+    let model_documents =
+        super::package_input_from_selected_models(&request.models, &model_sources)?;
     let read_limits =
         fsl_package::V2ReadLimits::bounded(fsl_replay::spine::I2_NATIVE_JOIN_STORAGE_DEFAULT);
     let admitted = fsl_package::admit_checked_package(
@@ -870,19 +867,19 @@ pub(super) fn run_bytes(
             is_candidate: checked.objective_is_candidate(),
         }),
     };
-    let identities = fsl_package::ReadIdentityRows::of_rows(
-        &admitted,
-        Vec::new(),
-        Vec::new(),
-        Vec::new(),
-        Vec::new(),
-    );
     let mut budget = read_limits.native_join_limits().budget();
+    let emission = compiled.emitted.emission();
+    let identities = emission
+        .identity_rows(&admitted, &mut budget)
+        .map_err(|failure| refused("/request/synthesis", format!("identity rows: {failure:?}")))?;
+    let equality = emission
+        .equality_witness(&admitted, &mut budget)
+        .map_err(|failure| refused("/request/synthesis", format!("equality rows: {failure:?}")))?;
     let bare = fsl_package::BarePackage::new(&admitted)
         .with_supply(
             fsl_package::BareSupply {
                 identities: &identities,
-                equality: None,
+                equality: Some(&equality),
             },
             &mut budget,
         )
@@ -1381,10 +1378,11 @@ fn exclusive_member(request: &super::wire::Request) -> super::Result<()> {
         || request.clause.is_some()
         || request.items.is_some()
         || request.tl_lowering.is_some()
+        || request.verification_plan.is_some()
     {
         return Err(refused(
             "/request/synthesis",
-            "is mutually exclusive with call, clause, items and tl_lowering",
+            "is mutually exclusive with call, clause, items, tl_lowering and verification_plan",
         ));
     }
     Ok(())
@@ -1735,7 +1733,7 @@ mod tests {
     /// last candidate still leaves it `validated`.
     #[test]
     #[trace("TC-2104", "FR-754-AC-3")]
-    #[trace("FSpec-TC-2038", "FSpec-FR-823-AC-1")]
+    #[trace("FSpec-TC-2038", "FSpec-FR-823-AC-5")]
     fn the_check_is_not_charged_to_the_search_work_limit() {
         let mut evaluator = pick(|c| c == 7, |c| c, None);
         let (outcome, exit) = run_pick(
@@ -1757,7 +1755,7 @@ mod tests {
     /// FSpec FR-823: a checker that disagrees with the search rejects the
     /// candidate with both evaluations in the record, exit 30.
     #[test]
-    #[trace("FSpec-TC-2038", "FSpec-FR-823-AC-1")]
+    #[trace("FSpec-TC-2038", "FSpec-FR-823-AC-5")]
     fn a_checker_that_disagrees_rejects_the_candidate() {
         let mut searcher = pick(|c| c >= 3, |c| c, None);
         let mut checker = pick(|c| c >= 4, |c| c, None);

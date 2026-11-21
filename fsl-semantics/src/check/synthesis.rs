@@ -174,7 +174,7 @@ pub(crate) fn check_forms(
                     )]);
                 }
                 Some(
-                    super::plan_value::declare(scope, named, form, object, &domain, &location)
+                    super::plan_value::declare(scope, named, form, object, &location)
                         .map_err(|refusal| vec![refusal])?,
                 )
             }
