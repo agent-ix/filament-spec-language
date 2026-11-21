@@ -1,0 +1,10 @@
+{
+  "format": "filament.state.snapshot/v1",
+  "identity": {"authority": "example", "identity": "recommendation-start"},
+  "observation": "current",
+  "model": {"identity": "test/counter"},
+  "anchor": {"kind": "initialization", "name": "start"},
+  "populations": [{"population": "ix://test/counter/counters", "complete": true,
+    "objects": [{"key": "counter", "type": "ix://test/counter/Counter",
+      "fields": {"value": {"integer": "0"}}}]}]
+}

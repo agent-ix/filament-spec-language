@@ -437,6 +437,10 @@ pub struct ProtocolRecommendation {
     pub node: String,
     /// The role named by the recommendation.
     pub role: String,
+    /// The protocol instance ordinal.
+    pub instance: u64,
+    /// The acting object's canonical reference, for a replicated role only.
+    pub actor: Option<String>,
     /// The operation's qualified identity.
     pub operation: String,
     /// The receiver's canonical JSON value.
@@ -1650,6 +1654,11 @@ impl ProtocolTransition {
         Some(ProtocolRecommendation {
             node: self.node.clone()?,
             role: role.clone(),
+            instance: self.thread.as_ref()?.instance,
+            actor: match &self.actor {
+                Some(actor) => Some(canonical(&reference_enc(&actor.object))?),
+                None => None,
+            },
             operation: operation.clone(),
             receiver: canonical(receiver)?,
             arguments: arguments
@@ -1832,19 +1841,29 @@ impl ProtocolTransition {
                 operation,
                 receiver,
                 arguments,
-            } => members.push((
-                "recommendation",
-                Enc::tagged(
-                    "protocol-recommendation",
-                    vec![
-                        ("node", Enc::Str(self.node.clone().unwrap_or_default())),
-                        ("role", Enc::Str(role.clone())),
-                        ("operation", Enc::Str(operation.clone())),
-                        ("receiver", receiver.clone()),
-                        ("arguments", Enc::Array(arguments.clone())),
-                    ],
-                ),
-            )),
+            } => {
+                let mut record = vec![
+                    ("node", Enc::Str(self.node.clone().unwrap_or_default())),
+                    ("role", Enc::Str(role.clone())),
+                    (
+                        "instance",
+                        self.thread
+                            .as_ref()
+                            .map(|thread| Enc::Str(thread.instance.to_string()))
+                            .unwrap_or(Enc::Unencodable("a-recommendation-has-a-thread")),
+                    ),
+                    ("operation", Enc::Str(operation.clone())),
+                    ("receiver", receiver.clone()),
+                    ("arguments", Enc::Array(arguments.clone())),
+                ];
+                if let Some(actor) = &self.actor {
+                    record.push(("actor", reference_enc(&actor.object)));
+                }
+                members.push((
+                    "recommendation",
+                    Enc::tagged("protocol-recommendation", record),
+                ));
+            }
             Members::Control => {}
             Members::Record {
                 record,
