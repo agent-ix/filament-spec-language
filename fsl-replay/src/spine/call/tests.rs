@@ -110,7 +110,7 @@ fn assert_division_value(result: Result<CallOutcome, Box<RunRefusal>>, expected:
 }
 
 #[test]
-#[trace("FR-767-AC-1", "FR-100-AC-1")]
+#[trace("FR-767-AC-1")]
 fn catalog_free_integer_division_runs_each_law_without_an_extension_catalog() {
     use crate::DefinitionRole;
 
@@ -145,7 +145,7 @@ fn catalog_free_integer_division_runs_each_law_without_an_extension_catalog() {
 }
 
 #[test]
-#[trace("FR-767-AC-4", "FR-670-AC-5", "FR-100-AC-1")]
+#[trace("FR-767-AC-4")]
 fn catalog_free_integer_division_without_a_selection_uses_only_the_header_law() {
     let call = division_call("q", -7, 3);
     for result in [
