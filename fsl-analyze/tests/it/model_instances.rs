@@ -1117,7 +1117,8 @@ fn a_key_holding_no_object_of_the_type_reads_absent_key() {
                         letters.atom(atom, instance, start, &mut meter)
                     }
                     .unwrap_or_else(|failure| {
-                        panic!("{route}: {activation} {formula}, {instance:?}: {failure:?}")
+                        let call_failure = bytes_letters.take_call_failure();
+                        panic!("{route}: {activation} {formula}, {instance:?}: {failure:?}; call_failure={call_failure:?}")
                     });
                     // Literals and immediate absent-key stops can consume no work.
                     // Every consumed counter must still equal the source's.
