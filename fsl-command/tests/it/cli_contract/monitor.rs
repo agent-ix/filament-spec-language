@@ -167,6 +167,73 @@ fn malformed_and_truncated_records_are_refusal_events() {
     );
 }
 
+/// QSL-2671, FR-644-AC-2: a stream whose first line is blank is one explicit
+/// malformed record. It gives a `refusal` event at physical record 0, the
+/// following observation is still accepted as the first position, and the
+/// summary counts the refused record.
+#[test]
+#[trace("FR-644-AC-2")]
+fn a_leading_blank_line_is_one_refused_record() {
+    let (_case, path) = load();
+    let mut input = b"\n".to_vec();
+    input.extend_from_slice(&records(&[9], true));
+    let stream = monitor(&path, &input);
+    let (events, summary) = stream.completed(10);
+    let refusals: Vec<&Value> = events
+        .iter()
+        .filter(|event| event["category"] == "refusal")
+        .collect();
+    assert_eq!(refusals.len(), 1, "{events:?}");
+    assert_eq!(refusals[0]["record"], 0, "{events:?}");
+    assert_eq!(
+        refusals[0]["disposition"]["cause"], "invalid-request",
+        "{events:?}"
+    );
+    assert_eq!(refusals[0]["disposition"]["member"], "record", "{events:?}");
+    let decided: Vec<(u64, String, String)> = changes(events)
+        .into_iter()
+        .filter(|(_, _, category)| category != "refusal")
+        .collect();
+    assert_eq!(
+        decided,
+        vec![
+            (1, "StaysLow".to_owned(), "violation".to_owned()),
+            (1, "DesiredSeen".to_owned(), "success".to_owned()),
+        ]
+    );
+    assert_eq!(summary["records"], 3, "{summary}");
+    assert_eq!(summary["refused"], 1, "{summary}");
+}
+
+/// QSL-2671, FR-644-AC-2: a blank or whitespace-only line between records is
+/// refused too, and leaves the session as the stream without it. An absent
+/// stream stays a legitimate empty trace, not a refusal.
+#[test]
+#[trace("FR-644-AC-2")]
+fn blank_and_whitespace_lines_are_refused_and_absence_is_not() {
+    let (_case, path) = load();
+    let mut input = records(&[2], false);
+    input.extend_from_slice(b"\n   \n");
+    input.extend_from_slice(&records(&[4], true));
+    let stream = monitor(&path, &input);
+    let (events, summary) = stream.completed(0);
+    let refused: Vec<u64> = events
+        .iter()
+        .filter(|event| event["category"] == "refusal")
+        .filter_map(|event| event["record"].as_u64())
+        .collect();
+    assert_eq!(refused, vec![1, 2], "{events:?}");
+    assert_eq!(summary["refused"], 2, "{summary}");
+
+    let stream = monitor(&path, b"");
+    let (events, summary) = stream.completed(0);
+    assert_eq!(summary["refused"], 0, "{summary}");
+    assert!(
+        events.iter().all(|event| event["category"] != "refusal"),
+        "{events:?}"
+    );
+}
+
 /// `--input` against stdin (driver FR-025 Inputs): the same records give
 /// byte-identical lines whichever stream carries them; the harness hands
 /// both as the same byte stream, so this checks the run is a function of
