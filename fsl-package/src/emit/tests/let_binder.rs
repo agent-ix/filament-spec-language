@@ -11,6 +11,10 @@ fn emitted_wire(declarations: &str) -> Value {
     let (_, package) = package_from_text(declarations);
     let emission = emit_checked(&package).expect("the package emits");
     assert_eq!(emission.omitted, [], "nothing is omitted");
+    assert!(
+        matches!(read_back(&emission), Read::Verified { .. }),
+        "IR admits the emitted binder link and its dependencies"
+    );
     wire(&emission)
 }
 
@@ -72,6 +76,10 @@ fn a_let_depends_on_the_binder_node_its_body_reads() {
         panic!("the let depends on one binder node: {binders:?}");
     };
     assert_eq!(
+        application["body"]["arguments"][0]["binder"], binder["node_id"],
+        "the binding explicitly links the binder node"
+    );
+    assert_eq!(
         application["body"]["arguments"][1]["target"], binder["node_id"],
         "the body reads the linked node"
     );
@@ -99,27 +107,20 @@ fn an_unread_binder_is_a_dependency_and_its_annotation_is_part_of_the_identity()
              {{ let y: {annotation} = x in true }}\n"
         )
     };
-    let let_key = |annotation: &str| {
-        let (_, package) = package_from_text(&source(annotation));
-        let key = package
-            .graph()
-            .semantic_graph()
-            .nodes()
-            .find(|node| node.semantic_form() == "let")
-            .expect("the let node")
-            .key()
-            .clone();
-        key
-    };
     let wire = emitted_wire(&source("Int[0, 1000]"));
+    let wider = emitted_wire(&source("Int[0, 2000]"));
+    let application = the_let(&wire);
+    let binders = dependent_parameters(&wire, application, "y");
+    let [binder] = binders.as_slice() else {
+        panic!("the unread binder is a dependency: {binders:?}");
+    };
     assert_eq!(
-        dependent_parameters(&wire, the_let(&wire), "y").len(),
-        1,
-        "the unread binder is a dependency"
+        application["body"]["arguments"][0]["binder"], binder["node_id"],
+        "the unread binder remains explicitly linked"
     );
     assert_ne!(
-        let_key("Int[0, 1000]"),
-        let_key("Int[0, 2000]"),
+        application["node_id"],
+        the_let(&wider)["node_id"],
         "the binder's annotation is part of the let's identity"
     );
 }
@@ -144,6 +145,10 @@ fn each_ieee_operand_let_depends_on_its_binder_node() {
         let [binder] = found.as_slice() else {
             panic!("the let depends on one operand binder: {found:?}");
         };
+        assert_eq!(
+            application["body"]["arguments"][0]["binder"], binder["node_id"],
+            "each IEEE operand binding links its own binder node"
+        );
         binders.push(parameter_member(binder, "level").clone());
     }
     binders.sort_by_key(Value::to_string);
