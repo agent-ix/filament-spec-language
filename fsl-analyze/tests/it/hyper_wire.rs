@@ -400,6 +400,7 @@ fn analyze_hyper_over_an_explicit_finite_trace_set_uses_its_population() {
     let ws = Workspace::new("hyper-wire-finite-trace-set");
     let mut request = request_members(Some(json!([{
         "claim": "Secret",
+        "kind": "temporal-satisfaction",
         "traces": {"authority": "test", "identity": "population"}
     }])));
     request["documents"] = json!([
