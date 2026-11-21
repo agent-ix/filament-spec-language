@@ -11,7 +11,7 @@
 use std::collections::{BTreeMap, VecDeque};
 
 use filament_exact::Integer;
-use fsl_eval::simulation::model::{ClockRole, TaskAutomaton};
+use fsl_eval::simulation::model::{ClockRole, TaskAutomaton, TaskProductSystem};
 use fsl_foundation::source::provenance::OccurrenceKey;
 use fsl_replay::{
     CertEdge, CertNode, DivergenceWitness, DivergentTarget, TaskClockCeiling,
@@ -22,6 +22,84 @@ use num_bigint::BigInt;
 
 use super::dbm::Bound;
 use super::task_symbolic::{SymbolicGraph, SymbolicIdentity};
+
+/// Builds a no-reachable-release certificate from the engine's closed source
+/// graph and its own time-divergence admission witness. A declared release is
+/// allowed only when none of its source steps is reachable. `None` means a
+/// release is reachable or the source search did not establish an admitted
+/// closed graph.
+///
+/// # Errors
+///
+/// Returns the source engine's typed limit, cancellation or expansion refusal.
+pub fn no_release_task_product_certificate(
+    product: &TaskProductSystem<'_, '_>,
+    obligation: OccurrenceKey,
+    limits: super::ZoneCheckLimits,
+    cancel: &filament_exact::Cancel,
+) -> Result<Option<ZoneCertificate<OccurrenceKey>>, super::ZoneCheckRefusal> {
+    use super::search::{Halt, Judged, Run, Searched};
+    let mut run = Run::new(
+        product.source(),
+        Judged::SourceClosure,
+        None,
+        &[],
+        limits,
+        cancel,
+    );
+    let searched = match run.search() {
+        Ok(searched) => searched,
+        Err(Halt::Outcome(searched)) => *searched,
+        Err(Halt::Refusal(refusal)) => return Err(refusal),
+    };
+    let proof = match searched {
+        Searched::Holds { proof, .. } => proof,
+        Searched::Stopped { cause, .. } => return Err(super::ZoneCheckRefusal::Stopped(cause)),
+        Searched::Undecided { .. } => return Ok(None),
+        Searched::Graph { .. } | Searched::HoldsReduced { .. } | Searched::Violated { .. } => {
+            return Err(super::ZoneCheckRefusal::Fault("source-closure-outcome"));
+        }
+    };
+    for index in 0..run.edges.len() {
+        if cancel.poll() {
+            return Err(super::ZoneCheckRefusal::Stopped(super::ZoneStop::Cancelled));
+        }
+        let edge = run.edges[index].clone();
+        if let Some((step, _)) = edge.step {
+            let steps = match run.steps_of(edge.from) {
+                Ok(steps) => steps,
+                Err(Halt::Refusal(refusal)) => return Err(refusal),
+                Err(Halt::Outcome(searched)) => {
+                    return match *searched {
+                        Searched::Stopped { cause, .. } => {
+                            Err(super::ZoneCheckRefusal::Stopped(cause))
+                        }
+                        _ => Err(super::ZoneCheckRefusal::Fault("source-closure-steps")),
+                    }
+                }
+            };
+            let step = steps
+                .get(step)
+                .ok_or(super::ZoneCheckRefusal::Fault("source-closure-step"))?;
+            if product
+                .plan()
+                .releases
+                .iter()
+                .any(|release| release.operation == step.operation())
+            {
+                return Ok(None);
+            }
+        }
+    }
+    let rows = TaskQueueBound::from_checked_task_set(product.plan().task_set)
+        .ok_or(super::ZoneCheckRefusal::Fault("source-closure-queues"))?;
+    let mut certificate = proof.proving(obligation);
+    certificate.task_product = TaskProductCertificate::closed_no_release_product(rows);
+    if certificate.task_product.is_none() {
+        return Err(super::ZoneCheckRefusal::Fault("source-closure-member"));
+    }
+    Ok(Some(certificate))
+}
 
 /// Why no certificate was built from a closed quotient.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -400,12 +478,55 @@ pub fn read_back_unchanged(
     identity: serde_json::Value,
     claim: &OccurrenceKey,
 ) -> Option<(serde_json::Value, ZoneCertificate<OccurrenceKey>)> {
-    let wire = built.to_wire(identity.clone()).ok()?;
-    let (read, read_identity) = ZoneCertificate::from_wire(&wire, claim.clone()).ok()?;
+    read_back(built, identity, claim, None)
+}
+
+/// Reads the emitted task certificate with genuine source clock identities.
+/// Its LU bounds, guard fragments, delay edges and admission witness must all
+/// survive the round trip unchanged before the independent check runs.
+pub fn read_back_unchanged_with_source(
+    built: &ZoneCertificate<OccurrenceKey>,
+    identity: serde_json::Value,
+    claim: &OccurrenceKey,
+    source: &fsl_eval::simulation::model::TimedSystem<'_, '_>,
+) -> Option<(serde_json::Value, ZoneCertificate<OccurrenceKey>)> {
+    read_back(built, identity, claim, Some(source))
+}
+
+fn read_back(
+    built: &ZoneCertificate<OccurrenceKey>,
+    identity: serde_json::Value,
+    claim: &OccurrenceKey,
+    source: Option<&fsl_eval::simulation::model::TimedSystem<'_, '_>>,
+) -> Option<(serde_json::Value, ZoneCertificate<OccurrenceKey>)> {
+    let wire = match source {
+        Some(source) => built.to_wire_with_source(identity.clone(), source),
+        None => built.to_wire(identity.clone()),
+    }
+    .ok()?;
+    let (read, read_identity) = match source {
+        Some(source) => ZoneCertificate::from_wire_with_source(&wire, claim.clone(), source),
+        None => ZoneCertificate::from_wire(&wire, claim.clone()),
+    }
+    .ok()?;
+    let written = match source {
+        Some(source) => read.to_wire_with_source(read_identity.clone(), source),
+        None => read.to_wire(read_identity.clone()),
+    }
+    .ok()?;
     (read_identity == identity
         && read.admitted == built.admitted
-        && read.to_wire(read_identity).ok().as_ref() == Some(&wire))
-    .then_some((wire, read))
+        && read.lu_bounds == built.lu_bounds
+        && read.edges.len() == built.edges.len()
+        && read.edges.iter().zip(&built.edges).all(|(read, built)| {
+            read.from == built.from
+                && read.to == built.to
+                && read.part == built.part
+                && read.horizon == built.horizon
+                && read.silent == built.silent
+        })
+        && written == wire)
+        .then_some((wire, read))
 }
 
 /// The reading of a wire edge list `flat` from `start`, as

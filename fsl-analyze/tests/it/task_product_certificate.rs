@@ -57,7 +57,10 @@ pub(crate) fn world_for(set: &str, tasks: &[&str], declarations: &str) -> World 
 
 pub(crate) type Certificate = ZoneCertificate<OccurrenceKey>;
 
-pub(crate) fn claim_of<'a>(world: &'a World, name: &str) -> &'a fsl_semantics::check::CheckedScheduleClaim {
+pub(crate) fn claim_of<'a>(
+    world: &'a World,
+    name: &str,
+) -> &'a fsl_semantics::check::CheckedScheduleClaim {
     world
         .package
         .graph()
@@ -944,7 +947,7 @@ fn a_mixed_criticality_set_is_certificate_unchecked() {
 }
 
 /// A source with no operations and one task set that declares no release.
-fn no_release() -> World {
+pub(crate) fn no_release() -> World {
     world(
         &document(&[], &[]),
         TIMED,
@@ -1206,7 +1209,7 @@ fn a_zeno_region_cycle_is_not_an_admitted_witness() {
 
 /// [`no_release`]'s task set, with a source that binds `a`'s release to an
 /// operation: the one difference between the two sources.
-fn releasable() -> World {
+pub(crate) fn releasable() -> World {
     world_for(
         "N",
         &["a"],
