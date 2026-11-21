@@ -164,20 +164,33 @@ pub(crate) fn reference_occurrences(
                 }
             }
             Value::Composite(composite) => {
-                if let Some(CompositeShape::Record(fields)) = types
+                match types
                     .composite(composite.declaration().clone())
                     .map(filament_semantic_value::declaration::CompositeDeclaration::shape)
                 {
-                    for (field, slot) in fields.iter().zip(composite.slots()).rev() {
-                        if let filament_exact::FieldValue::Present(value) = slot {
-                            let mut nested = path.clone();
-                            nested.push(PathStep::Field(field.name().to_owned()));
-                            if field.presence() == filament_exact::Presence::Optional {
-                                nested.push(PathStep::OptionValue);
+                    Some(CompositeShape::Record(fields)) => {
+                        for (field, slot) in fields.iter().zip(composite.slots()).rev() {
+                            if let filament_exact::FieldValue::Present(value) = slot {
+                                let mut nested = path.clone();
+                                nested.push(PathStep::Field(field.name().to_owned()));
+                                if field.presence() == filament_exact::Presence::Optional {
+                                    nested.push(PathStep::OptionValue);
+                                }
+                                pending.push((value, nested));
                             }
+                        }
+                    }
+                    Some(CompositeShape::Tuple(_)) => {
+                        for (position, slot) in composite.slots().iter().enumerate().rev() {
+                            let filament_exact::FieldValue::Present(value) = slot else {
+                                return Err(());
+                            };
+                            let mut nested = path.clone();
+                            nested.push(PathStep::Index(position));
                             pending.push((value, nested));
                         }
                     }
+                    Some(CompositeShape::Union(_)) | None => {}
                 }
             }
             Value::Collection(collection) => {
