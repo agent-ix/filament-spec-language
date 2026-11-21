@@ -1898,7 +1898,7 @@ impl<'a> WorkInputs<'_, 'a> {
             (_, Some(Route::ProtocolAnalysis)) => super::super::request::protocol_analysis_item(
                 Box::new(self.input.package().package().clone()),
                 &self.input.input(),
-                self.input.package().package_name(),
+                self.input.package().package().name(),
                 self.binding,
                 item,
                 &self.limits,
@@ -1995,7 +1995,13 @@ impl<'a> WorkInputs<'_, 'a> {
             _ => AnalyzeItem::unadapted(item.request_index, item.kind, family),
         };
         let expected = match &item.form {
-            _ if item.kind == Capability::GlobalConformance => {
+            _ if matches!(
+                item.kind,
+                Capability::GlobalConformance
+                    | Capability::LocalProjection
+                    | Capability::Realizability
+            ) =>
+            {
                 Some(crate::protocol_analysis::manifest::BACKEND_ID)
             }
             Some(ItemForm::Temporal(_)) => Some(crate::model_check::manifest::BACKEND_ID),
