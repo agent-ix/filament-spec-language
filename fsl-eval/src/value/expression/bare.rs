@@ -107,15 +107,23 @@ pub(crate) fn evaluate_hyper_holds(
     if components.len() != clause.quantifiers().len() {
         return Err(fault("hyper-atom-observes-one-state-per-trace"));
     }
-    let first = components.first().copied()
+    let first = components
+        .first()
+        .copied()
         .ok_or_else(|| fault("hyper-atom-observes-one-state-per-trace"))?;
-    let claim = clause.assembled_occurrence()
+    let claim = clause
+        .assembled_occurrence()
         .ok_or_else(|| fault("hyper-clause-has-an-assembled-occurrence"))?;
-    let term = package.project_hyper_holds(claim, atom.index()).map_err(|failure| match failure {
-        fsl_package::BareClauseRefusal::Selection(failure) => refusal(package, failure),
-        fsl_package::BareClauseRefusal::Pending { fact, .. } => unmet(package, fact),
-    })?;
-    let world = package.world().map_err(|failure| refusal(package, failure))?;
+    let term =
+        package
+            .project_hyper_holds(claim, atom.index())
+            .map_err(|failure| match failure {
+                fsl_package::BareClauseRefusal::Selection(failure) => refusal(package, failure),
+                fsl_package::BareClauseRefusal::Pending { fact, .. } => unmet(package, fact),
+            })?;
+    let world = package
+        .world()
+        .map_err(|failure| refusal(package, failure))?;
     let mut machine = Machine::with_world(World::Bytes(&world), first, None, None, meter, &[])
         .with_components(super::evaluate::ComponentReads {
             environments: components,
@@ -136,7 +144,12 @@ pub(crate) fn evaluate_hyper_holds(
             }
         }
     }
-    machine.run(ReaderNode::root(term.projection()), term.projection().frame_slots(), values)
+    machine
+        .run(
+            ReaderNode::root(term.projection()),
+            term.projection().frame_slots(),
+            values,
+        )
         .map_err(CallFailure::Fault)
 >>>>>>> 4b199dc736 (Evaluate package hyper atoms through the reader projection)
 }

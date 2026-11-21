@@ -125,8 +125,6 @@ pub use bare_term::{
 #[cfg(feature = "std")]
 pub use bare_terminal::{BareTerminal, BareTerminalDeclaration, BareTerminalPredicate};
 #[cfg(feature = "std")]
-pub use checked_views::BareHyperTerm;
-#[cfg(feature = "std")]
 pub use bare_world::BareWorld;
 pub use checked::{CheckedPackage, ResolvedDependency};
 #[cfg(feature = "std")]
@@ -149,6 +147,8 @@ pub use checked_v2::{
     TerminalResolveRefusal, TimedLiteralTypes, TimedNodeMetadata, UnsupportedWire, V2ReadLimits,
     V2ReadRefusal, WitnessSupplyFailure,
 };
+#[cfg(feature = "std")]
+pub use checked_views::BareHyperTerm;
 #[cfg(feature = "std")]
 pub use emit::write_operand_slots;
 #[cfg(feature = "std")]
