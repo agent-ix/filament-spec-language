@@ -940,9 +940,7 @@ fn absent_probabilistic_members_take_their_published_defaults() {
     assert_eq!(request["max_witnesses"], 8, "{bounded}");
 }
 
-/// FR-254 / QSL-2551: a delay-weighted fraction is a valid form, so EN-4
-/// refuses it as not yet implemented (`unsupported`), never as a caller's
-/// method choice (`invalid-request` `not-statistical`).
+/// Long-run delay weighting remains outside the bounded-window sampler.
 #[test]
 fn delay_weighting_from_source_is_not_yet_implemented_not_a_method_error() {
     let claim = "probabilistic Weighted using t on M over (m: M::Msg) under Even on origin \
@@ -961,6 +959,37 @@ fn delay_weighting_from_source_is_not_yet_implemented_not_a_method_error() {
         item["record"]["diagnostic"]["cause"], "not-statistical",
         "{item}"
     );
+}
+
+/// Both sends have delay at least 1 ms, so the entire half-ms window is
+/// spent at attempts = 0. Its held and total durations are both 1/2 ms.
+#[trace("FR-254-AC-3", "FSpec-FR-407-AC-19")]
+#[test]
+fn bounded_delay_fraction_from_source_clips_the_first_leaving_step() {
+    let claim = "probabilistic Weighted using t on M over (m: M::Msg) under Even on origin \
+         with alpha 0.4, beta 0.4, indifference 0.05 \
+         { mean of (fraction holds(m.attempts = 0) over [0, rational(1, 2) ms] weighted by delay) >= 0.5 }\n\
+         probabilistic WeightedEvent using t on M over (m: M::Msg) under Even on origin \
+         with alpha 0.4, beta 0.4, indifference 0.05 \
+         { probability >= 0.5 [ fraction holds(m.attempts = 0) over [0, rational(1, 2) ms] weighted by delay >= rational(1, 2) ] }";
+    let document = run_timed(
+        "bounded-delay-fraction",
+        claim,
+        json!([{"claim": "Weighted", "probabilistic": {
+            "evidence": "statistical", "method": {"type": "okamoto"}, "seed": "7"}},
+            {"claim": "WeightedEvent", "probabilistic": {
+            "evidence": "statistical", "method": {"type": "sprt"}, "seed": "7"}}]),
+    );
+    for index in 0..2 {
+        let item = &document["items"][index];
+        assert_eq!(label(item), "measured", "{document}");
+        assert_eq!(item["verdict"]["decision"]["type"], "accepted", "{item}");
+        assert_eq!(
+            item["verdict"]["estimate"]["value"],
+            json!({"numerator": "1", "denominator": "1"}),
+            "{item}"
+        );
+    }
 }
 
 /// FR-741 "Request": an item with no `probabilistic` member at all reaches a

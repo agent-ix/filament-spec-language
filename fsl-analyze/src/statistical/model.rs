@@ -135,10 +135,6 @@ pub fn check_statistical(
     let form = statistical.form();
     if matches!(
         &reading,
-        Reading::Fraction { fraction, .. }
-            if matches!(fraction.weight.as_ref(), Some(Weighting::Delay))
-    ) || matches!(
-        &reading,
         Reading::LongRun { weight, .. }
             if matches!(weight, Some(Weighting::Delay))
     ) {
@@ -659,7 +655,8 @@ fn reduce(
     let timed_horizon = match &reading {
         Reading::Formula { timed_horizon, .. } => timed_horizon.clone(),
         Reading::Measure { measure, .. } => measure.timed_within.clone(),
-        Reading::Fraction { .. } | Reading::LongRun { .. } => None,
+        Reading::Fraction { fraction, .. } => fraction.timed_window.clone(),
+        Reading::LongRun { .. } => None,
     };
     let mut claim = StatisticalClaim::new(form, bound, confidence)
         .map_err(|_| fault("a-checked-claim-has-an-indifference-region"))?;
@@ -887,6 +884,11 @@ impl<'c> Shared<'_, '_, 'c> {
                 return self.timed_elapsed(test, binding, seed, trace, horizon);
             }
         }
+        if let Reading::Fraction { fraction, .. } = &self.reading {
+            if fraction.weight == Some(Weighting::Delay) {
+                return self.timed_fraction(test, binding, seed, trace);
+            }
+        }
         let mut cursor = match self.cursor(start, seed, trace) {
             Ok(cursor) => cursor,
             Err(Ended::Halt(halt)) => return Err(halt),
@@ -907,6 +909,116 @@ impl<'c> Shared<'_, '_, 'c> {
         Ok(Drawn {
             sample,
             steps: cursor.steps,
+        })
+    }
+
+    /// A delay-weighted fraction integrates each position through the next
+    /// timestamp, clipping the final residence interval to the horizon.
+    fn timed_fraction(
+        &self,
+        test: &TestSubject,
+        binding: usize,
+        seed: u64,
+        trace: u64,
+    ) -> Result<Drawn, SampleHalt> {
+        let Reading::Fraction { fraction, event } = &self.reading else {
+            return Err(broken());
+        };
+        let horizon = fraction.timed_window.as_ref().ok_or_else(broken)?;
+        let timed = self.timed_system.as_ref().ok_or_else(broken)?;
+        let initial = timed
+            .initial()
+            .into_iter()
+            .nth(usize::try_from(test.initial).unwrap_or(usize::MAX))
+            .ok_or_else(broken)?;
+        if let Some(cause) = self.cancel.cause() {
+            return Err(SampleHalt::Cancelled(cause));
+        }
+        let sample = fsl_eval::simulation::model::sample_timed(
+            timed,
+            &initial,
+            self.workload,
+            fsl_eval::simulation::ChoicePoint {
+                seed,
+                trace,
+                step: 0,
+                choice: 0,
+            },
+            self.timed_sampling.q,
+            horizon,
+            self.timed_sampling.max_sample_steps,
+        )
+        .map_err(|stop| match stop {
+            TimedSampleStop::Race(TimedRaceStop::NotStochastic { state, identity }) => {
+                SampleHalt::NotStochastic { state, identity }
+            }
+            TimedSampleStop::TimeLockedSample { state } => SampleHalt::TimeLockedSample { state },
+            TimedSampleStop::MaxSampleSteps => SampleHalt::MaxSampleSteps {
+                value: self.timed_sampling.max_sample_steps,
+            },
+            _ => broken(),
+        })?;
+        let over = self
+            .bindings
+            .get(binding)
+            .and_then(|(_, over)| over.as_ref());
+        let mut held = Rational::from_integer(Integer::zero());
+        let mut total = held.clone();
+        let mut last_site = None;
+        for (position, state) in sample.states.iter().enumerate() {
+            let stamp = sample.stamps.get(position).ok_or_else(broken)?;
+            let end = sample.stamps.get(position + 1).unwrap_or(horizon);
+            let weight = end.sub(stamp);
+            let site = UndefinedSite {
+                position: u64::try_from(position).unwrap_or(u64::MAX),
+                state_key: self
+                    .system
+                    .state_key(state.discrete())
+                    .map_err(|_| broken())?
+                    .1,
+                locus: UndefinedLocus::ClaimPredicate(ClaimPredicate::Target),
+                transition: None,
+                time: Some(Box::new(fsl_replay::TimedPoint {
+                    stamp: stamp.clone(),
+                    clocks: state.clocks().values().to_vec(),
+                })),
+            };
+            let readings = self
+                .system
+                .state_predicates(state.discrete(), &[(&fraction.predicate, over)])
+                .map_err(SampleHalt::Expansion)?;
+            match readings.first().ok_or_else(broken)? {
+                PredicateReading::True => held = held.add(&weight),
+                PredicateReading::False => {}
+                PredicateReading::Undefined { cause, .. } => {
+                    return Ok(Drawn {
+                        sample: Sample::Undefined(UndefinedEvaluation {
+                            site,
+                            cause: cause.clone(),
+                        }),
+                        steps: sample.steps,
+                    })
+                }
+                PredicateReading::Refused(outcome) => {
+                    return Err(SampleHalt::PredicateRefused(outcome.clone()))
+                }
+            }
+            total = total.add(&weight);
+            last_site = Some(site);
+        }
+        let reading = match held.div(&total) {
+            Some(value) => match event {
+                Some(bound) => Sample::Event(compares(bound, &MeasureValue::Value(value))),
+                None => Sample::Fraction(UnitFraction::try_from(value).map_err(|_| broken())?),
+            },
+            None => Sample::Undefined(UndefinedEvaluation {
+                site: last_site.ok_or_else(broken)?,
+                cause: UndefinedCause::Kernel(filament_exact::Undefined::DivisionByZero),
+            }),
+        };
+        Ok(Drawn {
+            sample: reading,
+            steps: sample.steps,
         })
     }
 
