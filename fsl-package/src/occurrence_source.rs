@@ -184,7 +184,7 @@ mod tests {
     #[trace("FR-531-AC-39", "FSpec-FR-322-AC-510")]
     #[test]
     fn repeated_body_occurrences_keep_their_own_regions_and_paths() {
-        let (_, checked) = crate::emit::tests::package_from_text(
+        let (text, checked) = crate::emit::tests::package_from_text(
             "function f using v(x: Integer): Integer pure { (x + 1) * (x + 1) }\n",
         );
         let emission =
@@ -240,6 +240,26 @@ mod tests {
         let second = source_at(&repeated[1].0, &repeated[1].1, consumed).unwrap();
         assert_ne!(first.0.occurrence, second.0.occurrence);
         assert_ne!(first.0.region, second.0.region);
+        for located in [&first.0, &second.0] {
+            let start = usize::try_from(located.region.start()).unwrap();
+            let end = usize::try_from(located.region.end()).unwrap();
+            assert!(text.get(start..end).unwrap().contains("x + 1"));
+        }
+        assert_eq!(
+            occurrence_source(
+                &package,
+                &repeated[0].0.application,
+                &repeated[0].0.occurrence,
+                Some(&second.0.region)
+            ),
+            Err(OccurrenceSourceRefusal::UnknownRegion)
+        );
+        let mut unknown = repeated[0].0.occurrence.clone();
+        unknown.ordinal = u64::MAX;
+        assert_eq!(
+            occurrence_source(&package, &repeated[0].0.application, &unknown, None),
+            Err(OccurrenceSourceRefusal::UnknownOccurrence)
+        );
         assert_eq!(first.0.same_source_order(&second.0), Some(Ordering::Less));
         assert_eq!(first.1, consumed);
         assert!(matches!(
