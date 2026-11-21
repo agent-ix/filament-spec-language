@@ -7,6 +7,8 @@ relationships:
     type: verifies
   - target: ix://agent-ix/filament-spec-language/FR-330
     type: verifies
+  - target: ix://agent-ix/filament-spec-language/FR-1039
+    type: verifies
 ---
 # TC-1295: Evaluate a temporal clause under the finite-window profile on the spine
 
@@ -38,12 +40,24 @@ stated, and `p`, `q` are `holds` atoms of the fixture.
 
 For rows 41 and 42, use the source and checked-package run routes with the
 same caller-supplied `sources`, matching each atom region by source reference.
+These are direct byte-only adapter requests after caller provisioning of
+admitted `Source` values. They perform no source-file intake during execution.
 Exercise a `Timestamped` trace, an FR-504 `Progressed` trace and a call carrying
 the corresponding progress ledger; each fixture must produce non-empty
 decision support. The package route receives the emitted checked package and
 does not compile source again. Text comes only from the caller's `sources`,
 including when a package handoff holds other source bytes; no implicit file
 read supplies missing text.
+
+For rows 43 and 44, exercise the command's `native-run/1` wire request with
+`package` and the explicit top-level `sources` array from
+[FR-1039](../functional/FR-1039-run-every-native-run-member-over-a-selected-checked-package.md).
+Use exactly the existing five-field source selections, for example
+`{"file":"unit.native","authority":"example","identity":"unit-1","document":"doc-1","formal_revision":1}`.
+The command explicitly reads those selected files during intake, then passes
+the admitted sources to execution. This file intake is distinct from the
+direct byte-only adapter's absence of file reads. Source-run command controls
+omit `sources` and use their compilation's admitted sources.
 
 | # | Clause (`on origin` unless stated) | Trace and progress | Expected |
 | --- | --- | --- | --- |
@@ -88,7 +102,9 @@ read supplies missing text.
 | 39 | row 1's request with `execution` `Open`, then `Closed` | as row 1 | the same verdict; the premises report `Open`, then `Closed` (FR-501-AC-25) |
 | 40 | row 17's `until` and `release` `on origin`, and its `since` and `triggered` `on each` (the anchor at position 2); then `eventually[0,1] holds(p)` | stamps 0,1,1; positions 1 and 2 both keyed `(A, 1)`, distinct identities (a third atom differs); listed as given, then the two keyed observations reversed | stage `evaluate`, `invalid_runtime_input`/`invalid-value` at position 2 for each of the four operators and both listings; `eventually` evaluates with one outcome and one `result_identity` for both listings (FR-501-AC-26) |
 | 41 | BothRoutesSupportAtomParity: row 28's clauses with the atom authored as `holds( p )` | row 28's timestamped inputs and equivalent FR-504 progressed inputs, with and without a valid ledger; the same caller-supplied sources on both routes | equal decision-support pairs on both routes, with the atom name exactly `holds( p )`, including its internal spaces and the whole `holds` atom; positions remain those of the corresponding trace |
-| 42 | PackageMissingSourceRefusal: row 41's package request | remove the caller-supplied source whose reference matches the atom region; then replace it with a source of another reference; then supply the matching reference with bytes shorter than the span or with a span endpoint inside a UTF-8 scalar | each case preserves FR-283's `SourceNotSupplied` contract: category refusal, `invalid_runtime_input`/`missing-member` naming `sources`, exit 20, with the region's source identity and no clause record; the run refusal stays at stage `call`, as on the source route, without using handoff source bytes, reading a file or compiling source again |
+| 42 | PackageMissingSourceRefusal: row 41's direct byte-only package request after caller provisioning | remove the caller-supplied source whose reference matches the atom region; then replace it with a source of another reference; then supply the matching reference with bytes shorter than the span or with a span endpoint inside a UTF-8 scalar | each case preserves FR-283's `SourceNotSupplied` contract: category refusal, `invalid_runtime_input`/`missing-member` naming `sources`, exit 20, with the region's source identity and no clause record; the run refusal stays at stage `call`, as on the source route, without using handoff source bytes, doing file intake during adapter execution or compiling source again |
+| 43 | PackageCommandSupportAtomParity: row 41 through the command's package route | explicitly select the unit's exact original bytes in `request.sources`; use an authored file path different from the compile path and separately change only valid `document` and `formal_revision`; run timestamped and progressed inputs, with and without the ledger | non-empty support pairs equal the source command control and direct adapter; atom text is exactly `holds( p )`; native reference matching and text do not depend on the valid formal metadata or file path; explicitly selected files are admitted once before execution, no source compilation |
+| 44 | PackageCommandMissingSourceRefusal: row 43 | omit `sources`, use `[]`, replace the native reference, shorten the valid admitted UTF-8 bytes, then move the region endpoint inside a UTF-8 scalar; retain different source bytes in the handoff | each gives row 42's stage `call` refusal and no clause record; the command's explicit source intake is permitted, while the handoff supplies no fallback text; an invalid-UTF-8 source file instead retains FR-001's source/S0 intake refusal, not `SourceNotSupplied` |
 
 ## Expected Results
 

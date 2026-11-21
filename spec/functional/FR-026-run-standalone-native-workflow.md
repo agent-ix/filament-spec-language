@@ -99,8 +99,14 @@ setting (`request_bytes` or `dependent_bytes`) and its configured value
 (Outputs). A file exactly at the remaining limit is read; one byte over it
 is not.
 The run command shall count every dependent file toward `dependent_bytes` by its
-size, whatever its role (model, each program unit, library, snapshot, invocation or
-package), independently of the shared selected-file count ceiling.
+size, whatever its role (model, each program unit, library, snapshot, invocation,
+package or explicit runtime rendering source selected by
+[FR-1039](FR-1039-run-every-native-run-member-over-a-selected-checked-package.md)'s
+`request.sources`), independently of the shared selected-file count ceiling.
+The command SHALL count each `sources` entry toward that same 64-file ceiling.
+The command SHALL read its selected file once, in array order, after package
+and model admission and before member execution. The existing request-byte limit also bounds the
+array's JSON; there is no separate source-count or runtime source-byte limit.
 The command shall begin each invocation with fresh budgets.
 
 ## Acceptance Criteria
@@ -112,6 +118,7 @@ The command shall begin each invocation with fresh budgets.
 | FR-026-AC-5 | `command` given one `1-draft` request file by its path from two different process working directories returns equal outcomes, the request's relative, absolute and parent-relative file paths resolving against the request's directory and as written; no call writes a byte to stdout or stderr. | Test (TC-104) |
 | FR-026-AC-6 | A `1-draft` run request whose program source names `authority` `agent-ix` and `identity` `p` runs, and its `spine-run-result/1` `source` renders those two labels and no other identity member. The same request without the program source's `authority`, and again without its `identity`, refuses at the request stage with `invalid-request`, exit code 20. A present but blank `authority` refuses with `invalid_source_identity`, cause `blank-label`, field `label` `authority` (FR-001). | Test (TC-430) |
 | FR-026-AC-7 | Through `command` in process, a `1-draft` run request padded with trailing JSON whitespace to exactly `request_bytes` bytes, and one whose dependent files total exactly `dependent_bytes`, each run with exit code 0. The first with one more whitespace byte, and the second with `dependent_bytes` one lower, each settle category `incomplete`, exit code 22, with one diagnostic of code `resource_exhausted`, `cause` `null` and `locus` `null`, whose message names the setting (`request_bytes`, `dependent_bytes`), its configured value and the option `--request-bytes` or `--dependent-bytes`; neither gives category `refusal` or exit code 20. A request selecting 65 files settles `incomplete`, exit code 22, `resource_exhausted` with `cause` `null` naming the selected-file count and its maximum 64. | Test (TC-104) |
+| FR-026-AC-8 | A package request whose dependent files, including every `sources` file, total exactly `dependent_bytes` runs; one additional byte settles incomplete with `resource_exhausted`, exit 22, naming `dependent_bytes` and its configured value. A valid package request selecting 64 files across all roles runs, while adding a 65th through `sources` settles incomplete with `resource_exhausted`, exit 22, naming the selected-file maximum 64. Padding the same request's JSON to exactly `request_bytes` runs; one extra byte settles incomplete with `resource_exhausted`, exit 22, naming `request_bytes`. The existing null cause/locus and limit-raising option diagnostics are preserved. | Test |
 
 ## Dependencies
 
