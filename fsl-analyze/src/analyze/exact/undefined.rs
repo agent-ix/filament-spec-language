@@ -150,8 +150,23 @@ fn materialize(
         return Err(ProbabilityWitnessError::Refused);
     };
     let initial_key = if path.steps.is_empty() {
-        key(&path.key)?
-    } else if let Some(_) = monitor {
+        match monitor.as_ref() {
+            Some(monitor) => {
+                let control = monitor
+                    .unread_key()
+                    .map_err(|_| ProbabilityWitnessError::Refused)?;
+                ProbabilityProductKey::for_formula_state(
+                    reference,
+                    &path.key.model,
+                    &control,
+                    limits.document,
+                    cancel,
+                )
+                .map_err(|_| ProbabilityWitnessError::Refused)?
+            }
+            None => key(&path.key)?,
+        }
+    } else if monitor.is_some() {
         let ProbForm::Probability {
             event: Event::Formula { formula, .. },
             ..
@@ -279,6 +294,11 @@ fn materialize(
             PredicateRole::Target => fsl_replay::ClaimPredicate::Target,
         }),
     };
+    let product_state = if path.steps.is_empty() {
+        initial_key.clone()
+    } else {
+        key(&path.key)?
+    };
     Ok((
         ProbabilityUndefinedWitness {
             path: ProbabilisticCounterexample {
@@ -299,7 +319,7 @@ fn materialize(
                 },
                 cause: path.cause.clone(),
             },
-            product_state: key(&path.key)?,
+            product_state,
         },
         spelled,
     ))

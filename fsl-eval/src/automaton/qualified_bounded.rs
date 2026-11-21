@@ -24,7 +24,8 @@ pub enum QualifiedBoundedError {
     Key(#[from] KeyRefusal),
 }
 
-/// An origin-activated event-position `eventually[0,h] holds(P)` monitor.
+/// An origin-activated event-position `eventually[0,h] holds(P)` or
+/// `always[0,h] holds(P)` monitor.
 /// Its keys and ranks are projected from the reached automaton's real debt,
 /// with no separately advanced horizon counter. The caller owns the checked
 /// occurrence and binding in `StateContext` and supplies P's truth letters.
@@ -98,11 +99,6 @@ impl QualifiedBoundedMonitor {
     /// The checked `holds` atom whose truth supplies each observation.
     pub fn atom(&self) -> FormulaNodeId {
         self.translation.atom()
-    }
-
-    /// The actual monitor state before position zero is read.
-    pub fn initial(&mut self) -> Result<StateId, QualifiedBoundedError> {
-        Ok(self.monitor.initial()?)
     }
 
     /// Canonical control before the first observation, for an undefined read.

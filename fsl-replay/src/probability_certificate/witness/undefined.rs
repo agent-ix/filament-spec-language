@@ -95,6 +95,9 @@ pub fn replay_probabilistic_undefined(
     let mut previous = None;
     let mut storage = 0;
     let mut meter = filament_exact::Meter::new(system.meter_limits()).with_cancel(cancel.clone());
+    if evidence.scheduler.len() > limits.model.limits.max_states {
+        return Err(ExactProbabilityGraphError::LimitReached.into());
+    }
     for (key, action) in &evidence.scheduler {
         bounded::visit(&mut meter, cancel)?;
         if previous.is_some_and(|previous| previous >= key) {
@@ -217,6 +220,9 @@ pub fn replay_probabilistic_undefined(
                     )))
                 }
                 PredicateReading::Undefined { cause, .. } => {
+                    if !seen.contains(&pre_key) && seen.len() >= limits.model.limits.max_states {
+                        return Err(ExactProbabilityGraphError::LimitReached.into());
+                    }
                     let evaluation = crate::UndefinedEvaluation {
                         site: crate::UndefinedSite {
                             position: u64::try_from(position).unwrap_or(u64::MAX),
@@ -241,6 +247,7 @@ pub fn replay_probabilistic_undefined(
                         return Ok(ProbabilityWitnessReplay::Parity);
                     }
                     bounded::retain(pre_key.as_bytes().len(), &mut storage, limits)?;
+                    check_bits(&mass, limits.max_rational_bits)?;
                     let token = ReproducedProbabilityWitness {
                         evidence: evidence.clone(),
                         mass,
