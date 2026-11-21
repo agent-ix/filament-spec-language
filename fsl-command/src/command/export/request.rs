@@ -3,11 +3,12 @@
 //! member, and the admission refusals of FR-1015.
 
 use super::super::{Result, RunCause};
+use fsl_analyze::analyze::document::{DocumentSelection, ProtocolSelection};
 use fsl_foundation::Setting;
 use serde_json::{Map, Value};
 
 /// The members of an `export` request (FSpec FR-817).
-const MEMBERS: [&str; 8] = [
+const MEMBERS: [&str; 10] = [
     "profile",
     "target_family",
     "obligations",
@@ -16,6 +17,8 @@ const MEMBERS: [&str; 8] = [
     "initial",
     "limits",
     "output",
+    "protocols",
+    "universes",
 ];
 
 /// The observers of FSpec FR-817.
@@ -109,6 +112,10 @@ pub(super) struct Request {
     pub(super) initial: Option<String>,
     pub(super) limits: Limits,
     pub(super) output: Option<String>,
+    /// The protocol subjects named for clauses whose activation requires them.
+    pub(super) protocols: Vec<ProtocolSelection>,
+    /// The replicated-role universes supplied by the caller.
+    pub(super) universes: Vec<DocumentSelection>,
 }
 
 /// A member the reader refuses, with its FR-805 `cause`.
@@ -210,6 +217,30 @@ pub(super) fn read(member: &Value, given: &fsl_replay::spine::ExportLimits) -> R
         Some(Value::Object(record)) => Some(output_file(record)?),
         Some(_) => return Err(refuse("/output", "wrong-value-kind", "expected an object")),
     };
+    let protocols = protocol_inputs(object)?;
+    let universes = match object.get("universes") {
+        None | Some(Value::Null) => Vec::new(),
+        Some(Value::Array(entries)) => entries
+            .iter()
+            .enumerate()
+            .map(|(index, value)| {
+                serde_json::from_value(value.clone()).map_err(|error| {
+                    refuse(
+                        &format!("/universes/{index}"),
+                        "invalid-value",
+                        format!("the universe is not an analyze document reference: {error}"),
+                    )
+                })
+            })
+            .collect::<Result<Vec<_>>>()?,
+        Some(_) => {
+            return Err(refuse(
+                "/universes",
+                "wrong-value-kind",
+                "expected an array of universe bindings",
+            ));
+        }
+    };
     Ok(Request {
         target,
         obligations,
@@ -218,7 +249,74 @@ pub(super) fn read(member: &Value, given: &fsl_replay::spine::ExportLimits) -> R
         initial: text(object, "initial")?.map(str::to_owned),
         limits,
         output,
+        protocols,
+        universes,
     })
+}
+
+fn protocol_inputs(object: &Map<String, Value>) -> Result<Vec<ProtocolSelection>> {
+    let entries = match object.get("protocols") {
+        None | Some(Value::Null) => return Ok(Vec::new()),
+        Some(Value::Array(entries)) => entries,
+        Some(_) => {
+            return Err(refuse(
+                "/protocols",
+                "wrong-value-kind",
+                "expected an array of protocol bindings",
+            ));
+        }
+    };
+    let mut seen = std::collections::BTreeSet::new();
+    entries
+        .iter()
+        .enumerate()
+        .map(|(index, entry)| {
+            let path = format!("/protocols/{index}");
+            let Some(entry_object) = entry.as_object() else {
+                return Err(refuse(
+                    &path,
+                    "wrong-value-kind",
+                    "expected a protocol binding object",
+                ));
+            };
+            if let Some(unknown) = entry_object
+                .keys()
+                .find(|key| !["protocol", "over", "roles", "capacities"].contains(&key.as_str()))
+            {
+                return Err(RunCause::ExportProtocolRequest {
+                    path: format!("/request/export{path}"),
+                    reason: format!("unknown protocol binding member `{unknown}`"),
+                });
+            }
+            let selection: ProtocolSelection =
+                serde_json::from_value(entry.clone()).map_err(|error| {
+                    refuse(
+                        &path,
+                        "invalid-value",
+                        format!("the protocol binding is not an analyze protocol subject: {error}"),
+                    )
+                })?;
+            if selection.protocol.is_empty() {
+                return Err(refuse(
+                    &format!("{path}/protocol"),
+                    "wrong-value-kind",
+                    "expected a non-empty protocol name",
+                ));
+            }
+            if !seen.insert(selection.protocol.clone()) {
+                return Err(refuse(
+                    &format!("{path}/protocol"),
+                    "invalid-value",
+                    "a protocol binding is named twice",
+                ));
+            }
+            Ok(selection)
+        })
+        .collect()
+}
+
+pub(super) fn pointer_token(value: &str) -> String {
+    value.replace('~', "~0").replace('/', "~1")
 }
 
 fn obligations(object: &Map<String, Value>) -> Result<Vec<String>> {
@@ -347,4 +445,64 @@ fn limits(object: &Map<String, Value>, given: &fsl_replay::spine::ExportLimits) 
         }
     }
     Ok(limits)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ix_trace_rs::trace;
+    use serde_json::json;
+
+    fn member() -> Value {
+        json!({
+            "profile": "filament.output.tla2/v1",
+            "obligations": ["T"],
+            "protocols": [{
+                "protocol": "Hand",
+                "over": {"reference": {"population": "counters", "key": "<<99>>"}},
+                "roles": {"a": {"type": "model-binding", "selection": "model/Counter"}},
+                "capacities": {"Hand::ch": "2"}
+            }],
+            "universes": [{"authority": "agent-ix", "identity": "snapshots/counters"}]
+        })
+    }
+
+    #[test]
+    #[trace("FR-1015-AC-17")]
+    fn protocol_and_universe_bindings_use_the_analyze_reader_shapes() {
+        let request = read(&member(), &Default::default()).expect("the analyze subject shape");
+        assert_eq!(request.protocols.len(), 1);
+        assert_eq!(request.protocols[0].protocol, "Hand");
+        assert_eq!(
+            request.protocols[0].over.as_ref().unwrap().reference.key,
+            "<<99>>"
+        );
+        assert_eq!(request.protocols[0].roles["a"].selection, "model/Counter");
+        assert_eq!(request.protocols[0].capacities["Hand::ch"], "2");
+        assert_eq!(request.universes.len(), 1);
+        assert_eq!(request.universes[0].identity, "snapshots/counters");
+    }
+
+    #[test]
+    #[trace("FR-1015-AC-17")]
+    fn protocol_bindings_reject_unknown_members_like_analyze_reader() {
+        let mut member = member();
+        member["protocols"][0]["unexpected"] = json!(true);
+        let error = read(&member, &Default::default()).expect_err("closed protocol binding");
+        assert_eq!(error.code(), fsl_foundation::Code::InvalidRequest);
+        let output = super::super::super::output::error(
+            &super::super::super::RunError {
+                cause: error,
+                sources: crate::Sources::default(),
+            },
+            false,
+        )
+        .expect("serialize request failure");
+        assert_eq!(output["code"], "invalid-request", "{output}");
+        assert!(output.get("cause").is_none(), "{output}");
+        assert_eq!(
+            output["details"]["path"], "/request/export/protocols/0",
+            "{output}"
+        );
+    }
 }

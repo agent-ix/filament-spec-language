@@ -2,9 +2,9 @@
 //! FSpec FR-811 classification and FR-814 name mangling. An obligation whose
 //! dependency closure holds a construct the target cannot state is
 //! `unrepresented`, with one `target-unrepresentable` cause per such node. An
-//! obligation the target can state is lowered by FR-812 and FR-813; this
-//! build lowers none, so it stops the export as a mapper failure after the
-//! floor is decided and writes no package.
+//! obligation the target can state is lowered by FR-812 and FR-813 when its
+//! state and temporal constructs are in the supported subset; an unsupported
+//! specified construct stops the export with a typed capability refusal.
 
 use super::super::{Result, RunCause};
 use super::lower;
@@ -13,7 +13,7 @@ use super::{Disposition, Mapped, Record, Unlowered};
 use filament_contract_model::{CheckedNodeId, CheckedPackageV2};
 use filament_exact::NodeKey;
 use fsl_semantics::check::wire_id::WireGraph;
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 use std::collections::{BTreeMap, BTreeSet};
 
 /// One authored clause of the program an obligation name may resolve to.
@@ -317,6 +317,7 @@ pub(super) fn run(
     effective: &EffectiveLimits,
 ) -> Result<Mapped> {
     let graph = Graph::new(package)?;
+    validate_protocol_bindings(&graph, clauses, request)?;
     let mut meter = Meter {
         limits: effective,
         nodes: 0,
@@ -458,4 +459,154 @@ pub(super) fn run(
         work: meter.work,
         regions_written,
     })
+}
+
+/// Ensure a protocol-required temporal subject has the static role bindings
+/// that the analyzer would require before the exporter classifies it.
+fn validate_protocol_bindings(
+    graph: &Graph<'_>,
+    clauses: &[ClauseFact],
+    request: &Request,
+) -> Result<()> {
+    let selected: BTreeSet<_> = request.obligations.iter().map(String::as_str).collect();
+    if !request.universes.is_empty() {
+        return Err(RunCause::ExportRequest {
+            path: "/request/export/universes".to_owned(),
+            cause: "unsupported-selection",
+            reason: "explicit universes are outside the lowered temporal protocol subset"
+                .to_owned(),
+        });
+    }
+    let mut required_protocols = BTreeSet::new();
+    for clause in clauses
+        .iter()
+        .filter(|clause| selected.contains(clause.name.as_str()))
+    {
+        let Some(key) = &clause.obligation else {
+            continue;
+        };
+        let Some(root) = graph.by_key.get(key).copied() else {
+            continue;
+        };
+        if clause.construct != "temporal/temporal_clause" {
+            continue;
+        }
+        let node = graph.node(root);
+        let Ok(subject) =
+            fsl_package::checked_views::temporal_subject(graph.package, &node.node_id)
+        else {
+            continue;
+        };
+        for protocol_id in subject.requirements() {
+            let Some(protocol_position) = graph.position(protocol_id) else {
+                continue;
+            };
+            let protocol_node = graph.node(protocol_position);
+            let Ok((_, protocol_name)) = fsl_package::protocol_view::declaration(protocol_node)
+            else {
+                continue;
+            };
+            if protocol_name.is_empty() {
+                continue;
+            }
+            let protocol_name = protocol_name
+                .iter()
+                .map(|part| part.as_ref())
+                .collect::<Vec<_>>()
+                .join("::");
+            required_protocols.insert(protocol_name.to_owned());
+            let Some((binding_index, binding)) = request
+                .protocols
+                .iter()
+                .enumerate()
+                .find(|(_, binding)| binding.protocol == protocol_name)
+            else {
+                return Err(RunCause::ExportRequest {
+                    path: "/request/export/protocols".to_owned(),
+                    cause: "wrong-role-mapping",
+                    reason: format!("the required protocol `{protocol_name}` has no binding"),
+                });
+            };
+            if binding.over.is_none() {
+                return Err(RunCause::ExportRequest {
+                    path: format!("/request/export/protocols/{binding_index}/over"),
+                    cause: "wrong-role-mapping",
+                    reason: "the required protocol binding has no `over` selection".to_owned(),
+                });
+            }
+            let view =
+                fsl_package::protocol_view::protocol_view(graph.package, &protocol_node.node_id)
+                    .map_err(|_| internal("a required protocol has no readable view"))?;
+            let mut required_roles = BTreeSet::new();
+            for role_id in view.roles() {
+                let Some(role_position) = graph.position(role_id) else {
+                    continue;
+                };
+                let role_node = graph.node(role_position);
+                let Ok((_, role_name)) = fsl_package::protocol_view::declaration(role_node) else {
+                    continue;
+                };
+                let Some(role_name) = role_name.last() else {
+                    continue;
+                };
+                let role_name = role_name.as_ref();
+                let role_path = super::request::pointer_token(role_name);
+                if fsl_package::protocol_view::role_is_replicated(role_node)
+                    .map_err(|_| internal("a protocol role has no readable replication mode"))?
+                {
+                    return Err(RunCause::ExportRequest {
+                        path: format!(
+                            "/request/export/protocols/{binding_index}/roles/{role_path}"
+                        ),
+                        cause: "unsupported-selection",
+                        reason: "replicated protocol roles are outside the lowered subset"
+                            .to_owned(),
+                    });
+                }
+                required_roles.insert(role_name.to_owned());
+                if !binding
+                    .roles
+                    .get(role_name)
+                    .is_some_and(|role| role.kind == "model-binding" && !role.selection.is_empty())
+                {
+                    return Err(RunCause::ExportRequest {
+                        path: format!(
+                            "/request/export/protocols/{binding_index}/roles/{role_path}"
+                        ),
+                        cause: "wrong-role-mapping",
+                        reason: format!(
+                            "the required static role `{role_name}` has no model binding"
+                        ),
+                    });
+                }
+            }
+            if binding
+                .roles
+                .keys()
+                .any(|role| !required_roles.contains(role))
+            {
+                return Err(RunCause::ExportRequest {
+                    path: format!("/request/export/protocols/{binding_index}/roles"),
+                    cause: "wrong-role-mapping",
+                    reason:
+                        "the protocol binding names a role that is not declared by the protocol"
+                            .to_owned(),
+                });
+            }
+        }
+    }
+    if request
+        .protocols
+        .iter()
+        .any(|binding| !required_protocols.contains(&binding.protocol))
+    {
+        return Err(RunCause::ExportRequest {
+            path: "/request/export/protocols".to_owned(),
+            cause: "wrong-role-mapping",
+            reason:
+                "the request binds a protocol that is not required by a selected temporal clause"
+                    .to_owned(),
+        });
+    }
+    Ok(())
 }
