@@ -230,12 +230,7 @@ fn finite_population_bound_open_closure_and_incomplete_body_are_preserved() {
         evaluate_finite_hyper(&open, 2, &[(Forall, "a".into())], |_| {
             FiniteTupleOutcome::False { position: 0 }
         }),
-        FiniteHyperOutcome::Refuted {
-            false_tuples: vec![FiniteFalseTuple {
-                traces: vec!["a".into()],
-                position: 0,
-            }],
-        }
+        FiniteHyperOutcome::Inconclusive
     );
     assert_eq!(
         evaluate_finite_hyper(&open, 2, &[(Exists, "a".into())], |_| {

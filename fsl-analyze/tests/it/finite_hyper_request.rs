@@ -219,6 +219,10 @@ fn repeated_trace_identities_fold_only_when_records_match() {
         "{item}"
     );
     assert_eq!(item["record"]["cause"]["kind"], "invalid-input", "{item}");
+    assert_eq!(
+        item["record"]["diagnostic"]["detail"]["trace"], "a",
+        "the conflicting identity is named: {item}"
+    );
 }
 
 /// FR-898-AC-5: a tuple missing an aligned state remains inconclusive.

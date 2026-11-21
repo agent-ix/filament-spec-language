@@ -4,7 +4,7 @@
 use filament_exact::{Meter, Value};
 use filament_semantic_value::catalog::CatalogCode;
 use fsl_eval::hyper::{
-    evaluate_finite_hyper, FiniteHyperOutcome, FiniteQuantifier, FiniteTrace, FiniteTraceClosure,
+    evaluate_finite_hyper, FinitePopulationError, FiniteHyperOutcome, FiniteQuantifier, FiniteTrace, FiniteTraceClosure,
     FiniteTracePopulation, FiniteTupleOutcome,
 };
 use fsl_eval::value::CheckedPackageEvaluation;
@@ -68,19 +68,19 @@ pub(super) fn item<'a>(
         crate::model_check::manifest::BACKEND_ID,
         move |_| {
             let Some(reference) = request.options.traces.as_ref() else {
-                return invalid_population();
+                return invalid_population(None);
             };
             let Some(bytes) = binding.snapshots.get(reference) else {
-                return invalid_population();
+                return invalid_population(None);
             };
             let Ok(document) = serde_json::from_slice::<PopulationDocument>(bytes) else {
-                return invalid_population();
+                return invalid_population(None);
             };
             if document.format != "filament.trace-population/1"
                 || !matches!(document.closure.as_str(), "closed" | "open")
                 || document.record_type != record_type_name(package, form.clause.record())
             {
-                return invalid_population();
+                return invalid_population(None);
             }
             let expression = package.graph().finite_hyper_expression(form.clause.name());
             let Some(expression) = expression else {
@@ -106,10 +106,11 @@ pub(super) fn item<'a>(
             };
             let mut traces = Vec::with_capacity(document.traces.len());
             for trace in document.traces {
+                let named = trace.identity.clone();
                 let mut records = Vec::with_capacity(trace.states.len());
                 for state in trace.states {
                     let Some(fields) = state.as_object() else {
-                        return invalid_population();
+                        return invalid_population(Some(&named));
                     };
                     let mut values = Vec::with_capacity(record_fields.len());
                     for (qualified_field, field_type) in record_fields.iter().take(fields_per_trace)
@@ -121,12 +122,12 @@ pub(super) fn item<'a>(
                             )));
                         };
                         let Some(json) = fields.get(field) else {
-                            return invalid_population();
+                            return invalid_population(Some(&named));
                         };
                         let Some(value) = crate::protocol_analysis::recording::recording_value(
                             json, field_type, types,
                         ) else {
-                            return invalid_population();
+                            return invalid_population(Some(&named));
                         };
                         values.push(value);
                     }
@@ -152,7 +153,15 @@ pub(super) fn item<'a>(
                 traces,
             ) {
                 Ok(population) => population,
-                Err(_) => return invalid_population(),
+                Err(error) => {
+                    return invalid_population(match &error {
+                        FinitePopulationError::EmptyTraceIdentity => None,
+                        FinitePopulationError::EmptyTrace { identity }
+                        | FinitePopulationError::ConflictingTraceIdentity { identity } => {
+                            Some(identity)
+                        }
+                    });
+                }
             };
             let quantifiers: Vec<_> = form
                 .clause
@@ -173,6 +182,7 @@ pub(super) fn item<'a>(
                 })
                 .collect();
             let mut meter = Meter::new(limits.accounting);
+            let mut meter_stop = None;
             let evaluated =
                 evaluate_finite_hyper(&population, form.clause.bound(), &quantifiers, |selected| {
                     let max_positions = selected
@@ -215,6 +225,17 @@ pub(super) fn item<'a>(
                                     position: position as u64,
                                 };
                             }
+                            filament_eval::FamilyOutcome::Evaluated(
+                                filament_exact::Outcome::Incomplete(incomplete),
+                            ) => {
+                                meter_stop = Some(fsl_replay::IncompleteCause::LimitReached {
+                                    limit: fsl_replay::ModelCheckLimit::EvaluationMeter {
+                                        counter: incomplete.limit_kind,
+                                    },
+                                    value: incomplete.limit,
+                                });
+                                return FiniteTupleOutcome::Incomplete;
+                            }
                             _ => return FiniteTupleOutcome::Incomplete,
                         }
                     }
@@ -230,11 +251,16 @@ pub(super) fn item<'a>(
                 }
                 FiniteHyperOutcome::Inconclusive => {
                     EngineReport::FiniteHyper(Box::new(FiniteHyperReport {
-                        terminal: fsl_replay::TerminalRecord::inconclusive(
-                            request_index,
-                            backend,
-                            fsl_replay::InconclusiveCause::TemporalIndeterminate,
-                        ),
+                        terminal: match meter_stop {
+                            Some(cause) => {
+                                fsl_replay::TerminalRecord::incomplete(request_index, backend, cause)
+                            }
+                            None => fsl_replay::TerminalRecord::inconclusive(
+                                request_index,
+                                backend,
+                                fsl_replay::InconclusiveCause::TemporalIndeterminate,
+                            ),
+                        },
                         counterexample: None,
                     }))
                 }
@@ -336,10 +362,16 @@ fn invalid_population_code() -> CatalogCode {
     CatalogCode::new("invalid_runtime_input", "invalid-value")
 }
 
-fn invalid_population() -> EngineReport {
-    EngineReport::Refused(Refusal::Declined(
-        fsl_replay::ProofRefusalCause::InvalidInput,
-        fsl_replay::DeclineCode::Fsl(fsl_foundation::Code::InvalidRuntimeInput),
-        invalid_population_code(),
-    ))
+/// The FR-898 invalid population refusal, naming `trace` when one is at fault.
+fn invalid_population(trace: Option<&str>) -> EngineReport {
+    let cause = fsl_replay::ProofRefusalCause::InvalidInput;
+    let decline = fsl_replay::DeclineCode::Fsl(fsl_foundation::Code::InvalidRuntimeInput);
+    EngineReport::Refused(match trace {
+        Some(trace) => {
+            let mut detail = serde_json::Map::new();
+            detail.insert("trace".to_owned(), serde_json::json!(trace));
+            Refusal::DeclinedWithDetail(cause, decline, invalid_population_code(), detail)
+        }
+        None => Refusal::Declined(cause, decline, invalid_population_code()),
+    })
 }
