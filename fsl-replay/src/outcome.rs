@@ -417,6 +417,9 @@ enum ItemWhere {
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct ItemDiagnostic {
     code: &'static str,
+    /// The catalog cause; empty for a code FSpec FR-272 gives no cause
+    /// (`malformed_wire`), which writes no `cause` member.
+    #[serde(skip_serializing_if = "str::is_empty")]
     cause: &'static str,
     detail: serde_json::Map<String, serde_json::Value>,
 }

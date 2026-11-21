@@ -300,6 +300,39 @@ pub struct CompositionCycle {
     pub source: Span,
 }
 
+/// The packages whose graphs the node ids of a composition's component slots
+/// index (FSpec FR-322 "Scope"): the package of each `components` entry by
+/// name, and the package of the component of each guarantee clause.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct ComponentPackages {
+    by_name: BTreeMap<String, String>,
+    by_clause: BTreeMap<NodeKey, String>,
+}
+
+impl ComponentPackages {
+    /// The packages of the components named `by_name`, and of the component of
+    /// each guarantee clause node in `by_clause`.
+    pub fn new(by_name: BTreeMap<String, String>, by_clause: BTreeMap<NodeKey, String>) -> Self {
+        Self { by_name, by_clause }
+    }
+
+    /// The package of the `components` entry named `name`.
+    pub fn of_component(&self, name: &str) -> Option<&str> {
+        self.by_name.get(name).map(String::as_str)
+    }
+
+    /// The package of the component of the guarantee clause at `node`: the
+    /// `components` entry whose `name` is the `component` of that guarantee.
+    pub fn of_clause(&self, node: &NodeKey) -> Option<&str> {
+        self.by_clause.get(node).map(String::as_str)
+    }
+
+    /// Whether `package` is the package of some `components` entry.
+    pub fn holds_package(&self, package: &str) -> bool {
+        self.by_name.values().any(|entry| entry == package)
+    }
+}
+
 /// A checked component composition declaration (FSpec FR-489, FR-491).
 #[derive(Clone, Debug, PartialEq)]
 pub struct CheckedComposition {
@@ -469,6 +502,37 @@ impl CheckedComposition {
     /// than one node, and self edges).
     pub fn cycles(&self) -> &[CompositionCycle] {
         &self.cycles
+    }
+
+    /// The package of each `components` entry, and of the component of each
+    /// guarantee clause the declaration names (FSpec FR-322 "Scope").
+    pub fn component_packages(&self) -> ComponentPackages {
+        let by_name: BTreeMap<String, String> = self
+            .components
+            .iter()
+            .map(|component| (component.name.clone(), component.subject.package.clone()))
+            .collect();
+        let named = self
+            .guarantees
+            .iter()
+            .map(|guarantee| &guarantee.reference)
+            .chain(
+                self.relies
+                    .iter()
+                    .flat_map(|rely| [&rely.guarantee, &rely.on]),
+            )
+            .chain(
+                self.liveness_dependencies
+                    .iter()
+                    .flat_map(|premise| [&premise.guarantee, &premise.on]),
+            );
+        let by_clause = named
+            .filter_map(|clause| {
+                let package = by_name.get(&clause.component)?;
+                Some((clause.node.clone(), package.clone()))
+            })
+            .collect();
+        ComponentPackages { by_name, by_clause }
     }
 
     fn facts(&self, reference: &ClauseRef) -> Option<&CompositionClauseFacts> {

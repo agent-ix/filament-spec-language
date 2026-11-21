@@ -271,6 +271,10 @@ pub struct CompositionItem {
     /// in `premises` order, of the `premises` indices of the peer entries it
     /// assumes.
     pub assumptions: Vec<Vec<usize>>,
+    /// The package of each `components` entry and of the component of each
+    /// guarantee clause: the graphs the ids of the slots index (FSpec FR-322
+    /// "Scope").
+    pub components: fsl_semantics::check::ComponentPackages,
 }
 
 /// The checked finite-hyper clause selected by a temporal-satisfaction item.
@@ -1463,6 +1467,7 @@ fn work<'a>(
                             item.claim.clone(),
                             form.premises.clone(),
                             form.assumptions.clone(),
+                            form.components.clone(),
                         ),
                         shared,
                     )

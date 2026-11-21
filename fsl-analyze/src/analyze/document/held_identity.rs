@@ -9,14 +9,17 @@
 //! rewrites one whole item through [`WireGraph::document_value`], the one
 //! conversion the request and export routes also use, against the one graph
 //! the item names: the request's own package, or the dependency its `package`
-//! member names. A node id's own `package` member names its owner and never
+//! member names; a `composition` item writes the ids of a component slot in the
+//! component's graph. A node id's own `package` member names its owner and never
 //! picks a graph (FSpec FR-322 "Scope"). A reader of the result resolves the
 //! form back with [`WireGraph::structural_value`].
 
 use std::collections::BTreeMap;
 
-use filament_exact::{node_wire::node_key_from_json, NodeKey, PathSegment};
-use fsl_semantics::check::wire_id::{foreign_id_container, WireGraph};
+use fsl_semantics::check::wire_id::{
+    component_key_held, foreign_id_container, key_subject_package, peer_graphs, WireGraph,
+};
+use fsl_semantics::check::ComponentPackages;
 use serde_json::Value;
 
 use crate::analyze::GraphUnavailable;
@@ -42,14 +45,6 @@ fn is_certificate_identity(value: &Value) -> bool {
             && object.contains_key("model")
             && object.contains_key("ordinal")
     })
-}
-
-/// Whether `object` is a node id: exactly `package`, `path` and `ordinal`.
-fn is_id(object: &serde_json::Map<String, Value>) -> bool {
-    object.len() == 3
-        && object.contains_key("package")
-        && object.contains_key("path")
-        && object.contains_key("ordinal")
 }
 
 /// Whether `value` holds a node id with a nested operand id, or an identity
@@ -78,30 +73,57 @@ pub(super) fn needs_hold(value: &Value) -> bool {
     false
 }
 
+/// The graphs a `composition` item's component ids resolve against (FSpec
+/// FR-322 "Scope").
+pub(super) struct ComponentScope<'a> {
+    /// The package of each `components` entry by name, and of the component
+    /// of each guarantee clause.
+    pub components: &'a ComponentPackages,
+    /// The graph of each admitted dependency package, by identity.
+    pub graphs: &'a BTreeMap<String, Result<WireGraph, GraphUnavailable>>,
+}
+
+impl ComponentScope<'_> {
+    /// The graph of component package `package`, which must be a `components`
+    /// entry's package.
+    fn graph(&self, package: &str) -> Result<&WireGraph, HeldIdentityError> {
+        if !self.components.holds_package(package) {
+            return Err(HeldIdentityError::NotInGraph(format!(
+                "{package} is the package of no component of the composition"
+            )));
+        }
+        match self.graphs.get(package) {
+            Some(Ok(graph)) => Ok(graph),
+            Some(Err(cause)) => Err(HeldIdentityError::NoGraph(cause.clone())),
+            None => Err(HeldIdentityError::NoGraph(GraphUnavailable::NotEmitted)),
+        }
+    }
+}
+
 /// Write every node id under `value` in the document-held form of `graph`,
 /// and fill each identity's null `model` with `model`.
 ///
-/// `composition` is the dependency map of an item whose `request.kind` is
-/// `composition` and that has no `package` member: until FSpec FR-322 names a
-/// segment for a node of a dependency's graph, such an item keeps in
-/// structural form exactly the ids that have no held form in `graph` because
-/// the id or one of its operands is a node of a direct dependency.
+/// `composition` is the scope of an item whose `request.kind` is
+/// `composition` and that has no `package` member: each `component-guarantee`
+/// key of its `premises` is written against the graph of the package its
+/// subject identity carries, and each `interface-mismatch` `interface`
+/// against the graph of the package of its `component` (FSpec FR-322
+/// "Scope"). Every other id is written against `graph`.
 ///
 /// # Errors
 ///
-/// [`HeldIdentityError::NotInGraph`] for an id that has no held form for any
-/// other reason.
+/// [`HeldIdentityError::NotInGraph`] for an id that has no held form.
 pub(super) fn hold(
     value: &Value,
     graph: &WireGraph,
-    composition: Option<&BTreeMap<String, Result<WireGraph, GraphUnavailable>>>,
+    composition: Option<&ComponentScope<'_>>,
     model: Option<&str>,
 ) -> Result<Value, HeldIdentityError> {
     let mut held = match composition {
         None => graph
             .document_value(value)
             .map_err(HeldIdentityError::NotInGraph)?,
-        Some(dependencies) => hold_composition(value, graph, dependencies)?,
+        Some(scope) => hold_composition(value, graph, scope)?,
     };
     if let Some(model) = model {
         let mut pending = vec![&mut held];
@@ -119,66 +141,103 @@ pub(super) fn hold(
     Ok(held)
 }
 
-/// [`hold`] for a composition item: each id is held in `graph`, except an id
-/// that names a node of a direct dependency, which stays whole and structural.
-fn hold_composition(
+/// The RFC 6901 pointers, in `value`, of the ids a composition item writes
+/// against a component graph, each with the package of that graph.
+fn component_slots(
     value: &Value,
-    graph: &WireGraph,
-    dependencies: &BTreeMap<String, Result<WireGraph, GraphUnavailable>>,
-) -> Result<Value, HeldIdentityError> {
-    let mut held = value.clone();
-    let mut pending = vec![&mut held];
-    while let Some(current) = pending.pop() {
+    scope: &ComponentScope<'_>,
+) -> Result<Vec<(String, String, bool)>, HeldIdentityError> {
+    let mut slots = Vec::new();
+    if let Some(premises) = value["request"]["premises"].as_array() {
+        for (at, premise) in premises.iter().enumerate() {
+            let Some(key) = premise.get("key") else {
+                continue;
+            };
+            if premise["role"] != "component-guarantee" {
+                continue;
+            }
+            let package = key_subject_package(key).ok_or_else(|| {
+                HeldIdentityError::NotInGraph(format!("premise {at} carries no subject identity"))
+            })?;
+            slots.push((
+                format!("/request/premises/{at}/key"),
+                package.to_owned(),
+                true,
+            ));
+        }
+    }
+    let mut pending = vec![(String::new(), value)];
+    while let Some((pointer, current)) = pending.pop() {
         match current {
-            Value::Object(object) if foreign_id_container(object) => {}
-            Value::Object(object) if is_id(object) => {
-                let id = Value::Object(std::mem::take(object));
-                match graph.document_value(&id) {
-                    Ok(held) => *current = held,
-                    Err(error) => {
-                        let key = node_key_from_json(&id)
-                            .map_err(|error| HeldIdentityError::NotInGraph(error.to_string()))?;
-                        if !names_dependency(&key, graph, dependencies) {
-                            return Err(HeldIdentityError::NotInGraph(error));
-                        }
-                        *current = id;
-                    }
+            Value::Object(members) => {
+                if members.get("type").and_then(Value::as_str) == Some("interface-mismatch")
+                    && members.contains_key("interface")
+                {
+                    let component = members.get("component").and_then(Value::as_str);
+                    let package = component
+                        .and_then(|name| scope.components.of_component(name))
+                        .ok_or_else(|| {
+                            HeldIdentityError::NotInGraph(format!(
+                                "an interface-mismatch names no component: {component:?}"
+                            ))
+                        })?;
+                    slots.push((format!("{pointer}/interface"), package.to_owned(), false));
+                }
+                for (name, member) in members {
+                    let name = name.replace('~', "~0").replace('/', "~1");
+                    pending.push((format!("{pointer}/{name}"), member));
                 }
             }
-            Value::Object(object) => pending.extend(object.values_mut()),
-            Value::Array(items) => pending.extend(items.iter_mut()),
+            Value::Array(items) => {
+                for (at, item) in items.iter().enumerate() {
+                    pending.push((format!("{pointer}/{at}"), item));
+                }
+            }
             _ => {}
         }
     }
-    Ok(held)
+    Ok(slots)
 }
 
-/// Whether `key`'s package, or the package of an operand that is no node of
-/// `graph`, is a direct dependency.
-fn names_dependency(
-    key: &NodeKey,
+/// [`hold`] for a composition item: the ids of a component slot are held in
+/// the component's graph, every other id in `graph`.
+fn hold_composition(
+    value: &Value,
     graph: &WireGraph,
-    dependencies: &BTreeMap<String, Result<WireGraph, GraphUnavailable>>,
-) -> bool {
-    if dependencies.contains_key(key.package()) {
-        return true;
+    scope: &ComponentScope<'_>,
+) -> Result<Value, HeldIdentityError> {
+    let slots = component_slots(value, scope)?;
+    let mut rest = value.clone();
+    let mut taken = Vec::with_capacity(slots.len());
+    for (pointer, package, key) in slots {
+        let Some(slot) = rest.pointer_mut(&pointer) else {
+            continue;
+        };
+        taken.push((pointer, package, key, slot.take()));
     }
-    let mut pending = vec![key.clone()];
-    while let Some(key) = pending.pop() {
-        for segment in key.path() {
-            let PathSegment::Node(operand) = segment else {
-                continue;
-            };
-            if graph.index_of(&operand).is_some() {
-                continue;
-            }
-            if dependencies.contains_key(operand.package()) {
-                return true;
-            }
-            pending.push(operand);
+    let mut held = graph
+        .document_value(&rest)
+        .map_err(HeldIdentityError::NotInGraph)?;
+    let peers = |clause: &filament_exact::NodeKey| {
+        let package = scope.components.of_clause(clause)?;
+        match scope.graphs.get(package) {
+            Some(Ok(graph)) => Some(graph),
+            _ => None,
+        }
+    };
+    for (pointer, package, key, id) in taken {
+        let graph = scope.graph(&package)?;
+        let written = if key {
+            peer_graphs(&id, &peers).and_then(|peers| component_key_held(graph, &id, &peers))
+        } else {
+            graph.document_value(&id)
+        }
+        .map_err(HeldIdentityError::NotInGraph)?;
+        if let Some(slot) = held.pointer_mut(&pointer) {
+            *slot = written;
         }
     }
-    false
+    Ok(held)
 }
 
 #[cfg(test)]
@@ -189,50 +248,133 @@ mod tests {
 
     fn graph(package: &str) -> WireGraph {
         WireGraph::of_package_value(&json!({"semantic_graph": {"nodes": [
-            {"node_id": {"package": package, "path": ["leaf"], "ordinal": 0}}
+            {"node_id": {"package": package, "path": ["leaf"], "ordinal": 0}},
+            {"node_id": {"package": package, "path": ["wrap"], "ordinal": 0}}
         ]}}))
         .expect("graph")
     }
 
-    fn id(package: &str, operand_package: &str) -> Value {
+    fn id(package: &str, operand_package: &str, leaf: &str) -> Value {
         json!({"package": package, "ordinal": 0, "path": [
             "application",
-            {"package": operand_package, "path": ["leaf"], "ordinal": 0}
+            {"package": operand_package, "path": [leaf], "ordinal": 0}
         ]})
     }
 
-    fn dependencies() -> BTreeMap<String, Result<WireGraph, GraphUnavailable>> {
+    fn graphs() -> BTreeMap<String, Result<WireGraph, GraphUnavailable>> {
         BTreeMap::from([("test/part-b".to_owned(), Ok(graph("test/part-b")))])
     }
 
-    /// FR-621-AC-17: a composition item keeps the id with a dependency operand
-    /// nested and holds every other id.
-    #[trace("TC-3154", "FR-621-AC-17")]
-    #[test]
-    fn a_composition_item_keeps_a_dependency_operand_id_nested() {
-        let item = json!({
-            "claim": id("own", "test/part-b"),
-            "other": {"package": "own", "ordinal": 0, "path": [
-                "application", {"package": "own", "path": ["leaf"], "ordinal": 0}]},
-        });
-        let held = hold(&item, &graph("own"), Some(&dependencies()), None).expect("held");
-        assert_eq!(held["claim"], item["claim"]);
-        assert_eq!(held["other"]["path"][1], json!({"node": 0}));
+    fn components() -> ComponentPackages {
+        ComponentPackages::new(
+            BTreeMap::from([("B".to_owned(), "test/part-b".to_owned())]),
+            BTreeMap::new(),
+        )
     }
 
-    /// FR-621-AC-17: an item that is no composition, or that names a foreign
-    /// operand no dependency owns, fails instead of staying nested.
+    fn item() -> Value {
+        json!({"request": {"kind": "composition", "premises": [{
+            "role": "component-guarantee",
+            "key": {"claim": {"node": id("test/part-b", "test/part-b", "wrap")},
+                "temporal": {"subject": {"identity": "test/part-b using test/m"}}}}]}})
+    }
+
+    /// FR-621-AC-17: a component-guarantee key is held in the component's
+    /// graph, an own id in the request's graph.
     #[trace("TC-3154", "FR-621-AC-17")]
     #[test]
-    fn an_own_package_item_with_a_foreign_operand_fails() {
-        let item = json!({"claim": id("own", "test/part-b")});
+    fn a_component_key_is_held_in_the_component_graph() {
+        let components = components();
+        let graphs = graphs();
+        let scope = ComponentScope {
+            components: &components,
+            graphs: &graphs,
+        };
+        let mut value = item();
+        value["claim"] = id("own", "own", "leaf");
+        let held = hold(&value, &graph("own"), Some(&scope), None).expect("held");
+        assert_eq!(
+            held["request"]["premises"][0]["key"]["claim"]["node"]["path"][1],
+            json!({"node": 1})
+        );
+        assert_eq!(held["claim"]["path"][1], json!({"node": 0}));
+    }
+
+    /// FR-621-AC-17, FSpec FR-322 "Scope": a peer assumption id of a key is
+    /// held in the graph of the package of the peer guarantee's component,
+    /// not the graph its own `package` member names.
+    #[trace("TC-3154", "FR-621-AC-17")]
+    #[test]
+    fn a_peer_assumption_is_held_in_its_peer_components_graph() {
+        let peer = id("elsewhere", "test/part-c", "wrap");
+        let clause = filament_exact::node_wire::node_key_from_json(&peer).expect("a node key");
+        let components = ComponentPackages::new(
+            BTreeMap::from([
+                ("B".to_owned(), "test/part-b".to_owned()),
+                ("C".to_owned(), "test/part-c".to_owned()),
+            ]),
+            BTreeMap::from([(clause, "test/part-c".to_owned())]),
+        );
+        let graphs = BTreeMap::from([
+            ("test/part-b".to_owned(), Ok(graph("test/part-b"))),
+            ("test/part-c".to_owned(), Ok(graph("test/part-c"))),
+        ]);
+        let scope = ComponentScope {
+            components: &components,
+            graphs: &graphs,
+        };
+        let mut value = item();
+        value["request"]["premises"][0]["key"]["temporal"]["subject"]["assumptions"] =
+            json!([peer]);
+        let held = hold(&value, &graph("own"), Some(&scope), None).expect("held");
+        assert_eq!(
+            held["request"]["premises"][0]["key"]["temporal"]["subject"]["assumptions"][0]["path"]
+                [1],
+            json!({"node": 1})
+        );
+        // A clause no guarantee of the declaration names has no graph.
+        let none = ComponentScope {
+            components: &self::components(),
+            graphs: &graphs,
+        };
+        assert!(hold(&value, &graph("own"), Some(&none), None).is_err());
+    }
+
+    /// FR-621-AC-17: an `interface-mismatch` `interface` is held in the graph
+    /// of its `component`.
+    #[trace("TC-3154", "FR-621-AC-17")]
+    #[test]
+    fn an_interface_is_held_in_its_components_graph() {
+        let components = components();
+        let graphs = graphs();
+        let scope = ComponentScope {
+            components: &components,
+            graphs: &graphs,
+        };
+        let value = json!({"counterexample": [{"type": "interface-mismatch",
+            "component": "B", "interface": id("test/part-b", "test/part-b", "leaf"),
+            "premise": 0, "reason": "absent"}]});
+        let held = hold(&value, &graph("own"), Some(&scope), None).expect("held");
+        assert_eq!(
+            held["counterexample"][0]["interface"]["path"][1],
+            json!({"node": 0})
+        );
+    }
+
+    /// FR-621-AC-17: a key of a package no component names has no held form.
+    #[trace("TC-3154", "FR-621-AC-17")]
+    #[test]
+    fn a_key_of_no_component_has_no_held_form() {
+        let graphs = graphs();
+        let components = ComponentPackages::default();
+        let scope = ComponentScope {
+            components: &components,
+            graphs: &graphs,
+        };
         assert!(matches!(
-            hold(&item, &graph("own"), None, None),
+            hold(&item(), &graph("own"), Some(&scope), None),
             Err(HeldIdentityError::NotInGraph(_))
         ));
-        assert!(matches!(
-            hold(&item, &graph("own"), Some(&BTreeMap::new()), None),
-            Err(HeldIdentityError::NotInGraph(_))
-        ));
+        assert!(key_subject_package(&item()["request"]["premises"][0]["key"]).is_some());
     }
 }

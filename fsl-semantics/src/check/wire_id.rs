@@ -781,6 +781,289 @@ pub fn foreign_id_container(object: &serde_json::Map<String, serde_json::Value>)
         && object.contains_key("node")
 }
 
+/// Why a component-guarantee slot key (FSpec FR-322 "Scope") has no
+/// structural form.
+#[derive(Clone, Debug, Eq, PartialEq, thiserror::Error)]
+pub enum ComponentKeyRefusal {
+    /// The key's guarantee names no component, or its subject identity
+    /// carries a package other than the component's: `invalid_runtime_input`
+    /// / `invalid-value` at the key, before any range check.
+    #[error("the key's subject identity is not that of the guarantee's component package")]
+    Package,
+    /// An index segment is not below the component graph's node count:
+    /// `malformed_wire`, with no cause, at the `node` member `pointer` names,
+    /// relative to the key.
+    #[error("index segment {index} at {pointer} names no node of a {len}-node component graph")]
+    IndexOutOfRange {
+        /// The RFC 6901 pointer of the segment's `node` member, relative to
+        /// the key.
+        pointer: String,
+        /// The index the segment holds.
+        index: u64,
+        /// The component graph's node count.
+        len: usize,
+    },
+    /// Some other id of the key does not resolve.
+    #[error("{0}")]
+    Unresolved(String),
+}
+
+/// The package identity a `component-guarantee` key's subject identity
+/// carries: the subject identity of a component is `<package> using <model>`.
+/// `None` when the key carries no subject identity.
+pub fn key_subject_package(key: &serde_json::Value) -> Option<&str> {
+    let identity = key["temporal"]["subject"]["identity"].as_str()?;
+    Some(
+        identity
+            .split_once(" using ")
+            .map_or(identity, |(package, _)| package),
+    )
+}
+
+/// Whether `value` holds an index segment `{"node": i}` in a node id's path.
+pub fn key_holds_index_segment(value: &serde_json::Value) -> bool {
+    let mut pending = vec![value];
+    while let Some(current) = pending.pop() {
+        match current {
+            serde_json::Value::Object(members) => {
+                let indexed = members
+                    .get("path")
+                    .and_then(serde_json::Value::as_array)
+                    .is_some_and(|path| {
+                        path.iter().any(|segment| {
+                            segment.as_object().is_some_and(|segment| {
+                                segment.len() == 1 && segment.contains_key("node")
+                            })
+                        })
+                    });
+                if indexed {
+                    return true;
+                }
+                pending.extend(members.values());
+            }
+            serde_json::Value::Array(items) => pending.extend(items.iter()),
+            _ => {}
+        }
+    }
+    false
+}
+
+/// One step of an RFC 6901 pointer, ordered as the document's canonical
+/// bytes order it: array positions numerically, member names bytewise.
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
+enum Step {
+    Position(usize),
+    Name(String),
+}
+
+fn pointer_of(steps: &[Step]) -> String {
+    steps
+        .iter()
+        .map(|step| match step {
+            Step::Position(at) => format!("/{at}"),
+            Step::Name(name) => format!("/{}", name.replace('~', "~0").replace('/', "~1")),
+        })
+        .collect()
+}
+
+/// The RFC 6901 pointer, relative to `value`, of the `node` member of the
+/// first index segment (`{"node": i}`, `i` not below `len`) in a node id's
+/// `path` anywhere under `value`, in the order of the document's canonical
+/// bytes, with that index.
+fn out_of_range_segment(value: &serde_json::Value, len: usize) -> Option<(String, u64)> {
+    let mut pending: Vec<(Vec<Step>, &serde_json::Value)> = vec![(Vec::new(), value)];
+    let mut found: Option<(Vec<Step>, u64)> = None;
+    while let Some((steps, current)) = pending.pop() {
+        match current {
+            serde_json::Value::Object(members) => {
+                if let Some(path) = members.get("path").and_then(serde_json::Value::as_array) {
+                    for (at, segment) in path.iter().enumerate() {
+                        let Some(index) = segment
+                            .as_object()
+                            .filter(|segment| segment.len() == 1)
+                            .and_then(|segment| segment.get("node"))
+                            .and_then(serde_json::Value::as_u64)
+                        else {
+                            continue;
+                        };
+                        if usize::try_from(index).map_or(true, |index| index >= len) {
+                            let mut here = steps.clone();
+                            here.extend([
+                                Step::Name("path".to_owned()),
+                                Step::Position(at),
+                                Step::Name("node".to_owned()),
+                            ]);
+                            if found.as_ref().is_none_or(|(best, _)| here < *best) {
+                                found = Some((here, index));
+                            }
+                        }
+                    }
+                }
+                for (name, member) in members {
+                    let mut here = steps.clone();
+                    here.push(Step::Name(name.clone()));
+                    pending.push((here, member));
+                }
+            }
+            serde_json::Value::Array(items) => {
+                for (at, item) in items.iter().enumerate() {
+                    let mut here = steps.clone();
+                    here.push(Step::Position(at));
+                    pending.push((here, item));
+                }
+            }
+            _ => {}
+        }
+    }
+    found.map(|(steps, index)| (pointer_of(&steps), index))
+}
+
+/// FSpec FR-322 "Scope" (NI-28): the key of a `component-guarantee` slot
+/// carries the subject identity of the package of the slot's component
+/// (`package`, `None` when the guarantee names no `components` entry).
+///
+/// # Errors
+///
+/// [`ComponentKeyRefusal::Package`].
+pub fn check_component_key_package(
+    package: Option<&str>,
+    key: &serde_json::Value,
+) -> Result<(), ComponentKeyRefusal> {
+    let Some(package) = package else {
+        return Err(ComponentKeyRefusal::Package);
+    };
+    if key_subject_package(key).is_some_and(|carried| carried != package) {
+        return Err(ComponentKeyRefusal::Package);
+    }
+    Ok(())
+}
+
+/// The graphs a key's peer clause ids resolve against, one per entry of the
+/// key's `assumptions`, in that order: the graph of the package of the
+/// `components` entry whose `name` is the `component` of the peer guarantee
+/// the assumption names (FSpec FR-322 "Scope"), never the id's own `package`
+/// member. `peers` gives that package of each structural clause id.
+///
+/// # Errors
+///
+/// The message of the first assumption that names no peer guarantee or whose
+/// package has no graph.
+pub fn peer_graphs<'g>(
+    key: &serde_json::Value,
+    peers: &dyn Fn(&filament_exact::NodeKey) -> Option<&'g WireGraph>,
+) -> Result<Vec<&'g WireGraph>, String> {
+    let Some(serde_json::Value::Array(ids)) = key.pointer(ASSUMPTIONS) else {
+        return Ok(Vec::new());
+    };
+    ids.iter()
+        .map(|id| {
+            let node = fsl_foundation::node_wire::node_key_from_json(id)
+                .map_err(|error| error.to_string())?;
+            peers(&node).ok_or_else(|| format!("no graph for the assumption {id}"))
+        })
+        .collect()
+}
+
+/// FSpec FR-322 "Scope": the structural form of the `component-guarantee`
+/// slot `key` of a `composition` item, whose node ids index `graph`, the
+/// graph of the package of the slot's component (`package`, `None` when the
+/// guarantee names no `components` entry). The check of the subject identity
+/// precedes the range check. `peers` holds the graph of each entry of the
+/// key's `assumptions`, in order ([`peer_graphs`] for the structural writer;
+/// the caller derives it from the declaration's own assumption set for a held
+/// key).
+///
+/// # Errors
+///
+/// [`ComponentKeyRefusal`].
+pub fn component_key_structural(
+    graph: &WireGraph,
+    package: Option<&str>,
+    key: &serde_json::Value,
+    peers: &[&WireGraph],
+) -> Result<serde_json::Value, ComponentKeyRefusal> {
+    check_component_key_package(package, key)?;
+    let mut rest = key.clone();
+    let assumptions = rest.pointer_mut(ASSUMPTIONS).map(serde_json::Value::take);
+    let range = |at: &str, value: &serde_json::Value, graph: &WireGraph| {
+        let len = graph.keys().len();
+        match out_of_range_segment(value, len) {
+            Some((pointer, index)) => Err(ComponentKeyRefusal::IndexOutOfRange {
+                pointer: format!("{at}{pointer}"),
+                index,
+                len,
+            }),
+            None => Ok(()),
+        }
+    };
+    range("", &rest, graph)?;
+    let mut structural = graph
+        .structural_value(&rest)
+        .map_err(ComponentKeyRefusal::Unresolved)?;
+    if let Some(serde_json::Value::Array(ids)) = assumptions {
+        if ids.len() != peers.len() {
+            return Err(ComponentKeyRefusal::Unresolved(format!(
+                "{} assumptions for {} peer graphs",
+                ids.len(),
+                peers.len()
+            )));
+        }
+        let mut resolved = Vec::with_capacity(ids.len());
+        for (at, (id, peer)) in ids.iter().zip(peers).enumerate() {
+            range(&format!("{ASSUMPTIONS}/{at}"), id, *peer)?;
+            resolved.push(
+                peer.structural_value(id)
+                    .map_err(ComponentKeyRefusal::Unresolved)?,
+            );
+        }
+        if let Some(slot) = structural.pointer_mut(ASSUMPTIONS) {
+            *slot = serde_json::Value::Array(resolved);
+        }
+    }
+    Ok(structural)
+}
+
+/// FSpec FR-322 "Scope": the document-held form of the `component-guarantee`
+/// key `key` (structural), its ids written against `graph`, the graph of the
+/// slot's component package. The ids of the subject's `assumptions` are the
+/// clauses of peer components, whose nodes `graph` does not hold: each is
+/// written against the matching entry of `peers` ([`peer_graphs`]).
+///
+/// # Errors
+///
+/// The message of the first id that has no held form.
+pub fn component_key_held(
+    graph: &WireGraph,
+    key: &serde_json::Value,
+    peers: &[&WireGraph],
+) -> Result<serde_json::Value, String> {
+    let mut rest = key.clone();
+    let assumptions = rest.pointer_mut(ASSUMPTIONS).map(serde_json::Value::take);
+    let mut held = graph.document_value(&rest)?;
+    if let Some(serde_json::Value::Array(ids)) = assumptions {
+        if ids.len() != peers.len() {
+            return Err(format!(
+                "{} assumptions for {} peer graphs",
+                ids.len(),
+                peers.len()
+            ));
+        }
+        let written = ids
+            .iter()
+            .zip(peers)
+            .map(|(id, peer)| peer.document_value(id))
+            .collect::<Result<Vec<_>, _>>()?;
+        if let Some(slot) = held.pointer_mut(ASSUMPTIONS) {
+            *slot = serde_json::Value::Array(written);
+        }
+    }
+    Ok(held)
+}
+
+/// The pointer, in a `component-guarantee` key, of the subject's peer
+/// assumptions.
+const ASSUMPTIONS: &str = "/temporal/subject/assumptions";
+
 /// One checked-package document's `semantic_graph`: the rebuilt key of every
 /// node, by graph index, and the index of every key.
 #[derive(Clone, Default)]
@@ -1580,5 +1863,158 @@ mod tests {
         assert_eq!(graph.document_value_in_row(0, &value).unwrap(), value);
         // The structural view has no key for it.
         assert!(graph.structural_value_in_row(0, &value).is_err());
+    }
+
+    /// The graph of FSpec's `positive-dependency-library.json`
+    /// (package `test/predicates`, 19 nodes).
+    fn library_graph() -> WireGraph {
+        let (_, bytes) =
+            filament_specification::published_files("proposals/checked-package-v2/fixtures/")
+                .find(|(path, _)| path.ends_with("positive-dependency-library.json"))
+                .expect("the published library fixture");
+        WireGraph::of_package_bytes(&bytes).expect("the library's graph")
+    }
+
+    const LIBRARY: &str = "test/predicates";
+
+    /// A `component-guarantee` key whose `claim` node is the library node
+    /// `["composite_type", "set", {"node": index}]`.
+    fn library_key(index: u64, identity: &str) -> serde_json::Value {
+        serde_json::json!({"claim": {"node": {"package": LIBRARY, "ordinal": 0,
+            "path": ["composite_type", "set", {"node": index}]},
+            "occurrence": {"role": "claim", "ordinal": 0}},
+            "temporal": {"subject": {"identity": identity}}})
+    }
+
+    /// FR-322-AC-520 (NI-25): the key's claim node, written with index
+    /// segments of the component's graph, rebuilds to the structural key of
+    /// library node 8, and the written form resolves back to the held one.
+    #[ix_trace_rs::trace("FSpec-TC-233", "FSpec-FR-322-AC-520")]
+    #[test]
+    fn a_component_key_resolves_in_the_component_graph() {
+        let graph = library_graph();
+        let held = library_key(6, "test/predicates using m");
+        let structural =
+            component_key_structural(&graph, Some(LIBRARY), &held, &[]).expect("resolves");
+        let node = fsl_foundation::node_wire::node_key_to_json(&graph.keys()[8]).expect("json");
+        assert_eq!(structural["claim"]["node"], node);
+        assert_eq!(
+            component_key_held(&graph, &structural, &[]).expect("held"),
+            held
+        );
+    }
+
+    /// FR-322-AC-520 (NI-26): an `interface` id, written in the component's
+    /// graph, rebuilds to the key of library node 15.
+    #[ix_trace_rs::trace("FSpec-TC-233", "FSpec-FR-322-AC-520")]
+    #[test]
+    fn an_interface_id_resolves_in_the_component_graph() {
+        let graph = library_graph();
+        let held = serde_json::json!({"package": LIBRARY, "ordinal": 0,
+            "path": ["composite_type", "reference", {"node": 14}]});
+        let structural = graph.structural_value(&held).expect("resolves");
+        assert_eq!(
+            structural,
+            fsl_foundation::node_wire::node_key_to_json(&graph.keys()[15]).expect("json")
+        );
+        assert_eq!(graph.document_value(&structural).expect("held"), held);
+    }
+
+    /// FR-322-AC-520 (NI-27): an index not below the library's 19 nodes is
+    /// refused at the segment's `node` member.
+    #[ix_trace_rs::trace("FSpec-TC-233", "FSpec-FR-322-AC-520")]
+    #[test]
+    fn a_component_key_index_out_of_range_names_its_member() {
+        let held = library_key(19, "test/predicates using m");
+        assert_eq!(
+            component_key_structural(&library_graph(), Some(LIBRARY), &held, &[]),
+            Err(ComponentKeyRefusal::IndexOutOfRange {
+                pointer: "/claim/node/path/2/node".to_owned(),
+                index: 19,
+                len: 19,
+            })
+        );
+    }
+
+    /// FR-322-AC-520 (NI-28): a key of another package, or of a guarantee
+    /// naming no component, is refused before the range check, with or
+    /// without an index segment.
+    #[ix_trace_rs::trace("FSpec-TC-233", "FSpec-FR-322-AC-520")]
+    #[test]
+    fn a_component_key_of_another_package_is_refused_before_the_range_check() {
+        let graph = library_graph();
+        let foreign = library_key(19, "other using m");
+        assert_eq!(
+            component_key_structural(&graph, Some(LIBRARY), &foreign, &[]),
+            Err(ComponentKeyRefusal::Package)
+        );
+        assert_eq!(
+            component_key_structural(
+                &graph,
+                None,
+                &library_key(6, "test/predicates using m"),
+                &[]
+            ),
+            Err(ComponentKeyRefusal::Package)
+        );
+        let plain = serde_json::json!({"claim": {"node": {"package": LIBRARY, "ordinal": 0,
+            "path": ["x"]}}, "temporal": {"subject": {"identity": "other using m"}}});
+        assert!(!key_holds_index_segment(&plain));
+        assert_eq!(
+            check_component_key_package(Some(LIBRARY), &plain),
+            Err(ComponentKeyRefusal::Package)
+        );
+    }
+
+    /// FR-322-AC-520: the first out-of-range segment in canonical order is
+    /// named, so position 2 precedes position 10.
+    #[ix_trace_rs::trace("FSpec-TC-233", "FSpec-FR-322-AC-520")]
+    #[test]
+    fn the_first_out_of_range_segment_is_in_canonical_order() {
+        let mut path = vec![serde_json::json!("p"); 12];
+        path[10] = serde_json::json!({"node": 40});
+        path[2] = serde_json::json!({"node": 50});
+        let value = serde_json::json!({"claim": {"node": {"path": path}}});
+        assert_eq!(
+            out_of_range_segment(&value, 19),
+            Some(("/claim/node/path/2/node".to_owned(), 50))
+        );
+    }
+
+    /// FR-322 "Scope": a peer assumption id resolves in the graph of the
+    /// peer guarantee's component package, not the graph its own `package`
+    /// member names.
+    #[ix_trace_rs::trace("FSpec-TC-233", "FSpec-FR-322-AC-520")]
+    #[test]
+    fn a_peer_assumption_id_resolves_in_the_peer_components_graph() {
+        let own = WireGraph::of_package_value(&serde_json::json!({"semantic_graph": {"nodes": [
+            {"node_id": {"package": "a", "path": ["g"], "ordinal": 0}}
+        ]}}))
+        .expect("graph");
+        // The peer's clause is owned by a third package but sits in the
+        // peer component's graph, beside the node it names as operand.
+        let peer = WireGraph::of_package_value(&serde_json::json!({"semantic_graph": {"nodes": [
+            {"node_id": {"package": "third", "path": ["h"], "ordinal": 0}},
+            {"node_id": {"package": "third", "path": ["set", {"node": 0}], "ordinal": 0}}
+        ]}}))
+        .expect("graph");
+        let structural = serde_json::json!({"claim": {"node":
+            {"package": "a", "path": ["g"], "ordinal": 0}},
+            "temporal": {"subject": {"identity": "a using m", "assumptions": [
+                {"package": "third", "ordinal": 0, "path": ["set",
+                    {"package": "third", "path": ["h"], "ordinal": 0}]}]}}});
+        let held = component_key_held(&own, &structural, &[&peer]).expect("held");
+        assert_eq!(
+            held["temporal"]["subject"]["assumptions"][0]["path"][1],
+            serde_json::json!({"node": 0})
+        );
+        assert_eq!(
+            component_key_structural(&own, Some("a"), &held, &[&peer]).expect("resolves"),
+            structural
+        );
+        // The graph of the id's own `package` member is no graph for it.
+        assert!(component_key_held(&own, &structural, &[&own]).is_err());
+        // A peer count that differs from the assumption count has no form.
+        assert!(component_key_held(&own, &structural, &[]).is_err());
     }
 }
