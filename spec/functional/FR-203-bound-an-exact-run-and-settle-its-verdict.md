@@ -67,7 +67,9 @@ pub enum ExactProbLimit { MaxStates, MaxTransitions, MaxAutomatonStates, MaxIter
 ```rust
 // ProofBasis gains:
 //   ExactValue { value: ExtRational, reductions: Vec<AppliedReduction> },
-//   ValueBounds { lower: Rational, upper: Rational, method: BoundsMethod, reductions: Vec<AppliedReduction> },
+//   ValueBounds { lower: Rational, upper: ExtRational, method: BoundsMethod, reductions: Vec<AppliedReduction>, exploration: Exploration },
+// Exploration: Complete, or Partial for a lower proof found on a partial product (FR-1042), whose
+//   upper is the objective's least upper bound (+∞ for an expected reward) and which has no counterpart
 pub enum BoundsMethod { BackwardInduction { precision_bits: u32 }, IntervalIteration { precision_bits: u32, sweeps: u64 } }
 // IncompleteCause gains: PrecisionBudget { lower: Rational, upper: Rational }
 
@@ -108,6 +110,8 @@ pub struct ExactEntry { pub initial: u32, pub binding: Option<Binding>, pub inst
 | --- | --- | --- | --- | --- |
 | Exact value on the claim's side, certificate accepted | `proved` | `closed-scope` | `Proved{basis: ExactValue{…}, certification: Certified}` | success |
 | Sound interval on the claim's side, its `lower` and `upper` documents accepted (FR-1042) | `proved` | `closed-scope` | `Proved{basis: ValueBounds{…}, certification: Certified}` | success |
+| `ValueBounds` whose claim-side document is accepted and whose counterpart is rejected (FR-1042) | `inconclusive` | `unsettled` | `Inconclusive(CertificateRejected{rule, at})` with the counterpart's rule and locus | inconclusive |
+| `ValueBounds` that reaches settlement with no counterpart and without `exploration: Partial` (FR-1042) | `failed`, diagnostic `runtime_invariant`/`established-invariant-broken` | `unavailable` | `Failed` | failed (ADR-013 O-16 internal failure) |
 | Bound fails, witness replays | `refuted` | `decisive-counterexample` | `Refuted` | violation |
 | Undefined evaluation at a state of positive probability, `Undefined` path replays | `refuted`, cause `UndefinedEvaluation{where, cause}` | `decisive-counterexample` | `Refuted` | violation |
 | Interval straddles at the budget | `incomplete`, execution `resource-incomplete` | `unavailable` | `Incomplete(PrecisionBudget{…})` | incomplete |
@@ -176,6 +180,7 @@ pub struct ExactEntry { pub initial: u32, pub binding: Option<Binding>, pub inst
 | FR-203-AC-6 | A build stopped at `max_automaton_states` settles `incomplete`, `Incomplete(LimitReached{MaxAutomatonStates, value, exact_prob.max_automaton_states})`; a cancelled build settles `Incomplete(Cancelled{source})`; a build that meets an undecided successor settles `inconclusive`, `Inconclusive(UndecidedSuccessor)`; an expansion stop naming no limit settles `failed`, as an internal fault `runtime_invariant`/`established-invariant-broken` and otherwise with the stop's own cause; an `Internal` refusal settles `failed`. | Test (TC-638) |
 | FR-203-AC-7 | The build-result map is exhaustive over `ProductRefusal` and `ClauseOutcome` with no `_` arm. A build whose expansion stops at `max_candidates` 2 settles `incomplete`, `Incomplete(LimitReached{max_candidates, 2, expansion.max_candidates})`. A build whose `ProductRefusal`, asserted before settling, is `Expansion(stop)` naming `EvaluationMeter` (a subject whose successor expansion charges the meter before the claim reads any predicate, under an accounting bound `B` of `work_units` its first expansion exceeds) settles `Incomplete(LimitReached{work_units, B, accounting.work_units})`, naming the exhausted counter, `B` and the setting `accounting.<counter>` by FR-255 Behavior 9's rule (FSpec FR-461-AC-5); a build whose `ProductRefusal`, asserted before settling, is `PredicateRefused(Incomplete(i))` (the expansion fits under `B`, the predicate read's charge is the first one denied) settles the same way for `i`'s counter. A predicate refused `integer_out_of_domain`/`outside-domain` settles `failed` with that diagnostic; a constructed `PredicateRefused(NotBoolean)`, `PredicateRefused(KernelRefused(CheckedInvariant))` and `Translation` error each settle `failed`, `runtime_invariant`/`established-invariant-broken`; an `Admission` failure and a `RequiresBound` refusal return no terminal record. | Test (TC-1166) |
 | FR-203-AC-8 | The `proved` record of FR-203-AC-1 carries its `Exact` certificate in its item result, and those certificate bytes are accepted by `fsl-probability-check` in a later process; the `refuted` record of FR-203-AC-5 carries its witness, which replays. | Test (TC-2065) |
+| FR-203-AC-9 | A `ValueBounds` proof of FR-1042-AC-2's claim whose claim-side `lower` document `7/16` is accepted and whose counterpart `upper` `7/16` is rejected settles `inconclusive`, `CertificateRejected{InequalityFails, s}`; the same proof handed to settlement with no counterpart and no `exploration: Partial` settles `failed`, `runtime_invariant`/`established-invariant-broken`, category failed; with `exploration: Partial` and upper 1 it settles `proved`, `ValueBounds{7/16, 1, …}`. | Test (TC-3151) |
 
 ## Dependencies
 

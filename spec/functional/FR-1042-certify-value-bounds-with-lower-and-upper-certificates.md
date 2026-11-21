@@ -174,8 +174,15 @@ successor of strictly smaller rank whose value is positive (FSpec FR-412
   `CertificateRejected{rule, at}` with that document's rule and locus.
 - Both accepted SHALL settle `proved`,
   `ValueBounds{lower, upper, method, reductions}`, certified, with `lower`
-  and `upper` the two documents' initial values; a `lower` proof on a
-  partial product reports upper 1. The claim-side document missing its
+  and `upper` the two documents' initial values. A `lower` proof found on a
+  partial product (FSpec FR-411) SHALL settle `ValueBounds` with
+  `exploration: Partial`, which FSpec FR-331 writes as
+  `"exploration": "partial"`, and with `upper` the base's least upper
+  bound: 1 for a probability base, `1 − level` for a `shifted` measure base,
+  1 for a `fraction` payoff, and `+∞` for a reward base, written `"infinity"`
+  as FSpec FR-418 writes an absent bound. The marker, not the value of
+  `upper`, is what exempts the proof from its counterpart, so a fully
+  explored `lower` whose upper end is 1 still carries one. The claim-side document missing its
   threshold SHALL make EN-5 raise the precision, up to
   `max_precision_bits`, and then settle `Incomplete(PrecisionBudget{lower,
   upper})` (FR-203). A rejection SHALL settle `inconclusive`,
@@ -201,6 +208,7 @@ successor of strictly smaller rank whose value is positive (FSpec FR-412
 | FR-1042-AC-7 | FR-201-AC-27's `Steady` long-run claim (exact `1800/1801`) with `max_rational_bits` 4 settles `Incomplete(LimitReached{MaxRationalBits, 4, exact_prob.max_rational_bits})` with no certificate, and not `proved`, `unsupported` or `failed`. A settlement handed a `lower` proof with no counterpart over a fully explored product settles `failed`, `runtime_invariant`/`established-invariant-broken`. | Test (TC-3151) |
 | FR-1042-AC-9 | Over FR-201-AC-35's retry chain (`s` to itself and to `B` with `1/2` each, cost 1 on both; value 2), base `dtmc-expected-reward/v1`: `lower` `s` `15/8` with no ranking and counterpart `upper` `s` `9/4` with ranks `s` 1, `B` 0 prove `expected accumulate R until holds(B) >= 3/2` (`15/8 <= 1 + (1/2)(15/8)`, `1 + (1/2)(9/4) = 17/8 <= 9/4`); `upper` `s` `7/4` is rejected `InequalityFails` at `s`; `upper` without `ranking` is rejected `Malformed` at `ranking`. Over a closed non-`B` zero-cost self-loop reachable beside `B`, an `upper` row 0 there is rejected `RankBroken` at that state. | Test (TC-3151) |
 | FR-1042-AC-10 | Over FR-1043-AC-2's `fast`/`slow` model at level 0.5 (shifted minimum `−1/16`), a `lower` document naming only the initial key at value 0 is rejected `InequalityFails` there: each unnamed successor counts as `−1/2`, so both actions give `−1/2`. | Test (TC-3151) |
+| FR-1042-AC-11 | A `lower` proof found before `max_states` stopped exploration settles `ValueBounds` with `exploration: Partial` and no counterpart: over AC-1's chain with `upper` 1, over FR-1043-AC-2's level-0.4 `shifted` base with `upper` `3/5`, and over AC-9's reward chain with `upper` `+∞`, written `"infinity"`; each result passes the backend-provider schema. A fully explored `lower` proof over a base whose interval's upper end is 1 settles `proved` only with its counterpart. | Test (TC-3151) |
 | FR-1042-AC-8 | Pre-cancellation, cancellation during either document's check, and exhaustion of each caller limit settle `incomplete` with the actual limit and no truth value; either document with another identity refuses before enumeration, and either with a changed `base` member refuses objective mismatch. | Test (TC-3151) |
 
 ## Dependencies

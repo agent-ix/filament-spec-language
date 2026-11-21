@@ -107,7 +107,8 @@ contract, this requirement is.
   `ValueBounds` proof, `kind` and `document` are the claim side's (`lower`
   for `AtLeast`, `upper` for `AtMost`), and `counterpart` is the other
   side's `{kind, document, accepted}`, both in FR-1042's `value-bounds/v1`
-  profile. A quantile under a workload has kind `conditional`, mode
+  profile; a `lower` proof found on a partial product has no `counterpart`
+  and its record says `exploration: Partial`. A quantile under a workload has kind `conditional`, mode
   `ratio`, with FR-1043 parts.
 - `counterexample`, for an exact `refuted` record: FR-202's probabilistic
   witness in FSpec FR-413's spelling, with the item's `replay` member

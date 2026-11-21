@@ -5,6 +5,8 @@ type: TC
 relationships:
   - target: ix://agent-ix/filament-spec-language/FR-1042
     type: verifies
+  - target: ix://agent-ix/filament-spec-language/FR-203
+    type: verifies
 ---
 # TC-3151: Certify value bounds with lower and upper certificates
 
@@ -16,7 +18,7 @@ over the base profile's product, probability and expected-reward bases
 alike, that settlement checks the pairing, and that the long-run form, which
 has no dyadic method, settles a typed incomplete result.
 
-Scope: FR-1042-AC-2 to FR-1042-AC-5 and FR-1042-AC-7 to FR-1042-AC-10.
+Scope: FR-1042-AC-2 to FR-1042-AC-5, FR-1042-AC-7 to FR-1042-AC-11 and FR-203-AC-9.
 
 ## Test Procedure
 
@@ -36,6 +38,10 @@ Scope: FR-1042-AC-2 to FR-1042-AC-5 and FR-1042-AC-7 to FR-1042-AC-10.
    closed zero-cost loop.
 7. Over FR-1043-AC-2's model at level 0.5 offer a `lower` naming only the
    initial key at value 0.
+8. Stop exploration at `max_states` with a `lower` proof over AC-1's chain,
+   the level-0.4 `shifted` base and the reward chain; validate each result
+   against the backend-provider schema.
+9. Settle FR-203-AC-9's three `ValueBounds` cases.
 
 Tag the tests `#[trace("TC-3151", "FR-1042-AC-n")]`.
 
@@ -58,3 +64,8 @@ Tag the tests `#[trace("TC-3151", "FR-1042-AC-n")]`.
 - Step 6: `proved`; `InequalityFails` at `s`; `Malformed` at `ranking`;
   `RankBroken` at the loop state.
 - Step 7: `InequalityFails` at the initial key.
+- Step 8: `exploration: Partial`, no counterpart, `upper` 1, `3/5` and
+  `"infinity"`; each schema-valid.
+- Step 9: `inconclusive` `CertificateRejected{InequalityFails, s}`; `failed`,
+  `runtime_invariant`/`established-invariant-broken`; `proved`,
+  `ValueBounds{7/16, 1, …}`.
