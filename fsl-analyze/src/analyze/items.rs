@@ -1041,7 +1041,6 @@ pub(super) fn zone_refusal(refusal: &ZoneCheckRefusal) -> Refusal {
         // The forms EN-6 does not decide yet.
         ZoneCheckRefusal::UnsupportedForm
         | ZoneCheckRefusal::CarriedClocks
-        | ZoneCheckRefusal::HiddenFieldTimedAbstract
         | ZoneCheckRefusal::HiddenCandidateClockBlocks
         | ZoneCheckRefusal::HiddenCandidateLiveness
         | ZoneCheckRefusal::TimedAbstractLivenessTickSource => Refusal::Unsupported(NOT_YET),

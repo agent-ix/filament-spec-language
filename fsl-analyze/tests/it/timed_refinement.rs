@@ -405,46 +405,6 @@ fn a_timed_abstract_side_with_a_hidden_field_applies_the_abstract_clock_guard() 
     ));
 }
 
-/// FR-899 "Timed subjects", the narrowed refusal: with `any` the concrete
-/// send is matched by both a stutter and the abstract `send`, so the hidden
-/// candidate rows mix a step that is guarded with a stutter that is not. The
-/// product keeps one abstract clock valuation, so it refuses rather than
-/// follow either row.
-#[trace("TC-2538", "FR-899")]
-#[test]
-fn a_hidden_candidate_that_stutters_while_another_steps_is_refused() {
-    let concrete = document(&["x"], &[("send", &["inflight"])]);
-    let abstract_model = renamed_package(
-        &document(&["y"], &[("send", &["inflight"])]),
-        "test/abstract",
-    );
-    let world = refining(
-        &abstract_model,
-        &concrete,
-        &format!(
-            "{DENSE}time A dense unit ms;\n\
-             post ASend using v on A::Call::send {{ self.inflight = false }}\n\
-             pre ASendable using v on A::Call::send {{ self.y >= 1 ms }}\n\
-             pre MSend using v on M::Call::send {{ self.x >= 0 ms }}\n\
-             post MSent using v on M::Call::send {{ self.inflight }}\n{}",
-            refinement("false")
-                .replace(" late = self.late;", "")
-                .replace("-> A::Call::send(self)", "-> any")
-        ),
-    )
-    .unwrap_or_else(|refusals| panic!("{refusals:?}"));
-    let refused = check_timed_refinement(safety_request(&world), &Cancel::new())
-        .err()
-        .expect("mixed stutter and step rows are refused");
-    assert!(
-        matches!(
-            refused,
-            TimedRefinementRefusal::Zone(ZoneCheckRefusal::HiddenFieldTimedAbstract)
-        ),
-        "{refused:?}"
-    );
-}
-
 /// The refinement of a timed `A` with a hidden `late` by `M`, requiring weak
 /// fairness of the abstract `send`; `guard` is `M`'s `send` guard.
 fn timed_hidden_fair(guard: &str) -> Refining {
@@ -523,54 +483,6 @@ fn a_violated_safety_half_is_reported_with_no_liveness_half() {
         Some(RefinementFailure::AbstractClockGuard { .. })
     ));
     assert!(outcome.liveness.is_none(), "{:?}", outcome.liveness);
-}
-
-/// FR-899 "Timed subjects": `h` is hidden and free at the initial state (two initial
-/// candidates, `h` false and true), and
-/// the abstract time invariant `when self.h { y <= 0 }` reads differently
-/// for them. The product keeps one abstract clock valuation, so it refuses
-/// instead of intersecting the invariants.
-#[trace("TC-2538", "FR-899")]
-#[test]
-fn hidden_candidates_that_disagree_on_the_abstract_time_invariant_are_refused() {
-    let concrete = document(&["x"], &[("send", &["inflight"])]);
-    let mut abstract_document: serde_json::Value =
-        serde_json::from_slice(&document(&["y"], &[("send", &["inflight"])]))
-            .expect("abstract package JSON");
-    abstract_document["types"][1]["fields"]
-        .as_array_mut()
-        .expect("abstract object fields")
-        .push(crate::timed_world::wire_field(
-            "h",
-            "ix://filament/native/Boolean",
-        ));
-    let abstract_document =
-        renamed_package(&abstract_document.to_string().into_bytes(), "test/abstract");
-    let world = refining(
-        &abstract_document,
-        &concrete,
-        &format!(
-            "{DENSE}time A dense unit ms;\n\
-             post ASend using v on A::Call::send {{ self.inflight }}\n\
-             pre ASendable using v on A::Call::send {{ self.y >= 1 ms }}\n\
-             time invariant Trap when {{ self.h }} {{ self.y <= 0 ms }}\n\
-             pre MSend using v on M::Call::send {{ self.x >= 1 ms }}\n\
-             post MSent using v on M::Call::send {{ self.inflight }}\n{}",
-            refinement("self.inflight").replace(" late = self.late;", "")
-        ),
-    )
-    .unwrap_or_else(|refusals| panic!("{refusals:?}"))
-    .with_abstract_hidden_initials(&abstract_document, &[false, true]);
-    let refused = check_timed_refinement(safety_request(&world), &Cancel::new())
-        .err()
-        .expect("candidates that disagree on the invariant are refused");
-    assert!(
-        matches!(
-            refused,
-            TimedRefinementRefusal::Zone(ZoneCheckRefusal::HiddenFieldTimedAbstract)
-        ),
-        "{refused:?}"
-    );
 }
 
 /// The default timed profile supplies the selector bound for concrete

@@ -949,9 +949,6 @@ impl Product<'_, '_> {
             .positions
             .get(q)
             .ok_or(ZoneCheckRefusal::Fault("auxiliary-position"))?;
-        // Until the product follows every candidate, positions whose
-        // candidates disagree are refused.
-        Self::uniform_invariants(run, timed, position)?;
         for candidate in &position.abstract_states {
             let invariants = Self::candidate_invariants(run, timed, candidate)?;
             run.constrain(zone, &invariants)?;
@@ -974,31 +971,6 @@ impl Product<'_, '_> {
             run.timed.places().len(),
             &constraints,
         ))
-    }
-
-    /// The abstract time invariants every candidate of `position` reads. The
-    /// product keeps one abstract clock valuation per position, so candidates
-    /// whose invariants differ cannot be followed together: that is the
-    /// narrowed refusal, never an intersection that would drop behaviour.
-    fn uniform_invariants(
-        run: &Run<'_, '_, '_>,
-        timed: &TimedSystem<'_, '_>,
-        position: &RefinementPosition,
-    ) -> Result<Vec<PlaceConstraint>, Halt> {
-        let mut agreed: Option<Vec<PlaceConstraint>> = None;
-        for candidate in &position.abstract_states {
-            let state = timed
-                .system()
-                .pre_state(candidate.clone(), timed.system().declared_anchor());
-            let mut constraints = run.timed(timed.invariants(&state))?;
-            constraints.sort();
-            match &agreed {
-                None => agreed = Some(constraints),
-                Some(first) if *first == constraints => {}
-                Some(_) => return Err(ZoneCheckRefusal::HiddenFieldTimedAbstract.into()),
-            }
-        }
-        Ok(agreed.unwrap_or_default())
     }
 
     /// A point in `zone` at which every alive candidate's mapped abstract
@@ -1220,9 +1192,6 @@ impl Product<'_, '_> {
             .get(target)
             .ok_or(ZoneCheckRefusal::Fault("auxiliary-position"))?
             .clone();
-        // Until the product follows every candidate, edges whose rows differ in
-        // clock behaviour are refused.
-        self.matched_auxiliary_step(run, timed, source, taken)?;
         let rows = match self.rows(run, timed, source, taken)? {
             None => Vec::new(),
             Some(None) => return Ok((Vec::new(), vec![(zone, "mapped-operation".to_owned())])),
@@ -1578,11 +1547,11 @@ impl Product<'_, '_> {
                             if first.parts() == step.parts()
                                 && first.carries() == step.carries()
                                 && first.resets() == step.resets() => {}
-                        Some(_) => return Err(ZoneCheckRefusal::HiddenFieldTimedAbstract.into()),
+                        Some(_) => return Err(ZoneCheckRefusal::HiddenCandidateLiveness.into()),
                     }
                 }
                 match chosen {
-                    Some(_) if stutters => Err(ZoneCheckRefusal::HiddenFieldTimedAbstract.into()),
+                    Some(_) if stutters => Err(ZoneCheckRefusal::HiddenCandidateLiveness.into()),
                     Some(step) => Ok(Matched::Step(Box::new(step))),
                     None if stutters => Ok(Matched::Stutter),
                     None => Ok(Matched::Missing),

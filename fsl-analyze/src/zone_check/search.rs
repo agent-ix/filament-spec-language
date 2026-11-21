@@ -584,12 +584,6 @@ pub enum ZoneCheckRefusal {
     /// collection-valued write yet.
     #[error("the refinement checker does not map carried clock places")]
     CarriedClocks,
-    /// The abstract side has timed clocks and the hidden candidates of one
-    /// product position disagree on the abstract clock guard, carries or
-    /// resets of a step: the product keeps one abstract clock valuation per
-    /// position, so it cannot follow both candidates.
-    #[error("the refinement checker does not decide a timed abstract side whose hidden candidates differ in clock behaviour")]
-    HiddenFieldTimedAbstract,
     /// The alive hidden candidates of one product step apply different
     /// clock carries or resets, which needs one clock block per candidate;
     /// the product keeps one abstract clock block per position.
