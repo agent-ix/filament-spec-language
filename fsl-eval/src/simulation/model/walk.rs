@@ -739,16 +739,13 @@ pub(super) fn identities_of(
 ) -> Result<Vec<ModelTransition>, ExpansionStop> {
     let mut walk = walk_of(system, state, None)?;
     walk.rows.extend(absent_rows(system, state));
-    let mut budget = Budget {
-        used: 0,
-        max: Some(system.limits.max_candidates),
-        cancel: system
-            .request_cancel
-            .lock()
-            .expect("request cancellation lock")
-            .clone(),
-        request_meter: None,
-    };
+    let mut budget = system.budget();
+    budget.cancel = system
+        .request_cancel
+        .lock()
+        .expect("request cancellation lock")
+        .clone()
+        .or_else(|| system.probability_cancel.clone());
     let mut found = Vec::new();
     for row in &walk.rows {
         let Some(applications) = system.applications.get(&row.type_id()) else {
