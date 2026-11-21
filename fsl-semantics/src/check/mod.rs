@@ -90,9 +90,9 @@ pub use abstraction::{
 };
 pub use abstraction::{AbstractionNodeRefusal, AbstractionNodes};
 pub use composition::{
-    CheckedComponent, CheckedComposition, ClauseRef, ComponentGuaranteeKey, ComponentPackages,
-    ComponentSubject,
-    CompositionClauseFacts, CompositionCycle, CompositionGuarantee, CompositionItem,
+    composition_components, CheckedComponent, CheckedComposition, ClauseRef, ComponentGuaranteeKey,
+    ComponentPackages, ComponentSubject, CompositionClauseFacts, CompositionCycle,
+    CompositionGraphErrorCode, CompositionGraphRefusal, CompositionGuarantee, CompositionItem,
     CompositionName, CompositionPremise, CompositionRefusal, CompositionSlot, CompositionSlotKey,
     CompositionSpans, CompositionSupply, ItemPlacement, MalformedMember, ReadClause, ReadComponent,
     ReadComposition, ReadGuaranteeMember, ReadPremise, ReadSupply,
