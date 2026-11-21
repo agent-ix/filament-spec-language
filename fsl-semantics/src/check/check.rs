@@ -3093,6 +3093,16 @@ impl<'a> Typer<'a> {
         false
     }
 
+    /// Whether an unconverted integer equality operand lowers at the builtin
+    /// `Integer` node by the rule `lowers_as_integer` states (the typer form of
+    /// `lowered_integer_types`): FR-495-AC-24 compares such an operand as that
+    /// node, never as its checked interval.
+    fn equality_operand_lowers_as_integer(&self, operand: &TypedOperand) -> bool {
+        operand.conversion_target.is_none()
+            && matches!(operand.node.value_type, ValueType::Int(_) | ValueType::Integer)
+            && self.lowers_as_integer(&operand.node)
+    }
+
     /// This pass reading the concrete populations `populations` as a
     /// refinement row does (FR-139).
     #[must_use]
@@ -4008,6 +4018,21 @@ impl<'a> Typer<'a> {
                     location,
                 )
             });
+        }
+        // FR-495-AC-24: two integer operands that both lower at the builtin
+        // `Integer` node (an integer division, or a control node over one) are
+        // compared as that node, never as their checked intervals, so
+        // `n mod 3 = n mod 2` checks. An operand converted or of another type
+        // keeps the equality matrix.
+        let (mut left, mut right) = (left, right);
+        if self.equality_operand_lowers_as_integer(&left)
+            && self.equality_operand_lowers_as_integer(&right)
+        {
+            for operand in [&mut left, &mut right] {
+                let integer = EqualityOperand::typed(ValueType::Integer);
+                operand.checked = integer.clone();
+                operand.stored = integer;
+            }
         }
         let check = |left: &EqualityOperand, right: &EqualityOperand| {
             self.scope
