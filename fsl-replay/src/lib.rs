@@ -152,7 +152,7 @@ pub use certificate::closed_form::check::{
 };
 pub use certificate::closed_form::outcome::{
     AmcEvidence, ClosedFormAnalysis, ClosedFormEvidence, ClosedFormOutcome, DemandWitness,
-    HighModeMiss, JobIterates, MissEvidence, ScheduleLimit, TaskFixpoint,
+    HighModeMiss, JobIterates, MissEvidence, TaskFixpoint,
 };
 pub use certificate::closed_form::recompute::{recompute, ClosedFormCheck, ClosedFormDisagreement};
 pub use certificate::closed_form::settle::settle;

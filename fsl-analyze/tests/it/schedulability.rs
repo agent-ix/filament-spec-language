@@ -7,14 +7,14 @@
 use filament_exact::{Cancel, CancelCause, Integer, Rational};
 use filament_semantic_value::catalog::Category;
 use fsl_analyze::schedulability::{analyze, ScheduleLimits};
-use fsl_replay::IncompleteCause;
 use fsl_replay::{
     recompute, settle, AmcEvidence, Arrival, Certification, ClosedFormAnalysis, ClosedFormCheck,
     ClosedFormDisagreement, ClosedFormEvidence, ClosedFormOutcome, Code, Criticality,
     DisagreementCause, Identifier, InconclusiveCause, JobIterates, MissEvidence, ProofBasis,
-    QualifiedName, ScheduleClaim, ScheduleLimit, ScheduleSubject, SchedulingPolicy, Task,
-    TaskFixpoint, TaskSet, TaskSetRefusal, TerminalValue, TimeMember, Verdict, Wcet,
+    QualifiedName, ScheduleClaim, ScheduleSubject, SchedulingPolicy, Task, TaskFixpoint, TaskSet,
+    TaskSetRefusal, TerminalValue, TimeMember, Verdict, Wcet,
 };
+use fsl_replay::{IncompleteCause, ModelCheckLimit};
 use ix_trace_rs::trace;
 
 fn r(numerator: i64, denominator: i64) -> Rational {
@@ -461,10 +461,10 @@ fn qpa_stops_at_the_demand_point_limit_naming_it() {
     };
     assert_eq!(
         analyze(&subject, &limits, &Cancel::new()),
-        ClosedFormOutcome::Stopped(
-            IncompleteCause::ResourceExhausted,
-            ScheduleLimit::MaxDemandPoints(3)
-        )
+        ClosedFormOutcome::Stopped(IncompleteCause::LimitReached {
+            limit: ModelCheckLimit::ScheduleMaxDemandPoints,
+            value: 3
+        })
     );
 }
 
@@ -480,7 +480,7 @@ fn a_cancelled_handle_stops_the_analysis() {
     );
     assert!(matches!(
         outcome,
-        ClosedFormOutcome::Stopped(IncompleteCause::Cancelled { .. }, _)
+        ClosedFormOutcome::Stopped(IncompleteCause::Cancelled { .. })
     ));
 }
 
@@ -648,13 +648,14 @@ fn amc_settles_proved_and_a_failed_sufficient_test_settles_inconclusive() {
 #[test]
 fn a_stopped_analysis_settles_incomplete() {
     let subject = schedulable(ctl(5), SchedulingPolicy::Edf);
-    let outcome = ClosedFormOutcome::Stopped(
-        IncompleteCause::ResourceExhausted,
-        ScheduleLimit::MaxDemandPoints(3),
-    );
+    let cause = IncompleteCause::LimitReached {
+        limit: ModelCheckLimit::ScheduleMaxDemandPoints,
+        value: 3,
+    };
+    let outcome = ClosedFormOutcome::Stopped(cause.clone());
     assert_eq!(
         settled(&subject, &outcome),
-        TerminalValue::Incomplete(IncompleteCause::ResourceExhausted)
+        TerminalValue::Incomplete(cause)
     );
 }
 
