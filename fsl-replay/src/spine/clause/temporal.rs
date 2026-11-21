@@ -40,6 +40,7 @@ use crate::proof_result::SettlementBasis;
 
 mod package_selection;
 mod package_window;
+mod source_render;
 pub use package_selection::{
     run_package_snapshots, PackageSelectionNotRead, PackageSnapshotRequest,
 };
@@ -3758,36 +3759,7 @@ pub(super) fn atom_name(
     node: &fsl_semantics::check::TemporalClauseNode,
     atom: fsl_semantics::check::FormulaNodeId,
 ) -> Result<String, Box<RunRefusal>> {
-    let Some(FormulaNode::Holds { span } | FormulaNode::Aggregate { span }) =
-        node.clause().formula().nodes().get(atom.index()).cloned()
-    else {
-        // An atom is a `holds` or aggregate node; FR-283 never names one by
-        // its formula node index.
-        return Err(Box::new(RunRefusal::Fault(
-            filament_semantic_value::catalog::InternalFault::new(
-                "temporal",
-                "named-atom-is-a-holds-or-aggregate-node",
-            ),
-        )));
-    };
-    let Some(reference) = clause_source_ref(package, node) else {
-        return Err(Box::new(RunRefusal::Fault(
-            filament_semantic_value::catalog::InternalFault::new(
-                "temporal",
-                "clause-declaration-has-a-region",
-            ),
-        )));
-    };
-    let text = clause_source(package, sources, node).and_then(|source| source.slice(span));
-    text.map(str::to_owned).ok_or_else(|| {
-        Box::new(RunRefusal::SourceNotSupplied {
-            reference: fsl_foundation::SourceIdentity::new(
-                reference.authority(),
-                reference.identity(),
-            ),
-            clause: Some(node.clause().name().to_owned()),
-        })
-    })
+    source_render::atom_name(package, sources, node, atom)
 }
 
 /// FR-283 "Behavior": the name of the atom with formula occurrence `atom` of

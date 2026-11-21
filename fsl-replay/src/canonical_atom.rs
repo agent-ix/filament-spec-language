@@ -31,6 +31,14 @@ pub struct CanonicalRows {
 }
 
 impl CanonicalRows {
+    pub(crate) fn from_valuation(valuation: &crate::spine::TemporalValuation) -> Self {
+        Self {
+            declarations: valuation.canonical_declarations.clone(),
+            functions: valuation.canonical_functions.clone(),
+            record_fields: valuation.canonical_record_fields.clone(),
+            union_members: valuation.canonical_union_members.clone(),
+        }
+    }
     /// Build the declaration and function spellings a package-backed
     /// expression needs from its FR-940 read projection and the package's declared composites.
     pub fn from_projection(
@@ -1119,7 +1127,7 @@ fn canonical_identity(key: &NodeKey) -> Result<String, String> {
     Ok(format!("ix://{}/{}", key.package(), path.join("/")))
 }
 
-fn unit_identity(key: &NodeKey) -> Result<String, String> {
+pub(crate) fn unit_identity(key: &NodeKey) -> Result<String, String> {
     let view = key.view();
     let mut path = view.path();
     // NodeOwner::nominal_key places a model unit's actual declaration
@@ -1150,12 +1158,7 @@ pub fn source_labels(
         binders.push(trigger.to_owned());
     }
     binders.extend(clause.captures().map(|(name, _)| name.to_owned()));
-    let rows = CanonicalRows {
-        declarations: valuation.canonical_declarations.clone(),
-        functions: valuation.canonical_functions.clone(),
-        record_fields: valuation.canonical_record_fields.clone(),
-        union_members: valuation.canonical_union_members.clone(),
-    };
+    let rows = CanonicalRows::from_valuation(valuation);
     valuation
         .checked_conditions
         .iter()

@@ -578,10 +578,27 @@ impl TemporalValuation {
                 atom_identities.insert(atom, key.clone());
             }
         }
-        let canonical_declarations = canonical_condition_declarations(graph, &checked_conditions);
-        let canonical_functions = canonical_condition_functions(graph, &checked_conditions);
-        let canonical_record_fields = canonical_condition_record_fields(graph, &checked_conditions);
-        let canonical_union_members = canonical_condition_union_members(graph, &checked_conditions);
+        let mut roots = checked_conditions
+            .iter()
+            .map(|(_, body)| body.root())
+            .collect::<Vec<_>>();
+        for index in clause.aggregates().keys() {
+            if let Some(parts) = node.aggregate_conditions(
+                fsl_semantics::check::FormulaNodeId::from_arena_index(*index),
+            ) {
+                roots.extend(
+                    [parts.value, parts.filter, parts.predicate]
+                        .into_iter()
+                        .flatten()
+                        .map(|(root, _)| root),
+                );
+                roots.push(parts.threshold.0);
+            }
+        }
+        let canonical_declarations = canonical_condition_declarations(graph, &roots);
+        let canonical_functions = canonical_condition_functions(graph, &roots);
+        let canonical_record_fields = canonical_condition_record_fields(graph, &roots);
+        let canonical_union_members = canonical_condition_union_members(graph, &roots);
         Self {
             clause: clause.clone(),
             atom_identities,
@@ -598,14 +615,11 @@ impl TemporalValuation {
 
 fn canonical_condition_record_fields(
     graph: &CheckedGraph,
-    conditions: &[(
-        fsl_semantics::check::FormulaNodeId,
-        fsl_semantics::check::CheckedBody,
-    )],
+    conditions: &[fsl_semantics::check::CheckedNode<'_>],
 ) -> BTreeMap<filament_exact::NodeKey, Vec<String>> {
     let mut records = BTreeMap::new();
-    for (_, body) in conditions {
-        let mut pending = vec![body.root()];
+    for root in conditions {
+        let mut pending = vec![*root];
         let mut visited = std::collections::HashSet::new();
         while let Some(node) = pending.pop() {
             if !visited.insert(node.id()) {
@@ -638,14 +652,11 @@ fn canonical_condition_record_fields(
 
 fn canonical_condition_union_members(
     graph: &CheckedGraph,
-    conditions: &[(
-        fsl_semantics::check::FormulaNodeId,
-        fsl_semantics::check::CheckedBody,
-    )],
+    conditions: &[fsl_semantics::check::CheckedNode<'_>],
 ) -> BTreeMap<filament_exact::NodeKey, Vec<String>> {
     let mut unions = BTreeMap::new();
-    for (_, body) in conditions {
-        let mut pending = vec![body.root()];
+    for root in conditions {
+        let mut pending = vec![*root];
         let mut visited = std::collections::HashSet::new();
         while let Some(node) = pending.pop() {
             if !visited.insert(node.id()) {
@@ -683,14 +694,11 @@ fn canonical_condition_union_members(
 
 fn canonical_condition_functions(
     graph: &CheckedGraph,
-    conditions: &[(
-        fsl_semantics::check::FormulaNodeId,
-        fsl_semantics::check::CheckedBody,
-    )],
+    conditions: &[fsl_semantics::check::CheckedNode<'_>],
 ) -> BTreeMap<usize, String> {
     let mut functions = BTreeMap::new();
-    for (_, body) in conditions {
-        let mut pending = vec![body.root()];
+    for root in conditions {
+        let mut pending = vec![*root];
         let mut visited = std::collections::HashSet::new();
         while let Some(node) = pending.pop() {
             if !visited.insert(node.id()) {
@@ -718,10 +726,7 @@ fn canonical_condition_functions(
 
 fn canonical_condition_declarations(
     graph: &CheckedGraph,
-    conditions: &[(
-        fsl_semantics::check::FormulaNodeId,
-        fsl_semantics::check::CheckedBody,
-    )],
+    conditions: &[fsl_semantics::check::CheckedNode<'_>],
 ) -> BTreeMap<filament_exact::NodeKey, String> {
     let mut declarations = BTreeMap::new();
     for (key, declaration) in graph.semantic_graph().source_enum_declarations() {
@@ -739,8 +744,8 @@ fn canonical_condition_declarations(
             ),
         );
     }
-    for (_, body) in conditions {
-        let mut pending = vec![body.root()];
+    for root in conditions {
+        let mut pending = vec![*root];
         let mut visited = std::collections::HashSet::new();
         while let Some(node) = pending.pop() {
             if !visited.insert(node.id()) {

@@ -172,18 +172,32 @@ impl<'a, 'p> Context<'a, 'p> {
             .temporal_atom_sources(&self.claim, atom.index())
             .map_err(|reason| self.attribution(atom.index(), reason))?;
         let mut common = None;
-        for candidate in candidates {
+        let mut differing = false;
+        for candidate in &candidates {
             let text = self.source_text(&candidate.region)?;
-            if common.as_ref().is_some_and(|held| held != &text) {
-                // The reviewed rendering contract owns the exceptional
-                // differing-text rule; no occurrence is paired by rank.
-                return Err(
-                    self.attribution(atom.index(), OccurrenceSourceRefusal::AmbiguousRegion)
-                );
-            }
-            common = Some(text);
+            differing |= common.as_ref().is_some_and(|held| held != &text);
+            common.get_or_insert(text);
         }
-        common.ok_or_else(|| self.attribution(atom.index(), OccurrenceSourceRefusal::MissingRegion))
+        let text = common.ok_or_else(|| {
+            self.attribution(atom.index(), OccurrenceSourceRefusal::MissingRegion)
+        })?;
+        if candidates.len() > 1 {
+            self.source_text(&self.declaration)?;
+        }
+        if !differing {
+            return Ok(text);
+        }
+        let term = self
+            .package
+            .project_holds(self.key, atom.index())
+            .map_err(|_| self.attribution(atom.index(), OccurrenceSourceRefusal::UnknownNode))?;
+        let rows = crate::canonical_atom::CanonicalRows::from_projection(
+            term.projection(),
+            &self.package.declared_composites(),
+        )
+        .map_err(|_| self.attribution(atom.index(), OccurrenceSourceRefusal::UnknownNode))?;
+        crate::canonical_atom::package_label(&term, &rows)
+            .map_err(|_| self.attribution(atom.index(), OccurrenceSourceRefusal::UnknownNode))
     }
 
     pub fn classes(&self) -> Result<Vec<usize>, PackageSelectionNotRead> {
