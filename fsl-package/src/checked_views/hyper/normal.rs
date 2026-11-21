@@ -494,6 +494,12 @@ fn expression(
     values.pop().ok_or_else(|| malformed(claim))
 }
 
+struct EncodedBody {
+    bytes: Vec<u8>,
+    atoms: Vec<Vec<u8>>,
+    opaque: bool,
+}
+
 fn body(
     inputs: &Inputs<'_, '_>,
     formula: &[PackageFormulaNode],
@@ -502,7 +508,7 @@ fn body(
     swap: Option<(usize, usize)>,
     budget: &mut Budget<'_>,
     claim: &OccurrenceKey,
-) -> Result<(Vec<u8>, Vec<Vec<u8>>, bool), BareClauseRefusal> {
+) -> Result<EncodedBody, BareClauseRefusal> {
     budget.charge(
         formula.len(),
         formula
@@ -597,7 +603,11 @@ fn body(
         .first_mut()
         .and_then(Option::take)
         .ok_or_else(|| malformed(claim))?;
-    Ok((body.bytes, atom_bytes, body.opaque))
+    Ok(EncodedBody {
+        bytes: body.bytes,
+        atoms: atom_bytes,
+        opaque: body.opaque,
+    })
 }
 
 fn exchange(
@@ -785,7 +795,11 @@ fn copy_group_with_budget(
             std::mem::size_of::<CopyGenerator>() + 4 * std::mem::size_of::<usize>(),
         ),
     )?;
-    let (plain, atom_bytes, opaque) = body(&inputs, formula, atoms, slots, None, budget, claim)?;
+    let EncodedBody {
+        bytes: plain,
+        atoms: atom_bytes,
+        opaque,
+    } = body(&inputs, formula, atoms, slots, None, budget, claim)?;
     if opaque {
         return Ok((
             plain,
@@ -811,7 +825,11 @@ fn copy_group_with_budget(
             if quantifiers[earlier].alias != quantifiers[later].alias {
                 continue;
             }
-            let (swapped, swapped_atoms, _) = body(
+            let EncodedBody {
+                bytes: swapped,
+                atoms: swapped_atoms,
+                ..
+            } = body(
                 &inputs,
                 formula,
                 atoms,
