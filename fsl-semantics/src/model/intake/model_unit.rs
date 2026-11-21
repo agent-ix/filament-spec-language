@@ -803,7 +803,17 @@ pub fn compile_model_unit_with_causes(
         }
     }
     for end in connection_ends {
-        validate_connection_end(parsed, &identity, &types, &end)?;
+        validate_connection_end(
+            parsed,
+            &identity,
+            &types,
+            &[
+                (&populations, "population"),
+                (&dimensions, "dimension"),
+                (&units, "unit"),
+            ],
+            &end,
+        )?;
     }
     for (target, span) in references {
         if !object_names.contains(&target) {
@@ -2324,12 +2334,26 @@ fn validate_connection_end(
     parsed: &ParsedSource,
     package: &str,
     types: &[Value],
+    other_declarations: &[(&[Value], &str)],
     end: &ConnectionEnd,
 ) -> Result<(), Vec<CompleteDiagnostic>> {
     let mut port_owner = None;
     for (token, required_kind) in [(&end.part, "part"), (&end.port, "port")] {
         let key = format!("ix://{package}/{}", token.text);
-        let Some(node) = types.iter().find(|node| node["identity"] == key) else {
+        let declaration = types
+            .iter()
+            .map(|node| (node, "unknown"))
+            .chain(
+                other_declarations
+                    .iter()
+                    .flat_map(|(nodes, kind)| nodes.iter().map(move |node| (node, *kind))),
+            )
+            .find(|(node, _)| {
+                node["identity"] == key
+                    || node["displayName"] == token.text
+                    || node["name"] == token.text
+            });
+        let Some((node, fallback_kind)) = declaration else {
             return Err(vec![diagnostic(
                 parsed,
                 CompleteCode::MissingDeclaration,
@@ -2338,7 +2362,7 @@ fn validate_connection_end(
                 format!("connection end requires {required_kind} {key}, which is not declared"),
             )]);
         };
-        let actual_kind = node["kind"]["name"].as_str().unwrap_or("unknown");
+        let actual_kind = node["kind"]["name"].as_str().unwrap_or(fallback_kind);
         if actual_kind != required_kind {
             return Err(vec![diagnostic(
                 parsed,

@@ -346,6 +346,59 @@ fn systems_source_rejects_each_invalid_endpoint_before_writing_a_document() {
             assert!(error.message.contains(detail), "{detail}: {error:?}");
         }
     }
+    for (declaration, kind) in [
+        ("population Aux: Pump;", "population"),
+        ("dimension Aux;", "dimension"),
+        (
+            "dimension Length; unit Aux: Length = rational(1, 1);",
+            "unit",
+        ),
+    ] {
+        for (original, changed, required) in [
+            ("SysPump.PumpOut", "Aux.PumpOut", "part"),
+            ("SysTank.TankIn", "Aux.TankIn", "part"),
+            ("SysPump.PumpOut", "SysPump.Aux", "port"),
+            ("SysTank.TankIn", "SysTank.Aux", "port"),
+        ] {
+            let model = SYSTEMS_MODEL
+                .replace(
+                    "connection Pipe",
+                    &format!("{declaration}\nconnection Pipe"),
+                )
+                .replace(original, changed);
+            let parsed = fsl_cst::parse(
+                SourceIdentity::new("agent-ix", "test:plant.fsl"),
+                "plant.fsl",
+                model.as_bytes(),
+                fsl_cst::Limits::default(),
+            )
+            .unwrap();
+            let errors = fsl_semantics::model::intake::compile_model_unit_with_causes(
+                &parsed,
+                ModelNormalizationLimits::default(),
+            )
+            .expect_err("a declared non-system name has the wrong kind");
+            let [error] = errors.as_slice() else {
+                panic!("{errors:?}")
+            };
+            assert_eq!(error.code, CompleteCode::InvalidModelBinding, "{error:?}");
+            assert_eq!(error.cause, CompleteCause::WrongExport, "{error:?}");
+            assert!(
+                error
+                    .message
+                    .contains(&format!("requires {required}, found {kind}")),
+                "{error:?}"
+            );
+            let start = model.rfind("Aux").unwrap();
+            assert_eq!(
+                error.byte_span(),
+                Some(fsl_foundation::Span {
+                    start,
+                    end: start + 3
+                })
+            );
+        }
+    }
 }
 
 #[test]
