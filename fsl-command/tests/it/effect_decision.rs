@@ -128,7 +128,7 @@ fn unbounded_recommendation_lasso(stem: bool) -> Fixture {
     let advice = |name: &str| {
         format!(
             "recommend {name} by Auditor on M::Counter::inc contracts [SpaceAvailable] \
-         as (advice: Boolean) {{ true }};"
+         as (v{name}: Boolean) {{ true }};"
         )
     };
     let initial = if stem {
