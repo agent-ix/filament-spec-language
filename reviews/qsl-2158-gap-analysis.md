@@ -621,3 +621,21 @@ scope:
       representation and arithmetic limits and cancellation; a stop SHALL
       settle `incomplete` with its limit and no truth value.
 ```
+
+## Targeted mechanical verification round 4
+
+Frozen source `bd54ba0f8b40d960acb39086268fffd4269f3a13`; same independent Codex reviewer. Earlier history remains verbatim.
+
+**Latest qualification: CONDITIONAL pending final exact-head runtime.** Existing gap outcomes unchanged, no new gap finding or full gap analysis.
+
+Targeted CR023 mechanical verification only, continuing the same architecture-authorized correction. Inspected the eight production lines and their actual called APIs/error mappings. The quire_canonical::Reservation implementation explicitly forwards to the existing filament_exact::Reservation implementation; its poll, cumulative storage ceiling, checked size conversion and original first retained stop remain unchanged. Canonical denial handling resolves ModelKeyError::Denied through admission.refusal, preserving cancellation/storage/accounting causes instead of replacing them with Malformed.
+
+restore_named now calls the real public ModelSystem::actions_with_budget and maps its ModelKeyExpansionError through admission.expansion_refusal. The owner method uses the existing KeyScope and actual caller budget/cancel. Its difference from enabled_actions is filtering actions with no physical post for any draw; such an action cannot contain a matching pending draw, which independently requires positive probability and at least two actual posts. Draw selection, pending identity equality and retained rewards/posts remain unchanged. No error-semantic change or new defect found in this narrow correction.
+
+CR023 is fixed by inspected source. CR021/022 remain fixed under the accepted prepaid atomic-interval ruling; no deeper callback or full additional review was demanded. All prior histories/dispositions, including rejected CR002 and architecture-deferred generic GA002, remain preserved. Accepted normative SR507, pins, scope, defaults and wire are unchanged. No new full gap/BASE/matrix/global analysis was run. Source remains clean/frozen; read-only diff --check passes.
+
+Final exactbd54ba0f8b40d960acb39086268fffd4269f3a13 same45tests/16commands is being requested remotely; no results supplied yet. No45-test acceptance claim. Previous9e0a first30 command COMPILE101/ZERO tests, commands2–16 held, remains historical failure. No local cargo, tests, baseline, clippy, Kani, sweeps or devcompile.
+
+Plan completion: not assessed
+
+Earlier scoped static matrix/diagnostic limits remain; no recomputation was needed for this targeted mechanical correction.
