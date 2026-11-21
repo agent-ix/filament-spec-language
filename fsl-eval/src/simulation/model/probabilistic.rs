@@ -175,7 +175,7 @@ pub struct UndecidedSuccessor {
 #[derive(Clone, Debug, PartialEq)]
 pub enum Unsteppable {
     /// A scheduled identity and drawn vector has no post-state or several.
-    NotMarkov(NotMarkov),
+    NotMarkov(Box<NotMarkov>),
     /// A contract conjunction was undecided at the state.
     UndecidedSuccessor(UndecidedSuccessor),
 }
@@ -1018,7 +1018,7 @@ impl ModelSystem<'_> {
         for action in &actions {
             for draw in &action.draws {
                 if draw.successors.len() != 1 {
-                    return Ok(Err(Unsteppable::NotMarkov(NotMarkov {
+                    let cause = NotMarkov {
                         state: key,
                         transition: action.identity.clone(),
                         drawn_transition: draw.transition.clone(),
@@ -1027,7 +1027,12 @@ impl ModelSystem<'_> {
                             .expect("supported targets have at most 64-bit usize"),
                         post_state_examples: self
                             .not_markov_post_keys_impl(draw, cancel, key_policy)?,
-                    })));
+                    };
+                    if let Some(policy) = key_policy {
+                        policy.work(1)?;
+                        policy.admit(size_of::<NotMarkov>())?;
+                    }
+                    return Ok(Err(Unsteppable::NotMarkov(Box::new(cause))));
                 }
             }
         }

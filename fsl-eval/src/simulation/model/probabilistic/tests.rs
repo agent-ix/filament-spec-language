@@ -363,6 +363,130 @@ fn health_variants_are_not_markov() {
     assert_eq!(counts, [(false, 1), (true, 0)]);
 }
 
+/// Caller admission must succeed before retaining the owned refusal box.
+#[trace("TC-622", "FR-187-AC-3")]
+#[test]
+fn not_markov_box_admission_preserves_payload_and_caller_refusals() {
+    use super::super::{ModelKeyBudget, ModelKeyError, ModelKeyExpansionError};
+    use filament_exact::{
+        Cancel, CancelCause, IntegerDecimalBudget, Reservation, ReservationDenied,
+    };
+
+    #[derive(Clone, Debug, Eq, PartialEq)]
+    enum Admission {
+        Storage(usize),
+        Work(u64),
+    }
+    #[derive(Default)]
+    struct Budget<'a> {
+        charges: Vec<Admission>,
+        deny: Option<usize>,
+        cancel_on: Option<(usize, &'a Cancel)>,
+    }
+    impl Budget<'_> {
+        fn charge(&mut self, charge: Admission) -> Result<(), ReservationDenied> {
+            let index = self.charges.len();
+            self.charges.push(charge);
+            if let Some((at, cancel)) = self.cancel_on {
+                if at == index {
+                    cancel.cancel(CancelCause::Deadline);
+                }
+            }
+            if self.deny == Some(index) {
+                Err(ReservationDenied)
+            } else {
+                Ok(())
+            }
+        }
+    }
+    impl Reservation for Budget<'_> {
+        fn reserve(&mut self, bytes: usize) -> Result<(), ReservationDenied> {
+            self.charge(Admission::Storage(bytes))
+        }
+    }
+    impl IntegerDecimalBudget for Budget<'_> {
+        fn work(&mut self, units: u64) -> Result<(), ReservationDenied> {
+            self.charge(Admission::Work(units))
+        }
+    }
+    impl ModelKeyBudget for Budget<'_> {
+        fn integer(&mut self, _: &Integer) -> Result<(), ReservationDenied> {
+            Ok(())
+        }
+    }
+    for post in ["true", "self.up and not self.up"] {
+        let world = World::new(&world::gate("true", post, ""));
+        let system = world.system();
+        let start = initial(&system);
+        let expected = not_markov_of(
+            system
+                .weighted_steps(&start, world.workload("Unit"))
+                .unwrap(),
+            "the legacy port retains its complete refusal",
+        );
+        let mut admitted = Budget::default();
+        let result = system.weighted_steps_with_budget(
+            &start,
+            world.workload("Unit"),
+            fsl_foundation::IdentityLimits::default(),
+            &mut admitted,
+            &Cancel::new(),
+        );
+        assert_eq!(not_markov_of(result.unwrap(), "admitted refusal"), expected);
+        let boundary = admitted.charges.len() - 2;
+        assert_eq!(
+            &admitted.charges[boundary..],
+            &[
+                Admission::Work(1),
+                Admission::Storage(size_of::<NotMarkov>())
+            ]
+        );
+        for denied in [boundary, boundary + 1] {
+            let mut budget = Budget {
+                deny: Some(denied),
+                ..Budget::default()
+            };
+            let result = system.weighted_steps_with_budget(
+                &start,
+                world.workload("Unit"),
+                fsl_foundation::IdentityLimits::default(),
+                &mut budget,
+                &Cancel::new(),
+            );
+            assert!(
+                matches!(
+                    result,
+                    Err(ModelKeyExpansionError::Key(ModelKeyError::Denied))
+                ),
+                "{result:?}"
+            );
+            assert_eq!(budget.charges, admitted.charges[..=denied]);
+        }
+        let cancel = Cancel::new();
+        let mut budget = Budget {
+            cancel_on: Some((boundary + 1, &cancel)),
+            ..Budget::default()
+        };
+        let result = system.weighted_steps_with_budget(
+            &start,
+            world.workload("Unit"),
+            fsl_foundation::IdentityLimits::default(),
+            &mut budget,
+            &cancel,
+        );
+        assert!(
+            matches!(
+                result,
+                Err(ModelKeyExpansionError::Key(ModelKeyError::Cancelled(
+                    CancelCause::Deadline
+                )))
+            ),
+            "{result:?}"
+        );
+        assert_eq!(budget.charges, admitted.charges);
+    }
+}
+
 /// The full drawn identity preserves parameter order even when a random
 /// parameter lies between non-random parameters and no successor exists.
 #[trace("TC-622", "FR-187-AC-3")]
@@ -606,7 +730,7 @@ fn service_checks_and_refuses_emission_naming_its_boolean_random_parameter() {
 /// The [`NotMarkov`] of a `weighted_steps` result that is not steppable.
 fn not_markov_of(result: Result<Vec<WeightedStep>, Unsteppable>, why: &str) -> NotMarkov {
     match result {
-        Err(Unsteppable::NotMarkov(not_markov)) => not_markov,
+        Err(Unsteppable::NotMarkov(not_markov)) => *not_markov,
         other => panic!("NotMarkov ({why}): {other:?}"),
     }
 }

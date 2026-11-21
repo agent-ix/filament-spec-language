@@ -710,7 +710,7 @@ fn subject(
                 let steps = steps.map_err(|stop| {
                     failure(match stop {
                         fsl_eval::simulation::model::Unsteppable::NotMarkov(cause) => {
-                            crate::ExactProbBuildIssue::NotMarkov(Box::new(cause))
+                            crate::ExactProbBuildIssue::NotMarkov(cause)
                         }
                         fsl_eval::simulation::model::Unsteppable::UndecidedSuccessor(_) => {
                             crate::ExactProbBuildIssue::UndecidedSuccessor
@@ -754,7 +754,7 @@ fn subject(
                         .map_err(|stop| {
                             ProbabilityDocumentError::Build(Box::new(match stop {
                                 fsl_eval::simulation::model::Unsteppable::NotMarkov(cause) => {
-                                    crate::ExactProbBuildIssue::NotMarkov(Box::new(cause))
+                                    crate::ExactProbBuildIssue::NotMarkov(cause)
                                 }
                                 fsl_eval::simulation::model::Unsteppable::UndecidedSuccessor(_) => {
                                     crate::ExactProbBuildIssue::UndecidedSuccessor

@@ -966,7 +966,7 @@ impl Builder<'_, '_, '_, '_> {
         let steps = match result? {
             Ok(steps) => steps,
             Err(Unsteppable::NotMarkov(not_markov)) => {
-                return Err(ProductRefusal::NotMarkov(Box::new(not_markov)).into());
+                return Err(ProductRefusal::NotMarkov(not_markov).into());
             }
             Err(Unsteppable::UndecidedSuccessor(undecided)) => {
                 return Err(ProductRefusal::UndecidedSuccessor(undecided).into());
