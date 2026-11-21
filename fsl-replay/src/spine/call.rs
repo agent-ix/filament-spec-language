@@ -1021,8 +1021,12 @@ pub(crate) fn run_compiled(
     };
     let bound_world;
     let objects = if call.snapshot.is_some() {
-        bound_world =
-            bind_snapshot_populations(objects, models.models(), selected.parameters, call)?;
+        bound_world = bind_snapshot_populations(
+            objects,
+            models.models().iter().map(|model| &model.view),
+            selected.parameters,
+            call,
+        )?;
         &bound_world
     } else {
         objects
@@ -1117,9 +1121,9 @@ pub(crate) fn run_compiled(
 /// FR-650 "Population argument": FR-084 admission binds each population the
 /// call names for a `Population<T>[N]` parameter, with the parameter's
 /// declared maximum, and FR-089 records its identity in the object context.
-fn bind_snapshot_populations(
+pub(super) fn bind_snapshot_populations<'a>(
     objects: &ObjectEnvironment,
-    models: &[fsl_semantics::model::intake::SelectedModel],
+    views: impl IntoIterator<Item = &'a fsl_semantics::model::normalize::EffectiveView> + Clone,
     parameters: &[(String, ValueType)],
     call: &Call,
 ) -> Result<ObjectEnvironment, Box<RunRefusal>> {
@@ -1137,7 +1141,8 @@ fn bind_snapshot_populations(
         else {
             continue;
         };
-        environment = bind_snapshot_population(environment, models, named, *maximum, position)?;
+        environment =
+            bind_snapshot_population_views(environment, views.clone(), named, *maximum, position)?;
     }
     Ok(environment)
 }
@@ -1147,6 +1152,22 @@ fn bind_snapshot_populations(
 pub(super) fn bind_snapshot_population(
     objects: ObjectEnvironment,
     models: &[fsl_semantics::model::intake::SelectedModel],
+    named: &str,
+    maximum: Option<u64>,
+    position: usize,
+) -> Result<ObjectEnvironment, Box<RunRefusal>> {
+    bind_snapshot_population_views(
+        objects,
+        models.iter().map(|model| &model.view),
+        named,
+        maximum,
+        position,
+    )
+}
+
+fn bind_snapshot_population_views<'a>(
+    objects: ObjectEnvironment,
+    views: impl IntoIterator<Item = &'a fsl_semantics::model::normalize::EffectiveView>,
     named: &str,
     maximum: Option<u64>,
     position: usize,
@@ -1162,15 +1183,13 @@ pub(super) fn bind_snapshot_population(
         return Ok(objects);
     };
     let wrong = || Box::new(RunRefusal::WrongValueKind { position });
-    let Some((model, key)) = models.iter().find_map(|model| {
-        model
-            .view
-            .domain_package()
+    let Some((view, key)) = views.into_iter().find_map(|view| {
+        view.domain_package()
             .records
             .iter()
             .find_map(|record| match record {
                 DomainPackageRecord::Population(population) if population.key.node == named => {
-                    Some((model, population.key.clone()))
+                    Some((view, population.key.clone()))
                 }
                 _ => None,
             })
@@ -1180,9 +1199,7 @@ pub(super) fn bind_snapshot_population(
     let documents = members
         .iter()
         .map(|member| {
-            model
-                .view
-                .type_identities()
+            view.type_identities()
                 .iter()
                 .find(|(_, identity)| *identity == member.object_type())
                 .map(|(declaration, _)| PopulationMember {
@@ -1194,12 +1211,12 @@ pub(super) fn bind_snapshot_population(
         .collect::<Option<Vec<_>>>()
         .ok_or_else(wrong)?;
     let document = PopulationDocument {
-        model_identity: model.view.model_selection().identity.clone(),
+        model_identity: view.model_selection().identity.clone(),
         members: documents,
     };
     let mut meter = AdmissionMeter::new(PopulationAdmissionLimits::default());
     let AdmissionOutcome::Admitted(binding) = admit_binding(
-        &model.view,
+        view,
         &document,
         &key,
         GeneralizationClosure::Closed,

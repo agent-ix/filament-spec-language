@@ -4828,7 +4828,7 @@ mod order_tests {
                     function reference using v(p: Reference<M::Widget>): Boolean pure { true }\n\
                     function nested using v(p: Option<Population<M::Widget>[1]>): Boolean pure { true }\n\
                     function population using v(p: Population<M::Widget>[0]): Population<M::Widget>[0] pure { p }\n\
-                    function count using v(p: Population<M::Gadget>[1]): Integer pure { size(allInstances<M::Gadget>(p)) }\n";
+                    function tally using v(p: Population<M::Gadget>[1]): Integer pure { size(allInstances<M::Gadget>(p)) }\n";
         let parsed = fsl_cst::parse(
             fsl_foundation::SourceIdentity::new("agent-ix", "test:population-projection"),
             "population.native",
@@ -4909,7 +4909,7 @@ mod order_tests {
             projection.selected_function().unwrap().result_type,
             &ValueType::Population(Some(0))
         );
-        let projection = package.project_function("count").unwrap().unwrap();
+        let projection = package.project_function("tally").unwrap().unwrap();
         assert_eq!(
             projection.selected_function().unwrap().result_type,
             &ValueType::Integer
