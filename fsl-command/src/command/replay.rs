@@ -80,7 +80,7 @@ pub(super) fn run_bytes(
             let row = result
                 .to_function_json()
                 .map_err(|error| RunCause::ReplayOutput {
-                    outcome: fsl_replay::OutcomeDocument::from_replay_output_failure(0, &error),
+                    outcome: Box::new(fsl_replay::OutcomeDocument::from_replay_output_failure(0, &error)),
                     error,
                 })?;
             let row: Value = serde_json::from_str(&row).map_err(RunCause::Output)?;

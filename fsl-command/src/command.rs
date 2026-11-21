@@ -1093,7 +1093,7 @@ pub enum RunCause {
         #[source]
         error: fsl_replay::CauseCodecError,
         /// The all-or-nothing outcome document for this failed row.
-        outcome: fsl_replay::OutcomeDocument,
+        outcome: Box<fsl_replay::OutcomeDocument>,
     },
     /// An item run violated an internal runtime invariant.
     #[error("an items run faulted")]
@@ -1330,7 +1330,7 @@ impl RunError {
             RunCause::AnalyzeRefused(refusal) => refusal.document(),
             RunCause::MonitorRefused(refusal) => refusal.document(),
             RunCause::Replay(failure) => failure.outcome.clone(),
-            RunCause::ReplayOutput { outcome, .. } => outcome.clone(),
+            RunCause::ReplayOutput { outcome, .. } => outcome.as_ref().clone(),
             RunCause::Source(failure) => OutcomeDocument::new(operation, None, self.category())
                 .with_diagnostics(vec![OutcomeDiagnostic::from_source_diagnostic(
                     &failure.diagnostic,
@@ -4764,7 +4764,7 @@ mod tests {
         let codec = fsl_replay::CauseCodecError::Empty("result row");
         let error = RunError {
             cause: RunCause::ReplayOutput {
-                outcome: fsl_replay::OutcomeDocument::from_replay_output_failure(1, &codec),
+                outcome: Box::new(fsl_replay::OutcomeDocument::from_replay_output_failure(1, &codec)),
                 error: codec,
             },
             sources: crate::Sources::default(),
