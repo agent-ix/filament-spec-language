@@ -56,6 +56,16 @@ Direct rustfmt --check --edition 2021 --config skip_children=true over all nine 
 
 Plan completion: not assessed.
 
+## Post-rebase compatibility disposition — integration fix 1
+
+This is a bounded continuation of the original review under run 7D2A9A99-0FFA-4A52-ADA6-129B7663E1A2 and SR-202611212119190339300000001, not a second full review or a semantic fix round. Scoped code PASS and the original findings/history are unchanged.
+
+Inspected original frozen 13f242003f7964e0735c19807b2c316671473988, fresh-main helper at 514d2f5596859fbd449f27f77e08488c73072d30, rebased candidate 92cbf1ff45e9cf1935e91d591cad56ea2c9be484, and correction 2d0c8b8f4a3272081bba8c7e7e8c7afc3fd73e41. The correction changes only the two new test calls in fsl-package/src/emit/tests/composition.rs from compile(&declaration, None) to compile(&declaration), matching the existing shared World::compile helper's current signature.
+
+The old helper passed None to compile_with; its only lattice-dependent action was guarded by if let Some(profile), which None did not enter. Fresh main removes that optional parameter and branch, then assembles/checks/links the same unit against the same producer and consumer dependency inputs with the same source identity, modes and limits. Thus these call adaptations preserve the old no-lattice semantics. The exact two-line call diff changes no assertion, fixture, declaration or expected result. No new semantic defect found.
+
+Root reports the intermediate full check failed E0061 solely at these two obsolete calls and reports the initial four tracker comments have already passed exact byte/YAML readback. This reviewer did not query the tracker or rerun Cargo, tests, Quoin matrix or a full review. Root retains final workspace-check and merge custody on the corrected/artifact head. Global assurance FAIL, accepted baseline outcomes and unmet FR-1044-AC-10 remain unchanged.
+
 ## Examined units
 
 ```yaml
