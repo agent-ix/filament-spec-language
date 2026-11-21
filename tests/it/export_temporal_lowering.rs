@@ -515,13 +515,20 @@ mod dense_time {
         let checked: Value =
             serde_json::from_slice(&std::fs::read(directory.join("package.json")).unwrap())
                 .unwrap();
-        checked["semantic_graph"]["nodes"]
+        let (row, node) = checked["semantic_graph"]["nodes"]
             .as_array()
             .unwrap()
             .iter()
-            .find(|node| find(node))
-            .expect("the checked graph has the expected node")
-            .clone()
+            .enumerate()
+            .find(|(_, node)| find(node))
+            .expect("the checked graph has the expected node");
+        // FR-322 gives export outcomes document-held IDs. Resolve this node's
+        // operand slots through its own row before comparing the outcome.
+        let graph = fsl_semantics::check::wire_id::WireGraph::of_package_value(&checked)
+            .expect("the checked package has a valid operand table");
+        graph
+            .document_value_in_row(row, node)
+            .expect("the checked node's operand slots resolve to graph indexes")
     }
 
     fn node_text(checked: &Value) -> String {
