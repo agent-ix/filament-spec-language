@@ -3,6 +3,16 @@ id: FR-106
 title: "Read and admit state snapshots and invocations as the spine clause-execution input"
 type: FR
 relationships:
+  - target: ix://agent-ix/filament-spec-language/FR-230
+    type: depends_on
+  - target: ix://agent-ix/filament-spec-language/FR-1040
+    type: depends_on
+  - target: ix://agent-ix/filament-spec-language/FR-995
+    type: depends_on
+  - target: ix://agent-ix/filament-spec-language/FR-850
+    type: depends_on
+  - target: ix://agent-ix/filament-spec-language/FR-940
+    type: depends_on
   - target: ix://agent-ix/filament-spec-language/US-003
     type: implements
   - target: ix://agent-ix/filament-spec-language/ADR-012
@@ -401,9 +411,13 @@ reference as data, without resolving it as an object or population member.
 The same rule applies inside `Option` and `Sequence` values, retaining their
 presence and element order. No additional snapshot value form is introduced.
 
-The full reference SHALL bind the authenticated outer population/owner
-universe, the owner's local key, and FR-230's declared type/model scope,
-canonical declared path and tagged selector indices. FSL SHALL use the same
+The full reference SHALL retain the authenticated outer K2 owner universe
+as validation context and bind the original population declaration scope
+and URI, the owner's local key, and FR-230's declared type/model scope,
+canonical typed declared path and tagged selector indices. A root-type
+`UniverseId` is not a population identity; populations of the same type
+remain distinct through their original population descriptors, without
+serializing a raw universe node key in the place id. FSL SHALL use the same
 `place/v2` identity of FR-230 "Place identity" and declared-place table for
 source and bare checked routes.
 Admission SHALL NOT substitute an S3 allocation key or S4 node id for that
@@ -425,6 +439,10 @@ origins and producing no partial place table or admitted observation.
 > transported from another model or run. Route-neutral identity is deferred
 > to STEP2, including map-keyed Clock-reference identities, which remain
 > unsupported. This note does not relax the required admission behavior.
+
+> STEP2 targets also include AC-74/AC-75, FR-1040-AC-9 and FR-230's
+> route-neutral identity criteria. They remain unmet until implementation
+> and acceptance proof; the STEP1 boundary above remains in force.
 
 A set, bag or ordered-set value is the native spelling of FSpec FR-181's
 `set`, `bag` and `ordered-set` forms, with FSpec FR-144's "Supplied
@@ -1385,8 +1403,15 @@ completeness.
 | FR-106-AC-73 | Over [TC-464](../test-cases/TC-464-snapshots-and-invocations-admit.md) step 8's model variant without `x`, storing the formerly declared `c1.x` identity in `r`, in the present value of `maybe`, or at element 0 of `refs` refuses `dangling_reference`/`absent-target-in-complete-population`, naming the snapshot, owner population `calls`, object `c1`, the affected field and nested value path, and that undeclared target identity, with no admitted observation or truth value. A target's clock-reference static type or native Clock target alone does not make it declared. | Test (TC-464) |
 | FR-106-AC-74 | A relationship instance with producer-supplied identity bytes written in lowercase hex preserves the exact decoded bytes as `RelationshipIdentity`; ordinary snapshot admission accepts an instance without `identity`, but a `call.relationships` selection that reads the instance as a candidate (its entry is mapped by `relationship_identities`) with an absent, empty, non-string, uppercase, odd-length or invalid lowercase-hex identity refuses `invalid-request` at that instance's `identity` path after snapshot read and before resolver evaluation. | Test (`tests/it/native_run_relationships.rs::relationship_identity_is_optional_without_correlation`, `tests/it/native_run_relationships.rs::snapshot_relationship_identity_round_trips_exact_bytes`, `tests/it/native_run_relationships.rs::invalid_relationship_identity_refuses_after_snapshot_read`) |
 | FR-106-AC-75 | A relationship declaration absent from the selected package refuses `invalid-request` at its exact snapshot reference path after read and before resolver evaluation when `call.relationships` is selected; with no correlation selection the same reference keeps `invalid_runtime_input`/`wrong-role-mapping`. | Test (`tests/it/native_run_relationships.rs::unknown_relationship_type_in_correlation_is_invalid_request_after_snapshot_read`, `tests/it/native_run_relationships.rs::unknown_relationship_type_without_correlation_keeps_wrong_role_mapping`) |
+| FR-106-AC-76 | On source and bare checked routes, TC-464 steps 7 and 8 use the same authenticated declarations and actual evaluated references. Raw scalar, present optional and sequence values retain equal full canonical references across routes, including their outer universe; equal local owner keys in two populations remain distinct. With `x` declared before `y`, removing `x`, retaining `y` and preserving scope, population, owner and data-field declarations refuses every stored old `x` reference under AC-73, regardless of internal allocation order; none is admitted as `y`. | Test (TC-464) |
+| FR-106-AC-77 | For each route, TC-464 step 9's declared-table/admission entry over two distinct declaration origins whose normalized scope and full declared path coincide refuses `conflicting_declaration`/`duplicate-declaration`, naming both origins, and produces no partial place table, admitted observation or truth value. Two aliases of the same authenticated declaration and canonical normalized declared path instead supply one table view and admit the otherwise valid snapshot. | Test (TC-464) |
 
 ## Dependencies
+
+- FR-230: the canonical place-identity grammar and declaration scope.
+- FR-1040: route-neutral declared-table uniqueness and ambiguity refusals.
+- FR-995, FR-850 and FR-940: source declaration provenance and the admitted
+  bare package read boundary.
 
 - FR-084 and FR-089 (population binding and identity), FR-103 (operation
   effect), FR-001 (the two labels; FSpec STD-150), FR-056 (the K2 String, UUID and Timestamp payloads and their runtime-input
