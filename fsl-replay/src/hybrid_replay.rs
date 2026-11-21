@@ -398,7 +398,9 @@ impl UndefinedCause {
 pub enum ExactGap {
     /// A fairness constraint reads the enabledness of a transition whose
     /// reset leaves two or more variables free that the target mode's
-    /// invariant couples in one condition. Remaining work: QSL-2639.
+    /// invariant couples in one condition that is not linear in them (a
+    /// product of free variables, a conditional, a disequation). Linear
+    /// coupling is decided. Remaining work: QSL-2639.
     #[error("fairness reads a reset whose free variables the target invariant couples")]
     CoupledReset {
         /// The source mode's position.
@@ -526,10 +528,11 @@ pub fn exact_replay(
         // replay returns `NotExact` for it, as for a trace that is not a
         // point trace or that dwells in a mode without a polynomial flow.
         //
-        // TEMPORARY (QSL-2639 for `CoupledReset`): a gap FR-750 deletes,
-        // because exact replay decides those claims (quantifier elimination
-        // over several coupled free variables). Until then it also settles
-        // `NotExact`, the only honest answer short of a verdict.
+        // TEMPORARY (QSL-2639 for `CoupledReset`, non-linear coupling of free
+        // variables only): a gap FR-750 deletes, because exact replay decides
+        // those claims (joint quantifier elimination). Linear coupling is
+        // decided; until the rest is, `CoupledReset` also settles `NotExact`,
+        // the only honest answer short of a verdict.
         Err(HybridReplayRefusal::Exact(
             ExactGap::RecursiveCall | ExactGap::CoupledReset { .. },
         )) => Ok(ExactReplay::NotExact),

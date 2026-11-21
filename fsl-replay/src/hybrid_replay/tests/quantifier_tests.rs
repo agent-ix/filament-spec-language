@@ -336,7 +336,6 @@ fn a_reset_reading_a_free_variables_pre_jump_value_is_decided() {
 /// `t <= 1/2`. The transition is enabled for part of every period: a weak
 /// constraint is not violated (it is disabled somewhere) and a strong one is
 /// (it is enabled infinitely often and never taken).
-#[trace("TC-3037", "FR-750-AC-12")]
 #[test]
 fn coupled_free_variables_are_decided_jointly() {
     let source = |kind: &str| {
@@ -381,12 +380,58 @@ fn coupled_free_variables_are_decided_jointly() {
     );
 }
 
+/// A strict coupled condition is read strictly (FR-450 "Exact replay"): with
+/// `w >= 1` and `v >= t` the sum `v + w <= 1` holds only at `t = 0`, an
+/// instant a strong constraint still sees, and `v + w < 1` holds nowhere.
+#[test]
+fn coupled_free_variables_strict_target_is_read_strictly() {
+    let source = |relation: &str| {
+        format!(
+            "hybrid Coupled using p {{\n\
+               mode Run invariant {{ v >= 0 and v <= 1 and w >= 0 and w <= 1 }}\n\
+                 flow {{ v' = 1; w' = 0; }}\n\
+                 transition to Run when {{ v = 1 }} reset {{ v = 0 }};\n\
+                 transition to Gone when {{ true }} reset {{ v >= v and w >= 1 }};\n\
+               mode Gone invariant {{ v + w {relation} 1 }}\n\
+                 flow {{ v' = 0; w' = 0; }}\n\
+             }}\n\
+             temporal Fairly using p over (h: Coupled) clock \"model-time\" on origin {{\n\
+               fair strong Run::Gone;\n\
+               always holds(h.v >= 1)\n\
+             }}\n"
+        )
+    };
+    let lasso = HybridTrace {
+        start: state(0, n(0), &[n(0), n(0)]),
+        jumps: vec![TraceJump {
+            transition: 0,
+            before: Some(before(n(1), &[n(1), n(0)])),
+            state: state(0, n(1), &[n(0), n(0)]),
+        }],
+        delta: None,
+        loop_to: Some(0),
+        end: None,
+    };
+    let point = check(&source("<="));
+    assert_eq!(
+        exact_replay(&point, claim(&point, "Fairly"), &lasso),
+        Ok(ExactReplay::NotReproduced {
+            at: JsonPointer::root(),
+            check: ExactCheck::Claim,
+        })
+    );
+    let never = check(&source("<"));
+    assert_eq!(
+        exact_replay(&never, claim(&never, "Fairly"), &lasso),
+        Ok(reproduced_formula(&lasso))
+    );
+}
+
 /// Joint elimination reads the coupled conditions exactly: with `w >= 3/4`
 /// the sum `v + w <= 1` needs `v <= 1/4` and `v >= t`, so a strong
 /// constraint is still enabled for `t` in `[0, 1/4]`, and with `w >= 2` no
 /// state satisfies `v + w <= 1` at any instant, so even a strong constraint
 /// is never enabled and the lasso is fair.
-#[trace("TC-3037", "FR-750-AC-12")]
 #[test]
 fn coupled_free_variables_with_no_joint_solution_leave_fairness_satisfied() {
     let source = |bound: &str| {
