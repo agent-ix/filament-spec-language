@@ -74,25 +74,41 @@ discharge settles `unsupported`, naming the `composition` capability, exit 21
   is different: FSpec FR-491 derives it as a routed `composition` item under
   any rule, `assume-guarantee` included, and FSpec FR-290 and FR-507 give it
   the family `protocol`, so it is negotiated as a routed item.
-- **The premises are derived, never supplied.** The slots are FSpec FR-491's,
-  in its order. A caller who could supply them would assert a guarantee no
-  engine established, which FSpec FR-489 forbids, and FR-620 already refuses
-  every member FSL computes.
+- **The premises are derived; a caller may only restate their keys.** The
+  slots are FSpec FR-491's, in its order. FSpec FR-520 keeps `premises` a
+  caller item member, because it names slot keys and never a proof or a
+  result: a proof or result is never external to FSL (FSpec FR-489). So FR-620
+  is unchanged, and for a composition item only, FSL accepts a `premises`
+  member that is the derived slot list exactly and refuses any other. The
+  member of every other kind keeps its existing admission, a `realizability`
+  item's `premises` groups (FR-571) included.
 - **A premise item is its slot's item, not the clause requested alone.** A
   `component-guarantee` slot's item is `G` over `C`'s subject checked under
   exactly the assumptions FSpec FR-491 gives it from `G`'s `rely` and
   `depends` members, and the assumption set is part of its slot key. Only a
-  `G` with no such member has the item the clause settles to alone. The
-  item `declaration_items` writes for the slot is a `temporal-satisfaction`
-  item with no member that carries an assumption set, and no engine
-  `Engines::fsl()` registers reads one. FSL invents no such engine, and it
-  never runs a slot with a non-empty assumption set as the clause alone, which
-  would settle another obligation under that slot's key. So a premise item
-  whose assumption set is non-empty settles `unsupported`, naming kind
-  `temporal-satisfaction`, and a premise item with an empty set is run by the
-  engine that takes its clause.
+  `G` with no such member has the item the clause settles to alone. FSL's
+  typed slot key is the item's request identity plus FSpec FR-491's assumption
+  set. The item `declaration_items` writes for the slot is a
+  `temporal-satisfaction` item whose FSpec FR-331 wire has no member for an
+  assumption set, and no engine `Engines::fsl()` registers reads one, so the
+  `request` member of one guarantee under two assumption sets MAY be equal.
+  FSL does not change that wire in this requirement (FSpec FR-492 defines the
+  slot key as the request identity, which leaves the gap). It invents no
+  engine, and it never runs a slot with a non-empty assumption set as the
+  clause alone, which would settle another obligation under that slot's key.
+  So a premise item whose assumption set is non-empty settles `unsupported`,
+  naming kind `temporal-satisfaction`, before negotiation, and a premise item
+  with an empty set is run by the engine that takes its clause. Putting the
+  assumption set on the wire is remaining work: QSL-2739, second PR.
 - **The composition names its premises by slot key.** FSpec FR-331 `premises`
-  holds `{role, key}` per slot and no result. FSL settles every premise item
+  holds `{role, key}` per slot and no result. A routed main item holds the
+  slots of FSpec FR-331's five roles (`component-guarantee`, `rely`,
+  `liveness-dependency`, `fairness`, `environment`), which are FSpec FR-489's
+  four premise lists and the component guarantees, and holds no `fixed-point`
+  slot: FSpec FR-331 has no `fixed-point` role, and an item that breaks its
+  `premises` rule refuses before consumption. The `fixed-point` slot is its
+  own item (FSpec FR-491). That FSpec FR-331 names no `fixed-point` role for
+  the slot is remaining work: QSL-2739. FSL settles every premise item
   before it writes the composition item's outcome, and it never copies a
   premise result into the composition. How a provider reads those results is
   the second PR's decision.
@@ -113,7 +129,8 @@ discharge settles `unsupported`, naming the `composition` capability, exit 21
 - An `items` entry `{"claim": "S", "kind": "composition"}`, `S` the
   declaration's name. `kind` is required: the `protocol` family admits several
   kinds, so FR-620's `absent-kind` rule applies. The entry carries `required`,
-  `backend` and `options` as any item does, and carries no `premises`.
+  `backend` and `options` as any item does. It MAY carry `premises` and then
+  only as Behavior states: the derived slot list, never a proof or result.
 
 ## Outputs
 
@@ -134,7 +151,8 @@ derived item, and the same name listed twice writes two composition items, at
 two indices, over one shared set of premise items.
 
 - The composition item of a routed rule has the `request` member
-  `ClaimItem::request_item_wire` writes, its `premises` the slot keys, empty
+  `ClaimItem::request_item_wire` writes, its `premises` the derived slot list
+  (no `fixed-point` slot), empty
   `candidates`, and a record `unsupported`, `settled_by` `disposition`, no
   `backend`, no counterexample, settled at negotiation (FR-621 `S6b`), with
   diagnostic `unsupported_projection`/`unsupported-requested-capability`
@@ -147,7 +165,9 @@ two indices, over one shared set of premise items.
   and kind, stage `S4` (FR-621, an item settled by a disposition before any
   engine ran), category and exit as any `unsupported` item.
 - Each premise item carries its own record, extent, trust basis and
-  certification (FR-530-AC-6). The composition inherits none: a `proved`
+  certification (FR-530-AC-6); a premise item with a non-empty assumption set
+  is settled `unsupported` at stage `S4` as Behavior states. The composition
+  inherits none: a `proved`
   premise does not make it `proved`, and a `refuted` one does not make it
   `refuted`.
 - The document's category and exit code are FR-285's multi-item code, the most
@@ -158,15 +178,19 @@ two indices, over one shared set of premise items.
 - When an entry names a checked `compose` declaration under `interface`,
   `protocol-refinement` or `refinement-transfer`, FSL SHALL resolve it by
   FR-620's name lookup and build the item `declaration_items` writes for it,
-  whose `premises` are the declaration's slots in order.
+  whose `premises` are the declaration's slots in order but for its
+  `fixed-point` slot (the derived slot list).
 - When no registered backend advertises `composition`, FSL SHALL settle the
   item `unsupported` naming the capability, and SHALL NOT settle it `proved`,
   `refuted` or `inconclusive`.
 - When an entry names a declaration under `assume-guarantee` with `kind`
   `composition`, FSL SHALL settle it `unsupported` as the planner-local item
   Outputs gives, without routing it to a provider.
-- When a premise item's assumption set is non-empty, FSL SHALL settle it `unsupported`, naming kind `temporal-satisfaction`, without
-  running an engine on it.
+- When a premise item's assumption set is non-empty, FSL SHALL settle it
+  `unsupported` before negotiation, by a disposition at stage `S4`, with the
+  diagnostic `unsupported_projection`/`unsupported-requested-capability`
+  naming kind `temporal-satisfaction`, its `request` echo as written, empty
+  `candidates` and no `backend`, without running an engine on it.
 - When an entry names a name no declaration resolves, FSL SHALL settle that
   item `invalid-request` with `invalid_capability`/`unknown-claim` naming the
   name, and the request's other items still run.
@@ -177,10 +201,30 @@ two indices, over one shared set of premise items.
   `assume-guarantee` claim), and no other member.
 - When an entry names a composition with no `kind`, FSL SHALL settle that item
   by FR-620's `absent-kind`.
-- If an item carries a `premises` member, then FSL SHALL refuse the whole request at the request stage with `invalid-request`,
-  exit 20, naming `/items/<i>/premises`, running no item, as FR-620 does for
-  `request_index`, `extent` and `candidates`: FSL computes `premises`, and
-  FSpec FR-331 carries it only on a composition item a declaration derives.
+- If a `kind` `composition` item carries a `premises` member that is not an
+  array of closed objects `{role, key}`, `role` one of FSpec FR-331's five
+  roles, then FSL SHALL refuse the whole request at the request stage with
+  `invalid-request`, exit 20, naming the member's RFC 6901 pointer
+  (`/items/<i>/premises`, or `/items/<i>/premises/<j>` and its member), running
+  no item, as FR-620 does for any mistyped member. A `premises` member of an
+  item of another `kind` keeps its existing admission.
+- When a `kind` `composition` item carries a well-formed `premises` that
+  parsed equals the derived slot list, FSL SHALL treat the item as one with no
+  `premises`. Two lists are equal when they have the same length, and at each
+  position the same `role` and the same `key` as parsed JSON values, so the
+  order of an object's members is not significant and the order of the list
+  is.
+- If a `kind` `composition` item carries a well-formed `premises` that is not
+  equal to the derived slot list (a slot removed, added, reordered, relabelled
+  or with another key), then FSL SHALL settle that item, after name and kind
+  admission and the cycle refusal, `invalid-request` at stage `S4` with
+  `invalid_runtime_input`/`invalid-value` at `/items/<i>/premises`, as FSpec
+  FR-492-AC-2 refuses a slot list that differs from the derived one, deriving
+  no premise item for it, and the request's other items still run. The
+  comparison is made after the declaration is checked, because the derived
+  list does not exist before. An item naming an unknown name or a name that is
+  not a composition keeps its code from the bullets above, derives no premise
+  item and compares no `premises`.
 - When a declaration's dependency graph has a cycle and no selected profile
   declares FSpec FR-176's lattice, FSL SHALL settle the composition item
   `invalid-request` with `invalid_model_binding`/`malformed-declaration`
@@ -189,8 +233,10 @@ two indices, over one shared set of premise items.
 - When a cycle's profile declares the lattice, FSL SHALL write the
   `fixed-point` slot's item, under any rule, as one more premise item: a
   routed `composition` item of family `protocol` whose `premises` are the
-  cycle's component-guarantee slot keys, settled at negotiation `unsupported`
-  naming `composition` as a routed composition item is.
+  cycle's component-guarantee slot keys and whose `options` name the declaring
+  profile (FSpec FR-491), written as the one entry `profile` with the
+  profile's name as the slot key records it; it is settled at negotiation
+  `unsupported` naming `composition` as a routed composition item is.
 - When a component-guarantee premise does not settle `proved`, FSL SHALL
   return that premise's own record and SHALL NOT settle the composition
   `proved`.
@@ -226,19 +272,19 @@ with `rely PB::Capped on PA::Bounded;`; and `SysCycle`, `Sys` with that and
 emit fixture declares FSpec FR-176's lattice with), declaring `SysLat`
 (`SysCycle` under `interface`) and `SysLatAG` (under `assume-guarantee`). The
 unit `test/system-default` imports the same packages, selects `test/counter`
-as `M`, declares `inc` with no `pre` or `post`, the clause `Local`, then
-`Sys`. Every request runs through `fsl analyze`, machine and text mode.
+as `M`, declares no `pre` or `post` clause on `M::Counter::inc`, the clause
+`Local`, then `Sys`. Every request runs through `fsl analyze`, machine and text mode.
 
 | ID | Criteria | Verification |
 | --- | --- | --- |
-| FR-1044-AC-1 | Over `test/system`, the item `{"claim": "Sys", "kind": "composition"}` writes the composition at `request_index` 0 with a `request` member whose `premises` are the two component-guarantee slot keys and empty `candidates`, and a record `unsupported`, `settled_by` `disposition`, no `backend`, diagnostic `unsupported_projection`/`unsupported-requested-capability` naming `composition`; it writes two premise items, `Bounded` at index 1 and `Capped` at index 2, each `proved` by EN-1; the document exits 21 and the composition is not `proved`. | Test |
+| FR-1044-AC-1 | Over `test/system`, the item `{"claim": "Sys", "kind": "composition"}` writes the composition at `request_index` 0 with a `request` member whose `premises` are the two component-guarantee slot keys (the derived slot list) and empty `candidates`, and a record `unsupported`, `settled_by` `disposition`, no `backend`, diagnostic `unsupported_projection`/`unsupported-requested-capability` naming `composition`; it writes two premise items, `Bounded` at index 1 and `Capped` at index 2, each `proved` by EN-1; the document exits 21 and the composition is not `proved`. | Test |
 | FR-1044-AC-2 | `SysPR` and `SysRT` write the composition as AC-1 does and exit 21. `SysAG` writes at index 0 an item with no `request` member and no `candidates`, `claim_name` `SysAG`, a record `unsupported` with `settled_by` `disposition`, no `backend`, the AC-1 diagnostic naming `composition`, stage `S4`, and premise items `Bounded`, `Capped` at indices 1 and 2; exit 21. | Test |
 | FR-1044-AC-3 | The items `{"claim": "Sys", "kind": "composition"}`, `{"claim": "Missing", "kind": "composition"}`, `{"claim": "Local", "kind": "composition"}`, `{"claim": "Sys", "kind": "temporal-satisfaction"}`, `{"claim": "Sys"}` and `{"claim": "SysAG", "kind": "temporal-satisfaction"}` settle, in order: `unsupported`; `invalid-request` `invalid_capability`/`unknown-claim` naming `Missing`; `invalid-request` `inapplicable-kind` with payload `request_index` 2, `capability` `composition`, `family` `temporal-trace`; `invalid-request` `inapplicable-kind` with `request_index` 3, `capability` `temporal-satisfaction`, `family` `protocol`; `invalid-request` `absent-kind`; `invalid-request` `inapplicable-kind` with `request_index` 5, `capability` `temporal-satisfaction` and no `family`; the document exits 20. | Test |
-| FR-1044-AC-4 | Each of `{"claim": "Sys", "kind": "composition", "premises": []}`, `{"claim": "Sys", "premises": []}` and `{"claim": "Local", "premises": []}` refuses the whole request at the request stage, `invalid-request`, exit 20, naming `/items/0/premises`, and writes no item. | Test |
-| FR-1044-AC-5 | `SysRely` selected as in AC-1 writes `Bounded` at index 1 `proved` and `Capped` at index 2 with a non-empty assumption set (its slot key names `Bounded`) as `unsupported`, `settled_by` `disposition`, diagnostic `unsupported_projection`/`unsupported-requested-capability` naming `temporal-satisfaction`, no engine run; no item is written for the `rely` slot; the `Capped` item is not what `{"claim": "Capped"}` alone requests in `test/part-b` (its slot key and request identity differ); the composition is `unsupported` naming `composition`; exit 21. | Test |
+| FR-1044-AC-4 | Over `test/system`: (a) `{"claim": "Sys", "kind": "composition", "premises": P}`, `P` AC-1's `request.premises` with the members of each object written in reverse order, writes AC-1's items, records and exit. (b) With `P` having the `Capped` slot removed, the two slots swapped, or the second slot's `role` relabelled `rely`, followed by the item `{"claim": "Local"}`, the composition item settles `invalid-request` at stage `S4` with `invalid_runtime_input`/`invalid-value` at `/items/0/premises`, no premise item is written, `Local` is `proved`, and the document exits 20. (c) `"premises": {}`, `"premises": [1]` and `"premises": [{"role": "nope", "key": {}}]` each refuse the whole request at the request stage, `invalid-request`, exit 20, naming `/items/0/premises`, `/items/0/premises/0` and `/items/0/premises/0/role`, and write no item. (d) `{"claim": "Missing", "kind": "composition", "premises": []}` settles `unknown-claim` and `{"claim": "Local", "kind": "composition", "premises": []}` settles `inapplicable-kind`, each per item with no premise item. (e) A FR-571 `realizability` item carrying `premises` `{"role_knowledge": [], "environment": []}` is not refused for `premises` and settles as FR-571 gives it. | Test |
+| FR-1044-AC-5 | `SysRely` selected as in AC-1 writes `Bounded` at index 1 `proved`, and at index 2 `Capped`, whose assumption set is `Bounded`, with the `request` member of the clause as `test/part-b` declares it, empty `candidates` and no `backend`: a record `unsupported`, `settled_by` `disposition`, stage `S4`, diagnostic `unsupported_projection`/`unsupported-requested-capability` naming `temporal-satisfaction`, no engine run; no item is written for the `rely` slot; the composition is `unsupported` naming `composition`; exit 21. | Test |
 | FR-1044-AC-6 | `SysCycle` over `test/system`, with no lattice profile, writes one item, `invalid-request` `invalid_model_binding`/`malformed-declaration` naming `PB::Capped` and `PA::Bounded` in edge order, and no premise item; exit 20. | Test |
-| FR-1044-AC-7 | Over `test/system-lattice`, `SysLat` writes the composition at index 0 (routed, AC-1's record), `Bounded` at 1 and `Capped` at 2, each `unsupported` naming `temporal-satisfaction` (each assumes the other), and at index 3 the `fixed-point` item: a routed `composition` item with a `request` member whose `premises` are the two component-guarantee slot keys, family `protocol`, empty `candidates`, `unsupported` naming `composition`; `SysLatAG` writes the same items with index 0 planner-local as in AC-2, and index 3 the same routed `fixed-point` item; each exits 21. | Test |
-| FR-1044-AC-8 | The items `Sys` twice (`kind` `composition`) write two composition items at indices 0 and 1 and the `Bounded` and `Capped` items once, at indices 2 and 3; adding `SysRely` as a third entry writes its own composition at index 2, and the `Bounded` item is not written again. | Test |
+| FR-1044-AC-7 | Over `test/system-lattice`, `SysLat` writes the composition at index 0 (routed, AC-1's record), `Bounded` at 1 and `Capped` at 2, each `unsupported` naming `temporal-satisfaction` (each assumes the other), and at index 3 the `fixed-point` item: a routed `composition` item of family `protocol` with a `request` member whose `premises` are the two component-guarantee slot keys and whose `options` are `{"profile": "fixed-point-lattice"}`, empty `candidates`, `unsupported` naming `composition`; the item at index 0 holds the same two slot keys and no `fixed-point` slot; `SysLatAG` writes the same items with index 0 planner-local as in AC-2, and index 3 the same routed `fixed-point` item; each exits 21. | Test |
+| FR-1044-AC-8 | The items `Sys` twice (`kind` `composition`) write two composition items at indices 0 and 1 and the `Bounded` and `Capped` items once, at indices 2 and 3. With `SysRely` as a third entry, the compositions are at 0, 1 and 2, `Bounded` at 3 (shared, written once) and `Capped` at 4 `proved`, and at 5 a second `Capped`, from `SysRely`'s group, whose `request` member equals item 4's and whose record is `unsupported` as AC-5 states. | Test |
 | FR-1044-AC-9 | With `test/part-b`'s `Capped` replaced by `always holds(c.value <= 2)`, `Sys` writes `Capped` `refuted` with a counterexample ending in `value = 3` and `Bounded` `proved`, each keeping its own extent and certification, and the composition `unsupported` and not `refuted`; the document exits 21. | Test |
 | FR-1044-AC-10 | Over `test/system-default`, a request with no `items` writes `Local` at index 0, `Sys` at 1, the subject's derived deadlock-freedom item at 2 (FR-620-AC-5), then the premise items `Bounded` at 3 and `Capped` at 4, and exits 21; over the unit's `package` handoff (FR-850) it writes the same items, records and exit code. | Test |
 
