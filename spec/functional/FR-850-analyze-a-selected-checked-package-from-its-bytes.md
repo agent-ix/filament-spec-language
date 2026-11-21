@@ -411,7 +411,7 @@ The Counter fixture is FR-620's.
 ### FR-850-AC-13
 
 Starting from FR-517-AC-28's admitted diamond, mutate only the named input in
-each row below. Raw JSON edits SHALL preserve repeated members rather than
+each row below. Raw JSON edits preserve repeated members rather than
 collapsing them through an object map. For manifest mutations, the refusal's
 file is `dependencies.json`; the empty pointer `""` names its root. Each row
 refuses the whole request before any item runs, with `items` `[]`,
@@ -434,7 +434,7 @@ refuses the whole request before any item runs, with `items` `[]`,
 | Omit the reachable `test/shared` row (row 2), leaving the two canonical remaining rows and all physical artifact files intact | `missing_import` | `missing-selection` | importing file `dependencies/0/checked-package.json` (`test/left`), pointer `/lock/dependency_selections/0`, identity `test/shared`; `test/left` and `test/right` each have only that one direct dependency |
 | Keep the complete manifest but remove `dependencies/2/checked-package.json` | `invalid_package` | `missing-file` | exact relative path `dependencies/2/checked-package.json` |
 
-The omitted selection SHALL NOT be repaired by discovering the unlisted
+The omitted selection is not repaired by discovering the unlisted
 `dependencies/2` directory. Its `missing-selection` is distinct from the
 `missing-file` of a listed artifact whose file is absent.
 
@@ -453,18 +453,18 @@ run its source control before deleting source files.
 
 Run source and directory requests with the same two items and with
 `replay.input_bytes = P`, so the root alone fits but the consumed closure does
-not. The library-dependent item SHALL settle `inconclusive` with cause
+not. The library-dependent item settles `inconclusive` with cause
 `replay_refused`, carrying the original `stage_limit_exceeded` /
 `input-bytes-exceeded` refusal naming setting `replay.input_bytes`, bound `P`
-and its attempted byte count. It SHALL NOT settle `refuted` with an unverified
-counterexample, `failed`, or a whole-request admission refusal. `Bounded` SHALL
-still settle `proved` with its unlimited-run record. The outcome retains both
+and its attempted byte count. It never settles `refuted` with an unverified
+counterexample, `failed`, or a whole-request admission refusal. `Bounded`
+still settles `proved` with its unlimited-run record. The outcome retains both
 items, with category and exit determined by FR-621; source and package item
 records agree, and their outcomes differ only in the request selection echo.
 
-At `replay.input_bytes = R`, the same library-dependent item SHALL settle
+At `replay.input_bytes = R`, the same library-dependent item settles
 `refuted` with the original counterexample and `replay.reproduced` `true`, and
-`Bounded` SHALL remain unchanged. A replay implementation that charges only the
+`Bounded` remains unchanged. A replay implementation that charges only the
 root bytes would incorrectly pass at `P`, so the negative case can detect an
 omitted dependency charge.
 
