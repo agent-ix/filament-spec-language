@@ -218,3 +218,62 @@ scope:
 - fsl-replay/src/request.rs
 - fsl-replay/src/spine/lifecycle.rs
 - tests/it/checked_handoff.rs
+
+
+## Dispositions
+
+Round 1 independently inspected at `477b0027670c8c046e131401eebc111ea20b34a1`, against original reviewed head `75a4f4a04fc4046ec15a830f34b56221d55859d7`. Original findings remain unchanged.
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | Diamond omission retains physical files and asserts importing path/identity; restored manifest plus removed shared file asserts distinct missing-file result. Analyze checks items empty and last_stage null for both. |
+| FND-002 | fixed | The import-free mutation now asserts missing-file, exact manifest name, empty items and null last_stage. |
+| FND-003 | fixed | Source oracle is 42; after deleting all sources, complete source/package outcome equality is asserted before mutations. |
+| FND-004 | fixed | Assertions retain NativeJoinFailure::Limit with Projection owner and distinct ExhaustedWork/ExhaustedStorage codes; consumed plus unpaid charge equals the completed total for each original setting. |
+
+## Disposition verdict
+
+**PASS — no open review findings after round 1.** This supersedes the initial verdict for mergeability; final exact-head testing remains with lead/Draco. No new bounded defect was found in the fix diff.
+
+## Round 1 evidence
+
+The reviewer inspected all six changed paths, original artifact custody, source boundary clauses and actual test code. Coder logs at the exact frozen head show six focused tests passed (one per command) and confined command-only Clippy passed; no reviewer Cargo/build/gates ran. The earlier source-assembly failure is counterevidence to the original hypothesis, not a consumer red. The valid nested-local-record control passed with no bare_world change. Target remains retained and the worktree is unchanged.
+
+Additional boundary context: FR-396 Behavior, spec/functional/FR-396-expose-the-admitted-record-and-tuple-keys-through-the-replay-facade.md:86: “A unit cannot name an imported record or tuple as a type (the assembler refuses `ImportedTypeName`), so an own declaration never has a field of a dependency's composite type.” ADR-015 D-5, spec/decisions/ADR-015-compile-and-replay-against-dependencies.md:218, restricts imported signature types to package-independent types. fsl-semantics/src/check/assemble.rs:3390-3401 enforces that boundary before byte admission.
+
+```yaml
+head: 477b0027670c8c046e131401eebc111ea20b34a1
+dispositions:
+- fnd: FND-001
+  outcome: fixed
+  after_excerpt: "assert_eq!(diagnostic[\"code\"], \"missing_import\", \"{result}\"\
+    );\n    assert_eq!(diagnostic[\"cause\"], \"missing-selection\", \"{result}\"\
+    );\n    assert_eq!(\n        diagnostic[\"details\"][\"path\"], \"/lock/dependency_selections/0\"\
+    ,\n        \"{result}\"\n    );"
+  reason: Diamond omission retains physical files and asserts importing path/identity;
+    restored manifest plus removed shared file asserts distinct missing-file result.
+    Analyze checks items empty and last_stage null for both.
+- fnd: FND-002
+  outcome: fixed
+  after_excerpt: "std::fs::remove_file(directory.path().join(\"empty/dependencies.json\"\
+    )).unwrap();\n    let (exit, outcome) = analyze(\n        directory.path(),\n\
+    \        json!({\"package\": {\"directory\": \"empty\"}, \"models\": [], \"items\"\
+    : [{\"claim\": \"Missing\"}]}),\n        1 << 20,\n    );"
+  reason: The import-free mutation now asserts missing-file, exact manifest name,
+    empty items and null last_stage.
+- fnd: FND-003
+  outcome: fixed
+  after_excerpt: "assert_eq!(\n        source_result[\"outcome\"][\"value\"],\n  \
+    \      json!({\"integer\": \"42\"}),\n        \"{source_result}\"\n    );"
+  reason: Source oracle is 42; after deleting all sources, complete source/package
+    outcome equality is asserted before mutations.
+- fnd: FND-004
+  outcome: fixed
+  after_excerpt: "assert_eq!(original.setting(), setting, \"{refusal:?}\");\n    \
+    \        assert_eq!(original.configured_bound(), completed - 1, \"{refusal:?}\"\
+    );\n            assert_eq!(original.actual(), u128::from(completed), \"{refusal:?}\"\
+    );\n            assert_eq!(refusal.unpaid.kind, kind, \"{refusal:?}\");"
+  reason: Assertions retain NativeJoinFailure::Limit with Projection owner and distinct
+    ExhaustedWork/ExhaustedStorage codes; consumed plus unpaid charge equals the completed
+    total for each original setting.
+```

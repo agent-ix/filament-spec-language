@@ -208,3 +208,46 @@ scope:
 - fsl-replay/src/request.rs
 - fsl-replay/src/spine/lifecycle.rs
 - tests/it/checked_handoff.rs
+
+
+## Dispositions
+
+Round 1 independently inspected at `477b0027670c8c046e131401eebc111ea20b34a1`, against original reviewed head `75a4f4a04fc4046ec15a830f34b56221d55859d7`. Original findings remain unchanged.
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | rejected | Rejected: the hypothesized cross-library composite field cannot reach this consumer. FR-396 Behavior explicitly forbids imported record/tuple type names, ADR-015 D-5 restricts imported signatures to package-independent types, and assemble.rs:3390-3401 raises ImportedTypeName first. The prototype red log confirms SOURCE assembly refusal rather than a consumer failure. The permitted local-nested-composite/scalar-import control passes unchanged bare_world code from source and source-deleted strict artifacts with Integer 42. The original finding assumed an unsupported source type combination; no consumer fix or typing expansion is required. |
+| FND-002 | fixed | Private typed admission failure preserves run/analyze mapping separately; complete file/directory refusal parity and the analyze mapping are asserted. |
+
+## Disposition verdict
+
+**PASS — no open review findings after round 1.** This supersedes the initial verdict for mergeability; final exact-head testing remains with lead/Draco. No new bounded defect was found in the fix diff.
+
+## Round 1 evidence
+
+The reviewer inspected all six changed paths, original artifact custody, source boundary clauses and actual test code. Coder logs at the exact frozen head show six focused tests passed (one per command) and confined command-only Clippy passed; no reviewer Cargo/build/gates ran. The earlier source-assembly failure is counterevidence to the original hypothesis, not a consumer red. The valid nested-local-record control passed with no bare_world change. Target remains retained and the worktree is unchanged.
+
+Additional boundary context: FR-396 Behavior, spec/functional/FR-396-expose-the-admitted-record-and-tuple-keys-through-the-replay-facade.md:86: “A unit cannot name an imported record or tuple as a type (the assembler refuses `ImportedTypeName`), so an own declaration never has a field of a dependency's composite type.” ADR-015 D-5, spec/decisions/ADR-015-compile-and-replay-against-dependencies.md:218, restricts imported signature types to package-independent types. fsl-semantics/src/check/assemble.rs:3390-3401 enforces that boundary before byte admission.
+
+```yaml
+head: 477b0027670c8c046e131401eebc111ea20b34a1
+dispositions:
+- fnd: FND-001
+  outcome: rejected
+  reason: 'Rejected: the hypothesized cross-library composite field cannot reach this
+    consumer. FR-396 Behavior explicitly forbids imported record/tuple type names,
+    ADR-015 D-5 restricts imported signatures to package-independent types, and assemble.rs:3390-3401
+    raises ImportedTypeName first. The prototype red log confirms SOURCE assembly
+    refusal rather than a consumer failure. The permitted local-nested-composite/scalar-import
+    control passes unchanged bare_world code from source and source-deleted strict
+    artifacts with Integer 42. The original finding assumed an unsupported source
+    type combination; no consumer fix or typing expansion is required.'
+- fnd: FND-002
+  outcome: fixed
+  after_excerpt: "Self::UnselectedModel { index, identity } => RunCause::ClauseRequest\
+    \ {\n                member: format!(\"/request/models/{index}\"),\n         \
+    \       reason: format!(\"the package records no model selection {identity}\"\
+    ),\n            },"
+  reason: Private typed admission failure preserves run/analyze mapping separately;
+    complete file/directory refusal parity and the analyze mapping are asserted.
+```
