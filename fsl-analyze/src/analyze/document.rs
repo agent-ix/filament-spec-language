@@ -1677,9 +1677,11 @@ pub fn resolve_items(
 }
 
 mod composition_item;
+mod held_identity;
 mod package_run;
 
 pub use composition_item::CompositionClaim;
+pub use held_identity::HeldIdentityError;
 
 pub use package_run::{
     settle_package_run, PackageRun, PackageRunError, PendingFamily, PendingPackageFamily,
@@ -3651,6 +3653,9 @@ pub enum AnalyzeDocumentError {
     /// An internal fault stopped the run.
     #[error("the analyze run faulted")]
     Fault,
+    /// A result node id could not be written in the document-held form.
+    #[error(transparent)]
+    Identity(#[from] HeldIdentityError),
 }
 
 /// Negotiate `run`'s items with `negotiate`, analyze them under `cancel`
@@ -3794,6 +3799,7 @@ pub fn settle_run(
             counterexamples: outcome.counterexamples,
             details: outcome.details,
             protocol_conformance: outcome.protocol_conformance,
+            graphs: outcome.graphs,
         },
         &settled,
         &echoes,
@@ -4024,6 +4030,9 @@ fn negotiate_items(
                 identity,
                 required: item.options.required,
                 scoped: has_activation_scope(item.kind),
+                dependency: owner
+                    .as_ref()
+                    .map(|package| package.graph().package_name().to_owned()),
             },
         );
         if let Some(record) = before {
@@ -4163,6 +4172,7 @@ struct SettledParts {
     counterexamples: Vec<super::ItemCounterexample>,
     details: Vec<super::ItemDetail>,
     protocol_conformance: BTreeMap<RequestIndex, fsl_replay::ProtocolConformanceOutput>,
+    graphs: super::DocumentGraphs,
 }
 
 /// The FR-621 document of a run: the engines' records beside the items
@@ -4246,7 +4256,7 @@ fn write_run(
                     })
             })
             .flatten();
-        items.push(item_document(
+        let mut item = item_document(
             written,
             ItemMembers {
                 claim_name,
@@ -4261,9 +4271,15 @@ fn write_run(
                     .map(|backend| backend.as_str().to_owned()),
                 disposed,
             },
-        ));
+        );
+        hold_item(&mut item, &outcome.graphs, echo)?;
+        items.push(item);
     }
-    items.extend(simulated.iter().map(|(written, _)| written.clone()));
+    for (written, _) in simulated {
+        let mut item = written.clone();
+        hold_item(&mut item, &outcome.graphs, None)?;
+        items.push(item);
+    }
     items.sort_by_key(|item| item["request_index"].as_u64().unwrap_or(u64::MAX));
     document["items"] = Value::Array(items.clone());
     document["aggregate"] = json!({
@@ -4343,6 +4359,45 @@ fn spell_states(value: &mut Value) {
     }
 }
 
+/// FSpec FR-322, FR-412, FSL FR-621: write every node id of `item` in the
+/// document-held form of the package graph the item is analyzed over,
+/// through [`held_identity::hold`]. An item over a dependency of the request
+/// (a composition's component-guarantee premise) names that dependency in
+/// its `package` member and indexes the dependency's graph.
+fn hold_item(
+    item: &mut Value,
+    graphs: &super::DocumentGraphs,
+    echo: Option<&Echo>,
+) -> Result<(), AnalyzeDocumentError> {
+    let dependency = echo.and_then(|echo| echo.dependency.as_deref());
+    if let (Some(identity), Value::Object(members)) = (dependency, &mut *item) {
+        members.insert("package".to_owned(), identity.into());
+    }
+    if !held_identity::needs_hold(item) {
+        return Ok(());
+    }
+    let graph = match dependency {
+        Some(identity) => graphs
+            .dependencies
+            .get(identity)
+            .unwrap_or(&Err(super::GraphUnavailable::NotEmitted)),
+        None => &graphs.own,
+    }
+    .as_ref()
+    .map_err(|cause| held_identity::HeldIdentityError::NoGraph(cause.clone()))?;
+    // FSpec FR-322 has no segment for a node of a dependency's graph: a
+    // composition item over the request's own package keeps those ids
+    // structural (FR-621 "Node ids in an item").
+    let composition = (dependency.is_none() && item["request"]["kind"] == "composition")
+        .then_some(&graphs.dependencies);
+    let model = echo
+        .and_then(|echo| echo.identity.as_ref())
+        .and_then(|identity| identity["model"].as_str())
+        .map(str::to_owned);
+    *item = held_identity::hold(item, graph, composition, model.as_deref())?;
+    Ok(())
+}
+
 /// What the run knows of an item it resolved, beside its terminal record.
 struct Echo {
     /// The declared name the item resolved to.
@@ -4359,6 +4414,10 @@ struct Echo {
     required: bool,
     /// Whether the item has an activation scope (FR-622).
     scoped: bool,
+    /// The identity of the dependency package the item is analyzed over
+    /// (a composition's component-guarantee premise); `None` for an item
+    /// over the request's own package.
+    dependency: Option<String>,
 }
 
 /// The FR-621 members [`item_document`] adds to an FR-286 item.

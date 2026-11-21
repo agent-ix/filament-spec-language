@@ -836,7 +836,20 @@ fn assert_vacuity_result_carrier(world: &World, name: &str, certificate: &Value)
         carrier["checker"],
         fsl_replay::CertificateChecker::ProbabilityCertificate.as_str()
     );
-    assert_eq!(carrier["document"], *certificate);
+    // The result holds the certificate document in the document-held form
+    // (FSpec FR-322) with the owning model; read back through the package
+    // graph it is the engine's document, whose own identity names no model.
+    let emission = fsl_package::emit_checked(&world.package, fsl_package::EmitLimits::fixture())
+        .expect("the package emits");
+    let graph =
+        fsl_semantics::check::wire_id::WireGraph::of_package_bytes(emission.package().bytes())
+            .expect("the emitted package has a graph");
+    let mut resolved = graph
+        .structural_value(&carrier["document"])
+        .expect("the held ids resolve");
+    assert_eq!(resolved["identity"]["model"], "test/retry");
+    resolved["identity"]["model"] = serde_json::Value::Null;
+    assert_eq!(resolved, *certificate);
     assert_eq!(
         carrier["document"]["conditional"],
         json!({"mode":"vacuous"})

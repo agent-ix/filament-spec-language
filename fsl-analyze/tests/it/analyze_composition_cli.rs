@@ -23,8 +23,8 @@ use ix_trace_rs::trace;
 use serde_json::{json, Value};
 
 use crate::analyze_cli_support::{
-    analyze, analyze_with_providers, counter_snapshot, label, package_selection, request_members,
-    Workspace,
+    analyze, analyze_with_providers, assert_no_nested_node_ids, counter_snapshot, label,
+    package_selection, request_members, Workspace,
 };
 use crate::counter::{clause_text, document};
 
@@ -393,6 +393,7 @@ fn a_provider_proof_is_refused_over_an_unsupported_component_guarantee() {
 /// FR-1044 "Behavior" (the provider proof gate): two compositions of one request whose `Capped` guarantees
 /// are equal on the wire and differ in assumptions each read their own item.
 /// `Sys`'s proved `Capped` never discharges `SysRely`'s assumed one.
+#[trace("TC-3154", "FR-621-AC-17")]
 #[test]
 fn an_unassumed_proof_does_not_discharge_an_assumed_guarantee() {
     let (run, sent) = through_provider(
@@ -412,6 +413,14 @@ fn an_unassumed_proof_does_not_discharge_an_assumed_guarantee() {
     assert_eq!(label(&items[0]), "proved", "{document}");
     assert_proof_not_accepted(&items[1]);
     assert_eq!(items[3]["claim_name"], "Capped", "{document}");
+    // FR-621-AC-17: a premise item over a dependency names it in `package`
+    // and holds its node ids against that dependency's graph; the composition
+    // items over the request's own package carry no such member.
+    assert!(items[2]["package"].is_string(), "{document}");
+    assert!(items[3]["package"].is_string(), "{document}");
+    assert_no_nested_node_ids(&items[2]);
+    assert_no_nested_node_ids(&items[3]);
+    assert!(items[0].get("package").is_none(), "{document}");
     assert_eq!(label(&items[3]), "proved", "{document}");
     assert_eq!(items[4]["claim_name"], "Capped", "{document}");
     assert_eq!(label(&items[4]), "unsupported", "{document}");

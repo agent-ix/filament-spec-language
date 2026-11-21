@@ -497,6 +497,41 @@ pub(crate) fn analyze_bound<'a>(
     check_provision(package, provision)
         .map_err(|failure| StageFailure::Refused(super::AnalyzeRefusal::Provision(failure)))?;
     let shared = read.as_ref().map(crate::provider::Shared::of);
+    let own = match &read {
+        Some(read) => super::DocumentGraphs::of_bytes(read.emission().package().bytes()),
+        None => Err(super::GraphUnavailable::NotEmitted),
+    };
+    let mut dependency_graphs = BTreeMap::new();
+    for dependency in package.dependencies().values().chain(components.values()) {
+        let name = dependency.graph().package_name().to_owned();
+        if dependency_graphs.contains_key(&name) {
+            continue;
+        }
+        let graph = match crate::provider::read_package(dependency, binding.packages, limits.emit) {
+            Ok(read) => super::DocumentGraphs::of_bytes(read.emission().package().bytes()),
+            Err(crate::provider::NotAdmitted::Refused(refusal)) => {
+                return Err(StageFailure::Refused(super::AnalyzeRefusal::Package(
+                    refusal,
+                )));
+            }
+            Err(crate::provider::NotAdmitted::Other) => Err(super::GraphUnavailable::NotEmitted),
+        };
+        dependency_graphs.insert(name, graph);
+    }
+    // The result's node ids are held against these graphs, so a package or
+    // component that has none ends the run before any engine runs.
+    if let Err(cause) = &own {
+        return Err(StageFailure::Refused(super::AnalyzeRefusal::Emission(
+            cause.clone(),
+        )));
+    }
+    for component in components.values() {
+        if let Some(Err(cause)) = dependency_graphs.get(component.graph().package_name()) {
+            return Err(StageFailure::Refused(super::AnalyzeRefusal::Emission(
+                cause.clone(),
+            )));
+        }
+    }
     let component_runs: BTreeMap<RequestIndex, super::RunInput<'_>> = components
         .iter()
         .map(|(index, package)| (*index, super::RunInput::source(package)))
@@ -541,6 +576,10 @@ pub(crate) fn analyze_bound<'a>(
         details,
         protocol_conformance,
         closed_form,
+        graphs: super::DocumentGraphs {
+            own,
+            dependencies: dependency_graphs,
+        },
     }))
 }
 

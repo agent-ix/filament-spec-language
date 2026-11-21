@@ -682,6 +682,7 @@ impl Transfer<'_> {
         .map_err(|error| match error {
             AnalyzeDocumentError::Refused(refusal) => RunCause::AnalyzeRefused(Box::new(refusal)),
             AnalyzeDocumentError::Fault => RunCause::AnalyzeFault,
+            AnalyzeDocumentError::Identity(error) => super::identity_cause(error),
         })?;
         analyzed
             .0
