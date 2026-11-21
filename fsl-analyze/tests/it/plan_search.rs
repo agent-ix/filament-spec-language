@@ -1433,37 +1433,91 @@ fn native_outcomes_keep_all_results_in_result_then_state_order() {
     use fsl_eval::simulation::model::{
         NativeCandidateControl, NativeCandidateEvent, NativeCandidateVisit,
     };
-    let world = native_plan_world(
-        "language \"ix:native\" edition \"1-draft\"; domain \"test/native-plan\"; type ValueRange = Int[0,2]; object Counter { number: ValueRange; operation choose(): Boolean modifies self.number; } population counters: Counter;",
+    for (declaration, field) in [("", "Int[0,2]"), ("type Amount = Int[0,2];", "Amount")] {
+        let model = format!("language \"ix:native\" edition \"1-draft\"; domain \"test/native-plan\"; {declaration} object Counter {{ number: {field}; operation choose(): Boolean modifies self.number; }} population counters: Counter;");
+        let world = native_plan_world(
+        &model,
         "post Chosen using v on M::Counter::choose { (not result and self.number >= 1) or (result and self.number <= 1) }\n",
-        &[("c",json!({"number":{"integer":"0"}}))]);
-    let system = world_system(&world);
-    let mut outcomes = Vec::new();
-    let visit = system
-        .visit_plan_candidates(
-            &system.initial()[0],
-            &native_order(&system, &["choose"]),
-            None,
-            &mut |event| {
-                match event {
-                    NativeCandidateEvent::Begin(_) => {}
-                    NativeCandidateEvent::Completed { state, outcome, .. } => {
-                        outcomes.push((outcome, world.domain.integer(state, "c", "number")))
-                    }
-                    NativeCandidateEvent::Disabled(_)
-                    | NativeCandidateEvent::Undetermined { .. } => {
-                        panic!("four valid native pairs exist")
-                    }
-                }
-                NativeCandidateControl::Continue
-            },
-        )
-        .expect("the finite native relation completes");
-    assert_eq!(visit, NativeCandidateVisit::Complete);
-    assert_eq!(
-        outcomes,
-        [(Some(0), 1), (Some(1), 2), (Some(2), 0), (Some(3), 1)]
+        &[("c", json!({"number":{"integer":"0"}}))],
     );
+        let types = world.package.graph().scope().types();
+        let counter = types
+            .object_types()
+            .find(|object| object.name() == "M::Counter")
+            .unwrap();
+        let value = types
+            .attributes(counter.key())
+            .unwrap()
+            .iter()
+            .find(|attribute| attribute.field().name() == "number")
+            .unwrap();
+        let filament_exact::ValueType::Int(bounds) = value.field().value_type() else {
+            panic!("native frame enumeration must use the actual admitted bounded type");
+        };
+        assert_eq!(
+            (bounds.lower().to_string(), bounds.upper().to_string()),
+            ("0".to_owned(), "2".to_owned())
+        );
+        let system = world_system(&world);
+        let mut outcomes = Vec::new();
+        let visit = system
+            .visit_plan_candidates(
+                &system.initial()[0],
+                &native_order(&system, &["choose"]),
+                None,
+                &mut |event| {
+                    match event {
+                        NativeCandidateEvent::Begin(_) => {}
+                        NativeCandidateEvent::Completed { state, outcome, .. } => {
+                            outcomes.push((outcome, world.domain.integer(state, "c", "number")))
+                        }
+                        NativeCandidateEvent::Disabled(_)
+                        | NativeCandidateEvent::Undetermined { .. } => {
+                            panic!("four valid native pairs exist")
+                        }
+                    }
+                    NativeCandidateControl::Continue
+                },
+            )
+            .expect("the finite native relation completes");
+        assert_eq!(visit, NativeCandidateVisit::Complete);
+        assert_eq!(
+            outcomes,
+            [(Some(0), 1), (Some(1), 2), (Some(2), 0), (Some(3), 1)]
+        );
+    }
+}
+
+/// Input admission enforces inline bounds before native invocation, with the
+/// same refusal family as an explicitly named bounded model type.
+#[test]
+#[trace("FR-710-AC-5", "FSpec-FR-106", "FSpec-FR-154")]
+fn inline_integer_initial_values_refuse_outside_the_declared_interval() {
+    use fsl_semantics::model::observation::AdmissionFailure;
+    for initial in [-1, 3] {
+        let mut causes = Vec::new();
+        for (declaration, field) in [("", "Int[0,2]"), ("type Amount = Int[0,2];", "Amount")] {
+            let model = format!("language \"ix:native\" edition \"1-draft\"; domain \"test/native-plan\"; {declaration} object Counter {{ number: {field}; operation choose(): Boolean modifies self.number; }} population counters: Counter;");
+            let world = native_plan_world(
+                &model,
+                "",
+                &[("c", json!({"number":{"integer":initial.to_string()}}))],
+            );
+            let failure = match ModelSystem::new(world.subject(&["c"], UNLIMITED).simulation) {
+                Ok(_) => panic!("{initial} must not admit under {field}"),
+                Err(failure) => failure,
+            };
+            let AdmissionFailure::Refused(record) = failure else {
+                panic!("out-of-range input must refuse: {failure:?}");
+            };
+            assert_eq!(record.catalog.code(), "invalid_runtime_input");
+            causes.push(record.catalog.cause().to_owned());
+        }
+        assert_eq!(
+            causes[0], causes[1],
+            "inline and named ranges share the same input-admission owner"
+        );
+    }
 }
 
 /// Native replay binds the exact ordinal, even when two results share one
