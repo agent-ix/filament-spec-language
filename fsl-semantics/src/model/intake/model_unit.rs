@@ -147,6 +147,18 @@ struct Token {
     span: Span,
 }
 
+struct ConnectionEnd {
+    part: Token,
+    port: Token,
+}
+
+struct ConnectionDeclaration {
+    wire: Value,
+    name: String,
+    next: usize,
+    ends: [ConnectionEnd; 2],
+}
+
 /// Compile an admitted model unit. Source labels and declaration spans are
 /// retained in each document node's `origin`.
 pub fn compile_model_unit(
@@ -223,6 +235,7 @@ pub fn compile_model_unit_with_causes(
     let mut declaration_names = std::collections::BTreeSet::new();
     let mut population_names = std::collections::BTreeSet::new();
     let mut references = Vec::new();
+    let mut connection_ends = Vec::new();
     let mut supertype_references = Vec::new();
     let mut object_links = Vec::new();
     let mut has_object_type = false;
@@ -489,8 +502,7 @@ pub fn compile_model_unit_with_causes(
                 index = next;
             }
             Some("connection") => {
-                let Some((node, name, next)) =
-                    read_systems_connection(&tokens, index, &identity, parsed)
+                let Some(connection) = read_systems_connection(&tokens, index, &identity, parsed)
                 else {
                     return Err(vec![diagnostic(
                         parsed,
@@ -500,6 +512,12 @@ pub fn compile_model_unit_with_causes(
                         "invalid systems connection declaration",
                     )]);
                 };
+                let ConnectionDeclaration {
+                    wire: node,
+                    name,
+                    next,
+                    ends,
+                } = connection;
                 if !declaration_names.insert(name.clone()) {
                     return Err(vec![diagnostic(
                         parsed,
@@ -510,6 +528,7 @@ pub fn compile_model_unit_with_causes(
                     )]);
                 }
                 types.push(node);
+                connection_ends.extend(ends);
                 has_systems_connection = true;
                 index = next;
             }
@@ -782,6 +801,19 @@ pub fn compile_model_unit_with_causes(
             }
             None => break,
         }
+    }
+    for end in connection_ends {
+        validate_connection_end(
+            parsed,
+            &identity,
+            &types,
+            &[
+                (&populations, "population"),
+                (&dimensions, "dimension"),
+                (&units, "unit"),
+            ],
+            &end,
+        )?;
     }
     for (target, span) in references {
         if !object_names.contains(&target) {
@@ -2249,31 +2281,31 @@ fn read_systems_connection(
     mut index: usize,
     package: &str,
     parsed: &ParsedSource,
-) -> Option<(Value, String, usize)> {
+) -> Option<ConnectionDeclaration> {
     let start = tokens.get(index)?.span.start;
     index += 1;
     let name = tokens.get(index)?.text.clone();
     index += 1;
-    let _source_part = tokens.get(index)?.text.clone();
+    let source_part = tokens.get(index)?.clone();
     index += 1;
     if tokens.get(index)?.text != "." {
         return None;
     }
     index += 1;
-    let source_port = tokens.get(index)?.text.clone();
+    let source_port = tokens.get(index)?.clone();
     index += 1;
     let operator = tokens.get(index)?.text.clone();
     if operator != "->" && operator != "<->" {
         return None;
     }
     index += 1;
-    let _target_part = tokens.get(index)?.text.clone();
+    let target_part = tokens.get(index)?.clone();
     index += 1;
     if tokens.get(index)?.text != "." {
         return None;
     }
     index += 1;
-    let target_port = tokens.get(index)?.text.clone();
+    let target_port = tokens.get(index)?.clone();
     index += 1;
     if tokens.get(index)?.text != ";" {
         return None;
@@ -2282,15 +2314,15 @@ fn read_systems_connection(
     index += 1;
     let identity = format!("ix://{package}/{name}");
     let source_end = json!({
-        "type": format!("ix://{package}/{source_port}"),
+        "type": format!("ix://{package}/{}", source_port.text),
         "multiplicity": {"lower": 1, "upper": 1, "ordered": false, "unique": true},
     });
     let target_end = json!({
-        "type": format!("ix://{package}/{target_port}"),
+        "type": format!("ix://{package}/{}", target_port.text),
         "multiplicity": {"lower": 1, "upper": 1, "ordered": false, "unique": true},
     });
-    Some((
-        json!({
+    Some(ConnectionDeclaration {
+        wire: json!({
             "identity": identity,
             "displayName": name,
             "kind": {"module": package, "name": "connection"},
@@ -2300,8 +2332,81 @@ fn read_systems_connection(
             "flowDirection": if operator == "->" { "source-to-target" } else { "bidirectional" },
         }),
         name,
-        index,
-    ))
+        next: index,
+        ends: [
+            ConnectionEnd {
+                part: source_part,
+                port: source_port,
+            },
+            ConnectionEnd {
+                part: target_part,
+                port: target_port,
+            },
+        ],
+    })
+}
+
+fn validate_connection_end(
+    parsed: &ParsedSource,
+    package: &str,
+    types: &[Value],
+    other_declarations: &[(&[Value], &str)],
+    end: &ConnectionEnd,
+) -> Result<(), Vec<CompleteDiagnostic>> {
+    let mut port_owner = None;
+    for (token, required_kind) in [(&end.part, "part"), (&end.port, "port")] {
+        let key = format!("ix://{package}/{}", token.text);
+        let declaration = types
+            .iter()
+            .map(|node| (node, "unknown"))
+            .chain(
+                other_declarations
+                    .iter()
+                    .flat_map(|(nodes, kind)| nodes.iter().map(move |node| (node, *kind))),
+            )
+            .find(|(node, _)| {
+                node["identity"] == key
+                    || node["displayName"] == token.text
+                    || node["name"] == token.text
+            });
+        let Some((node, fallback_kind)) = declaration else {
+            return Err(vec![diagnostic(
+                parsed,
+                CompleteCode::MissingDeclaration,
+                CompleteCause::MissingDeclaration,
+                token.span,
+                format!("connection end requires {required_kind} {key}, which is not declared"),
+            )]);
+        };
+        let actual_kind = node["kind"]["name"].as_str().unwrap_or(fallback_kind);
+        if actual_kind != required_kind {
+            return Err(vec![diagnostic(
+                parsed,
+                CompleteCode::InvalidModelBinding,
+                CompleteCause::WrongExport,
+                token.span,
+                format!("connection end {key} requires {required_kind}, found {actual_kind}"),
+            )]);
+        }
+        if required_kind == "port" {
+            port_owner = node["owner"].as_str();
+        }
+    }
+    let written_owner = format!("ix://{package}/{}", end.part.text);
+    if port_owner != Some(written_owner.as_str()) {
+        return Err(vec![diagnostic(
+            parsed,
+            CompleteCode::InvalidModelBinding,
+            CompleteCause::MalformedDeclaration,
+            end.part.span,
+            format!(
+                "Port ix://{package}/{} has declared owner {}, but connection end names {written_owner}",
+                end.port.text,
+                port_owner.unwrap_or("<missing>"),
+            ),
+        )]);
+    }
+    Ok(())
 }
 
 fn read_systems_allocation(
