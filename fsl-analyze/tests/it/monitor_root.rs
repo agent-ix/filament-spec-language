@@ -100,7 +100,13 @@ fn monitor_body_locations_follow_entry_rekeys_and_preserve_helper_origins() {
     );
     let root = root_of(&unit, "C", &target()).expect("the authentic monitor emits");
     let package = admitted(&root);
-    let entries = keys(&package).entries;
+    let plan = package.monitor_plans().next().expect("one authentic plan");
+    let entries = [
+        plan.init().node_id().clone(),
+        plan.on_event().node_id().clone(),
+        plan.on_watermark().node_id().clone(),
+        plan.on_gap().node_id().clone(),
+    ];
     let entry_names = [
         names::INIT,
         names::ON_EVENT,
