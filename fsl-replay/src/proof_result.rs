@@ -1548,6 +1548,8 @@ pub struct TerminalRecord {
     backend: Option<BackendId>,
     value: TerminalValue,
     replay: Option<ReplayResult>,
+    protocol_analysis_key: Option<crate::protocol_analysis::ProtocolAnalysisKey>,
+    protocol_analysis_root: Option<crate::RuntimeValuePath>,
     /// The one diagnostic a `failed` record carries, when its settlement
     /// names one (FR-192: an internal failure's
     /// `runtime_invariant`/`established-invariant-broken`, or an expansion
@@ -1641,6 +1643,8 @@ impl TerminalRecord {
             backend: Some(backend),
             value: TerminalValue::Refuted,
             replay: Some(replay.clone()),
+            protocol_analysis_key: None,
+            protocol_analysis_root: None,
             diagnostic: None,
             exact_certificate: None,
             exact_certificate_document: None,
@@ -1842,15 +1846,23 @@ impl TerminalRecord {
     }
 
     /// ADR-036 PA-20 (FSL FR-573): the record of a settled protocol
-    /// analysis. A `refuted` settlement exists only for a counterexample
-    /// that replayed, which each protocol analysis engine checks before it
-    /// returns one.
+    /// analysis. The engine establishes its native counterexample before
+    /// returning `refuted`; acting-instance projection decisions are typed
+    /// witnesses and other decisive protocol results are replayed. `key`
+    /// retains the native projection or realizability key; `root` retains
+    /// its decisive witness's assessed root. Both are absent for a
+    /// global-conformance settlement.
     pub fn of_protocol_analysis(
         request_index: RequestIndex,
         backend: BackendId,
         settlement: &crate::protocol_analysis::ProtocolAnalysisSettlement,
+        key: Option<crate::protocol_analysis::ProtocolAnalysisKey>,
+        root: Option<crate::RuntimeValuePath>,
     ) -> Self {
-        Self::with_backend(request_index, backend, settlement.value.clone())
+        let mut record = Self::with_backend(request_index, backend, settlement.value.clone());
+        record.protocol_analysis_key = key;
+        record.protocol_analysis_root = root;
+        record
     }
 
     /// Build a tested record with the producing backend identity.
@@ -1896,6 +1908,8 @@ impl TerminalRecord {
             backend: None,
             value: TerminalValue::Declined { cause, code },
             replay: None,
+            protocol_analysis_key: None,
+            protocol_analysis_root: None,
             diagnostic: Some(diagnostic),
             exact_certificate: None,
             exact_certificate_document: None,
@@ -1928,6 +1942,8 @@ impl TerminalRecord {
             backend: None,
             value: TerminalValue::Unsupported(UnavailabilityCause::Disposition),
             replay: None,
+            protocol_analysis_key: None,
+            protocol_analysis_root: None,
             diagnostic: Some(diagnostic),
             exact_certificate: None,
             exact_certificate_document: None,
@@ -1954,6 +1970,8 @@ impl TerminalRecord {
                 code: DeclineCode::Fsl(Code::InvalidRequest),
             },
             replay: None,
+            protocol_analysis_key: None,
+            protocol_analysis_root: None,
             diagnostic: Some(diagnostic),
             exact_certificate: None,
             exact_certificate_document: None,
@@ -1971,6 +1989,8 @@ impl TerminalRecord {
             backend: None,
             value: TerminalValue::Failed,
             replay: None,
+            protocol_analysis_key: None,
+            protocol_analysis_root: None,
             diagnostic: Some(diagnostic),
             exact_certificate: None,
             exact_certificate_document: None,
@@ -2130,6 +2150,8 @@ impl TerminalRecord {
             backend: None,
             value: TerminalValue::Unsupported(UnavailabilityCause::HybridProviderAbsent),
             replay: None,
+            protocol_analysis_key: None,
+            protocol_analysis_root: None,
             diagnostic: Some(NegotiationOutcome::UnsupportedRequestedCapability.code()),
             exact_certificate: None,
             exact_certificate_document: None,
@@ -2156,6 +2178,8 @@ impl TerminalRecord {
             backend: Some(backend),
             value: TerminalValue::Unsupported(UnavailabilityCause::Disposition),
             replay: None,
+            protocol_analysis_key: None,
+            protocol_analysis_root: None,
             diagnostic: Some(CatalogCode::new("unsupported_construct", "expression-form")),
             exact_certificate: None,
             exact_certificate_document: None,
@@ -2177,6 +2201,8 @@ impl TerminalRecord {
             backend: Some(backend),
             value: TerminalValue::Unsupported(UnavailabilityCause::Disposition),
             replay: None,
+            protocol_analysis_key: None,
+            protocol_analysis_root: None,
             diagnostic: Some(CatalogCode::new(
                 "unsupported_projection",
                 "tool-unavailable",
@@ -2207,6 +2233,8 @@ impl TerminalRecord {
             backend: Some(backend),
             value,
             replay: None,
+            protocol_analysis_key: None,
+            protocol_analysis_root: None,
             diagnostic: disposed.then(|| NegotiationOutcome::UnsupportedRequestedCapability.code()),
             disposition_detail: disposed.then(serde_json::Map::new),
             diagnostic_detail: None,
@@ -2229,6 +2257,8 @@ impl TerminalRecord {
             backend: None,
             value,
             replay: None,
+            protocol_analysis_key: None,
+            protocol_analysis_root: None,
             diagnostic: None,
             exact_certificate: None,
             exact_certificate_document: None,
@@ -2241,6 +2271,17 @@ impl TerminalRecord {
     /// The `request_index` of the item this record was read for.
     pub fn request_index(&self) -> RequestIndex {
         self.request_index
+    }
+
+    /// The original protocol-analysis key retained when its native result settled.
+    /// Global-conformance records carry no projection or realizability key.
+    pub fn protocol_analysis_key(&self) -> Option<&crate::protocol_analysis::ProtocolAnalysisKey> {
+        self.protocol_analysis_key.as_ref()
+    }
+
+    /// The assessed root retained from the original decisive protocol witness.
+    pub fn protocol_analysis_root(&self) -> Option<&crate::RuntimeValuePath> {
+        self.protocol_analysis_root.as_ref()
     }
 
     /// The certificate accepted for this exact probabilistic proof, if any.

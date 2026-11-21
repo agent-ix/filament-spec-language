@@ -495,7 +495,7 @@ struct Admitted<'a> {
 
 fn admit<'a>(
     package: &CheckedPackageV2,
-    request: RealizabilityRequest<'a>,
+    request: &'a RealizabilityRequest<'a>,
 ) -> Result<Admitted<'a>, RealizabilityRefusal> {
     let mut premises = ProtocolPremises::from_view(package, &request.protocol)?;
     let protocol = request
@@ -503,15 +503,14 @@ fn admit<'a>(
         .model
         .simulation
         .input
-        .evaluator
-        .protocol(&request.subject.protocol)
+        .protocol_definition(&request.subject.protocol)
         .ok_or_else(|| {
             RealizabilityRefusal::Protocol(ProtocolRefusal::UnknownProtocol {
                 protocol: request.subject.protocol.clone(),
             })
         })?;
-    let capacities = Capacities::admit(protocol, &request.subject.capacities)
-        .map_err(|refusal| RealizabilityRefusal::Protocol(ProtocolRefusal::Capacity(refusal)))?;
+    let capacities = Capacities::admit_definition(&protocol, &request.subject.capacities)
+        .map_err(RealizabilityRefusal::Protocol)?;
     premises.state_capacities(|name| capacities.value(name));
     let open_range = premises.channels.iter().any(|channel| {
         matches!(
@@ -520,7 +519,7 @@ fn admit<'a>(
         )
     });
     let key = ProtocolAnalysisKey::realizability(RealizabilityKeyDraft {
-        definition_key: request.definition_key,
+        definition_key: request.definition_key.clone(),
         strategy_profile: request.strategy_profile.clone(),
         role_knowledge: request.role_knowledge.clone(),
         channels: Some(premises.channels.clone()),
@@ -545,7 +544,7 @@ fn admit<'a>(
         .and_then(Profile::from_wire);
     let Some(profile) = profile else {
         return Err(RealizabilityRefusal::InvalidProfile(
-            request.strategy_profile.unwrap_or_default(),
+            request.strategy_profile.clone().unwrap_or_default(),
         ));
     };
     for (member, value) in [
@@ -556,7 +555,7 @@ fn admit<'a>(
             return Err(RealizabilityRefusal::PremiseFact(member));
         }
     }
-    let root = AssessedRoot::new(request.assessed_root)?;
+    let root = AssessedRoot::new(request.assessed_root.clone())?;
     let names = fsl_replay::spine::arena_names(package, &request.protocol, &premises)?;
     let not_stated = |member: &'static str, value: &Option<Option<BTreeSet<String>>>| {
         matches!(value, Some(None)).then_some(Settled::Inconclusive(
@@ -580,7 +579,15 @@ fn admit<'a>(
     } else {
         let model = ModelSystem::new(request.subject.model.simulation.clone())
             .map_err(|failure| RealizabilityRefusal::Admission(Box::new(failure)))?;
-        match ProtocolSystem::new(model, &request.subject, Sc) {
+        let system = match protocol {
+            fsl_eval::simulation::model::ProtocolDefinition::Source(_) => {
+                ProtocolSystem::new(model, &request.subject, Sc)
+            }
+            fsl_eval::simulation::model::ProtocolDefinition::Package(_) => {
+                ProtocolSystem::new_package(model, &request.subject, Sc)
+            }
+        };
+        match system {
             Ok(system) => Ok(system),
             Err(ProtocolRefusal::Unsupported(construct)) => {
                 Err(Settled::Unsupported(UnsupportedCause {
@@ -656,7 +663,7 @@ fn decide(
 ) -> Result<RealizabilityOutcome, RealizabilityRefusal> {
     let budget = request.budget;
     let meter = request.subject.model.simulation.meter;
-    let admitted = admit(package, request)?;
+    let admitted = admit(package, &request)?;
     let key = admitted.key.clone();
     Ok(result(
         &key,
@@ -756,7 +763,7 @@ pub fn replay_strategy(
 ) -> Result<RealizabilityOutcome, RealizabilityRefusal> {
     let budget = request.budget;
     let meter = request.subject.model.simulation.meter;
-    let admitted = admit(package, request)?;
+    let admitted = admit(package, &request)?;
     let key = admitted.key.clone();
     let settled = match admitted.system {
         Err(outcome) => Ok(outcome),
@@ -789,7 +796,7 @@ pub fn replay_counterexample(
     request: RealizabilityRequest<'_>,
     counterexample: &RealizabilityCounterexample,
 ) -> Result<Option<Result<(), RealizabilityDisagreement>>, RealizabilityRefusal> {
-    let admitted = admit(package, request)?;
+    let admitted = admit(package, &request)?;
     let Ok(system) = admitted.system else {
         return Ok(None);
     };

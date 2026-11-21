@@ -93,6 +93,12 @@ pub(super) enum LoopGuard<'a> {
     Package,
 }
 
+/// A choice case's guard, retaining the selected route's native expression authority.
+pub(super) enum ChoiceGuard<'a> {
+    Source(&'a CheckedBody),
+    Package(crate::value::ProtocolSlot),
+}
+
 /// One `await` (ADR-027 ST-8): its matched event node, its `then` control
 /// and its `timeout` control.
 pub(super) struct Await {
@@ -307,8 +313,8 @@ pub(super) struct Program<'a> {
     pub(super) recommendations: BTreeMap<ProtocolNodeId, Recommendation<'a>>,
     pub(super) joins: BTreeMap<ProtocolNodeId, Join>,
     pub(super) loops: BTreeMap<ProtocolNodeId, Loop<'a>>,
-    /// Each `choice`'s cases, each with its guard, in authored order.
-    pub(super) choices: BTreeMap<ProtocolNodeId, Vec<(ProtocolNodeId, &'a CheckedBody)>>,
+    /// Each choice's cases and guards, in its native definition's order.
+    pub(super) choices: BTreeMap<ProtocolNodeId, Vec<(ProtocolNodeId, ChoiceGuard<'a>)>>,
     pub(super) awaits: BTreeMap<ProtocolNodeId, Await>,
     /// Each `check`'s condition.
     pub(super) checks: BTreeMap<ProtocolNodeId, &'a CheckedBody>,
@@ -748,7 +754,7 @@ impl<'a> Program<'a> {
                     .copied()
                     .find(|child| controls.get(child).is_some_and(|c| c.name == case.name))
                     .ok_or_else(|| ProtocolRefusal::fault("a-case-is-a-child-of-its-choice"))?;
-                cases.push((node, &case.guard));
+                cases.push((node, ChoiceGuard::Source(&case.guard)));
             }
             choices.insert(choice.node, cases);
         }
@@ -1004,9 +1010,8 @@ impl<'a> Program<'a> {
         model: &ModelSystem<'_>,
         package: &super::PackageProtocolProgram<'_>,
     ) -> Result<Self, ProtocolRefusal> {
-        // A control's text spells the structural branch between a parallel and
-        // its body, as the source checker's does: the package path has no
-        // branch segment.
+        // A control's text includes each structural branch or case label,
+        // which the package's declaration path omits.
         let mut by_depth: Vec<_> = package.controls.values().collect();
         by_depth.sort_by_key(|control| control.path.len());
         let mut texts: BTreeMap<ProtocolNodeId, String> = BTreeMap::new();
@@ -1031,6 +1036,7 @@ impl<'a> Program<'a> {
             let step = match control.operation {
                 fsl_package::protocol_view::ControlOperation::Sequence => ControlStep::Sequence,
                 fsl_package::protocol_view::ControlOperation::Parallel => ControlStep::Parallel,
+                fsl_package::protocol_view::ControlOperation::Choice => ControlStep::Choice,
                 fsl_package::protocol_view::ControlOperation::Attempt => ControlStep::Attempt,
                 fsl_package::protocol_view::ControlOperation::Send => ControlStep::Send,
                 fsl_package::protocol_view::ControlOperation::Receive => ControlStep::Receive,
@@ -1054,19 +1060,25 @@ impl<'a> Program<'a> {
             );
         }
 
-        // Package protocol views keep the labelled branch body as the
-        // parallel's record target. The execution tree also needs the
-        // source checker’s structural branch control between the parallel
-        // and its body, so settle and parent walks see the same shape.
+        // Admitted branch and case entries name their bodies. The execution
+        // tree retains a structural label control between each holder and
+        // body, so settling and parent walks follow the same native topology.
         let mut next_synthetic_id = controls
             .keys()
             .map(|node| node.0)
             .max()
             .unwrap_or(0)
             .saturating_add(1);
+        let mut choices = BTreeMap::new();
         for parallel in package.controls.values().filter(|control| {
-            control.operation == fsl_package::protocol_view::ControlOperation::Parallel
+            matches!(
+                control.operation,
+                fsl_package::protocol_view::ControlOperation::Parallel
+                    | fsl_package::protocol_view::ControlOperation::Choice
+            )
         }) {
+            let is_choice =
+                parallel.operation == fsl_package::protocol_view::ControlOperation::Choice;
             let mut branch_ids = Vec::with_capacity(parallel.branches.len());
             for (label, body) in &parallel.branches {
                 let branch = ProtocolNodeId(next_synthetic_id);
@@ -1078,7 +1090,11 @@ impl<'a> Program<'a> {
                 controls.insert(
                     branch,
                     Control {
-                        step: ControlStep::Branch,
+                        step: if is_choice {
+                            ControlStep::Case
+                        } else {
+                            ControlStep::Branch
+                        },
                         name: label.clone(),
                         text: format!("{}/{}", texts[&parallel.id], label),
                         parent: Some(parallel.id),
@@ -1086,6 +1102,18 @@ impl<'a> Program<'a> {
                     },
                 );
                 branch_ids.push(branch);
+                if is_choice {
+                    let guard = package
+                        .choices
+                        .get(&parallel.id)
+                        .and_then(|cases| cases.iter().find(|(case, _)| case == body))
+                        .map(|(_, slot)| slot.clone())
+                        .ok_or_else(|| ProtocolRefusal::fault("a-package-case-has-a-guard"))?;
+                    choices
+                        .entry(parallel.id)
+                        .or_insert_with(Vec::new)
+                        .push((branch, ChoiceGuard::Package(guard)));
+                }
             }
             let parallel_control = controls
                 .get_mut(&parallel.id)
@@ -1263,6 +1291,12 @@ impl<'a> Program<'a> {
             .controls
             .values()
             .filter_map(|control| control.constraint.as_ref().map(|slot| (control.id, slot)))
+            .chain(
+                package
+                    .choices
+                    .iter()
+                    .flat_map(|(choice, cases)| cases.iter().map(move |(_, slot)| (*choice, slot))),
+            )
             .chain(package.finish.as_ref().map(|slot| (finish_node, slot)))
         {
             for binder in package
@@ -1302,7 +1336,7 @@ impl<'a> Program<'a> {
                     )
                 })
                 .collect(),
-            choices: BTreeMap::new(),
+            choices,
             awaits: package
                 .awaits
                 .iter()

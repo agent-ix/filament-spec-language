@@ -9,7 +9,9 @@ use filament_contract_model::CheckedPackageV2;
 use filament_semantic_value::catalog::CatalogCode;
 use fsl_eval::simulation::protocol::ProtocolRefusal;
 use fsl_foundation::{BackendId, Code, RequestIndex};
-use fsl_replay::protocol_analysis::{AnalysisOutcome, ProtocolAnalysisSettlement};
+use fsl_replay::protocol_analysis::{
+    AnalysisOutcome, ProtocolAnalysisCounterexample, ProtocolAnalysisSettlement,
+};
 use fsl_replay::spine::{ProtocolAnalysisRecord, ProtocolRecordError};
 use fsl_replay::{DeclineCode, ProofRefusalCause, TerminalRecord};
 use fsl_route::Mode;
@@ -34,6 +36,41 @@ pub enum ProtocolAnalysisArtifact {
 }
 
 impl ProtocolAnalysisArtifact {
+    /// The decisive counterexample, retaining the native decisive evidence.
+    #[must_use]
+    pub fn counterexample(&self) -> Option<ProtocolAnalysisCounterexample> {
+        match self {
+            Self::Projection(result) => match &result.outcome {
+                AnalysisOutcome::Refuted(found) => Some(
+                    ProtocolAnalysisCounterexample::Projection(Box::new(found.clone())),
+                ),
+                _ => None,
+            },
+            Self::Realizability(result) => match &result.outcome {
+                AnalysisOutcome::Refuted(found) => Some(
+                    ProtocolAnalysisCounterexample::Realizability(Box::new(found.clone())),
+                ),
+                _ => None,
+            },
+        }
+    }
+
+    /// The complete FR-331 body of a refutation, absent for other outcomes.
+    pub(crate) fn counterexample_wire(
+        &self,
+    ) -> Option<Result<serde_json::Value, fsl_replay::CounterexampleWireError>> {
+        match self {
+            Self::Projection(result) => match &result.outcome {
+                AnalysisOutcome::Refuted(found) => Some(found.to_wire()),
+                _ => None,
+            },
+            Self::Realizability(result) => match &result.outcome {
+                AnalysisOutcome::Refuted(found) => Some(found.to_wire()),
+                _ => None,
+            },
+        }
+    }
+
     /// The result's FR-573 settlement.
     #[must_use]
     pub fn settlement(&self) -> ProtocolAnalysisSettlement {
@@ -54,27 +91,24 @@ impl ProtocolAnalysisArtifact {
     /// FR-352, which no settled result does.
     pub fn record(&self) -> Result<ProtocolAnalysisRecord, ProtocolRecordError> {
         let settlement = self.settlement();
-        let (key, witness) = match self {
-            Self::Projection(result) => (
-                &result.key,
-                match &result.outcome {
-                    AnalysisOutcome::Refuted(counterexample) => {
-                        Some(&counterexample.separating_witness)
-                    }
-                    _ => None,
-                },
-            ),
-            Self::Realizability(result) => (
-                &result.key,
-                match &result.outcome {
-                    AnalysisOutcome::Refuted(counterexample) => {
-                        Some(counterexample.separating_witness())
-                    }
-                    _ => None,
-                },
-            ),
+        let key = match self {
+            Self::Projection(result) => &result.key,
+            Self::Realizability(result) => &result.key,
         };
-        ProtocolAnalysisRecord::new(key.clone(), &settlement, witness)
+        ProtocolAnalysisRecord::new(key.clone(), &settlement, self.separating_witness())
+    }
+
+    fn separating_witness(&self) -> Option<&fsl_replay::SeparatingWitnessRecord> {
+        match self {
+            Self::Projection(result) => match &result.outcome {
+                AnalysisOutcome::Refuted(found) => Some(&found.separating_witness),
+                _ => None,
+            },
+            Self::Realizability(result) => match &result.outcome {
+                AnalysisOutcome::Refuted(found) => Some(found.separating_witness()),
+                _ => None,
+            },
+        }
     }
 }
 
@@ -235,8 +269,20 @@ pub(crate) fn settle(
     index: RequestIndex,
     backend: BackendId,
 ) -> (TerminalRecord, ProtocolAnalysisArtifact) {
+    let key = match &artifact {
+        ProtocolAnalysisArtifact::Projection(result) => &result.key,
+        ProtocolAnalysisArtifact::Realizability(result) => &result.key,
+    };
     (
-        TerminalRecord::of_protocol_analysis(index, backend, &artifact.settlement()),
+        TerminalRecord::of_protocol_analysis(
+            index,
+            backend,
+            &artifact.settlement(),
+            Some(key.clone()),
+            artifact
+                .separating_witness()
+                .map(|witness| witness.value_path.clone()),
+        ),
         artifact,
     )
 }
