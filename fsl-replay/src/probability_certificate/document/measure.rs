@@ -2,6 +2,7 @@
 //! Finite-horizon measure proofs, independently reconstructed from checked input.
 
 use super::*;
+use filament_exact::OrderingOperator as Order;
 use fsl_eval::probabilistic::{
     Accumulator, MeasureComparison, MeasureError, MeasurePayoff, MeasurePlan, MonitorState,
 };
@@ -87,6 +88,30 @@ struct Plan<'a> {
     payoff: MeasurePayoff,
     bound: Bound,
     strict: bool,
+}
+
+pub(in crate::probability_certificate) fn ordered(
+    operator: filament_exact::OrderingOperator,
+    left: &Rational,
+    right: &Rational,
+    meter: &mut filament_exact::Meter,
+    cancel: &Cancel,
+) -> Result<bool, ProbabilityDocumentError> {
+    poll(cancel)?;
+    match filament_exact::order_numbers(
+        operator,
+        filament_exact::OrderedOperands::Rationals(left, right),
+        meter,
+    ) {
+        filament_exact::Outcome::Completed(value) => Ok(value),
+        filament_exact::Outcome::Incomplete(error) => match cancel.tripped() {
+            Some(cause) => Err(ProbabilityDocumentError::Cancelled(cause)),
+            None => Err(ProbabilityDocumentError::Accounting(Box::new(error))),
+        },
+        filament_exact::Outcome::Undefined(_) | filament_exact::Outcome::Refused(_) => {
+            Err(ProbabilityDocumentError::Malformed)
+        }
+    }
 }
 
 fn scalar_error(error: MeasureError) -> ProbabilityDocumentError {
@@ -1211,7 +1236,9 @@ fn validate_ranges(
     };
     for row in &document.values {
         poll(cancel)?;
-        if row.value < lower || row.value > upper {
+        if ordered(Order::Less, &row.value, &lower, meter, cancel)?
+            || ordered(Order::Greater, &row.value, &upper, meter, cancel)?
+        {
             return Err(ProbabilityDocumentError::MalformedMember("values"));
         }
     }
@@ -1573,8 +1600,20 @@ fn checked_values(
                     optimum = Some(match optimum {
                         None => sum,
                         Some(old) => match document.objective.optimization {
-                            ProbabilityObjective::Minimum => old.min(sum),
-                            ProbabilityObjective::Maximum => old.max(sum),
+                            ProbabilityObjective::Minimum => {
+                                if ordered(Order::Less, &old, &sum, meter, cancel)? {
+                                    old
+                                } else {
+                                    sum
+                                }
+                            }
+                            ProbabilityObjective::Maximum => {
+                                if ordered(Order::Greater, &old, &sum, meter, cancel)? {
+                                    old
+                                } else {
+                                    sum
+                                }
+                            }
                             ProbabilityObjective::Workload => {
                                 return Err(ProbabilityDocumentError::Malformed)
                             }
@@ -1852,11 +1891,17 @@ pub(super) fn check(
         let threshold = match &plan.bound {
             Bound::AtLeast(value) | Bound::AtMost(value) => value,
         };
-        let holds = if plan.strict {
-            value < *threshold
-        } else {
-            value >= *threshold
-        };
+        let holds = ordered(
+            if plan.strict {
+                Order::Less
+            } else {
+                Order::GreaterOrEqual
+            },
+            &value,
+            threshold,
+            &mut meter,
+            cancel,
+        )?;
         if !holds {
             return Ok(rejected(
                 ProbabilityCertificateRule::ThresholdMissed,
@@ -1912,9 +1957,21 @@ pub(super) fn check(
         }
         (
             if plan.strict {
-                value <= super::rational(0)
+                ordered(
+                    Order::LessOrEqual,
+                    &value,
+                    &super::rational(0),
+                    &mut meter,
+                    cancel,
+                )?
             } else {
-                value >= super::rational(0)
+                ordered(
+                    Order::GreaterOrEqual,
+                    &value,
+                    &super::rational(0),
+                    &mut meter,
+                    cancel,
+                )?
             },
             if plan.strict {
                 ProbabilityBoundSide::AtLeast
@@ -1924,8 +1981,14 @@ pub(super) fn check(
         )
     } else {
         match &plan.bound {
-            Bound::AtLeast(threshold) => (value >= *threshold, ProbabilityBoundSide::AtLeast),
-            Bound::AtMost(threshold) => (value <= *threshold, ProbabilityBoundSide::AtMost),
+            Bound::AtLeast(threshold) => (
+                ordered(Order::GreaterOrEqual, &value, threshold, &mut meter, cancel)?,
+                ProbabilityBoundSide::AtLeast,
+            ),
+            Bound::AtMost(threshold) => (
+                ordered(Order::LessOrEqual, &value, threshold, &mut meter, cancel)?,
+                ProbabilityBoundSide::AtMost,
+            ),
         }
     };
     if !holds {
@@ -2252,8 +2315,8 @@ pub(in crate::probability_certificate) fn check_mean_refutation(
         .get(&graph.initial)
         .ok_or(ProbabilityDocumentError::Malformed)?;
     let refutes = match &selected.bound {
-        Bound::AtLeast(threshold) => value < threshold,
-        Bound::AtMost(threshold) => value > threshold,
+        Bound::AtLeast(threshold) => ordered(Order::Less, value, threshold, &mut meter, cancel)?,
+        Bound::AtMost(threshold) => ordered(Order::Greater, value, threshold, &mut meter, cancel)?,
     };
     if !refutes {
         return Ok(MeanRefutationCheck::Rejected(

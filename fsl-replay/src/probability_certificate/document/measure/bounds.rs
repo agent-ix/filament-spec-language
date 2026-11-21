@@ -441,7 +441,11 @@ pub(super) fn check(
                     cancel,
                 )?;
             }
-            let holds = if lower { value <= &sum } else { &sum <= value };
+            let holds = if lower {
+                ordered(Order::LessOrEqual, value, &sum, &mut meter, cancel)?
+            } else {
+                ordered(Order::LessOrEqual, &sum, value, &mut meter, cancel)?
+            };
             if !holds && (!needs_policy || policy.contains_key(key)) {
                 return Ok(rejection(
                     ProbabilityCertificateRule::InequalityFails,
@@ -522,8 +526,8 @@ pub(super) fn check(
         .get(&graph.initial)
         .ok_or(ProbabilityDocumentError::MalformedMember("values"))?;
     if !match &selected.bound {
-        Bound::AtLeast(threshold) => value < threshold,
-        Bound::AtMost(threshold) => value > threshold,
+        Bound::AtLeast(threshold) => ordered(Order::Less, value, threshold, &mut meter, cancel)?,
+        Bound::AtMost(threshold) => ordered(Order::Greater, value, threshold, &mut meter, cancel)?,
     } {
         return Ok(rejection(
             ProbabilityCertificateRule::ThresholdMissed,

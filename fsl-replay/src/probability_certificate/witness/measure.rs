@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! Native bounded-measure path sets and quantile two-mass replay (FR-202).
+use super::super::document::measure::ordered;
 use super::super::document::measure::{measure_probability_product_key, replay_control};
 use super::*;
+use filament_exact::OrderingOperator as Order;
 use fsl_eval::probabilistic::{Accumulator, MeasureError, MonitorState};
 
 fn limits_of(system: &ModelSystem<'_>, limits: &ExactProbLimits) -> ProbabilityDocumentLimits {
@@ -489,18 +491,41 @@ pub(super) fn replay(
                 cancel,
             )?;
             match threshold {
-                Bound::AtMost(_) => violating > threshold_mass,
-                Bound::AtLeast(_) => violating > rational(0) && violating >= threshold_mass,
+                Bound::AtMost(_) => ordered(
+                    Order::Greater,
+                    &violating,
+                    &threshold_mass,
+                    &mut meter,
+                    cancel,
+                )
+                .map_err(bounded::document_error)?,
+                Bound::AtLeast(_) => {
+                    ordered(Order::Greater, &violating, &rational(0), &mut meter, cancel)
+                        .map_err(bounded::document_error)?
+                        && ordered(
+                            Order::GreaterOrEqual,
+                            &violating,
+                            &threshold_mass,
+                            &mut meter,
+                            cancel,
+                        )
+                        .map_err(bounded::document_error)?
+                }
             }
         }
         ProbForm::Probability {
             bound: Bound::AtLeast(threshold),
             ..
-        } => violating > one_minus(threshold, &mut meter)?,
+        } => {
+            let threshold = one_minus(threshold, &mut meter)?;
+            ordered(Order::Greater, &violating, &threshold, &mut meter, cancel)
+                .map_err(bounded::document_error)?
+        }
         ProbForm::Probability {
             bound: Bound::AtMost(threshold),
             ..
-        } => violating > *threshold,
+        } => ordered(Order::Greater, &violating, threshold, &mut meter, cancel)
+            .map_err(bounded::document_error)?,
         _ => false,
     };
     if !holds {
