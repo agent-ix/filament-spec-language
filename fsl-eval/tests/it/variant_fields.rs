@@ -48,13 +48,21 @@ fn package_as(alias: &str) -> CheckedPackage {
 /// `document` linked as model `alias`, in a unit that declares only a
 /// function naming no variant type.
 fn package_over(document: &serde_json::Value, alias: &str) -> CheckedPackage {
+    package_functions(
+        document,
+        alias,
+        "function keep using v(): Boolean pure { true }",
+    )
+}
+
+fn package_functions(document: &serde_json::Value, alias: &str, functions: &str) -> CheckedPackage {
     let bytes = serde_json::to_vec(document).expect("the fixture serializes");
     let packages = package_input([bytes.as_slice()]).unwrap();
     let source = format!(
         "language \"ix:native\" edition \"1-draft\";\n\
          profile v = \"filament.value.complete/v1\";\n\
          model {alias} = {package:?};\n\
-         function keep using v(): Boolean pure {{ true }}\n",
+         {functions}\n",
         package = fixture::PACKAGE,
     );
     let parsed = fsl_cst::parse(
@@ -93,6 +101,103 @@ fn package_over(document: &serde_json::Value, alias: &str) -> CheckedPackage {
 
 fn package() -> CheckedPackage {
     package_as("Config")
+}
+
+/// Selected model enums evaluate actual values from source and the bytes-only
+/// carrier, preserving aliases, canonical ranks and equality charge sequences.
+#[trace("FR-531-AC-8", "FR-360-AC-8")]
+#[test]
+fn selected_model_enum_values_match_source_and_bare_evaluation() {
+    use fsl_eval::value::QualifiedName;
+    use fsl_package::{BarePackage, BareSupply, ReadIdentityRows};
+    use fsl_semantics::library::LibraryName;
+    let document = fixture::with_types(vec![fixture::variant_type(
+        "Unused",
+        &["Gold Plus", "Café", "2x"],
+    )]);
+    let document_bytes = serde_json::to_vec(&document).unwrap();
+    let models = package_input([document_bytes.as_slice()]).unwrap();
+    let mut first = None;
+    for alias in ["M", "Renamed"] {
+        let functions = format!("function pick using v(): {alias}::Tier pure {{ {alias}::Tier::Gold }}\nfunction same using v(): Boolean pure {{ pick() = {alias}::Tier::Gold }}\nfunction other using v(): Boolean pure {{ pick() = {alias}::Tier::Standard }}\nfunction pass using v(t: {alias}::Tier): {alias}::Tier pure {{ t }}");
+        let package = package_functions(&document, alias, &functions);
+        let emission = fsl_package::emit_checked(&package, fsl_package::EmitLimits::fixture())
+            .expect("selected enums emit");
+        let budget = || fsl_package::V2ReadLimits::fixture().native_join_budget();
+        let read = fsl_package::read_evaluation_emission(
+            &package,
+            &emission,
+            LibraryName::new("fixture").unwrap(),
+            &models,
+            fsl_package::V2ReadLimits::fixture(),
+            fsl_package::EmitLimits::fixture(),
+            fsl_package::SourceWitnessSupplier::new(&emission),
+        )
+        .expect("source route admits the same package");
+        let identities = emission
+            .identity_rows(read.admitted(), &mut budget())
+            .unwrap();
+        let identity_bytes = identities.to_bytes(read.admitted()).unwrap();
+        let identities =
+            ReadIdentityRows::read(&identity_bytes, read.admitted(), &mut budget()).unwrap();
+        let equality = emission
+            .equality_witness(read.admitted(), &mut budget())
+            .unwrap();
+        let equality_bytes = equality.to_bytes(read.admitted()).unwrap();
+        let equality =
+            fsl_package::ReadEqualityRows::read(&equality_bytes, read.admitted(), &mut budget())
+                .unwrap();
+        let bare = BarePackage::new(read.admitted())
+            .with_supply(
+                BareSupply {
+                    identities: &identities,
+                    equality: Some(&equality),
+                },
+                &mut budget(),
+            )
+            .unwrap();
+        for (name, expected) in [("pick", None), ("same", Some(true)), ("other", Some(false))] {
+            let call = |route: &dyn CheckedPackageEvaluation| {
+                let mut meter = Meter::new(UNLIMITED);
+                let evaluation = route
+                    .call(
+                        &QualifiedName::unqualified(name).unwrap(),
+                        vec![],
+                        &ObjectEnvironment::default(),
+                        &mut meter,
+                    )
+                    .expect("enum function evaluates");
+                (evaluation, meter)
+            };
+            let (source, source_meter) = call(&package);
+            let (bytes, bytes_meter) = call(&bare);
+            let FamilyOutcome::Evaluated(Outcome::Completed(source_value)) = source.outcome else {
+                panic!("source value")
+            };
+            let FamilyOutcome::Evaluated(Outcome::Completed(bare_value)) = bytes.outcome else {
+                panic!("bare value: {bytes:?}")
+            };
+            assert_eq!(bare_value, source_value, "{alias}::{name}");
+            if let Some(expected) = expected {
+                assert_eq!(bare_value, Value::Boolean(expected));
+            } else {
+                let Value::Enum(member) = &bare_value else {
+                    panic!("pick returns an enum")
+                };
+                assert_eq!(member.variant().case(), "Gold");
+                assert_eq!(member.rank(), 0);
+                if let Some(previous) = &first {
+                    assert_eq!(previous, &bare_value, "alias-independent opaque identity");
+                }
+                first = Some(bare_value);
+            }
+            assert_eq!(
+                source_meter.admitted_charges(),
+                bytes_meter.admitted_charges(),
+                "{alias}::{name}: semantic charge sequence"
+            );
+        }
+    }
 }
 
 fn variant_type(package: &CheckedPackage, alias: &str, name: &str) -> ValueType {
