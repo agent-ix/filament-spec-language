@@ -629,6 +629,29 @@ pub(crate) fn lone() -> Model {
     }
 }
 
+/// The `scored` model: `pay(n: Int[0, 5], m: Int[0, 2])` with the reward
+/// `score = 10 * n + m`, which reads both parameters, in slot order.
+pub(crate) fn scored() -> Model {
+    const PACKAGE: &str = "test/scored";
+    Model {
+        package: PACKAGE,
+        object: "Account",
+        population: "accounts",
+        key: "a",
+        integers: vec![("Amount", 0, 5), ("Small", 0, 2)],
+        fields: vec![("up", BOOLEAN.to_owned())],
+        operations: vec![Operation {
+            name: "pay",
+            parameters: vec![("n", int(PACKAGE, "Amount")), ("m", int(PACKAGE, "Small"))],
+            modifies: vec![],
+        }],
+        body: "reward score on Account::pay = 10 * n + m;\n\
+               workload Unit on M { weight Account::pay = 1; }\n"
+            .to_owned(),
+        initial: json!({"up": {"boolean": false}}),
+    }
+}
+
 /// FR-187-AC-4's `refund` model: `pay(n: Int[0, 5])` with the reward
 /// `refund = n - 3`.
 pub(crate) fn refund() -> Model {

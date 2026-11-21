@@ -33,8 +33,8 @@ use fsl_semantics::check::footprint::{
 use fsl_semantics::check::{
     CheckedBody, CheckedHyperClause, CheckedNode, CheckedProbabilisticModel, CheckedProtocol,
     CheckedProtocolNodeKeys, CheckedRow, CheckedStateClause, CheckedTemporalClause,
-    CheckedTerminalPredicate, EnumBinding, FormulaNodeId, ModelTimeSource, ReadReward, Reward,
-    StatePredicate, TimedModel, VariantTypeDeclaration, Written,
+    CheckedTerminalPredicate, EnumBinding, FormulaNodeId, ModelTimeSource, Reward, StatePredicate,
+    TimedModel, VariantTypeDeclaration, Written,
 };
 use fsl_semantics::model::clause_observation::Observation;
 use fsl_semantics::model::domain_package::{DomainPackage, DomainPackageRef};
@@ -162,6 +162,9 @@ pub struct ModelCheckInput<'a> {
     /// The `terminal` declarations (FR-411), or the refusal of their
     /// resolution, which the model system reports when it is built.
     pub terminals: Result<Vec<ModelTerminal<'a>>, TerminalResolveRefusal>,
+    /// The rewards of the package route's `reward` nodes, projected once;
+    /// `None` on the source route, which evaluates its checked rewards.
+    pub read_rewards: Option<&'a PackageRewards>,
     /// The evaluator of the package's checked forms.
     pub evaluator: &'a dyn ModelEvaluator,
     /// The source package the tables were read from; `None` on the package
@@ -222,6 +225,7 @@ impl<'a> ModelCheckInput<'a> {
                     })
                     .collect()
             }),
+            read_rewards: None,
             evaluator: package,
             source: Some(package),
             admitted: None,
@@ -335,6 +339,11 @@ pub enum PendingPackageForm {
     /// The package's `probabilistic` nodes do not read (FSL FR-740).
     #[error("the package's probabilistic nodes are not readable: {0}")]
     ProbabilisticNodes(fsl_package::ProbabilisticReadFault),
+    /// The clause function of a `reward` node does not project: its types or
+    /// equality are not readable from the package, or no function is at the
+    /// node.
+    #[error("the package's reward does not project: {0:?}")]
+    Reward(fsl_package::BareSelectionFailure),
     /// The package's random parameters and workloads do not rebuild against
     /// the selected domain packages (FSL FR-740).
     #[error("the package's probabilistic model does not rebuild: {0}")]
@@ -447,6 +456,46 @@ impl ProbabilisticParts {
     }
 }
 
+/// The rewards of a package's `reward` nodes, each projected once, in the
+/// order of [`CheckedProbabilisticModel::read_rewards`] (FR-187).
+pub struct PackageRewards {
+    world: fsl_package::BareWorld,
+    projected: Vec<crate::value::ProjectedReward>,
+}
+
+impl PackageRewards {
+    fn of(
+        package: &BarePackage<'_>,
+        world: fsl_package::BareWorld,
+        model: &CheckedProbabilisticModel,
+    ) -> Result<Self, PendingPackageForm> {
+        let projected = model
+            .read_rewards()
+            .iter()
+            .map(|reward| {
+                crate::value::ProjectedReward::of(package, reward)
+                    .map_err(PendingPackageForm::Reward)
+            })
+            .collect::<Result<_, _>>()?;
+        Ok(Self { world, projected })
+    }
+
+    /// How many rewards are projected.
+    pub(crate) fn len(&self) -> usize {
+        self.projected.len()
+    }
+
+    /// The projection of the reward at `index` of the model's read rewards.
+    pub(crate) fn reward(&self, index: usize) -> Option<&crate::value::ProjectedReward> {
+        self.projected.get(index)
+    }
+
+    /// The package's declarations the rewards evaluate against.
+    pub(crate) fn world(&self) -> &fsl_package::BareWorld {
+        &self.world
+    }
+}
+
 /// The package route's model-check input, built once from a
 /// [`BarePackage`]'s admitted nodes (FR-940): it owns the tables it read and
 /// lends them as a [`ModelCheckInput`].
@@ -457,6 +506,7 @@ pub struct PackageModelInput<'p> {
     model_selections: Vec<DomainPackageRef>,
     operations: OperationTable,
     probabilistic: CheckedProbabilisticModel,
+    rewards: PackageRewards,
     terminals: Vec<fsl_package::BareTerminal>,
     state_clauses: Vec<StateClauseEntry>,
 }
@@ -504,6 +554,7 @@ impl<'p> PackageModelInput<'p> {
             operations,
             probabilistic,
         } = ProbabilisticParts::read(package, packages, normalization, false)?;
+        let rewards = PackageRewards::of(package, world.clone(), &probabilistic)?;
         // FR-940: the state clauses by their `claim_names` rows (FSpec
         // FR-322), in source order, as the source route lists them.
         let state_clauses = package
@@ -533,6 +584,7 @@ impl<'p> PackageModelInput<'p> {
             model_selections,
             operations,
             probabilistic,
+            rewards,
             state_clauses,
             terminals,
         })
@@ -743,6 +795,7 @@ impl<'p> PackageModelInput<'p> {
                     },
                 })
                 .collect()),
+            read_rewards: Some(&self.rewards),
             evaluator: self.package,
             source: None,
             admitted: Some(self.package.package()),
@@ -1087,27 +1140,6 @@ pub trait ModelEvaluator: sealed::Sealed + Sync {
         arguments: Vec<Value>,
         meter: &mut Meter,
     ) -> Result<Evaluation, InternalFault>;
-
-    /// FR-187: the reward a package's `reward` node carries, evaluated
-    /// through its clause function ([`crate::value::bare_evaluate_reward`]);
-    /// the package route's counterpart of [`Self::evaluate_reward`].
-    ///
-    /// # Errors
-    ///
-    /// An internal fault, as the evaluator reports it.
-    fn evaluate_read_reward(
-        &self,
-        reward: &ReadReward,
-        arguments: Vec<Value>,
-        meter: &mut Meter,
-    ) -> Result<Evaluation, InternalFault>;
-
-    /// FR-187: the type of the value a package's reward computes.
-    ///
-    /// # Errors
-    ///
-    /// An internal fault, as the evaluator reports it.
-    fn read_reward_type(&self, reward: &ReadReward) -> Result<ValueType, InternalFault>;
 
     /// The checked state clause `name`, for a reading of its body.
     fn state_clause(&self, name: &str) -> Option<&CheckedStateClause>;
@@ -1523,19 +1555,6 @@ impl ModelEvaluator for CheckedPackage {
         meter: &mut Meter,
     ) -> Result<Evaluation, InternalFault> {
         crate::value::evaluate_reward(self, reward, arguments, meter)
-    }
-
-    fn evaluate_read_reward(
-        &self,
-        _reward: &ReadReward,
-        _arguments: Vec<Value>,
-        _meter: &mut Meter,
-    ) -> Result<Evaluation, InternalFault> {
-        Err(PACKAGE_FORM)
-    }
-
-    fn read_reward_type(&self, _reward: &ReadReward) -> Result<ValueType, InternalFault> {
-        Err(PACKAGE_FORM)
     }
 
     fn state_clause(&self, name: &str) -> Option<&CheckedStateClause> {
@@ -1965,19 +1984,6 @@ impl ModelEvaluator for BarePackage<'_> {
         _meter: &mut Meter,
     ) -> Result<Evaluation, InternalFault> {
         Err(SOURCE_FORM)
-    }
-
-    fn evaluate_read_reward(
-        &self,
-        reward: &ReadReward,
-        arguments: Vec<Value>,
-        meter: &mut Meter,
-    ) -> Result<Evaluation, InternalFault> {
-        crate::value::bare_evaluate_reward(self, reward, arguments, meter)
-    }
-
-    fn read_reward_type(&self, reward: &ReadReward) -> Result<ValueType, InternalFault> {
-        crate::value::bare_reward_value_type(self, reward)
     }
 
     fn state_clause(&self, _name: &str) -> Option<&CheckedStateClause> {

@@ -880,10 +880,12 @@ fn the_package_route_rebuilds_the_probabilistic_model_of_the_emitted_package() {
     }
 }
 
-/// Admission of `world`'s model through the package route: its package is
-/// emitted, read back from the wire bytes, and the system is built over the
-/// input the package route rebuilds from the nodes.
-fn wire_admission(world: &World) -> Result<(), AdmissionFailure> {
+/// `use_input` over the package route's input for `world`'s package: emitted,
+/// read back from the wire bytes, and rebuilt from the nodes.
+fn through_the_wire<T>(
+    world: &World,
+    use_input: impl FnOnce(crate::simulation::model::ModelCheckInput<'_>) -> T,
+) -> T {
     let read = fsl_package::read_evaluation_package(
         &world.package,
         fsl_semantics::library::LibraryName::new("fixture").expect("a library name"),
@@ -914,55 +916,160 @@ fn wire_admission(world: &World) -> Result<(), AdmissionFailure> {
         fsl_semantics::model::accounting::ModelNormalizationLimits::default(),
     )
     .unwrap_or_else(|pending| panic!("the package route builds its input: {pending}"));
-    world.admit_input(input.input(), 1_000_000).map(|_| ())
+    use_input(input.input())
+}
+
+/// Admission of `world`'s model through the package route.
+fn wire_admission(world: &World) -> Result<(), AdmissionFailure> {
+    through_the_wire(world, |input| {
+        world.admit_input(input, 1_000_000).map(|_| ())
+    })
+}
+
+/// The refusal record of `result`, which must be a refused admission.
+fn refusal(
+    result: Result<(), AdmissionFailure>,
+) -> ((String, String), std::collections::BTreeMap<String, String>) {
+    let Err(AdmissionFailure::Refused(record)) = result else {
+        panic!("admission refuses");
+    };
+    (
+        (
+            record.catalog.code().to_owned(),
+            record.catalog.cause().to_owned(),
+        ),
+        record
+            .fields
+            .iter()
+            .map(|(name, value)| ((*name).to_owned(), value.clone()))
+            .collect(),
+    )
 }
 
 /// FR-187-AC-4 (TC-622 step 4): the package route reads a negative reward
 /// from the wire, so a package whose `reward` node computes `n - 3` over
 /// `n: Int[0, 5]` refuses admission
-/// `invalid_probabilistic_model`/`negative-reward`, naming the operation and
-/// the reward, as the source route does.
+/// `invalid_probabilistic_model`/`negative-reward`, naming the operation, the
+/// reward and `n = 0`, as the source route does.
 #[trace("TC-622", "FR-187-AC-4")]
 #[test]
 fn a_negative_reward_read_from_the_wire_refuses_admission() {
     let model = world::refund();
     let world = World::with_s3_reward_signs_unchecked(&model);
-    let Err(AdmissionFailure::Refused(record)) = wire_admission(&world) else {
-        panic!("admission refuses");
-    };
+    let (cause, fields) = refusal(wire_admission(&world));
     assert_eq!(
-        (record.catalog.code(), record.catalog.cause()),
-        (Code::InvalidProbabilisticModel.as_str(), "negative-reward")
+        cause,
+        (
+            Code::InvalidProbabilisticModel.as_str().to_owned(),
+            "negative-reward".to_owned()
+        )
     );
-    assert_eq!(
-        record.fields.get("reward").map(String::as_str),
-        Some("refund")
-    );
-    assert_eq!(
-        record.fields.get("operation"),
-        Some(&model.ident("Account/pay"))
-    );
+    assert_eq!(fields.get("reward").map(String::as_str), Some("refund"));
+    assert_eq!(fields.get("operation"), Some(&model.ident("Account/pay")));
+    assert_eq!(fields.get("arguments").map(String::as_str), Some("n = 0"));
 }
 
-/// FR-187-AC-5 (TC-2064): the reward `refund = n - 3` over `n: Int[0, 5]` in
-/// a hand-built checked package read from the wire (S3 never checked its sign)
-/// is refused at admission `invalid_probabilistic_model`/`negative-reward`
-/// naming `n = 0`, the first argument vector in canonical order.
+/// FR-187-AC-5 (TC-2064): a package S3 never checked (`gap = m - n` over
+/// `n: Int[0, 5]`, `m: Int[0, 2]`), read from the wire, is refused at
+/// admission `invalid_probabilistic_model`/`negative-reward` at the first
+/// vector in canonical order (the first parameter most significant) that is
+/// negative, past the vectors that are not, naming the operation, the reward
+/// and both arguments.
 #[trace("TC-2064", "FR-187-AC-5")]
 #[test]
 fn a_hand_built_wire_package_with_a_negative_reward_is_refused_naming_its_arguments() {
-    let world = World::with_s3_reward_signs_unchecked(&world::refund());
-    let Err(AdmissionFailure::Refused(record)) = wire_admission(&world) else {
-        panic!("admission refuses");
-    };
+    let mut model = world::scored();
+    model.body = "reward gap on Account::pay = m - n;\n\
+                  workload Unit on M { weight Account::pay = 1; }\n"
+        .to_owned();
+    let world = World::with_s3_reward_signs_unchecked(&model);
+    let (cause, fields) = refusal(wire_admission(&world));
     assert_eq!(
-        (record.catalog.code(), record.catalog.cause()),
-        (Code::InvalidProbabilisticModel.as_str(), "negative-reward")
+        cause,
+        (
+            Code::InvalidProbabilisticModel.as_str().to_owned(),
+            "negative-reward".to_owned()
+        )
     );
+    assert_eq!(fields.get("reward").map(String::as_str), Some("gap"));
+    assert_eq!(fields.get("operation"), Some(&model.ident("Account/pay")));
     assert_eq!(
-        record.fields.get("arguments").map(String::as_str),
-        Some("n = 0")
+        fields.get("arguments").map(String::as_str),
+        Some("n = 1, m = 0")
     );
+}
+
+/// FR-187-AC-4: with several negative rewards the package route names the
+/// same first reward as the source route, whatever order they are written in:
+/// rewards are checked by operation, then name.
+#[trace("TC-622", "FR-187-AC-4")]
+#[test]
+fn both_routes_refuse_the_same_first_of_several_negative_rewards() {
+    let mut model = world::refund();
+    model.body = "reward zeta on Account::pay = n - 3;\n\
+                  reward alpha on Account::pay = n - 4;\n\
+                  workload Unit on M { weight Account::pay = 1; }\n"
+        .to_owned();
+    let world = World::with_s3_reward_signs_unchecked(&model);
+    let source = refusal(world.admit().map(|_| ()));
+    let wire = refusal(wire_admission(&world));
+    assert_eq!(source, wire);
+    assert_eq!(wire.1.get("reward").map(String::as_str), Some("alpha"));
+}
+
+/// The steps of the `scored` model's one state under `Unit`, as (non-random
+/// arguments, reward) pairs, in ascending order, read through `system`.
+fn scored_steps(
+    system: &super::ModelSystem<'_>,
+    world: &World,
+) -> Vec<(Vec<i64>, i64)> {
+    let start = initial(system);
+    let steps = system
+        .weighted_steps(&start, world.workload("Unit"))
+        .expect("expands")
+        .expect("decided");
+    let mut seen: Vec<(Vec<i64>, i64)> = steps
+        .iter()
+        .map(|step| {
+            let identity = step.identity.as_ref().expect("an operation step");
+            let [(name, reward)] = &step.rewards[..] else {
+                panic!("one reward: {:?}", step.rewards);
+            };
+            assert_eq!(name.as_str(), "score");
+            (
+                identity.arguments.iter().map(integer_of).collect(),
+                integer_of(reward),
+            )
+        })
+        .collect();
+    seen.sort();
+    seen
+}
+
+/// FR-187: the rewards of the steps the package route gives a positive
+/// two-parameter reward are the ones the source route gives, and each is
+/// `10 * n + m` of the step's own arguments.
+#[trace("TC-622", "FR-187-AC-4")]
+#[test]
+fn the_package_route_gives_the_rewards_of_a_two_parameter_reward_as_the_source_route_does() {
+    let world = World::new(&world::scored());
+    let source = scored_steps(&world.system(), &world);
+    assert_eq!(source.len(), 18);
+    for (arguments, reward) in &source {
+        let [n, m] = arguments[..] else {
+            panic!("two arguments: {arguments:?}");
+        };
+        assert_eq!(*reward, 10 * n + m);
+    }
+    let wire = through_the_wire(&world, |input| {
+        scored_steps(
+            &world
+                .admit_input(input, 1_000_000)
+                .expect("the wire system admits"),
+            &world,
+        )
+    });
+    assert_eq!(source, wire);
 }
 
 /// FSpec FR-406-AC-6 (TC-351): under a workload that gives `send_b` weight

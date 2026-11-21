@@ -1308,7 +1308,8 @@ impl<'wire> BareWalker<'wire> {
         let Some(selected) = self.selected_function(function) else {
             return Ok(None);
         };
-        let function = function_label(selected);
+        let function = function_label(selected)
+            .ok_or_else(|| WalkFailure::Fault(fault("reader-function-name-is-admitted")))?;
         let (_, body) = function_parts(&selected.body)
             .ok_or_else(|| WalkFailure::Fault(fault("reader-pure-function-has-checked-body")))?;
         let CheckedTerm::Reference { target } = body else {
@@ -1379,10 +1380,15 @@ impl<'wire> BareWalker<'wire> {
                             view: Box::new(view),
                         })
                     }
-                    Some(FunctionTypePosition::Result) => Err(WalkFailure::FunctionResultType {
-                        function: function_label(selected),
-                        view: Box::new(view),
-                    }),
+                    Some(FunctionTypePosition::Result) => {
+                        let function = function_label(selected).ok_or_else(|| {
+                            WalkFailure::Fault(fault("reader-function-name-is-admitted"))
+                        })?;
+                        Err(WalkFailure::FunctionResultType {
+                            function,
+                            view: Box::new(view),
+                        })
+                    }
                     None => Err(WalkFailure::Unsupported(view)),
                 }
             }
@@ -1660,7 +1666,8 @@ impl<'wire> ReaderBuilder<'_, 'wire> {
                         )));
                     }
                 };
-                let name = function_label(node);
+                let name = function_label(node)
+                    .ok_or_else(|| fault("reader-function-name-is-admitted"))?;
                 let parameters = parameter_ids
                     .iter()
                     .map(|id| {
@@ -3838,13 +3845,13 @@ fn body_location(admitted: &CheckedBodyLocation) -> Option<Location> {
 }
 
 /// The name of a function node: its declared name, or empty for a clause
-/// function, which carries no declaration.
-fn function_label(node: &CheckedSemanticNodeV2) -> String {
-    node.declaration
-        .as_ref()
-        .and_then(|declaration| declaration.qualified_name.last())
-        .map(ToString::to_string)
-        .unwrap_or_default()
+/// function, which carries a model owner and no declaration. `None` for any
+/// other function without a declared name.
+fn function_label(node: &CheckedSemanticNodeV2) -> Option<String> {
+    match node.declaration.as_ref() {
+        Some(declaration) => declaration.qualified_name.last().map(ToString::to_string),
+        None => node.owner.is_some().then(String::new),
+    }
 }
 
 /// How a pure function is selected from a package's nodes.

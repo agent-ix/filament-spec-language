@@ -718,16 +718,18 @@ impl<'p> BarePackage<'p> {
 
     /// The projection of the clause function at `node`, such as the function a
     /// `reward` node's expression names, as [`Self::project_function`]
-    /// projects a named one. `None` when the package holds no function there.
+    /// projects a named one.
     ///
     /// # Errors
     ///
-    /// As [`Self::project_function`].
+    /// As [`Self::project_function`]; [`SlotSelectionFailure::MissingNode`]
+    /// when the package holds no function at `node`.
     pub fn project_clause_function(
         &self,
         node: &NodeKey,
-    ) -> Result<Option<ReaderProtocolProjection>, BareSelectionFailure> {
-        self.project_selected_function(FunctionSelector::Node(node))
+    ) -> Result<ReaderProtocolProjection, BareSelectionFailure> {
+        self.project_selected_function(FunctionSelector::Node(node))?
+            .ok_or_else(|| SlotSelectionFailure::MissingNode(node.clone()).into())
     }
 
     fn project_selected_function(

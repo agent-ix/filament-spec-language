@@ -564,66 +564,64 @@ pub(crate) fn post_targets(
     )
 }
 
-/// The projection of the clause function a package's `reward` node names.
-fn reward_projection(
-    package: &BarePackage<'_>,
-    reward: &fsl_semantics::check::ReadReward,
-) -> Result<fsl_package::ReaderProtocolProjection, InternalFault> {
-    package
-        .project_clause_function(&reward.function)
-        .ok()
-        .flatten()
-        .ok_or(InternalFault::new(
-            "FR-940",
-            "bare-reward-function-projects",
-        ))
+/// A reward a package's `reward` node carries, projected once: the clause
+/// function its expression names, and the type of the value it computes
+/// (FR-187, ADR-024 PM-5).
+pub struct ProjectedReward {
+    projection: fsl_package::ReaderProtocolProjection,
+    slots: usize,
+    value_type: filament_exact::ValueType,
 }
 
-/// FR-187 (ADR-024 PM-5): the type of the value of the reward `reward` a
-/// package carries, which its clause function computes.
-///
-/// # Errors
-///
-/// An internal fault when the reward's function does not project.
-pub fn reward_value_type(
-    package: &BarePackage<'_>,
-    reward: &fsl_semantics::check::ReadReward,
-) -> Result<filament_exact::ValueType, InternalFault> {
-    let projection = reward_projection(package, reward)?;
-    let selected = projection
-        .selected_function()
-        .ok_or(InternalFault::new("FR-940", "bare-reward-has-function"))?;
-    Ok(selected.result_type.clone())
-}
+impl ProjectedReward {
+    /// The projection of `reward`'s clause function over `package`.
+    ///
+    /// # Errors
+    ///
+    /// The [`BareSelectionFailure`] of the first function, type or equality
+    /// the projection cannot read, or of a node that is no function.
+    pub fn of(
+        package: &BarePackage<'_>,
+        reward: &fsl_semantics::check::ReadReward,
+    ) -> Result<Self, BareSelectionFailure> {
+        let projection = package.project_clause_function(&reward.function)?;
+        let selected = projection.selected_function().ok_or_else(|| {
+            fsl_package::SlotSelectionFailure::MalformedNode(reward.function.clone())
+        })?;
+        let (slots, value_type) = (selected.slots, selected.result_type.clone());
+        Ok(Self {
+            projection,
+            slots,
+            value_type,
+        })
+    }
 
-/// FR-187 (ADR-024 PM-5): evaluate the reward `reward` a package carries on
-/// `arguments`, one value per parameter of its operation in declared order,
-/// through its clause function. A reward reads its operation's parameters
-/// alone, so the object environment is empty.
-///
-/// # Errors
-///
-/// An internal fault when the reward's function does not project or the
-/// package's declarations are not readable.
-pub fn evaluate_reward(
-    package: &BarePackage<'_>,
-    reward: &fsl_semantics::check::ReadReward,
-    arguments: Vec<Value>,
-    meter: &mut Meter,
-) -> Result<Evaluation, InternalFault> {
-    let projection = reward_projection(package, reward)?;
-    let selected = projection
-        .selected_function()
-        .ok_or(InternalFault::new("FR-940", "bare-reward-has-function"))?;
-    let world = package
-        .world()
-        .map_err(|_| InternalFault::new("FR-940", "bare-reward-world-reads"))?;
-    let objects = ObjectEnvironment::default();
-    Machine::from_bare_package(&world, &objects, meter).run(
-        ReaderNode::root(&projection),
-        selected.slots,
-        arguments,
-    )
+    /// The type of the value the reward computes.
+    pub fn value_type(&self) -> &filament_exact::ValueType {
+        &self.value_type
+    }
+
+    /// The reward evaluated on `arguments`, one value per parameter of its
+    /// operation in declared order, over the package's `world`. A reward
+    /// reads its operation's parameters alone, so the object environment is
+    /// empty.
+    ///
+    /// # Errors
+    ///
+    /// An internal fault, as the evaluator reports it.
+    pub fn evaluate(
+        &self,
+        world: &BareWorld,
+        arguments: Vec<Value>,
+        meter: &mut Meter,
+    ) -> Result<Evaluation, InternalFault> {
+        let objects = ObjectEnvironment::default();
+        Machine::from_bare_package(world, &objects, meter).run(
+            ReaderNode::root(&self.projection),
+            self.slots,
+            arguments,
+        )
+    }
 }
 
 impl super::clause_set::ClauseHost for BarePackage<'_> {

@@ -104,7 +104,7 @@ pub use expression::{
     supplied_stop_cause, supplied_stop_code, undefined_contract_code,
 };
 pub use expression::{
-    PackageOperations, bare_evaluate_frame, bare_evaluate_reward, bare_reward_value_type,
+    PackageOperations, ProjectedReward, bare_evaluate_frame,
 };
 
 #[cfg(test)]
