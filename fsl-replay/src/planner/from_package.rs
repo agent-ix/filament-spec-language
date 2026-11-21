@@ -239,13 +239,42 @@ fn operation_ref(context: &NodeKey, operation: &str) -> OperationRef {
     }
 }
 
-fn sorted_fairness(constraints: &[FairnessConstraint]) -> Result<Vec<FairnessKey>, KeyWireError> {
-    let mut keys = constraints
-        .iter()
-        .map(FairnessKey::of)
-        .collect::<Result<Vec<_>, _>>()?;
-    keys.sort();
-    Ok(keys)
+fn fairness_keys(constraints: &[FairnessConstraint]) -> Result<Vec<FairnessKey>, KeyWireError> {
+    constraints.iter().map(FairnessKey::of).collect()
+}
+
+/// Neutral request identity inputs shared by source and admitted adapters.
+pub(super) struct ItemKeyInput<'a> {
+    pub claim: OccurrenceKey,
+    pub kind: ClaimKind,
+    pub subject_identity: &'a str,
+    pub assumptions: &'a [NodeKey],
+    pub fairness: Vec<FairnessKey>,
+    pub stutter_closure: bool,
+    pub correspondence: Option<Correspondence>,
+    pub extent: ExtentClass,
+}
+
+pub(super) fn item_key_from_input(mut input: ItemKeyInput<'_>) -> Result<ItemKey, KeyWireError> {
+    let temporal = if input.kind == ClaimKind::TemporalSatisfaction {
+        input.fairness.sort();
+        Some(TemporalKey {
+            subject: subject_text(input.subject_identity, input.assumptions)?,
+            item_kind: TemporalItemKind::Formula,
+            fairness: input.fairness,
+            stutter_closure: input.stutter_closure,
+        })
+    } else {
+        None
+    };
+    Ok(ItemKey {
+        claim: input.claim,
+        kind: input.kind,
+        temporal,
+        correspondence: input.correspondence,
+        premises: Vec::new(),
+        extent: input.extent,
+    })
 }
 
 /// The text of a constraint as a local slot key member.
@@ -261,15 +290,10 @@ fn item_key(key: &SemSlotKey, assumptions: &[NodeKey]) -> Result<ItemKey, Declar
         Capability::Composition => ClaimKind::Composition,
         _ => return Err(DeclarationRefusal::NotAPremiseKind),
     };
-    let temporal = if kind == ClaimKind::TemporalSatisfaction {
-        Some(TemporalKey {
-            subject: subject_text(&key.subject, assumptions)?,
-            item_kind: TemporalItemKind::Formula,
-            fairness: sorted_fairness(&key.fairness)?,
-            stutter_closure: key.stutter_closure,
-        })
+    let fairness = if kind == ClaimKind::TemporalSatisfaction {
+        fairness_keys(&key.fairness)?
     } else {
-        None
+        Vec::new()
     };
     let correspondence = key
         .correspondence
@@ -283,20 +307,22 @@ fn item_key(key: &SemSlotKey, assumptions: &[NodeKey]) -> Result<ItemKey, Declar
                     .map(|(context, name)| operation_ref(context, name.as_str())),
             })
         });
-    Ok(ItemKey {
+    Ok(item_key_from_input(ItemKeyInput {
         claim: OccurrenceKey::new(
             key.claim.clone(),
             Origin::new(Role::new("claim"), u64::from(key.ordinal)),
         ),
         kind,
-        temporal,
+        subject_identity: &key.subject,
+        assumptions,
+        fairness,
+        stutter_closure: key.stutter_closure,
         correspondence,
-        premises: Vec::new(),
         extent: match key.extent {
             SemExtent::Bounded => ExtentClass::Bounded,
             SemExtent::Unbounded => ExtentClass::Unbounded,
         },
-    })
+    })?)
 }
 
 fn local(role: SlotRole, members: Vec<String>) -> SlotKey {
