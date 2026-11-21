@@ -887,7 +887,6 @@ pub(crate) struct ClauseBodies<'p> {
 /// Borrowed admitted declaration facts plus the one shared formula walk.
 pub(crate) struct ClauseBody<'p> {
     pub(crate) over: &'p CheckedNodeId,
-    pub(crate) clock: &'p CheckedTerm,
     pub(crate) activation: Activation,
     pub(crate) captures: Vec<CheckedNodeId>,
     pub(crate) capture_names: Vec<String>,
@@ -971,7 +970,6 @@ impl<'p> ClauseBodies<'p> {
         let (formula, _leaves) = formula_reads_with(graph, root, None, &mut work)?;
         Ok(ClauseBody {
             over,
-            clock,
             activation,
             captures,
             capture_names,

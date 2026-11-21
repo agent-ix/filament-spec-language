@@ -548,12 +548,6 @@ fn fair_clause_readback_preserves_constraints_and_key_fairness() {
     assert_eq!(body.formula, old_view.formula_graph());
     assert_eq!(body.over, old_view.over());
     assert_eq!(body.profile, old_view.profile());
-    assert!(matches!(
-        body.clock.literal_read().map(|r| r.value),
-        Some(filament_contract_model::CheckedLiteralValue::Text(
-            "model-steps"
-        ))
-    ));
     assert_eq!(&body.activation, old_view.activation());
     assert_eq!(body.captures, old_view.captures());
     assert_eq!(body.capture_names, old_view.capture_names());
