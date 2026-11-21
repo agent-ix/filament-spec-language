@@ -3872,7 +3872,24 @@ fn a_refinement_row_ref_lowers_with_the_binder_as_owner() {
                     .is_some_and(|key| timed.place_nodes().contains(key))
                 && form_of(&graph, owner) == "parameter"
                 && parameter_name(&graph, owner) == "c"
-                && binder_type.is_some_and(|ty| ty.semantic_form().contains("object"))
+                && binder_type.is_some_and(|ty| {
+                    if ty.node_tag() != NodeTag::CompositeType || ty.semantic_form() != "reference"
+                    {
+                        return false;
+                    }
+                    let BodyTerm::Aggregate(body) = ty.body() else {
+                        return false;
+                    };
+                    let [MemberTerm::Leaf(LeafTerm::Reference { target })] =
+                        body.members.as_slice()
+                    else {
+                        return false;
+                    };
+                    target.admitted().is_some_and(|key| {
+                        graph.resolve_declaration(key.clone())
+                            == Some(&ring_queue::key(ring_queue::CLOCKS, "Call"))
+                    })
+                })
         });
         assert!(
             owned_by_binder,
