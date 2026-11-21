@@ -49,8 +49,15 @@ objective with its direction, and the typed `satisfies` block.
   mints for the declaration.
 - The writer SHALL write `candidate` as a reference to the `value`/`parameter`
   node of the declaration's own name at level `0`, typed `D` for a value
-  synthesis and `G` for a plan synthesis, the binder S3 bound inside the
-  block and the objective (FR-754).
+  synthesis and the generated FR-800 plan-record type for a state-model or
+  hybrid plan synthesis,
+  the binder S3 bound inside the block and the objective (FR-754). The plan
+  candidate's `semantic_type` SHALL reference that generated plan-record
+  `composite_type`/`record` node defined by FSpec FR-322 "Plan-record type",
+  with that section's field schema, applicable FR-819 extensions and
+  ordinary generated-record identity, ownership and source mapping;
+  `grammar` still references the actual `G` node and `domain` still
+  references `D`.
 - The writer SHALL write `objective` as the empty aggregate when the
   declaration has none, and otherwise its `direction`, a reference to its
   root and its `text`, the objective expression's tokens from its first to
@@ -66,7 +73,7 @@ objective with its direction, and the typed `satisfies` block.
 | ID | Criteria | Verification |
 | --- | --- | --- |
 | FR-1036-AC-1 | `synthesis Pick using v grammar Digit domain Digit satisfies { Pick * Pick = 49 };` over `type Digit = Int[0, 9];` emits one `claim`/`synthesis_request` node with path `["Pick"]`, the six bindings `grammar`, `domain`, `candidate`, `objective`, `satisfies` and `symmetry` in that order, `grammar` and `domain` both the `Digit` node, the candidate a `value`/`parameter` node named `Pick`, `objective` the empty aggregate and `symmetry` `identity`, and one `claim_names` row named `Pick`; with `minimize Pick` the objective's `direction` is `minimize` and its `text` `Pick`. | Test (TC-3016) |
-| FR-1036-AC-2 | The plan synthesis `Reach` over `Config::ConfigVersion` with domain `Lengths` emits a node whose `grammar` is the `model`/`object_type` node of `ConfigVersion`, whose `domain` is the `bounded_domain`/`integer_range` node of `Lengths`, and whose candidate is typed by the `ConfigVersion` node; the emitted package is admitted by FSL's reader, which returns the declaration's grammar, domain, objective and block. | Test (TC-3016) |
+| FR-1036-AC-2 | The plan synthesis `Reach` over `Config::ConfigVersion` with domain `Lengths` emits a node whose `grammar` is the actual `model`/`object_type` node of `ConfigVersion`, whose `domain` is the `bounded_domain`/`integer_range` node of `Lengths`, and whose `candidate` references the `value`/`parameter` node named `Reach` at level `0`, with `semantic_type` referencing the generated FR-800 plan-record type node; the emitted package is admitted by FSL's reader, which returns that same candidate and plan-record type reference, grammar, domain, objective and block. Retyping the candidate to the `ConfigVersion` grammar node refuses `invalid_package`/`invalid-value` at the `candidate` binding. | Test (TC-3016) |
 
 ## Dependencies
 

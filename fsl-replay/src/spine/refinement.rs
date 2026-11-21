@@ -345,6 +345,8 @@ fn check_limit(cause: &CheckCause) -> Option<ReachedLimit> {
         | CheckCause::WrongSnapshot(_)
         | CheckCause::MissingName(_)
         | CheckCause::UnknownField { .. }
+        | CheckCause::PlanUnknownField { .. }
+        | CheckCause::PlanUnsupported { .. }
         | CheckCause::ExecutionPointBinding(_)
         | CheckCause::MissingQualifiedName(_)
         | CheckCause::UnresolvedUnitName { .. }

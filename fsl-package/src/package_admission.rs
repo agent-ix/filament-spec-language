@@ -64,8 +64,14 @@ pub fn admit_checked_package_with_dependencies(
 ) -> Result<CheckedPackageV2, PackageAdmissionRefusal> {
     let evidence = checked_package_evidence(documents, dependencies)?;
     match read_checked_package(bytes, limits.for_ir(), &evidence) {
-        CheckedPackageDispatchResult::AdmittedV2(package) => Ok(*package),
-        CheckedPackageDispatchResult::Refused(refusal) => {
+        CheckedPackageDispatchResult::AdmittedV2(package) => {
+            if let Some(refusal) = crate::bare_synthesis::plan_candidate_refusal(&package) {
+                return Err(of_reader_refusal(&refusal));
+            }
+            Ok(*package)
+        }
+        CheckedPackageDispatchResult::Refused(mut refusal) => {
+            crate::bare_synthesis::locate_plan_candidate_refusal(bytes, &mut refusal);
             Err(of_reader_refusal(&refusal).naming_identity_in(Some(bytes)))
         }
         CheckedPackageDispatchResult::Incomplete(incomplete) => Err(PackageAdmissionRefusal {
@@ -130,8 +136,16 @@ pub fn admit_checked_package_with_evidence(
         evidence,
         budget,
     ) {
-        Read::AdmittedV2(package) => Ok(*package),
-        Read::Refused(refusal) => Err(of_reader_refusal(&refusal).naming_identity_in(Some(bytes))),
+        Read::AdmittedV2(package) => {
+            if let Some(refusal) = crate::bare_synthesis::plan_candidate_refusal(&package) {
+                return Err(of_reader_refusal(&refusal));
+            }
+            Ok(*package)
+        }
+        Read::Refused(mut refusal) => {
+            crate::bare_synthesis::locate_plan_candidate_refusal(bytes, &mut refusal);
+            Err(of_reader_refusal(&refusal).naming_identity_in(Some(bytes)))
+        }
         Read::BudgetIncomplete(incomplete) => Err(denial(
             incomplete.limit,
             u128::from(incomplete.consumed),

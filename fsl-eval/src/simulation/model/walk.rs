@@ -35,8 +35,9 @@ pub(super) const fn exhausted(limit: ExpansionLimit) -> ExpansionStop {
 /// (FR-120 "Post-states", ADR-016 G-4).
 pub(crate) struct Budget {
     used: u64,
-    max: u64,
+    max: Option<u64>,
     cancel: Option<filament_exact::Cancel>,
+    request_meter: Option<std::sync::Arc<std::sync::Mutex<filament_exact::Meter>>>,
 }
 
 impl Budget {
@@ -44,9 +45,41 @@ impl Budget {
     pub(super) const fn new(max: u64) -> Self {
         Self {
             used: 0,
-            max,
+            max: Some(max),
             cancel: None,
+            request_meter: None,
         }
+    }
+
+    /// A lazy visitor retains at most one invocation's outcome collection.
+    /// Its caller gates invocation work; raw frame/result trials charge
+    /// evaluation work and poll cancellation independently of plan work.
+    pub(super) fn visiting(
+        cancel: Option<&filament_exact::Cancel>,
+        system: &ModelSystem<'_>,
+    ) -> Self {
+        Self {
+            used: 0,
+            max: None,
+            cancel: cancel.cloned(),
+            request_meter: Some(system.shared_meter.clone()),
+        }
+    }
+
+    fn account_trials(&self, count: u64) -> Result<(), ExpansionStop> {
+        if let Some(meter) = &self.request_meter {
+            meter
+                .lock()
+                .expect("evaluation meter lock")
+                .charge(
+                    filament_exact::Charge::new(filament_exact::ChargePoint::CollectionVisit)
+                        .work(filament_exact::Integer::from(count)),
+                )
+                .map_err(|incomplete| {
+                    exhausted(ExpansionLimit::EvaluationMeter(incomplete.limit_kind))
+                })?;
+        }
+        Ok(())
     }
 
     /// Count one candidate or (candidate, result) pair.
@@ -57,8 +90,9 @@ impl Budget {
     /// exceed the bound.
     pub(crate) fn charge(&mut self) -> Result<(), ExpansionStop> {
         self.poll_cancel()?;
+        self.account_trials(1)?;
         self.used = self.used.saturating_add(1);
-        if self.used > self.max {
+        if self.max.is_some_and(|max| self.used > max) {
             Err(exhausted(ExpansionLimit::MaxCandidates))
         } else {
             Ok(())
@@ -76,10 +110,11 @@ impl Budget {
     /// As [`Self::charge`].
     pub(super) fn charge_many(&mut self, count: usize) -> Result<(), ExpansionStop> {
         self.poll_cancel()?;
+        self.account_trials(u64::try_from(count).unwrap_or(u64::MAX))?;
         self.used = self
             .used
             .saturating_add(u64::try_from(count).unwrap_or(u64::MAX));
-        if self.used > self.max {
+        if self.max.is_some_and(|max| self.used > max) {
             Err(exhausted(ExpansionLimit::MaxCandidates))
         } else {
             Ok(())
@@ -134,7 +169,27 @@ pub(super) struct Walk<'s, 'a> {
     /// which a postcondition's `present(self.v)` reads (FR-230 "Presence is
     /// derived", FSpec FR-322 `CW-05`); `None` outside a timed expansion.
     pub(super) post_presence: Option<PostPresence<'s>>,
+    pub(super) candidate_visitor: Option<&'s dyn CandidateVisitor>,
+    pub(super) visitor_stopped: std::cell::Cell<bool>,
+    pub(super) retained_occurrences: std::cell::RefCell<filament_exact::Integer>,
 }
+
+pub(super) trait CandidateVisitor {
+    fn event(&self, event: super::NativeCandidateEvent<'_>) -> super::NativeCandidateControl;
+}
+impl<F> CandidateVisitor for std::cell::RefCell<F>
+where
+    F: for<'event> FnMut(super::NativeCandidateEvent<'event>) -> super::NativeCandidateControl,
+{
+    fn event(&self, event: super::NativeCandidateEvent<'_>) -> super::NativeCandidateControl {
+        (self.borrow_mut())(event)
+    }
+}
+
+// A control-flow sentinel private to this module: visit_plan_candidates
+// recognizes visitor_stopped and never exposes it as a native failure.
+const VISITOR_STOP: filament_semantic_value::catalog::CatalogCode =
+    filament_semantic_value::catalog::CatalogCode::new("cancelled", "caller-cancelled");
 
 /// Whether an expansion retains the first satisfying result or every result.
 #[derive(Clone, Copy, Default)]
@@ -173,11 +228,38 @@ impl Walk<'_, '_> {
         )
     }
 
-    pub(super) fn meter(&self) -> filament_exact::Meter {
-        let meter = filament_exact::Meter::new(self.system.meter);
-        match &self.cancel {
-            Some(cancel) => meter.with_cancel(cancel.clone()),
-            None => meter,
+    pub(super) fn visit(
+        &self,
+        event: super::NativeCandidateEvent<'_>,
+    ) -> Result<super::NativeCandidateControl, ExpansionStop> {
+        let Some(visitor) = self.candidate_visitor else {
+            return Ok(super::NativeCandidateControl::Continue);
+        };
+        let beginning = matches!(event, super::NativeCandidateEvent::Begin(_));
+        let control = visitor.event(event);
+        match control {
+            super::NativeCandidateControl::Continue => Ok(control),
+            super::NativeCandidateControl::Skip => {
+                if beginning {
+                    Ok(control)
+                } else {
+                    Err(stop(BROKEN))
+                }
+            }
+            super::NativeCandidateControl::Stop => {
+                self.visitor_stopped.set(true);
+                Err(stop(VISITOR_STOP))
+            }
+        }
+    }
+
+    pub(super) fn meter(&self) -> super::EvaluationMeter<'_> {
+        let meter = self.system.evaluation_meter();
+        match (meter, &self.cancel) {
+            (super::EvaluationMeter::Local(meter), Some(cancel)) => {
+                super::EvaluationMeter::Local(meter.with_cancel(cancel.clone()))
+            }
+            (meter, _) => meter,
         }
     }
     /// The references of every object of the state, in row order.
@@ -326,7 +408,39 @@ pub(super) fn walk_of<'s, 'a>(
         enforcement,
         clock_selectors: None,
         post_presence: None,
+        candidate_visitor: None,
+        visitor_stopped: std::cell::Cell::new(false),
+        retained_occurrences: std::cell::RefCell::new(filament_exact::Integer::one()),
     })
+}
+
+/// A source-plan walk does not retain the full node's invocation product.
+/// It sorts only one invocation's accounted outcomes before advancing.
+/// Operation order is supplied by admitted declarations.
+pub(super) fn visit_plan_candidates(
+    system: &ModelSystem<'_>,
+    state: &ModelSimState,
+    operations: &[(EffectiveId, String)],
+    cancel: Option<&filament_exact::Cancel>,
+    visitor: &mut dyn for<'event> FnMut(
+        super::NativeCandidateEvent<'event>,
+    ) -> super::NativeCandidateControl,
+) -> Result<super::NativeCandidateVisit, ExpansionStop> {
+    let visitor = std::cell::RefCell::new(visitor);
+    let mut walk = walk_of(system, state, None)?;
+    walk.cancel = cancel.cloned();
+    walk.candidate_visitor = Some(&visitor);
+    let mut budget = Budget::visiting(cancel, system);
+    for (declaring, name) in operations {
+        match frames::visit_operation(&walk, declaring, name, &mut budget) {
+            Ok(()) => {}
+            Err(_) if walk.visitor_stopped.get() => {
+                return Ok(super::NativeCandidateVisit::Stopped)
+            }
+            Err(stop) => return Err(stop),
+        }
+    }
+    Ok(super::NativeCandidateVisit::Complete)
 }
 
 /// One model state's expansion.
@@ -344,13 +458,18 @@ pub(super) fn expand_state(
     state: &ModelSimState,
     enforcement: Option<&Enforcement<'_>>,
 ) -> Result<Expansion<ModelTransition, ModelSimState, ModelFinding>, ExpansionStop> {
+    let cancel = system
+        .request_cancel
+        .lock()
+        .expect("request cancellation lock")
+        .clone();
     expand(
         system,
         state,
         enforcement,
         None,
         ExpansionSelection::default(),
-        None,
+        cancel.as_ref(),
         None,
     )
 }
@@ -597,8 +716,13 @@ pub(super) fn identities_of(
     walk.rows.extend(absent_rows(system, state));
     let mut budget = Budget {
         used: 0,
-        max: system.limits.max_candidates,
-        cancel: None,
+        max: Some(system.limits.max_candidates),
+        cancel: system
+            .request_cancel
+            .lock()
+            .expect("request cancellation lock")
+            .clone(),
+        request_meter: None,
     };
     let mut found = Vec::new();
     for row in &walk.rows {

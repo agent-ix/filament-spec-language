@@ -134,6 +134,7 @@ mod state_graph_claims;
 mod strong_fairness;
 #[cfg(feature = "test-support")]
 mod symmetric_population;
+mod synthesis_plan_value;
 #[cfg(feature = "test-support")]
 mod task_set_releases;
 #[cfg(feature = "test-support")]

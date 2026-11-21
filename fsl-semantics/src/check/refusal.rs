@@ -3073,6 +3073,22 @@ pub enum CheckCause {
         span: Span,
     },
     /// FR-754: the synthesis candidate domain has an unbounded component.
+    PlanUnsupported {
+        /// The named adapter form awaiting implementation.
+        form: String,
+        /// The authored site.
+        span: Span,
+    },
+    /// An unknown plan-record member, retaining its owner and exact member span.
+    PlanUnknownField {
+        /// The record owner.
+        owner: Box<str>,
+        /// The requested field.
+        field: Box<str>,
+        /// The authored member name.
+        span: Option<Span>,
+    },
+    /// A synthesis domain with no finite extent.
     SynthesisUnboundedDomain {
         /// The first unbounded component in declaration order.
         component: String,
@@ -3866,6 +3882,8 @@ impl CheckCause {
             | Self::RefinementNotEmitted { .. }
             | Self::TimedNotChecked { .. } => Code::UnsupportedConstruct,
             Self::SynthesisUnboundedDomain { .. } => Code::UnsupportedProjection,
+            Self::PlanUnsupported { .. } => Code::UnsupportedConstruct,
+            Self::PlanUnknownField { .. } => Code::MissingDeclaration,
             Self::Refinement(cause) => cause.cause.code(),
             Self::Abstraction(cause) => cause.code(),
             Self::Extension(cause) => cause.code(),
@@ -3958,6 +3976,8 @@ impl CheckCause {
                 Some("not-yet-implemented")
             }
             Self::SynthesisUnboundedDomain { .. } => Some("unbounded-extent"),
+            Self::PlanUnsupported { .. } => Some("not-yet-implemented"),
+            Self::PlanUnknownField { .. } => Some("missing-name"),
             Self::Refinement(cause) => cause.cause.cause(),
             Self::Abstraction(cause) => Some(cause.cause()),
             Self::Extension(cause) => Some(cause.cause()),
