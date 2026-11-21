@@ -10,7 +10,6 @@ use super::{wire, Result, RunCause};
 /// including readers that strip `export` before decoding the run request.
 pub(super) fn validate_bytes(bytes: &[u8]) -> Result<()> {
     use fsl_foundation::serde_object::Object;
-    use serde::Deserialize;
 
     let Ok(Object(envelope)) = serde_json::from_slice::<Object<wire::Envelope<'_>>>(bytes) else {
         // The owning envelope reader retains malformed-envelope diagnostics.
@@ -32,7 +31,7 @@ pub(super) fn validate_bytes(bytes: &[u8]) -> Result<()> {
         fn deserialize<D: de::Deserializer<'de>>(
             self,
             decoder: D,
-        ) -> std::result::Result<Self, D::Error> {
+        ) -> std::result::Result<Self::Value, D::Error> {
             struct ProvisionsVisitor<'a> {
                 duplicate_sources: &'a mut bool,
             }
