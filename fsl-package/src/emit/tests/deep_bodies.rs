@@ -129,7 +129,6 @@ fn deep_declarations(source: &str) -> PackageDeclarations {
 /// and the checked package clones, compares equal to its clone, formats for
 /// debug and drops there.
 #[trace("TC-725", "FR-258-AC-1", "FR-258-AC-5")]
-#[trace("TC-738", "FR-264-AC-8")]
 #[test]
 fn a_100000_deep_body_checks_lowers_and_emits_on_a_small_stack() {
     for label in ["sum", "else if", "let"] {
