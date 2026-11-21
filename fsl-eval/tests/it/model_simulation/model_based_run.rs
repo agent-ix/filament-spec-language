@@ -1781,17 +1781,24 @@ fn model_based_entry_refuses_missing_and_invalid_request_members() {
         exploration: Limits::default(),
         position_limit: 10_000,
     };
-    assert_eq!(
-        fsl_eval::simulation::model::run_model_based_test(
-            &value_world.package,
-            &value_request,
-            &NativeAdmission,
-            &cancel,
-        )
-        .expect_err("value clauses do not consume max_trace_length")
-        .cause,
-        "unknown-member"
-    );
+    let with_length = fsl_eval::simulation::model::run_model_based_test(
+        &value_world.package,
+        &value_request,
+        &NativeAdmission,
+        &cancel,
+    )
+    .expect("a value clause accepts max_trace_length and does not use it");
+    let mut without_length = value_request.clone();
+    without_length.max_trace_length = None;
+    let without_length = fsl_eval::simulation::model::run_model_based_test(
+        &value_world.package,
+        &without_length,
+        &NativeAdmission,
+        &cancel,
+    )
+    .expect("the same value clause runs without max_trace_length");
+    assert_eq!(with_length.counts, without_length.counts);
+    assert_eq!(with_length.evidence, without_length.evidence);
     value_request.max_trace_length = None;
     value_request.max_value_bits = Some(8);
     assert_eq!(
