@@ -4277,7 +4277,7 @@ fn literal_value(
             let scale = u32::try_from(scale).ok()?;
             let decimal =
                 filament_exact::Decimal::new(coefficient.to_string().parse().ok()?, scale);
-            let ValueType::Decimal(domain) =
+            let ValueType::Decimal(ref domain) =
                 crate::checked_v2::decimal_range_type(index.admitted, type_id).ok()?
             else {
                 return None;
