@@ -96,8 +96,8 @@ fn fixture(remove_x: bool) -> Checked {
     }
     let selected = if remove_x { "y" } else { "x" };
     let body = format!(
-        "{}\n\
-         profile p = \"filament.protocol.finite-global/v1\";\n\
+        "profile p = \"filament.protocol.finite-global/v1\";\n\
+         {}\n\
          protocol Places using p over (call: C::Call) on each (opened: Boolean) when (opened) {{\n\
            capture chosen: Reference<Clock> = ref(call.{selected});\n\
            capture used: Integer = count(c in C::calls where ref(c.{selected}) = call.r);\n\
