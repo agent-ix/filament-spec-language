@@ -25,11 +25,13 @@ pub(crate) mod encode;
 mod footprints;
 mod frames;
 mod input;
+mod relation_input;
 pub use input::{
     BodyReads, ModelCheckInput, ModelEvaluator, ModelTerminal, ModelTerminalDeclaration,
     PackageModelInput, PackageRewards, PendingClauseForm, PendingPackageForm, ProtocolDefinition,
     StateClauseEntry, TerminalWhen,
 };
+pub use relation_input::{ModelRelationDescriptor, ModelRelationTuple};
 mod operation_coverage;
 pub use operation_coverage::{
     model_operation_coverage, ModelOperation, ModelOperationCase, ModelOperationCoverage,
@@ -1013,6 +1015,24 @@ impl<'a> ModelSystem<'a> {
         match model {
             Some(model) => Self::over_model_of(request, &model, true),
             None => Self::new(request),
+        }
+    }
+
+    /// Select an HP-1 subject by its admitted domain identity on either route.
+    /// Unlike an alias lookup, this needs no source graph. Other models'
+    /// universes are skipped as they are for a source hyper subject.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::new`] and [`Self::over_model`].
+    pub fn for_model_identity(
+        request: ModelSimulationRequest<'a>,
+        identity: &str,
+    ) -> Result<Self, AdmissionFailure> {
+        if request.input.model_selections.len() > 1 {
+            Self::over_model_of(request, identity, true)
+        } else {
+            Self::new(request)
         }
     }
 

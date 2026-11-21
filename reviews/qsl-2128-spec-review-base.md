@@ -26,3 +26,9 @@ The explicit alias/root permutation preserves two aliases sharing a model root a
 ## Validation
 
 Author reports targeted Quire validation and diff check pass. Reviewer inspected strict reader execution-parameter and Boolean-body admission in the pinned step_relation reader and existing FR-179/163/184 semantics. New criteria intentionally precede implementation; no engine coverage or runtime PASS is claimed.
+
+## Dispositions
+
+### Round 1
+
+PASS for the bounded specification delta at 25634322fcdcf4b27b3abb9f2141376fb681ccf7. FND-001 fixed: ModelRelationFormRefusal::MissingSubjectDeclarationOrder is a typed semantic form-selection result independent of ViewFailure/UnsupportedView. It maps to existing item UnsupportedWithDetail and retains owning package/relation-key diagnostics. FR-390 view creation, read_node completeness and deterministic projection reason inventory/order remain unchanged. No other semantic change or new finding in this narrow disposition. Implementation remains conditional on the owned Contract IR member contract and coherent dependency update; no code/runtime/coverage pass is claimed.
