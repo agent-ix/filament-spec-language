@@ -52,7 +52,7 @@ native-run result and exit category.
   `RequiredRelationship` order.
 - Every instance in each supplied relationship extent supplies a non-empty `identity` in the
   lowercase-hex encoding of its producer-supplied `RelationshipIdentity`
-  bytes (FR-106-AC-72, FSpec FR-181 and FR-480). The resolver receives the
+  bytes (FR-106-AC-74, FSpec FR-181 and FR-480). The resolver receives the
   exact decoded bytes; FSL SHALL NOT derive this identity. These instances are
   the complete candidate set passed to the resolver; FSL SHALL NOT filter
   them by required declaration before identity validation.
