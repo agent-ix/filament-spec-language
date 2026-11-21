@@ -105,6 +105,11 @@ pub(super) fn slot_rows(
     )
 }
 
+/// Locates a row: the wire path and located payload of a node's occurrence, or
+/// `None` when the node is not written.
+type RowWire<L> =
+    dyn Fn(&Location, &CheckedNodeId, &CheckedOccurrence) -> Option<(String, L)>;
+
 /// The rows of the walk from `root`, appended to `pending` in visit order,
 /// each located by `wire`. `deref_by_record` keys the `deref` of every
 /// attribute the checker recorded one for, not only of a derefed one.
@@ -114,7 +119,7 @@ pub(super) fn term_rows<L>(
     applications: &HashMap<&Location, Vec<(NodeKey, filament_exact::Origin)>>,
     emitted_node_ids: &HashMap<NodeKey, CheckedNodeId>,
     pending: &mut Vec<PendingRow<L>>,
-    wire: &dyn Fn(&Location, &CheckedNodeId, &CheckedOccurrence) -> Option<(String, L)>,
+    wire: &RowWire<L>,
     deref_by_record: bool,
 ) -> Result<(), EmitRefusal> {
     let positions = walk(root);

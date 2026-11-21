@@ -1929,16 +1929,14 @@ impl<'wire> ReaderBuilder<'_, 'wire> {
     /// is taken at once, as the nested projection would. `None` once the node
     /// waits for no child.
     fn next_child(&mut self, parents: &mut [Frame]) -> Result<Option<Frame>, BuildError> {
-        loop {
-            let Some(parent) = parents.last_mut() else {
-                return Ok(None);
-            };
-            let Some((ordinal, wanted)) = parent.queue.pop() else {
-                return Ok(None);
-            };
-            parent.waiting = ordinal;
-            return Ok(Some(self.enter(wanted)));
-        }
+        let Some(parent) = parents.last_mut() else {
+            return Ok(None);
+        };
+        let Some((ordinal, wanted)) = parent.queue.pop() else {
+            return Ok(None);
+        };
+        parent.waiting = ordinal;
+        Ok(Some(self.enter(wanted)))
     }
 
     /// A frame for `request`, entered at the context's current frame size.
@@ -2206,7 +2204,7 @@ impl<'wire> ReaderBuilder<'_, 'wire> {
                 let [CheckedTerm::Binding { name, value }, body] = arguments else {
                     return Err(fault("reader-let-has-binding-and-body").into());
                 };
-                let filament_contract_model::CheckedBindingNameKind::Other(binder_name) =
+                let filament_contract_model::CheckedBindingNameKind::Other(_) =
                     name.kind()
                 else {
                     return Err(fault("reader-let-binder-has-name").into());
@@ -2507,7 +2505,7 @@ impl<'wire> ReaderBuilder<'_, 'wire> {
                 let [source_term, CheckedTerm::Binding { name, value }] = arguments else {
                     return Err(fault("reader-collection-query-has-source-and-binder").into());
                 };
-                let filament_contract_model::CheckedBindingNameKind::Other(binder_name) =
+                let filament_contract_model::CheckedBindingNameKind::Other(_) =
                     name.kind()
                 else {
                     return Err(fault("reader-collection-query-binder-has-name").into());
