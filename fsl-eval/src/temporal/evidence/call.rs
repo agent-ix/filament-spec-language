@@ -1864,7 +1864,11 @@ fn run_instance(
     let empty_scope = || -> Result<Outcome, CallFailure> {
         let view =
             owner.activation_view(&facts.authenticated, request.cover, anchor, None, *scope)?;
-        empty_scope_outcome(owner_disposition(view.payload(), *scope, request.execution)?)
+        empty_scope_outcome(owner_disposition(
+            view.payload(),
+            *scope,
+            request.execution,
+        )?)
     };
     let mut outcome = match &request.trigger {
         None => empty_scope()?,
@@ -2453,8 +2457,8 @@ mod tests {
             Disposition::Inactive
         );
         // The owner says Inactive over evidence the caller reported missing.
-        let failure = state(ActivationState::Inactive, TriggerEvidence::Missing)
-            .expect_err("a disagreement");
+        let failure =
+            state(ActivationState::Inactive, TriggerEvidence::Missing).expect_err("a disagreement");
         assert!(invariant_of(&failure).contains("owner-activation-agrees"));
         // The owner says Active for a scope with no instance.
         let Err(failure) = empty_scope_outcome(Disposition::Active) else {
@@ -2465,7 +2469,10 @@ mod tests {
         assert!(instance_is_active(Disposition::Active).is_ok());
         let failure = instance_is_active(Disposition::Inactive).expect_err("a disagreement");
         let text = invariant_of(&failure);
-        assert!(text.contains("owner-activation-agrees") && text.contains("Inactive"), "{text}");
+        assert!(
+            text.contains("owner-activation-agrees") && text.contains("Inactive"),
+            "{text}"
+        );
     }
 
     /// FR-516: every evaluation refusal has one stable kebab-case kind.

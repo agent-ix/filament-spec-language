@@ -125,7 +125,10 @@ fn the_bare_route_gives_the_results_and_charges_of_the_two_source_routes() {
                 bare_subject.canonical_package_bytes
             );
             assert!(subject.canonical_package_bytes.is_some());
-            assert_eq!(subject.time_unit_scale, bare_subject.time_unit_scale, "{kind}");
+            assert_eq!(
+                subject.time_unit_scale, bare_subject.time_unit_scale,
+                "{kind}"
+            );
             if !matches!(
                 name.as_str(),
                 "Due" | "DueLate" | "DueSample" | "DueTimestamp"
@@ -1104,7 +1107,8 @@ fn the_supplied_identity_rows_project_a_record_typed_capture_on_the_bare_route()
         )
         .expect("final identity rows");
     let mut budget = fsl_package::V2ReadLimits::fixture().native_join_budget();
-    let bare = BarePackage::new(read.admitted()).with_canonical_bytes(read.canonical_bytes())
+    let bare = BarePackage::new(read.admitted())
+        .with_canonical_bytes(read.canonical_bytes())
         .with_supply(
             fsl_package::BareSupply {
                 identities: &rows,
@@ -1251,7 +1255,8 @@ fn with_interval(
 fn bytes_that_differ_from_the_source_drive_the_bare_result() {
     let built = event_clauses(ONE_CLAUSE, &[("Due", "authority")]);
     let genuine_read = built.read(&built.emission);
-    let genuine_bare = BarePackage::new(genuine_read.admitted()).with_canonical_bytes(genuine_read.canonical_bytes());
+    let genuine_bare = BarePackage::new(genuine_read.admitted())
+        .with_canonical_bytes(genuine_read.canonical_bytes());
     let genuine = EvidencePackage::from_package(
         &genuine_bare,
         &mut fsl_package::V2ReadLimits::fixture().native_join_budget(),
@@ -1531,7 +1536,8 @@ fn record_rows(
         Vec::new(),
     );
     let mut measure = filament_contract_model::NativeJoinBudget::new(1 << 30, 1 << 30);
-    BarePackage::new(read.admitted()).with_canonical_bytes(read.canonical_bytes())
+    BarePackage::new(read.admitted())
+        .with_canonical_bytes(read.canonical_bytes())
         .with_supply(
             fsl_package::BareSupply {
                 identities: &rows,
@@ -1573,7 +1579,8 @@ fn supply_on<'p>(
     rows: &'p ReadIdentityRows,
     budget: &mut filament_contract_model::NativeJoinBudget,
 ) -> Result<BarePackage<'p>, filament_contract_model::ExactTypeProjectionError> {
-    BarePackage::new(read.admitted()).with_canonical_bytes(read.canonical_bytes())
+    BarePackage::new(read.admitted())
+        .with_canonical_bytes(read.canonical_bytes())
         .with_supply(
             fsl_package::BareSupply {
                 identities: rows,
@@ -2038,7 +2045,8 @@ fn opaque_caller_budgets_preserve_original_bounds_after_prior_joins() {
     for entry in 0..3 {
         let construct = |budget: &mut NativeJoinBudget| -> Result<(), NativeJoinFailure> {
             if entry == 0 {
-                BarePackage::new(read.admitted()).with_canonical_bytes(read.canonical_bytes())
+                BarePackage::new(read.admitted())
+                    .with_canonical_bytes(read.canonical_bytes())
                     .with_supply(
                         fsl_package::BareSupply {
                             identities: &rows,

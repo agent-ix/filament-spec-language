@@ -110,7 +110,8 @@ fn with_routes<R>(
         &mut fsl_package::V2ReadLimits::fixture().native_join_budget(),
     )
     .expect("package facts read");
-    let bare = fsl_package::BarePackage::new(read.admitted());
+    let bare =
+        fsl_package::BarePackage::new(read.admitted()).with_canonical_bytes(read.canonical_bytes());
     let from_package = EvidencePackage::from_package(
         &bare,
         &mut fsl_package::V2ReadLimits::fixture().native_join_budget(),
