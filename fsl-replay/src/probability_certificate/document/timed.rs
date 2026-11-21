@@ -3350,67 +3350,81 @@ pub(in crate::probability_certificate) fn replay_timed_witness(
         return Err(Error::Refused);
     }
     let failing = matches!(bound, Bound::AtLeast(_));
-    let mut used: BTreeMap<ProbabilityProductKey, BTreeSet<ProbabilityProductKey>> =
-        BTreeMap::new();
-    let mut sequences = BTreeSet::new();
-    for path in &witness.paths {
-        poll(cancel).map_err(from_document)?;
-        let mut at = graph.initial.clone();
-        let mut sequence = Vec::with_capacity(path.steps.len());
-        for step in &path.steps {
-            let state = graph.states.get(&at).ok_or(Error::Refused)?;
-            if state.terminal.is_some() {
-                return Err(Error::Refused);
-            }
-            used.entry(at.clone())
-                .or_default()
-                .insert(step.post_key.clone());
-            sequence.push(step.post_key.clone());
-            at = step.post_key.clone();
-        }
-        let end = graph.states.get(&at).ok_or(Error::Refused)?;
-        if sequence.is_empty() || end.terminal != Some(!failing) {
-            return Ok(Replay::Parity);
-        }
-        if !sequences.insert(sequence) {
-            return Ok(Replay::Parity);
-        }
-    }
-    // One choice per state: the first the checker lists that has every
-    // outcome the witness uses.
-    let mut chosen: BTreeMap<ProbabilityProductKey, usize> = BTreeMap::new();
-    for (key, targets) in &used {
-        let state = graph.states.get(key).ok_or(Error::Refused)?;
-        let covers = |choice: &Vec<ProbabilityEdge>, target: &ProbabilityProductKey| {
-            choice
+    let threshold = match &bound {
+        Bound::AtMost(threshold) => threshold.clone(),
+        Bound::AtLeast(threshold) => one().sub(threshold),
+    };
+    let sequences: Vec<Vec<ProbabilityProductKey>> = witness
+        .paths
+        .iter()
+        .map(|path| {
+            path.steps
                 .iter()
-                .any(|edge| &edge.target == target && edge.probability > zero())
-        };
-        // The witness only selects the scheduler: the choice it covers most is
-        // taken (the first on a tie); the mass is recomputed from the checker
-        // graph below.
-        let mut best: Option<(usize, usize)> = None;
-        for (position, choice) in state.choices.iter().enumerate() {
-            let covered = targets
-                .iter()
-                .filter(|target| covers(choice, target))
-                .count();
-            if best.is_none_or(|(_, most)| covered > most) {
-                best = Some((position, covered));
-            }
+                .map(|step| step.post_key.clone())
+                .collect()
+        })
+        .collect();
+    let Some((kept, mass)) = price_witness_paths(
+        &graph,
+        failing,
+        &threshold,
+        &sequences,
+        limits.max_rational_bits,
+        cancel,
+    )?
+    else {
+        return Ok(Replay::Parity);
+    };
+    let mut validated = witness.clone();
+    validated.paths = kept
+        .into_iter()
+        .map(|index| witness.paths[index].clone())
+        .collect();
+    Ok(Replay::Reproduced(Box::new(
+        super::super::ReproducedProbabilityWitness::reproduced(validated, mass),
+    )))
+}
+
+/// The paths of a witness that the checker graph validates, and their mass.
+///
+/// `sequences` holds each witness path as the keys it visits after the initial
+/// state. The witness selects the scheduler; the mass is the checker graph's
+/// own probability of the failing outcome under that memoryless choice (states
+/// no path visits take their first choice), so a step the graph does not have
+/// contributes nothing and a cycle under the choice is refused. The reported
+/// paths must reproduce themselves: those that are not outcomes of the chosen
+/// choice are dropped and the choices and mass re-derived from the rest until
+/// the set is stable. `None` (Parity) when a path is not a distinct walk to
+/// the forbidden decided state, or the final mass does not exceed `threshold`.
+fn price_witness_paths(
+    graph: &CheckerGraph,
+    failing: bool,
+    threshold: &Rational,
+    sequences: &[Vec<ProbabilityProductKey>],
+    max_rational_bits: u64,
+    cancel: &Cancel,
+) -> Result<Option<(Vec<usize>, Rational)>, super::super::ProbabilityWitnessError> {
+    use super::super::ProbabilityWitnessError as Error;
+    let cancelled = |error: ProbabilityDocumentError| match error {
+        ProbabilityDocumentError::Cancelled(cause) => {
+            Error::Graph(ExactProbabilityGraphError::Cancelled(cause))
         }
-        let (index, _) = best.ok_or(Error::Refused)?;
-        chosen.insert(key.clone(), index);
-    }
+        _ => Error::Graph(ExactProbabilityGraphError::LimitReached),
+    };
     let limit_bits = |value: &Rational| {
-        if value.max_part_bits() > limits.max_rational_bits {
+        if value.max_part_bits() > max_rational_bits {
             Err(Error::Limit {
                 limit: crate::ModelCheckLimit::ExactProbMaxRationalBits,
-                value: limits.max_rational_bits,
+                value: max_rational_bits,
             })
         } else {
             Ok(())
         }
+    };
+    let covers = |choice: &Vec<ProbabilityEdge>, target: &ProbabilityProductKey| {
+        choice
+            .iter()
+            .any(|edge| &edge.target == target && edge.probability > zero())
     };
     // The witness selects the scheduler; the mass is the checker graph's own
     // probability of the failing outcome under that memoryless choice (states
@@ -3471,50 +3485,103 @@ pub(in crate::probability_certificate) fn replay_timed_witness(
         memo.insert(key, value.clone());
         Ok(value)
     }
-    let mass = mass_of(
-        &graph,
-        &chosen,
-        failing,
-        &graph.initial,
-        &mut BTreeMap::new(),
-        &mut BTreeSet::new(),
-        cancel,
-        &limit_bits,
-    )?;
-    let threshold = match &bound {
-        Bound::AtMost(threshold) => threshold.clone(),
-        Bound::AtLeast(threshold) => one().sub(threshold),
+    // The choices and the mass a set of paths selects. `None` when a path is
+    // not a distinct walk to the forbidden decided state (a Parity case).
+    let solve = |paths: &[usize]| -> Result<
+        Option<(BTreeMap<ProbabilityProductKey, usize>, Rational)>,
+        Error,
+    > {
+        let mut used: BTreeMap<ProbabilityProductKey, BTreeSet<ProbabilityProductKey>> =
+            BTreeMap::new();
+        let mut sequences = BTreeSet::new();
+        for index in paths {
+            let path = &sequences[*index];
+            poll(cancel).map_err(cancelled)?;
+            let mut at = graph.initial.clone();
+            let mut sequence = Vec::with_capacity(path.len());
+            for step in path {
+                let state = graph.states.get(&at).ok_or(Error::Refused)?;
+                if state.terminal.is_some() {
+                    return Err(Error::Refused);
+                }
+                used.entry(at.clone())
+                    .or_default()
+                    .insert(step.clone());
+                sequence.push(step.clone());
+                at = step.clone();
+            }
+            let end = graph.states.get(&at).ok_or(Error::Refused)?;
+            if sequence.is_empty() || end.terminal != Some(!failing) {
+                return Ok(None);
+            }
+            if !sequences.insert(sequence) {
+                return Ok(None);
+            }
+        }
+        // One choice per visited state: the one the paths cover most (the first
+        // on a tie).
+        let mut chosen: BTreeMap<ProbabilityProductKey, usize> = BTreeMap::new();
+        for (key, targets) in &used {
+            let state = graph.states.get(key).ok_or(Error::Refused)?;
+            let mut best: Option<(usize, usize)> = None;
+            for (position, choice) in state.choices.iter().enumerate() {
+                let covered = targets
+                    .iter()
+                    .filter(|target| covers(choice, target))
+                    .count();
+                if best.is_none_or(|(_, most)| covered > most) {
+                    best = Some((position, covered));
+                }
+            }
+            let (index, _) = best.ok_or(Error::Refused)?;
+            chosen.insert(key.clone(), index);
+        }
+        let mass = mass_of(
+            &graph,
+            &chosen,
+            failing,
+            &graph.initial,
+            &mut BTreeMap::new(),
+            &mut BTreeSet::new(),
+            cancel,
+            &limit_bits,
+        )?;
+        Ok(Some((chosen, mass)))
     };
-    if mass <= threshold {
-        return Ok(Replay::Parity);
-    }
-    // The reported evidence keeps only the paths every step of which is an
-    // outcome of the chosen choice, so it holds nothing the checker did not
-    // validate.
-    let mut validated = witness.clone();
-    validated.paths.retain(|path| {
-        let mut at = &graph.initial;
-        path.steps.iter().all(|step| {
-            let covered = graph
-                .states
-                .get(at)
-                .zip(chosen.get(at))
-                .and_then(|(state, index)| state.choices.get(*index))
-                .is_some_and(|choice| {
-                    choice
-                        .iter()
-                        .any(|edge| edge.target == step.post_key && edge.probability > zero())
-                });
-            at = &step.post_key;
-            covered
-        })
-    });
-    if validated.paths.is_empty() {
-        return Ok(Replay::Parity);
-    }
-    Ok(Replay::Reproduced(Box::new(
-        super::super::ReproducedProbabilityWitness::reproduced(validated, mass),
-    )))
+    // The reported evidence must reproduce itself: keep only the paths every
+    // step of which is an outcome of the chosen choice, then re-derive the
+    // choices and the mass from those paths alone, until the set is stable. The
+    // reported mass is the last one derived and still exceeds the threshold.
+    let mut kept: Vec<usize> = (0..sequences.len()).collect();
+    let mass = loop {
+        let Some((chosen, mass)) = solve(&kept)? else {
+            return Ok(None);
+        };
+        if mass <= *threshold {
+            return Ok(None);
+        }
+        let before = kept.len();
+        kept.retain(|index| {
+            let mut at = &graph.initial;
+            sequences[*index].iter().all(|step| {
+                let covered = graph
+                    .states
+                    .get(at)
+                    .zip(chosen.get(at))
+                    .and_then(|(state, index)| state.choices.get(*index))
+                    .is_some_and(|choice| covers(choice, step));
+                at = step;
+                covered
+            })
+        });
+        if kept.is_empty() {
+            return Ok(None);
+        }
+        if kept.len() == before {
+            break mass;
+        }
+    };
+    Ok(Some((kept, mass)))
 }
 
 /// Whether `claim` is the timed deadline form this module enumerates.
@@ -3580,4 +3647,120 @@ pub fn digital_key_clocks(
             .push(Rational::from_integer(whole.into()).div(&Rational::from_integer(scale.into()))?);
     }
     Some(fsl_eval::simulation::model::ClockValuation::new(values))
+}
+
+#[cfg(test)]
+mod witness_pricing_tests {
+    use super::*;
+
+    fn key(name: &str) -> ProbabilityProductKey {
+        ProbabilityProductKey::from_canonical_bytes(name.as_bytes().to_vec())
+    }
+
+    fn part(numerator: i64, denominator: i64) -> Rational {
+        Rational::new(Integer::from(numerator), Integer::from(denominator)).expect("nonzero")
+    }
+
+    fn edge(target: &str, numerator: i64, denominator: i64) -> ProbabilityEdge {
+        ProbabilityEdge {
+            target: key(target),
+            probability: part(numerator, denominator),
+        }
+    }
+
+    fn graph(states: Vec<(&str, Option<bool>, Vec<Vec<ProbabilityEdge>>)>) -> CheckerGraph {
+        CheckerGraph {
+            initial: key("I"),
+            states: states
+                .into_iter()
+                .map(|(name, terminal, choices)| (key(name), CheckerState { terminal, choices }))
+                .collect(),
+        }
+    }
+
+    fn path(steps: &[&str]) -> Vec<ProbabilityProductKey> {
+        steps.iter().map(|step| key(step)).collect()
+    }
+
+    fn price(
+        graph: &CheckerGraph,
+        threshold: Rational,
+        sequences: &[Vec<ProbabilityProductKey>],
+    ) -> Option<(Vec<usize>, Rational)> {
+        price_witness_paths(graph, false, &threshold, sequences, 4096, &Cancel::new())
+            .expect("the graph prices")
+    }
+
+    /// The tie's two orderings: `A` fires the operation that retries at once, `B`
+    /// fires the one that loses half the time and retries later.
+    fn tie() -> CheckerGraph {
+        graph(vec![
+            (
+                "I",
+                None,
+                vec![
+                    vec![edge("ACC", 1, 1)],
+                    vec![edge("L", 1, 2), edge("REJ", 1, 2)],
+                ],
+            ),
+            ("L", None, vec![vec![edge("ACC2", 1, 1)]]),
+            ("ACC", Some(true), vec![]),
+            ("ACC2", Some(true), vec![]),
+            ("REJ", Some(false), vec![]),
+        ])
+    }
+
+    /// A witness whose path takes the NON-retrying ordering and still ends in
+    /// an accepted state selects that ordering, whose mass is below the bound,
+    /// so it does not refute; the honest path selects the other ordering.
+    #[test]
+    fn a_path_of_the_non_failing_ordering_that_ends_accepted_does_not_refute() {
+        let graph = tie();
+        assert_eq!(price(&graph, part(3, 5), &[path(&["L", "ACC2"])]), None);
+        assert_eq!(
+            price(&graph, part(3, 5), &[path(&["ACC"])]),
+            Some((vec![0], part(1, 1)))
+        );
+    }
+
+    /// A path whose first step is no outcome of the chosen choice is dropped
+    /// from the evidence, and the choices and the mass are re-derived from the
+    /// kept path alone: here dropping it changes the choice at `T`, the mass
+    /// falls to the bound and the witness no longer refutes.
+    #[test]
+    fn evidence_is_priced_from_the_validated_paths_alone() {
+        let graph = graph(vec![
+            (
+                "I",
+                None,
+                vec![
+                    vec![edge("T", 1, 1)],
+                    vec![edge("T", 1, 1)],
+                    vec![edge("X", 1, 1)],
+                ],
+            ),
+            ("X", None, vec![vec![edge("T", 1, 1)]]),
+            (
+                "T",
+                None,
+                vec![
+                    vec![edge("a", 1, 4), edge("REJ", 3, 4)],
+                    vec![edge("a", 1, 2), edge("b", 1, 2)],
+                ],
+            ),
+            ("a", Some(true), vec![]),
+            ("b", Some(true), vec![]),
+            ("REJ", Some(false), vec![]),
+        ]);
+        let kept = path(&["T", "a"]);
+        let dropped = path(&["X", "T", "b"]);
+        // The two together choose the second choice at `T` (mass 1), but the
+        // dropped path leaves, and the kept one alone ties back to the first.
+        assert_eq!(price(&graph, part(1, 2), &[kept.clone(), dropped]), None);
+        // Alone, the kept path prices the first choice at `T`.
+        assert_eq!(
+            price(&graph, part(1, 5), &[kept]),
+            Some((vec![0], part(1, 4)))
+        );
+    }
 }
