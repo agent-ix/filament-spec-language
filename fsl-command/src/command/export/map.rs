@@ -137,6 +137,7 @@ fn binding_reference(
         CheckedTerm::Binding {
             name: binding,
             value,
+            ..
         } if matches!(binding.kind(), CheckedBindingNameKind::Other(bound) if bound == name) => {
             match value.as_ref() {
                 CheckedTerm::Reference { target } => Some(target),
@@ -211,7 +212,7 @@ fn role_model_binding(
     let value = arguments
         .iter()
         .find_map(|argument| match argument {
-            CheckedTerm::Binding { name, value }
+            CheckedTerm::Binding { name, value, .. }
                 if matches!(name.kind(), CheckedBindingNameKind::Other("model")) =>
             {
                 Some(value.as_ref())

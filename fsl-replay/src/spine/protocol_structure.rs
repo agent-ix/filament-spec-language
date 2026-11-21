@@ -65,7 +65,7 @@ impl<'p> Reader<'p> {
             return None;
         };
         arguments.iter().find_map(|argument| match argument {
-            filament_contract_model::CheckedTerm::Binding { name, value } if &**name == member => {
+            filament_contract_model::CheckedTerm::Binding { name, value, .. } if &**name == member => {
                 match &**value {
                     filament_contract_model::CheckedTerm::Reference { target } => {
                         Some(target.clone())
@@ -82,7 +82,7 @@ impl<'p> Reader<'p> {
             return None;
         };
         arguments.iter().find_map(|argument| match argument {
-            CheckedTerm::Binding { name, value } if &**name == member => Some(&**value),
+            CheckedTerm::Binding { name, value, .. } if &**name == member => Some(&**value),
             _ => None,
         })
     }
@@ -144,7 +144,7 @@ impl<'p> Reader<'p> {
                     };
                     let bound = |name| {
                         members.iter().find_map(|member| match member {
-                            CheckedTerm::Binding { name: held, value } if &**held == name => {
+                            CheckedTerm::Binding { name: held, value, .. } if &**held == name => {
                                 Self::integer(value)
                             }
                             _ => None,
