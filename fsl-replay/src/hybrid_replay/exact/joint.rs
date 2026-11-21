@@ -704,4 +704,104 @@ mod nonlinear_tests {
             Err(HybridReplayRefusal::ResourceExhausted { .. })
         ));
     }
+
+    /// Trace: FR-450
+    #[test]
+    fn cad_collects_late_branch_and_coefficient_only_time_boundaries() {
+        let branch = logic(
+            LogicOp::Or,
+            logic(
+                LogicOp::And,
+                cmp(CompareOp::Lt, v(0), q(0)),
+                cmp(CompareOp::Lt, v(2), q(0)),
+            ),
+            logic(
+                LogicOp::And,
+                cmp(CompareOp::Ge, v(0), q(0)),
+                cmp(CompareOp::Gt, v(2), q(1)),
+            ),
+        );
+        let parts = vec![branch, cmp(CompareOp::Eq, mul(v(0), v(1)), q(0))];
+        let early = run(parts.clone(), 2, &ExactReal::Rational(n(-1)), u64::MAX);
+        assert_eq!(early.0, Ok(true));
+        assert!(
+            early
+                .1
+                .iter()
+                .any(|p| p.degree().unwrap_or(0) > 0 && p.eval(&n(1)).is_zero()),
+            "the early negative witness must not hide the other branch's t=1 boundary"
+        );
+        assert_eq!(
+            run(parts.clone(), 2, &ExactReal::Rational(n(0)), u64::MAX).0,
+            Ok(false)
+        );
+        assert_eq!(
+            run(parts.clone(), 2, &ExactReal::Rational(n(1)), u64::MAX).0,
+            Ok(false)
+        );
+        assert_eq!(
+            run(parts, 2, &ExactReal::Rational(n(2)), u64::MAX).0,
+            Ok(true)
+        );
+    }
+
+    /// Trace: FR-450
+    #[test]
+    fn cad_numeric_conditionals_negative_denominators_and_undefined_negation() {
+        let hole = cmp(CompareOp::Eq, v(0), v(1));
+        let division = op(ArithmeticOp::Div, v(1), op(ArithmeticOp::Sub, v(0), v(1)));
+        let at = ExactReal::Rational(n(0));
+        let conditional = Exp::Conditional(
+            Box::new(hole.clone()),
+            Box::new(q(1)),
+            Box::new(division.clone()),
+            TermLocus::default(),
+        );
+        let nested = Exp::Conditional(
+            Box::new(Exp::Boolean(true)),
+            Box::new(conditional),
+            Box::new(division.clone()),
+            TermLocus::default(),
+        );
+        assert_eq!(
+            run(
+                vec![hole.clone(), cmp(CompareOp::Eq, nested, q(1))],
+                2,
+                &at,
+                u64::MAX
+            )
+            .0,
+            Ok(true)
+        );
+        let negative = vec![
+            cmp(CompareOp::Eq, v(0), q(0)),
+            cmp(CompareOp::Eq, v(1), q(1)),
+            cmp(CompareOp::Lt, division.clone(), q(0)),
+        ];
+        assert_eq!(run(negative, 2, &at, u64::MAX).0, Ok(true));
+        let undefined = cmp(CompareOp::Eq, division, q(1));
+        assert_eq!(
+            run(
+                vec![hole.clone(), Exp::Not(Box::new(undefined.clone()))],
+                2,
+                &at,
+                u64::MAX
+            )
+            .0,
+            Ok(false)
+        );
+        assert_eq!(
+            run(
+                vec![
+                    hole,
+                    logic(LogicOp::Implies, Exp::Boolean(false), undefined)
+                ],
+                2,
+                &at,
+                u64::MAX
+            )
+            .0,
+            Ok(true)
+        );
+    }
 }
