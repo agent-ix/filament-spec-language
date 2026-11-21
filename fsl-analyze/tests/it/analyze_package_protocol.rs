@@ -241,6 +241,16 @@ fn live_workflow_roles(state: &crate::fill::Reached) -> usize {
         .count()
 }
 
+fn workflow_role_parity(ws: &Workspace, path: &std::path::Path, expected: &str) -> Value {
+    // Graph comparison already wrote this authentic handoff and its request.
+    let package_path = ws.path("analyze-package.json");
+    assert!(
+        package_path.is_file(),
+        "the graph prepared the package request"
+    );
+    channel_send_parity_using(ws, path, expected, || package_path)
+}
+
 /// The complete replicated-role example has an empty run and an unused channel;
 /// its two spawn orders meet at the same state, and finish tears down both actors.
 #[trace(
@@ -281,7 +291,7 @@ fn package_workflow_roles_runs_the_complete_body_and_tears_down() {
         assert_eq!(live_workflow_roles(&graph[*next]), 0);
         assert!(graph[*next].steps.is_empty());
     }
-    channel_send_parity(&ws, &path, "proved");
+    workflow_role_parity(&ws, &path, "proved");
 }
 
 /// The bound changes real reachable actors; owned attempts retain their actor
@@ -310,7 +320,7 @@ fn package_workflow_roles_bounds_instances_and_executes_owned_attempts() {
             })
             .collect();
         assert_eq!(actors.len(), 2, "either cell can execute Work");
-        channel_send_parity(&ws, &path, "refuted");
+        workflow_role_parity(&ws, &path, "refuted");
     }
 }
 
@@ -329,7 +339,7 @@ fn package_workflow_roles_empty_universe_and_binding_refusal() {
         .iter()
         .flat_map(|state| &state.steps)
         .all(|(step, _)| step.actor().is_none()));
-    let item = channel_send_parity(&ws, &path, "refuted");
+    let item = workflow_role_parity(&ws, &path, "refuted");
     let blocked = item["counterexample"]["blocked"]
         .as_array()
         .expect("blocked worker receive");
@@ -1762,6 +1772,15 @@ fn channel_send(name: &str, binder: &str, constraint: &str) -> String {
 }
 
 fn channel_send_parity(ws: &Workspace, path: &std::path::Path, expected: &str) -> Value {
+    channel_send_parity_using(ws, path, expected, || package_request(ws, path).0)
+}
+
+fn channel_send_parity_using(
+    ws: &Workspace,
+    path: &std::path::Path,
+    expected: &str,
+    package_request_path: impl FnOnce() -> std::path::PathBuf,
+) -> Value {
     let source = analyze(path);
     assert!(
         source.item(0).get("record").is_some(),
@@ -1769,7 +1788,7 @@ fn channel_send_parity(ws: &Workspace, path: &std::path::Path, expected: &str) -
         source.document()
     );
     assert_eq!(label(&source.item(0)), expected, "{}", source.document());
-    let (package_path, _) = package_request(ws, path);
+    let package_path = package_request_path();
     std::fs::remove_file(ws.path("program.fsl"))
         .expect("remove source before package analysis and replay");
     let package = analyze(&package_path);
