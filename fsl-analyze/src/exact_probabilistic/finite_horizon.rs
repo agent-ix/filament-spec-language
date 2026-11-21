@@ -1148,7 +1148,6 @@ fn action_groups(
     }
     let mut groups: Vec<(ProductAction, Vec<&ProbEdge>)> = Vec::new();
     for edge in edges {
-        operations.visit()?;
         if edge.probability < rational_zero() {
             return Err(FhError::InvalidProbability);
         }
@@ -1161,7 +1160,7 @@ fn action_groups(
         }
     }
     for (_, group) in &groups {
-        validate_probability_mass(group)?;
+        validate_probability_mass(group, &mut Arithmetic::plain())?;
     }
     Ok(groups.into_iter().map(|(_, edges)| edges).collect())
 }
@@ -1242,6 +1241,7 @@ fn validate_probability_mass(
 ) -> Result<(), FhError> {
     let mut total = rational_zero();
     for edge in edges {
+        operations.visit()?;
         if edge.probability < rational_zero() {
             return Err(FhError::InvalidProbability);
         }
