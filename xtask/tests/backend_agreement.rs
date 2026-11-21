@@ -476,8 +476,8 @@ mod backend_agreement {
     fn compiled_vectors_without_verification_items_remain_in_the_report() {
         let provider = FixtureProvider::new(Plan::Reference, 2);
         let mut corpus = Corpus::new();
-        // These vectors have no explicit selection. A real automatic scalar
-        // obligation is compared, while a Boolean helper remains unrequested.
+        // These vectors have no explicit selection. Compilation alone does not
+        // establish a pair of comparable backend records, even for x + 1.
         corpus.add("A", "language \"ix:native\" edition \"1-draft\";\nprofile v = \"filament.value.complete/v1\";\nfunction Claim using v(x: Int[0,10]): Int[1,11] pure { x + 1 }\n");
         corpus.add("B", FAILS);
         corpus.add("D", "language \"ix:native\" edition \"1-draft\";\nprofile v = \"filament.value.complete/v1\";\nrecord Data { x: Integer; }\n");
@@ -486,7 +486,12 @@ mod backend_agreement {
         assert_eq!(outcome.code, 0, "{}", outcome.stdout);
         assert_eq!(report["entries"].as_array().unwrap().len(), 5);
         assert_eq!(report["entries"][0]["vector"], "A");
-        assert_eq!(report["entries"][0]["settlement"], "agree");
+        assert_eq!(report["entries"][0]["settlement"], "not-compared");
+        assert!(report["entries"][0]["candidates"]
+            .as_array()
+            .unwrap()
+            .is_empty());
+        assert!(report["entries"][0]["failure"].is_object());
         assert_eq!(
             report["entries"][1]["failure"]["reason"],
             "no-resolved-verification-item"
@@ -497,7 +502,9 @@ mod backend_agreement {
             report["entries"][2]["failure"]["reason"],
             "no-resolved-verification-item"
         );
-        assert_eq!(report["counts"]["agree"], 3);
+        assert_eq!(report["counts"]["agree"], 2);
+        assert_eq!(report["counts"]["not-compared"], 3);
+        assert_eq!(provider.calls.load(Ordering::SeqCst), 4);
     }
 
     #[test]
