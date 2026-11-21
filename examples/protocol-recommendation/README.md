@@ -33,9 +33,8 @@ It permits the call when the counter value is below `2`. The attempt also
 selects `AppendOne`, which requires the model value to increase by one.
 
 The recommendation binder `advice` is unused because recommendations have no
-operation result. Writing `run observe sequence Main` instead of
-`run sequence Main` refuses the attempt during checking, before analysis steps
-the protocol.
+operation result. Changing the run declaration to `run observe sequence Main`
+refuses the attempt during checking, before analysis steps the protocol.
 
 The input model is the repository's
 [counter fixture](../../fsl-command/tests/fixtures/cli-contract/counter.semantic-ir.json).
