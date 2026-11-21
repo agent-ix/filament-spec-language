@@ -45,3 +45,10 @@ Disposition round 1. Fix head: a756b1f685fcd4e406a8d89c07463c9383f47b5d. The tes
 | FND-001 | fixed | `same_owner_and_self_operation_redefinitions_refuse_the_original_owner` (model_unit_inheritance.rs:302, FR-082-AC-2) asserts one typed RedefinitionTarget, with exact target and redefiner keys, for self, same-owner and mixed invalid-local cases, and that the proper-ancestor SHOP form checks clean. |
 | FND-002 | fixed | `an_object_extending_another_meaning_refuses_at_its_declaration` (model_unit_inheritance.rs:485, FR-710-AC-4) asserts exactly one invalid_model_binding/malformed-declaration for an object extending a record, a machine or a process, with the span equal to the whole authored declaration. |
 | FND-003 | fixed | Six new tests (model_unit_inheritance.rs:523-723) cover extends on record, event, interface and store; record subsets/redefines; event and interface local subsets that survive intake; unresolved field and operation links on event, interface and store; non-ancestor redefinitions projected to the declaration span; and disallowed event and store members. |
+
+Disposition round 2 (final verification). Head: 9d6cc5074dd85242c50b4e07d813ec2ddeba8493. The tests of record for FND-001 (:302), FND-002 (:485) and FND-003 (:523 onward) are unchanged. The only test repairs are these:
+
+- `non_object_disallowed_members_preserve_the_exact_parser_diagnostic` now asserts the compiler's diagnostic slice equals the raw parser's, plus phase Parse, invalid_syntax/unexpected-token, and the offending token (`bump` for an event body `operation bump();`, `n` for a store field). This matches the FR-710 contextual-word rule and the CST `EventDeclaration` rule.
+- The new `non_object_contextual_operation_is_an_event_field_name` (FR-710-AC-10, FR-710-AC-3) proves that an event field named `operation` is retained with Integer type through intake.
+
+No new rows: all three findings' latest outcome remains `fixed`, and no new finding. Draco's focused run at this head is queued; no runtime result is claimed.
