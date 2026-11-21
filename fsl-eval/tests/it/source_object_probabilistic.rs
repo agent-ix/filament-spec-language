@@ -370,7 +370,23 @@ fn a_malformed_source_operation_identity_is_refused_at_the_row() {
     let Err(PendingPackageForm::SourceModel(fault)) = through_doctored_rows(
         name,
         &package,
-        |text| text.replace("O::step", "Ostep"),
+        |text| {
+            // Only the source object's own operation row is malformed: the
+            // `source_operations` rows and the operation bodies keep the
+            // valid identity, so the supply joins and the refusal lands at
+            // the object row.
+            let mut file: serde_json::Value =
+                serde_json::from_str(&text).expect("the rows are JSON");
+            let operations = file["source_objects"]
+                .as_array_mut()
+                .expect("source object rows")
+                .iter_mut()
+                .flat_map(|object| object["operations"].as_array_mut().expect("operations"));
+            for operation in operations {
+                operation["identity"] = "Ostep".into();
+            }
+            file.to_string()
+        },
         |bare| {
             PackageModelInput::source_object_probabilistic_model(
                 bare,
