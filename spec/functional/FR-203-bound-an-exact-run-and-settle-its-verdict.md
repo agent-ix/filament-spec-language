@@ -21,6 +21,10 @@ relationships:
     type: depends_on
   - target: ix://agent-ix/filament-spec-language/FR-202
     type: depends_on
+  - target: ix://agent-ix/filament-specification/FR-331
+    type: depends_on
+  - target: ix://agent-ix/filament-specification/FR-412
+    type: depends_on
   - target: ix://agent-ix/filament-spec-language/FR-1042
     type: references
 ---
@@ -108,8 +112,10 @@ pub struct ExactEntry { pub initial: u32, pub binding: Option<Binding>, pub inst
 
 ### Settlement
 
-- When complete exploration of a conditional claim finds no activating
-  state reachable, so its condition has probability 0, EN-5 SHALL settle
+- This conditional-vacuity settlement SHALL apply to every conditional
+  reading admitted by FR-201, including bounded quantiles under a workload
+  or every scheduler, with or without fairness. When complete exploration
+  of such a claim finds no activating state reachable, so its condition has probability 0, EN-5 SHALL settle
   `proved`, `Certified`, with the existing `Exhaustive` basis only after
   FR-201's independent checker accepts the same item's `Conditional`
   certificate in `Vacuous` mode. The checker SHALL rederive absence of
@@ -223,7 +229,7 @@ pub struct ExactEntry { pub initial: u32, pub binding: Option<Binding>, pub inst
 | FR-203-AC-7 | The build-result map is exhaustive over `ProductRefusal` and `ClauseOutcome` with no `_` arm. A build whose expansion stops at `max_candidates` 2 settles `incomplete`, `Incomplete(LimitReached{max_candidates, 2, expansion.max_candidates})`. A build whose `ProductRefusal`, asserted before settling, is `Expansion(stop)` naming `EvaluationMeter` (a subject whose successor expansion charges the meter before the claim reads any predicate, under an accounting bound `B` of `work_units` its first expansion exceeds) settles `Incomplete(LimitReached{work_units, B, accounting.work_units})`, naming the exhausted counter, `B` and the setting `accounting.<counter>` by FR-255 Behavior 9's rule (FSpec FR-461-AC-5); a build whose `ProductRefusal`, asserted before settling, is `PredicateRefused(Incomplete(i))` (the expansion fits under `B`, the predicate read's charge is the first one denied) settles the same way for `i`'s counter. A predicate refused `integer_out_of_domain`/`outside-domain` settles `failed` with that diagnostic; a constructed `PredicateRefused(NotBoolean)`, `PredicateRefused(KernelRefused(CheckedInvariant))` and `Translation` error each settle `failed`, `runtime_invariant`/`established-invariant-broken`; an `Admission` failure and a `RequiresBound` refusal return no terminal record. | Test (TC-1166) |
 | FR-203-AC-8 | The `proved` record of FR-203-AC-1 carries its `Exact` certificate in its item result, and those certificate bytes are accepted by `fsl-probability-check` in a later process; the `refuted` record of FR-203-AC-5 carries its witness, which replays. | Test (TC-2065) |
 | FR-203-AC-9 | A `ValueBounds` proof of FR-1042-AC-2's claim whose claim-side `lower` document `7/16` is accepted and whose counterpart `upper` `7/16` is rejected settles `inconclusive`, `CertificateRejected{InequalityFails, s}`; the same proof handed to settlement with no counterpart and no `exploration: Partial` settles `failed`, `runtime_invariant`/`established-invariant-broken`, category failed; with `exploration: Partial` and upper 1 it settles `proved`, `ValueBounds{7/16, 1, …}`. | Test (TC-3151) |
-| FR-203-AC-10 | An untimed conditional quantile with `from holds(false)` and a finite window has no activating state in the complete reachable product. Native checking independently accepts its `Conditional` `Vacuous` certificate and settlement returns `proved`, `closed-scope`, `Certified`, `Exhaustive`, category success, carrying that certificate with empty `values` and `conditional` exactly `{"mode": "vacuous"}`. The emitted result passes FR-331's contract with basis `{"type": "exhaustive"}` and no numeric value, numeric entries, bounds, counterpart or generic `evidence`; it contains neither `ExactValue` nor a fabricated 0 or `0/0`. | Test |
+| FR-203-AC-10 | The untimed claim `quantile 0.5 of (steps from holds(false) until holds(true) within 4) <= 2`, checked separately under a resolved workload and under every scheduler (with and without an admitted fairness set) has no activating state in the complete reachable product. Native checking independently accepts its `Conditional` `Vacuous` certificate and settlement returns `proved`, `closed-scope`, `Certified`, `Exhaustive`, category success, carrying that certificate with empty `values` and `conditional` exactly `{"mode": "vacuous"}`. The emitted result passes FR-331's contract with basis `{"type": "exhaustive"}` and no numeric value, numeric entries, bounds, counterpart or generic `evidence`; it contains neither `ExactValue` nor a fabricated 0 or `0/0`. | Test |
 | FR-203-AC-11 | Changing AC-10's activation predicate to `holds(true)` makes the offered vacuous certificate reject `InequalityFails` and settle `inconclusive`, `CertificateRejected`, without vacuity acceptance. Offering an otherwise well-shaped `exact`, `ratio` or `optimum` certificate on `exhaustive`, or generic `evidence` with or without its permitted vacuous certificate, refuses the FR-331 result contract. An `exact-value` basis missing its value, using scalar zero or denominator zero refuses; AC-1's ordinary exact result with a valid `Rational` value remains admitted. An engine-only assertion, partial exploration, cancellation before or during checking, or a caller limit reached before checking completes produces no accepted vacuity evidence or proved record; cancellation and limits retain their typed incomplete causes. | Test |
 
 ## Dependencies
@@ -238,6 +244,13 @@ pub struct ExactEntry { pub initial: u32, pub binding: Option<Binding>, pub inst
 
 ## References
 
+- [FSpec FR-331: Backend provider envelope](ix://agent-ix/filament-specification/FR-331)
+  owns the value-free `exhaustive` result carrier and its sole permitted
+  conditional `vacuous` certificate exception, with `evidence` forbidden.
+  [FSpec FR-412: Probability certificate and its checker](ix://agent-ix/filament-specification/FR-412)
+  owns the conditional `vacuous` certificate and the independent
+  unreachable-activation check. The certified vacuity settlement above
+  depends on both contracts.
 - FSpec half, which owns `ExactProbLimits` and its setting names in the
   request, while FSL publishes the default values, and the result content
   onto FR-331 and FR-243: FSpec FR-411 (Linear STD-137).

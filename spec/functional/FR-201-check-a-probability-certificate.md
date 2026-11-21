@@ -97,14 +97,24 @@ product state form `{product_key}`, with `part` when present, and the second as 
 
 | Failure | `rule` | `at` |
 | --- | --- | --- |
-| An `Upper`, `Lower`, `Exact`, expected-reward or `LongRun` condition fails at a state, a policy entry is missing, has the wrong mode or names a choice that is not enabled there, or a recurrent component under the policy lacks observation progress or fairness | `InequalityFails` | `ProbabilisticProductState` of the first failing state in canonical order; for a component, its first state |
+| An `Upper`, `Lower`, `Exact`, expected-reward or `LongRun` condition fails at a state, a policy entry required by its profile is missing, has the wrong mode or names a choice that is not enabled there, or a recurrent component under the policy lacks observation progress or fairness | `InequalityFails` | `ProbabilisticProductState` of the first failing state in canonical order; for a component, its first state |
 | For a quantile claim with `y(s0) = 0`, the tight-action search reaches an activated state | `InequalityFails` | `ProbabilisticProductState` of the first reachable activated state |
 | A non-target state with `x > 0` has no rank | `RankMissing` | `ProbabilisticProductState` of that state |
 | A ranked non-target state with `x > 0` has no successor of positive probability, `x > 0` and a smaller rank | `RankBroken` | `ProbabilisticProductState` of that state |
 | The conditions hold, but the initial state's value is not on the claim's side of the threshold | `ThresholdMissed` | `ProbabilisticProductState` of the initial state |
-| A `Lower` or `Exact` certificate without `ranking`, a lower bound on a maximum without `policy`, or a `LongRun` certificate without `components`, a `Conditional` certificate without `conditional`, with an unknown `mode`, without a part its mode requires or with a part that is not `Exact`, an `Optimum` `reset` without `policy` or `ranking`, a `reset` whose `values`, `policy` or `ranking` miss, repeat or add a rebuilt reachable waiting state, a `Randomized` `reset` policy entry without a fairness set, or a `Ratio` certificate under an objective other than `workload` | `Malformed` | `CertificateMember` naming `ranking`, `policy`, `components`, `conditional`, `mode`, `numerator`, `denominator`, `post` or `reset` |
+| A `Lower` or `Exact` certificate without `ranking`, a lower bound on a maximum without `policy` where its profile requires that member (excluding FR-1042 optional-hint documents), or a `LongRun` certificate without `components`, a `Conditional` certificate without `conditional`, with an unknown `mode`, without a part its mode requires or with a part that is not `Exact`, an `Optimum` `reset` without `policy` or `ranking`, a `reset` whose `values`, `policy` or `ranking` miss, repeat or add a rebuilt reachable waiting state, a `Randomized` `reset` policy entry without a fairness set, or a `Ratio` certificate under an objective other than `workload` | `Malformed` | `CertificateMember` naming `ranking`, `policy`, `components`, `conditional`, `mode`, `numerator`, `denominator`, `post` or `reset` |
 | A `Ratio` denominator of 0 at an initial key from which a first activating state is reachable, or a `Vacuous` certificate where one is reachable | `InequalityFails` | `ProbabilisticProductState` of the initial state |
 | A part of a `Conditional` certificate fails its own conditions (for `reset`, FR-196's proper-optimum conditions); parts are checked in the order `numerator`, `denominator` or `post`, `reset`, and the first failing part is reported | that part's rule | that part's `ProbabilisticProductState` with `part` naming it |
+
+For [FR-1042](FR-1042-certify-value-bounds-with-lower-and-upper-certificates.md)
+`value-bounds/v1` documents, the checker SHALL apply that profile's optional
+policy-hint rules instead of the missing-policy failures above. An omitted
+hint SHALL trigger independent selection of the first action satisfying all
+per-state conditions in canonical full-product-action order. A present hint
+SHALL be checked without fallback. No satisfying inequality action SHALL
+reject `InequalityFails`; inequality candidates that all fail required
+progress or rank SHALL reject `RankBroken`, at the state's product key.
+Other profiles SHALL retain their own policy coverage and presence rules.
 
 ## Behavior
 

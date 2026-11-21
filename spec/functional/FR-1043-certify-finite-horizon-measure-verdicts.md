@@ -11,6 +11,8 @@ relationships:
     type: depends_on
   - target: ix://agent-ix/filament-spec-language/FR-197
     type: depends_on
+  - target: ix://agent-ix/filament-spec-language/FR-203
+    type: depends_on
   - target: ix://agent-ix/filament-spec-language/FR-1042
     type: references
   - target: ix://agent-ix/filament-spec-language/FR-202
@@ -26,7 +28,7 @@ relationships:
 
 ## Description
 
-EN-5 SHALL certify every exact proof of an untimed claim that reads a
+EN-5 SHALL certify every exact numeric proof of an untimed claim that reads a
 bounded measure (FR-186 `BoundedMeasure`: accumulate, steps or a fraction)
 in the closed profile
 `"filament.probability-objective/finite-horizon-measure/v1"`: a comparison
@@ -63,14 +65,21 @@ accumulated amount in its key, checks each part's equations and the ratio
 
 ### Forms and documents
 
-The table states proof evidence and proof threshold conditions. Mean
-refutation evidence SHALL follow the distinct role below.
+The table states proof evidence and proof threshold conditions. For every
+conditional reading, including a quantile under a workload or every
+scheduler with or without fairness, the checker SHALL first determine
+whether activation is unreachable in the complete product. If so, EN-5
+SHALL use [FR-203](FR-203-bound-an-exact-run-and-settle-its-verdict.md)'s
+certified value-free `Exhaustive` settlement with an independently accepted
+`conditional` `vacuous` certificate, not a numeric or shifted-value proof.
+The numeric quantile rows below apply only when activation is reachable.
+Mean refutation evidence SHALL follow the distinct role below.
 
 | Claim form | Evidence |
 | --- | --- |
 | `probability op θ [M op c]` | one `exact` document, payoff `event`; its initial value meets `θ` |
-| `quantile q of M <= c` or `>= c` under a workload | FR-201's `conditional` `ratio`: numerator payoff `satisfied`, denominator payoff `activated`, each an `exact` document of this profile; `numerator / denominator >= q` for `<= c`, `< q` (strict) for `>= c`; `vacuous` when no activating state is reachable |
-| `quantile q of M <= c` or `>= c` under every scheduler, with or without fairness | one document, payoff `shifted`: `exact` or `lower` for `<= c` with initial value at least 0; `exact` or `upper` for `>= c` with initial value below 0, or 0 with no activated state reachable through tight actions (FR-201 "General checking conditions") |
+| `quantile q of M <= c` or `>= c` under a workload | FR-201's `conditional` `ratio`: numerator payoff `satisfied`, denominator payoff `activated`, each an `exact` document of this profile; `numerator / denominator >= q` for `<= c`, `< q` (strict) for `>= c`; unreachable activation uses the value-free vacuity rule above |
+| `quantile q of M <= c` or `>= c` under every scheduler, with or without fairness | one document, payoff `shifted`: `exact` or `lower` for `<= c` with initial value at least 0; `exact` or `upper` for `>= c` with initial value below 0, or 0 with no activated state reachable through tight actions while activation remains reachable in the full product (FR-201 "General checking conditions") |
 | `mean of F op θ` | one `exact` document, payoff `fraction`; its initial value meets `θ` |
 
 - An elapsed measure over a timed subject keeps FR-877's timed-product
@@ -160,7 +169,10 @@ refutation evidence SHALL follow the distinct role below.
   sums SHALL run under the caller's byte, state, edge, work, storage,
   representation and arithmetic limits and cancellation; a stop SHALL
   settle `incomplete` with its limit and no truth value.
-- An accepted proof SHALL settle `proved`, `ExactValue` (the ratio for a
+- A vacuous conditional proof SHALL settle `proved`, certified,
+  value-free `Exhaustive` under FR-203, with its accepted conditional
+  `vacuous` certificate and no numeric entries. An accepted numeric proof
+  SHALL settle `proved`, `ExactValue` (the ratio for a
   workload quantile, the probability or mean otherwise), certified; a
   quantile or comparison-event refutation SHALL keep FR-202's two-mass or
   path-set evidence. A mean refutation SHALL carry FSpec FR-413 subsystem
@@ -229,6 +241,7 @@ refutation evidence SHALL follow the distinct role below.
 | FR-1043-AC-7 | AC-1's numerator with `window`, `threshold`, `comparison`, `reward`, `unit`, `level` or `payoff` changed refuses objective mismatch; a key whose accumulator amount or phase is altered is not an alias and fails coverage; a `shifted` value below `−level` is rejected `Malformed` at `values`. Pre-cancellation and exhaustion of each caller limit during expansion, payoff evaluation or exact sums settle `incomplete` with the actual limit and no truth value. | Test (TC-3152) |
 | FR-1043-AC-8 | With AC-1's `try` split into `fast` (`1/2`) and `slow` (`1/4`), `mean of fraction holds(delivered) over [0, 2]` has minimum `11/48` and maximum `5/12`. Under every scheduler, `>= 1/2` is refuted by an accepted exact minimum or FR-1042 `upper` on the minimum with initial bound `1/4` and policy `slow`; `<= 1/3` is refuted by an accepted exact maximum or `lower` on the maximum with initial bound `2/5` and policy `fast`. Both reuse subsystem evidence and are independently accepted by FR-202's checked-subject mean-certificate replay entry. | Test |
 | FR-1043-AC-9 | AC-5's exact workload mean `5/12` at `>= 5/12` and `<= 5/12`, a valid workload `upper` bound `1/2` at `>= 1/2`, and a valid `lower` bound `2/5` at `<= 2/5` each reject `ThresholdMissed` at the initial key and settle `inconclusive`, `CertificateRejected`. In AC-8, a valid `lower` minimum document with initial bound `1/5` at `>= 1/2` and a valid `upper` maximum document with bound `1/2` at `<= 1/3` each reject `Malformed` at `kind` with the same settlement. Identity/base mismatch retains its typed refusal; an invalid value rejects `InequalityFails` with `CertificateRejected`; a disagreeing witness policy settles `inconclusive`, `ReplayParity`. A raw engine verdict or unchecked certificate cannot settle `refuted`. An accepted partial `lower` maximum bound `2/5 > 1/3`, with unnamed successors counted as 0, refutes without an upper counterpart; cancellation or a live checking limit remains incomplete. | Test |
+| FR-1043-AC-10 | FR-203-AC-10's no-activation quantile under a resolved workload and under every scheduler, with and without an admitted fairness set, settles certified `Exhaustive` with an independently accepted conditional `vacuous` certificate, no `ExactValue`, shifted-value proof or numeric entry. A variant with reachable activation is not routed to vacuity; a forged `vacuous` certificate rejects `InequalityFails` under FR-201. The nonvacuous quantiles of AC-1 to AC-3 retain their numeric proof rules. | Test |
 
 ## Dependencies
 

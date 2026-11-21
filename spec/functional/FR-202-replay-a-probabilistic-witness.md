@@ -94,6 +94,7 @@ refuses. This race-policy form cannot name IdleObserve or change a fixed
 workload weight. No guessed FSpec wire spelling is adopted by this semantic
 contract.
 
+Except for a mean-bound certificate's independently checked policy below,
 EN-5 SHALL form the WitnessScheduler from the optimizer's attaining policy on
 the evidence's states: each entry is the complete pre-choice ProductKey and the
 ProductAction the policy takes there, chosen by FR-198's witness policy rules
@@ -131,10 +132,18 @@ race gives that post-key and elapsed amount.
   that minimum below `θ`; `<= θ` SHALL be refuted only by an exact maximum
   above `θ` or a `lower` certificate on that maximum above `θ`. The bound
   document SHALL use FR-1042's independently checked policy for that
-  extremum, synthesized in canonical action order where a hint is absent
-  and checked against the offered action where a hint is present. The
+  extremum, synthesized in canonical full-product-action order where a hint
+  is absent and checked against the offered action where a hint is present. The
   counterexample's scheduler SHALL agree with that selected policy; an exact
   document's witness SHALL attain its deciding extremum.
+  EN-5 SHALL construct a mean-bound counterexample's scheduler from the
+  policy returned by its independent FR-1042 check, rather than retain an
+  optimizer policy that differs under a slack bound. Where an intended
+  witness choice has an existing representable policy-hint form, EN-5 MAY
+  offer that matching hint before checking; the witness SHALL still use
+  the checker's accepted action. For implicit terminal stutter or
+  post-state choices without such a form, EN-5 SHALL omit the hint and use
+  the independently synthesized action without inventing a wire operation.
 - When checking that mean certificate as refutation evidence, the checker
   SHALL apply the strict refutation comparison above after the certificate
   conditions, rather than FR-1042's proof claim-side kind and inclusive
@@ -554,6 +563,7 @@ timed enumerator.
 | FR-202-AC-27 | Through the checked-subject mean-certificate replay entry, FR-1043-AC-5's workload mean `5/12` refutes `>= 1/2` using subsystem evidence containing the independently accepted `exact` `fraction` certificate; the same document checks in its refutation role despite missing the proof threshold. An unchecked document, an unreplayed engine value or a path set yields no accepted mean-refutation evidence. | Test |
 | FR-202-AC-28 | FR-1043-AC-8's minimum `11/48` with an accepted `upper` bound `1/4` refutes every-scheduler `>= 1/2`; its maximum `5/12` with an accepted `lower` bound `2/5` refutes every-scheduler `<= 1/3`. A valid `lower` minimum document with initial bound `1/5` at `>= 1/2`, and a valid `upper` maximum document with initial bound `1/2` at `<= 1/3`, each reject `Malformed` at `kind` and settle `inconclusive`, `CertificateRejected`; their conditions hold but their refutation roles are wrong. | Test |
 | FR-202-AC-29 | AC-27's exact `5/12` at `>= 5/12` or `<= 5/12`, and a valid workload `upper` bound `1/2` at `>= 1/2`, each reject `ThresholdMissed` at the initial key and settle `inconclusive`, `CertificateRejected`. Changing identity or base payoff/optimization retains the typed refusal; invalid certificate values settle `inconclusive`, `CertificateRejected{InequalityFails, at}`; a disagreeing witness policy settles `inconclusive`, `ReplayParity`; cancellation or a caller limit preserves its typed incomplete result without accepted evidence. | Test |
+| FR-202-AC-30 | A mean minimum refutation with a slack `upper < θ` for which both the optimizer's attaining action and a different canonical-first action satisfy every FR-1042 condition emits a witness matching the independently checked policy: with no hint it uses the canonical-first satisfying full-product action; with a representable valid hint it uses that hinted action. Both replay as refuted. An old optimizer witness disagreeing with the checked selection settles `inconclusive`, `ReplayParity`; implicit stutter or post-state selection uses the same rule without a fabricated policy identity. | Test |
 
 ## Dependencies
 
