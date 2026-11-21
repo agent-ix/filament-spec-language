@@ -21,7 +21,6 @@ fn sources(directory: &Path, found: &mut Vec<PathBuf>) {
 
 #[test]
 #[trace("TC-2442", "FR-861-AC-4")]
-#[ignore = "QSL-2145: fsl-eval still carries its own partial, completeness, activation and repair rules"]
 fn fsl_eval_calls_the_observation_owner_for_its_four_authority_rule_sets() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR"));
     let manifest = std::fs::read_to_string(root.join("Cargo.toml")).expect("the manifest");
@@ -47,7 +46,7 @@ fn fsl_eval_calls_the_observation_owner_for_its_four_authority_rule_sets() {
                 .starts_with("use filament_observation::authority::{")
         })
         .collect();
-    for module in ["partial", "completeness", "activation", "repair"] {
+    for module in ["partial", "completeness", "activation"] {
         let named = text.contains(&format!("filament_observation::authority::{module}"))
             || grouped.iter().any(|line| {
                 line.split(|c: char| !c.is_alphanumeric() && c != '_')
@@ -397,4 +396,173 @@ fn evidence_calls_consume_optional_activation_views_for_scopes_and_instances() {
     assert_eq!(result.activation, ActivationState::Active);
     assert_eq!(result.truth, Some(Truth::True));
     assert_eq!(result.instances.len(), 2);
+}
+
+#[test]
+#[trace("TC-2442", "FR-861-AC-4")]
+#[ignore = "QSL-2145: nothing in fsl-eval calls the owner's `repair::plan` yet; the retained results hold no owner bundle views, regions or result bytes (FR-944 \"Repair\")"]
+fn fsl_eval_calls_the_owner_repair_module() {
+    assert!(
+        eval_source().contains("filament_observation::authority::repair"),
+        "fsl-eval calls the owner's `repair` module"
+    );
+}
+
+/// The items FR-861-AC-4 forbids `fsl-eval` to define: the local rules the
+/// four owners replace. A definition of any of these names is a second copy.
+const FORBIDDEN_ITEMS: &[&str] = &[
+    // partial: the local interval algebra (`EvidenceLetters` reads through the owner).
+    "PossibilitySet",
+    "OrderPossibilities",
+    "EventTimeInterval",
+    "relation_to",
+    // activation: the local scope disposition rule.
+    "scope_disposition",
+    "no_instance",
+    "ActivationView",
+    "ActivationSelection",
+    // completeness: a second revision rule or view.
+    "CompletenessView",
+    "revise_completeness",
+    "revise",
+    // repair: affected-region planning.
+    "plan_repair",
+    "RepairPlan",
+    "FactRegion",
+    "PriorResult",
+    "DependencyEdge",
+    "affected_region",
+];
+
+/// The one QSL-2327 item FR-861 permits while the ledger cannot call the
+/// owner's `completeness::revise`.
+const TRACKED_EXCEPTION: &str = "revise_complete_through";
+
+/// Names of items defined (fn, struct, enum, trait, type, const) in `source`,
+/// and of fns whose signature takes two `ProgressCompleteness` values, which
+/// is a comparison of two completeness assertions.
+fn defined_items(source: &str) -> (Vec<String>, Vec<String>) {
+    use syn::visit::Visit;
+    #[derive(Default)]
+    struct Items {
+        defined: Vec<String>,
+        comparing: Vec<String>,
+    }
+    fn completeness_params(signature: &syn::Signature) -> usize {
+        signature
+            .inputs
+            .iter()
+            .filter(|input| match input {
+                syn::FnArg::Typed(typed) => matches!(&*typed.ty, syn::Type::Path(path)
+                    if path.path.segments.last().is_some_and(|s| s.ident == "ProgressCompleteness")),
+                syn::FnArg::Receiver(_) => false,
+            })
+            .count()
+    }
+    impl<'ast> Visit<'ast> for Items {
+        fn visit_item_fn(&mut self, node: &'ast syn::ItemFn) {
+            self.defined.push(node.sig.ident.to_string());
+            if completeness_params(&node.sig) >= 2 {
+                self.comparing.push(node.sig.ident.to_string());
+            }
+            syn::visit::visit_item_fn(self, node);
+        }
+        fn visit_impl_item_fn(&mut self, node: &'ast syn::ImplItemFn) {
+            self.defined.push(node.sig.ident.to_string());
+            if completeness_params(&node.sig) >= 2 {
+                self.comparing.push(node.sig.ident.to_string());
+            }
+            syn::visit::visit_impl_item_fn(self, node);
+        }
+        fn visit_item_struct(&mut self, node: &'ast syn::ItemStruct) {
+            self.defined.push(node.ident.to_string());
+            syn::visit::visit_item_struct(self, node);
+        }
+        fn visit_item_enum(&mut self, node: &'ast syn::ItemEnum) {
+            self.defined.push(node.ident.to_string());
+            syn::visit::visit_item_enum(self, node);
+        }
+        fn visit_item_trait(&mut self, node: &'ast syn::ItemTrait) {
+            self.defined.push(node.ident.to_string());
+            syn::visit::visit_item_trait(self, node);
+        }
+        fn visit_item_type(&mut self, node: &'ast syn::ItemType) {
+            self.defined.push(node.ident.to_string());
+            syn::visit::visit_item_type(self, node);
+        }
+    }
+    let parsed = syn::parse_file(source).expect("Rust source");
+    let mut items = Items::default();
+    items.visit_file(&parsed);
+    (items.defined, items.comparing)
+}
+
+/// Findings of the scan over `files`: `(file, item)` for each forbidden
+/// definition and each second comparison of two completeness assertions.
+fn second_copies(files: &[(String, String)]) -> Vec<(String, String)> {
+    let mut found = Vec::new();
+    for (name, source) in files {
+        let (defined, comparing) = defined_items(source);
+        for item in defined {
+            if FORBIDDEN_ITEMS.contains(&item.as_str()) {
+                found.push((name.clone(), item));
+            }
+        }
+        for item in comparing {
+            if item != TRACKED_EXCEPTION {
+                found.push((
+                    name.clone(),
+                    format!("{item} compares two completeness assertions"),
+                ));
+            }
+        }
+    }
+    found
+}
+
+#[test]
+#[trace("TC-2442", "FR-861-AC-4")]
+fn fsl_eval_defines_no_second_copy_of_the_four_owners_rule_sets() {
+    // The scan finds what it forbids.
+    let planted = [(
+        "planted.rs".to_owned(),
+        "fn scope_disposition() {} struct OrderPossibilities; \
+         fn revise_again(a: ProgressCompleteness, b: ProgressCompleteness) {}"
+            .to_owned(),
+    )];
+    let found = second_copies(&planted);
+    assert_eq!(found.len(), 3, "{found:?}");
+    // The one tracked exception passes; a second comparison does not.
+    let exception = [(
+        "exception.rs".to_owned(),
+        "pub fn revise_complete_through(a: ProgressCompleteness, b: ProgressCompleteness) {}"
+            .to_owned(),
+    )];
+    assert!(second_copies(&exception).is_empty());
+    // fsl-eval's own sources, shipped code and tests alike.
+    let mut paths = Vec::new();
+    sources(
+        &Path::new(env!("CARGO_MANIFEST_DIR")).join("src"),
+        &mut paths,
+    );
+    let files: Vec<(String, String)> = paths
+        .iter()
+        .map(|path| {
+            (
+                path.display().to_string(),
+                std::fs::read_to_string(path).expect("a source file"),
+            )
+        })
+        .collect();
+    let found = second_copies(&files);
+    assert!(
+        found.is_empty(),
+        "second copies of an owner rule: {found:?}"
+    );
+    assert!(
+        files
+            .iter()
+            .any(|(_, source)| defined_items(source).0.iter().any(|item| item == TRACKED_EXCEPTION)),
+        "the tracked QSL-2327 exception is still the one comparison; delete it with this allowance when the ledger calls `completeness::revise`"
+    );
 }
