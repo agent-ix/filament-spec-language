@@ -65,6 +65,142 @@ fn release_after_enable() -> World {
     ))
 }
 
+fn clockful_unreachable_release() -> World {
+    world(&document(&["x"], &[("fire_a", &["phase"]), ("tick", &["phase", "x"])]), TIMED, &format!(
+        "{DENSE}taskset N {{ task a periodic 4 ms deadline 4 ms bcet 1 ms wcet 2 ms priority 1 lo; }}\n\
+         schedulable NFp on N under fixed_priority;\n\
+         pre Blocked using v on M::Call::fire_a {{ self.phase = 1 }}\n\
+         post Fire using v on M::Call::fire_a {{ self.phase = pre(self.phase) }}\n\
+         pre Tick using v on M::Call::tick {{ (self.x >= 1 ms and self.x <= 2 ms) or self.x >= 3 ms }}\n\
+         post Ticked using v on M::Call::tick {{ self.phase = pre(self.phase) and self.x = 0 ms }}\n\
+         release N.a on M::Call::fire_a;\n"
+    ))
+}
+
+/// The original clock-place encoding and every source guard part survive
+/// transport; the independent checker accepts only the genuine source proof.
+#[trace("TC-371", "FR-418-AC-14")]
+#[test]
+fn clockful_no_release_transport_preserves_context_and_rejects_tampering() {
+    use fsl_analyze::zone_check::read_back_unchanged_with_source;
+    let world = clockful_unreachable_release();
+    let model = world.system();
+    let timed = TimedSystem::new(&model, "M").expect("timed source");
+    let product = TaskProductSystem::new(timed, "NFp").expect("task product");
+    let built = no_release_task_product_certificate(
+        &product,
+        claim_of(&world, "NFp").occurrence().expect("occurrence"),
+        ZoneCheckLimits::default(),
+        &Cancel::new(),
+    )
+    .expect("source closes")
+    .expect("no reachable release");
+    assert!(!built.lu_bounds.lower.is_empty());
+    assert!(built.edges.iter().any(|edge| edge.part == Some(0)));
+    assert!(
+        built.edges.iter().any(|edge| edge.part == Some(1)),
+        "both convex source guard parts are retained"
+    );
+    let (wire, read) =
+        read_back_unchanged_with_source(&built, json!({}), &built.obligation, product.source())
+            .expect("genuine source metadata reads back unchanged");
+    assert_eq!(
+        wire["bounds"][0]["clock"],
+        product
+            .source()
+            .clock_place_identity(0)
+            .expect("original clock identity")
+    );
+    assert_eq!(read.lu_bounds, built.lu_bounds);
+    assert_eq!(
+        verdict(&world, "NFp", &read, CertificateCheckLimits::default()),
+        Ok(ZoneCertificateVerdict::Accepted)
+    );
+    let decode = |wire: &Value| {
+        ZoneCertificate::from_wire_with_source(wire, built.obligation.clone(), product.source())
+            .expect("mutant retains wire shape")
+            .0
+    };
+    let mut lu = wire.clone();
+    for row in lu["bounds"].as_array_mut().expect("bounds") {
+        row["lower"] = json!({"bound":"-100","strict":false});
+        row["upper"] = json!({"bound":"-100","strict":false});
+    }
+    assert_eq!(
+        rejected(verdict(
+            &world,
+            "NFp",
+            &decode(&lu),
+            CertificateCheckLimits::default()
+        ))
+        .0,
+        CertificateRule::Malformed
+    );
+    let mut wrong_clock = wire.clone();
+    wrong_clock["bounds"][0]["clock"] = json!("not-the-source-clock");
+    assert!(ZoneCertificate::from_wire_with_source(
+        &wrong_clock,
+        built.obligation.clone(),
+        product.source()
+    )
+    .is_err());
+    let mut fragment = wire.clone();
+    fragment["edges"][0]["part"] = json!(999);
+    assert!(matches!(
+        verdict(
+            &world,
+            "NFp",
+            &decode(&fragment),
+            CertificateCheckLimits::default()
+        ),
+        Ok(ZoneCertificateVerdict::Rejected(_))
+    ));
+    let mut data = wire.clone();
+    data["edges"][0]["transition"]["operation"] = json!("M::Call::not_tick");
+    assert!(matches!(
+        verdict(
+            &world,
+            "NFp",
+            &decode(&data),
+            CertificateCheckLimits::default()
+        ),
+        Ok(ZoneCertificateVerdict::Rejected(_))
+    ));
+    let mut horizon = wire.clone();
+    horizon["edges"][0]["horizon"] =
+        json!([{"place":0,"operator":">=","bound":{"numerator":"1","denominator":"1"}}]);
+    let read = decode(&horizon);
+    assert_eq!(
+        read.edges[0]
+            .horizon
+            .as_ref()
+            .expect("horizon retained")
+            .len(),
+        1
+    );
+    assert!(matches!(
+        verdict(&world, "NFp", &read, CertificateCheckLimits::default()),
+        Ok(ZoneCertificateVerdict::Rejected(_))
+    ));
+    let mut delay = wire.clone();
+    delay["edges"]
+        .as_array_mut()
+        .expect("edges")
+        .push(json!({"node":0,"target":0,"transition":null,"horizon":[]}));
+    let read = decode(&delay);
+    assert!(read.edges.last().expect("delay").transition.is_none());
+    assert_eq!(read.edges.last().expect("delay").horizon, Some(Vec::new()));
+    assert_eq!(
+        read.to_wire_with_source(json!({}), product.source())
+            .expect("delay and horizon write unchanged"),
+        delay
+    );
+    assert!(matches!(
+        verdict(&world, "NFp", &read, CertificateCheckLimits::default()),
+        Ok(ZoneCertificateVerdict::Rejected(_))
+    ));
+}
+
 /// A declared but unreachable release uses the same genuine source closure
 /// as a release-free source, including the engine's admission witness.
 #[trace("TC-371", "FR-418-AC-14")]
