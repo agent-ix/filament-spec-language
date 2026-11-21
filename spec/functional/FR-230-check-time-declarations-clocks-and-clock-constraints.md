@@ -947,27 +947,38 @@ what each such position means.
   slot, and never the clocks' values; they are data reads. A reference to a slot place names the
   slot, so it keeps naming that slot when the collection moves its element.
   **Place identity.** The place id of a `Reference<Clock>` SHALL be a
-  canonical, one-to-one encoding of the triple (owner object identity, the
-  `clock_place` node key, slot indices), so that it is distinct for every
+  canonical, one-to-one encoding of the authenticated outer population/owner
+  universe, owner local key, declared type/model scope, canonical normalized
+  declared path and ordered tagged slot indices, so that it is distinct for every
   runtime place: `Call1.x` and `Call2.x` have distinct ids, as do slots 0 and 1
   of one collection, and one place always has one id. It is the UTF-8 text
-  `place/v1/<h(owner)>/<h(node key)>/<slots>`, where `h` is the lowercase hex
-  of the UTF-8 bytes of the owner object's FR-120 reference identity and of the
-  `clock_place` node's key, and `<slots>` is the decimal slot index at each
-  `Slot` step of the path in path order joined by `.`, or `-` when the path has
-  none. Two place ids are equal exactly when their texts are byte equal. The id is
-  stable within one checked package, compared for equality only (`<` over two
-  ids refuses `ill_typed`/`operator-ineligible`), and an id of one package
-  names no place of another. FSpec FR-415 states the same id as the state key, and
-  nothing is vendored here. The `clock_place` node key names the template of the
-  path and is the same for every instance; `<slots>` is the concrete position of
-  the instance at each `Slot` step and is never part of any node. A place under
+  beginning `place/v2/`, with one canonical encoding of those components for
+  both the source and bare checked routes. FSL SHALL retain authenticated
+  owner provenance in the declared type/model scope (SourceOwner authority and
+  identity, or selected Model identity and original declaration context), erase aliases, and
+  preserve the full ordered field, tuple, union-case and collection path tags
+  and concrete slot positions. FSL SHALL use one shared authenticated
+  declaration normalizer for both routes, including SourceOwner declaration
+  normalization and source `pN` versus selected `tuple/N` path normalization;
+  S3 allocation keys and S4 node ids are not persisted identity inputs.
+  An inherited place retains its original declared template scope; the runtime
+  object's subtype does not replace that scope.
+  This prerelease replaces `place/v1`, without parallel compatibility.
+  Two place ids are equal exactly when their texts are byte equal. The id is
+  stable for the same authenticated declaration/model scope across both routes
+  and is compared for equality only (`<` over two ids refuses
+  `ill_typed`/`operator-ineligible`). An id from a different authenticated
+  declaration/model scope names no place of this scope; a different checked
+  representation of the same authenticated scope does not change its ids.
+  FSpec FR-415 holds this place identity in the state key. Each tagged slot
+  index is the concrete position of the instance at its `Slot` path step and
+  is never part of a template node. A place under
   a `Map` value (`self.m[k].x`) is selected by key ("Clock collections"). A
   decimal slot index cannot name a key, so the place SHALL have no place id.
   The checker SHALL refuse `ref` of such a place `ill_typed`/`type-mismatch` at
   the `ref`, and `deref(r)` SHALL denote none. A snapshot `Reference<Clock>`
   whose identity names the `clock_place` of a place under a `Map` value, with
-  any `<slots>`, SHALL be refused `invalid_runtime_input`/`invalid-value`. The
+  any slot indices, SHALL be refused `invalid_runtime_input`/`invalid-value`. The
   clocks of such a place are reached by selection by key and through `forall`
   and `exists` over the map, never through a reference.
   The same value is carried in a field, a parameter, a result, a record
@@ -1127,9 +1138,9 @@ declaration and `clock-type` for a `Clock` in a type position. An unqualified
 | FR-230-AC-40 | `self.v = 0 ms` records a make-present of `v` with reset 0; `self.v = absent` records a drop that leaves `v` with no zone constraint, so a time invariant `when present(self.v) { value(self.v) <= 3 ms }` places no bound at a state where `v` was dropped. | Test |
 | FR-230-AC-41 | `present(...)` of `Option<Timer>`, of a union case `Armed(Boolean)` and of a slot of `q` is read from the snapshot's data, `member` or the collection's size, and those places hold no bit; `v: Option<Clock>` and each `Option<Clock>` element of `q` hold a bit whose initial value takes both values, giving `2` initial states for `v` alone. | Test |
 | FR-230-AC-42 | In a model with `v: Option<Clock>`, `q: Sequence<Option<Clock>>[0, 2]`, `o: Option<Timer>` and a union case `Armed(Boolean)`, only `v` and the live `Option<Clock>` elements of `q` carry a presence bit, encoded by their `option` shell as `{"type":"option","value":null}` (absent) or `{"type":"option","value":{"type":"tuple","name":"Clock","components":[]}}` (present); `semantic` stays a map; a one-element `q` has one bit and a dropped slot none; the keys of `o`, `Armed`, the slots of `q` and a model with no `Option<Clock>` are unchanged; two states that differ only in one bit have different state keys. | Test |
-| FR-230-AC-43 | In FR-230-AC-24's model, `ref(self.x)` of `Call1` and of `Call2` have different place ids, `ref(self.q[0])` and `ref(self.q[1])` have different place ids, `ref(self.m[k])` over a `Map` value refuses `ill_typed`/`type-mismatch`, `ref(self.x) = ref(other.x)` is false for two calls and true for one call, and the id of `Call1.x` is the text `place/v1/<h(owner)>/<h(node key)>/-` while that of `Call1.q[1]` ends `/1`. | Test |
+| FR-230-AC-43 | In FR-230-AC-24's model, `ref(self.x)` of `Call1` and of `Call2` have different place ids, `ref(self.q[0])` and `ref(self.q[1])` have different place ids, `ref(self.m[k])` over a `Map` value refuses `ill_typed`/`type-mismatch`, `ref(self.x) = ref(other.x)` is false for two calls and true for one call, and both ids use the canonical `place/v2/` encoding of "Place identity", retaining distinct tagged slot positions. | Test |
 | FR-230-AC-44 | A place id is stored in a field, a parameter, a result, a record component and a `Sequence<Reference<Clock>>` element and reads back equal; `=` over two ids is a data read, `<` refuses `ill_typed`/`operator-ineligible`; the id of `ref(self.q[0])` is unchanged after a reorder of `q`; and a package `reference` instance is FSpec FR-181's `reference` value whose `object_type` is the Clock type's effective id and whose `identity` is the hex of the id text. | Test |
-| FR-230-AC-45 | A snapshot `Reference<Clock>` whose identity is not of the `place/v1/...` form, or names an owner object or `clock_place` the package and universe do not contain, refuses `invalid_runtime_input`/`invalid-value`. | Test |
+| FR-230-AC-45 | A snapshot `Reference<Clock>` whose identity is not of the canonical `place/v2/...` form, or names an owner or declared place absent from the authenticated universe and declaration/model scope, refuses `invalid_runtime_input`/`invalid-value`. | Test |
 | FR-230-AC-46 | Over `s: Sequence<Clock>[1, 3]`, `b: Bag<Clock>[0, 2]`, `r: Sequence<Timer>[1, 3]` with a snapshot of two `Timer` elements and `st: Sequence<Stopwatch>[0, 2]` (`Stopwatch { x: Clock }`): the initial count of `s` ranges over `[1, 3]` and gives three initial states, `b` over `[0, 2]`, `st` over `[0, 2]`, and `r` takes the count 2 from the snapshot; over `qo: Sequence<Option<Clock>>[0, 2]` an element at initial bit absent is unconstrained and every present initial clock is 0. | Test |
 | FR-230-AC-47 | `t: Set<Clock>[0, 5]`, `o: OrderedSet<Clock>[0, 5]`, `so: Set<Option<Clock>>[0, 5]` and a `Set<Stopwatch>[0, 5]` each range over `[0, 1]`; `Set<Clock>[2, 5]` leaves no initial state (`Undecided(NoInitialState)`); a `Map<Text, Clock>[0, 2]` is not pure-clock and takes its entries from the snapshot. | Test |
 | FR-230-AC-48 | Over `u: Sequence<Clock>` with no declared maximum, initial states are produced in ascending count from 0 and the analysis stops `incomplete` with `limit-reached` whose `limit` is `max_clocks` once the live clocks exceed it, and it does not return `NotSimulated::RequiresBound`. | Test |
