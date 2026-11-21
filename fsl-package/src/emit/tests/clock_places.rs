@@ -181,6 +181,46 @@ fn emitted_source_place_member_type_matches_its_target_node_identity() {
     );
     assert!(!target_identity.contains("resolved:"));
     assert!(!target_identity.contains("Composite("));
+    let Read::Verified { admitted, .. } = read_back(&emission) else {
+        panic!("the actual emitted source declarations admit");
+    };
+    let bare = crate::BarePackage::new(&admitted);
+    let declarations = bare
+        .clock_declarations()
+        .expect("sealed declaration context");
+    let original = admitted
+        .resolved_graph()
+        .nodes
+        .iter()
+        .find(|node| {
+            node.declaration.as_ref().is_some_and(|declaration| {
+                declaration
+                    .qualified_name
+                    .iter()
+                    .map(|part| part.as_ref())
+                    .eq(["W"])
+            })
+        })
+        .expect("the admitted original W declaration");
+    let key = bare
+        .node_key(&original.node_id)
+        .expect("actual admitted key");
+    let Some(fsl_semantics::model::clock_reference::identity::DeclarationScope::Source {
+        authority,
+        identity,
+        declaration,
+    }) = declarations.scope(&key)
+    else {
+        panic!("the bare route retains SourceOwner rather than model scope");
+    };
+    assert_eq!(identity, source_owner);
+    assert_eq!(declaration, &target_identity);
+    assert_eq!(
+        authority,
+        order["owner"]["authority"]
+            .as_str()
+            .expect("source authority")
+    );
 }
 
 /// The unit selecting [`clocked_document`] under a dense time source, with
