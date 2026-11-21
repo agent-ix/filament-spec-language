@@ -1065,7 +1065,7 @@ fn several_free_identities_enabled_now_are_refused_not_decided() {
              workload Both on M { weight Call::send = 1; weight Call::tick = 1; }\n",
             &format!(
                 "probabilistic W using ev on M over (c: M::Call) {scheduler} on origin \
-                 {{ probability <= 0.6 [ eventually[0 ms, 4 ms] holds(c.late) ] }}\n"
+                 {{ probability <= 0.9999 [ eventually[0 ms, 4 ms] holds(c.late) ] }}\n"
             ),
         )
     };
