@@ -25,9 +25,7 @@ fn steps(path: &Value) -> usize {
 }
 
 /// FR-628-AC-1: `possible (value = 3)` proves with a three-step witness path
-/// that replays, and `possible (value > 3)` refutes. `value > 3` stands in
-/// for a target the checker would refuse outright: `value` is Int[0,3], so
-/// `value = 4` does not check.
+/// that replays, and `possible (value > 3)` refutes with a replayed trap.
 #[trace("TC-1588", "FR-628-AC-1")]
 #[test]
 fn a_possible_claim_proves_with_a_replayed_witness_path_and_refutes() {

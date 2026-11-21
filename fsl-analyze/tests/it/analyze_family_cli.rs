@@ -609,11 +609,11 @@ fn edf_and_amc_schedulability_items_settle_through_the_wire() {
     assert_eq!(label(&amc_refuted.item(0)), "refuted", "{amc_miss}");
     assert_eq!(amc_miss["type"], "schedulability-miss");
     assert_eq!(amc_miss["miss"]["task"], "b");
+    assert_eq!(amc_miss["miss"]["mode"], "lo");
 }
 
-/// FR-247-AC-4, FR-633 budgets: EDF's default QPA demand-point cap settles
+/// FR-633 budgets: EDF's default QPA demand-point cap settles
 /// incomplete through the native-analyze request path.
-#[trace("TC-702", "FR-247-AC-4")]
 #[trace("TC-1593", "FR-633")]
 #[test]
 fn edf_qpa_default_demand_point_cap_settles_incomplete_through_analyze() {
@@ -642,7 +642,11 @@ fn edf_qpa_default_demand_point_cap_settles_incomplete_through_analyze() {
     let item = run.item(0);
     assert_eq!(run.exit, 22, "{}", run.document());
     assert_eq!(label(&item), "incomplete", "{item}");
-    assert_eq!(item["record"]["cause"]["kind"], "limit-reached", "{item}");
+    let cause = &item["record"]["cause"];
+    assert_eq!(cause["kind"], "limit-reached", "{item}");
+    assert_eq!(cause["limit"], "max_demand_points", "{item}");
+    assert_eq!(cause["value"], 1_048_576, "{item}");
+    assert_eq!(cause["setting"], "schedule.max_demand_points", "{item}");
 }
 
 /// FR-635-AC-1, AC-2: an item naming a process provider handed to

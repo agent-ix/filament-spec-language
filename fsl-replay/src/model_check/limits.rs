@@ -292,6 +292,9 @@ pub enum ModelCheckLimit {
     /// FSpec FR-483: the operation-contract check arm's case budget; limit
     /// `max_cases`, setting `contract_check.max_cases`.
     ContractCheckMaxCases,
+    /// FR-247: EN-7's EDF demand-point budget; setting
+    /// `schedule.max_demand_points`.
+    ScheduleMaxDemandPoints,
 }
 
 impl ModelCheckLimit {
@@ -353,6 +356,7 @@ impl ModelCheckLimit {
             Self::CertificateMaxWorkingBytes => "max_working_bytes",
             Self::CertificateMaxRank => "max_rank",
             Self::ValueCheckMaxCases | Self::ContractCheckMaxCases => "max_cases",
+            Self::ScheduleMaxDemandPoints => "max_demand_points",
         }
     }
 
@@ -405,6 +409,7 @@ impl ModelCheckLimit {
             Self::CertificateMaxRank => "certificate_check.max_rank",
             Self::ValueCheckMaxCases => "value_check.max_cases",
             Self::ContractCheckMaxCases => "contract_check.max_cases",
+            Self::ScheduleMaxDemandPoints => "schedule.max_demand_points",
         }
     }
 }
@@ -595,6 +600,9 @@ mod tests {
             ModelCheckLimit::MaxCandidates => ("max_candidates", "expansion.max_candidates"),
             ModelCheckLimit::ValueCheckMaxCases => ("max_cases", "value_check.max_cases"),
             ModelCheckLimit::ContractCheckMaxCases => ("max_cases", "contract_check.max_cases"),
+            ModelCheckLimit::ScheduleMaxDemandPoints => {
+                ("max_demand_points", "schedule.max_demand_points")
+            }
             ModelCheckLimit::SolverSteps => ("max_solver_steps", "hybrid.max_solver_steps"),
             ModelCheckLimit::SmtMaxSolverSteps => ("max_solver_steps", "smt.max_solver_steps"),
             ModelCheckLimit::SmtMaxSolverTime => ("max_solver_time", "smt.max_solver_time"),
@@ -697,6 +705,7 @@ mod tests {
             ModelCheckLimit::MaxWitnessSet,
             ModelCheckLimit::MaxRelationTuples,
             ModelCheckLimit::MaxWindowValues,
+            ModelCheckLimit::ScheduleMaxDemandPoints,
             ModelCheckLimit::Statistical(StatisticalLimit::MaxSamples),
             ModelCheckLimit::Statistical(StatisticalLimit::MaxDraws),
             ModelCheckLimit::Statistical(StatisticalLimit::MaxCycleSteps),
