@@ -294,3 +294,40 @@ fn changed_objectives_full_keys_and_shifted_range_never_alias() {
         "{actual:?}"
     );
 }
+
+#[trace("TC-3152", "FR-1043-AC-7", "FR-196-AC-8", "FR-196-AC-12")]
+#[test]
+fn a_draw_with_multiple_post_states_retains_its_full_pending_control() {
+    let claim = claim(
+        "Q",
+        "every scheduler",
+        "quantile 0.4 of (steps from holds(true) until holds(m.delivered) within 2) >= 1",
+    );
+    let mut model = retry(&claim);
+    model.body = model.body.replace("self.delivered = (lost = 1)", "true");
+    let world = World::new(&model);
+    let doc = proof(&world, "Q", ratio(-2, 5));
+    let pending = doc["values"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(key)
+        .filter(|key| !key[7].is_null())
+        .collect::<Vec<_>>();
+    assert!(
+        !pending.is_empty(),
+        "a genuine residual post-state choice must enter the graph"
+    );
+    assert!(pending
+        .iter()
+        .all(|key| key[7][0] == "drawn" && key[5][0] == "measure"));
+    assert!(
+        pending.iter().any(|key| key[7][2][0] == "0")
+            || pending.iter().any(|key| !key[7][2].is_null())
+    );
+    let checked = check(&world, "Q", &doc);
+    assert!(
+        matches!(checked, Ok(ExactProbabilityCertificateCheck::Accepted(_))),
+        "{checked:?}"
+    );
+}

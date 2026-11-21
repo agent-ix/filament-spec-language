@@ -22,7 +22,11 @@ pub(super) fn run(
         expansion: simulation.expansion,
         meter: &scalar,
     };
-    let system = match ModelSystem::new_with_cancel(simulation.clone(), cancel) {
+    let admitted = ModelSystem::new_with_cancel(simulation.clone(), cancel);
+    if let Some(cause) = cancel.tripped() {
+        return settled(&ExactProbBuildIssue::Cancelled(cause), subject);
+    }
+    let system = match admitted {
         Ok(system) => system,
         Err(error) => return build_refusal(ProductRefusal::Admission(error), subject),
     };
@@ -141,20 +145,43 @@ pub(super) fn run(
         Err(_) => return broken(),
     };
     for state in &mut product.states {
-        if state.pending.is_some() {
-            return not_yet();
-        }
         let Some(control) = state.monitor else {
             return broken();
         };
         let Some(sums) = state.accumulator.as_ref() else {
             return broken();
         };
+        let pending = state
+            .pending
+            .as_ref()
+            .map(|pending| {
+                let mut admission = fsl_replay::ProbabilityKeyAdmission::new(
+                    &mut meter,
+                    &mut storage,
+                    document_limits.storage_bytes,
+                    cancel,
+                );
+                system
+                    .pending_key_bytes_with_budget(
+                        &pending.identity,
+                        &pending.random,
+                        fsl_foundation::IdentityLimits::default(),
+                        &mut admission,
+                        cancel,
+                    )
+                    .map_err(|error| admission.refusal(error))
+            })
+            .transpose();
+        let pending = match pending {
+            Ok(pending) => pending,
+            Err(error) => return document_failure(error, subject),
+        };
         let key = match measure_probability_product_key(
             reference,
             &state.model,
             control,
             sums,
+            pending.as_deref(),
             reward.as_ref(),
             document_limits,
             cancel,

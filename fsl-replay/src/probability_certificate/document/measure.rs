@@ -314,6 +314,7 @@ pub fn measure_probability_product_key(
     raw: &[u8],
     control: MonitorState,
     accumulator: &Accumulator,
+    pending: Option<&[u8]>,
     reward: Option<&ProbabilityRewardObjective>,
     limits: ProbabilityDocumentLimits,
     cancel: &Cancel,
@@ -349,11 +350,22 @@ pub fn measure_probability_product_key(
         if original != raw {
             return Err(ModelKeyError::Unsupported("canonical model body"));
         }
+        let pending = pending
+            .map(|bytes| {
+                quire_canonical::read_with_reservation(
+                    bytes,
+                    identity.input_bytes,
+                    &mut Reserve(&scope),
+                )
+                .map_err(|_| ModelKeyError::Denied)
+            })
+            .transpose()?;
         let key = fsl_eval::probabilistic::key::MeasureProductKey {
             binding,
             model: model.root(),
             control,
             accumulator,
+            pending: pending.as_ref().map(|pending| pending.root()),
             reward: reward.map(|reward| fsl_eval::probabilistic::key::RewardKey {
                 model: &reward.model,
                 name: &reward.name,
@@ -372,6 +384,20 @@ pub fn measure_probability_product_key(
     result.map_err(|error| admission.refusal(error))
 }
 
+enum Successor {
+    Position(
+        Rational,
+        ModelSimState,
+        Vec<(filament_exact::Identifier, filament_exact::Value)>,
+    ),
+    Draw(
+        Rational,
+        fsl_eval::simulation::model::ScheduledIdentity,
+        Vec<filament_exact::Value>,
+        Vec<ModelSimState>,
+        Vec<(filament_exact::Identifier, filament_exact::Value)>,
+    ),
+}
 struct State {
     terminal: Option<Rational>,
     rank: u64,
@@ -456,6 +482,7 @@ fn enumerate(
             &raw,
             control,
             accumulator,
+            None,
             plan.objective.reward.as_ref(),
             limits,
             cancel,
@@ -464,11 +491,18 @@ fn enumerate(
         )
     };
     let root = key_of(initial, control, &accumulator, meter, storage)?;
-    let mut queue = VecDeque::from([(root.clone(), initial.clone(), control, accumulator, truths)]);
+    let mut queue = VecDeque::from([(
+        root.clone(),
+        initial.clone(),
+        control,
+        accumulator,
+        truths,
+        None,
+    )]);
     let mut seen = BTreeSet::from([root.clone()]);
     let mut states = BTreeMap::new();
     let mut edges = 0usize;
-    while let Some((key, model, control, accumulator, truths)) = queue.pop_front() {
+    while let Some((key, model, control, accumulator, truths, resolution)) = queue.pop_front() {
         poll(cancel)?;
         charge(
             storage,
@@ -509,7 +543,12 @@ fn enumerate(
         if terminal.is_none() {
             let mut admission =
                 ProbabilityKeyAdmission::new(meter, storage, limits.storage_bytes, cancel);
-            let distributions = if let Some(workload) = workload {
+            let distributions = if let Some((posts, rewards)) = resolution {
+                posts
+                    .into_iter()
+                    .map(|post| vec![Successor::Position(rational(1), post, rewards.clone())])
+                    .collect()
+            } else if let Some(workload) = workload {
                 let steps = system
                     .weighted_steps_with_budget(
                         &model,
@@ -526,7 +565,7 @@ fn enumerate(
                     })?;
                 vec![steps
                     .into_iter()
-                    .map(|step| (step.probability, step.post, step.rewards))
+                    .map(|step| Successor::Position(step.probability, step.post, step.rewards))
                     .collect::<Vec<_>>()]
             } else {
                 let actions = system
@@ -557,21 +596,41 @@ fn enumerate(
                             ))
                         })
                         .collect::<Result<Vec<_>, ProbabilityDocumentError>>()?;
-                    vec![vec![(rational(1), model.clone(), rewards)]]
+                    vec![vec![Successor::Position(
+                        rational(1),
+                        model.clone(),
+                        rewards,
+                    )]]
                 } else {
                     let mut distributions = Vec::new();
                     for action in actions {
                         let mut distribution = Vec::new();
                         for draw in action.draws {
-                            if draw.successors.len() != 1 {
-                                return Err(ProbabilityDocumentError::Unsupported);
+                            if draw.successors.is_empty() {
+                                return Err(ProbabilityDocumentError::Build(Box::new(
+                                    crate::ExactProbBuildIssue::NotMarkov,
+                                )));
                             }
-                            let (_, post) = draw
-                                .successors
-                                .into_iter()
-                                .next()
-                                .ok_or(ProbabilityDocumentError::Malformed)?;
-                            distribution.push((draw.probability, post, draw.rewards));
+                            if draw.successors.len() == 1 {
+                                let (_, post) = draw
+                                    .successors
+                                    .into_iter()
+                                    .next()
+                                    .ok_or(ProbabilityDocumentError::Malformed)?;
+                                distribution.push(Successor::Position(
+                                    draw.probability,
+                                    post,
+                                    draw.rewards,
+                                ));
+                            } else {
+                                distribution.push(Successor::Draw(
+                                    draw.probability,
+                                    action.identity.clone(),
+                                    draw.random,
+                                    draw.successors.into_iter().map(|(_, post)| post).collect(),
+                                    draw.rewards,
+                                ));
+                            }
                         }
                         distributions.push(distribution);
                     }
@@ -581,7 +640,100 @@ fn enumerate(
             drop(admission);
             for distribution in distributions {
                 let mut choice = Vec::new();
-                for (probability, post, rewards) in distribution {
+                for successor in distribution {
+                    if let Successor::Draw(probability, scheduled, random, posts, rewards) =
+                        successor
+                    {
+                        if probability.is_zero() {
+                            continue;
+                        }
+                        edges = edges
+                            .checked_add(1)
+                            .ok_or(ProbabilityDocumentError::KeySizeOverflow)?;
+                        if edges > limits.edges {
+                            return Err(exceeded(
+                                ProbabilityDocumentLimit::Edges,
+                                u64::try_from(limits.edges).unwrap_or(u64::MAX),
+                                u64::try_from(edges).unwrap_or(u64::MAX),
+                            ));
+                        }
+                        let (raw, pending) = {
+                            let mut admission = ProbabilityKeyAdmission::new(
+                                meter,
+                                storage,
+                                limits.storage_bytes,
+                                cancel,
+                            );
+                            let identity = fsl_foundation::IdentityLimits::default();
+                            let raw = system
+                                .state_key_bytes_with_budget(
+                                    &model,
+                                    identity,
+                                    &mut admission,
+                                    cancel,
+                                )
+                                .map_err(|error| admission.refusal(error))?;
+                            let pending = system
+                                .pending_key_bytes_with_budget(
+                                    &scheduled,
+                                    &random,
+                                    identity,
+                                    &mut admission,
+                                    cancel,
+                                )
+                                .map_err(|error| admission.refusal(error))?;
+                            (raw, pending)
+                        };
+                        let target = measure_probability_product_key(
+                            binding,
+                            &raw,
+                            control,
+                            &accumulator,
+                            Some(&pending),
+                            plan.objective.reward.as_ref(),
+                            limits,
+                            cancel,
+                            meter,
+                            storage,
+                        )?;
+                        charge(
+                            storage,
+                            limits.storage_bytes,
+                            u64::try_from(
+                                target
+                                    .as_bytes()
+                                    .len()
+                                    .saturating_mul(3)
+                                    .saturating_add(std::mem::size_of::<ProbabilityEdge>()),
+                            )
+                            .unwrap_or(u64::MAX),
+                        )?;
+                        if seen.insert(target.clone()) {
+                            if seen.len() > limits.states {
+                                return Err(exceeded(
+                                    ProbabilityDocumentLimit::States,
+                                    u64::try_from(limits.states).unwrap_or(u64::MAX),
+                                    u64::try_from(seen.len()).unwrap_or(u64::MAX),
+                                ));
+                            }
+                            queue.push_back((
+                                target.clone(),
+                                model.clone(),
+                                control,
+                                accumulator.clone(),
+                                truths.clone(),
+                                Some((posts, rewards)),
+                            ));
+                        }
+                        choice.push(ProbabilityEdge {
+                            target,
+                            probability,
+                        });
+                        continue;
+                    }
+                    let Successor::Position(probability, post, rewards) = successor else {
+                        return Err(ProbabilityDocumentError::Malformed);
+                    };
                     poll(cancel)?;
                     if probability.is_zero() {
                         continue;
@@ -631,7 +783,7 @@ fn enumerate(
                                 u64::try_from(seen.len()).unwrap_or(u64::MAX),
                             ));
                         }
-                        queue.push_back((target.clone(), post, next, sums, post_truths));
+                        queue.push_back((target.clone(), post, next, sums, post_truths, None));
                     }
                     choice.push(ProbabilityEdge {
                         target,
@@ -756,7 +908,6 @@ fn decode_state(
         )
         || !matches!(parts[2].node(), Node::Null)
         || !matches!(parts[3].node(), Node::Null)
-        || !matches!(parts[7].node(), Node::Null)
     {
         return Err(ProbabilityDocumentError::MalformedMember("values"));
     }

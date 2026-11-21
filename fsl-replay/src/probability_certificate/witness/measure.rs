@@ -75,6 +75,7 @@ fn key(
         &raw,
         control,
         accumulator,
+        None,
         reward,
         limits,
         cancel,

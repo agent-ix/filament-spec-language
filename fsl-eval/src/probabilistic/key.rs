@@ -32,6 +32,8 @@ pub struct MeasureProductKey<'a, 'budget> {
     pub control: MonitorState,
     /// Shared exact amount or sums.
     pub accumulator: &'a Accumulator,
+    /// Actual checked draw awaiting a post-state resolution, absent otherwise.
+    pub pending: Option<NodeRef<'a>>,
     /// Checked reward descriptor, present exactly for reward/weighted forms.
     pub reward: Option<RewardKey<'a>>,
     /// Cumulative caller work, representation and storage admission.
@@ -213,7 +215,10 @@ impl Encode for MeasureProductKey<'_, '_> {
             }
         }
         writer.end_array()?;
-        writer.null()?;
+        match self.pending {
+            Some(pending) => pending.encode_into(writer)?,
+            None => writer.null()?,
+        }
         writer.end_array()
     }
 }

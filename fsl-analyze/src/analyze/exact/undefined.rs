@@ -213,7 +213,7 @@ fn materialize_inner(
             None if measured => {
                 let mut scope=measure_scope.borrow_mut();
                 let (meter,storage)=&mut *scope;
-                fsl_replay::measure_probability_product_key(reference,&state.model,state.monitor.ok_or(ProbabilityWitnessError::Refused)?,state.accumulator.as_ref().ok_or(ProbabilityWitnessError::Refused)?,reward.as_ref(),document_limits,cancel,meter,storage).map_err(ProbabilityWitnessError::from)
+                fsl_replay::measure_probability_product_key(reference,&state.model,state.monitor.ok_or(ProbabilityWitnessError::Refused)?,state.accumulator.as_ref().ok_or(ProbabilityWitnessError::Refused)?,None,reward.as_ref(),document_limits,cancel,meter,storage).map_err(ProbabilityWitnessError::from)
             },
             None => ProbabilityProductKey::for_model_state_with_limits(reference, &state.model, limits.document, cancel).map_err(ProbabilityWitnessError::from),
         }
@@ -321,6 +321,7 @@ fn materialize_inner(
             &raw,
             control.ok_or(ProbabilityWitnessError::Refused)?,
             sums.as_ref().ok_or(ProbabilityWitnessError::Refused)?,
+            None,
             reward.as_ref(),
             document_limits,
             cancel,
