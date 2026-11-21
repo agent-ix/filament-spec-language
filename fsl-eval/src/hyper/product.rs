@@ -31,7 +31,7 @@
 //! hands to the caller, as the `fsl-analyze` liveness product does: a
 //! `TransitionSystem` stop carries a catalog code only.
 
-use std::cell::{Ref, RefCell};
+use std::cell::{Cell, Ref, RefCell};
 use std::rc::Rc;
 
 use filament_exact::{Cancel, CancelCause, ScalarLimits};
@@ -51,8 +51,8 @@ use crate::hyper::seam::{HyperLetters, ParameterBinding, StepLabel, StepMatch};
 use crate::hyper::witness::{Partner, WitnessSet};
 use crate::simulation::model::{ModelFinding, ModelKey, ModelSimState, ModelSystem};
 use crate::simulation::{
-    EncodingRefusal, Expansion, ExpansionStop, OfferedReductions, Permutation, SymmetryGroup,
-    TransitionSystem,
+    ConstraintValue, EncodingRefusal, Expansion, ExpansionStop, OfferedReductions, Permutation,
+    SymmetryGroup, TransitionSystem,
 };
 use crate::temporal::UndefinedCause;
 
@@ -443,6 +443,8 @@ pub enum Halt {
     },
     /// An atom's evaluation exhausted the meter.
     Meter(filament_exact::LimitKind),
+    /// The selected state constraint has no value at a component state.
+    ConstraintUndefined(UndefinedCause),
     /// An atom gave no reading but an exhausted meter: it was refused, its
     /// state cannot be observed or the evaluator faulted (FR-487).
     Atom(crate::model_subject::AtomStop),
@@ -502,6 +504,16 @@ pub struct HyperInputs<'r, 's> {
     /// product of the [`BodySense::Negated`] body canonicalises: a possibility
     /// claim has one trace variable, so no copies to swap.
     pub copy_swap: Option<CopySwapInputs<'r>>,
+    /// The generators of the key symmetry the product canonicalises under,
+    /// acting on every component alike (FR-174 "Key symmetry"); empty when no
+    /// symmetry is selected. Each moves keys of one population and fixes the
+    /// clause's object parameters.
+    pub key_generators: Vec<Permutation>,
+    /// The state constraint that cuts the product (FR-174 "State
+    /// constraint"): a successor with a component at which it is false is
+    /// stored nowhere, and its predecessor is a boundary state. Only a
+    /// product of the [`BodySense::Negated`] body takes one.
+    pub constraint: Option<&'r str>,
 }
 
 /// Where the automaton is before a joint position is read.
@@ -518,6 +530,9 @@ pub struct HyperProduct<'r, 's> {
     pub(super) joint: Joint<'r, 's>,
     pub(super) automaton: RefCell<PropertyAutomaton>,
     pub(super) copy_swap: Option<CopySwap>,
+    pub(super) key_generators: Vec<Permutation>,
+    constraint: Option<&'r str>,
+    boundary: Cell<u64>,
     start: StateId,
     initial: Vec<HyperState>,
 }
@@ -576,6 +591,9 @@ impl<'r, 's> HyperProduct<'r, 's> {
                 .as_ref()
                 .filter(|_| symmetric)
                 .map(CopySwap::new),
+            key_generators: inputs.key_generators,
+            constraint: inputs.constraint,
+            boundary: Cell::new(0),
             start,
             initial: Vec::new(),
         })
@@ -597,6 +615,10 @@ impl<'r, 's> HyperProduct<'r, 's> {
             .collect();
         let mut initial = Vec::new();
         for components in cartesian(&lists) {
+            if self.cut(&components)? {
+                self.boundary.set(self.boundary.get().saturating_add(1));
+                continue;
+            }
             let reading = self.joint.reading(&components)?;
             for property in self.step(Before::Start, &reading)? {
                 initial.push(HyperState {
@@ -613,6 +635,39 @@ impl<'r, 's> HyperProduct<'r, 's> {
     /// Why the exploration stopped, once; `None` when it did not stop here.
     pub fn take_halt(&self) -> Option<Halt> {
         self.joint.take_halt()
+    }
+
+    /// Whether the product canonicalises under the clause's copy group.
+    pub fn swaps_copies(&self) -> bool {
+        self.copy_swap.is_some()
+    }
+
+    /// The product states the state constraint cut a successor at (FR-174
+    /// "State constraint"): a run with any is not a proof.
+    pub fn boundary_states(&self) -> u64 {
+        self.boundary.get()
+    }
+
+    /// Whether the state constraint is false at some component of
+    /// `components`; always `false` with none selected.
+    fn cut(&self, components: &[ModelSimState]) -> Result<bool, ExpansionStop> {
+        let Some(name) = self.constraint else {
+            return Ok(false);
+        };
+        let mut cut = false;
+        for (component, (system, state)) in self.joint.systems.iter().zip(components).enumerate() {
+            match system
+                .constraint_value(state, name)
+                .map_err(|stop| self.joint.record(Halt::Expansion { component, stop }))?
+            {
+                ConstraintValue::Holds => {}
+                ConstraintValue::Boundary => cut = true,
+                ConstraintValue::Undefined { cause, .. } => {
+                    return Err(self.joint.record(Halt::ConstraintUndefined(cause)))
+                }
+            }
+        }
+        Ok(cut)
     }
 
     /// The automaton of the body (negated or itself): its acceptance sets and
@@ -682,7 +737,8 @@ impl TransitionSystem for HyperProduct<'_, '_> {
 
     fn offered_reductions(&self) -> OfferedReductions {
         OfferedReductions {
-            symmetry: self.copy_swap.is_some(),
+            symmetry: self.copy_swap.is_some() || !self.key_generators.is_empty(),
+            constraint: self.constraint.is_some(),
             ..OfferedReductions::NONE
         }
     }
@@ -692,8 +748,10 @@ impl TransitionSystem for HyperProduct<'_, '_> {
         state: &HyperState,
         _group: &SymmetryGroup,
     ) -> Option<Result<(HyperState, Permutation), ExpansionStop>> {
-        let swap = self.copy_swap.as_ref()?;
-        Some(self.canonicalise(swap, state))
+        if self.copy_swap.is_none() && self.key_generators.is_empty() {
+            return None;
+        }
+        Some(self.canonicalise(state))
     }
 
     fn successors(
@@ -737,6 +795,7 @@ impl TransitionSystem for HyperProduct<'_, '_> {
         // The joint steps in the canonical order of their identities, so the
         // first undefined `μ_U` is the first in canonical order (FR-176-AC-4).
         let mut successors = Vec::new();
+        let mut cut = false;
         for (step, posts) in self.joint.joint_steps(&options)? {
             match self.joint.matched_universal(&step)? {
                 Matched::Fails => continue,
@@ -755,6 +814,10 @@ impl TransitionSystem for HyperProduct<'_, '_> {
                     continue;
                 }
             }
+            if self.cut(&posts)? {
+                cut = true;
+                continue;
+            }
             let reading = self.joint.reading(&posts)?;
             for property in self.step(before, &reading)? {
                 successors.push((
@@ -766,6 +829,9 @@ impl TransitionSystem for HyperProduct<'_, '_> {
                     },
                 ));
             }
+        }
+        if cut {
+            self.boundary.set(self.boundary.get().saturating_add(1));
         }
         Ok(Expansion {
             successors,

@@ -133,8 +133,9 @@ use fsl_eval::temporal::{
 use fsl_foundation::IdentityLimits;
 use fsl_replay::{
     AppliedReduction, BoundCovers, HyperCounterexample, HyperCounterexampleKind, HyperLocus,
-    HyperOutcome, HyperStep, HyperTrace, HyperUndefined, IncompleteCause, ModelCheckLimit,
-    ModelCheckLimits, ModelStep, ReachedLimit, RunStats, UndecidedCause,
+    HyperOutcome, HyperReductionCause, HyperStep, HyperTrace, HyperUndefined, IncompleteCause,
+    ModelCheckLimit, ModelCheckLimits, ModelStep, ReachedLimit, ReductionCause, RunStats,
+    UndecidedCause,
 };
 use fsl_semantics::check::{CheckedHyperClause, CopyGroup, FormulaNodeId, HyperForm};
 
@@ -143,6 +144,7 @@ use super::fair_walk::{tree_path, FairModel};
 use super::graph::{
     retain, retain_reduced, GraphExploration, ProductStateId, RetainedEdge, RetainedGraph,
 };
+use super::reduce;
 use fsl_route::reductions::Reductions;
 use lift::{through, Lifted};
 
@@ -231,6 +233,13 @@ pub enum HyperRefusal {
     /// is not built.
     #[error("an undefined evaluation on a tuple of closed finite executions is not decided")]
     ClosedUndefined,
+    /// The selected state constraint has no value at a component state; FR-174
+    /// states no verdict for it.
+    #[error("the state constraint has no value at a component state: {cause:?}")]
+    ConstraintUndefined {
+        /// Why it has no value.
+        cause: fsl_eval::temporal::UndefinedCause,
+    },
     /// A fairness constraint names an operation its variable's subject does
     /// not declare.
     #[error("the fairness constraint on `{name}` names an operation the subject does not declare")]
@@ -309,12 +318,24 @@ pub fn check_hyper(
         .iter()
         .map(|quantifier| slot_of(quantifier.alias.as_str()))
         .collect::<Result<Vec<_>, _>>()?;
+    let keys = match admit_reductions(&request.reductions, &systems)? {
+        Ok(keys) => keys,
+        Err(outcome) => return Ok(outcome),
+    };
+    let symmetric = !request.reductions.symmetry.is_empty();
     let instances = instances(clause, &systems, &slot_of)?;
+    let instances = if symmetric && clause.parameters().len() == 1 {
+        orbit_representatives(instances, &keys)
+    } else {
+        instances
+    };
     let copy = unfair_classes(clause);
     let run = Run {
         request: &request,
         systems,
         group: copy_symmetry(&copy),
+        keys,
+        symmetric,
         copy,
         slots,
         witness: matches!(clause.form(), Some(HyperForm::ForallExistsSafety)),
@@ -322,6 +343,61 @@ pub fn check_hyper(
         cancel,
     };
     run.decide(&instances)
+}
+
+/// FR-174 "Key symmetry" and "State constraint": admit the selected symmetry
+/// declarations over the clause's one subject, check the initial states'
+/// closure under them, and resolve the selected constraint. `Err` is the
+/// outcome that settles the item before any expansion.
+fn admit_reductions(
+    reductions: &Reductions,
+    systems: &[ModelSystem<'_>],
+) -> Result<Result<SymmetryGroup, HyperOutcome>, ModelCheckRefusal> {
+    let mut group = SymmetryGroup::default();
+    if !reductions.symmetry.is_empty() {
+        let system = systems
+            .first()
+            .ok_or_else(|| fault("a-symmetric-run-has-a-subject"))?;
+        group = reduce::admit(system, &reductions.symmetry).map_err(ModelCheckRefusal::Symmetry)?;
+        let closed = reduce::closure(system, &group).map_err(|refusal| match refusal {
+            reduce::ClosureRefusal::Encoding(refusal) => ModelCheckRefusal::Encoding(refusal),
+            reduce::ClosureRefusal::Unordered => fault("a-permuted-collection-is-ordered"),
+        })?;
+        match closed {
+            None => {}
+            Some(ReductionCause::SymmetryBroken { population, cause }) => {
+                return Ok(Err(HyperOutcome::Reduction {
+                    cause: HyperReductionCause::SymmetryBroken { population, cause },
+                    stats: Totals::default().stats(),
+                }));
+            }
+            Some(_) => return Err(fault("a-closure-settles-only-a-broken-symmetry")),
+        }
+    }
+    if let Some(name) = &reductions.constraint {
+        if systems.iter().any(|system| !system.has_constraint(name)) {
+            return Err(ModelCheckRefusal::UnknownConstraint { name: name.clone() });
+        }
+    }
+    Ok(Ok(group))
+}
+
+/// The instances of a clause with one object parameter, one for each orbit
+/// of `keys` (FR-151 "Instances"): the instance bound to the orbit's least
+/// key stands for every key of it.
+fn orbit_representatives(
+    instances: Vec<Vec<ParameterBinding>>,
+    keys: &SymmetryGroup,
+) -> Vec<Vec<ParameterBinding>> {
+    instances
+        .into_iter()
+        .filter(|instance| {
+            instance.iter().all(|binding| {
+                keys.class_of(&binding.instance.population, &binding.instance.key)
+                    .is_none_or(|class| class.keys.first() == Some(&binding.instance.key))
+            })
+        })
+        .collect()
 }
 
 /// The classes of `clause`'s copy group that EN-1 reduces by: those whose
@@ -397,6 +473,8 @@ struct Totals {
     edges: u64,
     automaton_states: u64,
     depth: u64,
+    /// The product states the state constraint cut a successor at.
+    boundary: u64,
 }
 
 impl Totals {
@@ -538,10 +616,18 @@ impl Built<'_, '_> {
     /// the body's acceptance sets to another: the quotient would not keep
     /// acceptance, so that product is stored whole. A projected (HP-6)
     /// product offers none: its states are not tuples the swap acts on.
-    fn offers_symmetry(&self) -> bool {
+    fn swaps_copies(&self) -> bool {
         match self {
-            Self::Universal(product) => product.offered_reductions().symmetry,
+            Self::Universal(product) => product.swaps_copies(),
             Self::Witness(_) | Self::Projected(_) => false,
+        }
+    }
+
+    /// The product states the state constraint cut a successor at.
+    fn boundary_states(&self) -> u64 {
+        match self {
+            Self::Universal(product) => product.boundary_states(),
+            Self::Witness(_) | Self::Projected(_) => 0,
         }
     }
 }
@@ -674,6 +760,11 @@ struct Run<'r, 'a> {
     /// The group the products are reduced by: the clause's copy group
     /// (FR-174), trivial when it has none.
     group: SymmetryGroup,
+    /// The key symmetry the request selects, as admitted over the subject
+    /// (FR-174 "Key symmetry"); trivial when none is selected.
+    keys: SymmetryGroup,
+    /// Whether the request selects a key symmetry.
+    symmetric: bool,
     /// The classes of the clause's copy group the run reduces by (FR-174):
     /// those whose variables carry no fairness.
     copy: CopyGroup,
@@ -761,6 +852,9 @@ impl<'a> Run<'_, 'a> {
                 stats: totals.stats(),
             });
         }
+        if totals.boundary > 0 {
+            return Ok(Self::constraint_reached(&totals));
+        }
         match (bounded, horizon) {
             (true, Some(depth)) => Ok(HyperOutcome::BoundReached {
                 depth: widen(depth),
@@ -768,6 +862,17 @@ impl<'a> Run<'_, 'a> {
                 stats: totals.stats(),
             }),
             _ => self.clean(&explored, &totals),
+        }
+    }
+
+    /// FR-174 "Outcomes": a run that found no violation but cut a successor at
+    /// its state constraint proves nothing, since a cut state may hide one.
+    fn constraint_reached(totals: &Totals) -> HyperOutcome {
+        HyperOutcome::Reduction {
+            cause: HyperReductionCause::ConstraintReached {
+                boundary_states: totals.boundary,
+            },
+            stats: totals.stats(),
         }
     }
 
@@ -1148,21 +1253,31 @@ impl<'a> Run<'_, 'a> {
                 });
             }
         }
-        let swapped = if explored.iter().any(|run| run.reduced) {
-            self.copy.classes.clone()
-        } else {
-            Vec::new()
-        };
-        Ok(if swapped.is_empty() {
-            HyperOutcome::Holds {
-                stats: totals.stats(),
-            }
-        } else {
-            HyperOutcome::HoldsReduced {
-                reductions: vec![AppliedReduction::CopySwap { classes: swapped }],
-                stats: totals.stats(),
-            }
-        })
+        let mut reductions = Vec::new();
+        if self.symmetric {
+            reductions.extend(explored.iter().map(|run| AppliedReduction::Symmetry {
+                groups: self.keys.classes.clone(),
+                orbit: self.orbit_of(run.instance),
+                stabiliser: self.stabiliser_of(run.instance).classes,
+            }));
+        }
+        if explored.iter().any(|run| run.reduced) {
+            reductions.push(AppliedReduction::CopySwap {
+                classes: self.copy.classes.clone(),
+            });
+        }
+        Ok(
+            if reductions.is_empty() && self.request.reductions.constraint.is_none() {
+                HyperOutcome::Holds {
+                    stats: totals.stats(),
+                }
+            } else {
+                HyperOutcome::HoldsReduced {
+                    reductions,
+                    stats: totals.stats(),
+                }
+            },
+        )
     }
 
     fn cancelled(&self, totals: &Totals) -> Result<HyperOutcome, ModelCheckRefusal> {
@@ -1297,6 +1412,9 @@ impl<'a> Run<'_, 'a> {
                 None,
             ),
             Halt::AutomatonKey(error) => return Err(HyperRefusal::Automaton(error).into()),
+            Halt::ConstraintUndefined(cause) => {
+                return Err(HyperRefusal::ConstraintUndefined { cause }.into())
+            }
             Halt::Atom(stop) => return Err(atom_halt(stop)),
             Halt::Encoding(refusal) => return Err(ModelCheckRefusal::Encoding(refusal)),
             Halt::Fault(internal) => return Err(ModelCheckRefusal::Fault(internal)),
@@ -1357,6 +1475,11 @@ impl<'a> Run<'_, 'a> {
                 max_automaton_states: limits.max_automaton_states,
                 meter: self.request.meter,
                 cancel: self.cancel,
+                key_generators: reduce::generators(&self.stabiliser_of(instance))
+                    .into_iter()
+                    .map(|(_, generator)| generator)
+                    .collect(),
+                constraint: self.request.reductions.constraint.as_deref(),
                 copy_swap: (!self.group.is_trivial()).then(|| CopySwapInputs {
                     variables: clause
                         .quantifiers()
@@ -1426,6 +1549,47 @@ impl<'a> Run<'_, 'a> {
         }
     }
 
+    /// The stabiliser of the keys `instance` binds in the selected key
+    /// symmetry (FR-151 "Instances"): the group its product runs under.
+    fn stabiliser_of(&self, instance: &[ParameterBinding]) -> SymmetryGroup {
+        instance.iter().fold(self.keys.clone(), |group, binding| {
+            group.stabiliser(&binding.instance.population, &binding.instance.key)
+        })
+    }
+
+    /// The keys `instance` stands for: its orbit under the selected key
+    /// symmetry when the clause has one object parameter, the keys it binds
+    /// otherwise, and none for a clause with no object parameter.
+    fn orbit_of(&self, instance: &[ParameterBinding]) -> Vec<String> {
+        match instance {
+            [binding] => self
+                .keys
+                .class_of(&binding.instance.population, &binding.instance.key)
+                .map_or_else(
+                    || vec![binding.instance.key.clone()],
+                    |class| class.keys.clone(),
+                ),
+            bound => bound
+                .iter()
+                .map(|binding| binding.instance.key.clone())
+                .collect(),
+        }
+    }
+
+    /// The group `product` canonicalises under: the clause's copy classes when
+    /// it swaps them, and the stabiliser of the keys `instance` binds in the
+    /// selected key symmetry. Only an HP-2 product takes the latter.
+    fn reduced_by(&self, product: &Built<'_, '_>, instance: &[ParameterBinding]) -> SymmetryGroup {
+        let mut classes = Vec::new();
+        if product.swaps_copies() {
+            classes.extend(self.group.classes.iter().cloned());
+        }
+        if matches!(product, Built::Universal(_)) {
+            classes.extend(self.stabiliser_of(instance).classes);
+        }
+        SymmetryGroup { classes }
+    }
+
     /// Explore `instance`'s product. `Err(outcome)` is a run that ended
     /// before it had a graph to examine.
     fn explore<'x>(
@@ -1439,12 +1603,8 @@ impl<'a> Run<'_, 'a> {
             Err(outcome) => return Ok(Err(outcome)),
         };
         let spent = self.request.limits.limits;
-        let reduced = product.offers_symmetry() && !self.group.is_trivial();
-        let group = if reduced {
-            self.group.clone()
-        } else {
-            SymmetryGroup::default()
-        };
+        let reduced = product.swaps_copies() && !self.group.is_trivial();
+        let group = self.reduced_by(&product, instance);
         let exploration = match &product {
             Built::Universal(product) => {
                 self.retained(product, &group, cap, totals, || product.take_halt())?
@@ -1468,6 +1628,7 @@ impl<'a> Run<'_, 'a> {
             transitions,
             widen(product.automaton().reached_states()),
         );
+        totals.boundary = totals.boundary.saturating_add(product.boundary_states());
         let ending = match &exploration.outcome {
             Outcome::Exhaustive(_) => Ending::Complete,
             Outcome::Bounded { limit, .. } => {
@@ -1911,7 +2072,15 @@ impl<'a> Run<'_, 'a> {
                 cause,
             } => {
                 let step = HyperTransition(through(&step.0, positions));
-                let posts = through(&posts, positions);
+                // Under a key symmetry the step and its post-states are the
+                // stored state's: rename them to the concrete state's.
+                let (step, posts) = if lifted.renaming.is_identity() {
+                    (step, through(&posts, positions))
+                } else {
+                    let step = self.renamed_step(&step, &lifted.renaming)?;
+                    let posts = self.concrete_posts(state, &step)?;
+                    (step, posts)
+                };
                 // An HP-3 clause's existential paths end at the pre-state, the
                 // first member's, and the evaluation names every variable
                 // with its state there (FSpec FR-400's reader rule).
@@ -1990,6 +2159,13 @@ impl<'a> Run<'_, 'a> {
                     .get(component)
                     .cloned()
                     .ok_or_else(|| fault("a-contract-finding-names-a-variable"))?;
+                let guard_of = guard_of
+                    .map(|guard| {
+                        self.system_of(component)?
+                            .permute_transition(&guard, &lifted.renaming)
+                            .map_err(|_| fault("a-key-renaming-permutes-a-transition"))
+                    })
+                    .transpose()?;
                 (
                     stem,
                     vec![state_key],
