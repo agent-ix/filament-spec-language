@@ -478,12 +478,48 @@ pub fn read_back_unchanged(
     identity: serde_json::Value,
     claim: &OccurrenceKey,
 ) -> Option<(serde_json::Value, ZoneCertificate<OccurrenceKey>)> {
-    let wire = built.to_wire(identity.clone()).ok()?;
-    let (read, read_identity) = ZoneCertificate::from_wire(&wire, claim.clone()).ok()?;
+    read_back(built, identity, claim, None)
+}
+
+/// Reads the emitted task certificate with genuine source clock identities.
+/// Its LU bounds, guard fragments, delay edges and admission witness must all
+/// survive the round trip unchanged before the independent check runs.
+pub fn read_back_unchanged_with_source(
+    built: &ZoneCertificate<OccurrenceKey>,
+    identity: serde_json::Value,
+    claim: &OccurrenceKey,
+    source: &fsl_eval::simulation::model::TimedSystem<'_, '_>,
+) -> Option<(serde_json::Value, ZoneCertificate<OccurrenceKey>)> {
+    read_back(built, identity, claim, Some(source))
+}
+
+fn read_back(
+    built: &ZoneCertificate<OccurrenceKey>,
+    identity: serde_json::Value,
+    claim: &OccurrenceKey,
+    source: Option<&fsl_eval::simulation::model::TimedSystem<'_, '_>>,
+) -> Option<(serde_json::Value, ZoneCertificate<OccurrenceKey>)> {
+    let wire = match source {
+        Some(source) => built.to_wire_with_source(identity.clone(), source),
+        None => built.to_wire(identity.clone()),
+    }
+    .ok()?;
+    let (read, read_identity) = match source {
+        Some(source) => ZoneCertificate::from_wire_with_source(&wire, claim.clone(), source),
+        None => ZoneCertificate::from_wire(&wire, claim.clone()),
+    }
+    .ok()?;
+    let written = match source {
+        Some(source) => read.to_wire_with_source(read_identity.clone(), source),
+        None => read.to_wire(read_identity.clone()),
+    }
+    .ok()?;
     (read_identity == identity
         && read.admitted == built.admitted
-        && read.to_wire(read_identity).ok().as_ref() == Some(&wire))
-    .then_some((wire, read))
+        && read.lu_bounds == built.lu_bounds
+        && read.edges == built.edges
+        && written == wire)
+        .then_some((wire, read))
 }
 
 /// The reading of a wire edge list `flat` from `start`, as

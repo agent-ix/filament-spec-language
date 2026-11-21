@@ -51,8 +51,8 @@ pub use settle::{
 };
 pub use state_graph::{decide_timed_state_graph, TimedStateGraphDecision};
 pub use task_certificate::{
-    no_release_task_product_certificate, read_back_unchanged, task_product_certificate,
-    TaskCertificateRefusal,
+    no_release_task_product_certificate, read_back_unchanged, read_back_unchanged_with_source,
+    task_product_certificate, TaskCertificateRefusal,
 };
 pub use task_product::{
     check_task_product, check_task_product_with_cancel, TaskProductSearchFrontier,

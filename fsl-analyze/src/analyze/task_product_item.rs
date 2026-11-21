@@ -610,7 +610,12 @@ fn prove<'a>(
     let Ok(identity) = fsl_replay::certificate_identity_wire(claim, model) else {
         return fault();
     };
-    let Some((wire, read)) = crate::zone_check::read_back_unchanged(&built, identity, claim) else {
+    let Some((wire, read)) = crate::zone_check::read_back_unchanged_with_source(
+        &built,
+        identity,
+        claim,
+        product.source(),
+    ) else {
         return fault();
     };
     let verdict = fsl_replay::check_zone_certificate(

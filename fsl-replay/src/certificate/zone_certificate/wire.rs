@@ -23,13 +23,16 @@
 
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine as _;
+use filament_exact::Integer;
+use fsl_eval::simulation::model::{PlaceConstraint, TimedSystem};
 use fsl_eval::simulation::StateKey;
+use fsl_semantics::check::ClockOp;
 use serde_json::{json, Map, Value};
 
 use super::{CertEdge, CertNode, DivergenceWitness, DivergentTarget, ZoneCertificate};
 use crate::certificate::task_product::{
-    array, child, count, integer, member, object, refuse, source_transition,
-    source_transition_wire, TaskProductCertificate, TaskProductShapeReason,
+    array, child, count, integer, member, object, rational, rational_wire, refuse,
+    source_transition, source_transition_wire, TaskProductCertificate, TaskProductShapeReason,
     TaskProductShapeRefusal, TaskTransitionTemplate,
 };
 use crate::certificate::zone::{LuBounds, Zone};
@@ -118,6 +121,74 @@ fn read_state(value: &Value, pointer: &str) -> Result<StateKey, TaskProductShape
     Ok(StateKey::from_canonical_bytes(bytes))
 }
 
+fn source_names(source: &TimedSystem<'_, '_>) -> Result<Vec<String>, ZoneCertificateWireError> {
+    (0..source.places().len())
+        .map(|place| {
+            source
+                .clock_place_identity(place)
+                .ok_or(ZoneCertificateWireError::Unspelled)
+        })
+        .collect()
+}
+
+fn lu_wire(value: &Option<Integer>) -> Value {
+    match value {
+        Some(value) => json!({"bound":value.to_string(),"strict":false}),
+        None => json!("infinity"),
+    }
+}
+
+fn read_lu(value: &Value, at: &str) -> Result<Option<Integer>, TaskProductShapeRefusal> {
+    if value.as_str() == Some("infinity") {
+        return Ok(None);
+    }
+    let row = object(value, at, &["bound", "strict"], &[])?;
+    if member(row, "strict") != &Value::Bool(false) {
+        return refuse(&child(at, "strict"), TaskProductShapeReason::NotCanonical);
+    }
+    integer(member(row, "bound"), &child(at, "bound")).map(Some)
+}
+
+fn op_text(op: ClockOp) -> &'static str {
+    match op {
+        ClockOp::Less => "<",
+        ClockOp::LessOrEqual => "<=",
+        ClockOp::Equal => "=",
+        ClockOp::GreaterOrEqual => ">=",
+        ClockOp::Greater => ">",
+    }
+}
+
+#[ix_trace_rs::string_edge]
+fn read_constraint(value: &Value, at: &str) -> Result<PlaceConstraint, TaskProductShapeRefusal> {
+    let row = object(value, at, &["place", "operator", "bound"], &[])?;
+    let op = match member(row, "operator").as_str() {
+        Some("<") => ClockOp::Less,
+        Some("<=") => ClockOp::LessOrEqual,
+        Some("=") => ClockOp::Equal,
+        Some(">=") => ClockOp::GreaterOrEqual,
+        Some(">") => ClockOp::Greater,
+        _ => {
+            return refuse(
+                &child(at, "operator"),
+                TaskProductShapeReason::UnknownVariant,
+            )
+        }
+    };
+    let place =
+        usize::try_from(count(member(row, "place"), &child(at, "place"))?).map_err(|_| {
+            TaskProductShapeRefusal {
+                pointer: child(at, "place"),
+                reason: TaskProductShapeReason::NotCanonical,
+            }
+        })?;
+    Ok(PlaceConstraint::new(
+        place,
+        op,
+        rational(member(row, "bound"), &child(at, "bound"))?,
+    ))
+}
+
 impl<O> ZoneCertificate<O> {
     /// The certificate's wire value, `identity` the structural identity of
     /// the obligation it proves (FR-412).
@@ -127,9 +198,45 @@ impl<O> ZoneCertificate<O> {
     /// [`ZoneCertificateWireError`] when a member lies outside the
     /// task-product form or a value has no spelling.
     pub fn to_wire(&self, identity: Value) -> Result<Value, ZoneCertificateWireError> {
+        self.write_wire(identity, None)
+    }
+
+    /// Writes source LU bounds with the original clock-place identities and
+    /// preserves source guard fragments. No clock identity is inferred from bytes.
+    ///
+    /// # Errors
+    /// Returns a shape or spelling refusal when the source context does not fit.
+    pub fn to_wire_with_source(
+        &self,
+        identity: Value,
+        source: &TimedSystem<'_, '_>,
+    ) -> Result<Value, ZoneCertificateWireError> {
+        self.write_wire(identity, Some(&source_names(source)?))
+    }
+
+    fn write_wire(
+        &self,
+        identity: Value,
+        source: Option<&[String]>,
+    ) -> Result<Value, ZoneCertificateWireError> {
         use ZoneCertificateWireError::Unsupported;
+        let mut bounds = Vec::new();
         if !self.lu_bounds.lower.is_empty() || !self.lu_bounds.upper.is_empty() {
-            return Err(Unsupported("bounds"));
+            let names = source.ok_or(Unsupported("bounds"))?;
+            if names.len() != self.lu_bounds.lower.len()
+                || names.len() != self.lu_bounds.upper.len()
+            {
+                return Err(Unsupported("bounds"));
+            }
+            let mut seen = std::collections::BTreeSet::new();
+            for node in &self.nodes {
+                if !seen.insert(node.state_key.as_bytes()) {
+                    continue;
+                }
+                for (index, name) in names.iter().enumerate() {
+                    bounds.push(json!({"state":state_wire(&node.state_key),"clock":name,"lower":lu_wire(&self.lu_bounds.lower[index]),"upper":lu_wire(&self.lu_bounds.upper[index])}));
+                }
+            }
         }
         if self.components.is_some() {
             return Err(Unsupported("components"));
@@ -162,7 +269,9 @@ impl<O> ZoneCertificate<O> {
         }
         let mut edges = Vec::with_capacity(self.edges.len());
         for edge in &self.edges {
-            if edge.part.is_some() || edge.horizon.is_some() || edge.silent.is_some() {
+            if edge.silent.is_some()
+                || (source.is_none() && (edge.part.is_some() || edge.horizon.is_some()))
+            {
                 return Err(Unsupported("edges"));
             }
             let transition = match (&edge.transition, &edge.task_transition) {
@@ -171,9 +280,17 @@ impl<O> ZoneCertificate<O> {
                 (None, Some(template)) => template
                     .to_wire()
                     .map_err(|_| ZoneCertificateWireError::Unspelled)?,
+                (None, None) if source.is_some() && edge.part.is_none() => Value::Null,
                 _ => return Err(Unsupported("edges")),
             };
-            edges.push(json!({"node": edge.from, "target": edge.to, "transition": transition}));
+            let mut row = json!({"node": edge.from, "target": edge.to, "transition": transition});
+            if let Some(part) = edge.part {
+                row["part"] = json!(part);
+            }
+            if let Some(horizon) = &edge.horizon {
+                row["horizon"]=Value::Array(horizon.iter().map(|constraint|json!({"place":constraint.place(),"operator":op_text(constraint.op()),"bound":rational_wire(constraint.bound())})).collect());
+            }
+            edges.push(row);
         }
         let mut map = Map::new();
         if let Some(witness) = &self.admitted {
@@ -188,7 +305,7 @@ impl<O> ZoneCertificate<O> {
                 json!({"edges": path, "start": witness.start}),
             );
         }
-        map.insert("bounds".to_owned(), json!([]));
+        map.insert("bounds".to_owned(), Value::Array(bounds));
         map.insert("edges".to_owned(), Value::Array(edges));
         map.insert("identity".to_owned(), identity);
         map.insert("initials".to_owned(), json!(self.initials));
@@ -215,6 +332,28 @@ impl<O> ZoneCertificate<O> {
         value: &Value,
         obligation: O,
     ) -> Result<(Self, Value), ZoneCertificateWireError> {
+        Self::read_wire(value, obligation, None)
+    }
+
+    /// Reads source bounds against the original source's complete clock layout.
+    /// Every state/clock row must be present in canonical order; differing rows
+    /// cannot silently collapse to one global bound.
+    ///
+    /// # Errors
+    /// Returns the first malformed row or a source-context mismatch.
+    pub fn from_wire_with_source(
+        value: &Value,
+        obligation: O,
+        source: &TimedSystem<'_, '_>,
+    ) -> Result<(Self, Value), ZoneCertificateWireError> {
+        Self::read_wire(value, obligation, Some(&source_names(source)?))
+    }
+
+    fn read_wire(
+        value: &Value,
+        obligation: O,
+        source: Option<&[String]>,
+    ) -> Result<(Self, Value), ZoneCertificateWireError> {
         let map = object(
             value,
             "",
@@ -222,9 +361,7 @@ impl<O> ZoneCertificate<O> {
             &["admitted", "task_product"],
         )?;
         let scale = integer(member(map, "scale"), "/scale")?;
-        if !array(member(map, "bounds"), "/bounds")?.is_empty() {
-            return Err(ZoneCertificateWireError::Unsupported("bounds"));
-        }
+        let bounds = array(member(map, "bounds"), "/bounds")?;
         let mut nodes = Vec::new();
         for (index, node) in array(member(map, "nodes"), "/nodes")?.iter().enumerate() {
             let at = child("/nodes", index);
@@ -248,29 +385,94 @@ impl<O> ZoneCertificate<O> {
                 product: None,
             });
         }
+        let mut lu_bounds = LuBounds {
+            lower: Vec::new(),
+            upper: Vec::new(),
+        };
+        if !bounds.is_empty() {
+            let names = source.ok_or(ZoneCertificateWireError::Unsupported("bounds"))?;
+            let mut seen = std::collections::BTreeSet::new();
+            let mut cursor = 0;
+            for node in &nodes {
+                if !seen.insert(node.state_key.as_bytes()) {
+                    continue;
+                }
+                for (clock, name) in names.iter().enumerate() {
+                    let at = child("/bounds", cursor);
+                    let Some(value) = bounds.get(cursor) else {
+                        return refuse(&at, TaskProductShapeReason::NotCanonical)
+                            .map_err(Into::into);
+                    };
+                    let row = object(value, &at, &["state", "clock", "lower", "upper"], &[])?;
+                    if read_state(member(row, "state"), &child(&at, "state"))? != node.state_key
+                        || member(row, "clock").as_str() != Some(name)
+                    {
+                        return refuse(&at, TaskProductShapeReason::NotCanonical)
+                            .map_err(Into::into);
+                    }
+                    let lower = read_lu(member(row, "lower"), &child(&at, "lower"))?;
+                    let upper = read_lu(member(row, "upper"), &child(&at, "upper"))?;
+                    if lu_bounds.lower.len() < names.len() {
+                        lu_bounds.lower.push(lower);
+                        lu_bounds.upper.push(upper);
+                    } else if lu_bounds.lower[clock] != lower || lu_bounds.upper[clock] != upper {
+                        return refuse(&at, TaskProductShapeReason::NotCanonical)
+                            .map_err(Into::into);
+                    }
+                    cursor += 1;
+                }
+            }
+            if cursor != bounds.len() {
+                return refuse("/bounds", TaskProductShapeReason::NotCanonical).map_err(Into::into);
+            }
+        }
         let mut edges = Vec::new();
         for (index, edge) in array(member(map, "edges"), "/edges")?.iter().enumerate() {
             let at = child("/edges", index);
-            let edge = object(edge, &at, &["node", "transition", "target"], &[])?;
+            let optional = if source.is_some() {
+                &["part", "horizon"][..]
+            } else {
+                &[][..]
+            };
+            let edge = object(edge, &at, &["node", "transition", "target"], optional)?;
             let transition = member(edge, "transition");
             let template =
                 transition.get("type").and_then(Value::as_str) == Some("task-transition-template");
             let at_transition = child(&at, "transition");
-            let (source, task) = if template {
+            let (source_step, task) = if template {
                 (
                     None,
                     Some(TaskTransitionTemplate::read(transition, &at_transition)?),
                 )
+            } else if transition.is_null() && source.is_some() {
+                (None, None)
             } else {
                 (Some(source_transition(transition, &at_transition)?), None)
             };
             edges.push(CertEdge {
                 from: usize::try_from(count(member(edge, "node"), &child(&at, "node"))?)
                     .unwrap_or(usize::MAX),
-                transition: source,
+                transition: source_step,
                 task_transition: task,
-                part: None,
-                horizon: None,
+                part: edge
+                    .get("part")
+                    .map(|value| {
+                        count(value, &child(&at, "part"))
+                            .map(|value| usize::try_from(value).unwrap_or(usize::MAX))
+                    })
+                    .transpose()?,
+                horizon: edge
+                    .get("horizon")
+                    .map(|value| {
+                        array(value, &child(&at, "horizon"))?
+                            .iter()
+                            .enumerate()
+                            .map(|(index, value)| {
+                                read_constraint(value, &child(&child(&at, "horizon"), index))
+                            })
+                            .collect()
+                    })
+                    .transpose()?,
                 to: usize::try_from(count(member(edge, "target"), &child(&at, "target"))?)
                     .unwrap_or(usize::MAX),
                 silent: None,
@@ -296,10 +498,7 @@ impl<O> ZoneCertificate<O> {
             Self {
                 obligation,
                 scale,
-                lu_bounds: LuBounds {
-                    lower: Vec::new(),
-                    upper: Vec::new(),
-                },
+                lu_bounds,
                 nodes,
                 edges,
                 initials,
