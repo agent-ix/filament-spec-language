@@ -4,9 +4,9 @@
 //! clause's definitions in each target, and the clause shapes the TLA+
 //! encoding does not cover.
 
-use crate::plan_export_surface::{COUNTER_UNIT, counter_model, counter_request, source};
+use crate::plan_export_surface::{counter_model, counter_request, source, COUNTER_UNIT};
 use ix_trace_rs::trace;
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 
 const HEAD: &str =
     "temporal T using t over (c: Counter::Counter) clock \"model-steps\" on origin {";
@@ -2750,6 +2750,36 @@ fn a_protocol_subject_with_an_unbound_static_role_refuses_wrong_role_mapping() {
     assert_eq!(value["cause"], "wrong-role-mapping", "{value}");
     assert_eq!(
         value["details"]["path"], "/request/export/protocols/0/roles/a",
+        "{value}"
+    );
+}
+
+#[test]
+#[trace("FSpec-FR-813-AC-24")]
+fn an_unbound_source_owned_role_without_initial_refuses_with_typed_role_error() {
+    let tail = format!(
+        "object Order identity (total) {{ total: Int[0, 9]; population orders; }}\n\
+         {}protocol Hand using P over (k: Counter::Counter) on origin {{\n\
+             role Seller on Order;\n\
+             requires temporal T;\n\
+             run sequence Main {{ check Ok using v {{ true }}; }}\n\
+             finish Done as (d: Counter::Counter) {{ true }};\n\
+         }}\n",
+        clause_tail("always holds(c.value <= 5)")
+    );
+    let (exit, value) = export_unit(
+        &tail,
+        Target::Tla,
+        None,
+        "filament.temporal.infinite-trace/v1",
+        false,
+    );
+
+    assert_eq!(exit, 20, "{value}");
+    assert_eq!(value["code"], "invalid_runtime_input", "{value}");
+    assert_eq!(value["cause"], "wrong-role-mapping", "{value}");
+    assert_eq!(
+        value["details"]["path"], "/request/export/protocols/0/roles/Seller",
         "{value}"
     );
 }
