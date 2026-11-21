@@ -1008,7 +1008,16 @@ fn run(
     let (product, monitor) = match built {
         (ProbBuild::Built(product), monitor) => (product, monitor),
         (ProbBuild::Undefined(path), monitor) => {
-            return undefined::run(simulation, claim, path, monitor, &limits, cancel, subject)
+            return undefined::run(
+                simulation,
+                claim,
+                path,
+                monitor,
+                &limits,
+                cancel,
+                subject,
+                tamper_witness,
+            )
         }
     };
     if let Some(formula) = bounded_formula {

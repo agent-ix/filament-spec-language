@@ -137,6 +137,12 @@ impl From<ExactProbabilityGraphError> for ProbabilityWitnessError {
     }
 }
 
+impl From<fsl_eval::automaton::QualifiedBoundedError> for ProbabilityWitnessError {
+    fn from(error: fsl_eval::automaton::QualifiedBoundedError) -> Self {
+        bounded::monitor_error(error)
+    }
+}
+
 /// Observation points of actual semantic work, for cancellation regression tests.
 #[cfg(feature = "test-support")]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

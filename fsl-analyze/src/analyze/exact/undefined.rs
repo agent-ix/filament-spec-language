@@ -16,18 +16,21 @@ pub(super) fn run(
     limits: &crate::exact_probabilistic::ExactProbLimits,
     cancel: &Cancel,
     subject: SubjectLimits<'_>,
+    tamper: Option<&dyn Fn(&mut ProbabilisticCounterexample)>,
 ) -> EngineReport {
     let system = match ModelSystem::new_with_cancel(simulation, cancel) {
         Ok(system) => system,
         Err(error) => return build_refusal(ProductRefusal::Admission(error), subject),
     };
-    let built =
-        materialize(&system, claim, &path, monitor, limits, cancel).map_err(ProducerFailure::from);
-    let (witness, scheduler) = match built {
+    let built = materialize(&system, claim, &path, monitor, limits, cancel);
+    let (mut witness, scheduler) = match built {
         Ok(built) => built,
         Err(ProducerFailure::Invariant) => return broken(),
         Err(ProducerFailure::Stopped(error)) => return failure(error, subject, limits),
     };
+    if let Some(tamper) = tamper {
+        tamper(&mut witness.path);
+    }
     let Some(package) = system.source_package() else {
         return not_yet();
     };
@@ -114,6 +117,17 @@ fn materialize(
     monitor: Option<Monitor<PropertyAutomaton>>,
     limits: &crate::exact_probabilistic::ExactProbLimits,
     cancel: &Cancel,
+) -> Result<(ProbabilityUndefinedWitness, SpelledScheduler), ProducerFailure> {
+    materialize_inner(system, claim, path, monitor, limits, cancel).map_err(ProducerFailure::from)
+}
+
+fn materialize_inner(
+    system: &ModelSystem<'_>,
+    claim: &fsl_semantics::check::CheckedProbabilisticClaim,
+    path: &UndefinedPath,
+    monitor: Option<Monitor<PropertyAutomaton>>,
+    limits: &crate::exact_probabilistic::ExactProbLimits,
+    cancel: &Cancel,
 ) -> Result<(ProbabilityUndefinedWitness, SpelledScheduler), ProbabilityWitnessError> {
     let item = fsl_replay::probabilistic_claim_identity(claim)
         .map_err(|_| ProbabilityWitnessError::Refused)?;
@@ -135,10 +149,10 @@ fn materialize(
                     monitor,
                     limits.model.max_automaton_states,
                 )
-                .map_err(|_| ProbabilityWitnessError::Refused)?,
+                .map_err(ProbabilityWitnessError::from)?,
             )
         }
-        (_, None) => None,
+        (ProbForm::Reach { .. }, None) => None,
         _ => return Err(ProbabilityWitnessError::Refused),
     };
     let key = |state: &crate::exact_probabilistic::ProbKey| -> Result<ProbabilityProductKey, ProbabilityWitnessError> {
@@ -156,7 +170,7 @@ fn materialize(
             Some(monitor) => {
                 let control = monitor
                     .unread_key()
-                    .map_err(|_| ProbabilityWitnessError::Refused)?;
+                    .map_err(ProbabilityWitnessError::from)?;
                 ProbabilityProductKey::for_formula_state(
                     reference,
                     &path.key.model,
@@ -182,7 +196,7 @@ fn materialize(
             &context,
             limits.model.max_automaton_states,
         )
-        .map_err(|_| ProbabilityWitnessError::Refused)?;
+        .map_err(ProbabilityWitnessError::from)?;
         let predicate = formula
             .condition(initial_monitor.atom().index())
             .ok_or(ProbabilityWitnessError::Refused)?;
@@ -194,14 +208,19 @@ fn materialize(
         let truth = match readings.as_slice() {
             [PredicateReading::True] => true,
             [PredicateReading::False] => false,
+            [PredicateReading::Refused(outcome)] => {
+                return Err(ProbabilityWitnessError::Build(Box::new(
+                    ExactProbBuildIssue::Predicate(outcome.clone()),
+                )))
+            }
             _ => return Err(ProbabilityWitnessError::Refused),
         };
         let control = initial_monitor
             .start(truth)
-            .map_err(|_| ProbabilityWitnessError::Refused)?;
+            .map_err(ProbabilityWitnessError::from)?;
         let control = initial_monitor
             .key(control)
-            .map_err(|_| ProbabilityWitnessError::Refused)?;
+            .map_err(ProbabilityWitnessError::from)?;
         let (raw, _) = system
             .state_key(initial)
             .map_err(|_| ProbabilityWitnessError::Refused)?;
