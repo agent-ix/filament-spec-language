@@ -184,7 +184,10 @@ fn incremental_and_full_reparse_publish_identical_language_outputs() {
         .any(|item| item.spelling == "Complete"));
     for word in ["machine", "step", "population", "occurs"] {
         assert!(
-            snapshot.completions.iter().any(|item| item.spelling == word),
+            snapshot
+                .completions
+                .iter()
+                .any(|item| item.spelling == word),
             "{word} is offered as a contextual keyword"
         );
     }

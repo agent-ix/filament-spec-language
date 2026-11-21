@@ -1304,12 +1304,8 @@ fn package_default_items_equal_the_source_defaults_over_every_claim_form() {
 #[trace("TC-2958", "FR-940-AC-22")]
 #[test]
 fn a_replay_over_the_input_bytes_bound_settles_replay_refused_on_both_routes() {
-    let unit = crate::counter::unit_text(&format!(
-        "{}{}{}",
-        bounded(),
-        at_most_two(),
-        reach_three()
-    ));
+    let unit =
+        crate::counter::unit_text(&format!("{}{}{}", bounded(), at_most_two(), reach_three()));
     let items = json!([{"claim": "Bounded"}, {"claim": "AtMostTwo"}, {"claim": "ReachThree"}]);
     let ws = Workspace::new("replay-input-bytes");
     let path = crate::analyze_cli_support::request_over(
@@ -1329,7 +1325,12 @@ fn a_replay_over_the_input_bytes_bound_settles_replay_refused_on_both_routes() {
     let below = u64::try_from(package.len() / 2).expect("a length");
     for (route, request) in [("source", &path), ("package", &package_path)] {
         let unset = analyze(request);
-        assert_eq!(label(&unset.item(1)), "refuted", "{route}: {}", unset.document());
+        assert_eq!(
+            label(&unset.item(1)),
+            "refuted",
+            "{route}: {}",
+            unset.document()
+        );
         let run = crate::analyze_cli_support::analyze_under_replay_bytes(request, below);
         let document = run.document();
         assert_eq!(label(&run.item(0)), "proved", "{route}: {document}");
@@ -1337,23 +1338,19 @@ fn a_replay_over_the_input_bytes_bound_settles_replay_refused_on_both_routes() {
             let item = run.item(index);
             assert_eq!(label(&item), "inconclusive", "{route} {index}: {document}");
             assert_eq!(
-                item["record"]["cause"]["kind"],
-                "replay-refused",
+                item["record"]["cause"]["kind"], "replay-refused",
                 "{route} {index}: {item}"
             );
             assert_eq!(
-                item["record"]["cause"]["code"],
-                "stage_limit_exceeded",
+                item["record"]["cause"]["code"], "stage_limit_exceeded",
                 "{route} {index}: {item}"
             );
             assert_eq!(
-                item["record"]["cause"]["cause"],
-                "input-bytes-exceeded",
+                item["record"]["cause"]["cause"], "input-bytes-exceeded",
                 "{route} {index}: {item}"
             );
             assert_eq!(
-                item["record"]["cause"]["setting"],
-                "replay.input_bytes",
+                item["record"]["cause"]["setting"], "replay.input_bytes",
                 "{route} {index}: {item}"
             );
         }

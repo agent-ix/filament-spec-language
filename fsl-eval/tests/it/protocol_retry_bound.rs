@@ -12,7 +12,7 @@ use fsl_eval::simulation::model::{
     ExpansionLimits, ModelSimulationRequest, ModelSystem, PopulationUniverse,
 };
 use fsl_eval::simulation::protocol::{
-    ProtocolSystem, ProtocolState, ProtocolTransition, ResolvedMemory, Sc, StepKind,
+    ProtocolState, ProtocolSystem, ProtocolTransition, ResolvedMemory, Sc, StepKind,
 };
 use fsl_package::CheckedPackage;
 use fsl_semantics::check::PackageDeclarations;

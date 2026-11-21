@@ -1051,7 +1051,10 @@ fn work<'a>(
                 limits.deadline,
                 engines.options().provider_limits,
                 engines.manifest_wire(),
-                item.candidates.iter().map(|candidate| candidate.id().clone()).collect(),
+                item.candidates
+                    .iter()
+                    .map(|candidate| candidate.id().clone())
+                    .collect(),
                 super::hybrid_item::Spelling {
                     packages: binding.packages,
                     emit: limits.emit,
@@ -1433,4 +1436,3 @@ mod tests {
         assert_eq!(entries, vec![("a", "a", &b"a"[..]), ("b", "z", &b"z"[..])]);
     }
 }
-

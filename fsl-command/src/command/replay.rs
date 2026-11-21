@@ -7,11 +7,11 @@
 use std::path::Path;
 
 use fsl_foundation::serde_object::Object;
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 
 use super::{
-    FileCounts, NativeResult, Result, RunCause, RunResult, check_file_count, intake_with_bytes,
-    wire,
+    check_file_count, intake_with_bytes, wire, FileCounts, NativeResult, Result, RunCause,
+    RunResult,
 };
 use crate::replay_request::RequestDefect;
 
@@ -80,7 +80,9 @@ pub(super) fn run_bytes(
             let row = result
                 .to_function_json()
                 .map_err(|error| RunCause::ReplayOutput {
-                    outcome: Box::new(fsl_replay::OutcomeDocument::from_replay_output_failure(0, &error)),
+                    outcome: Box::new(fsl_replay::OutcomeDocument::from_replay_output_failure(
+                        0, &error,
+                    )),
                     error,
                 })?;
             let row: Value = serde_json::from_str(&row).map_err(RunCause::Output)?;

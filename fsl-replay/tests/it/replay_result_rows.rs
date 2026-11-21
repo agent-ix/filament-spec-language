@@ -3,14 +3,14 @@
 //! replay-result arm writes its `results` row, so a replay outcome's
 //! `replayed` result (FR-286) and its text (FR-865) carry every arm.
 
-use filament_exact::ScalarLimits;
 use filament_contract_model::{CheckedNodeId, CheckedNodePathSegment};
+use filament_exact::ScalarLimits;
 use filament_semantic_value::catalog::Category;
+use fsl_eval::simulation::StateKey;
 use fsl_eval::temporal::{
     InsufficientData, InsufficientDataEvaluation, TemporalOutcome, TemporalPosition,
     WindowLimitReached,
 };
-use fsl_eval::simulation::StateKey;
 use fsl_package::protocol_view::{Port, PortRef};
 use fsl_replay::protocol_analysis::{
     ProtocolReplayResult, ProtocolReplaySettlement, WalkDisagreement,
@@ -475,16 +475,16 @@ fn a_protocol_analysis_replay_writes_its_row() {
     );
 
     let step_not_successor = ReplayResult::ProtocolAnalysis(ProtocolReplayResult {
-        settlement: ProtocolReplaySettlement::Inconclusive(
-            WalkDisagreement::StepNotSuccessor(PortRef {
+        settlement: ProtocolReplaySettlement::Inconclusive(WalkDisagreement::StepNotSuccessor(
+            PortRef {
                 node: CheckedNodeId {
                     package: "fixture".into(),
                     path: vec![CheckedNodePathSegment::Name("step".into())],
                     ordinal: 2,
                 },
                 port: Port::Exit,
-            }),
-        ),
+            },
+        )),
     });
     assert_eq!(
         row(&step_not_successor),

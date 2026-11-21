@@ -77,10 +77,7 @@ mod hint_catalog_tests {
         for row in HINTS {
             assert_eq!(hint_for(row.code, row.cause), Some(row.text));
         }
-        assert_eq!(
-            hint_for(Code::OutputFailure, Some("output-failure")),
-            None
-        );
+        assert_eq!(hint_for(Code::OutputFailure, Some("output-failure")), None);
         assert_eq!(hint_for(Code::InvalidRequest, None), None);
 
         let unknown = [HintRow {
@@ -119,4 +116,3 @@ mod hint_catalog_tests {
         ));
     }
 }
-

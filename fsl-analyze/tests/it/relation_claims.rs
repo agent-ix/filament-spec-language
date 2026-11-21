@@ -159,7 +159,10 @@ fn a_holding_relation_is_checked_over_reachable_transition_tuples() {
 fn relation_tuple_limit_and_depth_bound_are_reported() {
     let (package, relation, document) = package_and_relation(Vault::Secure, DETERMINISTIC);
     let (packages, snapshots, initial) = initial_world(&document);
-    let limits = ModelCheckLimits { max_relation_tuples: 10, ..ModelCheckLimits::default() };
+    let limits = ModelCheckLimits {
+        max_relation_tuples: 10,
+        ..ModelCheckLimits::default()
+    };
     let stopped = check_model_relation(
         ModelRelationCheckRequest {
             relation: &relation,
@@ -208,7 +211,10 @@ fn relation_tuple_limit_and_depth_bound_are_reported() {
 fn state_budget_exhaustion_does_not_settle_holds() {
     let (package, relation, document) = package_and_relation(Vault::Secure, DETERMINISTIC);
     let (packages, snapshots, initial) = initial_world(&document);
-    let limits = ModelCheckLimits { limits: Limits::default().with_max_states(1), ..ModelCheckLimits::default() };
+    let limits = ModelCheckLimits {
+        limits: Limits::default().with_max_states(1),
+        ..ModelCheckLimits::default()
+    };
     let outcome = check_model_relation(
         ModelRelationCheckRequest {
             relation: &relation,

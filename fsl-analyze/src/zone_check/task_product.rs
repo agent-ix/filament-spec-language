@@ -155,7 +155,10 @@ pub fn check_task_product_with_cancel(
     // Process concrete events by absolute time so the first refutation is the
     // earliest deadline miss; within a timestamp, continue one path before
     // branching across every same-time transition ordering.
-    #[allow(clippy::mutable_key_type, reason = "exact rationals cache integer representations; their numeric ordering and equality never mutate")]
+    #[allow(
+        clippy::mutable_key_type,
+        reason = "exact rationals cache integer representations; their numeric ordering and equality never mutate"
+    )]
     let mut queue = BTreeMap::<Rational, VecDeque<Pending>>::new();
     for (initial_state, state) in product.initial().into_iter().enumerate() {
         enqueue(
@@ -576,7 +579,10 @@ fn canonical_refutation(
     Ok((None, work))
 }
 
-#[allow(clippy::mutable_key_type, reason = "exact rationals cache integer representations; their numeric ordering and equality never mutate")]
+#[allow(
+    clippy::mutable_key_type,
+    reason = "exact rationals cache integer representations; their numeric ordering and equality never mutate"
+)]
 fn enqueue(queue: &mut BTreeMap<Rational, VecDeque<Pending>>, pending: Pending) {
     queue
         .entry(pending.state.now().clone())
@@ -584,7 +590,10 @@ fn enqueue(queue: &mut BTreeMap<Rational, VecDeque<Pending>>, pending: Pending) 
         .push_back(pending);
 }
 
-#[allow(clippy::mutable_key_type, reason = "exact rationals cache integer representations; their numeric ordering and equality never mutate")]
+#[allow(
+    clippy::mutable_key_type,
+    reason = "exact rationals cache integer representations; their numeric ordering and equality never mutate"
+)]
 fn pop_earliest(queue: &mut BTreeMap<Rational, VecDeque<Pending>>) -> Option<Pending> {
     let time = queue.first_key_value()?.0.clone();
     let pending = queue.get_mut(&time)?.pop_back()?;

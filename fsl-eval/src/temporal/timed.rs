@@ -99,10 +99,7 @@ impl TimedTrace {
     }
 
     /// The finite trace whose recording is complete through `through`.
-    pub fn through(
-        stamps: Vec<Rational>,
-        through: Rational,
-    ) -> Result<Self, TemporalRefusal> {
+    pub fn through(stamps: Vec<Rational>, through: Rational) -> Result<Self, TemporalRefusal> {
         let mut trace = Self::new(stamps)?;
         if trace.stamps.last().is_some_and(|last| &through < last) {
             return Err(TemporalRefusal::ThroughBeforeLastStamp);

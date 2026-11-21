@@ -149,7 +149,8 @@ fn check_dependent_bytes_excludes_source_and_counts_selected_library() {
     let importing_source = "language \"ix:native\" edition \"1-draft\";\n\
          profile v = \"filament.value.complete/v1\";\n\
          import \"test/geometry\" as g;\n\
-         function Eligible using v(n: Int[0, 12]): Boolean pure { n >= 3 }\n".to_owned();
+         function Eligible using v(n: Int[0, 12]): Boolean pure { n >= 3 }\n"
+        .to_owned();
     let selected_library = || CheckInputs {
         libraries: vec![("test/geometry".to_owned(), library_path.clone())],
         dependent_bytes: library_bytes,

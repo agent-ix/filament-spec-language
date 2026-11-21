@@ -6,7 +6,7 @@
 
 use crate::plan_export_surface::{braking_member, braking_request, counter_request, outcome_json};
 use ix_trace_rs::trace;
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 
 fn names(value: &Value, text: &str) {
     assert!(value.to_string().contains(text), "names {text}: {value}");

@@ -1721,7 +1721,10 @@ fn a_measured_recursive_clock_reading_unfolds() {
     let [part] = guard.parts() else {
         panic!("one convex part");
     };
-    assert!(part.data().is_none(), "no data literal beside the constraint");
+    assert!(
+        part.data().is_none(),
+        "no data literal beside the constraint"
+    );
     let [constraint] = part.clocks() else {
         panic!("one atomic constraint");
     };

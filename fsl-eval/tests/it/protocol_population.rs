@@ -17,9 +17,9 @@ use fsl_package::CheckedPackage;
 use fsl_semantics::check::PackageDeclarations;
 use fsl_semantics::model::accounting::ModelNormalizationLimits;
 use fsl_semantics::model::intake::{admit_unit, package_input};
-use fsl_semantics::model::observation::{DocumentProvision, ObservationLimits, document_reference};
+use fsl_semantics::model::observation::{document_reference, DocumentProvision, ObservationLimits};
 use ix_trace_rs::trace;
-use serde_json::{Value as Json, json};
+use serde_json::{json, Value as Json};
 
 #[path = "../../../fsl-semantics/tests/support/tc1070.rs"]
 #[allow(

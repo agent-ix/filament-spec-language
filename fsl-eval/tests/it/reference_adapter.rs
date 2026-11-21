@@ -5,8 +5,8 @@
 //! registered host bodies through one scheduler with the results
 //! `CheckedPackage::call` gives.
 
-use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Arc;
 
 use filament_eval::{
     Admission, Body, BodyFactory, BodyFailure, CallFailure, Evaluation, FamilyOutcome, Progress,
@@ -806,29 +806,25 @@ fn begin_of_a_call_and_of_an_expression_observes_the_meters_handle() {
     for handle in [Some(Cancel::new()), None] {
         let mut registry = Registry::new(Closure::new(&package));
         let mut meter = meter_with(handle.clone());
-        assert!(
-            registry
-                .begin_call(
-                    key.clone(),
-                    vec![int(3), int(4)],
-                    SessionLimits::default(),
-                    &objects,
-                    &mut meter
-                )
-                .is_ok()
-        );
+        assert!(registry
+            .begin_call(
+                key.clone(),
+                vec![int(3), int(4)],
+                SessionLimits::default(),
+                &objects,
+                &mut meter
+            )
+            .is_ok());
         let mut meter = meter_with(handle);
-        assert!(
-            registry
-                .begin_expression(
-                    &expression,
-                    vec![int(3), int(4)],
-                    SessionLimits::default(),
-                    &objects,
-                    &mut meter
-                )
-                .is_ok()
-        );
+        assert!(registry
+            .begin_expression(
+                &expression,
+                vec![int(3), int(4)],
+                SessionLimits::default(),
+                &objects,
+                &mut meter
+            )
+            .is_ok());
     }
 }
 

@@ -42,10 +42,10 @@ use filament_checked::key::DeclarationKey;
 use fsl_semantics::model::object_environment::PlacePresences;
 use fsl_semantics::model::state::ModelState;
 
-use super::BROKEN;
 use super::encode::declaration_text;
 use super::state_predicate::PredicateReading;
 use super::walk::{expand_enabled, stop};
+use super::BROKEN;
 use super::{ModelSimState, ModelSystem};
 use crate::simulation::expansion::ExpansionStop;
 use crate::simulation::reduction::Permutation;
@@ -56,9 +56,9 @@ mod over_time;
 pub use over_time::{DelayInterval, ScheduledWindow, TimeLock, TimedTerminalClass};
 mod race;
 pub use race::{
-    TimedRace, TimedRaceDraw, TimedRaceStep, TimedRaceStop, TimedSample, TimedSampleDisagreement,
-    TimedSampleReplay, TimedSampleStop, TimedSchedulerChoice, replay_timed_sample, sample_timed,
-    sample_timed_race,
+    replay_timed_sample, sample_timed, sample_timed_race, TimedRace, TimedRaceDraw, TimedRaceStep,
+    TimedRaceStop, TimedSample, TimedSampleDisagreement, TimedSampleReplay, TimedSampleStop,
+    TimedSchedulerChoice,
 };
 
 /// One clock of the subject: a clock field of one object of its universe.

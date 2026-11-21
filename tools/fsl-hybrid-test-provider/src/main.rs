@@ -82,9 +82,17 @@ fn run(script: &Value) -> Result<(), String> {
         // refused the way a provider that cannot read the package refuses.
         let held: Vec<&str> = request["body"]["request"]["dependencies"]
             .as_array()
-            .map(|held| held.iter().filter_map(|entry| entry["identity"].as_str()).collect())
+            .map(|held| {
+                held.iter()
+                    .filter_map(|entry| entry["identity"].as_str())
+                    .collect()
+            })
             .unwrap_or_default();
-        if required.iter().filter_map(Value::as_str).any(|identity| !held.contains(&identity)) {
+        if required
+            .iter()
+            .filter_map(Value::as_str)
+            .any(|identity| !held.contains(&identity))
+        {
             return Err("the request lacks a required dependency".to_owned());
         }
     }

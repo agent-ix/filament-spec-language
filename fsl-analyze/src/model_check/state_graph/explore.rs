@@ -392,10 +392,12 @@ impl Exploration<'_, '_, '_> {
         };
         if let Some(contract) = undefined {
             return Ok(Ok(Some(DeadlockEvent::Violated(
-                Box::new(CounterexampleKind::UndefinedEvaluation(UndefinedEvaluation {
-                    site: site(UndefinedLocus::Contract(contract.clause), contract.guard_of),
-                    cause: contract.cause,
-                })),
+                Box::new(CounterexampleKind::UndefinedEvaluation(
+                    UndefinedEvaluation {
+                        site: site(UndefinedLocus::Contract(contract.clause), contract.guard_of),
+                        cause: contract.cause,
+                    },
+                )),
                 at,
             ))));
         }
@@ -408,14 +410,17 @@ impl Exploration<'_, '_, '_> {
         };
         Ok(Ok(match class {
             TerminalClass::NotTerminal | TerminalClass::Intended => None,
-            TerminalClass::Deadlocked => {
-                Some(DeadlockEvent::Violated(Box::new(CounterexampleKind::Deadlock), at))
-            }
+            TerminalClass::Deadlocked => Some(DeadlockEvent::Violated(
+                Box::new(CounterexampleKind::Deadlock),
+                at,
+            )),
             TerminalClass::Undefined { model, cause } => Some(DeadlockEvent::Violated(
-                Box::new(CounterexampleKind::UndefinedEvaluation(UndefinedEvaluation {
-                    site: site(UndefinedLocus::Terminal(model), None),
-                    cause,
-                })),
+                Box::new(CounterexampleKind::UndefinedEvaluation(
+                    UndefinedEvaluation {
+                        site: site(UndefinedLocus::Terminal(model), None),
+                        cause,
+                    },
+                )),
                 at,
             )),
             TerminalClass::Undecided { .. } => Some(DeadlockEvent::Undecided),

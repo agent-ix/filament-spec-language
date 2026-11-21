@@ -735,7 +735,10 @@ fn an_undefined_model_side_expression_refutes_the_deadlock_item() {
     assert_eq!(evaluation.site.position, 3);
     assert_eq!(
         evaluation.site.locus,
-        UndefinedLocus::Terminal(fsl_eval::simulation::model::TerminalModel::new("test/counter", "M"))
+        UndefinedLocus::Terminal(fsl_eval::simulation::model::TerminalModel::new(
+            "test/counter",
+            "M"
+        ))
     );
     assert_eq!(
         evaluation.cause,

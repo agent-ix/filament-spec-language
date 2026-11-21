@@ -654,10 +654,10 @@ fn a_package_route_deadlock_item_joins_a_terminal_declaration_as_the_source_does
 #[trace("TC-1142", "FR-411-AC-5")]
 #[test]
 fn a_package_route_run_over_another_terminal_declaration_is_refused_as_the_source_is() {
+    use fsl_analyze::analyze::DerivedItemMismatch;
     use fsl_analyze::analyze::{
         derived_model_item, AnalyzeLimits, PackageDeadlockSubject, TemporalItem,
     };
-    use fsl_analyze::analyze::DerivedItemMismatch;
     use fsl_route::request::{DerivedLimits, ItemKind};
 
     let when = counter_with(&format!(
@@ -747,7 +747,11 @@ fn a_package_route_finds_the_terminal_whose_predicate_is_at_a_locus() {
     assert_eq!(from_bytes, from_source);
     let found = from_bytes.expect("the locus names the terminal");
     assert_eq!(found.identity(), "test/counter");
-    assert_eq!(found.label(), "test/counter", "the package route has no alias");
+    assert_eq!(
+        found.label(),
+        "test/counter",
+        "the package route has no alias"
+    );
     assert_eq!(source.terminal_at(&locus).unwrap().unwrap().label(), "M");
     let elsewhere = filament_semantic_value::location::ExpressionLocation::root(
         filament_semantic_value::location::ExpressionOwner::Expression,

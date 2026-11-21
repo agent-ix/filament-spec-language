@@ -19,8 +19,8 @@ use fsl_eval::simulation::model::{
     ExpansionLimits, ModelCheckInput, ModelSimulationRequest, ModelSystem, PendingClauseForm,
     TimedState, TimedSystem,
 };
-use fsl_foundation::RequestIndex;
 use fsl_foundation::source::provenance::OccurrenceKey;
+use fsl_foundation::RequestIndex;
 use fsl_package::{CheckedPackage, ObligationIdentity};
 use fsl_replay::{
     CertificateCheckLimits, CertificateChecker, CertificateRule, CertifiedItem, GraphEvidence,
@@ -30,12 +30,12 @@ use fsl_replay::{
     StateGraphPropertyForm, StateGraphRecord, TerminalValue, TrapClosure, WitnessPath,
     ZoneCertificateRequest, ZoneCertificateVerdict,
 };
-use fsl_route::StateGraphFormKind;
 use fsl_route::deadlock::{ItemObligation, ObligationKind};
 use fsl_route::reductions::ObligationReductions;
+use fsl_route::StateGraphFormKind;
 use fsl_semantics::check::{Capability, CheckedStateGraphClaim, DeclarationFamily, StateGraphForm};
 
-use super::items::{INVALID_VALUE, model_refusal};
+use super::items::{model_refusal, INVALID_VALUE};
 use super::timed_item::subject_refusal;
 use super::{
     AnalyzeItem, AnalyzeLimits, EngineReport, GraphReport, Refusal, SourceProvision,
@@ -43,11 +43,11 @@ use super::{
 };
 use crate::model_check::manifest as en1;
 use crate::model_check::{
-    StateGraphItem, StateGraphPipelineRefusal, StateGraphRequest, check_and_settle_state_graph,
+    check_and_settle_state_graph, StateGraphItem, StateGraphPipelineRefusal, StateGraphRequest,
 };
 use crate::zone_check::{
-    TimedStateGraphDecision, ZoneCheckLimit, ZoneCheckRefusal, ZoneStop, certificate_item,
-    decide_timed_state_graph, explore_timed_state_graph,
+    certificate_item, decide_timed_state_graph, explore_timed_state_graph, TimedStateGraphDecision,
+    ZoneCheckLimit, ZoneCheckRefusal, ZoneStop,
 };
 
 /// The property form of a checked claim.
@@ -62,7 +62,10 @@ fn property_form(form: &StateGraphForm) -> StateGraphPropertyForm {
 /// The EN-1 item that decides the state-graph claim at `key` over the
 /// binding, with the item's budgets, or `None` when the package holds no
 /// such claim.
-#[allow(clippy::too_many_arguments, reason = "the item binds source provision, subject, request identity, method, and independent budgets")]
+#[allow(
+    clippy::too_many_arguments,
+    reason = "the item binds source provision, subject, request identity, method, and independent budgets"
+)]
 pub(super) fn state_graph_item<'a>(
     analysis: &super::RunInput<'a>,
     binding: &SubjectBinding<'a>,
@@ -1470,8 +1473,7 @@ fn replay_instance(
         }
         Source::Bytes { package_bytes, .. } => (package_bytes.to_vec(), Vec::new(), Vec::new()),
     };
-    let package = super::clause_item::read_package(&bytes, &read.limits)
-        .map_err(Box::new)?;
+    let package = super::clause_item::read_package(&bytes, &read.limits).map_err(Box::new)?;
     let obligation = ObligationIdentity::new(node.clone(), None, 0);
     let mut envelope = GraphEvidenceEnvelope::new(
         obligation.clone(),
@@ -1531,7 +1533,9 @@ fn replay_instance(
         },
     };
     let replayed = match read.source {
-        Source::Checked { .. } => fsl_replay::replay_model_graph(wire, &subject, read.limits.replay),
+        Source::Checked { .. } => {
+            fsl_replay::replay_model_graph(wire, &subject, read.limits.replay)
+        }
         Source::Bytes { supply, .. } => {
             fsl_replay::replay_model_graph_from_package(wire, supply, &subject, read.limits.replay)
         }

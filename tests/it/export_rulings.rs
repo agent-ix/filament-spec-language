@@ -5,9 +5,9 @@
 //! the `fsl:` comment spelling, population bounds and `Init`.
 
 use crate::plan_export_surface::{braking_request, counter_export, outcome_json};
-use crate::support::config_version_spine::{Case, spine};
+use crate::support::config_version_spine::{spine, Case};
 use ix_trace_rs::trace;
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 
 const SPINE_HEADER: &str = "language \"ix:native\" edition \"1-draft\";\n\
      profile v = \"filament.model.complete/v1\";\n\

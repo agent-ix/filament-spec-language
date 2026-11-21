@@ -446,13 +446,13 @@ fn set_operation_parameter_presence(
 ) {
     let operation = package.records.iter_mut().find_map(|record| match record {
         DomainPackageRecord::OperationMember(operation)
-            if operation.key.node == operation_identity => Some(operation),
+            if operation.key.node == operation_identity =>
+        {
+            Some(operation)
+        }
         _ => None,
     });
-    operation
-        .expect("operation exists")
-        .parameters[0]
-        .presence = presence;
+    operation.expect("operation exists").parameters[0].presence = presence;
 }
 
 #[trace("FSpec-FR-151-AC-20")]
@@ -510,7 +510,10 @@ fn operation_parameter_presence_is_contravariant_under_redefinition() {
     assert!(failures.iter().any(|failure| {
         failure.axis == "parameter-presence"
             && failure.code == Code::IllTyped
-            && matches!(failure.cause, ModelRefusalCause::VarianceParameter { index: 1, .. })
+            && matches!(
+                failure.cause,
+                ModelRefusalCause::VarianceParameter { index: 1, .. }
+            )
     }));
 }
 

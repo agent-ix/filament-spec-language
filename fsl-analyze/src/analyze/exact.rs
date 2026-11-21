@@ -524,7 +524,8 @@ fn mean_time_ranking(
                     }
                 };
                 if edge.probability > Rational::from_integer(0_i64.into())
-                    && included.get(edge.to.index()).copied().unwrap_or(false) {
+                    && included.get(edge.to.index()).copied().unwrap_or(false)
+                {
                     if let Some(next_rank) = ranks.get(edge.to.index()).copied().flatten() {
                         choice.push(next_rank);
                     }

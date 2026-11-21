@@ -34,18 +34,18 @@ use fsl_forms::{
     BinaryOperator, ClauseKind, DeclarationSpans, DeclaredClauseKind, Expression, ExpressionSpans,
     FunctionDeclaration, StateClauseKind, TypeForm,
 };
-use fsl_foundation::Span;
 use fsl_foundation::diagnostic::Code;
 use fsl_foundation::selection::ProfileSelection;
+use fsl_foundation::Span;
 use fsl_package::CheckedPackage;
+use fsl_semantics::check::{
+    checked_dispatch_operation, object_type_supertypes, DispatchBridgeRefusal, DispatchRoot,
+    OperationClauses,
+};
 use fsl_semantics::check::{
     AdmittedModel, CheckCause, CheckRefusal, DispatchCandidate, DispatchFunctionRole,
     DispatchOperation, DispatchTable, InvalidDispatchDeclaration, ModelClause, PackageDeclarations,
     StateClauseDeclaration,
-};
-use fsl_semantics::check::{
-    DispatchBridgeRefusal, DispatchRoot, OperationClauses, checked_dispatch_operation,
-    object_type_supertypes,
 };
 use fsl_semantics::family::FamilyKind;
 use fsl_semantics::model::accounting::ModelNormalizationLimits;
@@ -56,7 +56,7 @@ use fsl_semantics::model::domain_package::{
     ProcessRecord, ValueTypeRef,
 };
 use fsl_semantics::model::normalize::{
-    EffectiveView, ModelRefusalCause, NormalizeOutcome, normalize,
+    normalize, EffectiveView, ModelRefusalCause, NormalizeOutcome,
 };
 use fsl_semantics::model::object_environment::ObjectEnvironment;
 use fsl_semantics::model::observation::{

@@ -9,7 +9,7 @@ use fsl_replay::Operation;
 use fsl_semantics::model::accounting::ModelNormalizationLimits;
 use fsl_semantics::model::intake::{compile_model_unit, package_input, package_input_from_sources};
 use ix_trace_rs::trace;
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 use std::path::{Path, PathBuf};
 
 /// FR-710-AC-1's model unit.
@@ -600,9 +600,7 @@ invariant Backward using P on M::Node at current { exists(n in M::nodes : n.rank
 /// The `nodes` snapshot of the compiled relationship: `a -> b -> c`, with
 /// ranks 0, 1 and 2.
 fn graph_snapshot() -> Value {
-    let node = |key: &str, rank: &str| {
-        json!({"key": key, "type": "ix://example/graph/Node", "fields": {"rank": {"integer": rank}}})
-    };
+    let node = |key: &str, rank: &str| json!({"key": key, "type": "ix://example/graph/Node", "fields": {"rank": {"integer": rank}}});
     let end = |key: &str| json!({"population": "ix://example/graph/nodes", "key": key});
     json!({
         "format": "filament.state.snapshot/v1",
@@ -650,10 +648,17 @@ fn graph_clause_holds(directory: &Path, name: &str, key: &str) -> bool {
         Ok(result) => (result.exit_code, result.value.as_value().clone()),
         Err(error) => (error.category().exit_code(), error.value().unwrap()),
     };
-    let holds = value["disposition"]["outcome"]["value"] == json!({"kind": "boolean", "value": true});
-    assert_eq!(exit, if holds { 0 } else { 10 }, "{name} over {key}: {value}");
+    let holds =
+        value["disposition"]["outcome"]["value"] == json!({"kind": "boolean", "value": true});
+    assert_eq!(
+        exit,
+        if holds { 0 } else { 10 },
+        "{name} over {key}: {value}"
+    );
     assert!(
-        holds || value["disposition"]["outcome"]["value"] == json!({"kind": "boolean", "value": false}),
+        holds
+            || value["disposition"]["outcome"]["value"]
+                == json!({"kind": "boolean", "value": false}),
         "{name} over {key}: {value}"
     );
     holds
@@ -666,7 +671,16 @@ fn reaches_checks_and_evaluates_over_a_model_unit_relationship() {
     let dir = directory.path();
     assert!(graph_clause_holds(dir, "Forward", "a"), "a reaches c");
     assert!(graph_clause_holds(dir, "Forward", "b"), "b reaches c");
-    assert!(!graph_clause_holds(dir, "Forward", "c"), "c reaches nothing");
-    assert!(!graph_clause_holds(dir, "Backward", "c"), "c does not reach a");
-    assert!(!graph_clause_holds(dir, "Backward", "b"), "b does not reach a");
+    assert!(
+        !graph_clause_holds(dir, "Forward", "c"),
+        "c reaches nothing"
+    );
+    assert!(
+        !graph_clause_holds(dir, "Backward", "c"),
+        "c does not reach a"
+    );
+    assert!(
+        !graph_clause_holds(dir, "Backward", "b"),
+        "b does not reach a"
+    );
 }

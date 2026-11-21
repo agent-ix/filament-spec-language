@@ -1000,7 +1000,10 @@ fn unknown_record_and_model_fields_name_their_owner_and_keep_type_mismatches() {
         .expect("the arithmetic body is refused");
     assert_eq!(
         (arithmetic.cause.code(), arithmetic.cause.cause()),
-        (fsl_foundation::diagnostic::Code::IllTyped, Some("type-mismatch")),
+        (
+            fsl_foundation::diagnostic::Code::IllTyped,
+            Some("type-mismatch")
+        ),
         "1 + \"a\" remains ill_typed/type-mismatch: {arithmetic:?}"
     );
 }

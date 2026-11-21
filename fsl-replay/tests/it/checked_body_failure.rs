@@ -2,8 +2,8 @@
 //! FR-485-AC-15: owner-authored FSV failures cross the public application boundary.
 
 use filament_eval::{
-    Admission, Body, BodyFactory, BodyFailure, CallFailure, Evaluation, FamilyOutcome,
-    Resume, Transition,
+    Admission, Body, BodyFactory, BodyFailure, CallFailure, Evaluation, FamilyOutcome, Resume,
+    Transition,
 };
 use filament_exact::{
     Cancel, CancelCause, ChargePoint, Integer, LimitKind, Meter, Outcome, ScalarLimits,

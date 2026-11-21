@@ -15,8 +15,8 @@ fn source() -> PathBuf {
 }
 
 fn write_handoff(directory: &Path) {
-    let source_file = tempfile::NamedTempFile::new_in(env!("CARGO_MANIFEST_DIR"))
-        .expect("temporary source file");
+    let source_file =
+        tempfile::NamedTempFile::new_in(env!("CARGO_MANIFEST_DIR")).expect("temporary source file");
     std::fs::copy(source(), source_file.path()).expect("copy source fixture");
     let source_path = PathBuf::from(
         source_file
@@ -45,8 +45,8 @@ fn write_handoff(directory: &Path) {
 
 fn refusal(directory: &Path, operand: &str) -> Value {
     let document = command::inspect_handoff_with_operand(directory, operand);
-    let value: Value = serde_json::from_slice(&document.to_bytes().expect("outcome bytes"))
-        .expect("outcome JSON");
+    let value: Value =
+        serde_json::from_slice(&document.to_bytes().expect("outcome bytes")).expect("outcome JSON");
     assert_eq!(value["operation"], "inspect", "{value}");
     assert_eq!(value["category"], "refusal", "{value}");
     assert_eq!(value["diagnostics"].as_array().unwrap().len(), 1, "{value}");

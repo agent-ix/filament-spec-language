@@ -10,7 +10,7 @@ use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use filament_exact::{Integer, Rational};
 use fsl_eval::simulation::model::{ClockValuation, ModelSimState, TimedState, TimedSystem};
 use num_traits::Zero;
-use serde_json::{Value as JsonValue, json};
+use serde_json::{json, Value as JsonValue};
 
 pub(super) fn check(
     system: &ModelSystem<'_>,
@@ -522,7 +522,10 @@ fn check_mean_time_values(
 /// Check a checker-derived shortest-path policy from a component member to
 /// an objective-best exit. This independently validates the macro state's
 /// exit closure instead of trusting member values alone.
-#[allow(clippy::too_many_arguments, reason = "timed certificate checks bind the subject and claim with independent scale, accounting, storage, and cancellation limits")]
+#[allow(
+    clippy::too_many_arguments,
+    reason = "timed certificate checks bind the subject and claim with independent scale, accounting, storage, and cancellation limits"
+)]
 fn mean_time_component_policy_valid(
     graph: &CheckerGraph,
     members: &BTreeSet<ProbabilityProductKey>,
@@ -959,15 +962,18 @@ fn mean_target(
     match readings.as_slice() {
         [fsl_eval::simulation::model::PredicateReading::True] => Ok(true),
         [fsl_eval::simulation::model::PredicateReading::False] => Ok(false),
-        [
-            fsl_eval::simulation::model::PredicateReading::Undefined { .. }
-            | fsl_eval::simulation::model::PredicateReading::Refused(_),
-        ] => Err(ProbabilityDocumentError::Unsupported),
+        [fsl_eval::simulation::model::PredicateReading::Undefined { .. }
+        | fsl_eval::simulation::model::PredicateReading::Refused(_)] => {
+            Err(ProbabilityDocumentError::Unsupported)
+        }
         _ => Err(ProbabilityDocumentError::Unsupported),
     }
 }
 
-#[allow(clippy::too_many_arguments, reason = "timed certificate checks bind the subject and claim with independent scale, accounting, storage, and cancellation limits")]
+#[allow(
+    clippy::too_many_arguments,
+    reason = "timed certificate checks bind the subject and claim with independent scale, accounting, storage, and cancellation limits"
+)]
 fn mean_region_key(
     system: &ModelSystem<'_>,
     timed: &TimedSystem<'_, '_>,
@@ -1208,7 +1214,10 @@ struct RegionState {
     tail: DigitalTail,
 }
 
-#[allow(clippy::too_many_arguments, reason = "timed certificate checks bind the subject and claim with independent scale, accounting, storage, and cancellation limits")]
+#[allow(
+    clippy::too_many_arguments,
+    reason = "timed certificate checks bind the subject and claim with independent scale, accounting, storage, and cancellation limits"
+)]
 fn enumerate_digital_deadline(
     system: &ModelSystem<'_>,
     timed: &TimedSystem<'_, '_>,
@@ -1578,7 +1587,10 @@ fn enumerate_digital_deadline(
     })
 }
 
-#[allow(clippy::too_many_arguments, reason = "timed certificate checks bind the subject and claim with independent scale, accounting, storage, and cancellation limits")]
+#[allow(
+    clippy::too_many_arguments,
+    reason = "timed certificate checks bind the subject and claim with independent scale, accounting, storage, and cancellation limits"
+)]
 fn enumerate_region_deadline(
     system: &ModelSystem<'_>,
     timed: &TimedSystem<'_, '_>,
@@ -1943,7 +1955,10 @@ fn phase_at(
     }
 }
 
-#[allow(clippy::too_many_arguments, reason = "timed certificate checks bind the subject and claim with independent scale, accounting, storage, and cancellation limits")]
+#[allow(
+    clippy::too_many_arguments,
+    reason = "timed certificate checks bind the subject and claim with independent scale, accounting, storage, and cancellation limits"
+)]
 fn region_key(
     system: &ModelSystem<'_>,
     timed: &TimedSystem<'_, '_>,
@@ -2183,7 +2198,10 @@ fn digital_key(
     .map_err(ProbabilityDocumentError::Graph)
 }
 
-#[allow(clippy::too_many_arguments, reason = "timed certificate checks bind the subject and claim with independent scale, accounting, storage, and cancellation limits")]
+#[allow(
+    clippy::too_many_arguments,
+    reason = "timed certificate checks bind the subject and claim with independent scale, accounting, storage, and cancellation limits"
+)]
 fn next_digital_delay(
     system: &ModelSystem<'_>,
     timed: &TimedSystem<'_, '_>,
@@ -2588,7 +2606,10 @@ fn digital_state_after_delay(
     Ok(Some(state))
 }
 
-#[allow(clippy::too_many_arguments, reason = "timed certificate checks bind the subject and claim with independent scale, accounting, storage, and cancellation limits")]
+#[allow(
+    clippy::too_many_arguments,
+    reason = "timed certificate checks bind the subject and claim with independent scale, accounting, storage, and cancellation limits"
+)]
 fn next_region_delay(
     system: &ModelSystem<'_>,
     timed: &TimedSystem<'_, '_>,

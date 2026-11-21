@@ -428,7 +428,10 @@ struct GraphPathReplay {
 
 /// Replay typed graph evidence against the recompiled claim and its admitted
 /// model system. The facade performs package and identity admission first.
-#[allow(clippy::too_many_arguments, reason = "replay binds the subject, evidence, cancellation, and independent state and transition bounds")]
+#[allow(
+    clippy::too_many_arguments,
+    reason = "replay binds the subject, evidence, cancellation, and independent state and transition bounds"
+)]
 pub(super) fn replay_evidence(
     system: &ModelSystem<'_>,
     timed: Option<&TimedSystem<'_, '_>>,
@@ -456,7 +459,10 @@ pub(super) fn replay_evidence(
     })
 }
 
-#[allow(clippy::too_many_arguments, reason = "replay binds the subject, evidence, cancellation, and independent state and transition bounds")]
+#[allow(
+    clippy::too_many_arguments,
+    reason = "replay binds the subject, evidence, cancellation, and independent state and transition bounds"
+)]
 fn replay_claim_evidence(
     system: &ModelSystem<'_>,
     timed: Option<&TimedSystem<'_, '_>>,

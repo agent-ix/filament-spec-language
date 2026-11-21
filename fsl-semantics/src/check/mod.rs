@@ -209,12 +209,12 @@ pub use time_units::is_clock_unit_node;
 mod timed_model;
 pub use probabilistic::{
     Bound, BoundedMeasure, CheckedPredicate, CheckedProbabilisticClaim, CheckedProbabilisticModel,
-    CheckedTemporalFormula, ClaimActivation, ClaimMemberPath, ClaimNormalForm, ClaimReadFault, ClaimReads,
-    Confidence, ConfidenceFault, Delay, DelayDistribution, DelayFault, Event, FairnessRead,
-    FractionMeasure, ModelSubjectRef, OverBinding, PreconditionSite, ProbForm, ProbScheduler,
-    ProbabilisticCause, ProbabilisticDeclaration, ProbabilisticFeature, ProbabilisticOperation,
-    QualitativeForm, RandomParameter, ReachTarget, Reward, SchedulerRead, Statement, SupportValue,
-    TimeTypeMismatchReason, WeightOwner, Weighting, Workload,
+    CheckedTemporalFormula, ClaimActivation, ClaimMemberPath, ClaimNormalForm, ClaimReadFault,
+    ClaimReads, Confidence, ConfidenceFault, Delay, DelayDistribution, DelayFault, Event,
+    FairnessRead, FractionMeasure, ModelSubjectRef, OverBinding, PreconditionSite, ProbForm,
+    ProbScheduler, ProbabilisticCause, ProbabilisticDeclaration, ProbabilisticFeature,
+    ProbabilisticOperation, QualitativeForm, RandomParameter, ReachTarget, Reward, SchedulerRead,
+    Statement, SupportValue, TimeTypeMismatchReason, WeightOwner, Weighting, Workload,
 };
 pub use probabilistic::{
     PackageDelay, PackageDelayFamily, PackageLiteral, PackageProbabilistic,
@@ -594,8 +594,9 @@ pub use refusal::{
     MemberCandidate, NavigationBound, Obligation, ObservationReason, OperandText, PredicateRole,
     ProtocolAnchorCause, ProtocolCheckRefusal, ProtocolConstruct, ProtocolReferenceCause,
     ProvedInterval, QualifiedCandidate, RefusedProtocolDependency, RelatedEnd, ReservedSlotName,
-    ShadowedDeclaration, SlotKind, SlotTag, StageLimitCause, StateGraphCause, TaskSetDefect, TaskTimeMember, TemporalCause,
-    TimeUnitCause, TimedConstruct, TimedOmission, UnwrittenTimedMember,
+    ShadowedDeclaration, SlotKind, SlotTag, StageLimitCause, StateGraphCause, TaskSetDefect,
+    TaskTimeMember, TemporalCause, TimeUnitCause, TimedConstruct, TimedOmission,
+    UnwrittenTimedMember,
 };
 pub use state_graph_claim::{
     state_graph_predicate_site, CheckedPredicateBody, CheckedStateGraphClaim,
@@ -1861,9 +1862,8 @@ fn limit_cause(limit: &fsl_foundation::diagnostic::LimitExceeded) -> CheckCause 
             actual: limit.actual(),
             region: match limit.locus() {
                 Some(Locus::Region(region)) => Some(region.clone()),
-                Some(Locus::Occurrence(_) | Locus::Artifact { .. } | Locus::Input { .. }) | None => {
-                    None
-                }
+                Some(Locus::Occurrence(_) | Locus::Artifact { .. } | Locus::Input { .. })
+                | None => None,
             },
         })),
         Err(setting) => CheckCause::InternalFault(Box::new(KeyFault::UncheckedLimit(setting))),
@@ -5197,10 +5197,18 @@ impl PackageDeclarations {
         // resolved, typed and recorded; FR-186: a `probabilistic` claim,
         // resolved, typed and recorded with its obligation identity.
         let task_set_owners: Vec<_> = (0..self.task_set_forms.len())
-            .map(|index| self.source_owners.get(&format!("task_set {index}")).cloned())
+            .map(|index| {
+                self.source_owners
+                    .get(&format!("task_set {index}"))
+                    .cloned()
+            })
             .collect();
         let declaration_owners: Vec<_> = (0..self.probabilistic.len())
-            .map(|index| self.source_owners.get(&format!("probabilistic {index}")).cloned())
+            .map(|index| {
+                self.source_owners
+                    .get(&format!("probabilistic {index}"))
+                    .cloned()
+            })
             .collect();
         let probabilistic_input = probabilistic::ProbabilisticInput {
             scope: &scope,

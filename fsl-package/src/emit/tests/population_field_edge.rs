@@ -11,7 +11,7 @@ use fsl_semantics::check::CheckedGraph;
 use fsl_semantics::family::ClaimExtent;
 
 use super::population_bound::{self, assert_population_node, population_nodes, type_occurrences};
-use super::reachability::{Lowered, applications, lower_over, model_node};
+use super::reachability::{applications, lower_over, model_node, Lowered};
 use super::*;
 
 /// The structural key of the unbounded `reaches(self, self, trail)` node over
@@ -47,9 +47,9 @@ fn sequence(mut field: Value, lower: u64, upper: u64) -> Value {
 }
 
 fn population(name: &str, member: &str) -> Value {
-    let mut population =
-        serde_json::from_slice::<Value>(&population_bound::document()).unwrap()["populations"][0]
-            .clone();
+    let mut population = serde_json::from_slice::<Value>(&population_bound::document()).unwrap()
+        ["populations"][0]
+        .clone();
     let identity = format!("ix://acme/orders/{name}");
     population["identity"] = json!(identity);
     population["displayName"] = json!(identity);

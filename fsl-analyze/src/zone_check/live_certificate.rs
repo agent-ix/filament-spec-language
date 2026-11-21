@@ -38,10 +38,7 @@ impl Run<'_, '_, '_> {
         proofs: Vec<InstanceProof>,
         admission: Option<Product>,
     ) -> Result<Proof, Halt> {
-        let non_zeno = if proofs
-            .iter()
-            .any(has_accepting_cycle_without_divergence)
-        {
+        let non_zeno = if proofs.iter().any(has_accepting_cycle_without_divergence) {
             NonZeno::Assumed
         } else {
             NonZeno::NotRequired

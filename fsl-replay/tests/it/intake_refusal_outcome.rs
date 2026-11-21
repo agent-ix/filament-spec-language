@@ -79,7 +79,9 @@ fn outcome(failure: spine::FrontEndFailure) -> (Box<CompileRefusal>, Value) {
     assert_eq!(bytes, document.to_bytes().unwrap());
     let value: Value = serde_json::from_slice(&bytes).unwrap();
     assert_eq!(value["category"], "refusal");
-    let Err(failure) = result else { panic!("the front end refused") };
+    let Err(failure) = result else {
+        panic!("the front end refused")
+    };
     let refusal = spine::refusal_or_fault(failure).unwrap();
     let messages: Vec<_> = value["diagnostics"]
         .as_array()

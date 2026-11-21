@@ -87,7 +87,8 @@ impl<'c> Plan<'c> {
         claim: &'c CheckedProbabilisticClaim,
         max_automaton_states: u64,
     ) -> Result<(Self, Reads<'c>), PlanFault> {
-        let role = |role, predicate: &'c CheckedPredicate| (UndefinedRead::Predicate(role), predicate);
+        let role =
+            |role, predicate: &'c CheckedPredicate| (UndefinedRead::Predicate(role), predicate);
         Ok(match &claim.form {
             ProbForm::Probability {
                 event: Event::Formula { formula, .. },
@@ -159,7 +160,8 @@ impl<'c> Plan<'c> {
         threshold: &Rational,
         span: Span,
     ) -> Result<(Self, Reads<'c>), PlanFault> {
-        let role = |role, predicate: &'c CheckedPredicate| (UndefinedRead::Predicate(role), predicate);
+        let role =
+            |role, predicate: &'c CheckedPredicate| (UndefinedRead::Predicate(role), predicate);
         Ok(match measure {
             BoundedMeasure::Accumulate {
                 reward,

@@ -291,7 +291,10 @@ fn task_search_evidence(
         expanded: bool,
     }
     let mut nodes: Vec<Node> = Vec::new();
-    #[allow(clippy::mutable_key_type, reason = "exact rationals cache integer representations; their numeric ordering and equality never mutate")]
+    #[allow(
+        clippy::mutable_key_type,
+        reason = "exact rationals cache integer representations; their numeric ordering and equality never mutate"
+    )]
     let mut lookup = std::collections::BTreeMap::new();
     let mut add = |state: &fsl_eval::simulation::model::TaskProductState,
                    depth: u64,

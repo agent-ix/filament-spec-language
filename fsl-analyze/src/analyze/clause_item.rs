@@ -19,24 +19,24 @@
 use filament_exact::Identifier;
 use filament_semantic_value::catalog::InternalFault;
 use filament_semantic_value::fairness::PropertyForm;
-use fsl_eval::simulation::Limits;
 use fsl_eval::simulation::model::{
     ExpansionLimits, ModelCheckInput, ModelSimulationRequest, ModelSystem,
 };
+use fsl_eval::simulation::Limits;
 use fsl_foundation::{source::provenance::OccurrenceKey, RequestIndex};
 use fsl_package::{CheckedPackage, ObligationIdentity};
 use fsl_replay::{
     replay_model_trace, CertificateRequest, EnvelopeSource, ModelCheckItem, ModelCheckLimits,
-    ModelTraceReplayResult, ModelTraceSubject, QualifiedName, ReplayPackage,
-    PackageReadRefusal, ReplayRefusal, ReplayRequestWire, ReplaySource, ReplayTargetMembers, RequestTargetWire,
+    ModelTraceReplayResult, ModelTraceSubject, PackageReadRefusal, QualifiedName, ReplayPackage,
+    ReplayRefusal, ReplayRequestWire, ReplaySource, ReplayTargetMembers, RequestTargetWire,
     StateEnvironment, TemporalCounterexample, Witness, WitnessEnvelope, WitnessPacket,
 };
 use fsl_route::Mode;
 use fsl_semantics::check::{Capability, TemporalClauseNode};
 
-use super::items::{BROKEN, CLAUSE_FAMILY, ModelItem, admission, settle_model_item};
+use super::items::{admission, settle_model_item, ModelItem, BROKEN, CLAUSE_FAMILY};
 use super::{AnalyzeItem, AnalyzeLimits, EngineReport, Refusal, SubjectBinding};
-use crate::model_check::{ModelCheckRequest, manifest as en1};
+use crate::model_check::{manifest as en1, ModelCheckRequest};
 
 /// The replay source an EN-1 authored-clause counterexample carries: a
 /// witness transcript with no values, since the clause's lasso is the
@@ -450,9 +450,9 @@ pub(super) fn replay_over(
 /// other failure the internal fault `fallback`.
 fn envelope_refusal(error: fsl_replay::WitnessRefusal, fallback: ReplayRefusal) -> ReplayRefusal {
     match error {
-        fsl_replay::WitnessRefusal::BoundExceeded(bound) => ReplayRefusal::Request(
-            fsl_replay::ReplayRequestRefusal::BoundExceeded(bound),
-        ),
+        fsl_replay::WitnessRefusal::BoundExceeded(bound) => {
+            ReplayRefusal::Request(fsl_replay::ReplayRequestRefusal::BoundExceeded(bound))
+        }
         _ => fallback,
     }
 }
@@ -517,10 +517,7 @@ pub(super) fn replay_wire<T: Clone + fsl_eval::simulation::SubjectTransition>(
         inputs.limits.emit,
     )
     .map_err(|_| fault("package-emission"))?;
-    let package = read_package(
-        emission.package().bytes(),
-        inputs.limits,
-    )?;
+    let package = read_package(emission.package().bytes(), inputs.limits)?;
     request_and_envelope(
         WireParts {
             package,
@@ -659,17 +656,13 @@ pub(crate) fn replay_protocol_over(
         occurrence,
         transcript: text,
     } = shape;
-    let emission =
-        fsl_package::emit_checked_with_temporal_selections(
-            inputs.package,
-            &model_selections(inputs.package),
-            inputs.limits.emit,
-        )
-        .map_err(|_| fault("package-emission"))?;
-    let package = read_package(
-        emission.package().bytes(),
-        inputs.limits,
-    )?;
+    let emission = fsl_package::emit_checked_with_temporal_selections(
+        inputs.package,
+        &model_selections(inputs.package),
+        inputs.limits.emit,
+    )
+    .map_err(|_| fault("package-emission"))?;
+    let package = read_package(emission.package().bytes(), inputs.limits)?;
     let transcript = || Witness::parse(text).map_err(|_| fault("transcript"));
     let wire = ReplayRequestWire {
         certificate: None,

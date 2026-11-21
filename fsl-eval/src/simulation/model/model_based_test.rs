@@ -14,22 +14,22 @@ use fsl_semantics::model::object_environment::ObjectEnvironment;
 
 use crate::simulation::order::Expanded;
 use crate::simulation::{
-    EncodingRefusal, Limits,
     expansion::{ExpansionLimit, ExpansionStop},
     trace::{Step, Trace},
+    EncodingRefusal, Limits,
 };
 
-use super::domain::{Domain, admitted_text_value};
-use super::{AdmissionFailure, ContractClause, ContractClauseKind};
+use super::domain::{admitted_text_value, Domain};
 use super::{
-    ModelBoundaryPartition, ModelCheckInput, ModelFinding, ModelOperation, ModelOperationCase,
-    ModelOperationCoverageEntry, ModelOperationCoverageLimit, ModelOperationCoverageLimits,
-    ModelOperationCoverageReason, ModelOperationCoverageReasonKind,
+    model_operation_coverage, sample_model_with_omitted_clause,
+    shrink_model_trace_with_omitted_clause, ModelBoundaryPartition, ModelCheckInput, ModelFinding,
+    ModelOperation, ModelOperationCase, ModelOperationCoverageEntry, ModelOperationCoverageLimit,
+    ModelOperationCoverageLimits, ModelOperationCoverageReason, ModelOperationCoverageReasonKind,
     ModelOperationCoverageSummaryStatus, ModelPartitionStatus, ModelPartitionUncoveredReason,
     ModelSampleError, ModelShrinkError, ModelSimState, ModelSimulationRequest, ModelSystem,
-    ModelTrace, model_operation_coverage, sample_model_with_omitted_clause,
-    shrink_model_trace_with_omitted_clause,
+    ModelTrace,
 };
+use super::{AdmissionFailure, ContractClause, ContractClauseKind};
 use crate::simulation::choice::ChoicePoint;
 use crate::simulation::trace::SampleProvenance;
 use crate::value::{CheckedPackageEvaluation, QualifiedName};
@@ -3955,7 +3955,7 @@ fn replayed_invocation_prefix(
 
 #[cfg(test)]
 mod refusal_tests {
-    use super::{ModelBasedTestError, ModelBasedTestResult, require_refusal};
+    use super::{require_refusal, ModelBasedTestError, ModelBasedTestResult};
 
     /// FR-752-AC-8: if admission accepts a refusal partition, the run exits
     /// through the API error and produces no model-based result record.

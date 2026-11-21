@@ -32,9 +32,7 @@ use super::{Bound, Dbm, ZoneCheckRefusal};
 pub fn certificate_item<S>(obligation: &ItemObligation<S>) -> CertificateItem<'_> {
     match &obligation.kind {
         ObligationKind::Authored(occurrence) => CertificateItem::Clause(occurrence),
-        ObligationKind::StateGraphAuthored(occurrence) => {
-            CertificateItem::StateGraph(occurrence)
-        }
+        ObligationKind::StateGraphAuthored(occurrence) => CertificateItem::StateGraph(occurrence),
         ObligationKind::DeadlockFreedom => CertificateItem::DeadlockFreedom,
         ObligationKind::TimeLockFreedom => CertificateItem::TimeLockFreedom,
         ObligationKind::Refinement {
@@ -141,11 +139,9 @@ pub(crate) fn state_graph_certificate<S>(
             .map(|bound| bound.clone().map(Integer::from_big))
             .collect()
     };
-    let state_graph = (form == StateGraphCertificateForm::AlwaysPossible).then(|| {
-        StateGraphPart {
-            form,
-            ef_nodes: ef_nodes.to_vec(),
-        }
+    let state_graph = (form == StateGraphCertificateForm::AlwaysPossible).then(|| StateGraphPart {
+        form,
+        ef_nodes: ef_nodes.to_vec(),
     });
     Ok(ZoneCertificate {
         obligation,

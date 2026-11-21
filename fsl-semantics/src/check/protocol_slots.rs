@@ -43,15 +43,15 @@ use fsl_forms::{
     ProtocolDeclarationForm, ProtocolMemberForm, ProtocolNodeKind, ReplicatedRoleForm, RoleForm,
     RoleLifetime, TerminalForm,
 };
-use fsl_foundation::{Span, diagnostic::Locus};
+use fsl_foundation::{diagnostic::Locus, Span};
 
 use super::check::{NamedScope, Scope};
 use super::ir::CheckedBody;
-use super::lowering::{ProtocolSite, protocol_location};
+use super::lowering::{protocol_location, ProtocolSite};
 use super::protocol_clause::{
-    BoundAttempt, CheckedProtocol, ProtocolNodeId, record_binder, written_owner,
+    record_binder, written_owner, BoundAttempt, CheckedProtocol, ProtocolNodeId,
 };
-use super::protocol_obligation::{Goal, model_state_reads, span_of, type_named_body, wraps};
+use super::protocol_obligation::{model_state_reads, span_of, type_named_body, wraps, Goal};
 use super::refusal::{
     ArmFault, CheckCause, CheckRefusal, ObservationReason, ProtocolAnchorCause, RelatedEnd,
     SlotKind,
@@ -694,7 +694,10 @@ impl Checker<'_, '_> {
                     ProtocolNodeKind::Event
                         if self.protocol.attempts.iter().any(|attempt| {
                             attempt.declaration == node && attempt.recommendation
-                        }) => Eligibility::Never,
+                        }) =>
+                    {
+                        Eligibility::Never
+                    }
                     ProtocolNodeKind::Attempt | ProtocolNodeKind::Event => {
                         Eligibility::Role(declaration.role.as_ref()?.name.clone())
                     }

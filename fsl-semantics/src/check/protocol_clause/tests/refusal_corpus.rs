@@ -4,7 +4,7 @@
 
 use ix_trace_rs::trace;
 
-use super::rules::{TRIED, located_refusals, protocol};
+use super::rules::{located_refusals, protocol, TRIED};
 use crate::check::refusal::ProtocolAnchorCause;
 
 fn only_locus(source: &str, expected_code: &str, expected_cause: Option<&str>) -> String {

@@ -24,12 +24,13 @@ use fsl_semantics::model::object_environment::ObjectEnvironment;
 
 use super::evaluate::reader_source::ReaderNode;
 use super::evaluate::{Machine, World};
-use super::protocol_slot::{ProtocolSlot, ProtocolSlotEvaluation, ProtocolSupply, resolve};
-use super::slot_supply::{AdmittedSupply, SlotHost, SourceView, admit_slot_supply};
+use super::protocol_slot::{resolve, ProtocolSlot, ProtocolSlotEvaluation, ProtocolSupply};
+use super::slot_supply::{admit_slot_supply, AdmittedSupply, SlotHost, SourceView};
 use super::{
-    ApplicationObservation, ApplicationObservationOptions, CheckedPackageEvaluation,
-    ClauseEvaluation, ClauseSetEvaluation, FrameEvaluation, QualifiedName, Separation,
-    SuppliedFailure, SuppliedLimits, SuppliedRun, ValueInvariantEvaluation, unsupported_projection,
+    unsupported_projection, ApplicationObservation, ApplicationObservationOptions,
+    CheckedPackageEvaluation, ClauseEvaluation, ClauseSetEvaluation, FrameEvaluation,
+    QualifiedName, Separation, SuppliedFailure, SuppliedLimits, SuppliedRun,
+    ValueInvariantEvaluation,
 };
 
 /// Evaluate a reader projection over the local frame with the shared

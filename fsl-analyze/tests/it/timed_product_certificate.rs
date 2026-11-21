@@ -4,23 +4,23 @@
 //! over ADR-028 §15.5's `Retx`, and the core checker that rebuilds the
 //! digital or region product itself.
 
-use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+use base64::Engine as _;
 use filament_exact::{Cancel, Integer, Rational};
 use fsl_analyze::analyze::{
-    AnalyzeRecord, Engines, analyze_items, exact_probabilistic_item,
-    exact_probabilistic_item_tampered,
+    analyze_items, exact_probabilistic_item, exact_probabilistic_item_tampered, AnalyzeRecord,
+    Engines,
 };
 use fsl_analyze::exact_probabilistic::{ExactProbLimits, ProductRequest};
 use fsl_eval::model_subject::ModelSubject;
 use fsl_foundation::RequestIndex;
 use fsl_replay::{
-    CertificateRule, ExactProbabilityCertificate, ExactProbabilityCertificateCheck,
-    InconclusiveCause, ProbabilityCertificateLocus, ProbabilityCertificateRule,
-    ProbabilityDocumentError, ProofBasis, TerminalValue, check_probability_certificate_document,
+    check_probability_certificate_document, CertificateRule, ExactProbabilityCertificate,
+    ExactProbabilityCertificateCheck, InconclusiveCause, ProbabilityCertificateLocus,
+    ProbabilityCertificateRule, ProbabilityDocumentError, ProofBasis, TerminalValue,
 };
 use ix_trace_rs::trace;
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 
 use super::long_run_certificate::limits;
 use crate::timed_world::{self, World};

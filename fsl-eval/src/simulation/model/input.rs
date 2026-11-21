@@ -25,10 +25,10 @@ use fsl_package::{
     TerminalResolveRefusal, UnreadModelForm,
 };
 use fsl_semantics::check::footprint::{
-    FootprintRefusal, ReferenceLiterals, SymbolicFootprint, SymbolicLocation, derive_atom_reads,
-    derive_attempt_footprint_fallback_with_reference_literals, derive_constraint_reads,
-    derive_footprint, derive_guard_reads, derive_node_reads,
+    derive_atom_reads, derive_attempt_footprint_fallback_with_reference_literals,
+    derive_constraint_reads, derive_footprint, derive_guard_reads, derive_node_reads,
     derive_selected_footprint_with_reference_literals, derive_slot_reads, reference_literals_of,
+    FootprintRefusal, ReferenceLiterals, SymbolicFootprint, SymbolicLocation,
 };
 use fsl_semantics::check::{
     CheckedBody, CheckedHyperClause, CheckedNode, CheckedProbabilisticModel, CheckedProtocol,
@@ -823,8 +823,11 @@ impl<'p> PackageModelInput<'p> {
                 .terminals
                 .iter()
                 .map(|terminal| ModelTerminal {
-                    model: super::TerminalModel::new(terminal.model.clone(), terminal.model.clone())
-                        .with_ordinal(terminal.ordinal),
+                    model: super::TerminalModel::new(
+                        terminal.model.clone(),
+                        terminal.model.clone(),
+                    )
+                    .with_ordinal(terminal.ordinal),
                     node: terminal.node.clone(),
                     declaration: match &terminal.declaration {
                         fsl_package::BareTerminalDeclaration::Any => ModelTerminalDeclaration::Any,
@@ -2334,7 +2337,7 @@ fn source_predicate<'p>(
 
 #[cfg(test)]
 mod tests {
-    use super::{ClauseBinder, receiver_slots};
+    use super::{receiver_slots, ClauseBinder};
     use ix_trace_rs::trace;
 
     /// FR-940-AC-11, FR-156: a package term gives frame slots to the binders

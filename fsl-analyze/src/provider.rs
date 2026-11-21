@@ -657,9 +657,7 @@ pub(crate) fn routed_contract_item<'d>(
         named,
     )
     .into_iter()
-    .find(|item| {
-        item.occurrence() == claim && item.kind() == Capability::OperationContract
-    });
+    .find(|item| item.occurrence() == claim && item.kind() == Capability::OperationContract);
     if let Some(record) = record {
         return Some(record.at_index(index));
     }
@@ -777,7 +775,10 @@ pub(crate) fn provider_item_over<'a>(
 
 /// An `operation-contract` item at `claim` for an external provider. The
 /// provider request is emitted only after negotiation (FR-968).
-#[allow(clippy::too_many_arguments, reason = "provider negotiation binds request identity, source package, claim selection, and emission limits")]
+#[allow(
+    clippy::too_many_arguments,
+    reason = "provider negotiation binds request identity, source package, claim selection, and emission limits"
+)]
 pub(crate) fn contract_provider_item_over<'a>(
     index: RequestIndex,
     backend: &BackendId,

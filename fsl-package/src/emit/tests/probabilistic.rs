@@ -1329,7 +1329,10 @@ fn a_claim_binds_the_workload_it_is_stated_under() {
     for (name, workload) in [("A", Some("Steady")), ("B", Some("Bursty")), ("C", None)] {
         let claim = claim_named(&wire, name);
         let body = &claim["body"];
-        assert_eq!(&targets(binding(body, "subject"))[..], std::slice::from_ref(root));
+        assert_eq!(
+            &targets(binding(body, "subject"))[..],
+            std::slice::from_ref(root)
+        );
         let scheduler = targets(binding(body, "scheduler"));
         let path = claim["node_id"]["path"].to_string();
         match workload {
@@ -1422,11 +1425,9 @@ fn a_claim_binds_every_random_parameter_of_its_subject() {
             randoms,
             "{name}"
         );
-        assert!(
-            node["node_id"]["path"]
-                .to_string()
-                .contains("\"distributions\"")
-        );
+        assert!(node["node_id"]["path"]
+            .to_string()
+            .contains("\"distributions\""));
     }
     for support in ["3: 1, 1: 2", "3: 1, 2: 3"] {
         let changed = random_claims_wire(support, &claims);

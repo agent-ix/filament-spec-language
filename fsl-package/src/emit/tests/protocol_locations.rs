@@ -996,7 +996,9 @@ fn the_reader_projects_nested_let_binders_into_distinct_slots() {
                 panic!("the outer let is the projected root");
             };
             let Some(filament_checked::node::NodeKind::Let {
-                slot: inner_slot, name: inner_name, ..
+                slot: inner_slot,
+                name: inner_name,
+                ..
             }) = projection.kind(*inner)
             else {
                 panic!("the inner let is projected in the outer body");

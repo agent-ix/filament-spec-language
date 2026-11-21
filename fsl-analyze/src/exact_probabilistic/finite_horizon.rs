@@ -10,7 +10,7 @@ use num_traits::Zero as _;
 
 use super::rows::Evaluation;
 use super::unbounded::{
-    Graph, UnboundedError, UnboundedObjective, maximal_end_components_from, policy_iteration,
+    maximal_end_components_from, policy_iteration, Graph, UnboundedError, UnboundedObjective,
 };
 use super::{
     ExactProbLimits, MonitorVerdict, ProbEdge, ProbProduct, ProbStateId, ProductAction, ProductKind,
@@ -174,7 +174,10 @@ pub fn backward_induction(
     )
 }
 
-#[allow(clippy::too_many_arguments, reason = "backward induction carries independent rational, precision, and policy iteration bounds")]
+#[allow(
+    clippy::too_many_arguments,
+    reason = "backward induction carries independent rational, precision, and policy iteration bounds"
+)]
 fn backward_induction_with_policy_limit(
     product: &ProbProduct,
     terminal: &[Option<Rational>],

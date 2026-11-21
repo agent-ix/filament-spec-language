@@ -609,12 +609,10 @@ pub fn read_task_temporal_document(
             "transition" => {
                 TaskProductTransition::Source(source_transition(transition, &transition_pointer)?)
             }
-            "task-transition" => {
-                TaskProductTransition::Task(Box::new(task_transition(
-                    transition,
-                    &transition_pointer,
-                )?))
-            }
+            "task-transition" => TaskProductTransition::Task(Box::new(task_transition(
+                transition,
+                &transition_pointer,
+            )?)),
             "terminal-stutter" => TaskProductTransition::TerminalStutter,
             _ => {
                 return Err(TemporalCounterexampleReadRefusal::TraceAlphabet {
@@ -2868,4 +2866,3 @@ mod tests {
         }
     }
 }
-

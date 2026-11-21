@@ -12,7 +12,7 @@ use filament_semantic_value::checking::CheckMode;
 use fsl_foundation::Code;
 use fsl_semantics::check::{CheckCause, CheckRefusal};
 
-use super::admission_corpus::{MAPS, rows_refinement};
+use super::admission_corpus::{rows_refinement, MAPS};
 use super::*;
 
 /// The refusals of `unit` over `documents`, which must not check.

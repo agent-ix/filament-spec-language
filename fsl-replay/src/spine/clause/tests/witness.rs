@@ -243,7 +243,10 @@ type VersionReplayCase = (
     Vec<(DocumentRef, Vec<u8>)>,
 );
 
-#[allow(clippy::too_many_arguments, reason = "the fixture independently selects pre/post versions, receiver, result, witness, and source")]
+#[allow(
+    clippy::too_many_arguments,
+    reason = "the fixture independently selects pre/post versions, receiver, result, witness, and source"
+)]
 fn version_advances_replay_case(
     unit: &Unit,
     root_pre: i64,

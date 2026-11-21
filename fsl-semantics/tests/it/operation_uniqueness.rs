@@ -5,11 +5,11 @@ use fsl_semantics::model::domain_package::DomainPackageRecord;
 use fsl_semantics::model::intake::UnitIntakeCause;
 use fsl_semantics::model::refusal::ModelRefusalCause;
 use ix_trace_rs::trace;
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 
 use super::model_operations::{
-    PACKAGE_IDENTITY, admit, config_version_document_with_operations, empty_frame, operation,
-    operation_parameter,
+    admit, config_version_document_with_operations, empty_frame, operation, operation_parameter,
+    PACKAGE_IDENTITY,
 };
 
 const INTEGER: &str = "ix://filament/native/Integer";
