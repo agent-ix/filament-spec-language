@@ -326,7 +326,9 @@ pub struct ComponentGuaranteeKey {
     /// The item's FR-492 slot key without the assumption set.
     pub key: SlotKey,
     /// The peer guarantees `G` may assume: the `H` of each `rely` and
-    /// `depends` member `G` carries, sorted by node.
+    /// `depends` member `G` carries that a declared `guarantee` names, sorted
+    /// by node. An `H` no declared `guarantee` names has no index (FSpec
+    /// FR-491 "Assumption binding"), so it is no assumption.
     pub assumptions: Vec<NodeKey>,
     /// The peer clauses behind `assumptions`, by full identity (component and
     /// clause), sorted: two components built from one package name one clause
@@ -497,6 +499,7 @@ impl CheckedComposition {
             .iter()
             .chain(&self.liveness_dependencies)
             .filter(|premise| assumes && premise.guarantee == *reference)
+            .filter(|premise| self.guarantees.iter().any(|g| g.reference == premise.on))
             .map(|premise| premise.on.clone())
             .collect();
         let assumptions: BTreeSet<NodeKey> = peers.iter().map(|peer| peer.node.clone()).collect();

@@ -33,3 +33,12 @@ Ticket: QSL-2739, PR #3385 at frozen head 13623d29. This is a planless gap audit
 - Matrix: computed by the `quire matrix` fallback after `quoin matrix` refused on size. In scope: FR-1044 has 12 criteria tagged, 1 untagged (AC-10) and 1 retired (AC-7). FR-530 has 8 tagged, 1 untagged (AC-10) and 1 retired (AC-5).
 - Reverse gap and stubs: examined over every changed source file in scope. No unowned behavior, `todo!` or placeholder return was found.
 - Semantic review: skipped. It is opt-in and was not requested in this non-interactive dispatch.
+
+## Dispositions
+
+Disposition round 1 at fix head fe5e3881a9987aefbe900da708cfb8743e22def4. Bounded to the fix commit. No repeated matrix or workspace run. The tags were checked in source.
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | `#[trace("FR-530-AC-1", "FR-530-AC-10", ...)]` is now on `a_non_assume_guarantee_rule_derives_a_request_item`, `#[trace("FR-1044-AC-5", "FR-530-AC-10")]` on `an_interface_composition_derives_no_assumption_set`, and FR-530-AC-10 on the new `components_of_one_package_are_distinct_assumed_peers`. |
+| FND-002 | deferred: external | FR-1044-AC-10 package parity stays OPEN with its existing owner, terra:QSL:package-consumer-api. The ignored test's reason says so, and it carries no trace, so it claims no coverage. No new issue or scope. |

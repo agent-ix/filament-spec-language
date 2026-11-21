@@ -898,8 +898,7 @@ fn a_premise_under_assumptions_is_not_run_as_the_clause_alone() {
 
 /// The record every cyclic composition settles with, under any rule: no
 /// `request` member and no candidates, `unsupported` by disposition at `S4`
-/// (basis `unavailable`),
-/// naming kind `composition`, form `fixed-point` and the cycle's guarantees in
+/// with no proof basis, naming kind `composition`, form `fixed-point` and the cycle's guarantees in
 /// edge order.
 fn assert_cycle_answer(item: &Value, name: &str) {
     assert_eq!(item["claim_name"], name, "{item}");
@@ -907,7 +906,9 @@ fn assert_cycle_answer(item: &Value, name: &str) {
     assert_eq!(label(item), "unsupported", "{item}");
     assert_eq!(item["record"]["settled_by"], "disposition", "{item}");
     assert!(item["record"]["backend"].is_null(), "{item}");
-    assert_eq!(item["record"]["basis"]["type"], "unavailable", "{item}");
+    // The record carries no proof basis; FSpec FR-243's `unavailable` is a
+    // settlement basis no terminal record writes.
+    assert!(item["record"]["basis"].is_null(), "{item}");
     assert_eq!(
         item["record"]["diagnostic"]["code"], "unsupported_projection",
         "{item}"
@@ -1294,15 +1295,13 @@ fn a_declared_interface_mismatch_the_provider_names_refutes_the_composition() {
     assert_eq!(counterexample["premise"], 1, "{document}");
     assert_eq!(counterexample["reason"], "absent", "{document}");
     assert_eq!(item["category"], "violation", "{document}");
-    // `SysAbsent`'s one premise, `Capped` under the absent `Bounded`, is
-    // checked under a peer guarantee and settles `unsupported`; `Sys`'s own
-    // premises keep their records.
+    // `SysAbsent`'s one premise is `Capped` with no assumption (the absent
+    // `Bounded` has no index), so it runs as its clause and proves; `Sys`'s
+    // premises prove beside it.
     let items = document["items"].as_array().expect("items");
-    assert_eq!(items.len(), 5, "{document}");
     assert_eq!(label(&items[1]), "proved", "{document}");
-    assert_eq!(label(&items[2]), "unsupported", "{document}");
+    assert_eq!(label(&items[2]), "proved", "{document}");
     assert_eq!(label(&items[3]), "proved", "{document}");
-    assert_eq!(label(&items[4]), "proved", "{document}");
     assert_eq!(run.exit, 10, "{document}");
 }
 

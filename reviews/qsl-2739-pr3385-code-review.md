@@ -52,3 +52,33 @@ The review brief does not allow the reviewer to run Cargo, fmt, clippy, tests, K
 The two main-conflict resolutions are correct and keep main's behaviour. `item_stage` keeps main's `ProtocolAnalysis` acting-instance arm and adds `InterfaceMismatch` as an S7 typed witness. `replay_target` returns `None` for `ScheduleMiss | InterfaceMismatch | ProtocolAnalysis`.
 
 Remaining work outside this PR: FR-1044-AC-10 package projection and parity stays OPEN with the package-consumer API lane. The external driver text is done in PR223 at 891ca755cf742712d7ff4f4adfa3208b775948f6 and is not pending. The PR correctly says `Refs QSL-2739` and never `Closes`.
+
+## New findings (disposition pass 1)
+
+Fix head fe5e3881a9987aefbe900da708cfb8743e22def4 over base f325f13cd02bd3aa3442b6340ba3a4a7ab462dd1. Scope is bounded to the fix commit (68957d6ce7..fe5e3881a9). The current dev-tools 0.3.2 `rust-style` and `rust-review` skills were applied. The initial pass cited 0.2.0.
+
+| ID | Severity | Summary | Refs |
+| --- | --- | --- | --- |
+| FND-007 | medium | The typed premise context is built from every `rely`/`depends` peer node, including a peer that no declared `guarantee` names. FSpec FR-491 "Assumption binding" and FR-1044 give such an `H` no index, and FR-1044 runs a premise whose slot entry of `assumptions` is empty as its clause. `SysAbsent`'s `Capped` has wire `assumptions` `[[]]`, yet `assumed` is true because the key holds the node `Bounded`, so it settles `unsupported` and never runs. Runtime fix 1 rewrote the AC-14 oracle to expect `items[2]` `unsupported`, which encodes this. The same node-keyed context gives an FR-492 slot key that a result checked under the derived (empty) context does not match. | fsl-semantics/src/check/composition.rs:495 |
+| FND-008 | medium | FND-001's fix binds the wire `assumptions` by the full `ClauseRef` (the new `peers`). The typed `ItemKey` still comes from the node-only `assumptions` (`item_key(&key.key, &key.assumptions)`, `subject_text` over nodes). Take two components built from one package. A guarantee checked under `PA::H`, under `PC::H`, or under both gets one identical `ItemKey`, so `premise_items` shares one item across contexts whose FR-331 arrays differ, and the planner admits a result of one context for the other. This contradicts "the typed key distinguishes an equal-wire guarantee under a different assumption context". The new fsl-package test checks only the wire arrays. | fsl-replay/src/planner/from_package.rs:586 |
+
+## Dispositions
+
+Disposition round 1. Every outcome below comes from reading the fix commit's source, not the fix report. The fresh fix-head runtime run (16 cases on Titan) is still pending (`/tmp/qsl-2739-provider-fix1-runtime-results.txt` is absent), so no runtime pass or merge eligibility is claimed. The initial head's runtime was 20 passed and 7 failed (`/tmp/qsl-2739-provider-runtime-results.txt`). Each of the 7 failures has a source change: the AC-14 oracle (see FND-007), the producer cause spelled `kind` per FSpec FR-621 against the provider's `type` per FR-331 (correct), and a legal `profile q` plus a `function marker` fixture in the root unit (fixture only, no wider admission).
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | `assumption_indices` now binds by full `ClauseRef` through the new `ComponentGuaranteeKey.peers`. Self indices and the two-peer collapse are gone from the wire array, and the test `components_of_one_package_are_distinct_assumed_peers` asserts `[[],[],[0,1]]` and `[[1],[]]`. The typed-key part of the same root cause stays open as FND-008. |
+| FND-002 | fixed | The `u64::MAX` exemption is removed. The caller's `max_work`, or the default, is honoured. An exhausted budget settles `incomplete` with `limit` `max_work`, the partial slots and no mismatch. A sufficient limit settles `refuted` with every slot. FR-530 and TC-1330 were amended in this PR as the ARCH ruling allows. |
+| FND-003 | fixed | The new `the_provider_witness_is_admitted_in_reason_major_order` test runs through the real `finish` admission. `SysMixed`'s slot-3 `weaker` witness is refused `invalid_result`/`invalid-value` at `/counterexample`, and the slot-4 `absent` one is `refuted`. The FR-1044 malformed-witness bullet and AC-14 are reworded per the ARCH ruling: a linked witness is a closed type that cannot be built malformed, and a malformed plugin witness is the producer's FR-331 schema obligation. No phantom reader or fake fixture was added. |
+| FND-004 | fixed | `composition_provider_of(..., ProviderOrigin::Linked)` adds a linked `proved` for `SysAG`, asserted `uncertified`. |
+| FND-005 | fixed | `assert_cycle_answer` asserts basis `unavailable`. The request with the cycle as its only item asserts `last_stage` `S4`. The new `a_self_rely_refuses_the_unit_as_a_malformed_declaration` asserts exit 20 and `invalid_model_binding`/`malformed-declaration` through analyze. |
+| FND-006 | fixed | The unused argument is dropped. The only caller admits the witness after its own recomputation and equality check. |
+| FND-007 | still-open: new in this round; route to the fix coder | The premise context should come from the derived peer-index set: undeclared peers excluded, and the AC-14 oracle restored to the spec's `proved`. |
+| FND-008 | still-open: new in this round; route to the fix coder | The typed `ItemKey` context must carry full peer identity (component or peer slot index), not nodes alone. |
+
+### Fixed text (after_excerpt)
+
+- FND-001 `fsl-semantics/src/check/composition.rs`: `.filter_map(|slot| Some((slot.index, slot.guarantee.as_ref()?)))` and `find_map(|(index, reference)| (*reference == peer).then_some(*index))` over `key.peers`.
+- FND-002 `fsl-replay/src/planner/compose.rs`: `let max_work = request.max_work.unwrap_or(budget.max_work);`
+- FND-006 `fsl-replay/src/proof_result.rs`: `pub fn refuted_by_interface_mismatch(request_index: RequestIndex, backend: BackendId) -> Self {`

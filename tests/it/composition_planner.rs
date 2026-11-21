@@ -425,6 +425,24 @@ fn an_absent_mismatch_is_reported_before_a_weaker_one_at_a_lower_slot() {
     assert_eq!(found.component, "Producer");
 }
 
+/// FSpec FR-491 "Assumption binding": only a peer a declared `guarantee`
+/// names is an assumption. A guarantee relying on a declared peer is keyed
+/// under it, and one relying on an undeclared peer is keyed as its own clause
+/// alone, so a result for the bare clause settles it.
+#[trace("TC-1330", "FR-530-AC-10")]
+#[test]
+fn only_a_declared_peer_is_an_assumption_of_the_slot_key() {
+    let world = World::new();
+    let subject = |chain: &Chain, slot: usize| chain.item_json(slot)["temporal"]["subject"].clone();
+    let declared = world.chain("assume-guarantee", CASE_ONE_MEMBERS);
+    assert!(subject(&declared, DONE).get("assumptions").is_some());
+    let undeclared = world.chain(
+        "assume-guarantee",
+        "guarantee Consumer::Done; rely Consumer::Done on Producer::Counted; ",
+    );
+    assert!(subject(&undeclared, 0).get("assumptions").is_none());
+}
+
 /// A wrong or unproved supplied result under a declared, non-weaker
 /// interface is never a mismatch (FSpec FR-492 "Interface mismatch").
 #[trace("TC-1330", "FR-530-AC-9")]

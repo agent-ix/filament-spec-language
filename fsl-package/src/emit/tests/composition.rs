@@ -556,33 +556,29 @@ fn a_non_assume_guarantee_rule_derives_a_request_item() {
     );
 }
 
-/// FSpec FR-491 "Assumption binding": a peer is bound by its component and
-/// clause, not by the clause's node alone. Two components built from one
-/// package name one clause node, yet they are two peers: a guarantee relying
-/// on both binds two indices, and a guarantee relying on its sibling binds the
-/// sibling, never itself.
+/// FSpec FR-491 "Assumption binding": a peer `H` no declared `guarantee`
+/// names has no index, so it is no assumption of the guarantee that relies on
+/// it: the slot's `assumptions` entry is empty and its key carries no node.
+/// (One clause node names one peer: a clause is checked over its component's
+/// own alias, and two components over one subject are refused, so no node is
+/// shared between components.)
 #[trace("FR-530-AC-10", "FSpec-FR-491-AC-1")]
 #[test]
-fn components_of_one_package_are_distinct_assumed_peers() {
+fn an_undeclared_peer_is_no_assumption() {
     let world = World::new();
-    let compose = |members: &str| {
-        let declaration = format!(
-            "compose Sys rule assume-guarantee {{ component PA from P using M; \
-             component PB from P using M; component Consumer from Q using M; {members}}}"
-        );
-        let package = world
-            .compile(&declaration)
-            .unwrap_or_else(|failure| panic!("{declaration}: the unit compiles: {failure:?}"));
-        sole(&package).item()
-    };
-    let item = compose(
-        "guarantee PA::Counted; guarantee PB::Counted; guarantee Consumer::Done; \
-         rely Consumer::Done on PA::Counted; rely Consumer::Done on PB::Counted; ",
+    let package = world.checked(
+        "assume-guarantee",
+        "guarantee Consumer::Done; rely Consumer::Done on Producer::Counted; ",
     );
-    assert_eq!(item.assumptions, vec![vec![], vec![], vec![0, 1]]);
-    let item =
-        compose("guarantee PA::Counted; guarantee PB::Counted; rely PA::Counted on PB::Counted; ");
-    assert_eq!(item.assumptions, vec![vec![1], vec![]]);
+    let item = sole(&package).item();
+    assert_eq!(item.assumptions, vec![Vec::<usize>::new()]);
+    let Some(CompositionSlotKey::ComponentGuarantee(key)) = &item.premises[0].key else {
+        panic!("a component-guarantee key");
+    };
+    assert!(
+        key.assumptions.is_empty() && key.peers.is_empty(),
+        "{key:?}"
+    );
 }
 
 /// FR-491-AC-6 (TC-985 case 6): the v2 byte emitter writes a composition
