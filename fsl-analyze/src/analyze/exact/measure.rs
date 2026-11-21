@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! Shared-control finite-horizon induction and independently accepted proofs.
 use super::*;
-use crate::exact_probabilistic::{backward_induction, FhObjective};
+use crate::exact_probabilistic::{decide_measure_exact, FhObjective, QualifiedFhError};
 use fsl_replay::{
     conditional_measure_probability_certificate, measure_probability_certificate_document,
     measure_probability_objective, measure_probability_product_key,
@@ -119,30 +119,18 @@ pub(super) fn run(
         ProbabilityObjective::Maximum => FhObjective::Max,
         _ => FhObjective::Min,
     };
-    let threshold = match &claim.form {
-        ProbForm::Probability {
-            bound: Bound::AtLeast(value) | Bound::AtMost(value),
-            ..
-        }
-        | ProbForm::MeanOfFraction {
-            bound: Bound::AtLeast(value) | Bound::AtMost(value),
-            ..
-        } => value.clone(),
-        ProbForm::Quantile { .. } => Rational::from_integer(0_i64.into()),
-        _ => return not_yet(),
-    };
-    let (values, policy) = match backward_induction(
+    let (values, policy) = match decide_measure_exact(
         &product,
         &terminal,
         objective,
-        &threshold,
         limits.max_rational_bits,
-        limits.precision_bits,
-        limits.max_precision_bits,
+        &mut meter,
+        &mut storage,
+        document_limits.storage_bytes,
     ) {
         Ok(FhResult::Exact { values, policy }) => (values, policy),
-        Ok(FhResult::Bounds { .. } | FhResult::PrecisionBudget { .. }) => return not_yet(),
-        Err(_) => return broken(),
+        Ok(_) => return broken(),
+        Err(error) => return document_failure(induction_failure(error, cancel), subject),
     };
     for state in &mut product.states {
         let Some(control) = state.monitor else {
@@ -255,19 +243,19 @@ pub(super) fn run(
                         .map_err(scalar_failure)
                 })
                 .collect::<Result<Vec<_>, _>>()?;
-            let denominator = match backward_induction(
+            let denominator = match decide_measure_exact(
                 &product,
                 &terminal,
                 objective,
-                &threshold,
                 limits.max_rational_bits,
-                limits.precision_bits,
-                limits.max_precision_bits,
+                &mut meter,
+                &mut storage,
+                document_limits.storage_bytes,
             )
-            .map_err(|_| ProbabilityDocumentError::Malformed)?
+            .map_err(|error| induction_failure(error, cancel))?
             {
                 FhResult::Exact { values, .. } => values,
-                _ => return Err(ProbabilityDocumentError::Unsupported),
+                _ => return Err(ProbabilityDocumentError::Malformed),
             };
             let vacuous = denominator
                 .get(initial.index())
@@ -489,5 +477,31 @@ fn refute(
             settled(&ExactProbBuildIssue::Limit { limit, value }, subject)
         }
         Err(_) => broken(),
+    }
+}
+
+fn induction_failure(error: QualifiedFhError, cancel: &Cancel) -> ProbabilityDocumentError {
+    if let Some(cause) = cancel.tripped() {
+        return ProbabilityDocumentError::Cancelled(cause);
+    }
+    match error {
+        QualifiedFhError::Accounting(error) => ProbabilityDocumentError::Accounting(error),
+        QualifiedFhError::Storage { bound, actual } => ProbabilityDocumentError::Limit {
+            limit: fsl_replay::ProbabilityDocumentLimit::StorageBytes,
+            bound,
+            actual,
+        },
+        QualifiedFhError::RationalBits { bound, actual } => ProbabilityDocumentError::Limit {
+            limit: fsl_replay::ProbabilityDocumentLimit::RationalBits,
+            bound,
+            actual,
+        },
+        QualifiedFhError::Graph(error) => match error {
+            FhError::Cycle => ProbabilityDocumentError::Graph(ExactProbabilityGraphError::Cycle),
+            FhError::InvalidState
+            | FhError::MissingAction
+            | FhError::InvalidProbability
+            | FhError::InvalidPrecision => ProbabilityDocumentError::Malformed,
+        },
     }
 }
