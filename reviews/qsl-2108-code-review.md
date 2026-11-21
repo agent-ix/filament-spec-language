@@ -67,3 +67,24 @@ scope:
   - {"id":"standalone-target","path":"Makefile; xtask/src/main.rs; xtask/src/lib.rs; xtask/tests/ci_targets.rs","role":"examined","excerpt":"backend-agreement remains a standalone command and Make target outside ci."}
   - {"id":"shared-preflight","path":"xtask/src/qualification.rs; xtask/src/qualification/adapters.rs","role":"examined","excerpt":"Shared corpus, schema, scope and settings preflight. No vector executes here."}
 ```
+
+## Dispositions
+
+### Round 1
+
+Reviewed fix head a08c8ccbf91316b0e2ce20ce07a7f4ccff20213c. Original findings above are unchanged.
+
+- FND-001: **fixed** — verified against the changed production code and regression assertions.
+- FND-002: **fixed** — verified against the changed production code and regression assertions.
+- FND-003: **fixed** — verified against the changed production code and regression assertions.
+
+```yaml
+dispositions:
+  - {"fnd":"FND-001","outcome":"fixed","after_excerpt":"let terminal = record.get(\"record\")?;\n    match (\n        terminal.get(\"result\")?.as_str()?,\n        record.get(\"category\")?.as_str()?,\n    ) {"}
+  - {"fnd":"FND-002","outcome":"fixed","after_excerpt":"if record.get(\"claim_name\").and_then(Value::as_str) != Some(item.claim.claim_name.as_str())\n            || record.get(\"request_index\").and_then(Value::as_u64) != Some(0)\n            || echo.get(\"request_index\").and_then(Value::as_u64) != Some(0)\n            || echo.get(\"claim\") != expected.get(\"claim\")\n            || echo.get(\"kind\") != expected.get(\"kind\")\n            || echo.get(\"extent\") != expected.get(\"extent\")"}
+  - {"fnd":"FND-003","outcome":"fixed","after_excerpt":"if claims.is_empty() && entries.is_empty() {\n        entries.push(failed_vector(\n            vector,\n            Settlement::NotCompared,\n            json!({\"reason\":\"no-resolved-verification-item\"}),\n        ));\n    }"}
+```
+
+## Disposition verdict
+
+**CONDITIONAL** — all original findings are fixed by inspection; no new defect was found in the bounded fix diff. Parent-owned focused runtime checks remain required before merge. The author reports focused lib/bin/test compilation passed. Reviewer ran no Cargo. The production native refuted and unsupported fixtures are byte-equal to the real driver outputs retained in this scratchpad. The decoder regression invokes production read_response and replay, rejects eight changed identity fields, and covers real-shaped agreement/conflict/non-comparison. Mixed-corpus and already-settled resolution regressions cover retained entries.

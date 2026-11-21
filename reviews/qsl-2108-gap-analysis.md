@@ -58,3 +58,20 @@ scope:
   - {"id":"standalone-target","path":"Makefile; xtask/src/main.rs; xtask/src/lib.rs; xtask/tests/ci_targets.rs","role":"examined","excerpt":"backend-agreement remains a standalone command and Make target outside ci."}
   - {"id":"shared-preflight","path":"xtask/src/qualification.rs; xtask/src/qualification/adapters.rs","role":"examined","excerpt":"Shared corpus, schema, scope and settings preflight. No vector executes here."}
 ```
+
+## Dispositions
+
+### Round 1
+
+Reviewed fix head a08c8ccbf91316b0e2ce20ce07a7f4ccff20213c. Original findings above are unchanged.
+
+- FND-001: **fixed** — verified against the changed production code and regression assertions.
+
+```yaml
+dispositions:
+  - {"fnd":"FND-001","outcome":"fixed","after_excerpt":"let document: Value = serde_json::from_slice(REFUTED).unwrap();\n            let backend = BackendId::new(\"value-checker\");\n            let mut refutation = driver.read_response(item, &backend, REFUTED).unwrap();\n            assert_eq!(refutation.record.as_ref().unwrap(), &document[\"items\"][0]);"}
+```
+
+## Disposition verdict
+
+**CONDITIONAL** — all original findings are fixed by inspection; no new defect was found in the bounded fix diff. Parent-owned focused runtime checks remain required before merge. The author reports focused lib/bin/test compilation passed. Reviewer ran no Cargo. The production native refuted and unsupported fixtures are byte-equal to the real driver outputs retained in this scratchpad. The decoder regression invokes production read_response and replay, rejects eight changed identity fields, and covers real-shaped agreement/conflict/non-comparison. Mixed-corpus and already-settled resolution regressions cover retained entries.
