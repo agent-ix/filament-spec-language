@@ -108,16 +108,13 @@ pub(super) fn run(
     {
         let empty = ExactProbabilityCertificate { values: Vec::new() };
         let checked = (|| {
-            let document = measure_probability_certificate_document(
+            let document = fsl_replay::vacuous_measure_probability_certificate_document(
                 &system,
                 claims,
                 &item,
-                &empty,
-                MeasurePayoffKind::Satisfied,
                 document_limits,
                 cancel,
-            )?
-            .into_vacuous()?;
+            )?;
             let bytes = write_measure_probability_certificate(&document, document_limits, cancel)?;
             check_probability_certificate_document(
                 &system,

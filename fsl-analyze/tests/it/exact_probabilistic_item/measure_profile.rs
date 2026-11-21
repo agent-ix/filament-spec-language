@@ -512,6 +512,17 @@ fn the_independent_measure_checker_preserves_caller_limits_and_cancellation() {
             fsl_replay::ProbabilityDocumentLimits { edges: 0, ..limits },
             fsl_replay::ProbabilityDocumentLimit::Edges,
         ),
+        (
+            fsl_replay::ProbabilityDocumentLimits { edges: 1, ..limits },
+            fsl_replay::ProbabilityDocumentLimit::Edges,
+        ),
+        (
+            fsl_replay::ProbabilityDocumentLimits {
+                scalar_bits: 3,
+                ..limits
+            },
+            fsl_replay::ProbabilityDocumentLimit::RationalBits,
+        ),
     ] {
         let actual = run(offered, &Cancel::new());
         assert!(
@@ -890,19 +901,27 @@ fn unreachable_activation_has_a_certified_value_free_vacuity_basis_for_each_sche
                 .unwrap(),
             )
             .unwrap();
-            let checked = check(&world, name, &numeric);
-            assert!(
-                matches!(
-                    checked,
-                    Ok(ExactProbabilityCertificateCheck::Rejected(
-                        ProbabilityCertificateRejection {
-                            rule: ProbabilityCertificateRule::InequalityFails,
-                            at: ProbabilityCertificateLocus::ProductState(_)
-                        }
-                    ))
-                ),
-                "numeric no-activation {scheduler}/{name}: {checked:?}"
+            let part = if scheduler == "Steady" {
+                &numeric["conditional"]["numerator"]
+            } else {
+                &numeric
+            };
+            let initial = part["ranking"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|row| row["rank"] == 4)
+                .unwrap();
+            let expected = ProbabilityProductKey::from_canonical_bytes(
+                URL_SAFE_NO_PAD
+                    .decode(initial["state"].as_str().unwrap())
+                    .unwrap(),
             );
+            let checked = check(&world, name, &numeric);
+            assert!(matches!(&checked, Ok(ExactProbabilityCertificateCheck::Rejected(ProbabilityCertificateRejection {
+                rule: ProbabilityCertificateRule::InequalityFails,
+                at: ProbabilityCertificateLocus::ProductState(at)
+            })) if at == &expected), "numeric no-activation {scheduler}/{name}: {checked:?}; expected initial {expected:?}");
         }
     }
     for scheduler in [
@@ -924,17 +943,13 @@ fn unreachable_activation_has_a_certified_value_free_vacuity_basis_for_each_sche
         assert_ne!(numeric["conditional"]["mode"], "vacuous");
         let system = ModelSystem::new(activated.subject().simulation).unwrap();
         let item = fsl_replay::probabilistic_claim_identity(activated.claim("Q")).unwrap();
-        let forged = fsl_replay::measure_probability_certificate_document(
+        let forged = fsl_replay::vacuous_measure_probability_certificate_document(
             &system,
             activated.package.graph().probabilistic_model().claims(),
             &item,
-            &ExactProbabilityCertificate { values: Vec::new() },
-            fsl_replay::MeasurePayoffKind::Satisfied,
             document_limits(),
             &Cancel::new(),
         )
-        .unwrap()
-        .into_vacuous()
         .unwrap();
         let forged: Value = serde_json::from_slice(
             &fsl_replay::write_measure_probability_certificate(

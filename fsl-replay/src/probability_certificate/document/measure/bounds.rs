@@ -240,6 +240,9 @@ pub(super) fn check(
         &mut storage,
         lower.then_some(&named),
     )?;
+    if graph.initials.len() != 1 {
+        return Err(ProbabilityDocumentError::Unsupported);
+    }
     let rejection = |rule, key| {
         MeanRefutationCheck::Rejected(ProbabilityCertificateRejection {
             rule,

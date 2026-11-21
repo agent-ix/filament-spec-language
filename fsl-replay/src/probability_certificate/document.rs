@@ -11,8 +11,8 @@ pub(super) mod measure;
 pub use measure::{
     conditional_measure_probability_certificate, measure_probability_certificate_document,
     measure_probability_objective, measure_probability_product_key,
-    read_measure_probability_certificate, write_measure_probability_certificate, MeasurePayoffKind,
-    MeasureProbabilityDocument,
+    read_measure_probability_certificate, vacuous_measure_probability_certificate_document,
+    write_measure_probability_certificate, MeasurePayoffKind, MeasureProbabilityDocument,
 };
 mod fairness;
 #[cfg(feature = "test-support")]

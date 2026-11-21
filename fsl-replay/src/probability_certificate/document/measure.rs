@@ -1533,18 +1533,38 @@ pub fn measure_probability_certificate_document(
     })
 }
 
-impl MeasureProbabilityDocument {
-    /// Select value-free vacuity evidence for an unactivated quantile.
-    /// This only creates unchecked evidence; the checker still explores activation.
-    pub fn into_vacuous(mut self) -> Result<Self, ProbabilityDocumentError> {
-        if self.payoff != MeasurePayoffKind::Satisfied || self.conditional.is_some() {
-            return Err(ProbabilityDocumentError::MalformedMember("mode"));
-        }
-        self.values.clear();
-        self.ranking.clear();
-        self.conditional = Some(Box::new(Conditional::Vacuous));
-        Ok(self)
+/// Build unchecked value-free quantile evidence without computing discarded
+/// numeric values or ranks. Only the independent checker proves vacuity.
+pub fn vacuous_measure_probability_certificate_document(
+    system: &ModelSystem<'_>,
+    claims: &[CheckedProbabilisticClaim],
+    item: &ObligationIdentity,
+    limits: ProbabilityDocumentLimits,
+    cancel: &Cancel,
+) -> Result<MeasureProbabilityDocument, ProbabilityDocumentError> {
+    let claim = bind_claim(claims, item, cancel)?;
+    if !matches!(claim.form, ProbForm::Quantile { .. }) {
+        return Err(ProbabilityDocumentError::MalformedMember("mode"));
     }
+    let mut meter = filament_exact::Meter::new(limits.accounting).with_cancel(cancel.clone());
+    let mut storage = 0;
+    let selected = plan(
+        system,
+        claim,
+        MeasurePayoffKind::Satisfied,
+        limits,
+        cancel,
+        &mut meter,
+        &mut storage,
+    )?;
+    Ok(MeasureProbabilityDocument {
+        identity: item.clone(),
+        payoff: MeasurePayoffKind::Satisfied,
+        values: Vec::new(),
+        ranking: Vec::new(),
+        objective: selected.objective,
+        conditional: Some(Box::new(Conditional::Vacuous)),
+    })
 }
 
 /// Combine exact numerator and denominator documents into a workload ratio.
