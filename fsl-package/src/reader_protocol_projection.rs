@@ -4273,6 +4273,20 @@ fn literal_value(
                 _ => return None,
             }
         }
+        Literal::Decimal { coefficient, scale } => {
+            let scale = u32::try_from(scale).ok()?;
+            let decimal =
+                filament_exact::Decimal::new(coefficient.to_string().parse().ok()?, scale);
+            let ValueType::Decimal(domain) =
+                crate::checked_v2::decimal_range_type(index.admitted, type_id).ok()?
+            else {
+                return None;
+            };
+            if !domain.contains(&decimal) {
+                return None;
+            }
+            Value::Decimal(decimal)
+        }
         Literal::Float32Bits(bits) => Value::Float(filament_exact::IeeeValue::binary32(bits)),
         Literal::Float64Bits(bits) => Value::Float(filament_exact::IeeeValue::binary64(bits)),
         Literal::String(value) => Value::String(value.into()),

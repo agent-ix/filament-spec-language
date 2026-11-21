@@ -238,6 +238,10 @@ impl ProtocolRefusal {
     /// The refusal's catalog code.
     pub fn code(&self) -> Code {
         match self {
+            Self::PackageParameterType { failure, .. } => match &**failure {
+                fsl_package::BareSelectionFailure::Slot(_) => Code::RuntimeInvariant,
+                _ => Code::UnknownRequiredFeature,
+            },
             Self::UnknownProtocol { .. }
             | Self::RoleMapping { .. }
             | Self::OverBinding { .. }
@@ -257,6 +261,10 @@ impl ProtocolRefusal {
     /// The refusal's catalog cause.
     pub fn cause(&self) -> &'static str {
         match self {
+            Self::PackageParameterType { failure, .. } => match &**failure {
+                fsl_package::BareSelectionFailure::Slot(_) => "established-invariant-broken",
+                _ => "unsupported-feature",
+            },
             Self::UnknownProtocol { .. }
             | Self::OverBinding { .. }
             | Self::RolePopulation { .. }
