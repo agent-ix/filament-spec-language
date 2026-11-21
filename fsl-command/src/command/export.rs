@@ -797,6 +797,7 @@ fn admission_cause(refusal: fsl_package::PackageAdmissionRefusal) -> RunCause {
         cause,
         pointer,
         identity,
+        ..
     } = refusal;
     let label = cause.as_ref().map_or_else(
         || code.as_str().to_owned(),
@@ -942,6 +943,7 @@ mod tests {
             (Code::MissingImport, 20),
         ] {
             let cause = admission_cause(fsl_package::PackageAdmissionRefusal {
+                limit: None,
                 code,
                 cause: Some("invalid-value".to_owned()),
                 pointer: Some("/claim_names/2".to_owned()),

@@ -62,6 +62,7 @@ pub const IDENTITIES_FORMAT: &str = "filament.checked-handoff.identities/4";
 /// `Clone`: an unbudgeted copy of the joined identities cannot be made.
 #[derive(Debug)]
 pub struct BarePackage<'p> {
+    dependency_views: Vec<BarePackage<'p>>,
     package: &'p CheckedPackageV2,
     /// The package's identity, its admitted `name()` (FR-940 `identity`).
     identity: fsl_semantics::library::LibraryName,
@@ -103,6 +104,7 @@ impl<'p> BarePackage<'p> {
     /// The bare package over `package`, with no supply.
     pub fn new(package: &'p CheckedPackageV2) -> Self {
         Self {
+            dependency_views: Vec::new(),
             identity: fsl_semantics::library::LibraryName::of_package(package),
             package,
             supply: None,
@@ -114,6 +116,35 @@ impl<'p> BarePackage<'p> {
             objects: Ok(Vec::new()),
             populations: Ok(BTreeMap::new()),
         }
+    }
+
+    /// Attach the retained closure, joining each library's own witnesses once
+    /// under the invocation's shared budget. The views are flat: a diamond
+    /// shares its one admitted artifact rather than copying subtrees.
+    ///
+    /// # Errors
+    /// Returns the original native join denial without a partially joined view.
+    pub fn with_dependency_artifacts(
+        mut self,
+        artifacts: &'p [crate::DependencyArtifact],
+        budget: &mut NativeJoinBudget,
+    ) -> Result<Self, crate::NativeJoinFailure> {
+        for artifact in artifacts {
+            self.dependency_views
+                .push(Self::new(&artifact.package).with_supply(
+                    BareSupply {
+                        identities: &artifact.identities,
+                        equality: Some(&artifact.equality),
+                    },
+                    budget,
+                )?);
+        }
+        Ok(self)
+    }
+
+    /// Authenticated package views of the unique library closure.
+    pub fn dependency_views(&self) -> &[BarePackage<'p>] {
+        &self.dependency_views
     }
 
     /// The admitted package's identity (FR-940 `identity`).
@@ -510,17 +541,7 @@ impl<'p> BarePackage<'p> {
     /// distinct values that share a name are both listed. The root package is
     /// not listed.
     pub fn dependencies(&self) -> Vec<&'p CheckedPackageV2> {
-        let mut closure: Vec<&'p CheckedPackageV2> = Vec::new();
-        let mut queue: std::collections::VecDeque<&'p CheckedPackageV2> =
-            self.package.direct_dependencies().collect();
-        while let Some(next) = queue.pop_front() {
-            if closure.iter().any(|held| std::ptr::eq(*held, next)) {
-                continue;
-            }
-            closure.push(next);
-            queue.extend(next.direct_dependencies());
-        }
-        closure
+        crate::analysis_view::closure(self.package)
     }
 }
 
