@@ -411,12 +411,19 @@ fn clock_reference_fields_emit_and_read_back_as_data() {
     let (package, document) = clock_reference_field_package();
     let emission = emit_checked(&package).expect("emits");
     let wire = wire(&emission);
+    assert!(!emission.equality_producer_identity_rows().is_empty());
     for row in emission.equality_producer_identity_rows() {
         assert!(nodes(&wire)
             .iter()
             .any(|node| node["node_id"]
                 == serde_json::to_value(row.checked_node()).expect("node id")));
         assert_eq!(row.source_map_entry().node_id, *row.checked_node());
+        assert!(wire["checked_term_data"]["equality_decisions"]
+            .as_array()
+            .expect("equality decisions")
+            .iter()
+            .any(|decision| decision["application"]
+                == serde_json::to_value(row.checked_node()).expect("application id")));
     }
     clock_reference_field_readback(document, emission, &wire);
 }
@@ -484,6 +491,23 @@ fn a_rekeyed_clock_equality_still_requires_its_exact_producer_identity() {
     let emission = emit_checked(&package).expect("timed equality emits after rekeying");
     let rows = emission.equality_producer_identity_rows();
     assert!(!rows.is_empty(), "the source records equality producers");
+    let wire = wire(&emission);
+    let written = WireGraph::of_package_value(&wire).expect("written graph");
+    let final_ids: HashMap<_, _> = rows
+        .iter()
+        .map(|row| {
+            let value = serde_json::to_value(row.checked_node()).expect("node id");
+            (
+                written.key_of_value(&value).expect("final key"),
+                row.checked_node().clone(),
+            )
+        })
+        .collect();
+    assert!(
+        rows.iter()
+            .any(|row| !final_ids.contains_key(row.application())),
+        "a timed equality's original key was replaced"
+    );
     let mut ids: HashMap<_, _> = rows
         .iter()
         .map(|row| (row.application().clone(), row.checked_node().clone()))
@@ -492,6 +516,10 @@ fn a_rekeyed_clock_equality_still_requires_its_exact_producer_identity() {
         .iter()
         .map(|row| row.source_map_entry().clone())
         .collect();
+    assert!(matches!(
+        equality_producer_emission_rows(package.graph(), &final_ids, &source_map),
+        Err(EmitRefusal::MissingEqualityIdentityContext { .. })
+    ));
     assert!(equality_producer_emission_rows(package.graph(), &ids, &source_map).is_ok());
     ids.remove(rows[0].application());
     assert!(matches!(
