@@ -594,6 +594,9 @@ impl AdmittedModel {
     /// Resolve the effective object types owning a Connection's two Ports.
     /// The caller checks admission separately to retain failures and ceilings.
     pub(crate) fn connection_ends(&self, key: &DeclarationKey) -> Option<[ValueType; 2]> {
+        if self.systems.as_ref()?.actual_kind(key) != crate::model::systems::Kind::Connection {
+            return None;
+        }
         let DomainPackageRecord::Relationship(relationship) = self.records.get(key)? else {
             return None;
         };
