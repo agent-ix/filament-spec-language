@@ -1360,7 +1360,9 @@ fn compile_handoff(directory: &Path, unit: &str) -> Value {
 /// FR-931-AC-18, FR-931-AC-9: the lasso `cross_evaluate` request over the
 /// unit's FR-517 handoff `{"directory": D}` with the source removed returns
 /// the source route's record, `cross_evaluation` included, byte-equal and with
-/// the same exit code; over `{file}` and `{file, equality}` it refuses
+/// the same exit code. The bounded-past clauses are supported; the future
+/// clauses retain the source route's `infinite-trace` unsupported dimension
+/// (FR-931-AC-9). Over `{file}` and `{file, equality}` it refuses
 /// `invalid-request` with `requires: directory`.
 #[test]
 #[trace("TC-2601", "FR-931-AC-18")]
@@ -1370,13 +1372,25 @@ fn a_lasso_cross_evaluation_over_a_handoff_directory_returns_the_source_record()
     spine::write(directory.path(), Case::Healthy).unwrap();
     let models = compile_handoff(directory.path(), &unit);
     for (trace, _, _) in lasso_cases() {
-        for clause in ["Prev", "PrevZero"] {
+        for clause in ["Prev", "PrevZero", "Safe", "Hits"] {
             let lower = json!({"clause": clause, "cross_evaluate": {"trace": trace}});
             let (source_code, from_source) = run(&unit, true, ("tl_lowering", lower.clone()));
-            assert_eq!(source_code, 0, "{clause} {trace}: {from_source}");
+            let expected = if matches!(clause, "Safe" | "Hits") {
+                21
+            } else {
+                0
+            };
+            assert_eq!(source_code, expected, "{clause} {trace}: {from_source}");
             let cross = &from_source["tl_lowering"]["cross_evaluation"];
-            assert_eq!(cross["traces"], 1, "{from_source}");
-            assert_eq!(cross["agree"], true, "{from_source}");
+            if expected == 0 {
+                assert_eq!(cross["traces"], 1, "{from_source}");
+                assert_eq!(cross["agree"], true, "{from_source}");
+            } else {
+                assert_eq!(
+                    from_source["tl_lowering"]["dimensions"],
+                    json!(["infinite-trace"])
+                );
+            }
 
             let (code, from_package) = write_request(
                 directory.path(),
@@ -1481,8 +1495,10 @@ fn a_refused_condition_in_a_clause_run_has_the_same_code_and_cause_on_both_route
         profile t = \"filament.temporal.infinite-trace/v1\";\n\
         model Config = \"example/config-version\";\n\
         record Counter { level: Int[0, 9]; }\n\
+        type Zero = Int[0, 0];\n\
+        function ints using v(xs: Sequence<Integer>[0, 3]): Sequence<Integer>[0, 3] pure { xs }\n\
         temporal C using t over (c: Counter) clock \"steps\" on each (q: Counter) \
-        { always holds(count<Int[0, 0]>(m in sequence[c.level]: m > 0) = 0) }\n";
+        { always holds(count<Zero>(m in ints(sequence[c.level]): m > 0) = 0) }\n";
     let clause = json!({"selection": {"temporal": {"name": "C", "trace":
         {"lasso": {"prefix": [], "loop": [level_sample(1)]}}}}, "observations": {}});
     let directory = tempfile::tempdir().unwrap();
@@ -2329,7 +2345,11 @@ fn lasso_unit() -> String {
      temporal Prev using t over (c: Counter) clock \"steps\" on each (q: Counter) \
      { once[1,1] not holds(c.level = 0) }\n\
      temporal PrevZero using t over (c: Counter) clock \"steps\" on each (q: Counter) \
-     { once[1,1] holds(c.level = 0) }\n"
+     { once[1,1] holds(c.level = 0) }\n\
+     temporal Safe using t over (c: Counter) clock \"steps\" on each (q: Counter) \
+     { always not holds(c.level = 0) }\n\
+     temporal Hits using t over (c: Counter) clock \"steps\" on each (q: Counter) \
+     { eventually holds(c.level = 0) }\n"
         .to_owned()
 }
 
