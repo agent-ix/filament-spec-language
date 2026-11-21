@@ -132,14 +132,31 @@ fn a_repeat_without_a_variant_derives_no_loop_proof_items() {
 /// counter as `got.left`, so the decision slots read a body binder, as
 /// FR-730's use case does.
 fn loop_unit(invariant: &str, variant: &str, guard: &str, operation: &str) -> String {
+    loop_unit_with_maximum(invariant, variant, guard, operation, None)
+}
+
+fn loop_unit_with_maximum(
+    invariant: &str,
+    variant: &str,
+    guard: &str,
+    operation: &str,
+    maximum: Option<u64>,
+) -> String {
     let contracts = match operation {
         "dec" => "DecPre, DecPost",
         _ => "TouchPre",
     };
+    let (maximum, exhausted) = match maximum {
+        Some(maximum) => (
+            format!(" max {maximum}"),
+            " exhausted sequence Exhausted { }",
+        ),
+        None => (String::new(), ""),
+    };
     let run = format!(
-        "sequence Main {{ repeat Retry by w visible (got.left) invariant {{ {invariant} }} \
+        "sequence Main {{ repeat Retry by w visible (got.left){maximum} invariant {{ {invariant} }} \
          variant {{ {variant} }} while {{ {guard} }} \
-         sequence Body {{ {} event Seen by w as (got: Left) {{ got.left = k.v }}; }} }}",
+         sequence Body {{ {} event Seen by w as (got: Left) {{ got.left = k.v }}; }}{exhausted} }}",
         crate::fill::attempt("T", operation, contracts, "t", "true")
     );
     format!("record Left {{ left: Int[0, 3]; }}\n{}", loop_pieces(&run))
@@ -276,6 +293,16 @@ fn analyze_case_items(
         };
         let occurrence = derived.occurrence().clone();
         let case_ref = case;
+        let variant = &protocol
+            .slots
+            .repeats
+            .iter()
+            .find(|candidate| candidate.node == repeat)
+            .expect("repeat")
+            .loop_proof
+            .as_ref()
+            .expect("loop proof")
+            .variant;
         let item = ProtocolItem {
             request: ProtocolCheckRequest {
                 temporal_clock_selections: &[],
@@ -308,7 +335,9 @@ fn analyze_case_items(
                         assert_eq!(proof.failure, failure);
                     }
                 }
-                case_ref.replay_at_occurrence("P", payload.clone(), &[], occurrence)
+                case_ref.replay_at_occurrence("P", payload.clone(), &[], occurrence).inspect_err(|refusal| {
+                    eprintln!("{kind:?} replay refused for variant {variant:?}: {refusal}; debug: {refusal:?}");
+                })
             }),
         };
         indexes.push((kind, derived.index()));
@@ -452,11 +481,7 @@ fn assert_refuted(items: &[(ItemKind, TerminalValue, bool)], wanted: ItemKind) {
 #[test]
 fn a_bounded_repeat_with_a_proof_derives_only_its_invariant() {
     for invariant in ["true", "false"] {
-        let body = loop_unit(invariant, "0", "got.left > 0", "dec").replacen(
-            "visible (got.left)",
-            "visible (got.left) max 3",
-            1,
-        );
+        let body = loop_unit_with_maximum(invariant, "0", "got.left > 0", "dec", Some(3));
         assert_eq!(loop_items(&body), ["loop-invariant"]);
         let case = Case::new(&body, &[2]);
         let items = analyze_case_items(
@@ -621,8 +646,18 @@ fn undecided_guards_preserve_initial_and_post_body_loop_proof_failures() {
 #[trace("TC-2022", "FR-730-AC-5", "FR-730-AC-6", "FR-620")]
 #[test]
 fn source_loop_proof_documents_settle_both_item_kinds() {
-    use crate::analyze_cli_support::{analyze, label, request_over, Workspace};
+    use crate::analyze_cli_support::{analyze, label, request_over, Run, Workspace};
     use serde_json::json;
+
+    let item_with_record = |run: &Run, index: usize, phase: &str| {
+        let item = run.item(index);
+        assert!(
+            item["record"]["result"].is_string(),
+            "{phase} item {index}: {}",
+            run.document()
+        );
+        item
+    };
 
     let ws = Workspace::new("source-loop-proof-wire");
     let body = loop_unit("true", "got.left", "got.left > 0", "dec");
@@ -650,7 +685,7 @@ fn source_loop_proof_documents_settle_both_item_kinds() {
         .into_iter()
         .enumerate()
     {
-        let item = run.item(index);
+        let item = item_with_record(&run, index, "unbounded");
         assert_eq!(label(&item), "proved", "{item}");
         assert_eq!(item["request"]["temporal"]["item_kind"], kind, "{item}");
         assert!(
@@ -669,7 +704,7 @@ fn source_loop_proof_documents_settle_both_item_kinds() {
     let stopped = analyze(&ws.write("limited.json", limited.to_string().as_bytes()));
     assert_eq!(stopped.exit, 22, "{}", stopped.document());
     for index in 0..2 {
-        let item = stopped.item(index);
+        let item = item_with_record(&stopped, index, "state-limited");
         assert_eq!(label(&item), "incomplete", "{item}");
         assert_eq!(item["record"]["cause"]["limit"], "max_states", "{item}");
         assert_eq!(item["record"]["cause"]["value"], 1, "{item}");
@@ -686,7 +721,7 @@ fn source_loop_proof_documents_settle_both_item_kinds() {
     let refused = analyze(&ws.write("horizon.json", horizon.to_string().as_bytes()));
     assert_eq!(refused.exit, 20, "{}", refused.document());
     for index in 0..2 {
-        let item = refused.item(index);
+        let item = item_with_record(&refused, index, "item-horizon-refused");
         assert_eq!(
             item["record"]["diagnostic"]["code"], "invalid_runtime_input",
             "{item}"
@@ -697,13 +732,18 @@ fn source_loop_proof_documents_settle_both_item_kinds() {
         );
     }
 
-    let bounded = unit.replacen("visible (got.left)", "visible (got.left) max 3", 1);
+    let bounded_body = loop_unit_with_maximum("true", "got.left", "got.left > 0", "dec", Some(3));
+    let bounded = crate::fill::unit_text_with(crate::fill::PROTOCOL_PROFILE, &bounded_body);
     ws.write("program.fsl", bounded.as_bytes());
     let bounded = analyze(&path);
     assert_eq!(bounded.exit, 20, "{}", bounded.document());
-    assert_eq!(label(&bounded.item(0)), "proved");
+    let invariant = item_with_record(&bounded, 0, "bounded");
+    let termination = item_with_record(&bounded, 1, "bounded");
+    assert_eq!(label(&invariant), "proved", "{}", bounded.document());
     assert_eq!(
-        bounded.item(1)["record"]["diagnostic"]["cause"],
-        "inapplicable-kind"
+        termination["record"]["diagnostic"]["cause"],
+        "inapplicable-kind",
+        "{}",
+        bounded.document()
     );
 }
