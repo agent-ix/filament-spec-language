@@ -491,10 +491,17 @@ fn witness(fixture: &Fixture) -> fsl_replay::TemporalCounterexample<ProtocolTran
     *counterexample
 }
 
+#[derive(Clone, Copy)]
+enum ReplayExpectation<'a> {
+    Reproduced,
+    Related(&'a str),
+    NotEnabled,
+}
+
 fn replay_both(
     fixture: &Fixture,
     payload: fsl_replay::TemporalCounterexample<ProtocolTransition>,
-    expected: Option<&str>,
+    expected: ReplayExpectation<'_>,
 ) {
     use fsl_replay::{ModelTraceRefusal, ModelTraceSettlement, ReplayLimits, ReplayRefusal};
     let unit = fill::unit_text_with("", &fixture.body);
@@ -528,14 +535,23 @@ fn replay_both(
     let check = |result: Result<fsl_replay::ModelTraceReplayResult, ReplayRefusal>| match (
         expected, result,
     ) {
-        (None, Ok(result)) => assert!(matches!(
+        (ReplayExpectation::Reproduced, Ok(result)) => assert!(matches!(
             result.settlement,
             ModelTraceSettlement::Reproduced { .. }
         )),
-        (Some(alias), Err(ReplayRefusal::ModelTrace(refusal))) => {
+        (ReplayExpectation::Related(alias), Err(ReplayRefusal::ModelTrace(refusal))) => {
             assert!(
                 matches!(&*refusal, ModelTraceRefusal::ProtocolRelatedBy { step: 0, node, relationship }
                     if node == "Main/Tx" && relationship == alias),
+                "{refusal:?}"
+            );
+        }
+        (ReplayExpectation::NotEnabled, Err(ReplayRefusal::ModelTrace(refusal))) => {
+            assert!(
+                matches!(
+                    &*refusal,
+                    ModelTraceRefusal::ProtocolNotEnabled { step: 0, .. }
+                ),
                 "{refusal:?}"
             );
         }
@@ -585,17 +601,62 @@ fn replay_reports_first_authored_alias_including_repeated_canonical_premises() {
         "related by Owns (k, k)",
     );
     let passing = Fixture::new("", &run, true);
+    passing.with_routes(true, |_, native| {
+        let admitted = native
+            .model
+            .simulation
+            .input
+            .admitted_package()
+            .expect("admitted");
+        let fsl_eval::simulation::model::ProtocolDefinition::Package(form) = native
+            .model
+            .simulation
+            .input
+            .protocol_definition("P")
+            .expect("P")
+        else {
+            panic!("native")
+        };
+        let tx = form
+            .controls
+            .iter()
+            .find(|control| control.path.last().is_some_and(|name| name == "Tx"))
+            .expect("Tx");
+        let clauses = admitted
+            .protocol_correlation_clauses(&tx.node.node_id)
+            .expect("authored rows");
+        assert_eq!(
+            clauses
+                .iter()
+                .map(|row| (row.alias.as_ref(), row.source_ordinal))
+                .collect::<Vec<_>>(),
+            vec![("owns", 0), ("Owns", 1), ("owns", 2)]
+        );
+        assert!(clauses
+            .iter()
+            .all(|row| row.canonical_index == clauses[0].canonical_index));
+    });
     let valid = witness(&passing);
     assert_eq!(valid.prefix[0].transition.kind(), StepKind::Send);
     assert!(valid
         .prefix
         .iter()
         .any(|step| step.transition.kind() == StepKind::Receive));
-    replay_both(&passing, valid.clone(), None);
+    replay_both(&passing, valid.clone(), ReplayExpectation::Reproduced);
     let failing = Fixture::new("", &run, false);
     let mut forged = witness(&failing);
     assert!(forged.prefix.is_empty());
-    replay_both(&failing, forged.clone(), None);
+    replay_both(&failing, forged.clone(), ReplayExpectation::Reproduced);
     forged.prefix.push(valid.prefix[0].clone());
-    replay_both(&failing, forged, Some("owns"));
+    replay_both(&failing, forged, ReplayExpectation::Related("owns"));
+    for blocked in [
+        run.replace("{ tx }", "{ false }"),
+        format!("check Stop {{ false }}; {run}"),
+    ] {
+        let fixture = Fixture::new("", &blocked, false);
+        let mut forged = witness(&fixture);
+        assert!(forged.prefix.is_empty());
+        forged.prefix.push(valid.prefix[0].clone());
+        replay_both(&fixture, forged, ReplayExpectation::NotEnabled);
+    }
 }
