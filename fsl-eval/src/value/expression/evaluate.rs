@@ -6074,7 +6074,6 @@ mod tests {
     use super::*;
     use filament_checked::key::DeclarationKey;
     use filament_checked::node::CheckedLiteral;
-    use filament_exact::ObjectId;
     use filament_semantic_value::catalog::Category;
     use filament_semantic_value::checking::{CheckMode, CheckingLimits};
     use filament_semantic_value::object_closure::ObjectClosure;
