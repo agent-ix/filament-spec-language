@@ -134,3 +134,30 @@ Observed existing focused logs: 14 enum tests PASS/1054 filtered; terminal 1 PAS
 }
 ```
 
+
+## Dispositions
+
+### Round 1
+
+Verified frozen fix head `3272cf024dc6a38471d4b378001928305456d73f`. The actual delta outside six copied SRs is one trace annotation and removal of one Markdown blank line; no production code or assertion changed and no Cargo rerun was necessary or performed. Both retained engine reports now mint 44 FR-531 criteria and bind AC42/43/44 as tagged with 2/1/1 tests respectively. The false terminal trace is replaced solely by `FSpec-FR-476-AC-4`.
+
+| FND | Outcome | Reason |
+| --- | --- | --- |
+| FND-001 | fixed | Verified actual fix and fixed excerpt below. |
+
+```yaml
+{
+  "dispositions": [
+    {
+      "fnd": "FND-001",
+      "outcome": "fixed",
+      "after_excerpt": "#[trace(\"FSpec-FR-476-AC-4\")]"
+    }
+  ]
+}
+```
+
+## Disposition verdict
+
+Round 1: scoped mergeability PASS for PR3333 at the verified frozen fix head; no scoped finding remains open. Original findings and their initial verdict remain above as the immutable review record.
+

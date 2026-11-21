@@ -141,3 +141,36 @@ Reconciliation: quoin matrix --repo . --json plus quire matrix --scope . --forma
 }
 ```
 
+
+## Dispositions
+
+### Round 1
+
+Verified frozen fix head `3272cf024dc6a38471d4b378001928305456d73f`. The actual delta outside six copied SRs is one trace annotation and removal of one Markdown blank line; no production code or assertion changed and no Cargo rerun was necessary or performed. Both retained engine reports now mint 44 FR-531 criteria and bind AC42/43/44 as tagged with 2/1/1 tests respectively. The false terminal trace is replaced solely by `FSpec-FR-476-AC-4`.
+
+| FND | Outcome | Reason |
+| --- | --- | --- |
+| FND-001 | accepted-no-change | Root explicitly accepts the unchanged pre-existing repository assurance backlog for scoped PR3333: 1127 untagged and 83 ignored-only criteria plus an incomplete global reverse audit remain outside this bounded carrier/object delivery. Global gap-analysis remains FAIL; no global assurance PASS or unrelated sweep is claimed. |
+| FND-002 | fixed | Verified actual fix and fixed excerpt below. |
+
+```yaml
+{
+  "dispositions": [
+    {
+      "fnd": "FND-001",
+      "outcome": "accepted-no-change",
+      "reason": "Root explicitly accepts the unchanged pre-existing repository assurance backlog for scoped PR3333: 1127 untagged and 83 ignored-only criteria plus an incomplete global reverse audit remain outside this bounded carrier/object delivery. Global gap-analysis remains FAIL; no global assurance PASS or unrelated sweep is claimed."
+    },
+    {
+      "fnd": "FND-002",
+      "outcome": "fixed",
+      "after_excerpt": " route's typed read of each row returns the checker's path. A row written with a whole `path` is refused `malformed_wire` at its `location`. | Test (TC-3133) |\n| FR-531-AC-42 | A selected model with `Tier` cases `Gold`, `Standard` and an unused payload-free variant with non-identifier cases in noncanonical authored order writes all three required model-enum channels in identities/5. Reading the file preserves every original declaration, member and shape; full runtime projection retains both enums, and the bare world resolves every case to its authenticat"
+    }
+  ]
+}
+```
+
+## Disposition verdict
+
+Round 1: scoped mergeability PASS for PR3333 at the verified frozen fix head; no scoped finding remains open. The global repository gap verdict remains FAIL; its baseline finding is accepted-no-change only for this scoped merge.
+
