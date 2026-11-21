@@ -2915,6 +2915,7 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
     /// reach) rather than left to this `deny` -- see each site's own note.
     #[deny(clippy::wildcard_enum_match_arm)]
     fn apply_as(&mut self, node: N, application: Application) -> Result<(), Halt> {
+        let mut result_origins = ReferenceOrigins::default();
         let value = match node.kind() {
             NodeKind::Literal(_)
             | NodeKind::ReferenceLiteral { .. }
@@ -2934,7 +2935,8 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
                 if node.at(*operand).value_type() != &ValueType::Composite(declaration.clone()) {
                     return Err(invariant("tuple-project-operand-type-mismatch"));
                 }
-                let Value::Composite(tuple) = self.pop()? else {
+                let (value, _, origins) = self.pop_owned_with_origins()?;
+                let Value::Composite(tuple) = value else {
                     return Err(invariant("tuple-project-composite-value-expected"));
                 };
                 if tuple.declaration() != declaration {
@@ -2957,6 +2959,9 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
                 };
                 // FR-143: a tuple position read retains exactly like a record
                 // field projection. It adds no charge of its own.
+                result_origins = origins.select(
+                    &filament_semantic_value::admission::PathStep::Index(*position),
+                );
                 value.clone()
             }
             // FSpec FR-144 "Indexing": a map entry is located by its key's
@@ -2982,7 +2987,10 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
                 ..
             } => {
                 let position = self.pop_integer()?;
-                let collection = self.pop_collection()?;
+                let (value, _, origins) = self.pop_owned_with_origins()?;
+                let Value::Collection(collection) = value else {
+                    return Err(invariant("collection-value-expected"));
+                };
                 let expected_kind = match collection.collection_type().kind() {
                     CollectionKind::Sequence => IndexedKind::Sequence,
                     CollectionKind::OrderedSet => IndexedKind::OrderedSet,
@@ -3005,6 +3013,9 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
                 let Some(value) = collection.elements().get(position) else {
                     return Err(Stop::Undefined(Undefined::NoElement).into());
                 };
+                result_origins = origins.select(
+                    &filament_semantic_value::admission::PathStep::Index(position),
+                );
                 charge_element(self.meter)?;
                 retain_scalar(value.clone(), self.meter)?
             }
@@ -3588,7 +3599,7 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
                 field,
                 optional,
             } => {
-                let record = self.pop()?;
+                let (record, _, origins) = self.pop_owned_with_origins()?;
                 let world = self.world;
                 let read = read_field(
                     world.types(),
@@ -3601,6 +3612,9 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
                 .map_err(invariant)?;
                 self.note_field(&read.composite, read.index, &read.value);
                 self.note_read(node, *operand, ReadStep::Field(field.name()), None);
+                result_origins = origins.select(
+                    &filament_semantic_value::admission::PathStep::Field(field.name().to_owned()),
+                );
                 read.value
             }
             NodeKind::Attribute {
@@ -3609,7 +3623,8 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
                 optional,
                 derefed,
             } => {
-                let Value::Reference(reference) = self.pop()? else {
+                let (value, _, owner_origins) = self.pop_owned_with_origins()?;
+                let Value::Reference(reference) = value else {
                     return Err(invariant("attribute-reference-value-expected"));
                 };
                 // FR-107's own model.deref/model.navigate charges are an
@@ -3652,6 +3667,22 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
                         ReferenceUnresolved,
                     ))));
                 }
+                result_origins = if owner_origins.unavailable_selection().is_some() {
+                    owner_origins.clone()
+                } else {
+                    owner_origins
+                        .population()
+                        .and_then(|population| {
+                            objects.field_reference_origins(
+                                population,
+                                reference.object().as_str(),
+                                field,
+                            )
+                        })
+                        .or_else(|| objects.context_field_reference_origins(&reference, field))
+                        .cloned()
+                        .unwrap_or_default()
+                };
                 let (slot, witnessed) = self.admitted_slot(objects, &reference, field)?;
                 self.log_field_read(node, objects, &reference, field)?;
                 // A model read is an application, located by its own row
@@ -3752,7 +3783,8 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
                 )?)
             }
             NodeKind::Value(_) => {
-                let Value::Option(option) = self.pop()? else {
+                let (value, _, origins) = self.pop_owned_with_origins()?;
+                let Value::Option(option) = value else {
                     return Err(invariant("option-value-expected"));
                 };
                 let payload = option
@@ -3760,6 +3792,8 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
                     .cloned()
                     .ok_or(Stop::Undefined(Undefined::NoneValue))?;
                 self.note_unwrapped(&option, &payload);
+                result_origins =
+                    origins.select(&filament_semantic_value::admission::PathStep::OptionValue);
                 payload
             }
             NodeKind::Call {
@@ -4306,7 +4340,7 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
                 }
             }
         };
-        self.push_value(value, false);
+        self.push_value_with_origins(value, false, result_origins);
         Ok(())
     }
 

@@ -139,6 +139,30 @@ pub(crate) fn references_in<'a>(
     references
 }
 
+/// Materialize a normalized v2 identity in the actual owner's existing K2
+/// universe. Declaration and population authentication belong to the caller;
+/// this shared encoder neither guesses an owner population nor creates one.
+///
+/// # Errors
+/// The canonical codec's exact refusal, including its caller-supplied byte
+/// bound, or a malformed identity whose local owner key does not match.
+pub fn encode_identity(
+    owner: &ObjectReference,
+    identity: &identity::PlaceIdentity,
+    limits: quire_canonical::Limits,
+) -> Result<ObjectReference, identity::IdentityError> {
+    if identity.owner != owner.object().as_str() {
+        return Err(identity::IdentityError::Malformed);
+    }
+    let encoded = identity.encode(limits)?;
+    let object = ObjectId::new(encoded).map_err(|_| identity::IdentityError::Malformed)?;
+    Ok(ObjectReference::new(
+        owner.universe().clone(),
+        crate::check::clock_reference_target(),
+        object,
+    ))
+}
+
 /// Encode the checked place and its instance without reading any clock value.
 pub fn encode(
     owner: &ObjectReference,

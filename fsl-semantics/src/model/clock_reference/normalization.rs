@@ -73,11 +73,22 @@ impl From<InternalFault> for ClockDeclarationResolutionError {
     }
 }
 
+/// One run-local checked place joined to its route-neutral declaration.
+/// The run key indexes this context only and is never persisted in an ID.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ClockRunPlace {
+    /// Actual checked owner type used for the existing conformance check.
+    pub owner: filament_exact::EffectiveId,
+    /// Shared normalized original declaration and full typed path.
+    pub template: std::sync::Arc<PlaceTemplate>,
+}
+
 /// Validated static clock declarations, independent of runtime populations.
 #[derive(Clone, Debug, Default)]
 pub struct ClockDeclarationTable {
     entries: std::sync::Arc<BTreeMap<PlaceTemplate, ClockDeclarationOrigin>>,
     source_declarations: std::sync::Arc<SourceDeclarations>,
+    run_places: std::sync::Arc<BTreeMap<NodeKey, ClockRunPlace>>,
 }
 
 impl ClockDeclarationTable {
@@ -104,7 +115,43 @@ impl ClockDeclarationTable {
         Ok(Self {
             entries: std::sync::Arc::new(table),
             source_declarations: std::sync::Arc::default(),
+            run_places: std::sync::Arc::default(),
         })
+    }
+
+    /// Attach only actual checked run nodes already represented in this
+    /// atomic declaration table; no allocation key becomes declaration data.
+    pub fn with_run_places(
+        mut self,
+        places: impl IntoIterator<Item = (NodeKey, filament_exact::EffectiveId, PlaceTemplate)>,
+    ) -> Result<Self, InternalFault> {
+        let mut run_places = BTreeMap::new();
+        for (node, owner, template) in places {
+            if !self.entries.contains_key(&template) {
+                return Err(fault("run-place-has-an-admitted-original-declaration"));
+            }
+            let place = ClockRunPlace {
+                owner,
+                template: std::sync::Arc::new(template),
+            };
+            if let Some(previous) = run_places.insert(node, place.clone()) {
+                if previous != place {
+                    return Err(fault("checked-run-place-has-one-declaration"));
+                }
+            }
+        }
+        self.run_places = std::sync::Arc::new(run_places);
+        Ok(self)
+    }
+
+    /// The original declared place selected by this run's actual checked key.
+    pub fn run_place(&self, node: &NodeKey) -> Option<&ClockRunPlace> {
+        self.run_places.get(node)
+    }
+
+    /// Actual checked places and their existing owner-conformance authority.
+    pub fn run_places(&self) -> impl Iterator<Item = (&NodeKey, &ClockRunPlace)> {
+        self.run_places.iter()
     }
 
     /// The authenticated origin of a full scoped declaration template.
