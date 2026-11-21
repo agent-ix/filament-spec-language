@@ -13,11 +13,26 @@ use fsl_semantics::check::Capability;
 use super::Diagnostic;
 
 /// Source bytes keyed only by the package's declared source labels.
-#[derive(Clone, Default, Eq, PartialEq)]
+#[derive(Clone, Default)]
 pub struct SourceProvision {
     entries: BTreeMap<(String, String), Vec<u8>>,
     temporal_selections: Vec<fsl_package::TemporalClockSelection>,
+    normalization_owner: Option<Arc<fsl_semantics::model::intake::SelectedModels>>,
 }
+
+impl PartialEq for SourceProvision {
+    fn eq(&self, other: &Self) -> bool {
+        self.entries == other.entries
+            && self.temporal_selections == other.temporal_selections
+            && match (&self.normalization_owner, &other.normalization_owner) {
+                (Some(left), Some(right)) => Arc::ptr_eq(left, right),
+                (None, None) => true,
+                (None, Some(_)) | (Some(_), None) => false,
+            }
+    }
+}
+
+impl Eq for SourceProvision {}
 
 impl std::fmt::Debug for SourceProvision {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -32,6 +47,22 @@ impl std::fmt::Debug for SourceProvision {
 }
 
 impl SourceProvision {
+    /// Share the genuine source admission without cloning its counters.
+    #[must_use]
+    pub fn with_normalization_owner(
+        mut self,
+        owner: Arc<fsl_semantics::model::intake::SelectedModels>,
+    ) -> Self {
+        self.normalization_owner = Some(owner);
+        self
+    }
+
+    /// The original cumulative normalization owner, when source acquisition
+    /// supplied one. Absence never authorizes a replacement admission.
+    pub fn normalization_owner(&self) -> Option<&fsl_semantics::model::intake::SelectedModels> {
+        self.normalization_owner.as_deref()
+    }
+
     /// Retain the actual clock selections admitted with these source units.
     #[must_use]
     pub fn with_temporal_selections(

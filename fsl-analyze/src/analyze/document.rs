@@ -3673,6 +3673,14 @@ pub struct AnalyzeRun<'a> {
     pub limits: AnalyzeLimits,
 }
 
+impl AnalyzeRun<'_> {
+    /// Borrow the actual source admission retained through checked acquisition.
+    /// The same owner accounts catalog and result work without a fresh budget.
+    pub fn normalization_owner(&self) -> Option<&fsl_semantics::model::intake::SelectedModels> {
+        self.provision.normalization_owner()
+    }
+}
+
 /// Why no FR-621 document could be written.
 #[derive(Debug, thiserror::Error)]
 pub enum AnalyzeDocumentError {

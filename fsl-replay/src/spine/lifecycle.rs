@@ -952,6 +952,7 @@ impl AdmittedModels {
 #[derive(Debug)]
 pub struct CheckedUnit {
     package: Arc<pkg::CheckedPackage>,
+    model_admission: Option<Arc<SelectedModels>>,
     source: Source,
     sources: Vec<Source>,
     type_report: TypeReport,
@@ -982,6 +983,19 @@ pub struct ProtocolCheckSite {
 }
 
 impl CheckedUnit {
+    /// Retain the actual admission used to check this unit. Consuming it moves
+    /// its cumulative meter; cloning the shared handle never forks counters.
+    #[must_use]
+    pub fn retain_model_admission(mut self, models: AdmittedModels) -> Self {
+        self.model_admission = Some(Arc::new(models.models));
+        self
+    }
+
+    /// The original model-admission owner retained by the source driver.
+    pub fn model_admission_owner(&self) -> Option<&Arc<SelectedModels>> {
+        self.model_admission.as_ref()
+    }
+
     /// The shared checked package used by the evaluator's retained closure.
     pub(crate) fn shared_package(&self) -> &Arc<pkg::CheckedPackage> {
         &self.package
@@ -2179,6 +2193,7 @@ pub(crate) fn check_units_with_options(
             let protocol_check_sites = protocol_check_sites(parsed, package.graph(), &type_report);
             checked_units.push(CheckedUnit {
                 package: Arc::clone(&package),
+                model_admission: None,
                 type_report,
                 protocol_check_sites,
                 source,
@@ -2590,6 +2605,7 @@ fn check_with_context_and_temporal_selections(
         let protocol_check_sites = protocol_check_sites(parsed, package.graph(), &type_report);
         let checked = CheckedUnit {
             package,
+            model_admission: None,
             source: parsed.source().clone(),
             sources: vec![parsed.source().clone()],
             type_report,
