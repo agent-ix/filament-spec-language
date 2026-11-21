@@ -425,7 +425,10 @@ fn materialize_inner(
             return Err(ProbabilityWitnessError::Refused);
         };
         eprintln!("QSL2158-DIAG undefined physical-step matched");
-        let post_key = key(&step.target)?;
+        let post_key = key(&step.target).map_err(|error| {
+            eprintln!("QSL2158-DIAG undefined actual-post product-key: {error:?}");
+            error
+        })?;
         if measured && step.resolved.is_some() && matches!(claim.scheduler, ProbScheduler::Every) {
             let (control, sums) = measure_source
                 .as_ref()
@@ -445,7 +448,10 @@ fn materialize_inner(
                     &mut admission,
                     cancel,
                 )
-                .map_err(|error| ProbabilityWitnessError::from(admission.refusal(error)))?;
+                .map_err(|error| {
+                    eprintln!("QSL2158-DIAG undefined actual-pre model-key: {error:?}");
+                    ProbabilityWitnessError::from(admission.refusal(error))
+                })?;
             let pending = system
                 .pending_key_bytes_with_budget(
                     action,
@@ -454,7 +460,10 @@ fn materialize_inner(
                     &mut admission,
                     cancel,
                 )
-                .map_err(|error| ProbabilityWitnessError::from(admission.refusal(error)))?;
+                .map_err(|error| {
+                    eprintln!("QSL2158-DIAG undefined pending declaration-key: {error:?}");
+                    ProbabilityWitnessError::from(admission.refusal(error))
+                })?;
             drop(admission);
             let pending = fsl_replay::measure_probability_product_key(
                 reference,

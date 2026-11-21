@@ -643,6 +643,10 @@ fn enumerate(
                   accumulator: &Accumulator,
                   meter: &mut filament_exact::Meter,
                   storage: &mut u64| {
+        eprintln!(
+            "QSL2158-DIAG raw model-key begin thread={:?} storage={storage}",
+            std::thread::current().name()
+        );
         let raw = {
             let mut admission =
                 ProbabilityKeyAdmission::new(meter, storage, limits.storage_bytes, cancel);
@@ -655,6 +659,10 @@ fn enumerate(
                 )
                 .map_err(|error| admission.refusal(error))?
         };
+        eprintln!(
+            "QSL2158-DIAG full product-key begin thread={:?} storage={storage}",
+            std::thread::current().name()
+        );
         measure_probability_product_key(
             binding,
             &raw,
@@ -803,6 +811,10 @@ fn enumerate(
         let mut action_labels = Vec::new();
         let resolving = resolution.is_some();
         if terminal.is_none() {
+            eprintln!(
+                "QSL2158-DIAG semantic expansion begin thread={:?} storage={storage}",
+                std::thread::current().name()
+            );
             let mut admission =
                 ProbabilityKeyAdmission::new(meter, storage, limits.storage_bytes, cancel);
             let distributions = if let Some((posts, rewards)) = resolution {
@@ -896,6 +908,10 @@ fn enumerate(
                 }
             };
             drop(admission);
+            eprintln!(
+                "QSL2158-DIAG semantic expansion end thread={:?} storage={storage}",
+                std::thread::current().name()
+            );
             for distribution in distributions {
                 let mut choice = Vec::new();
                 for successor in distribution {
@@ -2085,7 +2101,10 @@ pub(super) fn check(
             (numerator, ProbabilityCertificatePart::Numerator),
             (denominator, ProbabilityCertificatePart::Denominator),
         ] {
-            eprintln!("QSL2158-DIAG ratio part={part_name:?} begin storage={storage}");
+            eprintln!(
+                "QSL2158-DIAG ratio part={part_name:?} begin thread={:?} storage={storage}",
+                std::thread::current().name()
+            );
             let part_plan = plan_for_part(
                 system,
                 claim,
@@ -2108,6 +2127,7 @@ pub(super) fn check(
                 &mut storage,
                 None,
             )?;
+            eprintln!("QSL2158-DIAG ratio part graph end thread={:?} part={part_name:?} states={} storage={storage}", std::thread::current().name(), graph_part.states.len());
             let values = match checked_values(part, &graph_part, limits, cancel, &mut meter)? {
                 Ok(values) => values,
                 Err(mut rejection) => {

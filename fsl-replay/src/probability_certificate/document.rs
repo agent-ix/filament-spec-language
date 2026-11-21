@@ -493,11 +493,19 @@ fn profile_dispatch(
     }
     let parsed = quire_canonical::read_bounded(bytes, limits.bytes, limits.storage_bytes).map_err(
         |error| match error {
-            quire_canonical::ReadError::Limit(limit) => exceeded(
-                ProbabilityDocumentLimit::StorageBytes,
-                limit.bound,
-                limit.required,
-            ),
+            quire_canonical::ReadError::Limit(limit) => {
+                eprintln!(
+                    "QSL2158-DIAG profile-dispatch canonical storage denied thread={:?} bound={} actual={}",
+                    std::thread::current().name(),
+                    limit.bound,
+                    limit.required
+                );
+                exceeded(
+                    ProbabilityDocumentLimit::StorageBytes,
+                    limit.bound,
+                    limit.required,
+                )
+            }
             _ => ProbabilityDocumentError::Malformed,
         },
     )?;
@@ -594,11 +602,19 @@ fn decode_key(
     }
     let key = quire_canonical::read_bounded(&bytes, limits.bytes, limits.storage_bytes).map_err(
         |error| match error {
-            quire_canonical::ReadError::Limit(limit) => exceeded(
-                ProbabilityDocumentLimit::StorageBytes,
-                limit.bound,
-                limit.required,
-            ),
+            quire_canonical::ReadError::Limit(limit) => {
+                eprintln!(
+                    "QSL2158-DIAG decode-key canonical storage denied thread={:?} bound={} actual={}",
+                    std::thread::current().name(),
+                    limit.bound,
+                    limit.required
+                );
+                exceeded(
+                    ProbabilityDocumentLimit::StorageBytes,
+                    limit.bound,
+                    limit.required,
+                )
+            }
             _ => ProbabilityDocumentError::Malformed,
         },
     )?;
@@ -778,11 +794,19 @@ fn read_document_profile(
     }
     let parsed = quire_canonical::read_bounded(bytes, limits.bytes, limits.storage_bytes).map_err(
         |error| match error {
-            quire_canonical::ReadError::Limit(limit) => exceeded(
-                ProbabilityDocumentLimit::StorageBytes,
-                limit.bound,
-                limit.required,
-            ),
+            quire_canonical::ReadError::Limit(limit) => {
+                eprintln!(
+                    "QSL2158-DIAG read-document-profile canonical storage denied thread={:?} bound={} actual={}",
+                    std::thread::current().name(),
+                    limit.bound,
+                    limit.required
+                );
+                exceeded(
+                    ProbabilityDocumentLimit::StorageBytes,
+                    limit.bound,
+                    limit.required,
+                )
+            }
             _ => ProbabilityDocumentError::Malformed,
         },
     )?;
