@@ -6405,7 +6405,12 @@ impl PackageDeclarations {
                 state_nodes: &lowered_clauses,
             }) {
                 Ok(lowered) => lowered_relations.push(lowered),
-                Err(refusal) => refusals.push(refusal),
+                Err(refusal) => {
+                    refusals.push(refusal);
+                    if cancel.tripped().is_some() {
+                        return Err(refusals);
+                    }
+                }
             }
         }
         // FR-105 "Boolean model-field transitions": the derived
@@ -6433,6 +6438,9 @@ impl PackageDeclarations {
                 .collect();
             if let Err(refusal) = lowering.state_transitions(&transition_clauses) {
                 refusals.push(refusal);
+                if cancel.tripped().is_some() {
+                    return Err(refusals);
+                }
             }
         }
         // FR-092: the node of each protocol that holds an `attempt`, now that
@@ -6491,9 +6499,17 @@ impl PackageDeclarations {
                         lowering.protocol_nodes_with_attempts(&inputs, &attempts, &compensations)
                     {
                         refusals.push(refusal);
+                        if cancel.tripped().is_some() {
+                            return Err(refusals);
+                        }
                     }
                 }
-                Err(refusal) => refusals.push(refusal),
+                Err(refusal) => {
+                    refusals.push(refusal);
+                    if cancel.tripped().is_some() {
+                        return Err(refusals);
+                    }
+                }
             }
         }
         for index in deferred_protocol_fairness {
@@ -6564,7 +6580,12 @@ impl PackageDeclarations {
                                 if cause.construct()
                                     == Some(ProtocolConstruct::ReferenceToAttemptProtocol)
                         ) => {}
-                Err(refusal) => refusals.push(selected.unkeyed(refusal)),
+                Err(refusal) => {
+                    refusals.push(selected.unkeyed(refusal));
+                    if cancel.tripped().is_some() {
+                        return Err(refusals);
+                    }
+                }
             }
         }
         // FR-488: each emitted hyper clause over `behaviours`, after every
@@ -6606,7 +6627,12 @@ impl PackageDeclarations {
                 subject_roots: &subject_roots,
             }) {
                 Ok(lowered) => lowered_hyper.push(lowered),
-                Err(refusal) => refusals.push(refusal),
+                Err(refusal) => {
+                    refusals.push(refusal);
+                    if cancel.tripped().is_some() {
+                        return Err(refusals);
+                    }
+                }
             }
         }
         // FR-410: each checked state-graph claim, after every function its
@@ -6615,7 +6641,12 @@ impl PackageDeclarations {
         for (index, claim) in checked_state_graph_claims.iter().enumerate() {
             match lowering.state_graph_claim(&lowering::StateGraphClaimInput { index, claim }) {
                 Ok(lowered) => lowered_state_graph.push(lowered),
-                Err(refusal) => refusals.push(refusal),
+                Err(refusal) => {
+                    refusals.push(refusal);
+                    if cancel.tripped().is_some() {
+                        return Err(refusals);
+                    }
+                }
             }
         }
         // FSpec FR-640: the nodes each checked random parameter and
@@ -6624,6 +6655,9 @@ impl PackageDeclarations {
             Ok(keys) => keys,
             Err(refusal) => {
                 refusals.push(refusal);
+                if cancel.tripped().is_some() {
+                    return Err(refusals);
+                }
                 Vec::new()
             }
         };
@@ -6633,6 +6667,9 @@ impl PackageDeclarations {
                 Ok(keys) => Some(keys),
                 Err(refusal) => {
                     refusals.push(refusal);
+                    if cancel.tripped().is_some() {
+                        return Err(refusals);
+                    }
                     None
                 }
             };
@@ -6646,7 +6683,12 @@ impl PackageDeclarations {
                 signatures: signatures.as_slice(),
             }) {
                 Ok(lowered) => lowered_hybrids.push(lowered),
-                Err(refusal) => refusals.push(refusal),
+                Err(refusal) => {
+                    refusals.push(refusal);
+                    if cancel.tripped().is_some() {
+                        return Err(refusals);
+                    }
+                }
             }
         }
         let mut lowered_hybrid_claims = Vec::with_capacity(checked_hybrid_claim_list.len());
@@ -6666,7 +6708,12 @@ impl PackageDeclarations {
                     signatures: signatures.as_slice(),
                 }) {
                     Ok(lowered) => lowered_hybrid_claims.push((index, lowered)),
-                    Err(refusal) => refusals.push(refusal),
+                    Err(refusal) => {
+                        refusals.push(refusal);
+                        if cancel.tripped().is_some() {
+                            return Err(refusals);
+                        }
+                    }
                 }
             }
         }
@@ -6687,7 +6734,7 @@ impl PackageDeclarations {
                     extension::ClauseValue::Form(target) => lowered_extensions[target].is_some(),
                     extension::ClauseValue::Checked(_) => true,
                 });
-                if !ready {
+                if !ready || cancel.tripped().is_some() {
                     return true;
                 }
                 match lowering.extension_form(&lowering::ExtensionFormInput {
@@ -6700,6 +6747,9 @@ impl PackageDeclarations {
                 }
                 false
             });
+            if cancel.tripped().is_some() {
+                return Err(refusals);
+            }
             if pending.len() == before {
                 break;
             }
@@ -6721,7 +6771,12 @@ impl PackageDeclarations {
                 declaration: &checked.declaration,
             }) {
                 Ok(key) => lowered_terminals.push((index, declaration.model.clone(), key)),
-                Err(refusal) => refusals.push(refusal),
+                Err(refusal) => {
+                    refusals.push(refusal);
+                    if cancel.tripped().is_some() {
+                        return Err(refusals);
+                    }
+                }
             }
         }
         // FR-230, FSpec FR-322 "Timed-model nodes": each `urgent when`
@@ -6744,7 +6799,12 @@ impl PackageDeclarations {
                     .collect();
                 match lowering.timed_state(model.clocks(), context.clone(), alternatives, &sites) {
                     Ok(key) => lowered.push((index, key)),
-                    Err(refusal) => refusals.push(refusal),
+                    Err(refusal) => {
+                        refusals.push(refusal);
+                        if cancel.tripped().is_some() {
+                            return Err(refusals);
+                        }
+                    }
                 }
             }
             model.set_urgency_predicate_nodes(lowered);
@@ -6785,7 +6845,12 @@ impl PackageDeclarations {
             };
             match lowering.timed_clauses(&input) {
                 Ok(nodes) => model.set_clause_nodes(nodes),
-                Err(refusal) => refusals.push(refusal),
+                Err(refusal) => {
+                    refusals.push(refusal);
+                    if cancel.tripped().is_some() {
+                        return Err(refusals);
+                    }
+                }
             }
         }
         for composite in scope.types().composites() {
@@ -6800,7 +6865,12 @@ impl PackageDeclarations {
                         },
                     ));
                 }
-                Err(refusal) => refusals.push(refusal),
+                Err(refusal) => {
+                    refusals.push(refusal);
+                    if cancel.tripped().is_some() {
+                        return Err(refusals);
+                    }
+                }
             }
         }
         // FR-094: selected model type references root their named units even
@@ -6809,22 +6879,34 @@ impl PackageDeclarations {
             .model_type_unit_nodes(&check::declared_unit_ids(&self.units, &package_unit_ids))
         {
             refusals.push(refusal);
+            if cancel.tripped().is_some() {
+                return Err(refusals);
+            }
         }
         let declared_nominal_nodes: Vec<_> = self.nominal_spans.keys().cloned().collect();
         if let Err(refusal) = lowering.declared_nominal_nodes(&declared_nominal_nodes) {
             refusals.push(refusal);
+            if cancel.tripped().is_some() {
+                return Err(refusals);
+            }
         }
         // FR-092 rule 1: every admitted enum's declaration and member nodes,
         // which enum types and enum literals name by key.
         for enum_binding in scope.enums() {
             if let Err(refusal) = lowering.enum_nodes(enum_binding) {
                 refusals.push(refusal);
+                if cancel.tripped().is_some() {
+                    return Err(refusals);
+                }
             }
         }
         // FR-094 "Dimension equivalence": one node per admitted equivalence,
         // whether or not a quantity type names either dimension.
         if let Err(refusal) = lowering.dimension_equivalence_nodes(&self.dimension_equivalences) {
             refusals.push(refusal);
+            if cancel.tripped().is_some() {
+                return Err(refusals);
+            }
         }
         // FR-375: each class catalog, lowered once its protocol clauses'
         // nodes exist; a node no other declaration located takes its one
@@ -6838,7 +6920,12 @@ impl PackageDeclarations {
             });
             match lowering.class_catalog_keys(catalog, &location) {
                 Ok(keys) => checked.class_catalog_keys = keys,
-                Err(refusal) => refusals.push(refusal),
+                Err(refusal) => {
+                    refusals.push(refusal);
+                    if cancel.tripped().is_some() {
+                        return Err(refusals);
+                    }
+                }
             }
         }
         // FR-375: each refinement's rows, keyed once its catalog is, each
@@ -6860,14 +6947,24 @@ impl PackageDeclarations {
             });
             match lowering.refinement_rows(checked, &location) {
                 Ok(rows) => checked.row_keys = Some(rows),
-                Err(refusal) => refusals.push(refusal),
+                Err(refusal) => {
+                    refusals.push(refusal);
+                    if cancel.tripped().is_some() {
+                        return Err(refusals);
+                    }
+                }
             }
             // FR-144: the `Boolean` result bound of the refinement's record.
             match lowering.refinement_result_type(&location) {
                 Ok(boolean) => {
                     refinement_booleans.insert(checked.name().to_owned(), boolean);
                 }
-                Err(refusal) => refusals.push(refusal),
+                Err(refusal) => {
+                    refusals.push(refusal);
+                    if cancel.tripped().is_some() {
+                        return Err(refusals);
+                    }
+                }
             }
         }
         if !refusals.is_empty() {
