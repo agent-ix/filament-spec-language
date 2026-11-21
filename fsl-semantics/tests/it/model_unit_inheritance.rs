@@ -703,20 +703,80 @@ fn non_object_redefinitions_retain_the_shared_refusal_at_the_source_declaration(
 
 #[trace("FR-710-AC-4", "TC-1943")]
 #[test]
-fn non_object_disallowed_members_refuse_at_the_authored_keyword() {
-    for (declaration, keyword) in [
+fn non_object_disallowed_members_preserve_the_exact_parser_diagnostic() {
+    for (declaration, offending) in [
         (
             "event Notice { operation bump(); timestamp: Timestamp; occurs timestamp; }",
-            "operation",
+            "bump",
         ),
         ("store Repository persists Node { n: Integer; }", "n"),
     ] {
         let source = format!(
             "language \"ix:native\" edition \"1-draft\";\ndomain \"example/shop\";\nobject Node identity (id) {{ id: Integer; }}\n{declaration}\n"
         );
-        assert_eq!(
-            compile_refusals(&source),
-            [("unexpected-token", keyword.to_owned())]
-        );
+        let parsed = fsl_cst::parse(
+            fsl_foundation::SourceIdentity::new("test", "inheritance-model"),
+            "model.fsl",
+            source.as_bytes(),
+            fsl_cst::Limits::default(),
+        )
+        .expect("source metadata admits");
+        assert!(!parsed.is_admissible());
+        let compiler = fsl_semantics::model::intake::compile_model_unit_with_causes(
+            &parsed,
+            ModelNormalizationLimits::default(),
+        )
+        .expect_err("invalid source produces no model");
+        assert_eq!(compiler.as_slice(), parsed.diagnostics());
+        let [diagnostic] = compiler.as_slice() else {
+            panic!("one parser refusal: {compiler:#?}");
+        };
+        assert_eq!(diagnostic.phase, fsl_foundation::Phase::Parse);
+        assert_eq!(diagnostic.code, fsl_cst::CompleteCode::InvalidSyntax);
+        assert_eq!(diagnostic.cause, fsl_cst::CompleteCause::UnexpectedToken);
+        let span = diagnostic
+            .byte_span()
+            .expect("the offending token is source located");
+        assert_eq!(&source[span.start..span.end], offending);
     }
+}
+
+#[trace("FR-710-AC-10", "FR-710-AC-3", "TC-1942")]
+#[test]
+fn non_object_contextual_operation_is_an_event_field_name() {
+    let source = "language \"ix:native\" edition \"1-draft\";\ndomain \"example/shop\";\nevent Notice { operation: Integer; timestamp: Timestamp; occurs timestamp; }\n";
+    let parsed = fsl_cst::parse(
+        fsl_foundation::SourceIdentity::new("test", "inheritance-model"),
+        "model.fsl",
+        source.as_bytes(),
+        fsl_cst::Limits::default(),
+    )
+    .expect("source metadata admits");
+    assert!(parsed.is_admissible(), "{:?}", parsed.diagnostics());
+    let packages = compile(source).expect("a contextual field name compiles");
+    let (_, document) = admit(
+        "example/shop",
+        &packages,
+        ModelNormalizationLimits::default().intake,
+    )
+    .expect("the compiled event admits");
+    let records = read_records("example/shop", &document).expect("the event fields are retained");
+    let field = records
+        .iter()
+        .find_map(|record| match record {
+            DomainPackageRecord::FieldMember(field)
+                if field.key.node == "ix://example/shop/Notice/operation" =>
+            {
+                Some(field)
+            }
+            _ => None,
+        })
+        .expect("operation is a field, not a discarded operation declaration");
+    assert_eq!(field.owner.node, "ix://example/shop/Notice");
+    assert_eq!(
+        field.value_type,
+        fsl_semantics::model::domain_package::ValueTypeRef::Native(
+            fsl_semantics::model::domain_package::NativeValueType::Integer
+        )
+    );
 }

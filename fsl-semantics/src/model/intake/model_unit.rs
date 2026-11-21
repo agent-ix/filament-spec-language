@@ -167,6 +167,9 @@ pub fn compile_model_unit_with_causes(
     parsed: &ParsedSource,
     limits: ModelNormalizationLimits,
 ) -> Result<CompiledModelUnit, Vec<CompleteDiagnostic>> {
+    if !parsed.is_admissible() {
+        return Err(parsed.diagnostics().to_vec());
+    }
     let tokens = parsed
         .cst()
         .tokens()
@@ -177,45 +180,6 @@ pub fn compile_model_unit_with_causes(
             span: token.span(),
         })
         .collect::<Vec<_>>();
-    if !parsed.is_admissible() {
-        let mut diagnostics = parsed.diagnostics().to_vec();
-        let mut depth = 0usize;
-        for (index, token) in tokens.iter().enumerate() {
-            // A contextual declaration keyword can first parse as a field
-            // name, leaving the parser's refusal on the following name.
-            // Keep this exact forbidden-member refusal on its keyword.
-            if depth == 0 && ["event", "store"].contains(&token.text.as_str()) {
-                if let Err(forbidden) =
-                    validate_declaration_inheritance_syntax(&tokens, index, parsed)
-                {
-                    if let [forbidden] = forbidden.as_slice() {
-                        if let Some(span) = forbidden.byte_span() {
-                            let next = tokens
-                                .iter()
-                                .position(|token| token.span == span)
-                                .and_then(|at| tokens.get(at + 1));
-                            for diagnostic in &mut diagnostics {
-                                if diagnostic.code == CompleteCode::InvalidSyntax
-                                    && diagnostic.cause == CompleteCause::UnexpectedToken
-                                    && next.is_some_and(|name| {
-                                        diagnostic.byte_span() == Some(name.span)
-                                    })
-                                {
-                                    diagnostic.region = parsed.source().region(span);
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-            match token.text.as_str() {
-                "{" => depth += 1,
-                "}" => depth = depth.saturating_sub(1),
-                _ => {}
-            }
-        }
-        return Err(diagnostics);
-    }
     let source = parsed.source();
     let mut cursor = 0;
     let Some(identity) = read_identity(&tokens, &mut cursor) else {
@@ -1063,7 +1027,11 @@ fn record_operation_span(tokens: &[Token], mut index: usize) -> Option<Span> {
                     return None;
                 }
             }
-            "operation" if depth == 1 => return Some(token.span),
+            "operation"
+                if depth == 1 && tokens.get(index + 1).is_some_and(|next| next.text != ":") =>
+            {
+                return Some(token.span);
+            }
             _ => {}
         }
         index += 1;
@@ -1143,7 +1111,10 @@ fn validate_declaration_inheritance_syntax(
         if depth == 1 && token.text != "}" {
             let operation = tokens
                 .get(statement)
-                .is_some_and(|first| first.text == "operation");
+                .is_some_and(|first| first.text == "operation")
+                && tokens
+                    .get(statement + 1)
+                    .is_some_and(|next| next.text != ":");
             if (kind == "event" && operation)
                 || (kind == "store" && !operation)
                 || (kind == "record"
@@ -1585,7 +1556,7 @@ fn read_object(
                     "origin": source_origin(parsed, Span { start: tokens[start].span.start, end }),
                 }));
             }
-            "operation" => {
+            "operation" if tokens.get(index + 1).is_some_and(|next| next.text != ":") => {
                 let (operation, links, next) =
                     read_operation(tokens, index, &name, package, parsed)?;
                 operation_links.push(links);
