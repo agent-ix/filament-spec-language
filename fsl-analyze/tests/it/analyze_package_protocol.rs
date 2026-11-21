@@ -70,6 +70,26 @@ fn the_tso_litmus_claim_has_source_and_package_route_parity() {
     assert_eq!(package.item(0)["replay"]["reproduced"], true);
 }
 
+/// Release/acquire uses the same package protocol, effective memory model
+/// and bytes-only counterexample replay as the source route.
+#[trace("TC-2958", "FR-940-AC-6")]
+#[test]
+fn the_ra_litmus_claim_has_source_and_package_route_parity() {
+    let body = sb_unit(&sb_run("", "release", "acquire"));
+    let ws = Workspace::new("package-litmus-ra");
+    let mut extra = request_extra(json!([{"claim": "NoBothZero"}]));
+    extra["memory"][0]["model"] = json!("ra");
+    let source_request = litmus_request(&ws, &body, extra);
+    let source = analyze(&source_request);
+    assert_eq!(label(&source.item(0)), "refuted", "{}", source.document());
+    assert_eq!(source.item(0)["replay"]["reproduced"], true);
+
+    let package = package_run(&ws, &source_request);
+    assert_eq!(label(&package.item(0)), "refuted", "{}", package.document());
+    assert_eq!(package.item(0), source.item(0));
+    assert_eq!(package.exit, source.exit);
+}
+
 /// FR-940-AC-6: the protocol's race-freedom result reads the same admitted
 /// protocol and memory-model facts on the package route.
 #[trace("TC-2958", "FR-940-AC-6", "TC-3050", "FR-850-AC-11")]
