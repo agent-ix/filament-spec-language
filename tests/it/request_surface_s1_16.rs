@@ -3264,8 +3264,9 @@ fn package_clause_model_violations_match_source_decisive_locations() {
 #[test]
 #[trace("TC-840", "FR-330-AC-12")]
 fn package_remainder_decisive_walk_reaches_the_quantifier_through_branches() {
-    let unit = bump_low().replace(LOW_BODY,
-        "holds(if c.versionNumber >= 0 then (true and forall(n in sequence[3, c.versionNumber, 5]: n > 0)) else true)");
+    let unit = format!("{}\nfunction ints using v(xs: Sequence<Integer>[0, 3]): Sequence<Integer>[0, 3] pure {{ xs }}\n",
+        bump_low().replace(LOW_BODY,
+        "holds(if c.versionNumber >= 0 then (true and forall(n in ints(sequence[3, c.versionNumber, 5]): n > 0)) else true)"));
     package_clause_selection_outcomes(
         &unit,
         &[(json!({"finite": ["s0", "s1"]}), 10)],

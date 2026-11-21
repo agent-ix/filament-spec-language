@@ -518,6 +518,9 @@ pub struct OperationContractViolation {
 pub struct TemporalValuation {
     /// The checked clause.
     pub clause: fsl_semantics::check::CheckedTemporalClause,
+    /// Actual producer keys of the formula's `holds` nodes, retained from
+    /// lowering so source and package atom numbering agree under sharing.
+    pub atom_identities: BTreeMap<fsl_semantics::check::FormulaNodeId, filament_exact::NodeKey>,
     /// The checked Boolean condition of each `holds` atom, keyed by the
     /// formula node whose valuation the clause report carries. These views
     /// let command adapters render a package-independent canonical label.
@@ -557,6 +560,7 @@ impl TemporalValuation {
     ) -> Self {
         let clause = node.clause();
         let mut checked_conditions = Vec::new();
+        let mut atom_identities = BTreeMap::new();
         for index in 0..clause.formula().nodes().len() {
             let Some(atom) = clause.formula().node_id(index) else {
                 continue;
@@ -570,6 +574,9 @@ impl TemporalValuation {
             if let Some((condition, _)) = node.condition(atom) {
                 checked_conditions.push((atom, condition.body().clone()));
             }
+            if let Some(key) = node.formula_node_key(atom) {
+                atom_identities.insert(atom, key.clone());
+            }
         }
         let canonical_declarations = canonical_condition_declarations(graph, &checked_conditions);
         let canonical_functions = canonical_condition_functions(graph, &checked_conditions);
@@ -577,6 +584,7 @@ impl TemporalValuation {
         let canonical_union_members = canonical_condition_union_members(graph, &checked_conditions);
         Self {
             clause: clause.clone(),
+            atom_identities,
             checked_conditions,
             canonical_declarations,
             canonical_functions,

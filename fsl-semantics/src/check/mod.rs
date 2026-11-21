@@ -1433,6 +1433,8 @@ pub struct TemporalClauseNode {
     identity: filament_exact::NodeKey,
     claim: filament_exact::Origin,
     over: filament_exact::NodeKey,
+    /// The producer-assigned identity of every formula arena node.
+    formula_nodes: Vec<filament_exact::NodeKey>,
     /// Each `holds` atom's checked condition and its slot count, by the
     /// atom's formula node index.
     conditions: BTreeMap<usize, (CheckedBody, usize)>,
@@ -1474,6 +1476,7 @@ impl DebugWith for TemporalClauseNode {
             identity,
             claim,
             over,
+            formula_nodes: _,
             conditions,
             aggregates,
             guard,
@@ -1514,6 +1517,11 @@ pub struct ClauseSite {
 }
 
 impl TemporalClauseNode {
+    /// The producer-assigned key of a formula node. Distinct source uses of
+    /// equal checked atoms share this key even when their spans differ.
+    pub fn formula_node_key(&self, atom: FormulaNodeId) -> Option<&filament_exact::NodeKey> {
+        self.formula_nodes.get(atom.index())
+    }
     /// The checked clause.
     pub fn clause(&self) -> &CheckedTemporalClause {
         &self.clause
@@ -7806,6 +7814,7 @@ impl PackageDeclarations {
                     identity: lowered.key,
                     claim,
                     over: lowered.over,
+                    formula_nodes: lowered.formula_nodes,
                     guard: conditions
                         .guard
                         .map(|condition| (condition.body, condition.slots)),

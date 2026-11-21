@@ -204,6 +204,8 @@ pub(crate) struct LoweredTemporalClause {
     pub(crate) parameters: Vec<NodeKey>,
     /// The `Boolean` scalar type node: the clause's semantic type.
     pub(crate) boolean: NodeKey,
+    /// The actual lowered key of each formula arena node.
+    pub(crate) formula_nodes: Vec<NodeKey>,
 }
 
 impl Lowering<'_> {
@@ -344,7 +346,7 @@ impl Lowering<'_> {
                 },
             );
         }
-        let formula = self.temporal_formula(
+        let (formula, formula_nodes) = self.temporal_formula_nodes(
             &FormulaInput {
                 formula: clause.formula(),
                 node_site: &|node| temporal_location(input.index, TemporalSite::Node(node)),
@@ -498,6 +500,7 @@ impl Lowering<'_> {
             over,
             parameters,
             boolean,
+            formula_nodes,
         })
     }
 
