@@ -541,6 +541,7 @@ fn closed_form_schedule_request(claim: &str, expected: &str, exit: i32, analysis
         task a periodic 10 ms deadline 10 ms wcet 6 ms priority 1 lo;\n\
         task b periodic 20 ms deadline 20 ms wcet 10 ms priority 2 lo;\n}\n\
         schedulable FullEdf on Full under edf;\n\
+        schedulable FullFp on Full under fixed_priority;\n\
         schedulable OverEdf on Over under edf;\n\
         response AResponse5 on Full.a <= 5 ms under fixed_priority;\n\
         response AResponse4 on Full.a <= 4 ms under fixed_priority;\n";
@@ -574,7 +575,9 @@ fn closed_form_schedule_request(claim: &str, expected: &str, exit: i32, analysis
                 .expect("a valid schedule request");
         assert_eq!(negotiation.0.get(), 1, "{claim}, packaged={packaged}");
         assert_eq!(i32::from(result.exit_code), exit, "{}", result.value);
-        let item = &result.value["items"][0];
+        let document: Value =
+            serde_json::from_str(&result.value.to_string()).expect("an outcome document");
+        let item = &document["items"][0];
         assert_eq!(label(item), expected, "{item}");
         assert_eq!(item["request"]["extent"]["classification"], "unbounded");
         assert_eq!(item["request"]["candidates"]["backends"], json!(["en-7"]));
@@ -621,6 +624,12 @@ fn schedulability_response_meets_matches_en7_before_negotiation() {
 #[test]
 fn schedulability_response_misses_matches_en7_before_negotiation() {
     closed_form_schedule_request("AResponse4", "refuted", 10, "fixed-priority");
+}
+
+#[trace("TC-1593", "FR-633-AC-1")]
+#[test]
+fn fixed_priority_schedulable_matches_en7_before_negotiation() {
+    closed_form_schedule_request("FullFp", "proved", 0, "fixed-priority");
 }
 
 /// FR-633-AC-1, AC-2: `Ctl` proves on EN-7 and a response bound one below

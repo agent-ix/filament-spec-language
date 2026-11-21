@@ -2508,11 +2508,11 @@ fn resolve_schedule_claim(
         false,
         candidates,
     );
-    // EN-7's closed-form analysis has no finite bound to request. EN-6's
-    // explicitly selected task-product analysis retains its bounded mode.
-    let extent = if named
-        .as_ref()
-        .is_some_and(|backend| backend.as_str() == crate::zone_check::manifest::BACKEND_ID)
+    let candidate_backends = candidate_list(&candidates);
+    // EN-7's closed-form analysis has no finite bound to request. A request
+    // resolved to EN-6's task-product analysis retains its bounded mode.
+    let extent = if matches!(candidate_backends.as_slice(), [backend]
+        if backend.id().as_str() == crate::zone_check::manifest::BACKEND_ID)
     {
         ExtentClassification::Bounded
     } else {
@@ -2527,7 +2527,7 @@ fn resolve_schedule_claim(
             kind: Capability::Schedulability,
             extent,
             backend: named,
-            candidates: candidate_list(&candidates),
+            candidates: candidate_backends,
             options: ItemOptions {
                 required: selection.required.unwrap_or(true),
                 max_cases: None,

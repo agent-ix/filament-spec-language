@@ -759,6 +759,73 @@ fn a_release_backed_claim_routes_to_en_6_only_when_named() {
     assert_eq!(label(&without.item(1)), "unsupported");
 }
 
+/// A caller registering only EN-6 still resolves an unnamed release-backed
+/// claim in that provider's bounded mode, including default request items.
+#[trace("TC-3009", "FR-246-AC-5", "FR-075-AC-23", "FR-633")]
+#[test]
+fn an_en6_only_registry_keeps_unnamed_schedule_requests_bounded() {
+    use fsl_analyze::analyze::document::{
+        resolve_items, ItemSelection, ResolvedItem, SubjectSelection,
+    };
+    use fsl_analyze::analyze::{AnalyzeLimits, Engines, SubjectBinding};
+    use fsl_route::request::ExtentClassification;
+    use fsl_semantics::check::Capability;
+
+    let model =
+        crate::zone_search::rpc_document_with(&[("fire_a", &["phase"]), ("fire_b", &["phase"])]);
+    let body = format!(
+        "{}{PAIR}{}",
+        crate::timed_world::DENSE,
+        sources("Pair", &["a", "b"])
+    );
+    let world = crate::timed_world::world(&model, crate::zone_search::TIMED, &body);
+    let request = world.request();
+    let binding = SubjectBinding {
+        packages: request.packages,
+        snapshots: request.snapshots,
+        initial: request.initial,
+        universes: request.universes,
+    };
+    let engines = Engines::fsl().expect("linked manifests");
+    let en6 = engines
+        .registrations()
+        .find(|descriptor| descriptor.id().as_str() == "en-6")
+        .expect("EN-6 is registered");
+    assert!(en6
+        .advertises()
+        .any(|pair| pair == (Capability::Schedulability, fsl_route::Mode::Bounded)));
+    let mut registry = fsl_route::Registry::new();
+    registry
+        .register(en6.clone())
+        .expect("the real EN-6 descriptor");
+    let selections: Vec<ItemSelection> =
+        serde_json::from_value(json!([{"claim": "PairFp"}])).expect("a claim-only request");
+    for selections in [Some(selections.as_slice()), None] {
+        let resolved = resolve_items(
+            &world.package,
+            &SubjectSelection::default(),
+            selections,
+            &registry,
+            &[world.package.graph().source().clone()],
+            &binding,
+            &AnalyzeLimits::unbounded(),
+        );
+        let claims: Vec<_> = resolved
+            .iter()
+            .filter_map(|item| match item {
+                ResolvedItem::Claim(claim) if claim.claim_name == "PairFp" => Some(claim),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(claims.len(), 1, "one resolved schedule claim");
+        let item = &claims[0].item;
+        assert_eq!(item.extent, ExtentClassification::Bounded);
+        assert_eq!(item.candidates.len(), 1);
+        assert_eq!(item.candidates[0].id().as_str(), "en-6");
+        assert!(item.backend.is_none(), "the caller named no backend");
+    }
+}
+
 /// FR-249-AC-12: a work budget one short of what the refutation needs stops
 /// the search; the item settles `incomplete` with `limit-reached` for
 /// `max_task_product_work` and FR-331 `task_search` evidence that holds the
