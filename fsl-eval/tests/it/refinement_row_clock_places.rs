@@ -804,9 +804,24 @@ fn clock_reference_external_observations_are_explicitly_unsupported() {
     };
     assert_unsupported(&record);
 
-    let ordinary = check_clock_refinement(&clock_refinement(
-        "used = count(c in C::calls where c.n = self.n); busy = self.n = 2;",
-    ))
+    let mut ordinary_calls: Json =
+        serde_json::from_slice(&crate::ring_queue::clock_calls()).expect("ordinary model");
+    ordinary_calls["types"]
+        .as_array_mut()
+        .expect("types")
+        .iter_mut()
+        .find(|ty| ty["identity"] == crate::ring_queue::node(CLOCKS, "Call"))
+        .expect("Call")["fields"]
+        .as_array_mut()
+        .expect("fields")
+        .retain(|field| field["name"] != "x");
+    let ordinary_calls = serde_json::to_vec(&ordinary_calls).expect("ordinary model");
+    let ordinary = crate::ring_queue::check_models(
+        &crate::ring_queue::queue_spec(),
+        ("C", CLOCKS, &ordinary_calls),
+        true,
+        &clock_refinement("used = count(c in C::calls where c.n = self.n); busy = self.n = 2;"),
+    )
     .unwrap_or_else(|refusals| {
         panic!(
             "ordinary fixture: {:?}",
@@ -847,22 +862,22 @@ fn clock_reference_external_observations_are_explicitly_unsupported() {
     let model = fsl_semantics::model::domain_package::DomainPackageRef {
         identity: CLOCKS.to_owned(),
     };
-    assert!(
-        matches!(
-            ordinary_bare.admit_protocol_state(
-                &model,
-                &ordinary.packages,
-                ModelNormalizationLimits::default(),
-                &state(),
-                DocumentRef {
-                    authority: "test".to_owned(),
-                    identity: "ordinary".to_owned()
-                }
-            ),
-            ObservationAdmission::Admitted(_)
-        ),
-        "ordinary Bare state admission remains supported"
-    );
+    match ordinary_bare.admit_protocol_state(
+        &model,
+        &ordinary.packages,
+        ModelNormalizationLimits::default(),
+        &state(),
+        DocumentRef {
+            authority: "test".to_owned(),
+            identity: "ordinary".to_owned(),
+        },
+    ) {
+        ObservationAdmission::Admitted(_) => {}
+        ObservationAdmission::Refused(record) | ObservationAdmission::Incomplete(record) => {
+            panic!("ordinary Bare admission: {record:?}")
+        }
+        ObservationAdmission::Fault(fault) => panic!("ordinary Bare fault: {fault:?}"),
+    }
 }
 
 /// A map layout never authorizes a numerically forged clock-place identity.
