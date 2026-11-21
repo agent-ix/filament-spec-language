@@ -384,6 +384,95 @@ fn package_channel_send_parallel_combinations_refuse_before_execution() {
     }
 }
 
+/// A nonempty admitted correlation group is named and refused before package execution.
+#[trace("TC-2958", "FR-940", "FR-731-AC-1")]
+#[test]
+fn package_channel_send_related_premises_refuse_before_execution() {
+    for (related, expected) in [(false, "refuted"), (true, "proved")] {
+        let ws = Workspace::new(&format!("package-channel-send-related-{related}"));
+        let path = channel_send_request(
+            &ws,
+            1,
+            "block",
+            "exactly-once-premise",
+            "send Correlated via Release as (sent: M::Attempt) related by Owns (k, k) { sent.n = 0 };",
+            "closing",
+        );
+        let unit = std::fs::read_to_string(ws.path("program.fsl")).expect("the source unit");
+        std::fs::write(
+            ws.path("program.fsl"),
+            unit.replace(
+                "channel Release",
+                "relationship Owns = M::owns; channel Release",
+            ),
+        )
+        .expect("select the relationship premise");
+        let mut model: Value =
+            serde_json::from_slice(&std::fs::read(ws.path("model.json")).expect("model document"))
+                .expect("model JSON");
+        let cell = model["types"]
+            .as_array_mut()
+            .expect("model types")
+            .iter_mut()
+            .find(|node| node["identity"] == "ix://test/fill/Cell")
+            .expect("the Cell declaration");
+        let many = json!({"lower": 0, "upper": 2, "ordered": false, "unique": true});
+        cell["relationships"] = json!([{
+            "identity": "ix://test/fill/relationship/owns", "category": "structural",
+            "composite": false, "direction": "source-to-target",
+            "origin": {"source": {"sourceIdentity": "ix://test/fill/spec", "path": "model.fspec",
+                "startLine": 1, "startColumn": 1}},
+            "sourceEnd": {"type": "ix://test/fill/Cell", "role": "owner", "multiplicity": many},
+            "targetEnd": {"type": "ix://test/fill/Cell", "role": "owned", "multiplicity": many}
+        }]);
+        std::fs::write(ws.path("model.json"), model.to_string()).expect("write the related model");
+        let mut snapshot: Value = serde_json::from_slice(
+            &std::fs::read(ws.path("snapshot-0.json")).expect("the initial snapshot"),
+        )
+        .expect("snapshot JSON");
+        let object = json!({"population": "ix://test/fill/cells", "key": "c"});
+        let instances = if related {
+            vec![json!({"source": object, "target": object})]
+        } else {
+            Vec::new()
+        };
+        snapshot["relationships"] = json!([{
+            "relationship": "ix://test/fill/relationship/owns", "complete": true,
+            "instances": instances
+        }]);
+        std::fs::write(ws.path("snapshot-0.json"), snapshot.to_string())
+            .expect("write the relationship instances");
+        let source = analyze(&path);
+        assert!(
+            source.item(0).get("record").is_some(),
+            "{}",
+            source.document()
+        );
+        assert_eq!(label(&source.item(0)), expected, "{}", source.document());
+        let (package_path, _) = package_request(&ws, &path);
+        std::fs::remove_file(ws.path("program.fsl"))
+            .expect("remove source before package correlation refusal");
+        let package = analyze(&package_path);
+        let item = package.item(0);
+        assert_eq!(package.exit, 21, "{}", package.document());
+        assert_eq!(item["category"], "unsupported", "{}", package.document());
+        let diagnostic = &item["record"]["diagnostic"];
+        assert_eq!(diagnostic["code"], "unsupported_construct", "{item}");
+        assert_eq!(diagnostic["cause"], "not-yet-implemented", "{item}");
+        assert_eq!(diagnostic["detail"]["fact"], "correlation", "{item}");
+        assert_eq!(
+            diagnostic["detail"]["node"]["path"]
+                .as_array()
+                .expect("the refused admitted node's path")
+                .last(),
+            Some(&json!("Correlated")),
+            "{item}"
+        );
+        assert!(item.get("exploration").is_none(), "{item}");
+        assert!(item.get("counterexample").is_none(), "{item}");
+    }
+}
+
 fn parallel_request(ws: &Workspace, run: &str) -> std::path::PathBuf {
     let body = format!(
         "{}{}",

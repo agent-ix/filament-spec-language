@@ -285,6 +285,12 @@ pub enum PackageProgramRefusal {
     /// The execution engine does not step this checked package operation yet.
     #[error("unsupported_construct/not-yet-implemented: package control {0:?}")]
     Unsupported(ControlOperation),
+    /// A selected control has correlation premises with no executable package form.
+    #[error("unsupported_construct/not-yet-implemented: package correlation at {node:?}")]
+    Correlation {
+        /// The admitted control whose `related` group is nonempty.
+        node: fsl_package::CheckedNodeId,
+    },
     /// A node referenced by the control tree has no package execution entry.
     #[error("the package control tree references an absent control")]
     UnknownControl,
@@ -479,7 +485,21 @@ impl<'a> PackageProtocolProgram<'a> {
         for control in &form.controls {
             let name = control.path.last().cloned().unwrap_or_default();
             let channel = match &control.body {
-                ControlBody::Send { channel, .. } => Some((*channel).clone()),
+                ControlBody::Send { channel, .. } => {
+                    let Some(fsl_package::CheckedTerm::Aggregate { members }) =
+                        member(&control.node.body, "related")
+                    else {
+                        return Err(PackageProgramRefusal::MissingIdentity(
+                            control.node.node_id.clone(),
+                        ));
+                    };
+                    if !members.is_empty() {
+                        return Err(PackageProgramRefusal::Correlation {
+                            node: control.node.node_id.clone(),
+                        });
+                    }
+                    Some((*channel).clone())
+                }
                 _ => None,
             };
             let join = match &control.body {

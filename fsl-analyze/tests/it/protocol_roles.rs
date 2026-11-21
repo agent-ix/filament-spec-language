@@ -2500,7 +2500,9 @@ fn no_required_construct_settles_unsupported() {
                     ModelSystem::new(subject.model.simulation.clone()).expect("the subject admits");
                 ProtocolSystem::new(model, &subject, Sc).is_ok()
             }
-            Unsupported::PackageControl(_) | Unsupported::PackageReplicatedRole => false,
+            Unsupported::PackageControl(_)
+            | Unsupported::PackageCorrelation
+            | Unsupported::PackageReplicatedRole => false,
         }
     }
 
