@@ -335,12 +335,7 @@ fn assert_producer_clause(
     }
 }
 
-#[trace(
-    "TC-464",
-    "TC-3084",
-    "FR-106-AC-72",
-    "FR-106-AC-74"
-)]
+#[trace("TC-464", "TC-3084", "FR-106-AC-72", "FR-106-AC-74")]
 #[test]
 fn actual_clock_references_roundtrip_as_data_through_source_and_bare() {
     let checked = fixture(false);
@@ -609,7 +604,7 @@ fn removing_x_never_rebinds_its_actual_reference_to_y_at_the_reused_ordinal() {
         document["populations"][0]["objects"][0]["fields"][field] = match field {
             "r" => old,
             "maybe" => json!({"present":old}),
-            "refs" => json!({"sequence":[old]}),
+            "refs" => json!({"sequence":[old, raw_reference(y.object().as_str())]}),
             _ => unreachable!("fixture field"),
         };
         let snapshots =
