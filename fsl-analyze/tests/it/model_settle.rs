@@ -73,9 +73,12 @@ pub(crate) fn assert_allocation_outcome(records: &[fsl_replay::TerminalRecord], 
         )]))
     );
     let document = serde_json::to_value(document).unwrap();
-    assert_eq!(document["diagnostics"][0]["cause"], "allocation-failed");
     assert_eq!(
-        document["diagnostics"][0]["details"],
+        document["items"][0]["diagnostic"]["cause"],
+        "allocation-failed"
+    );
+    assert_eq!(
+        document["items"][0]["diagnostic"]["detail"],
         serde_json::json!({"requested": requested.to_string()})
     );
 }
