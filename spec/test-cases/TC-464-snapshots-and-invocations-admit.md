@@ -78,6 +78,10 @@ their document identity.
    Neither place identity is listed as an object key. Keep FR-1040-AC-3
    and FR-1040-AC-8's evaluation of the stored `self.r` in the owning
    TC-3084 procedure.
+   Run steps 7 and 8 through both the source and bare checked routes,
+   obtaining each reference by actual `ref` evaluation. Include TC-3084
+   step 7's parity vectors in raw scalar, present optional and sequence
+   values; compare full references, including their outer population.
 8. Compile a variant of step 7's same model with `y` retained and `x`
    removed, updating expressions that named `x` to use retained `y`, keeping
    a valid operation over `y`, the owner and population identities and the data field
@@ -125,10 +129,15 @@ Tag the tests `#[trace("TC-464", "FR-106-AC-n")]`. Bind step 7 to
   holding `c2.x` (absent in the repeat), and `refs` holding `c2.x` before
   `c1.x`. The distinct instances' place identities remain distinct data
   values without an object lookup for either target.
+  Both routes retain the same canonical identities for the same declared
+  places; equal owner local keys in different populations remain distinct.
 - Step 8: each undeclared-place case refuses `dangling_reference`/
   `absent-target-in-complete-population`, naming the snapshot, `calls`,
   owner `c1`, the field, its nested path (`maybe`'s present payload or
   `refs` element 0 where applicable), and the undeclared target identity;
-  no observation or truth value is produced. The ordinary-object `peer`
-  case still refuses the same code/cause naming `ghost` in complete
+  no observation or truth value is produced.
+  In both routes the actual old `x` reference refuses after `x` is removed
+  and `y` retained, including when `y` occupies the former allocation
+  position of `x`; no stored `x` value is admitted as `y`.
+  The ordinary-object `peer` case still refuses the same code/cause naming `ghost` in complete
   `calls`.
