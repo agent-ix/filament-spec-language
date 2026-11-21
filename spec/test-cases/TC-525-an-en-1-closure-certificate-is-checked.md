@@ -13,7 +13,7 @@ relationships:
 Verify that `check_closure` accepts a safety proof's closure and rejects a
 missing initial state, a missing successor and a bad state.
 
-Scope: FR-338-AC-1 to FR-338-AC-7, FR-338-AC-10, FR-338-AC-16 and FR-338-AC-23 to FR-338-AC-27. Canonical translation-state cases below
+Scope: FR-338-AC-1 to FR-338-AC-7, FR-338-AC-10, FR-338-AC-16, FR-338-AC-23 to FR-338-AC-27 and FR-338-AC-30. Canonical translation-state cases below
 are prospective qualification procedures; this artifact claims no execution.
 
 ## Test Procedure
@@ -121,6 +121,13 @@ Tag the tests `#[trace("TC-525", "FR-338-AC-n")]`.
     message obligation and read the `bound` member and captured value before
     and after each removal; re-key a capture-free clause; read the context
     activation of the `on origin` variant over `Once`.
+17. FR-338-AC-30: over the Counter subject, check the unguarded `on each`
+    TP-3 clause with the body `holds(c.value = 1) implies once[1,1]
+    holds(c.value = 0)`; offer its certificate for the bodies `holds(c.value =
+    2) implies once[1,1] holds(c.value = 0)` and `holds(c.value = 3) implies
+    once[1,1] holds(c.value = 2)`; remove one reached product state; replace
+    every activation by `"each"`; check the guarded variant `when (c.value >=
+    2)`.
 
 ## Expected Results
 
@@ -188,3 +195,5 @@ Tag the tests `#[trace("TC-525", "FR-338-AC-n")]`.
   `"removed"` with the message replaced by `null` and the post-removal states
   of the two lifetimes coincide; capture-free keys are byte-unchanged; the
   activation is `"each-activate"`.
+- Step 17: accepted and `proved`, `Certified`; `BadState` at model state 2 and at the terminal
+  stutter; `SuccessorMissing`; `ShapeMismatch`; the guarded variant accepted.

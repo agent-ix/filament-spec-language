@@ -229,6 +229,11 @@ automaton states and the depth reached.
   S4"), so the checker resolves the clause root in the recompiled package.
   A request whose clause root the recompiled package does not hold is
   refused by that checker and settles `failed`.
+- An infinite-trace TP-1 or TP-3 clause with an unguarded `on each` activation
+  over a model subject SHALL carry the `ClosureCertificate` of every explored
+  product state in its `Holds`, keyed as FR-338 "Unguarded `on each` TP-1 and
+  TP-3 clause" states; FR-127 settles it `proved` when the checker accepts it.
+  A TP-3 clause over a protocol subject carries none.
 - For a `ReachableInvariant` (TP-1) or `Safety` (TP-3) clause and for a
   `DeadlockFreedom` item, the engine SHALL build a deterministic bad-prefix
   monitor: the automaton of the formula itself, trimmed to the states from

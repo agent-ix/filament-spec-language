@@ -21,6 +21,8 @@ relationships:
     type: references
   - target: ix://agent-ix/filament-spec-language/FR-128
     type: depends_on
+  - target: ix://agent-ix/filament-spec-language/FR-338
+    type: references
 ---
 # FR-1030: Request a refinement transfer from a native run
 
@@ -133,15 +135,21 @@ The run outcome's `refinement_transfer` member:
 - Settling one transfer SHALL leave every other transfer of the request
   unchanged.
 - An abstract premise whose proof FR-127 cannot settle `proved` is a typed
-  unproved slot 1, never `proved`. A past or interval (TP-3) clause `on
-  origin` over an ordinary model subject is certified by the core (FR-338),
-  so its premise settles `proved`. A TP-3 clause the core does not certify,
-  one `on each` or over a protocol subject, settles `failed`; each transfer of
-  such a clause is `inconclusive`, `premise-unproved` naming slot 1 with that
-  result. That limit is honest and stays: it is not a `proved` and not a
-  refusal, and certifying those general modes is outside this requirement
-  (architecture ruling of 2026-11-21 on QSL-2247; a separate related ticket
-  carries it).
+  unproved slot 1, never `proved`. A past or interval (TP-3) clause over an
+  ordinary model subject, `on origin` or `on each (q: T)` with or without a
+  `when` condition, is certified by the core (FR-338), so its premise settles
+  `proved`, `Certified` when the core checker accepts the certificate and
+  `inconclusive`, `CertificateRejected` when it rejects it. A check that stops
+  on a limit or a cancel settles `incomplete`, and each of these makes the
+  transfer `inconclusive`, `premise-unproved` naming slot 1 with that result.
+  `on each` here is the temporal clause's activation (FR-126, FR-337), not the
+  `activation on each` of a protocol (FR-209).
+- A TP-3 clause over a protocol subject settles `failed` (FR-338-AC-29). That
+  limit is honest and stays: it is not a `proved` and not a refusal. This
+  member has no way to select a protocol abstract subject (`abstract` names a
+  model alias, FR-1031), and FR-1020's step-for-step decision is over
+  operation rows, so no transfer through a protocol subject is claimed by this
+  requirement. It stays with QSL-2751's remaining protocol-subject work.
 - A liveness clause's abstract premise is settled over the abstract stutter
   closure (FR-529's `stutter_closure`). A violating loop that is the closure's
   own self-loop at a nonterminal abstract state is a closure-only lasso. It is
@@ -168,6 +176,10 @@ The run outcome's `refinement_transfer` member:
 | FR-1030-AC-5 | A transfer premise reads its model with the same semantics as any model-subject claim, so the terminal state repeats under stutter extension: the clause `PrevStutter`, `always (holds(c.value = 2) implies once[1,1] holds(c.value = 1))`, is not proved at the repeated terminal state 2 (the state one step back is 2), and its transfer through the step-for-step `ThirdRefinesSpec` settles `inconclusive`, `premise-unproved` naming slot 1 with `result` `refuted`, the slot's own record showing `refuted`; exit `22`. | Test (TC-2920) |
 | FR-1030-AC-6 | Through `CasRefinesCounter`, the liveness clause `StuckTwo` (`always eventually holds(c.value = 2)`, no fairness) has an abstract premise violated by the closure stutter at value 0 and at value 1, so EN-1 writes one closure-only lasso, whose stem is whichever EN-1's discovery order yields. The run writes slot 1 `refuted`, which settles only when the production replay gate reproduced the lasso. The transfer outcome carries no lasso; the lossless equality of a written and read closure lasso and its post-read replay over the source and package routes are asserted by the FR-128-AC-14 and FR-128-AC-15 tests over the same closure-stutter mechanism. The transfer is `inconclusive`, `premise-unproved` naming slot 1 with `result` `refuted`, exit `22`, and never `unsupported`. | Test (TC-2920) |
 | FR-1030-AC-7 | The proposed clause `PendingTwo`, declared in `TRANSFER_DECLARATIONS` with `temporal PendingTwo using inf over (c: Spec::Counter) clock "model-steps" on origin { always (holds(c.value = 1) implies eventually holds(c.value = 2)) }` (the template of `StuckTwo`, no fairness), has the closure stutter at value 1 as its only violating loop, since the stutter at value 0 and the terminal stutter at value 2 satisfy it. Through `CasRefinesCounter` slot 1 is `refuted` through the replay gate over a closure-only lasso with a one-step real prefix (the written and read lasso of that shape is asserted by the FR-128-AC-14 test), and the transfer is `inconclusive`, `premise-unproved` naming slot 1, `result` `refuted`, exit `22`. | Test (TC-2920) |
+| FR-1030-AC-8 | `PrevSafeEach`, declared in `TRANSFER_DECLARATIONS` with `temporal PrevSafeEach using inf over (c: Spec::Counter) clock "model-steps" on each (q: Spec::Counter) { holds(c.value = 1) implies once[1,1] holds(c.value = 0) }`, and `SoonTwoEach`, the same with the body `holds(c.value = 1) implies eventually[0,2] holds(c.value = 2)`, transferred through the step-for-step `ThirdRefinesSpec` with no `premises`, settle slot 1 `proved`, `Certified` by the core checker's acceptance of the `ClosureCertificate` (FR-338-AC-30), and each transfer `proved`, `decisive-witness`, with both premise identities; exit `0`. Neither settles `failed` or `premise-unproved`. | Test (TC-2920) |
+| FR-1030-AC-9 | `PrevJumpEach`, the template of `PrevSafeEach` with the body `holds(c.value = 2) implies once[1,1] holds(c.value = 0)`, is violated at position 2, whose previous position holds 1, so slot 1 settles `refuted` through its replay, and `PrevStutterEach`, with the body `holds(c.value = 2) implies once[1,1] holds(c.value = 1)`, is violated at the repeated terminal state as AC-5 reads it. Through `ThirdRefinesSpec` each transfer settles `inconclusive`, `premise-unproved` naming slot 1 with `result` `refuted`; exit `22`; neither is `proved`. | Test (TC-2920) |
+| FR-1030-AC-10 | The broken mapping: `PrevSafeEach` through `ThirdRefinesSpec` with `abstract.initial` naming a snapshot whose `value` is 1 settles the refinement premise `refuted` with `InitialNotAbstract` (FR-144-AC-5), so the transfer settles `inconclusive`, `premise-unproved` naming slot 0 with `result` `refuted`, `step_for_step.holds` `true`; exit `22`. | Test (TC-2920) |
+| FR-1030-AC-11 | The checked package S4 emits for the unit carries `PrevSafeEach`'s `temporal_clause` node with its `on each` activation (FR-337). Its abstract claim item, settled from that package and not from source, has the value, `Certified` certification and accepted `ClosureCertificate` that AC-8 reads from source, and `planner::settle` over that package with both premises settled in-process (FR-529) writes the same `proved` transfer; a clause root the recompiled package does not hold settles `failed` (FR-126). FR-1031's exclusivity of `package` and `refinement_transfer` is unchanged. | Test (TC-2920) |
 
 ## Rationale
 
