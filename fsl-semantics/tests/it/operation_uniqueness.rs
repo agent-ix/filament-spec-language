@@ -894,7 +894,29 @@ fn operation_owner(kind: &str, operations: Vec<Value>) -> Vec<u8> {
         "state_machine" => (
             meaning::STATE_MACHINE,
             json!({"states": "required", "transitions": "required"}),
-            json!({"fields": [], "states": [], "transitions": []}),
+            json!({
+                "fields": [],
+                "states": ["Draft", "Placed"].map(|name| {
+                    let identity = format!("{owner}/{name}");
+                    json!({"identity": identity, "name": name, "origin": {"generated": {
+                        "generatorIdentity": identity,
+                        "generatorVersion": "1.0.0",
+                        "inputIdentities": [identity],
+                    }}})
+                }),
+                "transitions": [{
+                    "identity": format!("{owner}/advance_transition"),
+                    "from": format!("{owner}/Draft"),
+                    "to": format!("{owner}/Placed"),
+                    "trigger": format!("{owner}/advance"),
+                    "emits": [],
+                    "origin": {"generated": {
+                        "generatorIdentity": owner,
+                        "generatorVersion": "1.0.0",
+                        "inputIdentities": [owner],
+                    }},
+                }],
+            }),
         ),
         "process" => (
             meaning::PROCESS,
