@@ -135,10 +135,10 @@ fn check_dependent_bytes_excludes_source_and_counts_selected_library() {
         dependent_bytes: 0,
         ..CheckInputs::default()
     };
-    let document = document(&command::check_outcome(&source_path, &no_dependents));
-    assert_eq!(document["category"], "success", "{document}");
-    assert_eq!(document["last_stage"], "S4", "{document}");
-    assert!(document["diagnostics"].as_array().unwrap().is_empty());
+    let bare = document(&command::check_outcome(&source_path, &no_dependents));
+    assert_eq!(bare["category"], "success", "{bare}");
+    assert_eq!(bare["last_stage"], "S4", "{bare}");
+    assert!(bare["diagnostics"].as_array().unwrap().is_empty());
 
     let library_path = directory.path().join("geometry.fsl");
     let library = "language \"ix:native\" edition \"1-draft\";\n\
