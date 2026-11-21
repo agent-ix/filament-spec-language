@@ -2503,7 +2503,9 @@ fn timestamped_guarded_on_each_activations_are_evaluated() {
         report(request)
     }
 
-    assert_eq!(outcome(&guarded(&[0, 0])), &TemporalVerdict::Holds);
+    // Every guard is false over a closed, complete scope: no activation exists
+    // (FR-044-AC-7), so the clause is inactive, not a true obligation.
+    assert_eq!(outcome(&guarded(&[0, 0])), &TemporalVerdict::Inactive);
     assert_eq!(
         outcome(&guarded(&[1, 0])),
         &TemporalVerdict::Violated { at: 0 }
@@ -4059,6 +4061,87 @@ fn timestamped_undefined_guard_reports_a_named_incomplete_activation() {
     };
     assert_eq!(*at, 0);
     assert!(guard.path().is_empty());
+}
+
+/// The finite-window request of `TimestampedEach` with the guard `guard`.
+fn timestamped_guarded_by(guard: &str, values: &[i64], closed: bool) -> ClauseRunReport {
+    let mut request = timestamped_with(Unit::TimestampedEach, &[0, 10], values, 12, Some(12));
+    let bytes = program_source_bytes(&mut request);
+    let source = String::from_utf8(bytes.clone()).unwrap();
+    *bytes = source
+        .replace(
+            "on each (q: Counters::Counter) { eventually[0,2] holds(c.value > 0) }",
+            &format!(
+                "on each (q: Counters::Counter) when ({guard}) {{ eventually[0,2] holds(c.value > 0) }}"
+            ),
+        )
+        .into_bytes();
+    report(timestamped_changed(request, |trace| {
+        trace.progress.scope = closure(closed);
+    }))
+}
+
+/// FR-044-AC-5, FR-044-AC-7, FR-267-AC-28 (TC-1278): a closed, complete scope
+/// whose every guard is false is inactive on the finite-window path as on the
+/// batch path; an open scope in the same shape is not decided; a true guard
+/// still evaluates.
+#[trace("TC-1278", "FR-044-AC-7")]
+#[test]
+fn a_finite_window_scope_with_every_guard_false_matches_the_batch_inactive_result() {
+    let batch = report(finite(Unit::Guarded, "Guarded", &[0, 0, 0]));
+    assert_eq!(outcome(&batch), &TemporalVerdict::Inactive);
+
+    let closed = timestamped_guarded_by("q.value = 1", &[0, 0], true);
+    assert_eq!(outcome(&closed), outcome(&batch));
+    assert_eq!(closed.category_label(), batch.category_label());
+    assert_eq!(closed.disposition.truth(), None);
+    assert_eq!(closed.axes().activation, crate::ActivationAxis::Inactive);
+    assert_eq!(closed.axes().truth, None);
+    assert_eq!(window_report(&closed).basis, SettlementBasis::ClosedScope);
+
+    // The guard becomes true at one position: the clause is active again.
+    let active = timestamped_guarded_by("q.value = 1", &[0, 1], true);
+    assert!(
+        !matches!(outcome(&active), TemporalVerdict::Inactive),
+        "{:?}",
+        active.disposition
+    );
+    assert_eq!(active.axes().activation, crate::ActivationAxis::Active);
+}
+
+/// FR-044 "Outputs": an open scope whose every guard is false may still
+/// activate; the finite-window path does not decide it and reports no truth.
+#[trace("TC-1278", "FR-044-AC-5")]
+#[test]
+fn a_finite_window_open_scope_with_every_guard_false_is_not_decided() {
+    let open = timestamped_guarded_by("q.value = 1", &[0, 0], false);
+    assert_eq!(outcome(&open), &TemporalVerdict::Pending);
+    assert_eq!(open.disposition.truth(), None);
+    assert_eq!(open.axes().activation, crate::ActivationAxis::Unknown);
+    assert_eq!(open.axes().truth, Some(crate::TruthAxis::Pending));
+    assert_eq!(window_report(&open).basis, SettlementBasis::Unsettled);
+}
+
+/// The finite-window route reports a guard that divides by zero as an
+/// incomplete activation. The standard requires a typed `undefined` there
+/// (the batch run reports it so), so this pins current behavior only: it
+/// is neither inactive nor decided and carries no truth.
+/// QSL follow-up: window route reports activation-incomplete for an undefined guard
+#[test]
+fn a_finite_window_unknown_activation_is_neither_inactive_nor_decided() {
+    for closed in [true, false] {
+        let window = timestamped_guarded_by("3 mod (2 - q.value) >= 0", &[2, 2], closed);
+        assert!(
+            matches!(
+                outcome(&window),
+                TemporalVerdict::ActivationIncomplete { .. }
+            ),
+            "closed={closed}: {:?}",
+            window.disposition
+        );
+        assert_eq!(window.axes().activation, crate::ActivationAxis::Unknown);
+        assert_eq!(window.disposition.truth(), None);
+    }
 }
 
 /// FR-330-AC-9, FR-502 (TC-1295, TC-1296): a finite-window request that

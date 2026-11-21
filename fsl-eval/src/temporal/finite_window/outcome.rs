@@ -68,6 +68,15 @@ pub enum IndeterminateReason {
 pub enum WindowVerdict {
     /// `Completed(true)`.
     Holds,
+    /// A guarded `on each` clause over a closed, complete scope whose every
+    /// guard read false: no instance exists and there is no truth value
+    /// (FR-044 "Outputs").
+    Inactive,
+    /// A guarded `on each` clause whose every guard read false over a scope
+    /// that is open or not complete: a later observation may still activate
+    /// it, so the activation is unknown and there is no truth value
+    /// (FR-044 "Outputs").
+    ActivationUnknown,
     /// `Completed(false)` at the first activation that evaluated false.
     Violated {
         /// The activation's position.

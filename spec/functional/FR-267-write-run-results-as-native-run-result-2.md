@@ -322,7 +322,7 @@ FR-093-AC-5/6's closed, complete scope with no activation.
 | `violated` | `Completed(false)` | `position`, `counterexample` | `violation`, `false`, `closed-scope` | absent |
 | `undefined` | `Undefined` with a kernel or family cause | `position`, `counterexample` (may be absent for a model trace's `Undefined`, FR-330) | `violation`, `false`, `closed-scope` | `{"kind": "undefined", "reason": R}`, `R` the undefined value's FR-100 reason |
 | `insufficient-data` | `InsufficientData` (FR-327) | `position`, `count`, `min_count` | `undefined`, absent, `unavailable` | `{"kind": "undefined", "reason": "insufficient-data"}` |
-| `pending` | `Pending` | none | `pending`, absent, `unsettled` | absent |
+| `pending` | `Pending`, including FR-501's guarded scope with no activation that is open or not complete (FR-044 `unknown`) | none | `pending`, absent, `unsettled` | absent |
 | `pending-window` | FR-501's `Pending` of a finite-window activation | `position`, `deadline` | `pending`, absent, `unsettled` | absent |
 | `pending-next-event` | FR-504's `Pending` whose deadline is the next event | `position` | `pending`, absent, `unsettled` | absent |
 | `indeterminate` | FR-501's `Indeterminate` | `position`, `reason` | `indeterminate`, absent, `unavailable` | absent |
