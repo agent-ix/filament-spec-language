@@ -69,8 +69,14 @@ fn a_package_analyze_refuses_request_clocks_before_file_intake() {
     assert_eq!(first_diagnostic(&run)["code"], "invalid_package");
     assert!(first_diagnostic(&run).to_string().contains("missing-file"));
 
-    let body = format!("profile ep = \"filament.temporal.event-position.false-extension/v1\";\nrecord ClockReading {{ ready: Boolean; }}\ntemporal Clocked using ep over (r: ClockReading) clock \"events\" on origin {{ always[0,1] holds(r.ready) }}\n{}", bounded());
+    let body = format!("record ClockReading {{ ready: Boolean; }}\ntemporal Clocked using ep over (r: ClockReading) clock \"events\" on origin {{ always[0,1] holds(r.ready) }}\n{}", bounded());
     let source = counter_request(&ws, &body, json!([{"claim": "Bounded"}]));
+    let program = std::fs::read_to_string(ws.path("program.fsl")).expect("source program");
+    let program = program.replace(
+        "profile t0 = \"filament.temporal.infinite-trace/v1\";",
+        "profile t0 = \"filament.temporal.infinite-trace/v1\";\nprofile ep = \"filament.temporal.event-position.false-extension/v1\";",
+    );
+    ws.write("program.fsl", program.as_bytes());
     let mut source: Value =
         serde_json::from_slice(&std::fs::read(&source).expect("source request"))
             .expect("request JSON");

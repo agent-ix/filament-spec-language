@@ -559,7 +559,7 @@ mod package_intake_tests {
         }
         let cause = package_input_refusal(
             PendingPackageForm::Model(AdmissionFailure::Incomplete(Box::new(AdmissionRecord {
-                    catalog: CatalogCode::new("incomplete_population", "incomplete-scope"),
+                catalog: CatalogCode::new("incomplete_population", "incomplete-scope"),
                 ..record()
             }))),
             "test",
