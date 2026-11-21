@@ -86,3 +86,4 @@ Re-checked at fix commit `134c0e6133`.
 | FND-004 | fixed | `check_regions` refuses a non-empty zone whose `0 - x_k` cell is looser than `(0, <=)` with `NegativeClockValue` (zone.rs:1072-1080). The precondition is in the doc, and a test covers it |
 | FND-005 | fixed | The module doc now says the task-product operations are not Kani-harnessed and names their tests |
 | FND-006 | fixed | The case now uses `y <= 4` and asserts the tightened `x < 5` |
+| FND-007 | fixed | At `24e999a5bf` all 18 region_tests carry `#[trace("TC-371")]` alone. Only the 10^40 test also names an AC, `FR-418-AC-4`. No AC-13 or AC-18 tag remains. The commit changes tags only |
