@@ -80,40 +80,69 @@ pub struct ReferenceCatalog<'a> {
     declarations: Vec<ReferenceDeclaration<'a>>,
 }
 
+trait CatalogBudget {
+    fn charge(
+        &mut self,
+        kind: NativeJoinChargeKind,
+        amount: u128,
+    ) -> Result<(), ReferenceCatalogError>;
+}
+
+impl CatalogBudget for NativeJoinBudget {
+    fn charge(
+        &mut self,
+        kind: NativeJoinChargeKind,
+        amount: u128,
+    ) -> Result<(), ReferenceCatalogError> {
+        self.accounted_charge(
+            kind,
+            amount,
+            NativeJoinLocus {
+                source: NativeJoinLocusSource::AuthorityRow,
+                form: "reference-catalog",
+            },
+        )
+        .map_err(ReferenceCatalogError::Denied)
+    }
+}
+
+struct CoreCatalogBudget<'b>(&'b mut dyn filament_exact::IntegerDecimalBudget);
+
+impl CatalogBudget for CoreCatalogBudget<'_> {
+    fn charge(
+        &mut self,
+        kind: NativeJoinChargeKind,
+        amount: u128,
+    ) -> Result<(), ReferenceCatalogError> {
+        let refused = || ReferenceCatalogError::Denied(NativeJoinDeniedCharge { kind, amount });
+        match kind {
+            NativeJoinChargeKind::Work => {
+                self.0.work(u64::try_from(amount).map_err(|_| refused())?)
+            }
+            NativeJoinChargeKind::Storage => self
+                .0
+                .reserve(usize::try_from(amount).map_err(|_| refused())?),
+        }
+        .map_err(|_| refused())
+    }
+}
+
 fn charge(
-    budget: &mut NativeJoinBudget,
+    budget: &mut dyn CatalogBudget,
     kind: NativeJoinChargeKind,
     amount: usize,
 ) -> Result<(), ReferenceCatalogError> {
-    budget
-        .accounted_charge(
-            kind,
-            amount as u128,
-            NativeJoinLocus {
-                source: NativeJoinLocusSource::AuthorityRow,
-                form: "reference-catalog",
-            },
-        )
-        .map_err(ReferenceCatalogError::Denied)
+    budget.charge(kind, amount as u128)
 }
 
-fn work(budget: &mut NativeJoinBudget, amount: u64) -> Result<(), ReferenceCatalogError> {
-    budget
-        .accounted_charge(
-            NativeJoinChargeKind::Work,
-            u128::from(amount),
-            NativeJoinLocus {
-                source: NativeJoinLocusSource::AuthorityRow,
-                form: "reference-catalog",
-            },
-        )
-        .map_err(ReferenceCatalogError::Denied)
+fn work(budget: &mut dyn CatalogBudget, amount: u64) -> Result<(), ReferenceCatalogError> {
+    budget.charge(NativeJoinChargeKind::Work, u128::from(amount))
 }
 
 fn text_equal(
     left: &str,
     right: &str,
-    budget: &mut NativeJoinBudget,
+    budget: &mut dyn CatalogBudget,
 ) -> Result<bool, ReferenceCatalogError> {
     charge(
         budget,
@@ -126,7 +155,7 @@ fn text_equal(
 fn object_node_equal(
     left: &CheckedNodeId,
     right: &CheckedNodeId,
-    budget: &mut NativeJoinBudget,
+    budget: &mut dyn CatalogBudget,
 ) -> Result<bool, ReferenceCatalogError> {
     work(budget, 1)?;
     // Genuine selected object declarations have three named path segments.
@@ -157,7 +186,7 @@ fn insert_declaration<'a>(
     actual: &'a EffectiveId,
     key: &'a DeclarationKey,
     universe: &'a ObjectUniverse,
-    budget: &mut NativeJoinBudget,
+    budget: &mut dyn CatalogBudget,
 ) -> Result<(), ReferenceCatalogError> {
     let SelectedExactIdentity::Object(effective) = &row.exact_identity else {
         return Err(ReferenceCatalogError::ForeignModel);
@@ -249,14 +278,14 @@ impl<'a> ReferenceCatalog<'a> {
     pub fn from_checked_call(
         source: &'a CheckedPackage,
         models: &'a SelectedModels,
-        budget: &mut NativeJoinBudget,
+        budget: &mut dyn filament_exact::IntegerDecimalBudget,
     ) -> Result<Self, ReferenceCatalogError> {
         let mut declarations = Vec::new();
         Self::join_call_rows(
             source.graph().selected_exact_declaration_rows(),
             models,
             &mut declarations,
-            budget,
+            &mut CoreCatalogBudget(budget),
         )?;
         Ok(Self {
             package: None,
@@ -305,7 +334,7 @@ impl<'a> ReferenceCatalog<'a> {
         rows: &'a [SelectedExactDeclarationRow],
         models: &'a SelectedModels,
         declarations: &mut Vec<ReferenceDeclaration<'a>>,
-        budget: &mut NativeJoinBudget,
+        budget: &mut dyn CatalogBudget,
     ) -> Result<(), ReferenceCatalogError> {
         for row in rows {
             work(budget, 1)?;
