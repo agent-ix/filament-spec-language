@@ -1,0 +1,49 @@
+warning: unused import: `identity_form::is_effective_form`
+   --> fsl-replay/src/spine.rs:234:16
+    |
+234 | pub(crate) use identity_form::is_effective_form;
+    |                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: function `is_effective_form` is never used
+   --> fsl-replay/src/spine/identity_form.rs:160:15
+    |
+160 | pub(crate) fn is_effective_form(form: &Json) -> bool {
+    |               ^^^^^^^^^^^^^^^^^
+    |
+    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: function `sample_fingerprint` is never used
+   --> fsl-replay/src/spine/clause/temporal.rs:335:15
+    |
+335 | pub(crate) fn sample_fingerprint(
+    |               ^^^^^^^^^^^^^^^^^^
+
+warning: `fsl-replay` (lib) generated 3 warnings (run `cargo fix --lib -p fsl-replay` to apply 1 suggestion)
+   Compiling fsl-analyze v0.3.0 (/home/peter/dev/.worktrees/luna-qsl-2758-2760/fsl-analyze)
+   Compiling fsl-inspect v0.1.0 (/home/peter/dev/.worktrees/luna-qsl-2758-2760/fsl-inspect)
+   Compiling fsl-command v0.1.0 (/home/peter/dev/.worktrees/luna-qsl-2758-2760/fsl-command)
+    Finished `test` profile [unoptimized] target(s) in 28.96s
+     Running tests/it/main.rs (target/debug/deps/it-13478c0a8a0f3e03)
+
+running 1 test
+test cli_contract::run::canonical_run_acceptance_plans_retain_dispositions_and_severity ... FAILED
+
+failures:
+
+---- cli_contract::run::canonical_run_acceptance_plans_retain_dispositions_and_severity stdout ----
+
+thread 'cli_contract::run::canonical_run_acceptance_plans_retain_dispositions_and_severity' (2739458) panicked at fsl-command/tests/it/cli_contract/run.rs:462:13:
+assertion `left == right` failed: plan-passes: {"dispositions":{"again":{"blocked_by":null,"evidence":"proof","method":"model_check","result":{"basis":{"type":"exhaustive"},"category":"success","cause":null,"certification":"certified","request_index":1,"result":"proved"},"status":"proved"},"safe":{"blocked_by":null,"evidence":"proof","method":"model_check","result":{"basis":{"type":"exhaustive"},"category":"success","cause":null,"certification":"certified","request_index":0,"result":"proved"},"status":"proved"}},"document":null,"failed_steps":[],"format":"filament.verification-plan-outcome/v1","inputs":{"initial":"/home/peter/dev/.worktrees/luna-run-inputs-fixtures/examples/run-inputs/requests/../data/tank-0.json","max_trace_length":null,"max_value_bits":null,"seed":0},"package":"example:run-inputs/plan-passes","plan":"Release","status":"passed"}
+  left: Null
+ right: "en-1"
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    cli_contract::run::canonical_run_acceptance_plans_retain_dispositions_and_severity
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 200 filtered out; finished in 0.24s
+
+error: test failed, to rerun pass `-p fsl-command --test it`

@@ -2,6 +2,7 @@
 //! FR-960: the `call.requirements` member of a native-run/1 call, which asks
 //! the run to settle the call's requirement items and names the backend of
 //! each, read into a typed selection before any source is compiled.
+//! Verification-plan callers reuse its named-backend grammar at `/requirements`.
 
 use std::collections::BTreeMap;
 
@@ -9,9 +10,6 @@ use fsl_foundation::BackendId;
 use serde_json::{Map, Value};
 
 use super::{Result, RunCause};
-
-/// The pointer of the `requirements` member of a run's call.
-const POINTER: &str = "/call/requirements";
 
 /// A backend and its options, named for every item of the call or for one.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -64,22 +62,22 @@ fn refuse(pointer: String, reason: &str) -> RunCause {
 /// Read `value`, the request's `call.requirements` member, refusing at
 /// stage `request` with `invalid-request` naming the member's JSON pointer
 /// (FR-960 "Refusals before the call").
-pub(super) fn read(value: &Value) -> Result<Requirements> {
+pub(super) fn read(value: &Value, pointer: &str) -> Result<Requirements> {
     let Value::Object(members) = value else {
-        return Err(refuse(POINTER.to_owned(), "expected a closed object"));
+        return Err(refuse(pointer.to_owned(), "expected a closed object"));
     };
     let mut items = Vec::new();
     for key in members.keys() {
         if !matches!(key.as_str(), "backend" | "options" | "items") {
             return Err(refuse(
-                format!("{POINTER}/{}", token(key)),
+                format!("{pointer}/{}", token(key)),
                 "an unknown member",
             ));
         }
     }
-    let call = named(members, POINTER)?;
+    let call = named(members, pointer)?;
     if let Some(entries) = members.get("items") {
-        let pointer = format!("{POINTER}/items");
+        let pointer = format!("{pointer}/items");
         let Value::Array(entries) = entries else {
             return Err(refuse(pointer, "expected an array"));
         };

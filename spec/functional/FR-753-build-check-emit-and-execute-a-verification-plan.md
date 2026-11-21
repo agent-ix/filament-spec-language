@@ -87,6 +87,7 @@ pub fn execute_plan(
 - `negotiate` is FR-281's `Negotiate`: the coordinator builds each step's
   FR-290 item, computes its candidates by FR-075 and asks the caller to
   settle it, exactly as `analyze` does, and never chooses an engine itself.
+  A run request's existing `requirements.backend` selector and its options SHALL apply to that caller negotiation for every negotiated plan step.
 - `PlanOutcome` holds one `PlanDisposition` per node in source order, with
   the closed status of FSpec FR-824 "Outcome document", the method, the
   evidence kind, `blocked_by` and the step's terminal record. `fsl-command`

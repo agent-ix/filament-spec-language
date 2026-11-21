@@ -422,13 +422,32 @@ fn canonical_run_acceptance_plans_retain_dispositions_and_severity() {
         std::env::var_os("FSL_RUN_INPUTS_FIXTURES")
             .expect("the acceptance lane supplies its read-only fixture directory"),
     );
+    let temporary = Case::new();
     for (case, status, exit) in [
         ("plan-passes", "passed", 0),
         ("plan-fails", "failed", 10),
         ("plan-blocks", "failed", 22),
         ("plan-null-members-as-absent", "passed", 0),
     ] {
-        let outcome = plain(&directory.join("requests").join(format!("{case}.json")));
+        let originals = directory.join("requests");
+        let mut job: Value = serde_json::from_slice(
+            &std::fs::read(originals.join(format!("{case}.json")))
+                .expect("the authoritative request exists"),
+        )
+        .expect("the authored request is JSON");
+        // Only the private request selects a backend. Its source/model/snapshot
+        // files remain in the authoritative read-only checkout.
+        let body = &mut job["request"];
+        body["requirements"] = json!({"backend":"en-1"});
+        for model in body["models"].as_array_mut().unwrap() {
+            model["source"]["file"] =
+                json!(originals.join(model["source"]["file"].as_str().unwrap()));
+        }
+        body["program"]["source"]["file"] =
+            json!(originals.join(body["program"]["source"]["file"].as_str().unwrap()));
+        body["verification_plan"]["initial"] =
+            json!(originals.join(body["verification_plan"]["initial"].as_str().unwrap()));
+        let outcome = plain(&temporary.json(&format!("{case}.json"), &job));
         let document = &outcome.document["verification_plan"];
         assert_eq!(outcome.exit, exit, "{case}: {document}");
         assert_eq!(document["status"], status, "{case}: {document}");
@@ -436,16 +455,38 @@ fn canonical_run_acceptance_plans_retain_dispositions_and_severity() {
             .as_object()
             .expect("one named disposition per plan step");
         assert_eq!(dispositions.len(), 2, "{case}: {document}");
+        if case == "plan-passes" || case == "plan-null-members-as-absent" {
+            assert!(
+                dispositions.values().all(|step| step["status"] == "proved"),
+                "{case}: {document}"
+            );
+        }
         if case == "plan-fails" || case == "plan-blocks" {
             assert_eq!(document["failed_steps"], json!(["low"]), "{document}");
             assert_eq!(dispositions["low"]["status"], "refuted", "{document}");
         }
         if case == "plan-blocks" {
+            assert_eq!(dispositions["safe"]["blocked_by"], "low", "{document}");
             assert!(
                 dispositions
                     .values()
                     .any(|step| step["status"] == "blocked" && step["result"].is_null()),
                 "{document}"
+            );
+        }
+        if case == "plan-fails" {
+            assert_eq!(dispositions["safe"]["status"], "proved", "{document}");
+        }
+        if case == "plan-passes" {
+            job["request"]["requirements"]["backend"] = json!("fsl.absent");
+            let unknown = plain(&temporary.json("unknown-plan-backend.json", &job));
+            assert_eq!(unknown.exit, 20, "{}", unknown.document);
+            assert_eq!(
+                unknown.document["verification_plan"]["dispositions"]["safe"]["result"]
+                    ["diagnostic"]["cause"],
+                "unknown-backend",
+                "{}",
+                unknown.document
             );
         }
     }

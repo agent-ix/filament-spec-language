@@ -4476,7 +4476,7 @@ fn prepare_complete_run(
     let requirements = call
         .requirements
         .as_ref()
-        .map(requirements::read)
+        .map(|value| requirements::read(value, "/call/requirements"))
         .transpose()?;
     let documents = request
         .models

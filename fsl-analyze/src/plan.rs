@@ -34,6 +34,10 @@ use crate::analyze::{
 /// universes used by the existing analyze and simulation entry points.
 /// Bounds retain absence: the coordinator never supplies a generation default.
 pub struct PlanInputs<'a> {
+    /// The caller's standard named backend, applied only to negotiated steps.
+    pub backend: Option<fsl_foundation::BackendId>,
+    /// Options of that explicitly named backend.
+    pub backend_options: BTreeMap<String, String>,
     /// Per-step subject bindings, indexed by authored step name.
     pub bindings: BTreeMap<String, SubjectBinding<'a>>,
     /// Source bytes under the package's declared labels.
@@ -765,14 +769,20 @@ impl Execution<'_> {
             ));
         };
         item.form = form;
+        item.backend = inputs.backend.clone();
+        item.options.backend_options = inputs.backend_options.clone();
         item.options.max_cases = bound.and_then(NonZeroU64::new);
         item.options.required = true;
         let candidates = if let Some(evidence) = evidence {
-            registry.candidates_for_evidence(kind, &ItemEvidence::Kind(evidence), None)
+            registry.candidates_for_evidence(
+                kind,
+                &ItemEvidence::Kind(evidence),
+                item.backend.as_ref(),
+            )
         } else {
             registry.candidates_for_temporal_dynamics(
                 kind,
-                None,
+                item.backend.as_ref(),
                 &fairness
                     .iter()
                     .map(|constraint| constraint.kind())

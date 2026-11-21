@@ -13,6 +13,7 @@ CPU/load/available memory. Later commands used `--test-threads=1` as directed.
 | fsl-replay corrected genuine cumulative admission + execution | 0 | 1 pass, original supplied Admission counter and typed limit stop | `logs/canonical-run-cumulative-4.log` |
 | Source population expansion/reference reuse | 0 | 1 pass: document order, native Population argument, canonical roundtrip and external legacy refusal | `logs/canonical-run-population-2.log` |
 | Authoritative values/plans | 101 aggregate | Values test passes its 16 authored ready cases. Plan test fails at plan-passes with actual ambiguous-backend, not invalid-request | `logs/canonical-run-authoritative.log` |
+| Plan caller's existing named selector, after arch's final ruling | 0 | 1 named test: passed0, refuted10, refuted+blocked22, null-as-absent0; explicit unknown backend refuses20 without fallback | `logs/canonical-run-plans-selected-2.log` |
 | Migrated source/package/budget/law/handoff fixtures | 0 each | 16 named passes before the reused-claim failure | `logs/migration-*.log` |
 | Provider limits/overrides, previously unrun after loop stop | 0 | 1 pass on the actual #3393 pin base | `logs/migration-provider_run_accepts_run_limits_and_request_overrides.log` |
 | Reused-claim regression, original then exactly one authorized new-base rerun | 101 each | UnknownRequirementClaim persists; no assertion weakened and no further rerun | `logs/migration-a_run_call_names_the_backend_of_its_requirement_items.log`, `logs/reused-claim-21ed.log` |
@@ -40,8 +41,18 @@ The authoritative examples checkout was used in place and was never modified
 or copied. Its staged items array is explicitly invalid under the arch ruling:
 FR-651 retains its specified object envelope, exercised by the independent
 three-item and population regressions. Plan fixtures retain desired assertions;
-no current wrong refusal is accepted as passing. Their selector contract and
-the reused-claim producer identity defect are with the lead.
+no current wrong refusal is accepted as passing. The authorized selector
+implementation now threads `/request/requirements/backend` through the actual
+plan items and existing negotiation; `en-1` is the model-check manifest's
+advertised backend (`fsl_route::tie::EN1`). Only private selector-bearing request
+documents are materialized, with absolute references to the read-only originals.
+The initial selected-plan test assumed a backend field that the existing result
+envelope does not publish; its failure is retained in
+`logs/canonical-run-plans-selected.log`, and the corrected test proves selection
+with actual outcomes and an unknown-backend refusal. FR-753 gains one sentence
+for the selector edge. The reused-claim producer defect is held under QSL-2744;
+its test is unchanged and was not rerun again. The prior 26 accepted passes were
+not repeated during this plan-only completion.
 
 Dependencies integrated include actual main #3393
 `21edb2ead1c8b69768beedaab003e077ce4ed042`, with IR `96554ea5` and both FSpec
