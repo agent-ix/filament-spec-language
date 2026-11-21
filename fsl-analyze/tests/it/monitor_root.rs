@@ -1660,7 +1660,7 @@ fn reach_model_type(reached: ReachedModelType) {
             panic!("the reached union has exactly one producer row: {union_rows:?}");
         };
         use filament_contract_model::SelectedModelUnionPayload as Payload;
-        assert_eq!(row.selected_document.as_ref(), domain.package.as_str());
+        assert_eq!(&*row.selected_document, domain.package);
         let cases: Vec<_> = row
             .cases
             .iter()
@@ -1677,10 +1677,10 @@ fn reach_model_type(reached: ReachedModelType) {
         let projected = package
             .project_exact_type(&row.structural_node, closure.identities(), &mut budget)
             .expect("the joined authentic model union projects through native IR");
-        assert!(matches!(
+        assert_eq!(
             projected.value_type(),
-            filament_exact::ValueType::Union(_)
-        ));
+            &filament_exact::ValueType::Composite(row.type_handle.clone())
+        );
         return;
     }
     assert_eq!(closure.model_enums(), model_shapes.as_slice());
