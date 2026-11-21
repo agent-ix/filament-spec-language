@@ -490,7 +490,7 @@ fn composition_view_refuses_an_ambiguous_owning_clause_occurrence() {
 fn fair_clause_readback_preserves_constraints_and_key_fairness() {
     use crate::{BareFairnessRefusal, BareSupply, NativeRowErrorCode};
     use filament_contract_model::NativeJoinBudget;
-    let dependency = dependency("test/producer", "temporal Fair using t over (p: M::Producer) clock \"model-steps\" on origin { fair strong whole M::Producer::send; fair weak each M::Producer::send; fair strong each M::Producer::send; fair weak whole M::Producer::send; fair strong whole M::Producer::send; always eventually holds(p.sent) }\n");
+    let dependency = dependency("test/producer", "temporal Fair using t over (p: M::Producer) clock \"model-steps\" on origin { fair strong whole M::Producer::send; fair weak each M::Producer::send; fair strong each M::Producer::send; fair weak whole M::Producer::send; fair strong whole M::Producer::send; always eventually holds(p.sent) }\ntemporal Calm using t over (p: M::Producer) clock \"model-steps\" on origin { always holds(p.sent) }\n");
     let emission = emit_checked(&dependency.package).expect("the actual source emits");
     let document = serde_json::to_vec(&fixture::document()).expect("model document");
     let models =
@@ -593,6 +593,46 @@ fn fair_clause_readback_preserves_constraints_and_key_fairness() {
             })
         );
     }
+    let calm = read.claim_name("Calm").expect("a second genuine clause");
+    let mut batch_budget = NativeJoinBudget::new(1_000_000, 1_000_000);
+    let bodies = crate::checked_views::ClauseBodies::new(read.admitted(), &mut batch_budget)
+        .expect("one owner index");
+    let setup = batch_budget.consumed();
+    assert_eq!(
+        bodies
+            .node(&named.declaration)
+            .expect("document-held lookup")
+            .node_id,
+        named.declaration
+    );
+    let first = bodies
+        .body(&named.declaration, &mut batch_budget)
+        .expect("first body");
+    let first_paid = batch_budget.consumed();
+    assert_eq!(first_paid.work - setup.work, body_work - setup.work);
+    assert_eq!(
+        first_paid.storage - setup.storage,
+        body_storage - setup.storage
+    );
+    let second = bodies
+        .body(&calm.declaration, &mut batch_budget)
+        .expect("second body reuses the owner index");
+    let batch_paid = batch_budget.consumed();
+    let mut separate_budget = NativeJoinBudget::new(1_000_000, 1_000_000);
+    let separate = crate::checked_views::ClauseBodies::new(read.admitted(), &mut separate_budget)
+        .expect("separate owner index")
+        .body(&calm.declaration, &mut separate_budget)
+        .expect("same second body");
+    assert_eq!(first.formula, body.formula);
+    assert_eq!(second.formula, separate.formula);
+    assert_eq!(
+        batch_paid.work - first_paid.work,
+        separate_budget.consumed().work - setup.work
+    );
+    assert_eq!(
+        batch_paid.storage - first_paid.storage,
+        separate_budget.consumed().storage - setup.storage
+    );
     let before = budget.consumed();
     let fairness = bare
         .temporal_clause_fairness_with_budget(&named.declaration, &mut budget)
