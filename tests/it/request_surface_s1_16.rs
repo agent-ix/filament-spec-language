@@ -3043,6 +3043,20 @@ fn package_clause_selection_outcomes(
     refused_violation: bool,
     objects: SelectionObjects,
 ) {
+    let execute = |directory: &Path, request: &Value| {
+        let path = directory.join("request.json");
+        std::fs::write(&path, serde_json::to_vec(request).unwrap()).unwrap();
+        match fsl_command::command::run(&path, &crate::negotiation::Fr290) {
+            Ok(result) => (
+                result.exit_code,
+                result.value.as_value().clone(),
+                result
+                    .outcome
+                    .map(|outcome| outcome.to_bytes().expect("the complete outcome encodes")),
+            ),
+            Err(error) => (error.category().exit_code(), error.value().unwrap(), None),
+        }
+    };
     let directory = bump_directory(unit, &["a"], true);
     let mut second = snapshot_of(directory.path(), &["a"], true);
     second["identity"]["identity"] = json!("selection-second");
@@ -3070,7 +3084,7 @@ fn package_clause_selection_outcomes(
             let clause = json!({"selection": {"temporal": {"name": "Low", "trace": trace,
             "over": {"reference": {"population": population, "key": "a"}}}},
             "observations": {"s0": "s.json", "s1": "second.json"}});
-            let result = write_request(
+            let result = execute(
                 directory.path(),
                 &json!({"format": "native-run/1", "request": {
             "models": models, "program": {"source": source("unit.native")}, "clause": clause}}),
@@ -3081,7 +3095,7 @@ fn package_clause_selection_outcomes(
         .collect();
     let models = compile_handoff(directory.path(), unit);
     for (clause, expected) in clauses {
-        let actual = write_request(
+        let actual = execute(
             directory.path(),
             &json!({"format": "native-run/1", "request": {
             "models": models, "package": {"directory": "handoff"}, "clause": clause}}),
