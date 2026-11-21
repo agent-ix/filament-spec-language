@@ -1095,6 +1095,16 @@ fn link_inheritance(
             }
         }
         for (position, operation) in object.operations.iter().enumerate() {
+            let mut receiver_fields = Vec::new();
+            for (name, span) in &operation.receiver_fields {
+                let start = [(object.name.clone(), *span)];
+                let Some(owner) = declaring(&by_name, &start, name, MemberKind::Field) else {
+                    return Err(missing(*span, "modified field", name));
+                };
+                receiver_fields.push(format!("ix://{package}/{owner}/{name}"));
+            }
+            types[object.type_index]["operations"][position]["frame"]["modifies_receiver"] =
+                json!(receiver_fields);
             if let Some(target) = &operation.redefines {
                 types[object.type_index]["operations"][position]["redefines"] = json!(redefined(
                     &by_name,
@@ -1201,6 +1211,7 @@ struct FieldLink {
 struct OperationLink {
     name: String,
     redefines: Option<MemberTarget>,
+    receiver_fields: Vec<(String, Span)>,
 }
 
 /// `Owner :: member` of a `redefines` clause.
@@ -1326,12 +1337,9 @@ fn read_object(
                 }));
             }
             "operation" => {
-                let (operation, redefines, next) =
+                let (operation, links, next) =
                     read_operation(tokens, index, &name, package, parsed)?;
-                operation_links.push(OperationLink {
-                    name: operation["name"].as_str()?.to_owned(),
-                    redefines,
-                });
+                operation_links.push(links);
                 operations.push(operation);
                 index = next;
             }
@@ -2506,7 +2514,7 @@ fn read_operation(
     owner: &str,
     package: &str,
     parsed: &ParsedSource,
-) -> Option<(Value, Option<MemberTarget>, usize)> {
+) -> Option<(Value, OperationLink, usize)> {
     let start = tokens.get(index)?.span.start;
     index += 1;
     let name = tokens.get(index)?.text.clone();
@@ -2566,6 +2574,7 @@ fn read_operation(
     };
     let redefines = read_member_target(tokens, &mut index)?;
     let mut modifies_receiver = Vec::new();
+    let mut receiver_fields = Vec::new();
     let mut creates = Vec::new();
     let mut deletes = Vec::new();
     while tokens.get(index)?.text != ";" && tokens.get(index)?.text != "{" {
@@ -2581,6 +2590,7 @@ fn read_operation(
                         && tokens.get(index + 1).is_some_and(|token| token.text == ".")
                     {
                         if let Some(field) = tokens.get(index + 2) {
+                            receiver_fields.push((field.text.clone(), field.span));
                             modifies_receiver
                                 .push(format!("ix://{package}/{owner}/{}", field.text));
                         }
@@ -2642,7 +2652,15 @@ fn read_operation(
     if let Some(returns) = returns {
         operation["returns"] = returns;
     }
-    Some((operation, redefines, index))
+    Some((
+        operation,
+        OperationLink {
+            name,
+            redefines,
+            receiver_fields,
+        },
+        index,
+    ))
 }
 
 /// An optional `redefines Owner :: member` at `index`, which it advances past.

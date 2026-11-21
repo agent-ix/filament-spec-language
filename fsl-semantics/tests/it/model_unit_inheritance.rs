@@ -95,7 +95,10 @@ fn check_causes(packages: &PackageInput) -> Vec<&'static str> {
         ModelNormalizationLimits::default(),
     ) {
         Ok(models) => models,
-        Err(refusal) => return vec![refusal.cause.cause().expect("a catalogued intake refusal")],
+        Err(refusal) => {
+            eprintln!("I1 intake refusal: {refusal:#?}");
+            return vec![refusal.cause.cause().expect("a catalogued intake refusal")];
+        }
     };
     let mut declarations = match PackageDeclarations::assemble(
         parsed.source().reference().clone(),
@@ -106,6 +109,7 @@ fn check_causes(packages: &PackageInput) -> Vec<&'static str> {
     ) {
         Ok(declarations) => declarations,
         Err(refusal) => {
+            eprintln!("S3 assembly refusal: {refusal:#?}");
             return refusal
                 .errors
                 .iter()
@@ -115,7 +119,10 @@ fn check_causes(packages: &PackageInput) -> Vec<&'static str> {
     };
     let pending = match declarations.link_dispatch(ModelNormalizationLimits::default()) {
         Ok(pending) => pending,
-        Err(refusals) => return causes(&refusals),
+        Err(refusals) => {
+            eprintln!("S3 dispatch refusals: {refusals:#?}");
+            return causes(&refusals);
+        }
     };
     match declarations.check(
         CheckMode::Linked,
@@ -123,7 +130,11 @@ fn check_causes(packages: &PackageInput) -> Vec<&'static str> {
         &crate::reward_evaluator::ZeroRewardEvaluator,
     ) {
         Ok(_) => Vec::new(),
-        Err(refusals) => causes(&pending.report(refusals)),
+        Err(refusals) => {
+            let refusals = pending.report(refusals);
+            eprintln!("S3 check refusals: {refusals:#?}");
+            causes(&refusals)
+        }
     }
 }
 
@@ -192,8 +203,13 @@ fn a_model_unit_writes_supertypes_subsets_and_redefinitions_into_the_document() 
 #[trace("FR-082-AC-2", "TC-1942")]
 #[test]
 fn a_conforming_specialization_subsetting_and_redefinition_checks() {
-    let packages = compile(SHOP).expect("the inheritance model unit compiles");
-    assert_eq!(check_causes(&packages), Vec::<&str>::new());
+    for model in [
+        SHOP.to_owned(),
+        SHOP.replace("modifies self.total;", "modifies self.total, self.items;"),
+    ] {
+        let packages = compile(&model).expect("the inheritance model unit compiles");
+        assert_eq!(check_causes(&packages), Vec::<&str>::new(), "{model}");
+    }
 }
 
 #[trace("FR-710-AC-4", "TC-1943")]
@@ -313,7 +329,7 @@ domain \"example/shop\";
 machine BaseMachine { active: Boolean; states (Ready); }
 machine ChildMachine extends BaseMachine { states (Done); }
 process BaseProcess { id: Integer; operation go(); step start: begin; }
-process ChildProcess extends BaseProcess { operation stop(); step finish: begin; }
+process ChildProcess extends BaseProcess { operation stop(); step last: begin; }
 object Child extends Base { }
 object Base { total: Integer; }
 population children: Child;
