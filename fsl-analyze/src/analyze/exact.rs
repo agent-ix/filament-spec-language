@@ -79,8 +79,7 @@ pub(crate) enum ExactReport {
     ReplayRefused,
     /// The core rejected a probability value at a complete product state.
     Rejected {
-                | ProbabilityDocumentError::TimedObjectiveMismatch
-rule: CertificateRule,
+        rule: CertificateRule,
         at: CertificateLocus,
     },
     /// The checker accepted the solver's certificate.
@@ -417,7 +416,8 @@ fn run_timed(
     // A workload leaves the scheduler no choice when the product is a chain
     // and the delay choices of FR-204 otherwise; the checker's own graph
     // decides which the document states, so the other spelling is the one
-    // retry when it names a mismatch.
+    // retry, and only when the checker names the spelling as the mismatch (a
+    // route, unit, scale, form or target mismatch is a different error).
     let residual = match bound {
         Bound::AtLeast(_) => ProbabilityObjective::WorkloadMinimum,
         Bound::AtMost(_) => ProbabilityObjective::WorkloadMaximum,
@@ -1430,6 +1430,7 @@ fn document_failure(error: ProbabilityDocumentError, subject: SubjectLimits<'_>)
         | ProbabilityDocumentError::Noncanonical
         | ProbabilityDocumentError::IdentityMismatch
         | ProbabilityDocumentError::ObjectiveMismatch
+        | ProbabilityDocumentError::TimedObjectiveMismatch
         | ProbabilityDocumentError::Graph(_) => broken(),
     }
 }
