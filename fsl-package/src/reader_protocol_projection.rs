@@ -91,8 +91,8 @@ impl ReaderProtocolProjection {
             .and_then(|node| node.location.as_ref())
     }
 
-    /// The occurrence key of the node at an arena index when it has just one `expression`
-    /// occurrence; `None` otherwise.
+    /// The occurrence bound to this walk position by its captured location
+    /// row, or its unique admitted expression occurrence when no row applies.
     pub fn occurrence(
         &self,
         index: usize,
@@ -4372,7 +4372,7 @@ struct ReaderProjectedNode {
     /// other node, the wire carrying no location of its own for it.
     location: Option<Location>,
     children: Vec<usize>,
-    /// The occurrence of the node at this position, when it has just one.
+    /// The admitted occurrence bound to this particular walk position.
     occurrence: Option<fsl_foundation::source::provenance::OccurrenceKey>,
     /// The shared key already rebuilt by the owning admitted index. A row
     /// can bind a repeated occurrence without rebuilding this structural key.
