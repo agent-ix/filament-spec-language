@@ -85,6 +85,12 @@ impl<'a> Text<'a> {
             texts: std::cell::Cell::new(0),
         }
     }
+    pub(super) fn limits(&self) -> ProbabilityDocumentLimits {
+        self.limits
+    }
+    pub(super) fn cancel(&self) -> &'a Cancel {
+        self.cancel
+    }
     pub(super) fn take_stop(&self) -> Option<ProbabilityDocumentError> {
         self.stopped.borrow_mut().take()
     }

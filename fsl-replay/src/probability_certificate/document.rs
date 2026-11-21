@@ -7,6 +7,12 @@ use serde::{Deserialize, Serialize};
 
 use super::*;
 
+mod measure;
+pub use measure::{
+    conditional_measure_probability_certificate, measure_probability_certificate_document,
+    measure_probability_product_key, read_measure_probability_certificate,
+    write_measure_probability_certificate, MeasurePayoffKind, MeasureProbabilityDocument,
+};
 mod fairness;
 #[cfg(feature = "test-support")]
 pub use fairness::BoundedFairProbabilityPhase;
@@ -432,6 +438,7 @@ fn poll(cancel: &Cancel) -> Result<(), ProbabilityDocumentError> {
 
 #[derive(Clone, Copy, Eq, PartialEq)]
 enum ProfileDispatch {
+    Measure,
     Exact,
     Timed,
     LongRun,
@@ -473,6 +480,7 @@ fn profile_dispatch(
             Some(quire_canonical::Node::String(profile)) if long_run::is_profile(profile) => {
                 ProfileDispatch::LongRun
             }
+            Some(quire_canonical::Node::String(measure::PROFILE)) => ProfileDispatch::Measure,
             Some(quire_canonical::Node::String(TIMED_PROFILE)) => ProfileDispatch::Timed,
             Some(quire_canonical::Node::String(CYCLIC_MDP_PROFILE)) => ProfileDispatch::CyclicMdp,
             Some(quire_canonical::Node::String(CYCLIC_MDP_REWARD_PROFILE)) => {
@@ -1631,6 +1639,9 @@ fn check_document_with_control(
     fair_control: &fairness::Control<'_>,
 ) -> Result<ExactProbabilityCertificateCheck, ProbabilityDocumentError> {
     match profile_dispatch(bytes, limits, cancel)? {
+        ProfileDispatch::Measure => {
+            return measure::check(system, claims, item, bytes, limits, cancel)
+        }
         ProfileDispatch::Timed => return timed::check(system, claims, item, bytes, limits, cancel),
         ProfileDispatch::LongRun => {
             return long_run::check(system, claims, item, bytes, limits, cancel);
@@ -2061,6 +2072,9 @@ pub(super) fn certificate_identity(
     limits: ProbabilityDocumentLimits,
     cancel: &Cancel,
 ) -> Result<ObligationIdentity, ProbabilityDocumentError> {
+    if profile_dispatch(bytes, limits, cancel)? == ProfileDispatch::Measure {
+        return Ok(measure::read_measure_probability_certificate(bytes, limits, cancel)?.identity);
+    }
     if profile_dispatch(bytes, limits, cancel)? == ProfileDispatch::LongRun {
         return long_run::certificate_identity(bytes, limits, cancel);
     }
