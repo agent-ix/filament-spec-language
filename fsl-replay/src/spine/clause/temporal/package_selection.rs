@@ -198,13 +198,7 @@ pub fn run_package_snapshots(
     };
     // FR-645: a trace with no position, or a lasso with no loop position, has
     // no observation to evaluate over.
-    let empty = match trace {
-        TraceInput::Lasso { repeat, .. } if repeat.is_empty() => Some(site.empty_loop()),
-        TraceInput::Finite(positions) if positions.is_empty() => {
-            Some(site.empty_trace(trace.kind()))
-        }
-        _ => None,
-    };
+    let empty = super::empty_trace_refusal(&site, trace);
     if let Some(refusal) = empty {
         return early(ClauseDisposition::TraceRefused(Box::new(refusal)));
     }

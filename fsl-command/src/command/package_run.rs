@@ -388,7 +388,7 @@ fn execute_clause(
     work: ClauseWork,
 ) -> Result<RunResult> {
     let not_read = |reason: String| invalid("clause.selection", reason);
-    let model = if matches!(work.trace, TraceInput::Timed { .. }) {
+    let model = if matches!(work.trace, fsl_replay::spine::TraceInput::Timed { .. }) {
         fsl_eval::simulation::model::PackageModelInput::of_timed_trace(bare, packages, model_limits)
     } else {
         fsl_eval::simulation::model::PackageModelInput::of(bare, packages, model_limits)

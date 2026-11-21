@@ -1623,6 +1623,21 @@ fn run_sampled(
     request: &PackageSampledRequest<'_>,
     package: Option<&filament_contract_model::CheckedPackageV2>,
 ) -> Box<ClauseRunReport> {
+    if let Some((clause, _)) = request.clause {
+        let site = super::trace_refusal::PackageClauseSite { clause };
+        if !super::trace_refusal::profile_reads(clause.profile()).contains(&request.trace.kind()) {
+            return disposition_report(
+                ClauseDisposition::TraceRefused(Box::new(site.kind_mismatch(request.trace.kind()))),
+                ClauseRunUsage::default(),
+            );
+        }
+        if let Some(refusal) = empty_trace_refusal(&site, request.trace) {
+            return disposition_report(
+                ClauseDisposition::TraceRefused(Box::new(refusal)),
+                ClauseRunUsage::default(),
+            );
+        }
+    }
     let authenticated = match package
         .map(|package| authenticate_bare_timed(package, request.name, request.trace))
         .transpose()
@@ -1777,6 +1792,35 @@ pub(crate) fn with_subject_counterexample(
                 );
             }
         }
+    }
+}
+
+fn empty_trace_refusal(
+    site: &impl TraceSite,
+    trace: &TraceInput,
+) -> Option<super::trace_refusal::TraceRefusal> {
+    match trace {
+        TraceInput::Lasso { repeat, .. } if repeat.is_empty() => Some(site.empty_loop()),
+        TraceInput::Finite(positions)
+        | TraceInput::Progressed {
+            trace: positions, ..
+        } if positions.is_empty() => Some(site.empty_trace(trace.kind())),
+        TraceInput::Timed {
+            period: Some(_),
+            repeat,
+            ..
+        } if repeat.is_empty() => Some(site.empty_loop()),
+        TraceInput::Timed {
+            period: None,
+            prefix,
+            ..
+        } if prefix.is_empty() => Some(site.empty_trace(trace.kind())),
+        TraceInput::Timed { .. } => None,
+        TraceInput::Finite(_)
+        | TraceInput::Progressed { .. }
+        | TraceInput::Timestamped { .. }
+        | TraceInput::Lasso { .. }
+        | TraceInput::Model { .. } => None,
     }
 }
 
@@ -1937,29 +1981,7 @@ pub(super) fn run_temporal(run: &CompiledRun<'_>, request: &TemporalRun<'_>) -> 
 
     // FR-645: a trace with no position, or a lasso with no loop position, has
     // no observation to evaluate over.
-    let empty = match trace {
-        TraceInput::Lasso { repeat, .. } if repeat.is_empty() => Some(site.empty_loop()),
-        TraceInput::Finite(positions)
-        | TraceInput::Progressed {
-            trace: positions, ..
-        } if positions.is_empty() => Some(site.empty_trace(trace.kind())),
-        TraceInput::Timed {
-            period: Some(_),
-            repeat,
-            ..
-        } if repeat.is_empty() => Some(site.empty_loop()),
-        TraceInput::Timed {
-            period: None,
-            prefix,
-            ..
-        } if prefix.is_empty() => Some(site.empty_trace(trace.kind())),
-        TraceInput::Timed { .. } => None,
-        TraceInput::Finite(_)
-        | TraceInput::Progressed { .. }
-        | TraceInput::Timestamped { .. }
-        | TraceInput::Lasso { .. }
-        | TraceInput::Model { .. } => None,
-    };
+    let empty = empty_trace_refusal(&site, trace);
     if let Some(refusal) = empty {
         return early(ClauseDisposition::TraceRefused(Box::new(refusal)));
     }
