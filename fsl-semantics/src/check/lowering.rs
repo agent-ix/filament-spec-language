@@ -8173,13 +8173,11 @@ fn walked_operands(content: &NodeContent) -> Vec<filament_exact::PathSegment> {
                         walk.push(PathSegment::Node(node.clone()));
                     }
                 },
-                Some(Member::TemporalInterval { interval }) => {
-                    // FSpec FR-498: an operator's interval is part of its
-                    // identity, so `always[0,2]` and `always[0,3]` are two nodes.
-                    if let Some(interval) = interval {
-                        walk.text(&interval_spelling(*interval));
-                    }
-                }
+                // FSpec FR-498: an operator's interval is part of its
+                // identity, so `always[0,2]` and `always[0,3]` are two nodes.
+                Some(Member::TemporalInterval {
+                    interval: Some(interval),
+                }) => walk.text(&interval_spelling(*interval)),
                 Some(Member::TimedInterval(timed)) => walk.text(&timed_interval_spelling(timed)),
                 // FSpec FR-322 "Named type arguments": an alias is part of
                 // the application's identity, after the declaration operand.

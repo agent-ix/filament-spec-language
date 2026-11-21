@@ -3628,7 +3628,7 @@ fn admit_contexts<'t>(
                     admission_record(Code::InvalidRuntimeInput, "unknown-member")
                         .with("machine", machine.to_owned())
                         .with("field", name.clone())
-                        .with("path", context_field_path(entry, Some(&*name))),
+                        .with("path", context_field_path(entry, Some(name))),
                     entry,
                 ));
             }
@@ -3647,7 +3647,7 @@ fn admit_contexts<'t>(
                     admission_record(Code::InvalidRuntimeInput, "wrong-value-kind")
                         .with("machine", machine.to_owned())
                         .with("field", name.to_owned())
-                        .with("path", context_field_path(entry, Some(&*name))),
+                        .with("path", context_field_path(entry, Some(name))),
                     entry,
                 ));
             }
@@ -4463,7 +4463,7 @@ pub(super) fn admit_parameters(
             return Err(refuse(
                 admission_record(Code::InvalidRuntimeInput, "wrong-value-kind")
                     .with("field", name.clone())
-                    .with("path", parameter_path(Some(&*name))),
+                    .with("path", parameter_path(Some(name))),
             ));
         }
         let value = admit_form(references, raw.form(), value_type, None).map_err(|record| {
@@ -4486,7 +4486,7 @@ pub(super) fn admit_parameters(
             return Err(refuse(
                 admission_record(Code::InvalidRuntimeInput, "unknown-member")
                     .with("field", name.clone())
-                    .with("path", parameter_path(Some(&*name))),
+                    .with("path", parameter_path(Some(name))),
             ));
         }
     }
