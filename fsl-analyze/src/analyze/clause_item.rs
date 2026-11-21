@@ -29,7 +29,7 @@ use fsl_package::{CheckedPackage, ObligationIdentity};
 use fsl_replay::{
     replay_model_trace, CertificateRequest, EnvelopeSource, ModelCheckItem, ModelCheckLimits,
     ModelTraceReplayResult, ModelTraceSubject, PackageReadRefusal, ProtocolCertificateRequest,
-    ProtocolTraceSubject, QualifiedName, ReplayLimits, ReplayPackage, ReplayRefusal,
+    ProtocolTraceSubject, QualifiedName, ReplayPackage, ReplayRefusal,
     ReplayRequestWire, ReplaySource, ReplayTargetMembers, RequestTargetWire, StateEnvironment,
     TemporalCounterexample, Witness, WitnessEnvelope, WitnessPacket,
     replay_protocol_trace_from_package,
@@ -1284,8 +1284,7 @@ impl<'a> PackageProtocolWork<'a> {
                 }
             }
         };
-        let package = ReplayPackage::read(self.package_bytes, ReplayLimits::default().input_bytes)
-            .map_err(|_| fault("package-bytes"))?;
+        let package = read_package(self.package_bytes, &self.limits)?;
         let (wire, envelope) = request_and_envelope(
             WireParts {
                 package,
@@ -1304,7 +1303,7 @@ impl<'a> PackageProtocolWork<'a> {
             trace,
             &envelope,
             letters,
-            ReplayLimits::default(),
+            self.limits.replay,
         )
     }
 }

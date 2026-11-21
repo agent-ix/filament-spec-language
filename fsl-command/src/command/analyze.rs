@@ -15,6 +15,7 @@ use fsl_analyze::analyze::document::{
 };
 use fsl_analyze::analyze::{AnalyzeLimits, DeadlineSupply, Engine, Engines, SourceProvision};
 use fsl_analyze::provider::ProviderOptions;
+use fsl_eval::simulation::protocol::{MemorySelection, MemorySelectionRefusal, ResolvedMemory};
 use fsl_semantics::model::observation::DocumentProvision;
 
 use super::settle::Settle;
@@ -256,6 +257,14 @@ fn run_package(
         mut subject,
         limits,
     } = *members;
+    check_memory_using(&memory, |protocol, entries| {
+        use fsl_package::AnalysisView;
+        package
+            .protocol_execution_named(protocol)
+            .ok()
+            .flatten()
+            .map(|form| ResolvedMemory::resolve_package(&form, entries))
+    })?;
     subject.memory = memory;
     let binding = subject.binding(&supplied, &documents);
     let run = PackageRun {
@@ -967,11 +976,28 @@ fn check_memory(
     package: &fsl_package::CheckedPackage,
     memory: &[fsl_eval::simulation::protocol::MemorySelection],
 ) -> Result<()> {
+    check_memory_using(memory, |protocol, entries| {
+        package
+            .graph()
+            .protocol(protocol)
+            .map(|checked| ResolvedMemory::resolve(checked, entries))
+    })
+}
+
+/// Admit every request memory entry before resolving any item, using the
+/// selected route's protocol facts and the same refusal pointers.
+fn check_memory_using(
+    memory: &[MemorySelection],
+    resolve: impl Fn(
+        &str,
+        &[MemorySelection],
+    ) -> Option<std::result::Result<ResolvedMemory, MemorySelectionRefusal>>,
+) -> Result<()> {
     let refused = |member: String, reason: String| RunCause::AnalyzeMemory { member, reason };
     let mut protocols: Vec<&str> = Vec::new();
     for (position, entry) in memory.iter().enumerate() {
         let protocol = entry.parallel.split("::").next().unwrap_or_default();
-        if package.graph().protocol(protocol).is_none() {
+        if resolve(protocol, &[]).is_none() {
             return Err(refused(
                 format!("/memory/{position}/parallel"),
                 format!("{} names no protocol of the package", entry.parallel),
@@ -982,17 +1008,12 @@ fn check_memory(
         }
     }
     for protocol in protocols {
-        let Some(checked) = package.graph().protocol(protocol) else {
-            continue;
-        };
         let entries: Vec<_> = memory
             .iter()
             .filter(|entry| entry.parallel.split("::").next() == Some(protocol))
             .cloned()
             .collect();
-        if let Err(refusal) =
-            fsl_eval::simulation::protocol::ResolvedMemory::resolve(checked, &entries)
-        {
+        if let Some(Err(refusal)) = resolve(protocol, &entries) {
             let member = memory
                 .iter()
                 .position(|entry| entries.first().is_some_and(|first| first == entry))

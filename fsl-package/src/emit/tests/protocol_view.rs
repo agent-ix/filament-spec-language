@@ -1169,7 +1169,7 @@ fn an_interval_channel_needs_no_temporal_profile_and_reads_no_clock() {
 
 /// The package execution view reads the attempt facts from the admitted
 /// protocol nodes, including the role, operation, contracts and ordering.
-#[trace("FR-519", "TC-1314")]
+#[trace("FR-519", "FR-519-AC-5", "TC-1314")]
 #[test]
 fn the_execution_view_reads_attempt_facts_from_package_nodes() {
     // The compensation clause carries a clock reference the package reader does

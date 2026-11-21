@@ -599,13 +599,7 @@ impl<'a> PackageProtocolProgram<'a> {
             >,
         >,
     ) -> Result<ProtocolSupply<'obs>, PackageProgramRefusal> {
-        let required = self
-            .evaluator
-            .package_protocol_slot_binders(slot)
-            .ok_or_else(|| PackageProgramRefusal::MissingSlotBinders {
-                node: slot.node.clone(),
-                member: slot.member.clone(),
-            })?;
+        let required = self.slot_binders(slot)?;
         let required = required
             .into_iter()
             .collect::<std::collections::BTreeSet<_>>();
@@ -620,6 +614,19 @@ impl<'a> PackageProtocolProgram<'a> {
             }
         }
         self.supply(selected, observation)
+    }
+
+    /// The admitted binder reads of one selected expression slot.
+    pub(super) fn slot_binders(
+        &self,
+        slot: &ProtocolSlot,
+    ) -> Result<Vec<NodeKey>, PackageProgramRefusal> {
+        self.evaluator
+            .package_protocol_slot_binders(slot)
+            .ok_or_else(|| PackageProgramRefusal::MissingSlotBinders {
+                node: slot.node.clone(),
+                member: slot.member.clone(),
+            })
     }
 
     /// The outermost `parallel` whose memory model governs `control`, if the

@@ -849,13 +849,19 @@ fn protocol_binding(
         })
         .collect::<Option<Vec<_>>>()
         .ok_or("capacities")?;
+    let memory: Vec<_> = subject
+        .memory
+        .iter()
+        .filter(|entry| entry.parallel.split("::").next() == Some(selection.protocol.as_str()))
+        .cloned()
+        .collect();
     let effective = input
         .package()
         .protocol_execution_named(&selection.protocol)
         .ok()
         .flatten()
         .and_then(|form| {
-            fsl_eval::simulation::protocol::ResolvedMemory::resolve_package(&form, &subject.memory)
+            fsl_eval::simulation::protocol::ResolvedMemory::resolve_package(&form, &memory)
                 .ok()
         })
         .map(|resolved| {
@@ -883,7 +889,7 @@ fn protocol_binding(
             })
             .collect(),
         capacities,
-        memory: subject.memory.clone(),
+        memory,
         effective,
     }))
 }

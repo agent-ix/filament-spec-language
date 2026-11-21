@@ -977,7 +977,7 @@ impl<'a> Program<'a> {
     /// source `CheckedBody` fields; callers evaluate them through the package
     /// evaluator.
     pub(super) fn new_package(
-        _model: &ModelSystem<'_>,
+        model: &ModelSystem<'_>,
         package: &super::PackageProtocolProgram<'_>,
     ) -> Result<Self, ProtocolRefusal> {
         // A control's text spells the structural branch between a parallel and
@@ -987,16 +987,13 @@ impl<'a> Program<'a> {
         by_depth.sort_by_key(|control| control.path.len());
         let mut texts: BTreeMap<ProtocolNodeId, String> = BTreeMap::new();
         for control in by_depth {
-            let text = match control.parent.and_then(|parent| {
-                package.controls.get(&parent).zip(texts.get(&parent))
-            }) {
+            let text = match control
+                .parent
+                .and_then(|parent| package.controls.get(&parent).zip(texts.get(&parent)))
+            {
                 Some((parent, parent_text)) => {
                     let own = control.path.last().map_or("", String::as_str);
-                    match parent
-                        .branches
-                        .iter()
-                        .find(|(_, body)| *body == control.id)
-                    {
+                    match parent.branches.iter().find(|(_, body)| *body == control.id) {
                         Some((label, _)) => format!("{parent_text}/{label}/{own}"),
                         None => format!("{parent_text}/{own}"),
                     }
@@ -1123,15 +1120,7 @@ impl<'a> Program<'a> {
             );
         }
 
-        let finish_node = ProtocolNodeId(
-            package
-                .controls
-                .keys()
-                .map(|node| node.0)
-                .max()
-                .unwrap_or(0)
-                .saturating_add(1),
-        );
+        let finish_node = ProtocolNodeId(next_synthetic_id);
         let finish_slot = slots.len();
         slots.push(None);
         package_binders.push(Some(package.finish_binder.clone()));
@@ -1142,12 +1131,34 @@ impl<'a> Program<'a> {
             constraint: None,
             binder: (finish_slot, package.finish_binder_type.clone()),
         };
-        let reader_nodes: BTreeSet<_> = attempts
-            .keys()
-            .copied()
-            .chain(std::iter::once(finish_node))
-            .collect();
-        let readers = vec![reader_nodes; slots.len()];
+        let mut readers = vec![BTreeSet::new(); slots.len()];
+        let binder_keys = package_binders
+            .iter()
+            .map(|binder| {
+                binder
+                    .as_ref()
+                    .and_then(|binder| model.evaluator().package_node_key(binder))
+            })
+            .collect::<Vec<_>>();
+        for (node, slot) in package
+            .controls
+            .values()
+            .filter_map(|control| control.constraint.as_ref().map(|slot| (control.id, slot)))
+            .chain(package.finish.as_ref().map(|slot| (finish_node, slot)))
+        {
+            for binder in package
+                .slot_binders(slot)
+                .map_err(|_| ProtocolRefusal::fault("a-package-slot-has-admitted-binder-reads"))?
+            {
+                let position = binder_keys
+                    .iter()
+                    .position(|key| key.as_ref() == Some(&binder))
+                    .ok_or_else(|| {
+                        ProtocolRefusal::fault("a-package-slot-reads-a-declared-binder")
+                    })?;
+                readers[position].insert(node);
+            }
+        }
         let mut program = Self {
             root: package.root,
             controls,
@@ -1185,7 +1196,17 @@ impl<'a> Program<'a> {
         };
         program.spans = program.spans()?;
         program.loop_of = program.enclosing_loops()?;
-        program.reader_positions = vec![ReaderPositions::default(), ReaderPositions::default()];
+        program.reader_positions = program
+            .readers
+            .iter()
+            .map(|readers| ReaderPositions {
+                controls: readers
+                    .iter()
+                    .filter_map(|node| program.spans.get(node).map(|span| span.first))
+                    .collect(),
+                finish: readers.contains(&program.finish.node),
+            })
+            .collect();
         Ok(program)
     }
 
