@@ -966,7 +966,7 @@ impl Builder<'_, '_, '_, '_> {
         let steps = match result? {
             Ok(steps) => steps,
             Err(Unsteppable::NotMarkov(not_markov)) => {
-                return Err(ProductRefusal::NotMarkov(Box::new(not_markov)).into());
+                return Err(ProductRefusal::NotMarkov(not_markov).into());
             }
             Err(Unsteppable::UndecidedSuccessor(undecided)) => {
                 return Err(ProductRefusal::UndecidedSuccessor(undecided).into());
@@ -1055,8 +1055,10 @@ impl Builder<'_, '_, '_, '_> {
                     return Err(ProductRefusal::NotMarkov(Box::new(NotMarkov {
                         state: fsl_eval::simulation::StateKey::from_canonical_bytes(state),
                         transition: action.identity,
+                        drawn_transition: draw.transition,
                         random: draw.random,
                         post_states: 0,
+                        post_state_examples: Vec::new(),
                     }))
                     .into());
                 }

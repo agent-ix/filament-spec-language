@@ -465,7 +465,9 @@ fn output_limit(bound: u64, actual: u128) -> fsl_foundation::diagnostic::LimitEx
     fsl_foundation::diagnostic::LimitExceeded::new(
         fsl_foundation::Setting::EmitOutputBytes,
         bound,
-        actual,
+        // A row or writer fragment can straddle the ceiling. Report the
+        // first unpaid byte, rather than that fragment's complete length.
+        actual.min(u128::from(bound) + 1),
     )
 }
 
@@ -3418,15 +3420,13 @@ fn equality_fact_witness_rows(
         let mut add = |key: &NodeKey,
                        fact: EqualityFactWitness,
                        value_type: Option<filament_exact::ValueType>| {
-            // A selected Exact identity can name a declaration of a
-            // dependency package. IR's typed equality reader accepts only
-            // package-local structural facts, so rows whose key belongs to
-            // another package than the application are the one deliberate
-            // omission; every package-local key must still resolve.
-            if key.package() != row.application().package() {
-                return Ok(());
-            }
+            // Original model keys name the selected document, while their
+            // emitted structural nodes belong to this package. Locality is
+            // established by that final node, not the opaque original key.
             let Some(structural_node) = emitted_node_ids.get(key).cloned() else {
+                if key.package() != row.application().package() {
+                    return Ok(());
+                }
                 return Err(EmitRefusal::MissingEqualityIdentityContext {
                     application: row.application().clone(),
                 });
@@ -3435,6 +3435,9 @@ fn equality_fact_witness_rows(
                 .iter()
                 .find(|node| node.node_id == structural_node)
             else {
+                if key.package() != row.application().package() {
+                    return Ok(());
+                }
                 return Err(EmitRefusal::MissingEqualityIdentityContext {
                     application: row.application().clone(),
                 });

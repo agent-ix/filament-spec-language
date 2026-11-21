@@ -23,6 +23,8 @@ relationships:
     type: depends_on
   - target: ix://agent-ix/filament-spec-language/FR-215
     type: references
+  - target: ix://agent-ix/filament-spec-language/FR-255
+    type: references
   - target: ix://agent-ix/filament-spec-language/FR-230
     type: references
   - target: ix://agent-ix/filament-specification/FR-181
@@ -87,7 +89,8 @@ A `ModelSimulationRequest` (`fsl_eval::simulation::model`):
 - `ObservationLimits` (FR-106);
 - `ExpansionLimits { max_candidates: u64 }`;
 - the evaluation meter budget. Each clause evaluation gets a fresh `Meter`
-  with that budget (FR-107).
+  with that budget (FR-107), except for the cumulative `work_units`
+  allowance of an EN-4 or EN-5 model-subject run below.
 
 ## Outputs
 
@@ -590,8 +593,9 @@ The effective postcondition is the conjunction of the applicable `post`
 clauses, and `true` when none applies.
 
 A conjunction is evaluated through FR-107's `evaluate_clause_set`, over the
-applicable clauses of one kind, with a fresh meter for each clause and each
-clause in ascending name order (UTF-8 bytes):
+applicable clauses of one kind, with a fresh meter for each clause, subject
+to the cumulative probabilistic-run allowance below, and each clause in
+ascending name order (UTF-8 bytes):
 
 - An `Incomplete` result stops the expansion with `resource_exhausted`/
   `insufficient-next-charge` at once: the successor set is not known. The stop
@@ -683,6 +687,36 @@ value; a domain of more than 65,536 values cannot be ordered and stops the
 expansion the same way. When the count would exceed `max_candidates`, the expansion
 stops with `resource_exhausted`/`insufficient-next-charge`, naming the limit
 `MaxCandidates` and no counter.
+
+**Cumulative probabilistic work.** For an EN-4 or EN-5 model-subject run,
+the simulator SHALL charge one `work_units` unit for each argument vector,
+candidate and evaluated (candidate, result) pair counted above, in addition
+to the evaluation work already charged by the clauses. The run SHALL own
+one `accounting.work_units` allowance shared by every expansion and every
+clause evaluation, including claim predicates, across all its initial
+states, bindings and statistical tests. Starting another expansion,
+clause, sample or test SHALL NOT replenish that allowance. An individual
+native analyze probability item is one run; a separate item starts a
+separate allowance. The caller's configured accounting bound SHALL remain
+the bound, with the published default of 1,000,000 when omitted
+([FR-255](FR-255-name-the-setting-that-raises-a-reached-limit.md)). Other
+accounting counters retain their existing scope and charge rules.
+
+Before performing a candidate unit or clause work charge that would
+exceed the cumulative allowance, the simulator SHALL stop with the
+existing `EvaluationMeter` limit naming counter `work_units`; settlement
+SHALL name `work_units`, the configured bound and
+`accounting.work_units` under
+[FR-192](FR-192-settle-a-statistical-result-on-the-measured-axis.md) or
+[FR-203](FR-203-bound-an-exact-run-and-settle-its-verdict.md). Candidate
+generation SHALL retain cancellation polling at its charge points. The
+independent local `max_candidates` count above SHALL still reset per
+expansion and stop with `MaxCandidates`, naming
+`expansion.max_candidates`; it SHALL NOT supply a fresh cumulative work
+allowance. If a candidate unit would exceed both bounds, the local
+`MaxCandidates` check SHALL precede its cumulative work charge, so the
+reported bound is deterministic. A cumulative stop SHALL NOT return a
+partial successor set as a completed expansion.
 
 **Directly solved assignments.** An operation that writes several fields
 has a candidate set that is the product of their domains (two `Int[0, 99]`
@@ -907,6 +941,8 @@ identity text of operation `op`.
 | FR-120-AC-32 | Over AC-29's `Cell`, in a model where `Cell` also declares the query operation `succ(): Int[0, 100]`, whose body is `self.a + 1` and whose precondition is `self.b != 5`, and whose one other operation has the equation clause `post A { self.a = pre(self.succ()) }`, from the state with `a` 3 and `b` 5, where the dispatched call's precondition is false and so `e` is `Undefined` with reason `precondition-false` (FR-301-AC-2; the `succ` application itself is not enabled and charges its one argument vector in both forms), and in one whose equation evaluation is `Incomplete` under a meter budget whose `work_units` is 0, the application is not solved. Each gives the result of its enumerated reference form (`(self.a = ...) = true`, as in AC-30): the `Undefined` case records `ContractUndetermined` for `A` with the candidate's state key and the same charge, and the `Incomplete` case stops with `resource_exhausted`/`insufficient-next-charge` naming `EvaluationMeter` with counter `work_units`. | Test (TC-1418) |
 | FR-120-AC-33 | The `mc/frame_candidates` axis of `fsl-bench`, which QSL-1906 creates and which does not exist before it, builds AC-29's `swap` and AC-30's `step` models, each with its one operation, in a solved form and in the ineligible reference form. Its smallest-size test asserts, for the same state, the charges of AC-29 and AC-30 (2 and 101 solved, 10,001 enumerated for each) and equal successor sets of state keys; it asserts charges, not times. A speed claim rests on the A/B comparison of BENCHMARKING.md, and no stored figure is a threshold. | Test (TC-1418) |
 | FR-120-AC-34 | A `Cell` with a `Float64` field `a` and an operation whose frame is `modifies a` and whose clause is `post F { self.a = e }` has, as the solved candidates of `a`: the one candidate `3ff0000000000000` for `e` `float64(bits: 0x3ff0000000000000)`; the two candidates `0000000000000000` then `8000000000000000` for `e` `float64(bits: 0x8000000000000000)` or `float64(bits: 0x0000000000000000)`; and none for `e` `float64(bits: 0x7ff8000000000000)`, an application with no successor and no finding. Each count equals the enumeration's for the same application, and the enumerated domain of `a` is never generated. A field typed by a record holding a `Float64` member is enumerated. | Test (TC-3006) |
+| FR-120-AC-35 | In one EN-4 or EN-5 model-subject run with local `max_candidates` above each expansion's charge, two expansions that each fit `accounting.work_units = B` alone but whose combined candidate and clause work exceeds B stop at the first unpaid cumulative charge with `EvaluationMeter { counter: work_units }`; starting the second expansion does not reset the allowance. The same holds for two clause evaluations that fit separately but exceed B together, and for an expansion followed by a claim predicate. A separate run starts at zero; other accounting counters retain their existing scopes. | Test |
+| FR-120-AC-36 | For an argument vector, candidate and evaluated result pair, a metered fixture observes exactly one additional cumulative work unit apiece, beyond its existing clause work; an operation with no result adds no pair charge. A local `max_candidates` denial remains `MaxCandidates` even when the same candidate unit would also exceed cumulative work; a cumulative denial with local capacity remaining names `EvaluationMeter { counter: work_units }`. Cancellation during candidate generation returns the existing cancelled stop before another candidate is generated, and no stopped expansion supplies a completed partial successor set. | Test |
 
 ## Dependencies
 

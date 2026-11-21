@@ -31,7 +31,7 @@ use filament_semantic_value::model_transition::ModelTransition;
 use fsl_eval::fairness::{
     analyze, Analysis, Constraint, EdgeLabel, FairnessError, Graph, Identity, Strength, Vertex,
 };
-use fsl_eval::simulation::model::{ModelFinding, ModelSimState};
+use fsl_eval::simulation::model::{ModelFinding, ModelSimState, PlaceConstraint};
 use fsl_eval::simulation::ExpansionLimit;
 use fsl_replay::{
     abstract_classes, candidate_lasso_has_fair_run, check_step, AbstractClass, CandidateFairState,
@@ -45,7 +45,7 @@ use super::{
 };
 use crate::model_check::fair_walk::{fairness_constraints, FairModel};
 use crate::zone_check::concretise::{concretise, Stage, Target};
-use crate::zone_check::liveness::{next_cell, Cells, Sign};
+use crate::zone_check::liveness::{next_cell, CellAtom, Cells, Sign};
 use crate::zone_check::search::{
     constrain_at, scaled, widen, zone_bytes, Halt, Run, ZoneCheckRefusal, ZoneStats, ZoneUndecided,
 };
@@ -123,6 +123,23 @@ struct Live {
     /// The aM bounds vertices are identified under.
     bounds: Vec<Option<BigInt>>,
     judged: BTreeMap<JudgedKey, Option<(usize, Taken)>>,
+    /// What each position's abstract candidates enable over the abstract
+    /// clocks, by position; empty with an untimed abstract side.
+    views: BTreeMap<usize, AbstractView>,
+}
+
+/// What a position's abstract candidates enable over the abstract clocks
+/// (FR-899 "Timed subjects"): the guard constants of the `F_A` classes
+/// split the cells, and each candidate step's enabling parts decide which
+/// cells enable it.
+#[derive(Clone, Debug, Default)]
+struct AbstractView {
+    /// The cell atoms of the `F_A` operations' enabling parts, on the zone's
+    /// clocks.
+    atoms: Vec<CellAtom>,
+    /// Each step of each candidate (its state key), with its enabling parts
+    /// (FR-232) on the zone's clocks.
+    steps: Vec<(Vec<u8>, ModelTransition, Vec<Vec<PlaceConstraint>>)>,
 }
 
 /// A position's step judged: its position after and the abstract steps it
@@ -202,6 +219,7 @@ impl Product<'_, '_> {
             dim,
             bounds,
             judged: BTreeMap::new(),
+            views: BTreeMap::new(),
         })
     }
 
@@ -210,20 +228,39 @@ impl Product<'_, '_> {
         if let Some(ends) = self.build(run, live)? {
             return Ok(Lived::Ends(ends));
         }
-        let mut enabled = BTreeMap::new();
-        for node in &live.nodes {
-            if let std::collections::btree_map::Entry::Vacant(slot) = enabled.entry(node.q) {
-                match self.abstract_enabled(run, node.q)? {
+        // The transition identities each vertex enables, by vertex: from
+        // the position's untimed expansion, which also reports a stop or
+        // an undetermined successor, and under a timed abstract side from
+        // the candidates' guarded steps at the vertex's cell (FR-899
+        // "Timed subjects").
+        let mut untimed = BTreeMap::new();
+        let mut enabled: Vec<Vec<ModelTransition>> = Vec::with_capacity(live.nodes.len());
+        for at in 0..live.nodes.len() {
+            let q = live.nodes[at].q;
+            if let std::collections::btree_map::Entry::Vacant(slot) = untimed.entry(q) {
+                match self.abstract_enabled(run, q)? {
                     Ok(here) => {
                         slot.insert(here);
                     }
                     Err(ends) => return Ok(Lived::Ends(ends)),
                 }
             }
+            if run.auxiliary_timed.is_some() {
+                let view = self.abstract_view(run, live, q)?;
+                let mut here = Vec::new();
+                for (_, transition) in Self::enabled_at_zone(run, &view, &live.nodes[at].zone)? {
+                    if !here.contains(&transition) {
+                        here.push(transition);
+                    }
+                }
+                enabled.push(here);
+            } else {
+                enabled.push(untimed.get(&q).cloned().unwrap_or_default());
+            }
         }
         let mut identities = BTreeMap::new();
         for transition in enabled
-            .values()
+            .iter()
             .flatten()
             .chain(live.arcs.iter().flat_map(|arc| {
                 arc.taken.iter().flat_map(|taken| match taken {
@@ -356,8 +393,9 @@ impl Product<'_, '_> {
             };
             let mut zero = Dbm::zero(live.dim);
             self.auxiliary_invariants(run, q, &mut zero)?;
-            for (cell, piece) in run.split(&mut live.cells, &state, &zero)? {
-                let Some(zone) = run.close(&mut live.cells, &state, piece, &cell)? else {
+            let extra = self.abstract_view(run, live, q)?.atoms;
+            for (cell, piece) in run.split(&mut live.cells, &state, &extra, &zero)? {
+                let Some(zone) = run.close(&mut live.cells, &state, &extra, piece, &cell)? else {
                     continue;
                 };
                 let node = Node {
@@ -465,8 +503,10 @@ impl Product<'_, '_> {
                 if failure.is_some() || next.is_empty() {
                     continue;
                 }
-                for (cell, piece) in run.split(&mut live.cells, &post, &next)? {
-                    let Some(entered) = run.close(&mut live.cells, &post, piece, &cell)? else {
+                let extra = self.abstract_view(run, live, q)?.atoms;
+                for (cell, piece) in run.split(&mut live.cells, &post, &extra, &next)? {
+                    let Some(entered) = run.close(&mut live.cells, &post, &extra, piece, &cell)?
+                    else {
                         continue;
                     };
                     let next = Node {
@@ -501,11 +541,14 @@ impl Product<'_, '_> {
             later.up();
             constrain_at(&mut later, &invariants, &scale)?;
             self.auxiliary_invariants(run, node.q, &mut later)?;
-            for (cell, piece) in run.split(&mut live.cells, &node.state, &later)? {
+            let extra = self.abstract_view(run, live, node.q)?.atoms;
+            for (cell, piece) in run.split(&mut live.cells, &node.state, &extra, &later)? {
                 if !next_cell(&node.cell, &cell) {
                     continue;
                 }
-                let Some(entered) = run.close(&mut live.cells, &node.state, piece, &cell)? else {
+                let Some(entered) =
+                    run.close(&mut live.cells, &node.state, &extra, piece, &cell)?
+                else {
                     continue;
                 };
                 let next = Node {
@@ -533,7 +576,10 @@ impl Product<'_, '_> {
             reset.constrain(0, z, Bound::le(-scale.clone()))?;
             if !reset.is_empty() {
                 reset.reset(z, &BigInt::from(0))?;
-                if let Some(entered) = run.close(&mut live.cells, &node.state, reset, &node.cell)? {
+                let extra = extra_atoms(live, node.q);
+                if let Some(entered) =
+                    run.close(&mut live.cells, &node.state, &extra, reset, &node.cell)?
+                {
                     let next = Node {
                         zone: entered,
                         positioned: false,
@@ -586,9 +632,27 @@ impl Product<'_, '_> {
             taken: Some(taken),
             auxiliary_transform: None,
         };
-        Ok(Ok(add_node(run, live, next, Some(arc))?
-            .into_iter()
-            .collect()))
+        if run.auxiliary_timed.is_none() {
+            return Ok(Ok(add_node(run, live, next, Some(arc))?
+                .into_iter()
+                .collect()));
+        }
+        // The stutter's position reads other abstract guards: its zone is
+        // split again by them, each piece a vertex.
+        let extra = self.abstract_view(run, live, q)?.atoms;
+        let mut created = Vec::new();
+        for (cell, piece) in run.split(&mut live.cells, &node.state, &extra, &node.zone)? {
+            let Some(zone) = run.close(&mut live.cells, &node.state, &extra, piece, &cell)? else {
+                continue;
+            };
+            let next = Node {
+                cell,
+                zone,
+                ..next.clone()
+            };
+            created.extend(add_node(run, live, next, Some(arc.clone()))?);
+        }
+        Ok(Ok(created))
     }
 
     /// `check_step` on the step `transition` (by its index; `None` for a
@@ -687,6 +751,104 @@ impl Product<'_, '_> {
         Ok(Ok(here))
     }
 
+    /// What position `q`'s abstract candidates enable over the abstract
+    /// clocks, computed once (FR-899 "Timed subjects").
+    fn abstract_view(
+        &self,
+        run: &Run<'_, '_, '_>,
+        live: &mut Live,
+        q: usize,
+    ) -> Result<AbstractView, Halt> {
+        if let Some(view) = live.views.get(&q) {
+            return Ok(view.clone());
+        }
+        let view = self.build_view(run, q)?;
+        live.views.insert(q, view.clone());
+        Ok(view)
+    }
+
+    /// [`Self::abstract_view`], not stored: each step of each candidate of
+    /// position `q` with its enabling parts (FR-232) on the zone's clocks,
+    /// and the guard constants of the `F_A` operations' steps as cell atoms.
+    /// Empty with an untimed abstract side.
+    fn build_view(&self, run: &Run<'_, '_, '_>, q: usize) -> Result<AbstractView, Halt> {
+        let mut view = AbstractView::default();
+        let Some(timed) = run.auxiliary_timed else {
+            return Ok(view);
+        };
+        let offset = run.timed.places().len();
+        let mut constrained = BTreeSet::new();
+        for constraint in self.refinement.abstract_operation_fairness() {
+            let operation = constraint.operation();
+            let text = self
+                .abstract_system
+                .operation_text(operation.declaring_type(), operation.name())
+                .ok_or(ZoneCheckRefusal::Fault("abstract-fairness-operation"))?;
+            constrained.insert(text.to_owned());
+        }
+        let position = self
+            .positions
+            .get(q)
+            .ok_or(ZoneCheckRefusal::Fault("abstract-view-position"))?;
+        let mut atoms = BTreeSet::new();
+        for candidate in &position.abstract_states {
+            run.poll()?;
+            let key = self
+                .abstract_system
+                .state_key_of(candidate)
+                .map_err(|_| ZoneCheckRefusal::Fault("abstract-view-state-key"))?
+                .0;
+            let state = timed
+                .system()
+                .pre_state(candidate.clone(), timed.system().declared_anchor());
+            for step in run.timed(timed.guarded_steps(&state))? {
+                let parts: Vec<Vec<PlaceConstraint>> = run
+                    .enabling_parts_in(timed, &step)?
+                    .iter()
+                    .map(|part| super::auxiliary_constraints(offset, part))
+                    .collect();
+                if constrained.contains(step.operation()) {
+                    for constraint in parts.iter().flatten() {
+                        atoms.insert((
+                            constraint.place() + 1,
+                            scaled(constraint.bound(), &run.scale),
+                        ));
+                    }
+                }
+                view.steps
+                    .push((key.clone(), step.transition().clone(), parts));
+            }
+        }
+        view.atoms = atoms.into_iter().collect();
+        Ok(view)
+    }
+
+    /// The candidate steps of `view` enabled at the instants of `zone`, a
+    /// cell of the position (so each is enabled at every instant of it or
+    /// at none): the candidate's state key and the transition identity.
+    fn enabled_at_zone(
+        run: &Run<'_, '_, '_>,
+        view: &AbstractView,
+        zone: &Dbm,
+    ) -> Result<Vec<(Vec<u8>, ModelTransition)>, Halt> {
+        let mut here: Vec<(Vec<u8>, ModelTransition)> = Vec::new();
+        for (key, transition, parts) in &view.steps {
+            run.poll()?;
+            for part in parts {
+                let mut at = zone.clone();
+                constrain_at(&mut at, part, &run.scale)?;
+                if !at.is_empty() {
+                    let held = (key.clone(), transition.clone());
+                    if !here.contains(&held) {
+                        here.push(held);
+                    }
+                    break;
+                }
+            }
+        }
+        Ok(here)
+    }
+
     fn candidate_loop_has_fair_run(
         &self,
         run: &mut Run<'_, '_, '_>,
@@ -707,6 +869,15 @@ impl Product<'_, '_> {
                 .get(arc.from)
                 .ok_or(ZoneCheckRefusal::Fault("candidate-loop-source"))?;
             let mut candidates = Vec::new();
+            let timed_enabled = if run.auxiliary_timed.is_some() {
+                let view = live
+                    .views
+                    .get(&source.q)
+                    .ok_or(ZoneCheckRefusal::Fault("abstract-view-cached"))?;
+                Some(Self::enabled_at_zone(run, view, &source.zone)?)
+            } else {
+                None
+            };
             for candidate in &self.positions[source.q].abstract_states {
                 run.poll()?;
                 let (key, _) = self
@@ -750,11 +921,24 @@ impl Product<'_, '_> {
                         stats: run.stats(),
                     }));
                 }
-                let enabled: Vec<_> = expansion
-                    .successors
-                    .into_iter()
-                    .map(|(transition, _)| transition)
-                    .collect();
+                // Under a timed abstract side the candidate's steps enabled at
+                // the source vertex's cell, not its untimed successors.
+                let enabled: Vec<_> = match &timed_enabled {
+                    Some(held) => {
+                        let mut here: Vec<ModelTransition> = Vec::new();
+                        for (candidate_key, transition) in held {
+                            if *candidate_key == key && !here.contains(transition) {
+                                here.push(transition.clone());
+                            }
+                        }
+                        here
+                    }
+                    None => expansion
+                        .successors
+                        .into_iter()
+                        .map(|(transition, _)| transition)
+                        .collect(),
+                };
                 transitions.extend(enabled.iter().cloned());
                 candidates.push((key, enabled));
             }
@@ -936,7 +1120,7 @@ impl Product<'_, '_> {
         run: &mut Run<'_, '_, '_>,
         live: &mut Live,
         class: &AbstractClass,
-        enabled: &BTreeMap<usize, Vec<ModelTransition>>,
+        enabled: &[Vec<ModelTransition>],
     ) -> Result<(FairModel, BTreeSet<Vertex>, Vec<Vec<usize>>), Halt> {
         let hidden = self
             .refinement
@@ -1015,12 +1199,8 @@ impl Product<'_, '_> {
         let strong = !hidden && constraint.kind() == FairnessKind::Strong;
         let class_enabled: Vec<Vertex> = handles
             .iter()
-            .zip(&live.nodes)
-            .filter(|(_, node)| {
-                enabled
-                    .get(&node.q)
-                    .is_some_and(|here| class.is_enabled_in(here))
-            })
+            .zip(enabled)
+            .filter(|(_, here)| class.is_enabled_in(here))
             .map(|(handle, _)| *handle)
             .collect();
         if strong {
@@ -1186,7 +1366,12 @@ impl Product<'_, '_> {
                 cycle_stages.push(stage(run, live, arc)?);
             }
         }
-        let ceiling = run.timed.max_constant();
+        // The loop's unreset clocks stand past every constant of either
+        // model (FR-236).
+        let ceiling = run.auxiliary_timed.map_or_else(
+            || run.timed.max_constant(),
+            |auxiliary| run.timed.max_constant().max(auxiliary.max_constant()),
+        );
         Ok(run
             .timed_lasso(places, &ceiling, stem_stages, &cycle_stages)?
             .map(|(prefix, entry)| {
@@ -1294,6 +1479,13 @@ fn stages_along(
     Ok((initial, stages))
 }
 
+/// The abstract cell atoms of position `q`, as the build cached them.
+fn extra_atoms(live: &Live, q: usize) -> Vec<CellAtom> {
+    live.views
+        .get(&q)
+        .map_or_else(Vec::new, |view| view.atoms.clone())
+}
+
 /// The stage of `arc`, a step or a delay into the next cell.
 fn stage(run: &mut Run<'_, '_, '_>, live: &mut Live, arc: usize) -> Result<Stage, Halt> {
     let arc = live.arcs[arc].clone();
@@ -1301,6 +1493,8 @@ fn stage(run: &mut Run<'_, '_, '_>, live: &mut Live, arc: usize) -> Result<Stage
     let target = live.nodes[arc.to].clone();
     let invariants = run.timed(run.timed.invariants(&source.state))?;
     let elapses = run.elapses(&source.state)?;
+    let source_atoms = extra_atoms(live, source.q);
+    let target_atoms = extra_atoms(live, target.q);
     Ok(match arc.via {
         Via::Step { step, part } => {
             let steps = run.steps_for(&source.state)?;
@@ -1313,7 +1507,12 @@ fn stage(run: &mut Run<'_, '_, '_>, live: &mut Live, arc: usize) -> Result<Stage
                 invariants,
                 elapses,
                 target: run.timed(run.timed.invariants(&post))?,
-                before: run.cell_zone(&mut live.cells, &source.state, &source.cell)?,
+                before: run.cell_zone(
+                    &mut live.cells,
+                    &source.state,
+                    &source_atoms,
+                    &source.cell,
+                )?,
                 after: None,
                 auxiliary_carries: arc
                     .auxiliary_transform
@@ -1323,7 +1522,7 @@ fn stage(run: &mut Run<'_, '_, '_>, live: &mut Live, arc: usize) -> Result<Stage
                     .auxiliary_transform
                     .as_ref()
                     .map_or_else(Vec::new, |transform| transform.resets.clone()),
-                piece: run.cell_zone(&mut live.cells, &post, &target.cell)?,
+                piece: run.cell_zone(&mut live.cells, &post, &target_atoms, &target.cell)?,
                 step: Some((step, part)),
                 position: Vec::new(),
                 position_resets: Vec::new(),
@@ -1339,7 +1538,7 @@ fn stage(run: &mut Run<'_, '_, '_>, live: &mut Live, arc: usize) -> Result<Stage
             after: None,
             auxiliary_carries: Vec::new(),
             auxiliary_resets: Vec::new(),
-            piece: run.cell_zone(&mut live.cells, &target.state, &target.cell)?,
+            piece: run.cell_zone(&mut live.cells, &target.state, &target_atoms, &target.cell)?,
             step: None,
             position: Vec::new(),
             position_resets: Vec::new(),

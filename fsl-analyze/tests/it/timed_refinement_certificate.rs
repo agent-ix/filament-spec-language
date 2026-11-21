@@ -658,3 +658,100 @@ fn a_hidden_field_timed_abstract_refinement_returns_a_replayable_certificate() {
         ZoneCertificateVerdict::Rejected(_)
     ));
 }
+
+/// Two refinement positions whose mapped abstract steps differ in clock
+/// behaviour: `send` (position 0) has the guard `y >= 1` and no reset, `enter`
+/// (position 1) has the guard `y >= 2` and resets `y`.
+fn two_positions_world() -> Refining {
+    two_positions(true)
+}
+
+/// [`two_positions_world`], whose `enter` resets the abstract clock only with
+/// `resets`.
+fn two_positions(resets: bool) -> Refining {
+    let written: &[&str] = if resets { &["late", "y"] } else { &["late"] };
+    let entered = if resets {
+        "self.late and self.y = 0 ms"
+    } else {
+        "self.late"
+    };
+    let abstract_model = renamed_package(
+        &document(&["y"], &[("send", &["inflight"]), ("enter", written)]),
+        "test/treq3",
+    );
+    let concrete = document(&["x"], &[("send", &["inflight"]), ("enter", &["late"])]);
+    refining(
+        &abstract_model,
+        &concrete,
+        &format!(
+            "{DENSE}time A dense unit ms;\n\
+             pre ASendable using v on A::Call::send {{ not self.inflight and self.y >= 1 ms }}\n\
+             post ASend using v on A::Call::send {{ self.inflight }}\n\
+             pre AEnterable using v on A::Call::enter {{ self.inflight and not self.late and self.y >= 2 ms }}\n\
+             post AEntered using v on A::Call::enter {{ {entered} }}\n\
+             pre MSend using v on M::Call::send {{ not self.inflight and self.x >= 2 ms }}\n\
+             post MSent using v on M::Call::send {{ self.inflight }}\n\
+             pre MEnter using v on M::Call::enter {{ self.inflight and not self.late and self.x >= 3 ms }}\n\
+             post MEntered using v on M::Call::enter {{ self.late }}\n{}",
+            refinement("self.inflight").replace(
+                "step M::Call::send -> A::Call::send(self);",
+                "step M::Call::send -> A::Call::send(self);\n\
+                 step M::Call::enter -> A::Call::enter(self);"
+            )
+        ),
+    )
+    .unwrap_or_else(|refusals| panic!("{refusals:?}"))
+}
+
+/// FR-245 "Refinement form": the checker judges each node at its own
+/// refinement position. The second position's mapped `enter` resets the
+/// abstract clock, which the first position's `send` does not, so a checker
+/// that read every node at position 0 would compute a larger successor zone
+/// for the `enter` edge and reject the engine's own certificate.
+#[trace("TC-700", "FR-245")]
+#[test]
+fn the_checker_reads_each_refinement_node_at_its_own_position() {
+    let world = two_positions_world();
+    let certificate = certified(&world);
+    assert!(
+        certificate
+            .refinement
+            .as_ref()
+            .expect("a refinement part")
+            .positions
+            .len()
+            >= 3,
+        "the product has a position per concrete state"
+    );
+    assert_eq!(
+        verdict(&world, &certificate),
+        ZoneCertificateVerdict::Accepted
+    );
+}
+
+/// The forged form of the same rule: a certificate whose nodes carry the
+/// zones of the world where `enter` does not reset the abstract clock is
+/// valid only for a checker that reads the second position's `enter` at the
+/// first position, which has no such step. The checker judges each node at
+/// its own position and rejects it.
+#[trace("TC-700", "FR-245")]
+#[test]
+fn a_certificate_valid_only_at_position_zero_is_rejected() {
+    let world = two_positions(true);
+    let honest = certified(&world);
+    let unreset = certified(&two_positions(false));
+    assert_eq!(honest.nodes.len(), unreset.nodes.len());
+    let mut forged = honest.clone();
+    let mut changed = 0;
+    for (node, other) in forged.nodes.iter_mut().zip(&unreset.nodes) {
+        if node.zone != other.zone {
+            node.zone = other.zone.clone();
+            changed += 1;
+        }
+    }
+    assert!(changed > 0, "the reset changes a node's zone");
+    assert!(matches!(
+        verdict(&world, &forged),
+        ZoneCertificateVerdict::Rejected(_)
+    ));
+}

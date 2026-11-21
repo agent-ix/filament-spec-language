@@ -15,6 +15,7 @@ use super::unbounded::{
 use super::{
     ExactProbLimits, MonitorVerdict, ProbEdge, ProbProduct, ProbStateId, ProductAction, ProductKind,
 };
+use fsl_eval::probabilistic::MonitorState;
 use fsl_semantics::check::Bound;
 
 /// The scheduler objective for a bounded claim over every scheduler.
@@ -97,6 +98,11 @@ pub enum FhError {
     /// Precision limits are inconsistent or cannot be represented.
     #[error("the precision limits are invalid")]
     InvalidPrecision,
+    /// Policy iteration over a zero-time component reached the caller's
+    /// iteration bound (`max_policy_iterations`) before settling: a limit
+    /// stop, not a cycle.
+    #[error("policy iteration reached the iteration limit")]
+    PolicyIterationLimit,
 }
 
 /// Decide a bounded formula event on an already-built product (FR-197).
@@ -269,11 +275,47 @@ fn collapse_zero_time_components(
         product,
         choices: zero_choices,
     };
-    let components = maximal_end_components_from(
-        &zero_graph,
-        (0..product.states.len()).collect::<BTreeSet<_>>(),
-    )
-    .map_err(|_| FhError::InvalidState)?;
+    let all_states = (0..product.states.len()).collect::<BTreeSet<_>>();
+    let mut found: Vec<Vec<usize>> = maximal_end_components_from(&zero_graph, all_states.clone())
+        .map_err(|_| FhError::InvalidState)?;
+    // FR-924: a maximal end component over all actions is progressive when
+    // every clock entry of its key is reset, crossed or capped by it. A bounded
+    // event over a timed product keeps its deadline clock in the state; that
+    // clock is never reset, an end component that returns to its states cannot
+    // cross a boundary of it, and an undecided state is below its cap. So no
+    // end component of such a product is progressive, and each is one state
+    // with its exits, whatever the other clocks do.
+    let has_deadline = product
+        .states
+        .iter()
+        .any(|state| matches!(state.monitor, Some(MonitorState::Deadline { .. })));
+    if has_deadline {
+        found.extend(
+            maximal_end_components_from(&graph, all_states).map_err(|_| FhError::InvalidState)?,
+        );
+    }
+    // A zero-time component lies inside one maximal end component; it is
+    // subsumed by it. Components that overlap without nesting have no single
+    // value for the shared states, so the claim is not decided here.
+    found.sort_by(|left, right| right.len().cmp(&left.len()));
+    let mut components: Vec<Vec<usize>> = Vec::new();
+    for members in found {
+        let mut nested = false;
+        for other in &components {
+            let overlap = members.iter().filter(|state| other.contains(state)).count();
+            if overlap == members.len() {
+                nested = true;
+                break;
+            }
+            if overlap > 0 {
+                return Err(FhError::Cycle);
+            }
+        }
+        if !nested {
+            components.push(members);
+        }
+    }
+    components.sort_by_key(|component| component.iter().min().copied().unwrap_or(usize::MAX));
     if components.is_empty() {
         if !has_cycle(&zero_graph)? {
             return Ok(None);
@@ -306,8 +348,8 @@ fn collapse_zero_time_components(
             UnboundedError::InvalidProbability | UnboundedError::MaxRationalBits => {
                 FhError::InvalidProbability
             }
+            UnboundedError::MaxPolicyIterations => FhError::PolicyIterationLimit,
             UnboundedError::Singular
-            | UnboundedError::MaxPolicyIterations
             | UnboundedError::MissingReward
             | UnboundedError::ZeroWeightComponent => FhError::Cycle,
         })?;
@@ -478,8 +520,7 @@ impl ZeroTimeSolver<'_> {
             let groups = action_groups(self.product, ProbStateId(*state))?;
             for (choice_index, edges) in groups.iter().enumerate() {
                 let internal = edges.iter().all(|edge| {
-                    edge.probability.is_zero()
-                        || (edge.elapsed.is_zero() && member_set.contains(&edge.to.index()))
+                    edge.probability.is_zero() || member_set.contains(&edge.to.index())
                 });
                 if internal {
                     continue;
@@ -601,8 +642,7 @@ fn expand_zero_time_component_policy(
                 .iter()
                 .filter(|edges| {
                     edges.iter().all(|edge| {
-                        edge.probability.is_zero()
-                            || (edge.elapsed.is_zero() && members.contains(&edge.to.index()))
+                        edge.probability.is_zero() || members.contains(&edge.to.index())
                     })
                 })
                 .flat_map(|edges| {
@@ -635,17 +675,17 @@ fn expand_zero_time_component_policy(
         let selected = groups
             .iter()
             .position(|edges| {
-                edges.iter().all(|edge| {
-                    edge.probability.is_zero()
-                        || (edge.elapsed.is_zero() && members.contains(&edge.to.index()))
-                }) && edges.iter().any(|edge| {
-                    !edge.probability.is_zero()
-                        && distance
-                            .get(edge.to.index())
-                            .copied()
-                            .flatten()
-                            .is_some_and(|next| next < current)
-                })
+                edges
+                    .iter()
+                    .all(|edge| edge.probability.is_zero() || members.contains(&edge.to.index()))
+                    && edges.iter().any(|edge| {
+                        !edge.probability.is_zero()
+                            && distance
+                                .get(edge.to.index())
+                                .copied()
+                                .flatten()
+                                .is_some_and(|next| next < current)
+                    })
             })
             .ok_or(FhError::InvalidState)?;
         *policy.get_mut(*state).ok_or(FhError::InvalidState)? = Some(selected);
@@ -1583,6 +1623,33 @@ mod tests {
         .expect("valid finite product");
         assert!(matches!(minimum, FhResult::Exact { ref policy, .. } if policy[0] == Some(1)));
         assert!(matches!(maximum, FhResult::Exact { ref policy, .. } if policy[0] == Some(0)));
+    }
+
+    /// A zero-time cycle that stays reachable but has no end component is solved
+    /// by policy iteration; reaching the caller's iteration bound is a typed limit
+    /// stop, not a cycle (QSL-2156 FND-006).
+    /// Trace: TC-632
+    #[trace("TC-632")]
+    #[test]
+    fn policy_iteration_bound_is_a_limit_stop_not_a_cycle() {
+        let mut looping = product();
+        looping.kind = ProductKind::Mdp;
+        looping.edges[0].to = ProbStateId(0);
+        looping.edges[0].probability = rational(1, 2);
+        looping.edges[1].to = ProbStateId(1);
+        looping.edges[1].probability = rational(1, 2);
+        let terminal = [None, Some(rational(1, 1)), Some(rational(0, 1))];
+        let result = backward_induction_with_policy_limit(
+            &looping,
+            &terminal,
+            FhObjective::Min,
+            &rational(1, 2),
+            64,
+            4,
+            8,
+            0,
+        );
+        assert_eq!(result.err(), Some(FhError::PolicyIterationLimit));
     }
 
     /// Trace: TC-632, FR-197-AC-4

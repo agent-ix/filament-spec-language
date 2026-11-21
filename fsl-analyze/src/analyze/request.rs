@@ -497,6 +497,38 @@ pub(crate) fn analyze_bound<'a>(
     check_provision(package, provision)
         .map_err(|failure| StageFailure::Refused(super::AnalyzeRefusal::Provision(failure)))?;
     let shared = read.as_ref().map(crate::provider::Shared::of);
+    let own = match &read {
+        Some(read) => super::DocumentGraphs::of_bytes(read.emission().package().bytes()),
+        None => Err(super::GraphUnavailable::NotEmitted),
+    };
+    let mut dependency_graphs = BTreeMap::new();
+    for dependency in package.dependencies().values().chain(components.values()) {
+        let name = dependency.graph().package_name().to_owned();
+        if dependency_graphs.contains_key(&name) {
+            continue;
+        }
+        let graph = match crate::provider::read_package(dependency, binding.packages, limits.emit) {
+            Ok(read) => super::DocumentGraphs::of_bytes(read.emission().package().bytes()),
+            Err(crate::provider::NotAdmitted::Refused(refusal)) => {
+                return Err(StageFailure::Refused(super::AnalyzeRefusal::Package(
+                    refusal,
+                )));
+            }
+            Err(crate::provider::NotAdmitted::Other) => Err(super::GraphUnavailable::NotEmitted),
+        };
+        dependency_graphs.insert(name, graph);
+    }
+    // A package that does not emit has no graph and writes no held id, so its
+    // own graph is checked when an item needs it. A component an item is
+    // analyzed over always writes held ids, so one without a graph ends the
+    // run before any engine runs.
+    for component in components.values() {
+        if let Some(Err(cause)) = dependency_graphs.get(component.graph().package_name()) {
+            return Err(StageFailure::Refused(super::AnalyzeRefusal::Emission(
+                cause.clone(),
+            )));
+        }
+    }
     let component_runs: BTreeMap<RequestIndex, super::RunInput<'_>> = components
         .iter()
         .map(|(index, package)| (*index, super::RunInput::source(package)))
@@ -541,6 +573,10 @@ pub(crate) fn analyze_bound<'a>(
         details,
         protocol_conformance,
         closed_form,
+        graphs: super::DocumentGraphs {
+            own,
+            dependencies: dependency_graphs,
+        },
     }))
 }
 
@@ -691,6 +727,32 @@ fn protocol_analysis_work<'a>(
     limits: &super::AnalyzeLimits,
     shared: Option<crate::provider::Shared<'a>>,
 ) -> super::AnalyzeItem<'a> {
+    let Some(package) = checked_v2_package(shared) else {
+        return super::AnalyzeItem::unadapted(
+            item.request_index,
+            item.kind,
+            Some(fsl_semantics::check::DeclarationFamily::Protocol),
+        );
+    };
+    protocol_analysis_item(
+        package,
+        &analysis.model,
+        analysis.package.graph().package_name(),
+        binding,
+        item,
+        limits,
+    )
+}
+
+/// Build either route's native protocol-analysis item from its admitted package.
+pub(super) fn protocol_analysis_item<'a>(
+    v2: Box<filament_contract_model::CheckedPackageV2>,
+    model_input: &fsl_eval::simulation::model::ModelCheckInput<'a>,
+    package_name: &str,
+    binding: &super::SubjectBinding<'a>,
+    item: &super::ClaimItem,
+    limits: &super::AnalyzeLimits,
+) -> super::AnalyzeItem<'a> {
     let Some(selection) = item.options.protocol_analysis.as_ref() else {
         return super::AnalyzeItem::unadapted(
             item.request_index,
@@ -706,13 +768,6 @@ fn protocol_analysis_work<'a>(
         );
     };
     let Some(over) = protocol_binding.over.as_ref() else {
-        return super::AnalyzeItem::unadapted(
-            item.request_index,
-            item.kind,
-            Some(fsl_semantics::check::DeclarationFamily::Protocol),
-        );
-    };
-    let Some(v2) = checked_v2_package(shared) else {
         return super::AnalyzeItem::unadapted(
             item.request_index,
             item.kind,
@@ -746,8 +801,7 @@ fn protocol_analysis_work<'a>(
     };
     let definition_key = Some(format!(
         "ix://{}/{}",
-        analysis.package.graph().package_name(),
-        protocol_binding.protocol
+        package_name, protocol_binding.protocol
     ));
     let root = selection.assessed_root_draft.clone();
     if item.kind == Capability::LocalProjection {
@@ -776,7 +830,6 @@ fn protocol_analysis_work<'a>(
         };
         return crate::protocol_analysis::projection_item_owned(item.request_index, v2, request);
     }
-    let model_input = &analysis.model;
     let over = super::protocol_item::over_instance(binding, over);
     let Ok(subject) = super::protocol_item::subject_of(
         model_input,

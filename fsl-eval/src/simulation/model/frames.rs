@@ -305,6 +305,7 @@ pub(super) fn apply(
         }
         if let Some(enabled) = enabled.as_deref_mut() {
             enabled.push(EnabledVector {
+                transition,
                 receiver: row.reference.clone(),
                 declaring: application.declaring.clone(),
                 name: application.name.clone(),
@@ -429,6 +430,8 @@ pub(super) struct Outputs<'o> {
 /// One argument vector of an application whose effective precondition holds
 /// at the expanded state, and the successors it generated (FR-187).
 pub(super) struct EnabledVector {
+    /// The complete identity, retained even when the vector has no successor.
+    pub(super) transition: ModelTransition,
     /// The receiver.
     pub(super) receiver: ObjectReference,
     /// The operation's declaring type.

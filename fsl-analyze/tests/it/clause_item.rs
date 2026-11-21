@@ -734,3 +734,88 @@ fn a_failed_replay_emission_settles_failed_with_the_package_emission_fault() {
         "{terminal:?}"
     );
 }
+
+/// FR-621-AC-17: a run whose package has no admitted emission (the emit limit
+/// is reached) cannot write the node ids of an item it settled in the held
+/// form; the run reports the typed cause, never a result with a nested node
+/// id and never an untyped fault.
+#[trace("TC-3154", "FR-621-AC-17")]
+#[test]
+fn a_package_over_the_emit_limit_reports_the_typed_cause_not_a_nested_id() {
+    use fsl_analyze::analyze::document::{
+        settle_run, AnalyzeDocumentError, AnalyzeRun, HeldIdentityError, ResolvedClaim,
+        ResolvedItem, SubjectSelection,
+    };
+    use fsl_analyze::analyze::{ClaimItem, GraphUnavailable, ItemOptions};
+    use fsl_route::request::ExtentClassification;
+    use fsl_semantics::check::Capability;
+
+    let world = world();
+    let node = &world.package.graph().temporal_clauses()[0];
+    let claim = OccurrenceKey::new(node.identity(), node.claim().clone());
+    let engines = Engines::fsl().expect("the manifests register");
+    let mut registry = fsl_route::Registry::new();
+    for descriptor in engines.registrations() {
+        registry
+            .register(descriptor.clone())
+            .expect("a unique backend");
+    }
+    let candidates = registry.candidates_for_evidence(
+        Capability::TemporalSatisfaction,
+        &fsl_route::ItemEvidence::Absent,
+        None,
+    );
+    let fsl_route::CandidateOutcome::Candidates(set) = &candidates else {
+        panic!("temporal satisfaction has a candidate");
+    };
+    let binding = world.binding(&["c"]);
+    let subject = SubjectSelection::default_over(binding.snapshots);
+    let run = |limits: fsl_analyze::analyze::AnalyzeLimits| {
+        settle_run(
+            AnalyzeRun {
+                package: &world.package,
+                binding: world.binding(&["c"]),
+                provision: world.provision.clone(),
+                items: vec![ResolvedItem::Claim(Box::new(ResolvedClaim {
+                    item: ClaimItem {
+                        request_index: RequestIndex::new(0),
+                        claim: claim.clone(),
+                        kind: Capability::TemporalSatisfaction,
+                        extent: ExtentClassification::Bounded,
+                        backend: None,
+                        candidates: set.candidates().to_vec(),
+                        options: ItemOptions {
+                            required: true,
+                            ..ItemOptions::default()
+                        },
+                        form: None,
+                    },
+                    claim_name: "Bounded".to_owned(),
+                    candidates: candidates.clone(),
+                    subject: subject.clone(),
+                    unrouted: false,
+                }))],
+                engines: &engines,
+                limits,
+            },
+            &crate::analyze_cli_support::Fr290,
+            &Cancel::new(),
+        )
+    };
+    let settled = run(fsl_analyze::analyze::AnalyzeLimits::unbounded()).expect("a settled run");
+    crate::analyze_cli_support::assert_no_nested_node_ids(&settled.document);
+    let limited = fsl_analyze::analyze::AnalyzeLimits {
+        emit: fsl_package::EmitLimits::new(1),
+        ..fsl_analyze::analyze::AnalyzeLimits::unbounded()
+    };
+    match run(limited) {
+        Err(AnalyzeDocumentError::Identity(HeldIdentityError::NoGraph(
+            GraphUnavailable::NotEmitted,
+        )))
+        | Err(AnalyzeDocumentError::Refused(_)) => {}
+        other => panic!(
+            "the typed cause is reported: {:?}",
+            other.map(|run| run.document)
+        ),
+    }
+}

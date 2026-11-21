@@ -23,8 +23,8 @@ use ix_trace_rs::trace;
 use serde_json::{json, Value};
 
 use crate::analyze_cli_support::{
-    analyze, analyze_with_providers, counter_snapshot, label, package_selection, request_members,
-    Workspace,
+    analyze, analyze_with_providers, assert_no_nested_node_ids, counter_snapshot, label,
+    package_selection, request_members, Workspace,
 };
 use crate::counter::{clause_text, document};
 
@@ -140,6 +140,15 @@ fn roles(item: &Value) -> Vec<&str> {
         .collect()
 }
 
+/// A claim locus with the operand segments of its node id removed.
+fn claim_without_operands(claim: &Value) -> Value {
+    let mut claim = claim.clone();
+    if let Some(path) = claim["node"]["path"].as_array_mut() {
+        path.retain(Value::is_string);
+    }
+    claim
+}
+
 /// A routed composition item: the derived slot list, no candidates, and an
 /// `unsupported` disposition.
 fn assert_routed(item: &Value) {
@@ -175,7 +184,15 @@ fn a_routed_composition_is_unsupported_beside_its_proved_premises() {
         // the premise item checks.
         let key = &items[0]["request"]["premises"][slot]["key"];
         assert_eq!(key["kind"], "temporal-satisfaction", "{document}");
-        assert_eq!(key["claim"], item["request"]["claim"], "{document}");
+        // FR-621 "Node ids in an item": the composition keeps the dependency's
+        // node ids structural, and the premise item holds them against the
+        // dependency's graph, so the two name one claim in two spellings of its
+        // operands: the owner, ordinal, occurrence and text segments are equal.
+        assert_eq!(
+            claim_without_operands(&key["claim"]),
+            claim_without_operands(&item["request"]["claim"]),
+            "{document}"
+        );
     }
     assert_eq!(run.exit, 21, "{document}");
 }
@@ -393,6 +410,7 @@ fn a_provider_proof_is_refused_over_an_unsupported_component_guarantee() {
 /// FR-1044 "Behavior" (the provider proof gate): two compositions of one request whose `Capped` guarantees
 /// are equal on the wire and differ in assumptions each read their own item.
 /// `Sys`'s proved `Capped` never discharges `SysRely`'s assumed one.
+#[trace("TC-3154", "FR-621-AC-17")]
 #[test]
 fn an_unassumed_proof_does_not_discharge_an_assumed_guarantee() {
     let (run, sent) = through_provider(
@@ -412,6 +430,14 @@ fn an_unassumed_proof_does_not_discharge_an_assumed_guarantee() {
     assert_eq!(label(&items[0]), "proved", "{document}");
     assert_proof_not_accepted(&items[1]);
     assert_eq!(items[3]["claim_name"], "Capped", "{document}");
+    // FR-621-AC-17: a premise item over a dependency names it in `package`
+    // and holds its node ids against that dependency's graph; the composition
+    // items over the request's own package carry no such member.
+    assert!(items[2]["package"].is_string(), "{document}");
+    assert!(items[3]["package"].is_string(), "{document}");
+    assert_no_nested_node_ids(&items[2]);
+    assert_no_nested_node_ids(&items[3]);
+    assert!(items[0].get("package").is_none(), "{document}");
     assert_eq!(label(&items[3]), "proved", "{document}");
     assert_eq!(items[4]["claim_name"], "Capped", "{document}");
     assert_eq!(label(&items[4]), "unsupported", "{document}");
@@ -861,7 +887,6 @@ fn a_refuted_premise_keeps_its_own_record() {
 
 /// FR-1044-AC-10: with no `items`, the composition is a default item in
 /// source order, then the subject's derived item, then the premise items.
-#[trace("FR-1044-AC-10")]
 #[test]
 fn a_composition_is_a_default_item() {
     let ws = Workspace::new("compose-ac10");
@@ -900,42 +925,49 @@ fn package_handoff(ws: &Workspace, path: &std::path::Path) -> PathBuf {
     )
 }
 
-/// Asserts the public `package` handoff of a composition unit is refused
-/// whole at the request stage, exit 20, with no item: the strict reader
-/// refuses the package the producer emitted at an operand row of its
-/// `semantic_graph`, and FSL reports it `invalid_package` with no cause.
-/// Nothing settles, so the package route's own resolution, which an admitted
-/// package would reach, is not exercised (QSL-2739: package-consumer API).
-fn assert_package_refused(run: &crate::analyze_cli_support::Run) {
+/// Asserts the public `package` handoff of a composition unit is settled
+/// whole as unsupported, exit 21, with no item: the well-formed request meets
+/// a family the package route cannot read yet, typed
+/// `unsupported_construct`/`not-yet-implemented`, whose message names the
+/// family at `detail`. Nothing settles, so the package route's own
+/// resolution of a composition is not exercised (QSL-2739: package-consumer
+/// API).
+fn assert_package_pending(run: &crate::analyze_cli_support::Run, detail: &str) {
     let document = run.document();
-    let diagnostic = &document["diagnostics"][0];
-    assert_eq!(run.exit, 20, "{document}");
-    assert_eq!(document["category"], "refusal", "{document}");
+    let diagnostics = document["diagnostics"].as_array().expect("diagnostics");
+    assert_eq!(run.exit, 21, "{document}");
+    assert_eq!(document["category"], "unsupported", "{document}");
     assert_eq!(document["items"], json!([]), "{document}");
-    assert_eq!(diagnostic["code"], "invalid_package", "{diagnostic}");
-    assert!(diagnostic["cause"].is_null(), "{diagnostic}");
+    assert!(document["last_stage"].is_null(), "{document}");
+    assert_eq!(diagnostics.len(), 1, "{document}");
+    let diagnostic = &diagnostics[0];
+    assert_eq!(diagnostic["code"], "unsupported_construct", "{diagnostic}");
+    assert_eq!(diagnostic["cause"], "not-yet-implemented", "{diagnostic}");
     assert!(
-        diagnostic["message"].as_str().is_some_and(
-            |text| text.starts_with("invalid_package at /semantic_graph/operand_rows/")
-        ),
+        diagnostic["message"]
+            .as_str()
+            .is_some_and(|message| message.contains(detail)),
         "{diagnostic}"
     );
 }
 
 /// FR-1044 "Current system behavior" (QSL-2739): a `package` handoff of a
-/// unit with composition declarations, requested with no `items`, is refused
-/// whole and settles no item. The component libraries are supplied to the
-/// producer, so the refusal is the handoff's own.
+/// unit with composition declarations, requested with no `items`, is settled
+/// whole as the composition family and settles no item, `Local` included.
 #[test]
 fn the_package_default_items_refuse_a_composition() {
     let ws = Workspace::new("compose-package-default");
     let path = request_for(&ws, &system(), BOUNDED, None);
-    assert_package_refused(&analyze(&package_handoff(&ws, &path)));
+    assert_package_pending(
+        &analyze(&package_handoff(&ws, &path)),
+        ": the composition rule has no package form yet at",
+    );
 }
 
 /// FR-1044 "Current system behavior" (QSL-2739): an item naming a
 /// composition, or a name no package row carries, over a `package` handoff of
-/// that unit is refused whole too.
+/// that unit is settled whole as the unnamed-claim family: the package carries
+/// no name row for the composition, so neither name settles `unknown-claim`.
 #[test]
 fn a_package_item_naming_a_composition_is_refused() {
     // Each compile writes its own handoff directory, so each name gets its
@@ -943,8 +975,27 @@ fn a_package_item_naming_a_composition_is_refused() {
     for name in ["Sys", "Typo"] {
         let ws = Workspace::new(&format!("compose-package-named-{name}"));
         let path = request_for(&ws, &system(), BOUNDED, Some(json!([composition(name)])));
-        assert_package_refused(&analyze(&package_handoff(&ws, &path)));
+        assert_package_pending(
+            &analyze(&package_handoff(&ws, &path)),
+            "items[0] names the unnamed-claim family, which has no package form yet",
+        );
     }
+}
+
+/// FR-1044 "Current system behavior" (QSL-2739): a name the package carries a
+/// row for still resolves beside a composition; only the unresolved names are
+/// refused.
+#[test]
+fn a_package_item_naming_a_local_clause_beside_a_composition_settles() {
+    let ws = Workspace::new("compose-package-local");
+    let path = request_for(&ws, &system(), BOUNDED, Some(json!([{"claim": "Local"}])));
+    let run = analyze(&package_handoff(&ws, &path));
+    let document = run.document();
+    let items = document["items"].as_array().expect("items");
+    assert_eq!(items.len(), 1, "{document}");
+    assert_eq!(items[0]["claim_name"], "Local", "{document}");
+    assert_eq!(label(&items[0]), "proved", "{document}");
+    assert_eq!(run.exit, 0, "{document}");
 }
 
 /// FR-1044-AC-10, second half, once the package route reads a composition:

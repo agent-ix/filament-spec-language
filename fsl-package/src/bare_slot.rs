@@ -25,7 +25,8 @@ use crate::checked_v2::wire_graph;
 use crate::equality_file::EqualityWitnessRefusal;
 use crate::protocol_selection::{ProtocolSlotDescriptor, SlotSelectionFailure};
 use crate::protocol_view::{
-    argument, control_operation, group_member, integer, reference, text, ControlOperation,
+    argument, control_operation, control_site_path, group_member, integer, reference, text,
+    ControlOperation, ViewRefusal,
 };
 use crate::reader_protocol_projection::{
     node_value_type, BareWalker, FunctionSelector, ReaderProtocolProjection, TypeError, TypeReader,
@@ -285,7 +286,23 @@ fn slot_term<'n>(
             .copied()
             .ok_or_else(|| fault("selected-protocol-node-is-named"))
     };
-    let path: Vec<String> = declared.iter().skip(2).map(|s| (*s).to_owned()).collect();
+    let path: Vec<String> = if declared.get(1) == Some(&"run") {
+        control_site_path(package, p, &node.node_id).map_err(|refusal| match refusal {
+            ViewRefusal::MissingMember { member, .. } => SlotSelectionFailure::MissingMember {
+                name: member.to_owned(),
+                index: None,
+            },
+            ViewRefusal::UnknownProtocol { .. }
+            | ViewRefusal::NotAProtocolClause { .. }
+            | ViewRefusal::NotACompensation { .. }
+            | ViewRefusal::MalformedMember { .. }
+            | ViewRefusal::MissingSelection { .. } => {
+                SlotSelectionFailure::MalformedNode(descriptor.node().clone())
+            }
+        })?
+    } else {
+        declared.iter().skip(2).map(|s| (*s).to_owned()).collect()
+    };
     let control = || protocol_site(p, ProtocolSite::Control(&path));
     let arg = |name: &str| argument(node, name).ok_or_else(no);
     let member_of = |term: &'n CheckedTerm, name: &str| group_member(term, name).ok_or_else(no);

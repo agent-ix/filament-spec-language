@@ -17,7 +17,7 @@ that an owner refusal of that request is an internal failure and an owner
 maximum a limit, and that the package selection and its in-memory digest
 are equal on the source and bare-package routes. Scope: FR-944-AC-8,
 FR-944-AC-9, FR-944-AC-10, FR-944-AC-11, FR-944-AC-12, FR-944-AC-13, FR-944-AC-15 and
-the relabelling case of FR-944-AC-4.
+the equal-content, new-identity case of FR-944-AC-4.
 
 ## Test Procedure
 
@@ -87,11 +87,12 @@ the relabelling case of FR-944-AC-4.
   `filament.checked-package/v2`, equal digest) and `Context` authorities;
   the non-canonical copy is refused `noncanonical_wire` and admits nothing;
   no document or file FSL writes carries the digest.
-- Step 4: the relabelled position is refused before `revise` is called, a
-  contradiction on `Completeness`, `invalid_runtime_input`/`invalid-value`,
-  with the clock name, the retained assertion and the position, the ledger
-  unchanged; the position under its covered identity passes the check and
-  `revise` accepts it.
+- Step 4: the position under the new FR-106 identity is refused
+  `UncoveredMember` by `check_revision`, a contradiction on `Completeness`,
+  `invalid_runtime_input`/`invalid-value`, with the clock name, the retained
+  assertion and the position, the ledger unchanged, although it shares the
+  covered position's owner record identity; the position under its covered
+  identity is accepted.
 - Step 5: each value is the stated seven-member object with the label-free
   four-member `observation` in lowercase hexadecimal, the rationals with
   unbounded components, `{"cause": "kernel", "reason": "division-by-zero"}`,
@@ -99,8 +100,8 @@ the relabelling case of FR-944-AC-4.
   instance valuation keyed `"00ff"`, and `admit` returns `Available`; each content,
   valuation or sample change alone changes exactly that record's identity
   and a label change does not; the equal positions share one record whose
-  reports name both identities; the relabelled position is refused before
-  `revise`; the spine position retains its FR-106 document and its
+  reports name both identities; the position under a new identity at or before
+  the retained `through` is refused `UncoveredMember`; the spine position retains its FR-106 document and its
   `observation` is that document without `identity`.
 - Step 6: the undefined position's record value carries
   `{"undefined": {"cause": "kernel", "reason": "division-by-zero"}}` for

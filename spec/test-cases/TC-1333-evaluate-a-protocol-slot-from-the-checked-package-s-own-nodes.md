@@ -10,7 +10,7 @@ relationships:
 
 ## Description
 
-Verify protocol-slot evaluation from a bare package and its equality with the source routes. Scope: FR-533-AC-1 to FR-533-AC-23. Row 23 verifies the bounded quantity-call refusal while equivalence reconstruction remains unavailable. **R** is the package of FR-517.
+Verify protocol-slot evaluation from a bare package and its equality with the source routes. Scope: FR-533-AC-1 to FR-533-AC-23. Row 23 verifies quantity-call parity after equivalence reconstruction. **R** is the package of FR-517.
 
 ## Test Procedure
 
@@ -38,9 +38,9 @@ Verify protocol-slot evaluation from a bare package and its equality with the so
 | 20 | 20 | Strictly admitted **R** with the source `Shape` union constructed and matched in `Full`'s recovery predicate; vary receipts, target and activation, then add an unrelated union; compare the bare and source type environments | Equal Boolean values and ordered charges; original union type handle, sealed member/declaration identities, ordered members and positional payload types agree; missing required projections refuse before any charge; an unused union with an unrepresented tuple payload leaves the ordinary slot unchanged, while selecting even its nullary variant refuses before charging |
 | 21 | 21 | fixture L's two-record variant (TC-1063 row L4e), compiled in each source order of its two clauses, on the in-process and bare routes | `Got.related.from[0]`, `from[1]` and the call `to` end: equal values, charge logs and projected-root read `Location` on both routes; `from[i]` under `related <i> from`, the call `to` end under `related <k> to` with `k` its record's emitted position; the two `from` `Location` values differ; no `Location` under a `related <start> <end>` origin on either route |
 | 22 | 22 | fixture E-P with one unread variant (enum) type added to `M`: `with_supply`, `Refund.trigger.guard`, admission for `M` on both routes; fixture E-P with a native budget that pays every earlier `with_supply` join and the declaration projection but not the population catalog | `with_supply` succeeds and the guard equals the source route's value and charge log; bare admission refuses `unknown_required_feature`/`unsupported-feature`, `reason` `missing-type-representation`, no fault, while the source route admits; `NativeJoinFailure::PopulationCatalog` with its setting and a stage limit diagnostic whose bound and attempted total are the catalog error's `limit` and `consumed`, no `BarePackage` |
-| 23 | 23 | fixture Q, emitted and read through the actual package reader with identity/equality supply, called through the source package and the resulting `BarePackage`; repeat the five selected bare refusals with unlimited limits and with each tight meter below | source conversions return `1/4 s` and `3/4 s`; product, quotient and both square equalities are true. Bare cross, affine_class, product, quotient and the selected noncanonical square return the exact typed unsupported refusal and retained expression span below, no quantity and none of the five prohibited unit charges. The refusal remains typed unsupported under each tight meter, rather than becoming kernel-limit Incomplete. Bare same returns `1 s`, affine_same returns `3 beat`, and ordinary_power returns true. |
+| 23 | 23 | fixture Q, emitted/read with actual identity/equality supply and called through source and `BarePackage`; repeat at each measured counter boundary and with an actual admitted direct-dependency dimension operand | Both routes return `1/4 s`, `3/4 s`, the specified compound-conversion quantities and true arithmetic equalities, with identical unit types and ordered kernel charges. Required allowance minus one returns the same located Incomplete record without a quantity or payment of the denied charge; the exact allowance completes. Same-dimension, affine, unrelated power and nominal ineligibility behavior is preserved. |
 
-### Q — Dimension-equivalence reconstruction boundary
+### Q — Dimension-equivalence reconstruction
 
 Compile this source using the normal source checker. The symbols `s` and `beat`
 are nominal roots of their own declared dimensions, not an assumed spelling of
@@ -57,10 +57,18 @@ unit beat : Beat = rational(1, 1);
 unit bar : Beat = rational(4, 1) * beat;
 dimension Beat ~ Time by 1 beat = rational(1, 4) s;
 unit shifted : Beat = rational(1, 1) * beat + rational(2, 1);
+dimension TimeSquared = Time ^ 2;
+unit s2 : TimeSquared = rational(1, 1);
+dimension Dimensionless = Time / Time;
+unit one : Dimensionless = rational(1, 1);
 dimension Length;
 unit m : Length = rational(1, 1);
 function cross using v(): Quantity<s> pure { convert<Quantity<s>>(1 beat) }
 function affine_class using v(): Quantity<s> pure { convert<Quantity<s>>(1 shifted) }
+function product_value using v(): Quantity<s2> pure { convert<Quantity<s2>>(6 s * 3 beat) }
+function quotient_value using v(): Quantity<one> pure { convert<Quantity<one>>(6 s / 3 beat) }
+function power_s_value using v(): Quantity<s2> pure { convert<Quantity<s2>>(2 s ^ 2) }
+function power_beat_value using v(): Quantity<s2> pure { convert<Quantity<s2>>(2 beat ^ 2) }
 function product using v(): Boolean pure { 6 s * 3 beat = rational(9, 2) s * 1 s }
 function quotient using v(): Boolean pure { 6 s / 3 beat = 8 s / 1 s }
 function power_s using v(): Boolean pure { 2 s ^ 2 = 4 s * 1 s }
@@ -85,42 +93,40 @@ function ordinary_power using v(): Boolean pure { 2 m ^ 2 = 4 m * 1 m }
    is `64 beat^2` for a noncanonical `s`, or `1/4 s^2` for a noncanonical `beat`.
    Check that the product's nominal roots `s * beat`, the quotient's nominal
    roots `s / beat`, and the selected square's nominal root squared differ
-   from their checked class-root result units. A noncanonical operand alone
-   does not trigger refusal if those result units are equal.
+   from their checked class-root result units. Check the named compound
+   conversions return `9/2 s2`, `8 one`, `4 s2` and `1/4 s2` with their exact
+   declared target types.
 3. Emit the checked package, read its actual emitted representation using the
    normal package reader, join its identity/equality supply and construct the
    resulting `BarePackage`. Do not substitute a mock world or an evaluator
    retaining the source unit graph for the bare call. The source package may
    remain beside the bare value solely as an independent expected-value and
    retained-location oracle, as the existing source/bare test helper does.
-4. On the bare route, call `cross`, `affine_class`, `product`, `quotient` and
-   the selected square. Each returns `unsupported_construct` /
-   `not-yet-implemented` with
-   `what = dimension-equivalence-package-reconstruction` and no quantity.
-   Assert the exact source substring of its retained stop location:
-   `convert<Quantity<s>>(1 beat)`, `convert<Quantity<s>>(1 shifted)`, the first
-   `6 s * 3 beat`, the first `6 s / 3 beat`, and the first `2 s ^ 2` or
-   `2 beat ^ 2` for the selected member. Assert the occurrence start/end as
-   well as text so the repeated right-hand product or square cannot satisfy
-   the location oracle accidentally. Conversion roots have depth 0; the
-   selected arithmetic operands of the Boolean equality have depth 1.
-5. Inspect each bare call's actual admitted charge log: it contains no
-   `UnitIdentityRead`, `UnitEdge`, `UnitRationalArithmetic`, `UnitTargetDomain`
-   or `UnitResultRetain` for the refused operation. A function-entry charge is
-   permitted. Repeat each refusal on fresh meters whose other allowances are
-   generous, setting separately `work_units = 1`, `unit_edges = 0`,
-   `integer_bits = 0` and `result_units = 0`. These no-argument literal bodies
-   require only the earlier `FunctionCall` work charge to reach the guard;
-   `work_units = 0` would instead stop at that entry and is not a boundary
-   test. Each selected call still returns the same typed unsupported refusal,
-   location and absence of unit charges, rather than entering the shared
-   kernel and returning limit Incomplete.
+4. Call the same functions on the bare route. Assert the same exact quantities,
+   unit identities and true Boolean results. Include both nominal squares so
+   the noncanonical member is exercised independently of which root was chosen.
+5. Compare the actual ordered `UnitIdentityRead`, `UnitEdge`,
+   `UnitRationalArithmetic`, `UnitTargetDomain` and `UnitResultRetain` charge logs
+   between routes. For each of WorkUnits, UnitEdges, IntegerBits,
+   ValueOccurrences and ResultUnits with positive measured consumption, repeat
+   both calls with that allowance set to the required amount minus one. Assert
+   identical Incomplete records, retained operation locations and admitted
+   kernel logs, with no result quantity or payment of the denied charge. Repeat
+   at the exact required allowance and assert completion.
 6. Call `same`, `affine_same` and `ordinary_power` on source and bare routes
    under generous meters: they return `1 s`, `3 beat` and true respectively.
-   The integer-power guard is conditional on differing nominal and checked
-   result units; it is not a refusal of every integer power. Reader recovery
-   of equivalence definitions remains an unmet dependency; these calls do not
-   claim source/package parity for that deferred reconstruction.
+   Addition, subtraction and comparison of distinct nominal units still refuse
+   the same type mismatch without explicit conversion.
+7. Compile and admit genuine declarations of dependency-owned `Time` and `s`
+   and local `Beat` and `beat`. Use the checked IR writer to relate those
+   actual dimension ids through a typed Package operand, and fully admit that
+   package with the exact dependency selection and admitted evidence. Assert
+   the operand resolves to that dependency's actual source owner. Supply the
+   genuine dependency artifact and its witnesses to the bare graph builder:
+   its runtime conversion of `1 beat` returns exact `1/4` of the dependency's
+   `s`, with that unit's actual identity. This admitted-package test does not
+   require source-library quantity exports or foreign-operand emission, whose
+   producer contract remains separate; steps 1–6 retain both-route parity.
 
 Tag each test with `TC-1333` and the criteria it actually verifies; row 23 carries `FR-533-AC-23`. Rows 1 and 2 also carry FR-390-AC-11 and FR-520-AC-9.
 

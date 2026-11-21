@@ -17,8 +17,8 @@ use filament_semantic_value::catalog::{CatalogCode, InternalFault};
 use fsl_semantics::check::{Activation as ClauseActivation, TemporalProfile};
 
 use super::activation::{
-    activate, retained_instance, scope_disposition, ActivationInput, ActivationStop, ClauseShape,
-    Disposition, FaultKind, FaultSubject, Instance, InstanceState, UnknownKind,
+    activate, retained_instance, ActivationInput, ActivationStop, ClauseShape, Disposition,
+    FaultKind, FaultSubject, Instance, InstanceState, UnknownKind,
 };
 use super::binding::{AuthenticatedBinding, ClauseSelection};
 use super::counters::{CallMeter, ClauseStop, EvidenceStop, LimitReached, Visit};
@@ -85,6 +85,7 @@ pub(super) fn refusal(
 
 /// The subject with the occurrence the request selected and its clock row.
 struct ResolvedSubject<'p> {
+    package_subject: &'p EvidenceSubject<'p>,
     selection: ClauseSelection<'p>,
     facts: &'p crate::temporal::facts::ClauseFacts,
     instance_bound: &'p BTreeSet<u64>,
@@ -135,6 +136,7 @@ fn resolve<'p>(
     let occurrence_key = serde_json::to_vec(&(subject.declaration, &chosen.occurrence))
         .map_err(|_| fault("clause-identity-encodes"))?;
     Ok(ResolvedSubject {
+        package_subject: subject,
         selection: ClauseSelection {
             declaration: subject.declaration,
             profile: subject.profile,
@@ -257,7 +259,16 @@ fn incomplete_of(stop: EvidenceStop) -> EvidenceIncomplete {
 /// contradiction (FR-502), a relation refusal (FR-526), a delivery
 /// contradiction (FR-524) or a `trigger-required` / `trigger-unknown`
 /// selection; `CallFailure::Fault` for a broken invariant.
+///
+/// A caller-admitted producer bundle is mandatory:
+/// ```compile_fail
+/// use fsl_eval::temporal::evidence::{evaluate_temporal_evidence, EvidenceSubject, EvidenceRequest};
+/// fn missing_bundle(subject: &EvidenceSubject<'_>, request: &EvidenceRequest, meter: &mut filament_exact::Meter) {
+///     let _ = evaluate_temporal_evidence(subject, request, meter);
+/// }
+/// ```
 pub fn evaluate_temporal_evidence(
+    producer: &filament_observation::AdmittedStaticBundle,
     subject: &EvidenceSubject<'_>,
     request: &EvidenceRequest,
     meter: &mut Meter,
@@ -265,7 +276,7 @@ pub fn evaluate_temporal_evidence(
     let resolved = resolve(subject, request)?;
     let facts = admit(&resolved, request, meter)?;
     let shape = resolved.shape();
-    let outcome = assess(&facts, &shape, meter)?;
+    let outcome = assess(producer, &facts, &shape, meter)?;
     Ok(EvaluatedEvidence {
         result: conclude(&facts, outcome, meter),
     })
@@ -719,7 +730,10 @@ fn encode_captures(mut encoder: MemberEncoder, captures: &[CaptureFact]) -> Memb
     encoder
 }
 
-fn encode_trace(subject: &ResolvedSubject<'_>, request: &EvidenceRequest) -> Vec<u8> {
+fn encode_trace(
+    subject: &ResolvedSubject<'_>,
+    request: &EvidenceRequest,
+) -> Result<Vec<u8>, super::identity::MemberFault> {
     let mut encoder = MemberEncoder::new().u64(request.positions.len() as u64);
     // The listing is the order of an event-position or fixed-sample trace;
     // a timestamped trace has the canonical order of FR-501.
@@ -730,6 +744,20 @@ fn encode_trace(subject: &ResolvedSubject<'_>, request: &EvidenceRequest) -> Vec
     };
     for position in ordered {
         encoder = encode_ref(encoder, &position.observation).u64(position.position);
+        encoder = encoder.option(position.interval.as_ref(), |encoder, interval| {
+            encoder
+                .u64(interval.earliest)
+                .u64(interval.latest)
+                .flag(interval.earliest_open)
+                .flag(interval.latest_open)
+        });
+        encoder = encoder.option(position.arrival.as_ref(), |encoder, arrival| {
+            encoder.u64(*arrival)
+        });
+        encoder = match &position.admitted_document {
+            Some(document) => encoder.flag(true).bytes(&serde_json::to_vec(document)?),
+            None => encoder.flag(false),
+        };
         encoder = encoder.option(position.order_key.as_ref(), |encoder, key| {
             encoder.text(&key.authority).u64(key.key as u64)
         });
@@ -744,7 +772,7 @@ fn encode_trace(subject: &ResolvedSubject<'_>, request: &EvidenceRequest) -> Vec
             encoder = encode_aggregate_samples(encoder.bytes(instance.as_bytes()), samples);
         }
     }
-    encoder.finish()
+    Ok(encoder.finish())
 }
 
 fn encode_deliveries(request: &EvidenceRequest) -> Vec<u8> {
@@ -838,6 +866,7 @@ fn encode_retained(request: &EvidenceRequest, obligation: &ObligationKey) -> Vec
                 .bytes(identity.as_bytes())
                 .bytes(entry.payload().as_bytes())
                 .u64(entry.evaluations())
+                .bytes(&encode_captures(MemberEncoder::new(), entry.capture_facts()).finish())
                 .u64(entry.receipts().len() as u64);
             for receipt in entry.receipts() {
                 encoder = encoder.bytes(receipt.as_bytes());
@@ -916,7 +945,7 @@ fn identity_of(
         .ceilings(&request.limits)
         .meter_ceiling(meter_ceiling)
         .member(IdentityMember::Cover, cover)
-        .member(IdentityMember::Trace, encode_trace(subject, request))
+        .member(IdentityMember::Trace, encode_trace(subject, request)?)
         .member(IdentityMember::Progress, encode_progress(request))
         .member(IdentityMember::Trigger, trigger)
         .member(
@@ -1095,6 +1124,7 @@ impl WindowCharge for UnitCharger<'_, '_> {
 /// (FR-524 "Instance-bound atoms").
 struct EvidenceLetters<'a> {
     request: &'a EvidenceRequest,
+    owner: &'a super::owner::OwnerObservation,
     trace: &'a TimestampedTrace,
     bound: &'a BTreeSet<u64>,
     formula: &'a crate::temporal::facts::ClauseFormula,
@@ -1315,7 +1345,12 @@ impl TemporalLetters for EvidenceLetters<'_> {
         }
         if !self.bound.contains(&atom_index) {
             return Ok(match supplied.valuations.get(&atom_index) {
-                Some(valuation) => valuation.clone(),
+                Some(valuation) => self.owner.valuation(
+                    &supplied.observation.identity,
+                    atom_index,
+                    None,
+                    valuation,
+                )?,
                 None => {
                     self.absent.push((position.index(), atom_index));
                     Valuation::Missing
@@ -1327,7 +1362,12 @@ impl TemporalLetters for EvidenceLetters<'_> {
             .and_then(|assessed| supplied.instance_valuations.get(assessed))
             .and_then(|valuations| valuations.get(&atom_index));
         if let Some(valuation) = own {
-            return Ok(valuation.clone());
+            return Ok(self.owner.valuation(
+                &supplied.observation.identity,
+                atom_index,
+                self.assessed,
+                valuation,
+            )?);
         }
         let others = supplied
             .instance_valuations
@@ -1433,7 +1473,7 @@ fn admit_trace(
         | fsl_package::ClockConfiguration::FixedSample { .. }
         | fsl_package::ClockConfiguration::Timed { .. } => String::new(),
     };
-    TimestampedTrace::admit(
+    TimestampedTrace::admit_uncertain(
         clause_facts.name(),
         WindowClock {
             name: request.binding.clock_name.to_string(),
@@ -1444,10 +1484,15 @@ fn admit_trace(
         request
             .positions
             .iter()
-            .map(|position| TimestampedObservation {
-                stamp: position.position,
-                order_key: position.order_key.clone(),
-                observation: position.observation.identity.clone(),
+            .map(|position| {
+                (
+                    TimestampedObservation {
+                        stamp: position.position,
+                        order_key: position.order_key.clone(),
+                        observation: position.observation.identity.clone(),
+                    },
+                    position.interval,
+                )
             })
             .collect(),
         WindowProgress {
@@ -1460,10 +1505,6 @@ fn admit_trace(
     )
     .map(Ok)
     .map_err(|_| fault("trace-admits"))
-}
-
-fn no_instance(scope: TriggerScope, request: &EvidenceRequest) -> Outcome {
-    disposition_outcome(scope_disposition(scope, request.execution))
 }
 
 fn disposition_outcome(disposition: Disposition) -> Outcome {
@@ -1486,7 +1527,109 @@ fn disposition_outcome(disposition: Disposition) -> Outcome {
     }
 }
 
+/// A disagreement between the observation owner's answer and the evaluator's
+/// own fact, naming both. It is an internal fault, never a preferred answer.
+pub(super) fn disagreement(invariant: &'static str, owner: String, local: String) -> CallFailure {
+    CallFailure::Fault(
+        InternalFault::new("temporal.evidence", invariant)
+            .with_named(vec![("owner", owner), ("local", local)]),
+    )
+}
+
+/// The owner's completeness state against the state the evaluator's own
+/// assertion carries (FR-944 "Owner requirement: completeness revision": the
+/// ledger's `Complete { through }` rule stays local until QSL-2327).
+pub(super) fn completeness_agrees(
+    owner: filament_observation::authority::completeness::State,
+    asserted: ProgressCompleteness,
+) -> Result<(), CallFailure> {
+    use filament_observation::authority::completeness::State;
+    let local_complete = matches!(asserted, ProgressCompleteness::Complete { .. });
+    if (owner == State::Complete) == local_complete {
+        return Ok(());
+    }
+    Err(disagreement(
+        "owner-completeness-agrees",
+        format!("{owner:?}"),
+        format!("{asserted:?}"),
+    ))
+}
+
+/// A scope that created no instance: an owner `Active` contradicts the
+/// evaluator, which knows no instance exists.
+fn empty_scope_outcome(owner: Disposition) -> Result<Outcome, CallFailure> {
+    match owner {
+        Disposition::Active => Err(disagreement(
+            "owner-activation-agrees",
+            "Active".to_owned(),
+            "no instance".to_owned(),
+        )),
+        other => Ok(disposition_outcome(other)),
+    }
+}
+
+/// An instance the evaluator holds active: any other owner answer contradicts
+/// the evaluator.
+fn instance_is_active(owner: Disposition) -> Result<(), CallFailure> {
+    match owner {
+        Disposition::Active => Ok(()),
+        other => Err(disagreement(
+            "owner-activation-agrees",
+            format!("{other:?}"),
+            "Active".to_owned(),
+        )),
+    }
+}
+
+/// The disposition the owner's activation view states. The state comes from
+/// the owner. The `Unknown` kind separates a missing from a refused trigger
+/// record, which the owner has no vocabulary for: the evaluator hands it that
+/// evidence as caller input (`scope.evidence`), and an owner answer that
+/// cannot arise from that input is a disagreement.
+pub(super) fn owner_disposition(
+    view: &filament_observation::authority::activation::ActivationView,
+    scope: TriggerScope,
+    execution: super::activation::ExecutionDisposition,
+) -> Result<Disposition, CallFailure> {
+    state_disposition(view.activation(), view.evidence(), scope, execution)
+}
+
+/// [`owner_disposition`] over the owner's two axes.
+fn state_disposition(
+    activation: filament_observation::authority::activation::ActivationState,
+    evidence: filament_observation::authority::activation::EvidenceState,
+    scope: TriggerScope,
+    execution: super::activation::ExecutionDisposition,
+) -> Result<Disposition, CallFailure> {
+    use filament_observation::authority::activation::{ActivationState as State, EvidenceState};
+    let admitted = scope.evidence == super::trigger::TriggerEvidence::Admitted;
+    match activation {
+        State::Active => Ok(Disposition::Active),
+        State::Inactive if admitted => Ok(Disposition::Inactive),
+        State::Inactive => Err(disagreement(
+            "owner-activation-agrees",
+            "Inactive".to_owned(),
+            format!("{:?}", scope.evidence),
+        )),
+        State::Unknown => Ok(Disposition::Unknown {
+            kind: match scope.evidence {
+                super::trigger::TriggerEvidence::Missing => UnknownKind::Missing,
+                super::trigger::TriggerEvidence::Refused => UnknownKind::Refused,
+                super::trigger::TriggerEvidence::Admitted => UnknownKind::Open,
+            },
+            completeness: match evidence {
+                EvidenceState::Complete => super::activation::Completeness::Complete,
+                EvidenceState::Incomplete | EvidenceState::Contradicted => {
+                    super::activation::Completeness::Incomplete
+                }
+            },
+            execution,
+        }),
+    }
+}
+
 fn assess(
+    producer: &filament_observation::AdmittedStaticBundle,
     facts: &Facts<'_>,
     shape: &ClauseShape,
     meter: &mut Meter,
@@ -1579,6 +1722,22 @@ fn assess(
         Ok(trace) => trace,
         Err(stopped) => return Ok(*stopped),
     };
+    let owner = super::owner::admit_trace(
+        producer,
+        facts.subject.package_subject,
+        request,
+        &facts.authenticated,
+        facts.subject.occurrence,
+        &trace,
+    )?;
+    let asserted = request
+        .completeness
+        .as_ref()
+        .map_or(ProgressCompleteness::Incomplete, |record| record.state);
+    completeness_agrees(
+        owner.completeness_view(asserted, None)?.payload().state(),
+        asserted,
+    )?;
     let canonical_anchor = (0..trace.len())
         .find(|index| {
             trace
@@ -1612,6 +1771,7 @@ fn assess(
         scope,
         input,
         trace,
+        owner,
         activation_position,
         anchor_tick,
     };
@@ -1625,6 +1785,7 @@ struct Prepared {
     scope: TriggerScope,
     input: ActivationInput,
     trace: TimestampedTrace,
+    owner: super::owner::OwnerObservation,
     activation_position: usize,
     anchor_tick: u64,
 }
@@ -1643,6 +1804,7 @@ fn run_instance(
         trace,
         activation_position,
         anchor_tick,
+        owner,
     } = prepared;
     if let Some(trigger) = &request.trigger {
         call.assess(trigger.as_bytes());
@@ -1690,8 +1852,26 @@ fn run_instance(
         Err(ActivationStop::Stop(stop)) => return Ok(Outcome::stopped(incomplete_of(stop))),
     };
     let mut instances = activation.instances.clone();
+    let supplied = trace
+        .supplied_index(TemporalPosition::new(*activation_position as u64))
+        .ok_or_else(|| fault("activation-anchor-is-supplied"))?;
+    let anchor = request
+        .positions
+        .get(supplied)
+        .ok_or_else(|| fault("activation-anchor-is-supplied"))?;
+    // The owner answers for a scope that created no instance. The evaluator
+    // knows no instance exists, so an owner `Active` is a disagreement.
+    let empty_scope = || -> Result<Outcome, CallFailure> {
+        let view =
+            owner.activation_view(&facts.authenticated, request.cover, anchor, None, *scope)?;
+        empty_scope_outcome(owner_disposition(
+            view.payload(),
+            *scope,
+            request.execution,
+        )?)
+    };
     let mut outcome = match &request.trigger {
-        None => no_instance(*scope, request),
+        None => empty_scope()?,
         Some(trigger) => {
             let mut resolved = instances
                 .iter()
@@ -1709,7 +1889,7 @@ fn run_instance(
                 }
             }
             match resolved {
-                None => no_instance(*scope, request),
+                None => empty_scope()?,
                 Some(instance) => match &instance.state {
                     InstanceState::Unavailable(instance_fault) => {
                         Outcome::of(ActivationState::Unavailable).with_non_value(
@@ -1726,7 +1906,16 @@ fn run_instance(
                         )
                     }
                     InstanceState::Active => {
-                        evaluate(facts, trace, *activation_position, trigger, call)?
+                        instance_activation_agrees(
+                            facts,
+                            shape,
+                            owner,
+                            &activation.ledger,
+                            &instance,
+                            anchor,
+                            *scope,
+                        )?;
+                        evaluate(facts, trace, owner, *activation_position, trigger, call)?
                     }
                 },
             }
@@ -1748,11 +1937,72 @@ fn run_instance(
     Ok(outcome)
 }
 
+/// The owner's activation disposition of one instance the evaluator holds
+/// active, for the instance the request names only. The evaluator created the
+/// instance, so any owner answer other than `Active` is a disagreement.
+fn instance_activation_agrees(
+    facts: &Facts<'_>,
+    shape: &ClauseShape,
+    owner: &super::owner::OwnerObservation,
+    ledger: &EvidenceLedger,
+    instance: &Instance,
+    anchor: &EvidencePosition,
+    scope: TriggerScope,
+) -> Result<(), CallFailure> {
+    let request = facts.request;
+    let incoming = ledger
+        .instance(&facts.obligation, &instance.identity)
+        .map(|entry| entry.capture_facts());
+    let mut captures = Vec::new();
+    for (index, (name, declared)) in shape.capture_declarations().enumerate() {
+        let value = instance
+            .environment
+            .get(name)
+            .map(|entry| entry.value().as_bytes());
+        let fact = if let Some(value) = value {
+            serde_json::json!({"value": serde_json::from_slice::<serde_json::Value>(value)
+                .map_err(|_| fault("retained-capture-is-semantic-json"))?})
+        } else {
+            match incoming.and_then(|facts| facts.get(index)) {
+                Some(CaptureFact::Value { value, .. }) => {
+                    serde_json::json!({"value": serde_json::from_slice::<serde_json::Value>(value.as_bytes())
+                    .map_err(|_| fault("admitted-capture-is-semantic-json"))?})
+                }
+                Some(CaptureFact::Missing) | None => serde_json::json!({"fault":"missing"}),
+                Some(CaptureFact::Null) => serde_json::json!({"fault":"null"}),
+                Some(CaptureFact::WrongType) => serde_json::json!({"fault":"wrong-type"}),
+                Some(CaptureFact::Stale) => serde_json::json!({"fault":"stale"}),
+            }
+        };
+        let declared_type = fsl_semantics::model::domain_package::ValueTypeRef::Resolved(Box::new(
+            declared.clone(),
+        ))
+        .to_string();
+        captures.push(super::owner::ActivationCapture {
+            name,
+            declared_type,
+            fact,
+        });
+    }
+    let view = owner.activation_view(
+        &facts.authenticated,
+        request.cover,
+        anchor,
+        Some(super::owner::ActivationInstance {
+            identity: &instance.identity,
+            captures,
+        }),
+        scope,
+    )?;
+    instance_is_active(owner_disposition(view.payload(), scope, request.execution)?)
+}
+
 /// Assess the instance `trigger`, whose activation is established, under the
 /// finite-window evaluator (FR-501) at its one activation position.
 fn evaluate(
     facts: &Facts<'_>,
     trace: &TimestampedTrace,
+    owner: &super::owner::OwnerObservation,
     activation_position: usize,
     trigger: &SemanticTriggerIdentity,
     call: &mut CallMeter<'_>,
@@ -1761,6 +2011,7 @@ fn evaluate(
     let clause_facts = facts.subject.facts;
     let mut letters = EvidenceLetters {
         request,
+        owner,
         trace,
         bound: facts.subject.instance_bound,
         formula: facts.subject.facts.formula(),
@@ -1934,7 +2185,9 @@ fn evaluate(
             });
             outcome.settlement = None;
         }
-        WindowVerdict::ActivationIncomplete { .. } => {
+        WindowVerdict::ActivationIncomplete { .. }
+        | WindowVerdict::Inactive
+        | WindowVerdict::ActivationUnknown => {
             return Err(fault("anchored-activation-has-no-guard"));
         }
     }
@@ -2151,6 +2404,78 @@ mod tests {
     use crate::temporal::position::{PositionRefusal, TemporalPosition};
     use crate::temporal::window::WindowRefusal;
     use fsl_semantics::check::TemporalProfile;
+
+    fn invariant_of(failure: &filament_eval::CallFailure) -> String {
+        format!("{failure:?}")
+    }
+
+    /// QSL-2145 negative AC: a disagreement between the owner and the
+    /// evaluator is a fault naming both, never a preferred answer.
+    #[ix_trace_rs::trace("FR-861-AC-4", "TC-2442")]
+    #[test]
+    fn an_owner_completeness_state_that_differs_from_the_assertion_is_a_fault() {
+        use super::completeness_agrees;
+        use crate::temporal::ProgressCompleteness;
+        use filament_observation::authority::completeness::State;
+        let complete = ProgressCompleteness::Complete { through: 3 };
+        assert!(completeness_agrees(State::Complete, complete).is_ok());
+        assert!(completeness_agrees(State::Incomplete, ProgressCompleteness::Incomplete).is_ok());
+        for (owner, asserted) in [
+            (State::Incomplete, complete),
+            (State::Complete, ProgressCompleteness::Incomplete),
+        ] {
+            let failure = completeness_agrees(owner, asserted).expect_err("a disagreement");
+            let text = invariant_of(&failure);
+            assert!(text.contains("owner-completeness-agrees"), "{text}");
+            assert!(text.contains(&format!("{owner:?}")), "{text}");
+            assert!(text.contains(&format!("{asserted:?}")), "{text}");
+        }
+    }
+
+    #[ix_trace_rs::trace("FR-861-AC-4", "TC-2442")]
+    #[test]
+    fn an_owner_activation_answer_the_evaluator_cannot_have_is_a_fault() {
+        use super::super::activation::{Disposition, ExecutionDisposition};
+        use super::super::trigger::{TriggerEvidence, TriggerRecord, TriggerScope};
+        use super::{empty_scope_outcome, instance_is_active, state_disposition};
+        use crate::temporal::ProgressClosure;
+        use filament_observation::authority::activation::{ActivationState, EvidenceState};
+        let scope = |evidence| TriggerScope {
+            closure: ProgressClosure::Closed,
+            evidence,
+            record: TriggerRecord::Complete,
+        };
+        let state = |activation, evidence| {
+            state_disposition(
+                activation,
+                EvidenceState::Complete,
+                scope(evidence),
+                ExecutionDisposition::Completed,
+            )
+        };
+        // The owner agrees: inactive over admitted evidence, active, unknown.
+        assert_eq!(
+            state(ActivationState::Inactive, TriggerEvidence::Admitted).expect("inactive"),
+            Disposition::Inactive
+        );
+        // The owner says Inactive over evidence the caller reported missing.
+        let failure =
+            state(ActivationState::Inactive, TriggerEvidence::Missing).expect_err("a disagreement");
+        assert!(invariant_of(&failure).contains("owner-activation-agrees"));
+        // The owner says Active for a scope with no instance.
+        let Err(failure) = empty_scope_outcome(Disposition::Active) else {
+            panic!("a disagreement");
+        };
+        assert!(invariant_of(&failure).contains("owner-activation-agrees"));
+        // The owner says something other than Active for an active instance.
+        assert!(instance_is_active(Disposition::Active).is_ok());
+        let failure = instance_is_active(Disposition::Inactive).expect_err("a disagreement");
+        let text = invariant_of(&failure);
+        assert!(
+            text.contains("owner-activation-agrees") && text.contains("Inactive"),
+            "{text}"
+        );
+    }
 
     /// FR-516: every evaluation refusal has one stable kebab-case kind.
     #[ix_trace_rs::trace("FR-516-AC-42", "TC-1311")]

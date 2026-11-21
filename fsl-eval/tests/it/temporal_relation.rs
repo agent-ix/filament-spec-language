@@ -41,8 +41,13 @@ fn asking(env: &Env, p: u64, later: Valuation) -> EvidenceRequest {
 }
 
 fn run(env: &Env, asked: &EvidenceRequest) -> Result<EvidenceResult, CallFailure> {
-    evaluate_temporal_evidence(&env.subject(&[]), asked, &mut unlimited())
-        .map(|issued| issued.result().clone())
+    evaluate_temporal_evidence(
+        &crate::temporal_activation::producer(),
+        &env.subject(&[]),
+        asked,
+        &mut unlimited(),
+    )
+    .map(|issued| issued.result().clone())
 }
 
 fn correct(
@@ -175,8 +180,13 @@ fn a_relation_that_changes_nothing_or_has_no_ledger_is_refused_uncharged() {
     for make in [Relation::Superseding, Relation::Invalidating] {
         let same = correct(&env, p, Valuation::True, &r1, make);
         let mut meter = unlimited();
-        let refused = evaluate_temporal_evidence(&env.subject(&[]), &same, &mut meter)
-            .map(|issued| issued.result().clone());
+        let refused = evaluate_temporal_evidence(
+            &crate::temporal_activation::producer(),
+            &env.subject(&[]),
+            &same,
+            &mut meter,
+        )
+        .map(|issued| issued.result().clone());
         expect_refusal(refused, "unchanged-input");
         assert!(meter.admitted_charges().is_empty());
     }
@@ -282,12 +292,22 @@ fn equal_requests_give_equal_results_ledgers_and_charge_logs() {
     let r1 = run(&env, &asking(&env, p, Valuation::True)).expect("a result");
     let asked = correct(&env, p, Valuation::False, &r1, Relation::Superseding);
     let (mut first, mut second) = (unlimited(), unlimited());
-    let one = evaluate_temporal_evidence(&env.subject(&[]), &asked, &mut first)
-        .map(|issued| issued.result().clone())
-        .expect("a result");
-    let two = evaluate_temporal_evidence(&env.subject(&[]), &asked, &mut second)
-        .map(|issued| issued.result().clone())
-        .expect("a result");
+    let one = evaluate_temporal_evidence(
+        &crate::temporal_activation::producer(),
+        &env.subject(&[]),
+        &asked,
+        &mut first,
+    )
+    .map(|issued| issued.result().clone())
+    .expect("a result");
+    let two = evaluate_temporal_evidence(
+        &crate::temporal_activation::producer(),
+        &env.subject(&[]),
+        &asked,
+        &mut second,
+    )
+    .map(|issued| issued.result().clone())
+    .expect("a result");
     assert_eq!(one.result_identity, two.result_identity);
     assert_eq!(one.ledger, two.ledger);
     assert_eq!(first.admitted_charges(), second.admitted_charges());
@@ -504,6 +524,7 @@ fn a_lineage_stop_keeps_every_charge_an_earlier_call_made_on_the_meter() {
     };
     let mut meter = unlimited();
     let r1 = evaluate_temporal_evidence(
+        &crate::temporal_activation::producer(),
         &env.subject(&[]),
         &asking(&env, p, Valuation::True),
         &mut meter,
@@ -515,16 +536,26 @@ fn a_lineage_stop_keeps_every_charge_an_earlier_call_made_on_the_meter() {
 
     // The stopped call's own units, on a fresh meter.
     let mut alone = unlimited();
-    let stopped = evaluate_temporal_evidence(&env.subject(&[]), &stopped_request(&r1), &mut alone)
-        .map(|issued| issued.result().clone())
-        .expect("an Ok result");
+    let stopped = evaluate_temporal_evidence(
+        &crate::temporal_activation::producer(),
+        &env.subject(&[]),
+        &stopped_request(&r1),
+        &mut alone,
+    )
+    .map(|issued| issued.result().clone())
+    .expect("an Ok result");
     assert!(stopped.incomplete.is_some());
     let own = work(&alone);
 
     let before = meter.admitted_charges().len();
-    evaluate_temporal_evidence(&env.subject(&[]), &stopped_request(&r1), &mut meter)
-        .map(|issued| issued.result().clone())
-        .expect("an Ok result");
+    evaluate_temporal_evidence(
+        &crate::temporal_activation::producer(),
+        &env.subject(&[]),
+        &stopped_request(&r1),
+        &mut meter,
+    )
+    .map(|issued| issued.result().clone())
+    .expect("an Ok result");
     assert!(work(&meter) >= charged);
     assert_eq!(work(&meter), charged + own);
     assert_eq!(
@@ -536,12 +567,22 @@ fn a_lineage_stop_keeps_every_charge_an_earlier_call_made_on_the_meter() {
     let total = work(&meter);
     let mut third_alone = unlimited();
     let ask = correct(&env, p, Valuation::False, &r1, Relation::Superseding);
-    evaluate_temporal_evidence(&env.subject(&[]), &ask, &mut third_alone)
-        .map(|issued| issued.result().clone())
-        .expect("a result");
-    evaluate_temporal_evidence(&env.subject(&[]), &ask, &mut meter)
-        .map(|issued| issued.result().clone())
-        .expect("a result");
+    evaluate_temporal_evidence(
+        &crate::temporal_activation::producer(),
+        &env.subject(&[]),
+        &ask,
+        &mut third_alone,
+    )
+    .map(|issued| issued.result().clone())
+    .expect("a result");
+    evaluate_temporal_evidence(
+        &crate::temporal_activation::producer(),
+        &env.subject(&[]),
+        &ask,
+        &mut meter,
+    )
+    .map(|issued| issued.result().clone())
+    .expect("a result");
     assert_eq!(work(&meter), total + work(&third_alone));
 }
 
@@ -573,9 +614,14 @@ fn the_requests_valuations_alone_decide_an_always_clause() {
         asked.trigger = Some(id("o1"));
         asked.completeness.as_mut().expect("a record").state =
             fsl_eval::temporal::ProgressCompleteness::Complete { through: 1 };
-        evaluate_temporal_evidence(&subject, &asked, &mut unlimited())
-            .map(|issued| issued.result().clone())
-            .expect("a result")
+        evaluate_temporal_evidence(
+            &crate::temporal_activation::producer(),
+            &subject,
+            &asked,
+            &mut unlimited(),
+        )
+        .map(|issued| issued.result().clone())
+        .expect("a result")
     };
     let valued = at(Some(Valuation::True));
     assert_eq!(valued.truth, Some(Truth::True));
@@ -612,9 +658,14 @@ fn a_valuation_keyed_by_an_atom_the_formula_lacks_is_refused_before_any_charge()
     let stray = 99_u64;
     let refused = |asked: &EvidenceRequest| {
         let mut meter = unlimited();
-        let failure = evaluate_temporal_evidence(&subject, asked, &mut meter)
-            .map(|issued| issued.result().clone())
-            .expect_err("a refusal");
+        let failure = evaluate_temporal_evidence(
+            &crate::temporal_activation::producer(),
+            &subject,
+            asked,
+            &mut meter,
+        )
+        .map(|issued| issued.result().clone())
+        .expect_err("a refusal");
         assert!(meter.admitted_charges().is_empty());
         let CallFailure::Admission(failure) = failure else {
             panic!("an admission refusal, not {failure:?}");

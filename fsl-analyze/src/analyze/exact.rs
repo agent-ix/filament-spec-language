@@ -9,6 +9,7 @@
 //! independent FR-202 replay; long-run document evidence authorizes proofs.
 
 mod candidate;
+mod elapsed;
 mod long_run;
 mod measure;
 mod undefined;
@@ -339,6 +340,15 @@ fn run_timed(
     };
     let (values, policy) = match decide_bounded_event(&product, bound, &limits) {
         Ok(FhResult::Exact { values, policy }) => (values, policy),
+        Err(FhError::PolicyIterationLimit) => {
+            return settled(
+                &ExactProbBuildIssue::Limit {
+                    limit: ModelCheckLimit::ExactProbMaxPolicyIterations,
+                    value: limits.max_policy_iterations,
+                },
+                subject,
+            );
+        }
         Ok(FhResult::Bounds { .. } | FhResult::PrecisionBudget { .. }) | Err(FhError::Cycle) => {
             return not_yet();
         }
@@ -823,6 +833,15 @@ fn run(
     tamper: Option<&dyn Fn(&mut ExactProbabilityCertificate)>,
     tamper_witness: Option<&dyn Fn(&mut ProbabilisticCounterexample)>,
 ) -> EngineReport {
+    if matches!(
+        &request.claim.form,
+        ProbForm::Quantile {
+            measure: fsl_semantics::check::BoundedMeasure::Elapsed { .. },
+            ..
+        }
+    ) {
+        return elapsed::run(request, cancel, tamper);
+    }
     if request.claim.bounded_measure() {
         return measure::run(request, cancel, tamper, tamper_witness);
     }
@@ -1043,6 +1062,15 @@ fn run(
                     &ExactProbBuildIssue::PrecisionBudget {
                         lower: lower.rational(),
                         upper: upper.rational(),
+                    },
+                    subject,
+                );
+            }
+            Err(FhError::PolicyIterationLimit) => {
+                return settled(
+                    &ExactProbBuildIssue::Limit {
+                        limit: ModelCheckLimit::ExactProbMaxPolicyIterations,
+                        value: limits.max_policy_iterations,
                     },
                     subject,
                 );

@@ -1,0 +1,16 @@
+{
+  "format": "filament.state.snapshot/v1",
+  "identity": {"authority": "example", "identity": "example:lock/lock-free"},
+  "observation": "current",
+  "model": {"identity": "example/lock"},
+  "anchor": {"kind": "initialization", "name": "free"},
+  "populations": [
+    {
+      "population": "ix://example/lock/locks",
+      "complete": true,
+      "objects": [
+        {"key": "m", "type": "ix://example/lock/Lock", "fields": {"owner": {"integer": "0"}}}
+      ]
+    }
+  ]
+}

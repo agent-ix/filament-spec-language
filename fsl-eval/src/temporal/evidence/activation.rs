@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! FR-524: one temporal instance per semantic trigger or execution origin,
 //! with captures that are evaluated once and kept, a fault that names the
-//! input it found, and one of four dispositions for a scope that creates no
-//! instance. No output holds a truth value.
+//! input it found. The disposition of a scope that creates no instance is the
+//! observation owner's activation view (FR-861); no output holds a truth value.
 //!
 //! [`activate`] resolves the ordered `deliveries` (or `origins`) against the
 //! caller's [`EvidenceLedger`]. The resolution that can refuse
@@ -25,9 +25,8 @@ use super::ledger::{
 use super::limits::EvidenceCounter;
 use super::trigger::{
     CaptureFact, Evicted, ExecutionOrigin, Receipt, SemanticTriggerIdentity, TriggerDelivery,
-    TriggerEvidence, TriggerRecord, TriggerScope,
+    TriggerScope,
 };
-use crate::temporal::ledger::ProgressClosure;
 
 /// The facts of a checked clause that activation reads (FR-515 `Activation`
 /// and `captures`): how it activates and its captures in authored order.
@@ -64,6 +63,12 @@ impl ClauseShape {
     /// The captures' names, in authored order.
     pub fn capture_names(&self) -> impl Iterator<Item = &str> {
         self.captures.iter().map(|(name, _)| &**name)
+    }
+
+    pub(super) fn capture_declarations(&self) -> impl Iterator<Item = (&str, &ValueType)> {
+        self.captures
+            .iter()
+            .map(|(name, declared)| (name.as_ref(), declared))
     }
 
     fn guarded(&self) -> bool {
@@ -140,31 +145,6 @@ pub enum Disposition {
     Active,
 }
 
-/// The disposition of a trigger scope that creates no instance (FR-524
-/// "Dispositions of a scope with no instance").
-pub fn scope_disposition(scope: TriggerScope, execution: ExecutionDisposition) -> Disposition {
-    let completeness = match scope.record {
-        TriggerRecord::Complete => Completeness::Complete,
-        TriggerRecord::Incomplete => Completeness::Incomplete,
-    };
-    let unknown = |kind| Disposition::Unknown {
-        kind,
-        completeness,
-        execution,
-    };
-    match (scope.evidence, scope.closure, scope.record) {
-        (TriggerEvidence::Refused, _, _) => unknown(UnknownKind::Refused),
-        (TriggerEvidence::Missing, _, _) => unknown(UnknownKind::Missing),
-        (TriggerEvidence::Admitted, ProgressClosure::Closed, TriggerRecord::Complete) => {
-            Disposition::Inactive
-        }
-        (TriggerEvidence::Admitted, ProgressClosure::Open, _)
-        | (TriggerEvidence::Admitted, ProgressClosure::Closed, TriggerRecord::Incomplete) => {
-            unknown(UnknownKind::Open)
-        }
-    }
-}
-
 /// How an input of an activation faulted (FR-516 `non_value.kind`).
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum FaultKind {
@@ -221,8 +201,6 @@ pub struct Instance {
 /// The result of [`activate`].
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Activation {
-    /// The disposition.
-    pub disposition: Disposition,
     /// The instances the lists resolved, in order of first appearance.
     pub instances: Vec<Instance>,
     /// The identities whose deliveries had a false guard: no instance.
@@ -347,7 +325,7 @@ struct Arrival<'a> {
 
 /// Create one instance per distinct identity of `input`'s deliveries (or
 /// origins) over `clause`, evaluating each new instance's captures once at
-/// the anchor, and report the faults and the disposition.
+/// the anchor, and report the faults.
 ///
 /// # Errors
 ///
@@ -441,6 +419,7 @@ pub fn activate(
                     arrival.payload.clone(),
                     arrival.receipt.cloned(),
                     fault,
+                    arrival.captures.to_vec(),
                 );
                 let instance = instance_of(arrival.identity, &entry, None);
                 ledger = ledger.with_instance(obligation, arrival.identity, entry);
@@ -455,13 +434,7 @@ pub fn activate(
             }
         }
     }
-    let disposition = if instances.is_empty() {
-        scope_disposition(input.scope, input.execution)
-    } else {
-        Disposition::Active
-    };
     Ok(Activation {
-        disposition,
         instances,
         guard_false,
         ledger,
@@ -580,5 +553,6 @@ fn establish(
         arrival.payload.clone(),
         arrival.receipt.cloned(),
         CaptureEnvironment::new(entries),
+        arrival.captures.to_vec(),
     )))
 }

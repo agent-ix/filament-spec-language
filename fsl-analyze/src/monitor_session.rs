@@ -27,10 +27,10 @@ use fsl_replay::spine::{
     LedgerReadError, PackageAuthentication, ProgressAssertion, ProgressClosure,
     ProgressCompleteness, ProgressContradiction, ProgressLedger, ProgressLimitReached,
     ProgressLowerBoundary, ProgressRefusal, ProgressValue, SpineLimits, TemporalVerdict,
-    TimestampedCover, TimestampedObservation, TimestampedOrderKey, TimestampedWindow, TraceBinding,
-    TraceInput,
+    TimestampedCover, TimestampedMissingValuation, TimestampedObservation, TimestampedOrderKey,
+    TimestampedWindow, TraceBinding, TraceInput,
 };
-use fsl_semantics::check::{TemporalClauseNode, TemporalProfile};
+use fsl_semantics::check::{FormulaNode, TemporalClauseNode, TemporalProfile};
 use fsl_semantics::model::intake::PackageInput;
 use fsl_semantics::model::observation::{
     admit_record_sample, document_reference, AdmissionFailure,
@@ -130,6 +130,8 @@ pub struct MonitorObservation<'a> {
     pub stamp: Option<MonitorStamp>,
     /// The order key, where the kind allows one.
     pub order_key: Option<TimestampedOrderKey>,
+    /// FR-641 atom absences at this observation's zero-based trace index.
+    pub missing: &'a [TimestampedMissingValuation],
 }
 
 /// One clause's status after a step.
@@ -580,6 +582,25 @@ impl<'a> MonitorSession<'a> {
         observation_in: &MonitorObservation<'o>,
     ) -> Result<AdmittedPosition<'o>, Failure> {
         let kind = self.request.kind;
+        for missing in observation_in.missing {
+            if kind != MonitorTraceKind::Timestamped || missing.position != self.seen {
+                return Err(observation("missing", "invalid-value"));
+            }
+            let atom = usize::try_from(missing.atom)
+                .map_err(|_| observation("missing", "invalid-value"))?;
+            for clause in &self.request.clauses {
+                if !matches!(
+                    self.node(&clause.name)?
+                        .clause()
+                        .formula()
+                        .nodes()
+                        .get(atom),
+                    Some(FormulaNode::Holds { .. } | FormulaNode::Aggregate { .. })
+                ) {
+                    return Err(observation("missing", "invalid-value"));
+                }
+            }
+        }
         let stamp = match (&observation_in.stamp, kind) {
             (Some(MonitorStamp::Tick(tick)), MonitorTraceKind::Timestamped) => *tick,
             (None, MonitorTraceKind::Timestamped) => {
@@ -665,6 +686,11 @@ impl<'a> MonitorSession<'a> {
             stamp,
             order_key: observation_in.order_key.clone(),
             value,
+            absent: observation_in
+                .missing
+                .iter()
+                .map(|entry| entry.atom)
+                .collect(),
         })
     }
 
@@ -684,9 +710,10 @@ impl<'a> MonitorSession<'a> {
         let position = self.admit_observation(&observation)?;
         let stamp = position.stamp;
         let seen = self.seen.saturating_add(1);
-        let (priors, ledger) = self.advance(seen, self.assertion, cancel, |state, cancel| {
-            state.advance(position.clone(), cancel)
-        })?;
+        let (priors, ledger) =
+            self.advance(seen, self.assertion, false, cancel, |state, cancel| {
+                state.advance(position.clone(), cancel)
+            })?;
         self.seen = seen;
         self.newest = Some(self.newest.map_or(stamp, |newest| newest.max(stamp)));
         Ok(self.commit(priors, ledger))
@@ -730,7 +757,7 @@ impl<'a> MonitorSession<'a> {
             )));
         }
         let (priors, ledger) =
-            self.advance(self.seen, Some(progress), cancel, |state, cancel| {
+            self.advance(self.seen, Some(progress), true, cancel, |state, cancel| {
                 state.assert_progress(&progress, cancel)
             })?;
         self.assertion = Some(progress);
@@ -746,6 +773,7 @@ impl<'a> MonitorSession<'a> {
         &mut self,
         seen: u64,
         assertion: Option<ProgressAssertion>,
+        retain_ledger: bool,
         cancel: &Cancel,
         call: F,
     ) -> Result<(Vec<Prior<'a>>, Option<ProgressLedger>), Failure>
@@ -754,7 +782,13 @@ impl<'a> MonitorSession<'a> {
     {
         let mut priors = Vec::with_capacity(self.slots.len());
         let mut ledger = self.ledger.clone();
-        match self.advance_slots((seen, assertion), cancel, &call, &mut priors, &mut ledger) {
+        match self.advance_slots(
+            (seen, assertion, retain_ledger),
+            cancel,
+            &call,
+            &mut priors,
+            &mut ledger,
+        ) {
             Ok(()) => Ok((priors, ledger)),
             Err(failure) => {
                 self.rollback(priors);
@@ -786,7 +820,7 @@ impl<'a> MonitorSession<'a> {
     /// members in `priors` before it changes the slot.
     fn advance_slots<F>(
         &mut self,
-        (seen, assertion): (u64, Option<ProgressAssertion>),
+        (seen, assertion, retain_ledger): (u64, Option<ProgressAssertion>, bool),
         cancel: &Cancel,
         call: &F,
         priors: &mut Vec<Prior<'a>>,
@@ -821,8 +855,12 @@ impl<'a> MonitorSession<'a> {
             if seen == 0 {
                 continue;
             }
-            if let Some(updated) = &advanced.report.ledger {
-                *ledger = Some(updated.clone());
+            // An observation reports the current prefix but asserts no new
+            // watermark. Only the caller's progress assertion is retained.
+            if retain_ledger {
+                if let Some(updated) = &advanced.report.ledger {
+                    *ledger = Some(updated.clone());
+                }
             }
             slot.record = record_of(
                 self.package,

@@ -114,6 +114,7 @@ mod protocol_item_bounds;
 mod protocol_outcomes;
 mod protocol_projection;
 mod protocol_realizability;
+mod hidden_choice_source;
 mod protocol_recording;
 mod protocol_replay_mode;
 mod protocol_roles;

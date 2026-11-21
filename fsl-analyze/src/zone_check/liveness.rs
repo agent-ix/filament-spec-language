@@ -720,8 +720,8 @@ impl Run<'_, '_, '_> {
                 let Some(read_zone) = self.read_at(&zero, &read)? else {
                     continue;
                 };
-                for (cell, piece) in self.split(&mut live.cells, &state, &read_zone)? {
-                    let Some(zone) = self.close(&mut live.cells, &state, piece, &cell)? else {
+                for (cell, piece) in self.split(&mut live.cells, &state, &[], &read_zone)? {
+                    let Some(zone) = self.close(&mut live.cells, &state, &[], piece, &cell)? else {
                         continue;
                     };
                     let vertex = LiveVertex {
@@ -836,8 +836,9 @@ impl Run<'_, '_, '_> {
                         continue;
                     };
                     let index = live.product.read(&read);
-                    for (cell, piece) in self.split(&mut live.cells, &post, &read_zone)? {
-                        let Some(entered) = self.close(&mut live.cells, &post, piece, &cell)?
+                    for (cell, piece) in self.split(&mut live.cells, &post, &[], &read_zone)? {
+                        let Some(entered) =
+                            self.close(&mut live.cells, &post, &[], piece, &cell)?
                         else {
                             continue;
                         };
@@ -867,11 +868,11 @@ impl Run<'_, '_, '_> {
             let mut later = zone.clone();
             later.up();
             constrain_at(&mut later, &invariants, &scale)?;
-            for (cell, piece) in self.split(&mut live.cells, &state, &later)? {
+            for (cell, piece) in self.split(&mut live.cells, &state, &[], &later)? {
                 if !next_cell(&vertex.cell, &cell) {
                     continue;
                 }
-                let Some(entered) = self.close(&mut live.cells, &state, piece, &cell)? else {
+                let Some(entered) = self.close(&mut live.cells, &state, &[], piece, &cell)? else {
                     continue;
                 };
                 let next = LiveVertex {
@@ -892,7 +893,9 @@ impl Run<'_, '_, '_> {
             reset.constrain(0, z, Bound::le(-scale.clone()))?;
             if !reset.is_empty() {
                 reset.reset(z, &BigInt::from(0))?;
-                if let Some(entered) = self.close(&mut live.cells, &state, reset, &vertex.cell)? {
+                if let Some(entered) =
+                    self.close(&mut live.cells, &state, &[], reset, &vertex.cell)?
+                {
                     let next = LiveVertex {
                         zone: entered,
                         positioned: false,
@@ -920,7 +923,8 @@ impl Run<'_, '_, '_> {
             let Some(read_zone) = self.read_at(&vertex.zone, &read)? else {
                 continue;
             };
-            let Some(zone) = self.close(&mut live.cells, &vertex.state, read_zone, &vertex.cell)?
+            let Some(zone) =
+                self.close(&mut live.cells, &vertex.state, &[], read_zone, &vertex.cell)?
             else {
                 continue;
             };
@@ -1039,14 +1043,18 @@ impl Run<'_, '_, '_> {
         Ok(atoms)
     }
 
-    /// `zone` split into its cells at `state`, in sign order.
+    /// `zone` split into its cells at `state`, in sign order: by the cell
+    /// atoms of `state`, then by `extra` (a timed abstract side's guard
+    /// constants at the position).
     pub(super) fn split(
         &mut self,
         cells: &mut Cells,
         state: &ModelSimState,
+        extra: &[CellAtom],
         zone: &Dbm,
     ) -> Result<Vec<(Vec<Sign>, Dbm)>, Halt> {
-        let atoms = self.atoms_of(cells, state)?;
+        let mut atoms = self.atoms_of(cells, state)?;
+        atoms.extend_from_slice(extra);
         let mut pieces = vec![(Vec::new(), zone.clone())];
         for atom in &atoms {
             let mut split = Vec::with_capacity(pieces.len() * 3);
@@ -1072,10 +1080,12 @@ impl Run<'_, '_, '_> {
         &mut self,
         cells: &mut Cells,
         state: &ModelSimState,
+        extra: &[CellAtom],
         mut piece: Dbm,
         cell: &[Sign],
     ) -> Result<Option<Dbm>, Halt> {
-        let atoms = self.atoms_of(cells, state)?;
+        let mut atoms = self.atoms_of(cells, state)?;
+        atoms.extend_from_slice(extra);
         let invariants = self.timed(self.timed.invariants(state))?;
         let hold = |zone: &mut Dbm| -> Result<(), Halt> {
             constrain_at(zone, &invariants, &self.scale)?;
@@ -1290,7 +1300,7 @@ impl Run<'_, '_, '_> {
                     invariants,
                     elapses,
                     target: self.timed(self.timed.invariants(&post))?,
-                    before: self.cell_zone(&mut live.cells, &source.state, &source.cell)?,
+                    before: self.cell_zone(&mut live.cells, &source.state, &[], &source.cell)?,
                     after: None,
                     auxiliary_carries: Vec::new(),
                     auxiliary_resets: Vec::new(),
@@ -1299,7 +1309,7 @@ impl Run<'_, '_, '_> {
                         // known.
                         None
                     } else {
-                        self.cell_zone(&mut live.cells, &post, &target.cell)?
+                        self.cell_zone(&mut live.cells, &post, &[], &target.cell)?
                     },
                     step: Some((step, part)),
                     position,
@@ -1316,7 +1326,7 @@ impl Run<'_, '_, '_> {
                 after: None,
                 auxiliary_carries: Vec::new(),
                 auxiliary_resets: Vec::new(),
-                piece: self.cell_zone(&mut live.cells, &target.state, &target.cell)?,
+                piece: self.cell_zone(&mut live.cells, &target.state, &[], &target.cell)?,
                 step: None,
                 position: Vec::new(),
                 position_resets: Vec::new(),
@@ -1367,13 +1377,19 @@ impl Run<'_, '_, '_> {
         &mut self,
         cells: &mut Cells,
         state: &ModelSimState,
+        extra: &[CellAtom],
         cell: &[Sign],
     ) -> Result<Option<Dbm>, Halt> {
-        let atoms = self.atoms_of(cells, state)?;
+        let mut atoms = self.atoms_of(cells, state)?;
+        atoms.extend_from_slice(extra);
         if atoms.is_empty() {
             return Ok(None);
         }
-        let mut zone = Dbm::universe(self.timed.places().len() + 1);
+        let width = atoms
+            .iter()
+            .map(|(clock, _)| *clock + 1)
+            .fold(self.timed.places().len() + 1, usize::max);
+        let mut zone = Dbm::universe(width);
         for (atom, sign) in atoms.iter().zip(cell) {
             within(&mut zone, atom, *sign)?;
         }

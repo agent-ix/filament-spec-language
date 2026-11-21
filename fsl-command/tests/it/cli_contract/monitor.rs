@@ -369,3 +369,198 @@ fn a_records_file_gives_the_events_of_the_same_stream() {
         assert_eq!(summary["clauses"], stream_summary["clauses"], "{summary}");
     }
 }
+
+const QSL_2750_SOURCE: &str = r#"language "ix:native" edition "1-draft";
+profile w = "filament.temporal.timestamped-event.finite-window/v1";
+record Response { latency: Quantity<ms>; }
+dimension Time;
+unit s : Time = rational(1, 1);
+unit ms : Time = rational(1, 1000) * s;
+temporal MissingQuantile using w over (r: Response) clock "plant-ms" on origin {
+    always[0,300000] (quantile 0.95 of r.latency over past[0 ms,300 s] <= 5 ms)
+}
+"#;
+
+fn qsl_2750_case() -> (Case, std::path::PathBuf, Value) {
+    let mut request = request();
+    request["request"]["clauses"] = json!([{"name":"MissingQuantile"}]);
+    let clock = json!({"kind":"timestamped_event","timestamp_unit":"ms"});
+    request["request"]["clocks"] = json!({"plant-ms":clock});
+    request["request"]["trace"] = json!({"kind":"timestamped","lower_boundary":"authoritative-origin",
+        "binding":{"profile":"filament.temporal.timestamped-event.finite-window/v1",
+            "clock":"plant-ms","parameters":clock}});
+    let (case, path) = case_with(QSL_2750_SOURCE.as_bytes(), &request);
+    (case, path, request)
+}
+
+fn qsl_2750_records(missing: bool, empty: bool) -> Vec<Value> {
+    let mut records = Vec::new();
+    for index in 0_u64..20 {
+        let value = match index {
+            18 => 6,
+            19 => 7,
+            _ => 1,
+        };
+        let mut record = json!({"observation":{"sample":{"latency":{"kind":"quantity","unit":"ms",
+            "magnitude":{"kind":"rational","numerator":value.to_string(),"denominator":"1"}}}},"stamp":index});
+        if missing && index == 18 {
+            // The only aggregate is node 1, below the outer always node,
+            // as in the native-run fixture; the batch request checks it too.
+            record["missing"] = json!([{"position":18,"atom":1}]);
+        } else if empty {
+            record["missing"] = json!([]);
+        }
+        records.push(record);
+    }
+    records.push(json!({"progress":{"watermark":300000,
+        "completeness":{"complete":{"through":300000}},"scope":"closed","execution":"closed"}}));
+    records.push(json!({"end":true}));
+    records
+}
+
+fn qsl_2750_lines(records: &[Value]) -> Vec<u8> {
+    records
+        .iter()
+        .map(|record| format!("{record}\n"))
+        .collect::<String>()
+        .into_bytes()
+}
+
+#[test]
+#[trace("FR-644-AC-13", "FR-643-AC-13", "FR-194-AC-17")]
+fn qsl_2750_stream_missing_window_matches_the_real_batch_run() {
+    let (case, path, request) = qsl_2750_case();
+    let records = qsl_2750_records(true, false);
+    let stream = monitor(&path, &qsl_2750_lines(&records));
+    let (events, summary) = stream.completed(11);
+    assert_eq!(summary["refused"], 0, "{summary}");
+    let mut batch = request.clone();
+    batch["format"] = json!("native-run/1");
+    batch["request"].as_object_mut().unwrap().remove("clauses");
+    batch["request"].as_object_mut().unwrap().remove("trace");
+    batch["request"]["clause"] = json!({"selection":{"temporal":{"name":"MissingQuantile",
+        "trace":{"timestamped":{"observations":records.iter().take(20).map(|record|
+            json!({"position":record["observation"],"stamp":record["stamp"]})).collect::<Vec<_>>(),
+            "progress":records[20]["progress"],"lower_boundary":"authoritative-origin",
+            "binding":request["request"]["trace"]["binding"],"missing":[{"position":18,"atom":1}]}}}},
+        "observations":{}});
+    let batch_path = case.json("batch-run.json", &batch);
+    let batch = super::run(
+        &batch_path,
+        fsl_command::command::RunLimits::default(),
+        &fsl_command::command::RequestOverrides::default(),
+    );
+    let batch = batch.expect("monitor", "indeterminate", 11);
+    assert_eq!(
+        batch["items"][0]["cause"]["kind"], "missing-valuation",
+        "{batch}"
+    );
+    assert_eq!(batch["items"][0]["cause"]["position"], 18, "{batch}");
+    let report = &summary["clauses"][0]["disposition"];
+    assert!(report.to_string().contains("missing-valuation"), "{report}");
+    assert!(
+        events
+            .iter()
+            .any(|event| event["category"] == "indeterminate"),
+        "{events:?}"
+    );
+    let omitted = monitor(&path, &qsl_2750_lines(&qsl_2750_records(false, false)));
+    let empty = monitor(&path, &qsl_2750_lines(&qsl_2750_records(false, true)));
+    omitted.completed(10);
+    empty.completed(10);
+    assert_eq!(omitted.bytes(), empty.bytes());
+}
+
+#[test]
+#[trace("FR-644-AC-14")]
+fn qsl_2750_malformed_missing_entries_are_refused_atomically() {
+    let (_case, path, _) = qsl_2750_case();
+    let records = qsl_2750_records(false, false);
+    let clean = monitor(&path, &qsl_2750_lines(&records));
+    let (clean_events, clean_summary) = clean.completed(10);
+    let bad = [
+        "null",
+        "{}",
+        "[{}]",
+        "[{\"position\":1}]",
+        "[{\"position\":1,\"atom\":1,\"extra\":0}]",
+        "[{\"position\":1,\"atom\":1,\"atom\":1}]",
+        "[{\"position\":null,\"atom\":1}]",
+        "[{\"position\":1,\"atom\":null}]",
+        "[{\"position\":-1,\"atom\":1}]",
+        "[{\"position\":1,\"atom\":-1}]",
+        "[{\"position\":1.5,\"atom\":1}]",
+        "[{\"position\":1,\"atom\":1.5}]",
+        "[{\"position\":\"1\",\"atom\":1}]",
+        "[{\"position\":1,\"atom\":\"1\"}]",
+        "[{\"position\":18446744073709551616,\"atom\":1}]",
+        "[{\"position\":1,\"atom\":18446744073709551616}]",
+    ];
+    let mut lines = qsl_2750_lines(&records[..1]);
+    let mut malformed = Vec::new();
+    for missing in bad {
+        malformed.push(format!(
+            "{{\"observation\":{},\"stamp\":1,\"missing\":{missing}}}",
+            records[1]["observation"]
+        ));
+    }
+    malformed.push(format!(
+        "{{\"observation\":{},\"stamp\":1,\"missing\":[],\"missing\":[]}}",
+        records[1]["observation"]
+    ));
+    malformed.push("{\"progress\":{},\"missing\":[]}".to_owned());
+    for line in &malformed {
+        lines.extend_from_slice(format!("{line}\n").as_bytes());
+    }
+    lines.extend_from_slice(&qsl_2750_lines(&records[1..]));
+    let stream = monitor(&path, &lines);
+    let (events, summary) = stream.completed(10);
+    let refusals = events
+        .iter()
+        .filter(|event| event["category"] == "refusal")
+        .collect::<Vec<_>>();
+    assert_eq!(refusals.len(), malformed.len(), "{events:?}");
+    assert_eq!(summary["refused"], u64::try_from(malformed.len()).unwrap());
+    for refusal in refusals {
+        let disposition = &refusal["disposition"];
+        assert_eq!(disposition["stage"], "request");
+        assert_eq!(disposition["cause"], "invalid-request");
+        assert!(
+            matches!(disposition["member"].as_str(),Some(member) if member.starts_with("missing") || member=="atom"),
+            "{disposition}"
+        );
+    }
+    let strip_record = |event: &Value| {
+        let mut value = event.clone();
+        value.as_object_mut().unwrap().remove("record");
+        value
+    };
+    assert_eq!(
+        events
+            .iter()
+            .filter(|event| event["category"] != "refusal")
+            .map(strip_record)
+            .collect::<Vec<_>>(),
+        clean_events.iter().map(strip_record).collect::<Vec<_>>()
+    );
+    assert_eq!(summary["clauses"], clean_summary["clauses"]);
+    assert_eq!(summary["ledger"], clean_summary["ledger"]);
+}
+
+#[test]
+#[trace("FR-644-AC-14")]
+fn qsl_2750_empty_missing_is_refused_on_other_trace_kinds() {
+    let (_case, path) = load();
+    let mut with_member = json!({"observation":{"sample":{"bins":{"integer":"2"}}},"missing":[]})
+        .to_string()
+        .into_bytes();
+    with_member.push(b'\n');
+    with_member.extend(records(&[2, 4, 9], true));
+    let stream = monitor(&path, &with_member);
+    let (events, summary) = stream.completed(10);
+    assert_eq!(summary["refused"], 1);
+    assert_eq!(events[0]["disposition"]["member"], "missing");
+    let clean = monitor(&path, &records(&[2, 4, 9], true));
+    let (_, clean_summary) = clean.completed(10);
+    assert_eq!(summary["clauses"], clean_summary["clauses"]);
+}

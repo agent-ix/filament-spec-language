@@ -37,7 +37,8 @@ pub const IDENTITIES_FORMAT: &str = "filament.checked-handoff.identities/5";
 
 /// A checked package as a bytes-only consumer holds it (FR-531).
 ///
-/// `BarePackage::new` is the one constructor; nothing builds one from bytes,
+/// `BarePackage::new` is the one constructor (`with_canonical_bytes` attaches
+/// the bytes the package was already read from); nothing builds one from bytes,
 /// from a decoded graph or from a term (FR-531-AC-2):
 ///
 /// ```compile_fail,E0599
@@ -65,6 +66,10 @@ pub const IDENTITIES_FORMAT: &str = "filament.checked-handoff.identities/5";
 pub struct BarePackage<'p> {
     dependency_views: Vec<BarePackage<'p>>,
     package: &'p CheckedPackageV2,
+    /// The exact bytes that admitted `package`, when this value was built
+    /// from a reader-backed handoff. A bare package made directly from a
+    /// checked object has no byte witness.
+    canonical_bytes: Option<&'p [u8]>,
     /// The package's identity, its admitted `name()` (FR-940 `identity`).
     identity: fsl_semantics::library::LibraryName,
     supply: Option<BareSupply<'p>>,
@@ -76,7 +81,7 @@ pub struct BarePackage<'p> {
     equality: crate::reader_protocol_projection::EqualityDecisions,
     /// The source-owned units' definitions the supply's equality rows select
     /// (FR-533), empty when the rows select none.
-    pub(crate) units: filament_semantic_value::quantity::UnitTable,
+    pub(crate) units: crate::bare_units::UnitDefinitions,
     /// The identity an observation this package admits carries (FR-533
     /// "Observation admission"); one per value, never copied.
     owner: std::sync::Arc<()>,
@@ -109,11 +114,12 @@ impl<'p> BarePackage<'p> {
             dependency_views: Vec::new(),
             identity: fsl_semantics::library::LibraryName::of_package(package),
             package,
+            canonical_bytes: None,
             supply: None,
             joined: None,
             projections: BTreeMap::new(),
             equality: BTreeMap::new(),
-            units: filament_semantic_value::quantity::UnitTable::default(),
+            units: crate::bare_units::UnitDefinitions::default(),
             owner: std::sync::Arc::new(()),
             objects: Ok(Vec::new()),
             enum_members: filament_semantic_value::enumeration::EnumMemberIndex::default(),
@@ -148,6 +154,69 @@ impl<'p> BarePackage<'p> {
     /// Authenticated package views of the unique library closure.
     pub fn dependency_views(&self) -> &[BarePackage<'p>] {
         &self.dependency_views
+    }
+
+    /// This package with the exact canonical bytes it was read from.
+    ///
+    /// The caller passes the bytes the strict reader admitted `package` from
+    /// (a reader-backed value has them from
+    /// `AdmittedPackageRead::canonical_bytes`). FR-531-AC-2 forbids a
+    /// `BarePackage` signature that names `AdmittedPackageRead`, so this
+    /// takes the slice, not the read.
+    ///
+    /// The bytes are not trusted blindly: they attach only when their own
+    /// `name` and `contract_version` members are this package's. The package
+    /// holds no content digest to compare, so that is the whole check; bytes
+    /// that name another package stay unattached and the owner call refuses
+    /// for want of package bytes.
+    #[must_use]
+    pub fn with_canonical_bytes(mut self, bytes: &'p [u8]) -> Self {
+        #[derive(serde::Deserialize)]
+        struct Head<'a> {
+            #[serde(borrow, default)]
+            name: Option<&'a str>,
+            #[serde(borrow, default)]
+            contract_version: Option<&'a str>,
+        }
+        let names_this_package = serde_json::from_slice::<Head<'_>>(bytes).is_ok_and(|head| {
+            head.name == Some(self.package.name())
+                && head.contract_version == Some(crate::CHECKED_PACKAGE_V2)
+        });
+        if names_this_package {
+            self.canonical_bytes = Some(bytes);
+        }
+        self
+    }
+
+    /// Whether the package holds a unit node declared under the name `unit`.
+    /// A unit the package declares but `time_unit_scale` cannot read here has a
+    /// real factor this route lacks, which a caller must not replace by a count.
+    #[must_use]
+    pub fn declares_unit(&self, unit: &str) -> bool {
+        self.package.resolved_graph().nodes.iter().any(|node| {
+            node.node_tag.as_ref() == "scalar_type"
+                && node.semantic_form.as_ref() == "unit"
+                && node.declaration.as_ref().is_some_and(|declaration| {
+                    declaration
+                        .qualified_name
+                        .last()
+                        .is_some_and(|last| last.as_ref() == unit)
+                })
+        })
+    }
+
+    /// The exact scale of the time unit `unit` to seconds, read from the
+    /// package's own source-owned unit definitions, when it holds one: a
+    /// declared unit of the `Time` dimension named `unit` with no offset.
+    #[must_use]
+    pub fn time_unit_scale(&self, unit: &str) -> Option<filament_exact::Rational> {
+        self.units.time_unit_scale(unit)
+    }
+
+    /// The exact canonical bytes admitted for this package, when available.
+    /// A value constructed with [`Self::new`] has no retained input bytes.
+    pub fn canonical_bytes(&self) -> Option<&'p [u8]> {
+        self.canonical_bytes
     }
 
     /// The admitted package's identity (FR-940 `identity`).
@@ -235,11 +304,11 @@ impl<'p> BarePackage<'p> {
     ) -> Result<
         (
             Result<SelectedExactIdentities, IdentityWitnessRefusal>,
-            filament_semantic_value::quantity::UnitTable,
+            crate::bare_units::UnitDefinitions,
         ),
         crate::NativeJoinFailure,
     > {
-        let none = filament_semantic_value::quantity::UnitTable::default();
+        let none = crate::bare_units::UnitDefinitions::default();
         // Another package's rows are the equality stage's refusal to report.
         let Some(equality) = equality.filter(|equality| {
             equality.package_name() == self.package.name() && !equality.source_units().is_empty()

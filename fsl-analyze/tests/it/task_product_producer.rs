@@ -9,8 +9,8 @@ use std::collections::BTreeSet;
 
 use filament_exact::Cancel;
 use fsl_analyze::zone_check::{
-    explore_task_symbolic, read_back_unchanged, task_product_certificate, SymbolicGraph,
-    SymbolicStop,
+    explore_task_symbolic, no_release_task_product_certificate, read_back_unchanged,
+    task_product_certificate, SymbolicGraph, SymbolicStop, ZoneCheckLimits,
 };
 use fsl_eval::simulation::model::{TaskAutomaton, TaskProductSystem, TimedSystem};
 use fsl_foundation::source::provenance::OccurrenceKey;
@@ -22,9 +22,301 @@ use ix_trace_rs::trace;
 use serde_json::{json, Value};
 
 use crate::task_product_certificate::{
-    claim_of, over_utilised, preempting, rejected, solo, tied, verdict, Certificate,
+    claim_of, no_release, over_utilised, preempting, rejected, releasable, solo, tied, verdict,
+    Certificate,
 };
-use crate::timed_world::World;
+use crate::timed_world::{document, world, World, DENSE};
+use crate::zone_search::TIMED;
+
+fn no_release_emitted(
+    world: &World,
+    limits: ZoneCheckLimits,
+    cancel: &Cancel,
+) -> Result<Option<Certificate>, fsl_analyze::zone_check::ZoneCheckRefusal> {
+    let model = world.system();
+    let timed = TimedSystem::new(&model, "M").expect("a timed source");
+    let product = TaskProductSystem::new(timed, "NFp").expect("a task product");
+    no_release_task_product_certificate(
+        &product,
+        claim_of(world, "NFp").occurrence().expect("occurrence"),
+        limits,
+        cancel,
+    )
+}
+
+fn unreachable_release() -> World {
+    world(&document(&[], &[("fire_a", &["phase"])]), TIMED, &format!(
+        "{DENSE}taskset N {{ task a periodic 4 ms deadline 4 ms bcet 1 ms wcet 2 ms priority 1 lo; }}\n\
+         schedulable NFp on N under fixed_priority;\n\
+         pre Blocked using v on M::Call::fire_a {{ self.phase = 1 }}\n\
+         post Fire using v on M::Call::fire_a {{ self.phase = pre(self.phase) }}\n\
+         release N.a on M::Call::fire_a;\n"
+    ))
+}
+
+fn release_after_enable() -> World {
+    world(&document(&[], &[("fire_a", &["phase"]), ("enable", &["phase"])]), TIMED, &format!(
+        "{DENSE}taskset N {{ task a periodic 4 ms deadline 4 ms bcet 1 ms wcet 2 ms priority 1 lo; }}\n\
+         schedulable NFp on N under fixed_priority;\n\
+         pre Blocked using v on M::Call::fire_a {{ self.phase = 1 }}\n\
+         post Fire using v on M::Call::fire_a {{ self.phase = pre(self.phase) }}\n\
+         post Enable using v on M::Call::enable {{ self.phase = 1 }}\n\
+         release N.a on M::Call::fire_a;\n"
+    ))
+}
+
+fn clockful_unreachable_release() -> World {
+    world(&document(&["x"], &[("fire_a", &["phase"]), ("tick", &["phase", "x"])]), TIMED, &format!(
+        "{DENSE}taskset N {{ task a periodic 4 ms deadline 4 ms bcet 1 ms wcet 2 ms priority 1 lo; }}\n\
+         schedulable NFp on N under fixed_priority;\n\
+         pre Blocked using v on M::Call::fire_a {{ self.phase = 1 }}\n\
+         post Fire using v on M::Call::fire_a {{ self.phase = pre(self.phase) }}\n\
+         pre Tick using v on M::Call::tick {{ (self.x >= 1 ms and self.x <= 2 ms) or self.x >= 3 ms }}\n\
+         post Ticked using v on M::Call::tick {{ self.phase = pre(self.phase) and self.x = 0 ms }}\n\
+         release N.a on M::Call::fire_a;\n"
+    ))
+}
+
+/// The original clock-place encoding and every source guard part survive
+/// transport; the independent checker accepts only the genuine source proof.
+#[trace("FSpec-TC-371", "FSpec-FR-418-AC-14")]
+#[test]
+fn clockful_no_release_transport_preserves_context_and_rejects_tampering() {
+    use fsl_analyze::zone_check::read_back_unchanged_with_source;
+    let world = clockful_unreachable_release();
+    let model = world.system();
+    let timed = TimedSystem::new(&model, "M").expect("timed source");
+    let product = TaskProductSystem::new(timed, "NFp").expect("task product");
+    let built = no_release_task_product_certificate(
+        &product,
+        claim_of(&world, "NFp").occurrence().expect("occurrence"),
+        ZoneCheckLimits::default(),
+        &Cancel::new(),
+    )
+    .expect("source closes")
+    .expect("no reachable release");
+    assert!(!built.lu_bounds.lower.is_empty());
+    assert!(built.edges.iter().any(|edge| edge.part == Some(0)));
+    assert!(
+        built.edges.iter().any(|edge| edge.part == Some(1)),
+        "both convex source guard parts are retained"
+    );
+    let (wire, read) =
+        read_back_unchanged_with_source(&built, json!({}), &built.obligation, product.source())
+            .expect("genuine source metadata reads back unchanged");
+    assert_eq!(
+        wire["bounds"][0]["clock"],
+        product
+            .source()
+            .clock_place_identity(0)
+            .expect("original clock identity")
+    );
+    assert_eq!(read.lu_bounds, built.lu_bounds);
+    assert_eq!(
+        verdict(&world, "NFp", &read, CertificateCheckLimits::default()),
+        Ok(ZoneCertificateVerdict::Accepted)
+    );
+    let decode = |wire: &Value| {
+        ZoneCertificate::from_wire_with_source(wire, built.obligation.clone(), product.source())
+            .expect("mutant retains wire shape")
+            .0
+    };
+    let mut lu = wire.clone();
+    for row in lu["bounds"].as_array_mut().expect("bounds") {
+        row["lower"] = json!({"bound":"-100","strict":false});
+        row["upper"] = json!({"bound":"-100","strict":false});
+    }
+    assert_eq!(
+        rejected(verdict(
+            &world,
+            "NFp",
+            &decode(&lu),
+            CertificateCheckLimits::default()
+        ))
+        .0,
+        CertificateRule::Malformed
+    );
+    let mut wrong_clock = wire.clone();
+    wrong_clock["bounds"][0]["clock"] = json!("not-the-source-clock");
+    assert!(ZoneCertificate::from_wire_with_source(
+        &wrong_clock,
+        built.obligation.clone(),
+        product.source()
+    )
+    .is_err());
+    let mut fragment = wire.clone();
+    fragment["edges"][0]["part"] = json!(999);
+    assert!(matches!(
+        verdict(
+            &world,
+            "NFp",
+            &decode(&fragment),
+            CertificateCheckLimits::default()
+        ),
+        Ok(ZoneCertificateVerdict::Rejected(_))
+    ));
+    let mut data = wire.clone();
+    data["edges"][0]["transition"]["operation"] = json!("M::Call::not_tick");
+    assert!(matches!(
+        verdict(
+            &world,
+            "NFp",
+            &decode(&data),
+            CertificateCheckLimits::default()
+        ),
+        Ok(ZoneCertificateVerdict::Rejected(_))
+    ));
+    let mut horizon = wire.clone();
+    horizon["edges"][0]["horizon"] =
+        json!([{"place":0,"operator":">=","bound":{"numerator":"1","denominator":"1"}}]);
+    let read = decode(&horizon);
+    assert_eq!(
+        read.edges[0]
+            .horizon
+            .as_ref()
+            .expect("horizon retained")
+            .len(),
+        1
+    );
+    assert!(matches!(
+        verdict(&world, "NFp", &read, CertificateCheckLimits::default()),
+        Ok(ZoneCertificateVerdict::Rejected(_))
+    ));
+    let mut delay = wire.clone();
+    delay["edges"]
+        .as_array_mut()
+        .expect("edges")
+        .push(json!({"node":0,"target":0,"transition":null,"horizon":[]}));
+    let read = decode(&delay);
+    assert!(read.edges.last().expect("delay").transition.is_none());
+    assert_eq!(read.edges.last().expect("delay").horizon, Some(Vec::new()));
+    assert_eq!(
+        read.to_wire_with_source(json!({}), product.source())
+            .expect("delay and horizon write unchanged"),
+        delay
+    );
+    let mut delay_part = delay.clone();
+    delay_part["edges"]
+        .as_array_mut()
+        .expect("edges")
+        .last_mut()
+        .expect("delay")["part"] = json!(0);
+    assert!(ZoneCertificate::from_wire_with_source(
+        &delay_part,
+        built.obligation.clone(),
+        product.source()
+    )
+    .is_err());
+    assert!(matches!(
+        verdict(&world, "NFp", &read, CertificateCheckLimits::default()),
+        Ok(ZoneCertificateVerdict::Rejected(_))
+    ));
+}
+
+/// A declared but unreachable release uses the same genuine source closure
+/// as a release-free source, including the engine's admission witness.
+#[trace("FSpec-TC-371", "FSpec-FR-418-AC-14")]
+#[test]
+fn the_no_reachable_release_producer_certificate_is_accepted_from_its_json() {
+    for world in [no_release(), unreachable_release()] {
+        let built = no_release_emitted(&world, ZoneCheckLimits::default(), &Cancel::new())
+            .expect("source closure runs")
+            .expect("no release is reachable");
+        assert_eq!(
+            built
+                .task_product
+                .as_ref()
+                .expect("member")
+                .time_progress
+                .method,
+            fsl_replay::TaskClosureMethod::ClosedNoReleaseProduct
+        );
+        let (_, read) = read_back_unchanged(&built, json!({}), &built.obligation)
+            .expect("wire reads unchanged");
+        assert_eq!(
+            verdict(&world, "NFp", &read, CertificateCheckLimits::default()),
+            Ok(ZoneCertificateVerdict::Accepted)
+        );
+    }
+    for world in [releasable(), release_after_enable()] {
+        assert!(
+            no_release_emitted(&world, ZoneCheckLimits::default(), &Cancel::new())
+                .expect("source search runs")
+                .is_none()
+        );
+    }
+}
+
+/// Release absence alone is insufficient: the source must admit a genuine
+/// time-divergent behaviour for the emitted certificate's witness.
+#[trace("FSpec-TC-371", "FSpec-FR-418-AC-14")]
+#[test]
+fn a_no_release_source_without_admitted_behaviour_builds_no_certificate() {
+    let world = world(&document(&["x"], &[]), TIMED, &format!(
+        "{DENSE}taskset N {{ task a periodic 4 ms deadline 4 ms bcet 1 ms wcet 2 ms priority 1 lo; }}\n\
+         schedulable NFp on N under fixed_priority;\n\
+         time invariant Cap when {{ self.phase = 0 }} {{ self.x <= 1 ms }}\n"
+    ));
+    assert!(
+        no_release_emitted(&world, ZoneCheckLimits::default(), &Cancel::new())
+            .expect("source search runs")
+            .is_none()
+    );
+}
+
+/// Mutating the emitted member cannot turn the source closure into a
+/// different proof; the independent reader rejects the changed bytes.
+#[trace("FSpec-TC-371", "FSpec-FR-418-AC-14")]
+#[test]
+fn a_tampered_no_reachable_release_producer_certificate_is_rejected() {
+    let world = unreachable_release();
+    let built = no_release_emitted(&world, ZoneCheckLimits::default(), &Cancel::new())
+        .expect("search")
+        .expect("certificate");
+    let mut wire = built.to_wire(json!({})).expect("wire");
+    wire["task_product"]["queue_bounds"][0]["work_upper"]["numerator"] = json!("3");
+    let (read, _) = ZoneCertificate::from_wire(&wire, built.obligation).expect("shape reads");
+    assert_eq!(
+        rejected(verdict(
+            &world,
+            "NFp",
+            &read,
+            CertificateCheckLimits::default()
+        ))
+        .0,
+        CertificateRule::Malformed
+    );
+}
+
+/// Source limits and cancellation remain typed; neither produces a certificate.
+#[trace("FSpec-TC-371")]
+#[test]
+fn the_no_release_producer_preserves_source_limits_and_cancellation() {
+    let world = unreachable_release();
+    assert!(matches!(
+        no_release_emitted(
+            &world,
+            ZoneCheckLimits {
+                max_symbolic_states: 0,
+                ..ZoneCheckLimits::default()
+            },
+            &Cancel::new()
+        ),
+        Err(fsl_analyze::zone_check::ZoneCheckRefusal::Stopped(
+            fsl_analyze::zone_check::ZoneStop::LimitReached(
+                fsl_analyze::zone_check::ZoneCheckLimit::MaxSymbolicStates(0)
+            )
+        ))
+    ));
+    let cancel = Cancel::new();
+    cancel.cancel(filament_exact::CancelCause::Requested);
+    assert!(matches!(
+        no_release_emitted(&world, ZoneCheckLimits::default(), &cancel),
+        Err(fsl_analyze::zone_check::ZoneCheckRefusal::Stopped(
+            fsl_analyze::zone_check::ZoneStop::Cancelled
+        ))
+    ));
+}
 
 type Cells = Vec<Option<(String, bool)>>;
 

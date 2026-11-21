@@ -1615,6 +1615,30 @@ impl<'a> Definedness<'a> {
                     })
                 }
             }
+            NodeKind::QuantityScaleDiv { factor, .. } => {
+                let divisor = node.at(*factor);
+                let nonzero = match divisor.value_type() {
+                    ValueType::Integer | ValueType::Int(_) => {
+                        self.interval(divisor, facts).excludes_zero()
+                    }
+                    ValueType::Rational(domain) => domain.excludes_zero(),
+                    ValueType::Decimal(_) => matches!(
+                        divisor.kind(),
+                        NodeKind::Literal(CheckedLiteral(Value::Decimal(value)))
+                            if value.representation().coefficient() != &Integer::zero()
+                    ),
+                    _ => false,
+                };
+                if nonzero
+                    || self
+                        .stable_path(divisor, facts)
+                        .is_some_and(|path| facts.nonzero.contains(&path))
+                {
+                    Ok(())
+                } else {
+                    Err(Self::refuse(node, Obligation::Nonzero))
+                }
+            }
             NodeKind::IntegerDivision { right, .. } => {
                 let divisor = node.at(*right);
                 if self.interval(divisor, facts).excludes_zero()

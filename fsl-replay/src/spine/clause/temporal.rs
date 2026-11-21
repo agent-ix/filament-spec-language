@@ -335,6 +335,27 @@ pub fn sample_position(canonical: &str) -> DocumentRef {
 pub(crate) fn sample_fingerprint(
     text: &str,
 ) -> Result<String, filament_semantic_value::catalog::InternalFault> {
+    sample_fingerprint_with(text, &[])
+}
+
+/// [`sample_fingerprint`] of a sample whose observation holds no valuation of
+/// the atom nodes `absent` (FR-194, FR-641 `missing`): the absence is content
+/// of the position, so a changed absence at a covered index changes the
+/// fingerprint (FR-993). No absence leaves the sample's own fingerprint.
+pub(crate) fn sample_fingerprint_with(
+    text: &str,
+    absent: &[u64],
+) -> Result<String, filament_semantic_value::catalog::InternalFault> {
+    let wrapped;
+    let text = if absent.is_empty() {
+        text
+    } else {
+        let mut atoms = absent.to_vec();
+        atoms.sort_unstable();
+        atoms.dedup();
+        wrapped = format!("{{\"absent\":{atoms:?},\"sample\":{text}}}");
+        wrapped.as_str()
+    };
     let failed = || {
         filament_semantic_value::catalog::InternalFault::new(
             "temporal",
@@ -392,8 +413,8 @@ fn indexed_samples(
     trace: &TraceInput,
 ) -> Result<Option<TraceInput>, filament_semantic_value::catalog::InternalFault> {
     let sample = |document: &DocumentRef| document.authority == SAMPLE_AUTHORITY;
-    let cite = |index: usize, document: &DocumentRef| {
-        sample_fingerprint(&document.identity).map(|fingerprint| {
+    let cite = |index: usize, document: &DocumentRef, absent: &[u64]| {
+        sample_fingerprint_with(&document.identity, absent).map(|fingerprint| {
             sample_index(u64::try_from(index).unwrap_or(u64::MAX), Some(&fingerprint))
         })
     };
@@ -409,7 +430,7 @@ fn indexed_samples(
                 .enumerate()
                 .map(|(index, document)| {
                     if sample(document) {
-                        cite(index, document)
+                        cite(index, document, &[])
                     } else {
                         Ok(document.clone())
                     }
@@ -439,12 +460,21 @@ fn indexed_samples(
             }
             let renamed = observations
                 .iter()
+                .enumerate()
                 .zip(canonical)
-                .map(|(observation, canonical)| match canonical {
+                .map(|((listed, observation), canonical)| match canonical {
                     Some(index) if sample(&observation.document) => {
-                        cite(index, &observation.document).map(|document| TimestampedObservation {
-                            document,
-                            ..observation.clone()
+                        let absent: Vec<u64> = window
+                            .missing_valuations
+                            .iter()
+                            .filter(|missing| usize::try_from(missing.position) == Ok(listed))
+                            .map(|missing| missing.atom)
+                            .collect();
+                        cite(index, &observation.document, &absent).map(|document| {
+                            TimestampedObservation {
+                                document,
+                                ..observation.clone()
+                            }
                         })
                     }
                     _ => Ok(observation.clone()),
@@ -2932,13 +2962,30 @@ fn run_finite_window_core<E>(
         return fault("clause-node-key-has-a-text-spelling");
     };
     // FR-820: a carried state lists its positions in canonical order, each
-    // stamped after the ones before (FR-643 "Order"), and supplies no absent
-    // valuation; its trace admits only the positions added since its last
+    // stamped after the ones before (FR-643 "Order"), and supplies the absent
+    // valuations of its positions; its trace admits only the positions added since its last
     // run.
     // Interval stamps and a late-data cutoff take the whole-trace
     // evaluation: a carried state supplies neither.
-    let plain = input.window.missing_valuations.is_empty()
-        && screened.is_none()
+    // Nodes whose `holds` conditions read the same in the unit are one atom
+    // and share one valuation at a position.
+    let same_atom = |valuations: Vec<(u64, u64)>| -> Vec<(u64, u64)> {
+        valuations
+            .iter()
+            .flat_map(|(position, atom)| {
+                let class = usize::try_from(*atom)
+                    .ok()
+                    .and_then(|atom| classes.get(atom).copied());
+                classes
+                    .iter()
+                    .enumerate()
+                    .filter(move |(_, candidate)| Some(**candidate) == class)
+                    .filter_map(|(index, _)| Some((*position, u64::try_from(index).ok()?)))
+                    .collect::<Vec<_>>()
+            })
+            .collect()
+    };
+    let plain = screened.is_none()
         && input.window.late.intervals.iter().all(Option::is_none)
         && input.window.late.arrivals.iter().all(Option::is_none);
     if let (Some(admission), true) = (admission, plain) {
@@ -2972,7 +3019,17 @@ fn run_finite_window_core<E>(
         let Some(trace) = held.trace.as_ref() else {
             return fault("carried-timestamped-trace-is-held");
         };
-        return evaluate(trace, &[], meter);
+        // A carried state's positions are canonical, so its `missing` entries
+        // name them directly (FR-194).
+        let absent = same_atom(
+            input
+                .window
+                .missing_valuations
+                .iter()
+                .map(|missing| (missing.position, missing.atom))
+                .collect(),
+        );
+        return evaluate(trace, &absent, meter);
     }
     *trace_positions = input.observations.len();
     let ordered = ordered_timestamped_positions(input);
@@ -3011,24 +3068,6 @@ fn run_finite_window_core<E>(
                 let listed = usize::try_from(valuation.position).ok()?;
                 let position = ordered.iter().position(|(index, _)| *index == listed)?;
                 Some((u64::try_from(position).ok()?, valuation.atom))
-            })
-            .collect()
-    };
-    // Nodes whose `holds` conditions read the same in the unit are one atom
-    // and share one valuation at a position.
-    let same_atom = |valuations: Vec<(u64, u64)>| -> Vec<(u64, u64)> {
-        valuations
-            .iter()
-            .flat_map(|(position, atom)| {
-                let class = usize::try_from(*atom)
-                    .ok()
-                    .and_then(|atom| classes.get(atom).copied());
-                classes
-                    .iter()
-                    .enumerate()
-                    .filter(move |(_, candidate)| Some(**candidate) == class)
-                    .filter_map(|(index, _)| Some((*position, u64::try_from(index).ok()?)))
-                    .collect::<Vec<_>>()
             })
             .collect()
     };
@@ -3849,6 +3888,10 @@ fn window_verdict<E>(
     use fsl_eval::temporal::{IndeterminateReason, WindowVerdict};
     Ok(Some(match verdict {
         WindowVerdict::Holds => TemporalVerdict::Holds,
+        WindowVerdict::Inactive => TemporalVerdict::Inactive,
+        // An open or incomplete scope with no activation yet: a later
+        // observation may activate it, as the batch run reads an open prefix.
+        WindowVerdict::ActivationUnknown => TemporalVerdict::Pending,
         WindowVerdict::Violated { at } => TemporalVerdict::Violated { at: at.index() },
         WindowVerdict::Pending { at, deadline } => TemporalVerdict::PendingWindow {
             at: at.index(),

@@ -757,6 +757,77 @@ pub struct AnalyzeOutcome {
     /// EN-7's closed-form outcome, with its evidence, for each item it
     /// settled (FR-247, FR-633).
     pub closed_form: std::collections::BTreeMap<RequestIndex, fsl_replay::ClosedFormOutcome>,
+    /// The package graphs a result document writes its node ids against.
+    pub graphs: DocumentGraphs,
+}
+
+/// The node graphs of the packages a run analyzed, which index the node ids of
+/// its result document (FSpec FR-322 "Operand index segments"): the request's
+/// own package and, for each item over a dependency, that dependency.
+#[derive(Clone)]
+pub struct DocumentGraphs {
+    /// The graph of the request's own admitted package.
+    pub own: Result<fsl_semantics::check::wire_id::WireGraph, GraphUnavailable>,
+    /// The graph of each admitted dependency package of the request, by its
+    /// package identity text: the graph an item over that dependency, and
+    /// every id that names one of its nodes, indexes (FSpec FR-322).
+    pub dependencies: std::collections::BTreeMap<
+        String,
+        Result<fsl_semantics::check::wire_id::WireGraph, GraphUnavailable>,
+    >,
+}
+
+/// Why a package has no graph to write a result's node ids against.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum GraphUnavailable {
+    /// The package emitted no complete admitted bytes: the emitter refused
+    /// or reached its limit, and the strict reader named no refusal.
+    NotEmitted,
+    /// The admitted bytes hold no readable `semantic_graph`.
+    Unreadable(String),
+}
+
+impl Default for DocumentGraphs {
+    fn default() -> Self {
+        Self {
+            own: Err(GraphUnavailable::NotEmitted),
+            dependencies: std::collections::BTreeMap::new(),
+        }
+    }
+}
+
+impl GraphUnavailable {
+    /// The catalog code of the stop: the emit limit reached, or a package the
+    /// reader cannot read.
+    pub fn code(&self) -> fsl_foundation::Code {
+        match self {
+            Self::NotEmitted => fsl_foundation::Code::ResourceExhausted,
+            Self::Unreadable(_) => fsl_foundation::Code::InvalidPackage,
+        }
+    }
+}
+
+impl DocumentGraphs {
+    /// The graph of the package whose emission is `bytes`.
+    pub fn of_bytes(
+        bytes: &[u8],
+    ) -> Result<fsl_semantics::check::wire_id::WireGraph, GraphUnavailable> {
+        fsl_semantics::check::wire_id::WireGraph::of_package_bytes(bytes)
+            .map_err(GraphUnavailable::Unreadable)
+    }
+}
+
+impl std::fmt::Debug for DocumentGraphs {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("DocumentGraphs")
+            .field("own", &self.own.as_ref().map(|_| ()))
+            .field(
+                "dependencies",
+                &self.dependencies.keys().collect::<Vec<_>>(),
+            )
+            .finish()
+    }
 }
 
 /// What an item's engine reported beside its terminal record (FR-621).
@@ -887,6 +958,12 @@ pub enum AnalyzeRefusal {
     /// own code, cause and pointer, never an internal failure.
     #[error("the package the run compiled is not admitted: {}", .0.label())]
     Package(fsl_package::PackageAdmissionRefusal),
+    /// The package the run analyzes, or a dependency an item is analyzed
+    /// over, has no admitted emission, so the result's node ids cannot be
+    /// held (FSL FR-621 "Node ids in an item"): the run ends before any item
+    /// runs.
+    #[error("the result's node ids cannot be held: {0:?}")]
+    Emission(GraphUnavailable),
 }
 
 /// The deadline stated by the frontend, which owns its timer.
@@ -965,6 +1042,8 @@ pub enum Counterexample {
     TaskProduct(Box<serde_json::Value>),
     /// FR-898's reproduced trace tuple and joint position.
     FiniteHyper(Box<serde_json::Value>),
+    /// The complete native refutation of a realizability or projection item.
+    ProtocolAnalysis(Box<fsl_replay::protocol_analysis::ProtocolAnalysisCounterexample>),
 }
 
 /// What a state-graph engine run reports for one item (FR-628): the record of
@@ -1038,6 +1117,17 @@ impl AnalyzeRefusal {
                     refusal.code.category(),
                 )
                 .with_diagnostics(vec![diagnostic])
+            }
+            Self::Emission(cause) => {
+                let code = cause.code();
+                OutcomeDocument::new(Operation::Analyze, None, code.category()).with_diagnostics(
+                    vec![OutcomeDiagnostic::new(
+                        None,
+                        code.as_str(),
+                        None,
+                        self.to_string(),
+                    )],
+                )
             }
             Self::Provision(refusal) => {
                 let catalog = refusal.catalog_code();
@@ -1215,16 +1305,30 @@ fn item_stage(
     counterexamples: &[ItemCounterexample],
     route: Option<ItemRoute>,
 ) -> OutcomeStage {
-    // A counterexample reaches the document only once its replay reproduced
-    // it; the state-graph one is built as a typed witness and not replayed.
+    // Replayed counterexamples reach S8; state graphs, schedule misses and
+    // acting-instance projection decisions are direct typed witnesses at S7.
     if let Some(found) = counterexamples
         .iter()
         .find(|found| found.request_index == record.request_index())
     {
-        return if matches!(
-            found.counterexample,
-            Counterexample::StateGraph(_) | Counterexample::ScheduleMiss(_)
-        ) {
+        let typed_witness = match &found.counterexample {
+            Counterexample::StateGraph(_) | Counterexample::ScheduleMiss(_) => true,
+            Counterexample::ProtocolAnalysis(found) => {
+                matches!(found.as_ref(), fsl_replay::protocol_analysis::ProtocolAnalysisCounterexample::Projection(found)
+                    if matches!(found.decision, fsl_replay::protocol_analysis::ProjectionDecision::ActingInstance { .. }))
+            }
+            Counterexample::Hyper(_)
+            | Counterexample::Temporal { .. }
+            | Counterexample::Protocol { .. }
+            | Counterexample::Probabilistic(_)
+            | Counterexample::Assignments(_)
+            | Counterexample::Contract(_)
+            | Counterexample::GlobalConformance(_)
+            | Counterexample::Hybrid(_)
+            | Counterexample::TaskProduct(_)
+            | Counterexample::FiniteHyper(_) => false,
+        };
+        return if typed_witness {
             OutcomeStage::S7
         } else {
             OutcomeStage::S8
@@ -1264,6 +1368,19 @@ pub fn analyze_item(
                 .with_graph_evidence(graph.counterexample.clone(), graph.evidence.clone())
                 .with_graph_certificate_document(graph.certificate_document.clone()),
         );
+    }
+    if let Some(found) = found {
+        if let Counterexample::ProtocolAnalysis(native) = &found.counterexample {
+            if record.backend() != Some(&found.backend)
+                || record.protocol_analysis_key() != Some(native.key())
+                || record.protocol_analysis_root() != Some(&native.separating_witness().value_path)
+            {
+                return Err(OutcomeItemError::CounterexampleAssociation);
+            }
+            if found.wire.as_ref().map_err(Clone::clone)? != &native.to_wire()? {
+                return Err(OutcomeItemError::CounterexampleBodyMismatch);
+            }
+        }
     }
     let wire = found.map(|found| found.wire.clone()).transpose()?;
     let undefined = found.and_then(|found| found.counterexample.undefined_cause());
@@ -2075,6 +2192,13 @@ impl AnalyzeRecord {
         package: Option<&CheckedPackage>,
     ) -> Option<Result<serde_json::Value, CounterexampleWireError>> {
         let claim = self.claim.as_ref();
+        if let Some(wire) = self
+            .protocol_analysis
+            .as_ref()
+            .and_then(|artifact| artifact.counterexample_wire())
+        {
+            return Some(wire);
+        }
         if let Some(found) = self
             .hyper_check
             .as_ref()
@@ -2159,6 +2283,13 @@ impl AnalyzeRecord {
     /// Move out the counterexample the engine that settled this record
     /// holds.
     fn take_counterexample(&mut self) -> Option<Counterexample> {
+        if let Some(found) = self
+            .protocol_analysis
+            .as_ref()
+            .and_then(|artifact| artifact.counterexample())
+        {
+            return Some(Counterexample::ProtocolAnalysis(Box::new(found)));
+        }
         if let Some(found) = self
             .hyper_check
             .as_mut()
@@ -2334,6 +2465,7 @@ impl Counterexample {
             | Self::ScheduleMiss(_)
             | Self::Hybrid(_)
             | Self::TaskProduct(_)
+            | Self::ProtocolAnalysis(_)
             | Self::FiniteHyper(_) => None,
         }
     }

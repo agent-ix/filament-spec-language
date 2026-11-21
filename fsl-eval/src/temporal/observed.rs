@@ -2338,13 +2338,17 @@ pub fn letters_valuation<L: TemporalLetters>(
 /// are still held: each `holds` atom and each window aggregate atom, the
 /// aggregate read against the stamps of `trace`. `None` for a clause with a
 /// guard or captures, and for a reading that does not reduce to a letter (an
-/// undefined atom or a refused condition), which keep the sample.
+/// undefined atom or a refused condition), which keep the sample. `absent`
+/// names the `(position, atom)` valuations the observations hold none of: a
+/// window holding such a member, or an anchor missing an atom, reads no
+/// letter (FR-194-AC-17), so it keeps its sample.
 pub fn read_anchor_letter(
     package: &CheckedPackage,
     clause: &TemporalClauseNode,
     tape: &super::tape::LetterTape,
     trace: &TimestampedTrace,
     at: u64,
+    absent: &[(u64, u64)],
     meter: &mut Meter,
 ) -> Option<TapeLetter> {
     let checked = clause.clause();
@@ -2364,6 +2368,7 @@ pub fn read_anchor_letter(
             len: u64::try_from(trace.len()).ok()?,
         },
     );
+    letters.absent = absent;
     letters.windows = Some(trace.timed_window_trace().ok()?);
     let formula = checked.formula();
     let mut atoms = Vec::new();
@@ -2373,6 +2378,9 @@ pub fn read_anchor_letter(
             FormulaNode::Holds { .. } | FormulaNode::Aggregate { .. }
         ) {
             let id = formula.node_id(index)?;
+            if absent.contains(&(at, u64::try_from(index).ok()?)) {
+                return None;
+            }
             let reading = letters.atom(id, TemporalPosition::new(at), meter).ok()?;
             atoms.push((index, super::tape::TapeReading::of(&reading)?));
         }

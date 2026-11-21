@@ -92,7 +92,7 @@ fn emitted_byte_count(depth: usize) -> usize {
 
 /// The bound is inclusive: `N` bytes under bound `N` are emitted, byte for
 /// byte as under a larger bound; `N - 1` and `0` refuse, naming the setting,
-/// the configured bound and a count above it, and write nothing.
+/// the configured bound and the first unpaid byte, and return no partial package.
 #[trace("TC-738", "FR-264-AC-6")]
 #[test]
 fn a_package_is_emitted_at_its_exact_length_and_refused_one_below_and_at_zero() {
@@ -111,10 +111,10 @@ fn a_package_is_emitted_at_its_exact_length_and_refused_one_below_and_at_zero() 
         assert_eq!(limit.setting(), Setting::EmitOutputBytes);
         assert_eq!(limit.kind(), LimitKind::InputBytes);
         assert_eq!(limit.configured_bound(), bound);
-        assert!(
-            limit.actual() > u128::from(bound),
-            "the refused write would have reached more than {bound}: {}",
-            limit.actual()
+        assert_eq!(
+            limit.actual(),
+            u128::from(bound) + 1,
+            "a fresh emission reports its first unpaid byte"
         );
         assert!(
             limit.to_string().contains("emit.output_bytes"),
@@ -125,7 +125,7 @@ fn a_package_is_emitted_at_its_exact_length_and_refused_one_below_and_at_zero() 
 
 /// An emission remembered by an earlier call counts the same bytes against
 /// the bound the later call supplies: refused below `N` with actual exactly
-/// `N`, returned unchanged at `N`.
+/// `bound + 1`, returned unchanged at `N`.
 #[trace("TC-738", "FR-264-AC-7")]
 #[test]
 fn a_remembered_emission_is_held_to_the_bound_of_the_later_call() {
@@ -146,7 +146,7 @@ fn a_remembered_emission_is_held_to_the_bound_of_the_later_call() {
         );
         assert_eq!(limit.setting(), Setting::EmitOutputBytes);
         assert_eq!(limit.configured_bound(), bound);
-        assert_eq!(limit.actual(), u128::from(n));
+        assert_eq!(limit.actual(), u128::from(bound) + 1);
     }
 }
 

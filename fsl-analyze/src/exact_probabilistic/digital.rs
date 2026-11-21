@@ -35,9 +35,9 @@ use fsl_replay::{
     ProbabilityProductKey, RegionClockKey, RegionDeadlineKey, RegionKeyKind, RegionProductKeyInput,
 };
 use fsl_semantics::check::{
-    BinaryTemporal, CheckedInterval, CheckedPredicate, CheckedProbabilisticClaim, ClockOp,
-    ConvexPart, DelayDistribution, Event, FormulaNode, ProbForm, ProbScheduler, UnaryTemporal,
-    Workload,
+    BinaryTemporal, BoundedMeasure, CheckedInterval, CheckedPredicate, CheckedProbabilisticClaim,
+    ClockOp, ConvexPart, DelayDistribution, Event, FormulaNode, ProbForm, ProbScheduler,
+    UnaryTemporal, Workload,
 };
 use num_bigint::BigInt;
 use num_integer::Integer as _;
@@ -46,9 +46,9 @@ use serde_json::{json, Value as JsonValue};
 
 use super::unbounded::{maximal_end_components_from, same_action, Choice, Graph};
 use super::{
-    DeadlineKind, DeadlinePhase, ExactProbLimits, FreeDelayRow, MonitorState, MonitorVerdict,
-    PathStep, Pending, ProbBuild, ProbEdge, ProbKey, ProbProduct, ProbStateId, ProductAction,
-    ProductKind, ProductRefusal, ProductStop, UndefinedPath, UndefinedRead,
+    DeadlineKind, DeadlinePhase, ExactProbLimits, FreeDelayRow, MeasurePhase, MonitorState,
+    MonitorVerdict, PathStep, Pending, ProbBuild, ProbEdge, ProbKey, ProbProduct, ProbStateId,
+    ProductAction, ProductKind, ProductRefusal, ProductStop, UndefinedPath, UndefinedRead,
 };
 
 pub(crate) const ELAPSED_REWARD: &str = "qsl_elapsed_time";
@@ -137,7 +137,7 @@ pub(super) fn build<'s, 'a>(
 /// (ADR-028 TA-1, FR-204).
 fn resolve_choice(
     representative: Option<&ScheduledIdentity>,
-    taken: &Enabled,
+    taken: &Enabled<'_>,
     delay: u64,
 ) -> ProductAction {
     ProductAction::WorkloadResolve {
@@ -172,6 +172,17 @@ enum Form<'c> {
         /// The expected-time comparison threshold in the model's time unit.
         bound: Rational,
         /// The target predicate used to label product states.
+        reads: Vec<(UndefinedRead, &'c CheckedPredicate)>,
+    },
+    /// FR-877: `quantile q of (elapsed from A until B within W) op c`; its
+    /// reads are `A` then `B`.
+    Elapsed {
+        /// The comparison threshold `c` in the model's time unit.
+        threshold: Rational,
+        /// Whether the transform compares `M < c` (a `>=` claim).
+        strict: bool,
+        /// The window `W` in the model's time unit.
+        window: Rational,
         reads: Vec<(UndefinedRead, &'c CheckedPredicate)>,
     },
     /// An unbounded reachability form: its predicates label the states.
@@ -261,6 +272,28 @@ impl<'c> Form<'c> {
                         .collect(),
                 })
             }
+            ProbForm::Quantile {
+                measure:
+                    BoundedMeasure::Elapsed {
+                        from,
+                        until,
+                        within,
+                        ..
+                    },
+                threshold,
+                ..
+            } => Ok(Self::Elapsed {
+                threshold: match threshold {
+                    fsl_semantics::check::Bound::AtLeast(value)
+                    | fsl_semantics::check::Bound::AtMost(value) => value.clone(),
+                },
+                strict: matches!(threshold, fsl_semantics::check::Bound::AtLeast(_)),
+                window: within.clone(),
+                reads: vec![
+                    (UndefinedRead::Predicate(super::PredicateRole::From), from),
+                    (UndefinedRead::Predicate(super::PredicateRole::Until), until),
+                ],
+            }),
             ProbForm::Reach { .. } | ProbForm::ExpectedReward { .. } => {
                 let (plan, reads) = super::plan::Plan::of(claim, 1).map_err(|_| shape())?;
                 drop(plan);
@@ -272,9 +305,10 @@ impl<'c> Form<'c> {
 
     fn reads(&self) -> &[(UndefinedRead, &'c CheckedPredicate)] {
         match self {
-            Self::Deadline { reads, .. } | Self::MeanTime { reads, .. } | Self::Labels(reads) => {
-                reads
-            }
+            Self::Deadline { reads, .. }
+            | Self::MeanTime { reads, .. }
+            | Self::Elapsed { reads, .. }
+            | Self::Labels(reads) => reads,
         }
     }
 }
@@ -394,6 +428,12 @@ fn scale_of(
         note(bound);
     } else if let Form::MeanTime { bound, .. } = form {
         note(bound);
+    } else if let Form::Elapsed {
+        threshold, window, ..
+    } = form
+    {
+        note(threshold);
+        note(window);
     }
     for delay in system.input().probabilistic.delays() {
         if let DelayDistribution::Discrete(values) = delay.distribution() {
@@ -417,7 +457,10 @@ fn scale_of(
         let clocks = timed
             .places()
             .len()
-            .checked_add(usize::from(matches!(form, Form::Deadline { .. })))
+            .checked_add(usize::from(matches!(
+                form,
+                Form::Deadline { .. } | Form::Elapsed { .. }
+            )))
             .and_then(|count| count.checked_add(1))
             .and_then(|count| u64::try_from(count).ok())
             .ok_or_else(|| fault("region-clock-rank-count-fits-u64"))?;
@@ -431,6 +474,15 @@ pub(super) fn region_route(timed: &TimedSystem<'_, '_>, claim: &CheckedProbabili
     model_constraints(timed)
         .into_iter()
         .any(|constraint| matches!(constraint.op(), ClockOp::Less | ClockOp::Greater))
+        // FR-877: `M < c` is strict, so a `>=` quantile takes the region route.
+        || matches!(
+            &claim.form,
+            ProbForm::Quantile {
+                measure: BoundedMeasure::Elapsed { .. },
+                threshold: fsl_semantics::check::Bound::AtLeast(_),
+                ..
+            }
+        )
         || matches!(
             &claim.form,
             ProbForm::Probability {
@@ -519,7 +571,8 @@ struct Local {
 }
 
 /// A draw of an enabled identity: its enabled post-states.
-struct EnabledDraw {
+struct EnabledDraw<'local> {
+    transition: &'local filament_semantic_value::model_transition::ModelTransition,
     random: Vec<Value>,
     probability: Rational,
     rewards: Vec<(Identifier, Value)>,
@@ -527,9 +580,9 @@ struct EnabledDraw {
 }
 
 /// A scheduled identity enabled at a digital state.
-struct Enabled {
+struct Enabled<'local> {
     identity: ScheduledIdentity,
-    draws: Vec<EnabledDraw>,
+    draws: Vec<EnabledDraw<'local>>,
 }
 
 struct Resolution {
@@ -804,6 +857,7 @@ impl<'c> Builder<'_, '_, 'c> {
     fn deadline_bound(&self) -> Step<Option<u64>> {
         match &self.form {
             Form::Deadline { bound, .. } => self.bound_units(bound).map(Some),
+            Form::Elapsed { window, .. } => self.bound_units(window).map(Some),
             Form::MeanTime { .. } | Form::Labels(_) => Ok(None),
         }
     }
@@ -862,12 +916,12 @@ impl<'c> Builder<'_, '_, 'c> {
 
     /// The scheduled identities enabled at `clocks` with their enabled
     /// post-states (ADR-026 TS-2 with integer clocks).
-    fn enabled(
+    fn enabled<'local>(
         &mut self,
-        local: &Local,
+        local: &'local Local,
         model: &ModelSimState,
         clocks: &[u64],
-    ) -> Step<Vec<Enabled>> {
+    ) -> Step<Vec<Enabled<'local>>> {
         let valuation = self.valuation(clocks)?;
         let mut found = Vec::new();
         for action in &local.actions {
@@ -897,6 +951,7 @@ impl<'c> Builder<'_, '_, 'c> {
                     posts.push((post.clone(), self.digital(&reset)?));
                 }
                 draws.push(EnabledDraw {
+                    transition: &draw.transition,
                     random: draw.random.clone(),
                     probability: draw.probability.clone(),
                     rewards: draw.rewards.clone(),
@@ -914,8 +969,10 @@ impl<'c> Builder<'_, '_, 'c> {
                 return Err(ProductRefusal::NotMarkov(Box::new(NotMarkov {
                     state,
                     transition: action.identity.clone(),
+                    drawn_transition: blocked.transition.clone(),
                     random: blocked.random.clone(),
                     post_states: 0,
+                    post_state_examples: Vec::new(),
                 }))
                 .into());
             }
@@ -925,6 +982,24 @@ impl<'c> Builder<'_, '_, 'c> {
             });
         }
         Ok(found)
+    }
+
+    /// Retain model-state evidence from the actual filtered draw. Filtering
+    /// preserves the source draw's distinct canonical model-state order.
+    fn not_markov_post_keys(&self, posts: &[(ModelSimState, Vec<u64>)]) -> Step<Vec<StateKey>> {
+        let mut keys: Vec<StateKey> = Vec::with_capacity(posts.len().min(2));
+        for (model, _) in posts.iter().take(2) {
+            self.poll()?;
+            let (_, key) = self
+                .system
+                .state_key(model)
+                .map_err(|_| fault("state-key-encodes"))?;
+            if keys.last().is_some_and(|previous| previous >= &key) {
+                return Err(fault("filtered-post-model-keys-are-distinct-and-ordered").into());
+            }
+            keys.push(key);
+        }
+        Ok(keys)
     }
 
     // -- keys and truths ---------------------------------------------------
@@ -1021,7 +1096,11 @@ impl<'c> Builder<'_, '_, 'c> {
                 })
             })
             .collect::<Result<Vec<_>, ProductRefusal>>()?;
-        let deadline = match state.deadline {
+        let measure = match (&self.form, self.deadline_bound()?) {
+            (Form::Elapsed { .. }, Some(limit)) => Some((limit, state.deadline)),
+            _ => None,
+        };
+        let deadline = match state.deadline.filter(|_| measure.is_none()) {
             Some(elapsed) => {
                 let limit = self
                     .deadline_bound()?
@@ -1046,6 +1125,17 @@ impl<'c> Builder<'_, '_, 'c> {
                     DeadlinePhase::Pending => "pending",
                     DeadlinePhase::Accept => "accept",
                     DeadlinePhase::Reject => "reject",
+                }
+            ]),
+            MonitorState::Measure { phase, .. } => json!([
+                "measure",
+                null,
+                match phase {
+                    MeasurePhase::Inactive => "inactive",
+                    MeasurePhase::Active => "active",
+                    MeasurePhase::Complete => "complete",
+                    MeasurePhase::Censored => "censored",
+                    MeasurePhase::Unactivated => "unactivated",
                 }
             ]),
             _ => JsonValue::Null,
@@ -1080,6 +1170,7 @@ impl<'c> Builder<'_, '_, 'c> {
                 monitor,
                 accumulator: None,
                 pending: None,
+                elapsed: measure,
             })
         } else {
             let region_clocks = clocks
@@ -1132,6 +1223,7 @@ impl<'c> Builder<'_, '_, 'c> {
                 monitor,
                 accumulator: None,
                 pending: None,
+                elapsed: measure,
                 kind: if boundary_region {
                     RegionKeyKind::BoundaryRegion
                 } else {
@@ -1214,8 +1306,23 @@ impl<'c> Builder<'_, '_, 'c> {
         }
     }
 
-    fn deadline_start(&self, truths: &[bool]) -> Option<MonitorState> {
+    fn deadline_start(&self, truths: &[bool], state: &mut DState) -> Option<MonitorState> {
         match &self.form {
+            Form::Elapsed { .. } => {
+                let mut phase = MeasurePhase::Inactive;
+                if truths.first().copied().unwrap_or(false) {
+                    state.deadline = Some(0);
+                    phase = if truths.get(1).copied().unwrap_or(false) {
+                        MeasurePhase::Complete
+                    } else {
+                        MeasurePhase::Active
+                    };
+                }
+                Some(MonitorState::Measure {
+                    remaining: 0,
+                    phase,
+                })
+            }
             Form::Deadline { kind, .. } => Some(MonitorState::Deadline {
                 kind: *kind,
                 phase: Self::read_letter(*kind, DeadlinePhase::Pending, truths),
@@ -1229,9 +1336,42 @@ impl<'c> Builder<'_, '_, 'c> {
     fn control_after(
         &mut self,
         source: Option<MonitorState>,
-        reached: &DState,
+        reached: &mut DState,
         letters: &[Vec<bool>],
     ) -> Step<Option<MonitorState>> {
+        if matches!(self.form, Form::Elapsed { .. }) {
+            let Some(MonitorState::Measure { mut phase, .. }) = source else {
+                return Ok(None);
+            };
+            let bound = self.deadline_bound()?;
+            if phase == MeasurePhase::Active {
+                if let (Some(t), Some(bound)) = (reached.deadline, bound) {
+                    if t > bound {
+                        phase = MeasurePhase::Censored;
+                    }
+                }
+            }
+            for truths in letters {
+                match phase {
+                    MeasurePhase::Inactive if truths.first().copied().unwrap_or(false) => {
+                        reached.deadline = Some(0);
+                        phase = if truths.get(1).copied().unwrap_or(false) {
+                            MeasurePhase::Complete
+                        } else {
+                            MeasurePhase::Active
+                        };
+                    }
+                    MeasurePhase::Active if truths.get(1).copied().unwrap_or(false) => {
+                        phase = MeasurePhase::Complete;
+                    }
+                    _ => {}
+                }
+            }
+            return Ok(Some(MonitorState::Measure {
+                remaining: 0,
+                phase,
+            }));
+        }
         let Some(MonitorState::Deadline { kind, phase }) = source else {
             return Ok(None);
         };
@@ -1257,7 +1397,11 @@ impl<'c> Builder<'_, '_, 'c> {
 
     fn explore(&mut self) -> Step<Vec<(u32, Option<ModelInstance>, ProbStateId)>> {
         self.poll()?;
-        let deadline = self.deadline_bound()?.map(|_| 0);
+        let deadline = if matches!(self.form, Form::Elapsed { .. }) {
+            None
+        } else {
+            self.deadline_bound()?.map(|_| 0)
+        };
         let mut starts = Vec::new();
         for (position, initial) in self.timed.initial().into_iter().enumerate() {
             let at = u32::try_from(position).map_err(|_| fault("initial-states-count"))?;
@@ -1276,17 +1420,22 @@ impl<'c> Builder<'_, '_, 'c> {
                                 kind: *kind,
                                 phase: DeadlinePhase::Pending,
                             }),
+                            Form::Elapsed { .. } => Some(MonitorState::Measure {
+                                remaining: 0,
+                                phase: MeasurePhase::Inactive,
+                            }),
                             Form::MeanTime { .. } | Form::Labels(_) => None,
                         };
                         let key = self.key_of(&state, binding, monitor, None)?;
                         return Err(self.undefined(None, None, None, at, key, hit));
                     }
                 };
-                let monitor = self.deadline_start(&truths);
+                let mut state = state.clone();
+                let monitor = self.deadline_start(&truths, &mut state);
                 let key = self.key_of(&state, binding, monitor, None)?;
                 let target = Target {
                     key,
-                    state: state.clone(),
+                    state,
                     truths,
                     resolution: None,
                 };
@@ -1405,7 +1554,7 @@ impl<'c> Builder<'_, '_, 'c> {
     fn arrive(
         &mut self,
         at: usize,
-        reached: DState,
+        mut reached: DState,
         landed: &[ModelSimState],
         taken: Option<&TraceStep>,
     ) -> Step<Target> {
@@ -1437,7 +1586,7 @@ impl<'c> Builder<'_, '_, 'c> {
             },
         };
         let source = self.nodes[at].key.monitor;
-        let monitor = self.control_after(source, &reached, &letters)?;
+        let monitor = self.control_after(source, &mut reached, &letters)?;
         let key = self.key_of(&reached, binding, monitor, None)?;
         Ok(Target {
             key,
@@ -1689,7 +1838,7 @@ impl<'c> Builder<'_, '_, 'c> {
         at: usize,
         state: &DState,
         local: &Rc<Local>,
-        enabled: &[Enabled],
+        enabled: &[Enabled<'_>],
         planned: &mut Vec<Planned>,
     ) -> Step<()> {
         let trajectory = self.trajectory(state)?;
@@ -1833,7 +1982,7 @@ impl<'c> Builder<'_, '_, 'c> {
         &mut self,
         at: usize,
         state: &DState,
-        action: &Enabled,
+        action: &Enabled<'_>,
         share: Rational,
         planned: &mut Vec<Planned>,
     ) -> Step<()> {
@@ -2377,8 +2526,11 @@ impl<'c> Builder<'_, '_, 'c> {
                         return Err(ProductRefusal::NotMarkov(Box::new(NotMarkov {
                             state,
                             transition: identity.clone(),
+                            drawn_transition: draw.transition.clone(),
                             random: draw.random.clone(),
-                            post_states: u32::try_from(draw.posts.len()).unwrap_or(u32::MAX),
+                            post_states: u64::try_from(draw.posts.len())
+                                .expect("supported targets have at most 64-bit usize"),
+                            post_state_examples: self.not_markov_post_keys(&draw.posts)?,
                         }))
                         .into());
                     };
@@ -2600,6 +2752,18 @@ impl<'c> Builder<'_, '_, 'c> {
             self.edges = edges;
             self.zero_delay = zero_delay;
         }
+        let measure_limit = match &self.form {
+            Form::Elapsed {
+                threshold, strict, ..
+            } => Some((
+                self.bound_units(threshold).map_err(|halt| match halt {
+                    Halt::Refusal(refusal) => refusal,
+                    Halt::Undefined(_) => fault("elapsed-threshold-scales"),
+                })?,
+                *strict,
+            )),
+            _ => None,
+        };
         let mut decided: Vec<(ProbStateId, MonitorVerdict)> = self
             .nodes
             .iter()
@@ -2610,6 +2774,29 @@ impl<'c> Builder<'_, '_, 'c> {
                     DeadlinePhase::Reject => Some((ProbStateId(index), MonitorVerdict::Reject)),
                     DeadlinePhase::Pending => None,
                 },
+                // FR-877: a completed or censored measure is decided; it is in
+                // the transform's event when `M <= c` (`M < c`) holds.
+                Some(MonitorState::Measure { phase, .. }) => {
+                    let within = match (phase, node.state.deadline, measure_limit) {
+                        (MeasurePhase::Complete, Some(elapsed), Some((limit, strict))) => {
+                            if strict {
+                                elapsed < limit
+                            } else {
+                                elapsed <= limit
+                            }
+                        }
+                        (MeasurePhase::Complete | MeasurePhase::Censored, _, _) => false,
+                        _ => return None,
+                    };
+                    Some((
+                        ProbStateId(index),
+                        if within {
+                            MonitorVerdict::Accept
+                        } else {
+                            MonitorVerdict::Reject
+                        },
+                    ))
+                }
                 _ => None,
             })
             .collect();

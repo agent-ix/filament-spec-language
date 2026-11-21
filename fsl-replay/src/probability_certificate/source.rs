@@ -222,16 +222,24 @@ fn check_recompiled(
     limits: ProbabilitySourceLimits,
     cancel: &Cancel,
 ) -> Result<ExactProbabilityCertificateCheck, ProbabilitySourceError> {
+    // A certificate an analyze result carries holds its node ids as index
+    // segments of the emitted package (FSpec FR-322); it resolves against the
+    // graph of the package the request names, or, for a source request, of the
+    // package the byte provision recompiles to.
+    let held = HeldCertificate::read(request.certificate);
+    let mut resolved = None;
+    if let (Some(held), Some(emitted)) = (&held, emitted) {
+        resolved = Some(held.resolve(emitted, request.item)?);
+    }
+    let certificate = resolved.as_deref().unwrap_or(request.certificate);
     // Refuse a foreign claim before compiler/model work as well as enumeration.
-    let identity =
-        match super::document::certificate_identity(request.certificate, limits.document, cancel) {
-            Ok(identity) => identity,
-            Err(error) => {
-                return super::document::document_admission_error(error).map_err(Into::into)
-            }
-        };
-    if &identity != request.item {
-        return Err(ProbabilityDocumentError::IdentityMismatch.into());
+    if held.is_none() || resolved.is_some() {
+        refuse_foreign_claim(
+            certificate,
+            &claimed(request.item, held.is_some()),
+            limits,
+            cancel,
+        )?;
     }
     if request.initial.len() != 1 {
         return Err(ProbabilityDocumentError::Unsupported.into());
@@ -324,8 +332,22 @@ fn check_recompiled(
             return Err(ProbabilitySourceError::PackageMismatch);
         }
     }
+    if let (Some(held), None, None) = (&held, emitted, &resolved) {
+        let recompiled = spine::package(&checked, limits.spine.package, cancel)
+            .map_err(|failure| ProbabilitySourceError::Compile(Box::new(failure)))?
+            .into_value();
+        resolved = Some(held.resolve(recompiled.package().bytes(), request.item)?);
+        refuse_foreign_claim(
+            resolved.as_deref().unwrap_or_default(),
+            &claimed(request.item, true),
+            limits,
+            cancel,
+        )?;
+    }
+    let certificate = resolved.as_deref().unwrap_or(request.certificate);
     let claims = checked.package().graph().probabilistic_model().claims();
-    super::bind_claim(claims, request.item, cancel).map_err(ProbabilityDocumentError::from)?;
+    super::bind_claim(claims, &claimed(request.item, held.is_some()), cancel)
+        .map_err(ProbabilityDocumentError::from)?;
     let snapshots = request.provision.snapshots();
     let simulation = ModelSimulationRequest {
         input: fsl_eval::simulation::model::ModelCheckInput::source(checked.package()),
@@ -345,10 +367,92 @@ fn check_recompiled(
     check_probability_certificate_document(
         &system,
         claims,
-        request.item,
-        request.certificate,
+        &claimed(request.item, held.is_some()),
+        certificate,
         limits.document,
         cancel,
     )
     .map_err(Into::into)
+}
+
+/// Refuse a certificate that names a claim other than the requested one.
+fn refuse_foreign_claim(
+    certificate: &[u8],
+    item: &ObligationIdentity,
+    limits: ProbabilitySourceLimits,
+    cancel: &Cancel,
+) -> Result<(), ProbabilitySourceError> {
+    let identity = match super::document::certificate_identity(certificate, limits.document, cancel)
+    {
+        Ok(identity) => identity,
+        Err(error) => {
+            return super::document::document_admission_error(error)
+                .map(|_| ())
+                .map_err(Into::into)
+        }
+    };
+    if &identity != item {
+        return Err(ProbabilityDocumentError::IdentityMismatch.into());
+    }
+    Ok(())
+}
+
+/// A certificate document whose identity names its node by index segments of
+/// an emitted package (FSpec FR-322 "Operand index segments"), the form an
+/// analyze result writes.
+struct HeldCertificate(serde_json::Value);
+
+impl HeldCertificate {
+    /// The document, when an index segment `{"node": i}` appears anywhere in it
+    /// or its identity names a model: the form an analyze result writes.
+    fn read(bytes: &[u8]) -> Option<Self> {
+        let value: serde_json::Value = serde_json::from_slice(bytes).ok()?;
+        let mut held = !value["identity"]["model"].is_null();
+        let mut pending = vec![&value];
+        while let Some(current) = pending.pop() {
+            match current {
+                serde_json::Value::Object(object) => {
+                    held |=
+                        object.len() == 1 && object.get("node").is_some_and(|node| node.is_u64());
+                    pending.extend(object.values());
+                }
+                serde_json::Value::Array(items) => pending.extend(items.iter()),
+                _ => {}
+            }
+        }
+        held.then_some(Self(value))
+    }
+
+    /// The document with every node id resolved against `package`'s graph,
+    /// written as canonical structural bytes.
+    /// The model the result names must be the model the request names; the
+    /// checker derives the claim itself and its document names no model, so
+    /// the resolved bytes carry none.
+    fn resolve(
+        &self,
+        package: &[u8],
+        item: &ObligationIdentity,
+    ) -> Result<Vec<u8>, ProbabilityDocumentError> {
+        let graph = fsl_semantics::check::wire_id::WireGraph::of_package_bytes(package)
+            .map_err(|_| ProbabilityDocumentError::Malformed)?;
+        let mut structural = graph
+            .structural_value(&self.0)
+            .map_err(|_| ProbabilityDocumentError::Malformed)?;
+        if structural["identity"]["model"].as_str() != item.model().map(|model| model.as_str()) {
+            return Err(ProbabilityDocumentError::IdentityMismatch);
+        }
+        structural["identity"]["model"] = serde_json::Value::Null;
+        fsl_foundation::canonical_json::encode(&structural)
+            .map_err(|_| ProbabilityDocumentError::Malformed)
+    }
+}
+
+/// The identity the checker derives for the claim: the requested node and
+/// ordinal, and no model when the certificate is a resolved held document.
+fn claimed(item: &ObligationIdentity, held: bool) -> ObligationIdentity {
+    if held {
+        ObligationIdentity::new(item.node().clone(), None, item.ordinal())
+    } else {
+        item.clone()
+    }
 }

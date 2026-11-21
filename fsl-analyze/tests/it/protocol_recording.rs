@@ -2,7 +2,7 @@
 //! FR-895: replay-mode reading and obligation assessment of protocol recordings.
 
 use fsl_analyze::protocol_analysis::recording::{
-    assess_recording, RecordingFact, RecordingVerdict,
+    assess_recording, RecordingFact, RecordingGlobalResult, RecordingVerdict,
 };
 use ix_trace_rs::trace;
 use serde_json::{json, Value};
@@ -1572,7 +1572,7 @@ fn inactive_requirement_protocol() -> fsl_package::CheckedPackage {
     )
 }
 
-fn requirement_verdict(closure: &str) -> RecordingVerdict {
+fn requirement_item(closure: &str) -> (RecordingVerdict, RecordingGlobalResult) {
     let package = inactive_requirement_protocol();
     let run = recording(
         complete_observations(),
@@ -1580,12 +1580,13 @@ fn requirement_verdict(closure: &str) -> RecordingVerdict {
         closure,
     );
     let assessed = assess_recording(&package, run.to_string().as_bytes()).expect("readable run");
-    assessed
+    let verdict = assessed
         .obligations
         .iter()
         .find(|entry| entry.obligation.kind == "requirement")
         .unwrap_or_else(|| panic!("a requirement obligation: {:#?}", assessed.obligations))
-        .verdict
+        .verdict;
+    (verdict, assessed.global)
 }
 
 /// A requirement whose guard never holds creates no obligation: a closed
@@ -1593,6 +1594,20 @@ fn requirement_verdict(closure: &str) -> RecordingVerdict {
 #[trace("FR-895-AC-8")]
 #[test]
 fn an_inactive_requirement_is_satisfied_when_closed_and_pending_when_open() {
-    assert_eq!(requirement_verdict("closed"), RecordingVerdict::Satisfied);
-    assert_eq!(requirement_verdict("open"), RecordingVerdict::Pending);
+    let (verdict, global) = requirement_item("closed");
+    assert_eq!(verdict, RecordingVerdict::Satisfied);
+    assert_eq!(
+        (global.label.as_str(), global.basis.as_str()),
+        ("proved", "closed-scope")
+    );
+    assert!(global.complete && global.cause.is_none());
+
+    let (verdict, global) = requirement_item("open");
+    assert_eq!(verdict, RecordingVerdict::Pending);
+    assert_eq!(
+        (global.label.as_str(), global.basis.as_str()),
+        ("inconclusive", "unsettled")
+    );
+    assert_eq!(global.cause.as_deref(), Some("open-history"));
+    assert!(!global.complete);
 }

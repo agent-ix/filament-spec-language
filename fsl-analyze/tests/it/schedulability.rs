@@ -72,6 +72,89 @@ fn ctl(third: i64) -> TaskSet {
     .expect("an admitted task set")
 }
 
+fn b_set(third: i64, periods: [i64; 3]) -> TaskSet {
+    TaskSet::new(
+        set_name("B"),
+        vec![
+            task("t1", 1, periods[0], 1),
+            task("t2", 2, periods[1], 2),
+            task("t3", third, periods[2], 3),
+        ],
+    )
+    .expect("an admitted set")
+}
+
+fn b_response_time_results(
+    periods: [i64; 3],
+    third_fixpoint: i64,
+    three: &[i64],
+    four: &[i64],
+    loads: [Rational; 2],
+) {
+    let fixed = schedulable(b_set(3, periods), SchedulingPolicy::FixedPriority);
+    let outcome = run(&fixed);
+    let points = fixed_points(&outcome);
+    assert_eq!(fixpoints(points), vec![n(1), n(3), n(third_fixpoint)]);
+    assert_eq!(points[2].jobs, vec![JobIterates(iterates(three))]);
+    assert_eq!(
+        settled(&fixed, &outcome),
+        proved(ClosedFormAnalysis::FixedPriorityRta)
+    );
+    let missed = schedulable(b_set(4, periods), SchedulingPolicy::FixedPriority);
+    let outcome = run(&missed);
+    assert_eq!(
+        outcome,
+        ClosedFormOutcome::Miss(MissEvidence::FixedPriority {
+            task: id("t3"),
+            job: 0,
+            iterates: iterates(four)
+        })
+    );
+    assert_eq!(settled(&missed, &outcome), TerminalValue::Refuted);
+    for (third, load) in [3, 4].into_iter().zip(loads) {
+        let edf = schedulable(b_set(third, periods), SchedulingPolicy::Edf);
+        let utilization = edf.task_set().tasks().iter().fold(n(0), |sum, task| {
+            sum.add(
+                &task
+                    .wcet
+                    .hi()
+                    .div(task.arrival.interval())
+                    .expect("positive period"),
+            )
+        });
+        assert_eq!(utilization, load);
+        let outcome = run(&edf);
+        assert!(
+            matches!(
+                outcome,
+                ClosedFormOutcome::Schedulable(ClosedFormEvidence::Demand { .. })
+            ),
+            "{outcome:?}"
+        );
+        assert_eq!(settled(&edf, &outcome), proved(ClosedFormAnalysis::EdfQpa));
+    }
+}
+
+/// The original B results stay exact independently of the EN-6 quotient.
+#[trace("TC-3008", "FR-249-AC-8")]
+#[test]
+fn the_original_task_set_b_retains_its_response_time_results() {
+    b_response_time_results(
+        [4, 6, 10],
+        10,
+        &[3, 6, 7, 9, 10, 10],
+        &[4, 7, 10, 11],
+        [r(53, 60), r(59, 60)],
+    );
+}
+
+/// Retiming to (6,6,8) preserves all four policy/work outcomes.
+#[trace("TC-3008", "FR-249-AC-8")]
+#[test]
+fn b_reduced_has_the_approved_response_time_results() {
+    b_response_time_results([6, 6, 8], 6, &[3, 6, 6], &[4, 7, 10], [r(7, 8), n(1)]);
+}
+
 fn subject(set: TaskSet, claim: ScheduleClaim) -> ScheduleSubject {
     ScheduleSubject::new(set, claim).expect("an admitted claim")
 }

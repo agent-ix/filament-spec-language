@@ -373,7 +373,7 @@ pub fn same_source_transition(left: &ModelTransition, right: &ModelTransition) -
     }
 }
 
-fn rational(value: &Value, pointer: &str) -> Result<Rational, TaskProductShapeRefusal> {
+pub(crate) fn rational(value: &Value, pointer: &str) -> Result<Rational, TaskProductShapeRefusal> {
     let map = object(value, pointer, &["numerator", "denominator"], &[])?;
     let numerator = integer(member(map, "numerator"), &child(pointer, "numerator"))?;
     let denominator = integer(member(map, "denominator"), &child(pointer, "denominator"))?;
@@ -391,7 +391,7 @@ fn rational(value: &Value, pointer: &str) -> Result<Rational, TaskProductShapeRe
     Ok(reduced)
 }
 
-fn rational_wire(value: &Rational) -> Value {
+pub(crate) fn rational_wire(value: &Rational) -> Value {
     json!({
         "denominator": value.denominator().to_string(),
         "numerator": value.numerator().to_string(),

@@ -597,17 +597,35 @@ fn certificate_checks_independently() {
     let outcome = serde_json::to_value(analyzed.value).expect("the analyze document is JSON");
     let item = &outcome["items"][0];
     assert_eq!(item["record"]["result"], "proved", "{item}");
+    assert!(item["certificate"]["document"].is_object(), "{item}");
     let certificate = &item["certificate"]["document"];
-    assert!(certificate.is_object(), "{item}");
 
     let mut checker_request = proof_request(CLAIM);
     let certificate_text = serde_json::to_string(certificate).unwrap();
+    // The result holds the document-held form (FSpec FR-322): index segments
+    // and the owning model. The checker reads that document itself, unchanged.
     assert_eq!(
-        serde_json::from_str::<Value>(checker_request["certificate"].as_str().unwrap()).unwrap(),
-        *certificate,
-        "the verb emits the source certificate checked by this process"
+        certificate["identity"], item["certificate"]["identity"],
+        "{item}"
+    );
+    assert!(certificate["identity"]["model"].is_string(), "{item}");
+    assert!(
+        certificate["identity"]["node_id"]["path"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|segment| segment.get("node").is_some()),
+        "{item}"
     );
     checker_request["certificate"] = json!(certificate_text);
+    let mut unnamed = checker_request.clone();
+    let (code, result) = run(&unnamed, &[]);
+    assert_ne!(
+        code, 0,
+        "an item naming no model is not the certified claim: {result}"
+    );
+    unnamed["item"]["model"] = certificate["identity"]["model"].clone();
+    checker_request = unnamed;
     let (code, result) = run(&checker_request, &[]);
     assert_eq!(code, 0, "{result}");
     assert_eq!(result["status"], "accepted");

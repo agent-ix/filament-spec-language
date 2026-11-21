@@ -56,10 +56,10 @@ limits only (ADR-030 D-4.9).
    package whose canonical bytes number exactly the bound is emitted, and the
    emitter writes no bytes for one byte more. A package the emitter returns
    from its remembered emission counts the same bytes against the bound
-   supplied by the call. When the bound is reached the emitter SHALL return
+   supplied by the call. When the package would exceed the bound the emitter SHALL return
    `EmitRefusal::OutputLimit`, whose catalog code is `stage_limit_exceeded`
    with cause `input-bytes-exceeded`, carrying kind `input bytes`, the
-   configured bound, the byte count the refused write would have reached, and
+   configured bound, the first unpaid byte count (`bound + 1`), and
    setting `emit.output_bytes`; the compile lifecycle returns it as its
    `Limit` refusal. The published default is 16777216 bytes, supplied by the
    outer configuration (FR-255). The `body_locations` rows of a function body
@@ -69,8 +69,10 @@ limits only (ADR-030 D-4.9).
    the bytes it is written in, its `up` and `down` as they serialize and the
    row's other members, against this bound before it builds the row, and a
    body whose rows would exceed it is refused with the same `OutputLimit`,
-   whose actual count is the bytes of the rows written so far plus the
-   refused row.
+   whose actual count is `bound + 1`, even when a complete row or encoder
+   fragment would cross the bound by several bytes. The same first-unpaid
+   count applies to a refused remembered emission; its complete remembered
+   length is not the refusal's actual count. No refusal returns a partial package.
 
 ## Acceptance Criteria
 
@@ -81,9 +83,9 @@ limits only (ADR-030 D-4.9).
 | FR-264-AC-3 | A v2 artifact identical to an emitted one except that one `application` argument is an inline `application` term is refused by FSL's I2 read with code `malformed_wire`, with no limit outcome. | Test (TC-739) |
 | FR-264-AC-4 | A v2 artifact with more nodes than `i2.nodes` at bound `B` returns `StageFailure::Limit` with kind node count, bound `B`, IR's consumed count and setting `i2.nodes`, with `Locus::Artifact`; read again with `i2.nodes` raised through the v2 read limits' builder and through FR-255's settings operation given `i2.nodes=<n>` (FR-255), which the driver CLI exposes as `--limit` (ADR-029 CB-1), it verifies. | Test (TC-739) |
 | FR-264-AC-5 | On a thread with a 512 KiB stack and the default limits, a v2 artifact whose JSON is 100,000 arrays deep is refused by FSL's I2 read with code `malformed_wire`, with no limit outcome and no outcome naming a depth. | Test (TC-739) |
-| FR-264-AC-6 | A package whose canonical emitted bytes number `N` is emitted at `emit.output_bytes` `N`, with bytes equal to the bytes emitted under a larger bound. At bound `N - 1` it returns `EmitRefusal::OutputLimit` with code `stage_limit_exceeded`, cause `input-bytes-exceeded`, kind input bytes, bound `N - 1`, an actual count above `N - 1` and setting `emit.output_bytes`, and writes no bytes. At bound 0 it returns the same refusal with bound 0. | Test (TC-738) |
-| FR-264-AC-7 | A package emitted once and then offered again to an emit entry at a bound below its remembered byte length returns the same `OutputLimit` refusal with actual `N`; at bound `N` it returns the remembered emission. The compile lifecycle given `emit.output_bytes` `N - 1` returns `CompileRefusal::Limit` naming `emit.output_bytes`, and given `N` emits. | Test (TC-738) |
-| FR-264-AC-8 | A 100,000-term sum `x + x + ... + x` nested on the left, whose `body_locations` rows hold at most 200,000 `up` and `down` entries together (FSpec FR-322-AC-510 BL-D1), is emitted under the default `emit.output_bytes` 16777216 on a thread with a 512 KiB stack, as FR-531-AC-41 states; at a bound one byte below its emitted length it returns `EmitRefusal::OutputLimit` with code `stage_limit_exceeded`, setting `emit.output_bytes`, that bound and an actual count above it, charged for its rows (Behavior 5), and writes no bytes. | Test (TC-738) |
+| FR-264-AC-6 | A package whose canonical emitted bytes number `N` is emitted at `emit.output_bytes` `N`, with bytes equal to the bytes emitted under a larger bound. At bound `N - 1` it returns `EmitRefusal::OutputLimit` with code `stage_limit_exceeded`, cause `input-bytes-exceeded`, kind input bytes, bound `N - 1`, actual first unpaid byte `N` and setting `emit.output_bytes`, and returns no partial package. At bound 0 it returns the same refusal with bound 0 and actual first unpaid byte 1. | Test (TC-738) |
+| FR-264-AC-7 | A package emitted once with canonical byte length `N` and then offered again to an emit entry at a bound `B < N` returns the same `OutputLimit` refusal with configured bound `B` and actual first unpaid byte `B + 1`, including actual 1 at bound 0; at bound `N` it returns the remembered emission unchanged. The compile lifecycle given `emit.output_bytes` `N - 1` returns `CompileRefusal::Limit` naming `emit.output_bytes`, and given `N` emits. | Test (TC-738) |
+| FR-264-AC-8 | A sum `x + x + ... + x` with 100,000 `+` applications (100,001 terms) nested on the left emits a complete package on a thread with a 512 KiB stack under finite explicit caller ceilings derived before emission from the checked input and fixed schema/body-walk coefficients, as FR-531-AC-41 states. Its `body_locations` rows have at most 200,000 relative entries (one `up` per row plus its `down` entries; FSpec FR-322-AC-510 BL-D1), and its actual complete bytes and charged native strict-read and lending-cursor work are recorded against those bounds. With the same checked input and other stage ceilings unchanged, setting only `emit.output_bytes` to the published default 16777216 instead returns `EmitRefusal::OutputLimit` with code `stage_limit_exceeded`, setting `emit.output_bytes`, configured bound 16777216 and actual first unpaid byte 16777217, and no partial package. | Test (TC-738) |
 
 ## Dependencies
 

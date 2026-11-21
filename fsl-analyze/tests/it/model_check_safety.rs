@@ -29,8 +29,9 @@ use fsl_eval::simulation::model::ModelSimState;
 use fsl_eval::temporal::AtomReading;
 use fsl_eval::temporal::UndefinedCause;
 use fsl_replay::{
-    CounterexampleKind, IncompleteCause, ModelCheckItem, ModelCheckLimit, ModelCheckLimits,
-    ModelCheckOutcome, ReachedLimit, TemporalCounterexample, UndefinedLocus,
+    settle_model_check, CertificateRequest, CounterexampleKind, IncompleteCause, ModelCheckItem,
+    ModelCheckLimit, ModelCheckLimits, ModelCheckOutcome, ReachedLimit, SmtEncodingLimits,
+    TemporalCounterexample, TerminalValue, UndefinedLocus,
 };
 use fsl_semantics::check::FormulaNodeId;
 use ix_trace_rs::trace;
@@ -964,6 +965,55 @@ fn a_guarded_invariant_clause_is_read_from_its_activating_positions() {
         panic!("a safety clause holds with a closure: {certificate:?}");
     };
     assert!(certificate.states.is_empty(), "{certificate:?}");
+}
+
+/// FR-127 ADR-018 V-1: a TP-3 clause over `on each` has no canonical
+/// translation, so its proof carries an empty certificate, which the core
+/// checker cannot admit and the settlement map settles `failed`, never
+/// `proved`. Over the Counter subject, `on each always (p implies
+/// eventually[0,2] p)` holds with `p` true at every value.
+#[trace("TC-521", "FR-127-AC-1", "FR-338-AC-29")]
+#[test]
+fn an_on_each_past_or_interval_proof_never_settles_proved() {
+    let activation = each("Counter");
+    let world = counter_world(
+        INFINITE,
+        &[Clause {
+            activation: &activation,
+            formula: "always (holds(c.value <= 3) implies eventually[0,2] holds(c.value <= 3))",
+        }],
+    );
+    let letters = Letters::new(
+        &world.clauses[0],
+        vec![value(|v| Some(v <= 3)), value(|v| Some(v <= 3))],
+    );
+    let outcome = run_letters(&world, 0, &["c"], &letters, ModelCheckLimits::default())
+        .expect("checked");
+    let ModelCheckOutcome::Holds { certificate, .. } = &outcome else {
+        panic!("expected Holds, got {outcome:?}");
+    };
+    let fsl_replay::ProofCertificate::Closure(certificate) = certificate else {
+        panic!("a safety clause holds with a closure: {certificate:?}");
+    };
+    assert!(certificate.states.is_empty(), "{certificate:?}");
+    let temporal_clock_selections = crate::fill::tcb_01_event_position_selection(&world.package);
+    let request = CertificateRequest {
+        temporal_clock_selections: &temporal_clock_selections,
+        subject: world.subject(&["c"], UNLIMITED),
+        item: ModelCheckItem::Clause {
+            clause: &world.clauses[0],
+            letters: &letters,
+        },
+        smt_encoding: SmtEncodingLimits::default(),
+    };
+    let record = settle_model_check(
+        &outcome,
+        &ModelCheckLimits::default(),
+        &request,
+        &Cancel::new(),
+        |_| panic!("a proof replays nothing"),
+    );
+    assert_eq!(record.value, TerminalValue::Failed);
 }
 
 /// FR-126-AC-16: a `when` condition with no value at a position the monitor

@@ -2284,11 +2284,16 @@ impl<O> Checker<'_, '_, O> {
                 continue;
             };
             let listed = &certificate.nodes[node];
-            let q = self
-                .bound
-                .get(&listed.automaton_state)
-                .copied()
-                .unwrap_or_default();
+            // A refinement form's second component is a position, read at
+            // the node's own index (it is no claim-automaton state).
+            let q = if self.refined.is_some() {
+                listed.automaton_state
+            } else {
+                self.bound
+                    .get(&listed.automaton_state)
+                    .copied()
+                    .unwrap_or_default()
+            };
             let successors = match listed.product {
                 Some(mark) if self.live.is_some() => {
                     self.live_successors(node, &state, q, mark, &listed.zone)?
@@ -2299,8 +2304,14 @@ impl<O> Checker<'_, '_, O> {
                 let edge = &certificate.edges[index];
                 let target = &certificate.nodes[edge.to];
                 for (position, successor) in successors.iter().enumerate() {
-                    let same = successor.step.as_ref().map(GuardedStep::transition)
-                        == edge.transition.as_ref()
+                    let own = successor.step.as_ref().map(GuardedStep::transition);
+                    let identity_matches = match (own, edge.transition.as_ref()) {
+                        (Some(own), Some(listed)) if self.release_ops.is_some() => {
+                            super::task_product::same_source_transition(own, listed)
+                        }
+                        (own, listed) => own == listed,
+                    };
+                    let same = identity_matches
                         && successor.part == edge.part
                         && successor.horizon == edge.horizon
                         && successor.state_key == target.state_key

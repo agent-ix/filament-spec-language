@@ -629,9 +629,9 @@ pub enum UnavailabilityCause {
     },
     /// FR-182 V-8: an SMT hyper encoding is outside its supported fragment.
     UnsupportedSmtFragment,
-    /// FR-192: a drawn step of an EN-4 run broke the Markov condition
+    /// FR-187: a drawn step of an EN-4 or EN-5 run broke the Markov condition
     /// (ADR-024 PM-3). Wire cause `not-markov`.
-    NotMarkov,
+    NotMarkov(Box<fsl_eval::simulation::model::NotMarkov>),
     /// FR-192: a choice's scaled weight total exceeds `2^256`, so no draw is
     /// accepted (FSpec FR-181-AC-14). Wire cause `total-above-draw-range`,
     /// `total` a decimal string.
@@ -773,7 +773,7 @@ impl UnavailabilityCause {
             | Self::StatisticalRequest(_) => NegotiationOutcome::UnsupportedRequestedCapability
                 .code()
                 .cause(),
-            Self::NotMarkov => "not-markov",
+            Self::NotMarkov(_) => "not-markov",
             Self::TotalAboveDrawRange { .. } => "total-above-draw-range",
             Self::NotStochastic { .. } => "not-stochastic",
             Self::TimeLockedSample { .. } => "time-locked-sample",
@@ -801,7 +801,7 @@ impl UnavailabilityCause {
             Self::SolverAbsent
             | Self::BackendAbsent
             | Self::Disposition
-            | Self::NotMarkov
+            | Self::NotMarkov(_)
             | Self::TotalAboveDrawRange { .. }
             | Self::NotStochastic { .. }
             | Self::TimeLockedSample { .. }
@@ -1394,6 +1394,17 @@ impl ReportedInconclusiveCause {
 }
 
 impl TerminalValue {
+    fn invalid_not_markov(&self) -> bool {
+        matches!(
+            self,
+            Self::Unsupported(UnavailabilityCause::NotMarkov(cause))
+                if cause.post_states == 1
+                    || u64::try_from(cause.post_state_examples.len()).ok()
+                        != Some(cause.post_states.min(2))
+                    || cause.post_state_examples.windows(2).any(|pair| pair[0] >= pair[1])
+        )
+    }
+
     /// Map this value to its ADR-013 O-16 category. Exhaustive with no `_`
     /// arm; a further `TerminalValue` variant fails this match to compile
     /// rather than silently falling into an existing row (FR-069's
@@ -1548,6 +1559,8 @@ pub struct TerminalRecord {
     backend: Option<BackendId>,
     value: TerminalValue,
     replay: Option<ReplayResult>,
+    protocol_analysis_key: Option<crate::protocol_analysis::ProtocolAnalysisKey>,
+    protocol_analysis_root: Option<crate::RuntimeValuePath>,
     /// The one diagnostic a `failed` record carries, when its settlement
     /// names one (FR-192: an internal failure's
     /// `runtime_invariant`/`established-invariant-broken`, or an expansion
@@ -1641,6 +1654,8 @@ impl TerminalRecord {
             backend: Some(backend),
             value: TerminalValue::Refuted,
             replay: Some(replay.clone()),
+            protocol_analysis_key: None,
+            protocol_analysis_root: None,
             diagnostic: None,
             exact_certificate: None,
             exact_certificate_document: None,
@@ -1842,15 +1857,23 @@ impl TerminalRecord {
     }
 
     /// ADR-036 PA-20 (FSL FR-573): the record of a settled protocol
-    /// analysis. A `refuted` settlement exists only for a counterexample
-    /// that replayed, which each protocol analysis engine checks before it
-    /// returns one.
+    /// analysis. The engine establishes its native counterexample before
+    /// returning `refuted`; acting-instance projection decisions are typed
+    /// witnesses and other decisive protocol results are replayed. `key`
+    /// retains the native projection or realizability key; `root` retains
+    /// its decisive witness's assessed root. Both are absent for a
+    /// global-conformance settlement.
     pub fn of_protocol_analysis(
         request_index: RequestIndex,
         backend: BackendId,
         settlement: &crate::protocol_analysis::ProtocolAnalysisSettlement,
+        key: Option<crate::protocol_analysis::ProtocolAnalysisKey>,
+        root: Option<crate::RuntimeValuePath>,
     ) -> Self {
-        Self::with_backend(request_index, backend, settlement.value.clone())
+        let mut record = Self::with_backend(request_index, backend, settlement.value.clone());
+        record.protocol_analysis_key = key;
+        record.protocol_analysis_root = root;
+        record
     }
 
     /// Build a tested record with the producing backend identity.
@@ -1896,6 +1919,8 @@ impl TerminalRecord {
             backend: None,
             value: TerminalValue::Declined { cause, code },
             replay: None,
+            protocol_analysis_key: None,
+            protocol_analysis_root: None,
             diagnostic: Some(diagnostic),
             exact_certificate: None,
             exact_certificate_document: None,
@@ -1906,6 +1931,7 @@ impl TerminalRecord {
     }
 
     /// Build an unsupported record with the producing backend identity.
+    /// Malformed NotMarkov evidence settles as an internal failure.
     pub fn unsupported(
         request_index: RequestIndex,
         backend: BackendId,
@@ -1928,6 +1954,8 @@ impl TerminalRecord {
             backend: None,
             value: TerminalValue::Unsupported(UnavailabilityCause::Disposition),
             replay: None,
+            protocol_analysis_key: None,
+            protocol_analysis_root: None,
             diagnostic: Some(diagnostic),
             exact_certificate: None,
             exact_certificate_document: None,
@@ -1954,6 +1982,8 @@ impl TerminalRecord {
                 code: DeclineCode::Fsl(Code::InvalidRequest),
             },
             replay: None,
+            protocol_analysis_key: None,
+            protocol_analysis_root: None,
             diagnostic: Some(diagnostic),
             exact_certificate: None,
             exact_certificate_document: None,
@@ -1971,6 +2001,8 @@ impl TerminalRecord {
             backend: None,
             value: TerminalValue::Failed,
             replay: None,
+            protocol_analysis_key: None,
+            protocol_analysis_root: None,
             diagnostic: Some(diagnostic),
             exact_certificate: None,
             exact_certificate_document: None,
@@ -2130,6 +2162,8 @@ impl TerminalRecord {
             backend: None,
             value: TerminalValue::Unsupported(UnavailabilityCause::HybridProviderAbsent),
             replay: None,
+            protocol_analysis_key: None,
+            protocol_analysis_root: None,
             diagnostic: Some(NegotiationOutcome::UnsupportedRequestedCapability.code()),
             exact_certificate: None,
             exact_certificate_document: None,
@@ -2156,6 +2190,8 @@ impl TerminalRecord {
             backend: Some(backend),
             value: TerminalValue::Unsupported(UnavailabilityCause::Disposition),
             replay: None,
+            protocol_analysis_key: None,
+            protocol_analysis_root: None,
             diagnostic: Some(CatalogCode::new("unsupported_construct", "expression-form")),
             exact_certificate: None,
             exact_certificate_document: None,
@@ -2177,6 +2213,8 @@ impl TerminalRecord {
             backend: Some(backend),
             value: TerminalValue::Unsupported(UnavailabilityCause::Disposition),
             replay: None,
+            protocol_analysis_key: None,
+            protocol_analysis_root: None,
             diagnostic: Some(CatalogCode::new(
                 "unsupported_projection",
                 "tool-unavailable",
@@ -2194,6 +2232,12 @@ impl TerminalRecord {
         backend: BackendId,
         value: TerminalValue,
     ) -> Self {
+        let invalid_not_markov = value.invalid_not_markov();
+        let value = if invalid_not_markov {
+            TerminalValue::Failed
+        } else {
+            value
+        };
         // An `unsupported` record settled by disposition carries the FR-272
         // diagnostic (FR-286); a caller that builds one without a
         // diagnostic gets the generic capability diagnostic, never a record
@@ -2207,7 +2251,16 @@ impl TerminalRecord {
             backend: Some(backend),
             value,
             replay: None,
-            diagnostic: disposed.then(|| NegotiationOutcome::UnsupportedRequestedCapability.code()),
+            protocol_analysis_key: None,
+            protocol_analysis_root: None,
+            diagnostic: if invalid_not_markov {
+                Some(CatalogCode::new(
+                    "runtime_invariant",
+                    "established-invariant-broken",
+                ))
+            } else {
+                disposed.then(|| NegotiationOutcome::UnsupportedRequestedCapability.code())
+            },
             disposition_detail: disposed.then(serde_json::Map::new),
             diagnostic_detail: None,
             disposed,
@@ -2224,12 +2277,20 @@ impl TerminalRecord {
         reason = "used by fsl-replay's crate-local outcome fixtures"
     )]
     pub(crate) fn from_value(request_index: RequestIndex, value: TerminalValue) -> Self {
+        let invalid_not_markov = value.invalid_not_markov();
         Self {
             request_index,
             backend: None,
-            value,
+            value: if invalid_not_markov {
+                TerminalValue::Failed
+            } else {
+                value
+            },
             replay: None,
-            diagnostic: None,
+            protocol_analysis_key: None,
+            protocol_analysis_root: None,
+            diagnostic: invalid_not_markov
+                .then(|| CatalogCode::new("runtime_invariant", "established-invariant-broken")),
             exact_certificate: None,
             exact_certificate_document: None,
             disposition_detail: None,
@@ -2241,6 +2302,17 @@ impl TerminalRecord {
     /// The `request_index` of the item this record was read for.
     pub fn request_index(&self) -> RequestIndex {
         self.request_index
+    }
+
+    /// The original protocol-analysis key retained when its native result settled.
+    /// Global-conformance records carry no projection or realizability key.
+    pub fn protocol_analysis_key(&self) -> Option<&crate::protocol_analysis::ProtocolAnalysisKey> {
+        self.protocol_analysis_key.as_ref()
+    }
+
+    /// The assessed root retained from the original decisive protocol witness.
+    pub fn protocol_analysis_root(&self) -> Option<&crate::RuntimeValuePath> {
+        self.protocol_analysis_root.as_ref()
     }
 
     /// The certificate accepted for this exact probabilistic proof, if any.

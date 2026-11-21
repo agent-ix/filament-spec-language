@@ -677,7 +677,11 @@ const UNSUPPORTED: Table = &[
     ("every-scheduler", &[], &[]),
     ("exact-only-form", &[], &[]),
     ("confidence-beyond-precision", &[], &[]),
-    ("not-markov", &["post_states", "state", "transition"], &[]),
+    (
+        "not-markov",
+        &["post_state_count", "post_states", "state", "transition"],
+        &[],
+    ),
     ("not-stochastic", &["identity", "state"], &[]),
     ("time-locked-sample", &["state"], &[]),
     ("total-above-draw-range", &["total"], &[]),
@@ -897,12 +901,17 @@ fn read_task_search(value: &Value) -> Result<TaskSearchEvidence, Defect> {
         &["node_id", "model", "ordinal"],
         "/task_search/identity",
     )?;
-    fsl_foundation::node_wire::node_key_from_json(
-        identity
-            .get("node_id")
-            .ok_or_else(|| Defect::missing("/task_search/identity/node_id".to_owned()))?,
-    )
-    .map_err(|_| Defect::invalid("/task_search/identity/node_id".to_owned()))?;
+    let node_id = identity
+        .get("node_id")
+        .ok_or_else(|| Defect::missing("/task_search/identity/node_id".to_owned()))?;
+    // An analyze result holds the id as index segments of its package (FSpec
+    // FR-322); an engine's own record holds the structural key.
+    if fsl_foundation::node_wire::node_key_from_json(node_id).is_err()
+        && serde_json::from_value::<filament_contract_model::CheckedNodeId>(node_id.clone())
+            .is_err()
+    {
+        return Err(Defect::invalid("/task_search/identity/node_id".to_owned()));
+    }
     for required in ["node_id", "model", "ordinal"] {
         let path = format!("/task_search/identity/{required}");
         if !identity.get(required).is_some() {

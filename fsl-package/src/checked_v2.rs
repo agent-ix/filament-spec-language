@@ -1259,6 +1259,14 @@ impl AdmittedPackageRead<'_> {
         &self.read.admitted
     }
 
+    /// The exact canonical checked-package/v2 bytes this reader admitted.
+    ///
+    /// The bytes come from the retained emission used by the strict reader;
+    /// callers cannot pair this read with a separately supplied byte slice.
+    pub fn canonical_bytes(&self) -> &[u8] {
+        self.emission.package().bytes()
+    }
+
     /// The admitted package's identity (FR-940 `identity`).
     pub(crate) fn admitted_identity(&self) -> &LibraryName {
         &self.identity

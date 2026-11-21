@@ -212,6 +212,30 @@ impl PropertyAutomaton {
             .buchi_state(config, &self.eventualities, max_key_bytes)
     }
 
+    /// The FR-338 elementary configuration of a reached state: its
+    /// obligations, past memory, interval windows and acceptance membership,
+    /// independent of this automaton's run-local [`StateId`]. A safety
+    /// monitor state is the set of these over its viable members.
+    ///
+    /// # Errors
+    ///
+    /// [`AutomatonError::UnknownState`] when `state` was not reached,
+    /// [`AutomatonError::KeyEncodingLimit`] when a past memory exceeds
+    /// `max_key_bytes`, or [`AutomatonError::Invariant`] when a member has
+    /// no source occurrence in the checked formula.
+    pub fn configuration(
+        &self,
+        state: StateId,
+        max_key_bytes: u64,
+    ) -> Result<Configuration, AutomatonError> {
+        let config = self
+            .reached
+            .key(state)
+            .ok_or(AutomatonError::UnknownState { state })?;
+        self.translator
+            .configuration(config, &self.eventualities, max_key_bytes)
+    }
+
     /// The canonical key of a reached property state, independent of its
     /// run-local [`StateId`]. The same scheme covers bounded, safety and
     /// liveness translations. Its context binds the key to this automaton's
@@ -1148,10 +1172,38 @@ impl Translator {
         eventualities: &[NodeId],
         max_key_bytes: u64,
     ) -> Result<BuchiState, AutomatonError> {
-        let mut branch = Configuration::default();
+        let branch = self.configuration(config, eventualities, max_key_bytes)?;
         let waiting = self
             .activation_root
             .is_some_and(|root| config.must.contains(&root));
+        match self.activation_root {
+            Some(_) => {
+                let phase = if waiting {
+                    BuchiPhase::Waiting
+                } else {
+                    BuchiPhase::Active
+                };
+                // The guarded/unguarded form is the clause's own activation,
+                // recorded in `activation_guarded` when the translator is built.
+                if self.activation_guarded == Some(true) {
+                    Ok(BuchiState::Guarded(phase, branch))
+                } else {
+                    Ok(BuchiState::Each(phase, branch))
+                }
+            }
+            None => Ok(BuchiState::Elementary(branch)),
+        }
+    }
+
+    /// Project a reached engine configuration to FR-338's elementary
+    /// configuration `[obligations, past, windows, acceptance]`.
+    fn configuration(
+        &self,
+        config: &Config,
+        eventualities: &[NodeId],
+        max_key_bytes: u64,
+    ) -> Result<Configuration, AutomatonError> {
+        let mut branch = Configuration::default();
 
         for node in &config.must {
             if Some(*node) == self.activation_root {
@@ -1160,7 +1212,7 @@ impl Translator {
             let occurrences = self
                 .occurrences
                 .get(node)
-                .ok_or_else(|| invariant("buchi-obligation-has-source-occurrence"))?;
+                .ok_or_else(|| invariant("state-obligation-has-source-occurrence"))?;
             branch
                 .obligations
                 .extend(occurrences.iter().cloned().map(Obligation::Current));
@@ -1170,7 +1222,7 @@ impl Translator {
             let occurrences = self
                 .occurrences
                 .get(node)
-                .ok_or_else(|| invariant("buchi-window-has-source-occurrence"))?;
+                .ok_or_else(|| invariant("state-window-has-source-occurrence"))?;
             match counter {
                 Counter::Deadline(counter) if counter.is_pending() => {
                     branch
@@ -1202,7 +1254,7 @@ impl Translator {
             let occurrences = self
                 .occurrences
                 .get(node)
-                .ok_or_else(|| invariant("buchi-shift-has-source-occurrence"))?;
+                .ok_or_else(|| invariant("state-shift-has-source-occurrence"))?;
             for offset in remaining {
                 branch
                     .windows
@@ -1216,9 +1268,9 @@ impl Translator {
             let occurrences = self
                 .past_occurrences
                 .get(node)
-                .ok_or_else(|| invariant("buchi-past-has-source-occurrence"))?;
+                .ok_or_else(|| invariant("state-past-has-source-occurrence"))?;
             let Node::Past { kind, window, .. } = self.ir.node(*node)? else {
-                return Err(invariant("buchi-past-node"));
+                return Err(invariant("state-past-node"));
             };
             let past = Past::new(kind, window, self.subject);
             branch.past.extend(
@@ -1242,27 +1294,10 @@ impl Translator {
             let occurrences = self
                 .occurrences
                 .get(eventuality)
-                .ok_or_else(|| invariant("buchi-acceptance-has-source-occurrence"))?;
+                .ok_or_else(|| invariant("state-acceptance-has-source-occurrence"))?;
             branch.acceptance.extend(occurrences.iter().cloned());
         }
-
-        match self.activation_root {
-            Some(_) => {
-                let phase = if waiting {
-                    BuchiPhase::Waiting
-                } else {
-                    BuchiPhase::Active
-                };
-                // The guarded/unguarded form is the clause's own activation,
-                // recorded in `activation_guarded` when the translator is built.
-                if self.activation_guarded == Some(true) {
-                    Ok(BuchiState::Guarded(phase, branch))
-                } else {
-                    Ok(BuchiState::Each(phase, branch))
-                }
-            }
-            None => Ok(BuchiState::Elementary(branch)),
-        }
+        Ok(branch)
     }
 
     /// The unbounded `eventually` and `until` cores: what a state may carry

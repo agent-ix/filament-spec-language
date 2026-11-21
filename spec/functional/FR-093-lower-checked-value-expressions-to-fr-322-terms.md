@@ -356,19 +356,17 @@ the one the product of `s` and `s` has. A conversion between units of two
 dimension nodes that no equivalence relates, directly or through a class,
 refuses `ill_typed` as before.
 
-The source checker and evaluator SHALL use the equivalence-aware runtime unit
-graph of FSV FR-134 for these operations. While the package reader cannot
-reconstruct dimension-equivalence definitions, the bytes-only route SHALL
-refuse an explicit conversion whose declared units require that identification,
-or a compound operation whose nominal result unit differs from its checked
-class-root result, as `unsupported_construct`/`not-yet-implemented` with
-`what = dimension-equivalence-package-reconstruction`, at the operation's
-retained location. It SHALL return no converted or compound value on that
-path. This bounded limitation is governed by
+The source checker, source evaluator and bytes-only evaluator SHALL use the
+equivalence-aware runtime unit graph of FSV FR-134 for these operations. The
+bytes-only route SHALL reconstruct the classes from the package's admitted
+dimension-equivalence operands and ordered root ratios. A local operand resolves
+in that package; a package operand resolves in the exact named direct dependency.
+Both routes SHALL return the same exact quantity and unit, admit the same kernel
+charges and stop at the same denied kernel charge without a quantity. This
+behavior is governed by
 [FR-533](FR-533-evaluate-a-protocol-slot-from-the-checked-package-s-own-nodes.md),
 AC-23; nominal same-dimension conversions, including ordinary affine
-conversions, retain their existing package behavior. Package reconstruction
-of the class graph remains an unmet part of QSL-2734.
+conversions, retain their existing package behavior.
 
 **Lowering.** The literal's node has as `semantic_type` the
 `scalar_type`/`unit` node of its unit (FR-094: a declared unit's quantity

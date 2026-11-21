@@ -3,7 +3,7 @@
 //! evaluated value (FR-093 "Dimension equivalence", FR-093-AC-46; FSpec
 //! FR-142-AC-26).
 
-use filament_eval::{Evaluation, FamilyOutcome, FamilyResult};
+use filament_eval::{Evaluation, FamilyOutcome};
 use filament_exact::{
     ChargePoint, Integer, LimitKind, Meter, Outcome, Quantity as ExactQuantity, Rational, Value,
     ValueType,
@@ -310,7 +310,7 @@ fn with_bare<T>(
     let read = fsl_package::read_evaluation_emission(
         package,
         &emission,
-        LibraryName::new("fixture").expect("a package name"),
+        LibraryName::new(emission.package().name()).expect("the emitted package name"),
         &no_models,
         fsl_package::V2ReadLimits::fixture(),
         fsl_package::EmitLimits::fixture(),
@@ -340,6 +340,14 @@ fn boundary_program() -> String {
     format!(
         "{}\
          unit shifted : Beat = rational(1, 1) * beat + rational(2, 1);\n\
+         dimension TimeSquared = Time ^ 2;\n\
+         unit s2 : TimeSquared = rational(1, 1);\n\
+         dimension Dimensionless = Time / Time;\n\
+         unit one : Dimensionless = rational(1, 1);\n\
+         function product_value using v(): Quantity<s2> pure {{ convert<Quantity<s2>>(6 s * 3 beat) }}\n\
+         function quotient_value using v(): Quantity<one> pure {{ convert<Quantity<one>>(6 s / 3 beat) }}\n\
+         function power_s_value using v(): Quantity<s2> pure {{ convert<Quantity<s2>>(2 s ^ 2) }}\n\
+         function power_beat_value using v(): Quantity<s2> pure {{ convert<Quantity<s2>>(2 beat ^ 2) }}\n\
          function cross using v(): Quantity<s> pure {{ convert<Quantity<s>>(1 beat) }}\n\
          function affine_class using v(): Quantity<s> pure {{ convert<Quantity<s>>(1 shifted) }}\n\
          function quotient using v(): Boolean pure {{ 6 s / 3 beat = 8 s / 1 s }}\n\
@@ -355,215 +363,181 @@ fn boundary_program() -> String {
     )
 }
 
-fn assert_unsupported_at(
-    package: &CheckedPackage,
-    program: &str,
-    evaluation: &Evaluation,
-    meter: &Meter,
-    expression: &str,
-    depth: usize,
-) {
-    use filament_semantic_value::catalog::CatalogCode;
-    let FamilyOutcome::FamilyEvaluated(FamilyResult::Refused(cause)) = &evaluation.outcome else {
-        panic!("a typed unsupported conversion, got {evaluation:?}");
-    };
-    assert_eq!(
-        cause.catalog_code(),
-        CatalogCode::new("unsupported_construct", "not-yet-implemented")
-    );
-    let fields = cause
-        .catalog_fields()
-        .expect("the unsupported construct payload");
-    assert_eq!(
-        fields.get("what").map(String::as_str),
-        Some("dimension-equivalence-package-reconstruction")
-    );
-    let location = evaluation
-        .location
-        .as_ref()
-        .expect("the conversion's location");
-    assert_eq!(location.depth(), depth);
-    let region = package
-        .graph()
-        .region(location)
-        .expect("the source conversion span");
-    let prefix = "language \"ix:native\" edition \"1-draft\";\nprofile v = \"filament.value.complete/v1\";\n";
-    let full = format!("{prefix}{program}");
-    let start = usize::try_from(region.start()).expect("the source start fits");
-    let end = usize::try_from(region.end()).expect("the source end fits");
-    let expected_start = full
-        .find(expression)
-        .expect("the specified source operation");
-    assert_eq!(
-        start, expected_start,
-        "the first specified operation's start"
-    );
-    assert_eq!(
-        end,
-        expected_start + expression.len(),
-        "the exact operation's end"
-    );
-    assert_eq!(&full[start..end], expression);
-    assert!(
-        meter.admitted_charges().iter().all(|charge| !matches!(
-            charge.point,
-            ChargePoint::UnitIdentityRead
-                | ChargePoint::UnitEdge
-                | ChargePoint::UnitRationalArithmetic
-                | ChargePoint::UnitTargetDomain
-                | ChargePoint::UnitResultRetain
-        )),
-        "no quantity-kernel charge before refusal: {:?}",
-        meter.admitted_charges()
-    );
-}
-
-fn boundary_limits() -> [filament_exact::ScalarLimits; 5] {
-    use filament_exact::ScalarLimits;
-    [
-        UNLIMITED,
-        ScalarLimits {
-            work_units: 1,
-            ..UNLIMITED
-        },
-        ScalarLimits {
-            unit_edges: 0,
-            ..UNLIMITED
-        },
-        ScalarLimits {
-            integer_bits: 0,
-            ..UNLIMITED
-        },
-        ScalarLimits {
-            result_units: 0,
-            ..UNLIMITED
-        },
-    ]
-}
-
-/// FR-533-AC-23: until the IR reader exposes equivalence definitions, the
-/// bytes-only route reports the bounded unsupported construct at the
-/// conversion, while ordinary and affine conversions still evaluate.
-#[trace("FR-533-AC-23", "TC-1333")]
+/// FR-533-AC-23: the admitted package reconstructs the same class graph,
+/// quantities and result types as the source, including affine conversion.
+#[trace("FR-533-AC-23", "TC-1333", "FR-093-AC-46", "FSpec-FR-142-AC-26")]
 #[test]
-fn a_package_class_conversion_is_typed_unsupported_until_reconstruction() {
-    let program = boundary_program();
-    let package = package_with(&program).expect("the unit checks");
-    for (name, expected) in [
-        ("cross", fraction(1, 4)),
-        ("affine_class", fraction(3, 4)),
-        ("same", fraction(1, 1)),
-        ("affine_same", fraction(3, 1)),
-    ] {
-        assert_eq!(
-            quantity(&call(&package, name, &mut Meter::new(UNLIMITED))).magnitude(),
-            &expected
-        );
-    }
+fn package_class_conversions_and_compound_operations_match_source() {
+    let package = package_with(&boundary_program()).expect("the unit checks");
     with_bare(&package, |bare| {
-        for (name, expression) in [
-            ("cross", "convert<Quantity<s>>(1 beat)"),
-            ("affine_class", "convert<Quantity<s>>(1 shifted)"),
-            ("quotient", "6 s / 3 beat"),
+        for (name, expected) in [
+            ("cross", fraction(1, 4)),
+            ("affine_class", fraction(3, 4)),
+            ("same", fraction(1, 1)),
+            ("affine_same", fraction(3, 1)),
+            ("product_value", fraction(9, 2)),
+            ("quotient_value", fraction(8, 1)),
+            ("power_s_value", fraction(4, 1)),
+            ("power_beat_value", fraction(1, 4)),
         ] {
-            for limits in boundary_limits() {
-                let mut meter = Meter::new(limits);
-                let evaluation = call(bare, name, &mut meter);
-                let depth = if name == "quotient" { 1 } else { 0 };
-                assert_unsupported_at(&package, &program, &evaluation, &meter, expression, depth);
+            let source = call(&package, name, &mut Meter::new(UNLIMITED));
+            let bytes = call(bare, name, &mut Meter::new(UNLIMITED));
+            assert_eq!(quantity(&source).magnitude(), &expected, "{name}");
+            assert_eq!(
+                quantity(&bytes),
+                quantity(&source),
+                "{name}: value and unit"
+            );
+            let expected_type = package.graph().callable(name).expect("the callable").result;
+            assert_eq!(
+                expected_type,
+                &ValueType::Quantity(quantity(&bytes).unit().clone())
+            );
+        }
+        for name in [
+            "product",
+            "quotient",
+            "power_s",
+            "power_beat",
+            "ordinary_power",
+        ] {
+            for route in [&package as &dyn CheckedPackageEvaluation, bare] {
+                let evaluation = route
+                    .call(
+                        &QualifiedName::unqualified(name).expect("an identifier"),
+                        vec![],
+                        &ObjectEnvironment::default(),
+                        &mut Meter::new(UNLIMITED),
+                    )
+                    .expect("the function runs");
+                assert!(
+                    matches!(
+                        evaluation.outcome,
+                        FamilyOutcome::Evaluated(Outcome::Completed(Value::Boolean(true)))
+                    ),
+                    "{name}: {evaluation:?}"
+                );
             }
         }
-        assert_eq!(
-            quantity(&call(bare, "same", &mut Meter::new(UNLIMITED))).magnitude(),
-            &fraction(1, 1)
-        );
-        assert_eq!(
-            quantity(&call(bare, "affine_same", &mut Meter::new(UNLIMITED))).magnitude(),
-            &fraction(3, 1)
-        );
     });
 }
 
-/// FR-533-AC-23: a product across both nominal roots and a power of the
-/// noncanonical member refuse before the quantity kernel sees the caller's
-/// meter. The source route and an unrelated ordinary power still evaluate.
-#[trace("FR-533-AC-23", "TC-1333")]
-#[test]
-fn bare_class_products_and_noncanonical_powers_refuse_before_kernel_charges() {
-    use filament_exact::UnitId;
-    use filament_semantic_value::quantity::QuantityUnit;
+fn limited(counter: LimitKind, bound: u64) -> filament_exact::ScalarLimits {
+    let mut limits = UNLIMITED;
+    match counter {
+        LimitKind::WorkUnits => limits.work_units = bound,
+        LimitKind::UnitEdges => limits.unit_edges = bound,
+        LimitKind::IntegerBits => limits.integer_bits = bound,
+        LimitKind::ValueOccurrences => limits.value_occurrences = bound,
+        LimitKind::ResultUnits => limits.result_units = bound,
+        _ => unreachable!("the selected quantity counters"),
+    }
+    limits
+}
 
-    let program = boundary_program();
-    let package = package_with(&program).expect("the unit checks");
-    for name in [
-        "product",
-        "quotient",
-        "power_s",
-        "power_beat",
-        "ordinary_power",
-    ] {
-        let evaluation = call(&package, name, &mut Meter::new(UNLIMITED));
-        assert!(
+fn kernel_charges(meter: &Meter) -> Vec<&filament_exact::AdmittedCharge> {
+    meter
+        .admitted_charges()
+        .iter()
+        .filter(|charge| {
             matches!(
-                evaluation.outcome,
-                FamilyOutcome::Evaluated(Outcome::Completed(Value::Boolean(true)))
-            ),
-            "{name}: the source value matches the specified same-unit product: {evaluation:?}"
-        );
-    }
+                charge.point,
+                ChargePoint::UnitIdentityRead
+                    | ChargePoint::UnitEdge
+                    | ChargePoint::UnitRationalArithmetic
+                    | ChargePoint::UnitTargetDomain
+                    | ChargePoint::UnitResultRetain
+            )
+        })
+        .collect()
+}
 
-    let units = package.graph().scope().types().units();
-    let mut noncanonical = Vec::new();
-    for (name, function, expression) in [
-        ("s", "power_s", "2 s ^ 2"),
-        ("beat", "power_beat", "2 beat ^ 2"),
-    ] {
-        let id = units
-            .ids()
-            .find(|id| match id {
-                UnitId::Declared(key) => units
-                    .nominal_node(key)
-                    .is_some_and(|node| node.declaration.qualified_declaration == [name]),
-                UnitId::Compound(_) => false,
-            })
-            .expect("the declared nominal root unit");
-        let Some(QuantityUnit::Declared(unit)) = units.get(id.clone()) else {
-            panic!("{name} has its declared runtime unit");
-        };
-        if id != UnitId::declared(unit.root()) {
-            assert_eq!(unit.path().len(), 1, "one class identification edge");
-            noncanonical.push((function, expression));
-        }
-    }
-    let [(power, power_expression)] = noncanonical.as_slice() else {
-        panic!("exactly one declared root differs from the class root: {noncanonical:?}");
-    };
-
+/// FR-533-AC-23: both routes enter the same shared kernel, pay identical
+/// charges and deny at the same exact boundary without a result quantity.
+#[trace("FR-533-AC-23", "TC-1333", "FR-093-AC-46")]
+#[test]
+fn package_class_operations_share_kernel_charges_and_denial_boundaries() {
+    let package = package_with(&boundary_program()).expect("the unit checks");
     with_bare(&package, |bare| {
-        for (function, expression) in [("product", "6 s * 3 beat"), (*power, *power_expression)] {
-            for limits in boundary_limits() {
-                let mut meter = Meter::new(limits);
-                let evaluation = call(bare, function, &mut meter);
-                assert_unsupported_at(&package, &program, &evaluation, &meter, expression, 1);
+        for name in [
+            "cross",
+            "affine_class",
+            "product",
+            "quotient",
+            "power_s",
+            "power_beat",
+            "same",
+            "affine_same",
+            "ordinary_power",
+            "product_value",
+            "quotient_value",
+            "power_s_value",
+            "power_beat_value",
+        ] {
+            let mut source_meter = Meter::new(UNLIMITED);
+            let mut bare_meter = Meter::new(UNLIMITED);
+            call(&package, name, &mut source_meter);
+            call(bare, name, &mut bare_meter);
+            assert_eq!(
+                kernel_charges(&bare_meter),
+                kernel_charges(&source_meter),
+                "{name}: exact kernel charges"
+            );
+            for counter in [
+                LimitKind::WorkUnits,
+                LimitKind::UnitEdges,
+                LimitKind::IntegerBits,
+                LimitKind::ValueOccurrences,
+                LimitKind::ResultUnits,
+            ] {
+                let required = source_meter.consumed(counter);
+                assert_eq!(
+                    bare_meter.consumed(counter),
+                    required,
+                    "{name}: {counter:?}"
+                );
+                if required == 0 {
+                    continue;
+                }
+                let mut source_tight = Meter::new(limited(counter, required - 1));
+                let mut bare_tight = Meter::new(limited(counter, required - 1));
+                let source = call(&package, name, &mut source_tight);
+                let bytes = call(bare, name, &mut bare_tight);
+                let FamilyOutcome::Evaluated(Outcome::Incomplete(expected)) = &source.outcome
+                else {
+                    panic!("{name}/{counter:?}: source denies: {source:?}");
+                };
+                let FamilyOutcome::Evaluated(Outcome::Incomplete(actual)) = &bytes.outcome else {
+                    panic!("{name}/{counter:?}: bare denies without a quantity: {bytes:?}");
+                };
+                assert_eq!(actual, expected, "{name}/{counter:?}: exact denial");
+                assert_eq!(
+                    bytes.location, source.location,
+                    "{name}/{counter:?}: retained location"
+                );
+                assert_eq!(
+                    kernel_charges(&bare_tight),
+                    kernel_charges(&source_tight),
+                    "{name}/{counter:?}: denied charge is not paid"
+                );
+                for route in [&package as &dyn CheckedPackageEvaluation, bare] {
+                    let evaluation = route
+                        .call(
+                            &QualifiedName::unqualified(name).expect("an identifier"),
+                            vec![],
+                            &ObjectEnvironment::default(),
+                            &mut Meter::new(limited(counter, required)),
+                        )
+                        .expect("the exact-bound call runs");
+                    assert!(
+                        matches!(
+                            evaluation.outcome,
+                            FamilyOutcome::Evaluated(Outcome::Completed(_))
+                        ),
+                        "{name}/{counter:?}: exact budget completes: {evaluation:?}"
+                    );
+                }
             }
         }
-        let evaluation = call(bare, "ordinary_power", &mut Meter::new(UNLIMITED));
-        assert!(
-            matches!(
-                evaluation.outcome,
-                FamilyOutcome::Evaluated(Outcome::Completed(Value::Boolean(true)))
-            ),
-            "an unrelated ordinary power is unchanged: {evaluation:?}"
-        );
-        let mut meter = Meter::new(filament_exact::ScalarLimits {
-            integer_bits: 0,
-            ..UNLIMITED
-        });
-        let limited = call(bare, "ordinary_power", &mut meter);
-        let FamilyOutcome::Evaluated(Outcome::Incomplete(record)) = &limited.outcome else {
-            panic!("an ordinary power still obeys the caller's integer-bit limit: {limited:?}");
-        };
-        assert_eq!(record.limit_kind, LimitKind::IntegerBits);
-        assert_eq!(record.charge_point, ChargePoint::UnitIdentityRead);
     });
 }

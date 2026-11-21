@@ -108,11 +108,7 @@ impl Restore<'_, '_, '_> {
     }
     fn push<T>(&mut self, values: &mut Vec<T>, value: T) -> Result<(), ModelRestoreError> {
         if values.len() == values.capacity() {
-            let target = values
-                .capacity()
-                .checked_mul(2)
-                .unwrap_or(usize::MAX)
-                .max(1);
+            let target = values.capacity().saturating_mul(2).max(1);
             let bytes = target
                 .checked_mul(size_of::<T>())
                 .ok_or(ModelKeyError::SizeOverflow)?;
@@ -236,19 +232,21 @@ impl Restore<'_, '_, '_> {
         expected: &ValueType,
     ) -> Result<Value, ModelRestoreError> {
         let system = self.system;
-        enum Finish {
-            Option(ValueType, bool),
-            Collection(CollectionType, usize),
-            Map(MapType, usize),
+        // Queued work borrows admitted type metadata; only completed values
+        // retain the owned types their constructors require.
+        enum Finish<'ty> {
+            Option(&'ty ValueType, bool),
+            Collection(&'ty CollectionType, usize),
+            Map(&'ty MapType, usize),
             Composite(NodeKey, usize),
             Union(UnionMember, usize),
         }
-        enum Task<'a> {
-            Visit(NodeRef<'a>, ValueType, bool),
-            Finish(Finish),
+        enum Task<'node, 'ty> {
+            Visit(NodeRef<'node>, &'ty ValueType, bool),
+            Finish(Finish<'ty>),
         }
         let mut tasks = Vec::new();
-        self.push(&mut tasks, Task::Visit(node, expected.clone(), false))?;
+        self.push(&mut tasks, Task::Visit(node, expected, false))?;
         let mut values: Vec<FieldValue> = Vec::new();
         while let Some(task) = tasks.pop() {
             self.value_nodes = self
@@ -256,7 +254,7 @@ impl Restore<'_, '_, '_> {
                 .checked_add(1)
                 .ok_or(ModelKeyError::SizeOverflow)?;
             self.tick(1)?;
-            self.retain(size_of::<Task<'_>>().saturating_add(size_of::<FieldValue>()))?;
+            self.retain(size_of::<Task<'_, '_>>().saturating_add(size_of::<FieldValue>()))?;
             match task {
                 Task::Finish(finish) => {
                     let count = match &finish {
@@ -284,11 +282,11 @@ impl Restore<'_, '_, '_> {
                     };
                     let value = match finish {
                         Finish::Option(ty, _) => filament_exact::OptionValue::from_admitted(
-                            ty,
+                            ty.clone(),
                             present(slots)?.into_iter().next(),
                         ),
                         Finish::Collection(ty, _) => completed(filament_exact::form(
-                            &ty,
+                            ty,
                             present(slots)?,
                             self.budget.meter(),
                         ))?,
@@ -298,7 +296,8 @@ impl Restore<'_, '_, '_> {
                             while let Some(key) = items.next() {
                                 self.push(&mut entries, (key, items.next().ok_or_else(bad)?))?;
                             }
-                            filament_exact::from_admitted_map(ty, entries).map_err(|_| bad())?
+                            filament_exact::from_admitted_map(ty.clone(), entries)
+                                .map_err(|_| bad())?
                         }
                         Finish::Composite(key, _) => {
                             filament_exact::from_admitted_slots(key, slots.into_boxed_slice())
@@ -335,7 +334,7 @@ impl Restore<'_, '_, '_> {
                         }
                     }
 
-                    let value = match &ty {
+                    let value = match ty {
                         ValueType::Boolean if tag == "boolean" => {
                             match member(node, "value")?.node() {
                                 Node::Bool(value) => Value::Boolean(value),
@@ -399,12 +398,12 @@ impl Restore<'_, '_, '_> {
                         }
                         ValueType::Bytes if tag == "bytes" => {
                             let encoded = text(member(node, "text")?)?;
-                            if encoded.len() % 2 != 0 {
+                            let (pairs, remainder) = encoded.as_bytes().as_chunks::<2>();
+                            if !remainder.is_empty() {
                                 return Err(bad());
                             }
-                            let bytes = encoded
-                                .as_bytes()
-                                .chunks_exact(2)
+                            let bytes = pairs
+                                .iter()
                                 .map(|pair| {
                                     std::str::from_utf8(pair)
                                         .ok()
@@ -459,13 +458,10 @@ impl Restore<'_, '_, '_> {
                             let has_value = !matches!(inner.node(), Node::Null);
                             self.push(
                                 &mut tasks,
-                                Task::Finish(Finish::Option(payload.as_ref().clone(), has_value)),
+                                Task::Finish(Finish::Option(payload.as_ref(), has_value)),
                             )?;
                             if has_value {
-                                self.push(
-                                    &mut tasks,
-                                    Task::Visit(inner, payload.as_ref().clone(), false),
-                                )?;
+                                self.push(&mut tasks, Task::Visit(inner, payload.as_ref(), false))?;
                             }
                             continue;
                         }
@@ -482,15 +478,12 @@ impl Restore<'_, '_, '_> {
                             let items = self.array(member(node, "elements")?)?;
                             self.push(
                                 &mut tasks,
-                                Task::Finish(Finish::Collection(
-                                    declared.as_ref().clone(),
-                                    items.len(),
-                                )),
+                                Task::Finish(Finish::Collection(declared.as_ref(), items.len())),
                             )?;
                             for item in items.into_iter().rev() {
                                 self.push(
                                     &mut tasks,
-                                    Task::Visit(item, declared.element().clone(), false),
+                                    Task::Visit(item, declared.element(), false),
                                 )?;
                             }
                             continue;
@@ -507,7 +500,7 @@ impl Restore<'_, '_, '_> {
                             self.push(
                                 &mut tasks,
                                 Task::Finish(Finish::Map(
-                                    declared.as_ref().clone(),
+                                    declared.as_ref(),
                                     items
                                         .len()
                                         .checked_mul(2)
@@ -517,12 +510,9 @@ impl Restore<'_, '_, '_> {
                             for (key, value) in items.into_iter().rev() {
                                 self.push(
                                     &mut tasks,
-                                    Task::Visit(value, declared.values().clone(), false),
+                                    Task::Visit(value, declared.values(), false),
                                 )?;
-                                self.push(
-                                    &mut tasks,
-                                    Task::Visit(key, declared.key().clone(), false),
-                                )?;
+                                self.push(&mut tasks, Task::Visit(key, declared.key(), false))?;
                             }
                             continue;
                         }
@@ -563,7 +553,7 @@ impl Restore<'_, '_, '_> {
                                             &mut tasks,
                                             Task::Visit(
                                                 member(*row, "value")?,
-                                                field.value_type().clone(),
+                                                field.value_type(),
                                                 field.presence() == Presence::Optional,
                                             ),
                                         )?;
@@ -579,10 +569,7 @@ impl Restore<'_, '_, '_> {
                                         Task::Finish(Finish::Composite(own.key(), items.len())),
                                     )?;
                                     for (item, ty) in items.into_iter().zip(types).rev() {
-                                        self.push(
-                                            &mut tasks,
-                                            Task::Visit(item, ty.clone(), false),
-                                        )?;
+                                        self.push(&mut tasks, Task::Visit(item, ty, false))?;
                                     }
                                 }
                                 ("union", CompositeShape::Union(members)) => {
@@ -605,10 +592,7 @@ impl Restore<'_, '_, '_> {
                                     for (item, ty) in
                                         items.into_iter().zip(declared.positions()).rev()
                                     {
-                                        self.push(
-                                            &mut tasks,
-                                            Task::Visit(item, ty.clone(), false),
-                                        )?;
+                                        self.push(&mut tasks, Task::Visit(item, ty, false))?;
                                     }
                                 }
                                 _ => return Err(bad()),
@@ -617,7 +601,7 @@ impl Restore<'_, '_, '_> {
                         }
                         _ => return Err(bad()),
                     };
-                    let value = self.leaf(value, &ty)?;
+                    let value = self.leaf(value, ty)?;
                     self.push(&mut values, FieldValue::Present(value))?;
                 }
             }

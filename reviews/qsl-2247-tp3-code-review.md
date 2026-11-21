@@ -1,0 +1,112 @@
+---
+id: SR-2026112115155546054652100
+title: "code-review (with rust-review lane) of the QSL-2247 TP-3 monitor-configuration closure certifier"
+type: SpecReview
+analysis: code-review
+scope: "agent-ix/filament-spec-language; fsl-eval/src/automaton/{key,mod,monitor,translate}.rs; fsl-replay/src/model_check/item.rs; fsl-replay/src/certificate/closure.rs; fsl-analyze/src/model_check/check.rs; fsl-eval/tests/it/automaton_key.rs; fsl-analyze/tests/it/closure_certificate.rs; tests/it/plan_export_surface.rs (two TP-3 transfer tests only); QSL-2247 partial (TP-3 on origin over an ordinary model subject); branch terra/missing-engines-forms/qsl-2247-tp3 at d487f66c2ef9ce85d17454b52b1fe83a570d8549 on base d25728d74d830ccde8e0aae5c14d0b315af0db1e; PR agent-ix/filament-spec-language#3330"
+review_set: subset
+relationships:
+  - target: ix://agent-ix/filament-spec-language/FR-338
+    type: reviews
+  - target: ix://agent-ix/filament-spec-language/FR-127
+    type: reviews
+  - target: ix://agent-ix/filament-spec-language/FR-1030
+    type: reviews
+---
+
+## Summary
+
+Ticket: QSL-2247 (stays open: closure-only lasso witness/replay, TP-3 `on each`, TP-3 over protocol subjects). PR: agent-ix/filament-spec-language#3330 (head d487f66c, unchanged since this analysis). The frozen head d487f66c was checked: clean tree, its single commit sits on d25728d7, and the diff is 10 files, +666/-106. This review covers the code-review lane and the Rust lane (rust-review and rust-style) together. Repo Rust conventions come from AGENTS.md (trace-tag ids, `tests/it/` layout). Its repository idioms are followed, including `#[allow(clippy::too_many_arguments)]` on checker step helpers, which matches the existing TP-4 helpers.
+
+Runtime evidence: **none**. Per the brief, no test, clippy or fmt gate was run by the reviewer. The author reports `cargo check --locked -p fsl-eval -p fsl-analyze -p filament-spec-language --test it` with exit 0 and 0 warnings (log `/tmp/qsl-2247-tp3-check4.log`). That is real compile evidence for the three test targets. It is not a runtime green.
+
+Clean (examined, no defect):
+- Soundness shape. The checker (`run_monitored`) rebuilds `translate(clause)` and `Monitor::bad_prefix` from the recompiled clause. It re-reads every letter (`when`, captures, atoms, uncounted) and walks its own product keyed by `(model StateKey, monitor StateId)`. It uses the certificate only as a membership set. Every reached product state is checked `is_rejecting` before membership, then for membership. So a wrong or non-injective key can cause a rejection (incompleteness) but never an acceptance of a bad run. Nothing is taken from the certificate.
+- Same kernel. `Translator::configuration` is a pure extraction of the former `buchi_state` body; the activation wrapping is moved unchanged. TP-4's `BuchiState` result is byte-identical by construction. No second past or interval semantics is added, and no `NodeId` or `StateId` is serialized. `SafetyStates::key` performs the FR-338 normalization (earliest-deadline, offset-union, obligation-free subsumption) and self-admits before returning.
+- Engine/checker agreement. The engine product node is `(model, monitor state per instance)` with terminal stutter (`stutters()` true for non-bounded clauses) until the product repeats. Its per-instance projection equals the checker's per-instance product, because the monitor does not constrain the model. The joint stutter covers each instance's stutter. The certified path uses `chooser: None`, so no POR prunes edges. Initial states are read with `counted=true, first=true` on both sides. Boundary (memory- or instance-cut) states are not stuttered on either side, matching `run_liveness`/`run_bounded`.
+- Gating. `prepare` sets `monitored` only for `Safety`, `Counting::Every`, `Activation::Origin`, no invariant atom and `is_safety_translated`. `item.rs` builds `Monitored` under the same conditions. `PropertyForm::BoundedMltl` is impossible under `InfiniteTrace` (`property_form`) and `ReachableInvariant` always has an invariant atom, so the item-side omission of a form check does not widen the set. The protocol checker passes `instances_for(Protocol)`, so it never builds `Monitored`. A liveness-kind automaton reaching `Monitor::bad_prefix` is refused with `NotSafetyAutomaton`.
+- Budgets. Windows keep full `u64` `remaining()`. Past memory is keyed under `max_key_bytes` with typed `KeyEncodingLimit`. The checker maps that to `ClosureRefusal::Encoding`, and the engine maps it to `ModelCheckRefusal::Translation`. No truncation path exists.
+- FR-127. No empty-certificate `proved`, no provider self-certification and no `NotTranslated => Proved` were added. The `certified` widening affects only `Counting::Every` runs. `check_reduced` still discards it.
+- Tests use `expect`/`panic!` only in test code. No `todo!`, `dbg!` or `unwrap` on a production path was added.
+- PrevStutter (FR-1030-AC-5) is still asserted `inconclusive`/`premise-unproved`/slot 1 `refuted`/exit 22. It is not weakened, and it is a real semantic oracle for past memory at the repeated terminal state.
+- No explicit slot-1 `certified` CLI assertion is required. FR-1030-AC-1 demands `proved`, `decisive-witness` and both premise identities, which the test asserts. FR-1030-AC-3's `uncertified` concerns supplied premises. This is not a finding.
+
+## Verdict
+
+**APPROVE WITH CHANGES (2 medium, 4 low).** The certifier is sound by construction and reuses the shared kernel. The mediums are test gaps: the new checker's bad-state path has no negative vector, and the negative for the still-unsupported TP-3 classes was removed. Neither is a wrong result in the code. Merge readiness additionally requires the focused runtime filters listed in the analysis report to pass, and tracker publication; neither has happened yet.
+
+## Findings
+
+| ID | Severity | Summary | Refs |
+| --- | --- | --- | --- |
+| FND-001 | medium | No test exercises the new TP-3 checker's `BadState` paths: `reach_monitored`'s `is_rejecting(after)` rejection and `run_monitored`'s undefined-letter `product_rejecting` at an initial state. Every new closure vector offers a certificate for a clause that holds, and its negatives reject only by `SuccessorMissing`/`InitialMissing`. A checker that never consulted `is_rejecting` would pass all new tests while accepting a certificate for a violated TP-3 clause (FR-338 "hold no bad state"). Add a vector such as `always (once[1,1] p or historically p)` with `p` false at value 0, whose (even empty) certificate is rejected `BadState` at the origin's `["safety",[]]` product state, and one violated at a later position. | fsl-replay/src/certificate/closure.rs:1321-1338; fsl-replay/src/certificate/closure.rs:1214-1218; fsl-analyze/tests/it/closure_certificate.rs:709,776 |
+| FND-002 | medium | `a_safety_proof_with_an_empty_certificate_settles_failed_never_proved` was deleted. It was the settle-level pin that an engine proof of an uncertified TP-3 shape carries an empty certificate and settles `failed`, never `proved`. Its replacement inside the interval test forges an empty certificate for a now-certifiable clause, which exercises the `Monitored` checker (`InitialMissing`), not the typed-unproved fallback. The remaining unsupported classes (TP-3 `on each`; TP-3 over a protocol subject) now have no "never proved" regression test. A future widening of `monitored`/`item.rs` gating to those classes would go undetected. Keep a negative over an `on each` TP-3 clause (Counter subject): `Holds` with empty certificate, which settles `Failed`. | fsl-analyze/tests/it/closure_certificate.rs:683-823; fsl-analyze/src/model_check/check.rs:1801-1810 |
+| FND-003 | low | `reached_tp3_monitor_states_resolve_to_fr338_keys` documents "distinct live facts give distinct keys … including past history and interval windows". It asserts only key→admit self-round-trip, `configurations.is_empty() == is_rejecting`, and `distinct.len() > 1`. That last check is satisfied by the rejecting key (asserted reachable) plus any one other key. No assertion shows a past-memory or window member in any key, and no exact state body is checked. A projection that consistently dropped `past`/`windows` would pass this test. The closure tests' distinct-key assertions partly compensate. Assert a non-empty past/window member, or one exact body, for `once[1,1]` and `eventually[0,2]` after one position. | fsl-eval/tests/it/automaton_key.rs:1323-1380 |
+| FND-004 | low | `item.rs` treats "no TP-4 context" (`tp4: None`) as an ordinary subject (`tp4.is_none_or(Ordinary)`), keying `SubjectKind::Ordinary`. But the protocol producer calls `request.item.instances(...)` (tp4 `None`) for protocol subjects. Today this is unreachable for TP-3 only because `prepare`'s `counting == Counting::Every` keeps `certified` false there. Two separately maintained gates must stay in sync, or a protocol run gets ordinary key algebra. Pass the subject kind explicitly, or require `tp4` to be `Some(Ordinary)`. | fsl-replay/src/model_check/item.rs:396-405; fsl-analyze/src/model_check/check.rs:839 |
+| FND-005 | low | Misleading fault identities on the new TP-3 paths. `automaton_error` maps a TP-3 monitor's `UnknownState`/`Invariant`/`NotSafetyAutomaton` to `fault("tp4-automaton-transition")`. The now-shared `Translator::configuration` raises `buchi-obligation-/window-/shift-/past-/acceptance-has-source-occurrence` for safety-monitor projections. A runtime_invariant record from a TP-3 run would name TP-4/Büchi. Rename to form-neutral ids. | fsl-replay/src/certificate/closure.rs:1610; fsl-eval/src/automaton/translate.rs:1215 |
+| FND-006 | low | `monitored_step`'s `missing: CertificateRule` parameter is `SuccessorMissing` at both call sites. At the stutter call site, `state`/`state_key` duplicate `pending.state`/`pending.at.model_state`. Together these push the helper to nine arguments under `#[allow(clippy::too_many_arguments)]`. Drop `missing` (and pass the stutter case through `pending`) to remove the dead degree of freedom. | fsl-replay/src/certificate/closure.rs:1238-1268,1275-1286 |
+
+## Scope
+
+- fsl-eval/src/automaton/translate.rs `PropertyAutomaton::configuration`, `Translator::configuration`, `Translator::buchi_state` refactor (examined; FND-005)
+- fsl-eval/src/automaton/monitor.rs `SafetyAutomaton::configuration` default/forwarders, `Monitor::configurations` (examined, clean)
+- fsl-eval/src/automaton/key.rs `safety_shape`, `is_safety_translated`, `SafetyStates::clause` refactor, `max_key_bytes`, `key` (examined, clean)
+- fsl-eval/src/automaton/mod.rs re-export (examined, clean)
+- fsl-replay/src/model_check/item.rs `Translation::Monitored`, `admits`, `build_instances` gate (examined; FND-004)
+- fsl-replay/src/certificate/closure.rs `run_monitored`, `monitored_step`, `reach_monitored`, `product_monitored`, `product_rejecting`, `property_letter` rename, `automaton_error` (examined; FND-001, FND-005, FND-006)
+- fsl-analyze/src/model_check/check.rs `prepare` `monitored`, `bounded_translations`, `certificate` Monitored arm, module docs (examined; FND-002, FND-004)
+- fsl-analyze/src/model_check/check.rs `explore`, `stutters`, `product` (context_only)
+- fsl-eval/tests/it/automaton_key.rs `reached_tp3_monitor_states_resolve_to_fr338_keys` (examined; FND-003)
+- fsl-analyze/tests/it/closure_certificate.rs `a_past_clause_proof_carries_monitor_keys_the_core_accepts`, `an_interval_clause_proof_carries_monitor_keys_the_core_accepts`, removed `a_safety_proof_with_an_empty_certificate_settles_failed_never_proved` (examined; FND-001, FND-002)
+- tests/it/plan_export_surface.rs `a_step_for_step_refinement_transfers_previous_and_interval_clauses_proved` (un-ignored), `previous_transfers_only_through_a_step_for_step_refinement` (examined, clean)
+- FR-338 statement and state-algebra table, "Guarded `on each`" and "Protocol non-progress" sections (context_only); FR-127 settlement map and AC-1 (context_only); FR-1030 statement L119-141 and AC-1..AC-5 (context_only; see SR-2026112115155546054652101)
+
+## New findings (disposition pass 1)
+
+Pass-1 source: PR agent-ix/filament-spec-language#3330 head 943172bbeda2f23bd42754443278491dae142602 on base 01f289375f7a818f03919820396f333b1052bf89. `git range-diff` shows 7eaa8d52dd, the rebased original, is identical to the reviewed d487f66c. Only the fix commit 7eaa8d52dd..943172bbed was reviewed. No runtime tests were run.
+
+| ID | Severity | Summary | Refs |
+| --- | --- | --- | --- |
+| FND-007 | medium | Regression from the FND-004 fix. The model engine now builds certified instances with `instances_for(.., SubjectKind::Ordinary, ..)`, so `tp4` is `Some`. In `build_instances`, the `Self::LoopInvariant { repeat } if tp4.is_some()` and `LoopTermination` arms then take effect. A loop-proof item over a model subject therefore no longer refuses `ItemRefusal::LoopProofOverModel`: it gets a loop-proof `SafetyTranslation`. `prepare(.., Counting::Every)` then runs it as `Item::Deadlock` with `loop_proof_automaton()`. So `check_model` with `ModelCheckItem::LoopInvariant` over a model subject can return `Holds` with a loop-keyed certificate for an obligation the model never evaluates. The reduced path still refuses `ModelCheckRefusal::LoopProofOverModel` (check.rs:1422), so the two paths now disagree. `analyze` rejects such items upstream (`DerivedRun`), so the reach is the public `check_model` API. Fix: refuse loop items before instancing on the model path, or gate the loop arms on `SubjectKind::Protocol`. Add a test that `check_model` with a loop item over a model subject is refused. | fsl-analyze/src/model_check/check.rs:598-606; fsl-replay/src/model_check/item.rs:296-312 |
+| FND-008 | low | The checker's TP-3 undefined letter at a later position rejects `BadState` at `(successor model state, pending monitor key)`. TP-1 and TP-2 (and this PR's TP-3 origin case) name the successor under the rejecting key. FR-338's locus sentence names the reached product state whose expansion read it. The case is not pinned by any test, and AC-29 is silent on it. Choose one locus, `(successor, ["safety",[]])` to match the safety family and AC-29's "violated later" wording, and pin it with a later-undefined vector. Alternatively, record that it is deliberately unpinned with a ticket. The rule (`BadState`) is right; only the `at` locus is unsettled. | fsl-replay/src/certificate/closure.rs:1287-1289; spec/functional/FR-338-check-an-en-1-closure-certificate.md:644-647 |
+
+## Dispositions
+
+| FND | Outcome | Reason |
+| --- | --- | --- |
+| FND-001 | fixed | `a_certificate_for_a_violated_tp3_clause_is_rejected_bad_state` (closure_certificate.rs:900) covers three cases. An origin violation with an empty certificate is rejected `BadState` at (0, `["safety",[]]`); without `is_rejecting` it would be `InitialMissing`. A later violation with a candidate of the monitor's own keys for 0..2 is rejected `BadState` at (3, `["safety",[]]`); without `is_rejecting` it would be `SuccessorMissing`. An undefined origin with an empty certificate exercises `product_rejecting`. The oracle is the truth table and the locus, not the kernel. Runtime not run. |
+| FND-002 | fixed | `an_on_each_past_or_interval_proof_never_settles_proved` (model_check_safety.rs:977): `on each` TP-3 gives `Holds` with an empty certificate, and `settle_model_check` gives `TerminalValue::Failed`, independently of the forged-certificate path. Protocol is covered at item level only; see gap-analysis FND-003. |
+| FND-003 | fixed | `a_tp3_monitor_state_carries_the_specified_past_and_window_members` (automaton_key.rs:1416) asserts literal full-key bodies through `states_key`. These are independent of the kernel and derived from the FR-338 "other finite past interval" `history` row and the deadline window form: `once[1,1]` offsets `["1"]` then `[]`, deadline `"2"` then `"1"`, cleared, then expiry to `["safety",[]]`. Unconfirmed until run: the atom order (0 = p, 1 = q) is assumed. |
+| FND-004 | fixed | item.rs now requires `tp4.is_some_and(Ordinary)`. The model engine states `SubjectKind::Ordinary`, and kind-less `instances()` and `Protocol` both give `NotTranslated` (`a_tp3_clause_is_monitored_only_under_an_explicit_ordinary_subject`). The engine change introduced FND-007. |
+| FND-005 | fixed | Renamed `buchi-*` to `state-*` (translate.rs:1215-1297), `tp4-automaton-transition` to `automaton-transition`, and `tp4-atom-in-range` to `letter-atom-in-range`. No test or doc references the old ids. |
+| FND-006 | fixed | `MonitoredRun` holds monitor, keys, binding and visited. `monitored_step(run, pending, edge: Option<..>, counted)` derives the stutter case from `pending`. `missing` is gone from `monitored_step`, and both `#[allow(clippy::too_many_arguments)]` are removed. The order is unchanged: rejecting before visited, then the `max_states` budget, then membership. Key encoding still maps to `ClosureRefusal::Encoding`. |
+| FND-007 | fixed | Round 2 (head 8ccf5300). `check_model_with_stutter_closure` returns `ModelCheckRefusal::Item(ItemRefusal::LoopProofOverModel)` for `LoopInvariant` and `LoopTermination` before any instancing (check.rs:598-605). That is the same refusal the kind-less `instances` path gave before this PR. The reduced path's refusal and protocol loop items are unchanged. `a_loop_proof_item_is_refused_over_a_model_subject` drives both kinds through the public `check_model`. Runtime not run. |
+| FND-008 | fixed | Round 2. A later undefined letter now rejects through `product_rejecting(run.keys, state_key)`: the successor model state under `["safety",[]]`, matching TP-1/TP-2 and the TP-3 origin case (closure.rs:1287-1289). The new fourth vector (`|v| (v != 2).then_some(v <= 1)`, candidate keys for 0..1) expects `BadState` at (2, `["safety",[]]`); under the old code it would be (2, value-1 monitor key), so the test distinguishes the two. AC-29 now states the same locus. Runtime not run. |
+
+## Post-qualification verification (single failed-test fix)
+
+Source: PR #3330 head 9350c34bf21bc7de491c2a2d2394761ccc6b5ed5. Its parent is the root's artifact commit 4e791c819b, which was preserved. The source was clear at 8ccf5300, with all 12 findings fixed. Under the standing single-failed-test mechanical exception, only the changed test was inspected. This is not a re-review, and it adds no finding.
+
+Draco runtime at 8ccf5300:
+- fsl-eval: 4 of 4 passed.
+- fsl-analyze: 10 of 11 passed. `closure_certificate::a_past_clause_proof_carries_monitor_keys_the_core_accepts` failed at `keys.len() > 1`.
+- Root: 2 pending.
+
+Cause: the fixture's oracle was wrong; the production code is fine. In `always (once[1,1] p or historically p)` with `p` = `v <= 3`, `p` is true at every position. FR-338's `history` memory for `once[1,1]` is the true-offset set `1..b` from the next position, so it is `["1"]` after every read. `historically p` stays true as well. The origin and every later post-read state therefore legitimately share one key. This review pass's own earlier re-derivation, which said the origin key differs from value 1, made the same mistake.
+
+Verified fix: the diff from 4e791c819b to 9350c34bf2 touches only `fsl-analyze/tests/it/closure_certificate.rs`, and only this test. Compared with 8ccf5300, fsl-eval, fsl-replay, fsl-analyze/src, spec and tests/ are unchanged. `reviews/` is byte-identical to the disposition-2 SRs.
+
+Fixture check:
+- The new fixture is `always (not holds(c.value != 2) implies once[1,1] holds(c.value != 2))` with `|v| Some(v != 2)`.
+- Over values 0..3 plus the terminal stutter at 3, `p` = T, T, F, T, T.
+- `not p` holds only at value 2, where `once[1,1] p` reads `p` at value 1, which is true. So the clause holds, and the run should return `Holds`, `Accepted`, `Proved{Exhaustive, Certified}`.
+
+Oracle check against FR-338, not the kernel:
+- The post-read `once[1,1]` memory is `["1"]` after values 0, 1 and 3 and their stutters, and `[]` after value 2. No future operator sits inside the past operand, so there are no guessed carries ("A future operator inside a past operand…"). With no unbounded F/U on an ordinary subject, the acceptance set is empty.
+- Value 2 therefore keys apart from the others, and values 0, 1 and 3 share the origin key.
+- The deterministic single path gives one certificate entry per value.
+- The `once[1,1]` `["1"]`/`[]` body form is the one `automaton_key::a_tp3_monitor_state_carries_the_specified_past_and_window_members` asserts, and that test passed at Draco.
+- Both tamper negatives target value 2, the one value whose key differs. The checker reaches (0, k), (1, k) and then (2, k₂). Removing (2, k₂), or rewriting it as (2, k), is rejected `SuccessorMissing` at (2, k₂).
+- No assertion was weakened. The equality assertions at values 1 and 3 add an oracle the old test lacked.
+
+Qualification for this test is pending until it actually runs at 9350c34b. Only this one test needs re-running; the 14 greens at 8ccf5300 stand, and the 2 root cases remain pending.

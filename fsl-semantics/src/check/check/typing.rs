@@ -3812,8 +3812,10 @@ impl<'a> Typer<'a> {
             } => match pair {
                 Pair::First(second, second_location) => {
                     let peer = typed.value_type.clone();
-                    let second_hint = if operator == ArithmeticOperator::Multiply
-                        && matches!(&peer, ValueType::Quantity(_))
+                    let second_hint = if matches!(
+                        operator,
+                        ArithmeticOperator::Multiply | ArithmeticOperator::Divide
+                    ) && matches!(&peer, ValueType::Quantity(_))
                     {
                         exact_rational_literal_type(second)
                             .or_else(|| exact_decimal_literal_type(second))

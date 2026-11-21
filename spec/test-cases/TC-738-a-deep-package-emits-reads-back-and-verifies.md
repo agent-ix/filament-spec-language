@@ -28,9 +28,15 @@ Run every step on a thread spawned with a 512 KiB stack unless the step says oth
 
 3. Emit a checked package once to measure its canonical byte length `N`, then
    emit it at `emit.output_bytes` `N`, `N - 1` and `0` (FR-264-AC-6).
-4. Offer the already emitted package to an emit entry at `N - 1` and at `N`,
-   and run the compile lifecycle's E4 entry at both bounds (FR-264-AC-7).
-5. Emit FR-264-AC-8's 100,000-term sum under the default `emit.output_bytes`, count its `body_locations` `up` and `down` entries, then emit it at one byte below its emitted length (FR-264-AC-8).
+4. Offer the already emitted package to an emit entry at `N - 1`, `0` and `N`,
+   and run the compile lifecycle's E4 entry at `N - 1` and `N` (FR-264-AC-7).
+5. Emit FR-264-AC-8's sum of 100,000 additions (100,001 terms) under finite
+   explicit caller ceilings derived before emission from the checked input
+   and fixed schema/body-walk coefficients, as FR-531-AC-41 specifies. Record
+   complete canonical bytes, relative body-location entries, and charged native
+   strict-read and lending-cursor work against those bounds. With the same
+   checked input and other stage ceilings unchanged, set only `emit.output_bytes`
+   to the published default 16777216 and emit again (FR-264-AC-8).
 
 Tag the tests `#[trace("TC-738", "FR-264-AC-6")]`, `#[trace("TC-738", "FR-264-AC-7")]`, `#[trace("TC-738", "FR-264-AC-1")]`, `#[trace("TC-738", "FR-264-AC-2")]`, `#[trace("TC-738", "FR-264-AC-8")]`.
 
@@ -41,7 +47,13 @@ Tag the tests `#[trace("TC-738", "FR-264-AC-6")]`, `#[trace("TC-738", "FR-264-AC
 - Step 2: every body is in FR-322's stratified grammar.
 - Step 3: bound `N` emits bytes equal to the larger-bound emission; bounds `N - 1`
   and `0` each refuse with `OutputLimit` naming `emit.output_bytes`, the bound and
-  an actual above it, and write no bytes.
-- Step 4: the remembered emission is refused below `N` and returned at `N`; the
+  actual first unpaid byte `N` and `1` respectively, and return no partial package.
+- Step 4: the remembered emission is refused at each `B < N` with configured
+  bound `B` and actual first unpaid byte `B + 1` (including actual 1 at bound 0),
+  and returned unchanged at `N`; the
   lifecycle returns `CompileRefusal::Limit` at `N - 1` and emits at `N`.
-- Step 5: the sum emits under the default bound with at most 200,000 location entries; one byte below its length it refuses `OutputLimit` naming `emit.output_bytes` and writes no bytes.
+- Step 5: the sum emits a complete package under its predeclared explicit
+  ceilings, with at most 200,000 relative location entries and recorded bytes
+  and native work within the declared bounds. Under the unchanged published
+  default it instead refuses `OutputLimit` naming `emit.output_bytes`, configured
+  bound 16777216 and actual first unpaid byte 16777217, with no partial package.

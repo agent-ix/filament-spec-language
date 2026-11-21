@@ -584,13 +584,11 @@ pub enum ZoneCheckRefusal {
     /// position, so it cannot follow both candidates.
     #[error("the refinement checker does not decide a timed abstract side whose hidden candidates differ in clock behaviour")]
     HiddenFieldTimedAbstract,
-    /// The liveness half of a timed abstract side with a hidden abstract field
-    /// and an abstract fairness obligation: class enabledness there needs the
-    /// abstract clock guards of each hidden candidate and a split of the cells
-    /// by the guards of the fairness classes, which the checker does not yet
-    /// read.
-    #[error("the refinement checker does not decide the liveness half of a timed abstract side with a hidden field")]
-    HiddenFieldTimedAbstractLiveness,
+    /// The liveness half of a timed abstract side under a concrete tick
+    /// source: abstract class enabledness is read over the instants between
+    /// positions, which a tick source does not have.
+    #[error("the refinement checker does not decide the liveness half of a timed abstract side under a tick source")]
+    TimedAbstractLivenessTickSource,
     /// A symmetry declaration does not admit (FR-151).
     #[error(transparent)]
     Symmetry(SymmetryRefusal),
@@ -1016,6 +1014,8 @@ pub(super) enum Searched {
 
 /// What a run judges its nodes by.
 pub(super) enum Judged<'r> {
+    /// Source closure with the ordinary time-divergence admission check.
+    SourceClosure,
     /// A graph-only run; the caller evaluates its state-graph predicates.
     StateGraph,
     /// An authored clause.
@@ -1179,6 +1179,7 @@ impl<'r, 's, 'a> Run<'r, 's, 'a> {
         match &self.judged {
             Judged::Claim(claim) | Judged::Liveness(claim) => Some(claim),
             Judged::StateGraph
+            | Judged::SourceClosure
             | Judged::DeadlockFreedom
             | Judged::TimeLockFreedom
             | Judged::Refinement => None,
@@ -1347,7 +1348,7 @@ impl<'r, 's, 'a> Run<'r, 's, 'a> {
         Ok(found)
     }
 
-    fn search(&mut self) -> Result<Searched, Halt> {
+    pub(super) fn search(&mut self) -> Result<Searched, Halt> {
         let initial = self.timed.initial();
         if initial.is_empty() {
             return Err(self.undecided(ZoneUndecided::NoInitialState));
@@ -1942,7 +1943,7 @@ impl<'r, 's, 'a> Run<'r, 's, 'a> {
     fn badness(&mut self, node: usize) -> Result<Option<Result<Badness, ()>>, Halt> {
         let claim = match &self.judged {
             Judged::Claim(claim) => claim,
-            Judged::StateGraph => return Ok(None),
+            Judged::StateGraph | Judged::SourceClosure => return Ok(None),
             Judged::DeadlockFreedom => return self.deadlock(node),
             Judged::TimeLockFreedom | Judged::Liveness(_) | Judged::Refinement => return Ok(None),
         };
@@ -2064,7 +2065,17 @@ impl<'r, 's, 'a> Run<'r, 's, 'a> {
         &self,
         step: &GuardedStep,
     ) -> Result<Vec<Vec<PlaceConstraint>>, Halt> {
-        let target = self.timed(self.timed.invariants(step.post()))?;
+        self.enabling_parts_in(self.timed, step)
+    }
+
+    /// [`Self::enabling_parts`] of a step of `timed`, in its own place
+    /// numbering (the abstract side's, for a timed abstract subject).
+    pub(super) fn enabling_parts_in(
+        &self,
+        timed: &TimedSystem<'_, '_>,
+        step: &GuardedStep,
+    ) -> Result<Vec<Vec<PlaceConstraint>>, Halt> {
+        let target = self.timed(timed.invariants(step.post()))?;
         let mut pulled_back = Vec::with_capacity(target.len());
         for bound in target {
             if let Some((_, value)) = step

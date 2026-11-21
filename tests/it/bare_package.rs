@@ -11,9 +11,27 @@ use serde_json::{json, Value};
 
 use super::checked_handoff::{admitted, request, tree, KINDS};
 use super::temporal_package_route::{
-    clause_ids, event_clauses, event_clauses_over, recipe, request as evidence_request, run,
+    clause_ids, event_clauses, event_clauses_over, recipe, recipe_naming,
+    request as evidence_request, run,
 };
 use fsl_command::checked_handoff::{evidence, write, Corpus};
+
+#[trace("TC-2624", "FR-944-AC-10")]
+#[test]
+fn bare_reader_route_keeps_the_exact_admitted_package_bytes() {
+    let built = recipe("fixed_sample");
+    let read = built.read(&built.emission);
+    let bare = BarePackage::new(read.admitted()).with_canonical_bytes(read.canonical_bytes());
+
+    assert_eq!(bare.package().name(), read.admitted().name());
+    assert_eq!(
+        bare.canonical_bytes(),
+        Some(built.emission.package().bytes())
+    );
+    assert!(BarePackage::new(read.admitted())
+        .canonical_bytes()
+        .is_none());
+}
 
 use super::bare_equality::tc1070 as population_fixture;
 
@@ -69,7 +87,7 @@ fn matrix(
 /// packages, the result of every request of the matrix (each truth outcome,
 /// activation state and `Incomplete` counter) is equal over the three routes,
 /// field by field, with the charge log and `result_identity`.
-#[trace("FR-532-AC-1", "FR-516-AC-18", "TC-1332")]
+#[trace("FR-532-AC-1", "FR-516-AC-18", "TC-1332", "FR-944-AC-10")]
 #[test]
 fn the_bare_route_gives_the_results_and_charges_of_the_two_source_routes() {
     let mut clauses = std::collections::BTreeSet::new();
@@ -88,7 +106,7 @@ fn the_bare_route_gives_the_results_and_charges_of_the_two_source_routes() {
             &mut fsl_package::V2ReadLimits::fixture().native_join_budget(),
         )
         .expect("read");
-        let bare = BarePackage::new(read.admitted());
+        let bare = BarePackage::new(read.admitted()).with_canonical_bytes(read.canonical_bytes());
         let bytes = EvidencePackage::from_package(
             &bare,
             &mut fsl_package::V2ReadLimits::fixture().native_join_budget(),
@@ -98,6 +116,20 @@ fn the_bare_route_gives_the_results_and_charges_of_the_two_source_routes() {
         for clause in clause_ids(&emitted) {
             let subject = emitted.subject(&clause, None).expect("reads");
             let name = subject.facts.name().to_owned();
+            // FR-944-AC-10: the owner selects the package and its clock scale from
+            // these members, so the bare route with its bytes selects what the
+            // source route does.
+            let bare_subject = bytes.subject(&clause, None).expect("bare reads");
+            assert_eq!(subject.package_identity, bare_subject.package_identity);
+            assert_eq!(
+                subject.canonical_package_bytes,
+                bare_subject.canonical_package_bytes
+            );
+            assert!(subject.canonical_package_bytes.is_some());
+            assert_eq!(
+                subject.time_unit_scale, bare_subject.time_unit_scale,
+                "{kind}"
+            );
             if !matches!(
                 name.as_str(),
                 "Due" | "DueLate" | "DueSample" | "DueTimestamp"
@@ -173,7 +205,7 @@ fn the_progress_binding_names_the_package_and_no_source_label() {
         &mut fsl_package::V2ReadLimits::fixture().native_join_budget(),
     )
     .expect("emission");
-    let bare = BarePackage::new(read.admitted());
+    let bare = BarePackage::new(read.admitted()).with_canonical_bytes(read.canonical_bytes());
     let bytes = EvidencePackage::from_package(
         &bare,
         &mut fsl_package::V2ReadLimits::fixture().native_join_budget(),
@@ -216,7 +248,7 @@ fn a_shared_holds_node_is_one_atom_on_every_route() {
             &mut fsl_package::V2ReadLimits::fixture().native_join_budget(),
         )
         .expect("read");
-        let bare = BarePackage::new(read.admitted());
+        let bare = BarePackage::new(read.admitted()).with_canonical_bytes(read.canonical_bytes());
         let bytes = EvidencePackage::from_package(
             &bare,
             &mut fsl_package::V2ReadLimits::fixture().native_join_budget(),
@@ -294,7 +326,7 @@ fn directory(
 #[test]
 fn a_handoff_directory_gives_a_bare_package_and_an_identity_file() {
     let (_holder, files, package) = directory("event_position");
-    let bare = BarePackage::new(&package);
+    let bare = BarePackage::new(&package).with_canonical_bytes(&files["checked-package.json"]);
     let evaluation = EvidencePackage::from_package(
         &bare,
         &mut fsl_package::V2ReadLimits::fixture().native_join_budget(),
@@ -316,7 +348,7 @@ fn a_handoff_directory_gives_a_bare_package_and_an_identity_file() {
     assert!(!charges.is_empty());
 
     let file: Value = serde_json::from_slice(&files["identities.json"]).expect("JSON");
-    assert_eq!(file["format"], "filament.checked-handoff.identities/4");
+    assert_eq!(file["format"], "filament.checked-handoff.identities/5");
     assert!(files["identities.json"].ends_with(b"}\n"));
     let rows = ReadIdentityRows::read(
         &files["identities.json"],
@@ -833,20 +865,79 @@ fn from_package_returns_only_the_ambiguous_name_mismatch() {
 #[trace("FR-532-AC-9", "TC-1332")]
 #[test]
 fn the_evaluator_reads_the_clause_only_through_the_facts() {
-    let directory =
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("fsl-eval/src/temporal/evidence");
-    for entry in std::fs::read_dir(&directory).expect("the evidence sources") {
-        let path = entry.expect("entry").path();
-        let text = std::fs::read_to_string(&path).expect("source");
-        for forbidden in ["SourceIdentity", "CheckedTemporalClause"] {
-            let code: String = text
+    fn violations(directory: &std::path::Path) -> Vec<(std::path::PathBuf, &'static str)> {
+        let mut pending = vec![directory.to_owned()];
+        let mut sources = Vec::new();
+        while let Some(directory) = pending.pop() {
+            let mut entries: Vec<_> = std::fs::read_dir(&directory)
+                .unwrap_or_else(|error| panic!("{}: {error}", directory.display()))
+                .map(|entry| {
+                    entry.unwrap_or_else(|error| panic!("{}: {error}", directory.display()))
+                })
+                .collect();
+            entries.sort_by_key(std::fs::DirEntry::file_name);
+            for entry in entries {
+                let path = entry.path();
+                let kind = entry
+                    .file_type()
+                    .unwrap_or_else(|error| panic!("{}: {error}", path.display()));
+                if kind.is_dir() {
+                    pending.push(path);
+                } else if kind.is_file() {
+                    sources.push(path);
+                } else {
+                    panic!("unexpected source entry kind: {}", path.display());
+                }
+            }
+        }
+        sources.sort();
+        assert!(!sources.is_empty(), "{}: no sources", directory.display());
+        let mut found = Vec::new();
+        for path in sources {
+            let text = std::fs::read_to_string(&path)
+                .unwrap_or_else(|error| panic!("{}: {error}", path.display()));
+            let code = text
                 .lines()
                 .filter(|line| !line.trim_start().starts_with("//"))
                 .collect::<Vec<_>>()
                 .join("\n");
-            assert!(!code.contains(forbidden), "{}: {forbidden}", path.display());
+            for forbidden in ["SourceIdentity", "CheckedTemporalClause"] {
+                if code.contains(forbidden) {
+                    found.push((path.clone(), forbidden));
+                }
+            }
         }
+        found
     }
+
+    // Module subdirectories and every regular file retain the same forbidden
+    // type checks; neither directory nor extension filtering may hide a read.
+    let fixture = tempfile::tempdir().expect("source-layout fixture");
+    let nested = fixture.path().join("nested");
+    std::fs::create_dir(&nested).expect("nested module directory");
+    let nested_source = nested.join("mod.rs");
+    std::fs::write(
+        &nested_source,
+        "pub struct SourceIdentity;\npub struct CheckedTemporalClause;\n",
+    )
+    .expect("nested forbidden-type source");
+    std::fs::write(fixture.path().join("mod.rs"), "mod nested;\n").expect("root source");
+    let other_source = fixture.path().join("other.inc");
+    std::fs::write(&other_source, "pub struct SourceIdentity;\n")
+        .expect("a source without an rs extension");
+    assert_eq!(
+        violations(fixture.path()),
+        vec![
+            (nested_source.clone(), "SourceIdentity"),
+            (nested_source, "CheckedTemporalClause"),
+            (other_source, "SourceIdentity"),
+        ]
+    );
+
+    let directory =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("fsl-eval/src/temporal/evidence");
+    let forbidden = violations(&directory);
+    assert!(forbidden.is_empty(), "{forbidden:?}");
     let ledger = read_source("fsl-eval/src/temporal/ledger.rs");
     let binding = ledger
         .split("pub struct LedgerBinding")
@@ -892,8 +983,8 @@ fn the_consumer_entry_sections_name_the_bare_entry() {
 #[trace("FR-531-AC-4", "TC-1331")]
 #[test]
 fn a_node_that_is_no_temporal_clause_is_unresolved_over_the_bare_package() {
-    let (_holder, _files, package) = directory("event_position");
-    let bare = BarePackage::new(&package);
+    let (_holder, files, package) = directory("event_position");
+    let bare = BarePackage::new(&package).with_canonical_bytes(&files["checked-package.json"]);
     let evaluation = EvidencePackage::from_package(
         &bare,
         &mut fsl_package::V2ReadLimits::fixture().native_join_budget(),
@@ -916,7 +1007,12 @@ fn a_node_that_is_no_temporal_clause_is_unresolved_over_the_bare_package() {
     for id in [other, absent] {
         let mut meter = super::temporal_package_route::unlimited();
         let refused = evaluation
-            .evaluate_temporal_evidence(&id, &asked, &mut meter)
+            .evaluate_temporal_evidence(
+                &crate::support::observation_producer(),
+                &id,
+                &asked,
+                &mut meter,
+            )
             .map(|issued| issued.result().clone());
         assert_eq!(
             super::temporal_package_route::cause(&refused.expect_err("refused")),
@@ -996,7 +1092,7 @@ fn a_record_typed_capture_projects_with_the_source_identities() {
             .collect();
         assert_eq!(held, declared);
     }
-    let bare = BarePackage::new(read.admitted());
+    let bare = BarePackage::new(read.admitted()).with_canonical_bytes(read.canonical_bytes());
     let bytes = EvidencePackage::from_package(
         &bare,
         &mut fsl_package::V2ReadLimits::fixture().native_join_budget(),
@@ -1072,6 +1168,7 @@ fn the_supplied_identity_rows_project_a_record_typed_capture_on_the_bare_route()
         .expect("final identity rows");
     let mut budget = fsl_package::V2ReadLimits::fixture().native_join_budget();
     let bare = BarePackage::new(read.admitted())
+        .with_canonical_bytes(read.canonical_bytes())
         .with_supply(
             fsl_package::BareSupply {
                 identities: &rows,
@@ -1138,7 +1235,7 @@ fn the_dependency_closure_follows_a_chain_and_lists_a_diamond_once() {
             .direct_dependencies()
             .map(|package| package.name().to_owned())
             .collect();
-        let bare = BarePackage::new(read.admitted());
+        let bare = BarePackage::new(read.admitted()).with_canonical_bytes(read.canonical_bytes());
         let closure: Vec<String> = bare
             .dependencies()
             .iter()
@@ -1218,7 +1315,8 @@ fn with_interval(
 fn bytes_that_differ_from_the_source_drive_the_bare_result() {
     let built = event_clauses(ONE_CLAUSE, &[("Due", "authority")]);
     let genuine_read = built.read(&built.emission);
-    let genuine_bare = BarePackage::new(genuine_read.admitted());
+    let genuine_bare = BarePackage::new(genuine_read.admitted())
+        .with_canonical_bytes(genuine_read.canonical_bytes());
     let genuine = EvidencePackage::from_package(
         &genuine_bare,
         &mut fsl_package::V2ReadLimits::fixture().native_join_budget(),
@@ -1232,7 +1330,7 @@ fn bytes_that_differ_from_the_source_drive_the_bare_result() {
         wire["temporal_bindings"][0]["clock"]["sequence_authority"] = json!("another-authority");
     });
     let read = built.read(&renamed);
-    let bare = BarePackage::new(read.admitted());
+    let bare = BarePackage::new(read.admitted()).with_canonical_bytes(read.canonical_bytes());
     let package = EvidencePackage::from_package(
         &bare,
         &mut fsl_package::V2ReadLimits::fixture().native_join_budget(),
@@ -1261,7 +1359,7 @@ fn bytes_that_differ_from_the_source_drive_the_bare_result() {
     // and the routes that hold the genuine source refuse the difference.
     let longer = with_interval(&built, json!({"lower": "0", "upper": "4"}));
     let read = built.read(&longer);
-    let bare = BarePackage::new(read.admitted());
+    let bare = BarePackage::new(read.admitted()).with_canonical_bytes(read.canonical_bytes());
     let package = EvidencePackage::from_package(
         &bare,
         &mut fsl_package::V2ReadLimits::fixture().native_join_budget(),
@@ -1291,7 +1389,12 @@ fn bytes_that_differ_from_the_source_drive_the_bare_result() {
     ] {
         let mut meter = super::temporal_package_route::unlimited();
         let refused = source_route
-            .evaluate_temporal_evidence(&clause, &asked, &mut meter)
+            .evaluate_temporal_evidence(
+                &crate::support::observation_producer(),
+                &clause,
+                &asked,
+                &mut meter,
+            )
             .map(|issued| issued.result().clone());
         let refused = refused.expect_err("the source differs from the bytes");
         assert_eq!(
@@ -1385,7 +1488,7 @@ fn every_temporal_operator_gives_the_same_result_over_the_three_routes() {
             &mut fsl_package::V2ReadLimits::fixture().native_join_budget(),
         )
         .expect("read");
-        let bare = BarePackage::new(read.admitted());
+        let bare = BarePackage::new(read.admitted()).with_canonical_bytes(read.canonical_bytes());
         let bytes = EvidencePackage::from_package(
             &bare,
             &mut fsl_package::V2ReadLimits::fixture().native_join_budget(),
@@ -1460,7 +1563,7 @@ fn the_replay_binding_names_the_package_the_source_emits() {
     for kind in KINDS {
         let built = recipe(kind);
         let read = built.read(&built.emission);
-        let bare = BarePackage::new(read.admitted());
+        let bare = BarePackage::new(read.admitted()).with_canonical_bytes(read.canonical_bytes());
         let package = EvidencePackage::from_package(
             &bare,
             &mut fsl_package::V2ReadLimits::fixture().native_join_budget(),
@@ -1494,6 +1597,7 @@ fn record_rows(
     );
     let mut measure = filament_contract_model::NativeJoinBudget::new(1 << 30, 1 << 30);
     BarePackage::new(read.admitted())
+        .with_canonical_bytes(read.canonical_bytes())
         .with_supply(
             fsl_package::BareSupply {
                 identities: &rows,
@@ -1536,6 +1640,7 @@ fn supply_on<'p>(
     budget: &mut filament_contract_model::NativeJoinBudget,
 ) -> Result<BarePackage<'p>, filament_contract_model::ExactTypeProjectionError> {
     BarePackage::new(read.admitted())
+        .with_canonical_bytes(read.canonical_bytes())
         .with_supply(
             fsl_package::BareSupply {
                 identities: rows,
@@ -1671,7 +1776,7 @@ fn witness_defects_stay_deferred_and_a_denial_is_not_an_unknown_witness() {
     ));
 
     // Missing: no supply at all.
-    let bare = BarePackage::new(read.admitted());
+    let bare = BarePackage::new(read.admitted()).with_canonical_bytes(read.canonical_bytes());
     assert!(matches!(
         bare.world().err(),
         Some(BareSelectionFailure::Identity(
@@ -1843,13 +1948,39 @@ fn the_writer_refuses_native_join_limits_that_cannot_pay_for_the_identity_join()
         built.emission.package().bytes(),
         "the budget oracle and writer must use exactly the same producer package",
     );
+    let dependencies = built.dependency_artifacts();
+    assert!(!dependencies.is_empty(), "the recipe imports a library");
+    // The closed dependency artifacts precede the root on the writer's one
+    // native-join ledger, in selected-identity order.
+    let materialize_dependencies = |budget: &mut filament_contract_model::NativeJoinBudget| {
+        let mut files = Vec::new();
+        for (index, (_, emission, package)) in dependencies.iter().enumerate() {
+            let identities = emission
+                .identity_rows(package, budget)
+                .expect("the allowance pays for dependency identities");
+            files.push((
+                format!("dependencies/{index}/identities.json"),
+                identities.to_bytes(package).expect("dependency identities"),
+            ));
+            let equality = emission
+                .equality_witness(package, budget)
+                .expect("the allowance pays for dependency equality");
+            files.push((
+                format!("dependencies/{index}/equality.json"),
+                equality.to_bytes(package).expect("dependency equality"),
+            ));
+        }
+        files
+    };
     let mut measure = filament_contract_model::NativeJoinBudget::new(1 << 30, 1 << 30);
-    built
+    let dependency_files = materialize_dependencies(&mut measure);
+    let dependency_need = measure.consumed();
+    let identities = built
         .emission
         .identity_rows(read.admitted(), &mut measure)
         .expect("measure the same final emission join the writer performs");
     let need = measure.consumed();
-    assert!(need.work > 0 && need.storage > 0);
+    assert!(need.work > dependency_need.work && need.storage > dependency_need.storage);
     for (limits, code) in [
         (
             fsl_package::NativeJoinLimits::new(need.work - 1, need.storage),
@@ -1860,6 +1991,17 @@ fn the_writer_refuses_native_join_limits_that_cannot_pay_for_the_identity_join()
             Code::ExhaustedStorage,
         ),
     ] {
+        let mut oracle = limits.budget();
+        let _ = materialize_dependencies(&mut oracle);
+        let IdentityFileRefusal::Rows(expected) = built
+            .emission
+            .identity_rows(read.admitted(), &mut oracle)
+            .expect_err("one-short root-identity allowance refuses its final copy")
+        else {
+            panic!("the root-identity denial retains its compact row cause");
+        };
+        assert_eq!(expected.denied(), oracle.first_unpaid());
+        assert_eq!(expected.locus(), oracle.first_unpaid_locus());
         let mut asked = request("event_position", Corpus::None);
         asked.emit.package_name = package_name.clone();
         asked.native_join = limits;
@@ -1876,6 +2018,7 @@ fn the_writer_refuses_native_join_limits_that_cannot_pay_for_the_identity_join()
                         denial.native
                     )
                 };
+                assert_eq!(*native, expected, "resource, amount, locus and full bound");
                 assert_eq!(
                     native.code(),
                     if code == Code::ExhaustedWork {
@@ -1937,6 +2080,7 @@ fn the_writer_refuses_native_join_limits_that_cannot_pay_for_the_identity_join()
         ),
     ] {
         let mut oracle = filament_contract_model::NativeJoinBudget::new(work, storage);
+        let _ = materialize_dependencies(&mut oracle);
         built
             .emission
             .identity_rows(read.admitted(), &mut oracle)
@@ -1976,13 +2120,25 @@ fn the_writer_refuses_native_join_limits_that_cannot_pay_for_the_identity_join()
     exact.native_join =
         fsl_package::NativeJoinLimits::new(complete_need.work, complete_need.storage);
     write(&exact, &target).expect("exact complete work and storage write the directory");
-    assert!(target.join("identities.json").exists());
+    assert_eq!(
+        std::fs::read(target.join("identities.json")).expect("written identity file"),
+        identities
+            .to_bytes(read.admitted())
+            .expect("measured identity file")
+    );
     assert_eq!(
         std::fs::read(target.join("equality.json")).expect("written equality file"),
         equality
             .to_bytes(read.admitted())
             .expect("measured equality file")
     );
+    for (path, bytes) in dependency_files {
+        assert_eq!(
+            std::fs::read(target.join(&path)).expect("written dependency sidecar"),
+            bytes,
+            "{path}"
+        );
+    }
 }
 
 /// Original opaque ceilings and cumulative attempted totals survive every
@@ -2001,6 +2157,7 @@ fn opaque_caller_budgets_preserve_original_bounds_after_prior_joins() {
         let construct = |budget: &mut NativeJoinBudget| -> Result<(), NativeJoinFailure> {
             if entry == 0 {
                 BarePackage::new(read.admitted())
+                    .with_canonical_bytes(read.canonical_bytes())
                     .with_supply(
                         fsl_package::BareSupply {
                             identities: &rows,
@@ -2158,4 +2315,47 @@ fn a_guard_and_a_holds_term_project_their_ieee_operand_binders_at_the_checkers_l
         .expect("a holds atom");
     bare.project_holds(&key, position)
         .unwrap_or_else(|failure| panic!("the holds term projects: {failure:?}"));
+}
+
+/// FR-944-AC-13 (TC-1332): a clock naming a unit the package declares that is
+/// no linear time unit (`U`, a `Money` unit) is refused with the same cause by
+/// the source route and the bare route, never read as a count of steps.
+#[trace("FR-944-AC-13", "FR-944-AC-10", "TC-1332")]
+#[test]
+fn a_clock_naming_a_declared_non_time_unit_is_refused_on_both_routes() {
+    for kind in ["fixed_sample", "timestamped_event"] {
+        let built = recipe_naming(kind, Some("U"));
+        let read = built.read(&built.emission);
+        let emitted = EvidencePackage::from_emission(
+            &built.emission,
+            &read,
+            &mut fsl_package::V2ReadLimits::fixture().native_join_budget(),
+        )
+        .expect("emission");
+        let bare = BarePackage::new(read.admitted()).with_canonical_bytes(read.canonical_bytes());
+        let bytes = EvidencePackage::from_package(
+            &bare,
+            &mut fsl_package::V2ReadLimits::fixture().native_join_budget(),
+        )
+        .expect("bare");
+        let mut causes = Vec::new();
+        for package in [&emitted, &bytes] {
+            let clause = clause_ids(package).into_iter().next().expect("a clause");
+            let subject = package.subject(&clause, None).expect("reads");
+            assert_eq!(
+                subject.time_unit_scale,
+                fsl_eval::temporal::evidence::ClockScale::Unreadable,
+                "{kind}"
+            );
+            let asked = evidence_request(package, &clause, None, 2);
+            let failure = run(package, &clause, &asked).0.expect_err("refused");
+            causes.push(format!("{failure:?}"));
+        }
+        assert!(
+            causes[0].contains("declared-time-unit-factor-is-readable"),
+            "{kind}: {}",
+            causes[0]
+        );
+        assert_eq!(causes[0], causes[1], "{kind}");
+    }
 }

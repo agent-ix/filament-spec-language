@@ -212,7 +212,13 @@ fn check(
         world.package.graph().probabilistic_model().claims(),
         &identity,
         &serde_json::to_vec(document).expect("serializes"),
-        limits(),
+        // The two-clock region product of FR-924-AC-6 has 217 states, more
+        // than the 128 the shared document limits admit.
+        fsl_replay::ProbabilityDocumentLimits {
+            states: 4096,
+            edges: 65_536,
+            ..limits()
+        },
         &Cancel::new(),
     )
 }
@@ -591,7 +597,6 @@ fn zeno_values_are_rejected() {
 /// FR-924-AC-3: a retry cycle holds delays and is not collapsed.
 #[trace("TC-2493", "FR-924-AC-3")]
 #[trace("FSpec-TC-1820", "FSpec-FR-753-AC-3")]
-#[ignore = "QSL-2156: expected elapsed time over the digital route is not checked yet; the checker requires the region route"]
 #[test]
 fn delay_cycles_are_not_collapsed() {
     let world = retx(
@@ -630,7 +635,6 @@ fn zero_time_cycle_without_end_component_is_certified() {
 /// FR-924-AC-5: a time-locked initial state is terminal.
 #[trace("TC-2493", "FR-924-AC-5")]
 #[trace("FSpec-TC-1820", "FSpec-FR-753-AC-6")]
-#[ignore = "QSL-2156: the timed deadline checker does not accept a workload scheduler yet"]
 #[test]
 fn time_locked_state_is_certified_terminal() {
     let world = retx(
@@ -673,7 +677,6 @@ fn quantiles() -> World {
 /// FR-877-AC-1: `<= 2 ms` is proved with the transform's minimum `2/5`.
 #[trace("TC-2494", "FR-877-AC-1")]
 #[trace("FSpec-TC-1820", "FSpec-FR-753-AC-4")]
-#[ignore = "QSL-2156: elapsed-time quantile claims are not routed to the timed product yet (QSL-2158 source interface)"]
 #[test]
 fn elapsed_quantile_at_most_is_certified() {
     let world = quantiles();
@@ -685,17 +688,17 @@ fn elapsed_quantile_at_most_is_certified() {
     let doc = document(&record);
     assert_eq!(doc["objective"]["timed"]["form"], "elapsed-quantile");
     assert_eq!(doc["objective"]["timed"]["route"], "digital");
+    assert_eq!(proved_value(&record), ratio(2, 5));
+    assert_eq!(doc["kind"], "exact");
     assert!(accepted(&world, "AtMostTwo", &doc));
 }
 
-/// FR-877-AC-2: `<= 1 ms` is refuted; a tampered transform value rejects.
+/// FR-877-AC-2 (certificate half): AC-1's item with its initial value set to
+/// `1/2` is rejected `InequalityFails` by the checker's own enumeration.
 #[trace("TC-2494", "FR-877-AC-2")]
-#[trace("FSpec-TC-1820", "FSpec-FR-753-AC-4")]
-#[ignore = "QSL-2156: elapsed-time quantile claims are not routed to the timed product yet (QSL-2158 source interface)"]
 #[test]
-fn elapsed_quantile_at_most_refutes() {
+fn elapsed_quantile_altered_transform_value_is_rejected() {
     let world = quantiles();
-    assert!(is_refuted(&settle(&world, "AtMostOne")));
     let tampered = settle_tampered(&world, "AtMostTwo", |certificate| {
         for entry in &mut certificate.values {
             if entry.value == ratio(2, 5) {
@@ -709,10 +712,19 @@ fn elapsed_quantile_at_most_refutes() {
     );
 }
 
+/// FR-877-AC-2: `<= 1 ms` is refuted.
+#[trace("TC-2494", "FR-877-AC-2")]
+#[trace("FSpec-TC-1820", "FSpec-FR-753-AC-4")]
+#[ignore = "QSL-2156: refutation needs the timed witness replay"]
+#[test]
+fn elapsed_quantile_at_most_refutes() {
+    let world = quantiles();
+    assert!(is_refuted(&settle(&world, "AtMostOne")));
+}
+
 /// FR-877-AC-3: `>= 1 ms` is proved by a region `upper` document of `-1/2`.
 #[trace("TC-2494", "FR-877-AC-3")]
 #[trace("FSpec-TC-1820", "FSpec-FR-753-AC-5")]
-#[ignore = "QSL-2156: elapsed-time quantile claims are not routed to the timed product yet (QSL-2158 source interface)"]
 #[test]
 fn elapsed_quantile_at_least_is_certified_over_regions() {
     let world = quantiles();
@@ -724,13 +736,45 @@ fn elapsed_quantile_at_least_is_certified_over_regions() {
     let doc = document(&record);
     assert_eq!(doc["objective"]["timed"]["route"], "region");
     assert_eq!(doc["kind"], "upper");
+    assert_eq!(proved_value(&record), ratio(-1, 2));
     assert!(accepted(&world, "AtLeastOne", &doc));
+}
+
+/// FR-877-AC-3 (certificate half): an `upper` document whose values are
+/// lowered below the checker's own enumeration is rejected `InequalityFails`,
+/// and one raised to a non-negative initial value misses the strict threshold.
+#[trace("TC-2494", "FR-201")]
+#[test]
+fn elapsed_quantile_altered_upper_value_is_rejected() {
+    let world = quantiles();
+    let lowered = settle_tampered(&world, "AtLeastOne", |certificate| {
+        for entry in &mut certificate.values {
+            if entry.value == ratio(-1, 2) {
+                entry.value = ratio(-1, 1);
+            }
+        }
+    });
+    assert_eq!(
+        rejected_item_rule(&lowered),
+        CertificateRule::InequalityFails
+    );
+    let raised = settle_tampered(&world, "AtLeastOne", |certificate| {
+        for entry in &mut certificate.values {
+            if entry.value == ratio(-1, 2) {
+                entry.value = ratio(1, 2);
+            }
+        }
+    });
+    assert_eq!(
+        rejected_item_rule(&raised),
+        CertificateRule::ThresholdMissed
+    );
 }
 
 /// FR-877-AC-4: at a transform maximum of exactly 0 the tight search reaches
 /// the activated initial state, so the claim is refuted, never proved.
 #[trace("TC-2494", "FR-877-AC-4")]
-#[ignore = "QSL-2156: elapsed-time quantile claims are not routed to the timed product yet (QSL-2158 source interface)"]
+#[ignore = "QSL-2156: a refutation needs the timed witness replay (draco/qsl-2156-cycles)"]
 #[test]
 fn elapsed_quantile_tight_search_refutes() {
     let world = quantiles();
@@ -776,7 +820,6 @@ fn a_wrong_clock_cap_is_malformed() {
 /// value 0 is rejected.
 #[trace("TC-2493", "FR-924-AC-6")]
 #[trace("FSpec-TC-1820", "FSpec-FR-753-AC-7")]
-#[ignore = "QSL-2156: the region product of a reset loop holds a positive-time cycle; bounded backward induction rejects it and the claim settles as not yet implemented"]
 #[test]
 fn reset_loop_zeno_values_are_rejected() {
     let world = retx_over(
@@ -792,10 +835,95 @@ fn reset_loop_zeno_values_are_rejected() {
     assert_eq!(proved_value(&record), ratio(99, 100));
     let doc = document(&record);
     assert_eq!(doc["objective"]["timed"]["route"], "region");
-    assert!(accepted(&world, "Deadline", &doc));
+    assert!(
+        accepted(&world, "Deadline", &doc),
+        "{:?}",
+        check(&world, "Deadline", &doc)
+    );
     let tampered = settle_tampered(&world, "Deadline", set_interior_values(ratio(0, 1)));
     assert_eq!(
         rejected_item_rule(&tampered),
         CertificateRule::InequalityFails
     );
+}
+
+/// FR-924-AC-6 with no deadline clock in the key (the expected-elapsed route):
+/// the reset loop is not progressive because `x` is never reset, crossed or
+/// capped in it, so the value is still the best exit, 10/9, and a value read
+/// off the Zeno loop is rejected.
+#[trace("TC-2493", "FR-924-AC-6")]
+#[test]
+fn reset_loop_is_nonprogressive_without_a_deadline_clock() {
+    let world = retx_over(
+        &["x", "y"],
+        &[("send", &["late", "x"]), ("again", &["y"])],
+        GUARD,
+        true,
+        "pre Again using v on M::Call::again { not self.late and self.y < 1 ms }\n\
+         post Reset using v on M::Call::again { self.y = 0 ms }\n",
+        "probabilistic MeanLow using inf on M over (c: M::Call) under every scheduler on origin \
+         { expected elapsed until holds(c.late) >= 1 ms }\n",
+    );
+    let record = settle(&world, "MeanLow");
+    assert_eq!(proved_value(&record), ratio(10, 9));
+    assert_eq!(document(&record)["objective"]["timed"]["route"], "region");
+    assert!(accepted(&world, "MeanLow", &document(&record)));
+    let tampered = settle_tampered(&world, "MeanLow", |certificate| {
+        for entry in &mut certificate.values {
+            entry.value = ratio(0, 1);
+        }
+    });
+    assert!(proved_value_of(&tampered).is_none());
+}
+
+/// FR-923: a workload resolves a state by its weights, so an operation it
+/// weighs at zero cannot be dropped from the checker's product. The engine
+/// emits no workload document for a timed deadline (and faults on a zero-weight
+/// race), so the document is the `every scheduler` one of the same model and
+/// claim name with its optimization relabelled `workload`; the checker, given
+/// the claim under the workload, must refuse the product as `Unsupported`
+/// rather than check one without `tick`.
+#[trace("TC-2492")]
+#[test]
+fn the_checker_refuses_a_workload_that_weighs_an_enabled_operation_at_zero() {
+    let world = |scheduler: &str| {
+        retx_with(
+            &[("send", &["late", "x"]), ("tick", &["retried"])],
+            GUARD,
+            true,
+            "delay M::Call::send ~ discrete { 2 ms: 1 };\n\
+             pre Tick using v on M::Call::tick { not self.late and not self.retried and self.x >= 2 ms }\n\
+             post Ticked using v on M::Call::tick { self.retried = true }\n\
+             workload Both on M { weight Call::send = 1; weight Call::tick = 0; }\n",
+            &format!(
+                "probabilistic W using ev on M over (c: M::Call) {scheduler} on origin \
+                 {{ probability <= 0.99 [ eventually[0 ms, 5 ms] holds(c.retried and c.late) ] }}\n"
+            ),
+        )
+    };
+    let mut doc = document(&settle(&world("under every scheduler"), "W"));
+    doc["objective"]["optimization"] = json!("workload");
+    // The claim identity names its scheduler, so it names the workload too.
+    let workload = r#"{"ordinal":0,"package":"package","path":["probabilistic","workload",{"ordinal":0,"package":"test/timed","path":["model","object_type","ix://test/timed/Call"]},"Both","send*1,tick*0"]}"#;
+    doc["identity"] = serde_json::from_str(&doc["identity"].to_string().replace(
+        r#""scheduler","every""#,
+        &format!(r#""scheduler",{workload}"#),
+    ))
+    .expect("identity JSON");
+    let result = check(&world("under Both"), "W", &doc);
+    assert!(
+        matches!(result, Err(ProbabilityDocumentError::Unsupported)),
+        "{result:?}"
+    );
+}
+
+/// The exact value of a `proved` record, when it is one.
+fn proved_value_of(record: &AnalyzeRecord) -> Option<Rational> {
+    match record.terminal()?.value() {
+        TerminalValue::Proved {
+            basis: ProofBasis::ExactValue { value, .. },
+            ..
+        } => Some(value.value().clone()),
+        _ => None,
+    }
 }
