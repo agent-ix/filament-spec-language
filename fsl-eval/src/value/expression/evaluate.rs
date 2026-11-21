@@ -21,7 +21,6 @@ use super::causes::{
     ObjectFieldIllTyped, ProtocolClauseSnapshot, UnsupportedConstruct,
 };
 use super::protocol_slot::charges::{BinderCharges, ChargeRouting, Owner, Owners};
-use super::protocol_slot::ProtocolReferenceOccurrence;
 use super::s6a::separation::{
     locatable, occurrence_at, ComparisonReport, InvocationBinding, Provenance, RuntimeValuePath,
     Separation, SeparationStep, StopReport, Trail, ValuePathStep, ValuePathSubject, WitnessClaim,
@@ -560,9 +559,8 @@ fn sum_admits(value_type: &ValueType, value: &Value) -> bool {
     }
 }
 
-/// Immutable sparse authority shared by reads and call frames. Ordinary
-/// values have no backing allocation.
-pub(super) type ReferenceOrigins = Option<Arc<[ProtocolReferenceOccurrence]>>;
+/// The same immutable sparse authority retained by model admission.
+pub(super) use fsl_semantics::model::object_environment::ReferenceOrigins;
 
 /// The arguments a call popped, with whether each forwards the absent-key
 /// parameter and the binder each derives from.

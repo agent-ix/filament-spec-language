@@ -38,14 +38,8 @@ pub enum SuppliedValue {
     Unavailable(CatalogCode),
 }
 
-/// The selected population for one reference occurrence in a supplied value.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct ProtocolReferenceOccurrence {
-    /// The typed path from the supplied value's root to this reference.
-    pub path: Vec<PathStep>,
-    /// The exact checked population declaration that supplied the reference.
-    pub population: NodeKey,
-}
+/// The model-owned occurrence carrier, also used by raw value admission.
+pub use fsl_semantics::model::object_environment::ReferenceOccurrence as ProtocolReferenceOccurrence;
 
 /// One binder value with explicit population provenance for every reference.
 #[derive(Clone, Debug)]

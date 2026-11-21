@@ -18,8 +18,23 @@ use crate::model::observation::{OutOfRange, RelationshipExtents};
 use crate::model::population::PopulationBinding;
 use filament_checked::key::DeclarationKey;
 use filament_exact::{EffectiveId, NodeKey, ObjectReference, PopulationId, UniverseId, Value};
+use filament_semantic_value::admission::PathStep;
 use filament_semantic_value::declaration::{FieldRef, TypeEnvironment};
 use filament_semantic_value::object_closure::ObjectClosure;
+
+/// The explicitly selected population of one reference occurrence. These
+/// facts accompany values; constructing this record does not authenticate it.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ReferenceOccurrence {
+    /// The typed path from the value's root to this reference.
+    pub path: Vec<PathStep>,
+    /// The actual checked population declaration selected for the reference.
+    pub population: NodeKey,
+}
+
+/// Immutable sparse occurrence storage shared by admission, reads and call
+/// frames. An unattributed value has no backing allocation.
+pub type ReferenceOrigins = Option<Arc<[ReferenceOccurrence]>>;
 
 /// [`ObjectEnvironment::with_population`]'s refusal: `population_id` is
 /// already recorded under a binding that does not equal the one this call
