@@ -57,6 +57,17 @@ impl Budget<'_> {
         self.charge(bytes.len(), bytes.len())?;
         Ok(bytes.to_vec())
     }
+    fn operands(&mut self, operands: &[u64]) -> Result<Vec<u8>, BareClauseRefusal> {
+        let size = operands
+            .len()
+            .checked_mul(8)
+            .ok_or_else(|| pending(self.node, "hyper-normal-form-work"))?;
+        self.charge(size, size)?;
+        Ok(operands
+            .iter()
+            .flat_map(|operand| operand.to_be_bytes())
+            .collect())
+    }
     fn charge(&mut self, work: usize, storage: usize) -> Result<(), BareClauseRefusal> {
         let work = u64::try_from(work).ok();
         let storage = u64::try_from(storage).ok();
@@ -168,15 +179,9 @@ fn combine(
             .iter()
             .try_fold(0usize, |sum, part| sum.checked_add(part.len()))
             .ok_or_else(|| pending(budget.node, "hyper-normal-form-work"))?;
-        // Sorting can compare every byte at each comparison-tree level.
-        budget.charge(
-            bytes.saturating_mul(
-                usize::try_from(parts.len().max(1).ilog2())
-                    .unwrap_or(usize::MAX)
-                    .saturating_add(1),
-            ),
-            0,
-        )?;
+        // Every pair can compare the entire shorter value. Reserve that
+        // conservative bound before the infallible library sort starts.
+        budget.charge(bytes.saturating_mul(parts.len()), 0)?;
         parts.sort();
     }
     Ok(Encoded {
@@ -308,6 +313,12 @@ fn expression(
                         )?,
                         _ => return Err(pending(root, "hyper-normal-form-member")),
                     };
+                    budget.charge(
+                        read.constraints.len(),
+                        read.constraints
+                            .len()
+                            .saturating_mul(std::mem::size_of::<Vec<u8>>()),
+                    )?;
                     let tag = encode(
                         b"application",
                         &[
@@ -323,17 +334,14 @@ fn expression(
                                         encode(
                                             format!("{:?}", constraint.kind).as_bytes(),
                                             &[
-                                                constraint
-                                                    .operands
-                                                    .iter()
-                                                    .flat_map(|operand| operand.to_be_bytes())
-                                                    .collect(),
-                                                constraint
-                                                    .family
-                                                    .as_deref()
-                                                    .unwrap_or_default()
-                                                    .as_bytes()
-                                                    .to_vec(),
+                                                budget.operands(&constraint.operands)?,
+                                                budget.copy(
+                                                    constraint
+                                                        .family
+                                                        .as_deref()
+                                                        .unwrap_or_default()
+                                                        .as_bytes(),
+                                                )?,
                                             ],
                                             budget,
                                         )
@@ -512,7 +520,11 @@ fn exchange(
         .try_fold(0usize, |sum, bytes| sum.checked_add(bytes.len()))
         .ok_or_else(|| pending(budget.node, "hyper-normal-form-work"))?;
     budget.charge(
-        bytes.saturating_mul(plain.len().max(1).ilog2() as usize + 1),
+        bytes.saturating_mul(
+            usize::try_from(plain.len().max(1).ilog2())
+                .unwrap_or(usize::MAX)
+                .saturating_add(1),
+        ),
         plain.len().saturating_mul(
             std::mem::size_of::<VecDeque<usize>>() + 2 * std::mem::size_of::<usize>(),
         ),
