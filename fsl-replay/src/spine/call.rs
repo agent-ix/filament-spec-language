@@ -674,6 +674,45 @@ pub fn run(
     objects: &ObjectEnvironment,
     cancel: &Cancel,
 ) -> Result<CallOutcome, Box<RunRefusal>> {
+    run_with_integer_division(
+        source,
+        package_name,
+        path,
+        bytes,
+        packages,
+        dependencies,
+        limits,
+        call,
+        objects,
+        None,
+        cancel,
+    )
+}
+
+/// Compile and run `bytes` with an optional caller-selected integer-division
+/// law and no extension catalog (FR-767).
+///
+/// A supplied law applies to `div` and `rem` and must agree with a law in
+/// the source header. With `None`, only the header can select a law; a unit
+/// using `div` or `rem` without either selection is refused. Compilation,
+/// execution limits and cancellation behave as in [`run`].
+#[allow(
+    clippy::too_many_arguments,
+    reason = "FR-100 run inputs plus the optional caller-owned division selection"
+)]
+pub fn run_with_integer_division(
+    source: SourceIdentity,
+    package_name: String,
+    path: &str,
+    bytes: &[u8],
+    packages: &fsl_semantics::model::intake::PackageInput,
+    dependencies: &DependencyInput,
+    limits: SpineLimits,
+    call: &Call,
+    objects: &ObjectEnvironment,
+    integer_division: Option<crate::AdmittedIntegerDivision>,
+    cancel: &Cancel,
+) -> Result<CallOutcome, Box<RunRefusal>> {
     run_with_optional_profile_catalog(
         source,
         package_name,
@@ -685,7 +724,7 @@ pub fn run(
         call,
         objects,
         None,
-        None,
+        integer_division,
         cancel,
     )
 }
