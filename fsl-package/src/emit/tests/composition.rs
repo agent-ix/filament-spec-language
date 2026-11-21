@@ -730,7 +730,7 @@ fn composition_declaration_and_canonical_members_keep_their_authored_regions() {
     );
     let source = unit(&declaration);
     let package = world
-        .compile(&declaration, None)
+        .compile(&declaration)
         .expect("the source checks");
     let emission = emit_checked(&package).expect("the composition emits");
     assert!(emission.omitted().is_empty());
@@ -1087,7 +1087,7 @@ fn composition_empty_arrays_and_region_refusal_precedence_are_preserved() {
         "environment Sched by \"scheduler\" fair weak each M::Producer::send; ",
     );
     let package = world
-        .compile(&declaration, None)
+        .compile(&declaration)
         .expect("the source checks");
     let emission = emit_checked(&package).expect("the source emits");
     let document = serde_json::to_vec(&fixture::document()).expect("model document");
