@@ -16,7 +16,8 @@ mod backend_agreement {
     use ix_trace_rs::trace;
     use serde_json::{json, Value};
     use xtask::backend_agreement::{
-        self as gate, CandidateRecord, DomainBound, Item, Negotiated, Provider, Recheck, Settlement,
+        self as gate, CandidateRecord, DomainBound, Entry, Item, Negotiated, Provider, Recheck,
+        Settlement,
     };
     use xtask::error::{Error, Result};
 
@@ -376,8 +377,23 @@ mod backend_agreement {
     #[trace("TC-1193", "FR-448-AC-5")]
     fn a_case_with_one_backend_only_is_reported_not_silently_counted_as_agreement() {
         let mut candidates = [record("proved")];
-        assert_eq!(gate::compare(&mut candidates), Settlement::NotCompared);
+        let settlement = gate::compare(&mut candidates);
+        assert_eq!(settlement, Settlement::NotCompared);
         assert!(candidates[0].not_compared.is_some());
+        let outcome = gate::report(
+            vec![Entry {
+                vector: "single".into(),
+                request_index: Some(0),
+                capability: "V1-TOOL-004".into(),
+                settlement,
+                candidates: candidates.into(),
+                failure: None,
+            }],
+            false,
+        )
+        .unwrap();
+        assert_eq!(document(&outcome)["counts"]["agree"], 0);
+        assert_eq!(document(&outcome)["counts"]["not-compared"], 1);
     }
 
     #[test]
