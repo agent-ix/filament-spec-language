@@ -432,24 +432,31 @@ fn a_rational_product_refuses_when_its_derived_range_does_not_fit() {
 #[trace("FSpec-FR-146-AC-9")]
 #[test]
 fn positive_rational_division_by_one_keeps_its_derived_bounds() {
-    let declarations = "profile law = \"filament.value.integer-division.euclidean/v1\";\n\
-        type R = Rational[1, 9; 1, 9];\n\
-        function divide using v(a: R): R pure { a / rational(1, 1) }";
-    assert_eq!(source_refusals(declarations), Ok(()));
-
-    for result in ["Rational[1, 8; 1, 9]", "Rational[1, 9; 1, 8]"] {
+    for body in [
+        "a / rational(1, 1)",
+        "let quotient = a / rational(1, 1) in quotient",
+    ] {
         let declarations = format!(
             "profile law = \"filament.value.integer-division.euclidean/v1\";\n\
-             function divide using v(a: Rational[1, 9; 1, 9]): {result} pure {{ a / rational(1, 1) }}"
+             type R = Rational[1, 9; 1, 9];\n\
+             function divide using v(a: R): R pure {{ {body} }}"
         );
-        assert_eq!(
-            source_refusals(&declarations),
-            Err(vec![(
-                Code::UndefinedExpression,
-                Some("unproved-range".to_owned()),
-            )]),
-            "the normalized quotient does not fit {result}"
-        );
+        assert_eq!(source_refusals(&declarations), Ok(()), "{body}");
+
+        for result in ["Rational[1, 8; 1, 9]", "Rational[1, 9; 1, 8]"] {
+            let declarations = format!(
+                "profile law = \"filament.value.integer-division.euclidean/v1\";\n\
+                 function divide using v(a: Rational[1, 9; 1, 9]): {result} pure {{ {body} }}"
+            );
+            assert_eq!(
+                source_refusals(&declarations),
+                Err(vec![(
+                    Code::UndefinedExpression,
+                    Some("unproved-range".to_owned()),
+                )]),
+                "the normalized quotient {body} does not fit {result}"
+            );
+        }
     }
 }
 
