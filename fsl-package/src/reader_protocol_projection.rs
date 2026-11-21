@@ -23,8 +23,8 @@ use filament_contract_model::{
     CheckedSemanticNodeV2, CheckedTerm, OperationModeKind,
 };
 use filament_exact::{
-    admit_text, ArithmeticOperator, Meter, NodeKey, OrderingOperator, ScalarLimits, TextPayload,
-    Timestamp, Uuid, Value, ValueType,
+    ArithmeticOperator, Meter, NodeKey, OrderingOperator, ScalarLimits, TextPayload, Timestamp,
+    Uuid, Value, ValueType, admit_text,
 };
 use filament_semantic_value::catalog::InternalFault;
 use filament_semantic_value::declaration::{
@@ -37,7 +37,7 @@ use fsl_semantics::check::wire_id::WireGraph;
 
 use crate::equality_file::{EqualityWitnessRefusal, ReadEqualityRows};
 use crate::introduced_binders::is_sum_identity;
-use crate::wire_form::{has_form, has_tag, split_tag_form, OperationSuffix, WireForm, WireTag};
+use crate::wire_form::{OperationSuffix, WireForm, WireTag, has_form, has_tag, split_tag_form};
 
 /// One projected protocol slot: owned evaluator nodes, the admitted function
 /// table its calls reach, and the frame its locals and case binders use.
@@ -810,7 +810,7 @@ pub(crate) fn admit_equality_decisions(
                 Ok(value) => Ok(value),
                 Err(crate::equality_file::EqualityDecisionFailure::Witness(error)) => Err(error),
                 Err(crate::equality_file::EqualityDecisionFailure::Exhausted(error)) => {
-                    return Err(crate::NativeJoinFailure::Equality(error))
+                    return Err(crate::NativeJoinFailure::Equality(error));
                 }
             },
         };
@@ -2578,7 +2578,11 @@ impl<'wire> ReaderBuilder<'_, 'wire> {
             }
             Some("filament.op.collection.seq") => {
                 // FR-322 `seq`: two bounds outside the binder, the body inside.
-                let [low_term, high_term, CheckedTerm::Binding { name, value, .. }] = arguments
+                let [
+                    low_term,
+                    high_term,
+                    CheckedTerm::Binding { name, value, .. },
+                ] = arguments
                 else {
                     return Err(fault("reader-seq-has-two-bounds-and-binder").into());
                 };
@@ -2717,6 +2721,13 @@ impl<'wire> ReaderBuilder<'_, 'wire> {
                     _ => ArithmeticOperator::Divide,
                 };
                 Ok((NodeKind::Quantity(operator, *left, *right), children))
+            }
+            Some("filament.op.quantity.pow") => {
+                let children = self.project_arguments(id, Some(arguments), context, locals)?;
+                let [base, exponent] = children.as_slice() else {
+                    return Err(fault("reader-quantity-power-has-two-operands").into());
+                };
+                Ok((NodeKind::QuantityPower(*base, *exponent), children))
             }
             Some("filament.op.numeric.narrow") => {
                 let children = self.project_arguments(id, Some(arguments), context, locals)?;

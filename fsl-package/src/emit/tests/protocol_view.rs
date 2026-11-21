@@ -356,10 +356,11 @@ fn the_protocol_view_lists_the_nodes_the_checked_clause_rebuilds() {
         protocol.channels.len(),
         "one queue per channel"
     );
-    assert!(view
-        .queues()
-        .iter()
-        .all(|id| node(package, id).declaration.is_none()));
+    assert!(
+        view.queues()
+            .iter()
+            .all(|id| node(package, id).declaration.is_none())
+    );
     assert_eq!(
         sorted(names(view.compensations())),
         sorted(
@@ -529,7 +530,7 @@ fn an_await_after_a_compensation_is_anchored_at_the_forward_effect() {
     let after = arguments
         .iter()
         .find_map(|argument| match argument {
-            CheckedTerm::Binding { name, value } if &**name == "after" => Some(&**value),
+            CheckedTerm::Binding { name, value, .. } if &**name == "after" => Some(&**value),
             _ => None,
         })
         .expect("an after argument");
@@ -539,13 +540,13 @@ fn an_await_after_a_compensation_is_anchored_at_the_forward_effect() {
     let (mut kind, mut target) = (None, None);
     for member in members {
         match member {
-            CheckedTerm::Binding { name, value } if &**name == "kind" => {
+            CheckedTerm::Binding { name, value, .. } if &**name == "kind" => {
                 let CheckedTerm::Literal { value, .. } = &**value else {
                     panic!("a text kind");
                 };
                 kind = Some(value.clone());
             }
-            CheckedTerm::Binding { name, value } if &**name == "target" => {
+            CheckedTerm::Binding { name, value, .. } if &**name == "target" => {
                 target = Some((**value).clone());
             }
             _ => {}
@@ -618,7 +619,7 @@ fn awaits_after_one_template_and_a_template_without_a_commit_check() {
             panic!("an application body");
         };
         let after = arguments.iter().find_map(|argument| match argument {
-            CheckedTerm::Binding { name, value } if &**name == "after" => Some(&**value),
+            CheckedTerm::Binding { name, value, .. } if &**name == "after" => Some(&**value),
             _ => None,
         });
         let Some(CheckedTerm::Aggregate { members }) = after else {
@@ -627,7 +628,7 @@ fn awaits_after_one_template_and_a_template_without_a_commit_check() {
         members
             .iter()
             .find_map(|member| match member {
-                CheckedTerm::Binding { name, value } if &**name == "target" => {
+                CheckedTerm::Binding { name, value, .. } if &**name == "target" => {
                     Some((**value).clone())
                 }
                 _ => None,
@@ -678,7 +679,7 @@ fn a_control_held_twice_is_refused_not_listed_twice() {
         panic!("an application body");
     };
     for argument in arguments {
-        if let CheckedTerm::Binding { name, value } = argument {
+        if let CheckedTerm::Binding { name, value, .. } = argument {
             if &**name == "children" {
                 let CheckedTerm::Aggregate { members } = &mut **value else {
                     panic!("children is a list");
@@ -976,7 +977,7 @@ fn the_channel_and_queue_views_return_delivery_and_capacity() {
             panic!("an application body");
         };
         for argument in arguments {
-            if let CheckedTerm::Binding { name, value } = argument {
+            if let CheckedTerm::Binding { name, value, .. } = argument {
                 if &**name == "delivery" {
                     if let CheckedTerm::Literal { value, .. } = &mut **value {
                         *value =
@@ -1618,7 +1619,7 @@ fn nodes_with_maximum(
     let group = arguments
         .iter_mut()
         .find_map(|argument| match argument {
-            CheckedTerm::Binding { name, value } if &**name == "attempts" => Some(&mut **value),
+            CheckedTerm::Binding { name, value, .. } if &**name == "attempts" => Some(&mut **value),
             _ => None,
         })
         .expect("the attempts argument");
@@ -1831,7 +1832,7 @@ fn the_await_anchor_is_the_kind_and_target_the_node_carries() {
             panic!("an application body");
         };
         for argument in arguments {
-            if let CheckedTerm::Binding { name, value } = argument {
+            if let CheckedTerm::Binding { name, value, .. } = argument {
                 if &**name == "after" {
                     edit(value);
                 }
@@ -1863,7 +1864,7 @@ fn the_await_anchor_is_the_kind_and_target_the_node_carries() {
                 panic!("after is a group");
             };
             for m in members {
-                if let CheckedTerm::Binding { name, value } = m {
+                if let CheckedTerm::Binding { name, value, .. } = m {
                     if &**name == "kind" {
                         if let CheckedTerm::Literal { value, .. } = &mut **value {
                             *value = filament_contract_model::CheckedJson::from_serializable(
@@ -1910,7 +1911,7 @@ fn a_channels_ends_and_message_type_are_the_nodes_it_references() {
         panic!("an application body");
     };
     for argument in arguments {
-        if let CheckedTerm::Binding { name, value } = argument {
+        if let CheckedTerm::Binding { name, value, .. } = argument {
             if &**name == "from" {
                 **value = channel_argument(charges, "delivery").clone();
             }
@@ -1942,7 +1943,9 @@ fn channel_argument<'n>(channel: &'n CheckedSemanticNodeV2, name: &str) -> &'n C
     arguments
         .iter()
         .find_map(|argument| match argument {
-            CheckedTerm::Binding { name: bound, value } if &**bound == name => Some(&**value),
+            CheckedTerm::Binding {
+                name: bound, value, ..
+            } if &**bound == name => Some(&**value),
             _ => None,
         })
         .unwrap_or_else(|| panic!("a {name} argument"))
@@ -2007,7 +2010,7 @@ fn a_choices_owner_and_visible_set_are_the_nodes_it_references() {
         panic!("an application body");
     };
     for argument in arguments {
-        if let CheckedTerm::Binding { name, value } = argument {
+        if let CheckedTerm::Binding { name, value, .. } = argument {
             if &**name == "owner" {
                 **value = CheckedTerm::Aggregate {
                     members: Vec::new(),
@@ -2027,7 +2030,7 @@ fn a_choices_owner_and_visible_set_are_the_nodes_it_references() {
         panic!("an application body");
     };
     for argument in arguments {
-        if let CheckedTerm::Binding { name, value } = argument {
+        if let CheckedTerm::Binding { name, value, .. } = argument {
             if &**name == "visible" {
                 **value = CheckedTerm::reference(outcome.node_id.clone());
             }
@@ -2063,6 +2066,7 @@ fn with_argument(
         if let CheckedTerm::Binding {
             name: bound,
             value: held,
+            ..
         } = argument
         {
             if &**bound == name {
@@ -2132,6 +2136,7 @@ fn a_channels_ordering_and_fifo_key_are_the_nodes_it_references() {
         CheckedTerm::Aggregate {
             members: vec![CheckedTerm::Binding {
                 name: "kind".into(),
+                binder: None,
                 value: Box::new(text_term(channel_argument(charges, "delivery"), "sorted")),
             }],
         },
