@@ -5353,3 +5353,17 @@ fn reader_backed_activation_guard_runs_integer_division() {
     );
     assert_guard_true_on_both_routes(&source, "7 div 2 = 3 and -7 div 2 = -3");
 }
+
+/// FR-390-AC-28, FR-533: integer operands of `/` with a `Rational` result
+/// (the expected type promotes them exactly) give the same value, outcome and
+/// charge log through the reader view as through the checked package.
+#[test]
+#[trace("TC-1070", "FR-390-AC-28")]
+fn reader_backed_activation_guard_keeps_integer_slash_fractional() {
+    let source = guard_source(
+        "",
+        "function inv using v(x: Int[1, 9]): Rational[0, 1; 1, 9] pure { 1 / x }",
+        "opened.ready and inv(2) = rational(1, 2)",
+    );
+    assert_guard_true_on_both_routes(&source, "1 / 2 = rational(1, 2) over integer operands");
+}
