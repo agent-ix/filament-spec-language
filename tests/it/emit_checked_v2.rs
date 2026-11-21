@@ -187,7 +187,7 @@ fn parameter_name(node: &CheckedSemanticNodeV2) -> String {
     members
         .iter()
         .find_map(|member| match member {
-            CheckedTerm::Binding { name, value } if name.as_ref() == "name" => match &**value {
+            CheckedTerm::Binding { name, value, .. } if name.as_ref() == "name" => match &**value {
                 CheckedTerm::Literal { value, .. } => value.as_str().map(str::to_owned),
                 _ => None,
             },
@@ -262,7 +262,7 @@ fn the_switch_transition_reads_back_typed_subject_input_post_claim_and_source() 
     let bindings: Vec<(&str, &CheckedTerm)> = arguments
         .iter()
         .map(|argument| match argument {
-            CheckedTerm::Binding { name, value } => (name.as_ref(), &**value),
+            CheckedTerm::Binding { name, value, .. } => (name.as_ref(), &**value),
             other => panic!("a transition argument is a binding: {other:?}"),
         })
         .collect();
@@ -283,7 +283,7 @@ fn the_switch_transition_reads_back_typed_subject_input_post_claim_and_source() 
     };
     assert_eq!(anchor_body.execution_point, None, "a no-point anchor");
     let anchored = anchor_body.members.iter().find_map(|member| match member {
-        CheckedTerm::Binding { name, value } if name.as_ref() == "operation" => match &**value {
+        CheckedTerm::Binding { name, value, .. } if name.as_ref() == "operation" => match &**value {
             CheckedTerm::Literal { value, .. } => value.as_str(),
             _ => None,
         },
@@ -502,7 +502,7 @@ fn the_typed_inputs_keep_the_declared_order_of_two_parameters() {
     let CheckedTerm::Application { arguments, .. } = &transition.body else {
         panic!("a typed transition application");
     };
-    let CheckedTerm::Binding { name, value } = &arguments[2] else {
+    let CheckedTerm::Binding { name, value, .. } = &arguments[2] else {
         panic!("the third binding");
     };
     assert_eq!(name.as_ref(), "inputs");
