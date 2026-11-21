@@ -253,30 +253,36 @@ two indices, over one shared set of premise items.
 - When a registered backend advertises `composition`, FSL SHALL negotiate the
   routed item to it (FSpec FR-348-AC-3) and send it, through the external
   provider request, the item with its derived `premises` slot keys and its
-  `options`. An item sends its `options` only to a backend it names (FR-967),
-  and the backend publishes each option it is sent. FSL sends no premise
-  result and no component proof with it. FSL settles the provider's verdict
-  as for any external provider, with these causes: `unknown` is
-  `inconclusive` `solver-inconclusive` (FSpec FR-331); `refuted` is
-  `inconclusive` `replay-refused` with the code `unknown_required_feature`,
-  because a composition has no replay (FSpec FR-290 "Replay context"); and
-  `proved` carries the certification FSL assigns the provider's origin (FSpec
-  FR-635: `trusted` for a plugin, `uncertified` for a linked provider), never
-  one the provider states. How a provider reads the premises' results, and
-  what it refutes, is the second PR's decision.
-- FSL SHALL accept a provider's `proved` for a composition only when every
-  component-guarantee premise of that composition settled `proved` in the same
-  request. FSL decides this from its own records, never from the provider, and
-  it reads each premise by the request index of the item its typed slot key
-  (the assumptions included) was given, so a guarantee equal on the wire but
-  checked under other peer guarantees is another item and never discharges
-  this one. A premise that settled otherwise, by an engine, by disposition
-  before any engine ran (`unsupported` under peer guarantees), or not at all,
-  fails the check. The composition then settles `inconclusive` with cause
-  `replay-refused` (FSpec FR-331's cause for a result FSL does not accept; it
-  is an FSL-only cause) and the code `unsupported_projection`, naming the
-  provider, with no certification. FSL runs no composition algorithm of its
-  own and adds no proof.
+  `options`. The `options` are negotiated as for any provider item: FR-967
+  for a named backend, FR-243 and FR-635 against the candidates' manifests
+  otherwise. FSL sends no premise result and no component proof with it. FSL
+  settles the provider's verdict as for any external provider, with these
+  causes: `unknown` is `inconclusive` `solver-inconclusive` (FSpec FR-331);
+  `refuted` is `inconclusive` `replay-refused` with the code
+  `unknown_required_feature`, because a composition has no replay (FR-290
+  "Replay context"); and `proved` carries the certification FSL assigns the
+  provider's origin (FR-635: `trusted` for a plugin, `uncertified` for a
+  linked provider), never one the provider states. How a provider reads the
+  premises' results, and what it refutes, is the second PR's decision.
+- FSL SHALL accept a provider's `proved` for a composition only when the
+  composition has component-guarantee premises and every one of them settled
+  `proved` in the same request. FSL decides this from its own records, never
+  from the provider, and it reads each premise by the request index of the
+  item its typed slot key (the assumptions included) was given, so a
+  guarantee equal on the wire but checked under other peer guarantees is
+  another item and never discharges this one. A premise that settled
+  otherwise, by an engine, by disposition before any engine ran
+  (`unsupported` under peer guarantees), or not at all, fails the check, and
+  so does a composition with no component-guarantee premise to check. The
+  composition then settles `inconclusive` with cause `replay-refused` and the
+  code `unsupported_projection`, naming the provider, with no certification.
+  FSpec FR-331 (lines 856-858) defines `replay-refused` as a core-only cause,
+  settled by the core's own replay or Kani run, so this use is the nearest
+  existing core-only cause under the architecture ruling on QSL-2739, not
+  that definition's own case: `premise-unproved` is planner-only and
+  `hypotheses-not-established` is the invariant item's. The standard has no
+  cause for a provider's proof FSL does not accept; that gap remains work on
+  QSL-2739. FSL runs no composition algorithm of its own and adds no proof.
 
 ### Current system behavior
 

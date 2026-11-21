@@ -356,9 +356,8 @@ fn assert_proof_not_accepted(item: &Value) {
     assert!(item["record"]["certification"].is_null(), "{item}");
 }
 
-/// FR-1044-AC-9: a provider's `proved` for a composition whose component
+/// FR-1044 "Behavior" (the provider proof gate): a provider's `proved` for a composition whose component
 /// guarantee `refuted` is not accepted.
-#[trace("FR-1044-AC-9")]
 #[test]
 fn a_provider_proof_is_refused_over_a_refuted_component_guarantee() {
     let (run, sent) = through_provider(
@@ -374,10 +373,9 @@ fn a_provider_proof_is_refused_over_a_refuted_component_guarantee() {
     assert_eq!(label(&document["items"][2]), "refuted", "{document}");
 }
 
-/// FR-1044-AC-5: a provider's `proved` for a composition whose component
+/// FR-1044 "Behavior" (the provider proof gate): a provider's `proved` for a composition whose component
 /// guarantee is checked under peer guarantees, which settles `unsupported` by
 /// disposition before any engine runs, is not accepted.
-#[trace("FR-1044-AC-5")]
 #[test]
 fn a_provider_proof_is_refused_over_an_unsupported_component_guarantee() {
     let (run, _) = through_provider(
@@ -392,10 +390,9 @@ fn a_provider_proof_is_refused_over_an_unsupported_component_guarantee() {
     assert_eq!(label(&document["items"][2]), "unsupported", "{document}");
 }
 
-/// FR-1044-AC-8: two compositions of one request whose `Capped` guarantees
+/// FR-1044 "Behavior" (the provider proof gate): two compositions of one request whose `Capped` guarantees
 /// are equal on the wire and differ in assumptions each read their own item.
 /// `Sys`'s proved `Capped` never discharges `SysRely`'s assumed one.
-#[trace("FR-1044-AC-8")]
 #[test]
 fn an_unassumed_proof_does_not_discharge_an_assumed_guarantee() {
     let (run, sent) = through_provider(

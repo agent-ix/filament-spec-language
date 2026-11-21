@@ -3750,14 +3750,17 @@ pub fn settle_run(
     )
 }
 
-/// FR-1044: a routed composition's `proved` stands only when every one of its
-/// component-guarantee items settled `proved` in this request. The items are
-/// the ones its slot keys identified at resolution, by request index, so a
-/// guarantee checked under other peers is never read as this one; an item
-/// absent from `records` settled by disposition, before any engine ran, and
-/// is not `proved`. A provider's `proved` that fails the check settles
-/// `inconclusive` with FR-331's `replay-refused` (the provider's proof is not
-/// accepted) and the code of an unsupported capability.
+/// FR-1044: a routed composition's `proved` stands only when it has
+/// component-guarantee items and every one of them settled `proved` in this
+/// request. The items are the ones its slot keys identified at resolution, by
+/// request index, so a guarantee checked under other peers is never read as
+/// this one; an item absent from `records` settled by disposition, before any
+/// engine ran, and is not `proved`. A composition with no such item has
+/// nothing to establish its proof, so its `proved` fails closed too. A
+/// provider's `proved` that fails the check settles `inconclusive` with
+/// `replay-refused`, the nearest existing core-only cause, and the code of an
+/// unsupported capability. A `proved` record that names no backend is a
+/// broken invariant and settles `failed`.
 fn gate_compositions(
     records: &mut [TerminalRecord],
     gates: &BTreeMap<RequestIndex, Vec<RequestIndex>>,
@@ -3773,19 +3776,102 @@ fn gate_compositions(
             continue;
         };
         if !matches!(record.value(), TerminalValue::Proved { .. })
-            || required.iter().all(|premise| proved.contains(premise))
+            || (!required.is_empty() && required.iter().all(|premise| proved.contains(premise)))
         {
             continue;
         }
-        let backend = record
-            .backend()
-            .cloned()
-            .unwrap_or_else(|| BackendId::new("composition"));
-        *record = TerminalRecord::inconclusive(
-            index,
-            backend,
-            InconclusiveCause::ReplayRefused(fsl_foundation::Code::UnsupportedProjection),
-        );
+        *record = match record.backend().cloned() {
+            Some(backend) => TerminalRecord::inconclusive(
+                index,
+                backend,
+                InconclusiveCause::ReplayRefused(fsl_foundation::Code::UnsupportedProjection),
+            ),
+            None => TerminalRecord::disposition_failed(
+                index,
+                filament_semantic_value::catalog::InternalFault::new(
+                    "composition-gate",
+                    "proved-without-backend",
+                )
+                .catalog_code(),
+            ),
+        };
+    }
+}
+
+#[cfg(test)]
+mod composition_gate_tests {
+    use std::collections::BTreeMap;
+
+    use fsl_foundation::{BackendId, RequestIndex};
+    use fsl_replay::{Certification, InconclusiveCause, TerminalRecord, TerminalValue};
+
+    use super::gate_compositions;
+
+    fn index(position: usize) -> RequestIndex {
+        RequestIndex::new(position)
+    }
+
+    fn proved(position: usize) -> TerminalRecord {
+        TerminalRecord::proved_by_provider(
+            index(position),
+            BackendId::new("provider"),
+            Certification::Trusted,
+        )
+    }
+
+    /// FR-1044 Behavior: a composition's `proved` over component guarantees
+    /// that all settled `proved` stands.
+    #[test]
+    fn a_proof_over_proved_guarantees_stands() {
+        let mut records = vec![proved(0), proved(1), proved(2)];
+        let gates = BTreeMap::from([(index(0), vec![index(1), index(2)])]);
+        gate_compositions(&mut records, &gates);
+        assert!(matches!(records[0].value(), TerminalValue::Proved { .. }));
+    }
+
+    /// FR-1044 Behavior: a guarantee that is not `proved`, or that has no
+    /// record because it settled by disposition, refuses the proof.
+    #[test]
+    fn a_proof_over_an_unproved_or_missing_guarantee_is_refused() {
+        for guarantees in [vec![index(1), index(2)], vec![index(1), index(5)]] {
+            let mut records = vec![
+                proved(0),
+                proved(1),
+                TerminalRecord::failed(index(2), BackendId::new("en-1")),
+            ];
+            let gates = BTreeMap::from([(index(0), guarantees)]);
+            gate_compositions(&mut records, &gates);
+            assert!(
+                matches!(
+                    records[0].value(),
+                    TerminalValue::Inconclusive(InconclusiveCause::ReplayRefused(_))
+                ),
+                "{:?}",
+                records[0].value()
+            );
+        }
+    }
+
+    /// FR-1044 Behavior: a composition with no component-guarantee item has
+    /// nothing that establishes its proof, so a provider's `proved` fails
+    /// closed rather than stand on the provider's answer alone.
+    #[test]
+    fn a_proof_with_no_guarantee_to_check_is_refused() {
+        let mut records = vec![proved(0)];
+        let gates = BTreeMap::from([(index(0), Vec::new())]);
+        gate_compositions(&mut records, &gates);
+        assert!(matches!(
+            records[0].value(),
+            TerminalValue::Inconclusive(InconclusiveCause::ReplayRefused(_))
+        ));
+    }
+
+    /// A record of an item that is no composition is never read.
+    #[test]
+    fn a_record_with_no_gate_is_untouched() {
+        let mut records = vec![proved(0)];
+        gate_compositions(&mut records, &BTreeMap::new());
+        assert!(matches!(records[0].value(), TerminalValue::Proved { .. }));
     }
 }
 
