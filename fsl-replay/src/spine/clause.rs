@@ -305,6 +305,42 @@ impl ClauseRunSource {
     }
 }
 
+/// The number of clauses an extracted unit declares, or `None` for a program
+/// source or a body that does not parse (compilation reports that refusal).
+/// A clause is a state clause or a temporal clause.
+fn extracted_clause_count(
+    unit: &Unit<'_>,
+    limits: fsl_cst::Limits,
+    cancel: &Cancel,
+) -> Option<usize> {
+    unit.language?;
+    let parsed = front_end::parse(
+        &front_end::ParseRequest {
+            source: unit.identity,
+            path: unit.path,
+            bytes: unit.bytes,
+        },
+        limits,
+        cancel,
+    )
+    .ok()?
+    .into_value();
+    Some(
+        parsed
+            .unit()
+            .forms()
+            .iter()
+            .filter(|form| {
+                matches!(
+                    form.form(),
+                    fsl_forms::DeclarationForm::StateClause(_)
+                        | fsl_forms::DeclarationForm::Temporal(_)
+                )
+            })
+            .count(),
+    )
+}
+
 /// FR-109 Inputs: one clause-run request.
 pub struct ClauseRunRequest {
     /// The unit: program source bytes, or an I3 extracted source.
@@ -388,6 +424,12 @@ pub enum ClauseDisposition {
     UnknownLanguage {
         /// The declared fence language.
         language: String,
+    },
+    /// Stage `compile`, category `refusal`, `extraction-clause-count`: an
+    /// extracted body declares more than one clause. Nothing is compiled.
+    ExtractionClauseCount {
+        /// The number of clauses the body declares.
+        actual: usize,
     },
     /// Stage `select`, `missing_declaration`/`missing-name`.
     MissingName {
@@ -779,7 +821,9 @@ impl ClauseDisposition {
     /// The FR-109 stage this disposition reports at.
     pub fn stage(&self) -> ClauseRunStage {
         match self {
-            Self::Compile(_) | Self::UnknownLanguage { .. } => ClauseRunStage::Compile,
+            Self::Compile(_)
+            | Self::UnknownLanguage { .. }
+            | Self::ExtractionClauseCount { .. } => ClauseRunStage::Compile,
             Self::MissingName { .. } | Self::NotAPredicate { .. } => ClauseRunStage::Select,
             Self::Admit(_) | Self::SnapshotAdmission { .. } | Self::ArgumentRefusal(_) => {
                 ClauseRunStage::Admit
@@ -814,6 +858,7 @@ impl ClauseDisposition {
             Self::Compile(refusal) => refusal.code().category(),
             Self::ArgumentRefusal(refusal) => refusal.category(),
             Self::UnknownLanguage { .. }
+            | Self::ExtractionClauseCount { .. }
             | Self::MissingName { .. }
             | Self::NotAPredicate { .. } => Category::Refusal,
             Self::Admit(AdmissionFailure::Refused(record)) => {
@@ -1473,6 +1518,7 @@ impl ClauseRunReport {
         let activation = match &self.disposition {
             ClauseDisposition::Compile(_)
             | ClauseDisposition::UnknownLanguage { .. }
+            | ClauseDisposition::ExtractionClauseCount { .. }
             | ClauseDisposition::MissingName { .. }
             | ClauseDisposition::NotAPredicate { .. }
             | ClauseDisposition::Admit(_)
@@ -1730,6 +1776,11 @@ fn run_clause_reading(
     }
 
     let cancel = Cancel::new();
+    if let Some(actual) =
+        extracted_clause_count(&unit, request.limits.source, &cancel).filter(|n| *n > 1)
+    {
+        return Ok(report(ClauseDisposition::ExtractionClauseCount { actual }));
+    }
     let front_end = || -> Result<_, front_end::FrontEndFailure> {
         let parsed = front_end::parse(
             &front_end::ParseRequest {
@@ -2380,6 +2431,11 @@ fn compile_program_parts(
         }
     }
     let cancel = Cancel::new();
+    if let Some(actual) = extracted_clause_count(&unit, limits.source, &cancel).filter(|n| *n > 1) {
+        return Err(Box::new(report(ClauseDisposition::ExtractionClauseCount {
+            actual,
+        })));
+    }
     let front_end = || -> Result<_, front_end::FrontEndFailure> {
         let parsed = front_end::parse(
             &front_end::ParseRequest {

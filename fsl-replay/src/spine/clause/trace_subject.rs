@@ -81,6 +81,13 @@ pub fn run_trace_subject_clause(
         }
     }
     let cancel = Cancel::new();
+    if let Some(actual) =
+        super::extracted_clause_count(&unit, request.limits.source, &cancel).filter(|n| *n > 1)
+    {
+        return Ok(empty_report(ClauseDisposition::ExtractionClauseCount {
+            actual,
+        }));
+    }
     let compile = || -> Result<_, front_end::FrontEndFailure> {
         let parsed = front_end::parse(
             &front_end::ParseRequest {

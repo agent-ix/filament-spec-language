@@ -2981,6 +2981,12 @@ impl Disposition {
                         .fields(BTreeMap::from([("language", language.clone())])),
                 );
             }
+            ClauseDisposition::ExtractionClauseCount { actual } => {
+                result.refusal = Some(
+                    RefusalWire::new(Code::ExtractionClauseCount.as_str(), None)
+                        .fields(BTreeMap::from([("actual", actual.to_string())])),
+                );
+            }
             ClauseDisposition::MissingName { name } => {
                 result.refusal = Some(
                     RefusalWire::new(Code::MissingDeclaration.as_str(), Some("missing-name"))

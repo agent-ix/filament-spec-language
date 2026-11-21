@@ -420,6 +420,7 @@ fn settle(disposition: ClauseDisposition) -> ClauseEvaluation {
             }
         }
         ClauseDisposition::UnknownLanguage { .. }
+        | ClauseDisposition::ExtractionClauseCount { .. }
         | ClauseDisposition::NotAPredicate { .. }
         | ClauseDisposition::FrameViolation(_)
         | ClauseDisposition::OperationContractViolation(_)
