@@ -3867,19 +3867,7 @@ fn request<T: wire::RequestKind>(bytes: &[u8]) -> Result<T> {
     if envelope.format != T::FORMAT.as_str() {
         return Err(RunCause::Format);
     }
-    let Object(request): Object<T> =
-        serde_json::from_str(envelope.request.get()).map_err(|error| {
-            if T::FORMAT == fsl_foundation::wire_format::WireFormat::RunRequest
-                && error.to_string().starts_with("duplicate field `sources`")
-            {
-                RunCause::ClauseRequest {
-                    member: "/request/sources".to_owned(),
-                    reason: "repeated member".to_owned(),
-                }
-            } else {
-                RunCause::Json(error)
-            }
-        })?;
+    let Object(request): Object<T> = serde_json::from_str(envelope.request.get())?;
     request.validate()?;
     Ok(request)
 }

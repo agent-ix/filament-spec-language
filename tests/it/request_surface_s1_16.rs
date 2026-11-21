@@ -3652,7 +3652,7 @@ fn package_clause_selections_timed_samples_match_source() {
 /// Actual shared atoms preserve support positions and caller whitespace; a
 /// differing spelling selects the checked canonical label on both routes.
 #[test]
-#[trace("TC-1295", "FR-501-AC-31", "FR-1039-AC-8")]
+#[trace("TC-1295", "FR-501-AC-31", "FR-1039-AC-10")]
 fn package_remainder_window_shared_atoms_match_source_and_require_caller_bytes() {
     let fixture = include_str!("../corpus/temporal/timestamped-window.native");
     let clocks = json!({"sensor": {"kind": "timestamped_event", "timestamp_unit": "ms"}});

@@ -24,12 +24,19 @@ pub(super) fn validate_bytes(bytes: &[u8]) -> Result<()> {
         program: bool,
         package: bool,
     }
-    impl<'de> Deserialize<'de> for Provisions {
+    struct ProvisionsSeed<'a> {
+        duplicate_sources: &'a mut bool,
+    }
+    impl<'de> DeserializeSeed<'de> for ProvisionsSeed<'_> {
+        type Value = Provisions;
         fn deserialize<D: de::Deserializer<'de>>(
+            self,
             decoder: D,
         ) -> std::result::Result<Self, D::Error> {
-            struct ProvisionsVisitor;
-            impl<'de> Visitor<'de> for ProvisionsVisitor {
+            struct ProvisionsVisitor<'a> {
+                duplicate_sources: &'a mut bool,
+            }
+            impl<'de> Visitor<'de> for ProvisionsVisitor<'_> {
                 type Value = Provisions;
                 fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
                     f.write_str("a run request object")
@@ -47,6 +54,7 @@ pub(super) fn validate_bytes(bytes: &[u8]) -> Result<()> {
                         match key.as_str() {
                             "sources" => {
                                 if provisions.sources.is_some() {
+                                    *self.duplicate_sources = true;
                                     return Err(de::Error::custom(
                                         "/request/sources: repeated member",
                                     ));
@@ -71,27 +79,33 @@ pub(super) fn validate_bytes(bytes: &[u8]) -> Result<()> {
                     Ok(provisions)
                 }
             }
-            decoder.deserialize_map(ProvisionsVisitor)
+            decoder.deserialize_map(ProvisionsVisitor {
+                duplicate_sources: self.duplicate_sources,
+            })
         }
     }
-    let Object(provisions): Object<Provisions> =
-        serde_json::from_str(envelope.request.get()).map_err(decode_error)?;
+    let mut duplicate_sources = false;
+    let mut decoder = serde_json::Deserializer::from_str(envelope.request.get());
+    let provisions = ProvisionsSeed {
+        duplicate_sources: &mut duplicate_sources,
+    }
+    .deserialize(&mut decoder)
+    .map_err(|error| {
+        if duplicate_sources {
+            RunCause::ClauseRequest {
+                member: "/request/sources".to_owned(),
+                reason: "repeated member".to_owned(),
+            }
+        } else {
+            RunCause::Json(error)
+        }
+    })?;
+    decoder.end()?;
     validate_provisions(
         provisions.sources.as_deref(),
         provisions.program,
         provisions.package,
     )
-}
-
-pub(super) fn decode_error(error: serde_json::Error) -> RunCause {
-    if error.to_string().starts_with("duplicate field `sources`") {
-        RunCause::ClauseRequest {
-            member: "/request/sources".to_owned(),
-            reason: "repeated member".to_owned(),
-        }
-    } else {
-        RunCause::Json(error)
-    }
 }
 
 pub(super) fn deserialize<'de, D: de::Deserializer<'de>>(
