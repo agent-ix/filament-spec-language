@@ -899,11 +899,7 @@ impl<'c> Builder<'_, '_, 'c> {
                 draws.push(EnabledDraw {
                     random: draw.random.clone(),
                     probability: draw.probability.clone(),
-                    rewards: draw
-                        .rewards
-                        .defined()
-                        .map_err(|_| fault("reward-is-defined"))?
-                        .to_vec(),
+                    rewards: draw.rewards.clone(),
                     posts,
                 });
             }

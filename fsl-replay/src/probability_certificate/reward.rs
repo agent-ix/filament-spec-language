@@ -723,11 +723,7 @@ fn step_costs(
             if step.probability != rational(0) {
                 control.phase(RewardProbabilityPhase::Reward)?;
                 let value = magnitude(
-                    step.rewards.defined().map_err(|_| {
-                        ProbabilityDocumentError::Graph(
-                            ExactProbabilityGraphError::ExpansionRefused,
-                        )
-                    })?,
+                    &step.rewards,
                     objective,
                     limits,
                     cancel,
@@ -772,9 +768,7 @@ fn step_costs(
             }
             control.phase(RewardProbabilityPhase::Reward)?;
             let value = magnitude(
-                draw.rewards.defined().map_err(|_| {
-                    ProbabilityDocumentError::Graph(ExactProbabilityGraphError::ExpansionRefused)
-                })?,
+                &draw.rewards,
                 objective,
                 limits,
                 cancel,

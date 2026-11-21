@@ -145,7 +145,7 @@ fn sum(steps: &[WeightedStep]) -> Rational {
 
 /// The one reward value of a step.
 fn duration(step: &WeightedStep) -> i64 {
-    let [(name, value)] = step.rewards.defined().expect("defined fixture rewards") else {
+    let [(name, value)] = &step.rewards[..] else {
         panic!("one reward: {:?}", step.rewards);
     };
     assert_eq!(name.as_str(), "duration");
@@ -533,7 +533,7 @@ fn the_stutter_step_carries_every_reward_at_zero() {
     let [stutter] = <[_; 1]>::try_from(steps(&system, &start, &world, "Unit")).expect("one");
     assert_eq!(stutter.transition, TransitionId::Stutter);
     assert_eq!(stutter.probability, ratio(1, 1));
-    let [(name, value)] = stutter.rewards.defined().expect("defined stutter rewards") else {
+    let [(name, value)] = &stutter.rewards[..] else {
         panic!("one reward: {:?}", stutter.rewards);
     };
     assert_eq!(name.as_str(), "cost");
@@ -1086,7 +1086,7 @@ fn scored_steps(system: &super::ModelSystem<'_>, world: &World) -> Vec<(Vec<i64>
         .iter()
         .map(|step| {
             let identity = step.identity.as_ref().expect("an operation step");
-            let [(name, reward)] = step.rewards.defined().expect("defined fixture rewards") else {
+            let [(name, reward)] = &step.rewards[..] else {
                 panic!("one reward: {:?}", step.rewards);
             };
             assert_eq!(name.as_str(), "score");

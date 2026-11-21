@@ -74,78 +74,6 @@ pub struct Action {
     pub draws: Vec<Draw>,
 }
 
-/// An actual reward read that did not produce a value.
-#[derive(Clone, Debug)]
-pub struct UndefinedReward {
-    /// The declared reward whose expression was read.
-    pub reward: Identifier,
-    /// The evaluator's original undefined cause.
-    pub cause: crate::temporal::UndefinedCause,
-}
-
-/// One owning observation of every declared reward on an actual draw.
-/// Successful and undefined views are derived together from these reads;
-/// callers cannot construct conflicting observations.
-#[derive(Clone, Debug)]
-pub struct RewardObservations {
-    values: Vec<(Identifier, Value)>,
-    undefined: Vec<UndefinedReward>,
-}
-impl RewardObservations {
-    fn from_readings(
-        readings: Vec<(Identifier, Result<Value, crate::temporal::UndefinedCause>)>,
-    ) -> Self {
-        let mut values = Vec::new();
-        let mut undefined = Vec::new();
-        for (reward, reading) in readings {
-            match reading {
-                Ok(value) => values.push((reward, value)),
-                Err(cause) => undefined.push(UndefinedReward { reward, cause }),
-            }
-        }
-        Self { values, undefined }
-    }
-    fn zeros(values: Vec<(Identifier, Value)>) -> Self {
-        Self {
-            values,
-            undefined: Vec::new(),
-        }
-    }
-    /// Every reward must be defined for a legacy consumer of the full vector.
-    pub fn defined(&self) -> Result<&[(Identifier, Value)], &UndefinedReward> {
-        match self.undefined.first() {
-            Some(undefined) => Err(undefined),
-            None => Ok(&self.values),
-        }
-    }
-    /// Consume a complete defined vector, preserving refusal on any undefined read.
-    pub fn into_defined(self) -> Result<Vec<(Identifier, Value)>, UndefinedReward> {
-        match self.undefined.into_iter().next() {
-            Some(undefined) => Err(undefined),
-            None => Ok(self.values),
-        }
-    }
-    /// The requested reward's undefined observation, if its actual read failed.
-    pub fn undefined(&self, reward: &Identifier) -> Option<&UndefinedReward> {
-        self.undefined
-            .iter()
-            .find(|reading| &reading.reward == reward)
-    }
-    /// Successful reads. A consumer must first check its requested reward with
-    /// [`Self::undefined`]; this view does not substitute a value for failed reads.
-    pub fn successful(&self) -> &[(Identifier, Value)] {
-        &self.values
-    }
-    /// Total declared reward observations, including undefined reads.
-    pub fn len(&self) -> usize {
-        self.values.len().saturating_add(self.undefined.len())
-    }
-    /// Whether this model declares no rewards.
-    pub fn is_empty(&self) -> bool {
-        self.values.is_empty() && self.undefined.is_empty()
-    }
-}
-
 /// One vector of a scheduled identity's random arguments (FR-187).
 #[derive(Clone, Debug)]
 pub struct Draw {
@@ -159,7 +87,7 @@ pub struct Draw {
     pub successors: Vec<(ModelTransition, ModelSimState)>,
     /// Every reward of the model, in ascending name order: the operation's
     /// own reward evaluated on the transition's arguments, or 0.
-    pub rewards: RewardObservations,
+    pub rewards: Vec<(Identifier, Value)>,
 }
 
 /// The transition a weighted or sampled step takes: an operation's, or the
@@ -191,7 +119,7 @@ pub struct WeightedStep {
     pub probability: Rational,
     /// The step's rewards, as [`Draw::rewards`]; every reward 0 on the
     /// stutter step.
-    pub rewards: RewardObservations,
+    pub rewards: Vec<(Identifier, Value)>,
 }
 
 /// A scheduled identity and drawn vector with no post-state, or with
@@ -616,7 +544,7 @@ impl ModelSystem<'_> {
         reward: DeclaredReward<'_>,
         arguments: Vec<Value>,
         cancel: Option<&filament_exact::Cancel>,
-    ) -> Result<Result<Value, crate::temporal::UndefinedCause>, ExpansionStop> {
+    ) -> Result<Value, ExpansionStop> {
         let mut meter = Meter::new(self.meter);
         if let Some(cancel) = cancel {
             meter = meter.with_cancel(cancel.clone());
@@ -636,20 +564,7 @@ impl ModelSystem<'_> {
         if let filament_eval::FamilyOutcome::Evaluated(Outcome::Completed(value)) =
             &evaluation.outcome
         {
-            return Ok(Ok(value.clone()));
-        }
-        match &evaluation.outcome {
-            filament_eval::FamilyOutcome::Evaluated(Outcome::Undefined(cause)) => {
-                return Ok(Err(crate::temporal::UndefinedCause::Kernel(cause.clone())));
-            }
-            filament_eval::FamilyOutcome::FamilyEvaluated(
-                filament_eval::FamilyResult::Undefined(cause),
-            ) => {
-                return Ok(Err(crate::temporal::UndefinedCause::Family(
-                    cause.undefined_record(),
-                )));
-            }
-            _ => {}
+            return Ok(value.clone());
         }
         match verdict(&evaluation.outcome) {
             Verdict::Undecided(ClauseOutcome::Incomplete(incomplete)) => Err(exhausted(
@@ -668,9 +583,8 @@ impl ModelSystem<'_> {
         name: &str,
         arguments: &[(String, Value)],
         cancel: Option<&filament_exact::Cancel>,
-    ) -> Result<RewardObservations, ExpansionStop> {
-        let readings = self
-            .probabilistic
+    ) -> Result<Vec<(Identifier, Value)>, ExpansionStop> {
+        self.probabilistic
             .names
             .iter()
             .map(|(reward_name, zero)| {
@@ -685,12 +599,11 @@ impl ModelSystem<'_> {
                         arguments.iter().map(|(_, value)| value.clone()).collect(),
                         cancel,
                     )?,
-                    None => Ok(zero.clone()),
+                    None => zero.clone(),
                 };
                 Ok((reward_name.clone(), value))
             })
-            .collect::<Result<Vec<_>, ExpansionStop>>()?;
-        Ok(RewardObservations::from_readings(readings))
+            .collect()
     }
 
     /// Every reward of the model at 0: the stutter step's rewards.
@@ -759,8 +672,7 @@ impl ModelSystem<'_> {
                             )))
                         }
                         _ => super::fault("reward-evaluation"),
-                    })?
-                    .map_err(|_| super::fault("reward-evaluation"))?;
+                    })?;
                 if is_negative(&value) {
                     let rendered = reward
                         .parameters()
@@ -1084,7 +996,7 @@ impl ModelSystem<'_> {
                 random: Vec::new(),
                 post: state.clone(),
                 probability: Rational::from_integer(Integer::one()),
-                rewards: RewardObservations::zeros(self.zero_rewards()),
+                rewards: self.zero_rewards(),
             }]));
         }
         let key = match key_policy {
