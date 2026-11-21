@@ -27,10 +27,10 @@ use fsl_eval::temporal::{
 use fsl_foundation::diagnostic::Code;
 use fsl_foundation::source::provenance::OccurrenceKey;
 use fsl_replay::{
-    replay_protocol_trace_with_temporal_selections, CounterexampleKind, DisagreementCause, Lasso,
-    ModelCheckOutcome, ModelStep, ModelTraceRefusal, ModelTraceReplayResult, ModelTraceSettlement,
-    ModelTraceSubject, ModelTraceValue, ProtocolTraceSubject, ReplayLimits, ReplayRefusal,
-    TemporalCounterexample,
+    replay_protocol_trace_with_temporal_selections, ClosureRule, ClosureStutter,
+    CounterexampleKind, DisagreementCause, Lasso, ModelCheckOutcome, ModelStep, ModelTraceRefusal,
+    ModelTraceReplayResult, ModelTraceSettlement, ModelTraceSubject, ModelTraceValue,
+    ProtocolTraceSubject, ReplayLimits, ReplayRefusal, StepSite, TemporalCounterexample,
 };
 use fsl_semantics::check::FormulaNodeId;
 use ix_trace_rs::trace;
@@ -64,6 +64,17 @@ fn replay(
     letters: &dyn ModelLetters,
     payload: &TemporalCounterexample<ProtocolTransition>,
 ) -> Result<ModelTraceReplayResult, ReplayRefusal> {
+    replay_selecting(case, letters, payload, false)
+}
+
+/// [`replay`] with the item's `stutter_closure` as the request's subject
+/// carries it.
+fn replay_selecting(
+    case: &Case,
+    letters: &dyn ModelLetters,
+    payload: &TemporalCounterexample<ProtocolTransition>,
+    stutter_closure: bool,
+) -> Result<ModelTraceReplayResult, ReplayRefusal> {
     let unit = crate::fill::unit_text(&case.body).into_bytes();
     let node = &case.checked.graph().temporal_clauses()[0];
     let clause_node = node.identity().clone();
@@ -90,7 +101,7 @@ fn replay(
                 expansion: ExpansionLimits {
                     max_candidates: 1_000_000,
                 },
-                stutter_closure: false,
+                stutter_closure,
             },
             protocol: protocol.to_owned(),
             over: instance("c"),
@@ -1317,4 +1328,45 @@ fn queue_delivery_indices(key: &fsl_eval::simulation::StateKey) -> Vec<u64> {
         &mut indices,
     );
     indices
+}
+
+/// FR-128-AC-11: a protocol subject has no closure alphabet, so a listed
+/// closure step refuses at its `/transition/type` through the production
+/// protocol replay entry, even for an item that selects `stutter_closure`,
+/// and before any step runs: the same payload with the step removed and an
+/// initial state outside the subject refuses on that state instead.
+#[trace("TC-523", "FR-128-AC-11")]
+#[test]
+fn a_protocol_subject_refuses_a_closure_step_before_executing_the_prefix() {
+    let (case, mut payload) = zero_counted_lasso();
+    payload.initial_state = 99;
+    let letters = CellV(is_one);
+    let control = replay(&case, &letters, &payload);
+    assert!(
+        matches!(
+            control,
+            Err(ReplayRefusal::ModelTrace(ref refusal))
+                if matches!(**refusal, ModelTraceRefusal::InitialState { .. })
+        ),
+        "{control:?}"
+    );
+    payload.closure_stutters = vec![ClosureStutter {
+        site: StepSite::Loop(0),
+        post_state: payload.prefix[0].post_state.clone(),
+        delay: None,
+    }];
+    for selected in [false, true] {
+        let Err(ReplayRefusal::ModelTrace(refusal)) =
+            replay_selecting(&case, &letters, &payload, selected)
+        else {
+            panic!("a protocol subject refuses the closure step");
+        };
+        assert_eq!(
+            *refusal,
+            ModelTraceRefusal::ClosureStutter {
+                pointer: "/loop/0/transition/type".to_owned(),
+                rule: ClosureRule::Alphabet,
+            }
+        );
+    }
 }

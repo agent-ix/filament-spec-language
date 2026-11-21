@@ -13,13 +13,13 @@ use fsl_eval::simulation::TransitionSystem;
 use fsl_package::CheckedPackage;
 use fsl_replay::{
     abstract_classes, open_systems, replay_refinement_trace, settle_refinement,
-    settle_refinement_refusal, settle_refinement_safety, Certification, CounterexampleKind,
-    Execution, IncompleteCause, InconclusiveCause, Lasso, LivenessHalf, ModelCheckLimit,
-    ModelCheckLimits, ModelCheckOutcome, ModelCheckRecord, ModelStep, ModelTraceRefusal,
-    ProofBasis, ReachedLimit, RefinementFailure, RefinementOutcome, RefinementRecord,
-    RefinementTraceSettlement, ReplayRefusal, ResultLabel, RunStats, SafetyOutcome,
-    SafetyUndecided, SettlementBasis, SimulationCertificateRequest, TemporalCounterexample,
-    TerminalValue, UnavailabilityCause, UndecidedCause,
+    settle_refinement_refusal, settle_refinement_safety, Certification, ClosureRule,
+    ClosureStutter, CounterexampleKind, Execution, IncompleteCause, InconclusiveCause, Lasso,
+    LivenessHalf, ModelCheckLimit, ModelCheckLimits, ModelCheckOutcome, ModelCheckRecord,
+    ModelStep, ModelTraceRefusal, ProofBasis, ReachedLimit, RefinementFailure, RefinementOutcome,
+    RefinementRecord, RefinementTraceSettlement, ReplayRefusal, ResultLabel, RunStats,
+    SafetyOutcome, SafetyUndecided, SettlementBasis, SimulationCertificateRequest, StepSite,
+    TemporalCounterexample, TerminalValue, UnavailabilityCause, UndecidedCause,
 };
 use fsl_semantics::check::CheckedRefinement;
 use fsl_semantics::model::observation::DocumentRef;
@@ -285,6 +285,38 @@ fn a_counterexample_that_does_not_re_execute_refuses() {
         replay(&subject, &altered),
         Err(ReplayRefusal::ModelTrace(refusal)) if matches!(*refusal, ModelTraceRefusal::PostState { .. })
     ));
+}
+
+/// FR-128-AC-11: the refinement alphabet has no closure step, so a listed
+/// one refuses at its `/transition/type` through the refinement entry
+/// before any step is re-executed: the same payload with the step removed
+/// and an out-of-range initial state refuses on that state instead.
+#[trace("TC-523", "FR-128-AC-11")]
+#[test]
+fn a_refinement_subject_refuses_a_closure_step_before_executing_the_prefix() {
+    let world = World::with(Variant::LOST_UPDATE, &lost_update_refinement());
+    let subject = cas(&world);
+    let mut payload = counterexample(check(&subject));
+    payload.initial_state = 99;
+    assert!(matches!(
+        replay(&subject, &payload),
+        Err(ReplayRefusal::ModelTrace(refusal)) if matches!(*refusal, ModelTraceRefusal::InitialState { .. })
+    ));
+    payload.closure_stutters = vec![ClosureStutter {
+        site: StepSite::Prefix(0),
+        post_state: payload.prefix[0].post_state.clone(),
+        delay: None,
+    }];
+    let Err(ReplayRefusal::ModelTrace(refusal)) = replay(&subject, &payload) else {
+        panic!("a refinement subject refuses the closure step");
+    };
+    assert_eq!(
+        *refusal,
+        ModelTraceRefusal::ClosureStutter {
+            pointer: "/prefix/0/transition/type".to_owned(),
+            rule: ClosureRule::Alphabet,
+        }
+    );
 }
 
 /// FR-145 (TC-550): a payload that names no refinement failure is bad input,

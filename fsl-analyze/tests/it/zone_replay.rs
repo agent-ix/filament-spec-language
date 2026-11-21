@@ -19,11 +19,12 @@ use fsl_eval::simulation::Limits;
 use fsl_eval::temporal::UndefinedCause;
 use fsl_foundation::diagnostic::Code;
 use fsl_replay::{
-    CertificateLocus, CertificateRule, ClosedFormAnalysis, CounterexampleKind, DelayBar,
-    DisagreementCause, IncompleteCause, InconclusiveCause, Lasso, ModelCheckLimit, ModelStep,
-    ModelTraceRefusal, ModelTraceReplayResult, ModelTraceSettlement, ModelTraceValue, ProofBasis,
-    ReplayRefusal, ResultLabel, SettlementBasis, StrongFairnessHint, TemporalCounterexample,
-    TerminalValue, UnavailabilityCause, ZoneCertificateVerdict,
+    CertificateLocus, CertificateRule, ClosedFormAnalysis, ClosureRule, ClosureStutter,
+    CounterexampleKind, DelayBar, DisagreementCause, IncompleteCause, InconclusiveCause, Lasso,
+    ModelCheckLimit, ModelStep, ModelTraceRefusal, ModelTraceReplayResult, ModelTraceSettlement,
+    ModelTraceValue, ProofBasis, ReplayRefusal, ResultLabel, SettlementBasis, StepSite,
+    StrongFairnessHint, TemporalCounterexample, TerminalValue, UnavailabilityCause,
+    ZoneCertificateVerdict,
 };
 use fsl_semantics::family::UnsupportedItem;
 use ix_trace_rs::trace;
@@ -238,6 +239,42 @@ fn a_counterexample_that_breaks_time_is_refused() {
     assert_eq!(code, Code::InvalidRuntimeInput);
     let (cause, _) = refusal(replay(&world, &loop_of(exact(1, 2))));
     assert_eq!(cause, ModelTraceRefusal::LoopOpen { entry: 1, steps: 2 });
+}
+
+/// FR-128-AC-11: the timed alphabet has no closure step, so a listed one
+/// refuses at its `/transition/type` through the timed entry before any step
+/// is re-executed: the same payload without it refuses on its zero-delay
+/// loop, which the alphabet check precedes.
+#[trace("TC-523", "FR-128-AC-11")]
+#[test]
+fn a_timed_subject_refuses_a_closure_step_before_executing_the_loop() {
+    let world = lock();
+    let mut counterexample = payload(
+        &world,
+        walk(&world, &[("go", whole(0)), ("ping", whole(0))]),
+        CounterexampleKind::Formula,
+        Some(Lasso {
+            entry: 1,
+            terminal_stutter: false,
+            terminal_stutter_delay: None,
+        }),
+    );
+    let (cause, _) = refusal(replay(&world, &counterexample));
+    assert_eq!(cause, ModelTraceRefusal::LoopZeroDelay { entry: 1 });
+    counterexample.closure_stutters = vec![ClosureStutter {
+        site: StepSite::Loop(0),
+        post_state: counterexample.prefix[0].post_state.clone(),
+        delay: None,
+    }];
+    let (cause, code) = refusal(replay(&world, &counterexample));
+    assert_eq!(
+        cause,
+        ModelTraceRefusal::ClosureStutter {
+            pointer: "/loop/0/transition/type".to_owned(),
+            rule: ClosureRule::Alphabet,
+        }
+    );
+    assert_eq!(code, Code::InvalidRuntimeInput);
 }
 
 /// The strict-guard `Rpc` (ADR-026 §11): `reply` needs `x > 3 ms`,
