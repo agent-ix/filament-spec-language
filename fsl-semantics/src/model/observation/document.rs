@@ -2901,17 +2901,17 @@ fn collect_object_references(
     let mut pending = vec![(raw.form(), value_type.clone())];
     let mut records = None;
     while let Some((form, value_type)) = pending.pop() {
-        match (form, value_type) {
+        match (form, &value_type) {
             (RawForm::Reference(reference), ValueType::Reference(target)) => {
-                if !crate::model::clock_reference::is_clock_type(&target) {
+                if !crate::model::clock_reference::is_clock_type(target) {
                     into.push((reference.population.clone(), reference.key.clone()));
                 }
             }
             (RawForm::Present(inner), ValueType::Option(payload)) => {
-                pending.push((inner.form(), (*payload).clone()));
+                pending.push((inner.form(), (**payload).clone()));
             }
             (RawForm::Present(inner), value_type) => {
-                pending.push((inner.form(), value_type));
+                pending.push((inner.form(), value_type.clone()));
             }
             (RawForm::Collection(_, items), ValueType::Collection(collection)) => {
                 pending.extend(
@@ -4003,7 +4003,7 @@ pub(super) fn check_population_completeness(
                 continue;
             };
             for object in &entry.objects {
-                let (view, key) = find_declaration(views, &object.type_identity)
+                let (view, key) = find_declaration(views, object.type_identity.as_str())
                     .ok_or_else(|| fault("admitted-object-declaration-missing"))?;
                 let effective = view
                     .view
