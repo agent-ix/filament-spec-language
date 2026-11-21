@@ -539,7 +539,8 @@ fn a_closed_finite_trace_with_every_guard_false_is_inactive() {
 }
 
 /// FR-820 Equality: the monitor's carried report over a closed trace whose
-/// every guard is false equals the batch run's for every prefix, inactive.
+/// every guard is false equals the batch run's for every prefix, and a later
+/// true guard makes it active again.
 #[test]
 #[trace("FSpec-FR-093-AC-5", "FR-267-AC-28")]
 fn the_monitor_reports_a_closed_false_guard_scope_inactive_like_the_batch_run() {
@@ -552,6 +553,14 @@ fn the_monitor_reports_a_closed_false_guard_scope_inactive_like_the_batch_run() 
         true,
     );
     assert_eq!(inactive["temporal"]["kind"], "inactive", "{inactive}");
+    let active = monitored_with(
+        directory.path(),
+        GUARDED_CLOSED,
+        "GuardedClosed",
+        &[0, 1, 0],
+        true,
+    );
+    assert_eq!(active["temporal"]["kind"], "holds", "{active}");
 }
 
 /// The actual guard, rather than the captured predicate or body truth,

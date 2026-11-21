@@ -1604,6 +1604,17 @@ impl<'a> ClauseState<'a> {
                     );
                 (decisive_window(report) || closed).then(|| Arc::clone(report))
             }
+            // No guard has been true yet: a later position may still activate
+            // the clause, so the open scope decides nothing.
+            TemporalProfile::EventPositionFalseExtension
+            | TemporalProfile::FixedSampleFalseExtension
+                if matches!(
+                    report.disposition,
+                    ClauseDisposition::Temporal(TemporalVerdict::Inactive)
+                ) =>
+            {
+                None
+            }
             TemporalProfile::EventPositionFalseExtension
             | TemporalProfile::FixedSampleFalseExtension => self.open_scope(assertion, cancel)?,
             TemporalProfile::Timed => None,

@@ -49,3 +49,14 @@ FAIL: FND-001 is high. FR-267-AC-28 is tagged by `a_closed_false_guard_capture_s
 - Criteria examined: FR-267-AC-20, FR-267-AC-28, FR-820-AC-1, FSpec FR-093-AC-5, FSpec FR-093-AC-6. All are tagged. Gaps are by route, not by untagged criterion.
 - Semantic review: skipped as a separate pass. The intent check for the changed routes was done by hand inside the code review.
 - Plan completion: not assessed
+
+## Dispositions
+
+Disposition pass 2 at head 586c552b0e, a static review plus /tmp/qsl2590-focused-4.log.
+
+| FND | Outcome | Reason |
+| --- | --- | --- |
+| FND-001 | still-open | The monitor-route test `the_monitor_reports_a_closed_false_guard_scope_inactive_like_the_batch_run` now exists, and it compares `temporal` and `truth` for every prefix. It fails at this head: its active control (levels 0, 1, 0) ends `inactive` on the monitor, and the command exited 101 (see the code-review SR, FND-005). |
+| FND-002 | fixed | - |
+| FND-003 | still-open | No AC was added for FR-283's `Inactive` row or for FR-621's `inactive` kind. `MonitorVerdict::Inactive` is reached only by the failing monitor test. This closes with FND-001 if that test passes. A separate AC is optional. |
+| FND-004 | deferred | QSL-2254: every timed run-wire test is still ignored, so the timed inactive branch cannot have an end-to-end test yet. |

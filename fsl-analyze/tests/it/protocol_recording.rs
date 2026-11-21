@@ -1590,7 +1590,7 @@ fn requirement_verdict(closure: &str) -> RecordingVerdict {
 
 /// A requirement whose guard never holds creates no obligation: a closed
 /// recording satisfies it, an open one leaves it pending.
-#[trace("FR-895-AC-1")]
+#[trace("FR-895-AC-8")]
 #[test]
 fn an_inactive_requirement_is_satisfied_when_closed_and_pending_when_open() {
     assert_eq!(requirement_verdict("closed"), RecordingVerdict::Satisfied);

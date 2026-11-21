@@ -62,3 +62,17 @@ Disposition pass 1 at head 4257de2984 (fix commits 99cff0523b, 6e354cfc27, 4257d
 | FND-002 | fixed | observed.rs:197 and 312-318 set `inactive` for a timed lasso or a trace closed by `through` when the guarded run holds and no guard read true. `run_temporal` now uses the flag (temporal.rs:1896-1900). I checked the coder's claim that no timed end-to-end test can run: every timed run-wire test is `#[ignore]` on QSL-2254/QSL-2136 (tests/it/run_wire.rs:164, 198, 230, 717, 884, 1264, 1405), and `evaluate_observed_timed` has no other caller. The test is deferred to QSL-2254. |
 | FND-003 | fixed | FR-267-AC-20 now says "outside the seventeen". FR-621 lists `inactive` as the seventeenth kind. FSpec FR-352 on origin/main 6ad873d5 already registers `inactive` (FR-352 line 270 and AC-25), so no companion PR is needed. The stale FR-267 prose that remains is FND-007. |
 | FND-004 | fixed | FR-283 Outputs gains the row "`Inactive` / A closed, complete guarded scope whose every guard is false / none / success / 0". |
+
+Disposition pass 2 at head 586c552b0e (fix commits 59a2658636, 362fdab606, 00e6c51bed; review copies in 586c552b0e), rebased on main d84ed5685b. This is a static review plus the lead's log /tmp/qsl2590-focused-4.log.
+
+| FND | Outcome | Reason |
+| --- | --- | --- |
+| FND-005 | still-open | The code change is in place: `ClauseStream::admitted`/`inactive()` (stream.rs:204,414,956-963), clause_state.rs:888-891 and 1038-1043, snapshot.rs:439-442, and the override in `streamed_sample_report` (temporal.rs:1349-1356). But the PR's own new test fails at this head. In /tmp/qsl2590-focused-4.log, `the_monitor_reports_a_closed_false_guard_scope_inactive_like_the_batch_run` FAILED at tests/it/temporal_capture_run.rs:562 and the `--test it temporal_capture_run` command exited 101 (`exit-3=101`), not 0. The failing assertion is the active control: the monitor run over levels 0, 1, 0 ends with disposition `{"category":"success","stage":"evaluate","temporal":{"kind":"inactive"}}`, while the batch run over the same records reports `holds`. So the monitor route now reports inactive, with no truth, for a stream whose guard was true. That is a wrong result in the other direction. The worktree holds uncommitted edits to this test (strict comparison for the active case, plus event dumps), so the coder is still debugging it. I have not found the root cause by reading the code: `admitted` is set from the same `letter.when` that opens an activation (stream.rs:414 and 447), and it is carried through `to_bytes`/`from_bytes`. |
+| FND-006 | fixed | - |
+| FND-007 | fixed | - |
+
+## New findings (disposition pass 2)
+
+| ID | Severity | Summary | Refs |
+| --- | --- | --- | --- |
+| FND-008 | low | `an_inactive_requirement_is_satisfied_when_closed_and_pending_when_open` is tagged `FR-895-AC-1`. That AC is the all-satisfied order fixture that settles `proved`, and it does not state the new inactive-requirement rule. The new FR-895 Requirement row sentence ("satisfied when the recording is closed and pending when it is open") has no acceptance criterion of its own. Add one, for example FR-895-AC-N, and tag the test to it. | fsl-analyze/tests/it/protocol_recording.rs:1593; spec/functional/FR-895-assess-a-recorded-protocol-execution-against-its-obligations.md:76 |
