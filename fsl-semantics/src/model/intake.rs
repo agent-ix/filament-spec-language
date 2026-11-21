@@ -2946,6 +2946,48 @@ fn read_type_identity(
     Ok(("", declaration_key(package, identity)))
 }
 
+/// The name an operation's contract clauses give its result; no parameter
+/// takes it.
+const RESULT_PARAMETER: &str = "result";
+
+/// Refuses the second of two operations of one owner that share a `name`
+/// under distinct identities (a repeated identity is refused before the
+/// reader runs), naming both. Runs before any operation is read so the
+/// name refusal precedes every refusal inside the later operation.
+fn refuse_repeated_operation_name(
+    package: &str,
+    operations: &[Value],
+    operations_at: &str,
+) -> Result<(), ModelRefusal> {
+    let mut seen: Vec<(&str, &str)> = Vec::with_capacity(operations.len());
+    for (position, operation) in operations.iter().enumerate() {
+        let (Some(name), Some(identity)) = (
+            operation.get("name").and_then(Value::as_str),
+            operation.get("identity").and_then(Value::as_str),
+        ) else {
+            continue;
+        };
+        if let Some((_, first)) = seen
+            .iter()
+            .find(|(seen_name, seen_identity)| *seen_name == name && *seen_identity != identity)
+        {
+            let at = format!("{operations_at}[{position}]");
+            return Err(ModelRefusal {
+                code: Code::AmbiguousDeclaration,
+                cause: ModelRefusalCause::AmbiguousName {
+                    key: declaration_key(package, identity),
+                    member: MemberPath::from_document_location(&at).child("name"),
+                },
+                detail: format!(
+                    "{at}: operation name {name:?} is declared by {first} and {identity}"
+                ),
+            });
+        }
+        seen.push((name, identity));
+    }
+    Ok(())
+}
+
 fn read_operation_parameter(
     package: &str,
     owner_identity: &str,
@@ -2959,6 +3001,27 @@ fn read_operation_parameter(
             "identity",
             format!("{node:?} is not {owner_identity}/<name>"),
         ));
+    }
+    let tail = member_identity_name(owner_identity, node).unwrap_or_default();
+    if let Some(name) = ctx.opt_str_field("name") {
+        if name != tail {
+            return Err(ctx.malformed_in(
+                "name",
+                format!("{name:?} is not the final segment {tail:?} of the identity {node:?}"),
+            ));
+        }
+        if name == RESULT_PARAMETER {
+            return Err(ModelRefusal {
+                code: Code::AmbiguousDeclaration,
+                cause: ModelRefusalCause::AmbiguousName {
+                    key: declaration_key(package, node),
+                    member: MemberPath::from_document_location(at).child("name"),
+                },
+                detail: format!(
+                    "{at}: {RESULT_PARAMETER:?} names the operation's result, so no parameter of {owner_identity} takes it"
+                ),
+            });
+        }
     }
     let type_ref = ctx.str_field("typeRef")?;
     // A `Clock` parameter is a place (FR-230 "Operation parameters").
@@ -3344,6 +3407,7 @@ pub(super) fn read_persistence_interface(
             "a persistence interface declares one or more operations",
         ));
     }
+    refuse_repeated_operation_name(package, operations, &format!("{}.operations", ctx.at))?;
     for (position, operation) in operations.iter().enumerate() {
         let operation_at = format!("{}.operations[{position}]", ctx.at);
         if let Some(pre) = operation.get("pre").and_then(Value::as_array) {
@@ -3966,7 +4030,9 @@ pub(super) fn read_object_type(
         )?));
     }
     let operations_at = format!("{at}.operations");
-    for (position, operation) in ctx.array_field("operations")?.iter().enumerate() {
+    let operations = ctx.array_field("operations")?;
+    refuse_repeated_operation_name(package, operations, &operations_at)?;
+    for (position, operation) in operations.iter().enumerate() {
         records.push(DomainPackageRecord::OperationMember(read_operation_member(
             package,
             node,
@@ -4069,7 +4135,9 @@ pub(super) fn read_record_value_type(
         )?));
     }
     let operations_at = format!("{at}.operations");
-    for (position, operation) in ctx.array_field("operations")?.iter().enumerate() {
+    let operations = ctx.array_field("operations")?;
+    refuse_repeated_operation_name(package, operations, &operations_at)?;
+    for (position, operation) in operations.iter().enumerate() {
         records.push(DomainPackageRecord::OperationMember(read_operation_member(
             package,
             node,
@@ -6230,7 +6298,12 @@ fn resolve_frame_array(
                     at,
                 ))
             }
-            Some(kind) if expected.contains(kind) => keys.push(declaration_key(package, entry)),
+            Some(kind) if expected.contains(kind) => {
+                let key = declaration_key(package, entry);
+                if !keys.contains(&key) {
+                    keys.push(key);
+                }
+            }
             Some(_) => {
                 return Err(malformed_frame_entry(
                     frame.node.clone(),

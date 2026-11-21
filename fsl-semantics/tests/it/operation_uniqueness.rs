@@ -55,7 +55,8 @@ fn assert_refusal(
         ModelRefusalCause::ConflictingBinding {
             key,
             member: Some(path),
-        } => {
+        }
+        | ModelRefusalCause::AmbiguousName { key, member: path } => {
             assert_eq!(key.node, node);
             assert_eq!(path.to_string(), member);
         }
@@ -98,7 +99,6 @@ fn duplicate_operation_identity_refuses_at_the_second_operation() {
 }
 
 #[trace("TC-1307", "FR-512-AC-5")]
-#[ignore = "QSL-2696: enforce operation and parameter namespaces before frame resolution"]
 #[test]
 fn equal_operation_names_with_distinct_identities_refuse_at_the_second_name() {
     let first = query("advance", json!([]));
@@ -162,7 +162,6 @@ fn duplicate_parameter_names_preserve_the_readers_exact_repeated_name() {
 }
 
 #[trace("TC-1307", "FR-512-AC-9", "FR-512-AC-15")]
-#[ignore = "QSL-2696: enforce operation and parameter namespaces before frame resolution"]
 #[test]
 fn mismatched_parameter_name_preempts_frame_resolution() {
     let mut parameter = operation_parameter("advance", "amount", INTEGER);
@@ -179,7 +178,6 @@ fn mismatched_parameter_name_preempts_frame_resolution() {
 }
 
 #[trace("TC-1307", "FR-512-AC-10", "FR-512-AC-11", "FR-512-AC-15")]
-#[ignore = "QSL-2696: enforce operation and parameter namespaces before frame resolution"]
 #[test]
 fn result_parameter_is_reserved_with_and_without_a_return_type() {
     for returns in [Some(INTEGER), None] {
@@ -201,10 +199,11 @@ fn result_parameter_is_reserved_with_and_without_a_return_type() {
 }
 
 #[trace("TC-1307", "FR-512-AC-12")]
-#[ignore = "QSL-2697: deduplicate repeated frame grants at intake"]
 #[test]
 fn repeated_frame_entries_deduplicate_without_losing_distinct_entries() {
-    assert_deduplicated_frame("modifies");
+    for member in ["modifies", "creates", "deletes"] {
+        assert_deduplicated_frame(member);
+    }
 }
 
 fn assert_deduplicated_frame(member: &str) {
@@ -259,14 +258,12 @@ fn receiver_frame_duplicates_deduplicate() {
 }
 
 #[trace("TC-1307", "FR-512-AC-13")]
-#[ignore = "QSL-2697: deduplicate repeated frame grants at intake"]
 #[test]
 fn creation_frame_duplicates_deduplicate() {
     assert_deduplicated_frame("creates");
 }
 
 #[trace("TC-1307", "FR-512-AC-13")]
-#[ignore = "QSL-2697: deduplicate repeated frame grants at intake"]
 #[test]
 fn deletion_frame_duplicates_deduplicate() {
     assert_deduplicated_frame("deletes");
@@ -376,7 +373,6 @@ fn an_explicit_redefinition_keeps_its_own_operation_identity() {
 }
 
 #[trace("TC-1307", "FR-512-AC-5", "FR-512-AC-16")]
-#[ignore = "QSL-2696: enforce operation and parameter namespaces before frame resolution"]
 #[test]
 fn repeated_operation_name_preempts_the_second_operations_reserved_parameter() {
     let first = query("advance", json!([]));
@@ -583,7 +579,6 @@ fn unrelated_objects_can_declare_the_same_operation_name() {
 }
 
 #[trace("TC-1307", "FR-512-AC-11", "FR-512-AC-15")]
-#[ignore = "QSL-2696: reserve the result parameter name before frame resolution"]
 #[test]
 fn result_parameter_without_a_return_type_refuses_before_frame_resolution() {
     let mut op = operation(
@@ -786,7 +781,6 @@ fn unrelated_record_order_keeps_owner_refusals_ahead_of_operation_name_collision
 }
 
 #[trace("TC-1307", "FR-512-AC-5", "FR-512-AC-16", "FR-512-AC-17")]
-#[ignore = "QSL-2696: operation namespace and precedence refusal must survive record reordering"]
 #[test]
 fn unrelated_record_order_keeps_both_equal_name_collision_participants() {
     for reserved_parameter in [false, true] {
@@ -812,7 +806,6 @@ fn unrelated_record_order_keeps_both_equal_name_collision_participants() {
 }
 
 #[trace("TC-1307", "FR-512-AC-9", "FR-512-AC-15", "FR-512-AC-17")]
-#[ignore = "QSL-2696: parameter name validation must precede frame resolution after record reordering"]
 #[test]
 fn unrelated_record_order_keeps_mismatched_parameter_name_and_precedence_loci() {
     for bad_frame in [false, true] {
@@ -841,7 +834,6 @@ fn unrelated_record_order_keeps_mismatched_parameter_name_and_precedence_loci() 
     "FR-512-AC-15",
     "FR-512-AC-17"
 )]
-#[ignore = "QSL-2696: reserved result-name and precedence refusal must survive record reordering"]
 #[test]
 fn unrelated_record_order_keeps_reserved_result_name_and_precedence_loci() {
     for returns in [None, Some(INTEGER)] {
