@@ -303,6 +303,12 @@ checked obligation identity, backend identity, selected environments and
 domains, and the family's actual counterexample and required certificate.
 These inputs SHALL come from that run's acquisition and family settlement,
 not be inferred from a claim name or from `replay.reproduced`.
+The owner `OUTCOME_SCHEMA_1` SHALL admit the optional item member. The writer
+and consumer forwarding SHALL preserve its raw JSON and original package
+lexical bytes. The native reader SHALL return a fresh replay outcome and the
+actual native family settlement/result mapping defined by the transport
+contract; producer history or category `success` alone is not independent
+reproduction evidence.
 
 The retained request members SHALL use FR-071's existing owned types and
 FSpec FR-336's mapping where that mapping applies. A reference SHALL be
