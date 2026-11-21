@@ -407,7 +407,10 @@ fn operation_enum(name: &str, synthesis: &str, cases: Vec<String>) -> Option<Enu
     let owners = OwnerSelection::new([NodeOwner::Definition(subject.clone())]);
     let preimage = EnumDeclarationPreimage::new(
         NodeOwner::Definition(subject),
-        vec![synthesis.to_owned(), "Op".to_owned()],
+        std::iter::once(synthesis)
+            .chain(name.split("::"))
+            .map(str::to_owned)
+            .collect(),
         false,
         cases.clone(),
     )
