@@ -46,6 +46,8 @@ pub enum TaskProductShapeReason {
     /// as a closure label that does not belong to the method, a cap the
     /// method forbids, or an empty `queue_bounds`.
     Inconsistent,
+    /// Reference restoration needs the original package-bound codec.
+    ReferenceContextRequired,
 }
 
 /// A `task_product` value that is not a `TaskProductCertificate`, with the
@@ -74,8 +76,28 @@ impl TaskProductShapeRefusal {
 
 /// A value that has no wire spelling.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, thiserror::Error)]
-#[error("the task-product value has no wire spelling")]
-pub struct TaskProductWireError;
+pub enum TaskProductWireError {
+    /// A source transition has no canonical spelling.
+    #[error("the task-product value has no wire spelling")]
+    Unspelled,
+    /// Reference output needs the original package-bound codec.
+    #[error("the task-product value requires package-bound reference context")]
+    ReferenceContextRequired,
+}
+
+/// A task-product carrier failure retaining its reference/resource cause.
+#[derive(Debug, thiserror::Error)]
+pub enum TaskProductReferenceError {
+    /// Closed certificate metadata was refused.
+    #[error(transparent)]
+    Shape(#[from] TaskProductShapeRefusal),
+    /// The native certificate has no wire spelling.
+    #[error(transparent)]
+    Wire(#[from] TaskProductWireError),
+    /// Canonical conversion stopped under the original caller's resources.
+    #[error(transparent)]
+    Reference(#[from] crate::ReferenceCodecError),
+}
 
 pub(crate) fn refuse<T>(
     pointer: &str,
@@ -317,44 +339,13 @@ fn typed_value(value: &Value, pointer: &str, depth: usize) -> Result<(), TaskPro
             text(member(map, "member"), &at("member"))?;
             list(map, "components")
         }
-        "reference" => {
-            let map = object(
-                value,
-                pointer,
-                &["type", "universe", "object_type", "identity"],
-                &[],
-            )?;
-            node_id(member(map, "universe"), &at("universe"))?;
-            effective_id(member(map, "object_type"), &at("object_type"))?;
-            match member_str(value, "identity") {
-                Some(_) => text(member(map, "identity"), &at("identity")).map(drop),
-                None => refuse(&at("identity"), TaskProductShapeReason::WrongKind),
-            }
-        }
+        "reference" => refuse(pointer, TaskProductShapeReason::ReferenceContextRequired),
         _ => refuse(&at("type"), TaskProductShapeReason::UnknownVariant),
     }
 }
 
 fn member_str<'v>(value: &'v Value, name: &str) -> Option<&'v str> {
     value.get(name).and_then(Value::as_str)
-}
-
-/// An effective type id as `effective_form` writes it (its reader is the
-/// spine's `read_effective`; a `null` root is refused).
-fn effective_id(value: &Value, pointer: &str) -> Result<(), TaskProductShapeRefusal> {
-    if crate::spine::is_effective_form(value) {
-        Ok(())
-    } else {
-        refuse(pointer, TaskProductShapeReason::WrongKind)
-    }
-}
-
-/// A checked-package `NodeId`: `{ordinal, package, path}`.
-fn node_id(value: &Value, pointer: &str) -> Result<(), TaskProductShapeRefusal> {
-    let map = object(value, pointer, &["ordinal", "package", "path"], &[])?;
-    count(member(map, "ordinal"), &child(pointer, "ordinal"))?;
-    text(member(map, "package"), &child(pointer, "package"))?;
-    array(member(map, "path"), &child(pointer, "path")).map(drop)
 }
 
 /// Whether two source transitions have one wire spelling. The FR-331 wire
@@ -416,7 +407,7 @@ fn enumerated<T: Copy>(
         })
 }
 
-const ACTIONS: [(&str, TaskTransitionAction); 8] = [
+pub(crate) const ACTIONS: [(&str, TaskTransitionAction); 8] = [
     ("activate", TaskTransitionAction::Activate),
     ("release", TaskTransitionAction::Release),
     ("dispatch", TaskTransitionAction::Dispatch),
@@ -427,7 +418,7 @@ const ACTIONS: [(&str, TaskTransitionAction); 8] = [
     ("deadline-miss", TaskTransitionAction::DeadlineMiss),
 ];
 
-fn action_name(action: TaskTransitionAction) -> &'static str {
+pub(crate) fn action_name(action: TaskTransitionAction) -> &'static str {
     ACTIONS
         .iter()
         .find(|(_, candidate)| *candidate == action)
@@ -475,10 +466,47 @@ pub(crate) fn source_transition(
 pub(crate) fn source_transition_wire(
     transition: &ModelTransition,
 ) -> Result<Value, TaskProductWireError> {
-    crate::task_source_transition_wire(transition).map_err(|_| TaskProductWireError)
+    let wire = crate::task_source_transition_wire(transition)
+        .map_err(|_| TaskProductWireError::Unspelled)?;
+    for value in wire
+        .get("receiver")
+        .filter(|value| !value.is_null())
+        .into_iter()
+        .chain(wire["arguments"].as_array().into_iter().flatten())
+    {
+        typed_value(value, "", 0).map_err(|error| match error.reason {
+            TaskProductShapeReason::ReferenceContextRequired => {
+                TaskProductWireError::ReferenceContextRequired
+            }
+            _ => TaskProductWireError::Unspelled,
+        })?;
+    }
+    Ok(wire)
 }
 
 impl TaskTransitionTemplate {
+    /// Write both source arms with the original package-bound reference codec.
+    ///
+    /// # Errors
+    /// Preserves typed reference, resource and cancellation failures.
+    pub fn to_wire_with_references(
+        &self,
+        references: &mut crate::ReferenceScope<'_, '_, '_, '_>,
+    ) -> Result<Value, crate::ReferenceCodecError> {
+        references.encode_task_template(self)
+    }
+
+    /// Restore both source arms before constructing this native template.
+    ///
+    /// # Errors
+    /// Preserves malformed-wire, reference, resource and cancellation failures.
+    pub fn from_wire_with_references(
+        value: &Value,
+        references: &mut crate::ReferenceScope<'_, '_, '_, '_>,
+    ) -> Result<Self, crate::ReferenceCodecError> {
+        references.restore_task_template(value)
+    }
+
     /// Reads a `TaskTransitionTemplate` (FR-418-AC-11): the closed shape
     /// with `type` `task-transition-template`, and no occurrence,
     /// generation, demand, jitter or deadline.
@@ -615,6 +643,32 @@ const OPERATORS: [(&str, TaskDiagonalOperator); 4] = [
 ];
 
 impl TaskProductCertificate {
+    /// Encode references in every subtraction's source-transition template.
+    ///
+    /// # Errors
+    /// Retains typed conversion, resource and cancellation failures.
+    pub fn to_wire_with_references(
+        &self,
+        references: &mut crate::ReferenceScope<'_, '_, '_, '_>,
+    ) -> Result<Value, TaskProductReferenceError> {
+        self.write_with(|template| Ok(references.encode_task_template(template)?))
+    }
+
+    /// Restore subtraction templates using the original package context.
+    ///
+    /// # Errors
+    /// Retains shape, reference, resource and cancellation failures.
+    pub fn from_wire_with_references(
+        value: &Value,
+        references: &mut crate::ReferenceScope<'_, '_, '_, '_>,
+    ) -> Result<Self, TaskProductReferenceError> {
+        Self::read_with(value, |value, pointer| {
+            Ok(references.at_pointer(pointer, |references| {
+                references.restore_task_template(value)
+            })?)
+        })
+    }
+
     /// Reads a `task_product` member (FR-418-AC-11, AC-14): the
     /// `bounded-subtraction-diagonal/v1` abstraction, the structured
     /// `time_progress`, and the four arrays, each row closed. It refuses an
@@ -628,6 +682,13 @@ impl TaskProductCertificate {
     ///
     /// [`TaskProductShapeRefusal`] naming the first offence.
     pub fn from_wire(value: &Value) -> Result<Self, TaskProductShapeRefusal> {
+        Self::read_with(value, TaskTransitionTemplate::read)
+    }
+
+    fn read_with<E: From<TaskProductShapeRefusal>>(
+        value: &Value,
+        mut transition: impl FnMut(&Value, &str) -> Result<TaskTransitionTemplate, E>,
+    ) -> Result<Self, E> {
         let map = object(
             value,
             "",
@@ -642,7 +703,8 @@ impl TaskProductCertificate {
             &[],
         )?;
         if member(map, "abstraction").as_str() != Some(Self::ABSTRACTION) {
-            return refuse("/abstraction", TaskProductShapeReason::UnknownVariant);
+            return refuse("/abstraction", TaskProductShapeReason::UnknownVariant)
+                .map_err(Into::into);
         }
         let progress = object(
             member(map, "time_progress"),
@@ -678,18 +740,21 @@ impl TaskProductCertificate {
             return refuse(
                 "/time_progress/live_job_cap",
                 TaskProductShapeReason::Inconsistent,
-            );
+            )
+            .map_err(Into::into);
         }
         if !closure_ok {
             return refuse(
                 "/time_progress/closure",
                 TaskProductShapeReason::Inconsistent,
-            );
+            )
+            .map_err(Into::into);
         }
 
         let rows = array(member(map, "queue_bounds"), "/queue_bounds")?;
         if rows.is_empty() {
-            return refuse("/queue_bounds", TaskProductShapeReason::Inconsistent);
+            return refuse("/queue_bounds", TaskProductShapeReason::Inconsistent)
+                .map_err(Into::into);
         }
         let queue_bounds = rows
             .iter()
@@ -710,7 +775,9 @@ impl TaskProductCertificate {
         let subtractions = array(member(map, "subtractions"), "/subtractions")?
             .iter()
             .enumerate()
-            .map(|(index, row)| read_subtraction(row, &format!("/subtractions/{index}")))
+            .map(|(index, row)| {
+                read_subtraction(row, &format!("/subtractions/{index}"), &mut transition)
+            })
             .collect::<Result<Vec<_>, _>>()?;
         if method == TaskClosureMethod::ClosedNoReleaseProduct {
             for (name, empty) in [
@@ -719,7 +786,8 @@ impl TaskProductCertificate {
                 ("subtractions", subtractions.is_empty()),
             ] {
                 if !empty {
-                    return refuse(&format!("/{name}"), TaskProductShapeReason::Inconsistent);
+                    return refuse(&format!("/{name}"), TaskProductShapeReason::Inconsistent)
+                        .map_err(Into::into);
                 }
             }
         }
@@ -745,6 +813,13 @@ impl TaskProductCertificate {
     ///
     /// [`TaskProductWireError`] when a source transition has no spelling.
     pub fn to_wire(&self) -> Result<Value, TaskProductWireError> {
+        self.write_with(TaskTransitionTemplate::to_wire)
+    }
+
+    fn write_with<E>(
+        &self,
+        mut transition: impl FnMut(&TaskTransitionTemplate) -> Result<Value, E>,
+    ) -> Result<Value, E> {
         let queue_bounds: Vec<Value> = self
             .queue_bounds
             .iter()
@@ -786,10 +861,10 @@ impl TaskProductCertificate {
                 Ok(json!({
                     "clock": row.clock,
                     "constant": row.constant.to_string(),
-                    "transition": row.transition.to_wire()?,
+                    "transition": transition(&row.transition)?,
                 }))
             })
-            .collect::<Result<Vec<Value>, TaskProductWireError>>()?;
+            .collect::<Result<Vec<Value>, E>>()?;
         Ok(json!({
             "abstraction": self.abstraction,
             "clock_ceilings": clock_ceilings,
@@ -869,16 +944,14 @@ fn read_diagonal(
     })
 }
 
-fn read_subtraction(
+fn read_subtraction<E: From<TaskProductShapeRefusal>>(
     value: &Value,
     pointer: &str,
-) -> Result<TaskSubtraction, TaskProductShapeRefusal> {
+    transition: &mut impl FnMut(&Value, &str) -> Result<TaskTransitionTemplate, E>,
+) -> Result<TaskSubtraction, E> {
     let map = object(value, pointer, &["transition", "clock", "constant"], &[])?;
     Ok(TaskSubtraction {
-        transition: TaskTransitionTemplate::read(
-            member(map, "transition"),
-            &child(pointer, "transition"),
-        )?,
+        transition: transition(member(map, "transition"), &child(pointer, "transition"))?,
         clock: text(member(map, "clock"), &child(pointer, "clock"))?,
         constant: positive_integer(member(map, "constant"), &child(pointer, "constant"))?,
     })
