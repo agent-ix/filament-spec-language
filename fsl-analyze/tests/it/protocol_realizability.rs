@@ -1409,6 +1409,80 @@ fn a_symbolic_capacity_premise_carries_the_bound_value_in_the_key() {
          receive B via Sym of A as (b: Ack) { true }; }",
         &[0],
     );
+    let admission_fixture = Fixture::built(
+        "on origin", "exactly-once-premise", "",
+        "channel Sym from Buyer to Seller carries Ack ordering unordered delivery exactly-once-premise capacity symbolic(Bound) overflow reject;\n\
+         channel Earlier from Buyer to Seller carries Ack ordering unordered delivery exactly-once-premise capacity symbolic(Alpha) overflow reject;\n",
+        "sequence Main {}", &[0],
+    );
+    let source_definition = fsl_eval::simulation::model::ProtocolDefinition::Source(
+        admission_fixture.checked.graph().protocol("Flow").unwrap(),
+    );
+    let package_definition = fsl_eval::simulation::model::ProtocolDefinition::Package(Box::new(
+        fsl_package::protocol_view::protocol_execution_view(
+            &admission_fixture.admitted,
+            &clause(&admission_fixture.admitted),
+        )
+        .unwrap(),
+    ));
+    for (values, expected_error) in [
+        (&[][..], None),
+        (&[("Bound", u64::MAX)][..], None),
+        (&[("Other", 1)][..], Some("unknown")),
+        (&[("Bound", 1), ("Bound", 2)][..], Some("duplicate")),
+    ] {
+        let bindings: Vec<_> = values
+            .iter()
+            .map(|(name, value)| CapacityBinding {
+                name: (*name).to_owned(),
+                value: *value,
+            })
+            .collect();
+        let source = fsl_eval::simulation::protocol::Capacities::admit_definition(
+            &source_definition,
+            &bindings,
+        );
+        let package = fsl_eval::simulation::protocol::Capacities::admit_definition(
+            &package_definition,
+            &bindings,
+        );
+        match (source, package, expected_error) {
+            (Ok(source), Ok(package), None) => {
+                assert_eq!(
+                    source, package,
+                    "both native definitions admit the same capacity facts"
+                );
+                let names: Vec<_> = package
+                    .unbound()
+                    .iter()
+                    .map(|entry| entry.name.as_str())
+                    .collect();
+                assert_eq!(
+                    names,
+                    if values.is_empty() {
+                        vec!["Alpha", "Bound"]
+                    } else {
+                        vec!["Alpha"]
+                    }
+                );
+                assert_eq!(package.unbound()[0].channels, ["Flow::Earlier"]);
+            }
+            (
+                Err(ProtocolRefusal::Capacity(source)),
+                Err(ProtocolRefusal::Capacity(package)),
+                Some(expected),
+            ) => {
+                assert_eq!(source, package);
+                assert!(
+                    matches!((expected, package),
+                    ("unknown", CapacityRefusal::UnknownName { name }) if name == "Other")
+                        || matches!((expected, source),
+                    ("duplicate", CapacityRefusal::Duplicate { name }) if name == "Bound")
+                );
+            }
+            other => panic!("capacity admission disagrees: {other:?}"),
+        }
+    }
     let bound = |capacities: &[(&str, u64)]| {
         let mut request = fixture.request(64);
         request.subject.capacities = capacities

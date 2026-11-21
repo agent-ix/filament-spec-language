@@ -2079,62 +2079,14 @@ fn resolve_one(
         candidates,
     );
     let temporal = selection.temporal.clone().unwrap_or_default();
-    let mut assessed_root_draft = fsl_replay::protocol_analysis::AssessedRootDraft::default();
-    if protocol_analysis_kind {
-        if temporal.profile.is_none() {
-            return invalid_member(index, name, "temporal.profile");
+    let protocol_analysis = if protocol_analysis_kind {
+        match protocol_analysis_selection(index, name, selection, kind, projection_role.clone()) {
+            Ok(selection) => Some(selection),
+            Err(refused) => return refused,
         }
-        if temporal.max_depth.is_none() {
-            return invalid_member(index, name, "temporal.max_depth");
-        }
-        if temporal
-            .max_depth
-            .is_some_and(|bound| bound.value().is_none())
-        {
-            return invalid_member_cause(index, name, "temporal.max_depth", "invalid-value");
-        }
-        if temporal
-            .max_depth
-            .and_then(RequestCount::value)
-            .is_some_and(|bound| bound == 0)
-        {
-            return invalid_member_cause(index, name, "temporal.max_depth", "invalid-value");
-        }
-        if temporal
-            .profile
-            .as_deref()
-            .is_some_and(|profile| crate::protocol_analysis::Profile::from_wire(profile).is_none())
-        {
-            return invalid_member_cause(index, name, "temporal.profile", "invalid-value");
-        }
-        if kind == Capability::Realizability && temporal.max_history.is_none() {
-            return invalid_member(index, name, "temporal.max_history");
-        }
-        if kind == Capability::Realizability
-            && temporal
-                .max_history
-                .is_some_and(|bound| bound.value().is_none_or(|value| value == 0))
-        {
-            return invalid_member_cause(index, name, "temporal.max_history", "invalid-value");
-        }
-        if kind == Capability::LocalProjection && temporal.max_history.is_some() {
-            return invalid_member_cause(index, name, "temporal.max_history", "unknown-member");
-        }
-        if selection.assessed_root.is_none() {
-            return invalid_member(index, name, "assessed_root");
-        }
-        let Some(root_wire) = selection.assessed_root.as_ref() else {
-            return invalid_member(index, name, "assessed_root");
-        };
-        assessed_root_draft =
-            match fsl_replay::protocol_analysis::AssessedRootDraft::read_wire(root_wire) {
-                Ok(root) => root,
-                Err(member) => return invalid_member_cause(index, name, member, "invalid-value"),
-            };
-        if kind == Capability::LocalProjection && projection_role.is_none() {
-            return invalid_member(index, name, "options.role");
-        }
-    }
+    } else {
+        None
+    };
     let own_subject = temporal
         .subject
         .clone()
@@ -2263,18 +2215,9 @@ fn resolve_one(
                 .map(DocumentSelection::reference),
             population: selection.population.clone(),
             backend_options,
-            protocol_analysis: protocol_analysis_kind.then(|| ProtocolAnalysisSelection {
-                profile: temporal.profile.clone().expect("profile checked above"),
-                max_depth: temporal
-                    .max_depth
-                    .and_then(RequestCount::value)
-                    .expect("valid max_depth checked above"),
-                max_history: temporal.max_history.and_then(RequestCount::value),
-                role: projection_role.clone(),
-                assessed_root: selection.assessed_root.clone(),
-                assessed_root_draft,
-                protocol: protocol.clone(),
-                premises: selection.premises.clone(),
+            protocol_analysis: protocol_analysis.map(|mut selection| {
+                selection.protocol = protocol.clone();
+                selection
             }),
         },
         form,
@@ -2565,6 +2508,81 @@ fn invalid_value(index: RequestIndex, name: &str, member: &str) -> ResolvedItem 
 }
 
 /// A required protocol-analysis request member was absent.
+/// The protocol-analysis members admitted identically by both intake routes.
+fn protocol_analysis_selection(
+    index: RequestIndex,
+    name: &str,
+    selection: &ItemSelection,
+    kind: Capability,
+    role: Option<String>,
+) -> Result<ProtocolAnalysisSelection, ResolvedItem> {
+    let temporal = selection.temporal.clone().unwrap_or_default();
+    let Some(profile) = temporal.profile else {
+        return Err(invalid_member(index, name, "temporal.profile"));
+    };
+    let Some(depth) = temporal.max_depth else {
+        return Err(invalid_member(index, name, "temporal.max_depth"));
+    };
+    let Some(max_depth) = depth.value().filter(|depth| *depth != 0) else {
+        return Err(invalid_member_cause(
+            index,
+            name,
+            "temporal.max_depth",
+            "invalid-value",
+        ));
+    };
+    if crate::protocol_analysis::Profile::from_wire(&profile).is_none() {
+        return Err(invalid_member_cause(
+            index,
+            name,
+            "temporal.profile",
+            "invalid-value",
+        ));
+    }
+    if kind == Capability::Realizability && temporal.max_history.is_none() {
+        return Err(invalid_member(index, name, "temporal.max_history"));
+    }
+    if kind == Capability::Realizability
+        && temporal
+            .max_history
+            .is_some_and(|bound| bound.value().is_none_or(|value| value == 0))
+    {
+        return Err(invalid_member_cause(
+            index,
+            name,
+            "temporal.max_history",
+            "invalid-value",
+        ));
+    }
+    if kind == Capability::LocalProjection && temporal.max_history.is_some() {
+        return Err(invalid_member_cause(
+            index,
+            name,
+            "temporal.max_history",
+            "unknown-member",
+        ));
+    }
+    let Some(root_wire) = selection.assessed_root.as_ref() else {
+        return Err(invalid_member(index, name, "assessed_root"));
+    };
+    let assessed_root_draft =
+        fsl_replay::protocol_analysis::AssessedRootDraft::read_wire(root_wire)
+            .map_err(|member| invalid_member_cause(index, name, member, "invalid-value"))?;
+    if kind == Capability::LocalProjection && role.is_none() {
+        return Err(invalid_member(index, name, "options.role"));
+    }
+    Ok(ProtocolAnalysisSelection {
+        profile,
+        max_depth,
+        max_history: temporal.max_history.and_then(RequestCount::value),
+        role,
+        assessed_root: selection.assessed_root.clone(),
+        assessed_root_draft,
+        protocol: None,
+        premises: selection.premises.clone(),
+    })
+}
+
 fn invalid_member(index: RequestIndex, name: &str, member: &str) -> ResolvedItem {
     invalid_member_cause(index, name, member, "missing-member")
 }
