@@ -113,7 +113,7 @@ mod tests {
 
     /// Admission defects must name their own member before the pending capability.
     #[test]
-    #[trace("FR-1022", "TC-2872")]
+    #[trace("FR-1022")]
     fn malformed_evidence_refuses_at_its_member() {
         for (name, value, cause) in [
             ("package", json!(false), "wrong-value-kind"),
@@ -151,7 +151,7 @@ mod tests {
 
     /// Shape admission supplies a lifecycle refusal, never a proof or a tool observation.
     #[test]
-    #[trace("FR-1022", "TC-2872")]
+    #[trace("FR-1022")]
     fn admitted_evidence_remains_an_unimplemented_capability() {
         let result = run_member(&member()).unwrap();
         assert_eq!(result.exit_code, 21);
