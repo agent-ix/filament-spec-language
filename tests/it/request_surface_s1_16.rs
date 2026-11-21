@@ -81,10 +81,14 @@ fn run_with_model(
     for (name, member) in members {
         request[name] = member;
     }
-    if request["model_based_test"]["initial"].is_string() {
+    if request["model_based_test"]["initial"].is_string()
+        || request["synthesis"]["initial"].as_str() == Some("spine-snapshot.json")
+    {
         let snapshot_path = directory.path().join("spine-snapshot.json");
         let bytes = std::fs::read(&snapshot_path).expect("the spine snapshot exists");
         let mut snapshot: Value = serde_json::from_slice(&bytes).expect("a JSON snapshot");
+        // Model runs and plan searches start at initialization, rather than
+        // the handler observation used by the spine's invariant walkthrough.
         snapshot["anchor"] = json!({"kind": "initialization", "name": "start"});
         std::fs::write(
             snapshot_path,

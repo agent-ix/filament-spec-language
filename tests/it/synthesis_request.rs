@@ -596,29 +596,43 @@ fn a_source_plan_candidate_emits_its_record_types_and_source_regions() {
         ("test", "synthesis-request")
     );
     let bytes = emitted.package().bytes();
-    let wire: Value = serde_json::from_slice(&bytes).expect("a JSON package");
-    let claim = synthesis_nodes(&wire)[0];
-    let nodes = wire["semantic_graph"]["nodes"]
-        .as_array()
-        .expect("graph nodes");
-    let candidate = nodes
-        .iter()
-        .find(|node| node["node_id"] == binding(claim, "candidate")["value"]["target"])
-        .expect("the plan candidate resolves to its parameter node");
-    assert_eq!(candidate["semantic_form"], "parameter", "{candidate}");
-    let plan_type = nodes
-        .iter()
-        .find(|node| node["node_id"] == candidate["semantic_type"])
-        .expect("the parameter is typed by the emitted plan record");
-    assert_eq!(plan_type["semantic_form"], "record", "{plan_type}");
-    assert_eq!(
-        binding_names(plan_type),
-        ["length", "final", "initial", "steps"]
-    );
     fsl_package::admit_checked_package(
-        &bytes,
+        bytes,
         &packages,
         fsl_package::V2ReadLimits::bounded(fsl_replay::spine::I2_NATIVE_JOIN_STORAGE_DEFAULT),
     )
     .expect("all generated plan declarations and occurrences admit");
+    // Operand slots belong to their holder's row; resolve them before
+    // comparing the claim's reference to the parameter's own node id.
+    let mut wire: Value = serde_json::from_slice(bytes).expect("a JSON package");
+    fsl_semantics::check::wire_id::resolve_operand_slots(&mut wire)
+        .expect("every operand slot names its holder's row entry");
+    let claim = synthesis_nodes(&wire)[0];
+    let nodes = wire["semantic_graph"]["nodes"]
+        .as_array()
+        .expect("graph nodes");
+    let candidates = nodes
+        .iter()
+        .filter(|node| node["node_id"] == binding(claim, "candidate")["value"]["target"])
+        .collect::<Vec<_>>();
+    let [candidate] = candidates.as_slice() else {
+        panic!("the plan candidate resolves to exactly one parameter node: {candidates:?}");
+    };
+    assert_eq!(candidate["node_tag"], "value", "{candidate}");
+    assert_eq!(candidate["semantic_form"], "parameter", "{candidate}");
+    let plan_types = nodes
+        .iter()
+        .filter(|node| node["node_id"] == candidate["semantic_type"])
+        .collect::<Vec<_>>();
+    let [plan_type] = plan_types.as_slice() else {
+        panic!("the parameter is typed by exactly one emitted plan record: {plan_types:?}");
+    };
+    assert_eq!(plan_type["semantic_form"], "record", "{plan_type}");
+    assert_eq!(records.iter().filter(|row|
+        serde_json::to_value(&row.structural_node).expect("a node id serializes") == plan_type["node_id"]
+    ).count(), 1, "the exact plan record has one producer identity row");
+    assert_eq!(
+        binding_names(plan_type),
+        ["length", "final", "initial", "steps"]
+    );
 }

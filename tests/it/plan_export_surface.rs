@@ -58,6 +58,14 @@ fn run(unit: &str, with_model: bool, member: (&str, Value)) -> (u8, Value) {
 }
 
 fn write_request(directory: &Path, request: &Value) -> (u8, Value) {
+    if request["request"]["synthesis"]["initial"].as_str() == Some("spine-snapshot.json") {
+        let snapshot_path = directory.join("spine-snapshot.json");
+        let bytes = std::fs::read(&snapshot_path).expect("the plan's spine snapshot exists");
+        let mut snapshot: Value = serde_json::from_slice(&bytes).expect("a JSON snapshot");
+        snapshot["anchor"] = json!({"kind": "initialization", "name": "start"});
+        std::fs::write(snapshot_path, serde_json::to_vec(&snapshot).unwrap())
+            .expect("the plan's initialization snapshot is written");
+    }
     let path = directory.join("request.json");
     std::fs::write(&path, serde_json::to_vec(request).unwrap()).unwrap();
     match fsl_command::command::run(&path, &crate::negotiation::Fr290) {
