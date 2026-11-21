@@ -5,6 +5,8 @@ type: TC
 relationships:
   - target: ix://agent-ix/filament-spec-language/FR-1040
     type: verifies
+  - target: ix://agent-ix/filament-spec-language/FR-230
+    type: verifies
 ---
 # TC-3084: Clock-place references and presence reads check and lower in population forms
 
@@ -15,6 +17,8 @@ at S4 to FSpec FR-829's place-reference application and FSpec FR-322's
 presence read, per instance under a population binder and through an object
 reference, and that the remaining wrong forms refuse with typed causes.
 Scope: FR-1040-AC-1 to FR-1040-AC-9.
+Step 7 also verifies FR-230-AC-43's exact encoding vector and
+FR-230-AC-49's tagged nested-collection indices.
 
 ## Test Procedure
 
@@ -55,10 +59,12 @@ refinement rows.
    with deliberately equal canonical scope and full path to the negative
    table fixture. For inheritance, use `Base { c: Clock }`, `Child extends
    Base {}` and `time Base dense unit ms`: access the same owner instance's
-   inherited `c` through the original `Base` template. Require scope
-   `Base`, path `Field(c)` and the normalized row
-   `(ix://I/Base, ix://I/Base/c, ix://filament/native/Clock)` under the
-   authenticated source owner `(A, I)` on both routes. As earlier-refusal
+   inherited `c` through the original `Base` template. For authenticated
+   source authority `A` and identity `I`, require the exact components
+   `S = ["source","A","I","ix://I/Base"]`,
+   `T = [["field",["source","A","I","ix://I/Base"],"ix://I/Base/c",["clock"]]]`
+   and `J = []` on both routes, retaining the same actual `P` and `K` for
+   the same owner. As earlier-refusal
    controls, redeclare source field `c` on `Child` (FR-569:
    `ambiguous_declaration`/`ambiguous-name` at `Child.c`), and
    select the legal package field redefinition `Child/d -> Base/c` with
@@ -79,7 +85,9 @@ refinement rows.
    Assert the typed path and tagged-index differences of FR-230-AC-49,
    including two nested collections. TC-464 step 10 owns malformed-text
    and re-added-kind raw admission, including the noncanonical decimal
-   selector spelling of FR-230-AC-45.
+   `pathPosition` spelling `"01"` of FR-230-AC-45. Bind the literal vector
+   control to `FR-230-AC-43` and the nested-collection controls to
+   `FR-230-AC-49`, additionally to the `FR-1040-AC-9` cases above.
 
 ## Expected Results
 
@@ -102,8 +110,9 @@ refinement rows.
   resolution refuses `ambiguous_declaration`/`ambiguous-name` at the
   ownership lookup, naming both competing origins and producing no table,
   without choosing a candidate. The inherited `Child.c`
-  control uses the original `Base.c` template, retaining its `Base` scope
-  and row on both routes; it does not mint a `Child` template. The source
+  control uses the original `Base.c` template, retaining exactly the `S`,
+  `T` and empty `J` specified above on both routes; it does not mint a
+  `Child` template. The source
   field redeclaration and selected-package redefinition controls refuse
   earlier as `ambiguous_declaration`/`ambiguous-name` at `Child.c`
   (FR-569) and at `M` in `time M` (FR-230-AC-38), respectively, and are not
