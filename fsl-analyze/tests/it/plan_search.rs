@@ -1248,6 +1248,15 @@ fn source_policy_acceptance_requires_closed_truth_and_preserves_vacuity() {
 
 /// A genuine authored native model, retaining its declared operation order.
 fn native_plan_world(model: &str, contracts: &str, start: &[(&str, serde_json::Value)]) -> World {
+    native_plan_world_with_clauses(model, contracts, &[], start)
+}
+
+fn native_plan_world_with_clauses(
+    model: &str,
+    contracts: &str,
+    clauses: &[model_world::Clause<'_>],
+    start: &[(&str, serde_json::Value)],
+) -> World {
     let source = fsl_cst::diagnostic::read_source(
         fsl_foundation::SourceIdentity::new("test", "native-plan-model"),
         "native-plan-model.fsl",
@@ -1267,7 +1276,7 @@ fn native_plan_world(model: &str, contracts: &str, start: &[(&str, serde_json::V
         },
         contracts,
         model_world::INFINITE,
-        &[],
+        clauses,
         start,
     )
 }
@@ -3026,9 +3035,10 @@ population counters: Counter;
 "#;
 
 fn positive_policy_world(formula: &str) -> World {
-    native_plan_world(POLICY_DIAMOND_MODEL, &format!(
-        "type Lengths = Int[0,3];\ntemporal Policy using t over (c: M::Counter) clock \"model-steps\" on origin {{ {formula} }}\nsynthesis Reach using t grammar M::Counter domain Lengths satisfies {{ forall(c in Reach.final.counters: c.number = 4) }};\n"
-    ), &[("c", json!({"number":{"integer":"0"}}))])
+    native_plan_world_with_clauses(POLICY_DIAMOND_MODEL,
+        "type Lengths = Int[0,3]; synthesis Reach using t grammar M::Counter domain Lengths satisfies { forall(c in Reach.final.counters: c.number = 4) };\n",
+        &[model_world::Clause { activation: "on origin", formula }],
+        &[("c", json!({"number":{"integer":"0"}}))])
 }
 
 /// Different past witnesses survive a native diamond; equal obligations merge
@@ -3323,7 +3333,12 @@ fn positive_source_policy_instances_preserve_order_vacuity_and_original_denials(
         ],
         vec![],
     ] {
-        let world = native_plan_world(POLICY_DIAMOND_MODEL,"type Lengths = Int[0,1]; temporal Policy using t over (c: M::Counter) clock \"model-steps\" on origin { always holds(c.number >= 0) } synthesis Reach using t grammar M::Counter domain Lengths satisfies { true };",&start);
+        let world = native_plan_world_with_clauses(
+            POLICY_DIAMOND_MODEL,
+            "type Lengths = Int[0,1]; synthesis Reach using t grammar M::Counter domain Lengths satisfies { true };",
+            &[model_world::Clause { activation: "on origin", formula: "always holds(c.number >= 0)" }],
+            &start,
+        );
         let keys: Vec<_> = start.iter().map(|(key, _)| *key).collect();
         let system = ModelSystem::new(world.subject(&keys, UNLIMITED).simulation).unwrap();
         let node = &world.package.graph().temporal_clauses()[0];
