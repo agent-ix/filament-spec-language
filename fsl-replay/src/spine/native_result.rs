@@ -3031,6 +3031,15 @@ impl Disposition {
                 });
                 result.refusal = Some(refusal);
             }
+            ClauseDisposition::PackageAdmission(failure) => {
+                let (filament_eval::CallAdmissionFailure::Refused(admission)
+                | filament_eval::CallAdmissionFailure::Incomplete(admission)) = failure.as_ref();
+                let record = &admission.record;
+                result.refusal = Some(
+                    RefusalWire::new(record.catalog.code(), Some(record.catalog.cause()))
+                        .fields(record.fields.clone()),
+                );
+            }
             ClauseDisposition::Admit(failure) => match failure {
                 fsl_semantics::model::observation::AdmissionFailure::Refused(record)
                 | fsl_semantics::model::observation::AdmissionFailure::Incomplete(record) => {

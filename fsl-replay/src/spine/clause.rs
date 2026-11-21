@@ -438,6 +438,9 @@ pub enum ClauseDisposition {
     /// Stage `admit`: FR-106 admission's own failure, or (for a `Function`
     /// selection) the analogous snapshot-only admission failure.
     Admit(AdmissionFailure),
+    /// Stage `admit`: a checked-package call's original admission failure,
+    /// including its typed package, node, population, member or binder locus.
+    PackageAdmission(Box<filament_eval::CallAdmissionFailure>),
     /// Stage `admit`: a current-snapshot refusal, with the selected document
     /// identity retained for FR-663's locus.
     SnapshotAdmission {
@@ -811,9 +814,10 @@ impl ClauseDisposition {
             | Self::UnknownLanguage { .. }
             | Self::ExtractionClauseCount { .. } => ClauseRunStage::Compile,
             Self::MissingName { .. } | Self::NotAPredicate { .. } => ClauseRunStage::Select,
-            Self::Admit(_) | Self::SnapshotAdmission { .. } | Self::ArgumentRefusal(_) => {
-                ClauseRunStage::Admit
-            }
+            Self::Admit(_)
+            | Self::PackageAdmission(_)
+            | Self::SnapshotAdmission { .. }
+            | Self::ArgumentRefusal(_) => ClauseRunStage::Admit,
             Self::TraceRefused(refusal) => refusal.stage,
             Self::Evaluate(_)
             | Self::Temporal(_)
@@ -852,6 +856,13 @@ impl ClauseDisposition {
                     .map_or(Category::InternalFailure, |code| code.category())
             }
             Self::Admit(AdmissionFailure::Incomplete(_)) => Category::Incomplete,
+            Self::PackageAdmission(failure) => match failure.as_ref() {
+                filament_eval::CallAdmissionFailure::Refused(record) => {
+                    fsl_foundation::diagnostic::Code::from_code(record.record.catalog.code())
+                        .map_or(Category::InternalFailure, |code| code.category())
+                }
+                filament_eval::CallAdmissionFailure::Incomplete(_) => Category::Incomplete,
+            },
             Self::SnapshotAdmission {
                 failure: AdmissionFailure::Refused(record),
                 ..
@@ -1511,6 +1522,7 @@ impl ClauseRunReport {
             | ClauseDisposition::MissingName { .. }
             | ClauseDisposition::NotAPredicate { .. }
             | ClauseDisposition::Admit(_)
+            | ClauseDisposition::PackageAdmission(_)
             | ClauseDisposition::SnapshotAdmission { .. }
             | ClauseDisposition::ArgumentRefusal(_)
             | ClauseDisposition::TemporalRefusal(_)

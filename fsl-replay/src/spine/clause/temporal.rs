@@ -1576,15 +1576,7 @@ pub fn run_package_valuation(
 fn package_call_disposition(failure: filament_eval::CallFailure) -> ClauseDisposition {
     match failure {
         filament_eval::CallFailure::Admission(failure) => {
-            let failure = match *failure {
-                filament_eval::CallAdmissionFailure::Refused(record) => {
-                    AdmissionFailure::Refused(Box::new(record.record))
-                }
-                filament_eval::CallAdmissionFailure::Incomplete(record) => {
-                    AdmissionFailure::Incomplete(Box::new(record.record))
-                }
-            };
-            ClauseDisposition::Admit(failure)
+            ClauseDisposition::PackageAdmission(failure)
         }
         failure => refusal_disposition(*convert_call_failure(failure)),
     }
@@ -3933,6 +3925,78 @@ pub(crate) fn trace_refusal(refusal: TemporalRefusal) -> TemporalTraceRefusal {
                 "temporal",
                 "step-evaluator-refusal",
             ))
+        }
+    }
+}
+
+#[cfg(test)]
+mod package_admission_tests {
+    use super::*;
+    use filament_eval::{
+        CallAdmissionFailure, CallAdmissionLocus, CallAdmissionRecord, CallFailure,
+    };
+
+    /// The report retains checked-package attribution without claiming a
+    /// source location in the native result before one is available.
+    #[ix_trace_rs::trace("TC-3019", "FR-1039")]
+    #[test]
+    fn package_call_admission_retains_typed_locus_without_wire_locus() {
+        let node = filament_exact::NodeKey::new(
+            "fixture",
+            vec![filament_exact::PathSegment::Text("Low".into())],
+            1,
+        )
+        .expect("a clause node key");
+        for locus in [
+            CallAdmissionLocus::Package,
+            CallAdmissionLocus::Node(node),
+            CallAdmissionLocus::Member {
+                name: "holds".to_owned(),
+                index: Some(0),
+            },
+        ] {
+            for incomplete in [false, true] {
+                let catalog = if incomplete {
+                    CatalogCode::new("unavailable_observation", "missing-required-artifact")
+                } else {
+                    CatalogCode::new("invalid_runtime_input", "invalid-value")
+                };
+                let record = AdmissionRecord {
+                    catalog,
+                    fields: BTreeMap::from([("member".to_owned(), "holds[0]".to_owned())]),
+                    path: Vec::new(),
+                    kernel: None,
+                };
+                let admission = CallAdmissionRecord {
+                    record: record.clone(),
+                    locus: locus.clone(),
+                };
+                let failure = if incomplete {
+                    CallAdmissionFailure::Incomplete(admission)
+                } else {
+                    CallAdmissionFailure::Refused(admission)
+                };
+                let report = disposition_report(
+                    package_call_disposition(CallFailure::Admission(Box::new(failure.clone()))),
+                    ClauseRunUsage::default(),
+                );
+                let ClauseDisposition::PackageAdmission(retained) = &report.disposition else {
+                    panic!("the report retains the original package admission failure");
+                };
+                assert_eq!(retained.as_ref(), &failure);
+                assert_eq!(
+                    report.disposition.stage(),
+                    super::super::ClauseRunStage::Admit
+                );
+                let bytes = crate::spine::write_clause_run_result(&report)
+                    .expect("the admission report writes");
+                let wire: serde_json::Value = serde_json::from_slice(&bytes).expect("JSON");
+                assert_eq!(wire["refusal"]["code"], record.catalog.code());
+                assert_eq!(wire["refusal"]["cause"], record.catalog.cause());
+                assert_eq!(wire["refusal"]["fields"], serde_json::json!(record.fields));
+                assert!(wire["refusal"].get("locus").is_none());
+                crate::spine::read_native_run_result(&bytes).expect("the result reads");
+            }
         }
     }
 }
