@@ -43,3 +43,21 @@ FND-002: either let the assembly-time projection's entries win in `type_units` (
 - Cargo.toml, Cargo.lock (examined): five approved revisions; core-data unchanged.
 - fsl-eval/tests/it/quantity_class_convert.rs, fsl-eval/tests/it/quantity_literals.rs, fsl-semantics/tests/it/dimension_equivalence.rs (examined): oracles for FR-093-AC-46, FR-533-AC-23, FR-497-AC-2.
 - filament-semantic-value 6e809434 src/unit/equivalence.rs, src/quantity.rs (context_only): shared projection, `converts_to`, `result_unit`, metered `convert`.
+
+## Dispositions
+
+Round 1, fix head 4219c63abebbce1dd776d930e126e778c4bd5d96 (original head 1d666e7daa977b75f02e1bdefbd89b361d0449fd). The reason column records the evidence; after-excerpts are in the round-1 dispositions comment.
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | At 4219c63abebbce1dd776d930e126e778c4bd5d96 the bytes route probes the result unit with the public evaluate_quantity_unit(QuantityOperation::Power(unit_base, &exponent)) on a separate all-zero ScalarLimits meter before the caller-metered call. Shared evaluate_quantity_unit runs type_check and IdentifiedUnit::new, then evaluate stops at its first UnitIdentityRead charge, so no value arithmetic runs and nothing reaches the caller meter. This is the checker's Typer::power NO_CHARGE pattern. On a match the real operation runs once on self.meter. |
+| FND-002 | fixed | Assembly now appends types.units() after the projected names.unit_table, so the projected entries win. check() no longer reprojects, and the dead KeyFault::DimensionClassProjection / DimensionClassProjectionRefusal wrapper is removed. The nominal PackageDeclarations.units stays for TimeUnits. |
+| FND-003 | fixed | The predicate is now convert<Quantity<ua>>(1000 ub) = 1 ua, which is true under 1 ua = 1000 ub. |
+
+Round 2, final head 7eb36c927d92a4b7637c05c608d09db5e819f2b8 (delta from 4219c63abebbce1dd776d930e126e778c4bd5d96). Each round-1 fix was re-verified at this head; none of the fixed files or spec rows changed in the delta. Delta review, no new findings. Pins: the lock source changes only IR 0e089f6e -> dacfac6b and FSpec 6ad873d5 -> 247a3941; SV, checked/eval, observation and core-data are unchanged. Reader quantity.pow projects the emitted Operands::Two(base, exponent) to the existing NodeKind::QuantityPower(base, exponent), the same two-child shape as quantity arithmetic, with no type or arithmetic reconstruction, so Bare admission reaches the early power guard. QSL-2728 producer sub-scope: lowering takes the let binder from the just-pushed scope entry (binder.parameter); MemberTerm::let_binding carries Some(binder); map_refs and the identity walk include it; BodyNames adds it as a dependency; emit member_term maps it with admitted_id(...).transpose(); every non-let binding emits None, and the 28 mechanical patterns only add `..`.
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | Round 2: still fixed at 7eb36c927d, unchanged by the delta. At 7eb36c927d92a4b7637c05c608d09db5e819f2b8 the bytes route probes the result unit with the public evaluate_quantity_unit(QuantityOperation::Power(unit_base, &exponent)) on a separate all-zero ScalarLimits meter before the caller-metered call. Shared evaluate_quantity_unit runs type_check and IdentifiedUnit::new, then evaluate stops at its first UnitIdentityRead charge, so no value arithmetic runs and nothing reaches the caller meter. This is the checker's Typer::power NO_CHARGE pattern. On a match the real operation runs once on self.meter. |
+| FND-002 | fixed | Round 2: still fixed at 7eb36c927d, unchanged by the delta. Assembly now appends types.units() after the projected names.unit_table, so the projected entries win. check() no longer reprojects, and the dead KeyFault::DimensionClassProjection / DimensionClassProjectionRefusal wrapper is removed. The nominal PackageDeclarations.units stays for TimeUnits. |
+| FND-003 | fixed | Round 2: still fixed at 7eb36c927d, unchanged by the delta. The predicate is now convert<Quantity<ua>>(1000 ub) = 1 ua, which is true under 1 ua = 1000 ub. |

@@ -40,3 +40,23 @@ Reverse gaps: `AssemblyCause::DimensionClassProjection` and `KeyFault::Dimension
 - FR-497-AC-2 (examined): carried quantity not an arithmetic operand.
 - FR-093 dimension-equivalence prose, lines 359-371 (context_only).
 - FR-533 boundary prose, lines 296-313 (context_only).
+
+## Dispositions
+
+Round 1, fix head 4219c63abebbce1dd776d930e126e778c4bd5d96 (original head 1d666e7daa977b75f02e1bdefbd89b361d0449fd). The reason column records the evidence; after-excerpts are in the round-1 dispositions comment.
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | quoin matrix (0.36.8) at the fix head extracts 23 FR-533 criteria. FR-533-AC-23 is tagged, with binders a_package_class_conversion_is_typed_unsupported_until_reconstruction and bare_class_products_and_noncanonical_powers_refuse_before_kernel_charges. |
+| FND-002 | fixed | New test bare_class_products_and_noncanonical_powers_refuse_before_kernel_charges refuses the bare product and the noncanonical power. It picks the noncanonical member from the projected root relation, checks span and no unit charges under five meters, and keeps an ordinary Length power true and caller-metered (an integer_bits=0 stop at UnitIdentityRead). Runtime outcome is not claimed: draco's fix-head runs are queued. |
+| FND-003 | fixed | The unrelated-dimension negative is now tagged FSpec-FR-142-AC-2 / FSpec-TC-187, matching quantities.rs's existing incompatible-dimension tests. It is no longer tagged FR-093-AC-46. |
+| FND-004 | fixed | The single-package positive keeps FR-093-AC-46 only. The matrix no longer binds it to FR-091-AC-60, whose sole binder is dimension_equivalences_are_decided_by_fr_142_steps. |
+
+Round 2, final head 7eb36c927d92a4b7637c05c608d09db5e819f2b8 (delta from 4219c63abebbce1dd776d930e126e778c4bd5d96). Each round-1 fix was re-verified at this head; none of the fixed files or spec rows changed in the delta. Delta gap check, no new findings. let_binder tests (FR-093-AC-68, FSpec-FR-322-AC-512, TC-3137) assert the binder link, the dependency, the reference identity, unread-binder identity and per-IEEE-operand binders on strictly read packages. FSpec-FR-142-AC-2 / TC-187 text is unchanged between FSpec 6ad873d5 and the pinned 247a3941; that FSpec range changes only its tests/*.rs (no lib, API or Cargo change). Draco runs for the 12 focused tests and the replay check are queued, not green; no runtime outcome is claimed.
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | Round 2: still fixed at 7eb36c927d, unchanged by the delta. quoin matrix (0.36.8) at the fix head extracts 23 FR-533 criteria. FR-533-AC-23 is tagged, with binders a_package_class_conversion_is_typed_unsupported_until_reconstruction and bare_class_products_and_noncanonical_powers_refuse_before_kernel_charges. |
+| FND-002 | fixed | Round 2: still fixed at 7eb36c927d, unchanged by the delta. New test bare_class_products_and_noncanonical_powers_refuse_before_kernel_charges refuses the bare product and the noncanonical power. It picks the noncanonical member from the projected root relation, checks span and no unit charges under five meters, and keeps an ordinary Length power true and caller-metered (an integer_bits=0 stop at UnitIdentityRead). Runtime outcome is not claimed: draco's fix-head runs are queued. |
+| FND-003 | fixed | Round 2: still fixed at 7eb36c927d, unchanged by the delta. The unrelated-dimension negative is now tagged FSpec-FR-142-AC-2 / FSpec-TC-187, matching quantities.rs's existing incompatible-dimension tests. It is no longer tagged FR-093-AC-46. |
+| FND-004 | fixed | Round 2: still fixed at 7eb36c927d, unchanged by the delta. The single-package positive keeps FR-093-AC-46 only. The matrix no longer binds it to FR-091-AC-60, whose sole binder is dimension_equivalences_are_decided_by_fr_142_steps. |

@@ -34,3 +34,21 @@ CONDITIONAL. The FR-093 paragraph and the FR-533 boundary section agree on the r
 - FR-533 "Dimension equivalence reconstruction boundary" prose (examined).
 - FR-093 dimension-equivalence runtime-graph paragraph (examined).
 - FR-093-AC-46 (context_only): unchanged source-route criterion that AC-23 cites.
+
+## Dispositions
+
+Round 1, fix head 4219c63abebbce1dd776d930e126e778c4bd5d96 (original head 1d666e7daa977b75f02e1bdefbd89b361d0449fd). The reason column records the evidence; after-excerpts are in the round-1 dispositions comment.
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | The blank line is removed. AC-23 directly follows AC-22 in one table, and the matrix extracts 23 FR-533 criteria. |
+| FND-002 | fixed | The boundary now states the product, quotient and integer-power refusal and its no-unit-charge ordering. AC-23 and TC-1333 row 23 / fixture Q verify the product, the quotient and the noncanonical square, keeping same-dimension, affine and ordinary power as positives. |
+| FND-003 | fixed | AC-23's verification cell is now Test (TC-1333). TC-1333 row 23 and fixture Q supply the procedure, and the TC scope reads AC-1 to AC-23. |
+
+Round 2, final head 7eb36c927d92a4b7637c05c608d09db5e819f2b8 (delta from 4219c63abebbce1dd776d930e126e778c4bd5d96). Each round-1 fix was re-verified at this head; none of the fixed files or spec rows changed in the delta. 
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | Round 2: still fixed at 7eb36c927d, unchanged by the delta. The blank line is removed. AC-23 directly follows AC-22 in one table, and the matrix extracts 23 FR-533 criteria. |
+| FND-002 | fixed | Round 2: still fixed at 7eb36c927d, unchanged by the delta. The boundary now states the product, quotient and integer-power refusal and its no-unit-charge ordering. AC-23 and TC-1333 row 23 / fixture Q verify the product, the quotient and the noncanonical square, keeping same-dimension, affine and ordinary power as positives. |
+| FND-003 | fixed | Round 2: still fixed at 7eb36c927d, unchanged by the delta. AC-23's verification cell is now Test (TC-1333). TC-1333 row 23 and fixture Q supply the procedure, and the TC scope reads AC-1 to AC-23. |

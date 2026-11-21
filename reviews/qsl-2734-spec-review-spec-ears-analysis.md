@@ -31,3 +31,17 @@ CONDITIONAL. The new statements are well-formed state-driven ("While the package
 - FR-533-AC-23 (examined).
 - FR-533 boundary statements (examined): state-driven refusal, location and no-value clauses, nominal/affine preservation.
 - FR-093 runtime-graph paragraph (examined): source checker/evaluator SHALL use FSV FR-134 graph; bytes-only route SHALL refuse; SHALL return no value.
+
+## Dispositions
+
+Round 1, fix head 4219c63abebbce1dd776d930e126e778c4bd5d96 (original head 1d666e7daa977b75f02e1bdefbd89b361d0449fd). The reason column records the evidence; after-excerpts are in the round-1 dispositions comment.
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | AC-23 now names fixture Q and the first concrete product/quotient spans. It states the prose's trigger (nominal result unit differs from the checked class-root result unit) and selects the noncanonical member by its projected canonical root. |
+
+Round 2, final head 7eb36c927d92a4b7637c05c608d09db5e819f2b8 (delta from 4219c63abebbce1dd776d930e126e778c4bd5d96). Each round-1 fix was re-verified at this head; none of the fixed files or spec rows changed in the delta. 
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | Round 2: still fixed at 7eb36c927d, unchanged by the delta. AC-23 now names fixture Q and the first concrete product/quotient spans. It states the prose's trigger (nominal result unit differs from the checked class-root result unit) and selects the noncanonical member by its projected canonical root. |
