@@ -210,9 +210,8 @@ fn package_repeat_blocked_attempt_preserves_replay_refusal() {
         ("blocked", "true", "false"),
         ("undefined", "zero / zero = zero", "true"),
     ] {
-        let visible = if scenario == "undefined" { "zero" } else { "" };
         let controls = format!(
-            "repeat Again by Machining visible ({visible}) while {{ {guard} }} {}",
+            "repeat Again by Machining visible () while {{ {guard} }} {}",
             repeat_attempt("Remachined", "again", constraint)
         );
         let request = |ws: &Workspace| {
