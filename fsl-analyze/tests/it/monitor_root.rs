@@ -177,7 +177,11 @@ fn monitor_body_locations_follow_entry_rekeys_and_preserve_helper_origins() {
             let expected_path =
                 format!("/checked_term_data/body_locations/{row_index}/application");
             assert_eq!(
-                refusal.primary_path().map(|path| path.as_str()),
+                refusal
+                    .loci
+                    .first()
+                    .and_then(|locus| locus.path.as_ref())
+                    .map(|path| path.as_str()),
                 Some(expected_path.as_str())
             );
         }
