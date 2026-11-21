@@ -255,6 +255,46 @@ fn exchange_stop_real_host_timeout_reaps_without_result_frame() {
 }
 
 #[test]
+#[trace("FR-750-AC-18", "FR-750-AC-23", "FR-750-AC-24")]
+fn exchange_stop_real_host_rejects_a_proof_arriving_after_provider_deadline() {
+    let ws = Workspace::new("late-provider-proof");
+    let script = json!({"mode": "answer", "answer_delay_ms": 3, "outcome": proof()});
+    let path = ws.write("script.json", script.to_string().as_bytes());
+    // The result arrives after the deadline, within the host's polling wait.
+    // Repeating the exchange also exercises the boundary across child starts.
+    for _ in 0..10 {
+        let host = StdioHost::new(Path::new(PROVIDER).to_owned(), path.clone(), limits());
+        let cancel = Cancel::new();
+        assert_eq!(
+            host.exchange(br#"{"request":{"deadline_ms":2}}"#, &cancel),
+            Err(HybridExchangeError::TimedOut),
+            "a late proof must not escape the provider deadline"
+        );
+        assert!(host.reaped.load(Ordering::Acquire));
+        assert_eq!(host.results.load(Ordering::Relaxed), 0);
+        assert_eq!(cancel.cause(), None);
+    }
+    let mut bounds = limits();
+    bounds.deadline_ms = 2;
+    let engine = support::process_engine(&ws, &script, bounds);
+    let cancel = Cancel::new();
+    let document = run_with_cancel(
+        &ws,
+        &unit(),
+        json!([{
+            "claim": "SlowEnough", "backend": BACKEND
+        }]),
+        vec![engine],
+        bounds,
+        &cancel,
+    );
+    let items = document["items"].as_array().expect("outcome items");
+    assert_eq!(items.len(), 1, "{document}");
+    assert_stop(&items[0], "timed-out");
+    assert_eq!(cancel.cause(), None);
+}
+
+#[test]
 #[trace("FR-750-AC-19", "FR-750-AC-23", "FR-750-AC-24")]
 fn exchange_stop_real_host_discards_late_evidence_and_reaps_cancelled_processes() {
     for source in [CancelCause::Requested, CancelCause::Deadline] {
