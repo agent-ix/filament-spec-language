@@ -365,13 +365,13 @@ fn an_abstract_clock_guard_refutes_and_replays_the_exact_delay() {
     ));
 }
 
-/// FR-900-AC-2 with an unmapped abstract field: which abstract clock guards
-/// and resets apply then depends on the hidden valuation, which the product
-/// does not track, so EN-6 refuses the combination instead of settling the
-/// safety half `proved` over guards it skipped.
+/// FR-900-AC-2 with an unmapped abstract field: the abstract clock guard of
+/// the step the concrete send maps to applies through the hidden candidate's
+/// step rows, so the guard violation is found rather than skipped and the
+/// safety half is not settled `proved`.
 #[trace("TC-2538", "FR-900-AC-2")]
 #[test]
-fn a_timed_abstract_side_with_a_hidden_field_is_refused() {
+fn a_timed_abstract_side_with_a_hidden_field_applies_the_abstract_clock_guard() {
     let concrete = document(&["x"], &[("send", &["inflight"])]);
     let abstract_model = renamed_package(
         &document(&["y"], &[("send", &["inflight"])]),
@@ -390,20 +390,22 @@ fn a_timed_abstract_side_with_a_hidden_field_is_refused() {
         ),
     )
     .unwrap_or_else(|refusals| panic!("{refusals:?}"));
-    let refused = check_timed_refinement(safety_request(&world), &Cancel::new())
-        .err()
-        .expect("the hidden field under a timed abstract side is refused");
-    assert!(
-        matches!(
-            refused,
-            TimedRefinementRefusal::Zone(ZoneCheckRefusal::HiddenFieldTimedAbstract)
-        ),
-        "{refused:?}"
-    );
+    let outcome = safety(&world);
+    let TimedSafetyOutcome::Violated { counterexample, .. } = outcome else {
+        panic!("the abstract clock guard refutes the refinement: {outcome:?}");
+    };
+    assert!(matches!(
+        counterexample.refinement.as_ref(),
+        Some(RefinementFailure::AbstractClockGuard { .. })
+    ));
+    assert!(matches!(
+        replay_attempt(&world, &counterexample),
+        Ok(RefinementTraceSettlement::Reproduced { .. })
+    ));
 }
 
 /// The default timed profile supplies the selector bound for concrete
-/// ClockRef data before refinement's independent hidden-field refusal.
+/// ClockRef data, and a hidden abstract field no longer refuses the check.
 #[trace("TC-3084", "FR-1040-AC-8")]
 #[test]
 fn clock_reference_selectors_use_the_timed_profile_before_refinement_gates() {
@@ -473,14 +475,17 @@ fn clock_reference_selectors_use_the_timed_profile_before_refinement_gates() {
     );
     let mut request = safety_request(&world);
     request.concrete = concrete_request;
-    let refused = check_timed_refinement(request, &Cancel::new())
-        .expect_err("the existing hidden abstract field gate still applies");
+    // The hidden abstract field no longer refuses: the check runs with the
+    // timed constructor's default selector bound.
+    let outcome = check_timed_refinement(request, &Cancel::new());
     assert!(
-        matches!(
-            refused,
-            TimedRefinementRefusal::Zone(ZoneCheckRefusal::HiddenFieldTimedAbstract)
+        !matches!(
+            outcome,
+            Err(TimedRefinementRefusal::Zone(
+                ZoneCheckRefusal::HiddenFieldTimedAbstract
+            ))
         ),
-        "the timed constructor's default bound precedes this gate: {refused:?}"
+        "a hidden abstract field under a timed abstract side is checked: {outcome:?}"
     );
 }
 

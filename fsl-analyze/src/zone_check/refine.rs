@@ -317,14 +317,6 @@ fn check_refinement_with_time_source<S>(
         check_model_bounds(&abstract_system, BOUND_POSITIONS).map_err(not_simulated)?;
         None
     };
-    if auxiliary_timed.is_some()
-        && refinement
-            .objects()
-            .iter()
-            .any(|object| !object.hidden.is_empty())
-    {
-        return Err(ZoneCheckRefusal::HiddenFieldTimedAbstract.into());
-    }
     let mut run = Run::new(
         &timed,
         Judged::Refinement,
@@ -972,24 +964,9 @@ impl Product<'_, '_> {
         let Some(timed) = run.auxiliary_timed else {
             return Ok((None, None));
         };
-        if let Taken::Abstract(transitions) = taken {
-            let source_position = self
-                .positions
-                .get(source)
-                .ok_or(ZoneCheckRefusal::Fault("auxiliary-source"))?;
-            let mut matched = None;
-            'candidates: for candidate in &source_position.abstract_states {
-                let state = timed
-                    .system()
-                    .pre_state(candidate.clone(), timed.system().declared_anchor());
-                for step in run.timed(timed.guarded_steps(&state))? {
-                    if transitions.contains(step.transition()) {
-                        matched = Some(step);
-                        break 'candidates;
-                    }
-                }
-            }
-            if let Some(step) = matched {
+        if matches!(taken, Taken::Abstract(_) | Taken::CandidateSteps(_)) {
+            let matched = self.matched_auxiliary_step(run, timed, source, taken)?;
+            if let Matched::Step(step) = matched {
                 let concrete_places = run.timed.places().len();
                 let failed = self
                     .auxiliary_guard_complement(run, zone, &step)?
@@ -1036,12 +1013,88 @@ impl Product<'_, '_> {
                     zone.constrain(0, 0, Bound::lt(0.into()))?;
                 }
                 return Ok((failed, Some(transform)));
-            } else {
+            } else if matches!(matched, Matched::Missing) {
                 return Ok((Some((zone.clone(), "mapped-operation".to_owned())), None));
             }
         }
         self.auxiliary_invariants(run, target, zone)?;
         Ok((None, None))
+    }
+
+    /// The abstract step whose clock guard, carries and resets the product
+    /// applies for `taken`. With a hidden field the rows are per candidate;
+    /// the single clock set of the product can follow them only when every
+    /// row yields the same clock behaviour, otherwise the combination is
+    /// refused.
+    fn matched_auxiliary_step(
+        &self,
+        run: &Run<'_, '_, '_>,
+        timed: &TimedSystem<'_, '_>,
+        source: usize,
+        taken: &Taken,
+    ) -> Result<Matched, Halt> {
+        let source_position = self
+            .positions
+            .get(source)
+            .ok_or(ZoneCheckRefusal::Fault("auxiliary-source"))?;
+        let mut candidate_states = Vec::with_capacity(source_position.abstract_states.len());
+        for candidate in &source_position.abstract_states {
+            let key = self
+                .abstract_system
+                .state_key_of(candidate)
+                .map_err(|_| Halt::from(ZoneCheckRefusal::Fault("position-key")))?
+                .0;
+            let state = timed
+                .system()
+                .pre_state(candidate.clone(), timed.system().declared_anchor());
+            candidate_states.push((key, state));
+        }
+        match taken {
+            Taken::Abstract(transitions) => {
+                for (_, state) in &candidate_states {
+                    for step in run.timed(timed.guarded_steps(state))? {
+                        if transitions.contains(step.transition()) {
+                            return Ok(Matched::Step(Box::new(step)));
+                        }
+                    }
+                }
+                Ok(Matched::Missing)
+            }
+            Taken::CandidateSteps(rows) => {
+                let mut chosen: Option<GuardedStep> = None;
+                let mut stutters = false;
+                for row in rows {
+                    let Some(transition) = &row.transition else {
+                        stutters = true;
+                        continue;
+                    };
+                    let (_, state) = candidate_states
+                        .iter()
+                        .find(|(key, _)| *key == row.pre_state)
+                        .ok_or(ZoneCheckRefusal::Fault("auxiliary-candidate"))?;
+                    let step = run
+                        .timed(timed.guarded_steps(state))?
+                        .into_iter()
+                        .find(|step| step.transition() == transition)
+                        .ok_or(ZoneCheckRefusal::Fault("auxiliary-candidate-step"))?;
+                    match &chosen {
+                        None => chosen = Some(step),
+                        Some(first)
+                            if first.parts() == step.parts()
+                                && first.carries() == step.carries()
+                                && first.resets() == step.resets() => {}
+                        Some(_) => return Err(ZoneCheckRefusal::HiddenFieldTimedAbstract.into()),
+                    }
+                }
+                match chosen {
+                    Some(_) if stutters => Err(ZoneCheckRefusal::HiddenFieldTimedAbstract.into()),
+                    Some(step) => Ok(Matched::Step(Box::new(step))),
+                    None if stutters => Ok(Matched::Stutter),
+                    None => Ok(Matched::Missing),
+                }
+            }
+            _ => Ok(Matched::Missing),
+        }
     }
 
     /// Find a zone point outside every convex part of an abstract guard.
@@ -1359,4 +1412,14 @@ fn refuted(
         blocked: Vec::new(),
         final_delay: None,
     }
+}
+
+/// The abstract step an edge's clock behaviour follows.
+enum Matched {
+    /// One guarded step.
+    Step(Box<GuardedStep>),
+    /// Every candidate stutters: no clock guard, carry or reset.
+    Stutter,
+    /// The row's operation has no guarded step.
+    Missing,
 }
