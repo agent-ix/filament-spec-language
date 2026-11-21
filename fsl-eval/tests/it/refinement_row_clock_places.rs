@@ -804,16 +804,18 @@ fn clock_reference_external_observations_are_explicitly_unsupported() {
     };
     assert_unsupported(&record);
 
-    let ordinary = check_clock_refinement(&clock_refinement("used = 0; busy = false;"))
-        .unwrap_or_else(|refusals| {
-            panic!(
-                "ordinary fixture: {:?}",
-                refusals
-                    .iter()
-                    .map(|refusal| &refusal.refusal)
-                    .collect::<Vec<_>>()
-            )
-        });
+    let ordinary = check_clock_refinement(&clock_refinement(
+        "used = count(c in C::calls where c.n = self.n); busy = self.n = 2;",
+    ))
+    .unwrap_or_else(|refusals| {
+        panic!(
+            "ordinary fixture: {:?}",
+            refusals
+                .iter()
+                .map(|refusal| &refusal.refusal)
+                .collect::<Vec<_>>()
+        )
+    });
     let ordinary_package = CheckedPackage::link(ordinary.graph);
     let ordinary_read = fsl_package::read_evaluation_package(
         &ordinary_package,
