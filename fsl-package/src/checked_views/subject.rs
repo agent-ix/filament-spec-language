@@ -15,6 +15,8 @@ use fsl_foundation::source::provenance::OccurrenceKey;
 use super::graph::Graph;
 use super::ViewRefusal;
 use crate::checked_v2::{resolve_clause_root, role_spelling, wire_graph};
+use crate::native_row::{self, NativeRowError};
+use filament_contract_model::{NativeJoinBudget, NativeJoinLocus};
 
 /// The most formula applications one view expands: the reader's own
 /// `i2.work_units` default. A formula node shared by several parents is read
@@ -754,40 +756,80 @@ fn binding<'t>(members: &'t [CheckedTerm], name: &str) -> Option<&'t CheckedTerm
 }
 
 fn read_activation(term: &CheckedTerm) -> Result<Activation, ViewRefusal> {
-    let members = members(term)?;
-    let kind = binding(members, "kind")
+    read_activation_with(term, &mut UnmeteredFormula)
+}
+
+fn binding_with<'t, W: FormulaWork>(
+    fields: &'t [CheckedTerm],
+    name: &str,
+    work: &mut W,
+) -> Result<Option<&'t CheckedTerm>, W::Error> {
+    for field in fields {
+        work.visit()?;
+        if let CheckedTerm::Binding {
+            name: bound, value, ..
+        } = field
+        {
+            if bound.kind() == CheckedBindingNameKind::Other(name) {
+                return Ok(Some(value));
+            }
+        }
+    }
+    Ok(None)
+}
+
+fn read_activation_with<W: FormulaWork>(
+    term: &CheckedTerm,
+    work: &mut W,
+) -> Result<Activation, W::Error> {
+    let fields = members(term)?;
+    let kind = binding_with(fields, "kind", work)?
         .and_then(CheckedTerm::literal_read)
         .map(|literal| literal.value);
     match kind {
         Some(CheckedLiteralValue::Text("origin")) => Ok(Activation::Origin),
         Some(CheckedLiteralValue::Text("each")) => {
-            let id = |term: &CheckedTerm| {
-                reference_target(term)
-                    .cloned()
-                    .ok_or(ViewRefusal::UnresolvedClause)
-            };
+            let trigger = binding_with(fields, "trigger", work)?
+                .and_then(reference_target)
+                .ok_or(ViewRefusal::UnresolvedClause)?;
+            let guard = binding_with(fields, "guard", work)?
+                .map(|term| reference_target(term).ok_or(ViewRefusal::UnresolvedClause))
+                .transpose()?;
+            work.node(trigger)?;
+            if let Some(guard) = guard {
+                work.node(guard)?;
+            }
             Ok(Activation::Each {
-                trigger: binding(members, "trigger")
-                    .ok_or(ViewRefusal::UnresolvedClause)
-                    .and_then(id)?,
-                guard: binding(members, "guard").map(id).transpose()?,
+                trigger: trigger.clone(),
+                guard: guard.cloned(),
             })
         }
-        _ => Err(ViewRefusal::UnresolvedClause),
+        _ => Err(ViewRefusal::UnresolvedClause.into()),
     }
 }
 
 fn read_capture_names(term: &CheckedTerm) -> Result<Vec<String>, ViewRefusal> {
-    members(term)?
-        .iter()
-        .map(|member| match member {
-            CheckedTerm::Binding { name, .. } => match name.kind() {
-                CheckedBindingNameKind::Other(name) => Ok(name.to_owned()),
-                _ => Err(ViewRefusal::UnresolvedClause),
-            },
-            _ => Err(ViewRefusal::UnresolvedClause),
-        })
-        .collect()
+    read_capture_names_with(term, &mut UnmeteredFormula)
+}
+
+fn read_capture_names_with<W: FormulaWork>(
+    term: &CheckedTerm,
+    work: &mut W,
+) -> Result<Vec<String>, W::Error> {
+    let mut names = Vec::new();
+    for member in members(term)? {
+        work.visit()?;
+        let CheckedTerm::Binding { name, .. } = member else {
+            return Err(ViewRefusal::UnresolvedClause.into());
+        };
+        let CheckedBindingNameKind::Other(name) = name.kind() else {
+            return Err(ViewRefusal::UnresolvedClause.into());
+        };
+        work.text(name)?;
+        work.room(&mut names)?;
+        names.push(name.to_owned());
+    }
+    Ok(names)
 }
 
 /// The declared name of the `value`/`parameter` node `term` is the body of.
@@ -802,15 +844,223 @@ pub(super) fn parameter_name(term: &CheckedTerm) -> Option<&str> {
 }
 
 fn read_captures(term: &CheckedTerm) -> Result<Vec<CheckedNodeId>, ViewRefusal> {
-    members(term)?
-        .iter()
-        .map(|member| match member {
-            CheckedTerm::Binding { value, .. } => reference_target(value)
-                .cloned()
-                .ok_or(ViewRefusal::UnresolvedClause),
-            _ => Err(ViewRefusal::UnresolvedClause),
+    read_captures_with(term, &mut UnmeteredFormula)
+}
+
+fn read_captures_with<W: FormulaWork>(
+    term: &CheckedTerm,
+    work: &mut W,
+) -> Result<Vec<CheckedNodeId>, W::Error> {
+    let mut captures = Vec::new();
+    for member in members(term)? {
+        work.visit()?;
+        let CheckedTerm::Binding { value, .. } = member else {
+            return Err(ViewRefusal::UnresolvedClause.into());
+        };
+        let id = reference_target(value).ok_or(ViewRefusal::UnresolvedClause)?;
+        work.node(id)?;
+        work.room(&mut captures)?;
+        captures.push(id.clone());
+    }
+    Ok(captures)
+}
+
+/// A body read failure keeps the original native denial separate from an
+/// unsupported or malformed admitted view.
+#[derive(Debug, thiserror::Error)]
+pub(crate) enum ClauseBodyRefusal {
+    #[error(transparent)]
+    View(#[from] ViewRefusal),
+    #[error(transparent)]
+    Native(#[from] NativeRowError),
+    #[error("clause-body allocation failed: {0}")]
+    Allocation(#[from] std::collections::TryReserveError),
+}
+
+/// One owner index shared by the requested clause bodies. No source graph or
+/// effective model is built, and no foreign-held key is used as a position.
+pub(crate) struct ClauseBodies<'p> {
+    graph: Graph<'p>,
+    locus: NativeJoinLocus,
+}
+
+/// Borrowed admitted declaration facts plus the one shared formula walk.
+pub(crate) struct ClauseBody<'p> {
+    pub(crate) over: &'p CheckedNodeId,
+    pub(crate) clock: &'p CheckedTerm,
+    pub(crate) activation: Activation,
+    pub(crate) captures: Vec<CheckedNodeId>,
+    pub(crate) capture_names: Vec<String>,
+    pub(crate) profile: &'p CheckedSelection,
+    pub(crate) formula: Vec<FormulaNodeUse<'p>>,
+}
+
+impl<'p> ClauseBodies<'p> {
+    pub(crate) fn new(
+        package: &'p CheckedPackageV2,
+        budget: &mut NativeJoinBudget,
+    ) -> Result<Self, NativeRowError> {
+        let locus = native_row::start(budget, "temporal_clause_bodies")?;
+        Ok(Self {
+            graph: Graph::with_budget(package, budget, locus)?,
+            locus,
         })
-        .collect()
+    }
+
+    pub(crate) fn body(
+        &self,
+        declaration: &CheckedNodeId,
+        budget: &mut NativeJoinBudget,
+    ) -> Result<ClauseBody<'p>, ClauseBodyRefusal> {
+        let graph = &self.graph;
+        let mut work = MeteredFormula {
+            budget,
+            locus: self.locus,
+        };
+        work.visit()?;
+        let at = graph
+            .position(declaration)
+            .ok_or(ViewRefusal::UnresolvedClause)?;
+        if graph.kind(at) != Some(CheckedNodeKind::Temporal(TemporalForm::TemporalClause)) {
+            return Err(ViewRefusal::UnresolvedClause.into());
+        }
+        let Some(CheckedTerm::Application {
+            operation,
+            arguments,
+            ..
+        }) = graph.term(at)
+        else {
+            return Err(ViewRefusal::UnresolvedClause.into());
+        };
+        let operation = operation
+            .read()
+            .map_err(|_| ViewRefusal::UnresolvedClause)?;
+        let [over, clock, activation, captures, _fairness, formula] = arguments.as_slice() else {
+            return Err(ViewRefusal::UnresolvedClause.into());
+        };
+        let mut profile = None;
+        for law in operation.laws {
+            work.visit()?;
+            if law.role != LawRole::TemporalProfile {
+                continue;
+            }
+            for selection in &graph.package().lock().profile_selections {
+                work.visit()?;
+                if selection.role == CheckedSelectionRole::TemporalProfile
+                    && selection.definition == law.definition
+                {
+                    profile = Some(selection);
+                    break;
+                }
+            }
+            if profile.is_some() {
+                break;
+            }
+        }
+        let over = parameter_reference(graph, over)?;
+        if !matches!(
+            clock.literal_read().map(|read| read.value),
+            Some(CheckedLiteralValue::Text(_))
+        ) {
+            return Err(ViewRefusal::UnresolvedClause.into());
+        }
+        let activation = read_activation_with(activation, &mut work)?;
+        let capture_names = read_capture_names_with(captures, &mut work)?;
+        let captures = read_captures_with(captures, &mut work)?;
+        let root = reference_position(graph, formula)?;
+        let (formula, _leaves) = formula_reads_with(graph, root, None, &mut work)?;
+        Ok(ClauseBody {
+            over,
+            clock,
+            activation,
+            captures,
+            capture_names,
+            profile: profile.ok_or(ViewRefusal::UnresolvedClause)?,
+            formula,
+        })
+    }
+
+    pub(crate) fn node(&self, id: &CheckedNodeId) -> Option<&'p CheckedSemanticNodeV2> {
+        self.graph.position(id).and_then(|at| self.graph.node(at))
+    }
+}
+
+trait FormulaWork {
+    type Error: From<ViewRefusal>;
+    fn visit(&mut self) -> Result<(), Self::Error>;
+    fn room<T>(&mut self, list: &mut Vec<T>) -> Result<(), Self::Error>;
+    fn node(&mut self, id: &CheckedNodeId) -> Result<(), Self::Error>;
+    fn text(&mut self, text: &str) -> Result<(), Self::Error>;
+    fn interval(&mut self, interval: &CheckedOperationInterval) -> Result<(), Self::Error>;
+}
+
+struct UnmeteredFormula;
+impl FormulaWork for UnmeteredFormula {
+    type Error = ViewRefusal;
+    fn visit(&mut self) -> Result<(), Self::Error> {
+        Ok(())
+    }
+    fn room<T>(&mut self, list: &mut Vec<T>) -> Result<(), Self::Error> {
+        list.reserve(1);
+        Ok(())
+    }
+    fn node(&mut self, _: &CheckedNodeId) -> Result<(), Self::Error> {
+        Ok(())
+    }
+    fn text(&mut self, _: &str) -> Result<(), Self::Error> {
+        Ok(())
+    }
+    fn interval(&mut self, _: &CheckedOperationInterval) -> Result<(), Self::Error> {
+        Ok(())
+    }
+}
+
+struct MeteredFormula<'a> {
+    budget: &'a mut NativeJoinBudget,
+    locus: NativeJoinLocus,
+}
+impl FormulaWork for MeteredFormula<'_> {
+    type Error = ClauseBodyRefusal;
+    fn visit(&mut self) -> Result<(), Self::Error> {
+        Ok(native_row::work(self.budget, self.locus, 1)?)
+    }
+    fn room<T>(&mut self, list: &mut Vec<T>) -> Result<(), Self::Error> {
+        if list.len() == list.capacity() {
+            let additional = list.len().max(1);
+            native_row::items(
+                self.budget,
+                self.locus,
+                list.len().saturating_add(additional),
+            )?;
+            list.try_reserve_exact(additional)?;
+        }
+        Ok(())
+    }
+    fn node(&mut self, id: &CheckedNodeId) -> Result<(), Self::Error> {
+        Ok(native_row::node(self.budget, self.locus, id)?)
+    }
+    fn text(&mut self, text: &str) -> Result<(), Self::Error> {
+        Ok(native_row::text(self.budget, self.locus, text)?)
+    }
+    fn interval(&mut self, interval: &CheckedOperationInterval) -> Result<(), Self::Error> {
+        match interval {
+            CheckedOperationInterval::Integer { lower, upper } => {
+                native_row::integer(self.budget, self.locus, lower)?;
+                if let Some(upper) = upper {
+                    native_row::integer(self.budget, self.locus, upper)?;
+                }
+            }
+            CheckedOperationInterval::Timed { lower, upper, .. } => {
+                native_row::integer(self.budget, self.locus, &lower.numerator)?;
+                native_row::integer(self.budget, self.locus, &lower.denominator)?;
+                if let Some(upper) = upper {
+                    native_row::integer(self.budget, self.locus, &upper.numerator)?;
+                    native_row::integer(self.budget, self.locus, &upper.denominator)?;
+                }
+            }
+        }
+        Ok(())
+    }
 }
 
 /// The formula nodes rooted at `root` in pre-order with their operand
@@ -820,27 +1070,46 @@ fn formula_reads<'p>(
     root: usize,
     visits: u64,
 ) -> Result<(Vec<FormulaNodeUse<'p>>, Vec<CheckedNodeId>), ViewRefusal> {
+    formula_reads_with(graph, root, Some(visits), &mut UnmeteredFormula)
+}
+
+fn formula_reads_with<'p, W: FormulaWork>(
+    graph: &Graph<'p>,
+    root: usize,
+    visits: Option<u64>,
+    work: &mut W,
+) -> Result<(Vec<FormulaNodeUse<'p>>, Vec<CheckedNodeId>), W::Error> {
     let mut uses: Vec<FormulaNodeUse<'p>> = Vec::new();
     let mut leaves = Vec::new();
     // Each pending entry is a node and the position of the parent that
     // listed it; operands pop in operand order, so they append in that order.
-    let mut pending: Vec<(usize, Option<usize>)> = vec![(root, None)];
+    let mut pending: Vec<(usize, Option<usize>)> = Vec::new();
+    work.room(&mut pending)?;
+    pending.push((root, None));
     while let Some((at, parent)) = pending.pop() {
-        if u64::try_from(uses.len()).map_or(true, |read| read >= visits) {
-            return Err(ViewRefusal::FormulaTooLarge);
+        work.visit()?;
+        if visits
+            .is_some_and(|visits| u64::try_from(uses.len()).map_or(true, |read| read >= visits))
+        {
+            return Err(ViewRefusal::FormulaTooLarge.into());
         }
         if graph.kind(at) != Some(CheckedNodeKind::Temporal(TemporalForm::Formula)) {
-            return Err(ViewRefusal::UnresolvedClause);
+            return Err(ViewRefusal::UnresolvedClause.into());
         }
         let operation = graph.operation(at).ok_or(ViewRefusal::UnresolvedClause)?;
         let interval = match graph.member(at) {
-            Some(CheckedOperationMember::TemporalInterval { interval }) => interval.clone(),
+            Some(CheckedOperationMember::TemporalInterval { interval }) => {
+                if let Some(interval) = interval {
+                    work.interval(interval)?;
+                }
+                interval.clone()
+            }
             _ => None,
         };
         let arguments = graph.arguments(at).ok_or(ViewRefusal::UnresolvedClause)?;
         let aggregate = if FormulaOperation::of(operation) == Some(FormulaOperation::Aggregate) {
             let [CheckedTerm::Aggregate { .. }] = arguments else {
-                return Err(ViewRefusal::UnresolvedClause);
+                return Err(ViewRefusal::UnresolvedClause.into());
             };
             Some(&arguments[0])
         } else {
@@ -848,11 +1117,14 @@ fn formula_reads<'p>(
         };
         let position = uses.len();
         if let Some(parent) = parent {
-            uses.get_mut(parent)
+            let operands = &mut uses
+                .get_mut(parent)
                 .ok_or(ViewRefusal::UnresolvedClause)?
-                .operands
-                .push(position);
+                .operands;
+            work.room(operands)?;
+            operands.push(position);
         }
+        work.room(&mut uses)?;
         uses.push(FormulaNodeUse {
             node: graph
                 .node(at)
@@ -865,8 +1137,11 @@ fn formula_reads<'p>(
         });
         if FormulaOperation::of(operation) == Some(FormulaOperation::Holds) {
             let [operand] = arguments else {
-                return Err(ViewRefusal::UnresolvedClause);
+                return Err(ViewRefusal::UnresolvedClause.into());
             };
+            let leaf = reference_target(operand).ok_or(ViewRefusal::UnresolvedClause)?;
+            work.node(leaf)?;
+            work.room(&mut leaves)?;
             leaves.push(
                 reference_target(operand)
                     .cloned()
@@ -874,6 +1149,8 @@ fn formula_reads<'p>(
             );
         } else if aggregate.is_none() {
             for operand in arguments.iter().rev() {
+                work.visit()?;
+                work.room(&mut pending)?;
                 pending.push((reference_position(graph, operand)?, Some(position)));
             }
         }

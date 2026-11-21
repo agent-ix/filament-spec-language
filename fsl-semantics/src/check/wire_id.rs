@@ -2156,7 +2156,7 @@ mod tests {
 
     /// Structural conversion pays only newly materialized descendants, keeps
     /// exact finite limits and preserves the original first unpaid charge.
-    #[ix_trace_rs::trace("FSpec-FR-322-AC-510", "FR-531-AC-39")]
+    #[ix_trace_rs::trace("TC-1081", "FR-251-AC-49")]
     #[test]
     fn structural_key_materialization_preserves_paid_cache_and_exact_bounds() {
         let child = Arc::new(CheckedNodeId {
@@ -2177,9 +2177,22 @@ mod tests {
             source: filament_contract_model::NativeJoinLocusSource::Package,
             form: "composition_slot_key",
         };
-        let expected = StructuralKeys::default()
-            .key(&root)
-            .expect("legacy structural key");
+        let child_key =
+            NodeKey::new("owner", vec![text("child")], 0).expect("independent child key");
+        let expected = NodeKey::new(
+            "owner",
+            vec![
+                text("root"),
+                PathSegment::Node(child_key.clone()),
+                PathSegment::Node(child_key),
+            ],
+            0,
+        )
+        .expect("independent root key");
+        assert_eq!(
+            StructuralKeys::default().key(&root).expect("legacy key"),
+            expected
+        );
         let mut keys = StructuralKeys::default();
         let mut budget = NativeJoinBudget::new(1_000_000, 1_000_000);
         assert_eq!(
