@@ -1723,7 +1723,7 @@ fn read_object(
                             "keyword": keyword, "operands": {"value":value},
                             "appliesTo": "ix://filament/native/Integer",
                             "diagnosticCode": format!("bound.{keyword}"),
-                            "origin": source_origin(parsed, span),
+                            "origin": json!({"source": source_span(parsed, span)}),
                         }))
                     }).collect::<Option<Vec<_>>>()?;
                     additional_types.push(scalar_type_definition(
@@ -1731,7 +1731,7 @@ fn read_object(
                         &identity,
                         "integer",
                         constraints,
-                        source_origin(parsed, span),
+                        json!({"source": source_span(parsed, span)}),
                     ));
                     inline_integers.push((alias, span));
                     type_reference = Some(identity);

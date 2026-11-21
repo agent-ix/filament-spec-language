@@ -174,13 +174,48 @@ fn compile_model_unit_returns_its_identity_and_stable_document_bytes() {
         serde_json::from_slice(compiled.bytes()).expect("compiled document is JSON");
     assert_eq!(document["contractVersion"], "2.0.0");
     assert_eq!(document["package"]["identity"], "example/shop");
+    let types = document["types"].as_array().unwrap();
+    assert_eq!(types.len(), 3);
+    let order = types
+        .iter()
+        .find(|node| node["identity"] == "ix://example/shop/Order")
+        .unwrap();
     assert_eq!(
-        document["types"][0]["fields"][0]["origin"]["source"]["sourceIdentity"],
+        order["fields"][0]["origin"]["source"]["sourceIdentity"],
         "ix://agent-ix/test:shop-model"
     );
-    assert_eq!(document["types"].as_array().unwrap().len(), 1);
-    let order = &document["types"][0];
-    assert_eq!(order["identity"], "ix://example/shop/Order");
+    for (index, alias, upper, line, column, end_column) in [
+        (0, "OrderId", "999", 4, 7, 18),
+        (1, "OrderTotal", "100", 5, 10, 21),
+    ] {
+        let identity = format!("ix://example/shop/{alias}");
+        assert_eq!(order["fields"][index]["typeRef"], identity);
+        let scalar = types
+            .iter()
+            .find(|node| node["identity"] == identity)
+            .unwrap();
+        assert_eq!(scalar["kind"]["name"], "value_type");
+        assert_eq!(scalar["scalar"], "integer");
+        let origin = serde_json::json!({"source": {
+            "sourceIdentity": "ix://agent-ix/test:shop-model", "path": "shop.fsl",
+            "startLine": line, "startColumn": column, "endLine": line, "endColumn": end_column,
+        }});
+        assert_eq!(scalar["origin"], origin);
+        let constraints = scalar["constraints"].as_array().unwrap();
+        assert_eq!(constraints.len(), 2);
+        for (constraint, keyword, bound) in [
+            (&constraints[0], "min", "0"),
+            (&constraints[1], "max", upper),
+        ] {
+            assert_eq!(
+                constraint["identity"],
+                format!("ix://example/shop/constraint/{alias}/{keyword}")
+            );
+            assert_eq!(constraint["keyword"], keyword);
+            assert_eq!(constraint["operands"]["value"], bound);
+            assert_eq!(constraint["origin"], origin);
+        }
+    }
     assert_eq!(order["fields"].as_array().unwrap().len(), 2);
     for (index, name) in ["id", "total"].into_iter().enumerate() {
         let field = &order["fields"][index];
@@ -227,6 +262,7 @@ fn compile_model_unit_returns_its_identity_and_stable_document_bytes() {
         constructs,
         std::collections::BTreeSet::from([
             ("object_type", "filament.meaning.model.object-type/v1"),
+            ("value_type", "filament.meaning.model.value-type/v1"),
             ("population", "filament.meaning.model.population/v1"),
         ])
     );
@@ -248,7 +284,12 @@ fn compile_model_unit_returns_its_identity_and_stable_document_bytes() {
     let admitted_document: serde_json::Value =
         serde_json::from_slice(&admitted["example/shop"]).expect("admitted document is JSON");
     assert_eq!(
-        admitted_document["types"][0]["operations"][0]["name"],
+        admitted_document["types"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|node| node["identity"] == "ix://example/shop/Order")
+            .unwrap()["operations"][0]["name"],
         "pay"
     );
 }
@@ -312,15 +353,21 @@ population nodes: Node;
         .expect("the relationship model compiles");
     let document: serde_json::Value =
         serde_json::from_slice(compiled.bytes()).expect("compiled document is JSON");
+    let node = document["types"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|node| node["identity"] == "ix://example/graph/Node")
+        .unwrap();
     assert_eq!(
-        document["types"][0]["relationships"][0]["identity"],
+        node["relationships"][0]["identity"],
         "ix://example/graph/relationship/Node-next-Node"
     );
     assert_eq!(
-        document["types"][0]["relationships"][0]["targetEnd"]["multiplicity"]["lower"],
+        node["relationships"][0]["targetEnd"]["multiplicity"]["lower"],
         0
     );
-    let relationship = &document["types"][0]["relationships"][0];
+    let relationship = &node["relationships"][0];
     assert_eq!(relationship["sourceEnd"]["role"], "next");
     assert!(relationship["targetEnd"].get("role").is_none());
     assert_eq!(relationship["sourceEnd"]["multiplicity"]["lower"], 0);
@@ -1233,6 +1280,7 @@ fn inline_integer_fields_refuse_constrained_alias_identity_collisions() {
         "object Order { total: Int[0,3]; } type OrderTotal = Int[0,9];",
         "object Order { total: Int[0,3]; } object OrderTotal {}",
         "object Holder { Maybe: Option<Integer>; } object Option_Holder_ { maybe: Int[0,3]; }",
+        "object Order { total: Int[0,3]; } object Orde { rTotal: Int[0,3]; }",
     ] {
         let source = format!(
             "language \"ix:native\" edition \"1-draft\"; domain \"example/shop\"; {declarations}"
