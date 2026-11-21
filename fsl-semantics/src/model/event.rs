@@ -6,7 +6,7 @@
 )]
 
 use crate::model::domain_package::{DomainPackageRecord, EventTypeRecord};
-use crate::model::intake::{read_record_value_type, NodeCtx};
+use crate::model::intake::{read_record_value_type, NodeCtx, OperationNames};
 use crate::model::normalize::ModelRefusal;
 use filament_checked::key::DeclarationKey;
 
@@ -32,6 +32,7 @@ pub(super) fn bind(context: &mut MeaningBindingContext<'_, '_>) -> Result<(), Mo
         context.at,
         context.meanings_by_node,
         context.records,
+        OperationNames::OwnerRefuses,
         context.pending,
     )?;
     let key = DeclarationKey {

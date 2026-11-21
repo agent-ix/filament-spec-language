@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-//! FR-760-AC-3: every Agent-IX git dependency is pinned to a release tag in
-//! the Cargo manifest that declares its source.
+//! FR-760-AC-3: every Agent-IX git dependency is pinned to a release tag or a full
+//! commit sha `rev` in the Cargo manifest that declares its source.
 
 use std::ffi::OsString;
 use std::fs;
@@ -43,7 +43,7 @@ pub fn run(workspace_root: &Path, arguments: &[OsString]) -> Result<Outcome> {
 
     if findings.is_empty() {
         Ok(Outcome::success(format!(
-            "pin-check ok: {manifest_count} Cargo.toml manifests; {dependency_count} Agent-IX git dependencies are tag-pinned\n"
+            "pin-check ok: {manifest_count} Cargo.toml manifests; {dependency_count} Agent-IX git dependencies are pinned\n"
         )))
     } else {
         let mut summary = format!(
@@ -165,16 +165,24 @@ fn inspect_dependencies(
         let tag = dependency.get("tag").and_then(toml::Value::as_str);
         let branch = dependency.get("branch").and_then(toml::Value::as_str);
         let rev = dependency.get("rev").and_then(toml::Value::as_str);
-        if tag.is_none() || branch.is_some() || rev.is_some() {
+        let full_rev = rev.is_some_and(is_full_sha);
+        if (tag.is_none() && rev.is_none())
+            || branch.is_some()
+            || (rev.is_some() && !full_rev)
+            || (tag.is_some() && rev.is_some())
+        {
             let mut selectors = Vec::new();
-            if tag.is_none() {
-                selectors.push("missing tag".to_owned());
+            if tag.is_none() && rev.is_none() {
+                selectors.push("missing tag or full-sha rev".to_owned());
             }
             if branch.is_some() {
                 selectors.push("uses branch".to_owned());
             }
-            if rev.is_some() {
-                selectors.push("uses rev".to_owned());
+            if tag.is_some() && rev.is_some() {
+                selectors.push("uses both tag and rev".to_owned());
+            }
+            if rev.is_some() && !full_rev {
+                selectors.push("uses rev that is not a full 40-hex sha".to_owned());
             }
             findings.push(format!(
                 "{} [{section}] dependency {name:?} ({git}) {}",
@@ -183,4 +191,10 @@ fn inspect_dependencies(
             ));
         }
     }
+}
+
+/// A full 40-character hexadecimal commit id; abbreviations can become
+/// ambiguous as the dependency's history grows.
+fn is_full_sha(rev: &str) -> bool {
+    rev.len() == 40 && rev.bytes().all(|byte| byte.is_ascii_hexdigit())
 }

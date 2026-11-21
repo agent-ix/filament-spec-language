@@ -152,7 +152,7 @@ pub use certificate::closed_form::check::{
 };
 pub use certificate::closed_form::outcome::{
     AmcEvidence, ClosedFormAnalysis, ClosedFormEvidence, ClosedFormOutcome, DemandWitness,
-    HighModeMiss, JobIterates, MissEvidence, ScheduleLimit, TaskFixpoint,
+    HighModeMiss, JobIterates, MissEvidence, TaskFixpoint,
 };
 pub use certificate::closed_form::recompute::{recompute, ClosedFormCheck, ClosedFormDisagreement};
 pub use certificate::closed_form::settle::settle;
@@ -187,11 +187,13 @@ pub use certificate::task_product::{
 };
 pub use certificate::zone::{LuBounds, Zone, ZoneError};
 pub use certificate::zone_certificate::{
-    check_zone_certificate, AcceptanceSet, CertEdge, CertNode, CertificateCheckLimits,
-    CertificateItem, CertifiedItem, CheckerFault, ComponentReason, Components, DivergenceWitness,
-    DivergentTarget, FairnessMember, ItemIdentity, NonZeno, ProductMark, RefinementIdentity,
-    RefinementPart, SilentMove, StateGraphCertificateForm, StateGraphPart, ZoneCertificate,
-    ZoneCertificateRefusal, ZoneCertificateRequest, ZoneCertificateVerdict,
+    check_zone_certificate, explore_task_product, recomputed_member, AcceptanceSet, CertEdge,
+    CertNode, CertificateCheckLimits, CertificateItem, CertifiedItem, CheckerFault,
+    ComponentReason, Components, DivergenceWitness, DivergentTarget, FairnessMember, ItemIdentity,
+    NonZeno, ProductMark, QuotientEdge, QuotientIdentity, QuotientInitial, QuotientStop,
+    QuotientVertex, RefinementIdentity, RefinementPart, SilentMove, StateGraphCertificateForm,
+    StateGraphPart, TaskProductQuotient, ZoneCertificate, ZoneCertificateRefusal,
+    ZoneCertificateRequest, ZoneCertificateVerdict,
 };
 pub use certificate::{CertificateLocus, CertificateMember, CertificateRule, QueryPart};
 /// FR-322 "Operand index segments": a package's graph and its wire ids.
@@ -227,7 +229,7 @@ pub use execute::{
     replay_with_temporal_selections, settle_verified_shadow, value_parity_obligation, BoundEntries,
     DependencySelectionsCause, Domain, FrameIdentityMismatch, FrameReplayResult,
     IdentityEncodeError, LimitAboveReader, MalformedOperationReason, ParityArgument,
-    ParityBoundRefusal, ParityPreimage, ReplayRefusal, ScalarIdentityMismatch, ValueParityArgument,
+    ParityBoundRefusal, PackageReadRefusal, ParityPreimage, ReplayRefusal, ScalarIdentityMismatch, ValueParityArgument,
     ValueParityPreimage, ValueParityReport, ValueParityResult,
 };
 pub use hybrid::{
@@ -397,6 +399,7 @@ pub use outcome::undefined_reason;
 pub use outcome::{
     assignments_wire, certificate_identity_wire, claim_locus_wire, graph_evidence_wire,
     omitted_witnesses, sampled_witness_wire, OmittedWitness, WitnessOmission,
+    hyper_counterexample_wire,
     probabilistic_wire, protocol_temporal_wire, read_task_temporal_counterexample,
     read_task_temporal_document, read_temporal_counterexample, replay_model_trace_document,
     state_key_wire, task_product_transition_wire, ReadCounterexample, TraceAlphabet,
@@ -433,6 +436,7 @@ pub use probability_certificate::{
     long_run_probability_certificate_document, probabilistic_claim_identity,
     probabilistic_formula_monitor_context, probability_certificate_document,
     probability_proof_document, read_long_run_probability_certificate,
+    region_probability_product_key,
     read_probability_certificate, read_probability_proof_document,
     read_weighted_long_run_probability_certificate, replay_probabilistic_witness,
     weighted_long_run_probability_certificate_document, write_long_run_probability_certificate,
@@ -446,6 +450,8 @@ pub use probability_certificate::{
     ProbabilityDocumentError, ProbabilityDocumentIoLimits, ProbabilityDocumentLimit,
     ProbabilityDocumentLimits, ProbabilityKeyAdmission, ProbabilityObjective,
     ProbabilityProductKey, ProbabilityProofDocument, ProbabilityRewardObjective,
+    TimedProbabilityForm, TimedProbabilityObjective, TimedProbabilityRoute,
+    RegionClockKey, RegionDeadlineKey, RegionKeyKind, RegionProductKeyInput,
     ProbabilitySourceError, ProbabilitySourceLimits, ProbabilitySourceRequest,
     ProbabilityStateEvent, ProbabilityWitnessError, ProbabilityWitnessPath,
     ProbabilityWitnessReplay, ProbabilityWitnessStep, ReproducedProbabilityWitness,

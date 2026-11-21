@@ -22,6 +22,7 @@
 //! canonical form of a state is the least member of its orbit.
 
 mod checked;
+mod closed;
 mod copy_swap;
 mod joint;
 mod product;
@@ -32,6 +33,10 @@ mod witness;
 
 pub use crate::simulation::model::CheckedHyperLetters;
 pub use checked::CheckedStepMatch;
+pub use closed::{
+    closed_executions, horizon, judge_closed_tuple, search_partner, ClosedExecution, ClosedInputs,
+    ClosedStep, ClosedStop, ClosedVerdict, PartnerSearch, Tuples,
+};
 pub use copy_swap::{copy_population, copy_symmetry, CopySwapInputs};
 pub use joint::cartesian;
 pub use product::{

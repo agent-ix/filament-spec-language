@@ -306,6 +306,9 @@ pub(super) struct Request {
     /// reader before any stage runs (`plan::request`).
     #[serde(default, deserialize_with = "present_json_value")]
     pub verification_plan: Option<serde_json::Value>,
+    /// FSpec FR-190's direct model-based testing request member.
+    #[serde(default, deserialize_with = "present_json_value")]
+    pub model_based_test: Option<serde_json::Value>,
 }
 
 fn from_object_opt<'de, D: serde::Deserializer<'de>, T: serde::Deserialize<'de>>(

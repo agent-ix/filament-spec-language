@@ -487,7 +487,7 @@ fn source_and_types(g: &mut Grammar) {
         s(vec![
             opt(x("open")),
             opt(x("symmetric")),
-            x("population"),
+            contextual("population"),
             ident(),
             x(":"),
             ident(),
@@ -666,7 +666,7 @@ fn source_and_types(g: &mut Grammar) {
     g.insert(
         P::InterfaceDeclaration,
         s(vec![
-            x("interface"),
+            contextual("interface"),
             ident(),
             x("{"),
             star(c(vec![r(P::DomainField), r(P::DomainOperation)])),
@@ -676,7 +676,7 @@ fn source_and_types(g: &mut Grammar) {
     g.insert(
         P::PartDeclaration,
         s(vec![
-            x("part"),
+            contextual("part"),
             ident(),
             x(":"),
             ident(),

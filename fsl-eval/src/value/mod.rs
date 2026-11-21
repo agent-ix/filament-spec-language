@@ -96,7 +96,7 @@ pub use expression::{
     evaluate_state_predicate_with, evaluate_terminal_predicate, input_refusal_code, refusal_record,
     supplied_stop_cause, supplied_stop_code, undefined_contract_code,
 };
-pub use expression::{PackageOperations, bare_evaluate_frame};
+pub use expression::{PackageOperations, ProjectedReward, bare_evaluate_frame};
 pub(crate) use expression::{
     ProjectedClause, StateGraphOver, bare_post_targets, evaluate_bare_state_graph_predicate,
     evaluate_bare_terminal_predicate, package_constraint_reads, package_guard_reads,

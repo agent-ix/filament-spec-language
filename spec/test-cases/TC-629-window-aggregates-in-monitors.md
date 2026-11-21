@@ -12,7 +12,7 @@ relationships:
 
 Verify aggregate evaluation under both profiles, nearest-rank quantiles, insufficient data, the window-value limit and work charge, S3 refusals, and the Boolean temporal input.
 
-Scope: FR-194-AC-1 to FR-194-AC-10.
+Scope: FR-194-AC-1 to FR-194-AC-12 and FR-194-AC-14 to FR-194-AC-17.
 
 ## Test Procedure
 
@@ -30,6 +30,10 @@ Fixtures: the timestamped response trace of FR-194-AC-1; event-position traces o
 10. Over `x` values `1, 2`, evaluate FR-194-AC-10's `count` and `sum` terms with `min_count 0` and the `count` without it at position 1; check the `min`, `max`, `fraction` and `quantile` terms with `min_count 0`.
 11. With FR-194-AC-11's model `M` and units, check and evaluate the `sum`, `min`, `max` and `quantile 0.5` terms of `e.latency: Quantity<M::ms>` over `latency` values `5, 1, 4` at position 2, the `sum` with threshold `1 M::s`, the filtered `sum ... where holds(e.latency > 9 M::ms) ... min_count 0 = 0 M::ms`, and the `sum` with thresholds `10 ms` and `10 s`.
 12. With FR-194-AC-12's `Lc`, check each of the four terms of `convert<Lc>(e.d)` with thresholds `5 m` and `5 s`, the `sum` of `e.d` with threshold `convert<Lc>(5 m)`, and the converted-back sum over `d` values `2, -1, 3`, read at position 2.
+13. Over events stamped 0, 5000 and 10000 ms, evaluate FR-194-AC-14's four `count` windows at position 2, and the event-position `count over past[1, 3]` at position 4 of five positions.
+14. Over three events stamped 7 ms with order keys 1, 2, 3 listed as 3, 1, 2, evaluate `count over past[0 ms, 0 ms]` and its `>= 3` atom at each position; repeat with another listing order.
+15. Run FR-194-AC-13's unit over AC-1's trace with watermark 19 and completeness through 9, then through 19; add `min_count 30` and run through 9 and through 300000; run the first input on the carried route.
+16. Run FR-194-AC-13's unit over AC-1's trace with the response at 18 ms missing its `latency`, complete through 300000.
 
 Tag the tests `#[trace("TC-629", "FR-194-AC-n")]`.
 
@@ -47,3 +51,7 @@ Tag the tests `#[trace("TC-629", "FR-194-AC-n")]`.
 - Step 10: `true`, `false` and `true`, never `InsufficientData`; `Undefined(InsufficientData{0, 1})` without `min_count`; `invalid_package`/`invalid-value` at `0` for each of the four other terms.
 - Step 11: value type `Quantity<M::ms>` over the package unit's node and the values `10`, `1`, `5`, `4` of `M::ms`; `true` with the threshold `1000` of `M::ms`; `true` for the filtered sum; `ill_typed`/`unit-mismatch` at `10 ms` and at `10 s`.
 - Step 12: one `ill_typed`/`type-mismatch` at `convert<Lc>(e.d)` per term with `5 m`, and that refusal then `ill_typed`/`unit-mismatch` at `5 s`; `ill_typed`/`type-mismatch` at the threshold; the converted-back sum checks, is `4 m` and the atom is `true`.
+- Step 13: 2, 1, 1 and 2; 3 over positions 1 to 3.
+- Step 14: 1, 2, 3, with the `>= 3` atom true only at position 2, for every listing order.
+- Step 15: `pending-window` with deadline 300000 and the atom at 19 two-valued (`IncompleteInput`); `violated`, exit 10; no `InsufficientData` through 9, `InsufficientData{20, 30}` through 300000; the carried route gives the same results.
+- Step 16: `MissingValuation` at position 19 and an `indeterminate` result with reason `MissingValuation`.

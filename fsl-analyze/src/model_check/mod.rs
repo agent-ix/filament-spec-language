@@ -41,8 +41,8 @@ pub use graph::{
     RetainedGraph, RetainedState,
 };
 pub use hyper::{
-    check_hyper, check_single_existential, HyperCheckRequest, HyperRefusal,
-    SingleExistentialRequest, SingleExistentialRun,
+    alias_provisions, alias_system, check_hyper, check_single_existential, HyperCheckRequest,
+    HyperRefusal, SingleExistentialRequest, SingleExistentialRun,
 };
 pub use liveness::LivenessRefusal;
 pub use product::{

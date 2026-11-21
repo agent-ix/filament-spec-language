@@ -10,14 +10,16 @@ use filament_exact::{Integer, Rational, ValueType};
 use filament_semantic_value::checking::CheckMode;
 use fsl_foundation::diagnostic::Code;
 use fsl_semantics::check::{
-    AggregateTerm, BodyTerm, CheckCause, CheckRefusal, CheckedGraph, CheckedNode, ClockOp,
-    MeasureObligation, StatePredicate, TemporalCause, TimeSourceKind, TimedConstruct, TimedModel,
+    AggregateTerm, BodyTerm, CheckCause, CheckRefusal, CheckedGraph, CheckedNode,
+    CheckingLimitKind, ClockOp, MeasureObligation, StatePredicate, TemporalCause, TimeSourceKind,
+    TimedConstruct, TimedModel,
 };
 use fsl_semantics::model::intake::meaning;
 use ix_trace_rs::trace;
 use serde_json::{json, Value};
 
 mod behavior_boundaries;
+mod recursive_readings;
 
 use crate::model_operations::{
     admit_and_assemble_with_profiles, config_unit_with_profiles, operation,
@@ -697,6 +699,41 @@ fn many_clocks_and_a_huge_constant_check() {
     assert_eq!(bound.numerator().to_string(), expected);
 }
 
+/// FR-230-AC-4's negative (TC-685 step 4): a guard shape AC-4 admits refuses
+/// with a typed cause once one operand is outside it. The exact `10^40 ms`
+/// constant negated is a negative constant at its quantity, and a disjunct
+/// comparing the clock with another clock is a clock comparison at that
+/// comparison.
+#[trace("TC-685", "FR-230-AC-4")]
+#[test]
+fn a_disjunctive_guard_with_an_inadmissible_operand_refuses() {
+    let document = rpc_document(&["x", "y"]);
+    let huge = format!("1{} ms", "0".repeat(40));
+    for (guard, tag, at) in [
+        (
+            format!("(self.x < 1 ms or self.x > -{huge}) and self.ready"),
+            "negative-clock-constant",
+            format!("-{huge}"),
+        ),
+        (
+            "(self.x < 1 ms or self.x > self.y) and self.ready".to_owned(),
+            "clock-comparison",
+            "self.x > self.y".to_owned(),
+        ),
+    ] {
+        let body = format!(
+            "{UNITS}time Config dense unit ms;\n\
+             pre Bump using v on Config::Call::bump {{ {guard} }}\n"
+        );
+        let (cause, text) = refused(&document, &body);
+        assert_eq!(
+            (cause.code(), cause.tag(), text.as_str()),
+            (Code::InvalidTimedModel, tag, at.as_str()),
+            "{guard}"
+        );
+    }
+}
+
 /// Part of FR-230-AC-2 (TC-685): each ill-formed clock use refuses at its
 /// span, a clock read through a path other than `self` and a clock write
 /// nested under `implies` among them. Not covered: the duplicate-source,
@@ -1253,9 +1290,8 @@ fn a_clock_reading_call_elsewhere_reads_a_clock_outside_a_constraint() {
 /// FR-230 "Parameters" (TC-685): an `if` whose condition reads a clock is no
 /// data condition, so a place it selects refuses `clock-read-outside-
 /// constraint` at the condition; a recursive clock-reading declaration
-/// with no `decreases` refuses `missing-measure` (FR-091-AC-30), and one
-/// with a measure, which FR-230 gives no expansion (STD-493 item 19), is
-/// not checked.
+/// with no `decreases` refuses `missing-measure` (FR-091-AC-30), and a
+/// measured one whose unfolding does not end is stopped by the work budget.
 #[trace("TC-685")]
 #[test]
 fn a_place_selected_by_a_clock_or_a_recursive_expansion_refuses() {
@@ -1313,29 +1349,36 @@ fn a_place_selected_by_a_clock_or_a_recursive_expansion_refuses() {
         text[region.start() as usize..region.end() as usize].starts_with("predicate loop"),
         "{region:?}"
     );
-    // A measured one, whose expansion FR-230 does not define (STD-493 item
-    // 19), is not checked.
-    let refusals = check(
-        &document,
-        &format!(
-            "{dense}function loop using v(c: Clock, n: Integer): Boolean pure decreases(n) {{ \
-                 loop(c, n - 1) }}\n\
-             pre L using v on Config::Call::reply {{ loop(self.x, 3) }}\n"
-        ),
-    )
-    .expect_err("the expansion does not end");
-    assert!(
-        matches!(
-            refusals.as_slice(),
-            [CheckRefusal {
-                cause: CheckCause::TimedNotChecked {
-                    construct: TimedConstruct::RecursiveClockReading,
-                    ..
-                },
-                ..
-            }]
-        ),
-        "{refusals:?}"
+    // A measured declaration whose unfolding never reaches a base case is
+    // stopped by the work budget at its call, not by the stack.
+    let unbounded = format!(
+        "{dense}function loop using v(c: Clock, n: Integer): Boolean pure decreases(n) {{ \
+             loop(c, n - 1) }}\n\
+         pre L using v on Config::Call::reply {{ loop(self.x, 3) }}\n"
+    );
+    let admitted = admit_and_assemble_with_profiles(&document, TEMPORAL, &unbounded)
+        .expect("S2 builds every form")
+        .with_unwritten_timed_members();
+    let regions = admitted.regions();
+    let refusals = admitted
+        .check(
+            CheckMode::Linked,
+            filament_semantic_value::checking::CheckingLimits::default().with_work_budget(1000),
+            &crate::reward_evaluator::ZeroRewardEvaluator,
+        )
+        .expect_err("the unfolding does not end");
+    let [refusal] = refusals.as_slice() else {
+        panic!("one refusal: {refusals:?}");
+    };
+    let CheckCause::ResourceExhausted(limit) = &refusal.cause else {
+        panic!("a stage limit: {refusal:?}");
+    };
+    assert_eq!(limit.kind, CheckingLimitKind::WorkBudget);
+    let region = regions.refusal_region(refusal).expect("a region");
+    let (text, _) = config_unit_with_profiles(&document, TEMPORAL, &unbounded);
+    assert_eq!(
+        &text[region.start() as usize..region.end() as usize],
+        "loop(self.x, 3)"
     );
 }
 
@@ -1655,11 +1698,11 @@ fn each_units_tick_anchor_is_its_own_packages_operation() {
 
 /// FR-230-AC-68 "Recursive clock readings": a measured recursive
 /// clock-reading declaration unfolds at a call whose data arguments are
-/// constants, and a call whose data argument is not a constant reads a clock
-/// outside a constraint.
+/// constants into the one atomic constraint, a call whose data argument is
+/// not a constant reads a clock outside a constraint naming the cycle, and
+/// each unfolding is one unit of the checker's work budget.
 #[trace("TC-2392", "FR-230-AC-68")]
 #[test]
-#[ignore = "QSL-2144: measured recursive clock-reading expansion is refused TimedNotChecked, not unfolded"]
 fn a_measured_recursive_clock_reading_unfolds() {
     let document = rpc_document(&["x", "y"]);
     let declarations = |call: &str| {
@@ -1670,8 +1713,22 @@ fn a_measured_recursive_clock_reading_unfolds() {
              pre L using v on Config::Call::reply {{ {call} }}\n"
         )
     };
-    check(&document, &declarations("loop(self.x, 3)"))
+    let graph = check(&document, &declarations("loop(self.x, 3)"))
         .unwrap_or_else(|refusals| panic!("the constant call unfolds: {refusals:?}"));
+    let [guard] = timed(&graph).guards() else {
+        panic!("one guard");
+    };
+    let [part] = guard.parts() else {
+        panic!("one convex part");
+    };
+    assert!(part.data().is_none(), "no data literal beside the constraint");
+    let [constraint] = part.clocks() else {
+        panic!("one atomic constraint");
+    };
+    assert_eq!(
+        (constraint.op(), constraint.bound().clone()),
+        (ClockOp::LessOrEqual, exact(3, 1))
+    );
     let (cause, text) = refused(&document, &declarations("loop(self.x, self.n)"));
     assert_eq!(
         (cause.code(), cause.tag(), text.as_str()),
@@ -1681,33 +1738,57 @@ fn a_measured_recursive_clock_reading_unfolds() {
             "loop(self.x, self.n)"
         )
     );
-    // Each unfolding is one work unit: the smallest budget that admits the
-    // constant call, less one, refuses `work-budget-exceeded` at the call.
-    let unit = declarations("loop(self.x, 3)");
-    let with_budget = |budget: u64| {
-        admit_and_assemble_with_profiles(&document, TEMPORAL, &unit)
-            .expect("S2 builds every timed form")
-            .with_unwritten_timed_members()
-            .check(
-                CheckMode::Linked,
-                filament_semantic_value::checking::CheckingLimits::default()
-                    .with_work_budget(budget),
-                &crate::reward_evaluator::ZeroRewardEvaluator,
-            )
-    };
-    let (mut low, mut high) = (0_u64, 1_u64 << 32);
-    while low + 1 < high {
-        let middle = low + (high - low) / 2;
-        if with_budget(middle).is_ok() {
-            high = middle;
-        } else {
-            low = middle;
-        }
-    }
-    let refusals = with_budget(high - 1).expect_err("one unit short refuses");
-    let text = format!("{refusals:?}");
     assert!(
-        text.contains("WorkBudget"),
-        "work-budget-exceeded at the call: {text}"
+        matches!(&cause, TemporalCause::ClockReadingCycle { cycle, .. }
+            if cycle == &["loop".to_owned(), "loop".to_owned()]),
+        "{cause:?}"
     );
+    // Each unfolding is one work unit, charged as it is read: the smallest
+    // budget that admits a call grows by one for each level of its
+    // argument, a budget short of the unfoldings refuses at the call, and
+    // one unit short of the whole check's work refuses where it runs out.
+    let run = |call: &str, budget: u64| {
+        let unit = declarations(call);
+        let admitted = admit_and_assemble_with_profiles(&document, TEMPORAL, &unit)
+            .expect("S2 builds every timed form")
+            .with_unwritten_timed_members();
+        let regions = admitted.regions();
+        let result = admitted.check(
+            CheckMode::Linked,
+            filament_semantic_value::checking::CheckingLimits::default().with_work_budget(budget),
+            &crate::reward_evaluator::ZeroRewardEvaluator,
+        );
+        (result, regions, unit)
+    };
+    let smallest = |call: &str| {
+        let (mut low, mut high) = (0_u64, 1_u64 << 24);
+        while low + 1 < high {
+            let middle = low + (high - low) / 2;
+            if run(call, middle).0.is_ok() {
+                high = middle;
+            } else {
+                low = middle;
+            }
+        }
+        high
+    };
+    let used = smallest("loop(self.x, 3)");
+    assert_eq!(used, smallest("loop(self.x, 0)") + 3);
+    let work_budget_refusal = |budget: u64| {
+        let (result, regions, unit) = run("loop(self.x, 3)", budget);
+        let refusals = result.expect_err("a short budget refuses");
+        let [refusal] = refusals.as_slice() else {
+            panic!("one refusal: {refusals:?}");
+        };
+        let CheckCause::ResourceExhausted(limit) = &refusal.cause else {
+            panic!("a stage limit: {refusal:?}");
+        };
+        assert_eq!(limit.kind, CheckingLimitKind::WorkBudget);
+        let (text, _) = config_unit_with_profiles(&document, TEMPORAL, &unit);
+        regions
+            .refusal_region(refusal)
+            .map(|region| text[region.start() as usize..region.end() as usize].to_owned())
+    };
+    assert_eq!(work_budget_refusal(3).as_deref(), Some("loop(self.x, 3)"));
+    work_budget_refusal(used - 1);
 }

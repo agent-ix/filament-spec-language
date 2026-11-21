@@ -262,7 +262,11 @@ ranks below 10.
 - The evaluator SHALL give every atom at an eligible position a possibility set over `{true, false}`
   (FSpec FR-160): a valuation present in the trace is a singleton; a valuation
   absent from the admitted observation of an eligible position is `MissingValuation`
-  (both possibilities). A position is one admitted observation, so it holds at
+  (both possibilities). A window aggregate atom (FR-194) is an atom of its
+  anchor position: its window may reach stamps where completeness is not
+  asserted, and FR-194 "Windows that reach stamps not asserted complete" gives
+  it both possibilities there, with reason `IncompleteInput`, so an aggregate
+  over a partial window is never read as final. A position is one admitted observation, so it holds at
   most one valuation of an atom. Observations that share a stamp are readings of
   one instant: when two of them give differing valuations of one atom, the atom
   is `ConflictingValuation` at every position of that stamp (both possibilities,

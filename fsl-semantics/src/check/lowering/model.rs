@@ -33,7 +33,8 @@ use crate::check::node_key::{
 use crate::check::refusal::{CheckCause, CheckRefusal, KeyFault};
 use crate::check::VariantTypeDeclaration;
 use crate::model::domain_package::{
-    DomainPackage, DomainPackageRecord, DomainPackageRef, PopulationRecord,
+    DomainPackage, DomainPackageRecord, DomainPackageRef, NativeValueType, PopulationRecord,
+    ValueTypeRef,
 };
 use crate::model::normalize::EffectiveView;
 use crate::value::nominal_payload::{
@@ -773,6 +774,52 @@ impl AdmittedModel {
             owner.clone(),
             name,
         ))
+    }
+
+    /// The key type of a map-valued clock place field, retained for lowering
+    /// its slot-presence binder even though the field is not ordinary data.
+    pub(crate) fn clock_map_key_type(
+        &self,
+        object: EffectiveId,
+        field_name: &str,
+    ) -> Option<ValueType> {
+        let place = self.places.iter().find(|place| {
+            self.conforms(object.clone(), place.owner.clone())
+                && matches!(
+                    place.path.as_slice(),
+                    [PlaceStep::Field(name), PlaceStep::Slot(shape)]
+                        if name == field_name && shape.map
+                )
+        })?;
+        let DomainPackageRecord::FieldMember(field) = self.records.get(&place.field)? else {
+            return None;
+        };
+        let ValueTypeRef::Package(map_key) = &field.value_type else {
+            return None;
+        };
+        let DomainPackageRecord::MapType(map) = self.records.get(map_key)? else {
+            return None;
+        };
+        let mut key = &map.keys;
+        for _ in 0..=self.records.len() {
+            let ValueTypeRef::Package(alias_key) = key else {
+                break;
+            };
+            let Some(DomainPackageRecord::AliasType(alias)) = self.records.get(alias_key) else {
+                break;
+            };
+            key = &alias.target;
+        }
+        match key {
+            ValueTypeRef::Native(NativeValueType::Text | NativeValueType::String) => {
+                Some(ValueType::String)
+            }
+            ValueTypeRef::Native(NativeValueType::Integer) => Some(ValueType::Integer),
+            ValueTypeRef::Native(NativeValueType::Uuid) => Some(ValueType::Uuid),
+            ValueTypeRef::Native(NativeValueType::Timestamp) => Some(ValueType::Timestamp),
+            ValueTypeRef::Resolved(value_type) => Some((**value_type).clone()),
+            _ => None,
+        }
     }
 
     /// The effective identity of the object type declared under `key`.
@@ -3173,6 +3220,9 @@ impl<'a> Lowering<'a> {
         target: EffectiveId,
         location: &Location,
     ) -> Result<NodeKey, CheckRefusal> {
+        if target == crate::check::clock_reference_target() {
+            return self.scalar("clock_reference", location);
+        }
         let object = self.object_node(target, location)?;
         self.insert(
             location,
@@ -3342,6 +3392,7 @@ impl<'a> Lowering<'a> {
                         ScalarValueDomain::Rational { unit, .. } => unit.as_deref(),
                         ScalarValueDomain::Integer { .. }
                         | ScalarValueDomain::Text(_)
+                        | ScalarValueDomain::Decimal(_)
                         | ScalarValueDomain::Native(_) => None,
                     },
                     DomainPackageRecord::Enum(_)

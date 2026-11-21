@@ -27,6 +27,7 @@ mod counterexample;
 pub mod hint;
 pub use counterexample::{
     CounterexampleWireError, ProtocolWire, assignments_wire, graph_evidence_wire,
+    hyper_counterexample_wire,
     sampled_witness_wire, probabilistic_wire, protocol_temporal_wire, task_temporal_wire, temporal_wire,
     task_temporal_wire_with_queue_growth,
     task_source_transition_wire, task_transition_wire,
@@ -998,6 +999,15 @@ impl ItemCause {
             }
             ReportedInconclusiveCause::Cause(InconclusiveCause::ReplayRefused(code)) => {
                 item.code = Some(code.as_str().to_owned());
+            }
+            ReportedInconclusiveCause::Cause(InconclusiveCause::ReplayRefusedAtBound {
+                code,
+                cause,
+                setting,
+            }) => {
+                item.code = Some(code.as_str().to_owned());
+                item.cause = Some((*cause).to_owned());
+                item.setting = Some(setting);
             }
             ReportedInconclusiveCause::Cause(InconclusiveCause::StaleDependency {
                 requested,
@@ -3463,6 +3473,7 @@ fn replay_stage(refusal: &ReplayRefusal) -> Option<OutcomeStage> {
         | ReplayRefusal::LimitAboveReader(_)
         | ReplayRefusal::SourceCount(_)
         | ReplayRefusal::PackageSources(_)
+        | ReplayRefusal::PackageRead(_)
         | ReplayRefusal::DependencySources { .. }
         | ReplayRefusal::DependencySelections(_)
         | ReplayRefusal::DependencyInput(_)

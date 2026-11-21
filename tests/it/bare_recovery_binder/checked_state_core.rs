@@ -22,8 +22,7 @@ fn checked_recipe(condition: &str, declarations: &str) -> Recipe {
 }
 
 #[test]
-#[trace("FR-531", "FR-520-AC-1")]
-#[ignore = "QSL-2723: authentic conditional equality witness refuses Equality(Unknown); strict Boolean oracle pending"]
+#[trace("FR-531", "FR-520-AC-1", "FR-495-AC-24")]
 fn bytes_only_recovery_combines_modulo_multiplicity_sum_and_branch_selection() {
     let recipe = checked_recipe(
         "let n = size(recoveredFull.receipts) in if activatedFull then n mod 3 = 0 else sum<M::Total>(r in recoveredFull.receipts: r) = targetFull and n mod 3 = 1",

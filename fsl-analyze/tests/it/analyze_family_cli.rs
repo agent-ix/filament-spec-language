@@ -524,6 +524,131 @@ fn schedulability_proves_on_en7_and_a_tight_response_refutes() {
     assert_eq!(miss["miss"]["bound"]["numerator"], "11", "{miss}");
 }
 
+/// FR-633, FR-247: EDF and AMC each settle their holding and low-mode or
+/// utilization miss cases through the native-analyze request wire.
+#[trace("TC-1593", "FR-633-AC-3", "FR-247-AC-2", "FR-247-AC-3")]
+#[test]
+fn edf_and_amc_schedulability_items_settle_through_the_wire() {
+    fn schedule_source(task_set: &str, claims: &str) -> String {
+        format!(
+            "language \"ix:native\" edition \"1-draft\";\n\
+             profile t = \"filament.temporal.complete/v1\";\n\
+             dimension Time;\nunit ms : Time = rational(1, 1);\n\
+             {task_set}\n{claims}"
+        )
+    }
+
+    fn run_schedule(name: &str, source: &str, claim: &str) -> crate::analyze_cli_support::Run {
+        let ws = Workspace::new(name);
+        let path = request_over(
+            &ws,
+            source,
+            &crate::counter::document(false),
+            &[],
+            json!({"models": [], "items": [{"claim": claim}]}),
+        );
+        analyze(&path)
+    }
+
+    let edf_task_set = |third| {
+        format!(
+            "taskset Ctl {{\n\
+             task a periodic 4 ms deadline 4 ms wcet 1 ms priority 1 lo;\n\
+             task b periodic 6 ms deadline 6 ms wcet 2 ms priority 2 lo;\n\
+             task c periodic 12 ms deadline 12 ms wcet {third} ms priority 3 lo;\
+             }}"
+        )
+    };
+    let edf_claim = "schedulable CtlEdf on Ctl under edf;";
+    let edf_holds = run_schedule(
+        "schedulability-edf-holds",
+        &schedule_source(&edf_task_set(5), edf_claim),
+        "CtlEdf",
+    );
+    let edf_item = edf_holds.item(0);
+    assert_eq!(label(&edf_item), "proved", "{}", edf_holds.document());
+    assert_eq!(edf_item["record"]["basis"]["analysis"], "edf");
+    assert_eq!(edf_item["record"]["certification"], "certified");
+
+    let edf_refuted = run_schedule(
+        "schedulability-edf-refuted",
+        &schedule_source(&edf_task_set(6), edf_claim),
+        "CtlEdf",
+    );
+    let edf_miss = &edf_refuted.item(0)["counterexample"]["counterexample"];
+    assert_eq!(label(&edf_refuted.item(0)), "refuted", "{edf_miss}");
+    assert_eq!(edf_miss["type"], "schedulability-miss");
+    assert_eq!(edf_miss["miss"]["utilization"]["numerator"], "13");
+    assert_eq!(edf_miss["miss"]["utilization"]["denominator"], "12");
+
+    let amc_task_set = |low, high| {
+        format!(
+            "taskset Mc {{\n\
+             task a periodic 4 ms deadline 4 ms wcet 1 ms priority 1 lo;\n\
+             task b periodic 6 ms deadline 6 ms wcet {low} ms priority 2 hi wcet_hi {high} ms;\
+             }}"
+        )
+    };
+    let amc_claim = "schedulable McAmc on Mc under amc;";
+    let amc_holds = run_schedule(
+        "schedulability-amc-holds",
+        &schedule_source(&amc_task_set(1, 3), amc_claim),
+        "McAmc",
+    );
+    let amc_item = amc_holds.item(0);
+    assert_eq!(label(&amc_item), "proved", "{}", amc_holds.document());
+    assert_eq!(amc_item["record"]["basis"]["analysis"], "amc-rtb");
+    assert_eq!(amc_item["record"]["certification"], "certified");
+
+    let amc_refuted = run_schedule(
+        "schedulability-amc-refuted",
+        &schedule_source(&amc_task_set(5, 5), amc_claim),
+        "McAmc",
+    );
+    let amc_miss = &amc_refuted.item(0)["counterexample"]["counterexample"];
+    assert_eq!(label(&amc_refuted.item(0)), "refuted", "{amc_miss}");
+    assert_eq!(amc_miss["type"], "schedulability-miss");
+    assert_eq!(amc_miss["miss"]["task"], "b");
+    assert_eq!(amc_miss["miss"]["mode"], "lo");
+}
+
+/// FR-633 budgets: EDF's default QPA demand-point cap settles
+/// incomplete through the native-analyze request path.
+#[trace("TC-1593", "FR-633")]
+#[test]
+fn edf_qpa_default_demand_point_cap_settles_incomplete_through_analyze() {
+    let period = 1_048_580_u64;
+    let long_period = period * period + 1;
+    let unit = format!(
+        "language \"ix:native\" edition \"1-draft\";\n\
+         profile t = \"filament.temporal.complete/v1\";\n\
+         dimension Time;\nunit ms : Time = rational(1, 1);\n\
+         taskset Many {{\n\
+         task a periodic {period} ms deadline {period} ms wcet {} ms priority 1 lo;\n\
+         task b periodic {long_period} ms deadline {long_period} ms wcet {period} ms priority 2 lo;\n\
+         }}\n\
+         schedulable ManyEdf on Many under edf;\n",
+        period - 1
+    );
+    let ws = Workspace::new("family-edf-demand-point-limit");
+    let request = request_over(
+        &ws,
+        &unit,
+        &crate::counter::document(false),
+        &[],
+        json!({"models": [], "items": [{"claim": "ManyEdf"}]}),
+    );
+    let run = analyze(&request);
+    let item = run.item(0);
+    assert_eq!(run.exit, 22, "{}", run.document());
+    assert_eq!(label(&item), "incomplete", "{item}");
+    let cause = &item["record"]["cause"];
+    assert_eq!(cause["kind"], "limit-reached", "{item}");
+    assert_eq!(cause["limit"], "max_demand_points", "{item}");
+    assert_eq!(cause["value"], 1_048_576, "{item}");
+    assert_eq!(cause["setting"], "schedule.max_demand_points", "{item}");
+}
+
 /// FR-635-AC-1, AC-2: an item naming a process provider handed to
 /// `analyze_with_providers` settles on it, the registry lists it, and another
 /// item is unchanged by it. The provider stands where the driver passes a
@@ -873,7 +998,6 @@ pub(crate) fn ctl_request(ws: &Workspace, claims: &str, items: Value) -> std::pa
 /// under the two rows' configurations; it is never `not-yet-implemented`.
 #[trace("TC-2243", "FR-640-AC-12")]
 #[test]
-#[ignore = "QSL-2643: the bounded event-position hyper form is not implemented (hyper_clause.rs sets a form only for InfiniteTrace, so model_check/hyper.rs refuses it as FormNotDecided { form: None }); native-analyze/1 also refuses invalid_capability/unknown-claim for the two-model hyper clause (document.rs settles unknown_claim when the name resolves no declaration or claim occurrence; which of the two fails is not confirmed by reading)"]
 fn a_hyper_clause_over_two_models_analyzes_and_replays_per_trace() {
     let declaration = "hyper Saves using e over behaviours (v: V::Vault, w: N::Vault) \
                        forall trace a of V forall trace b of N \
@@ -905,10 +1029,9 @@ fn a_hyper_clause_over_two_models_analyzes_and_replays_per_trace() {
         "{item}"
     );
     let verdict = label(&item);
-    assert!(matches!(verdict, "proved" | "refuted"), "{item}");
-    if verdict == "refuted" {
-        assert_eq!(item["replay"]["reproduced"], true, "{item}");
-    }
+    // FR-173-AC-6's HP-2 `l` body: the two vaults' `l` differ, so it is refuted.
+    assert_eq!(verdict, "refuted", "{item}");
+    assert_eq!(item["replay"]["reproduced"], true, "{item}");
 }
 
 /// FR-640-AC-12 (TC-2243): the hyper model checker refutes a two-model
@@ -917,12 +1040,10 @@ fn a_hyper_clause_over_two_models_analyzes_and_replays_per_trace() {
 /// `fsl_replay` and settles `refuted`.
 #[trace("TC-2243", "FR-640-AC-12")]
 #[test]
-#[ignore = "QSL-2643: the bounded event-position hyper form is not implemented (hyper_clause.rs sets a form only for InfiniteTrace, so model_check/hyper.rs refuses it as FormNotDecided { form: None }); native-analyze/1 also refuses invalid_capability/unknown-claim for the two-model hyper clause (document.rs settles unknown_claim when the name resolves no declaration or claim occurrence; which of the two fails is not confirmed by reading)"]
 fn a_two_model_hyper_counterexample_replays_through_the_engine() {
     use filament_exact::Cancel;
     use fsl_eval::hyper::{CheckedHyperLetters, CheckedStepMatch, ParameterBinding};
     use fsl_eval::model_subject::ModelInstance;
-    use fsl_eval::simulation::model::ModelSystem;
     use fsl_replay::{
         replay_hyper_trace_tuple, settle_hyper_check, HyperOutcome, HyperReplay, ModelCheckLimits,
         TerminalValue,
@@ -939,15 +1060,15 @@ fn a_two_model_hyper_counterexample_replays_through_the_engine() {
     );
     let limits = ModelCheckLimits::default();
     let outcome = world
-        .run(limits, &Cancel::new())
+        .run_selecting(fsl_route::reductions::Reductions::default())
         .expect("the two-model hyper item runs");
     let HyperOutcome::Violated { counterexample, .. } = &outcome else {
         panic!("Saves is refuted by the initial model values: {outcome:?}");
     };
 
-    let subject = world.subject();
-    let system = ModelSystem::new(subject.simulation).expect("the subject admits");
-    let systems = vec![&system; world.clause.quantifiers().len()];
+    // One system per trace variable's own model.
+    let seams = world.seams();
+    let systems = seams.per_trace();
     let letters = CheckedHyperLetters::new(&world.package, &world.clause, systems.clone())
         .expect("the clause letters admit the subject");
     let matcher = CheckedStepMatch::new(&world.package, &world.clause);
@@ -976,6 +1097,7 @@ fn a_two_model_hyper_counterexample_replays_through_the_engine() {
         matcher: &matcher,
         meter: crate::counter::UNLIMITED,
         max_witness_set: limits.max_witness_set,
+        max_states: u64::try_from(limits.limits.max_states).unwrap_or(u64::MAX),
         cancel: &cancel,
     };
     assert!(matches!(

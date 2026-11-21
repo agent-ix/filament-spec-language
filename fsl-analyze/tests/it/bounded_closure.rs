@@ -515,6 +515,7 @@ fn a_formula_product_embeds_the_real_complete_monitor_without_inner_transport() 
         cyclic_dtmc: false,
         reward: None,
         event: None,
+        timed: None,
         failures: Vec::new(),
         identity: fsl_package::ObligationIdentity::new(
             filament_exact::NodeKey::new(

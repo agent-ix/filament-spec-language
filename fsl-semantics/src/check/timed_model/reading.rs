@@ -23,7 +23,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::rc::Rc;
 
-use filament_exact::{EffectiveId, Rational};
+use filament_exact::{EffectiveId, Integer, NonZeroInteger, Rational};
 use fsl_forms::{
     BinaryOperator, BinderQuery, ExprId, ExprNode, Expression, ExpressionForm, ExpressionSpans,
     NameForm, TypeFormHead,
@@ -69,6 +69,9 @@ pub(crate) struct Declarations<'r> {
     spellings: &'r ModelSpellings,
     /// The source unit of each declaration, by declared name.
     source_owners: &'r BTreeMap<String, RawSourceRef>,
+    /// The cycle of calls through each recursive declaration, from it back
+    /// to itself.
+    cycles: BTreeMap<&'r str, Vec<String>>,
 }
 
 impl<'r> Declarations<'r> {
@@ -78,6 +81,20 @@ impl<'r> Declarations<'r> {
         spellings: &'r ModelSpellings,
         source_owners: &'r BTreeMap<String, RawSourceRef>,
     ) -> Self {
+        let calls = call_graph(declarations);
+        let cycles = declarations
+            .iter()
+            .enumerate()
+            .filter_map(|(start, declaration)| {
+                let members = cycle_from(&calls, start)?;
+                let names = members
+                    .iter()
+                    .filter_map(|member| declarations.get(*member))
+                    .map(|member| member.function.name.clone())
+                    .collect();
+                Some((declaration.function.name.as_str(), names))
+            })
+            .collect();
         Self {
             by_name: declarations
                 .iter()
@@ -86,7 +103,15 @@ impl<'r> Declarations<'r> {
             models,
             spellings,
             source_owners,
+            cycles,
         }
+    }
+
+    /// The declarations on the cycle of calls through `name`, in call
+    /// order from `name` back to itself; `None` when `name` is not
+    /// recursive.
+    fn cycle(&self, name: &str) -> Option<&[String]> {
+        self.cycles.get(name).map(Vec::as_slice)
     }
 
     /// The declaration a written call name names: an unqualified name of
@@ -681,6 +706,238 @@ enum Argument {
     Value {
         term: DataLiteral,
         constant: Result<Rational, TemporalCause>,
+        /// Its value, when it is an integer or Boolean constant.
+        known: Option<Known>,
+    },
+}
+
+impl Argument {
+    /// Whether the argument is a constant the checker evaluates, or no data
+    /// argument at all.
+    fn is_constant(&self) -> bool {
+        match self {
+            Self::Value {
+                constant, known, ..
+            } => known.is_some() || constant.is_ok(),
+            Self::Places(_) | Self::Path(_) => true,
+        }
+    }
+}
+
+/// A constant a data argument or a condition evaluates to.
+#[derive(Clone, Debug, PartialEq)]
+enum Known {
+    Integer(Integer),
+    Boolean(bool),
+    /// A union value written `U::member(payload…)` or `U::member`.
+    Union {
+        member: String,
+        payload: Vec<Known>,
+    },
+}
+
+/// The constant node `id` of `expression` evaluates to: a literal, a name
+/// `resolve` gives a constant, a union value, or an operation over
+/// constants. `Err` carries the bit length of an integer result past
+/// `bits`; `None` is a value that is not a constant.
+fn fold(
+    expression: &Expression,
+    resolve: &dyn Fn(ExprId) -> Option<Known>,
+    id: ExprId,
+    bits: u64,
+) -> Result<Option<Known>, u64> {
+    let Some(node) = expression.get(id).map(|node| node.node()) else {
+        return Ok(None);
+    };
+    let again = |id: ExprId| fold(expression, resolve, id, bits);
+    match node {
+        ExprNode::Integer(value) => bounded(value.clone(), bits),
+        ExprNode::Boolean(value) => Ok(Some(Known::Boolean(*value))),
+        ExprNode::Name(name) if name.segments.len() == 1 => Ok(resolve(id)),
+        ExprNode::Name(name) => Ok(Some(Known::Union {
+            member: member_of(name),
+            payload: Vec::new(),
+        })),
+        ExprNode::Call { name, arguments } if name.segments.len() > 1 => {
+            let mut payload = Vec::with_capacity(arguments.len());
+            for argument in arguments {
+                match again(*argument)? {
+                    Some(known) => payload.push(known),
+                    None => return Ok(None),
+                }
+            }
+            Ok(Some(Known::Union {
+                member: member_of(name),
+                payload,
+            }))
+        }
+        ExprNode::Negate(operand) => match again(*operand)? {
+            Some(Known::Integer(value)) => bounded(value.neg(), bits),
+            _ => Ok(None),
+        },
+        ExprNode::Not(operand) => match again(*operand)? {
+            Some(Known::Boolean(value)) => Ok(Some(Known::Boolean(!value))),
+            _ => Ok(None),
+        },
+        ExprNode::Binary {
+            operator,
+            left,
+            right,
+        } => {
+            let (Some(left), Some(right)) = (again(*left)?, again(*right)?) else {
+                return Ok(None);
+            };
+            operate(*operator, left, right, bits)
+        }
+        _ => Ok(None),
+    }
+}
+
+/// The last segment of a union member's written name.
+fn member_of(name: &NameForm) -> String {
+    name.segments.last().cloned().unwrap_or_default()
+}
+
+fn bounded(value: Integer, bits: u64) -> Result<Option<Known>, u64> {
+    let wide = value.magnitude_bits();
+    if wide > bits {
+        Err(wide)
+    } else {
+        Ok(Some(Known::Integer(value)))
+    }
+}
+
+/// `left operator right` over constants.
+fn operate(
+    operator: BinaryOperator,
+    left: Known,
+    right: Known,
+    bits: u64,
+) -> Result<Option<Known>, u64> {
+    let truth = |value: bool| Ok(Some(Known::Boolean(value)));
+    match (left, right) {
+        (Known::Integer(left), Known::Integer(right)) => match operator {
+            BinaryOperator::Add => bounded(left.add(&right), bits),
+            BinaryOperator::Subtract => bounded(left.sub(&right), bits),
+            BinaryOperator::Multiply => bounded(left.mul(&right), bits),
+            BinaryOperator::IntegerDiv
+            | BinaryOperator::IntegerRem
+            | BinaryOperator::IntegerMod => Ok(divide(operator, &left, &right)),
+            BinaryOperator::Equal => truth(left == right),
+            BinaryOperator::NotEqual => truth(left != right),
+            BinaryOperator::Less => truth(left < right),
+            BinaryOperator::LessOrEqual => truth(left <= right),
+            BinaryOperator::Greater => truth(left > right),
+            BinaryOperator::GreaterOrEqual => truth(left >= right),
+            _ => Ok(None),
+        },
+        (Known::Boolean(left), Known::Boolean(right)) => match operator {
+            BinaryOperator::And => truth(left && right),
+            BinaryOperator::Or => truth(left || right),
+            BinaryOperator::Implies => truth(!left || right),
+            BinaryOperator::Equal => truth(left == right),
+            BinaryOperator::NotEqual => truth(left != right),
+            _ => Ok(None),
+        },
+        (left @ Known::Union { .. }, right @ Known::Union { .. }) => match operator {
+            BinaryOperator::Equal => truth(left == right),
+            BinaryOperator::NotEqual => truth(left != right),
+            _ => Ok(None),
+        },
+        _ => Ok(None),
+    }
+}
+
+/// `div`, `rem` or `mod` of a non-negative dividend by a positive divisor,
+/// where every division law gives the same result. A negative operand or a
+/// zero divisor is left to the law and the value checker, so it is no
+/// constant.
+fn divide(operator: BinaryOperator, dividend: &Integer, divisor: &Integer) -> Option<Known> {
+    if dividend.is_negative() || divisor.is_negative() {
+        return None;
+    }
+    let divisor = NonZeroInteger::try_from(divisor).ok()?;
+    let (quotient, remainder) = dividend.div_rem_truncating(divisor);
+    Some(Known::Integer(if operator == BinaryOperator::IntegerDiv {
+        quotient
+    } else {
+        remainder
+    }))
+}
+
+/// The frame a reading is in: the one it started in, or one a tail call
+/// entered.
+#[derive(Clone)]
+enum Current<'b, 'e> {
+    Outer(Frame<'b, 'e>),
+    Inner(Rc<Entered<'e>>),
+}
+
+impl<'b, 'e> Current<'b, 'e> {
+    fn frame(&self) -> Frame<'_, 'e> {
+        match self {
+            Self::Outer(frame) => *frame,
+            Self::Inner(entered) => Frame {
+                body: &entered.body,
+                environment: &entered.environment,
+                site: entered.site,
+            },
+        }
+    }
+}
+
+/// A body a tail call entered: the called body, its arguments, and the
+/// outermost call site.
+struct Entered<'d> {
+    body: Body<'d>,
+    environment: BTreeMap<String, Argument>,
+    site: ExprId,
+}
+
+/// What reading one Boolean body node comes to.
+enum Step<'e> {
+    /// The node's disjunctive forms, read positively and negated.
+    Done((Dnf, Dnf)),
+    /// The node is the negation of body node `0`.
+    Negate(ExprId),
+    /// The node combines two operands the reading reads in turn.
+    Split {
+        operator: BinaryOperator,
+        left: ExprId,
+        right: ExprId,
+    },
+    /// The node's value is that of body node `id`, in the frame `into`
+    /// enters (the same frame when `None`).
+    Read {
+        id: ExprId,
+        into: Option<Entered<'e>>,
+    },
+}
+
+/// What a Boolean reading does with the result of the node it is reading.
+enum Pending<'b, 'e> {
+    /// Swap the positive and negated forms.
+    Swap,
+    /// Read `right` next, in `current`, with `stack` cut back to `depth`.
+    Right {
+        operator: BinaryOperator,
+        right: ExprId,
+        current: Current<'b, 'e>,
+        depth: usize,
+    },
+    /// Combine the left operand's forms with the result.
+    Join {
+        operator: BinaryOperator,
+        left: (Dnf, Dnf),
+    },
+}
+
+/// What reading one place expression node comes to.
+enum PlacesStep<'e> {
+    Done(Places),
+    Read {
+        id: ExprId,
+        into: Option<Entered<'e>>,
     },
 }
 
@@ -704,6 +961,7 @@ type Stack = Vec<String>;
 
 /// A body reading in progress: the body, its parameters' arguments, and
 /// the call-site node the outermost call is.
+#[derive(Clone, Copy)]
 struct Frame<'b, 'd> {
     body: &'b Body<'d>,
     environment: &'b BTreeMap<String, Argument>,
@@ -778,7 +1036,8 @@ impl<'e, 'f, 'c> Expansion<'e, 'f, 'c> {
                 if declaration.result != ClockSlot::Clock {
                     return Ok(None);
                 }
-                let environment = self.site_arguments(declaration, arguments, budget)?;
+                budget.unfold(self.located.span(id))?;
+                let environment = self.site_arguments(declaration, arguments, id, budget)?;
                 let body = Body::of(declaration);
                 let frame = Frame {
                     body: &body,
@@ -810,7 +1069,8 @@ impl<'e, 'f, 'c> Expansion<'e, 'f, 'c> {
             // A place expression: the comparison that reads it expands it.
             return Ok(None);
         }
-        let environment = self.site_arguments(declaration, arguments, budget)?;
+        budget.unfold(self.located.span(id))?;
+        let environment = self.site_arguments(declaration, arguments, id, budget)?;
         let body = Body::of(declaration);
         let frame = Frame {
             body: &body,
@@ -827,6 +1087,7 @@ impl<'e, 'f, 'c> Expansion<'e, 'f, 'c> {
         &self,
         declaration: &ClockReadingDeclaration,
         arguments: &[ExprId],
+        call: ExprId,
         budget: &mut PartBudget,
     ) -> Result<BTreeMap<String, Argument>, CheckCause> {
         let mut bound = BTreeMap::new();
@@ -841,6 +1102,11 @@ impl<'e, 'f, 'c> Expansion<'e, 'f, 'c> {
             let read = match slot {
                 ClockSlot::Clock => match self.site_places(argument, budget)? {
                     Some(places) => Argument::Places(places),
+                    // A clock of another object, read through a binder, is a
+                    // clock read outside a constraint, at the call.
+                    None if self.located.reads_clock(argument) => {
+                        return Err(timed(self.located.outside(call)));
+                    }
                     None => {
                         return Err(timed(TemporalCause::NotAPlaceExpression { span }));
                     }
@@ -862,6 +1128,7 @@ impl<'e, 'f, 'c> Expansion<'e, 'f, 'c> {
                         Argument::Value {
                             term: DataLiteral::Site(argument),
                             constant: self.located.constant(argument, self.clocks),
+                            known: self.site_known(argument, budget)?,
                         }
                     }
                 }
@@ -936,7 +1203,7 @@ impl<'e, 'f, 'c> Expansion<'e, 'f, 'c> {
 
     /// The receiver path the place path at body node `root` starts from:
     /// none for `self`, an object or record parameter's argument path.
-    fn prefix(&self, frame: &Frame<'_, '_>, root: ExprId) -> Result<Vec<PlaceStep>, CheckCause> {
+    fn prefix(&self, frame: &Frame<'_, 'e>, root: ExprId) -> Result<Vec<PlaceStep>, CheckCause> {
         let body = frame.body;
         match body.node(root) {
             Some(ExprNode::SelfRef) => Ok(Vec::new()),
@@ -965,7 +1232,7 @@ impl<'e, 'f, 'c> Expansion<'e, 'f, 'c> {
     /// called declaration.
     fn body_arguments(
         &self,
-        frame: &Frame<'_, '_>,
+        frame: &Frame<'_, 'e>,
         called: &ClockReadingDeclaration,
         arguments: &[ExprId],
         stack: &mut Stack,
@@ -1031,9 +1298,17 @@ impl<'e, 'f, 'c> Expansion<'e, 'f, 'c> {
                                 span: body.span(argument),
                             }),
                         };
+                        let known = self.known(frame, argument, budget)?;
+                        let term = match &known {
+                            Some(known @ (Known::Integer(_) | Known::Boolean(_))) => {
+                                self.literal(frame, known)?
+                            }
+                            _ => self.formed(frame, argument)?,
+                        };
                         Argument::Value {
-                            term: self.formed(frame, argument)?,
+                            term,
                             constant,
+                            known,
                         }
                     }
                 }
@@ -1043,13 +1318,115 @@ impl<'e, 'f, 'c> Expansion<'e, 'f, 'c> {
         Ok(bound)
     }
 
+    /// The constant body node `id` evaluates to, with its parameters
+    /// replaced by their constant arguments.
+    ///
+    /// # Errors
+    ///
+    /// The rational-bit limit, at an integer result too wide for it.
+    fn known(
+        &self,
+        frame: &Frame<'_, 'e>,
+        id: ExprId,
+        budget: &PartBudget,
+    ) -> Result<Option<Known>, CheckCause> {
+        let body = frame.body;
+        let resolve = |name: ExprId| -> Option<Known> {
+            let ExprNode::Name(written) = body.node(name)? else {
+                return None;
+            };
+            match frame.environment.get(&written.name)? {
+                Argument::Value { known, .. } => known.clone(),
+                _ => None,
+            }
+        };
+        fold(body.expression(), &resolve, id, self.clocks.rational_bits).map_err(|bits| {
+            budget.too_wide(
+                self.clocks.rational_bits,
+                bits,
+                self.located.span(frame.site),
+            )
+        })
+    }
+
+    /// The constant call-site node `id` evaluates to.
+    ///
+    /// # Errors
+    ///
+    /// The rational-bit limit, at an integer result too wide for it.
+    fn site_known(&self, id: ExprId, budget: &PartBudget) -> Result<Option<Known>, CheckCause> {
+        fold(
+            &self.located.form.expression,
+            &|_| None,
+            id,
+            self.clocks.rational_bits,
+        )
+        .map_err(|bits| budget.too_wide(self.clocks.rational_bits, bits, self.located.span(id)))
+    }
+
+    /// The data term of constant `known`, located at the outermost call.
+    fn literal(&self, frame: &Frame<'_, 'e>, known: &Known) -> Result<DataLiteral, CheckCause> {
+        let expression = match known {
+            Known::Integer(value) => Expression::integer(value.clone()),
+            Known::Boolean(value) => Expression::boolean(*value),
+            Known::Union { .. } => return Err(timed(self.located.outside(frame.site))),
+        };
+        let spans = ExpressionSpans::at_point(&expression, self.located.span(frame.site).start)
+            .map_err(|_| timed(self.located.outside(frame.site)))?;
+        Ok(DataLiteral::Formed(Rc::new(ExpressionForm {
+            expression,
+            spans,
+        })))
+    }
+
+    /// The refusal of a read whose unfolding no finite set of atomic
+    /// constraints stands for, at the outermost call `site` of the
+    /// declaration `name`: the cycle's declarations when it is recursive.
+    fn unfolding_refusal(&self, name: &str, site: ExprId) -> CheckCause {
+        timed(match self.declarations.cycle(name) {
+            Some(cycle) => TemporalCause::ClockReadingCycle {
+                cycle: cycle.to_vec(),
+                span: self.located.span(site),
+            },
+            None => self.located.outside(site),
+        })
+    }
+
+    /// Enter the called declaration `called` from `frame`: charge the
+    /// unfolding, read the arguments, and refuse a recursive call whose
+    /// data is not constant.
+    fn enter(
+        &self,
+        frame: &Frame<'_, 'e>,
+        called: &'e ClockReadingDeclaration,
+        arguments: &[ExprId],
+        stack: &mut Stack,
+        budget: &mut PartBudget,
+    ) -> Result<Entered<'e>, CheckCause> {
+        let name = &called.function.name;
+        let recursive = stack.contains(name);
+        budget.unfold(self.located.span(frame.site))?;
+        let environment = self.body_arguments(frame, called, arguments, stack, budget)?;
+        if recursive && !environment.values().all(Argument::is_constant) {
+            return Err(self.unfolding_refusal(name, frame.site));
+        }
+        if !recursive {
+            stack.push(name.clone());
+        }
+        Ok(Entered {
+            body: Body::of(called),
+            environment,
+            site: frame.site,
+        })
+    }
+
     /// Body node `id`, a data term, read at the call site: its parameters
     /// replaced by their arguments, located at the outermost call.
     ///
     /// # Errors
     ///
     /// `clock-read-outside-constraint` at the first clock read under `id`.
-    fn formed(&self, frame: &Frame<'_, '_>, id: ExprId) -> Result<DataLiteral, CheckCause> {
+    fn formed(&self, frame: &Frame<'_, 'e>, id: ExprId) -> Result<DataLiteral, CheckCause> {
         let body = frame.body;
         if let Some(read) = body.first_clock_read(id, self.declarations) {
             return Err(timed(TemporalCause::ClockReadOutsideConstraint {
@@ -1074,7 +1451,7 @@ impl<'e, 'f, 'c> Expansion<'e, 'f, 'c> {
     ///
     /// `clock-read-outside-constraint` at a clock parameter, which no data
     /// term stands for.
-    fn grafted(&self, frame: &Frame<'_, '_>, id: ExprId) -> Result<ExpressionForm, CheckCause> {
+    fn grafted(&self, frame: &Frame<'_, 'e>, id: ExprId) -> Result<ExpressionForm, CheckCause> {
         let body = frame.body;
         let site_span = self.located.span(frame.site);
         let names: BTreeSet<&str> = frame.environment.keys().map(String::as_str).collect();
@@ -1122,7 +1499,7 @@ impl<'e, 'f, 'c> Expansion<'e, 'f, 'c> {
     /// the call, when it ranges over a clock collection of the receiver.
     fn quantified(
         &self,
-        frame: &Frame<'_, '_>,
+        frame: &Frame<'_, 'e>,
         id: ExprId,
         budget: &mut PartBudget,
     ) -> Result<Option<(Dnf, Dnf)>, CheckCause> {
@@ -1156,11 +1533,50 @@ impl<'e, 'f, 'c> Expansion<'e, 'f, 'c> {
     /// The places body node `id` denotes.
     fn places(
         &self,
-        frame: &Frame<'_, '_>,
+        frame: &Frame<'_, 'e>,
         id: ExprId,
         stack: &mut Stack,
         budget: &mut PartBudget,
     ) -> Result<Places, CheckCause> {
+        let depth = stack.len();
+        let read = self.read_places(Current::Outer(*frame), id, stack, budget);
+        stack.truncate(depth);
+        read
+    }
+
+    /// Read place expression `id` in `start`. A selected `if` branch and a
+    /// call are tail positions, read in a loop, so a recursive declaration
+    /// unfolds to any depth the work budget admits without nesting the
+    /// reading.
+    fn read_places(
+        &self,
+        start: Current<'_, 'e>,
+        mut id: ExprId,
+        stack: &mut Stack,
+        budget: &mut PartBudget,
+    ) -> Result<Places, CheckCause> {
+        let mut current = start;
+        loop {
+            match self.places_step(&current.frame(), id, stack, budget)? {
+                PlacesStep::Done(places) => return Ok(places),
+                PlacesStep::Read { id: next, into } => {
+                    id = next;
+                    if let Some(into) = into {
+                        current = Current::Inner(Rc::new(into));
+                    }
+                }
+            }
+        }
+    }
+
+    /// One step of reading place expression `id`.
+    fn places_step(
+        &self,
+        frame: &Frame<'_, 'e>,
+        id: ExprId,
+        stack: &mut Stack,
+        budget: &mut PartBudget,
+    ) -> Result<PlacesStep<'e>, CheckCause> {
         let body = frame.body;
         let not_a_place = || {
             timed(TemporalCause::NotAPlaceExpression {
@@ -1172,7 +1588,7 @@ impl<'e, 'f, 'c> Expansion<'e, 'f, 'c> {
                 .parameter(self.declarations, id)
                 .and_then(|parameter| frame.environment.get(parameter.name))
             {
-                Some(Argument::Places(places)) => Ok(places.clone()),
+                Some(Argument::Places(places)) => Ok(PlacesStep::Done(places.clone())),
                 _ => Err(not_a_place()),
             },
             Some(ExprNode::Field { .. }) => {
@@ -1199,20 +1615,42 @@ impl<'e, 'f, 'c> Expansion<'e, 'f, 'c> {
                     })
                     .map(ClockId)
                     .ok_or_else(not_a_place)?;
-                Ok(vec![(
+                Ok(PlacesStep::Done(vec![(
                     Vec::new(),
                     Place {
                         parameter: None,
                         via: via.to_vec(),
                         clock,
                     },
-                )])
+                )]))
             }
             Some(ExprNode::If {
                 condition,
                 then,
                 otherwise,
             }) => {
+                // A condition over constants keeps the branch it selects.
+                match self.known(frame, *condition, budget)? {
+                    Some(Known::Boolean(true)) => {
+                        return Ok(PlacesStep::Read {
+                            id: *then,
+                            into: None,
+                        });
+                    }
+                    Some(Known::Boolean(false)) => {
+                        return Ok(PlacesStep::Read {
+                            id: *otherwise,
+                            into: None,
+                        });
+                    }
+                    _ => {}
+                }
+                // A recursive unfolding has no finite set of places for a
+                // condition that is not a constant.
+                let name = &body.declaration.function.name;
+                if self.declarations.cycle(name).is_some() {
+                    return Err(self.unfolding_refusal(name, frame.site));
+                }
                 // The condition is data: a clock read there selects no place.
                 let (selected, rejected) = self.boolean(frame, *condition, stack, budget)?;
                 if selected
@@ -1238,7 +1676,7 @@ impl<'e, 'f, 'c> Expansion<'e, 'f, 'c> {
                     }
                 }
                 budget.charge(places.len())?;
-                Ok(places)
+                Ok(PlacesStep::Done(places))
             }
             Some(ExprNode::Call { name, arguments }) => {
                 let called = self
@@ -1246,58 +1684,18 @@ impl<'e, 'f, 'c> Expansion<'e, 'f, 'c> {
                     .named(name)
                     .filter(|called| called.result == ClockSlot::Clock)
                     .ok_or_else(not_a_place)?;
-                self.call(
-                    frame,
-                    id,
-                    called,
-                    arguments,
-                    stack,
-                    budget,
-                    |inner, root, stack, budget| self.places(inner, root, stack, budget),
-                )
+                let entered = self.enter(frame, called, arguments, stack, budget)?;
+                Ok(PlacesStep::Read {
+                    id: entered.body.expression().root_id(),
+                    into: Some(entered),
+                })
             }
             _ => Err(not_a_place()),
         }
     }
 
-    /// Read the call at body node `id` of `called`, with `read` over the
-    /// called body, refusing recursion.
-    #[allow(clippy::too_many_arguments)] // one call's whole reading state
-    fn call<T>(
-        &self,
-        frame: &Frame<'_, '_>,
-        id: ExprId,
-        called: &ClockReadingDeclaration,
-        arguments: &[ExprId],
-        stack: &mut Stack,
-        budget: &mut PartBudget,
-        read: impl FnOnce(&Frame<'_, '_>, ExprId, &mut Stack, &mut PartBudget) -> Result<T, CheckCause>,
-    ) -> Result<T, CheckCause> {
-        let name = &called.function.name;
-        if stack.contains(name) {
-            // FR-230 does not say what a measured recursive clock-reading
-            // declaration expands to (STD-493 item 19); an unmeasured one is
-            // refused before expansion (`unmeasured_cycle`).
-            return Err(not_checked(
-                TimedConstruct::RecursiveClockReading,
-                frame.body.span(id),
-            ));
-        }
-        let environment = self.body_arguments(frame, called, arguments, stack, budget)?;
-        let called_body = Body::of(called);
-        let inner = Frame {
-            body: &called_body,
-            environment: &environment,
-            site: frame.site,
-        };
-        stack.push(name.clone());
-        let result = read(&inner, called_body.expression().root_id(), stack, budget);
-        stack.pop();
-        result
-    }
-
     /// The constant body node `id` denotes as a bound.
-    fn bound(&self, frame: &Frame<'_, '_>, id: ExprId) -> Result<Rational, CheckCause> {
+    fn bound(&self, frame: &Frame<'_, 'e>, id: ExprId) -> Result<Rational, CheckCause> {
         let body = frame.body;
         match body.node(id) {
             Some(ExprNode::Quantity(quantity)) => self.clocks.quantity(quantity).map_err(timed),
@@ -1324,34 +1722,182 @@ impl<'e, 'f, 'c> Expansion<'e, 'f, 'c> {
     /// clock-reading predicates and data predicates.
     fn boolean(
         &self,
-        frame: &Frame<'_, '_>,
+        frame: &Frame<'_, 'e>,
         id: ExprId,
         stack: &mut Stack,
         budget: &mut PartBudget,
     ) -> Result<(Dnf, Dnf), CheckCause> {
+        let depth = stack.len();
+        let read = self.read_boolean(Current::Outer(*frame), id, stack, budget);
+        stack.truncate(depth);
+        read
+    }
+
+    /// Read Boolean node `id` in `start`. The reading keeps its own stack of
+    /// what is left to do with each result instead of nesting, so a
+    /// recursive declaration unfolds to any depth the node limit and work
+    /// budget admit without nesting the reading: a negation, a selected
+    /// `if` branch, a call and each operand of `and`, `or` and `implies`
+    /// are read in turn.
+    fn read_boolean(
+        &self,
+        start: Current<'_, 'e>,
+        mut id: ExprId,
+        stack: &mut Stack,
+        budget: &mut PartBudget,
+    ) -> Result<(Dnf, Dnf), CheckCause> {
+        let mut current = start;
+        let mut pending: Vec<Pending<'_, 'e>> = Vec::new();
+        loop {
+            let mut read = match self.boolean_step(&current.frame(), id, stack, budget)? {
+                Step::Done(read) => read,
+                Step::Negate(operand) => {
+                    pending.push(Pending::Swap);
+                    id = operand;
+                    continue;
+                }
+                Step::Split {
+                    operator,
+                    left,
+                    right,
+                } => {
+                    // Each operand left unread is held, so the node limit
+                    // bounds how many.
+                    budget.charge(1)?;
+                    pending.push(Pending::Right {
+                        operator,
+                        right,
+                        current: current.clone(),
+                        depth: stack.len(),
+                    });
+                    id = left;
+                    continue;
+                }
+                Step::Read { id: next, into } => {
+                    id = next;
+                    if let Some(into) = into {
+                        current = Current::Inner(Rc::new(into));
+                    }
+                    continue;
+                }
+            };
+            loop {
+                match pending.pop() {
+                    None => return Ok(read),
+                    Some(Pending::Swap) => read = (read.1, read.0),
+                    Some(Pending::Right {
+                        operator,
+                        right,
+                        current: resumed,
+                        depth,
+                    }) => {
+                        stack.truncate(depth);
+                        pending.push(Pending::Join {
+                            operator,
+                            left: read,
+                        });
+                        current = resumed;
+                        id = right;
+                        break;
+                    }
+                    Some(Pending::Join {
+                        operator,
+                        left: (lp, ln),
+                    }) => {
+                        let (rp, rn) = read;
+                        read = match operator {
+                            BinaryOperator::And => (budget.product(&lp, &rp)?, [ln, rn].concat()),
+                            BinaryOperator::Or => ([lp, rp].concat(), budget.product(&ln, &rn)?),
+                            _ => ([ln, rp].concat(), budget.product(&lp, &rn)?),
+                        };
+                    }
+                }
+            }
+        }
+    }
+
+    /// One step of reading Boolean body node `id`.
+    fn boolean_step(
+        &self,
+        frame: &Frame<'_, 'e>,
+        id: ExprId,
+        stack: &mut Stack,
+        budget: &mut PartBudget,
+    ) -> Result<Step<'e>, CheckCause> {
         let body = frame.body;
+        let name = &body.declaration.function.name;
         let truth = || vec![(Vec::new(), Vec::new())];
+        let done = |read| Ok(Step::Done(read));
         match body.node(id) {
-            Some(ExprNode::Boolean(true)) => Ok((truth(), Vec::new())),
-            Some(ExprNode::Boolean(false)) => Ok((Vec::new(), truth())),
-            Some(ExprNode::Not(operand)) => {
-                let (positive, negative) = self.boolean(frame, *operand, stack, budget)?;
-                Ok((negative, positive))
+            Some(ExprNode::Boolean(true)) => done((truth(), Vec::new())),
+            Some(ExprNode::Boolean(false)) => done((Vec::new(), truth())),
+            Some(ExprNode::Not(operand)) => Ok(Step::Negate(*operand)),
+            // An `if` that reads a clock keeps the branch its condition
+            // selects; a condition that is not a constant has no finite set
+            // of atomic constraints.
+            Some(ExprNode::If {
+                condition,
+                then,
+                otherwise,
+            }) if body.first_clock_read(id, self.declarations).is_some() => {
+                let selected = match self.known(frame, *condition, budget)? {
+                    Some(Known::Boolean(true)) => *then,
+                    Some(Known::Boolean(false)) => *otherwise,
+                    _ => return Err(self.unfolding_refusal(name, frame.site)),
+                };
+                Ok(Step::Read {
+                    id: selected,
+                    into: None,
+                })
+            }
+            // A `case` that reads a clock keeps the arm its scrutinee
+            // selects, its binders bound to the payload.
+            Some(ExprNode::Case(case))
+                if body.first_clock_read(id, self.declarations).is_some() =>
+            {
+                let Some(Known::Union { member, payload }) =
+                    self.known(frame, case.scrutinee, budget)?
+                else {
+                    return Err(self.unfolding_refusal(name, frame.site));
+                };
+                let Some(arm) = case.arms.iter().find(|arm| {
+                    arm.member.segments.last() == Some(&member)
+                        && arm.binders.len() == payload.len()
+                }) else {
+                    return Err(self.unfolding_refusal(name, frame.site));
+                };
+                let mut environment = frame.environment.clone();
+                for (binder, value) in arm.binders.iter().zip(payload) {
+                    environment.insert(
+                        binder.name.clone(),
+                        Argument::Value {
+                            term: self.literal(frame, &value)?,
+                            constant: Err(TemporalCause::ClockBoundNotConstant {
+                                span: body.span(arm.body),
+                            }),
+                            known: Some(value),
+                        },
+                    );
+                }
+                Ok(Step::Read {
+                    id: arm.body,
+                    into: Some(Entered {
+                        body: Body::of(body.declaration),
+                        environment,
+                        site: frame.site,
+                    }),
+                })
             }
             Some(ExprNode::Binary {
                 operator:
                     operator @ (BinaryOperator::And | BinaryOperator::Or | BinaryOperator::Implies),
                 left,
                 right,
-            }) if body.first_clock_read(id, self.declarations).is_some() => {
-                let (lp, ln) = self.boolean(frame, *left, stack, budget)?;
-                let (rp, rn) = self.boolean(frame, *right, stack, budget)?;
-                Ok(match operator {
-                    BinaryOperator::And => (budget.product(&lp, &rp)?, [ln, rn].concat()),
-                    BinaryOperator::Or => ([lp, rp].concat(), budget.product(&ln, &rn)?),
-                    _ => ([ln, rp].concat(), budget.product(&lp, &rn)?),
-                })
-            }
+            }) if body.first_clock_read(id, self.declarations).is_some() => Ok(Step::Split {
+                operator: *operator,
+                left: *left,
+                right: *right,
+            }),
             Some(ExprNode::Binary {
                 operator,
                 left,
@@ -1371,7 +1917,7 @@ impl<'e, 'f, 'c> Expansion<'e, 'f, 'c> {
                 };
                 let places = self.places(frame, place, stack, budget)?;
                 let bound = self.bound(frame, bound)?;
-                Ok(constraints(
+                done(constraints(
                     places,
                     op,
                     &bound,
@@ -1387,15 +1933,11 @@ impl<'e, 'f, 'c> Expansion<'e, 'f, 'c> {
                 let Some(called) = self.declarations.named(name) else {
                     return Err(timed(self.located.outside(frame.site)));
                 };
-                self.call(
-                    frame,
-                    id,
-                    called,
-                    arguments,
-                    stack,
-                    budget,
-                    |inner, root, stack, budget| self.boolean(inner, root, stack, budget),
-                )
+                let entered = self.enter(frame, called, arguments, stack, budget)?;
+                Ok(Step::Read {
+                    id: entered.body.expression().root_id(),
+                    into: Some(entered),
+                })
             }
             // A quantifier over a clock collection (FR-230 "Quantified
             // reads"): read at the call site, its source the receiver's
@@ -1404,10 +1946,10 @@ impl<'e, 'f, 'c> Expansion<'e, 'f, 'c> {
                 query: BinderQuery::Forall | BinderQuery::Exists,
                 ..
             }) => match self.quantified(frame, id, budget)? {
-                Some(read) => Ok(read),
+                Some(read) => done(read),
                 None => {
                     let literal = self.formed(frame, id)?;
-                    Ok((
+                    done((
                         vec![(vec![(literal.clone(), true)], Vec::new())],
                         vec![(vec![(literal, false)], Vec::new())],
                     ))
@@ -1416,7 +1958,7 @@ impl<'e, 'f, 'c> Expansion<'e, 'f, 'c> {
             // A data predicate: read at the call site.
             _ => {
                 let literal = self.formed(frame, id)?;
-                Ok((
+                done((
                     vec![(vec![(literal.clone(), true)], Vec::new())],
                     vec![(vec![(literal, false)], Vec::new())],
                 ))
@@ -1494,58 +2036,11 @@ pub(crate) fn site(name: &str) -> String {
 pub(crate) fn unmeasured_cycle(
     declarations: &[ClockReadingDeclaration],
 ) -> Option<(Vec<String>, &str)> {
-    let index: BTreeMap<&str, usize> = declarations
-        .iter()
-        .enumerate()
-        .map(|(position, declaration)| (declaration.function.name.as_str(), position))
-        .collect();
-    let calls: Vec<Vec<usize>> = declarations
-        .iter()
-        .map(|declaration| {
-            let body = &declaration.function.body;
-            let mut called: Vec<usize> = body
-                .iter()
-                .filter_map(|node| match node.node() {
-                    ExprNode::Call { name, .. } if name.segments.len() == 1 => {
-                        index.get(name.name.as_str()).copied()
-                    }
-                    _ => None,
-                })
-                .collect();
-            called.sort_unstable();
-            called.dedup();
-            called
-        })
-        .collect();
+    let calls = call_graph(declarations);
     for (start, declaration) in declarations.iter().enumerate() {
-        // The shortest call path from `start` back to itself.
-        let mut previous: BTreeMap<usize, usize> = BTreeMap::new();
-        let mut pending = std::collections::VecDeque::from([start]);
-        let mut closing = None;
-        'walk: while let Some(at) = pending.pop_front() {
-            for &next in calls.get(at).into_iter().flatten() {
-                if next == start {
-                    closing = Some(at);
-                    break 'walk;
-                }
-                if previous.contains_key(&next) {
-                    continue;
-                }
-                previous.insert(next, at);
-                pending.push_back(next);
-            }
-        }
-        let Some(mut at) = closing else {
+        let Some(members) = cycle_from(&calls, start) else {
             continue;
         };
-        let mut members = vec![start];
-        let mut back = Vec::new();
-        while at != start {
-            back.push(at);
-            at = previous.get(&at).copied().unwrap_or(start);
-        }
-        members.extend(back.into_iter().rev());
-        members.push(start);
         let unmeasured = members.iter().any(|member| {
             declarations
                 .get(*member)
@@ -1561,4 +2056,64 @@ pub(crate) fn unmeasured_cycle(
         }
     }
     None
+}
+
+/// The declarations each of `declarations` calls, by position (FR-146's call
+/// graph over them).
+fn call_graph(declarations: &[ClockReadingDeclaration]) -> Vec<Vec<usize>> {
+    let index: BTreeMap<&str, usize> = declarations
+        .iter()
+        .enumerate()
+        .map(|(position, declaration)| (declaration.function.name.as_str(), position))
+        .collect();
+    declarations
+        .iter()
+        .map(|declaration| {
+            let mut called: Vec<usize> = declaration
+                .function
+                .body
+                .iter()
+                .filter_map(|node| match node.node() {
+                    ExprNode::Call { name, .. } if name.segments.len() == 1 => {
+                        index.get(name.name.as_str()).copied()
+                    }
+                    _ => None,
+                })
+                .collect();
+            called.sort_unstable();
+            called.dedup();
+            called
+        })
+        .collect()
+}
+
+/// The shortest call path from declaration `start` back to itself, as the
+/// positions from `start` to `start`; `None` when `start` is not recursive.
+fn cycle_from(calls: &[Vec<usize>], start: usize) -> Option<Vec<usize>> {
+    let mut previous: BTreeMap<usize, usize> = BTreeMap::new();
+    let mut pending = std::collections::VecDeque::from([start]);
+    let mut closing = None;
+    'walk: while let Some(at) = pending.pop_front() {
+        for &next in calls.get(at).into_iter().flatten() {
+            if next == start {
+                closing = Some(at);
+                break 'walk;
+            }
+            if previous.contains_key(&next) {
+                continue;
+            }
+            previous.insert(next, at);
+            pending.push_back(next);
+        }
+    }
+    let mut at = closing?;
+    let mut members = vec![start];
+    let mut back = Vec::new();
+    while at != start {
+        back.push(at);
+        at = previous.get(&at).copied().unwrap_or(start);
+    }
+    members.extend(back.into_iter().rev());
+    members.push(start);
+    Some(members)
 }

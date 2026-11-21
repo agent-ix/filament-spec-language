@@ -1119,7 +1119,13 @@ pub struct Scope {
     pub(crate) known_populations: Vec<String>,
     /// The object type and path of every clock place of the unit's timed
     /// models, which `ref(p)` names (FR-230 "Clock references").
-    clock_places: Vec<(EffectiveId, Vec<super::lowering::PlaceStep>)>,
+    clock_places: Vec<(
+        EffectiveId,
+        Vec<super::lowering::PlaceStep>,
+        Option<NodeKey>,
+    )>,
+    /// The guarded clock places named by presence reads in data clauses.
+    clock_presence_places: Vec<super::timed_model::PresencePlace>,
     /// The names of the unit's clock-reading declarations (FR-230): a call
     /// of one that reaches the value checker is outside every place that
     /// admits it.
@@ -1162,7 +1168,7 @@ pub struct Scope {
     imports: BTreeMap<String, super::AdmittedImport>,
 }
 
-fsl_foundation::debug_with_struct!(Scope, "Scope" { types: plain, model_records: with, relationships: plain, enums: plain, variant_types: with, operations: plain, ieee_profile: plain, ieee_operation: plain, integer_division: plain, complete_value: plain, known_populations: plain, clock_places: plain, clock_reading: plain, history_names: plain, complete_model: plain, dispatch_operations: plain, symmetric_objects: plain, index: plain, imports: values });
+fsl_foundation::debug_with_struct!(Scope, "Scope" { types: plain, model_records: with, relationships: plain, enums: plain, variant_types: with, operations: plain, ieee_profile: plain, ieee_operation: plain, integer_division: plain, complete_value: plain, known_populations: plain, clock_places: plain, clock_presence_places: plain, clock_reading: plain, history_names: plain, complete_model: plain, dispatch_operations: plain, symmetric_objects: plain, index: plain, imports: values });
 
 /// Drops the chain of imported checked graphs over an explicit stack
 /// (ADR-030): each import holds its library's graph, whose scope holds that
@@ -1518,6 +1524,7 @@ impl Scope {
             complete_value: false,
             known_populations: Vec::new(),
             clock_places: Vec::new(),
+            clock_presence_places: Vec::new(),
             clock_reading: BTreeSet::new(),
             history_names: Vec::new(),
             complete_model: false,
@@ -1642,8 +1649,50 @@ impl Scope {
         self.clock_places = models
             .iter()
             .flat_map(|model| super::AdmittedModel::clock_places(model).iter())
-            .map(|place| (place.owner.clone(), place.path.clone()))
+            .map(|place| (place.owner.clone(), place.path.clone(), None))
             .collect();
+        self
+    }
+
+    /// Attach the structural keys S3 assigns to timed models' clock
+    /// places, in their time-source and place order (FSpec FR-322).
+    pub(crate) fn with_clock_place_keys(
+        mut self,
+        models: &[super::AdmittedModel],
+        time_sources: &[super::temporal_clause::ModelTimeSource],
+        package_name: &str,
+    ) -> Self {
+        let mut ordinal = 0_u64;
+        let keys: Vec<_> = time_sources
+            .iter()
+            .filter_map(|source| models.iter().find(|model| source.times(model)))
+            .flat_map(|model| {
+                self.clock_presence_places
+                    .extend(super::timed_model::presence_places(
+                        &super::timed_model::clock_fields(model),
+                    ));
+                super::AdmittedModel::clock_places(model)
+                    .iter()
+                    .map(|place| (place.owner.clone(), place.path.clone()))
+                    .collect::<Vec<_>>()
+            })
+            .map(|(owner, path)| {
+                let key = super::clock_place_node_key(package_name, ordinal).ok();
+                ordinal = ordinal.saturating_add(1);
+                (owner, path, key)
+            })
+            .collect();
+        for (owner, path, key) in keys {
+            if let Some(place) =
+                self.clock_places
+                    .iter_mut()
+                    .find(|(candidate, candidate_path, _)| {
+                        *candidate == owner && *candidate_path == path
+                    })
+            {
+                place.2 = key;
+            }
+        }
         self
     }
 
@@ -1786,7 +1835,10 @@ impl Scope {
     /// arguments"): a model alias type is its declaration, the unit's own
     /// alias its qualified name beneath its source unit's identity, and a
     /// model scalar names none.
-    pub(crate) fn alias_declaration(&self, written: &str) -> Option<crate::value::TypeArgumentAlias> {
+    pub(crate) fn alias_declaration(
+        &self,
+        written: &str,
+    ) -> Option<crate::value::TypeArgumentAlias> {
         if let Some(alias) = self.model_aliases.get(written) {
             return Some(alias.clone());
         }
@@ -2125,35 +2177,43 @@ impl Scope {
         if self.model_records.events.is_empty() {
             return false;
         }
-        let mut seen = BTreeSet::new();
-        let mut pending = vec![value_type];
-        while let Some(value_type) = pending.pop() {
-            match value_type {
-                ValueType::Option(payload) => pending.push(payload),
-                ValueType::Collection(collection) => pending.push(collection.element()),
-                ValueType::Map(map) => pending.push(map.values()),
-                ValueType::Composite(declaration) => {
-                    if self.model_records.events.contains(declaration) {
-                        return true;
-                    }
-                    if !seen.insert(declaration.clone()) {
-                        continue;
-                    }
-                    match self.types.composite(declaration.clone()).map(|c| c.shape()) {
-                        Some(CompositeShape::Record(fields)) => {
-                            pending.extend(fields.iter().map(FieldDeclaration::value_type));
-                        }
-                        Some(CompositeShape::Tuple(positions)) => pending.extend(positions),
-                        Some(CompositeShape::Union(members)) => {
-                            pending.extend(members.iter().flat_map(|member| member.positions()));
-                        }
-                        None => {}
-                    }
-                }
-                _ => {}
+        reaches_leaf(
+            value_type,
+            |leaf| {
+                matches!(
+                    leaf,
+                    ValueType::Composite(declaration)
+                        if self.model_records.events.contains(declaration)
+                )
+            },
+            |declaration| self.composite_members(declaration),
+        )
+    }
+
+    /// Whether a value type contains an IEEE float directly or through an
+    /// option, collection, map value, or declared composite field.
+    pub(crate) fn reaches_float(&self, value_type: &ValueType) -> bool {
+        reaches_leaf(
+            value_type,
+            |leaf| matches!(leaf, ValueType::Float(_)),
+            |declaration| self.composite_members(declaration),
+        )
+    }
+
+    /// The types a declared composite holds: a record's fields, a tuple's
+    /// positions or every position of a union's members.
+    fn composite_members(&self, declaration: &filament_exact::NodeKey) -> Vec<&ValueType> {
+        match self.types.composite(declaration.clone()).map(|c| c.shape()) {
+            Some(CompositeShape::Record(fields)) => {
+                fields.iter().map(FieldDeclaration::value_type).collect()
             }
+            Some(CompositeShape::Tuple(positions)) => positions.iter().collect(),
+            Some(CompositeShape::Union(members)) => members
+                .iter()
+                .flat_map(|member| member.positions())
+                .collect(),
+            None => Vec::new(),
         }
-        false
     }
 
     /// The position, in the record `declaration`'s own fields, of the field
@@ -2662,6 +2722,34 @@ pub(crate) fn cancelled_refusal(location: &Location) -> CheckRefusal {
     )
 }
 
+/// `value_type` with every `Reference<Clock>` replaced by `Boolean`, a leaf
+/// the type environment admits wherever a reference is; `None` when a map
+/// built from the result would have a key that is no leaf.
+fn clock_reference_as_leaf(value_type: &ValueType) -> Option<ValueType> {
+    Some(match value_type {
+        ValueType::Reference(target) if target == &super::clock_reference_target() => {
+            ValueType::Boolean
+        }
+        ValueType::Option(payload) => {
+            ValueType::Option(Arc::new(clock_reference_as_leaf(payload)?))
+        }
+        ValueType::Collection(collection) => ValueType::collection(CollectionType::new(
+            collection.kind(),
+            clock_reference_as_leaf(collection.element())?,
+            collection.bound(),
+        )),
+        ValueType::Map(map) => ValueType::Map(Arc::new(
+            filament_exact::MapType::new(
+                clock_reference_as_leaf(map.key())?,
+                clock_reference_as_leaf(map.values())?,
+                map.bound(),
+            )
+            .ok()?,
+        )),
+        other => other.clone(),
+    })
+}
+
 fn mismatch(location: &Location) -> CheckRefusal {
     CheckRefusal::ill_typed(location, IllTypedCause::TypeMismatch)
 }
@@ -3089,6 +3177,16 @@ impl<'a> Typer<'a> {
         false
     }
 
+    /// Whether an unconverted integer equality operand lowers at the builtin
+    /// `Integer` node by the rule `lowers_as_integer` states (the typer form of
+    /// `lowered_integer_types`): FR-495-AC-24 compares such an operand as that
+    /// node, never as its checked interval.
+    fn equality_operand_lowers_as_integer(&self, operand: &TypedOperand) -> bool {
+        operand.conversion_target.is_none()
+            && matches!(operand.node.value_type, ValueType::Int(_) | ValueType::Integer)
+            && self.lowers_as_integer(&operand.node)
+    }
+
     /// This pass reading the concrete populations `populations` as a
     /// refinement row does (FR-139).
     #[must_use]
@@ -3114,6 +3212,14 @@ impl<'a> Typer<'a> {
     ) -> Self {
         self.presence_places = places;
         self
+    }
+
+    fn clock_presence_places(&self) -> &[super::timed_model::PresencePlace] {
+        if self.presence_places.is_empty() {
+            &self.scope.clock_presence_places
+        } else {
+            &self.presence_places
+        }
     }
 
     /// This pass typing the atom or `match` conjunct of a `hyper` clause
@@ -3272,7 +3378,11 @@ impl<'a> Typer<'a> {
 
     /// The declared name of `slot` (FR-400 "Canonical read projections"). A slot
     /// bound without a recorded name is an internal fault, never an empty name.
-    pub(crate) fn slot_name(&self, slot: Slot, location: &Location) -> Result<String, CheckRefusal> {
+    pub(crate) fn slot_name(
+        &self,
+        slot: Slot,
+        location: &Location,
+    ) -> Result<String, CheckRefusal> {
         self.slot_names.get(slot).cloned().ok_or_else(|| {
             refuse(
                 location,
@@ -3575,9 +3685,12 @@ impl<'a> Typer<'a> {
         value_type: &ValueType,
         location: &Location,
     ) -> Result<(), CheckRefusal> {
+        // `Reference<Clock>` names no declared object type, so the whole type
+        // is checked with each clock reference read as a leaf of its own.
+        let whole = clock_reference_as_leaf(value_type).ok_or_else(|| mismatch(location))?;
         self.scope
             .types
-            .try_check_type(value_type)
+            .try_check_type(&whole)
             .map_err(|refusal| CheckRefusal::from_type_check(location, refusal))?;
         let mut pending = vec![value_type];
         while let Some(value_type) = pending.pop() {
@@ -3597,9 +3710,22 @@ impl<'a> Typer<'a> {
                         return Err(mismatch(location));
                     }
                 }
+                ValueType::Reference(target) if target == &super::clock_reference_target() => {
+                    // `Reference<Clock>` is the checker's synthetic handle
+                    // type for a clock place. The native Clock declaration
+                    // is not an object type in the admitted TypeEnvironment.
+                }
                 ValueType::Option(payload) => pending.push(payload),
                 ValueType::Collection(collection) => pending.push(collection.element()),
-                ValueType::Map(map) => pending.push(map.values()),
+                ValueType::Map(map) => {
+                    pending.push(map.key());
+                    pending.push(map.values());
+                }
+                ValueType::Reference(_) | ValueType::Composite(_) => self
+                    .scope
+                    .types
+                    .try_check_type(value_type)
+                    .map_err(|refusal| CheckRefusal::from_type_check(location, refusal))?,
                 ValueType::Boolean
                 | ValueType::Integer
                 | ValueType::Int(_)
@@ -3611,11 +3737,15 @@ impl<'a> Typer<'a> {
                 | ValueType::CarriedQuantity(_)
                 | ValueType::Text(_)
                 | ValueType::String
-                | ValueType::Composite(_)
-                | ValueType::Reference(_)
-                | ValueType::Population(_) => {}
-                ValueType::Uuid | ValueType::Timestamp => {}
-                ValueType::Bytes | ValueType::JsonObject => {}
+                | ValueType::Population(_)
+                | ValueType::Uuid
+                | ValueType::Timestamp
+                | ValueType::Bytes
+                | ValueType::JsonObject => self
+                    .scope
+                    .types
+                    .try_check_type(value_type)
+                    .map_err(|refusal| CheckRefusal::from_type_check(location, refusal))?,
             }
         }
         Ok(())
@@ -4004,6 +4134,21 @@ impl<'a> Typer<'a> {
                     location,
                 )
             });
+        }
+        // FR-495-AC-24: two integer operands that both lower at the builtin
+        // `Integer` node (an integer division, or a control node over one) are
+        // compared as that node, never as their checked intervals, so
+        // `n mod 3 = n mod 2` checks. An operand converted or of another type
+        // keeps the equality matrix.
+        let (mut left, mut right) = (left, right);
+        if self.equality_operand_lowers_as_integer(&left)
+            && self.equality_operand_lowers_as_integer(&right)
+        {
+            for operand in [&mut left, &mut right] {
+                let integer = EqualityOperand::typed(ValueType::Integer);
+                operand.checked = integer.clone();
+                operand.stored = integer;
+            }
         }
         let check = |left: &EqualityOperand, right: &EqualityOperand| {
             self.scope
@@ -4685,10 +4830,11 @@ impl<'a> Typer<'a> {
         &self,
         operand: fsl_forms::ExprRef<'e>,
     ) -> Option<(fsl_forms::ExprRef<'e>, String, Option<String>, usize)> {
-        if self.presence_places.is_empty() {
+        if self.clock_presence_places().is_empty() {
             return None;
         }
         let mut path = Vec::new();
+        let mut prefixes = Vec::new();
         let mut owner = operand;
         loop {
             match owner.node() {
@@ -4699,6 +4845,7 @@ impl<'a> Typer<'a> {
                 } => {
                     path.push(field.clone());
                     owner = owner.at(*before);
+                    prefixes.push(owner);
                 }
                 fsl_forms::ExprNode::Index {
                     operand: before,
@@ -4709,6 +4856,7 @@ impl<'a> Typer<'a> {
                     };
                     path.push(position.to_u64()?.to_string());
                     owner = owner.at(*before);
+                    prefixes.push(owner);
                 }
                 fsl_forms::ExprNode::SelfRef if !path.is_empty() => break,
                 fsl_forms::ExprNode::Name(name)
@@ -4728,16 +4876,41 @@ impl<'a> Typer<'a> {
             }
         }
         path.reverse();
-        let place = self.presence_places.iter().find(|place| {
+        prefixes.reverse();
+        let names_place = |place: &&super::timed_model::PresencePlace, path: &[String]| {
             !place.slot
                 && place.path.len() == path.len()
-                && place.path.iter().zip(&path).all(|(step, read)| match step {
+                && place.path.iter().zip(path).all(|(step, read)| match step {
                     super::lowering::PlaceStep::Field(name)
                     | super::lowering::PlaceStep::Union(name) => name == read,
                     super::lowering::PlaceStep::Slot(_) => false,
                 })
-        })?;
-        Some((owner, place.field.clone(), place.case.clone(), path.len()))
+        };
+        if let Some(place) = self
+            .clock_presence_places()
+            .iter()
+            .find(|place| names_place(place, &path))
+        {
+            return Some((owner, place.field.clone(), place.case.clone(), path.len()));
+        }
+        for prefix in (1..path.len()).rev() {
+            let Some(owner) = prefixes.get(prefix).copied() else {
+                continue;
+            };
+            if let Some(place) = self
+                .clock_presence_places()
+                .iter()
+                .find(|place| names_place(place, &path[prefix..]))
+            {
+                return Some((
+                    owner,
+                    place.field.clone(),
+                    place.case.clone(),
+                    path.len().saturating_sub(prefix),
+                ));
+            }
+        }
+        None
     }
 
     /// Whether `operand`, the operand of a field read `operand.op`, is
@@ -4810,7 +4983,7 @@ impl<'a> Typer<'a> {
         let fsl_forms::ExprNode::Field { operand, field, .. } = source.node() else {
             return None;
         };
-        self.presence_places
+        self.clock_presence_places()
             .iter()
             .any(|place| place.slot && place.field == *field)
             .then(|| (source.at(*operand), field.as_str(), all))
@@ -4831,7 +5004,7 @@ impl<'a> Typer<'a> {
             return Err(mismatch(location));
         };
         let place = self
-            .presence_places
+            .clock_presence_places()
             .iter()
             .find(|place| {
                 place.slot
@@ -4870,7 +5043,7 @@ impl<'a> Typer<'a> {
     ) -> Result<Node, CheckRefusal> {
         let place = match &owner.value_type {
             ValueType::Reference(object) => self
-                .presence_places
+                .clock_presence_places()
                 .iter()
                 .find(|place| {
                     !place.slot
@@ -4935,67 +5108,246 @@ impl<'a> Typer<'a> {
     /// selector that is no `Integer` index of a `Sequence` or `OrderedSet`,
     /// at the selector.
     ///
-    /// The checked node that carries a place id is not in `filament-checked`
-    /// yet, so a `ref` of a place that has an id is refused
-    /// `unknown_required_feature`/`unsupported-feature` at the `ref`. So is a
-    /// longer path, of fields or selectors, that names no place of the owner:
-    /// an intermediate field may be a reference to another object
-    /// (`ref(self.r.x)`, `ref(self.r.ts[0].x)`), which needs the dereference
-    /// semantics.
+    /// A longer path can cross a field that is itself an object reference
+    /// (`ref(self.r.x)`); the typed owner is that field's value, and the
+    /// remaining path names a place of its target object.
     pub(super) fn clock_ref(
         &mut self,
         owner: Node,
         path: &[(Option<&str>, Option<Location>)],
-        selectors: &[ValueType],
+        selectors: &[Node],
         location: &Location,
     ) -> Result<Node, CheckRefusal> {
-        let unsupported = || {
-            refuse(
-                location,
-                CheckCause::UnsupportedFeature {
-                    loci: vec![location.clone()],
-                },
-            )
-        };
         let ValueType::Reference(object) = &owner.value_type else {
             return Err(mismatch(location));
         };
-        let place = self
-            .scope
-            .clock_places
-            .iter()
-            .find_map(|(place_owner, steps)| {
-                self.scope
-                    .types
-                    .conforms(object.clone(), place_owner.clone())
-                    .then(|| named_by(steps, path).map(|slots| (steps, slots)))
-                    .flatten()
-            });
-        let Some((steps, slots)) = place else {
-            return Err(if path.len() > 1 {
-                unsupported()
-            } else {
-                mismatch(location)
-            });
+        let object = object.clone();
+        let scope = self.scope;
+        let find_place = |object: EffectiveId, path: &[(Option<&str>, Option<Location>)]| {
+            scope
+                .clock_places
+                .iter()
+                .find_map(|(place_owner, steps, node)| {
+                    (scope.types.conforms(object.clone(), place_owner.clone()))
+                        .then(|| {
+                            named_by(steps, path).map(|slots| (steps.clone(), slots, node.clone()))
+                        })
+                        .flatten()
+                })
         };
-        let mut selected = selectors.iter().zip(slots);
+        let mut selected_owner = owner;
+        let mut path_offset = 0;
+        let mut place = find_place(object, path);
+        if place.is_none() && path.len() > 1 {
+            // A longer path can cross an object-reference field. Read that
+            // field as the owner of the remaining clock place, preserving
+            // the same direct Reference<T> term the checked graph carries.
+            for (index, (field, _)) in path.iter().enumerate().take(path.len() - 1) {
+                let Some(field) = field else {
+                    break;
+                };
+                let field_location = location;
+                selected_owner = match selected_owner.value_type.clone() {
+                    ValueType::Reference(_) => match self.attribute(
+                        selected_owner,
+                        field,
+                        None,
+                        field_location,
+                        field_location,
+                        false,
+                    ) {
+                        Ok(value) => value,
+                        Err(_) => return Err(mismatch(location)),
+                    },
+                    ValueType::Composite(_) => {
+                        match self.field(selected_owner, field, None, field_location) {
+                            Ok(value) => value,
+                            Err(_) => return Err(mismatch(location)),
+                        }
+                    }
+                    ValueType::Option(_) => return Err(mismatch(field_location)),
+                    _ => break,
+                };
+                if let ValueType::Reference(object) = &selected_owner.value_type {
+                    path_offset = index + 1;
+                    place = find_place(object.clone(), &path[path_offset..]);
+                    if place.is_some() {
+                        break;
+                    }
+                }
+            }
+        }
+        let Some((steps, slots, place)) = place else {
+            return Err(mismatch(location));
+        };
+        let Some(place) = place else {
+            return Err(refuse(
+                location,
+                CheckCause::InternalFault(Box::new(KeyFault::StageFault(
+                    filament_semantic_value::catalog::InternalFault::new(
+                        "S3",
+                        "clock place has no emitted timed-model node",
+                    ),
+                ))),
+            ));
+        };
+        let selector_offset = path[..path_offset]
+            .iter()
+            .filter(|(field, _)| field.is_none())
+            .count();
+        let clock_is_terminal_field = matches!(
+            steps.last(),
+            Some(super::lowering::PlaceStep::Field(_) | super::lowering::PlaceStep::Union(_))
+        );
+        let mut selected = selectors.iter().skip(selector_offset).zip(slots);
         for step in steps {
             let super::lowering::PlaceStep::Slot(shape) = step else {
                 continue;
             };
-            // A place under a `Map` value is selected by key, which has no
-            // decimal slot index to put in a place id.
-            if shape.map {
-                return Err(mismatch(location));
-            }
             let Some((selector, index)) = selected.next() else {
                 return Err(mismatch(location));
             };
-            if !matches!(selector, ValueType::Integer | ValueType::Int(_)) {
-                return Err(mismatch(path[index].1.as_ref().unwrap_or(location)));
+            if shape.map {
+                return Err(mismatch(location));
+            }
+            if !matches!(&selector.value_type, ValueType::Integer | ValueType::Int(_)) {
+                return Err(mismatch(
+                    path[path_offset + index].1.as_ref().unwrap_or(location),
+                ));
             }
         }
-        Err(unsupported())
+
+        // Keep each selected collection element in the checked body as an
+        // Index node. Facts can then prove its slot live from `size(q) > i`
+        // (or refuse `unproved-presence` at the selector) while S4 unwraps
+        // the same node back to its authored selector for the place-ref call.
+        let mut current = selected_owner.clone();
+        let mut checked_slots = Vec::new();
+        let mut selector = selectors.iter().skip(selector_offset);
+        for (index, (field, selector_location)) in path[path_offset..].iter().enumerate() {
+            if clock_is_terminal_field && path_offset + index + 1 == path.len() {
+                // The clock leaf (or union payload case) is represented by
+                // the place template itself; it is not an ordinary model
+                // attribute to type as a value read.
+                continue;
+            }
+            if let Some(field) = field {
+                current = if let Some(collection) =
+                    self.clock_collection_field(current.clone(), field, location)?
+                {
+                    collection
+                } else {
+                    match &current.value_type {
+                        ValueType::Reference(_) => {
+                            self.attribute(current, field, None, location, location, false)?
+                        }
+                        ValueType::Composite(_) => self.field(current, field, None, location)?,
+                        _ => return Err(mismatch(location)),
+                    }
+                };
+                continue;
+            }
+            let Some(index) = selector.next() else {
+                return Err(mismatch(location));
+            };
+            let (kind, value_type) = match &current.value_type {
+                ValueType::Collection(collection) => {
+                    let kind = match collection.kind() {
+                        filament_exact::CollectionKind::Sequence => {
+                            filament_checked::node::IndexedKind::Sequence
+                        }
+                        filament_exact::CollectionKind::OrderedSet => {
+                            filament_checked::node::IndexedKind::OrderedSet
+                        }
+                        _ => return Err(mismatch(selector_location.as_ref().unwrap_or(location))),
+                    };
+                    (kind, collection.element().clone())
+                }
+                _ => return Err(mismatch(selector_location.as_ref().unwrap_or(location))),
+            };
+            let selector_location = selector_location.as_ref().unwrap_or(location);
+            let checked = node(
+                NodeKind::Index {
+                    collection: self.push(current),
+                    index: self.push(index.clone()),
+                    kind,
+                },
+                value_type,
+                selector_location,
+            );
+            checked_slots.push(self.push(checked.clone()));
+            current = checked;
+        }
+        let reference = self.push(selected_owner);
+        Ok(node(
+            NodeKind::PlaceReference {
+                reference,
+                place: place.clone(),
+                slots: checked_slots,
+            },
+            super::clock_reference_type(),
+            location,
+        ))
+    }
+
+    /// A clock collection is a place, not an ordinary model attribute. Keep
+    /// a typed field-shaped path under an Index so FR-1040's interval proof
+    /// can compare `size(self.q)` with `self.q[i]`. PlaceReference lowering
+    /// emits only the selector, so this synthetic field never becomes a
+    /// package value read.
+    fn clock_collection_field(
+        &mut self,
+        owner: Node,
+        field: &str,
+        location: &Location,
+    ) -> Result<Option<Node>, CheckRefusal> {
+        let ValueType::Reference(object) = &owner.value_type else {
+            return Ok(None);
+        };
+        let Some((shape, place_key)) =
+            self.scope
+                .clock_places
+                .iter()
+                .find_map(|(candidate, path, key)| {
+                    (self.scope.types.conforms(object.clone(), candidate.clone()))
+                        .then(|| match path.as_slice() {
+                            [
+                                super::lowering::PlaceStep::Field(name),
+                                super::lowering::PlaceStep::Slot(shape),
+                            ] if name == field && !shape.map => {
+                                key.as_ref().map(|key| (*shape, key.clone()))
+                            }
+                            _ => None,
+                        })
+                        .flatten()
+                })
+        else {
+            return Ok(None);
+        };
+        let kind = match (shape.ordered, shape.unique) {
+            (true, false) => CollectionKind::Sequence,
+            (true, true) => CollectionKind::OrderedSet,
+            (false, true) => CollectionKind::Set,
+            (false, false) => return Ok(None),
+        };
+        let cardinality = shape
+            .max
+            .map(|maximum| bound(shape.min, maximum, location))
+            .transpose()?;
+        let value_type = ValueType::collection(CollectionType::new(
+            kind,
+            super::clock_reference_type(),
+            cardinality,
+        ));
+        Ok(Some(node(
+            NodeKind::Field {
+                operand: self.push(owner),
+                field: filament_checked::node::RecordField::new(place_key, field),
+                optional: false,
+            },
+            value_type,
+            location,
+        )))
     }
 
     pub(crate) fn is_model_receiver(&self, value_type: &ValueType, name: &str) -> bool {
@@ -5664,7 +6016,7 @@ impl<'a> Typer<'a> {
                 | ValueType::Rational(_)
                 | ValueType::Decimal(_),
             ) => {
-                use super::numeric_conversion::{classify, Class};
+                use super::numeric_conversion::{Class, classify};
                 let class = classify(&operand.value_type, target).ok_or_else(|| {
                     CheckRefusal::ill_typed(location, IllTypedCause::OperatorIneligible)
                 })?;
@@ -6211,32 +6563,39 @@ pub(crate) fn bind_parameters(
 
 /// Whether `ty` is, or holds through an option, a collection or a map's
 /// values, a `Float` (the IEEE profile is needed exactly then).
-pub(super) fn holds_float(mut ty: &ValueType) -> bool {
-    loop {
-        match ty {
-            ValueType::Float(_) => return true,
-            ValueType::Option(payload) => ty = payload,
-            ValueType::Collection(collection) => ty = collection.element(),
-            ValueType::Map(map) => ty = map.values(),
-            ValueType::Boolean
-            | ValueType::Integer
-            | ValueType::Int(_)
-            | ValueType::Rational(_)
-            | ValueType::Decimal(_)
-            | ValueType::Quantity(_)
-            | ValueType::BoundedQuantity(_)
-            | ValueType::CarriedQuantity(_)
-            | ValueType::Text(_)
-            | ValueType::String
-            | ValueType::Uuid
-            | ValueType::Timestamp
-            | ValueType::Enum(_)
-            | ValueType::Composite(_)
-            | ValueType::Reference(_)
-            | ValueType::Population(_) => return false,
-            ValueType::Bytes | ValueType::JsonObject => return false,
+pub(super) fn holds_float(ty: &ValueType) -> bool {
+    reaches_leaf(
+        ty,
+        |leaf| matches!(leaf, ValueType::Float(_)),
+        |_| Vec::new(),
+    )
+}
+
+/// Whether `root` is, or holds through an option, a collection, a map's
+/// values or a declared composite, a type `leaf` accepts. `members` gives the
+/// types a composite declaration holds; each declaration is visited once.
+fn reaches_leaf<'a>(
+    root: &'a ValueType,
+    leaf: impl Fn(&ValueType) -> bool,
+    members: impl Fn(&filament_exact::NodeKey) -> Vec<&'a ValueType>,
+) -> bool {
+    let mut seen = BTreeSet::new();
+    let mut pending = vec![root];
+    while let Some(value_type) = pending.pop() {
+        if leaf(value_type) {
+            return true;
+        }
+        match value_type {
+            ValueType::Option(payload) => pending.push(payload),
+            ValueType::Collection(collection) => pending.push(collection.element()),
+            ValueType::Map(map) => pending.push(map.values()),
+            ValueType::Composite(declaration) if seen.insert(declaration.clone()) => {
+                pending.extend(members(declaration));
+            }
+            _ => {}
         }
     }
+    false
 }
 
 #[cfg(test)]

@@ -113,13 +113,6 @@ pub enum MissEvidence {
     Utilization(Rational),
 }
 
-/// The setting an EN-7 stop names (FR-247).
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum ScheduleLimit {
-    /// `max_demand_points`, with the value in force.
-    MaxDemandPoints(u64),
-}
-
 /// EN-7's result for a claim (FR-247).
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ClosedFormOutcome {
@@ -131,5 +124,5 @@ pub enum ClosedFormOutcome {
     /// nothing.
     SufficientTestFailed(ClosedFormEvidence),
     /// A budget or the caller stopped the analysis.
-    Stopped(IncompleteCause, ScheduleLimit),
+    Stopped(IncompleteCause),
 }

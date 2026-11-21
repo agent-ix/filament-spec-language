@@ -108,6 +108,12 @@ pub enum CertificateRule {
     /// A liveness certificate's non-Zeno premise is absent, unexpected or
     /// differs from the checker's recomputation (FR-245).
     NonZenoMismatch,
+    /// A task-product certificate node the checker's recomputation does not
+    /// reach from `initials` (FSpec FR-418).
+    UnreachedNode,
+    /// A task-product certificate edge the checker's recomputation does not
+    /// produce (FSpec FR-418).
+    ExtraEdge,
 }
 
 /// FR-338 and FR-314: where a certificate rejection occurred.

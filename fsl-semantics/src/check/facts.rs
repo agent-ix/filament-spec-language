@@ -28,7 +28,7 @@ mod persistent;
 
 use self::persistent::PersistentMap;
 use super::check::{holds_float, DispatchOperation};
-use super::ir::{CheckedNode, DispatchTable, Slot};
+use super::ir::{CheckedNode, DispatchTable, NodeId, Slot};
 use super::observation::Observations;
 use super::refusal::{
     CheckCause, CheckRefusal, InvalidDispatchDeclaration, Obligation, OperandText, ProvedInterval,
@@ -92,6 +92,9 @@ struct Facts {
     /// FR-577 difference bounds `(u, v) -> c` record `u - v <= c` for two
     /// integer value paths.
     differences: PersistentMap<(StablePath, StablePath), Integer>,
+    /// Bounds `(v, c) -> k` record `v - size(c) <= k` for an integer value
+    /// path `v` and a stable collection path `c`: `v < size(c)` is `k = -1`.
+    below_size: PersistentMap<(StablePath, StablePath), Integer>,
 }
 
 /// How a call argument relates to the caller's parameters.
@@ -579,6 +582,11 @@ fn join(left: Option<Rc<Facts>>, right: Option<Rc<Facts>>) -> Option<Rc<Facts>> 
                 .intersect_with(&right.differences, &|left, right| {
                     left.clone().max(right.clone())
                 }),
+            below_size: left
+                .below_size
+                .intersect_with(&right.below_size, &|left, right| {
+                    left.clone().max(right.clone())
+                }),
         })),
     }
 }
@@ -1040,6 +1048,9 @@ impl<'a> Definedness<'a> {
         if matches!(relation, Relation::Equal | Relation::NotEqual) {
             return (unchanged(), unchanged());
         }
+        if let Some(next) = self.below_size_fact(left, right, relation, facts) {
+            return (Some(next), unchanged());
+        }
         let (Some(Subject::Value(x)), Some(Subject::Value(y))) =
             (self.subject(left, facts), self.subject(right, facts))
         else {
@@ -1066,6 +1077,43 @@ impl<'a> Definedness<'a> {
             Some(Rc::new(next))
         };
         (bounded(relation), bounded(relation.negated()))
+    }
+
+    /// The facts after `left relation right` holds, when it bounds a stable
+    /// integer path below the size of a stable collection (`i < size(c)`).
+    fn below_size_fact(
+        &self,
+        left: CheckedNode<'_>,
+        right: CheckedNode<'_>,
+        relation: Relation,
+        facts: &Rc<Facts>,
+    ) -> Option<Rc<Facts>> {
+        let (value, collection, bound) =
+            match (self.subject(left, facts), self.subject(right, facts), relation) {
+                (Some(Subject::Value(value)), Some(Subject::Size(collection)), Relation::Less)
+                | (Some(Subject::Size(collection)), Some(Subject::Value(value)), Relation::Greater) => {
+                    (value, collection, Integer::one().neg())
+                }
+                (
+                    Some(Subject::Value(value)),
+                    Some(Subject::Size(collection)),
+                    Relation::LessOrEqual,
+                )
+                | (
+                    Some(Subject::Size(collection)),
+                    Some(Subject::Value(value)),
+                    Relation::GreaterOrEqual,
+                ) => (value, collection, Integer::zero()),
+                _ => return None,
+            };
+        let mut next = Facts::clone(facts);
+        let key = (value, collection);
+        let bound = match next.below_size.get(&key) {
+            Some(held) => held.clone().min(bound),
+            None => bound,
+        };
+        next.below_size.insert(key, bound);
+        Some(Rc::new(next))
     }
 
     /// The bound on a binary subtraction of two stable value paths, if any.
@@ -1522,6 +1570,44 @@ impl<'a> Definedness<'a> {
         }
     }
 
+    fn discharge_sequence_index(
+        &self,
+        node: CheckedNode<'_>,
+        collection: NodeId,
+        index: NodeId,
+        facts: &Facts,
+    ) -> Result<(), CheckRefusal> {
+        let collection_node = node.at(collection);
+        let ValueType::Collection(collection_type) = collection_node.value_type() else {
+            return Err(Self::refuse(node, Obligation::Presence));
+        };
+        let size = self
+            .stable_path(collection_node, facts)
+            .and_then(|path| facts.intervals.get(&Subject::Size(path)))
+            .map_or_else(|| cardinality(collection_type), Interval::of_proved);
+        let index_node = node.at(index);
+        let position = self.interval(index_node, facts);
+        let zero = End::Finite(Integer::zero());
+        // `i < size(c)` held over the same stable paths proves slot `i` live.
+        let below_size = || {
+            let (Some(Subject::Value(value)), Some(collection)) = (
+                self.subject(index_node, facts),
+                self.stable_path(collection_node, facts),
+            ) else {
+                return false;
+            };
+            facts
+                .below_size
+                .get(&(value, collection))
+                .is_some_and(|bound| *bound <= Integer::one().neg())
+        };
+        if position.lower >= zero && (position.upper < size.lower || below_size()) {
+            Ok(())
+        } else {
+            Err(Self::refuse(index_node, Obligation::Presence))
+        }
+    }
+
     fn discharge_node(&mut self, node: CheckedNode<'_>, facts: &Facts) -> Result<(), CheckRefusal> {
         match node.kind() {
             NodeKind::ConvertScalar(_, operand) => {
@@ -1817,25 +1903,21 @@ impl<'a> Definedness<'a> {
             NodeKind::Index {
                 collection,
                 index,
-                kind:
-                    filament_checked::node::IndexedKind::Sequence
-                    | filament_checked::node::IndexedKind::OrderedSet,
-            } => {
-                let collection_node = node.at(*collection);
-                let ValueType::Collection(collection_type) = collection_node.value_type() else {
-                    return Err(Self::refuse(node, Obligation::Presence));
-                };
-                let size = self
-                    .stable_path(collection_node, facts)
-                    .and_then(|path| facts.intervals.get(&Subject::Size(path)))
-                    .map_or_else(|| cardinality(collection_type), Interval::of_proved);
-                let position = self.interval(node.at(*index), facts);
-                let zero = End::Finite(Integer::zero());
-                if position.lower >= zero && position.upper < size.lower {
-                    Ok(())
-                } else {
-                    Err(Self::refuse(node.at(*index), Obligation::Presence))
+                kind: IndexedKind::Sequence | IndexedKind::OrderedSet,
+            } => self.discharge_sequence_index(node, *collection, *index, facts),
+            NodeKind::PlaceReference { slots, .. } => {
+                for slot in slots {
+                    let selector = node.at(*slot);
+                    if let NodeKind::Index {
+                        collection,
+                        index,
+                        kind: IndexedKind::Sequence | IndexedKind::OrderedSet,
+                    } = selector.kind()
+                    {
+                        self.discharge_sequence_index(selector, *collection, *index, facts)?;
+                    }
                 }
+                Ok(())
             }
             // A reduction (no identity) of a possibly empty source.
             NodeKind::Fold {
@@ -2415,6 +2497,11 @@ fn rekey(facts: &Facts, parameters: usize, shift: usize) -> Facts {
             kept.differences.insert((upper, lower), bound);
         }
     }
+    for ((value, collection), bound) in facts.below_size.entries() {
+        if let (Some(value), Some(collection)) = (path(value), path(collection)) {
+            kept.below_size.insert((value, collection), bound);
+        }
+    }
     kept
 }
 
@@ -2460,6 +2547,13 @@ fn conjoin(into: &mut Facts, other: &Facts) -> bool {
             None => incoming,
         };
         into.differences.insert(key, merged);
+    }
+    for (key, incoming) in other.below_size.entries() {
+        let merged = match into.below_size.get(&key) {
+            Some(held) => held.clone().min(incoming),
+            None => incoming,
+        };
+        into.below_size.insert(key, merged);
     }
     true
 }

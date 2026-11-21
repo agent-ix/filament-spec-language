@@ -358,9 +358,22 @@ impl World {
     }
 
     fn admit_within(&self, max_candidates: u64) -> Result<ModelSystem<'_>, AdmissionFailure> {
+        self.admit_input(
+            crate::simulation::model::ModelCheckInput::source(&self.package),
+            max_candidates,
+        )
+    }
+
+    /// The system over this world's states read through `input`, with an
+    /// expansion budget of `max_candidates`.
+    pub(crate) fn admit_input<'a>(
+        &'a self,
+        input: crate::simulation::model::ModelCheckInput<'a>,
+        max_candidates: u64,
+    ) -> Result<ModelSystem<'a>, AdmissionFailure> {
         ModelSystem::new(ModelSimulationRequest {
             emit: fsl_package::EmitLimits::fixture(),
-            input: crate::simulation::model::ModelCheckInput::source(&self.package),
+            input,
             packages: &self.packages,
             normalization: ModelNormalizationLimits::default(),
             snapshots: &self.snapshots,
@@ -612,6 +625,29 @@ pub(crate) fn lone() -> Model {
             modifies: vec![],
         }],
         body: "workload Unit on M { weight Pinger::ping = 1; }\n".to_owned(),
+        initial: json!({"up": {"boolean": false}}),
+    }
+}
+
+/// The `scored` model: `pay(n: Int[0, 5], m: Int[0, 2])` with the reward
+/// `score = 10 * n + m`, which reads both parameters, in slot order.
+pub(crate) fn scored() -> Model {
+    const PACKAGE: &str = "test/scored";
+    Model {
+        package: PACKAGE,
+        object: "Account",
+        population: "accounts",
+        key: "a",
+        integers: vec![("Amount", 0, 5), ("Small", 0, 2)],
+        fields: vec![("up", BOOLEAN.to_owned())],
+        operations: vec![Operation {
+            name: "pay",
+            parameters: vec![("n", int(PACKAGE, "Amount")), ("m", int(PACKAGE, "Small"))],
+            modifies: vec![],
+        }],
+        body: "reward score on Account::pay = 10 * n + m;\n\
+               workload Unit on M { weight Account::pay = 1; }\n"
+            .to_owned(),
         initial: json!({"up": {"boolean": false}}),
     }
 }

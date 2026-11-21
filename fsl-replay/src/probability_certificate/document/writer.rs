@@ -250,6 +250,8 @@ impl Encode for Events<'_> {
         writer.name("profile")?;
         writer.string(if !self.fairness.is_empty() {
             BOUNDED_FAIR_PROFILE
+        } else if self.document.timed.is_some() {
+            TIMED_PROFILE
         } else if self.cyclic_mdp && self.document.reward.is_some() {
             CYCLIC_MDP_REWARD_PROFILE
         } else if self.cyclic_mdp {
@@ -306,6 +308,33 @@ impl Encode for Events<'_> {
             constraint.encode_into(writer)?;
         }
         writer.end_array()?;
+        if let Some(timed) = &self.document.timed {
+            writer.name("timed")?;
+            writer.begin_object()?;
+            writer.name("route")?;
+            writer.string(match timed.route {
+                TimedProbabilityRoute::Digital => "digital",
+                TimedProbabilityRoute::Region => "region",
+            })?;
+            writer.name("unit")?;
+            writer.begin_array()?;
+            writer.string("declared")?;
+            fsl_foundation::node_wire::encode_node_key(&timed.unit, writer)?;
+            writer.end_array()?;
+            writer.name("scale")?;
+            writer.string(&timed.scale.to_string())?;
+            writer.name("form")?;
+            writer.string(match timed.form {
+                TimedProbabilityForm::Reach => "reach",
+                TimedProbabilityForm::Until => "until",
+                TimedProbabilityForm::Always => "always",
+                TimedProbabilityForm::Deadline => "deadline",
+                TimedProbabilityForm::BoundedWindow => "bounded-window",
+                TimedProbabilityForm::ExpectedElapsed => "expected-elapsed",
+                TimedProbabilityForm::ElapsedQuantile => "elapsed-quantile",
+            })?;
+            writer.end_object()?;
+        }
         writer.end_object()?;
         writer.name("kind")?;
         writer.string("exact")?;

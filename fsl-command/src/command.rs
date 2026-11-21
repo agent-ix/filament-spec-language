@@ -7,6 +7,7 @@ mod export;
 mod flow;
 mod items;
 pub mod monitor;
+mod model_based_test;
 mod output;
 mod output_file;
 mod package_run;
@@ -62,6 +63,9 @@ pub struct RunLimits {
     pub request_bytes: usize,
     /// Maximum aggregate bytes in selected dependent files.
     pub dependent_bytes: usize,
+    /// `replay.input_bytes` (FR-255): the bound on each replay read an
+    /// analyze run starts (FR-940-AC-22).
+    pub replay_input_bytes: u64,
 }
 
 impl Default for RunLimits {
@@ -69,6 +73,7 @@ impl Default for RunLimits {
         Self {
             request_bytes: REQUEST_BYTES,
             dependent_bytes: TOTAL_BYTES,
+            replay_input_bytes: fsl_replay::DEFAULT_REPLAY_INPUT_BYTES,
         }
     }
 }
@@ -635,6 +640,15 @@ pub enum PreparedRun {
     /// FR-100, FR-1039: a call over a selected checked package, run from the
     /// package's own records without compiling source.
     Package(Box<package_run::PreparedPackageRun>),
+    /// FSpec FR-190: the result of the direct model-based testing request.
+    ModelBasedTest(PreparedModelBasedTestRun),
+}
+
+/// The direct model-based test record and sources admitted to produce it.
+pub struct PreparedModelBasedTestRun {
+    record: serde_json::Value,
+    exit_code: u8,
+    sources: crate::Sources,
 }
 
 /// A typed clause request together with every source admitted to prepare it.
@@ -687,6 +701,7 @@ impl PreparedRun {
             Self::Clause(request) => request.sources.clone(),
             Self::TlLowering(prepared) => prepared.sources.clone(),
             Self::Package(prepared) => prepared.sources(),
+            Self::ModelBasedTest(prepared) => prepared.sources.clone(),
         }
     }
 }
@@ -791,6 +806,17 @@ pub enum RunCause {
         cause: &'static str,
         /// Why the member is refused.
         reason: String,
+    },
+    /// FR-752: a typed model-based-test request refusal with its catalog code
+    /// and cause.
+    #[error("invalid model_based_test request member {path}: {cause}")]
+    ModelBasedTestRequest {
+        /// The catalog code of the refusal.
+        code: Code,
+        /// The JSON pointer of the member at fault.
+        path: String,
+        /// The FR-805 cause retained by the evaluator.
+        cause: &'static str,
     },
     /// FR-312: a clause request member cannot form a typed selection.
     #[error("invalid clause request member {member}: {reason}")]
@@ -917,6 +943,11 @@ pub enum RunCause {
     /// The request's extension definition catalog is invalid.
     #[error("the request's extension definitions are refused: {0}")]
     ExtensionCatalog(String),
+    /// An extension names a capability outside the closed complete-V1
+    /// inventory; it cannot be dropped, so the request is unsupported rather
+    /// than malformed.
+    #[error("the request's extension names an unknown required capability: {0}")]
+    UnknownExtensionCapability(String),
     /// Spine compile of a `1-draft` program refused at one stage.
     #[error("{}", .0.refusal)]
     Spine(Box<SpineFailure>),
@@ -1123,7 +1154,9 @@ impl RunCause {
             | Self::ExportProtocolRequest { .. } => Code::InvalidRequest,
             Self::ExportMapper { .. } => Code::RuntimeInvariant,
             Self::ExportRequest { .. } => Code::InvalidRuntimeInput,
-            Self::PlanRequest { code, .. } | Self::SynthesisRequest { code, .. } => *code,
+            Self::PlanRequest { code, .. }
+            | Self::SynthesisRequest { code, .. }
+            | Self::ModelBasedTestRequest { code, .. } => *code,
             Self::Output(_) | Self::ClauseOutput(_) | Self::ExportOutput { .. } => {
                 Code::OutputFailure
             }
@@ -1149,6 +1182,7 @@ impl RunCause {
             Self::ExtractionFailure { code, .. } => *code,
             Self::Spine(failure) => failure.refusal.code(),
             Self::ExtensionCatalog(_) => Code::InvalidPackage,
+            Self::UnknownExtensionCapability(_) => Code::UnknownRequiredFeature,
             Self::SpineRun(refusal) => refusal.code(),
             Self::UnknownRequirementClaim { .. } => Code::MissingDeclaration,
             Self::TemporalCorrection(_) => Code::InvalidRuntimeInput,
@@ -1334,7 +1368,8 @@ impl RunError {
             )]),
             RunCause::ExportRequest { path, cause, .. }
             | RunCause::PlanRequest { path, cause, .. }
-            | RunCause::SynthesisRequest { path, cause, .. } => {
+            | RunCause::SynthesisRequest { path, cause, .. }
+            | RunCause::ModelBasedTestRequest { path, cause, .. } => {
                 OutcomeDocument::new(operation, None, self.category()).with_diagnostics(vec![
                     OutcomeDiagnostic::new(
                         Some(*cause),
@@ -1400,6 +1435,7 @@ impl RunError {
             | RunCause::EmptyCompileProgram
             | RunCause::Libraries(_)
             | RunCause::ExtensionCatalog(_)
+            | RunCause::UnknownExtensionCapability(_)
             | RunCause::CompleteRunSelection(_)
             | RunCause::AnalyzeRequest { .. }
             | RunCause::AnalyzeUniverse(_)
@@ -1414,6 +1450,7 @@ impl RunError {
                 .with_diagnostics(vec![OutcomeDiagnostic::new(
                     match &self.cause {
                         RunCause::IntegerDivisionLaw { .. } => Some("unsupported-selection"),
+                        RunCause::UnknownExtensionCapability(_) => Some("unknown-feature"),
                         _ => None,
                     },
                     self.cause.code().as_str(),
@@ -3518,10 +3555,7 @@ fn extension_catalog(
         let capabilities = extension
             .capabilities
             .iter()
-            .map(|capability| {
-                CapabilityId::complete(capability)
-                    .map_err(|error| RunCause::ExtensionCatalog(error.to_string()))
-            })
+            .map(|capability| CapabilityId::complete(capability).map_err(extension_catalog_cause))
             .collect::<Result<std::collections::BTreeSet<_>>>()?;
         definitions.push(ExtensionDefinitionSource {
             authority: extension.authority.clone(),
@@ -3532,7 +3566,19 @@ fn extension_catalog(
         });
     }
     fsl_semantics::library::bundle::DefinitionCatalog::read_extensions(definitions)
-        .map_err(|error| RunCause::ExtensionCatalog(error.to_string()))
+        .map_err(extension_catalog_cause)
+}
+
+/// The refusal of an extension catalogue failure: a capability outside the
+/// closed inventory is an unknown required feature, every other failure a
+/// malformed catalogue.
+fn extension_catalog_cause(error: fsl_semantics::library::bundle::PackageError) -> RunCause {
+    match error {
+        fsl_semantics::library::bundle::PackageError::UnknownCapability(_) => {
+            RunCause::UnknownExtensionCapability(error.to_string())
+        }
+        other => RunCause::ExtensionCatalog(other.to_string()),
+    }
 }
 
 /// Validate extension labels and logical identity uniqueness before intake
@@ -3806,6 +3852,15 @@ fn prepare_run_bytes_with_sources(
     if let Some(member) = &request.tl_lowering {
         tl::decode(member)?;
     }
+    if let Some(member) = &request.model_based_test {
+        model_based_test::decode(member)?;
+    }
+    if request.tl_lowering.is_some() && request.model_based_test.is_some() {
+        return Err(RunCause::ClauseRequest {
+            member: "model_based_test".to_owned(),
+            reason: "model_based_test and tl_lowering are mutually exclusive".to_owned(),
+        });
+    }
     if request.items.is_some() {
         return Err(RunCause::ClauseRequest {
             member: "items".to_owned(),
@@ -3837,6 +3892,13 @@ fn prepare_run_bytes_with_sources(
                     .call
                     .as_ref()
                     .is_some_and(|call| call.snapshot.is_some()),
+            ) + usize::from(
+                request
+                    .model_based_test
+                    .as_ref()
+                    .and_then(|member| member.get("initial"))
+                    .and_then(serde_json::Value::as_str)
+                    .is_some(),
             ),
             extensions: request.extensions.len(),
         },
@@ -3976,6 +4038,20 @@ fn prepare_complete_run(
 ) -> Result<PreparedRun> {
     if let Some(member) = &request.tl_lowering {
         return prepare_lowering(intake, request, member, source, observation_override);
+    }
+    if let Some(member) = &request.model_based_test {
+        return model_based_test::prepare(
+            intake,
+            request,
+            member,
+            model_based_test::Context {
+                source,
+                integer_division,
+                library_integer_division,
+                limits: stage_limits,
+                observation_override,
+            },
+        );
     }
     if let Some(clause) = &request.clause {
         if request.call.is_some() {
@@ -4173,6 +4249,15 @@ fn execute_prepared(prepared: PreparedRun, settle: &settle::Settle<'_>) -> Resul
         PreparedRun::Function(prepared) => prepared,
         PreparedRun::TlLowering(prepared) => return execute_lowering(*prepared),
         PreparedRun::Package(prepared) => return package_run::execute(*prepared),
+        PreparedRun::ModelBasedTest(prepared) => {
+            return Ok(RunResult {
+                exit_code: prepared.exit_code,
+                value: NativeResult::model_based_test_document(prepared.record),
+                outcome: None,
+                requirements: None,
+                sources: prepared.sources,
+            });
+        }
         PreparedRun::Clause(request) => {
             let selection = request.selection.clone();
             let report =

@@ -19,7 +19,7 @@ pub mod manifest;
 
 use filament_exact::{Cancel, CancelCause};
 use fsl_replay::{
-    ClosedFormOutcome, IncompleteCause, ScheduleClaim, ScheduleLimit, ScheduleSubject,
+    ClosedFormOutcome, IncompleteCause, ModelCheckLimit, ScheduleClaim, ScheduleSubject,
     SchedulingPolicy,
 };
 
@@ -71,14 +71,12 @@ pub fn analyze(
         | ScheduleClaim::Response { .. } => fixed_priority::analyse(subject, cancel),
     };
     decided.unwrap_or_else(|stop| {
-        let setting = ScheduleLimit::MaxDemandPoints(limits.max_demand_points);
-        match stop {
-            Stop::Cancelled(source) => {
-                ClosedFormOutcome::Stopped(IncompleteCause::Cancelled { source }, setting)
-            }
-            Stop::DemandPoints => {
-                ClosedFormOutcome::Stopped(IncompleteCause::ResourceExhausted, setting)
-            }
-        }
+        ClosedFormOutcome::Stopped(match stop {
+            Stop::Cancelled(source) => IncompleteCause::Cancelled { source },
+            Stop::DemandPoints => IncompleteCause::LimitReached {
+                limit: ModelCheckLimit::ScheduleMaxDemandPoints,
+                value: limits.max_demand_points,
+            },
+        })
     })
 }

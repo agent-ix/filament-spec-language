@@ -1187,5 +1187,14 @@ fn a_cancelled_run_settles_the_model_based_test_step_incomplete() {
     )
     .expect("the plan runs")
     .into_value();
-    assert_eq!(outcome.dispositions[0].1.status, PlanStatus::Incomplete);
+    let (_, step) = &outcome.dispositions[0];
+    assert_eq!(step.status, PlanStatus::Incomplete);
+    assert!(matches!(
+        step.result,
+        Some(PlanResult::NotRun {
+            code: "cancelled",
+            cause: "cancelled",
+            ..
+        })
+    ));
 }

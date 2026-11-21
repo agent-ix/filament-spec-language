@@ -83,6 +83,11 @@
 
 mod divergence;
 mod product;
+pub use task_check::{
+    explore_task_product, recomputed_member, QuotientEdge, QuotientIdentity, QuotientInitial,
+    QuotientStop, QuotientVertex, TaskProductQuotient,
+};
+mod task_check;
 
 use filament_exact::NodeKey;
 use std::cell::{Cell, RefCell};
@@ -526,6 +531,9 @@ pub struct CertificateCheckLimits {
     /// (ADR-018 LA-5): reaching it stops the check as EN-6's own
     /// `max_automaton_states` stops the search (SR-1647001 FND-002).
     pub max_automaton_states: u64,
+    /// FSpec FR-418's `zone_check.max_check_work`: the work units of a
+    /// task-product check (default 100000000).
+    pub max_check_work: u64,
 }
 
 impl Default for CertificateCheckLimits {
@@ -534,6 +542,7 @@ impl Default for CertificateCheckLimits {
             max_certificate_edges: 1 << 24,
             max_certificate_bytes: 1 << 30,
             max_automaton_states: crate::model_check::limits::DEFAULT_MAX_AUTOMATON_STATES,
+            max_check_work: 100_000_000,
         }
     }
 }
@@ -585,6 +594,11 @@ pub enum CertifiedItem<'a> {
         /// The instance's `over` binding.
         over: Option<&'a filament_exact::ObjectReference>,
     },
+    /// FSpec FR-418's schedulability claim, decided on the task product.
+    Schedulability {
+        /// The checked claim.
+        claim: &'a fsl_semantics::check::CheckedScheduleClaim,
+    },
 }
 
 /// The item an obligation names, as the checker compares it with the
@@ -607,6 +621,8 @@ pub enum CertificateItem<'o> {
     },
     /// A state-graph claim by its checked occurrence.
     StateGraph(&'o OccurrenceKey),
+    /// A schedulability claim by its checked occurrence.
+    Schedulability(&'o OccurrenceKey),
     /// Any other item, which no zone certificate proves.
     Other,
 }
@@ -631,6 +647,8 @@ pub enum ItemIdentity {
     },
     /// A state-graph claim by its checked occurrence.
     StateGraph(OccurrenceKey),
+    /// A schedulability claim by its checked occurrence.
+    Schedulability(OccurrenceKey),
     /// Any other item.
     Other,
 }
@@ -649,6 +667,7 @@ impl From<CertificateItem<'_>> for ItemIdentity {
                 abstract_initial: abstract_initial.clone(),
             },
             CertificateItem::StateGraph(occurrence) => Self::StateGraph(occurrence.clone()),
+            CertificateItem::Schedulability(occurrence) => Self::Schedulability(occurrence.clone()),
             CertificateItem::Other => Self::Other,
         }
     }
@@ -724,6 +743,8 @@ pub enum ZoneCertificateRefusal<O> {
     Admission(Box<AdmissionFailure>),
     /// The model's timed reading does not build (FR-231).
     TimedSubject(Box<TimedSubjectRefusal>),
+    /// The claim's task product does not lower: FR-418's plan refusal.
+    TaskProductPlan(Box<fsl_eval::simulation::model::TaskProductPlanRefusal>),
     /// The item is not one this checker reads yet (see the module).
     UnsupportedItem,
     /// The clause's instances are not finite.
@@ -745,9 +766,11 @@ impl<O> ZoneCertificateRefusal<O> {
             Self::Package(refusal) => refusal.code(),
             Self::UnsupportedItem => Code::UnsupportedConstruct,
             Self::Fault(_) => Code::RuntimeInvariant,
-            Self::Admission(_) | Self::TimedSubject(_) | Self::Unbounded | Self::Undecided => {
-                Code::InvalidRuntimeInput
-            }
+            Self::TaskProductPlan(_)
+            | Self::Admission(_)
+            | Self::TimedSubject(_)
+            | Self::Unbounded
+            | Self::Undecided => Code::InvalidRuntimeInput,
         }
     }
 }
@@ -854,10 +877,10 @@ pub fn check_zone_certificate<O: Clone + Eq>(
     limits: CertificateCheckLimits,
     cancel: &Cancel,
 ) -> Result<ZoneCertificateVerdict, ZoneCertificateRefusal<O>> {
-    if certificate.task_product.is_some() {
-        // No task-derived item has been routed through this reader yet.
-        // Preserve the FR-418 member locus instead of accepting unverified
-        // product evidence on an ordinary source-only certificate.
+    if certificate.task_product.is_some()
+        && !matches!(request.item, CertifiedItem::Schedulability { .. })
+    {
+        // Only a schedulability item carries FR-418's task-product member.
         return Ok(malformed_verdict(CertificateMember::TaskProduct));
     }
     let mismatch = || ZoneCertificateRefusal::ObligationMismatch {
@@ -903,6 +926,14 @@ pub fn check_zone_certificate<O: Clone + Eq>(
             .map_or(ItemIdentity::Other, |occurrence| {
                 ItemIdentity::StateGraph(occurrence.clone())
             }),
+        CertifiedItem::Schedulability { claim } => source
+            .graph()
+            .task_sets()
+            .claims()
+            .iter()
+            .find(|own| own.name == claim.name && own.occurrence() == claim.occurrence())
+            .and_then(|own| own.occurrence())
+            .map_or(ItemIdentity::Other, ItemIdentity::Schedulability),
     };
     if named != recompiled || recompiled == ItemIdentity::Other {
         return Err(ZoneCertificateRefusal::IdentityMismatch {
@@ -974,6 +1005,16 @@ pub fn check_zone_certificate<O: Clone + Eq>(
     };
     let timed = TimedSystem::with_max_clocks(concrete, request.model, request.max_clocks)
         .map_err(|refusal| ZoneCertificateRefusal::TimedSubject(Box::new(refusal)))?;
+    let mut release_ops = None;
+    if let CertifiedItem::Schedulability { claim } = request.item {
+        match task_check::route(&timed, claim, certificate)? {
+            task_check::Route::FiniteProduct => {
+                return task_check::schedulability(timed, claim, certificate, limits, cancel);
+            }
+            task_check::Route::Verdict(verdict) => return Ok(verdict),
+            task_check::Route::NoRelease(operations) => release_ops = Some(operations),
+        }
+    }
     let mut live = None;
     let (claim, window) = match request.item {
         CertifiedItem::Clause { clause, letters } => {
@@ -1067,7 +1108,8 @@ pub fn check_zone_certificate<O: Clone + Eq>(
         CertifiedItem::DeadlockFreedom
         | CertifiedItem::TimeLockFreedom
         | CertifiedItem::Refinement { .. }
-        | CertifiedItem::StateGraph { .. } => (None, None),
+        | CertifiedItem::StateGraph { .. }
+        | CertifiedItem::Schedulability { .. } => (None, None),
     };
     let time_lock = matches!(request.item, CertifiedItem::TimeLockFreedom);
     let count = certificate.nodes.len();
@@ -1077,6 +1119,7 @@ pub fn check_zone_certificate<O: Clone + Eq>(
         window,
         live,
         time_lock,
+        release_ops,
         state_graph: match request.item {
             CertifiedItem::StateGraph { claim, over } => Some(StateGraphClaim { claim, over }),
             _ => None,
@@ -1165,6 +1208,10 @@ struct Checker<'c, 'a, O> {
     live: Option<product::LiveClaim<'c>>,
     /// Whether the item is time-lock freedom, with its divergence part.
     time_lock: bool,
+    /// FR-418's no-release closure of a schedulability claim: the source
+    /// operations that bind a checked task release, none of which may be
+    /// enabled at a reached node.
+    release_ops: Option<Vec<String>>,
     /// FR-712's discrete state-graph proof, checked over these reachable
     /// timed zones without FR-244's divergence-admission premise.
     state_graph: Option<StateGraphClaim<'c>>,
@@ -1484,7 +1531,6 @@ impl<O> Checker<'_, '_, O> {
                 edge.silent,
             ) {
                 (Some(_), None, Some(_), None) => true,
-                (None, Some(_), Some(_), None) => certificate.task_product.is_some(),
                 (None, None, None, None) => windowed || live.is_some(),
                 (None, None, None, Some(_)) => live.is_some(),
                 _ => false,
@@ -2195,6 +2241,17 @@ impl<O> Checker<'_, '_, O> {
         let successors = self.successors[node]
             .as_ref()
             .expect("a reached node has recomputed successors");
+        if let Some(releases) = &self.release_ops {
+            let released = successors.iter().any(|successor| {
+                successor
+                    .step
+                    .as_ref()
+                    .is_some_and(|step| releases.iter().any(|release| release == step.operation()))
+            });
+            if released {
+                return reject(CertificateRule::SuccessorMissing, at_node(node));
+            }
+        }
         // A set or bag assignment can produce several semantically equal
         // guarded steps (for example, equal element matches). The certificate
         // edge schema names their transition, guard part and resulting
@@ -2240,7 +2297,11 @@ impl<O> Checker<'_, '_, O> {
     /// Whether `node` violates the item at some valuation of its zone.
     fn bad(&self, node: usize) -> Step<bool, O> {
         let state = self.state(node)?;
-        if self.time_lock || self.live.is_some() || self.refined.is_some() {
+        if self.time_lock
+            || self.release_ops.is_some()
+            || self.live.is_some()
+            || self.refined.is_some()
+        {
             // A refinement form's badness is `check_step`'s, judged on
             // each edge in `reach`.
             // Time-lock freedom is read from the divergence part, and a

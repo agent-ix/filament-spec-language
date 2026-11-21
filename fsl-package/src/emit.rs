@@ -2494,6 +2494,8 @@ fn application_operator(operator: Operator) -> ApplicationOperator {
         Operator::Present => ApplicationOperator::Present,
         Operator::Value => ApplicationOperator::Value,
         Operator::Deref => ApplicationOperator::Deref,
+        Operator::PlaceRef => ApplicationOperator::PlaceRef,
+        Operator::Slots => ApplicationOperator::Slots,
         Operator::Reaches => ApplicationOperator::Reaches,
         Operator::Temporal => ApplicationOperator::Temporal,
         Operator::TemporalFormula => ApplicationOperator::TemporalFormula,

@@ -33,18 +33,18 @@ use filament_checked::node::{
     Arithmetic, CaseArm, CheckedLiteral, Connective, IntegerDivisionOperator, NodeKind,
     OrderedKind, RecordField, RecordSlot, Visit,
 };
-use std::collections::{hash_map, BTreeMap, BTreeSet, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet, hash_map};
 use std::fmt;
 use std::ops::ControlFlow;
 
 use fsl_foundation::source::node_table::{
-    standalone, DebugTable, DebugWith, NodeKeyDebug, NodeList, With,
+    DebugTable, DebugWith, NodeKeyDebug, NodeList, With, standalone,
 };
 
 use filament_exact::{
-    ArithmeticOperator, Charge, ChargePoint, CollectionKind, CollectionType, EffectiveId,
-    Identifier, Integer, MapType, Meter, NodeKey, OrderingOperator, Origin as OccurrenceOrigin,
-    Presence, TextProfile, Value, ValueType,
+    ArithmeticOperator, CardinalityBound, Charge, ChargePoint, CollectionKind, CollectionType,
+    EffectiveId, Identifier, Integer, MapType, Meter, NodeKey, OrderingOperator,
+    Origin as OccurrenceOrigin, Presence, TextProfile, Value, ValueType,
 };
 
 use super::check::{EnumBinding, Scope};
@@ -96,32 +96,32 @@ mod timed_clause;
 
 pub(crate) use extension::ExtensionFormInput;
 pub(crate) use hybrid::{
-    hybrid_location, hybrid_site, HybridClaimInput, HybridModelInput, HybridSite,
+    HybridClaimInput, HybridModelInput, HybridSite, hybrid_location, hybrid_site,
 };
 pub(crate) use hyper::{
-    finish_step_relation, HyperClauseInput, LoweredStepRelation, StepRelationInput,
+    HyperClauseInput, LoweredStepRelation, StepRelationInput, finish_step_relation,
 };
 pub(crate) use model::ParentSlotFailure;
-pub(crate) use model::{
-    bound_origin, clock_type_identity, equivalence_origin, model_declaration_key, quantity_origin,
-    record_node_key, strictly_below, QuantityKind, SourceClockLayout, SourceClockPlace,
-};
 pub use model::{
-    collection_kind, model_root_key, AdmittedModel, CollectionShape, ForeignView, ModelClause,
-    PlaceRow, PlaceStep, SelectedModelEnumDeclaration, SelectedModelEnumMember,
-    SelectedOperationMember,
+    AdmittedModel, CollectionShape, ForeignView, ModelClause, PlaceRow, PlaceStep,
+    SelectedModelEnumDeclaration, SelectedModelEnumMember, SelectedOperationMember,
+    collection_kind, model_root_key,
+};
+pub(crate) use model::{
+    QuantityKind, SourceClockLayout, SourceClockPlace, bound_origin, clock_type_identity,
+    equivalence_origin, model_declaration_key, quantity_origin, record_node_key, strictly_below,
 };
 pub(crate) use model::{model_node_content, population_node_content};
 pub(crate) use protocol::{
-    compensation_origin, declaration_origin, protocol_location, AttemptNodes, CompensationNodes,
-    ProtocolInput,
+    AttemptNodes, CompensationNodes, ProtocolInput, compensation_origin, declaration_origin,
+    protocol_location,
 };
-pub use protocol::{protocol_site, ProtocolSite, RelatedSide};
+pub use protocol::{ProtocolSite, RelatedSide, protocol_site};
 pub(crate) use state::{
+    AnchorInput, AttemptInput, LoweredAttempt, LoweredClause, OperationBinding, StateClauseInput,
     protocol_attempt_operation_location, protocol_attempt_operation_site,
     state_clause_name_location, state_clause_name_site, state_operation_location,
-    state_operation_site, AnchorInput, AttemptInput, LoweredAttempt, LoweredClause,
-    OperationBinding, StateClauseInput,
+    state_operation_site,
 };
 pub(crate) use state_graph::StateGraphClaimInput;
 pub(crate) use state_transition::TransitionClause;
@@ -129,10 +129,10 @@ pub(crate) use synthesis::{
     synthesis_location, synthesis_objective_location, synthesis_satisfies_location,
 };
 pub(crate) use temporal::{
-    temporal_location, temporal_site, AggregatePart, LoweredTemporalClause, TemporalClauseInput,
-    TemporalSite,
+    AggregatePart, LoweredTemporalClause, TemporalClauseInput, TemporalSite, temporal_location,
+    temporal_site,
 };
-pub(crate) use terminal::{terminal_location, terminal_site, TerminalInput, TerminalSite};
+pub(crate) use terminal::{TerminalInput, TerminalSite, terminal_location, terminal_site};
 pub(crate) use timed_clause::TimedClauseInput;
 
 /// A node's place in its recursion group (FR-092 "Recursion groups"): the
@@ -1255,13 +1255,38 @@ fn carrier_rounding(carried: &filament_exact::CarriedQuantityType) -> filament_e
 #[ix_trace_rs::string_edge]
 fn variant_type_identity(path: &[filament_exact::PathSegment]) -> Option<&String> {
     match path {
-        [filament_exact::PathSegment::Text(kind), filament_exact::PathSegment::Text(form), filament_exact::PathSegment::Text(identity)]
-            if kind == "model" && form == "variant_type" =>
-        {
-            Some(identity)
-        }
+        [
+            filament_exact::PathSegment::Text(kind),
+            filament_exact::PathSegment::Text(form),
+            filament_exact::PathSegment::Text(identity),
+        ] if kind == "model" && form == "variant_type" => Some(identity),
         _ => None,
     }
+}
+
+/// `data` with each source operand fact that lowers at `Integer` (an integer
+/// division, or a control node over one) retyped to the node type the operand
+/// lowers at, so the emitted fact witness names the type the graph carries
+/// (FR-495-AC-24).
+fn data_at_lowered_types(
+    node: CheckedNode<'_>,
+    mut data: EqualityProducerData,
+) -> EqualityProducerData {
+    for fact in &mut data.operand_type_facts {
+        if fact.role != super::ir::EqualityUnitOperandRole::Source {
+            continue;
+        }
+        let lowered = node
+            .children()
+            .into_iter()
+            .nth(fact.operand_position)
+            .filter(|child| child.value_type() == &fact.value_type)
+            .map(|child| child.lowered_value_type().into_owned());
+        if let Some(lowered) = lowered {
+            fact.value_type = lowered;
+        }
+    }
+    data
 }
 
 fn refuse(location: &Location, cause: CheckCause) -> CheckRefusal {
@@ -1420,6 +1445,18 @@ enum LowerFrame<'n> {
     Fold(Box<FoldFrame<'n>>),
     /// `case`: its scrutinee, then each arm's body under the arm's binders.
     Case(Box<CaseFrame<'n>>),
+    /// A clock collection's slot-presence quantifier, after lowering its owner.
+    SlotPresence {
+        node: CheckedNode<'n>,
+        field: String,
+        all: bool,
+    },
+    /// A clock collection read as a value (`size(r.q)`): its slot domain,
+    /// after lowering its owner.
+    SlotDomain {
+        node: CheckedNode<'n>,
+        field: String,
+    },
 }
 
 /// A checked node's operands, in order.
@@ -1429,6 +1466,7 @@ enum Operands<'n> {
     Two(&'n NodeId, &'n NodeId),
     Three(&'n NodeId, &'n NodeId, &'n NodeId),
     Each(&'n [NodeId]),
+    FirstThenEach(&'n NodeId, &'n [NodeId]),
     /// A dispatch call's receiver, then its arguments.
     Receiver(&'n NodeId, &'n [NodeId]),
 }
@@ -1440,6 +1478,7 @@ impl<'n> Operands<'n> {
             Self::Two(..) => 2,
             Self::Three(..) => 3,
             Self::Each(nodes) => nodes.len(),
+            Self::FirstThenEach(_, nodes) => nodes.len() + 1,
             Self::Receiver(_, arguments) => arguments.len() + 1,
         }
     }
@@ -1448,11 +1487,13 @@ impl<'n> Operands<'n> {
         let operand = match (self, index) {
             (Self::One(first) | Self::Two(first, _) | Self::Three(first, _, _), 0)
             | (Self::Receiver(first, _), 0) => Some(first),
+            (Self::FirstThenEach(first, _), 0) => Some(first),
             (Self::Two(_, second) | Self::Three(_, second, _), 1) => Some(second),
             (Self::Three(_, _, third), 2) => Some(third),
             (Self::Each(nodes), index) => nodes.get(index),
+            (Self::FirstThenEach(_, nodes), index) => nodes.get(index.checked_sub(1)?),
             (Self::Receiver(_, arguments), index) => arguments.get(index.checked_sub(1)?),
-            (Self::One(_) | Self::Two(..) | Self::Three(..), _) => None,
+            (Self::One(_) | Self::Two(..) | Self::Three(..) | Self::FirstThenEach(..), _) => None,
         };
         operand.copied()
     }
@@ -5152,6 +5193,21 @@ impl<'a> Lowering<'a> {
                 Operands::One(operand),
             ),
             NodeKind::Field { operand, field, .. } => {
+                // A clock collection is a place, not a record field: read as a
+                // value it is the domain of its live slots.
+                if let ValueType::Reference(owner_type) = node.at(*operand).value_type() {
+                    if self
+                        .timed_place_slot(owner_type.clone(), field.name())
+                        .is_some()
+                    {
+                        let owner = node.at(*operand);
+                        frames.push(LowerFrame::SlotDomain {
+                            node,
+                            field: field.name().to_owned(),
+                        });
+                        return Ok(LowerStep::Descend(owner));
+                    }
+                }
                 let member = self.field_member(field, node.location())?;
                 (
                     Keyed::Application(
@@ -5252,11 +5308,26 @@ impl<'a> Lowering<'a> {
                     frames,
                 );
             }
-            // These checked forms have no S4 representation yet. In
-            // particular, a clock-place reference is a descriptor, not a
-            // clock value; the downstream term contract has no row for it.
-            // A quantifier over a clock collection's slots likewise has no
-            // producer form yet.
+            NodeKind::PlaceReference {
+                reference,
+                place,
+                slots,
+            } => {
+                return self.next_operand(
+                    Box::new(OperandsFrame {
+                        node,
+                        operands: Operands::FirstThenEach(&reference, &slots),
+                        next: 0,
+                        terms: vec![LeafTerm::reference_node(place.clone().into())],
+                        keyed: Keyed::Application(
+                            Operator::PlaceRef,
+                            plain("filament.op.clock_reference.ref"),
+                        ),
+                    }),
+                    frames,
+                );
+            }
+            // These checked forms have no S4 representation yet.
             NodeKind::PopulationObjects { population } => {
                 let population = self.population_reference_node(population, node.location())?;
                 let result_type = self.type_ref(node.value_type(), node.location())?;
@@ -5272,9 +5343,18 @@ impl<'a> Lowering<'a> {
                 )?;
                 return Ok(LowerStep::Lowered(term));
             }
-            NodeKind::History { .. }
-            | NodeKind::PlaceReference { .. }
-            | NodeKind::SlotPresence { .. } => {
+            NodeKind::SlotPresence {
+                reference,
+                field,
+                all,
+            } => {
+                let owner = node.at(*reference);
+                let field = field.name.clone();
+                let all = *all;
+                frames.push(LowerFrame::SlotPresence { node, field, all });
+                return Ok(LowerStep::Descend(owner));
+            }
+            NodeKind::History { .. } => {
                 return Err(refuse(
                     node.location(),
                     CheckCause::UnsupportedFeature {
@@ -5483,7 +5563,7 @@ impl<'a> Lowering<'a> {
                         ..plain("filament.op.quantity.convert")
                     }
                 } else {
-                    use super::numeric_conversion::{classify, Class};
+                    use super::numeric_conversion::{Class, classify};
                     let identity = match classify(node.at(*operand).value_type(), &target) {
                         Some(Class::RangeNarrowing) => "filament.op.numeric.narrow",
                         Some(Class::RationalNarrowing) => "filament.op.rational.narrow",
@@ -5843,7 +5923,7 @@ impl<'a> Lowering<'a> {
                         Operation {
                             member: Some(Member::TypeArgument {
                                 declaration: object,
-                alias: None,
+                                alias: None,
                             }),
                             mode: Some(OperationMode::Absence(*absence)),
                             ..plain("filament.op.model.lookup")
@@ -6074,7 +6154,16 @@ impl<'a> Lowering<'a> {
     ) -> Result<LowerStep<'n>, CheckRefusal> {
         if let Some(operand) = frame.operands.get(frame.next) {
             frame.next += 1;
-            let operand = frame.node.at(operand);
+            let mut operand = frame.node.at(operand);
+            // QSL-2178 retains a selected collection Index beneath a
+            // PlaceReference so the definedness walk can prove that the
+            // element exists. The emitted place identity still carries the
+            // selector itself, not the indexed element value.
+            if frame.next > 1 && matches!(frame.node.kind(), NodeKind::PlaceReference { .. }) {
+                if let NodeKind::Index { index, .. } = operand.kind() {
+                    operand = frame.node.at(*index);
+                }
+            }
             // FR-358, ADR-013 O-09: an integer literal operand of an FR-357
             // scalar operator or of an integer `eq`/`ne` is a literal term in
             // the application's argument, never a node of its own.
@@ -6113,6 +6202,7 @@ impl<'a> Lowering<'a> {
                     };
                     let identity =
                         self.equality_identity(node, key.clone(), location.clone(), &data)?;
+                    let data = data_at_lowered_types(node, data);
                     self.equality_producer_data
                         .insert((key.clone(), location.clone()), data);
                     self.equality_producer_identities
@@ -6726,7 +6816,114 @@ impl<'a> Lowering<'a> {
             }
             LowerFrame::Fold(frame) => self.accept_fold(frame, term, binders, frames),
             LowerFrame::Case(frame) => self.accept_case(frame, term, binders, frames),
+            LowerFrame::SlotDomain { node, field } => {
+                let NodeKind::Field { operand, .. } = node.kind() else {
+                    return Err(fault(node.location(), KeyFault::UnresolvedDraft));
+                };
+                let (_, _, domain) = self.slot_domain(
+                    node.at(*operand).value_type(),
+                    &field,
+                    &term,
+                    node.location(),
+                )?;
+                Ok(LowerStep::Lowered(domain))
+            }
+            LowerFrame::SlotPresence { node, field, all } => {
+                let NodeKind::SlotPresence { reference, .. } = node.kind() else {
+                    return Err(fault(node.location(), KeyFault::UnresolvedDraft));
+                };
+                let (place, selector, domain) = self.slot_domain(
+                    node.at(*reference).value_type(),
+                    &field,
+                    &term,
+                    node.location(),
+                )?;
+                let name = "slot";
+                let parameter =
+                    self.parameter(name, binders.scope.len(), selector, node.location())?;
+                let boolean = self.type_node(&ValueType::Boolean, node.location())?;
+                let body = self.typed_application(
+                    node.location(),
+                    boolean,
+                    Operator::Present,
+                    Operation::plain("filament.op.option.present"),
+                    vec![
+                        MemberTerm::Leaf(LeafTerm::reference(place)),
+                        MemberTerm::Leaf(term),
+                        MemberTerm::Leaf(LeafTerm::reference(parameter)),
+                    ],
+                )?;
+                let boolean = self.type_node(&ValueType::Boolean, node.location())?;
+                self.typed_application(
+                    node.location(),
+                    boolean,
+                    Operator::Quantify,
+                    Operation::plain(if all {
+                        "filament.op.collection.forall"
+                    } else {
+                        "filament.op.collection.exists"
+                    }),
+                    vec![MemberTerm::Leaf(domain), MemberTerm::bound(name, body)],
+                )
+                .map(LowerStep::Lowered)
+            }
         }
+    }
+
+    /// The slot-domain application of the clock collection `field` of the
+    /// object `owner` is a reference to, at the lowered owner `term`: its
+    /// place template, the node of its slot selectors' type and the domain
+    /// term.
+    /// A `Sequence` is selected by position; a `Map` by its key type.
+    fn slot_domain(
+        &mut self,
+        owner: &ValueType,
+        field: &str,
+        term: &LeafTerm,
+        location: &Location,
+    ) -> Result<(NodeKey, NodeKey, LeafTerm), CheckRefusal> {
+        let ValueType::Reference(owner_type) = owner else {
+            return Err(fault(location, KeyFault::UnresolvedDraft));
+        };
+        let (place, shape) = self
+            .timed_place_slot(owner_type.clone(), field)
+            .ok_or_else(|| fault(location, KeyFault::UnresolvedDraft))?;
+        let selector_type = if shape.map {
+            self.models
+                .iter()
+                .find_map(|model| model.clock_map_key_type(owner_type.clone(), field))
+                .ok_or_else(|| {
+                    refuse(
+                        location,
+                        CheckCause::UnsupportedFeature {
+                            loci: vec![location.clone()],
+                        },
+                    )
+                })?
+        } else {
+            ValueType::Integer
+        };
+        // A `Map` key of the checked model's `String` is written as the
+        // `text` scalar, the one node the map's own `key` binding names.
+        let selector = self.map_key_node(&selector_type, location)?;
+        let domain_type = CollectionType::new(
+            CollectionKind::Set,
+            selector_type,
+            shape.max.map(CardinalityBound::at_most),
+        );
+        let domain_type = self.collection_type(&domain_type, selector.clone(), location)?;
+        let selector = require_admitted(selector, location)?;
+        let domain = self.typed_application(
+            location,
+            domain_type,
+            Operator::Slots,
+            Operation::plain("filament.op.option.slots"),
+            vec![
+                MemberTerm::Leaf(LeafTerm::reference(place.clone())),
+                MemberTerm::Leaf(term.clone()),
+            ],
+        )?;
+        Ok((place, selector, domain))
     }
 
     /// The declared members of the union `declaration`.
@@ -7144,6 +7341,9 @@ impl<'a> Lowering<'a> {
             }
             ValueType::Enum(_) => "enum",
             ValueType::Quantity(_) | ValueType::BoundedQuantity(_) => "quantity",
+            ValueType::Reference(target) if *target == crate::check::clock_reference_target() => {
+                "clock_reference"
+            }
             ValueType::Reference(_) => "reference",
             // FR-497-AC-2: the checker refuses a carried quantity `=` operand
             // before lowering.

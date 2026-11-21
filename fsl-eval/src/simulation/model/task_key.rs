@@ -9,7 +9,7 @@
 //!
 //! ```text
 //! | task:age; ...                                   arrival phases
-//! | task[:rank]:slot[:demand:jitter:deadline:service]:l|h:r|p:x|-:release  one per live job
+//! | task[:rank]:slot[:demand:jitter:deadline:service]:l|h:r|p:x|-[:s|-]:release  one per live job
 //! [| q[:task.rank ...]]                             ready queue, symbolic only
 //! l|h                                               criticality mode
 //! [:task@index[#generation@occurrence]:source ...]  pending budget changes
@@ -19,7 +19,8 @@
 //! The concrete path supplies the bracketed concrete fields (an arrival's
 //! age, the four job quantities, generation and occurrence); the symbolic
 //! path leaves them out because the node's DBM holds them, and adds the
-//! documented extension: each job's `rank`, the ready `queue`, and pending
+//! documented extension: each job's `rank` and `started` flag (whether its
+//! service clock is live, which no DBM can say), the ready `queue`, and pending
 //! changes located by rank. This is the single place the extension is
 //! defined. The writer does not sort; the symbolic key sorts jobs and
 //! pending changes by `(task, rank)` before calling it.
@@ -49,6 +50,11 @@ pub struct TaskKeyJob<'a> {
     pub ready: bool,
     /// Whether the job is running.
     pub running: bool,
+    /// Whether the job has received service, so its service clock is live;
+    /// symbolic keys only (a concrete key holds the service itself). A DBM
+    /// cannot tell a live service clock at zero from a dead one, so the
+    /// symbolic key states it.
+    pub started: Option<bool>,
     /// The source operation that activated the job.
     pub release: &'a ModelTransition,
 }
@@ -122,6 +128,10 @@ pub fn write_task_control(
         key.push(':');
         key.push(if job.running { 'x' } else { '-' });
         key.push(':');
+        if let Some(started) = job.started {
+            key.push(if started { 's' } else { '-' });
+            key.push(':');
+        }
         push_identity(key, job.release)?;
     }
     if let Some(queue) = &control.queue {
@@ -195,6 +205,7 @@ mod tests {
                     high_allowance: false,
                     ready: true,
                     running: true,
+                    started: (!concrete).then_some(true),
                     release: &release,
                 },
                 TaskKeyJob {
@@ -209,6 +220,7 @@ mod tests {
                     high_allowance: true,
                     ready: false,
                     running: false,
+                    started: (!concrete).then_some(false),
                     release: &release,
                 },
             ]
@@ -252,7 +264,7 @@ mod tests {
         assert_eq!(
             symbolic_key,
             format!(
-                "|0:=;1:-;|0:0:1:l:r:x:{IDENTITY}|1:0:0:h:p:-:{IDENTITY}|q:1.0h:1@0:{IDENTITY}."
+                "|0:=;1:-;|0:0:1:l:r:x:s:{IDENTITY}|1:0:0:h:p:-:-:{IDENTITY}|q:1.0h:1@0:{IDENTITY}."
             )
         );
     }

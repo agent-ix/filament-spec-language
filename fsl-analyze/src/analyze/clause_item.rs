@@ -26,8 +26,8 @@ use fsl_foundation::{source::provenance::OccurrenceKey, RequestIndex};
 use fsl_package::{CheckedPackage, ObligationIdentity};
 use fsl_replay::{
     replay_model_trace, CertificateRequest, EnvelopeSource, ModelCheckItem, ModelCheckLimits,
-    ModelTraceReplayResult, ModelTraceSubject, QualifiedName, ReplayLimits, ReplayPackage,
-    ReplayRefusal, ReplayRequestWire, ReplaySource, ReplayTargetMembers, RequestTargetWire,
+    ModelTraceReplayResult, ModelTraceSubject, QualifiedName, ReplayPackage,
+    PackageReadRefusal, ReplayRefusal, ReplayRequestWire, ReplaySource, ReplayTargetMembers, RequestTargetWire,
     StateEnvironment, TemporalCounterexample, Witness, WitnessEnvelope, WitnessPacket,
 };
 use fsl_route::Mode;
@@ -433,8 +433,48 @@ pub(super) fn replay_over(
         },
         &envelope,
         letters,
-        ReplayLimits::default(),
+        inputs.limits.replay,
     )
+}
+
+/// The refusal of a witness envelope the replay could not reconstruct: the
+/// run's `replay.input_bytes` bound is the replay refusal of that item, any
+/// other failure the internal fault `fallback`.
+fn envelope_refusal(error: fsl_replay::WitnessRefusal, fallback: ReplayRefusal) -> ReplayRefusal {
+    match error {
+        fsl_replay::WitnessRefusal::BoundExceeded(bound) => ReplayRefusal::Request(
+            fsl_replay::ReplayRequestRefusal::BoundExceeded(bound),
+        ),
+        _ => fallback,
+    }
+}
+
+/// The replay's read of the package `bytes` under the run's
+/// `replay.input_bytes` (FR-940-AC-22): bytes over the bound refuse as the
+/// replay request's `stage_limit_exceeded`/`input-bytes-exceeded`, which
+/// settles the item `inconclusive` `replay_refused`. A read that fails otherwise is the
+/// replay refusal of that item alone: `resource_exhausted` for an allocation
+/// it cannot make, `invalid_package` for bytes that are no package document.
+pub(super) fn read_package(
+    bytes: &[u8],
+    limits: &AnalyzeLimits,
+) -> Result<ReplayPackage, ReplayRefusal> {
+    let bound = limits.replay.input_bytes;
+    let actual = bytes.len() as u128;
+    if actual > u128::from(bound) {
+        return Err(ReplayRefusal::Request(
+            fsl_replay::ReplayRequestRefusal::BoundExceeded(fsl_replay::BoundExceeded {
+                bound,
+                actual,
+            }),
+        ));
+    }
+    ReplayPackage::read(bytes, bound).map_err(|error| {
+        ReplayRefusal::PackageRead(match error {
+            quire_canonical::ReadError::Allocation { .. } => PackageReadRefusal::Allocation,
+            _ => PackageReadRefusal::Malformed,
+        })
+    })
 }
 
 /// The clock selections of the declarations of `package` over a model
@@ -469,11 +509,10 @@ pub(super) fn replay_wire<T: Clone + fsl_eval::simulation::SubjectTransition>(
         inputs.limits.emit,
     )
     .map_err(|_| fault("package-emission"))?;
-    let package = ReplayPackage::read(
+    let package = read_package(
         emission.package().bytes(),
-        ReplayLimits::default().input_bytes,
-    )
-    .map_err(|_| fault("package-emission"))?;
+        inputs.limits,
+    )?;
     request_and_envelope(
         WireParts {
             package,
@@ -569,9 +608,9 @@ pub(super) fn request_and_envelope<T: Clone + fsl_eval::simulation::SubjectTrans
             source: Some(EnvelopeSource::Witness(transcript()?)),
             family_payload: Some(payload.clone()),
         },
-        ReplayLimits::default(),
+        limits.replay,
     )
-    .map_err(|_| fault("envelope"))?;
+    .map_err(|error| envelope_refusal(error, fault("envelope")))?;
     Ok((wire, envelope))
 }
 
@@ -619,11 +658,10 @@ pub(crate) fn replay_protocol_over(
             inputs.limits.emit,
         )
         .map_err(|_| fault("package-emission"))?;
-    let package = ReplayPackage::read(
+    let package = read_package(
         emission.package().bytes(),
-        ReplayLimits::default().input_bytes,
-    )
-    .map_err(|_| fault("package-emission"))?;
+        inputs.limits,
+    )?;
     let transcript = || Witness::parse(text).map_err(|_| fault("transcript"));
     let wire = ReplayRequestWire {
         certificate: None,
@@ -663,15 +701,15 @@ pub(crate) fn replay_protocol_over(
             source: Some(EnvelopeSource::Witness(transcript()?)),
             family_payload: Some(payload.clone()),
         },
-        ReplayLimits::default(),
+        inputs.limits.replay,
     )
-    .map_err(|_| fault("envelope"))?;
+    .map_err(|error| envelope_refusal(error, fault("envelope")))?;
     fsl_replay::replay_protocol_trace(
         wire,
         &inputs.subject,
         &envelope,
         letters,
-        ReplayLimits::default(),
+        inputs.limits.replay,
     )
 }
 
@@ -893,8 +931,7 @@ impl<'a> PackageClauseSubject<'a> {
         let fault =
             |cause: &'static str| ReplayRefusal::Fault(InternalFault::new("analyze", cause));
         let name = named(&self.clause).map_err(|_| fault("clause-name"))?;
-        let package = ReplayPackage::read(self.package_bytes, ReplayLimits::default().input_bytes)
-            .map_err(|_| fault("package-bytes"))?;
+        let package = read_package(self.package_bytes, &self.limits)?;
         let (wire, envelope) = request_and_envelope(
             WireParts {
                 package,
@@ -926,7 +963,7 @@ impl<'a> PackageClauseSubject<'a> {
             },
             &envelope,
             letters,
-            ReplayLimits::default(),
+            self.limits.replay,
         )
     }
 }
@@ -937,4 +974,41 @@ fn named(
 ) -> Result<QualifiedName, ClauseItemRefusal> {
     let segment = Identifier::new(clause.name()).map_err(|_| ClauseItemRefusal::UnnamedClause)?;
     QualifiedName::new(vec![segment]).map_err(|_| ClauseItemRefusal::UnnamedClause)
+}
+
+#[cfg(test)]
+mod tests {
+    use fsl_foundation::Code;
+    use fsl_replay::{InconclusiveCause, TerminalValue};
+    use ix_trace_rs::trace;
+
+    use super::*;
+
+    /// FR-940-AC-22 (TC-2958): a replay read of bytes that are no package
+    /// document is the replay refusal of that item alone, `invalid_package`,
+    /// which settles `inconclusive` `replay_refused` and never the internal
+    /// fault; a read the run's `replay.input_bytes` bound refuses is
+    /// `stage_limit_exceeded`.
+    #[trace("TC-2958", "FR-940-AC-22")]
+    #[test]
+    fn an_unreadable_replay_package_is_that_items_replay_refusal() {
+        let limits = AnalyzeLimits::unbounded();
+        let refusal = read_package(b"{not a package", &limits).expect_err("malformed bytes");
+        assert!(matches!(
+            refusal,
+            ReplayRefusal::PackageRead(PackageReadRefusal::Malformed)
+        ));
+        assert_eq!(refusal.code(), Code::InvalidPackage);
+        assert_eq!(
+            TerminalValue::from_replay_refusal(&refusal),
+            TerminalValue::Inconclusive(InconclusiveCause::ReplayRefused(Code::InvalidPackage))
+        );
+
+        let bounded = AnalyzeLimits {
+            replay: fsl_replay::ReplayLimits::default().with_input_bytes(4),
+            ..limits
+        };
+        let refusal = read_package(b"{\"a\":1}", &bounded).expect_err("over the bound");
+        assert_eq!(refusal.code(), Code::StageLimitExceeded);
+    }
 }

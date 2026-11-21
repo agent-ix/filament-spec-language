@@ -27,33 +27,35 @@
 //! one object type the model's populations range over.
 
 use fsl_foundation::source::node_table::{
-    DebugTable, DebugWith, NodeKeyDebug, NodeList, With, standalone,
+    standalone, DebugTable, DebugWith, NodeKeyDebug, NodeList, With,
 };
 use std::collections::{BTreeMap, BTreeSet};
 
 use filament_checked::key::DeclarationKey;
-use filament_exact::{EffectiveId, NodeKey, Rational, ValueType};
+use filament_exact::{
+    Charge, ChargePoint, EffectiveId, Integer, Meter, NodeKey, Rational, ValueType,
+};
 use filament_semantic_value::declaration::{CompositeShape, TypeEnvironment};
 use fsl_forms::{
     BinaryOperator, ExprId, ExprNode, ExpressionForm, QuantityForm, StateClauseKind,
     TimeInvariantForm, TypeFormHead, UrgentForm, UrgentTarget,
 };
+use fsl_foundation::source::provenance::{RawSourceRef, SourceRegion};
 use fsl_foundation::Span;
-use fsl_foundation::source::provenance::RawSourceRef;
 
 pub use self::collection_write::{CollectionWrite, Written};
 use super::assemble::TimedDeclaration;
 use super::check::NamedScope;
 use super::ir::{CheckedBody, CheckedNode};
-use super::lowering::{AdmittedModel, CollectionShape, PlaceStep, strictly_below};
+use super::lowering::{strictly_below, AdmittedModel, CollectionShape, PlaceStep};
 use super::refusal::TimedConstruct;
 use super::refusal::{
     CheckCause, CheckRefusal, ExcludedClauseForm, TemporalCause, TimedOmission,
     UnwrittenTimedMember,
 };
 use super::state_clause::{
-    ClauseDeclarations, ClauseOperation, ClauseView, PopulationDomain, StateClauseDeclaration,
-    check_clause, check_clause_named, population_of,
+    check_clause, check_clause_named, population_of, ClauseDeclarations, ClauseOperation,
+    ClauseView, PopulationDomain, StateClauseDeclaration,
 };
 use super::state_graph_claim::StatePredicate;
 use super::temporal_clause::{ModelTimeSource, TimeSourceKind};
@@ -813,23 +815,33 @@ fn bit_path(path: &[PlaceStep]) -> bool {
     match path {
         [PlaceStep::Field(_)] => true,
         [PlaceStep::Field(_), PlaceStep::Slot(shape)] => {
-            shape.ordered && !shape.unique && shape.max.is_some()
+            (shape.ordered && !shape.unique || shape.map) && shape.max.is_some()
         }
         _ => false,
     }
 }
 
+fn slot_presence_path(path: &[PlaceStep]) -> bool {
+    matches!(
+        path,
+        [PlaceStep::Field(_), PlaceStep::Slot(shape)]
+            if (shape.ordered && !shape.unique || shape.map) && shape.max.is_some()
+    )
+}
+
 /// The guarded places of `clocks` a predicate names `r.f` or `r.f.c`:
 /// an `Option<Clock>` field of the object, or a clock case of its union
 /// field.
-fn presence_places(clocks: &[ClockField]) -> Vec<PresencePlace> {
+pub(crate) fn presence_places(clocks: &[ClockField]) -> Vec<PresencePlace> {
     clocks
         .iter()
         .filter(|clock| clock.guarded)
         .filter_map(|clock| {
             let (field, case, slot) = match clock.path.as_slice() {
                 [PlaceStep::Field(field)] if clock.bit => (field.clone(), None, false),
-                [PlaceStep::Field(field), PlaceStep::Slot(_)] if clock.bit => {
+                [PlaceStep::Field(field), PlaceStep::Slot(_)]
+                    if clock.bit || slot_presence_path(&clock.path) =>
+                {
                     (field.clone(), None, true)
                 }
                 _ => {
@@ -1488,13 +1500,6 @@ impl TimedModel {
                 if !part.elements.is_empty() || !part.families.is_empty() {
                     return Some((Unwritten(Member::QuantifiedClause), guard.span));
                 }
-                if part
-                    .data
-                    .as_ref()
-                    .is_some_and(|data| data.checked_body().reads_slot_presence())
-                {
-                    return Some((Unwritten(Member::ElementPresence), guard.span));
-                }
                 if part.clocks.is_empty() && !guard.covered() && !part.empty_collection_branch {
                     // Located at the disjunct: its data predicate's site.
                     let site = guard_part_site(&self.model, at, index);
@@ -1561,13 +1566,6 @@ impl TimedModel {
                         .is_some_and(|binding| invariant.binders.contains(binding))
             }) {
                 return Some((Unwritten(Member::QuantifiedClause), invariant.span));
-            }
-            if invariant
-                .alternatives
-                .iter()
-                .any(|alternative| alternative.predicate.checked_body().reads_slot_presence())
-            {
-                return Some((Unwritten(Member::ElementPresence), invariant.span));
             }
         }
         self.urgency
@@ -1837,6 +1835,8 @@ pub(crate) struct Inputs<'a> {
     /// Each selected model alias's declaration span, which locates a clock
     /// field of an untimed model that no clause reads.
     pub(crate) model_spans: &'a std::collections::BTreeMap<String, Span>,
+    /// The source region a span of the unit names.
+    pub(crate) locate: &'a dyn Fn(Span) -> Option<SourceRegion>,
 }
 
 /// `cause`, located by the span it carries.
@@ -1904,7 +1904,8 @@ impl Clocks<'_> {
     }
 
     /// Whether `source` of `form` is `r.q`, `q` a `Sequence<Option<Clock>>`
-    /// field of some object type of the model.
+    /// or a bounded `Map<K, Clock>` field of some object type of the model:
+    /// a map's membership supplies the presence of its slots.
     fn bit_slots(&self, form: &ExpressionForm, source: ExprId) -> bool {
         let Some(ExprNode::Field { field, .. }) =
             form.expression.get(source).map(|node| node.node())
@@ -1912,9 +1913,9 @@ impl Clocks<'_> {
             return false;
         };
         self.fields.iter().any(|clock| {
-            clock.bit
-                && matches!(clock.path.as_slice(),
-                    [PlaceStep::Field(name), PlaceStep::Slot(_)] if name == field)
+            matches!(clock.path.as_slice(),
+                [PlaceStep::Field(name), PlaceStep::Slot(shape)]
+                    if name == field && (clock.bit || shape.map && shape.max.is_some()))
         })
     }
 
@@ -2141,7 +2142,7 @@ pub(crate) fn clock_fields(model: &AdmittedModel) -> Vec<ClockField> {
             path: place.path.clone(),
             aliases: place.aliases.clone(),
             bit: place.bit,
-            guarded: place.bit || place.case,
+            guarded: place.bit || place.case || slot_presence_path(&place.path),
             rows: place.rows(),
         })
         .collect()
@@ -2361,6 +2362,25 @@ impl<'f> Located<'f> {
                 }
             }
         }
+        // The place path of a `ref(p)` operand names a place and reads no
+        // clock; a selector inside it is an ordinary expression.
+        let mut under_ref = BTreeSet::new();
+        for node in form.expression.iter() {
+            let ExprNode::Ref(operand) = node.node() else {
+                continue;
+            };
+            let mut at = Some(*operand);
+            while let Some(id) = at.take() {
+                under_ref.insert(id);
+                at = match form.expression.get(id).map(|node| node.node()) {
+                    Some(ExprNode::Field { operand, .. } | ExprNode::Index { operand, .. }) => {
+                        Some(*operand)
+                    }
+                    Some(ExprNode::Select { place, .. }) => Some(*place),
+                    _ => None,
+                };
+            }
+        }
         // Children precede their parents, so each child is final when its
         // parent is reached.
         for node in form.expression.iter() {
@@ -2543,7 +2563,10 @@ impl<'f> Located<'f> {
             }
             // A clock read through another path is a read, though no
             // constraint can take it.
-            if clocks.foreign(form, id, context, &parents) {
+            if !under_ref.contains(&id)
+                && !traversed(form, id, &parents)
+                && clocks.foreign(form, id, context, &parents)
+            {
                 first[id.index()] = spans.get(id.index()).copied();
                 continue;
             }
@@ -2767,13 +2790,17 @@ type Dnf = Vec<(Vec<(DataLiteral, bool)>, Vec<ClockConstraint>)>;
 
 /// The parts of a guard's disjunctive forms, counted against the package's
 /// node limit: a guard whose disjunctive form grows past it is refused, as
-/// a body with that many nodes would be.
-struct PartBudget {
+/// a body with that many nodes would be. It also charges each unfolding of a
+/// clock-reading declaration to the checker's work meter.
+struct PartBudget<'m> {
     limit: u64,
     used: u64,
+    meter: &'m mut Meter,
+    /// The source region of a span, for a refusal located at a call.
+    locate: &'m dyn Fn(Span) -> Option<SourceRegion>,
 }
 
-impl PartBudget {
+impl PartBudget<'_> {
     fn charge(&mut self, parts: usize) -> Result<(), CheckCause> {
         let actual = self
             .used
@@ -2793,6 +2820,32 @@ impl PartBudget {
         Ok(())
     }
 
+    /// Charge one unfolding of the clock-reading declaration called at
+    /// `call` to the work meter.
+    fn unfold(&mut self, call: Span) -> Result<(), CheckCause> {
+        self.meter
+            .charge(Charge::new(ChargePoint::DeclarationCheck).work(Integer::from(1_u64)))
+            .map_err(|incomplete| {
+                limit_exceeded(
+                    super::refusal::CheckingLimitKind::WorkBudget,
+                    incomplete.limit,
+                    u128::from(incomplete.consumed) + 1,
+                    (self.locate)(call),
+                )
+            })
+    }
+
+    /// The refusal of a constant of `bits` bits past the rational-bit
+    /// ceiling `limit`, located at `at`.
+    fn too_wide(&self, limit: u64, bits: u64, at: Span) -> CheckCause {
+        limit_exceeded(
+            super::refusal::CheckingLimitKind::RationalBits,
+            limit,
+            u128::from(bits),
+            (self.locate)(at),
+        )
+    }
+
     fn product(&mut self, left: &Dnf, right: &Dnf) -> Result<Dnf, CheckCause> {
         self.charge(left.len().saturating_mul(right.len()))?;
         Ok(left
@@ -2807,6 +2860,21 @@ impl PartBudget {
             })
             .collect())
     }
+}
+
+fn limit_exceeded(
+    kind: super::refusal::CheckingLimitKind,
+    limit: u64,
+    actual: u128,
+    region: Option<SourceRegion>,
+) -> CheckCause {
+    CheckCause::ResourceExhausted(Box::new(super::refusal::StageLimitCause {
+        stage: super::refusal::CheckingStage::Typing,
+        kind,
+        limit,
+        actual,
+        region,
+    }))
 }
 
 fn timed(cause: TemporalCause) -> CheckCause {
@@ -3045,7 +3113,11 @@ fn part_predicate(
                 // the data predicate.
                 DataLiteral::Family(_) | DataLiteral::Presence(_) => return None,
             };
-            if positive { Some(cut) } else { cut.negated() }
+            if positive {
+                Some(cut)
+            } else {
+                cut.negated()
+            }
         })
         .collect::<Option<Vec<_>>>()?;
     ExpressionForm::conjunction(operands)
@@ -4310,6 +4382,7 @@ fn urgency(
 pub(crate) fn prepare(
     inputs: &Inputs<'_>,
     state_clauses: &mut [StateClauseDeclaration],
+    meter: &mut Meter,
 ) -> Result<TimedDrafts, CheckRefusal> {
     // FR-146 over the clock-reading declarations, which have no function
     // node for the value checker's measure check to reach (FR-091-AC-30).
@@ -4326,16 +4399,19 @@ pub(crate) fn prepare(
             },
         });
     }
-    prepare_models(inputs, state_clauses).map_err(refusal)
+    prepare_models(inputs, state_clauses, meter).map_err(refusal)
 }
 
 fn prepare_models(
     inputs: &Inputs<'_>,
     state_clauses: &mut [StateClauseDeclaration],
+    meter: &mut Meter,
 ) -> Result<TimedDrafts, CheckCause> {
     let mut budget = PartBudget {
         limit: inputs.nodes,
         used: 0,
+        meter,
+        locate: inputs.locate,
     };
     // FR-230 "Clock-reading declarations": each body is checked once. A call
     // this check does not expand reaches the value checker, which refuses it
@@ -4847,7 +4923,12 @@ fn check_part(
                 presence_places: checking.presence_places,
                 body: &form.expression,
             };
-            let (predicate, used) = typed_in(&view, form, declarations, cx, None)?;
+            // FR-391: a data predicate cut from a timed state-clause guard
+            // retains the same selected-model population names as the
+            // clause body. Without this scope, a `count`/quantifier over
+            // `Config::calls` is re-read as an unresolved segment here.
+            let named = NamedScope::of(declarations.models, declarations.scope, declarations.unit);
+            let (predicate, used) = typed_in(&view, form, declarations, cx, Some(named))?;
             *nodes_used = (*nodes_used).max(used);
             Some(predicate)
         }
@@ -5050,14 +5131,7 @@ pub(crate) fn check(
                         )?);
                     }
                     let alternatives = typed;
-                    // A presence read of a quantified element has no
-                    // producer form in this slice.
-                    let written = alternatives
-                        .iter()
-                        .all(|alternative| {
-                            !alternative.predicate.checked_body().reads_slot_presence()
-                        })
-                        .then_some(UrgencyPredicate { sites, node: None });
+                    let written = Some(UrgencyPredicate { sites, node: None });
                     (
                         Urgency::When {
                             name,
@@ -5218,7 +5292,7 @@ pub(crate) fn not_emitted(model: &TimedModel) -> Option<CheckRefusal> {
 
 #[cfg(test)]
 mod tests {
-    use fsl_forms::{ExpressionForm, ExpressionSpans, parse_clause_text};
+    use fsl_forms::{parse_clause_text, ExpressionForm, ExpressionSpans};
     use ix_trace_rs::trace;
 
     use super::DataLiteral;

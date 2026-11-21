@@ -319,3 +319,61 @@ fn an_unproved_narrowing_reports_the_target_range() {
         bounds("-3", "10")
     );
 }
+
+/// FR-093-AC-67: a decimal operand is proved by the declared ranges of its
+/// typed operands under exact interval arithmetic, so `s * 0.1` (at most 1.0)
+/// narrows into a target that holds 5.0 although the product is written at
+/// `s`'s own wider type.
+#[trace("FR-093-AC-67", "FR-093-AC-42", "FSpec-FR-149")]
+#[test]
+fn decimal_arithmetic_over_declared_ranges_proves_a_narrowing() {
+    assert_operation(
+        "type S = Decimal[0, 100; 1, 1; exact];\n\
+         type T = Decimal[0, 50; 1, 1; exact];\n\
+         function f using v(s: S): T pure { convert<T>(s * decimal(1, 1)) }",
+        "filament.op.numeric.narrow",
+        CheckMode::Linked,
+    );
+}
+
+/// FR-093-AC-67: when the exact interval of the sum exceeds the target
+/// (`1.5 + s` reaches 11.5, the target holds 5.0), the narrowing stays
+/// `undefined_expression`/`unproved-range`.
+#[trace("FR-093-AC-67", "FR-093-AC-42", "FSpec-FR-149")]
+#[test]
+fn decimal_sum_that_can_exceed_the_target_refuses_unproved_range() {
+    assert_unproved(
+        "type S = Decimal[0, 100; 1, 1; exact];\n\
+         type T = Decimal[0, 50; 1, 1; exact];\n\
+         function f using v(s: S): T pure { convert<T>(decimal(15, 1) + s) }",
+    );
+}
+
+/// FR-093-AC-67: an arithmetic node whose own type rounds stores a value on
+/// its maximum-scale grid, so the exact product bound 4.95 is widened outward
+/// to 5.0 and a target ending at 4.95 is not proved (`9.9 * 0.5` rounds to
+/// 5.0), while a target holding 5.00 is, and an `exact` twin keeps the exact
+/// interval.
+#[trace("FR-093-AC-67", "FSpec-FR-149")]
+#[test]
+fn a_rounding_decimal_node_is_widened_outward_to_its_grid() {
+    assert_unproved(
+        "type S = Decimal[0, 99; 1, 1; nearest-even];\n\
+         type T = Decimal[0, 495; 2, 2; nearest-even];\n\
+         function f using v(s: S): T pure { convert<T>(s * decimal(5, 1)) }",
+    );
+    assert_operation(
+        "type S = Decimal[0, 99; 1, 1; nearest-even];\n\
+         type T = Decimal[0, 500; 2, 2; nearest-even];\n\
+         function f using v(s: S): T pure { convert<T>(s * decimal(5, 1)) }",
+        "filament.op.numeric.narrow",
+        CheckMode::Linked,
+    );
+    assert_operation(
+        "type S = Decimal[0, 99; 1, 1; exact];\n\
+         type T = Decimal[0, 495; 2, 2; exact];\n\
+         function f using v(s: S): T pure { convert<T>(s * decimal(5, 1)) }",
+        "filament.op.numeric.narrow",
+        CheckMode::Linked,
+    );
+}

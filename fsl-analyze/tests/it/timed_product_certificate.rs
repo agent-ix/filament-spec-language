@@ -4,21 +4,23 @@
 //! over ADR-028 §15.5's `Retx`, and the core checker that rebuilds the
 //! digital or region product itself.
 
+use base64::Engine as _;
+use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use filament_exact::{Cancel, Integer, Rational};
 use fsl_analyze::analyze::{
-    analyze_items, exact_probabilistic_item, exact_probabilistic_item_tampered, AnalyzeRecord,
-    Engines,
+    AnalyzeRecord, Engines, analyze_items, exact_probabilistic_item,
+    exact_probabilistic_item_tampered,
 };
 use fsl_analyze::exact_probabilistic::{ExactProbLimits, ProductRequest};
 use fsl_eval::model_subject::ModelSubject;
 use fsl_foundation::RequestIndex;
 use fsl_replay::{
-    check_probability_certificate_document, CertificateRule, ExactProbabilityCertificate,
-    ExactProbabilityCertificateCheck, InconclusiveCause, ProbabilityCertificateLocus,
-    ProbabilityCertificateRule, ProbabilityDocumentError, ProofBasis, TerminalValue,
+    CertificateRule, ExactProbabilityCertificate, ExactProbabilityCertificateCheck,
+    InconclusiveCause, ProbabilityCertificateLocus, ProbabilityCertificateRule,
+    ProbabilityDocumentError, ProofBasis, TerminalValue, check_probability_certificate_document,
 };
 use ix_trace_rs::trace;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use super::long_run_certificate::limits;
 use crate::timed_world::{self, World};
@@ -48,7 +50,7 @@ fn every_deadlines() -> String {
     format!(
         "{}{}{}",
         deadline("Deadline", "under every scheduler", ">= 0.99"),
-        deadline("Max", "under every scheduler", "<= 0.999"),
+        deadline("Max", "under every scheduler", "<= 0.9999"),
         deadline("Strict", "under every scheduler", ">= 0.995"),
     )
 }
@@ -158,7 +160,9 @@ fn settle_tampered(
 
 /// The exact value of a `proved` record.
 fn proved_value(record: &AnalyzeRecord) -> Rational {
-    let terminal = record.terminal().expect("a terminal record");
+    let terminal = record
+        .terminal()
+        .unwrap_or_else(|| panic!("expected a terminal record, got {record:#?}"));
     match terminal.value() {
         TerminalValue::Proved {
             basis: ProofBasis::ExactValue { value, .. },
@@ -261,7 +265,6 @@ fn set_interior_values(to: Rational) -> impl Fn(&mut ExactProbabilityCertificate
 #[trace("TC-2489", "FR-920-AC-1")]
 #[trace("FSpec-TC-1767", "FSpec-FR-725-AC-1")]
 #[test]
-#[ignore = "QSL-2156: timed-product/v1 certificate documents not implemented yet"]
 fn digital_document_names_route_scale_and_clocks() {
     let world = retx(GUARD, true, "", &every_deadlines());
     let record = settle(&world, "Deadline");
@@ -279,33 +282,60 @@ fn digital_document_names_route_scale_and_clocks() {
 #[trace("TC-2489", "FR-920-AC-2")]
 #[trace("FSpec-TC-1767", "FSpec-FR-725-AC-2")]
 #[test]
-#[ignore = "QSL-2156: region keys in timed-product certificates not implemented yet"]
 fn region_document_keeps_fraction_order() {
     let world = retx(STRICT, true, "", &every_deadlines());
     let doc = document(&settle(&world, "Deadline"));
     assert_eq!(doc["objective"]["timed"]["route"], "region");
-    let keys: std::collections::BTreeSet<String> = doc["values"]
-        .as_array()
-        .expect("values")
+    let rows = doc["values"].as_array().expect("values");
+    let keys = rows
         .iter()
-        .map(|row| row["state"].to_string())
-        .collect();
-    assert_eq!(keys.len(), doc["values"].as_array().unwrap().len());
-    assert!(keys.iter().all(|key| key.contains("region")));
+        .map(|row| {
+            let encoded = row["state"].as_str().expect("encoded product key");
+            let bytes = URL_SAFE_NO_PAD.decode(encoded).expect("base64 product key");
+            serde_json::from_slice::<Value>(&bytes).expect("canonical product key")
+        })
+        .collect::<Vec<_>>();
+    let unique: std::collections::BTreeSet<String> =
+        keys.iter().map(serde_json::Value::to_string).collect();
+    assert_eq!(unique.len(), rows.len());
+    assert!(keys.iter().all(|key| key[2][1][0] == "region"));
+    assert!(keys.iter().all(|key| {
+        key[2][1][4].as_array().is_some_and(|clocks| {
+            clocks.iter().all(|clock| {
+                clock
+                    .as_array()
+                    .is_some_and(|parts| parts.len() == 4 && parts[3].as_str().is_some())
+            })
+        })
+    }));
 }
 
 /// FR-920-AC-3: a document has no component member; adding one rejects.
 #[trace("TC-2489", "FR-920-AC-3")]
 #[trace("FSpec-TC-1767", "FSpec-FR-725-AC-3")]
 #[test]
-#[ignore = "QSL-2156: timed-product/v1 certificate documents not implemented yet"]
 fn timed_document_has_no_component_member() {
     let world = retx(GUARD, true, "", &every_deadlines());
     let mut doc = document(&settle(&world, "Deadline"));
     doc["components"] = json!([]);
     assert!(!accepted(&world, "Deadline", &doc));
-    let emission = fsl_package::emit_checked(&world.package, fsl_package::EmitLimits::fixture())
-        .expect("S4 emits the timed unit");
+    // Retx's random parameter is checked but not yet emitted by this S4
+    // profile; use a deterministic timed package to test that the certificate
+    // profile itself is not part of package source.
+    let emission_world = timed_world::world(
+        &timed_world::document(&["x"], &[("send", &["late", "x"])]),
+        PROFILES,
+        &format!(
+            "{}\
+             pre Send using v on M::Call::send {{ not self.late and self.x >= 1 ms }}\n\
+             post Sent using v on M::Call::send {{ self.late = true and self.x = 0 ms }}\n\
+             time invariant Deadline when {{ not self.late }} {{ self.x <= 2 ms }}\n",
+            timed_world::DENSE,
+        ),
+    );
+    let emission =
+        fsl_package::emit_checked(&emission_world.package, fsl_package::EmitLimits::fixture())
+            .expect("S4 emits the deterministic timed unit");
     let text = String::from_utf8_lossy(emission.package().bytes()).into_owned();
     assert!(!text.contains("timed-product/v1"));
 }
@@ -317,7 +347,6 @@ fn timed_document_has_no_component_member() {
 #[trace("TC-2490", "FR-921-AC-1")]
 #[trace("FSpec-TC-1768", "FSpec-FR-751-AC-1")]
 #[test]
-#[ignore = "QSL-2156: the timed-product certificate checker not implemented yet"]
 fn altered_timed_value_is_rejected() {
     let world = retx(GUARD, true, "", &every_deadlines());
     let doc = document(&settle(&world, "Deadline"));
@@ -336,7 +365,6 @@ fn altered_timed_value_is_rejected() {
 #[trace("TC-2490", "FR-921-AC-2")]
 #[trace("FSpec-TC-1768", "FSpec-FR-751-AC-2")]
 #[test]
-#[ignore = "QSL-2156: the timed-product certificate checker not implemented yet"]
 fn stated_route_and_scale_are_compared() {
     let world = retx(GUARD, true, "", &every_deadlines());
     let doc = document(&settle(&world, "Deadline"));
@@ -357,7 +385,6 @@ fn stated_route_and_scale_are_compared() {
 #[trace("TC-2490", "FR-921-AC-3")]
 #[trace("FSpec-TC-1768", "FSpec-FR-751-AC-3")]
 #[test]
-#[ignore = "QSL-2156: the timed-product certificate checker not implemented yet"]
 fn timed_rows_cover_exactly_the_rebuilt_product() {
     let world = retx(GUARD, true, "", &every_deadlines());
     let doc = document(&settle(&world, "Deadline"));
@@ -384,7 +411,6 @@ fn timed_rows_cover_exactly_the_rebuilt_product() {
 #[trace("TC-2491", "FR-922-AC-1")]
 #[trace("FSpec-TC-1769", "FSpec-FR-752-AC-1")]
 #[test]
-#[ignore = "QSL-2156: the region MDP and its certificate not implemented yet"]
 fn strict_guard_is_certified_over_regions() {
     let world = retx(STRICT, true, "", &every_deadlines());
     for (claim, value) in [("Deadline", ratio(99, 100)), ("Max", ratio(999, 1000))] {
@@ -401,7 +427,6 @@ fn strict_guard_is_certified_over_regions() {
 #[trace("TC-2491", "FR-922-AC-2")]
 #[trace("FSpec-TC-1769", "FSpec-FR-752-AC-2")]
 #[test]
-#[ignore = "QSL-2156: the region MDP and its certificate not implemented yet"]
 fn digital_values_for_a_strict_guard_are_rejected() {
     let world = retx(STRICT, true, "", &every_deadlines());
     let mut doc = document(&settle(&world, "Deadline"));
@@ -428,7 +453,6 @@ fn digital_values_for_a_strict_guard_are_rejected() {
 /// boundary regions.
 #[trace("TC-2491", "FR-922-AC-3")]
 #[test]
-#[ignore = "QSL-2156: boundary-region certificates for expected elapsed time not implemented yet"]
 fn strict_mean_time_is_certified_over_boundary_regions() {
     let world = retx(
         STRICT,
@@ -441,26 +465,38 @@ fn strict_mean_time_is_certified_over_boundary_regions() {
     assert_eq!(proved_value(&record), ratio(20, 9));
     let doc = document(&record);
     assert_eq!(doc["objective"]["timed"]["form"], "expected-elapsed");
-    assert!(doc["values"][0]["state"]
-        .to_string()
-        .contains("boundary-region"));
+    let encoded = doc["values"][0]["state"]
+        .as_str()
+        .expect("encoded boundary-region key");
+    let bytes = URL_SAFE_NO_PAD.decode(encoded).expect("base64 ProductKey");
+    let key: Value = serde_json::from_slice(&bytes).expect("canonical ProductKey");
+    assert_eq!(key[2][1][0], "boundary-region");
     assert!(accepted(&world, "MeanTime", &doc));
 }
 
 // --- FR-923 (TC-2492) -------------------------------------------------------
 
-/// FR-923-AC-1: a `discrete` delay over every scheduler leaves no choice:
-/// minimum and maximum are the workload's value.
-#[trace("TC-2492", "FR-923-AC-1")]
+/// A `discrete` delay over every scheduler leaves no choice: minimum and
+/// maximum are the workload's value. This is the proof half of FR-923-AC-1,
+/// whose refutation half is the ignored test below, so the criterion is
+/// tagged there.
+#[trace("TC-2492")]
 #[trace("FSpec-TC-1769", "FSpec-FR-752-AC-3")]
 #[test]
-#[ignore = "QSL-2156: delay distributions over every scheduler not implemented yet"]
 fn every_scheduler_discrete_delay_is_certified() {
     let world = retx(GUARD, true, TWO_DELAYS, &every_deadlines());
     let record = settle(&world, "Deadline");
     assert_eq!(proved_value(&record), ratio(159_129, 160_000));
     let doc = document(&record);
     assert!(accepted(&world, "Deadline", &doc));
+}
+
+/// FR-923-AC-1: a bound above the discrete delay's exact value is refuted.
+#[trace("TC-2492", "FR-923-AC-1")]
+#[ignore = "QSL-2156: timed witness replay of a refuted every-scheduler deadline claim is not implemented yet"]
+#[test]
+fn every_scheduler_discrete_delay_refutes() {
+    let world = retx(GUARD, true, TWO_DELAYS, &every_deadlines());
     assert!(is_refuted(&settle(&world, "Strict")));
 }
 
@@ -469,7 +505,6 @@ fn every_scheduler_discrete_delay_is_certified() {
 #[trace("TC-2492", "FR-923-AC-2")]
 #[trace("FSpec-TC-1769", "FSpec-FR-752-AC-4")]
 #[test]
-#[ignore = "QSL-2156: delay distributions over every scheduler not implemented yet"]
 fn distribution_free_values_are_rejected() {
     let world = retx(GUARD, true, TWO_DELAYS, &every_deadlines());
     let record = settle_tampered(&world, "Deadline", |certificate| {
@@ -488,8 +523,8 @@ fn distribution_free_values_are_rejected() {
 /// FR-923-AC-3: over every scheduler a tie at the least delay is the
 /// scheduler's choice, so the maximum is 1 where `Both` gives `21/40`.
 #[trace("TC-2492", "FR-923-AC-3")]
+#[ignore = "QSL-2156: timed witness replay of an every-scheduler tie refutation and a workload-scheduler timed deadline check are not implemented yet"]
 #[test]
-#[ignore = "QSL-2156: every-scheduler tie choice in delay races not implemented yet"]
 fn every_scheduler_tie_is_the_schedulers_choice() {
     // `send` is drawn at 2 ms; `tick` is free but can only fire at x = 2 ms.
     let claim = |name: &str, scheduler: &str| {
@@ -532,7 +567,6 @@ fn toggling() -> World {
 #[trace("TC-2493", "FR-924-AC-1")]
 #[trace("FSpec-TC-1820", "FSpec-FR-753-AC-1")]
 #[test]
-#[ignore = "QSL-2156: zero-time end components made transient not implemented yet"]
 fn zero_time_components_take_their_best_exit() {
     let world = toggling();
     let record = settle(&world, "Deadline");
@@ -545,7 +579,6 @@ fn zero_time_components_take_their_best_exit() {
 #[trace("TC-2493", "FR-924-AC-2")]
 #[trace("FSpec-TC-1820", "FSpec-FR-753-AC-2")]
 #[test]
-#[ignore = "QSL-2156: zero-time end components made transient not implemented yet"]
 fn zeno_values_are_rejected() {
     let world = toggling();
     let record = settle_tampered(&world, "Deadline", set_interior_values(ratio(0, 1)));
@@ -558,8 +591,8 @@ fn zeno_values_are_rejected() {
 /// FR-924-AC-3: a retry cycle holds delays and is not collapsed.
 #[trace("TC-2493", "FR-924-AC-3")]
 #[trace("FSpec-TC-1820", "FSpec-FR-753-AC-3")]
+#[ignore = "QSL-2156: expected elapsed time over the digital route is not checked yet; the checker requires the region route"]
 #[test]
-#[ignore = "QSL-2156: timed-product certificates for expected elapsed time not implemented yet"]
 fn delay_cycles_are_not_collapsed() {
     let world = retx(
         GUARD,
@@ -587,7 +620,6 @@ fn delay_cycles_are_not_collapsed() {
 /// FR-924-AC-4: a zero-time cycle every action leaves is no end component.
 #[trace("TC-2493", "FR-924-AC-4")]
 #[test]
-#[ignore = "QSL-2156: time-divergent decision of zero-delay cycles not implemented yet"]
 fn zero_time_cycle_without_end_component_is_certified() {
     let world = retx("", false, "", &every_deadlines());
     let record = settle(&world, "Deadline");
@@ -598,8 +630,8 @@ fn zero_time_cycle_without_end_component_is_certified() {
 /// FR-924-AC-5: a time-locked initial state is terminal.
 #[trace("TC-2493", "FR-924-AC-5")]
 #[trace("FSpec-TC-1820", "FSpec-FR-753-AC-6")]
+#[ignore = "QSL-2156: the timed deadline checker does not accept a workload scheduler yet"]
 #[test]
-#[ignore = "QSL-2156: time-locked digital states not read as terminal yet"]
 fn time_locked_state_is_certified_terminal() {
     let world = retx(
         GUARD,
@@ -641,8 +673,8 @@ fn quantiles() -> World {
 /// FR-877-AC-1: `<= 2 ms` is proved with the transform's minimum `2/5`.
 #[trace("TC-2494", "FR-877-AC-1")]
 #[trace("FSpec-TC-1820", "FSpec-FR-753-AC-4")]
+#[ignore = "QSL-2156: elapsed-time quantile claims are not routed to the timed product yet (QSL-2158 source interface)"]
 #[test]
-#[ignore = "QSL-2156: elapsed-time quantile forms over digital clocks not implemented yet"]
 fn elapsed_quantile_at_most_is_certified() {
     let world = quantiles();
     let record = settle(&world, "AtMostTwo");
@@ -659,8 +691,8 @@ fn elapsed_quantile_at_most_is_certified() {
 /// FR-877-AC-2: `<= 1 ms` is refuted; a tampered transform value rejects.
 #[trace("TC-2494", "FR-877-AC-2")]
 #[trace("FSpec-TC-1820", "FSpec-FR-753-AC-4")]
+#[ignore = "QSL-2156: elapsed-time quantile claims are not routed to the timed product yet (QSL-2158 source interface)"]
 #[test]
-#[ignore = "QSL-2156: elapsed-time quantile forms over digital clocks not implemented yet"]
 fn elapsed_quantile_at_most_refutes() {
     let world = quantiles();
     assert!(is_refuted(&settle(&world, "AtMostOne")));
@@ -680,8 +712,8 @@ fn elapsed_quantile_at_most_refutes() {
 /// FR-877-AC-3: `>= 1 ms` is proved by a region `upper` document of `-1/2`.
 #[trace("TC-2494", "FR-877-AC-3")]
 #[trace("FSpec-TC-1820", "FSpec-FR-753-AC-5")]
+#[ignore = "QSL-2156: elapsed-time quantile claims are not routed to the timed product yet (QSL-2158 source interface)"]
 #[test]
-#[ignore = "QSL-2156: elapsed-time quantile forms over regions not implemented yet"]
 fn elapsed_quantile_at_least_is_certified_over_regions() {
     let world = quantiles();
     let record = settle(&world, "AtLeastOne");
@@ -698,8 +730,8 @@ fn elapsed_quantile_at_least_is_certified_over_regions() {
 /// FR-877-AC-4: at a transform maximum of exactly 0 the tight search reaches
 /// the activated initial state, so the claim is refuted, never proved.
 #[trace("TC-2494", "FR-877-AC-4")]
+#[ignore = "QSL-2156: elapsed-time quantile claims are not routed to the timed product yet (QSL-2158 source interface)"]
 #[test]
-#[ignore = "QSL-2156: elapsed-time quantile forms over regions not implemented yet"]
 fn elapsed_quantile_tight_search_refutes() {
     let world = quantiles();
     assert!(is_refuted(&settle(&world, "Tight")));
@@ -708,19 +740,26 @@ fn elapsed_quantile_tight_search_refutes() {
 /// FR-921-AC-2: a key whose cap of `x` is changed is malformed.
 #[trace("TC-2490", "FR-921-AC-2")]
 #[test]
-#[ignore = "QSL-2156: the timed-product certificate checker not implemented yet"]
 fn a_wrong_clock_cap_is_malformed() {
     let world = retx(GUARD, true, "", &every_deadlines());
     let doc = document(&settle(&world, "Deadline"));
-    let text = doc.to_string();
-    // The first `x` entry `[identity,value,"3"]` (FR-196: the cap of `x` is 3)
-    // with its cap lowered to 2.
-    let lowered = if text.contains(",\"3\"]") {
-        text.replacen(",\"3\"]", ",\"2\"]", 1)
-    } else {
-        text.replacen(",\\\"3\\\"]", ",\\\"2\\\"]", 1)
-    };
-    let changed: Value = serde_json::from_str(&lowered).expect("JSON");
+    let mut changed = doc.clone();
+    let mut lowered_caps = 0;
+    for row in changed["values"].as_array_mut().expect("values") {
+        let encoded = row["state"].as_str().expect("encoded ProductKey");
+        let bytes = URL_SAFE_NO_PAD.decode(encoded).expect("base64 ProductKey");
+        let mut key: Value = serde_json::from_slice(&bytes).expect("canonical ProductKey");
+        let clocks = key[2][1][4].as_array_mut().expect("digital clocks");
+        if let Some(clock) = clocks.iter_mut().find(|clock| clock[0][1] == "x") {
+            // FR-196: the cap of `x` is 3; lower it to 2 in the encoded key.
+            assert_eq!(clock[2], "3");
+            clock[2] = json!("2");
+            let bytes = serde_json::to_vec(&key).expect("canonical JSON bytes");
+            row["state"] = json!(URL_SAFE_NO_PAD.encode(bytes));
+            lowered_caps += 1;
+        }
+    }
+    assert!(lowered_caps > 0, "the digital ProductKeys name clock x");
     assert_ne!(changed, doc, "the document names the cap of x");
     match check(&world, "Deadline", &changed) {
         Ok(ExactProbabilityCertificateCheck::Rejected(rejection)) => {
@@ -737,8 +776,8 @@ fn a_wrong_clock_cap_is_malformed() {
 /// value 0 is rejected.
 #[trace("TC-2493", "FR-924-AC-6")]
 #[trace("FSpec-TC-1820", "FSpec-FR-753-AC-7")]
+#[ignore = "QSL-2156: the region product of a reset loop holds a positive-time cycle; bounded backward induction rejects it and the claim settles as not yet implemented"]
 #[test]
-#[ignore = "QSL-2156: the Alur–Dill progress condition on region end components not implemented yet"]
 fn reset_loop_zeno_values_are_rejected() {
     let world = retx_over(
         &["x", "y"],

@@ -85,6 +85,8 @@ struct EdgeGraph {
     findings: Vec<(String, String)>,
     /// States whose expansion returns `ExpansionStop` with this cause.
     stops: Vec<(String, CatalogCode)>,
+    /// Findings each listed state reports when evaluated for findings alone.
+    stopped_findings: Vec<(String, String)>,
 }
 
 impl EdgeGraph {
@@ -106,12 +108,21 @@ impl EdgeGraph {
             edges,
             findings: vec![],
             stops: vec![],
+            stopped_findings: vec![],
         }
     }
 
     /// The same graph, whose expansion of `state` also returns `finding`.
     fn with_finding(mut self, state: &str, finding: &str) -> Self {
         self.findings.push((state.to_owned(), finding.to_owned()));
+        self
+    }
+
+    /// The same graph, whose `state` reports `finding` when evaluated for
+    /// findings alone.
+    fn with_stopped_finding(mut self, state: &str, finding: &str) -> Self {
+        self.stopped_findings
+            .push((state.to_owned(), finding.to_owned()));
         self
     }
 
@@ -160,6 +171,16 @@ impl TransitionSystem for EdgeGraph {
                 .map(|(_, finding)| finding.clone())
                 .collect(),
         })
+    }
+
+    fn state_findings(&self, state: &String) -> Option<Result<Vec<String>, ExpansionStop>> {
+        let found: Vec<String> = self
+            .stopped_findings
+            .iter()
+            .filter(|(at, _)| at == state)
+            .map(|(_, finding)| finding.clone())
+            .collect();
+        (!found.is_empty()).then_some(Ok(found))
     }
 }
 
@@ -2020,6 +2041,25 @@ fn tc_474_a_stopped_trace_replays_and_a_differing_stop_refuses() {
             replayed: Some(EXHAUSTED),
         })
     );
+}
+
+/// A sampled trace that ends at a stopped state keeps the findings evaluated
+/// for that state alone, at its step depth, and replays against them.
+#[test]
+fn a_stopped_sample_keeps_the_stopped_states_own_findings() {
+    let stopping = short_chain()
+        .with_stop("1", EXHAUSTED)
+        .with_stopped_finding("1", "own");
+    let trace = sample_474(&stopping, 1, 4);
+    assert_eq!(trace.findings.len(), 1);
+    assert_eq!(trace.findings[0].depth, 1);
+    assert_eq!(trace.findings[0].findings, vec!["own".to_owned()]);
+    assert_eq!(replay(&stopping, &trace, IdentityLimits::default()), Ok(()));
+
+    let tampered_system = short_chain()
+        .with_stop("1", EXHAUSTED)
+        .with_stopped_finding("1", "other");
+    assert!(replay(&tampered_system, &trace, IdentityLimits::default()).is_err());
 }
 
 /// TC-474 step 6, FR-101-AC-14: a sampled trace records the findings of the

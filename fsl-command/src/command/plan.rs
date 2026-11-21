@@ -236,7 +236,7 @@ pub(super) fn run_bytes(
                 )
                 .map_err(plan_refusal)?
                 .into_value();
-                Some(outcome::dispositions(outcome)?)
+                Some(outcome::dispositions(outcome, package.graph().package_name())?)
             } else {
                 None
             };

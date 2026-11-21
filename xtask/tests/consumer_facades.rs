@@ -126,7 +126,53 @@ fn pin_check_passes_the_workspace_and_refuses_a_branch_dependency() {
     let text = report(&refused);
     assert_eq!(refused.status.code(), Some(1), "{text}");
     assert!(text.contains("replace"), "{text}");
-    assert!(text.contains("uses rev"), "{text}");
+    assert!(
+        text.contains("uses rev that is not a full 40-hex sha"),
+        "{text}"
+    );
+}
+
+#[test]
+#[trace("TC-2141", "FR-760-AC-3")]
+fn pin_check_accepts_tag_and_full_sha_rev_and_refuses_short_rev() {
+    let scratch = tempfile::tempdir().expect("scratch directory");
+    let manifest = scratch.path().join("Cargo.toml");
+    let check = |dependency: &str| {
+        fs::write(
+            &manifest,
+            format!(
+                "[package]\nname = \"scratch\"\nversion = \"0.0.0\"\nedition = \"2021\"\n\n\
+                 [dependencies]\nfilament-contract-model = {{ git = \"https://github.com/agent-ix/filament-contract-ir\"{dependency} }}\n"
+            ),
+        )
+        .expect("write scratch manifest");
+        xtask(&[
+            "pin-check",
+            "--manifest",
+            manifest.to_str().expect("UTF-8 path"),
+        ])
+    };
+    let sha = "f5c913bd0123456789abcdef0123456789abcdef";
+    let tag = check(", tag = \"v1.2.3\"");
+    assert_eq!(tag.status.code(), Some(0), "{}", report(&tag));
+    let full = check(&format!(", rev = \"{sha}\""));
+    assert_eq!(full.status.code(), Some(0), "{}", report(&full));
+    let short = format!(", rev = \"{}\"", &sha[..8]);
+    let non_hex = format!(", rev = \"{}z\"", &sha[..39]);
+    let both = format!(", tag = \"v1.2.3\", rev = \"{sha}\"");
+    for (dependency, message) in [
+        (short.as_str(), "uses rev that is not a full 40-hex sha"),
+        (non_hex.as_str(), "uses rev that is not a full 40-hex sha"),
+        (", branch = \"main\"", "uses branch"),
+        ("", "missing tag or full-sha rev"),
+        (both.as_str(), "uses both tag and rev"),
+    ] {
+        let refused = check(dependency);
+        let text = report(&refused);
+        assert_eq!(refused.status.code(), Some(1), "{text}");
+        assert!(text.contains(message), "{dependency}: {text}");
+        assert!(text.contains("filament-contract-model"), "{text}");
+    }
 }
 
 #[test]
@@ -173,7 +219,10 @@ fn a_pending_field_is_rejected_by_the_closed_binding_schema() {
     let output = check_with(&bindings);
     let text = report(&output);
     assert_eq!(output.status.code(), Some(1), "{text}");
-    assert!(text.contains("binding fact: unexpected field pending_ticket"), "{text}");
+    assert!(
+        text.contains("binding fact: unexpected field pending_ticket"),
+        "{text}"
+    );
 }
 
 #[test]

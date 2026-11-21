@@ -4459,7 +4459,8 @@ fn a_named_predicate_declaration_is_outside_state_core_and_inside_state_queries(
 }
 
 /// FR-110-AC-8: an expression form outside the closure refuses
-/// `unsupported_construct`/`expression-form` at the expression, and a form of
+/// `unsupported_construct`/`expression-form` at the form (a binary operator at
+/// its own token), and a form of
 /// a wider layer is never admitted: state queries admits `filter` over a
 /// predicate but not integer `div`, which only the value layer adds.
 #[trace("TC-490", "FR-110-AC-8")]
@@ -4467,14 +4468,14 @@ fn a_named_predicate_declaration_is_outside_state_core_and_inside_state_queries(
 fn an_expression_form_of_a_wider_layer_is_refused_at_its_span() {
     let (layer, form, _) = layer_refusal(
         "predicate Half using q(x: Int[0, 9]): Boolean { x div 2 = 1 }",
-        "x div 2",
+        "div",
     );
     assert_eq!(layer, HeaderLayer::StateQueries);
     assert_eq!(form, LayerForm::ValueConstruct);
     // The first offending form in source order is the one refused.
     let (_, form, _) = layer_refusal(
         "predicate Twice using q(x: Int[0, 9]): Boolean { x rem 2 = 0 and x div 2 = 1 }",
-        "x rem 2",
+        "rem",
     );
     assert_eq!(form, LayerForm::ValueConstruct);
 }

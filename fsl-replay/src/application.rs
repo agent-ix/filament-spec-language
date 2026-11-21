@@ -1096,9 +1096,7 @@ pub enum CheckedApplicationProgress<'a> {
 mod tests {
     use super::*;
     use crate::spine::SuppliedLibrary;
-    use filament_eval::{
-        Body, BodyFailure, ChildRequest, FamilyOutcome, LiveContext, Resume, Transition,
-    };
+    use filament_eval::{Body, BodyFailure, ChildRequest, FamilyOutcome, Resume, Transition};
     use filament_exact::{
         Cancel, CancelCause, Integer, LimitKind, Outcome, ScalarLimits, ValueType,
     };

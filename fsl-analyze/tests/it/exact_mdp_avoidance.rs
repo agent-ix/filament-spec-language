@@ -20,6 +20,7 @@ fn key(id: u8) -> ProbKey {
         monitor: None,
         accumulator: None,
         pending: None,
+        certificate_state: None,
     }
 }
 
@@ -59,6 +60,7 @@ fn product(mut edges: Vec<(usize, usize, i64, i64, u8)>) -> ProbProduct {
             draw: None,
             to: ids[to],
             probability: ratio(n, d),
+            elapsed: ratio(0, 1),
             rewards: vec![(
                 Identifier::new("cost").expect("identifier"),
                 Value::Integer(Integer::zero()),

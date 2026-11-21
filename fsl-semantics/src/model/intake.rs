@@ -61,7 +61,10 @@ use crate::model::domain_package::{
 use crate::model::normalize::{ModelRefusal, ModelRefusalCause, Refusals};
 use crate::model::refusal::{Inexact, IntakeLimit, MemberPath, MemberRoot};
 use filament_checked::key::DeclarationKey;
-use filament_exact::{Integer, IntegerInterval, Presence, RationalDomain, TextProfile, TextType};
+use filament_exact::{
+    DecimalType, Integer, IntegerInterval, Presence, RationalDomain, RoundingMode, TextProfile,
+    TextType, ValueType,
+};
 use fsl_foundation::diagnostic::{Code, JsonPointer};
 use fsl_foundation::source::{LocatedSpan, Position};
 use fsl_foundation::IntakeLimits;
@@ -1451,6 +1454,7 @@ fn validate_with_semantic_ir(document: &PackageDocument) -> Result<(), Vec<Model
         })
         .collect();
     let mut namespace_forms = std::collections::BTreeSet::new();
+    let mut decimal_roots = std::collections::BTreeSet::new();
     let refusals: Vec<ModelRefusal> = verdict
         .diagnostics
         .iter()
@@ -1483,6 +1487,11 @@ fn validate_with_semantic_ir(document: &PackageDocument) -> Result<(), Vec<Model
         // validation and this filter suppresses only its corresponding
         // closed-vocabulary diagnostics.
         .filter(|located| !rational_value_type_schema_diagnostic(document, located))
+        // FR-056's Decimal policy is an FCD extension too. Keep only the
+        // validator diagnostics for the member spelling that this reader
+        // owns; malformed policies and operands still surface from the
+        // shared validator unchanged.
+        .filter(|located| !decimal_schema_diagnostic(document, located))
         // The upstream validator also emits generic supertype diagnostics for
         // process cross-meaning edges and cycles, and for record, event and
         // state machine cycles. The binder retains those edges so
@@ -1515,6 +1524,9 @@ fn validate_with_semantic_ir(document: &PackageDocument) -> Result<(), Vec<Model
                     ));
                 }
                 return Some(refusal);
+            }
+            if decimal_policy_cascade(document, located, &mut decimal_roots) {
+                return None;
             }
             if let Some(refusal) = missing_option_inner_schema_refusal(document, located) {
                 return Some(refusal);
@@ -1842,6 +1854,228 @@ fn rational_value_type_schema_diagnostic(
                 ]
                 .contains(&keyword)
             }),
+        _ => false,
+    }
+}
+
+/// The Decimal declaration without a policy that a type reference reaches:
+/// the first node of its alias chain that is a policy-less `decimal` scalar
+/// or a policy-less alias of native Decimal. `None` when the chain carries a
+/// policy, or ends anywhere else.
+fn policy_less_decimal_root<'t>(types: &'t [Value], reference: &str) -> Option<&'t str> {
+    let mut current = reference;
+    for _ in 0..=types.len() {
+        let node = types
+            .iter()
+            .find(|node| node.get("identity").and_then(Value::as_str) == Some(current))?;
+        if node.get("decimal").is_some() {
+            return None;
+        }
+        let identity = node.get("identity").and_then(Value::as_str)?;
+        if node.get("scalar").and_then(Value::as_str) == Some("decimal") {
+            return Some(identity);
+        }
+        if node.get("kind").and_then(Value::as_str) != Some("alias") {
+            return None;
+        }
+        let target = node.get("target").and_then(Value::as_str)?;
+        if target == "ix://filament/native/Decimal" {
+            return Some(identity);
+        }
+        current = target;
+    }
+    None
+}
+
+/// Whether the type `reference` of `tree` is a Decimal subject: a `decimal`
+/// scalar, a node carrying a policy, or an alias chain that reaches one or
+/// native Decimal.
+fn walks_to_decimal(tree: &Value, reference: &str) -> bool {
+    let Some(types) = tree.get("types").and_then(Value::as_array) else {
+        return false;
+    };
+    let mut current = reference;
+    for _ in 0..=types.len() {
+        let Some(node) = types
+            .iter()
+            .find(|node| node.get("identity").and_then(Value::as_str) == Some(current))
+        else {
+            return false;
+        };
+        if node.get("scalar").and_then(Value::as_str) == Some("decimal")
+            || node.get("decimal").is_some()
+        {
+            return true;
+        }
+        let Some(target) = node.get("target").and_then(Value::as_str) else {
+            return false;
+        };
+        if target == "ix://filament/native/Decimal" {
+            return true;
+        }
+        current = target;
+    }
+    false
+}
+
+/// Whether `reference` reaches native Decimal through a value type bound to it
+/// by `target`, with no policy on the way. Such a value type is an untyped
+/// native alias, not a Decimal walk that lacks its policy.
+fn reaches_target_bound_decimal(types: &[Value], reference: &str) -> bool {
+    let mut current = reference;
+    for _ in 0..=types.len() {
+        let Some(node) = types
+            .iter()
+            .find(|node| node.get("identity").and_then(Value::as_str) == Some(current))
+        else {
+            return false;
+        };
+        if node.get("decimal").is_some() {
+            return false;
+        }
+        let Some(target) = node.get("target").and_then(Value::as_str) else {
+            return false;
+        };
+        if target == "ix://filament/native/Decimal" {
+            return node.get("kind").and_then(Value::as_str) != Some("alias");
+        }
+        current = target;
+    }
+    false
+}
+
+/// Whether `located` is a consequence of a Decimal declaration that lacks its
+/// policy, for which another diagnostic already stands: the validator walks
+/// every field, parameter, result, alias and bound that reaches the
+/// declaration and reports each, so one missing policy would otherwise refuse
+/// once per use. The first `DECIMAL_POLICY_MISSING` of each root is kept
+/// (`roots` records them), and an `INVALID_OPERAND` on a bound of a
+/// policy-less declaration, which has no scale to read it at, is dropped.
+#[ix_trace_rs::string_edge]
+fn decimal_policy_cascade(
+    document: &PackageDocument,
+    located: &agent_ix_semantic_ir::diag::Located,
+    roots: &mut std::collections::BTreeSet<String>,
+) -> bool {
+    let missing = located.code == agent_ix_semantic_ir::rules::DECIMAL_POLICY_MISSING;
+    if !missing && located.code != agent_ix_semantic_ir::rules::INVALID_OPERAND {
+        return false;
+    }
+    let Some(types) = document.tree.get("types").and_then(Value::as_array) else {
+        return false;
+    };
+    let Some(rest) = located.pointer.strip_prefix("/ir/types/") else {
+        return false;
+    };
+    let mut segments = rest.split('/');
+    let Some(node) = segments
+        .next()
+        .and_then(|position| position.parse::<usize>().ok())
+        .and_then(|position| types.get(position))
+    else {
+        return false;
+    };
+    let Some(identity) = node.get("identity").and_then(Value::as_str) else {
+        return false;
+    };
+    // The reference the diagnostic's position carries: a member's, a
+    // parameter's or a result's `typeRef`, else the node's own walk.
+    let mut position = node;
+    for segment in segments {
+        if matches!(segment, "constraints" | "target") {
+            break;
+        }
+        let next = match segment.parse::<usize>() {
+            Ok(index) => position.get(index),
+            Err(_) => position.get(segment),
+        };
+        let Some(next) = next else {
+            break;
+        };
+        position = next;
+    }
+    let reference = position
+        .get("typeRef")
+        .and_then(Value::as_str)
+        .filter(|_| !std::ptr::eq(position, node))
+        .unwrap_or(identity);
+    let root = policy_less_decimal_root(types, reference);
+    if !missing {
+        return root.is_some();
+    }
+    if reaches_target_bound_decimal(types, reference) {
+        return true;
+    }
+    !roots.insert(root.map_or_else(|| located.pointer.clone(), str::to_owned))
+}
+
+/// Whether a shared schema diagnostic is one of the Decimal schema members
+/// whose semantic interpretation belongs to FR-056's Decimal reader.
+#[ix_trace_rs::string_edge]
+fn decimal_schema_diagnostic(
+    document: &PackageDocument,
+    located: &agent_ix_semantic_ir::diag::Located,
+) -> bool {
+    if located.code != agent_ix_semantic_ir::schema::SCHEMA_VIOLATION {
+        return false;
+    }
+    let Some(rest) = located.pointer.strip_prefix("/ir/types/") else {
+        return false;
+    };
+    let mut segments = rest.split('/');
+    let Some(position) = segments.next().and_then(|text| text.parse::<usize>().ok()) else {
+        return false;
+    };
+    let member = segments.next();
+    let Some(type_value) = document
+        .tree
+        .get("types")
+        .and_then(Value::as_array)
+        .and_then(|types| types.get(position))
+    else {
+        return false;
+    };
+    let is_decimal_value_type = type_value.get("scalar").and_then(Value::as_str) == Some("decimal");
+    let is_decimal_alias = type_value.get("kind").and_then(Value::as_str) == Some("alias")
+        && type_value.get("target").and_then(Value::as_str) == Some("ix://filament/native/Decimal");
+    if !is_decimal_value_type && !is_decimal_alias {
+        return false;
+    }
+    let Some(policy) = type_value.get("decimal").and_then(Value::as_object) else {
+        return false;
+    };
+    let Some(precision) = policy.get("precision").and_then(Value::as_u64) else {
+        return false;
+    };
+    let Some(scale) = policy.get("scale").and_then(Value::as_u64) else {
+        return false;
+    };
+    if !(1..=38).contains(&precision) || scale > precision {
+        return false;
+    }
+    // The validator reports an unadmitted `unit` at the type itself; a
+    // Decimal's unit is the reader's own refusal.
+    let Some(member) = member else {
+        return type_value.get("unit").is_some()
+            && located.message == "the member unit is not one this schema admits";
+    };
+    match member {
+        "scalar" | "unit" => segments.next().is_none(),
+        // A policy member beyond `precision` and `scale` stays the
+        // validator's refusal.
+        "decimal" => segments.next().is_none() && policy.len() == 2,
+        "constraints" => {
+            let Some(index) = segments.next().and_then(|text| text.parse::<usize>().ok()) else {
+                return false;
+            };
+            let is_decimal_keyword = type_value
+                .get("constraints")
+                .and_then(Value::as_array)
+                .and_then(|constraints| constraints.get(index))
+                .and_then(|constraint| constraint.get("keyword"))
+                .is_some();
+            is_decimal_keyword && segments.next() == Some("keyword") && segments.next().is_none()
+        }
         _ => false,
     }
 }
@@ -2712,23 +2946,99 @@ fn read_type_identity(
     Ok(("", declaration_key(package, identity)))
 }
 
+/// Whether an owner's operation names are validated at intake.
+#[derive(Clone, Copy, Eq, PartialEq)]
+pub(super) enum OperationNames {
+    /// Operation and parameter names are validated while the owner is read.
+    Validated,
+    /// The owner admits no operations; normalization refuses each operation
+    /// with the owner refusal, which precedes any name refusal.
+    OwnerRefuses,
+}
+
+/// The name an operation's contract clauses give its result; no parameter
+/// takes it.
+const RESULT_PARAMETER: &str = "result";
+
+/// Refuses the second of two operations of one owner that share a `name`
+/// under distinct identities (a repeated identity is refused before the
+/// reader runs), naming both. Runs before any operation is read so the
+/// name refusal precedes every refusal inside the later operation.
+fn refuse_repeated_operation_name(
+    package: &str,
+    operations: &[Value],
+    operations_at: &str,
+) -> Result<(), ModelRefusal> {
+    let mut seen: Vec<(&str, &str)> = Vec::with_capacity(operations.len());
+    for (position, operation) in operations.iter().enumerate() {
+        let (Some(name), Some(identity)) = (
+            operation.get("name").and_then(Value::as_str),
+            operation.get("identity").and_then(Value::as_str),
+        ) else {
+            continue;
+        };
+        if let Some((_, first)) = seen
+            .iter()
+            .find(|(seen_name, seen_identity)| *seen_name == name && *seen_identity != identity)
+        {
+            let at = format!("{operations_at}[{position}]");
+            return Err(ModelRefusal {
+                code: Code::AmbiguousDeclaration,
+                cause: ModelRefusalCause::AmbiguousName {
+                    key: declaration_key(package, identity),
+                    member: MemberPath::from_document_location(&at).child("name"),
+                },
+                detail: format!(
+                    "{at}: operation name {name:?} is declared by {first} and {identity}"
+                ),
+            });
+        }
+        seen.push((name, identity));
+    }
+    Ok(())
+}
+
 fn read_operation_parameter(
     package: &str,
     owner_identity: &str,
     param: &Value,
     at: &str,
+    names: OperationNames,
 ) -> Result<OperationParameterRecord, ModelRefusal> {
     let ctx = NodeCtx::new(param, at);
     let node = ctx.str_field("identity")?;
-    if member_identity_name(owner_identity, node).is_none() {
+    let Some(tail) = member_identity_name(owner_identity, node) else {
         return Err(ctx.malformed_in(
             "identity",
             format!("{node:?} is not {owner_identity}/<name>"),
         ));
+    };
+    let declared_name = ctx
+        .opt_str_field("name")
+        .filter(|_| names == OperationNames::Validated);
+    if let Some(name) = declared_name {
+        if name != tail {
+            return Err(ctx.malformed_in(
+                "name",
+                format!("{name:?} is not the final segment {tail:?} of the identity {node:?}"),
+            ));
+        }
+        if name == RESULT_PARAMETER {
+            return Err(ModelRefusal {
+                code: Code::AmbiguousDeclaration,
+                cause: ModelRefusalCause::AmbiguousName {
+                    key: declaration_key(package, node),
+                    member: MemberPath::from_document_location(at).child("name"),
+                },
+                detail: format!(
+                    "{at}: {RESULT_PARAMETER:?} names the operation's result, so no parameter of {owner_identity} takes it"
+                ),
+            });
+        }
     }
     let type_ref = ctx.str_field("typeRef")?;
     // A `Clock` parameter is a place (FR-230 "Operation parameters").
-    let value_type = read_value_type_ref(package, &ctx, type_ref, true)?;
+    let value_type = read_member_value_type_ref(package, &ctx, type_ref, true)?;
     let multiplicity = ctx.multiplicity("multiplicity")?;
     let presence = match ctx.str_field("presence")? {
         "required" => Presence::Required,
@@ -2869,6 +3179,7 @@ pub(super) fn read_operation_member(
     operation: &Value,
     at: &str,
     receiver: OperationReceiver,
+    names: OperationNames,
     pending: &mut Vec<PendingFrame>,
 ) -> Result<OperationMemberRecord, ModelRefusal> {
     let ctx = NodeCtx::new(operation, at);
@@ -2885,13 +3196,21 @@ pub(super) fn read_operation_member(
         .iter()
         .enumerate()
         .map(|(position, param)| {
-            read_operation_parameter(package, node, param, &format!("{params_at}[{position}]"))
+            read_operation_parameter(
+                package,
+                node,
+                param,
+                &format!("{params_at}[{position}]"),
+                names,
+            )
         })
         .collect::<Result<Vec<_>, _>>()?;
     let result = match operation.get("returns") {
         None => None,
         Some(returns) => {
             let returns_ctx = NodeCtx::new(operation, at);
+            let returns_at = format!("{at}.returns");
+            let returns_value_ctx = NodeCtx::new(returns, &returns_at);
             let type_ref = returns
                 .get("typeRef")
                 .and_then(Value::as_str)
@@ -2899,7 +3218,17 @@ pub(super) fn read_operation_member(
                     returns_ctx.malformed_in("returns.typeRef", "missing or not a string")
                 })?;
             // A `Clock` result is a place (FR-230 "Results").
-            let value_type = read_value_type_ref(package, &returns_ctx, type_ref, true)?;
+            let mut value_type = read_value_type_ref(package, &returns_ctx, type_ref, true)?;
+            if returns.get("decimal").is_some() {
+                if value_type != ValueTypeRef::Native(NativeValueType::Decimal) {
+                    return Err(returns_ctx.malformed_in(
+                        "returns.decimal",
+                        "a result-level Decimal policy types only a native Decimal typeRef",
+                    ));
+                }
+                let decimal = read_decimal_value_type(node, &returns_value_ctx, &returns_at, None)?;
+                value_type = ValueTypeRef::Resolved(Box::new(ValueType::Decimal(decimal)));
+            }
             let multiplicity = returns_ctx.multiplicity_of(returns, "returns.multiplicity")?;
             Some(OperationResult {
                 value_type,
@@ -3098,6 +3427,7 @@ pub(super) fn read_persistence_interface(
             "a persistence interface declares one or more operations",
         ));
     }
+    refuse_repeated_operation_name(package, operations, &format!("{}.operations", ctx.at))?;
     for (position, operation) in operations.iter().enumerate() {
         let operation_at = format!("{}.operations[{position}]", ctx.at);
         if let Some(pre) = operation.get("pre").and_then(Value::as_array) {
@@ -3116,6 +3446,7 @@ pub(super) fn read_persistence_interface(
             operation,
             &operation_at,
             OperationReceiver::NoObject,
+            OperationNames::Validated,
             pending,
         )?));
     }
@@ -3244,6 +3575,32 @@ fn read_value_type_ref(
         ));
     }
     Ok(ValueTypeRef::Package(declaration_key(package, type_ref)))
+}
+
+/// Resolve a field or operation parameter's declared type, including the
+/// filament-core-data policy that types a direct native Decimal member.
+#[ix_trace_rs::string_edge]
+fn read_member_value_type_ref(
+    package: &str,
+    ctx: &NodeCtx<'_>,
+    type_ref: &str,
+    allow_clock: bool,
+) -> Result<ValueTypeRef, ModelRefusal> {
+    let value_type = read_value_type_ref(package, ctx, type_ref, allow_clock)?;
+    if ctx.value.get("decimal").is_none() {
+        return Ok(value_type);
+    }
+    if value_type != ValueTypeRef::Native(NativeValueType::Decimal) {
+        return Err(ctx.malformed_in(
+            "decimal",
+            "a member-level Decimal policy types only a native Decimal typeRef",
+        ));
+    }
+    let node = ctx.str_field("identity")?;
+    let decimal = read_decimal_value_type(node, ctx, &ctx.at, None)?;
+    Ok(ValueTypeRef::Resolved(Box::new(ValueType::Decimal(
+        decimal,
+    ))))
 }
 
 /// The `bound` of a map type `type_value` (FR-154 "Map types"): an object of
@@ -3433,6 +3790,164 @@ fn canonical_rational(text: &str) -> Option<filament_exact::Rational> {
     .ok()
 }
 
+/// Read one Decimal policy and its value bounds as the exact coefficient
+/// interval used by the checked type. `base` is the Decimal value type an
+/// alias narrows; a policy-carrying node starts from the precision domain.
+#[ix_trace_rs::string_edge]
+fn read_decimal_value_type(
+    node: &str,
+    ctx: &NodeCtx<'_>,
+    at: &str,
+    base: Option<&DecimalType>,
+) -> Result<DecimalType, ModelRefusal> {
+    if ctx.value.get("unit").is_some() {
+        return Err(ctx.malformed_in("unit", "unit is supported only by a rational value type"));
+    }
+
+    let (mut lower, mut upper, scale) = if let Some(base) = base {
+        if ctx.value.get("decimal").is_some() {
+            return Err(ctx.malformed_in(
+                "decimal",
+                "an alias carries a policy only when it directly targets native Decimal",
+            ));
+        }
+        (
+            base.lower().clone(),
+            base.upper().clone(),
+            u64::from(base.max_scale()),
+        )
+    } else {
+        let policy = ctx
+            .value
+            .get("decimal")
+            .and_then(Value::as_object)
+            .ok_or_else(|| ctx.malformed_in("decimal", "missing Decimal policy"))?;
+        let precision = policy
+            .get("precision")
+            .and_then(Value::as_u64)
+            .filter(|precision| (1..=38).contains(precision))
+            .ok_or_else(|| ctx.malformed_in("decimal.precision", "expected 1..=38"))?;
+        let scale = policy
+            .get("scale")
+            .and_then(Value::as_u64)
+            .filter(|scale| *scale <= precision)
+            .ok_or_else(|| {
+                ctx.malformed_in(
+                    "decimal.scale",
+                    "expected a non-negative scale no greater than precision",
+                )
+            })?;
+        let maximum = Integer::power_of_ten(precision).sub(&Integer::one());
+        (maximum.neg(), maximum, scale)
+    };
+
+    const KEYWORDS: [&str; 4] = ["min", "max", "exclusiveMin", "exclusiveMax"];
+    let constraints = ctx.array_field("constraints")?;
+    // Preserve the specified validation order: unsupported keyword before a
+    // duplicate, then range consistency after every bound has been applied.
+    for (position, constraint) in constraints.iter().enumerate() {
+        let constraint_at = format!("{at}.constraints[{position}]");
+        let constraint_ctx = NodeCtx::new(constraint, constraint_at.clone());
+        let keyword = constraint_ctx.str_field("keyword")?;
+        if !KEYWORDS.contains(&keyword) {
+            return Err(unsupported_member(
+                constraint,
+                &constraint_at,
+                MemberPath::from_document_location(&constraint_at).child("keyword"),
+                format!("{}:constraints:{keyword}", meaning::VALUE_TYPE),
+            ));
+        }
+    }
+
+    let mut seen = std::collections::BTreeSet::new();
+    for (position, constraint) in constraints.iter().enumerate() {
+        let constraint_at = format!("{at}.constraints[{position}]");
+        let constraint_ctx = NodeCtx::new(constraint, constraint_at);
+        let keyword = constraint_ctx.str_field("keyword")?;
+        if !seen.insert(keyword) {
+            return Err(
+                constraint_ctx.malformed_in("keyword", format!("{keyword:?} is declared twice"))
+            );
+        }
+        if let Some(applies_to) = constraint.get("appliesTo").and_then(Value::as_str) {
+            if applies_to != node {
+                return Err(constraint_ctx.malformed_in(
+                    "appliesTo",
+                    format!("{keyword} applies to {applies_to:?}, not this Decimal node"),
+                ));
+            }
+        }
+        let operand = constraint
+            .get("operands")
+            .and_then(|operands| operands.get("value"))
+            .and_then(Value::as_str)
+            .and_then(|text| decimal_coefficient(text, scale))
+            .ok_or_else(|| {
+                constraint_ctx.malformed_in(
+                    "operands.value",
+                    format!("{keyword}: expected a canonical Decimal value at scale {scale}"),
+                )
+            })?;
+        match keyword {
+            "min" => lower = lower.max(operand),
+            "exclusiveMin" => {
+                let successor = operand.add(&Integer::one());
+                lower = lower.max(successor);
+            }
+            "max" => upper = upper.min(operand),
+            "exclusiveMax" => {
+                let predecessor = operand.sub(&Integer::one());
+                upper = upper.min(predecessor);
+            }
+            _ => unreachable!("Decimal constraint keyword was checked above"),
+        }
+    }
+    if lower > upper {
+        return Err(ctx.malformed_in(
+            "constraints",
+            format!("coefficient lower bound {lower} is greater than upper bound {upper}"),
+        ));
+    }
+    DecimalType::new(lower, upper, scale, scale, RoundingMode::Exact)
+        .map_err(|_| ctx.malformed_in("constraints", "invalid Decimal coefficient bounds"))
+}
+
+/// Convert a canonical decimal string into its coefficient at `scale`,
+/// without passing through a floating-point value.
+fn decimal_coefficient(text: &str, scale: u64) -> Option<Integer> {
+    let (negative, unsigned) = match text.strip_prefix('-') {
+        Some(unsigned) => (true, unsigned),
+        None => (false, text),
+    };
+    let (whole, fraction) = unsigned.split_once('.').unwrap_or((unsigned, ""));
+    if whole.is_empty()
+        || !whole.bytes().all(|byte| byte.is_ascii_digit())
+        || (whole.len() > 1 && whole.starts_with('0'))
+        || fraction.bytes().any(|byte| !byte.is_ascii_digit())
+        || fraction.len() as u64 > scale
+        || text == "-0"
+        || text.ends_with('.')
+        || text.starts_with('+')
+    {
+        return None;
+    }
+    // The coefficient is the digits of `whole.fraction` padded to `scale`
+    // places. Leading zeros (`0.0001` at scale 4) are not part of an integer
+    // literal, so the digit string is trimmed before it is parsed.
+    let padding = "0".repeat((scale - fraction.len() as u64) as usize);
+    let digits = format!("{whole}{fraction}{padding}");
+    let digits = digits.trim_start_matches('0');
+    let mut coefficient = if digits.is_empty() {
+        Integer::zero()
+    } else {
+        digits.parse::<Integer>().ok()?
+    };
+    if negative {
+        coefficient = coefficient.neg();
+    }
+    Some(coefficient)
+}
+
 #[ix_trace_rs::string_edge]
 fn read_field_member(
     package: &str,
@@ -3452,7 +3967,7 @@ fn read_field_member(
     let type_ref = ctx.str_field("typeRef")?;
     // FR-230 models Clock as a place, so only a field reader can admit it;
     // parameters and results use the ordinary data value algebra.
-    let value_type = read_value_type_ref(package, &ctx, type_ref, true)?;
+    let value_type = read_member_value_type_ref(package, &ctx, type_ref, true)?;
     let multiplicity = ctx.multiplicity("multiplicity")?;
     // FSpec's own Presence row (`model-complete.md`:158): `presence` is
     // exactly `required` or `optional`, independent of `multiplicity`'s
@@ -3536,13 +4051,16 @@ pub(super) fn read_object_type(
         )?));
     }
     let operations_at = format!("{at}.operations");
-    for (position, operation) in ctx.array_field("operations")?.iter().enumerate() {
+    let operations = ctx.array_field("operations")?;
+    refuse_repeated_operation_name(package, operations, &operations_at)?;
+    for (position, operation) in operations.iter().enumerate() {
         records.push(DomainPackageRecord::OperationMember(read_operation_member(
             package,
             node,
             operation,
             &format!("{operations_at}[{position}]"),
             receiver,
+            OperationNames::Validated,
             pending,
         )?));
     }
@@ -3590,6 +4108,7 @@ pub(super) fn read_record_value_type(
     at: &str,
     type_meanings: &HashMap<&str, &str>,
     records: &mut Vec<DomainPackageRecord>,
+    names: OperationNames,
     pending: &mut Vec<PendingFrame>,
 ) -> Result<(), ModelRefusal> {
     let ctx = NodeCtx::new(type_value, at);
@@ -3639,13 +4158,18 @@ pub(super) fn read_record_value_type(
         )?));
     }
     let operations_at = format!("{at}.operations");
-    for (position, operation) in ctx.array_field("operations")?.iter().enumerate() {
+    let operations = ctx.array_field("operations")?;
+    if names == OperationNames::Validated {
+        refuse_repeated_operation_name(package, operations, &operations_at)?;
+    }
+    for (position, operation) in operations.iter().enumerate() {
         records.push(DomainPackageRecord::OperationMember(read_operation_member(
             package,
             node,
             operation,
             &format!("{operations_at}[{position}]"),
             OperationReceiver::NoObject,
+            names,
             pending,
         )?));
     }
@@ -3838,6 +4362,12 @@ fn read_value_type(
         let ValueTypeRef::Native(native) = value_type else {
             return Err(ctx.malformed_in("target", "an FSL value alias names a native value type"));
         };
+        if native == NativeValueType::Decimal && type_value.get("decimal").is_some() {
+            return Err(ctx.malformed_in(
+                "decimal",
+                "DECIMAL_POLICY_CONFLICT: a value type bound to native Decimal by target carries no policy",
+            ));
+        }
         if !ctx.array_field("constraints")?.is_empty() {
             return Err(unsupported_at(
                 type_value,
@@ -3859,6 +4389,12 @@ fn read_value_type(
     }
     if scalar == "rational" {
         return read_rational_value_type(package, node, &ctx, at);
+    }
+    if scalar == "decimal" {
+        return Ok(ScalarTypeRecord {
+            key: declaration_key(package, node),
+            domain: ScalarValueDomain::Decimal(read_decimal_value_type(node, &ctx, at, None)?),
+        });
     }
     if scalar != "integer" {
         return Err(unsupported_at(
@@ -5128,6 +5664,9 @@ fn shape_index(document: &Value) -> HashMap<(String, String), String> {
 #[ix_trace_rs::string_edge]
 struct TypeNodeReader<'a> {
     package: &'a str,
+    raw_types: &'a [Value],
+    type_positions: HashMap<String, usize>,
+    decimal_type_cache: std::cell::RefCell<HashMap<String, Option<DecimalType>>>,
     meanings: &'a HashMap<(String, String), String>,
     shapes: &'a HashMap<(String, String), String>,
     type_meanings: &'a HashMap<&'a str, &'a str>,
@@ -5140,6 +5679,100 @@ struct TypeNodeReader<'a> {
     semantic_members: &'a HashMap<&'a str, &'a agent_ix_semantic_ir::json::Json>,
 }
 
+/// Records that every identity in `visited` reaches no Decimal, so a later
+/// walk through any of them stops at once, and returns that outcome.
+fn cache_no_decimal(
+    cache: &std::cell::RefCell<HashMap<String, Option<DecimalType>>>,
+    visited: Vec<String>,
+) -> Option<DecimalType> {
+    let mut cache = cache.borrow_mut();
+    for identity in visited {
+        cache.insert(identity, None);
+    }
+    None
+}
+
+/// Resolve the Decimal type a package declaration contributes to its alias
+/// walk. Only scalar `decimal` declarations, policy-carrying aliases of native
+/// Decimal, and aliases that reach either form are Decimal subjects; a
+/// `target`-bound value type remains an untyped native alias.
+#[ix_trace_rs::string_edge]
+fn decimal_type_for_identity(
+    package: &str,
+    types: &[Value],
+    type_positions: &HashMap<String, usize>,
+    cache: &std::cell::RefCell<HashMap<String, Option<DecimalType>>>,
+    identity: &str,
+) -> Result<Option<DecimalType>, ModelRefusal> {
+    // Alias chains are caller-controlled package data. Walk them iteratively
+    // so a valid long chain cannot exhaust the intake stack, and use the
+    // document's identity index instead of rescanning `types[]` at each hop.
+    let mut path = Vec::new();
+    let mut visited = Vec::new();
+    let mut seen = std::collections::BTreeSet::new();
+    let mut current = identity;
+    let mut decimal = loop {
+        let cached = { cache.borrow().get(current).cloned() };
+        if let Some(cached) = cached {
+            if let Some(decimal) = cached {
+                break decimal;
+            }
+            return Ok(cache_no_decimal(cache, visited));
+        }
+        if !seen.insert(current.to_owned()) {
+            return Ok(cache_no_decimal(cache, visited));
+        }
+        visited.push(current.to_owned());
+        let Some(position) = type_positions.get(current).copied() else {
+            return Ok(cache_no_decimal(cache, visited));
+        };
+        let type_value = &types[position];
+        let at = format!("$.types[{position}]");
+        let ctx = NodeCtx::new(type_value, &at);
+        let node = ctx.str_field("identity")?;
+        if type_value.get("scalar").and_then(Value::as_str) == Some("decimal") {
+            let decimal = read_decimal_value_type(node, &ctx, &at, None)?;
+            cache
+                .borrow_mut()
+                .insert(current.to_owned(), Some(decimal.clone()));
+            break decimal;
+        }
+        if type_value.get("kind").and_then(Value::as_str) != Some("alias") {
+            return Ok(cache_no_decimal(cache, visited));
+        }
+        let Some(target) = type_value.get("target").and_then(Value::as_str) else {
+            return Ok(cache_no_decimal(cache, visited));
+        };
+        if target == "ix://filament/native/Decimal" {
+            if type_value.get("decimal").is_none() {
+                return Ok(cache_no_decimal(cache, visited));
+            }
+            let decimal = read_decimal_value_type(node, &ctx, &at, None)?;
+            cache
+                .borrow_mut()
+                .insert(current.to_owned(), Some(decimal.clone()));
+            break decimal;
+        }
+        if type_identity_segment(package, target).is_none() {
+            return Ok(cache_no_decimal(cache, visited));
+        }
+        path.push(position);
+        current = target;
+    };
+
+    for position in path.into_iter().rev() {
+        let type_value = &types[position];
+        let at = format!("$.types[{position}]");
+        let ctx = NodeCtx::new(type_value, &at);
+        let node = ctx.str_field("identity")?;
+        decimal = read_decimal_value_type(node, &ctx, &at, Some(&decimal))?;
+        cache
+            .borrow_mut()
+            .insert(node.to_owned(), Some(decimal.clone()));
+    }
+    Ok(Some(decimal))
+}
+
 #[ix_trace_rs::string_edge]
 fn read_type_node(
     reader: &TypeNodeReader<'_>,
@@ -5149,6 +5782,9 @@ fn read_type_node(
 ) -> Result<Vec<DomainPackageRecord>, Refusals> {
     let TypeNodeReader {
         package,
+        raw_types,
+        type_positions,
+        decimal_type_cache,
         meanings,
         shapes,
         type_meanings,
@@ -5173,6 +5809,31 @@ fn read_type_node(
                 &constraint_at,
                 MemberPath::from_document_location(&constraint_at).child("appliesTo"),
                 "a Rational value type's constraint cannot be carried by another node",
+            )
+            .into());
+        }
+    }
+    for (position, constraint) in ctx.array_field("constraints")?.iter().enumerate() {
+        let Some(applies_to) = constraint.get("appliesTo").and_then(Value::as_str) else {
+            continue;
+        };
+        if applies_to != node
+            && decimal_type_for_identity(
+                package,
+                raw_types,
+                type_positions,
+                decimal_type_cache,
+                applies_to,
+            )?
+            .is_some()
+        {
+            let constraint_at = format!("{at}.constraints[{position}]");
+            return Err(malformed_on(
+                node,
+                constraint,
+                &constraint_at,
+                MemberPath::from_document_location(&constraint_at).child("appliesTo"),
+                "a Decimal value type's constraint cannot be carried by another node",
             )
             .into());
         }
@@ -5215,6 +5876,23 @@ fn read_type_node(
         }
     }
     if type_value.get("kind").and_then(Value::as_str) == Some("alias") {
+        if let Some(decimal) =
+            decimal_type_for_identity(package, raw_types, type_positions, decimal_type_cache, node)?
+        {
+            if !ctx.array_field("fields")?.is_empty()
+                || !ctx.array_field("operations")?.is_empty()
+                || !ctx.array_field("relationships")?.is_empty()
+                || !ctx.array_field("supertypes")?.is_empty()
+            {
+                return Err(ctx
+                    .malformed("a Decimal alias declares no fields, operations, relationships or supertypes")
+                    .into());
+            }
+            return Ok(vec![DomainPackageRecord::ScalarType(ScalarTypeRecord {
+                key,
+                domain: ScalarValueDomain::Decimal(decimal),
+            })]);
+        }
         // FCD #315: an alias of `ix://filament/native/Clock` or of a unit
         // `ix://filament/unit/<name>` is that type under its own name
         // (FR-230-AC-16, FR-230-AC-17). Its constraints give a clock time
@@ -5235,6 +5913,11 @@ fn read_type_node(
             ValueTypeRef::Clock
         } else if target.starts_with("ix://filament/unit/") {
             read_value_type_ref(package, &ctx, target, false)?
+        } else if target == "ix://filament/native/Decimal" {
+            // An alias of native Decimal that declares no policy is an untyped
+            // native alias; a member it types has no policy and the validator
+            // refuses that member.
+            ValueTypeRef::Native(NativeValueType::Decimal)
         } else if type_identity_segment(package, target).is_some()
             && semantic.is_some_and(|document| document.option_inner(target).is_some())
         {
@@ -5641,7 +6324,12 @@ fn resolve_frame_array(
                     at,
                 ))
             }
-            Some(kind) if expected.contains(kind) => keys.push(declaration_key(package, entry)),
+            Some(kind) if expected.contains(kind) => {
+                let key = declaration_key(package, entry);
+                if !keys.contains(&key) {
+                    keys.push(key);
+                }
+            }
             Some(_) => {
                 return Err(malformed_frame_entry(
                     frame.node.clone(),
@@ -5969,7 +6657,15 @@ pub fn read_domain_package(
         semantic.as_ref(),
         intake_refusals.is_empty(),
     );
+    let mut reported = std::collections::BTreeSet::new();
     for refusal in reader_refusals {
+        // A node read once per path that reaches it (an alias chain over a
+        // Decimal reaches it again) repeats one refusal.
+        if let Some(node) = refusal_node(&refusal) {
+            if !reported.insert((node.to_owned(), refusal.detail.clone())) {
+                continue;
+            }
+        }
         // The reader's own dangling `persists`/`members` entry repeats what the
         // semantic-IR missing-name refusal already reports for that node.
         let reader_node = match &refusal.cause {
@@ -5984,7 +6680,15 @@ pub fn read_domain_package(
             ModelRefusalCause::UnsupportedDeclarationForm { .. }
         ) && reader_node
             .is_some_and(|node| !unsupported_form_nodes.contains(node));
-        if !distinct_family && reader_node.is_some_and(|node| semantic_refused_nodes.contains(node))
+        // A constraint of a node the validator refused is that refusal's
+        // detail: the validator reports an unreadable bound at its owner.
+        let constraint_owner = reader_node
+            .and_then(|node| node.rsplit_once("/constraints/"))
+            .map(|(owner, _)| owner)
+            .filter(|owner| walks_to_decimal(&document.tree, owner));
+        if (!distinct_family
+            && reader_node.is_some_and(|node| semantic_refused_nodes.contains(node)))
+            || constraint_owner.is_some_and(|owner| semantic_refused_nodes.contains(owner))
         {
             continue;
         }
@@ -6222,7 +6926,8 @@ pub(crate) fn refusal_node(refusal: &ModelRefusal) -> Option<&str> {
         | ModelRefusalCause::UnpreservedModelMeaning { node, .. }
         | ModelRefusalCause::IntakeMissingDeclaration { node, .. }
         | ModelRefusalCause::UnsupportedDeclarationForm { node, .. } => Some(node),
-        ModelRefusalCause::ConflictingBinding { key, .. } => Some(&key.node),
+        ModelRefusalCause::ConflictingBinding { key, .. }
+        | ModelRefusalCause::AmbiguousName { key, .. } => Some(&key.node),
         _ => None,
     }
 }
@@ -6444,25 +7149,31 @@ fn read_nodes_partial(
     let mut refusals = Vec::new();
     let mut pending: Vec<PendingFrame> = Vec::new();
     let mut namespace_members: HashMap<DeclarationKey, DeclarationKey> = HashMap::new();
+    let type_positions: HashMap<String, usize> = types
+        .iter()
+        .enumerate()
+        .filter_map(|(position, type_value)| {
+            Some((type_value.get("identity")?.as_str()?.to_owned(), position))
+        })
+        .collect();
+    let type_reader = TypeNodeReader {
+        package: package_identity,
+        raw_types: types,
+        type_positions,
+        decimal_type_cache: std::cell::RefCell::new(HashMap::new()),
+        meanings: &meanings,
+        shapes: &shapes,
+        type_meanings: &type_meanings,
+        rational_types: &rational_types,
+        unbounded_rationals: &unbounded_rationals,
+        semantic,
+        semantic_members: &semantic_members,
+    };
     for node in nodes {
         match node {
             DocumentNode::Type(type_value, position, _) => {
                 let at = format!("$.types[{position}]");
-                match read_type_node(
-                    &TypeNodeReader {
-                        package: package_identity,
-                        meanings: &meanings,
-                        shapes: &shapes,
-                        type_meanings: &type_meanings,
-                        rational_types: &rational_types,
-                        unbounded_rationals: &unbounded_rationals,
-                        semantic,
-                        semantic_members: &semantic_members,
-                    },
-                    type_value,
-                    &at,
-                    &mut pending,
-                ) {
+                match read_type_node(&type_reader, type_value, &at, &mut pending) {
                     Ok(mut new_records) => {
                         let mut duplicate = None;
                         for record in &new_records {
@@ -6576,7 +7287,8 @@ fn key_eligibility(records: &[DomainPackageRecord], keys: &ValueTypeRef) -> Opti
                         scalar.domain,
                         ScalarValueDomain::Native(
                             NativeValueType::Decimal | NativeValueType::Rational
-                        ) | ScalarValueDomain::Rational { domain: None, .. }
+                        ) | ScalarValueDomain::Decimal(_)
+                            | ScalarValueDomain::Rational { domain: None, .. }
                     ) {
                         KeyEligibility::Ineligible
                     } else {
@@ -6881,6 +7593,76 @@ mod tests {
     use super::*;
     use ix_trace_rs::trace;
 
+    #[trace("FR-056-AC-67")]
+    #[test]
+    fn decimal_alias_walk_handles_long_chains_and_stops_cycles() {
+        const ALIASES: usize = 4096;
+        let package = "test/decimal-chain";
+        let identity = |position: usize| format!("ix://{package}/A{position}");
+        let mut types = (0..ALIASES)
+            .map(|position| {
+                let target = if position + 1 == ALIASES {
+                    "ix://filament/native/Decimal".to_owned()
+                } else {
+                    identity(position + 1)
+                };
+                let mut value = serde_json::json!({
+                    "identity": identity(position),
+                    "kind": "alias",
+                    "target": target,
+                    "constraints": [],
+                });
+                if position + 1 == ALIASES {
+                    value["decimal"] = serde_json::json!({"precision": 5, "scale": 2});
+                }
+                value
+            })
+            .collect::<Vec<_>>();
+        let positions = types
+            .iter()
+            .enumerate()
+            .map(|(position, value)| {
+                (
+                    value["identity"].as_str().expect("identity").to_owned(),
+                    position,
+                )
+            })
+            .collect();
+        let cache = std::cell::RefCell::new(HashMap::new());
+
+        let decimal = decimal_type_for_identity(package, &types, &positions, &cache, &identity(0))
+            .expect("long Decimal alias chain reads")
+            .expect("the chain reaches the policy-carrying native Decimal alias");
+        assert_eq!(decimal.lower(), &Integer::from(-99_999_i64));
+        assert_eq!(decimal.upper(), &Integer::from(99_999_i64));
+
+        types[ALIASES - 1]["target"] = identity(0).into();
+        types[ALIASES - 1]
+            .as_object_mut()
+            .expect("alias")
+            .remove("decimal");
+        let cyclic_positions = types
+            .iter()
+            .enumerate()
+            .map(|(position, value)| {
+                (
+                    value["identity"].as_str().expect("identity").to_owned(),
+                    position,
+                )
+            })
+            .collect();
+        let cyclic_cache = std::cell::RefCell::new(HashMap::new());
+        assert!(decimal_type_for_identity(
+            package,
+            &types,
+            &cyclic_positions,
+            &cyclic_cache,
+            &identity(0),
+        )
+        .expect("a cycle is a non-Decimal result for the ordinary alias-cycle refusal")
+        .is_none());
+    }
+
     #[trace("FSpec-FR-154-AC-39", "FSpec-FR-154-AC-40", "FSpec-FR-154-AC-41")]
     #[test]
     fn reads_option_value_type_and_refuses_invalid_inner_shape() {
@@ -6891,6 +7673,9 @@ mod tests {
         let semantic_members = HashMap::new();
         let reader = TypeNodeReader {
             package: "acme/orders",
+            raw_types: &[],
+            type_positions: HashMap::new(),
+            decimal_type_cache: std::cell::RefCell::new(HashMap::new()),
             meanings: &meanings,
             shapes: &shapes,
             type_meanings: &type_meanings,
@@ -7499,6 +8284,7 @@ mod tests {
                 &operation,
                 "$.types[0].operations[0]",
                 OperationReceiver::Object,
+                OperationNames::Validated,
                 &mut pending,
             )
             .expect_err("a malformed frame member refuses");
@@ -9079,6 +9865,7 @@ mod tests {
                 ("ix://acme/orders/Placed", meaning::PERSISTENCE_INTERFACE),
             ]),
             &mut records,
+            OperationNames::OwnerRefuses,
             &mut Vec::new(),
         )
         .map(|()| records)
@@ -12460,7 +13247,19 @@ mod tests {
         };
         let mut package = vec![
             scalar("Small", ScalarValueDomain::Integer { lower: 0, upper: 9 }),
-            scalar("Price", ScalarValueDomain::Native(NativeValueType::Decimal)),
+            scalar(
+                "Price",
+                ScalarValueDomain::Decimal(
+                    DecimalType::new(
+                        Integer::from(-999_i64),
+                        Integer::from(999_i64),
+                        2,
+                        2,
+                        RoundingMode::Exact,
+                    )
+                    .unwrap(),
+                ),
+            ),
             scalar(
                 "NativeRatio",
                 ScalarValueDomain::Native(NativeValueType::Rational),
@@ -12576,6 +13375,7 @@ mod tests {
             ("PM-16", package_key("Shape")),
             ("PM-32", package_key("Price")),
             ("PM-33", ValueTypeRef::Native(NativeValueType::Rational)),
+            ("PM-32", ValueTypeRef::Native(NativeValueType::Decimal)),
             ("PM-33", package_key("NativeRatio")),
             ("PM-33", package_key("Ratio")),
         ] {

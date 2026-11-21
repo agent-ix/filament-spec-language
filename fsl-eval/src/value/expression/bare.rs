@@ -584,6 +584,66 @@ pub(crate) fn post_targets(
     )
 }
 
+/// A reward a package's `reward` node carries, projected once: the clause
+/// function its expression names, and the type of the value it computes
+/// (FR-187, ADR-024 PM-5).
+pub struct ProjectedReward {
+    projection: fsl_package::ReaderProtocolProjection,
+    slots: usize,
+    value_type: filament_exact::ValueType,
+}
+
+impl ProjectedReward {
+    /// The projection of `reward`'s clause function over `package`.
+    ///
+    /// # Errors
+    ///
+    /// The [`BareSelectionFailure`] of the first function, type or equality
+    /// the projection cannot read, or of a node that is no function.
+    pub fn of(
+        package: &BarePackage<'_>,
+        reward: &fsl_semantics::check::ReadReward,
+    ) -> Result<Self, BareSelectionFailure> {
+        let projection = package.project_clause_function(&reward.function)?;
+        let selected = projection.selected_function().ok_or_else(|| {
+            fsl_package::SlotSelectionFailure::MalformedNode(reward.function.clone())
+        })?;
+        let (slots, value_type) = (selected.slots, selected.result_type.clone());
+        Ok(Self {
+            projection,
+            slots,
+            value_type,
+        })
+    }
+
+    /// The type of the value the reward computes.
+    pub fn value_type(&self) -> &filament_exact::ValueType {
+        &self.value_type
+    }
+
+    /// The reward evaluated on `arguments`, one value per parameter of its
+    /// operation in declared order, over the package's `world`. A reward
+    /// reads its operation's parameters alone, so the object environment is
+    /// empty.
+    ///
+    /// # Errors
+    ///
+    /// An internal fault, as the evaluator reports it.
+    pub fn evaluate(
+        &self,
+        world: &BareWorld,
+        arguments: Vec<Value>,
+        meter: &mut Meter,
+    ) -> Result<Evaluation, InternalFault> {
+        let objects = ObjectEnvironment::default();
+        Machine::from_bare_package(world, &objects, meter).run(
+            ReaderNode::root(&self.projection),
+            self.slots,
+            arguments,
+        )
+    }
+}
+
 impl super::clause_set::ClauseHost for BarePackage<'_> {
     fn clause_observation(
         &self,

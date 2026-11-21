@@ -1095,10 +1095,11 @@ pub(super) fn model_refusal(refusal: &ModelCheckRefusal) -> Refusal {
         | ModelCheckRefusal::FormNotDecided { .. }
         | ModelCheckRefusal::CaptureRead { .. }
         | ModelCheckRefusal::WeakLiveness
-        | ModelCheckRefusal::ReducedLiveness
         | ModelCheckRefusal::ProtocolAbstractSide
         | ModelCheckRefusal::Hyper(
-            HyperRefusal::FormNotDecided { .. } | HyperRefusal::NotSingleExistential { .. },
+            HyperRefusal::FormNotDecided { .. }
+                | HyperRefusal::NotSingleExistential { .. }
+                | HyperRefusal::ClosedUndefined,
         ) => Refusal::Unsupported(NOT_YET),
         // Clauses and operations the engine cannot read: unsupported forms.
         ModelCheckRefusal::Translation(_) | ModelCheckRefusal::Footprint(_) => {
@@ -1356,7 +1357,6 @@ mod tests {
             _ => None,
         };
         let not_yet = Some("unsupported_construct/not-yet-implemented".to_owned());
-        assert_eq!(unsupported(ModelCheckRefusal::ReducedLiveness), not_yet);
         assert_eq!(
             unsupported(ModelCheckRefusal::Hyper(HyperRefusal::FormNotDecided {
                 form: None

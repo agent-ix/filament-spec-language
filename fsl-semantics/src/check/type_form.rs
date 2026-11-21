@@ -490,6 +490,9 @@ fn resolve_builtin<'f>(
         BuiltinType::Clock => Err(fault(form, TypeFormFault::ClockNotChecked)),
         BuiltinType::Reference => {
             let target = only_argument(form)?;
+            if is_clock_type_form(target) {
+                return Ok(Step::Leaf(super::clock_reference_type()));
+            }
             let TypeFormHead::Name(name) = &target.head else {
                 return Err(malformed(form));
             };
@@ -521,6 +524,17 @@ fn resolve_builtin<'f>(
         }
     };
     leaf.map(Step::Leaf)
+}
+
+/// Whether `form` spells the native `Clock` type. A `Clock` nested in
+/// `Reference<Clock>` is a `QualifiedName` in S2, while a bare `Clock` is a
+/// builtin type form.
+pub(crate) fn is_clock_type_form(form: &TypeForm) -> bool {
+    matches!(&form.head, TypeFormHead::Builtin(BuiltinType::Clock))
+        || matches!(
+            &form.head,
+            TypeFormHead::Name(name) if !name.is_qualified() && name.name == "Clock"
+        )
 }
 
 /// Resolve each named factor, including factors raised to zero.

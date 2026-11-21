@@ -98,6 +98,18 @@ in the recording is `pending` while the closure record is not `closed`, and
 early therefore leaves its undecided obligations `pending`. An obligation is
 never `satisfied` by the absence of a violation.
 
+A requirement obligation whose `requires temporal` clause is inactive over
+the recording, every activation guard false so the clause creates no
+obligation (FSpec FR-093-AC-5, AC-6), SHALL be `satisfied` on a `closed`
+recording and `pending` on an open one, and an item that settles `proved`
+on a `closed` recording stays `proved` with it. This is not satisfaction
+by the absence of a violation: for an inactive clause the `closed` closure
+record is the deciding evidence, because it asserts that the recording is
+complete, so no further observation can make a guard true and no
+activation can occur. An open recording has no such evidence, since a later
+observation could still activate the clause, so the obligation stays
+`pending` there.
+
 **Result.** The item settles with the FR-360 labels:
 
 - `proved`, basis `closed-scope`, when every obligation is `satisfied`;
@@ -135,6 +147,7 @@ looking like success, which FSpec FR-059-AC-3 requires.
 | FR-895-AC-5 | Over the AC-2 protocol, a recording in which `Seller` sends `Note` on `Tell` before any `Got` is observed, a point where the protocol enables no send of `Seller`, gives that observation's enabledness obligation `violated`, cause `unexpected`, and settles `refuted`. | Test (TC-2531) |
 | FR-895-AC-6 | A compensation `within [0, 120]` on clock `c`, whose recorded first attempt has a reading of 130 on `c`, gives the window obligation `violated`. With the reading absent and closure `open`, the obligation is `pending`. Batch and incremental assessment of each recording give equal verdicts. | Test (TC-2531) |
 | FR-895-AC-7 | The closed AC-1 recording with `Got` listed before `Placed` in its `observations` array, its local orders and correlations unchanged (the `Placed` to `Got` correlation being the only relation between the two), has no causal cycle: every obligation is `satisfied`, the item settles `proved`, and the verdicts equal those of the AC-1 recording. | Test (TC-2815) |
+| FR-895-AC-8 | The AC-1 protocol with a `requires temporal` clause activated `on each` under a guard that is false at every observation of AC-1's recording (an `eventually` over an order total above any the recording holds), gives the clause's requirement obligation `satisfied` and the item `proved` when the closure is `closed`; the same recording with closure `open` gives that obligation `pending` and the item `inconclusive`, `open-history`, never `proved`. | Test (TC-2530) |
 
 ## Dependencies
 

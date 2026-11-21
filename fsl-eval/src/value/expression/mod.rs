@@ -37,7 +37,9 @@ mod value_invariants;
 pub use bare::evaluate_bare_expression;
 pub use bare::evaluate_selected_protocol_slot as bare_evaluate_selected_protocol_slot;
 pub(crate) use bare::post_targets as bare_post_targets;
-pub use bare::{evaluate_frame as bare_evaluate_frame, PackageOperations};
+pub use bare::{
+    evaluate_frame as bare_evaluate_frame, PackageOperations, ProjectedReward,
+};
 pub(crate) use bare::{
     StateGraphOver, evaluate_state_graph_predicate as evaluate_bare_state_graph_predicate,
     evaluate_terminal_predicate as evaluate_bare_terminal_predicate,

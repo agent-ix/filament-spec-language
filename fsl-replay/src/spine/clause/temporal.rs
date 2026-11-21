@@ -876,6 +876,11 @@ fn same_entry(left: Option<&ProgressLedgerEntry>, right: Option<&ProgressLedgerE
 }
 
 impl CarriedAdmission {
+    /// The finite-window trace the last run admitted.
+    pub(super) fn trace_ref(&self) -> Option<&TimestampedTrace> {
+        self.trace.as_ref()
+    }
+
     /// The admission as it is now, for [`Self::restore`].
     pub(crate) fn mark(&self) -> AdmissionMark {
         AdmissionMark {
@@ -1524,7 +1529,7 @@ pub(super) fn run_temporal(run: &CompiledRun<'_>, request: &TemporalRun<'_>) -> 
                 || usize::try_from(missing.atom).ok().is_none_or(|atom| {
                     !matches!(
                         clause.formula().nodes().get(atom),
-                        Some(FormulaNode::Holds { .. })
+                        Some(FormulaNode::Holds { .. } | FormulaNode::Aggregate { .. })
                     )
                 })
         }) {
@@ -1930,11 +1935,15 @@ pub(super) fn run_temporal(run: &CompiledRun<'_>, request: &TemporalRun<'_>) -> 
         };
     }
 
-    // QSL-2138: only the closed finite route below reads window aggregates.
+    // FR-194: the closed finite event-position route and the timestamped
+    // finite-window route (one-shot and FR-820 carried) read window aggregates; a timed or lasso sample
+    // trace still refuses one.
     if sampled
         && !tape.is_some_and(|tape| tape.open_aggregates)
         && !(matches!(trace, TraceInput::Finite(_))
             && clause.profile() == TemporalProfile::EventPositionFalseExtension)
+        && !(matches!(trace, TraceInput::Timestamped { .. })
+            && clause.profile() == TemporalProfile::TimestampedEventFiniteWindow)
         && clause
             .formula()
             .nodes()

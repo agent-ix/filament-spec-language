@@ -212,6 +212,9 @@ pub fn settle_hyper_check(
         HyperOutcome::Holds { .. } | HyperOutcome::HoldsReduced { .. } => {
             return Err(HyperSettleRefusal::ProductClosureCheckerNotBuilt)
         }
+        HyperOutcome::HoldsClosed { .. } => {
+            Row::proved(ProofBasis::Exhaustive, SettlementBasis::ClosedScope)
+        }
         HyperOutcome::Reduction { cause, .. } => match cause {
             HyperReductionCause::NotPreserving { .. } => {
                 return Err(HyperSettleRefusal::ReductionFormNotRepresentable)
@@ -650,6 +653,8 @@ fn with_hyper_replay<T>(
         matcher: &matcher,
         meter: item.subjects[0].simulation.meter,
         max_witness_set: ModelCheckLimits::default().max_witness_set,
+        max_states: u64::try_from(ModelCheckLimits::default().limits.max_states)
+            .unwrap_or(u64::MAX),
         cancel: &cancel,
     };
     Ok(run(&replay))
