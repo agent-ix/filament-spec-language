@@ -356,3 +356,68 @@ addition is accepted on BASE, and FND-001 to FND-013 remain closed. This
 verdict covers normative spec acceptance only. It makes no claim about the
 implementation, which is still in progress, or about whether the PR can
 merge.
+
+### Round 7 scope addition (CR-003, FR-203 mixed-initial activation coverage)
+
+This round is a narrow normative addition authorized by architecture, and it
+is owned by FSL. It covers pure-spec commit
+`51d98fca473ac03d87e4788340fb82bfe8c0fa61`, which changes only FR-203: the
+entries and coverage bullet at lines 208-232 and FR-203-AC-12. The working
+doc is byte-identical to the commit, and no later commit touches `spec/`.
+FR-201, FR-202 and FR-1043 are unchanged since `faa136f99d`; other spec docs
+that changed on the branch in between are outside this scope.
+`quire validate --scope .` on FR-203 exits 0 with no output,
+`git diff --check` is clean, and `quire properties` extracts FR-203-AC-12
+once.
+
+No new findings.
+
+Round-7 checks:
+
+- **Architecture ruling.** FR-203 meets it.
+  - Every admitted (initial, binding) pair is accounted for in the
+    independently checked acceptance, either by its checked value or by
+    unreachable activation under FR-201's per-key rule.
+  - That coverage is derived from the existing certificate values and
+    bindings. There is no external coverage member, no wire change, and no
+    FSpec change or pin.
+  - There is exactly one numeric entry per activating pair, with its actual
+    initial index and binding, so the builder cannot hardcode index 0.
+    Nonactivating pairs are omitted, with no `0/0` or scalar placeholder.
+  - A missing, duplicate, nonactivating or mismatched entry settles
+    `failed`, `runtime_invariant`/`established-invariant-broken`.
+  - When nothing activates, the `Vacuous` certificate and `Exhaustive`
+    basis are required.
+- **Consistency with FR-201.** FR-201 lines 643-652 treat a
+  denominator-0 key as vacuous only when another initial key activates.
+  AC-12 is exactly that mixed case: index 1 activates and index 0 does not,
+  so the `Ratio` is accepted with index 0 per-key vacuous. The all-unreachable
+  case stays routed to `Vacuous`, as the bullet's final sentence states.
+- **Consistency with the existing `ExactEntry`.** `ExactEntry`
+  (`initial: u32`, `binding`, `value`, `extremum`) carries the actual index
+  and binding unchanged, and FR-203 line 88 keeps entries numeric-only. The
+  least favourable pair is chosen among activating pairs, because only they
+  have values. For AC-12 that is index 1 with `3/4`, so `ExactValue{3/4}`
+  matches FR-1043's "ratio for a workload quantile". No average or
+  first-value summary is introduced.
+- **Arithmetic in AC-12.** Index 1 starts undelivered, so `not m.delivered`
+  holds at position 0 and activation is immediate. The only positive-weight
+  step, `fast`, delivers with probability `1/2`, so `Pr(M <= 2)` is
+  `1/2 + 1/4 = 3/4` with a denominator of 1, and `3/4 >= 0.5` proves the
+  claim. This matches FR-1043-AC-1. Index 0 is delivered and terminal, so it
+  stutters forever, never activates, and has numerator and denominator 0.
+  `slow` at weight 0 is admitted (FR-185 lines 177-181, FR-185-AC-10). The
+  four negative entry sets (an extra index 0, a missing index 1, a duplicate,
+  and index 0 substituted for index 1) each break the
+  exact-activating-coverage rule, so they settle `runtime_invariant`. The
+  typed outcomes are deterministic.
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| (none) | - | Round 7: no new findings; FND-001 to FND-013 remain closed and need no new row. |
+
+**Round-7 verdict: PASS.** The FR-203 mixed-initial activation coverage
+addition is accepted on BASE. FND-001 to FND-013 remain closed, and the
+round-6 FractionValue AC-11 remains accepted. This verdict covers normative
+spec acceptance only. It makes no claim about the implementation, which is
+still in progress, or about whether the PR can merge.

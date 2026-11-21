@@ -306,9 +306,9 @@ pub(super) fn check(
             meter
                 .charge(
                     filament_exact::Charge::new(filament_exact::ChargePoint::GraphEdge).work(
-                        Integer::from(
+                        Integer::from(u64::from(
                             usize::BITS.saturating_sub(document.ranking.len().leading_zeros()),
-                        ),
+                        )),
                     ),
                 )
                 .map_err(|error| ProbabilityDocumentError::Accounting(Box::new(error)))?;
