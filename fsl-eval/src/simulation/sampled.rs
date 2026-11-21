@@ -510,7 +510,7 @@ fn take_step(
         transition: TransitionId::Operation(transition),
         random: draw.random.clone(),
         probability,
-        rewards: draw.rewards.clone(),
+        rewards: draw.rewards.defined().map_err(|_| broken())?.to_vec(),
     })
 }
 

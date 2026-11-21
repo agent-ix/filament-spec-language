@@ -775,7 +775,11 @@ fn subject(
                         let magnitude = {
                             let context = &mut **context;
                             super::super::reward::magnitude(
-                                &step.rewards,
+                                step.rewards.defined().map_err(|_| {
+                                    ProbabilityDocumentError::Graph(
+                                        ExactProbabilityGraphError::ExpansionRefused,
+                                    )
+                                })?,
                                 objective,
                                 limits,
                                 cancel,
