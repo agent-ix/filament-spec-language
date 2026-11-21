@@ -130,6 +130,8 @@ pub enum Unsupported {
     PackageCorrelation,
     /// A package repeat's loop proof has no executable package form yet.
     PackageRepeatProof,
+    /// A configured package Await clock awaits clock-selection transport.
+    PackageAwaitClockSelection,
     /// A package protocol declares a replicated role this program does not
     /// step yet.
     PackageReplicatedRole,
@@ -144,6 +146,7 @@ impl Unsupported {
             Self::PackageControl(_) => "package protocol control",
             Self::PackageCorrelation => "package protocol correlation",
             Self::PackageRepeatProof => "package repeat proof",
+            Self::PackageAwaitClockSelection => "package Await clock-selection transport",
             Self::PackageReplicatedRole => "package replicated role",
         }
     }
@@ -1636,6 +1639,9 @@ impl<'a, M: MemoryModel> ProtocolSystem<'a, M> {
                     node,
                     failure,
                 },
+                PackageProgramRefusal::AwaitClockSelection { .. } => {
+                    ProtocolRefusal::Unsupported(Unsupported::PackageAwaitClockSelection)
+                }
                 _ => ProtocolRefusal::fault("a-selected-package-protocol-builds"),
             })?;
         if let Some(binding) = subject.capacities.first() {

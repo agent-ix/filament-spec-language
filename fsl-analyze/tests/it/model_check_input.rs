@@ -18,17 +18,31 @@ fn still_document() -> Vec<u8> {
 
 /// The admitted bytes `package` was written to, with the identity and
 /// equality rows of its handoff.
-struct Handoff {
-    admitted: fsl_package::CheckedPackageV2,
+pub(crate) struct Handoff {
+    pub(crate) admitted: fsl_package::CheckedPackageV2,
     identities: fsl_package::ReadIdentityRows,
     equality: fsl_package::ReadEqualityRows,
 }
 
 fn handoff(package: &CheckedPackage, documents: &Documents) -> Handoff {
-    let emission = fsl_package::emit_checked(package, EmitLimits::fixture()).expect("emits");
+    handoff_with_selections(package, &documents.packages, &[])
+}
+
+/// Emit and strictly admit one package with its actual clock and evaluator facts.
+pub(crate) fn handoff_with_selections(
+    package: &CheckedPackage,
+    packages: &fsl_semantics::model::intake::PackageInput,
+    selections: &[fsl_package::TemporalClockSelection],
+) -> Handoff {
+    let emission = fsl_package::emit_checked_with_temporal_selections(
+        package,
+        selections,
+        EmitLimits::fixture(),
+    )
+    .expect("emits");
     let admitted = fsl_package::admit_checked_package(
         emission.package().bytes(),
-        &documents.packages,
+        packages,
         V2ReadLimits::fixture(),
     )
     .expect("the strict reader admits the written bytes");
@@ -45,7 +59,7 @@ fn handoff(package: &CheckedPackage, documents: &Documents) -> Handoff {
     }
 }
 
-fn bare(handoff: &Handoff) -> BarePackage<'_> {
+pub(crate) fn bare(handoff: &Handoff) -> BarePackage<'_> {
     BarePackage::new(&handoff.admitted)
         .with_supply(
             BareSupply {

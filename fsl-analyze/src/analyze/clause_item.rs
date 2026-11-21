@@ -1125,9 +1125,20 @@ impl<'a> PackageProtocolWork<'a> {
                     Err(fsl_eval::simulation::protocol::PackageProgramRefusal::Unsupported(_)) => {
                         return unsupported();
                     }
-                    Err(fsl_eval::simulation::protocol::PackageProgramRefusal::Correlation {
-                        node,
-                    }) => {
+                    Err(fsl_eval::simulation::protocol::PackageProgramRefusal::AwaitClockSelection { node, clock }) => {
+                        let mut detail = serde_json::Map::new();
+                        detail.insert("fact".to_owned(), serde_json::json!("await-clock-selection-transport"));
+                        detail.insert("node".to_owned(), serde_json::json!(node));
+                        detail.insert("clock".to_owned(), serde_json::json!(clock));
+                        return EngineReport::Refused(Refusal::UnsupportedWithDetail(
+                            filament_semantic_value::catalog::CatalogCode::new(
+                                "unsupported_construct",
+                                "not-yet-implemented",
+                            ),
+                            detail,
+                        ));
+                    }
+                    Err(fsl_eval::simulation::protocol::PackageProgramRefusal::Correlation { node }) => {
                         let mut detail = serde_json::Map::new();
                         detail.insert("fact".to_owned(), serde_json::json!("correlation"));
                         detail.insert("node".to_owned(), serde_json::json!(node));
