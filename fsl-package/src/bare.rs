@@ -210,26 +210,7 @@ impl<'p> BarePackage<'p> {
     /// declared unit of the `Time` dimension named `unit` with no offset.
     #[must_use]
     pub fn time_unit_scale(&self, unit: &str) -> Option<filament_exact::Rational> {
-        use filament_semantic_value::quantity::QuantityUnit;
-        use filament_semantic_value::unit::NominalUnitForm;
-        let named = |segments: &[String], name: &str| {
-            segments.last().is_some_and(|last| last == name) || segments.join("::") == name
-        };
-        self.units.ids().find_map(|id| {
-            let QuantityUnit::Declared(declared) = self.units.get(id)? else {
-                return None;
-            };
-            let node = self.units.nominal_node(&declared.key())?;
-            if !matches!(node.form, NominalUnitForm::Unit { .. })
-                || !named(&node.declaration.qualified_declaration, unit)
-                || declared.is_affine()
-            {
-                return None;
-            }
-            let dimension = self.units.nominal_node(&declared.dimension_node())?;
-            named(&dimension.declaration.qualified_declaration, "Time")
-                .then(|| declared.canonical().scale().clone())
-        })
+        self.units.time_unit_scale(unit)
     }
 
     /// The exact canonical bytes admitted for this package, when available.
