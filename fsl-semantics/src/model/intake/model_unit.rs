@@ -167,9 +167,6 @@ pub fn compile_model_unit_with_causes(
     parsed: &ParsedSource,
     limits: ModelNormalizationLimits,
 ) -> Result<CompiledModelUnit, Vec<CompleteDiagnostic>> {
-    if !parsed.is_admissible() {
-        return Err(parsed.diagnostics().to_vec());
-    }
     let tokens = parsed
         .cst()
         .tokens()
@@ -180,6 +177,45 @@ pub fn compile_model_unit_with_causes(
             span: token.span(),
         })
         .collect::<Vec<_>>();
+    if !parsed.is_admissible() {
+        let mut diagnostics = parsed.diagnostics().to_vec();
+        let mut depth = 0usize;
+        for (index, token) in tokens.iter().enumerate() {
+            // A contextual declaration keyword can first parse as a field
+            // name, leaving the parser's refusal on the following name.
+            // Keep this exact forbidden-member refusal on its keyword.
+            if depth == 0 && ["event", "store"].contains(&token.text.as_str()) {
+                if let Err(forbidden) =
+                    validate_declaration_inheritance_syntax(&tokens, index, parsed)
+                {
+                    if let [forbidden] = forbidden.as_slice() {
+                        if let Some(span) = forbidden.byte_span() {
+                            let next = tokens
+                                .iter()
+                                .position(|token| token.span == span)
+                                .and_then(|at| tokens.get(at + 1));
+                            for diagnostic in &mut diagnostics {
+                                if diagnostic.code == CompleteCode::InvalidSyntax
+                                    && diagnostic.cause == CompleteCause::UnexpectedToken
+                                    && next.is_some_and(|name| {
+                                        diagnostic.byte_span() == Some(name.span)
+                                    })
+                                {
+                                    diagnostic.region = parsed.source().region(span);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            match token.text.as_str() {
+                "{" => depth += 1,
+                "}" => depth = depth.saturating_sub(1),
+                _ => {}
+            }
+        }
+        return Err(diagnostics);
+    }
     let source = parsed.source();
     let mut cursor = 0;
     let Some(identity) = read_identity(&tokens, &mut cursor) else {
