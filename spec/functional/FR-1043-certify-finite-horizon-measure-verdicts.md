@@ -171,18 +171,18 @@ refutation evidence SHALL follow the distinct role below.
 
 ### Mean-refutation role
 
-- For `mean of F op c`, EN-5 SHALL emit an `exact` document with payoff
+- For `mean of F op θ`, EN-5 SHALL emit an `exact` document with payoff
   `fraction`, or a refuting `lower` or `upper` document under
   [FR-1042](FR-1042-certify-value-bounds-with-lower-and-upper-certificates.md)
   with the same complete objective as `base` that a proof would use. The
   checker SHALL independently check the document's identity, objective or
   base, product, payoff and certificate conditions, including the required
   policy for a bound, before testing refutation. Under a workload, `exact`
-  value `v < c` or `upper < c` refutes `>= c`; `v > c` or `lower > c`
-  refutes `<= c`. Under every scheduler, the deciding extremum SHALL remain
-  the minimum for `>= c` and the maximum for `<= c`: `exact` minimum or
-  `upper` on that minimum must be strictly below `c`, and `exact` maximum
-  or `lower` on that maximum must be strictly above `c`.
+  value `v < θ` or `upper < θ` refutes `>= θ`; `v > θ` or `lower > θ`
+  refutes `<= θ`. Under every scheduler, the deciding extremum SHALL remain
+  the minimum for `>= θ` and the maximum for `<= θ`: `exact` minimum or
+  `upper` on that minimum must be strictly below `θ`, and `exact` maximum
+  or `lower` on that maximum must be strictly above `θ`.
 - The checker SHALL check these documents in their refutation role,
   applying the strict comparison to the independently checked initial
   value or bound, rather than requiring the proof claim-side kind or
@@ -190,11 +190,31 @@ refutation evidence SHALL follow the distinct role below.
   because it misses the original claim's proof threshold. Equality SHALL
   NOT refute either non-strict mean claim. The counterexample SHALL reuse
   FSpec FR-413's subsystem evidence and
-  [FR-202](FR-202-replay-a-probabilistic-witness.md)'s scheduler and replay
-  acceptance rules, with opaque accepted evidence for the same identity,
+  [FR-202](FR-202-replay-a-probabilistic-witness.md)'s scheduler and
+  checked-subject mean-certificate replay entry acceptance rules, with opaque accepted evidence for the same identity,
   base and deciding extremum required before settlement. A path set or
   probability-mass comparison SHALL NOT certify this expectation. The
   caller limits and cancellation obligations above apply to this check.
+
+- A valid document failing the strict refutation comparison, including
+  equality, SHALL be rejected by the checker `ThresholdMissed` at the
+  initial key; a `lower` for `>= θ` or `upper` for `<= θ` SHALL be rejected
+  `Malformed` at `kind`. Failed certificate conditions SHALL retain
+  FR-201's rule and locus. These rejections SHALL settle `inconclusive`,
+  `CertificateRejected{rule, at}`. Witness-policy disagreement or failure
+  to attain an exact extremum SHALL settle replay `inconclusive`,
+  `ReplayParity`; identity and objective/base mismatch SHALL retain the
+  existing typed refusal. The mean threshold `θ` SHALL NOT be written into
+  `measure.threshold`, which remains null for payoff `fraction`.
+- The checker SHALL rebuild the full stopped product for `exact` and
+  `upper`; an FR-1042 `lower` MAY name a subset, including a partially
+  explored product. For a `fraction` base, every unnamed successor SHALL
+  count as 0, the least completed-fraction payoff. The checker SHALL expand
+  the named states and their successors and check the lower conditions
+  under its own limits. An accepted partial `lower > θ` SHALL refute
+  `<= θ` without a counterpart, including a maximum under every scheduler.
+  A live limit or cancellation during checking SHALL return incomplete
+  without accepted evidence.
 
 ## Acceptance Criteria
 
@@ -207,9 +227,8 @@ refutation evidence SHALL follow the distinct role below.
 | FR-1043-AC-5 | Under `Retry`'s workload, `mean of fraction holds(delivered) over [0, 2] >= rational(2,5)` settles `proved`, `ExactValue{5/12}`, with a `fraction` document; at `rational(1,2)` it settles `refuted` with FSpec FR-413 subsystem evidence containing an independently accepted `exact` `fraction` certificate of `5/12 < 1/2`, checked for refutation rather than the proof threshold. The comparison event `probability >= 0.7 [M <= 2]` over AC-1's measure settles `proved`, `ExactValue{3/4}`, with an `event` document. | Test (TC-3152) |
 | FR-1043-AC-6 | FR-201-AC-51's finite-horizon quantile item over the cyclic `link` model under every scheduler (`Pr(M <= 3) = 13/27` for `steps from holds(true) until holds(m.delivered) within 4`), written at level 0.4, settles `proved` with shifted initial value `11/135` and a document `fsl-probability-check` accepts in a separate process; written at level 0.5 it settles `refuted`. | Test (TC-2065) |
 | FR-1043-AC-7 | AC-1's numerator with `window`, `threshold`, `comparison`, `reward`, `unit`, `level` or `payoff` changed refuses objective mismatch; a key whose accumulator amount or phase is altered is not an alias and fails coverage; a `shifted` value below `−level` is rejected `Malformed` at `values`. Pre-cancellation and exhaustion of each caller limit during expansion, payoff evaluation or exact sums settle `incomplete` with the actual limit and no truth value. | Test (TC-3152) |
-
-| FR-1043-AC-8 | With AC-1's `try` split into `fast` (`1/2`) and `slow` (`1/4`), `mean of fraction holds(delivered) over [0, 2]` has minimum `11/48` and maximum `5/12`. Under every scheduler, `>= 1/2` is refuted by an accepted exact minimum or FR-1042 `upper` on the minimum with initial bound `1/4` and policy `slow`; `<= 1/3` is refuted by an accepted exact maximum or `lower` on the maximum with initial bound `2/5` and policy `fast`. Both reuse subsystem evidence and are independently accepted by FR-202 replay. | Test |
-| FR-1043-AC-9 | AC-5's exact workload mean `5/12` at `>= 5/12` and `<= 5/12` does not refute. A valid workload `upper` bound `1/2` at `>= 1/2`, or `lower` bound `2/5` at `<= 2/5`, does not refute. In AC-8 a lower bound on the minimum or an upper bound on the maximum cannot refute, even when strictly past the threshold; a changed identity, base, extremum, invalid value or disagreeing witness policy is not accepted. A raw engine verdict or unchecked certificate cannot settle the item `refuted`. | Test |
+| FR-1043-AC-8 | With AC-1's `try` split into `fast` (`1/2`) and `slow` (`1/4`), `mean of fraction holds(delivered) over [0, 2]` has minimum `11/48` and maximum `5/12`. Under every scheduler, `>= 1/2` is refuted by an accepted exact minimum or FR-1042 `upper` on the minimum with initial bound `1/4` and policy `slow`; `<= 1/3` is refuted by an accepted exact maximum or `lower` on the maximum with initial bound `2/5` and policy `fast`. Both reuse subsystem evidence and are independently accepted by FR-202's checked-subject mean-certificate replay entry. | Test |
+| FR-1043-AC-9 | AC-5's exact workload mean `5/12` at `>= 5/12` and `<= 5/12`, a valid workload `upper` bound `1/2` at `>= 1/2`, and a valid `lower` bound `2/5` at `<= 2/5` each reject `ThresholdMissed` at the initial key and settle `inconclusive`, `CertificateRejected`. In AC-8, a valid `lower` minimum document with initial bound `1/5` at `>= 1/2` and a valid `upper` maximum document with bound `1/2` at `<= 1/3` each reject `Malformed` at `kind` with the same settlement. Identity/base mismatch retains its typed refusal; an invalid value rejects `InequalityFails` with `CertificateRejected`; a disagreeing witness policy settles `inconclusive`, `ReplayParity`. A raw engine verdict or unchecked certificate cannot settle `refuted`. An accepted partial `lower` maximum bound `2/5 > 1/3`, with unnamed successors counted as 0, refutes without an upper counterpart; cancellation or a live checking limit remains incomplete. | Test |
 
 ## Dependencies
 
