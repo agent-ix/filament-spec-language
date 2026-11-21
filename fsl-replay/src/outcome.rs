@@ -24,6 +24,7 @@
 //! non-proof evaluation outcome such as `execute`.
 
 mod counterexample;
+pub(crate) use counterexample::model_clause_wire;
 pub mod hint;
 pub use counterexample::{
     assignments_wire, graph_evidence_wire, hyper_counterexample_wire, probabilistic_undefined_wire,

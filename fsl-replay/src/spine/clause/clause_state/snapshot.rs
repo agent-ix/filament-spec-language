@@ -470,7 +470,7 @@ impl<'a> ClauseState<'a> {
                 meter,
             );
             let mut decided = finish(disposition, meter);
-            decided.counterexample = counterexample;
+            decided.counterexample = counterexample.map(Into::into);
             decided.decisive = decisive;
             decided.refused_at = report.refused_at;
             report = decided;

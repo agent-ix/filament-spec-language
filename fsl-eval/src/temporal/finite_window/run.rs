@@ -8,7 +8,7 @@ use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use crate::temporal::facts::ClauseFacts;
 use filament_exact::{Charge, ChargePoint, Incomplete, Meter};
 use filament_semantic_value::catalog::InternalFault;
-use fsl_semantics::check::{Activation, CaptureSite, TemporalProfile};
+use fsl_semantics::check::{Activation, CaptureSite, FormulaNodeId, TemporalProfile};
 
 use super::identity::{Block, IdentityStream};
 use super::lift::{Candidate, Cell, Lifter, Part, Poss, ScanFrame, Variant};
@@ -71,7 +71,7 @@ enum Stop {
     WindowLimit(WindowLimitReached),
     /// An `on each` guard that is undefined at a position.
     GuardUndefined(UndefinedEvaluation),
-    Undefined(UndefinedEvaluation),
+    Undefined(UndefinedEvaluation, Option<FormulaNodeId>),
     /// A `holds` condition, an `on each` guard or a capture was refused at
     /// this position (FR-327 "Refused condition").
     /// The atom class for a refused `holds` condition, or `None` for an
@@ -217,7 +217,7 @@ pub(super) enum Entry {
 pub(super) enum Tail {
     Done,
     GuardUndefined(UndefinedEvaluation),
-    Undefined(UndefinedEvaluation),
+    Undefined(UndefinedEvaluation, Option<FormulaNodeId>),
     Incomplete(Incomplete),
     WindowLimit(WindowLimitReached),
 }
@@ -458,7 +458,7 @@ impl<'a, L: TemporalLetters> Run<'a, L> {
             Err(Stop::Incomplete(incomplete)) => Tail::Incomplete(incomplete),
             Err(Stop::WindowLimit(limit)) => Tail::WindowLimit(limit),
             Err(Stop::GuardUndefined(undefined)) => Tail::GuardUndefined(undefined),
-            Err(Stop::Undefined(undefined)) => Tail::Undefined(undefined),
+            Err(Stop::Undefined(undefined, atom)) => Tail::Undefined(undefined, atom),
             // In evaluation order: an atom undefined at an earlier position, or
             // an activation that ended false before the refused condition, is
             // returned instead of it.
@@ -468,17 +468,20 @@ impl<'a, L: TemporalLetters> Run<'a, L> {
                 // refused position precedes this refusal. `read_atom` can retain
                 // lower-class valuations outside the activation's closure, so
                 // position alone cannot establish precedence for guards/captures.
-                if let Some(((position, _), cause)) =
+                if let Some(((position, class), cause)) =
                     self.undefined.iter().find(|((position, class), _)| {
                         *position < refused
                             || (*position == refused
                                 && atom_class.is_some_and(|refused_class| *class < refused_class))
                     })
                 {
-                    Tail::Undefined(UndefinedEvaluation {
-                        at: position_of(*position).map_err(TemporalRefusal::Fault)?,
-                        cause: cause.clone(),
-                    })
+                    Tail::Undefined(
+                        UndefinedEvaluation {
+                            at: position_of(*position).map_err(TemporalRefusal::Fault)?,
+                            cause: cause.clone(),
+                        },
+                        Some(FormulaNodeId::from_arena_index(*class)),
+                    )
                 } else if prior.first_false.is_some()
                     || done
                         .iter()
@@ -717,7 +720,7 @@ impl<L: TemporalLetters> Run<'_, L> {
                     .captures(at, &mut *self.meter)
                     .map_err(|stop| Stop::at(stop, at, None))?
                 {
-                    return Err(Stop::Undefined(UndefinedEvaluation { at, cause }));
+                    return Err(Stop::Undefined(UndefinedEvaluation { at, cause }, None));
                 }
             }
             let closure = self.demand(anchor)?;
@@ -726,7 +729,7 @@ impl<L: TemporalLetters> Run<'_, L> {
                     .iter()
                     .any(|(node, at)| *at == key.0 && self.class(*node) == key.1)
             });
-            if let Some((&(position, _), cause)) = undefined {
+            if let Some((&(position, class), cause)) = undefined {
                 let undefined = UndefinedEvaluation {
                     at: position_of(position)?,
                     cause: cause.clone(),
@@ -748,7 +751,10 @@ impl<L: TemporalLetters> Run<'_, L> {
                 self.cells = saved;
                 let finished = finished?;
                 if finished.result != Ending::False {
-                    return Err(Stop::Undefined(undefined));
+                    return Err(Stop::Undefined(
+                        undefined,
+                        Some(FormulaNodeId::from_arena_index(class)),
+                    ));
                 }
                 done.push(finished);
                 continue;
@@ -1335,6 +1341,10 @@ impl<L: TemporalLetters> Run<'_, L> {
             .iter()
             .find(|a| matches!(a.result, Ending::Pending { .. } | Ending::Indeterminate(_)));
         let scope_closed = self.trace.asserted.scope == ProgressClosure::Closed;
+        let undefined_atom = match &tail {
+            Tail::Undefined(_, atom) => *atom,
+            _ => None,
+        };
         let (verdict, basis, support) = if let Some(summary) = &prior.first_false {
             (
                 WindowVerdict::Violated {
@@ -1367,7 +1377,7 @@ impl<L: TemporalLetters> Run<'_, L> {
                     Basis::Unavailable,
                     Vec::new(),
                 ),
-                Tail::Undefined(undefined) => (
+                Tail::Undefined(undefined, _) => (
                     WindowVerdict::Undefined(undefined),
                     Basis::Unavailable,
                     Vec::new(),
@@ -1499,6 +1509,11 @@ impl<L: TemporalLetters> Run<'_, L> {
             self.meter.limits(),
         )?;
         Ok(WindowEvaluation {
+            undefined_atom: if matches!(verdict, WindowVerdict::Undefined(_)) {
+                undefined_atom
+            } else {
+                None
+            },
             verdict,
             basis,
             support,

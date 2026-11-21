@@ -28,6 +28,8 @@ pub const CATALOG_PAIRS: &[fsl_foundation::diagnostic::CatalogCode] = &[
 #[cfg(feature = "std")]
 mod analysis_view;
 #[cfg(feature = "std")]
+pub mod occurrence_source;
+#[cfg(feature = "std")]
 pub use analysis_view::{AnalysisView, ClaimOccurrence, DependencyClosure};
 #[cfg(feature = "std")]
 pub use model_input_form::UnreadModelForm;

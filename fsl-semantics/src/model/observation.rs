@@ -2095,6 +2095,35 @@ pub fn admit_current_snapshot<'a>(
     )
 }
 
+/// [`admit_current_snapshot`] with the effective model views used by that
+/// same admission, moved to the caller for subsequent population binding.
+/// No model is normalized again when retaining these views.
+pub fn admit_current_snapshot_with_views<'a>(
+    model_selections: impl Into<ModelSelections<'a>>,
+    types: &TypeEnvironment,
+    packages: &PackageInput,
+    model_limits: ModelNormalizationLimits,
+    provision: &BTreeMap<DocumentRef, Vec<u8>>,
+    selected: &DocumentRef,
+    limits: ObservationLimits,
+) -> Result<(ObjectEnvironment, AdmissionUsage, Vec<EffectiveView>), AdmissionFailure> {
+    admit_current_environment_with_views(
+        model_selections,
+        types,
+        (packages, model_limits),
+        (provision, selected, limits),
+        &[],
+        &[],
+    )
+    .map(|(environment, usage, views)| {
+        (
+            environment,
+            usage,
+            views.into_iter().map(|view| view.view).collect(),
+        )
+    })
+}
+
 /// FR-106's `ValueInvariants` selection: admit one current snapshot without
 /// selecting a state clause, then return the admitted values and their
 /// document identity for FR-366 evaluation.
@@ -2371,6 +2400,31 @@ fn admit_current_environment<'a>(
     arguments: &[ObjectReference],
     required: &[String],
 ) -> Result<(ObjectEnvironment, AdmissionUsage), AdmissionFailure> {
+    admit_current_environment_with_views(
+        model_selections,
+        types,
+        (packages, model_limits),
+        (provision, selected, limits),
+        arguments,
+        required,
+    )
+    .map(|(environment, usage, _)| (environment, usage))
+}
+
+/// The shared admission core retains the actual normalized views, so callers
+/// that bind populations do not repeat the admission's normalization work.
+fn admit_current_environment_with_views<'a>(
+    model_selections: impl Into<ModelSelections<'a>>,
+    types: &TypeEnvironment,
+    (packages, model_limits): (&PackageInput, ModelNormalizationLimits),
+    (provision, selected, limits): (
+        &BTreeMap<DocumentRef, Vec<u8>>,
+        &DocumentRef,
+        ObservationLimits,
+    ),
+    arguments: &[ObjectReference],
+    required: &[String],
+) -> Result<(ObjectEnvironment, AdmissionUsage, Vec<ModelView>), AdmissionFailure> {
     let views = model_views(model_selections, packages, model_limits)?;
     let read = read_document(DocumentKind::Snapshot, provision, selected, limits, &views)?;
     let snapshot = read
@@ -2392,7 +2446,7 @@ fn admit_current_environment<'a>(
         required,
         model_limits.ancestor_steps,
     )?;
-    Ok((admitted.environment, read.usage))
+    Ok((admitted.environment, read.usage, views))
 }
 
 /// The reference a document `bytes` names itself by: the four identity labels

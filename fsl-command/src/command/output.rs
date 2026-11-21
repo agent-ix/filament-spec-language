@@ -429,6 +429,7 @@ pub(super) fn error(error: &RunError, artifact: bool) -> Result<Value, serde_jso
             RunCause::SpineRun(refusal) => match refusal.as_ref() {
                 fsl_replay::spine::RunRefusal::Compile(refusal) => refusal.cause(),
                 fsl_replay::spine::RunRefusal::Argument { defect, .. } => Some(defect.cause),
+                fsl_replay::spine::RunRefusal::SourceNotSupplied { .. } => Some("missing-member"),
                 fsl_replay::spine::RunRefusal::UnsupportedResult { .. }
                 | fsl_replay::spine::RunRefusal::UnsupportedParameter { .. } => {
                     Some("unsupported-feature")

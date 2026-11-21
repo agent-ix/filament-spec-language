@@ -267,7 +267,8 @@ impl<'p> BarePackage<'p> {
             self.exact_type_projections(),
             self.dependency_views(),
         )
-        .map_err(SlotSelectionFailure::Fault)?;
+        .map_err(SlotSelectionFailure::Fault)?
+        .with_populations(self);
         let walker = if print { walker.printing() } else { walker };
         let root_key = graph
             .key(root)
@@ -908,8 +909,7 @@ impl<'p> BarePackage<'p> {
     ///
     /// [`BareClauseRefusal::Selection`] for a clause the package does not
     /// select; [`BareClauseRefusal::Pending`] for a fact the form does not
-    /// read yet: a fairness set, an interval, an aggregate atom or a
-    /// formula node used twice.
+    /// read yet: a fairness set, an interval or an aggregate atom.
     pub fn temporal_clause_form(
         &self,
         claim: &fsl_foundation::source::provenance::OccurrenceKey,
@@ -929,6 +929,68 @@ impl<'p> BarePackage<'p> {
         claim: &fsl_foundation::source::provenance::OccurrenceKey,
     ) -> Result<fsl_semantics::check::PackageClauseForm, BareClauseRefusal> {
         self.read_temporal_clause_form(claim, true)
+    }
+
+    /// Candidate atom occurrences inside the explicitly selected claim's
+    /// declaration and native source. Structural sharing does not identify
+    /// a particular use; callers may compare supplied text, never pair ranks.
+    pub fn temporal_atom_sources(
+        &self,
+        claim: &fsl_foundation::source::provenance::OccurrenceKey,
+        position: usize,
+    ) -> Result<
+        Vec<crate::occurrence_source::OccurrenceSource>,
+        crate::occurrence_source::OccurrenceSourceRefusal,
+    > {
+        use crate::occurrence_source::{occurrence_source, OccurrenceSourceRefusal};
+        use filament_contract_model::{CheckedOccurrence, CheckedOccurrenceRole};
+        let package = self.package();
+        let node = self
+            .temporal_clause_semantic_node(claim.node())
+            .map_err(|_| OccurrenceSourceRefusal::UnknownNode)?;
+        let view = temporal_subject(package, &node.node_id)
+            .map_err(|_| OccurrenceSourceRefusal::UnknownNode)?;
+        let row = view
+            .name_row_of(&crate::checked_views::ClauseOccurrence {
+                node: node.node_id.clone(),
+                role: CheckedOccurrenceRole::Claim,
+                ordinal: claim.origin().ordinal(),
+            })
+            .ok_or(OccurrenceSourceRefusal::UnknownOccurrence)?;
+        let atom = view
+            .formula_graph()
+            .get(position)
+            .filter(|entry| entry.kind() == Some(FormulaOperation::Holds))
+            .ok_or(OccurrenceSourceRefusal::UnknownOccurrence)?;
+        let declaration = crate::checked_v2::source_region(&row.declaration_region)
+            .map_err(|_| OccurrenceSourceRefusal::MissingRegion)?;
+        let mut candidates = Vec::new();
+        for entry in package.source_map().iter().filter(|entry| {
+            entry.node_id == *atom.node && entry.role == CheckedOccurrenceRole::Expression
+        }) {
+            for region in &entry.regions {
+                let region = crate::checked_v2::source_region(region)
+                    .map_err(|_| OccurrenceSourceRefusal::MissingRegion)?;
+                if region.source() == declaration.source()
+                    && region.start() >= declaration.start()
+                    && region.end() <= declaration.end()
+                {
+                    candidates.push(occurrence_source(
+                        package,
+                        atom.node,
+                        &CheckedOccurrence {
+                            role: entry.role.clone(),
+                            ordinal: entry.ordinal,
+                        },
+                        Some(&region),
+                    )?);
+                }
+            }
+        }
+        if candidates.is_empty() {
+            return Err(OccurrenceSourceRefusal::MissingRegion);
+        }
+        Ok(candidates)
     }
 
     #[ix_trace_rs::string_edge]
@@ -1016,15 +1078,11 @@ impl<'p> BarePackage<'p> {
         }
         let uses = view.formula_graph();
         let mut formula = Vec::with_capacity(uses.len());
-        let mut seen = BTreeSet::new();
-        for entry in uses {
+        for (position, entry) in uses.iter().enumerate() {
             let pending = |fact| BareClauseRefusal::Pending {
                 fact,
                 node: entry.node.clone(),
             };
-            if !seen.insert(entry.node) {
-                return Err(pending("shared-formula-node"));
-            }
             let interval = match (&entry.interval, intervals) {
                 (None, _) => None,
                 (Some(interval), true) => {
@@ -1038,15 +1096,19 @@ impl<'p> BarePackage<'p> {
             formula.push(match kind {
                 FormulaOperation::True => PackageFormulaNode::Constant(true),
                 FormulaOperation::False => PackageFormulaNode::Constant(false),
-                FormulaOperation::Holds => PackageFormulaNode::Holds {
-                    span: package
-                        .source_map()
-                        .iter()
-                        .find(|map| map.node_id == *entry.node)
-                        .and_then(|map| map.regions.first())
-                        .map(region_span)
-                        .ok_or_else(malformed)?,
-                },
+                FormulaOperation::Holds => {
+                    let sources = self
+                        .temporal_atom_sources(claim, position)
+                        .map_err(|_| malformed())?;
+                    let atom_span = match sources.as_slice() {
+                        [only] => fsl_foundation::Span {
+                            start: usize::try_from(only.region.start()).map_err(|_| malformed())?,
+                            end: usize::try_from(only.region.end()).map_err(|_| malformed())?,
+                        },
+                        _ => span,
+                    };
+                    PackageFormulaNode::Holds { span: atom_span }
+                }
                 FormulaOperation::Aggregate => return Err(pending("aggregate")),
                 FormulaOperation::Not => PackageFormulaNode::Not(operand(0)?),
                 FormulaOperation::And => PackageFormulaNode::And(operand(0)?, operand(1)?),

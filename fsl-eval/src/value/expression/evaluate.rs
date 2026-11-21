@@ -1829,7 +1829,11 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
         if let Some(provenance) = trail.provenance(&Value::Collection(Arc::clone(collection))) {
             return Some(provenance.clone());
         }
-        let occurrence = occurrence_at(self.world.graph()?, node.location()?, None)?;
+        let occurrence = self
+            .world
+            .graph()
+            .and_then(|graph| occurrence_at(graph, node.location()?, None))
+            .or_else(|| node.occurrence())?;
         Some(Provenance::built(trail.observation.clone(), occurrence))
     }
 
@@ -5156,9 +5160,12 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
         if !self.on_claim_level() {
             return;
         }
-        let Some(occurrence) = node.location().and_then(|location| {
-            occurrence_at(self.world.graph()?, location, Some(Operator::Collection))
-        }) else {
+        let Some(occurrence) = self
+            .world
+            .graph()
+            .and_then(|graph| occurrence_at(graph, node.location()?, Some(Operator::Collection)))
+            .or_else(|| node.occurrence())
+        else {
             return;
         };
         if let Some(trail) = self.trail.as_mut() {
@@ -5525,12 +5532,13 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
             .get(position)
             .cloned()
             .ok_or_else(|| invariant("query-stop-position-invalid"))?;
-        let quantifier = iteration
-            .node
-            .location()
-            .and_then(|location| {
-                occurrence_at(self.world.graph()?, location, Some(Operator::Quantify))
+        let quantifier = self
+            .world
+            .graph()
+            .and_then(|graph| {
+                occurrence_at(graph, iteration.node.location()?, Some(Operator::Quantify))
             })
+            .or_else(|| iteration.node.occurrence())
             .ok_or_else(|| {
                 Halt::Fault(InternalFault::new("S6a", "quantifier-has-an-occurrence"))
             })?;

@@ -11,11 +11,19 @@ use serde_json::value::RawValue;
 /// The selected request shape owns its admitted envelope format.
 pub(super) trait RequestKind: serde::de::DeserializeOwned {
     const FORMAT: fsl_foundation::wire_format::WireFormat;
+
+    fn validate(&self) -> super::Result<()> {
+        Ok(())
+    }
 }
 
 impl RequestKind for Request {
     const FORMAT: fsl_foundation::wire_format::WireFormat =
         fsl_foundation::wire_format::WireFormat::RunRequest;
+
+    fn validate(&self) -> super::Result<()> {
+        super::runtime_sources::validate(self)
+    }
 }
 
 impl RequestKind for CompileRequest {
@@ -258,6 +266,10 @@ fn present_json_value<'de, D: serde::Deserializer<'de>>(
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct Request {
+    /// FR-1039: explicit package-only rendering sources, with presence
+    /// retained so even an empty array conflicts with `program`.
+    #[serde(default, deserialize_with = "super::runtime_sources::deserialize")]
+    pub sources: Option<Vec<SourceFile>>,
     #[serde(deserialize_with = "deserialize_objects")]
     pub models: Vec<Model>,
     /// FR-100: the program source selection; exactly one of `program` and

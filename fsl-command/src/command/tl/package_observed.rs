@@ -29,6 +29,8 @@ use crate::command::{wire, Result, RunCause};
 /// What a package run reads beyond the package: the domain packages its
 /// model selections bind to and the snapshot of an `initial` request.
 pub(in crate::command) struct PackageRun<'a> {
+    /// Explicit caller sources for any refused condition's source rendering.
+    pub(in crate::command) sources: &'a [fsl_foundation::Source],
     /// The domain package documents the request supplied.
     pub(in crate::command) packages: &'a PackageInput,
     /// The limits admission re-normalizes them under.
@@ -155,7 +157,7 @@ pub(super) fn observe(
         .map_err(|refusal| clause_not_read(&refusal))?;
     let selection = clause_selection(lowering, initial)?;
     match cross {
-        CrossEvaluate::Trace { .. } => trace(bare, &model, (&clause, key), selection),
+        CrossEvaluate::Trace { .. } => trace(bare, &model, (&clause, key), run.sources, selection),
         CrossEvaluate::Initial { .. } => {
             let initial = initial.ok_or_else(|| {
                 RunCause::TlFault("an initial request reads its snapshot".to_owned())
@@ -183,6 +185,7 @@ fn trace(
         &fsl_semantics::check::CheckedTemporalClause,
         &filament_exact::NodeKey,
     ),
+    sources: &[fsl_foundation::Source],
     selection: ClauseRunSelection,
 ) -> Result<Observation> {
     let ClauseRunSelection::SampledTemporal { name, trace, .. } = &selection else {
@@ -224,6 +227,12 @@ fn trace(
         }
     }
     let request = PackageSampledRequest {
+        package: bare,
+        sources,
+        ledger: None,
+        progress_capacity: fsl_replay::spine::SpineLimits::default()
+            .progress
+            .covered_positions,
         evaluator: bare,
         name,
         clause: Some((clause, key)),

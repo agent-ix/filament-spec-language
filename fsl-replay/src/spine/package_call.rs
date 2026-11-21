@@ -47,6 +47,84 @@ pub fn run_package(
     objects: &ObjectEnvironment,
     cancel: &Cancel,
 ) -> Result<CallOutcome, Box<RunRefusal>> {
+    run_package_with_sources(package, call, objects, &[], cancel).outcome
+}
+
+/// A package call's original result beside any unavailable source attribution.
+/// Attribution does not replace the evaluated code, cause or fields.
+#[derive(Debug)]
+pub struct PackageCallResult {
+    /// The unchanged execution result, with a rendered locus when available.
+    pub outcome: Result<CallOutcome, Box<RunRefusal>>,
+    /// An admitted location whose occurrence attribution was unavailable.
+    pub attribution: Option<PackageSourceAttributionFailure>,
+}
+
+/// A source-attribution failure retained beside the original evaluated result.
+#[derive(Debug)]
+pub struct PackageSourceAttributionFailure {
+    /// The actual semantic location selected by evaluation.
+    pub selector: filament_semantic_value::location::ExpressionLocation,
+    /// The helper's original typed reason, without diagnostic normalization.
+    pub reason: fsl_package::occurrence_source::OccurrenceSourceRefusal,
+    /// The original budget denial, when a metered owner supplied one.
+    pub budget_context: Option<fsl_foundation::diagnostic::BudgetDenial>,
+}
+
+/// Run the admitted package with caller-admitted rendering sources. Source
+/// paths and text supply no package semantics or authentication.
+pub fn run_package_with_sources(
+    package: &BarePackage<'_>,
+    call: &Call,
+    objects: &ObjectEnvironment,
+    sources: &[fsl_foundation::Source],
+    cancel: &Cancel,
+) -> PackageCallResult {
+    let attribution = std::cell::RefCell::new(None);
+    let outcome =
+        run_package_resolving(package, call, objects, None, sources, cancel, &attribution);
+    PackageCallResult {
+        outcome,
+        attribution: attribution.into_inner(),
+    }
+}
+
+/// Run a package call using the effective views retained by its snapshot
+/// admission. Population arguments bind against those same views, preserving
+/// their declared maxima without normalizing the selected models again.
+pub fn run_package_with_snapshot_views(
+    package: &BarePackage<'_>,
+    call: &Call,
+    objects: &ObjectEnvironment,
+    views: &[fsl_semantics::model::normalize::EffectiveView],
+    sources: &[fsl_foundation::Source],
+    cancel: &Cancel,
+) -> PackageCallResult {
+    let attribution = std::cell::RefCell::new(None);
+    let outcome = run_package_resolving(
+        package,
+        call,
+        objects,
+        Some(views),
+        sources,
+        cancel,
+        &attribution,
+    );
+    PackageCallResult {
+        outcome,
+        attribution: attribution.into_inner(),
+    }
+}
+
+fn run_package_resolving(
+    package: &BarePackage<'_>,
+    call: &Call,
+    objects: &ObjectEnvironment,
+    views: Option<&[fsl_semantics::model::normalize::EffectiveView]>,
+    sources: &[fsl_foundation::Source],
+    cancel: &Cancel,
+    attribution: &std::cell::RefCell<Option<PackageSourceAttributionFailure>>,
+) -> Result<CallOutcome, Box<RunRefusal>> {
     // FR-296: a backend the caller did not supply refuses before any stage.
     SuppliedBackends::default()
         .member(call.backend)
@@ -94,9 +172,26 @@ pub fn run_package(
         Ok(world) => world,
         Err(_) => return Err(call_failure(package, &name, objects, call, cancel)),
     };
+    let bound_objects;
+    let objects = match (call.snapshot.as_ref(), views) {
+        (Some(_), Some(views)) => {
+            bound_objects =
+                super::call::bind_snapshot_populations(objects, views.iter(), &parameters, call)?;
+            &bound_objects
+        }
+        _ => objects,
+    };
     // FR-533 "Types the bytes cannot project": the bytes carry no declared
     // enumeration index, so the forms read no enumeration by name.
-    let forms = Forms::new(world.types(), &[]);
+    let universe_of = |declared: &filament_exact::EffectiveId| {
+        objects.population_universe_for_type(declared).cloned()
+    };
+    let object_world = call.snapshot.as_ref().map(|_| super::run_value::World {
+        objects,
+        universe_of: &universe_of,
+    });
+    let forms =
+        Forms::new(world.types(), &[]).in_world(package.package().name(), object_world.as_ref());
     let supplied = admit_wire_arguments(&forms, &parameters, call)?;
     let arguments = bind_arguments(&parameters, &supplied)?;
     let mut meter = Meter::new(call.accounting).with_cancel(cancel.clone());
@@ -129,9 +224,21 @@ pub fn run_package(
                 ))),
             }
         }
-        // The bytes carry no source, so a refusal's location resolves to no
-        // source region (FR-531 "Outputs").
-        _ => convert_outcome_resolving(evaluation, |_| None, &[]),
+        _ => convert_outcome_resolving(
+            evaluation,
+            |location| match projection.source_at_location(package, location) {
+                Ok(region) => region,
+                Err(reason) => {
+                    *attribution.borrow_mut() = Some(PackageSourceAttributionFailure {
+                        selector: location.clone(),
+                        reason,
+                        budget_context: None,
+                    });
+                    None
+                }
+            },
+            sources,
+        ),
     }
 }
 

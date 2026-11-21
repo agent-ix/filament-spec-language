@@ -141,6 +141,7 @@ mod modulo_claim_bounds;
 mod name_resolution_confinement;
 mod native_boundaries;
 mod native_run_result_root;
+mod package_model_native;
 mod replay_library_clocks;
 mod replay_multi_source;
 mod replay_refinement_internals;

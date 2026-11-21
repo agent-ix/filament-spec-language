@@ -398,6 +398,13 @@ pub struct DurationWindow {
     pub(crate) nominal_nodes: Vec<TimeNominalNode>,
 }
 
+impl DurationWindow {
+    /// The actual selected clock unit to which both bounds were normalized.
+    pub fn unit(&self) -> &NodeKey {
+        &self.unit
+    }
+}
+
 /// The checked term of one window aggregate atom, beside its typed value,
 /// filter, predicate and threshold expressions (FR-194, FR-337-AC-15).
 #[derive(Clone, Debug, Eq, PartialEq)]

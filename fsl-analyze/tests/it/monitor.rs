@@ -29,6 +29,18 @@ use crate::counter::{
     Documents, UNLIMITED,
 };
 
+/// Require the observed arm of a supplied-trace monitor counterexample.
+pub(super) fn observed_counterexample(
+    counterexample: &fsl_replay::ClauseRunCounterexample,
+) -> &fsl_replay::ObservedTemporalCounterexample {
+    match counterexample {
+        fsl_replay::ClauseRunCounterexample::Observed(observed) => observed,
+        fsl_replay::ClauseRunCounterexample::Model(_) => {
+            panic!("a supplied trace must retain its observed counterexample")
+        }
+    }
+}
+
 const ALWAYS_SMALL: &str = "always holds(c.value < 2)";
 const ALWAYS_EVENTUALLY_THREE: &str = "always eventually holds(c.value = 3)";
 const DIVIDES: &str = "always holds(3 mod (2 - c.value) >= 0)";
@@ -193,7 +205,10 @@ fn a_finite_trace_violates_at_its_activation_or_stays_pending() {
     assert_eq!(record.verdict, MonitorVerdict::Violated);
     assert_eq!(record.category, Category::Violation);
     assert_eq!(record.report().disposition.exit_code(), 10);
-    let counterexample = record.counterexample().expect("a counterexample");
+    let counterexample = record
+        .counterexample()
+        .map(observed_counterexample)
+        .expect("a counterexample");
     assert_eq!(counterexample.trace_position.index(), 0);
     let identities: Vec<_> = counterexample
         .prefix
@@ -233,6 +248,7 @@ fn a_lasso_is_tested_or_violated_by_its_loop() {
     assert_eq!(violated.records[0].report().disposition.exit_code(), 10);
     let counterexample = violated.records[0]
         .counterexample()
+        .map(observed_counterexample)
         .expect("counterexample");
     assert_eq!(counterexample.loop_start, Some(2));
 }
@@ -292,6 +308,7 @@ fn an_undefined_evaluation_is_a_violation() {
     assert_eq!(
         record
             .counterexample()
+            .map(observed_counterexample)
             .expect("counterexample")
             .trace_position
             .index(),
@@ -539,7 +556,9 @@ fn a_violation_carries_the_decisive_position_of_its_atom() {
         report
             .counterexample
             .as_ref()
-            .map(|counterexample| counterexample.trace_position.index()),
+            .map(|counterexample| observed_counterexample(counterexample)
+                .trace_position
+                .index()),
         Some(0)
     );
     let decisive = report.decisive.as_ref().expect("a decisive record");

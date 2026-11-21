@@ -22,7 +22,8 @@ struct ExpressionNode {
 }
 
 #[derive(Default)]
-pub(super) struct CanonicalRows {
+/// Package-owned declaration rows used by the canonical checked-expression printer.
+pub struct CanonicalRows {
     declarations: BTreeMap<NodeKey, String>,
     functions: BTreeMap<usize, String>,
     record_fields: BTreeMap<NodeKey, Vec<String>>,
@@ -30,9 +31,17 @@ pub(super) struct CanonicalRows {
 }
 
 impl CanonicalRows {
+    pub(crate) fn from_valuation(valuation: &crate::spine::TemporalValuation) -> Self {
+        Self {
+            declarations: valuation.canonical_declarations.clone(),
+            functions: valuation.canonical_functions.clone(),
+            record_fields: valuation.canonical_record_fields.clone(),
+            union_members: valuation.canonical_union_members.clone(),
+        }
+    }
     /// Build the declaration and function spellings a package-backed
     /// expression needs from its FR-940 read projection and the package's declared composites.
-    pub(super) fn from_projection(
+    pub fn from_projection(
         projection: &fsl_package::ReaderProtocolProjection,
         declared: &[fsl_package::DeclaredComposite],
     ) -> Result<Self, String> {
@@ -1118,10 +1127,30 @@ fn canonical_identity(key: &NodeKey) -> Result<String, String> {
     Ok(format!("ix://{}/{}", key.package(), path.join("/")))
 }
 
+pub(crate) fn unit_identity(key: &NodeKey) -> Result<String, String> {
+    let view = key.view();
+    let mut path = view.path();
+    // NodeOwner::nominal_key places a model unit's actual declaration
+    // identity in its third segment at ordinal 0. Source and definition
+    // units use their declaration path at UNIT_ORDINAL (2).
+    if view.ordinal() == 0 {
+        if let (
+            Some(filament_exact::PathSegmentView::Text("scalar_type")),
+            Some(filament_exact::PathSegmentView::Text("unit")),
+            Some(filament_exact::PathSegmentView::Text(identity)),
+            None,
+        ) = (path.next(), path.next(), path.next(), path.next())
+        {
+            return Ok(identity.to_owned());
+        }
+    }
+    canonical_identity(key)
+}
+
 /// Build labels solely from the retained checked source conditions and their
 /// positional clause binders. Source slices are deliberately not involved.
-pub(super) fn source_labels(
-    valuation: &fsl_replay::spine::TemporalValuation,
+pub fn source_labels(
+    valuation: &crate::spine::TemporalValuation,
 ) -> Result<BTreeMap<fsl_semantics::check::FormulaNodeId, String>, String> {
     let clause = &valuation.clause;
     let mut binders = vec![clause.over().0.clone()];
@@ -1129,12 +1158,7 @@ pub(super) fn source_labels(
         binders.push(trigger.to_owned());
     }
     binders.extend(clause.captures().map(|(name, _)| name.to_owned()));
-    let rows = CanonicalRows {
-        declarations: valuation.canonical_declarations.clone(),
-        functions: valuation.canonical_functions.clone(),
-        record_fields: valuation.canonical_record_fields.clone(),
-        union_members: valuation.canonical_union_members.clone(),
-    };
+    let rows = CanonicalRows::from_valuation(valuation);
     valuation
         .checked_conditions
         .iter()
@@ -1150,7 +1174,7 @@ pub(super) fn source_labels(
 /// Binder names and slot identities come only from the admitted package
 /// projection and clause form; the caller supplies the package-derived type
 /// rows used by the shared printer.
-pub(super) fn package_label(
+pub fn package_label(
     term: &fsl_package::BareClauseTerm,
     rows: &CanonicalRows,
 ) -> Result<String, String> {
@@ -1250,6 +1274,18 @@ fn literal_text(value: &Value, declarations: &BTreeMap<NodeKey, String>) -> Resu
             value.numerator(),
             value.denominator()
         )),
+        Value::Quantity(value) => {
+            let unit = value
+                .unit()
+                .declared_key()
+                .ok_or_else(|| "checked literal has no canonical expression spelling".to_owned())?;
+            Ok(format!(
+                "rational({}, {}) {}",
+                value.magnitude().numerator(),
+                value.magnitude().denominator(),
+                unit_identity(unit)?
+            ))
+        }
         Value::Decimal(value) => Ok(format!(
             "decimal({}, {})",
             value.representation().coefficient(),
@@ -1273,7 +1309,8 @@ fn literal_text(value: &Value, declarations: &BTreeMap<NodeKey, String>) -> Resu
 mod tests {
     use super::*;
     use filament_checked::node::ConnectiveOrigin;
-    use filament_exact::{IeeeValue, Integer, IntegerInterval};
+    use filament_exact::{IeeeValue, Integer, IntegerInterval, Quantity, Rational, UnitId};
+    use fsl_semantics::value::{ModelSubject, NodeOwner, OwnerSubject};
     use ix_trace_rs::trace;
 
     fn ordinary(nodes: &mut Vec<ExpressionNode>, kind: NodeKind<usize, CheckedLiteral>) -> usize {
@@ -1374,6 +1411,77 @@ mod tests {
 
     fn render(nodes: Vec<ExpressionNode>, root: usize) -> Result<String, String> {
         CheckedExpression { nodes, root }.render(&[], &CanonicalRows::default())
+    }
+
+    #[test]
+    #[trace("TC-3039", "FR-931-AC-11", "FR-931-AC-12")]
+    fn quantity_literals_keep_exact_magnitudes_and_unit_declaration_identities() {
+        for (package, numerator, denominator, expected) in [
+            (
+                "example/config-version",
+                6_i64,
+                4_i64,
+                "rational(3, 2) ix://example/config-version/unit/ms",
+            ),
+            (
+                "example/config-version",
+                6,
+                -4,
+                "rational(-3, 2) ix://example/config-version/unit/ms",
+            ),
+            (
+                "example/config-version",
+                0,
+                7,
+                "rational(0, 1) ix://example/config-version/unit/ms",
+            ),
+            (
+                "another/clock",
+                3000,
+                1,
+                "rational(3000, 1) ix://another/clock/unit/ms",
+            ),
+        ] {
+            let owner = NodeOwner::Model(ModelSubject {
+                identity: package.to_owned(),
+                node: format!("ix://{package}/unit/ms"),
+            });
+            let unit = UnitId::declared(owner.nominal_key("unit", &["ms".to_owned()], 2).unwrap());
+            let quantity = Quantity::new(
+                Rational::new(Integer::from(numerator), Integer::from(denominator)).unwrap(),
+                unit.clone(),
+            );
+            let mut nodes = Vec::new();
+            let root = typed(
+                &mut nodes,
+                NodeKind::Literal(CheckedLiteral(Value::Quantity(quantity))),
+                ValueType::Quantity(unit),
+            );
+            assert_eq!(render(nodes, root).unwrap(), expected);
+        }
+    }
+
+    #[test]
+    #[trace("TC-3039", "FR-931-AC-11", "FR-931-AC-12")]
+    fn a_source_unit_path_is_not_a_model_unit_identity() {
+        let owner = NodeOwner::Source(OwnerSubject::new("agent-ix", "clock", "clock"));
+        let unit = UnitId::declared(
+            owner
+                .nominal_key(
+                    "unit",
+                    &["scalar_type".to_owned(), "unit".to_owned(), "ms".to_owned()],
+                    2,
+                )
+                .unwrap(),
+        );
+        let value = Value::Quantity(Quantity::new(
+            Rational::from_integer(Integer::from(3_i64)),
+            unit,
+        ));
+        assert_eq!(
+            literal_text(&value, &BTreeMap::new()).unwrap(),
+            "rational(3, 1) ix://clock/scalar_type/unit/ms"
+        );
     }
 
     const A: u64 = 0x3ff0_0000_0000_0000;

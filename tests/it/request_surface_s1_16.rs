@@ -1785,63 +1785,46 @@ fn a_clause_run_over_a_handoff_directory_returns_the_source_result() {
     }
 }
 
-/// FR-1039 (TC-3019): a `holds` condition the kernel refuses inside a clause
-/// run is the caller's refusal on both routes, never an internal failure. The
-/// package route reports the source route's code and cause; only the locus
-/// differs, because the package carries no source span.
+/// FR-1039 (TC-3019): an evaluated refusal on a lasso retains its complete
+/// source disposition, including its caller-rendered region, on both routes.
 #[test]
-#[trace("TC-3019", "FR-1039")]
+#[trace("TC-3019", "FR-1039", "FR-1039-AC-11")]
 fn a_refused_condition_in_a_clause_run_has_the_same_code_and_cause_on_both_routes() {
-    // `count<Zero>` of a non-zero element leaves `Int[0, 0]`: the kernel
-    // refuses the condition at a level of 1 or more.
-    let unit = "language \"ix:native\" edition \"1-draft\";\n\
-        profile v = \"filament.value.complete/v1\";\n\
-        profile m = \"filament.model.complete/v1\";\n\
-        profile t = \"filament.temporal.infinite-trace/v1\";\n\
-        model Config = \"example/config-version\";\n\
-        record Counter { level: Int[0, 9]; }\n\
-        type Zero = Int[0, 0];\n\
-        function ints using v(xs: Sequence<Integer>[0, 3]): Sequence<Integer>[0, 3] pure { xs }\n\
-        temporal C using t over (c: Counter) clock \"steps\" on each (q: Counter) \
-        { always holds(count<Zero>(m in ints(sequence[c.level]): m > 0) = 0) }\n";
-    let clause = json!({"selection": {"temporal": {"name": "C", "trace":
-        {"lasso": {"prefix": [], "loop": [level_sample(1)]}}}}, "observations": {}});
+    let unit = package_refusal_unit("filament.temporal.infinite-trace/v1");
+    let clause = json!({"selection":{"temporal":{"name":"C","trace":
+        {"lasso":{"prefix":[],"loop":[level_sample(1)]}}}},"observations":{}});
     let directory = tempfile::tempdir().unwrap();
     spine::write(directory.path(), Case::Healthy).unwrap();
-    let models = compile_handoff(directory.path(), unit);
-    let (source_code, from_source) = run(unit, true, ("clause", clause.clone()));
-    let (code, from_package) = write_request(
+    let models = compile_handoff(directory.path(), &unit);
+    std::fs::write(directory.path().join("caller.native"), &unit).unwrap();
+    let mut caller = source("unit.native");
+    caller["file"] = json!("caller.native");
+    let expected = write_request(
         directory.path(),
-        &json!({"format": "native-run/1", "request": {"models": models,
-            "package": {"directory": "handoff"}, "clause": clause}}),
+        &json!({"format":"native-run/1","request":{
+        "models":models,"program":{"source":caller},"clause":clause}}),
     );
-    // Neither route is an internal failure, and both give the same exit code.
-    assert_ne!(source_code, 30, "{from_source}");
-    assert_eq!(code, source_code, "{from_package}\n{from_source}");
-    // The same code and cause; the locus is the one member that may differ.
-    fn without_locus(value: &Value) -> Value {
-        match value {
-            Value::Object(members) => Value::Object(
-                members
-                    .iter()
-                    .filter(|(name, _)| !matches!(name.as_str(), "locus" | "location" | "message"))
-                    .map(|(name, member)| (name.clone(), without_locus(member)))
-                    .collect(),
-            ),
-            Value::Array(items) => Value::Array(items.iter().map(without_locus).collect()),
-            other => other.clone(),
-        }
-    }
-    let disposition = |value: &Value| without_locus(&value["disposition"]);
+    assert_eq!(expected.0, 22, "{}", expected.1);
+    let refusal = &expected.1["disposition"]["outcome"];
+    assert_eq!(refusal["kind"], "refused", "{}", expected.1);
+    assert_eq!(refusal["code"], "incomplete_population");
+    assert_eq!(refusal["cause"], "missing-required-artifact");
     assert_eq!(
-        disposition(&from_package),
-        disposition(&from_source),
-        "{from_package}\n{from_source}"
+        refusal["fields"],
+        json!({"population":format!("ix://{}/config_history", spine::PACKAGE_IDENTITY)})
     );
-    assert!(
-        from_source.to_string().contains("integer_out_of_domain"),
-        "the fixture refuses a condition: {from_source}"
+    assert_eq!(refusal["locus"]["file"], "caller.native");
+    assert!(refusal["locus"]["span"].is_object());
+    let actual = write_request(
+        directory.path(),
+        &json!({"format":"native-run/1","request":{
+        "models":models,"package":{"directory":"handoff"},"sources":[caller],"clause":clause}}),
     );
+    assert_eq!(
+        actual, expected,
+        "all refusal fields and the actual source span are retained"
+    );
+    fsl_replay::spine::read_native_run_result(&serde_json::to_vec(&actual.1).unwrap()).unwrap();
 }
 
 /// FR-1039-AC-6 (FR-931-AC-6's snapshot): `cross_evaluate` `{"initial": S,
@@ -3043,6 +3026,20 @@ fn package_clause_selection_outcomes(
     refused_violation: bool,
     objects: SelectionObjects,
 ) {
+    let execute = |directory: &Path, request: &Value| {
+        let path = directory.join("request.json");
+        std::fs::write(&path, serde_json::to_vec(request).unwrap()).unwrap();
+        match fsl_command::command::run(&path, &crate::negotiation::Fr290) {
+            Ok(result) => (
+                result.exit_code,
+                result.value.as_value().clone(),
+                result
+                    .outcome
+                    .map(|outcome| outcome.to_bytes().expect("the complete outcome encodes")),
+            ),
+            Err(error) => (error.category().exit_code(), error.value().unwrap(), None),
+        }
+    };
     let directory = bump_directory(unit, &["a"], true);
     let mut second = snapshot_of(directory.path(), &["a"], true);
     second["identity"]["identity"] = json!("selection-second");
@@ -3070,7 +3067,7 @@ fn package_clause_selection_outcomes(
             let clause = json!({"selection": {"temporal": {"name": "Low", "trace": trace,
             "over": {"reference": {"population": population, "key": "a"}}}},
             "observations": {"s0": "s.json", "s1": "second.json"}});
-            let result = write_request(
+            let result = execute(
                 directory.path(),
                 &json!({"format": "native-run/1", "request": {
             "models": models, "program": {"source": source("unit.native")}, "clause": clause}}),
@@ -3081,7 +3078,7 @@ fn package_clause_selection_outcomes(
         .collect();
     let models = compile_handoff(directory.path(), unit);
     for (clause, expected) in clauses {
-        let actual = write_request(
+        let actual = execute(
             directory.path(),
             &json!({"format": "native-run/1", "request": {
             "models": models, "package": {"directory": "handoff"}, "clause": clause}}),
@@ -3124,9 +3121,13 @@ fn package_clause_selection_outcomes(
                     .get("model")
                     .is_some()
             {
-                assert!(actual.1["disposition"]["temporal"]
-                    .get("counterexample")
-                    .is_none());
+                let temporal = &actual.1["disposition"]["temporal"];
+                if temporal["kind"] == "violated" {
+                    assert_eq!(temporal["counterexample"]["trace"], "model", "{}", actual.1);
+                } else {
+                    assert_eq!(temporal["kind"], "undefined", "{}", actual.1);
+                    assert!(temporal.get("counterexample").is_none());
+                }
                 let mut malformed = actual.1.clone();
                 malformed["disposition"]["temporal"]["counterexample"] = Value::Null;
                 assert!(fsl_replay::spine::read_native_run_result(
@@ -3222,52 +3223,392 @@ fn package_clause_selections_timed_results_match_source() {
     }
 }
 
-/// FR-1039 Outputs: until reader body locations are available, a violated
-/// snapshot/model clause explicitly refuses its missing decisive record.
+/// FR-1039 Outputs: violated snapshot clauses follow the same traced
+/// decisive decision walk and return the source route's complete record.
 #[test]
 #[trace("TC-3019", "FR-1039")]
-fn package_clause_selections_violations_refuse_missing_decisive_locations() {
+fn package_clause_snapshot_violations_match_source_decisive_locations() {
     let unit = bump_low().replace(LOW_BODY, "holds(c.versionNumber > 2)");
     package_clause_selection_outcomes(
         &unit,
         &[(json!({"finite": ["s0", "s1"]}), 10)],
-        true,
+        false,
         SelectionObjects::Present,
     );
-    let unit = unit
+}
+
+/// A model violation reads the decisive atom over its reconstructed state.
+#[test]
+#[trace("TC-840", "FR-330-AC-16")]
+fn package_clause_model_violations_match_source_decisive_locations() {
+    let unit = bump_low()
+        .replace(LOW_BODY, "holds(c.versionNumber > 2)")
         .replace(EVENT_POSITION, "filament.temporal.infinite-trace/v1")
         .replace(
             "pre(self.versionNumber) < 3 and self.versionNumber = pre(self.versionNumber) + 1",
             "false",
         );
-    let directory = bump_directory(&unit, &["a"], true);
-    let snapshot = snapshot_of(directory.path(), &["a"], true);
-    let clause = json!({"selection": {"temporal": {"name": "Low", "over": {"reference": {
-        "population": snapshot["populations"][0]["population"], "key": "a"}},
-        "trace": {"model": {"initial": "s0", "universes": ["s0"], "prefix": [],
-        "loop": [{"transition": {"type": "terminal-stutter"}, "post_state": {"key": "W10"}}]}}}},
-        "observations": {"s0": "s.json"}});
-    let path = directory.path().join("source-reference.json");
-    std::fs::write(&path, serde_json::to_vec(&json!({"format": "native-run/1", "request": {
-        "models": [{"format": "semantic-ir/2.0.0", "source": source("spine-model.semantic-ir.json")}],
-        "program": {"source": source("unit.native")}, "clause": clause}})).unwrap()).unwrap();
-    let source_request = fsl_command::command::read_clause_run_request(&path).unwrap();
-    let report = fsl_replay::spine::run_clause(source_request).unwrap();
-    assert_eq!(
-        report.disposition.exit_code(),
-        10,
-        "{:?}",
-        report.disposition
+    package_clause_selection_outcomes(
+        &unit,
+        &[(
+            json!({"model": {"initial": "s0", "universes": ["s0", "s1"], "prefix": [],
+            "loop": [{"transition": {"type": "terminal-stutter"}, "post_state": {"key": "W10"}}]}}),
+            10,
+        )],
+        false,
+        SelectionObjects::Present,
     );
+}
+
+/// The decisive walk follows the taken `if` arm and authored connective to
+/// the quantifier which supplied the actual false element.
+#[test]
+#[trace("TC-840", "FR-330-AC-12")]
+fn package_remainder_decisive_walk_reaches_the_quantifier_through_branches() {
+    let unit = format!("{}\nfunction ints using v(xs: Sequence<Integer>[0, 3]): Sequence<Integer>[0, 3] pure {{ xs }}\n",
+        bump_low().replace(LOW_BODY,
+        "holds(if c.versionNumber >= 0 then (true and forall(n in ints(sequence[3, c.versionNumber, 5]): n > 0)) else true)"));
+    package_clause_selection_outcomes(
+        &unit,
+        &[(json!({"finite": ["s0", "s1"]}), 10)],
+        false,
+        SelectionObjects::Present,
+    );
+}
+
+/// FR-931 keeps canonical text and first-formula-use numbering even when
+/// structural atoms repeat and their authored whitespace differs.
+#[test]
+#[trace("TC-2601", "FR-931-AC-11", "FR-931-AC-18")]
+fn package_remainder_tl_atoms_keep_canonical_text_and_first_occurrence_ids() {
+    let unit = bump_low().replace(LOW_BODY,
+        "holds( ( c.versionNumber<=2 ) ) and (holds(c.versionNumber<1) or holds(c.versionNumber <= 2))");
+    let directory = bump_directory(&unit, &["a"], true);
+    let member = json!({"clause": "Low"});
+    let expected = run(&unit, true, ("tl_lowering", member.clone()));
+    assert_eq!(expected.0, 0, "{}", expected.1);
     let models = compile_handoff(directory.path(), &unit);
     let actual = write_request(
         directory.path(),
         &json!({"format": "native-run/1", "request": {
-        "models": models, "package": {"directory": "handoff"}, "clause": clause}}),
+        "models": models, "package": {"directory": "handoff"}, "tl_lowering": member }}),
     );
-    assert_eq!(actual.0, 20, "{}", actual.1);
-    assert_eq!(actual.1["code"], "invalid-request", "{}", actual.1);
-    refusal_names(&actual.1, "clause.selection");
+    assert_eq!(actual, expected);
+    assert_eq!(
+        actual.1["tl_lowering"]["atoms"],
+        json!({
+        "p0": "holds(c.versionNumber <= 2)", "p1": "holds(c.versionNumber < 1)" })
+    );
+    let formula = actual.1["tl_lowering"]["formula"].as_str().unwrap();
+    assert_eq!(formula.matches("p0").count(), 2, "{formula}");
+    assert_eq!(formula.matches("p1").count(), 1, "{formula}");
+}
+
+#[test]
+#[trace("TC-3019", "FR-1039-AC-8", "FR-100-AC-23")]
+fn package_remainder_caller_source_carrier_refuses_before_file_io() {
+    let directory = tempfile::tempdir().unwrap();
+    let valid = source("unavailable.native");
+    let mut cases = vec![
+        (Value::Null, "/request/sources".to_owned()),
+        (json!({}), "/request/sources".to_owned()),
+        (json!([[]]), "/request/sources/0".to_owned()),
+    ];
+    for field in [
+        "file",
+        "authority",
+        "identity",
+        "document",
+        "formal_revision",
+    ] {
+        let mut missing = valid.clone();
+        missing.as_object_mut().unwrap().remove(field);
+        cases.push((json!([missing]), format!("/request/sources/0/{field}")));
+        let mut wrong = valid.clone();
+        wrong[field] = if field == "formal_revision" {
+            json!(-1)
+        } else {
+            json!(7)
+        };
+        cases.push((json!([wrong]), format!("/request/sources/0/{field}")));
+    }
+    let mut extra = valid.clone();
+    extra["text"] = json!("unused");
+    cases.push((json!([extra]), "/request/sources/0/text".to_owned()));
+    let mut repeated = valid.clone();
+    repeated["file"] = json!("another.native");
+    repeated["document"] = json!("Other");
+    cases.push((
+        json!([valid.clone(), repeated]),
+        "/request/sources/1".to_owned(),
+    ));
+    for (sources, pointer) in cases {
+        let (code, value) = write_request(
+            directory.path(),
+            &json!({"format":"native-run/1", "request":{
+            "models":[], "package":{"file":"unavailable-package.json"},
+            "sources":sources, "tl_lowering":{"clause":"Low"}}}),
+        );
+        assert_eq!(code, 20, "{value}");
+        assert_eq!(value["stage"], "request", "{value}");
+        assert_eq!(value["code"], "invalid-request", "{value}");
+        assert!(
+            value["message"].as_str().unwrap().contains(&pointer),
+            "{pointer}: {value}"
+        );
+    }
+    for sources in [json!([]), json!([valid])] {
+        let (code, value) = write_request(
+            directory.path(),
+            &json!({"format":"native-run/1", "request":{
+            "models":[], "program":{"source":source("unavailable-program.native")},
+            "sources":sources, "call":{"function":"f","arguments":[]}}}),
+        );
+        assert_eq!(code, 20, "{value}");
+        assert_eq!(value["stage"], "request", "{value}");
+        assert!(
+            value["message"]
+                .as_str()
+                .unwrap()
+                .contains("/request/sources"),
+            "{value}"
+        );
+    }
+    for (field, supplied) in [("document", json!("")), ("formal_revision", json!(0))] {
+        let mut selected = source("unavailable.native");
+        selected[field] = supplied;
+        let (code, value) = write_request(
+            directory.path(),
+            &json!({"format":"native-run/1", "request":{
+            "models":[], "package":{"file":"unavailable-package.json"},
+            "sources":[selected], "tl_lowering":{"clause":"Low"}}}),
+        );
+        assert_eq!(code, 20, "{value}");
+        assert_eq!(value["stage"], "request", "{value}");
+        assert_eq!(value["code"], "invalid-identifier", "{value}");
+        assert_eq!(
+            value["details"]["code"],
+            if field == "formal_revision" {
+                "invalid_source_revision"
+            } else {
+                "invalid_identifier"
+            },
+            "{value}"
+        );
+        assert!(
+            value
+                .to_string()
+                .contains(&format!("/request/sources/0/{field}")),
+            "{value}"
+        );
+    }
+    let selected = source("unavailable.native");
+    let mut raw_cases = vec![(
+        "\"sources\":[],\"sources\":[]".to_owned(),
+        "/request/sources".to_owned(),
+    )];
+    let rendered = serde_json::to_string(&selected).unwrap();
+    for field in [
+        "file",
+        "authority",
+        "identity",
+        "document",
+        "formal_revision",
+    ] {
+        raw_cases.push((
+            format!(
+                "\"sources\":[{},\"{field}\":{}}}]",
+                &rendered[..rendered.len() - 1],
+                selected[field]
+            ),
+            format!("/request/sources/0/{field}"),
+        ));
+    }
+    for value in ["18446744073709551616", "1.5", "null"] {
+        let mut selected = selected.clone();
+        selected.as_object_mut().unwrap().remove("formal_revision");
+        let rendered = serde_json::to_string(&selected).unwrap();
+        raw_cases.push((
+            format!(
+                "\"sources\":[{},\"formal_revision\":{value}}}]",
+                &rendered[..rendered.len() - 1]
+            ),
+            "/request/sources/0/formal_revision".to_owned(),
+        ));
+    }
+    for (members, pointer) in raw_cases {
+        let raw = format!("{{\"format\":\"native-run/1\",\"request\":{{\"models\":[],\"package\":{{\"file\":\"unavailable-package.json\"}},{members},\"tl_lowering\":{{\"clause\":\"Low\"}}}}}}");
+        let path = directory.path().join("raw.json");
+        std::fs::write(&path, raw).unwrap();
+        let refusal = fsl_command::command::run(&path, &crate::negotiation::Fr290)
+            .err()
+            .expect("malformed carrier refuses");
+        let value = refusal.value().unwrap();
+        assert_eq!(refusal.category().exit_code(), 20, "{value}");
+        assert_eq!(value["code"], "invalid-request", "{value}");
+        assert_eq!(value["stage"], "request", "{value}");
+        assert!(
+            value["message"].as_str().unwrap().contains(&pointer),
+            "{pointer}: {value}"
+        );
+    }
+    let mut invalid_revision = source("unavailable.native");
+    invalid_revision["formal_revision"] = json!(0);
+    for members in [
+        "\"sources\":[],\"sources\":null".to_owned(),
+        format!("\"sources\":[{invalid_revision}],\"sources\":42"),
+    ] {
+        let raw = format!("{{\"format\":\"native-run/1\",\"request\":{{\"models\":[],\"package\":{{\"file\":\"unavailable-package.json\"}},{members},\"call\":{{\"function\":\"unused\",\"arguments\":[]}}}}}}");
+        let path = directory.path().join("priority.json");
+        std::fs::write(&path, raw).unwrap();
+        let refused = fsl_command::command::run(&path, &crate::negotiation::Fr290)
+            .err()
+            .unwrap();
+        let value = refused.value().unwrap();
+        assert_eq!(refused.category().exit_code(), 20);
+        assert_eq!(value["code"], "invalid-request", "{value}");
+        assert_eq!(value["stage"], "request", "{value}");
+        assert_eq!(
+            value["message"],
+            "invalid clause request member /request/sources: repeated member"
+        );
+    }
+}
+
+#[test]
+#[trace("TC-3019", "FR-1039-AC-9", "FR-1039-AC-12")]
+fn package_remainder_caller_sources_admit_and_leave_tl_atoms_canonical() {
+    let directory = tempfile::tempdir().unwrap();
+    spine::write(directory.path(), Case::Healthy).unwrap();
+    let unit = low(EVENT_POSITION, "always[0,3] holds( c.versionNumber <= 2 )");
+    let models = compile_handoff(directory.path(), &unit);
+    std::fs::write(directory.path().join("caller.native"), &unit).unwrap();
+    let request = json!({"format":"native-run/1", "request":{
+        "models":models,"package":{"directory":"handoff"},"tl_lowering":{"clause":"Low"}}});
+    let expected = write_request(directory.path(), &request);
+    assert_eq!(expected.0, 0, "{:?}", expected);
+    let mut selected = source("unit.native");
+    selected["file"] = json!("caller.native");
+    selected["document"] = json!("Other");
+    selected["formal_revision"] = json!(7);
+    for sources in [json!([]), json!([selected.clone()])] {
+        let mut supplied = request.clone();
+        supplied["request"]["sources"] = sources;
+        assert_eq!(write_request(directory.path(), &supplied), expected);
+    }
+    selected["file"] = json!("unavailable.native");
+    let mut unavailable = request.clone();
+    unavailable["request"]["sources"] = json!([selected]);
+    let (code, value) = write_request(directory.path(), &unavailable);
+    assert_eq!(code, 20, "{value}");
+    assert_eq!(value["stage"], "file", "{value}");
+    assert_eq!(value["code"], "io-error", "{value}");
+    for (bytes, blank_label) in [
+        (vec![0xff], None),
+        (b"\xef\xbb\xbftext".to_vec(), None),
+        (b"text\0".to_vec(), None),
+        (unit.as_bytes().to_vec(), Some("authority")),
+        (unit.as_bytes().to_vec(), Some("identity")),
+    ] {
+        std::fs::write(directory.path().join("offered.native"), bytes).unwrap();
+        let mut selected = source("offered.native");
+        if let Some(label) = blank_label {
+            selected[label] = json!("");
+        }
+        let from_source = write_request(
+            directory.path(),
+            &json!({"format":"native-run/1", "request":{
+            "models":[],"program":{"source":selected},"call":{"function":"f","arguments":[]}}}),
+        );
+        let mut supplied = request.clone();
+        supplied["request"]["sources"] = json!([selected]);
+        let from_package = write_request(directory.path(), &supplied);
+        assert_eq!(from_package, from_source);
+        assert_eq!(from_package.0, 20, "{:?}", from_package);
+        assert_eq!(from_package.1["stage"], "source", "{:?}", from_package);
+    }
+}
+
+#[test]
+#[trace("TC-3019", "FR-026-AC-8")]
+fn package_remainder_caller_sources_share_intake_limits_at_the_boundary() {
+    use fsl_command::command::{prepare_run, RunLimits};
+    let directory = tempfile::tempdir().unwrap();
+    spine::write(directory.path(), Case::Healthy).unwrap();
+    let unit = low(EVENT_POSITION, "always[0,3] holds(c.versionNumber <= 2)");
+    let models = compile_handoff(directory.path(), &unit);
+    std::fs::write(directory.path().join("caller.native"), &unit).unwrap();
+    let mut sources = Vec::new();
+    for index in 0..61 {
+        let mut selected = source("caller.native");
+        selected["identity"] = json!(format!("test:render:{index}"));
+        sources.push(selected);
+    }
+    let mut request = json!({"format":"native-run/1", "request":{
+        "models":models,"package":{"file":"package.json","equality":"handoff/equality.json"},
+        "sources":sources,"tl_lowering":{"clause":"Low"}}});
+    let path = directory.path().join("bounded.json");
+    let bytes = serde_json::to_vec(&request).unwrap();
+    std::fs::write(&path, &bytes).unwrap();
+    let dependent_bytes = [
+        "package.json",
+        "handoff/equality.json",
+        "spine-model.semantic-ir.json",
+    ]
+    .into_iter()
+    .map(|file| {
+        std::fs::metadata(directory.path().join(file))
+            .unwrap()
+            .len() as usize
+    })
+    .sum::<usize>()
+        + 61 * unit.len();
+    let limits = RunLimits {
+        request_bytes: bytes.len(),
+        dependent_bytes,
+        ..RunLimits::default()
+    };
+    prepare_run(&path, limits).expect("64 selected files exactly at both byte bounds admit");
+    for (limits, setting) in [
+        (
+            RunLimits {
+                request_bytes: bytes.len() - 1,
+                ..limits
+            },
+            "request_bytes",
+        ),
+        (
+            RunLimits {
+                dependent_bytes: dependent_bytes - 1,
+                ..limits
+            },
+            "dependent_bytes",
+        ),
+    ] {
+        let refusal = prepare_run(&path, limits)
+            .err()
+            .expect("one byte over stops intake");
+        assert_eq!(refusal.category().exit_code(), 22, "{refusal}");
+        assert!(refusal.to_string().contains(setting), "{refusal}");
+    }
+    let mut selected = source("caller.native");
+    selected["identity"] = json!("test:render:62");
+    request["request"]["sources"]
+        .as_array_mut()
+        .unwrap()
+        .push(selected);
+    std::fs::write(&path, serde_json::to_vec(&request).unwrap()).unwrap();
+    let refusal = prepare_run(&path, RunLimits::default())
+        .err()
+        .expect("65 files stops intake");
+    assert_eq!(refusal.category().exit_code(), 22, "{refusal}");
+    let native = refusal.value().unwrap();
+    assert_eq!(native["details"]["maximum"], 64, "{native}");
+    assert_eq!(native["details"]["remaining"], 61, "{native}");
+    assert_eq!(native["details"]["requested"], 62, "{native}");
+    request["request"]["sources"] = json!([]);
+    std::fs::write(&path, serde_json::to_vec(&request).unwrap()).unwrap();
+    prepare_run(&path, RunLimits::default()).expect("the next invocation has fresh budgets");
 }
 
 /// FR-1039 Outputs: timed record samples share the snapshot timed evaluator,
@@ -3310,4 +3651,642 @@ fn package_clause_selections_timed_samples_match_source() {
         );
         assert_eq!(actual, expected);
     }
+}
+
+/// Actual shared atoms preserve support positions and caller whitespace; a
+/// differing spelling selects the checked canonical label on both routes.
+#[test]
+#[trace("TC-1295", "FR-501-AC-31", "FR-1039-AC-10")]
+fn package_remainder_window_shared_atoms_match_source_and_require_caller_bytes() {
+    let fixture = include_str!("../corpus/temporal/timestamped-window.native");
+    let clocks = json!({"sensor": {"kind": "timestamped_event", "timestamp_unit": "ms"}});
+    let profile = "filament.temporal.timestamped-event.finite-window/v1";
+    for progressed in [false, true] {
+        for (body, label, candidates) in [
+            ("always[0,5] holds( p.ok )", "holds( p.ok )", 1),
+            (
+                "always[0,5] (holds( p.ok ) and holds( p.ok ))",
+                "holds( p.ok )",
+                2,
+            ),
+            (
+                "always[0,5] (holds( p.ok ) and holds(p.ok))",
+                "holds(p.ok)",
+                2,
+            ),
+        ] {
+            let profile = if progressed { EVENT_POSITION } else { profile };
+            let unit = fixture
+                .replace(
+                    "filament.temporal.timestamped-event.finite-window/v1",
+                    profile,
+                )
+                .replace("eventually[0,7] holds(p.ok)", body);
+            let duplicate = unit[unit.find("temporal StampedPulse").unwrap()..]
+                .replace("temporal StampedPulse", "temporal OtherPulse");
+            let unit = format!("{unit}\n{duplicate}");
+            let clocks = if progressed {
+                json!({"sensor": {"kind":"event_position", "sequence_authority":"pulse-sequence"}})
+            } else {
+                clocks.clone()
+            };
+            let directory = tempfile::tempdir().unwrap();
+            spine::write(directory.path(), Case::Healthy).unwrap();
+            std::fs::write(directory.path().join("unit.native"), &unit).unwrap();
+            let observations: Vec<Value> = [(0, true), (2, false), (5, true)].into_iter().map(|(stamp, ok)| {
+            json!({"position": {"sample": {"ok": {"boolean": ok}}}, "stamp": stamp})
+        }).collect();
+            let progress = json!({"watermark":5,"completeness":{"complete":{"through":5}},"scope":"closed","execution":"closed"});
+            let binding =
+                json!({"profile":profile,"clock":"sensor","parameters":clocks["sensor"].clone()});
+            let trace = if progressed {
+                json!({"progressed":{"positions":observations.iter().map(|observation| observation["position"].clone()).collect::<Vec<_>>(),
+                "progress":progress,"lower_boundary":"authoritative-origin","binding":binding}})
+            } else {
+                json!({"timestamped":{"observations":observations,"progress":progress,"lower_boundary":"authoritative-origin","binding":binding}})
+            };
+            let clause = json!({"selection":{"temporal":{"name":"StampedPulse","trace":trace}},"observations":{}});
+            let expected = write_request(
+                directory.path(),
+                &json!({"format":"native-run/1", "request": {
+                    "models": [], "program": {"source": source("unit.native")}, "clocks": clocks, "clause": clause
+                }}),
+            );
+            assert_eq!(expected.0, 10, "source {body}: {}", expected.1);
+            assert_eq!(
+                expected.1["support"],
+                Value::Array(vec![json!({"position":1,"atom":label}); candidates]),
+                "{}",
+                expected.1
+            );
+            assert_eq!(expected.1["basis"], "closed-scope");
+            compile_handoff_with_clocks(directory.path(), &unit, Some(clocks.clone()));
+            let package_bytes = std::fs::read(directory.path().join("package.json")).unwrap();
+            let package = fsl_package::admit_checked_package(
+                &package_bytes,
+                &Default::default(),
+                fsl_replay::spine::SpineLimits::default().imports,
+            )
+            .expect("the genuine package strictly admits");
+            let row = package
+                .temporal_clause_names()
+                .unwrap()
+                .iter()
+                .find(|row| row.name.as_ref() == "StampedPulse")
+                .unwrap();
+            let view =
+                fsl_package::checked_views::temporal_subject(&package, &row.declaration).unwrap();
+            let atom = view
+                .formula_graph()
+                .iter()
+                .find(|entry| {
+                    entry.kind() == Some(fsl_package::checked_views::FormulaOperation::Holds)
+                })
+                .unwrap()
+                .node;
+            let expression_regions: usize = package
+                .source_map()
+                .iter()
+                .filter(|entry| {
+                    entry.node_id == *atom
+                        && entry.role == filament_contract_model::CheckedOccurrenceRole::Expression
+                })
+                .map(|entry| entry.regions.len())
+                .sum();
+            assert_eq!(
+                expression_regions,
+                candidates * 2,
+                "{body}: both claims share the actual node and retain their own source rows"
+            );
+            std::fs::write(directory.path().join("caller.native"), &unit).unwrap();
+            let mut caller = source("unit.native");
+            caller["file"] = json!("caller.native");
+            caller["document"] = json!("DifferentDocument");
+            caller["formal_revision"] = json!(9);
+            let request = json!({"format":"native-run/1", "request": {"models":[],
+            "package":{"directory":"handoff"}, "sources":[caller], "clause":clause}});
+            package_window_adapter_controls(&package, directory.path(), &unit, label, candidates);
+            let actual = write_request(directory.path(), &request);
+            assert_eq!(actual, expected, "package {body}");
+            fsl_replay::spine::read_native_run_result(&serde_json::to_vec(&actual.1).unwrap())
+                .expect("strict native read");
+            for supplied in [
+                Value::Null,
+                json!([]),
+                json!([{ "file":"caller.native", "authority":"agent-ix", "identity":"wrong", "document":"Other", "formal_revision":1 }]),
+            ] {
+                let mut missing = request.clone();
+                if supplied.is_null() {
+                    missing["request"]
+                        .as_object_mut()
+                        .unwrap()
+                        .remove("sources");
+                } else {
+                    missing["request"]["sources"] = supplied;
+                }
+                let refusal = write_request(directory.path(), &missing);
+                assert_eq!(refusal.0, 20, "{}", refusal.1);
+                assert_eq!(refusal.1["stage"], "call", "{}", refusal.1);
+                assert_eq!(refusal.1["code"], "invalid_runtime_input", "{}", refusal.1);
+                assert_eq!(refusal.1["cause"], "missing-member", "{}", refusal.1);
+                assert_eq!(refusal.1["details"]["field"], "sources", "{}", refusal.1);
+            }
+        }
+    }
+}
+
+/// The byte-only adapter retains actual loci and obeys caller source and
+/// finite progress/work boundaries, independently of command file intake.
+fn package_window_adapter_controls(
+    package: &filament_contract_model::CheckedPackageV2,
+    directory: &Path,
+    unit: &str,
+    label: &str,
+    support_count: usize,
+) {
+    use fsl_foundation::source::provenance::{OccurrenceKey, RawSourceRef, SourceRegion};
+    use fsl_foundation::{Source, SourceIdentity};
+    use fsl_replay::spine::{self as replay, ClauseDisposition, TemporalVerdict};
+    let limits = replay::SpineLimits::default();
+    let mut budget = limits.imports.native_join_budget();
+    let identities = fsl_package::ReadIdentityRows::read(
+        &std::fs::read(directory.join("handoff/identities.json")).unwrap(),
+        package,
+        &mut budget,
+    )
+    .expect("the real handoff identity rows join");
+    let equality = fsl_package::ReadEqualityRows::read(
+        &std::fs::read(directory.join("handoff/equality.json")).unwrap(),
+        package,
+    )
+    .expect("the real equality rows read");
+    let bare = fsl_package::BarePackage::new(package)
+        .with_supply(
+            fsl_package::BareSupply {
+                identities: &identities,
+                equality: Some(&equality),
+            },
+            &mut budget,
+        )
+        .expect("the one bounded join admits the caller's actual witnesses");
+    let packages = fsl_semantics::model::intake::PackageInput::default();
+    let model = fsl_eval::simulation::model::PackageModelInput::of(&bare, &packages, limits.model)
+        .expect("the admitted record package supplies its own type world");
+    let row = package
+        .temporal_clause_names()
+        .unwrap()
+        .iter()
+        .find(|row| row.name.as_ref() == "StampedPulse")
+        .unwrap();
+    let view = fsl_package::checked_views::temporal_subject(package, &row.declaration).unwrap();
+    let key = view.declaration_key().unwrap();
+    let claim = OccurrenceKey::new(
+        key.clone(),
+        filament_exact::Origin::new(filament_exact::Role::new("claim"), row.occurrence),
+    );
+    let clause = model
+        .temporal_run_clause(&claim, limits.checking.nodes())
+        .unwrap();
+    let source_identity = SourceIdentity::new("agent-ix", "test:s1-16:unit.native");
+    let source = |identity: SourceIdentity, bytes: &[u8]| {
+        Source::read_typed(identity, "caller.native", bytes, unit.len()).unwrap_or_else(|refusal| {
+            panic!("the valid caller source reads: {}", refusal.error.message)
+        })
+    };
+    let sources = [source(source_identity.clone(), unit.as_bytes())];
+    let region = |region: &filament_contract_model::CheckedSourceRegion| {
+        SourceRegion::new(
+            RawSourceRef::new(
+                region.source.authority.as_ref(),
+                region.source.identity.as_ref(),
+            )
+            .unwrap(),
+            region.start,
+            region.end,
+        )
+        .unwrap()
+    };
+    let declaration = region(&row.declaration_region);
+    let atom = view
+        .formula_graph()
+        .iter()
+        .find(|entry| entry.kind() == Some(fsl_package::checked_views::FormulaOperation::Holds))
+        .unwrap()
+        .node;
+    let candidates = package
+        .source_map()
+        .iter()
+        .filter(|entry| {
+            entry.node_id == *atom
+                && entry.role == filament_contract_model::CheckedOccurrenceRole::Expression
+        })
+        .flat_map(|entry| entry.regions.iter())
+        .map(region)
+        .filter(|region| {
+            region.source() == declaration.source()
+                && region.start() >= declaration.start()
+                && region.end() <= declaration.end()
+        })
+        .collect::<Vec<_>>();
+    let expected_region = match candidates.as_slice() {
+        [only] => only.clone(),
+        [_, _, ..] => declaration.clone(),
+        _ => panic!("the genuine atom has caller regions"),
+    };
+    let first_atom = clause
+        .formula()
+        .nodes()
+        .iter()
+        .position(|node| matches!(node, fsl_semantics::check::FormulaNode::Holds { .. }))
+        .unwrap();
+    let projected = bare.project_holds(&key, first_atom).unwrap();
+    let projection = projected.projection();
+    let location = projection.location(projection.root()).unwrap();
+    assert!(
+        projection.source_at_location(&bare, location).is_err(),
+        "global sharing does not identify the selected claim's occurrence"
+    );
+    let scoped = projection.source_at_location_within(&bare, location, &declaration);
+    if support_count == 1 {
+        let scoped = scoped.unwrap().unwrap();
+        assert_eq!(scoped.source(), declaration.source());
+        assert!(scoped.start() >= declaration.start() && scoped.end() <= declaration.end());
+    } else {
+        assert!(matches!(
+            scoped,
+            Err(fsl_package::occurrence_source::OccurrenceSourceRefusal::AmbiguousRegion)
+        ));
+    }
+    let positions = [true, false, true]
+        .map(|ok| replay::sample_position(&json!({"ok":{"boolean":ok}}).to_string()));
+    let progress = replay::ProgressAssertion {
+        watermark: 5,
+        completeness: replay::ProgressCompleteness::Complete { through: 5 },
+        scope: replay::ProgressClosure::Closed,
+        execution: replay::ProgressClosure::Closed,
+    };
+    let parameters = if clause.profile().identity() == EVENT_POSITION {
+        fsl_package::ClockConfiguration::EventPosition {
+            sequence_authority: "pulse-sequence".into(),
+        }
+    } else {
+        fsl_package::ClockConfiguration::TimestampedEvent {
+            timestamp_unit: "ms".into(),
+        }
+    };
+    let binding = replay::TraceBinding {
+        profile: clause.profile().identity().to_owned(),
+        clock_name: "sensor".to_owned(),
+        parameters,
+    };
+    let trace = if clause.profile().identity() == EVENT_POSITION {
+        replay::TraceInput::Progressed {
+            trace: positions.to_vec(),
+            progress,
+            lower_boundary: replay::ProgressLowerBoundary::AuthoritativeOrigin,
+            binding,
+        }
+    } else {
+        replay::TraceInput::Timestamped {
+            observations: positions
+                .iter()
+                .cloned()
+                .zip([0, 2, 5])
+                .map(|(document, stamp)| replay::TimestampedObservation {
+                    document,
+                    stamp,
+                    order_key: None,
+                })
+                .collect(),
+            progress,
+            window: Box::new(replay::TimestampedWindow {
+                binding: Some(binding),
+                authoritative_origin: true,
+                cover: None,
+                missing_valuations: Vec::new(),
+                late: Default::default(),
+            }),
+        }
+    };
+    let accounting = fsl_replay::AccountingLimits::default().0;
+    let run = |sources: &[Source], ledger, capacity, accounting| {
+        replay::run_package_sampled_authenticated(
+            &replay::PackageSampledRequest {
+                package: &bare,
+                sources,
+                ledger,
+                progress_capacity: capacity,
+                evaluator: &bare,
+                name: "StampedPulse",
+                clause: Some((&clause, &key)),
+                types: model.input().types,
+                trace: &trace,
+                accounting,
+            },
+            package,
+        )
+    };
+    let full = run(
+        &sources,
+        None,
+        limits.progress.covered_positions,
+        accounting,
+    )
+    .expect("the real byte-only trace evaluates");
+    assert!(matches!(
+        full.disposition,
+        ClauseDisposition::Temporal(TemporalVerdict::Violated { at: 0 })
+    ));
+    let window = full.finite_window.as_ref().unwrap();
+    assert_eq!(
+        window.support,
+        vec![
+            replay::FiniteWindowSupport {
+                position: 1,
+                atom: label.to_owned()
+            };
+            support_count
+        ]
+    );
+    assert!(!window.atom_regions.is_empty());
+    for actual in window.atom_regions.values() {
+        assert_eq!(actual, &expected_region);
+    }
+    let checked = crate::support::front_end::checked(
+        source_identity.clone(),
+        "unit.native",
+        unit.as_bytes(),
+        &packages,
+        &replay::DependencyInput::default(),
+    )
+    .unwrap();
+    let node = checked
+        .package()
+        .graph()
+        .temporal_clauses()
+        .iter()
+        .find(|node| node.clause().name() == "StampedPulse")
+        .unwrap();
+    let first = node
+        .clause()
+        .formula()
+        .nodes()
+        .iter()
+        .position(|node| matches!(node, fsl_semantics::check::FormulaNode::Holds { .. }))
+        .unwrap();
+    let rendered =
+        replay::render_clause_atom(checked.package(), &sources, "StampedPulse", first).unwrap();
+    assert_eq!(
+        (rendered.name.as_str(), &rendered.region),
+        (label, &expected_region)
+    );
+    let ledger = full
+        .ledger
+        .as_ref()
+        .expect("the real progress ledger is retained");
+    let repeated = run(
+        &sources,
+        Some(ledger),
+        limits.progress.covered_positions,
+        accounting,
+    )
+    .expect("the carried ledger accepts the same facts");
+    assert_eq!(repeated.ledger, full.ledger);
+    assert_eq!(
+        repeated.finite_window.as_ref().unwrap().support,
+        window.support
+    );
+    let bounded = run(&sources, None, 2, accounting).unwrap();
+    assert!(matches!(
+        bounded.disposition,
+        ClauseDisposition::Temporal(TemporalVerdict::ProgressLimitReached(_))
+    ));
+    let mut budget = accounting;
+    budget.work_units = 0;
+    let stopped = run(&sources, None, limits.progress.covered_positions, budget).unwrap();
+    assert_eq!(stopped.category().exit_code(), 22);
+    assert!(matches!(
+        stopped.disposition,
+        ClauseDisposition::Temporal(TemporalVerdict::Incomplete(_))
+    ));
+    let mut invalid = vec![
+        Vec::new(),
+        vec![source(
+            SourceIdentity::new("other", "reference"),
+            unit.as_bytes(),
+        )],
+        vec![source(source_identity.clone(), b"short")],
+    ];
+    let mut selected_regions = candidates.clone();
+    if candidates.len() > 1 {
+        selected_regions.push(declaration);
+    }
+    for selected in selected_regions {
+        let end = usize::try_from(selected.end()).unwrap();
+        assert!(end > 0 && end < unit.len());
+        let mut bytes = unit.as_bytes().to_vec();
+        bytes.splice(end - 1..end + 1, "é".bytes());
+        assert!(
+            std::str::from_utf8(&bytes).is_ok(),
+            "the caller supplies valid UTF-8 with a split region endpoint"
+        );
+        invalid.push(vec![source(source_identity.clone(), &bytes)]);
+    }
+    for missing in invalid {
+        let refusal = run(
+            &missing,
+            None,
+            limits.progress.covered_positions,
+            accounting,
+        )
+        .unwrap_err();
+        let replay::PackageSelectionNotRead::Run(refusal) = refusal else {
+            panic!("the original caller-source refusal")
+        };
+        assert!(matches!(
+            *refusal,
+            replay::RunRefusal::SourceNotSupplied { .. }
+        ));
+        assert!(
+            matches!(replay::render_clause_atom(checked.package(), &missing, "StampedPulse", first), Err(ref refusal) if matches!(**refusal, replay::RunRefusal::SourceNotSupplied { .. }))
+        );
+    }
+}
+
+fn package_refusal_unit(profile: &str) -> String {
+    "language \"ix:native\" edition \"1-draft\";\n\
+        profile v = \"filament.model.complete/v1\";\n\
+        profile t = \"filament.temporal.event-position.false-extension/v1\";\n\
+        model Config = \"example/config-version\";\n\
+        record Counter { level: Int[0, 9]; }\n\
+        type Zero = Int[0, 0];\n\
+        function ints using v(xs: Sequence<Integer>[0, 3]): Sequence<Integer>[0, 3] pure { xs }\n\
+        type Total = Int[0, 4000];\n\
+        function same using v(r: Config::ConfigVersion): Config::ConfigVersion pure { r }\n\
+        function totalVersions using v(p: Population<Config::ConfigVersion>[4]): Total pure { sum<Total>(r in allInstances<Config::ConfigVersion>(p): deref(r).versionNumber) }\n\
+        temporal C using t over (c: Counter) clock \"sensor\" on origin \
+        { always[0,5] holds(size(allInstances<Config::ConfigVersion>(Config::config_history)) >= 0) }\n\
+        temporal Other using t over (c: Counter) clock \"sensor\" on origin \
+        { always[0,5] holds(size(allInstances<Config::ConfigVersion>(Config::config_history)) >= 0) }\n".replace(EVENT_POSITION, profile)
+}
+
+/// A real call refusal retains its source record and caller-rendered span.
+#[test]
+#[trace("TC-3019", "FR-1039-AC-11", "TC-451", "FR-100-AC-9")]
+fn package_remainder_call_refusal_keeps_caller_source_locus() {
+    assert_package_refusal_sources("call");
+}
+
+/// A refused native condition renders its actual selected-claim region.
+#[test]
+#[trace("TC-3019", "FR-1039-AC-11")]
+fn package_remainder_condition_refusal_keeps_caller_source_locus() {
+    assert_package_refusal_sources("clause");
+}
+
+fn assert_package_refusal_sources(member: &str) {
+    use fsl_foundation::{Source, SourceIdentity, Span};
+    let unit = package_refusal_unit(EVENT_POSITION);
+    let directory = tempfile::tempdir().unwrap();
+    spine::write(directory.path(), Case::Incomplete).unwrap();
+    std::fs::write(directory.path().join("caller.native"), &unit).unwrap();
+    let clocks =
+        json!({"sensor":{"kind":"event_position","sequence_authority":"counter-sequence"}});
+    let models = compile_handoff_with_clocks(directory.path(), &unit, Some(clocks.clone()));
+    let offered = Source::read_typed(
+        SourceIdentity::new("agent-ix", "test:s1-16:unit.native"),
+        "caller.native",
+        unit.as_bytes(),
+        unit.len(),
+    )
+    .unwrap_or_else(|refusal| panic!("valid caller source: {}", refusal.error.message));
+    let (selection, term) = match member {
+        "call" => (
+            json!({"function":"totalVersions","snapshot":"spine-snapshot.json",
+            "arguments":[{"parameter":"p","value":{"population":format!("ix://{}/config_history", spine::PACKAGE_IDENTITY)}}]}),
+            "allInstances<Config::ConfigVersion>(p)",
+        ),
+        "clause" => (
+            json!({"selection":{"temporal":{"name":"C","trace":{"finite":[level_sample(1)]}}},
+            "observations":{}}),
+            "allInstances<Config::ConfigVersion>(Config::config_history)",
+        ),
+        _ => panic!("unknown fixture member {member}"),
+    };
+    let owner = if member == "call" {
+        0
+    } else {
+        unit.find("temporal C").unwrap()
+    };
+    let start = owner + unit[owner..].find(term).unwrap();
+    let span = serde_json::to_value(
+        offered
+            .locate(Span {
+                start,
+                end: start + term.len(),
+            })
+            .unwrap(),
+    )
+    .unwrap();
+    let mut caller = source("unit.native");
+    caller["file"] = json!("caller.native");
+    caller["document"] = json!("CallerDocument");
+    caller["formal_revision"] = json!(19);
+    let mut source_request = json!({"format":"native-run/1","request":{
+        "models":models,"program":{"source":caller},"clocks":clocks
+    }});
+    source_request["request"][member] = selection.clone();
+    let expected = write_request(directory.path(), &source_request);
+    assert_eq!(expected.0, 22, "source {member}: {}", expected.1);
+    let outcome = |value: &Value| {
+        if member == "call" {
+            value["outcome"].clone()
+        } else {
+            value["disposition"]["outcome"].clone()
+        }
+    };
+    let refusal = outcome(&expected.1);
+    assert_eq!(refusal["kind"], "refused", "{}", expected.1);
+    assert_eq!(refusal["code"], "incomplete_population", "{refusal}");
+    assert_eq!(
+        refusal["cause"],
+        if member == "call" {
+            "incomplete-scope"
+        } else {
+            "missing-required-artifact"
+        },
+        "{refusal}"
+    );
+    assert_eq!(
+        refusal["fields"],
+        json!({"population":format!("ix://{}/config_history", spine::PACKAGE_IDENTITY)})
+    );
+    assert_eq!(
+        refusal["locus"],
+        json!({"file":"caller.native","span":span})
+    );
+    if member == "clause" {
+        fsl_replay::spine::read_native_run_result(&serde_json::to_vec(&expected.1).unwrap())
+            .unwrap();
+    }
+    let mut request = json!({"format":"native-run/1","request":{
+        "models":models,"package":{"directory":"handoff"},"sources":[caller]
+    }});
+    request["request"][member] = selection;
+    for (document, revision) in [("CallerDocument", 19), ("AnotherDocument", 27)] {
+        request["request"]["sources"][0]["document"] = json!(document);
+        request["request"]["sources"][0]["formal_revision"] = json!(revision);
+        let actual = write_request(directory.path(), &request);
+        assert_eq!(actual.0, expected.0, "package {member}: {}", actual.1);
+        assert_eq!(
+            outcome(&actual.1),
+            refusal,
+            "package {member}: {}",
+            actual.1
+        );
+        if member == "clause" {
+            assert_eq!(actual, expected, "all original condition report fields");
+            fsl_replay::spine::read_native_run_result(&serde_json::to_vec(&actual.1).unwrap())
+                .unwrap();
+        }
+    }
+    let assert_missing = |request: &Value| {
+        let result = write_request(directory.path(), request);
+        assert_eq!(result.0, 20, "{member}: {}", result.1);
+        assert_eq!(result.1["code"], "invalid_runtime_input", "{}", result.1);
+        assert_eq!(result.1["cause"], "missing-member", "{}", result.1);
+        assert_eq!(result.1["stage"], "call", "{}", result.1);
+        assert_eq!(result.1["details"], json!({"field":"sources"}));
+        assert!(result.1["message"]
+            .as_str()
+            .unwrap()
+            .contains("test:s1-16:unit.native"));
+        assert!(result.1.get("outcome").is_none());
+        assert!(result.1.get("disposition").is_none());
+    };
+    let mut missing = request.clone();
+    missing["request"]
+        .as_object_mut()
+        .unwrap()
+        .remove("sources");
+    assert_missing(&missing);
+    missing = request.clone();
+    missing["request"]["sources"] = json!([]);
+    assert_missing(&missing);
+    missing = request.clone();
+    missing["request"]["sources"][0]["identity"] = json!("wrong-reference");
+    assert_missing(&missing);
+    std::fs::write(directory.path().join("caller.native"), "short").unwrap();
+    assert_missing(&request);
+    for endpoint in [start, start + term.len()] {
+        let mut split = unit.as_bytes().to_vec();
+        split[endpoint - 1..endpoint + 1].copy_from_slice("é".as_bytes());
+        assert!(
+            std::str::from_utf8(&split).is_ok(),
+            "the entire caller document remains valid UTF-8"
+        );
+        std::fs::write(directory.path().join("caller.native"), split).unwrap();
+        assert_missing(&request);
+    }
+    std::fs::write(directory.path().join("caller.native"), &unit).unwrap();
 }

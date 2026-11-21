@@ -36,6 +36,7 @@ pub(super) struct ModelRun {
     pub(super) disposition: ClauseDisposition,
     pub(super) usage: ClauseRunUsage,
     pub(super) decisive: Option<crate::TemporalDecisive>,
+    pub(super) counterexample: Option<crate::ModelClauseCounterexample>,
 }
 
 /// The snapshot members the universes are read from.
@@ -157,6 +158,7 @@ pub(super) fn run_model(
             ..ClauseRunUsage::default()
         },
         decisive: None,
+        counterexample: None,
     };
     let Some(over) = over else {
         return stopped(
@@ -263,6 +265,8 @@ pub(super) fn run_model(
         Err(refusal) => return stopped(replay_refusal(refusal), admitted),
     };
     let ModelTraceRun {
+        bound_over,
+        terminal_state,
         outcome,
         decisive,
         observation,
@@ -312,6 +316,13 @@ pub(super) fn run_model(
         }
     }
     ModelRun {
+        counterexample: model_counterexample(
+            clause,
+            &disposition,
+            payload,
+            bound_over,
+            terminal_state,
+        ),
         disposition,
         usage: ClauseRunUsage::from_meter(&meter, admitted),
         decisive: decisive_record,
@@ -524,7 +535,30 @@ fn fault(invariant: &'static str) -> ModelRun {
         ),
         usage: ClauseRunUsage::default(),
         decisive: None,
+        counterexample: None,
     }
+}
+
+/// Retain a verified model violation in its original arm. Undefined keeps
+/// FR-330's existing optional-witness policy.
+pub(super) fn model_counterexample(
+    clause: &fsl_semantics::check::CheckedTemporalClause,
+    disposition: &ClauseDisposition,
+    mut behaviour: TemporalCounterexample,
+    over: Option<filament_exact::ObjectReference>,
+    terminal_state: fsl_eval::simulation::StateKey,
+) -> Option<crate::ModelClauseCounterexample> {
+    let ClauseDisposition::Temporal(TemporalVerdict::Violated { at }) = disposition else {
+        return None;
+    };
+    behaviour.fairness = clause.fairness().to_vec();
+    Some(crate::ModelClauseCounterexample {
+        behaviour,
+        over: over?,
+        terminal_state,
+        trace_position: fsl_eval::temporal::TemporalPosition::new(*at),
+        interval: super::temporal::step_interval(clause),
+    })
 }
 
 /// The disposition of a refused model-arm re-execution: the subject's own

@@ -91,8 +91,8 @@ impl ReaderProtocolProjection {
             .and_then(|node| node.location.as_ref())
     }
 
-    /// The occurrence key of the node at an arena index when it has just one `expression`
-    /// occurrence; `None` otherwise.
+    /// The occurrence bound to this walk position by its captured location
+    /// row, or its unique admitted expression occurrence when no row applies.
     pub fn occurrence(
         &self,
         index: usize,
@@ -100,6 +100,132 @@ impl ReaderProtocolProjection {
         self.nodes
             .get(index)
             .and_then(|node| node.occurrence.as_ref())
+    }
+
+    /// Resolve a captured semantic location through its actual occurrence
+    /// and the owning admitted package. Equal locations with unequal source
+    /// attributions are ambiguous; a structural match never chooses a site.
+    pub fn source_at_location(
+        &self,
+        package: &crate::BarePackage<'_>,
+        location: &Location,
+    ) -> Result<
+        Option<fsl_foundation::source::provenance::SourceRegion>,
+        crate::occurrence_source::OccurrenceSourceRefusal,
+    > {
+        self.resolve_source_at_location(package, location, None)
+    }
+
+    /// Resolve root expression regions only within the selected declaration.
+    /// Captured function-body rows retain their own admitted source identity.
+    pub fn source_at_location_within(
+        &self,
+        package: &crate::BarePackage<'_>,
+        location: &Location,
+        declaration: &fsl_foundation::source::provenance::SourceRegion,
+    ) -> Result<
+        Option<fsl_foundation::source::provenance::SourceRegion>,
+        crate::occurrence_source::OccurrenceSourceRefusal,
+    > {
+        self.resolve_source_at_location(package, location, Some(declaration))
+    }
+
+    fn resolve_source_at_location(
+        &self,
+        package: &crate::BarePackage<'_>,
+        location: &Location,
+        declaration: Option<&fsl_foundation::source::provenance::SourceRegion>,
+    ) -> Result<
+        Option<fsl_foundation::source::provenance::SourceRegion>,
+        crate::occurrence_source::OccurrenceSourceRefusal,
+    > {
+        let mut selected = None;
+        for node in self
+            .nodes
+            .iter()
+            .filter(|node| node.location.as_ref() == Some(location))
+        {
+            let Some(application) = &node.term else {
+                continue;
+            };
+            let owner = if application.package.as_ref() == package.package().name() {
+                package
+            } else {
+                package
+                    .dependency_views()
+                    .iter()
+                    .find(|view| view.package().name() == application.package.as_ref())
+                    .ok_or(crate::occurrence_source::OccurrenceSourceRefusal::UnknownNode)?
+            };
+            let admitted = owner
+                .package()
+                .resolved_graph()
+                .nodes
+                .iter()
+                .find(|candidate| candidate.node_id == *application)
+                .ok_or(crate::occurrence_source::OccurrenceSourceRefusal::UnknownNode)?;
+            if let Some(declaration) = declaration.filter(|_| !node.captured_body) {
+                let mut found = false;
+                for row in owner.package().source_map().iter().filter(|row| {
+                    row.node_id == *application
+                        && row.role == filament_contract_model::CheckedOccurrenceRole::Expression
+                }) {
+                    for region in &row.regions {
+                        let region = crate::checked_v2::source_region(region).map_err(|_| {
+                            crate::occurrence_source::OccurrenceSourceRefusal::MissingRegion
+                        })?;
+                        if region.source() != declaration.source()
+                            || region.start() < declaration.start()
+                            || region.end() > declaration.end()
+                        {
+                            continue;
+                        }
+                        found = true;
+                        if selected
+                            .as_ref()
+                            .is_some_and(|previous| previous != &region)
+                        {
+                            return Err(
+                                crate::occurrence_source::OccurrenceSourceRefusal::AmbiguousRegion,
+                            );
+                        }
+                        selected = Some(region);
+                    }
+                }
+                if !found {
+                    return Err(crate::occurrence_source::OccurrenceSourceRefusal::MissingRegion);
+                }
+                continue;
+            }
+            let occurrence = node
+                .occurrence
+                .as_ref()
+                .ok_or(crate::occurrence_source::OccurrenceSourceRefusal::UnknownOccurrence)?;
+            let admitted_occurrence = admitted
+                .occurrences
+                .iter()
+                .find(|candidate| {
+                    candidate.ordinal == occurrence.origin().ordinal()
+                        && crate::checked_v2::role_spelling(&candidate.role)
+                            == occurrence.origin().role().as_str()
+                })
+                .ok_or(crate::occurrence_source::OccurrenceSourceRefusal::UnknownOccurrence)?;
+            let region = crate::occurrence_source::occurrence_source(
+                owner.package(),
+                application,
+                admitted_occurrence,
+                None,
+            )?
+            .region;
+            if selected
+                .as_ref()
+                .is_some_and(|previous| previous != &region)
+            {
+                return Err(crate::occurrence_source::OccurrenceSourceRefusal::AmbiguousRegion);
+            }
+            selected = Some(region);
+        }
+        Ok(selected)
     }
 
     /// Ordered child node indices.
@@ -165,7 +291,7 @@ impl ReaderProtocolProjection {
                 function.clone()
             })
             .collect();
-        let mut rows: BTreeMap<CheckedNodeId, BTreeMap<CheckedNodeId, Vec<Location>>> =
+        let mut rows: BTreeMap<CheckedNodeId, BTreeMap<CheckedNodeId, Vec<CapturedBodyLocation>>> =
             BTreeMap::new();
         for projected in &self.functions {
             let function = &projected.node;
@@ -196,16 +322,31 @@ impl ReaderProtocolProjection {
                         .and_then(|group| group.get(*visit));
                     *visit += 1;
                     if node.term.as_ref() == Some(application) {
-                        let location =
+                        let captured =
                             row.ok_or_else(|| fault("projected-body-term-has-captured-location"))?;
-                        located.push((position, location.clone()));
+                        let key = node
+                            .key
+                            .as_ref()
+                            .ok_or_else(|| fault("captured-body-application-has-admitted-key"))?;
+                        let occurrence = fsl_foundation::source::provenance::OccurrenceKey::new(
+                            key.clone(),
+                            filament_exact::Origin::new(
+                                filament_exact::Role::new(crate::checked_v2::role_spelling(
+                                    &captured.occurrence.role,
+                                )),
+                                captured.occurrence.ordinal,
+                            ),
+                        );
+                        located.push((position, captured.location.clone(), occurrence));
                     }
                 }
             }
         }
-        for (position, location) in located {
+        for (position, location, occurrence) in located {
             if let Some(node) = self.nodes.get_mut(position) {
                 node.location = Some(location);
+                node.occurrence = Some(occurrence);
+                node.captured_body = true;
             }
         }
         // A `let`, conditional or `case` is no term and has no row (FSpec
@@ -2293,6 +2434,8 @@ impl<'wire> ReaderBuilder<'_, 'wire> {
             absorbed: None,
             type_argument,
             occurrence: self.sole_expression_occurrence(id, node),
+            captured_body: false,
+            key: Some(self.index.key(id)?),
         }))
     }
 
@@ -3753,6 +3896,18 @@ pub(crate) fn node_value_type(
     let own = index.node(id).map(|node| &node.semantic_type);
     let at = error.at.as_deref();
     let scalar_at = at.filter(|failed| *failed == id || own == Some(failed));
+    if unresolved {
+        if let Some(declaration) = own.and_then(|declaration| index.node(declaration)) {
+            if declaration.node_tag.as_ref() == "bounded_domain"
+                && declaration.semantic_form.as_ref() == "model_population"
+            {
+                return population_node_type(index, &declaration.node_id);
+            }
+            if has_form(declaration, WireTag::CompositeType, WireForm::Reference) {
+                return reference_node_type(index, &declaration.node_id);
+            }
+        }
+    }
     let selected = |declaration: &CheckedNodeId| {
         index
             .identities
@@ -3860,6 +4015,88 @@ pub(crate) fn node_value_type(
     }
 }
 
+/// A reference retains the selected model object's effective identity.
+fn reference_node_type(
+    index: &TypeReader<'_>,
+    declaration: &CheckedNodeId,
+) -> Result<ValueType, TypeError> {
+    let reference = index.node(declaration).ok_or(TypeError::Unsupported)?;
+    if !has_form(reference, WireTag::CompositeType, WireForm::Reference) {
+        return Err(TypeError::Unsupported);
+    }
+    let CheckedTerm::Aggregate { members } = &reference.body else {
+        return Err(TypeError::Unsupported);
+    };
+    let [CheckedTerm::Reference { target }] = members.as_slice() else {
+        return Err(TypeError::Unsupported);
+    };
+    index
+        .identities
+        .declaration_rows()
+        .find_map(|row| match &row.exact_identity {
+            filament_contract_model::SelectedExactIdentity::Object(identity)
+                if row.structural_node == *target =>
+            {
+                Some(ValueType::Reference(identity.clone()))
+            }
+            _ => None,
+        })
+        .ok_or(TypeError::Unsupported)
+}
+
+/// The admitted population node distinguishes no maximum from a zero maximum.
+#[ix_trace_rs::string_edge]
+fn population_node_type(
+    index: &TypeReader<'_>,
+    declaration: &CheckedNodeId,
+) -> Result<ValueType, TypeError> {
+    let population = index.node(declaration).ok_or(TypeError::Unsupported)?;
+    if population.node_tag.as_ref() != "bounded_domain"
+        || population.semantic_form.as_ref() != "model_population"
+    {
+        return Err(TypeError::Unsupported);
+    }
+    let set = index
+        .node(&population.semantic_type)
+        .filter(|node| {
+            matches!(
+                index.admitted.node_kind(&node.node_id),
+                Some(filament_contract_model::CheckedNodeKind::CompositeType(
+                    filament_contract_model::CompositeTypeForm::Set
+                ))
+            )
+        })
+        .ok_or(TypeError::Unsupported)?;
+    let CheckedTerm::Aggregate { members } = &set.body else {
+        return Err(TypeError::Unsupported);
+    };
+    let [CheckedTerm::Reference { target }] = members.as_slice() else {
+        return Err(TypeError::Unsupported);
+    };
+    reference_node_type(index, target)?;
+    let CheckedTerm::Aggregate { members } = &population.body else {
+        return Err(TypeError::Unsupported);
+    };
+    let maximum = match members.as_slice() {
+        [] => None,
+        [CheckedTerm::Binding { name, value, .. }] if name.as_ref() == "max" => {
+            let Some(filament_contract_model::CheckedLiteralValue::Integer(maximum)) =
+                value.literal_read().map(|literal| literal.value)
+            else {
+                return Err(TypeError::Unsupported);
+            };
+            Some(
+                maximum
+                    .to_string()
+                    .parse()
+                    .map_err(|_| TypeError::Unsupported)?,
+            )
+        }
+        _ => return Err(TypeError::Unsupported),
+    };
+    Ok(ValueType::Population(maximum))
+}
+
 /// `#[string_edge]`: `form` is the admitted `tag/form` wire word an IR type
 /// error names.
 #[ix_trace_rs::string_edge]
@@ -3920,8 +4157,9 @@ fn bound_member(body: &CheckedTerm, wanted: &str) -> Option<u64> {
 /// The exact type of a node whose semantic type is a collection, optionally
 /// cardinality-bounded. IR's projection reads a collection only as a record member, so
 /// the join is FSL's: the bounds node gives the cardinality, the collection
-/// type node the kind and its element, and the element is typed by a node of
-/// the package that has it as semantic type (IR's own projection of that node).
+/// type node the kind and its element. References retain their selected
+/// object identity directly; other elements use IR's projection of a node
+/// that has the element as its semantic type.
 #[ix_trace_rs::string_edge]
 fn collection_node_type(
     index: &TypeReader<'_>,
@@ -3964,12 +4202,19 @@ fn collection_node_type(
         },
         _ => return Err(fault("reader-collection-type-has-one-element").into()),
     };
-    let witness = index
-        .nodes
-        .values()
-        .find(|node| node.semantic_type == *element && node.node_id != *id)
-        .ok_or(TypeError::Unsupported)?;
-    let element = node_value_type(index, &witness.node_id)?;
+    let element = if index
+        .node(element)
+        .is_some_and(|node| has_form(node, WireTag::CompositeType, WireForm::Reference))
+    {
+        reference_node_type(index, element)?
+    } else {
+        let witness = index
+            .nodes
+            .values()
+            .find(|node| node.semantic_type == *element && node.node_id != *id)
+            .ok_or(TypeError::Unsupported)?;
+        node_value_type(index, &witness.node_id)?
+    };
     Ok(ValueType::collection(filament_exact::CollectionType::new(
         kind, element, bound,
     )))
@@ -4068,12 +4313,17 @@ fn location(admitted: &CheckedProtocolLocation) -> Option<Location> {
 /// Reconstruct through the admitted lending cursor. An exhausted cursor or an
 /// unrepresentable coordinate fails the whole function before any projection
 /// node receives a location.
+struct CapturedBodyLocation {
+    location: Location,
+    occurrence: filament_contract_model::CheckedOccurrence,
+}
+
 fn reconstructed_body_locations(
     admitted: &CheckedPackageV2,
     function: &CheckedNodeId,
     work_limit: u64,
-) -> Result<BTreeMap<CheckedNodeId, Vec<Location>>, InternalFault> {
-    let mut rows: BTreeMap<CheckedNodeId, Vec<Location>> = BTreeMap::new();
+) -> Result<BTreeMap<CheckedNodeId, Vec<CapturedBodyLocation>>, InternalFault> {
+    let mut rows: BTreeMap<CheckedNodeId, Vec<CapturedBodyLocation>> = BTreeMap::new();
     let mut cursor = admitted
         .body_locations(function, work_limit)
         .map_err(|_| fault("admitted-body-locations-reconstruct"))?;
@@ -4085,9 +4335,13 @@ fn reconstructed_body_locations(
         let location = body_location(&view.row.location, &previous)
             .ok_or_else(|| fault("body-location-coordinates-fit"))?;
         previous = location.clone();
+        let occurrence = view.row.occurrence.clone();
         rows.entry(view.row.application.clone())
             .or_default()
-            .push(location);
+            .push(CapturedBodyLocation {
+                location,
+                occurrence,
+            });
     }
     Ok(rows)
 }
@@ -4439,8 +4693,12 @@ struct ReaderProjectedNode {
     /// other node, the wire carrying no location of its own for it.
     location: Option<Location>,
     children: Vec<usize>,
-    /// The occurrence of the node at this position, when it has just one.
+    /// The admitted occurrence bound to this particular walk position.
     occurrence: Option<fsl_foundation::source::provenance::OccurrenceKey>,
+    captured_body: bool,
+    /// The shared key already rebuilt by the owning admitted index. A row
+    /// can bind a repeated occurrence without rebuilding this structural key.
+    key: Option<NodeKey>,
     /// The application this slot-walk position is a term of (FR-383).
     term: Option<CheckedNodeId>,
     /// A quantity conversion the walk visits directly above this node,
@@ -4462,6 +4720,8 @@ impl ReaderProjectedNode {
             absorbed: None,
             type_argument: None,
             occurrence: None,
+            captured_body: false,
+            key: None,
         }
     }
 
@@ -4555,6 +4815,224 @@ mod order_tests {
         NodeKey::new("pkg", vec![PathSegment::Text(name.to_owned())], 0).expect("a key")
     }
 
+    /// Source-emitted population parameters retain their exact optional maximum.
+    #[trace("FR-945-AC-1", "FR-650-AC-1", "FR-1039-AC-11")]
+    #[test]
+    fn admitted_population_parameter_types_preserve_absence_zero_and_maximum() {
+        use filament_semantic_value::checking::{CheckMode, CheckingLimits};
+        let mut model: serde_json::Value = serde_json::from_slice(include_bytes!(
+            "../../tests/fixtures/spine-model.semantic-ir.json"
+        ))
+        .unwrap();
+        model["constructs"].as_array_mut().unwrap().push(serde_json::json!({
+            "kind": {"module": "acme/orders", "name": "population"},
+            "moduleVersion": "1.0.0",
+            "construct": {"identity": "none", "shape": "record", "members": {}, "meaning": "filament.meaning.model.population/v1"},
+        }));
+        model["populations"] = serde_json::json!([{
+            "identity": "ix://acme/orders/widgets",
+            "displayName": "ix://acme/orders/widgets",
+            "kind": {"module": "acme/orders", "name": "population"},
+            "members": ["ix://acme/orders/Widget"],
+            "extent": "closed",
+            "origin": {"generated": {"generatorIdentity": "ix://acme/orders/widgets", "generatorVersion": "1.0.0", "inputIdentities": ["ix://acme/orders/widgets"]}},
+        }]);
+        let model = crate::emit::tests::wire_bytes(&model).unwrap();
+        let packages = fsl_semantics::model::intake::package_input([model.as_slice()]).unwrap();
+        let text = "language \"ix:native\" edition \"1-draft\";\n\
+                    profile v = \"filament.model.complete/v1\";\n\
+                    profile t = \"filament.temporal.event-position.false-extension/v1\";\n\
+                    model M = \"acme/orders\";\n\
+                    record Counter { level: Int[0, 9]; }\n\
+                    function unbounded using v(p: Population<M::Widget>): Boolean pure { true }\n\
+                    function zero using v(p: Population<M::Widget>[0]): Boolean pure { true }\n\
+                    function maximum using v(p: Population<M::Widget>[18446744073709551615]): Boolean pure { true }\n\
+                    function reference using v(p: Reference<M::Widget>): Boolean pure { true }\n\
+                    function population using v(p: Population<M::Widget>[0]): Population<M::Widget>[0] pure { p }\n\
+                    function tally using v(p: Population<M::Gadget>[1]): Integer pure { size(allInstances<M::Gadget>(p)) }\n\
+                    temporal C using t over (c: Counter) clock \"sensor\" on origin { always[0,5] holds(size(allInstances<M::Widget>(M::widgets)) >= 0) }\n";
+        let parsed = fsl_cst::parse(
+            fsl_foundation::SourceIdentity::new("agent-ix", "test:population-projection"),
+            "population.native",
+            text.as_bytes(),
+            fsl_cst::Limits::default(),
+        )
+        .unwrap();
+        assert_eq!(parsed.diagnostics(), []);
+        let raw = parsed.source().reference().clone();
+        let unit = fsl_forms::build_unit(&parsed).unwrap();
+        let models = fsl_semantics::model::intake::admit_unit(
+            &unit.selections().models,
+            &packages,
+            fsl_semantics::model::accounting::ModelNormalizationLimits::default(),
+        )
+        .unwrap();
+        let graph = fsl_semantics::check::PackageDeclarations::assemble(
+            raw,
+            "pkg".to_owned(),
+            unit,
+            models,
+            Vec::new(),
+        )
+        .unwrap()
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &fsl_semantics::check::test_support::ZeroRewardEvaluator,
+        )
+        .unwrap();
+        let checked = crate::CheckedPackage::link(graph);
+        let clocks = checked
+            .graph()
+            .temporal_clauses()
+            .iter()
+            .map(|temporal| {
+                crate::emit::TemporalClockSelection::new(
+                    checked.graph().source().clone(),
+                    temporal.clause().span(),
+                    filament_contract_model::ClockConfiguration::EventPosition {
+                        sequence_authority: "population-sequence".into(),
+                    },
+                )
+            })
+            .collect::<Vec<_>>();
+        let emission = crate::emit::emit_checked_with_temporal_selections(
+            &checked,
+            &clocks,
+            crate::checked::EmitLimits::new(1 << 20),
+        )
+        .unwrap();
+        let mut evidence = emission.evidence().clone();
+        evidence
+            .insert_domain_package_document("acme/orders", model.as_slice())
+            .unwrap();
+        let admitted = match filament_contract_model::read_checked_package(
+            emission.package().bytes(),
+            crate::checked_v2::V2ReadLimits::fixture().for_ir(),
+            &evidence,
+        ) {
+            filament_contract_model::CheckedPackageDispatchResult::AdmittedV2(package) => package,
+            other => panic!("source-emitted package must be admitted: {other:?}"),
+        };
+        let mut budget = filament_contract_model::NativeJoinBudget::new(10_000_000, 10_000_000);
+        let identities = emission.identity_rows(&admitted, &mut budget).unwrap();
+        let package = crate::BarePackage::new(&admitted)
+            .with_supply(
+                crate::BareSupply {
+                    identities: &identities,
+                    equality: None,
+                },
+                &mut budget,
+            )
+            .unwrap();
+        let clause = &emission.temporal_rows().clauses()[0].declaration;
+        let subject = crate::checked_views::temporal_subject(&admitted, clause).unwrap();
+        let position = subject
+            .formula_graph()
+            .iter()
+            .position(|entry| entry.kind() == Some(crate::checked_views::FormulaOperation::Holds))
+            .unwrap();
+        let key = crate::checked_v2::wire_graph(&admitted)
+            .unwrap()
+            .key(clause)
+            .unwrap();
+        let condition = package.project_holds(&key, position).unwrap();
+        assert!(condition.projection().nodes.iter().any(|node| matches!(&node.kind, NodeKind::NamedPopulation { population, .. } if population.package == "acme/orders" && population.node == "ix://acme/orders/widgets")), "the condition reads the checked population declaration through its authoritative catalog");
+        for (name, maximum) in [
+            ("unbounded", None),
+            ("zero", Some(0)),
+            ("maximum", Some(u64::MAX)),
+        ] {
+            let projection = package.project_function(name).unwrap().unwrap();
+            assert_eq!(
+                projection.selected_function().unwrap().parameters[0].value_type,
+                ValueType::Population(maximum),
+                "{name}"
+            );
+        }
+        let projection = package.project_function("population").unwrap().unwrap();
+        assert_eq!(
+            projection.selected_function().unwrap().result_type,
+            &ValueType::Population(Some(0))
+        );
+        let projection = package.project_function("tally").unwrap().unwrap();
+        assert_eq!(
+            projection.selected_function().unwrap().result_type,
+            &ValueType::Integer
+        );
+        let projection = package.project_function("reference").unwrap().unwrap();
+        assert_eq!(
+            &projection.selected_function().unwrap().parameters[0].value_type,
+            &checked.graph().callable("reference").unwrap().parameters[0].1,
+            "the package retains the source-selected object identity"
+        );
+        let selected = fsl_semantics::model::observation::DocumentRef {
+            authority: "agent-ix".to_owned(),
+            identity: "test:population-snapshot".to_owned(),
+        };
+        let snapshot = serde_json::to_vec(&serde_json::json!({
+            "format": "filament.state.snapshot/v1",
+            "identity": {"authority": selected.authority, "identity": selected.identity},
+            "observation": "current",
+            "model": {"identity": "acme/orders"},
+            "populations": [{"population": "ix://acme/orders/widgets", "complete": true, "objects": []}],
+        }))
+        .unwrap();
+        let provision = BTreeMap::from([(selected.clone(), snapshot.clone())]);
+        let limits = fsl_semantics::model::observation::ObservationLimits::default();
+        let model_limits = fsl_semantics::model::accounting::ModelNormalizationLimits::default();
+        let (objects, usage, views) = package
+            .admit_call_snapshot_with_views(&packages, model_limits, &provision, &selected, limits)
+            .unwrap();
+        let (legacy_objects, legacy_usage) = package
+            .admit_call_snapshot(&packages, model_limits, &provision, &selected, limits)
+            .unwrap();
+        assert_eq!(usage, legacy_usage);
+        assert_eq!(usage.document_bytes, u64::try_from(snapshot.len()).unwrap());
+        assert_eq!(
+            objects.population_completeness(),
+            legacy_objects.population_completeness()
+        );
+        assert!(objects.population_complete("ix://acme/orders/widgets"));
+        assert_eq!(views.len(), 1);
+        assert_eq!(views[0].model_selection().identity, "acme/orders");
+        let ValueType::Reference(expected) =
+            &checked.graph().callable("reference").unwrap().parameters[0].1
+        else {
+            panic!("the source parameter is a reference");
+        };
+        assert!(
+            views[0]
+                .type_identities()
+                .values()
+                .any(|identity| identity == expected),
+            "retained views preserve the source-selected effective identity"
+        );
+        let empty_rows = crate::ReadIdentityRows::of_rows(
+            &admitted,
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+        );
+        let without_identities = crate::BarePackage::new(&admitted)
+            .with_supply(
+                crate::BareSupply {
+                    identities: &empty_rows,
+                    equality: None,
+                },
+                &mut budget,
+            )
+            .unwrap();
+        assert!(
+            matches!(
+                without_identities.project_function("zero"),
+                Err(crate::BareSelectionFailure::FunctionParameterType { position: 0, .. })
+            ),
+            "population projection requires the selected object identity witness"
+        );
+    }
+
     /// Representation admission preserves opaque references and still checks
     /// every later nested composite in the same projected arena.
     #[trace("TC-1333", "FR-533-AC-20")]
@@ -4620,7 +5098,11 @@ mod order_tests {
         let allowance =
             body_location_allowance(&package, function).expect("a finite DAG allowance");
         let locations = reconstructed_body_locations(&package, function, allowance).unwrap();
-        let mut paths: Vec<_> = locations.values().flatten().map(Location::path).collect();
+        let mut paths: Vec<_> = locations
+            .values()
+            .flatten()
+            .map(|row| row.location.path())
+            .collect();
         paths.sort();
         assert_eq!(paths, vec![vec![], vec![0], vec![1]]);
         assert!(
