@@ -4117,22 +4117,21 @@ fn package_remainder_call_and_condition_refusals_keep_caller_source_loci() {
     use fsl_foundation::{Source, SourceIdentity, Span};
     let unit = "language \"ix:native\" edition \"1-draft\";\n\
         profile v = \"filament.model.complete/v1\";\n\
-        profile t = \"filament.temporal.timestamped-event.finite-window/v1\";\n\
+        profile t = \"filament.temporal.event-position.false-extension/v1\";\n\
         model Config = \"example/config-version\";\n\
         record Counter { level: Int[0, 9]; }\n\
         type Zero = Int[0, 0];\n\
         function ints using v(xs: Sequence<Integer>[0, 3]): Sequence<Integer>[0, 3] pure { xs }\n\
         type Total = Int[0, 4000];\n\
         function totalVersions using v(p: Population<Config::ConfigVersion>[4]): Total pure { sum<Total>(r in allInstances<Config::ConfigVersion>(p): deref(r).versionNumber) }\n\
-        temporal C using t over (c: Config::ConfigVersion) clock \"sensor\" on origin \
+        temporal C using t over (c: Config::ConfigVersion) clock \"model-steps\" on origin \
         { always[0,5] holds(sum<Total>(r in allInstances<Config::ConfigVersion>(Config::config_history): deref(r).versionNumber) >= 0) }\n\
-        temporal Other using t over (c: Config::ConfigVersion) clock \"sensor\" on origin \
+        temporal Other using t over (c: Config::ConfigVersion) clock \"model-steps\" on origin \
         { always[0,5] holds(sum<Total>(r in allInstances<Config::ConfigVersion>(Config::config_history): deref(r).versionNumber) >= 0) }\n";
     let directory = tempfile::tempdir().unwrap();
     spine::write(directory.path(), Case::Incomplete).unwrap();
     std::fs::write(directory.path().join("caller.native"), unit).unwrap();
-    let clocks = json!({"sensor":{"kind":"timestamped_event","timestamp_unit":"ms"}});
-    let models = compile_handoff_with_clocks(directory.path(), unit, Some(clocks.clone()));
+    let models = compile_handoff(directory.path(), unit);
     let offered = Source::read_typed(
         SourceIdentity::new("agent-ix", "test:s1-16:unit.native"),
         "caller.native",
@@ -4148,12 +4147,9 @@ fn package_remainder_call_and_condition_refusals_keep_caller_source_loci() {
         ),
         (
             "clause",
-            json!({"selection":{"temporal":{"name":"C","trace":{"timestamped":{
-            "observations":[{"position":"s0","stamp":0}],
-            "progress":{"watermark":5,"completeness":{"complete":{"through":5}},"scope":"closed","execution":"closed"},
-            "lower_boundary":"authoritative-origin",
-            "binding":{"profile":"filament.temporal.timestamped-event.finite-window/v1","clock":"sensor","parameters":clocks["sensor"]}
-        }},"over":{"reference":{"population":format!("ix://{}/config_history", spine::PACKAGE_IDENTITY),"key":"child"}}}},"observations":{"s0":"spine-snapshot.json"}}),
+            json!({"selection":{"temporal":{"name":"C","trace":{"finite":["s0"]},
+                "over":{"reference":{"population":format!("ix://{}/config_history", spine::PACKAGE_IDENTITY),"key":"child"}}}},
+                "observations":{"s0":"spine-snapshot.json"}}),
             "allInstances<Config::ConfigVersion>(Config::config_history)",
         ),
     ] {
@@ -4172,7 +4168,7 @@ fn package_remainder_call_and_condition_refusals_keep_caller_source_loci() {
         caller["document"] = json!("CallerDocument");
         caller["formal_revision"] = json!(19);
         let mut source_request = json!({"format":"native-run/1","request":{
-            "models":models,"program":{"source":caller},"clocks":clocks
+            "models":models,"program":{"source":caller}
         }});
         source_request["request"][member] = selection.clone();
         let expected = write_request(directory.path(), &source_request);
