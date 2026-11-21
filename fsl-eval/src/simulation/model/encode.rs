@@ -510,6 +510,12 @@ pub(crate) struct SharedEnc {
     bytes: Option<Vec<u8>>,
 }
 
+impl SharedEnc {
+    pub(crate) fn borrowed_value(&self) -> &Enc {
+        &self.value
+    }
+}
+
 impl Enc {
     /// `value` as an [`Enc::Shared`], its bytes written once now.
     pub(crate) fn shared(value: Enc) -> Self {

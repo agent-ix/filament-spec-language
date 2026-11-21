@@ -1105,6 +1105,7 @@ fn work<'a>(
                 analysis,
                 binding,
                 *limits,
+                provision.normalization_owner(),
                 &item.claim,
                 item.request_index,
                 form,
@@ -1282,7 +1283,11 @@ fn work<'a>(
         {
             match probability_work(analysis, binding, &item.claim, form, limits) {
                 Some(ProbabilityWork::Exact(request)) => {
-                    super::exact_probabilistic_item(item.request_index, request)
+                    super::exact::exact_probabilistic_item_with_owner(
+                        item.request_index,
+                        request,
+                        provision.normalization_owner(),
+                    )
                 }
                 Some(ProbabilityWork::Statistical(request)) => {
                     super::statistical_item(item.request_index, request)
@@ -1455,6 +1460,7 @@ fn work<'a>(
                     analysis,
                     binding,
                     *limits,
+                    provision.normalization_owner(),
                     item.options.max_task_product_work,
                     item.options.max_check_work,
                     &item.claim,

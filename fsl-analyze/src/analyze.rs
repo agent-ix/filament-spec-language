@@ -45,6 +45,7 @@ mod invariant_item;
 mod items;
 mod protocol_item;
 mod reduction_item;
+mod reference_output;
 mod refinement_item;
 pub(crate) mod request;
 pub(crate) use request::dependency_packages;

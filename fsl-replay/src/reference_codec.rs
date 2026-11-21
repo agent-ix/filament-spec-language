@@ -135,6 +135,15 @@ pub struct ReferenceScope<'s, 'c, 'm, 'r> {
 }
 
 impl ReferenceScope<'_, '_, '_, '_> {
+    pub(crate) fn model_runtime(
+        &mut self,
+        system: &ModelSystem<'_>,
+    ) -> Result<(), ReferenceCodecError> {
+        match &self.codec.runtime {
+            ReferenceRuntime::Model(bound) if std::ptr::eq(*bound, system) => Ok(()),
+            _ => Err(self.scope.fail(ReferenceFailure::ForeignCatalog)),
+        }
+    }
     pub(crate) fn carrier_refusal(&mut self, member: &'static str) -> ReferenceCodecError {
         ReferenceCodecError::Carrier {
             cause: crate::CounterexampleWireError::Unspelled(member),
@@ -176,7 +185,11 @@ impl ReferenceScope<'_, '_, '_, '_> {
         value: &filament_semantic_value::fairness::FairnessConstraint,
     ) -> Result<Value, ReferenceCodecError> {
         use quire_canonical::Encode as _;
-        let admission = Admission::new(&mut *self.scope.budget, self.scope.cancel);
+        let admission = Admission::new(
+            &mut *self.scope.budget,
+            self.scope.cancel,
+            self.scope.normalization_owner,
+        );
         let result = admission.encoded(self.limits, |writer| value.encode_into(writer));
         let bytes = admission
             .finish(result)
@@ -188,6 +201,71 @@ impl ReferenceScope<'_, '_, '_, '_> {
 
     pub(crate) fn typed_value(&mut self, value: &Value) -> Result<Value, ReferenceCodecError> {
         self.codec.value(value, false, 0, &mut self.scope)
+    }
+
+    pub(crate) fn native_json(&mut self, bytes: &[u8]) -> Result<Value, ReferenceCodecError> {
+        let text = std::str::from_utf8(bytes)
+            .map_err(|_| self.scope.fail(ReferenceFailure::MalformedWire))?;
+        parse_text(text, &mut self.scope)
+    }
+
+    pub(crate) fn native_value(
+        &mut self,
+        value: &filament_exact::Value,
+        package: &fsl_package::CheckedPackage,
+        owner: &fsl_semantics::model::intake::SelectedModels,
+    ) -> Result<Value, ReferenceCodecError> {
+        let mut budget = crate::NormalizationReferenceBudget::source(
+            owner,
+            fsl_semantics::model::accounting::ChargePoint::ReferenceResult,
+        );
+        let types = package.graph().scope();
+        let written = fsl_eval::simulation::model::run_value_bytes(
+            value,
+            types.types(),
+            types.enums(),
+            types.variant_types(),
+            fsl_foundation::IdentityLimits::default(),
+            &mut budget,
+            self.scope.cancel,
+        );
+        if let Some(cause) = budget.take_normalization_failure() {
+            return Err(ReferenceCodecError::Normalization {
+                cause,
+                pointer: std::mem::take(&mut self.scope.path),
+            });
+        }
+        let written = written.map_err(|error| self.scope.stopped(error))?;
+        let native = self.native_json(&written)?;
+        self.typed_value(&native)
+    }
+
+    pub(crate) fn native_state(
+        &mut self,
+        state: &fsl_eval::simulation::model::ModelSimState,
+        system: &fsl_eval::simulation::model::ModelSystem<'_>,
+        owner: &fsl_semantics::model::intake::SelectedModels,
+    ) -> Result<Value, ReferenceCodecError> {
+        self.model_runtime(system)?;
+        let mut budget = crate::NormalizationReferenceBudget::source(
+            owner,
+            fsl_semantics::model::accounting::ChargePoint::ReferenceResult,
+        );
+        let bytes = system.state_key_bytes_with_budget(
+            state,
+            fsl_foundation::IdentityLimits::default(),
+            &mut budget,
+            self.scope.cancel,
+        );
+        if let Some(cause) = budget.take_normalization_failure() {
+            return Err(ReferenceCodecError::Normalization {
+                cause,
+                pointer: std::mem::take(&mut self.scope.path),
+            });
+        }
+        let bytes = bytes.map_err(|error| self.scope.stopped(error))?;
+        let key = self.opaque_bytes(&bytes)?;
+        self.record([("key", key)])
     }
 
     pub(crate) fn declaration_text(
@@ -277,23 +355,26 @@ impl ReferenceScope<'_, '_, '_, '_> {
         &mut self,
         key: &fsl_eval::simulation::StateKey,
     ) -> Result<Value, ReferenceCodecError> {
+        self.opaque_bytes(key.as_bytes())
+    }
+
+    pub(crate) fn opaque_bytes(&mut self, bytes: &[u8]) -> Result<Value, ReferenceCodecError> {
         use base64::Engine as _;
         // The same URL_SAFE_NO_PAD encoding as TimedStateWire; admit and
         // fallibly allocate its complete output before encoding opaque bytes.
-        let encoded = key
-            .as_bytes()
+        let encoded = bytes
             .len()
             .checked_add(2)
             .and_then(|n| n.checked_div(3))
             .and_then(|n| n.checked_mul(4))
             .ok_or_else(|| self.scope.stopped(ModelKeyError::SizeOverflow))?;
-        self.scope.work(key.as_bytes().len())?;
+        self.scope.work(bytes.len())?;
         self.scope.work(encoded)?;
         self.scope.reserve(encoded)?;
         let mut text = String::new();
         text.try_reserve_exact(encoded)
             .map_err(|_| self.scope.allocation(encoded))?;
-        base64::engine::general_purpose::URL_SAFE_NO_PAD.encode_string(key.as_bytes(), &mut text);
+        base64::engine::general_purpose::URL_SAFE_NO_PAD.encode_string(bytes, &mut text);
         Ok(Value::String(text))
     }
 
@@ -377,7 +458,13 @@ impl ReferenceScope<'_, '_, '_, '_> {
         self.codec.encode_reference_in(value, &mut self.scope)
     }
 
-    pub(crate) fn at_pointer<T, E: From<ReferenceCodecError>>(
+    /// Run one nested carrier operation at its existing RFC 6901 prefix.
+    /// Pointer text is admitted before storage is grown; the prior prefix is
+    /// restored on success and failure.
+    ///
+    /// # Errors
+    /// Preserves the operation's typed failure and pointer-storage denials.
+    pub fn at_pointer<T, E: From<ReferenceCodecError>>(
         &mut self,
         pointer: &str,
         action: impl FnOnce(&mut Self) -> Result<T, E>,
@@ -395,6 +482,22 @@ impl ReferenceScope<'_, '_, '_, '_> {
         let result = action(self);
         self.scope.path.truncate(before);
         result
+    }
+
+    /// Run an array element under a charged canonical index at `pointer`.
+    ///
+    /// # Errors
+    /// Preserves nested operation, metadata, resource and cancellation failures.
+    pub fn at_index<T, E: From<ReferenceCodecError>>(
+        &mut self,
+        pointer: &str,
+        index: usize,
+        action: impl FnOnce(&mut Self) -> Result<T, E>,
+    ) -> Result<T, E> {
+        self.at_pointer(pointer, |s| {
+            let index = s.display_text(&index)?;
+            s.at_pointer("/", |s| s.at_pointer(&index, action))
+        })
     }
 
     /// Encode both source-transition arms of a task template with one catalog.
@@ -609,6 +712,153 @@ impl ReferenceScope<'_, '_, '_, '_> {
 enum ReferenceRuntime<'c, 'r> {
     Model(&'c ModelSystem<'r>),
     Call(&'c ObjectEnvironment),
+}
+
+impl fsl_eval::simulation::protocol::ProtocolWireSink for ReferenceScope<'_, '_, '_, '_> {
+    type Error = ReferenceCodecError;
+    fn work(&mut self, units: usize) -> Result<(), Self::Error> {
+        self.scope.work(units)
+    }
+    fn depth(&mut self, depth: usize) -> Result<(), Self::Error> {
+        self.scope.work(1)?;
+        if depth > self.scope.max_depth.min(64) {
+            return Err(self.scope.fail(ReferenceFailure::DepthLimit));
+        }
+        Ok(())
+    }
+    fn string(&mut self, text: &str) -> Result<Value, Self::Error> {
+        self.text(text)
+    }
+    fn unsigned(&mut self, value: u64) -> Result<Value, Self::Error> {
+        self.display(&value)
+    }
+    fn object(&mut self) -> Result<Value, Self::Error> {
+        self.scope.work(1)?;
+        self.record([])
+    }
+    fn array(&mut self, len: usize) -> Result<Value, Self::Error> {
+        ReferenceScope::array(self, len).map(Value::Array)
+    }
+    fn field(
+        &mut self,
+        out: &mut Value,
+        name: &str,
+        value: impl FnOnce(&mut Self) -> Result<Value, Self::Error>,
+    ) -> Result<(), Self::Error> {
+        let map = out
+            .as_object()
+            .ok_or_else(|| self.scope.fail(ReferenceFailure::MalformedWire))?;
+        let comparisons = name
+            .len()
+            .checked_mul(map.len())
+            .ok_or_else(|| self.scope.stopped(ModelKeyError::SizeOverflow))?;
+        self.scope.work(comparisons)?;
+        if map.contains_key(name) {
+            return Err(self.scope.fail(ReferenceFailure::MalformedWire));
+        }
+        let before = self.scope.path.len();
+        let additional = name
+            .len()
+            .checked_mul(2)
+            .and_then(|n| n.checked_add(1))
+            .ok_or_else(|| self.scope.stopped(ModelKeyError::SizeOverflow))?;
+        self.scope.work(name.len())?;
+        self.scope.reserve(additional)?;
+        self.scope
+            .path
+            .try_reserve_exact(additional)
+            .map_err(|_| self.scope.allocation(additional))?;
+        self.scope.path.push('/');
+        for c in name.chars() {
+            match c {
+                '~' => self.scope.path.push_str("~0"),
+                '/' => self.scope.path.push_str("~1"),
+                c => self.scope.path.push(c),
+            }
+        }
+        let result = value(self).and_then(|value| self.put(out, name, value));
+        self.scope.path.truncate(before);
+        result
+    }
+    fn element(
+        &mut self,
+        out: &mut Value,
+        index: usize,
+        value: impl FnOnce(&mut Self) -> Result<Value, Self::Error>,
+    ) -> Result<(), Self::Error> {
+        let index = self.display_text(&index)?;
+        let value = self.at_pointer("/", |s| s.at_pointer(&index, value))?;
+        let values = out
+            .as_array_mut()
+            .ok_or_else(|| self.scope.fail(ReferenceFailure::MalformedWire))?;
+        self.append(values, value)
+    }
+    fn reference(&mut self, value: &ObjectReference) -> Result<Value, Self::Error> {
+        self.encode_reference(value)
+    }
+    fn reference_parts(
+        &mut self,
+        universe: &filament_exact::NodeKey,
+        object_type: &EffectiveId,
+        identity: &str,
+    ) -> Result<Value, Self::Error> {
+        let previous = self.scope.normalization_owner;
+        let result = (|| {
+            let mut found = false;
+            for declaration in self.codec.catalog.declarations() {
+                self.scope.normalization_owner = declaration.normalization_owner();
+                if fsl_semantics::model::state::StateModel::reference_identity_equal_with_work(
+                    object_type,
+                    declaration.effective(),
+                    &mut |units| {
+                        let units = usize::try_from(units)
+                            .map_err(|_| self.scope.stopped(ModelKeyError::SizeOverflow))?;
+                        self.scope.work(units)
+                    },
+                )? {
+                    found = true;
+                    break;
+                }
+            }
+            if !found {
+                return Err(self.scope.fail(ReferenceFailure::UnknownDeclaration));
+            }
+            let universe = self.node(universe)?;
+            let object_type = self.scope.effective_json(object_type)?;
+            let identity = self.text(identity)?;
+            let tag = self.text("reference")?;
+            let native = self.record([
+                ("type", tag),
+                ("universe", universe),
+                ("object_type", object_type),
+                ("identity", identity),
+            ])?;
+            self.codec.reference(&native, false, &mut self.scope)
+        })();
+        self.scope.normalization_owner = previous;
+        result
+    }
+    fn node(&mut self, value: &filament_exact::NodeKey) -> Result<Value, Self::Error> {
+        ReferenceScope::node(self, value)
+    }
+    fn effective(&mut self, value: &EffectiveId) -> Result<Value, Self::Error> {
+        self.scope.effective_json(value)
+    }
+    fn declaration(
+        &mut self,
+        value: &filament_checked::key::DeclarationKey,
+    ) -> Result<Value, Self::Error> {
+        self.declaration_text(value).map(Value::String)
+    }
+    fn order_map(&mut self, entries: &mut Value) -> Result<(), Self::Error> {
+        let values = entries
+            .as_array_mut()
+            .ok_or_else(|| self.scope.fail(ReferenceFailure::MalformedWire))?;
+        sort_values(values, true, false, &mut self.scope)
+    }
+    fn unsupported(&mut self, what: &'static str) -> Self::Error {
+        self.carrier_refusal(what)
+    }
 }
 
 struct Scope<'a, 'n> {
@@ -2618,7 +2868,7 @@ mod tests {
 
     /// Trace: FSpec-FR-181, FSpec-FR-364
     #[test]
-    fn scoped_temporal_retains_genuine_initial_terminal_key_and_original_population() {
+    fn scoped_temporal_and_protocol_retain_genuine_key_population_and_borrowed_fields() {
         use super::{reference_fixture, ReferenceCodec};
         use filament_checked::key::DeclarationKey;
         use fsl_eval::simulation::model::{
@@ -2696,6 +2946,49 @@ mod tests {
             64,
             quire_canonical::Limits::new(100000),
         );
+        let transition = fsl_eval::simulation::protocol::ProtocolTransition::fork(
+            fsl_eval::simulation::protocol::ThreadPath::root(7).child("fork/雪", "left", 3),
+            "join/雪",
+        );
+        let protocol = crate::model_check::counterexample::TemporalCounterexample {
+            initial_state: 0,
+            prefix: vec![crate::model_check::counterexample::ModelStep {
+                transition: transition.clone(),
+                post_state: terminal.clone(),
+                delay: None,
+            }],
+            over_binding: None,
+            fairness: Vec::new(),
+            kind: crate::model_check::counterexample::CounterexampleKind::Formula,
+            lasso: None,
+            blocked: Vec::new(),
+            refinement: None,
+            final_delay: None,
+        };
+        let subject = crate::ProtocolWire {
+            protocol: "real-runtime-projection".to_owned(),
+            over: native.clone(),
+            roles: vec![("role/雪".to_owned(), object_type.package.clone())],
+            capacities: vec![("queue~雪".to_owned(), 2)],
+            max_live_instances: Some(7),
+        };
+        let written = scope
+            .protocol_temporal_wire(&protocol, &subject, None, None)
+            .unwrap();
+        assert_eq!(
+            written["prefix"][0]["transition"],
+            fsl_eval::simulation::protocol::transition_json(&transition).unwrap()
+        );
+        assert_eq!(
+            written["prefix"][0]["post_state"],
+            crate::state_key_wire(&terminal).unwrap()
+        );
+        assert_eq!(
+            written["subject"]["over"],
+            scope.encode_reference(&native).unwrap()
+        );
+        assert_eq!(written["subject"]["roles"]["role/雪"], object_type.package);
+        assert_eq!(written["subject"]["capacities"]["queue~雪"], "2");
         let mut witness = crate::model_check::counterexample::TemporalCounterexample {
             initial_state: 0,
             prefix: Vec::new(),
@@ -2777,7 +3070,8 @@ mod tests {
         use fsl_semantics::model::accounting::ModelNormalizationLimits;
         use fsl_semantics::model::intake::{admit_unit, package_input};
         use fsl_semantics::model::observation::{
-            admit_current_snapshot, declared_type_universe_for, DocumentRef, ObservationLimits,
+            admit_current_snapshot_with_provenance, admitted_population_document,
+            declared_type_universe_for, DocumentRef, ObservationLimits,
         };
         use serde_json::{json, Value};
         use std::collections::BTreeMap;
@@ -2894,17 +3188,6 @@ mod tests {
         .expect("actual source model system");
         let emission = fsl_package::emit_checked(checked, EmitLimits::new(16_777_216))
             .expect("genuine source emission");
-        let emitted: Value = serde_json::from_slice(emission.package().bytes())
-            .expect("the captured emitted package is JSON");
-        let node6 = emitted["semantic_graph"]["nodes"]
-            .as_array()
-            .and_then(|nodes| nodes.get(6))
-            .expect("the captured emitted graph has node 6");
-        eprintln!(
-            "node6 kind={}/{}",
-            node6["node_tag"], node6["semantic_form"]
-        );
-        eprintln!("node6 owner={}", node6["owner"]);
         let read = fsl_package::read_evaluation_emission(
             checked,
             &emission,
@@ -2914,10 +3197,6 @@ mod tests {
             EmitLimits::new(16_777_216),
             fsl_package::SourceWitnessSupplier::new(&emission),
         );
-        match &read {
-            Ok(_) => eprintln!("reader refusing check=none (admitted)"),
-            Err(refusal) => eprintln!("reader refusing check={refusal:?}"),
-        }
         let read = read.expect("source emission and strict package admission");
         let mut joins = NativeJoinBudget::new(10_000_000, 10_000_000);
         let source_catalog =
@@ -3020,7 +3299,7 @@ mod tests {
             transition
         );
         assert_eq!(system.state_key_of(&initial).unwrap().0, before);
-        let (environment, _) = admit_current_snapshot(
+        let (environment, _, admitted_models) = admit_current_snapshot_with_provenance(
             checked.graph().model_inputs(),
             checked.graph().scope().types(),
             &packages,
@@ -3037,7 +3316,31 @@ mod tests {
             },
             key: object_key.to_owned(),
         };
-        let binding = environment.population_binding(&population).unwrap();
+        let [admitted_model] = admitted_models.as_slice() else {
+            panic!("the fixture selects exactly its original Config model");
+        };
+        let document = admitted_population_document(
+            admitted_model.view(),
+            checked.graph().scope().types(),
+            &environment,
+            &population,
+            &["a", object_key],
+        )
+        .expect("retain the actual selected population's admitted fields");
+        use fsl_semantics::model::population::{
+            admit_binding, AdmissionMeter, AdmissionOutcome, PopulationAdmissionLimits,
+        };
+        let mut population_meter = AdmissionMeter::new(PopulationAdmissionLimits::default());
+        let AdmissionOutcome::Admitted(binding) = admit_binding(
+            admitted_model.view(),
+            &document,
+            &selection.population,
+            fsl_semantics::model::dispatch::GeneralizationClosure::Closed,
+            None,
+            &mut population_meter,
+        ) else {
+            panic!("the selected population must pass native binding admission");
+        };
         let alternate_ref = DocumentRef {
             authority: selected.authority.clone(),
             identity: "reference-alternate".to_owned(),
@@ -3050,7 +3353,7 @@ mod tests {
             alternate_ref.clone(),
             serde_json::to_vec(&alternate).unwrap(),
         )]);
-        let (alternate_environment, _) = admit_current_snapshot(
+        let (alternate_environment, _, alternate_models) = admit_current_snapshot_with_provenance(
             checked.graph().model_inputs(),
             checked.graph().scope().types(),
             &packages,
@@ -3060,18 +3363,40 @@ mod tests {
             ObservationLimits::default(),
         )
         .expect("other population's genuine snapshot admission");
-        let other_binding = alternate_environment
-            .population_binding(&other_population)
-            .unwrap();
+        let [alternate_model] = alternate_models.as_slice() else {
+            panic!("the alternate snapshot selects exactly its original Config model");
+        };
+        let document = admitted_population_document(
+            alternate_model.view(),
+            checked.graph().scope().types(),
+            &alternate_environment,
+            &other_population,
+            &["a", object_key],
+        )
+        .expect("retain the explicitly selected alternate population's fields");
+        let alternate_population = DeclarationKey {
+            package: type_key.package.clone(),
+            node: other_population.clone(),
+        };
+        let AdmissionOutcome::Admitted(other_binding) = admit_binding(
+            alternate_model.view(),
+            &document,
+            &alternate_population,
+            fsl_semantics::model::dispatch::GeneralizationClosure::Closed,
+            None,
+            &mut population_meter,
+        ) else {
+            panic!("the alternate population must pass native binding admission");
+        };
         assert_eq!(binding.universe(), other_binding.universe());
         assert_eq!(
             codec
-                .restore_over_binding(&wire, Some(&selection), binding, &mut budget, &cancel, 64)
+                .restore_over_binding(&wire, Some(&selection), &binding, &mut budget, &cancel, 64)
                 .unwrap(),
             selection
         );
         assert!(matches!(
-            codec.restore_over_binding(&wire, None, binding, &mut budget, &cancel, 64),
+            codec.restore_over_binding(&wire, None, &binding, &mut budget, &cancel, 64),
             Err(ReferenceCodecError::Refused {
                 reason: ReferenceFailure::MissingPopulation,
                 ..
@@ -3081,7 +3406,7 @@ mod tests {
             codec.restore_over_binding(
                 &wire,
                 Some(&selection),
-                other_binding,
+                &other_binding,
                 &mut budget,
                 &cancel,
                 64
@@ -3091,7 +3416,21 @@ mod tests {
                 ..
             })
         ));
-        let bare = BarePackage::new(read.admitted());
+        let rows = emission
+            .identity_rows(read.admitted(), &mut joins)
+            .expect("the original emission's admitted identity supply");
+        let equality = emission
+            .equality_witness(read.admitted(), &mut joins)
+            .expect("the original emission's admitted equality supply");
+        let bare = BarePackage::new(read.admitted())
+            .with_supply(
+                fsl_package::BareSupply {
+                    identities: &rows,
+                    equality: Some(&equality),
+                },
+                &mut joins,
+            )
+            .expect("the authentic emitted package supply joins");
         let package_input = PackageModelInput::of(&bare, &packages, limits.model)
             .expect("real admitted package model input");
         let package_system = ModelSystem::new(request(

@@ -135,6 +135,12 @@ struct Run<'r, 'a> {
 }
 
 impl<'a> Run<'_, 'a> {
+    fn normalization_owner(&self) -> Option<&'a fsl_semantics::model::intake::SelectedModels> {
+        match self.source {
+            Source::Checked { provision, .. } => provision.normalization_owner(),
+            Source::Bytes { .. } => None,
+        }
+    }
     /// The checked package of a source-route run; the package route has none.
     fn package(&self) -> Option<&'a CheckedPackage> {
         match self.source {
@@ -218,13 +224,20 @@ fn run(read: &Run<'_, '_>, cancel: &Cancel) -> EngineReport {
     let property = property_form(claim.form());
     let parameter = claim.over().map(|over| over.name.as_str());
     let spelled = evidence_of(&system, claim, instance).map(|evidence| {
-        fsl_replay::graph_evidence_wire(
-            &evidence,
-            property,
-            parameter,
-            instance.over.as_ref(),
-            &instance.sampled,
-            claim.occurrence(),
+        super::reference_output::with_source(
+            &system,
+            read.normalization_owner(),
+            cancel,
+            |references| {
+                references.graph_evidence_wire(
+                    &evidence,
+                    property,
+                    parameter,
+                    instance.over.as_ref(),
+                    &instance.sampled,
+                    claim.occurrence(),
+                )
+            },
         )
     });
     let refuted = matches!(record.value, TerminalValue::Refuted);
@@ -240,7 +253,10 @@ fn run(read: &Run<'_, '_>, cancel: &Cancel) -> EngineReport {
                     ..
                 }
         );
-    let wire = spelled.and_then(Result::ok);
+    let wire = match spelled.transpose() {
+        Ok(wire) => wire,
+        Err(refusal) => return EngineReport::Refused(refusal),
+    };
     if (refuted || witnessed) && wire.is_none() {
         return EngineReport::Refused(Refusal::Failed(super::items::BROKEN));
     }
@@ -457,19 +473,26 @@ fn run_digital(read: &Run<'_, '_>, cancel: &Cancel) -> EngineReport {
         let wire = evidence
             .as_ref()
             .map(|evidence| {
-                fsl_replay::graph_evidence_wire(
-                    evidence,
-                    property_form(read.claim.form()),
-                    read.claim.over().map(|over| over.name.as_str()),
-                    over.as_ref(),
-                    &[],
-                    Some(&occurrence),
+                super::reference_output::with_source(
+                    &system,
+                    read.normalization_owner(),
+                    cancel,
+                    |references| {
+                        references.graph_evidence_wire(
+                            evidence,
+                            property_form(read.claim.form()),
+                            read.claim.over().map(|over| over.name.as_str()),
+                            over.as_ref(),
+                            &[],
+                            Some(&occurrence),
+                        )
+                    },
                 )
             })
             .transpose();
         let wire = match wire {
             Ok(wire) => wire,
-            Err(_) => return EngineReport::Refused(Refusal::Failed(super::items::BROKEN)),
+            Err(refusal) => return EngineReport::Refused(refusal),
         };
         let record = StateGraphRecord {
             value: if held {
@@ -1172,19 +1195,26 @@ fn run_timed(read: &Run<'_, '_>, cancel: &Cancel) -> EngineReport {
         let wire = evidence
             .as_ref()
             .map(|evidence| {
-                fsl_replay::graph_evidence_wire(
-                    evidence,
-                    property_form(read.claim.form()),
-                    read.claim.over().map(|over| over.name.as_str()),
-                    over.as_ref(),
-                    &[],
-                    Some(&occurrence),
+                super::reference_output::with_source(
+                    &system,
+                    read.normalization_owner(),
+                    cancel,
+                    |references| {
+                        references.graph_evidence_wire(
+                            evidence,
+                            property_form(read.claim.form()),
+                            read.claim.over().map(|over| over.name.as_str()),
+                            over.as_ref(),
+                            &[],
+                            Some(&occurrence),
+                        )
+                    },
                 )
             })
             .transpose();
         let wire = match wire {
             Ok(wire) => wire,
-            Err(_) => return EngineReport::Refused(Refusal::Failed(super::items::BROKEN)),
+            Err(refusal) => return EngineReport::Refused(refusal),
         };
         let limit_values = read.form.limits.used();
         let record = StateGraphRecord {

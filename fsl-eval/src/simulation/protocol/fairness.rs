@@ -379,6 +379,84 @@ impl Encode for ProtocolFairness {
     }
 }
 
+impl ProtocolFairness {
+    /// Project the original fairness metadata without building an encoding tree.
+    ///
+    /// # Errors
+    /// The output sink's original encoding/resource failure.
+    pub fn write_borrowed<S: super::borrowed_wire::ProtocolWireSink>(
+        &self,
+        s: &mut S,
+    ) -> Result<serde_json::Value, S::Error> {
+        use super::borrowed_wire::tagged;
+        let mut out = s.object()?;
+        s.field(&mut out, "kind", |s| {
+            s.string(match self.kind {
+                FairnessKind::Weak => "weak",
+                FairnessKind::Strong => "strong",
+            })
+        })?;
+        s.field(&mut out, "granularity", |s| {
+            s.string(match self.granularity {
+                FairnessGranularity::Whole => "whole",
+                FairnessGranularity::Each => "each",
+            })
+        })?;
+        s.field(&mut out, "origin", |s| s.string(self.origin.text()))?;
+        s.field(&mut out, "target", |s| {
+            let out = match &self.target {
+                ProtocolTarget::Operation { name } => {
+                    let mut out = tagged(s, "operation")?;
+                    s.field(&mut out, "name", |s| s.string(name))?;
+                    out
+                }
+                ProtocolTarget::Root => {
+                    let mut out = tagged(s, "thread-target")?;
+                    s.field(&mut out, "node", |_| Ok(serde_json::Value::Null))?;
+                    s.field(&mut out, "branch", |_| Ok(serde_json::Value::Null))?;
+                    out
+                }
+                ProtocolTarget::Branch { parallel, branch } => {
+                    let mut out = tagged(s, "thread-target")?;
+                    s.field(&mut out, "node", |s| s.string(parallel))?;
+                    s.field(&mut out, "branch", |s| s.string(branch))?;
+                    out
+                }
+                ProtocolTarget::AttemptNode { node } => {
+                    let mut out = tagged(s, "attempt-node")?;
+                    s.field(&mut out, "node", |s| s.string(node))?;
+                    out
+                }
+                ProtocolTarget::CompensationTemplate { template } => {
+                    let mut out = tagged(s, "compensation-template")?;
+                    s.field(&mut out, "template", |s| s.string(template))?;
+                    out
+                }
+                ProtocolTarget::MemoryStep {
+                    model,
+                    step,
+                    parallel,
+                    branch,
+                } => {
+                    let mut out = tagged(s, "memory-step")?;
+                    s.field(&mut out, "model", |s| s.string(model.label()))?;
+                    s.field(&mut out, "step", |s| s.string(step))?;
+                    s.field(&mut out, "node", |s| s.string(parallel))?;
+                    s.field(&mut out, "branch", |s| s.string(branch))?;
+                    out
+                }
+                ProtocolTarget::Visibility { model } => {
+                    let mut out = tagged(s, "visibility")?;
+                    s.field(&mut out, "model", |s| s.string(model.label()))?;
+                    out
+                }
+            };
+            Ok(out)
+        })?;
+        Ok(out)
+    }
+}
+
 /// Why a protocol fairness set could not be built.
 #[derive(Clone, Debug, Eq, PartialEq, thiserror::Error)]
 pub enum ProtocolFairnessError {

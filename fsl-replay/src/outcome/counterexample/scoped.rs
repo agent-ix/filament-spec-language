@@ -5,6 +5,75 @@ use super::*;
 use crate::{ReferenceCodecError, ReferenceScope};
 
 impl ReferenceScope<'_, '_, '_, '_> {
+    /// Write a complete protocol carrier from the original private runtime
+    /// fields, including send/blocked/fairness data. The optional terminal key
+    /// is the genuine retained final key and introduces no wire member.
+    ///
+    /// # Errors
+    /// Preserves typed reference, metadata, cancellation and owner denials.
+    pub fn protocol_temporal_wire(
+        &mut self,
+        counterexample: &TemporalCounterexample<ProtocolTransition>,
+        subject: &ProtocolWire,
+        claim: Option<&OccurrenceKey>,
+        terminal_key: Option<&fsl_eval::simulation::StateKey>,
+    ) -> Result<Json, ReferenceCodecError> {
+        use fsl_eval::simulation::protocol::ProtocolWireSink;
+        let mut out = self.temporal_full(
+            counterexample,
+            Some(&subject.over),
+            claim,
+            terminal_key,
+            false,
+            |s, transition| transition.write_borrowed(s),
+            |s, transition| {
+                transition
+                    .send_record()
+                    .map(|record| record.write_borrowed(s))
+                    .transpose()
+            },
+            |s, fairness| fairness.write_borrowed(s),
+        )?;
+        self.field(&mut out, "subject", |s| {
+            let tag = s.text("protocol-subject")?;
+            let protocol = s.text(&subject.protocol)?;
+            let over = s.at_pointer("/over", |s| s.encode_reference(&subject.over))?;
+            let mut roles = s.record([])?;
+            for (role, model) in &subject.roles {
+                s.field(&mut roles, role, |s| s.text(model))?;
+            }
+            let mut out = s.record([
+                ("type", tag),
+                ("protocol", protocol),
+                ("over", over),
+                ("roles", roles),
+            ])?;
+            if !subject.capacities.is_empty() {
+                s.field(&mut out, "capacities", |s| {
+                    let mut out = s.record([])?;
+                    for (name, value) in &subject.capacities {
+                        s.field(&mut out, name, |s| s.display(value))?;
+                    }
+                    Ok(out)
+                })?;
+            }
+            Ok(out)
+        })?;
+        if let Some(bound) = subject.max_live_instances {
+            self.put(&mut out, "max_live_instances", Json::from(bound))?;
+        }
+        if matches!(counterexample.kind, CounterexampleKind::Deadlock) {
+            self.field(&mut out, "blocked", |s| {
+                let mut out = Json::Array(ReferenceScope::array(s, counterexample.blocked.len())?);
+                for (index, blocked) in counterexample.blocked.iter().enumerate() {
+                    s.element(&mut out, index, |s| blocked.write_borrowed(s))?;
+                }
+                Ok(out)
+            })?;
+        }
+        Ok(out)
+    }
+
     /// Write a task-scheduler identity with both source arms converted by the
     /// shared codec and exact scalar metadata charged before materialization.
     ///
@@ -92,6 +161,7 @@ impl ReferenceScope<'_, '_, '_, '_> {
             terminal_key,
             true,
             |s, transition| s.task_product_transition_wire(transition),
+            |_, _| Ok(None),
             |s, fairness| s.fairness_wire(fairness),
         )
     }
@@ -148,7 +218,7 @@ impl ReferenceScope<'_, '_, '_, '_> {
         }
     }
 
-    fn undefined_full(
+    pub(super) fn undefined_full(
         &mut self,
         evaluation: &UndefinedEvaluation,
         claim: Option<&OccurrenceKey>,
@@ -369,6 +439,7 @@ impl ReferenceScope<'_, '_, '_, '_> {
             terminal_key,
             false,
             |s, transition| s.encode_task_transition(transition),
+            |_, _| Ok(None),
             |s, fairness| s.fairness_wire(fairness),
         )
     }
@@ -385,6 +456,7 @@ impl ReferenceScope<'_, '_, '_, '_> {
         terminal_key: Option<&fsl_eval::simulation::StateKey>,
         delay_required: bool,
         mut transition: impl FnMut(&mut Self, &T) -> Result<Json, ReferenceCodecError>,
+        mut send_record: impl FnMut(&mut Self, &T) -> Result<Option<Json>, ReferenceCodecError>,
         mut fairness: impl FnMut(&mut Self, &T::Fairness) -> Result<Json, ReferenceCodecError>,
     ) -> Result<Json, ReferenceCodecError> {
         let mut race = None;
@@ -444,6 +516,11 @@ impl ReferenceScope<'_, '_, '_, '_> {
                         s.at_pointer("/transition", |s| transition(s, &step.transition))?;
                     let state = s.at_pointer("/post_state", |s| s.state(&step.post_state))?;
                     let mut out = s.record([("transition", transition), ("post_state", state)])?;
+                    if let Some(record) =
+                        s.at_pointer("/send_record", |s| send_record(s, &step.transition))?
+                    {
+                        s.put(&mut out, "send_record", record)?;
+                    }
                     if let Some(delay) = &step.delay {
                         let delay = s.at_pointer("/delay", |s| s.rational(delay))?;
                         s.put(&mut out, "delay", delay)?;
