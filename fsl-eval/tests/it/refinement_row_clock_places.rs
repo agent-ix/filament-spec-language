@@ -404,7 +404,7 @@ fn clock_reference_snapshot_accepts_a_declared_place() {
         c2["fields"]["maybe"] = json!({"absent":{}});
         c2["fields"]["refs"] = json!({"sequence":[r2,r1]});
         document["populations"][0]["objects"][0]["fields"]["maybe"] = if present {
-            json!({"present":r1})
+            json!({"present":r2})
         } else {
             json!({"absent":{}})
         };
@@ -441,7 +441,7 @@ fn clock_reference_snapshot_accepts_a_declared_place() {
                 call.fields
                     .get(&key(CLOCKS, "Call/maybe"))
                     .expect("optional field is present"),
-                &reference,
+                &second,
             );
         } else {
             assert!(!call.fields.contains_key(&key(CLOCKS, "Call/maybe")));
@@ -485,6 +485,16 @@ fn clock_reference_snapshot_refuses_an_undeclared_place() {
     let checked = clock_reference_fixture_variant(true, true, false);
     let package = CheckedPackage::link(checked.graph);
     let graph = package.graph();
+    assert_eq!(
+        graph
+            .timed_models()
+            .iter()
+            .flat_map(|model| model.clocks().iter())
+            .map(|clock| clock.name())
+            .collect::<Vec<_>>(),
+        ["y"],
+        "the real model variant removes x and retains y"
+    );
     let model = StateModel::new(
         graph.model_inputs(),
         graph.scope().types(),
