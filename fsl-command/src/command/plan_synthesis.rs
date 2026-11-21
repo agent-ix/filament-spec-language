@@ -112,7 +112,7 @@ fn objective(checked: &CheckedSynthesis) -> PlanObjective {
             Some(body.root().value_type().clone()),
         ),
     };
-    let form = match value_type {
+    let form = match &value_type {
         Some(ValueType::Decimal(decimal)) => ValueForm::Decimal {
             scale: decimal.max_scale(),
         },

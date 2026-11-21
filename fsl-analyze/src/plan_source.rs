@@ -493,13 +493,18 @@ impl<'a> SourcePlan<'a> {
 
 /// Whether `body` reads the field `field` of the record `record`.
 fn reads_field(body: &CheckedBody, record: &filament_exact::NodeKey, field: &str) -> bool {
-    (0..body.len()).any(|index| {
-        matches!(
-            body.node(CheckedBody::id_at(index)).kind(),
+    let mut pending = vec![body.root()];
+    while let Some(node) = pending.pop() {
+        if matches!(
+            node.kind(),
             NodeKind::Field { field: read, .. }
                 if read.name() == field && &read.declaration() == record
-        )
-    })
+        ) {
+            return true;
+        }
+        pending.extend(node.children());
+    }
+    false
 }
 
 /// Whether `body` is a sum over the plan's steps whose term reads only the
