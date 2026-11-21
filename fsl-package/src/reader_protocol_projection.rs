@@ -3923,6 +3923,18 @@ pub(crate) fn node_value_type(
             if has_form(declaration, WireTag::CompositeType, WireForm::Reference) {
                 return reference_node_type(index, &declaration.node_id);
             }
+            // An optional lookup result retains its reference's selected object identity.
+            if has_form(declaration, WireTag::CompositeType, WireForm::Option) {
+                if let CheckedTerm::Aggregate { members } = &declaration.body {
+                    if let [CheckedTerm::Reference { target }] = members.as_slice() {
+                        if index.node(target).is_some_and(|node| {
+                            has_form(node, WireTag::CompositeType, WireForm::Reference)
+                        }) {
+                            return reference_node_type(index, target).map(ValueType::option);
+                        }
+                    }
+                }
+            }
         }
     }
     let selected = |declaration: &CheckedNodeId| {
