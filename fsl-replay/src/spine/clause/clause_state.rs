@@ -739,8 +739,8 @@ impl<'a> ClauseState<'a> {
             }
             AdmittedValue::Snapshot(_) => {}
         }
-        let evaluated =
-            cancelled(cancel).and_then(|()| self.evaluate(self.progress, &mut meter, cancel));
+        let evaluated = cancelled(cancel)
+            .and_then(|()| self.evaluate(self.progress, false, &mut meter, cancel));
         if evaluated.is_err() {
             self.restore(mark);
         }
@@ -1102,7 +1102,7 @@ impl<'a> ClauseState<'a> {
         cancelled(cancel)?;
         let mut meter = Meter::new(self.open.limits.accounting).with_cancel(cancel.clone());
         let mark = self.mark();
-        let advance = match self.evaluate(Some(*progress), &mut meter, cancel) {
+        let advance = match self.evaluate(Some(*progress), true, &mut meter, cancel) {
             Ok(advance) => advance,
             Err(refusal) => {
                 self.restore(mark);
@@ -1355,6 +1355,7 @@ impl<'a> ClauseState<'a> {
     fn provisional_advance(
         &mut self,
         assertion: Option<ProgressAssertion>,
+        asserting_progress: bool,
         meter: &mut Meter,
         cancel: &Cancel,
     ) -> Result<Advance, ClauseRefusal> {
@@ -1363,17 +1364,23 @@ impl<'a> ClauseState<'a> {
         let evaluated = (|| {
             self.order_covered(meter)?;
             let report = {
-                // Reading an uncovered prefix asserts no progress. In
+                // Observing an uncovered prefix asserts no progress. In
                 // particular, the default open assertion must not regress a
                 // carried watermark or compare a partial re-delivery with
                 // its covered fingerprints. Explicit progress checks both.
-                let ledger = self.ledger.take();
+                let ledger = if asserting_progress {
+                    None
+                } else {
+                    self.ledger.take()
+                };
                 let trace = self.trace_of(
                     self.seen.len(),
                     assertion.unwrap_or_else(Self::open_assertion),
                 )?;
                 let mut report = self.run(&trace, self.seen.len(), false, cancel);
-                report.ledger = ledger;
+                if ledger.is_some() {
+                    report.ledger = ledger;
+                }
                 report
             };
             cancelled(cancel)?;
@@ -1399,12 +1406,13 @@ impl<'a> ClauseState<'a> {
     fn evaluate(
         &mut self,
         assertion: Option<ProgressAssertion>,
+        asserting_progress: bool,
         meter: &mut Meter,
         cancel: &Cancel,
     ) -> Result<Advance, ClauseRefusal> {
         if !self.evaluable(assertion) {
             if self.open.kind == ClauseTraceKind::Timestamped && !self.seen.is_empty() {
-                return self.provisional_advance(assertion, meter, cancel);
+                return self.provisional_advance(assertion, asserting_progress, meter, cancel);
             }
             return Ok(Advance {
                 report: Arc::clone(&self.report),
@@ -2210,7 +2218,7 @@ impl<'a> ClauseState<'a> {
             && !state.evaluable(state.progress)
         {
             let mut meter = Meter::new(request.limits.accounting).with_cancel(cancel.clone());
-            state.provisional_advance(state.progress, &mut meter, cancel)?;
+            state.provisional_advance(state.progress, false, &mut meter, cancel)?;
         }
         Ok(state)
     }

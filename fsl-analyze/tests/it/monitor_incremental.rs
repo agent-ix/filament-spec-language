@@ -3993,7 +3993,7 @@ fn a_carried_window_member_without_a_valuation_equals_the_batch() {
 /// FR-993, FR-194-AC-17: an absence is content of its position, so a state
 /// that delivers a position without the absence the covered ledger holds for
 /// it is refused as a `Completeness` contradiction, before and after a
-/// `from_bytes` restore.
+/// `from_bytes` restore, including when a later position is still uncovered.
 #[test]
 #[trace("TC-629", "FR-194-AC-17", "FR-993-AC-1")]
 fn a_changed_absence_at_a_covered_index_is_a_completeness_contradiction() {
@@ -4008,7 +4008,7 @@ fn a_changed_absence_at_a_covered_index_is_a_completeness_contradiction() {
     )
     .ledger
     .expect("the retained ledger");
-    for restored in [false, true] {
+    for (restored, uncovered) in [(false, false), (true, false), (false, true), (true, true)] {
         let mut open = clause_open(
             &world,
             ClauseTraceKind::Timestamped,
@@ -4040,15 +4040,22 @@ fn a_changed_absence_at_a_covered_index_is_a_completeness_contradiction() {
                 .advance(admitted(&world, "Twos", &text(1), index), &cancel)
                 .expect("advances");
         }
+        if uncovered {
+            state
+                .advance(admitted(&world, "Twos", &text(1), 5), &cancel)
+                .expect("an uncovered observation asserts no progress");
+        }
+        let before = state.to_bytes().expect("writes before the assertion");
         let refused = state.assert_progress(&progress(3), &cancel);
         let Err(spine::ClauseRefusal::Contradiction(contradiction)) = refused else {
-            panic!("restored {restored}: a contradiction, got {refused:?}");
+            panic!("restored {restored}, uncovered {uncovered}: a contradiction, got {refused:?}");
         };
         assert_eq!(
             contradiction.contradiction.dimension,
             ContradictedDimension::Completeness,
-            "restored {restored}"
+            "restored {restored}, uncovered {uncovered}"
         );
+        assert_eq!(state.to_bytes().expect("writes after refusal"), before);
     }
 }
 
