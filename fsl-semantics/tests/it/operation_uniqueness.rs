@@ -890,20 +890,24 @@ fn operation_owner(kind: &str, operations: Vec<Value>) -> Vec<u8> {
     let id = format!("{owner}/id");
     let id_field = wire_field(&id, "id", "ix://filament/native/Boolean", "required", 1);
     let step = format!("{owner}/receive");
+    let states: Vec<Value> = ["Draft", "Placed"]
+        .iter()
+        .map(|name| {
+            let identity = format!("{owner}/{name}");
+            json!({"identity": identity, "name": name, "origin": {"generated": {
+                "generatorIdentity": identity,
+                "generatorVersion": "1.0.0",
+                "inputIdentities": [identity],
+            }}})
+        })
+        .collect();
     let (meaning, members, extra) = match kind {
         "state_machine" => (
             meaning::STATE_MACHINE,
             json!({"states": "required", "transitions": "required"}),
             json!({
                 "fields": [],
-                "states": ["Draft", "Placed"].map(|name| {
-                    let identity = format!("{owner}/{name}");
-                    json!({"identity": identity, "name": name, "origin": {"generated": {
-                        "generatorIdentity": identity,
-                        "generatorVersion": "1.0.0",
-                        "inputIdentities": [identity],
-                    }}})
-                }),
+                "states": states,
                 "transitions": [{
                     "identity": format!("{owner}/advance_transition"),
                     "from": format!("{owner}/Draft"),
