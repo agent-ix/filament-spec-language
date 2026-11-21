@@ -759,6 +759,7 @@ fn drive(
                         );
                         super::analyze::settle_items(
                             checked.package(),
+                            checked.model_admission_owner().cloned(),
                             &packages,
                             std::iter::once(&program).chain(libraries.iter().copied()),
                             selections,

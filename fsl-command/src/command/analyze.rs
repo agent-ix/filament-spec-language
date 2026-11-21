@@ -605,6 +605,7 @@ fn run_input(
             let units = std::iter::once(&source).chain(libraries);
             let settled = settle_items(
                 checked.package(),
+                checked.model_admission_owner().cloned(),
                 &packages,
                 units,
                 selections,
@@ -657,6 +658,7 @@ pub(super) struct RoutedItems {
 /// provision, or an internal fault.
 pub(super) fn settle_items<'u>(
     package: &fsl_package::CheckedPackage,
+    normalization_owner: Option<std::sync::Arc<fsl_semantics::model::intake::SelectedModels>>,
     packages: &fsl_semantics::model::intake::PackageInput,
     units: impl IntoIterator<Item = &'u FormalSource>,
     selections: &[fsl_package::TemporalClockSelection],
@@ -664,6 +666,9 @@ pub(super) fn settle_items<'u>(
     settle: &Settle<'_>,
 ) -> Result<SettledRun> {
     let mut provision = SourceProvision::default().with_temporal_selections(selections.to_vec());
+    if let Some(owner) = normalization_owner {
+        provision = provision.with_normalization_owner(owner);
+    }
     let mut labels = Vec::new();
     for read in units {
         labels.push(read.source().reference().clone());

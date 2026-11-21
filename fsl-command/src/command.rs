@@ -3597,7 +3597,7 @@ fn check_sources<T>(
         .flat_map(|unit| clocks.check_selections(unit))
         .collect();
     let mut handoff_inventory = None;
-    let (checked, package_selections) = if unit_list {
+    let (checked, package_selections, models) = if unit_list {
         let admitted = fsl_replay::spine::admit_parsed_unit_list(parsed, &dependencies)
             .map_err(|refusal| spine_failure(*refusal))?;
         let models = fsl_replay::spine::select_units(
@@ -3634,7 +3634,7 @@ fn check_sources<T>(
         let selections = clocks
             .package_selections(&checked, &units)
             .map_err(|refusal| spine_failure(*refusal))?;
-        (checked, selections)
+        (checked, selections, models)
     } else {
         let parsed = parsed
             .into_iter()
@@ -3678,8 +3678,9 @@ fn check_sources<T>(
         let selections = clocks
             .package_selections(&checked, &[&parsed])
             .map_err(|refusal| spine_failure(*refusal))?;
-        (checked, selections)
+        (checked, selections, models)
     };
+    let checked = checked.retain_model_admission(models);
     finish(
         intake,
         checked,
