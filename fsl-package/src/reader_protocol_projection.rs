@@ -3894,11 +3894,17 @@ pub(crate) fn node_value_type(
     let own = index.node(id).map(|node| &node.semantic_type);
     let at = error.at.as_deref();
     let scalar_at = at.filter(|failed| *failed == id || own == Some(failed));
-    if error.code == Code::UnsupportedExactType
-        && error.form.as_deref() == Some("bounded_domain/model_population")
-    {
-        let declaration = scalar_at.ok_or(TypeError::Unsupported)?;
-        return population_node_type(index, declaration);
+    if unresolved {
+        if let Some(declaration) = own.and_then(|declaration| index.node(declaration)) {
+            if declaration.node_tag.as_ref() == "bounded_domain"
+                && declaration.semantic_form.as_ref() == "model_population"
+            {
+                return population_node_type(index, &declaration.node_id);
+            }
+            if has_form(declaration, WireTag::CompositeType, WireForm::Reference) {
+                return reference_node_type(index, &declaration.node_id);
+            }
+        }
     }
     let selected = |declaration: &CheckedNodeId| {
         index
@@ -3941,9 +3947,6 @@ pub(crate) fn node_value_type(
         )?);
     }
     match error.form.as_deref().and_then(split_tag_form) {
-        Some((WireTag::CompositeType, WireForm::Reference)) if unresolved => {
-            reference_node_type(index, scalar_at.ok_or(TypeError::Unsupported)?)
-        }
         Some((WireTag::ScalarType, WireForm::Text)) if unresolved => {
             index
                 .node(scalar_at.ok_or(TypeError::Unsupported)?)
@@ -4843,7 +4846,9 @@ mod order_tests {
         let emission =
             crate::emit::emit_checked(&checked, crate::checked::EmitLimits::new(1 << 20)).unwrap();
         let mut evidence = emission.evidence().clone();
-        evidence.insert_domain_package_document("acme/orders", model).unwrap();
+        evidence
+            .insert_domain_package_document("acme/orders", model)
+            .unwrap();
         let admitted = match filament_contract_model::read_checked_package(
             emission.package().bytes(),
             crate::checked_v2::V2ReadLimits::fixture().for_ir(),
