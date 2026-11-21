@@ -4,7 +4,7 @@
 use std::cell::RefCell;
 
 use filament_exact::{
-    CancelCause, Charge, ChargePoint, Incomplete, Integer, Meter, NodeKey, NodePathIter, Origin,
+    CancelCause, Charge, ChargePoint, Incomplete, Meter, NodeKey, NodePathIter, Origin,
 };
 use fsl_foundation::node_wire::{project_node_key, NodeIdentitySink};
 use fsl_foundation::IdentityLimits;
@@ -418,6 +418,26 @@ impl StepPolicy {
             PolicyState::Bounded(BoundedState::Open { .. }) => final_holds,
         })
     }
+    /// Copy retained policy vectors on the original representation ledger.
+    pub fn copy_states(
+        monitors: &[Vec<u8>],
+        meter: &mut Meter,
+    ) -> Result<Vec<Vec<u8>>, PolicyStateError> {
+        let budget = Budget {
+            meter: RefCell::new(meter),
+            stopped: RefCell::new(None),
+        };
+        let mut output = Vec::new();
+        budget.growth(&mut output, monitors.len())?;
+        for monitor in monitors {
+            budget.work(1)?;
+            let mut copy = Vec::new();
+            budget.copy(&mut copy, monitor)?;
+            output.push(copy);
+        }
+        Ok(output)
+    }
+
     /// Encode the ordered vector of full canonical per-instance keys.
     pub fn encode(
         &self,
@@ -556,7 +576,7 @@ impl StepPolicy {
     }
 }
 fn take_count(input: &mut &[u8], budget: &Budget<'_>) -> Result<usize, PolicyStateError> {
-    budget.work(8)?;
+    budget.work(input.len().min(8))?;
     let (head, rest) = input.split_at_checked(8).ok_or(PolicyStateError::Invalid)?;
     let bytes: [u8; 8] = head.try_into().map_err(|_| PolicyStateError::Invalid)?;
     *input = rest;

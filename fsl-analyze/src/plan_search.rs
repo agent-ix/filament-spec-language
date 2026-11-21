@@ -932,7 +932,7 @@ pub(crate) fn stop_cause(stop: RuleStop) -> PlanStopCause {
             limit: "input_bytes",
             value,
             setting: fsl_foundation::setting::Setting::IdentityInputBytes
-                .as_str()
+                .name()
                 .to_owned(),
         },
         RuleStop::Cancelled(cause) => PlanStopCause::Cancelled(cause),
