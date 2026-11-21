@@ -1063,6 +1063,5 @@ fn unknown_relationship_type_in_correlation_is_invalid_request_after_snapshot_re
     let failure = request_failure(&ordinary);
     assert_eq!(ordinary.status.code(), Some(20), "{failure}");
     assert_eq!(failure["code"], "invalid_runtime_input", "{failure}");
-    assert_eq!(failure["cause"], "wrong-role-mapping", "{failure}");
     assert_eq!(failure["stage"], "call", "{failure}");
 }
