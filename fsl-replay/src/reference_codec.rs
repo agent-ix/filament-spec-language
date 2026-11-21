@@ -1,11 +1,15 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! The package-bound boundary between native and backend reference identities.
 
-use filament_exact::{Cancel, EffectiveId, ObjectReference};
+use filament_exact::{
+    Cancel, EffectiveId, IdentityCopyError, IntegerDecimalBudget, ObjectId, ObjectReference,
+};
 use filament_semantic_value::model_transition::{InvalidModelTransition, ModelTransition};
 use fsl_eval::model_subject::ModelInstance;
-use fsl_eval::simulation::model::{ModelKeyError, ModelRestoreBudget, ModelSystem};
-use fsl_package::{ReferenceCatalog, ReferenceDeclaration};
+use fsl_eval::simulation::model::{ModelKeyError, ModelSystem};
+use fsl_package::{CheckedPackage, CheckedPackageV2, ReferenceCatalog, ReferenceDeclaration};
+use fsl_semantics::model::intake::SelectedModels;
+use fsl_semantics::model::object_environment::ObjectEnvironment;
 use fsl_semantics::model::population::PopulationBinding;
 use serde_json::{Map, Value};
 use std::cell::RefCell;
@@ -42,6 +46,22 @@ pub enum ReferenceFailure {
 /// A typed boundary refusal with an RFC 6901 locus; resource causes are retained.
 #[derive(Debug, thiserror::Error)]
 pub enum ReferenceCodecError {
+    /// A complete native identity copy stopped under the actual caller budget.
+    #[error("reference identity copy stopped at {pointer}: {cause:?}")]
+    IdentityCopy {
+        /// Original typed copy/caller cause, without display-text branching.
+        cause: IdentityCopyError<ModelKeyError>,
+        /// The reference being constructed.
+        pointer: String,
+    },
+    /// The normalized model universe could not construct its native identity.
+    #[error("reference universe construction stopped at {pointer}: {cause:?}")]
+    Universe {
+        /// The actual model-owned universe refusal.
+        cause: fsl_semantics::model::normalize::UniverseIdentityError,
+        /// The reference being constructed.
+        pointer: String,
+    },
     /// The actual model owner's reference admission refused construction.
     #[error("native reference admission refused at {pointer}: {cause:?}")]
     Native {
@@ -79,11 +99,16 @@ pub enum ReferenceCodecError {
 /// A codec borrowing the catalog and its actual admitted runtime owner.
 pub struct ReferenceCodec<'c, 'm, 'r> {
     catalog: &'c ReferenceCatalog<'m>,
-    system: &'c ModelSystem<'r>,
+    runtime: ReferenceRuntime<'c, 'r>,
+}
+
+enum ReferenceRuntime<'c, 'r> {
+    Model(&'c ModelSystem<'r>),
+    Call(&'c ObjectEnvironment),
 }
 
 struct Scope<'a> {
-    budget: &'a mut dyn ModelRestoreBudget,
+    budget: &'a mut dyn IntegerDecimalBudget,
     cancel: &'a Cancel,
     path: String,
     max_depth: usize,
@@ -201,11 +226,22 @@ impl Scope<'_> {
     }
 
     fn reserve(&mut self, bytes: usize) -> Result<(), ReferenceCodecError> {
-        self.poll()?;
+        self.reserve_key(bytes).map_err(|error| self.stopped(error))
+    }
+
+    fn reserve_key(&mut self, bytes: usize) -> Result<(), ModelKeyError> {
+        self.cancel.poll();
+        if let Some(cause) = self.cancel.tripped() {
+            return Err(ModelKeyError::Cancelled(cause));
+        }
         self.budget
             .reserve(bytes)
-            .map_err(|_| self.stopped(ModelKeyError::Denied))?;
-        self.poll()
+            .map_err(|_| ModelKeyError::Denied)?;
+        self.cancel.poll();
+        match self.cancel.tripped() {
+            Some(cause) => Err(ModelKeyError::Cancelled(cause)),
+            None => Ok(()),
+        }
     }
 
     fn text(&mut self, text: &str) -> Result<String, ReferenceCodecError> {
@@ -470,26 +506,31 @@ impl<'c, 'm, 'r> ReferenceCodec<'c, 'm, 'r> {
     ) -> Result<ObjectReference, ReferenceCodecError> {
         // Account the model-owned declaring/type lookup and its subsequent
         // reference construction before invoking the allocating owner method.
-        self.system
-            .reference_model()
-            .reference_components_with_work(declaration.key(), &mut |units| {
-                let units = usize::try_from(units)
-                    .ok()
-                    .and_then(|n| n.checked_mul(2))
-                    .ok_or_else(|| scope.stopped(ModelKeyError::SizeOverflow))?;
-                scope.work(units)
-            })?
-            .ok_or_else(|| scope.fail(ReferenceFailure::UnknownDeclaration))?;
+        if let ReferenceRuntime::Model(system) = &self.runtime {
+            system
+                .reference_model()
+                .reference_components_with_work(declaration.key(), &mut |units| {
+                    let units = usize::try_from(units)
+                        .ok()
+                        .and_then(|n| n.checked_mul(2))
+                        .ok_or_else(|| scope.stopped(ModelKeyError::SizeOverflow))?;
+                    scope.work(units)
+                })?
+                .ok_or_else(|| scope.fail(ReferenceFailure::UnknownDeclaration))?;
+        }
         let owner_storage = size_of::<ObjectReference>()
             .checked_mul(16)
             .ok_or_else(|| scope.stopped(ModelKeyError::SizeOverflow))?;
         scope.reserve(owner_storage)?;
+        let model_runtime = matches!(&self.runtime, ReferenceRuntime::Model(_));
         for original in declaration.effective().owner_chain() {
             scope.work(original.package().len())?;
             scope.work(original.node().len())?;
-            scope.reserve(size_of::<filament_exact::OriginalDeclarationKey>())?;
-            scope.reserve(original.package().len())?;
-            scope.reserve(original.node().len())?;
+            if model_runtime {
+                scope.reserve(size_of::<filament_exact::OriginalDeclarationKey>())?;
+                scope.reserve(original.package().len())?;
+                scope.reserve(original.node().len())?;
+            }
         }
         let root = declaration
             .universe()
@@ -501,15 +542,36 @@ impl<'c, 'm, 'r> ReferenceCodec<'c, 'm, 'r> {
         scope.work(root.node().len())?;
         scope.reserve(root.package().len())?;
         scope.reserve(root.node().len())?;
-        scope.work(object.len())?;
-        scope.reserve(object.len())?;
-        let result = self
-            .system
-            .object_reference(declaration.key(), object)
-            .map_err(|cause| ReferenceCodecError::Native {
+        if model_runtime {
+            scope.work(object.len())?;
+            scope.reserve(object.len())?;
+        }
+        let result = match &self.runtime {
+            ReferenceRuntime::Model(system) => system
+                .object_reference(declaration.key(), object)
+                .map_err(|cause| ReferenceCodecError::Native {
                 cause,
                 pointer: std::mem::take(&mut scope.path),
-            })?;
+            })?,
+            ReferenceRuntime::Call(_) => {
+                let effective = declaration
+                    .effective()
+                    .try_clone_with(&mut |bytes| scope.reserve_key(bytes))
+                    .map_err(|cause| ReferenceCodecError::IdentityCopy {
+                        cause,
+                        pointer: std::mem::take(&mut scope.path),
+                    })?;
+                let universe = declaration.universe().identity().map_err(|cause| {
+                    ReferenceCodecError::Universe {
+                        cause,
+                        pointer: std::mem::take(&mut scope.path),
+                    }
+                })?;
+                let object = ObjectId::new(scope.text(object)?)
+                    .map_err(|_| scope.fail(ReferenceFailure::InvalidIdentity))?;
+                ObjectReference::new(universe, effective, object)
+            }
+        };
         scope.poll()?;
         Ok(result)
     }
@@ -656,17 +718,86 @@ impl<'c, 'm, 'r> ReferenceCodec<'c, 'm, 'r> {
             Some(source) => input
                 .source_package()
                 .is_some_and(|actual| std::ptr::eq(actual, source)),
-            None => input
-                .admitted_package()
-                .is_some_and(|actual| std::ptr::eq(actual, catalog.package())),
+            None => input.admitted_package().is_some_and(|actual| {
+                catalog
+                    .package()
+                    .is_some_and(|package| std::ptr::eq(actual, package))
+            }),
         };
-        if !package_matches || !std::ptr::eq(catalog.model(), system.reference_model()) {
+        if !package_matches
+            || !catalog
+                .model()
+                .is_some_and(|model| std::ptr::eq(model, system.reference_model()))
+        {
             return Err(ReferenceCodecError::Refused {
                 reason: ReferenceFailure::ForeignCatalog,
                 pointer: String::new(),
             });
         }
-        Ok(Self { catalog, system })
+        Ok(Self {
+            catalog,
+            runtime: ReferenceRuntime::Model(system),
+        })
+    }
+
+    /// Use the original checked function-call package, model admission and
+    /// object environment. No simulator or caller-supplied universe map is
+    /// accepted as a substitute for the normalized admission owner.
+    ///
+    /// # Errors
+    /// Refuses a catalog from another package or model-admission operation.
+    pub fn for_checked_call(
+        catalog: &'c ReferenceCatalog<'m>,
+        source: &CheckedPackage,
+        models: &SelectedModels,
+        objects: &'c ObjectEnvironment,
+    ) -> Result<Self, ReferenceCodecError> {
+        let matches = catalog
+            .source()
+            .is_some_and(|actual| std::ptr::eq(actual, source))
+            && catalog.package().is_none()
+            && catalog
+                .selected_models()
+                .is_some_and(|actual| std::ptr::eq(actual, models));
+        Self::call_context(catalog, objects, matches)
+    }
+
+    /// Use a strictly admitted function-call package and its actual model
+    /// admission with the same shared recursive converter.
+    ///
+    /// # Errors
+    /// Refuses a catalog from another package or model-admission operation.
+    pub fn for_admitted_call(
+        catalog: &'c ReferenceCatalog<'m>,
+        package: &CheckedPackageV2,
+        models: &SelectedModels,
+        objects: &'c ObjectEnvironment,
+    ) -> Result<Self, ReferenceCodecError> {
+        let matches = catalog.source().is_none()
+            && catalog
+                .package()
+                .is_some_and(|actual| std::ptr::eq(actual, package))
+            && catalog
+                .selected_models()
+                .is_some_and(|actual| std::ptr::eq(actual, models));
+        Self::call_context(catalog, objects, matches)
+    }
+
+    fn call_context(
+        catalog: &'c ReferenceCatalog<'m>,
+        objects: &'c ObjectEnvironment,
+        matches: bool,
+    ) -> Result<Self, ReferenceCodecError> {
+        if !matches || catalog.model().is_some() {
+            return Err(ReferenceCodecError::Refused {
+                reason: ReferenceFailure::ForeignCatalog,
+                pointer: String::new(),
+            });
+        }
+        Ok(Self {
+            catalog,
+            runtime: ReferenceRuntime::Call(objects),
+        })
     }
 
     fn reference(
@@ -757,7 +888,7 @@ impl<'c, 'm, 'r> ReferenceCodec<'c, 'm, 'r> {
     pub fn encode_value(
         &self,
         value: &Value,
-        budget: &mut dyn ModelRestoreBudget,
+        budget: &mut dyn IntegerDecimalBudget,
         cancel: &Cancel,
         max_depth: usize,
     ) -> Result<Value, ReferenceCodecError> {
@@ -781,7 +912,7 @@ impl<'c, 'm, 'r> ReferenceCodec<'c, 'm, 'r> {
     pub fn restore_value(
         &self,
         value: &Value,
-        budget: &mut dyn ModelRestoreBudget,
+        budget: &mut dyn IntegerDecimalBudget,
         cancel: &Cancel,
         max_depth: usize,
     ) -> Result<Value, ReferenceCodecError> {
@@ -805,7 +936,7 @@ impl<'c, 'm, 'r> ReferenceCodec<'c, 'm, 'r> {
     pub fn encode_reference(
         &self,
         reference: &ObjectReference,
-        budget: &mut dyn ModelRestoreBudget,
+        budget: &mut dyn IntegerDecimalBudget,
         cancel: &Cancel,
         max_depth: usize,
     ) -> Result<Value, ReferenceCodecError> {
@@ -835,7 +966,7 @@ impl<'c, 'm, 'r> ReferenceCodec<'c, 'm, 'r> {
     pub fn restore_reference(
         &self,
         value: &Value,
-        budget: &mut dyn ModelRestoreBudget,
+        budget: &mut dyn IntegerDecimalBudget,
         cancel: &Cancel,
         max_depth: usize,
     ) -> Result<ObjectReference, ReferenceCodecError> {
@@ -863,7 +994,7 @@ impl<'c, 'm, 'r> ReferenceCodec<'c, 'm, 'r> {
     pub fn restore_transition(
         &self,
         value: &Value,
-        budget: &mut dyn ModelRestoreBudget,
+        budget: &mut dyn IntegerDecimalBudget,
         cancel: &Cancel,
         max_depth: usize,
         limits: quire_canonical::Limits,
@@ -943,7 +1074,7 @@ impl<'c, 'm, 'r> ReferenceCodec<'c, 'm, 'r> {
     pub fn encode_transition(
         &self,
         transition: &ModelTransition,
-        budget: &mut dyn ModelRestoreBudget,
+        budget: &mut dyn IntegerDecimalBudget,
         cancel: &Cancel,
         max_depth: usize,
     ) -> Result<Value, ReferenceCodecError> {
@@ -999,7 +1130,7 @@ impl<'c, 'm, 'r> ReferenceCodec<'c, 'm, 'r> {
         value: &Value,
         selected: Option<&ModelInstance>,
         binding: &PopulationBinding,
-        budget: &mut dyn ModelRestoreBudget,
+        budget: &mut dyn IntegerDecimalBudget,
         cancel: &Cancel,
         max_depth: usize,
     ) -> Result<ModelInstance, ReferenceCodecError> {
@@ -1010,6 +1141,23 @@ impl<'c, 'm, 'r> ReferenceCodec<'c, 'm, 'r> {
             max_depth,
         };
         let selected = selected.ok_or_else(|| scope.fail(ReferenceFailure::MissingPopulation))?;
+        if let ReferenceRuntime::Call(objects) = &self.runtime {
+            let mut bindings = objects.population_bindings();
+            let mut owned = false;
+            loop {
+                scope.work(1)?;
+                let Some(actual) = bindings.next() else {
+                    break;
+                };
+                if std::ptr::eq(actual, binding) {
+                    owned = true;
+                    break;
+                }
+            }
+            if !owned {
+                return Err(scope.fail(ReferenceFailure::WrongPopulation));
+            }
+        }
         if !scope.equal_text(
             &selected.population.package,
             &binding.population_key().package,
@@ -1136,13 +1284,13 @@ fn sort_values(
 /// Canonical writer admission shares the caller's budget and cancellation. Both
 /// writer scratch and sink output allocations are charged before reservation.
 struct Admission<'a> {
-    budget: RefCell<&'a mut dyn ModelRestoreBudget>,
+    budget: RefCell<&'a mut dyn IntegerDecimalBudget>,
     cancel: &'a Cancel,
     failure: RefCell<Option<ModelKeyError>>,
 }
 
 impl<'a> Admission<'a> {
-    fn new(budget: &'a mut dyn ModelRestoreBudget, cancel: &'a Cancel) -> Self {
+    fn new(budget: &'a mut dyn IntegerDecimalBudget, cancel: &'a Cancel) -> Self {
         Self {
             budget: RefCell::new(budget),
             cancel,
@@ -1440,6 +1588,133 @@ mod tests {
         );
         assert_eq!(budget.work_left, 0);
         assert_eq!(budget.storage_used, 0);
+    }
+
+    /// Trace: FSpec-FR-181
+    #[test]
+    fn call_reference_adapter_uses_checked_admission_and_environment() {
+        use super::{reference_fixture, ReferenceCodec};
+        use filament_contract_model::NativeJoinBudget;
+        use fsl_eval::execution::{PrepareLimits, SuppliedBackends};
+        use fsl_package::ReferenceCatalog;
+        use fsl_semantics::model::intake::{package_input, SelectedModels};
+        use fsl_semantics::model::observation::{
+            admit_current_snapshot, DocumentRef, ObservationLimits,
+        };
+        use serde_json::json;
+        use std::collections::BTreeMap;
+
+        let packages = package_input([reference_fixture::DOMAIN_PACKAGE.as_bytes()]).unwrap();
+        let source = fsl_foundation::SourceIdentity::new("test", "checked-call-reference");
+        let text = format!("language \"ix:native\" edition \"1-draft\";\nprofile v = \"filament.model.complete/v1\";\nmodel Config = {:?};\nfunction keep using v(x: Config::ConfigVersion): Config::ConfigVersion pure {{ x }}\n", reference_fixture::PACKAGE_IDENTITY);
+        let limits = crate::spine::SpineLimits::default();
+        let compiled = crate::spine::compose(
+            source,
+            "checked-call.native",
+            text.as_bytes(),
+            &packages,
+            &crate::spine::DependencyInput::default(),
+            limits,
+        )
+        .expect("actual function checking and model admission");
+        let checked = &compiled.package;
+        let models = compiled.models.selected_models();
+        let population = "ix://example/config-version/config_history";
+        let selected = DocumentRef {
+            authority: "test".to_owned(),
+            identity: "checked-call-current".to_owned(),
+        };
+        let snapshot = json!({
+            "format": "filament.state.snapshot/v1",
+            "identity": {"authority": selected.authority, "identity": selected.identity},
+            "observation": "current", "anchor": {"kind": "handler", "name": "read"},
+            "model": {"identity": reference_fixture::PACKAGE_IDENTITY},
+            "populations": [{"population": population, "complete": true, "objects": [{
+                "key": "雪call", "type": "ix://example/config-version/ConfigVersion",
+                "fields": {"versionNumber": {"integer": "2"}, "parent": {"absent": {}}}
+            }]}]
+        });
+        let provisions =
+            BTreeMap::from([(selected.clone(), serde_json::to_vec(&snapshot).unwrap())]);
+        let (objects, _) = admit_current_snapshot(
+            checked.graph().model_inputs(),
+            checked.graph().scope().types(),
+            &packages,
+            limits.model,
+            &provisions,
+            &selected,
+            ObservationLimits::default(),
+        )
+        .expect("actual call object environment");
+        let [native] = objects.references() else {
+            panic!("one admitted reference");
+        };
+        let call = crate::spine::Call::new(
+            "keep".to_owned(),
+            vec![crate::spine::CallArgument {
+                parameter: "x".to_owned(),
+                value: filament_exact::Value::Reference(native.clone()),
+            }],
+            crate::spine::default_accounting(1_000_000),
+            filament_semantic_value::supplied_stop::SuppliedLimits::default(),
+        );
+        let cancel = Cancel::new();
+        let outcome = crate::spine::run_compiled(
+            &compiled.checked,
+            &compiled.models,
+            crate::spine::CallSources {
+                package_name: checked.graph().package_name(),
+                packages: &packages,
+                model_limits: limits.model,
+            },
+            &call,
+            &objects,
+            &SuppliedBackends::default(),
+            &PrepareLimits::default(),
+            &cancel,
+        )
+        .expect("direct checked function execution");
+        let crate::spine::CallOutcome::Completed(crate::spine::CallValue::Reference(result)) =
+            outcome
+        else {
+            panic!("a reference-valued completed call");
+        };
+        assert_eq!(&result, native);
+        let mut join_budget = NativeJoinBudget::new(1_000_000, 1_000_000);
+        let catalog = ReferenceCatalog::from_checked_call(checked, models, &mut join_budget)
+            .expect("genuine checked call catalog");
+        assert!(catalog.package().is_none());
+        assert!(catalog.model().is_none());
+        let codec = ReferenceCodec::for_checked_call(&catalog, checked, models, &objects).unwrap();
+        let mut storage = Budget::new(1_000_000, 1_000_000);
+        // An erased core work/storage budget cannot be downcast to a model
+        // simulation/restoration budget. This is the actual call adapter API.
+        let budget: &mut dyn IntegerDecimalBudget = &mut storage;
+        let wire = codec
+            .encode_reference(&result, budget, &cancel, 64)
+            .unwrap();
+        assert_eq!(wire["identity"], "e99baa63616c6c");
+        assert_eq!(
+            codec.restore_reference(&wire, budget, &cancel, 64).unwrap(),
+            result
+        );
+        let foreign: SelectedModels = models.clone();
+        assert!(matches!(
+            ReferenceCodec::for_checked_call(&catalog, checked, &foreign, &objects),
+            Err(ReferenceCodecError::Refused {
+                reason: ReferenceFailure::ForeignCatalog,
+                ..
+            })
+        ));
+        let mut denied = Budget::new(0, 1_000_000);
+        assert!(matches!(
+            codec.encode_reference(native, &mut denied, &cancel, 64),
+            Err(ReferenceCodecError::Key {
+                source: ModelKeyError::Denied,
+                ..
+            })
+        ));
+        assert_eq!(denied.storage_used, 0);
     }
 
     /// Trace: FSpec-FR-181

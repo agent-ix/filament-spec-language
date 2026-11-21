@@ -633,7 +633,12 @@ impl EffectiveView {
             .and_then(|index| self.body.universes.get(*index))
     }
 
-    pub(crate) fn object_universe_with_work<E>(
+    /// Borrow a declared object's universe with admission before every lookup
+    /// visit and complete declaration-key comparison.
+    ///
+    /// # Errors
+    /// Returns the caller's first work refusal unchanged.
+    pub fn object_universe_with_work<E>(
         &self,
         type_key: &DeclarationKey,
         work: &mut impl FnMut(u64) -> Result<(), E>,
