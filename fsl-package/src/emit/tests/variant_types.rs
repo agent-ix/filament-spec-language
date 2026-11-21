@@ -795,7 +795,10 @@ fn model_enum_carrier_refuses_missing_repeated_foreign_and_conflicting_evidence(
                     .unwrap()
                     .push(row);
             }
-            "rank" => changed["model_enum_shapes"][0]["shape"]["ordered"] = json!(true),
+            "rank" => changed["model_enum_shapes"][0]["shape"]["variants"]
+                .as_array_mut()
+                .unwrap()
+                .reverse(),
             "case_order" => changed["model_enum_shapes"][0]["cases"]
                 .as_array_mut()
                 .unwrap()

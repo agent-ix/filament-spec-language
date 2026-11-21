@@ -26,10 +26,21 @@ pub(super) struct SourceTupleJson {
 #[serde(deny_unknown_fields)]
 struct TuplePositionJson {
     ordinal: u64,
+    #[serde(deserialize_with = "required_optional")]
     type_node: Option<CheckedNodeId>,
+    #[serde(deserialize_with = "required_optional")]
     value_type: Option<OriginalValueType>,
+    #[serde(deserialize_with = "required_optional")]
     member_type: Option<String>,
     collections: Vec<ClockCollectionLayerJson>,
+}
+
+fn required_optional<'de, D, T>(deserializer: D) -> Result<Option<T>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: Deserialize<'de>,
+{
+    Option::<T>::deserialize(deserializer)
 }
 
 impl SourceTupleJson {

@@ -154,8 +154,7 @@ impl ShapeJson {
             node_key: OriginalNodeKey::of(&row.node_key).map_err(|_| malformed())?,
             selected_document: row.selected_document.to_string(),
             original_identity: row.original_identity.to_string(),
-            shape: OriginalValueType::of(&ValueType::Enum(row.shape.clone()))
-                .map_err(|_| malformed())?,
+            shape: OriginalValueType::of_enum_shape(&row.shape).map_err(|_| malformed())?,
             cases: row
                 .cases
                 .iter()
@@ -178,9 +177,11 @@ impl ShapeJson {
     }
 
     pub(super) fn row(self) -> Result<SelectedModelEnumShapeRow, IdentityFileRefusal> {
-        let ValueType::Enum(shape) = self.shape.value().map_err(|_| malformed())? else {
+        let mut value_type = self.shape.value().map_err(|_| malformed())?;
+        let ValueType::Enum(shape) = &mut value_type else {
             return Err(malformed());
         };
+        let shape = std::mem::replace(shape, filament_exact::EnumShape::new(false, []));
         Ok(SelectedModelEnumShapeRow {
             structural_node: self.structural_node,
             node_key: self.node_key.key().map_err(|_| malformed())?,

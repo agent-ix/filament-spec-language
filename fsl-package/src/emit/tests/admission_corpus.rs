@@ -991,6 +991,7 @@ fn a_terminal_object_type_target_has_the_same_native_refusal_on_both_routes() {
         .iter()
         .position(|node| node["node_tag"] == "temporal" && node["semantic_form"] == "terminal")
         .expect("the terminal node");
+    let graph = WireGraph::of_package_value(&wire).expect("structural graph");
     let terminal = &mut wire["semantic_graph"]["nodes"][position];
     assert_eq!(terminal["body"]["members"][0]["name"], "model");
     let model = terminal["body"]["members"][0]["value"]["target"].clone();
@@ -1002,6 +1003,14 @@ fn a_terminal_object_type_target_has_the_same_native_refusal_on_both_routes() {
     if !dependencies.contains(&object) {
         dependencies.push(object);
     }
+    dependencies.sort_by_key(|dependency| {
+        graph
+            .key_in_row(
+                position,
+                &serde_json::from_value(dependency.clone()).expect("typed id"),
+            )
+            .expect("local node")
+    });
     let bytes = jcs(&wire);
     let bare =
         read_bytes(&emitted, &bytes).expect_err("object_type is not a terminal model target");
@@ -1034,7 +1043,8 @@ fn a_terminal_object_type_target_has_the_same_native_refusal_on_both_routes() {
         crate::EmitLimits::fixture(),
         crate::SourceWitnessSupplier::new(&emitted.emission),
     )
-    .expect_err("source-backed admission uses the same reader");
+    .err()
+    .expect("source-backed admission uses the same reader");
     let crate::ImportViewRefusal::Read { refusal, .. } = source else {
         panic!("the native reader must own source-backed refusal");
     };

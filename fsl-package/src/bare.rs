@@ -551,7 +551,7 @@ impl<'p> BarePackage<'p> {
 
 /// The selected model identity rows of one package, read from its
 /// `identities.json` (FR-390, FR-531).
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Debug, Eq, PartialEq)]
 pub struct ReadIdentityRows {
     package: String,
     declarations: Vec<SelectedExactDeclarationRow>,
