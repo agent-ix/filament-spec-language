@@ -51,3 +51,11 @@ Examined and found sound:
 ## Verdict
 
 The oracle changes are normatively justified and do not weaken either test: Test 1 is strengthened from a single representative to the FR-241/FR-899 total-loop property, and Test 2's strict Holds follows from the fixture under FR-899. FND-001 (a rustfmt regression from the import removal) must be fixed before merge.
+
+## Dispositions
+
+Round 1: head 84b94fb546bb0314a4251f310d7f2c85ab83a938, rebased onto origin/main dab8c60624b4427e2290efe7ebaa3827f5ae0842. Against ae223c69996b7e55c15d826976397b47469f5764, the two test files differ only by the three-line re-wrap of the zone_check import list, so the test bodies are unchanged. Main changed neither file between abcb1c5ad45882b9100e1a917ef3ccbb23f32d86 and dab8c60624b4427e2290efe7ebaa3827f5ae0842. `rustfmt --check --edition 2021` is clean on both files at the new head. The committed reviews/qsl-2243-main-reds-code-review.md is byte-identical to this SR's review-pass version. Titan ran the two tests at ae223c69996b7e55c15d826976397b47469f5764 (rc 0: 2 passed, 0 failed, 0 ignored). No runtime was run at 84b94fb546bb0314a4251f310d7f2c85ab83a938, and none is claimed.
+
+| FND | Outcome | Reason |
+| --- | --- | --- |
+| FND-001 | fixed | The import list is re-wrapped to rustfmt's layout and `rustfmt --check` is clean at 84b94fb546bb0314a4251f310d7f2c85ab83a938 |
