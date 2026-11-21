@@ -171,7 +171,7 @@ fn returned_undefined_and_actual_state_limit_runs_settle_without_invented_outcom
 const CHOOSING_INC: &str = "pre CanInc using v on M::Counter::inc { self.value < 3 }\n\
      post Inc using v on M::Counter::inc { self.value - pre(self.value) = 1 or self.value - pre(self.value) = 2 }\n";
 
-#[trace("FR-128-AC-3")]
+#[trace("FR-128-AC-1")]
 #[test]
 fn a_recorded_post_state_selects_among_the_successors_of_one_transition_identity() {
     let case = case(CHOOSING_INC, &[1]);
@@ -197,5 +197,22 @@ fn a_recorded_post_state_selects_among_the_successors_of_one_transition_identity
     let mut chosen = returned;
     chosen.prefix[0].post_state = other;
     let result = replay(&case, chosen).expect("the other recorded successor is chosen");
-    assert_ne!(result.settlement, taken.settlement);
+    assert!(
+        matches!(
+            taken.settlement,
+            ModelTraceSettlement::Reproduced {
+                value: ModelTraceValue::Truth(false),
+                ..
+            }
+        ),
+        "{:?}",
+        taken.settlement
+    );
+    // Value 2 still enables `inc`, so the deadlock claim disagrees there: the
+    // replay reached the other successor rather than refusing the key.
+    assert!(
+        matches!(result.settlement, ModelTraceSettlement::Inconclusive(_)),
+        "{:?}",
+        result.settlement
+    );
 }
