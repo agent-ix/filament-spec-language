@@ -7367,6 +7367,21 @@ fn emit_package_inner(
             profile_selections.push(selection);
         }
     }
+    // A finite trace-set clause writes no profile law on its node, so the lock
+    // selects its profile here for the clause's clock binding to resolve.
+    for hyper in graph.finite_hyper_clauses() {
+        let profile = hyper.profile();
+        if !profile.is_bounded() {
+            continue;
+        }
+        let selection = CheckedSelection {
+            role: CheckedSelectionRole::TemporalProfile,
+            definition: profile_definition(profile),
+        };
+        if !profile_selections.contains(&selection) {
+            profile_selections.push(selection);
+        }
+    }
     // The IEEE trigger includes a declared float with no IEEE application.
     // Keep the selected, admitted policy even when no node needs its law.
     if let Some(profile) = graph.scope().ieee_profile_selection() {
@@ -8853,6 +8868,11 @@ fn claim_name_rows(
             .ok_or(EmitRefusal::SourceMapInvariant)?;
         sites.push((occurrence.clone(), hyper.name(), hyper.span()));
     }
+    // A finite-trace hyper clause is likewise one `hyperproperty` claim node.
+    for hyper in graph.finite_hyper_clauses() {
+        let occurrence = hyper.occurrence().ok_or(EmitRefusal::SourceMapInvariant)?;
+        sites.push((occurrence.clone(), hyper.name(), hyper.span()));
+    }
     // The other occurrences one declaration introduces (a step relation's
     // `declaration` occurrence, a derived conjunction's `claim` occurrence
     // per contributing clause) are recorded at that declaration's own
@@ -9203,6 +9223,65 @@ fn temporal_binding_rows(
                 trace: Some(quantifier.variable.as_str().into()),
             };
             keyed.rows.push((occurrence.node().clone(), row.clone()));
+            rows.push(row);
+        }
+    }
+
+    for hyper in graph.finite_hyper_clauses() {
+        let profile = hyper.profile();
+        if !matches!(
+            profile,
+            TemporalProfile::EventPositionFalseExtension
+                | TemporalProfile::FixedSampleFalseExtension
+                | TemporalProfile::TimestampedEventFiniteWindow
+        ) {
+            continue;
+        }
+        let identity = hyper
+            .identity()
+            .ok_or(EmitRefusal::SourceMapInvariant)?
+            .clone();
+        let occurrence = hyper.occurrence().ok_or(EmitRefusal::SourceMapInvariant)?;
+        let location = graph
+            .occurrence(occurrence.node().clone(), occurrence.origin())
+            .ok_or(EmitRefusal::SourceMapInvariant)?;
+        let region = graph
+            .region(location)
+            .ok_or(EmitRefusal::SourceMapInvariant)?;
+        let source = region.source().clone();
+        let span = hyper.span();
+        let key = (source.clone(), span.start, span.end, None);
+        let Some(selection) = selected.remove(&key) else {
+            missing.push((
+                MissingClockKind::Other,
+                source,
+                span,
+                format!("bounded temporal rule `{}`", hyper.name()),
+            ));
+            continue;
+        };
+        check_selected_definition(&source, span, profile, selection)?;
+        let clock = &selection.clock;
+        let clock_name = hyper.domain_clock();
+        validate_temporal_clock(&source, span, clock_name, clock)?;
+        let declaration = emitted_node_ids
+            .get(&identity)
+            .cloned()
+            .ok_or(EmitRefusal::SourceMapInvariant)?;
+        let claim_ordinal = occurrence.origin().ordinal();
+        keyed
+            .declarations
+            .push((identity.clone(), claim_ordinal, declaration.clone()));
+        for quantifier in hyper.quantifiers() {
+            let row = filament_contract_model::TemporalBinding {
+                declaration: declaration.clone(),
+                occurrence: claim_ordinal,
+                clock_name: clock_name.into(),
+                clock: clock.clone(),
+                source_unit: None,
+                trace: Some(quantifier.variable.clone().into()),
+            };
+            keyed.rows.push((identity.clone(), row.clone()));
             rows.push(row);
         }
     }

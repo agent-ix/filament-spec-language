@@ -619,10 +619,6 @@ pub enum UnavailabilityCause {
         /// FSL's own; the FSpec FR-331 wire locus stays `{node, occurrence}`.
         member: Option<fsl_semantics::check::ClaimMemberPath>,
     },
-    /// ADR-020 AX-5: a refinement with a hidden abstract field and a
-    /// non-empty `F_A` has no liveness half to decide. Wire cause
-    /// `unsupported_projection`/`unsupported-requested-capability`.
-    HiddenFieldLiveness,
     /// ADR-023 section 3, FR-173: a hyper clause S3 classified into HP-4
     /// has no construction, so negotiation settles it without an engine run.
     /// Wire cause `unsupported_projection`/`unsupported-requested-capability`.
@@ -632,10 +628,6 @@ pub enum UnavailabilityCause {
     },
     /// FR-182 V-8: an SMT hyper encoding is outside its supported fragment.
     UnsupportedSmtFragment,
-    /// A refinement with a strong constraint in `F_A`, whose liveness half
-    /// the second phase does not decide: it reads a class as weak. Wire cause
-    /// `unsupported_projection`/`unsupported-requested-capability`.
-    StrongAbstractFairness,
     /// FR-192: a drawn step of an EN-4 run broke the Markov condition
     /// (ADR-024 PM-3). Wire cause `not-markov`.
     NotMarkov,
@@ -775,10 +767,8 @@ impl UnavailabilityCause {
                 .cause(),
             Self::MissingFairnessPremise { .. } => "missing-fairness-premise",
             Self::UnsupportedReduction { .. }
-            | Self::HiddenFieldLiveness
             | Self::UnsupportedHyperForm { .. }
             | Self::UnsupportedSmtFragment
-            | Self::StrongAbstractFairness
             | Self::StatisticalRequest(_) => NegotiationOutcome::UnsupportedRequestedCapability
                 .code()
                 .cause(),
@@ -825,10 +815,8 @@ impl UnavailabilityCause {
             Self::MissingFairnessPremise { .. }
             | Self::HybridProviderAbsent
             | Self::UnsupportedReduction { .. }
-            | Self::HiddenFieldLiveness
             | Self::UnsupportedHyperForm { .. }
             | Self::UnsupportedSmtFragment
-            | Self::StrongAbstractFairness
             | Self::StatisticalRequest(_)
             | Self::ValueCheck { .. }
             | Self::ContractCheck { .. }
@@ -1788,6 +1776,16 @@ impl TerminalRecord {
         request_index: RequestIndex,
         backend: BackendId,
         _reproduced: &crate::contract_check::ReproducedContractViolation,
+    ) -> Self {
+        Self::with_backend(request_index, backend, TerminalValue::Refuted)
+    }
+
+    /// FR-898: a finite-hyperproperty refutation whose population and exact
+    /// trace-pair witness were reproduced by the checked body.
+    pub fn refuted_by_finite_hyper(
+        request_index: RequestIndex,
+        backend: BackendId,
+        _reproduced: &crate::ReproducedFiniteHyperRefutation,
     ) -> Self {
         Self::with_backend(request_index, backend, TerminalValue::Refuted)
     }

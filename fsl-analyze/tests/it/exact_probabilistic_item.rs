@@ -12,6 +12,7 @@ use fsl_eval::simulation::model::ModelSystem;
 use fsl_eval::simulation::{Limits, TransitionSystem};
 use fsl_foundation::RequestIndex;
 use fsl_replay::InconclusiveCause;
+use fsl_replay::ProbabilityCertificateDocument;
 use fsl_replay::{
     claim_binding, Certification, ExactOrBounds, ExactProbabilityCertificateCheck,
     ExactProbabilityGraphError, Extremum, IncompleteCause, ModelCheckLimit, ModelCheckLimits,
@@ -627,9 +628,8 @@ fn p95_settles_proved_with_its_exact_value() {
 /// FR-203-AC-5 (TC-641): FR-196-AC-5's `Coin` refutation, a claim read
 /// undefined (`absent-key`) at a state of positive probability, settles
 /// `refuted` with its replayed undefined path, whatever the threshold.
-#[trace("TC-641", "FR-203-AC-5")]
+#[trace("TC-641", "FR-203-AC-5", "TC-3153", "FR-202-AC-5", "FR-202-AC-24")]
 #[test]
-#[ignore = "QSL-2158: FR-202 (checked-subject undefined-evaluation witness entry) not implemented yet"]
 fn an_undefined_evaluation_settles_refuted_whatever_the_threshold() {
     for threshold in ["0.5", "0.01"] {
         let claim = format!(
@@ -653,4 +653,665 @@ fn an_undefined_evaluation_settles_refuted_whatever_the_threshold() {
             "{text}"
         );
     }
+}
+
+fn undefined_evidence(world: &World, claim: &str) -> fsl_replay::ProbabilityUndefinedWitness {
+    let record = settle(world, claim, ModelCheckLimits::default());
+    assert_eq!(
+        record.terminal().expect("terminal").value(),
+        &TerminalValue::Refuted
+    );
+    let found = record
+        .probabilistic_counterexample
+        .expect("reproduced evidence");
+    assert_eq!(
+        found.wire.as_ref().expect("wire")["evidence"]["type"],
+        "undefined-path"
+    );
+    use base64::Engine;
+    let witness = found.found.undefined().expect("undefined token");
+    assert_eq!(
+        found.wire.as_ref().unwrap()["evidence"]["undefined"]["where"]["product_state"]["key"],
+        base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(witness.product_state.as_bytes())
+    );
+    witness.clone()
+}
+
+#[trace("TC-3153", "FR-202-AC-5", "FR-202-AC-24")]
+#[test]
+fn undefined_replay_checks_first_read_location_control_and_package_ownership() {
+    use fsl_replay::{
+        replay_probabilistic_undefined, ProbabilityWitnessError, ProbabilityWitnessReplay,
+    };
+    let claims = "probabilistic Open using ev on M over (c: M::Coin) under Even on origin \
+        { probability >= 0.5 [ always[0,3] holds(c.v = 0) ] }\n\
+        probabilistic Decided using ev on M over (c: M::Coin) under Even on origin \
+        { probability >= 0.5 [ always[0,3] holds(c.v = 1) ] }";
+    let world = World::new(&prob_world::coin(claims));
+    let system = ModelSystem::new(world.subject().simulation).unwrap();
+    let witness = undefined_evidence(&world, "Open");
+    let limits = world.request("Open", ModelCheckLimits::default()).limits;
+    let replay = |witness: &fsl_replay::ProbabilityUndefinedWitness| {
+        replay_probabilistic_undefined(
+            &world.package,
+            &system,
+            &witness.path.item,
+            witness,
+            &limits,
+            &Cancel::new(),
+        )
+    };
+    assert!(matches!(
+        replay(&witness),
+        Ok(ProbabilityWitnessReplay::Reproduced(_))
+    ));
+    assert_eq!(witness.evaluation.site.position, 1);
+    let mut forged = witness.clone();
+    forged.evaluation.site.position = 0;
+    assert!(matches!(
+        replay(&forged),
+        Ok(ProbabilityWitnessReplay::Parity)
+    ));
+    let mut forged = witness.clone();
+    forged.evaluation.cause =
+        fsl_eval::temporal::UndefinedCause::Kernel(filament_exact::Undefined::DivisionByZero);
+    assert!(matches!(
+        replay(&forged),
+        Ok(ProbabilityWitnessReplay::Parity)
+    ));
+    let mut forged = witness.clone();
+    forged.product_state = forged.path.initial_key.clone();
+    assert!(matches!(
+        replay(&forged),
+        Ok(ProbabilityWitnessReplay::Parity)
+    ));
+    let mut forged = witness.clone();
+    forged.evaluation.site.locus =
+        fsl_replay::UndefinedLocus::ClaimPredicate(fsl_replay::ClaimPredicate::Target);
+    assert!(matches!(
+        replay(&forged),
+        Ok(ProbabilityWitnessReplay::Parity)
+    ));
+    let other = World::new(&prob_world::coin(claims));
+    assert!(matches!(
+        replay_probabilistic_undefined(
+            &other.package,
+            &system,
+            &witness.path.item,
+            &witness,
+            &limits,
+            &Cancel::new()
+        ),
+        Err(ProbabilityWitnessError::Refused)
+    ));
+    let wrong_item = fsl_replay::probabilistic_claim_identity(world.claim("Decided")).unwrap();
+    assert!(matches!(
+        replay_probabilistic_undefined(
+            &world.package,
+            &system,
+            &wrong_item,
+            &witness,
+            &limits,
+            &Cancel::new()
+        ),
+        Err(ProbabilityWitnessError::Refused)
+    ));
+}
+
+#[trace("TC-3153", "FR-202-AC-25", "FR-202-AC-26")]
+#[test]
+fn undefined_replay_distinguishes_workload_repeated_keys_and_scheduler_choices() {
+    use fsl_eval::simulation::model::TransitionId;
+    use fsl_replay::{
+        replay_probabilistic_undefined, ProbabilityWitnessError, ProbabilityWitnessReplay,
+    };
+    let claims = "probabilistic Work using inf on M over (c: M::Coin) under Even on origin \
+        { probability >= 0.5 [ eventually holds(c.v = 1) ] }\n\
+        probabilistic Every using inf on M over (c: M::Coin) under every scheduler on origin \
+        { probability >= 0.5 [ eventually holds(c.v = 1) ] }\n\
+        probabilistic Bounded using ev on M over (c: M::Coin) under every scheduler on origin \
+        { probability >= 0.5 [ always[0,3] holds(c.v = 0) ] }";
+    let mut model = prob_world::coin(claims);
+    model.operations.push(prob_world::Operation {
+        name: "keep",
+        parameters: vec![],
+        modifies: vec![],
+        deletes: false,
+    });
+    // Zero weight admits keep without changing the workload's drop probability.
+    model.body = model.body.replace(
+        "weight Coin::drop = 1;",
+        "weight Coin::drop = 1; weight Coin::keep = 0;",
+    );
+    let world = World::new(&model);
+    let system = ModelSystem::new(world.subject().simulation).unwrap();
+    let mut workload = undefined_evidence(&world, "Work");
+    let every = undefined_evidence(&world, "Every");
+    let bounded = undefined_evidence(&world, "Bounded");
+    let pre_read: serde_json::Value =
+        serde_json::from_slice(every.product_state.as_bytes()).unwrap();
+    assert!(pre_read[5].is_null(), "unbounded monitor is null");
+    assert!(pre_read[6].is_null(), "unbounded accumulator is null");
+    let limits = world.request("Work", ModelCheckLimits::default()).limits;
+    let initial = system.initial().remove(0);
+    let workload_decl = system.input().probabilistic.workload("Even").unwrap();
+    let returning = system.weighted_steps_with_cancel(&initial, workload_decl, &Cancel::new()).unwrap().unwrap().into_iter().find(|step| matches!(step.random.as_slice(), [filament_exact::Value::Integer(value)] if value == &Integer::from(1_i64))).unwrap();
+    let TransitionId::Operation(transition) = returning.transition else {
+        panic!("operation");
+    };
+    let action = returning.identity.unwrap();
+    let first = fsl_replay::ProbabilityWitnessStep {
+        choice: fsl_replay::ProductAction::Identity(
+            fsl_replay::Schedule::of(&system, &action).unwrap(),
+        ),
+        action: Some(action),
+        transition: Some(transition),
+        draw: Some(returning.random),
+        post: returning.post,
+        post_key: workload.path.initial_key.clone(),
+        elapsed: ratio(0, 1),
+    };
+    workload.path.paths[0].steps.insert(0, first);
+    workload.evaluation.site.position = 2;
+    let replay = |witness: &fsl_replay::ProbabilityUndefinedWitness| {
+        replay_probabilistic_undefined(
+            &world.package,
+            &system,
+            &witness.path.item,
+            witness,
+            &limits,
+            &Cancel::new(),
+        )
+    };
+    let Ok(ProbabilityWitnessReplay::Reproduced(token)) = replay(&workload) else {
+        panic!("workload permits the returning key");
+    };
+    assert_eq!(token.mass(), &ratio(1, 4));
+    let mut repeated = workload;
+    repeated.path.item = every.path.item.clone();
+    repeated.path.scheduler = every.path.scheduler.clone();
+    assert!(matches!(
+        replay(&repeated),
+        Ok(ProbabilityWitnessReplay::Parity)
+    ));
+    let keep = system
+        .actions_with_cancel(&initial, &Cancel::new())
+        .unwrap()
+        .unwrap()
+        .into_iter()
+        .find(|action| action.identity.operation.contains("keep"))
+        .unwrap();
+    for name in ["Every", "Bounded"] {
+        let choice = fsl_replay::ProductAction::Identity(
+            fsl_replay::Schedule::of(&system, &keep.identity).unwrap(),
+        );
+        let item = fsl_analyze::analyze::exact_probabilistic_item_witness_tampered(
+            RequestIndex::new(0),
+            world.request(name, ModelCheckLimits::default()),
+            move |path| {
+                path.scheduler[0].1 = choice.clone();
+            },
+        );
+        let record = analyze_items(&Engines::fsl().unwrap(), vec![item], &Cancel::new()).remove(0);
+        assert_eq!(
+            record.terminal().unwrap().value(),
+            &TerminalValue::Inconclusive(InconclusiveCause::ReplayRefused(
+                fsl_foundation::diagnostic::Code::InvalidRuntimeInput
+            ))
+        );
+        assert!(record.probabilistic_counterexample.is_none());
+    }
+    for mut wrong in [every.clone(), bounded] {
+        wrong.path.scheduler[0].1 = fsl_replay::ProductAction::Identity(
+            fsl_replay::Schedule::of(&system, &keep.identity).unwrap(),
+        );
+        assert!(matches!(
+            replay(&wrong),
+            Err(ProbabilityWitnessError::Refused)
+        ));
+    }
+    let own_item = fsl_replay::probabilistic_claim_identity(world.claim("Work")).unwrap();
+    assert!(TerminalRecord::refuted_by_probability_witness(
+        RequestIndex::new(0),
+        fsl_foundation::BackendId::new("en-5"),
+        &own_item,
+        &token
+    )
+    .is_some());
+    let other_item = fsl_replay::probabilistic_claim_identity(world.claim("Every")).unwrap();
+    assert!(TerminalRecord::refuted_by_probability_witness(
+        RequestIndex::new(0),
+        fsl_foundation::BackendId::new("en-5"),
+        &other_item,
+        &token
+    )
+    .is_none());
+}
+
+#[trace("TC-3153", "FR-202-AC-26")]
+#[test]
+fn undefined_replay_preserves_limits_and_cancellation_at_the_final_poll() {
+    use fsl_replay::{
+        replay_probabilistic_undefined, ProbabilityWitnessError, ProbabilityWitnessReplay,
+    };
+    let claim = "probabilistic Dropped using ev on M over (c: M::Coin) under Even on origin \
+        { probability >= 0.5 [ always[0,3] holds(c.v = 0) ] }";
+    let world = World::new(&prob_world::coin(claim));
+    let system = ModelSystem::new(world.subject().simulation).unwrap();
+    let witness = undefined_evidence(&world, "Dropped");
+    let limits = world.request("Dropped", ModelCheckLimits::default()).limits;
+    let mut key_meter = filament_exact::Meter::new(filament_exact::ScalarLimits {
+        work_units: 0,
+        ..prob_world::UNLIMITED
+    });
+    let exhausted = key_meter
+        .charge(filament_exact::Charge::new(
+            filament_exact::ChargePoint::CollectionMemberTest,
+        ))
+        .unwrap_err();
+    assert!(matches!(
+        ProbabilityWitnessError::from(fsl_replay::ProbabilityDocumentError::Accounting(Box::new(
+            exhausted
+        ))),
+        ProbabilityWitnessError::Limit {
+            limit: ModelCheckLimit::EvaluationMeter { .. },
+            value: 0
+        }
+    ));
+    for budget in ["work", "expansion", "storage", "paths"] {
+        let mut request = world.request("Dropped", ModelCheckLimits::default());
+        match budget {
+            "work" => request.subject.simulation.meter.work_units = 0,
+            "expansion" => request.subject.simulation.expansion.max_candidates = 0,
+            "storage" => request.limits.document.storage_bytes = 0,
+            "paths" => request.limits.max_witness_paths = 0,
+            _ => unreachable!(),
+        }
+        let record = analyze_items(
+            &Engines::fsl().unwrap(),
+            vec![exact_probabilistic_item(RequestIndex::new(0), request)],
+            &Cancel::new(),
+        )
+        .remove(0);
+        assert!(
+            matches!(
+                record.terminal().expect("stopped terminal").value(),
+                TerminalValue::Incomplete(IncompleteCause::LimitReached { .. })
+            ),
+            "{budget}: {record:?}"
+        );
+        assert!(record.probabilistic_counterexample.is_none(), "{budget}");
+        assert!(record.exact_probabilistic.is_none(), "{budget}");
+    }
+    for budget in ["work", "expansion"] {
+        let mut simulation = world.subject().simulation;
+        match budget {
+            "work" => simulation.meter.work_units = 0,
+            "expansion" => simulation.expansion.max_candidates = 0,
+            _ => unreachable!(),
+        }
+        let meter = simulation.meter;
+        let expansion = simulation.expansion;
+        let replay_system = ModelSystem::new(simulation)
+            .expect("limited replay subject admits without rebuilding evidence");
+        let error = replay_probabilistic_undefined(
+            &world.package,
+            &replay_system,
+            &witness.path.item,
+            &witness,
+            &limits,
+            &Cancel::new(),
+        )
+        .expect_err("native replay must exhaust its own budget");
+        let ProbabilityWitnessError::Build(issue) = error else {
+            panic!("expected typed replay exhaustion, got {error:?}");
+        };
+        let settled = fsl_replay::settle_exact_prob_build_issue(
+            &issue,
+            fsl_replay::statistical::SubjectLimits {
+                expansion,
+                meter: &meter,
+            },
+        );
+        assert!(
+            matches!(
+                (budget, settled.value()),
+                (
+                    "work",
+                    TerminalValue::Incomplete(IncompleteCause::LimitReached {
+                        limit: ModelCheckLimit::EvaluationMeter { .. },
+                        value: 0
+                    })
+                ) | (
+                    "expansion",
+                    TerminalValue::Incomplete(IncompleteCause::LimitReached {
+                        limit: ModelCheckLimit::MaxCandidates,
+                        value: 0
+                    })
+                )
+            ),
+            "{budget}: {settled:?}"
+        );
+    }
+    let run = |limits: &fsl_analyze::exact_probabilistic::ExactProbLimits, cancel: &Cancel| {
+        replay_probabilistic_undefined(
+            &world.package,
+            &system,
+            &witness.path.item,
+            &witness,
+            limits,
+            cancel,
+        )
+    };
+    let mut stopped = limits;
+    stopped.model.limits.max_states = 0;
+    assert!(matches!(
+        run(&stopped, &Cancel::new()),
+        Err(ProbabilityWitnessError::Graph(
+            ExactProbabilityGraphError::LimitReached
+        ))
+    ));
+    let mut stopped = limits;
+    stopped.model.limits.max_transitions = 0;
+    assert!(matches!(
+        run(&stopped, &Cancel::new()),
+        Err(ProbabilityWitnessError::Graph(
+            ExactProbabilityGraphError::EdgeLimitReached
+        ))
+    ));
+    let mut stopped = limits;
+    stopped.document.storage_bytes = 0;
+    assert!(matches!(
+        run(&stopped, &Cancel::new()),
+        Err(ProbabilityWitnessError::Limit {
+            limit: ModelCheckLimit::CertificateMaxWorkingBytes,
+            value: 0
+        })
+    ));
+    let polls = Arc::new(AtomicU32::new(0));
+    let count = Arc::clone(&polls);
+    let counting = Cancel::observing(move || {
+        count.fetch_add(1, Ordering::Relaxed);
+    });
+    assert!(matches!(
+        run(&limits, &counting),
+        Ok(ProbabilityWitnessReplay::Reproduced(_))
+    ));
+    let final_poll = polls.load(Ordering::Relaxed);
+    assert!(final_poll > 0);
+    for cause in [CancelCause::Requested, CancelCause::Deadline] {
+        let cancelled = Cancel::new();
+        cancelled.cancel(cause);
+        assert!(
+            matches!(run(&limits, &cancelled), Err(ProbabilityWitnessError::Graph(ExactProbabilityGraphError::Cancelled(found))) if found == cause)
+        );
+        let slot = Arc::new(OnceLock::<Cancel>::new());
+        let weak = Arc::downgrade(&slot);
+        let seen = Arc::new(AtomicU32::new(0));
+        let count = Arc::clone(&seen);
+        let cancel = Cancel::observing(move || {
+            if count.fetch_add(1, Ordering::Relaxed) + 1 == final_poll {
+                weak.upgrade().unwrap().get().unwrap().cancel(cause);
+            }
+        });
+        slot.set(cancel.clone()).unwrap();
+        assert!(
+            matches!(run(&limits, &cancel), Err(ProbabilityWitnessError::Graph(ExactProbabilityGraphError::Cancelled(found))) if found == cause)
+        );
+    }
+}
+
+/// Rebuild every offered key under the actual checked claim, deliberately
+/// continuing even after its monitor decides to forge an adversarial path.
+fn rekey_undefined(
+    world: &World,
+    name: &str,
+    witness: &mut fsl_replay::ProbabilityUndefinedWitness,
+) {
+    use fsl_eval::automaton::QualifiedBoundedMonitor;
+    use fsl_eval::simulation::model::PredicateReading;
+    use fsl_semantics::check::{Event, ProbForm};
+    let system = ModelSystem::new(world.subject().simulation).unwrap();
+    let claim = world.claim(name);
+    witness.path.item = fsl_replay::probabilistic_claim_identity(claim).unwrap();
+    let binding = claim_binding(&system, claim).unwrap();
+    let reference = binding.as_ref().map(|b| &b.reference);
+    let context = fsl_replay::probabilistic_formula_monitor_context(claim, reference).unwrap();
+    let ProbForm::Probability {
+        event: Event::Formula { formula, .. },
+        ..
+    } = &claim.form
+    else {
+        panic!("bounded formula");
+    };
+    let mut monitor =
+        QualifiedBoundedMonitor::for_observations(formula.formula(), &context, 100).unwrap();
+    let predicate = formula.condition(monitor.atom().index()).unwrap();
+    witness.evaluation.site.locus = fsl_replay::UndefinedLocus::Atom(monitor.atom());
+    let mut control = None;
+    for position in 0..=witness.path.paths[0].steps.len() {
+        let state = if position == 0 {
+            &witness.path.initial
+        } else {
+            &witness.path.paths[0].steps[position - 1].post
+        };
+        let readings = system
+            .state_predicates_with_cancel(state, &[(predicate, reference)], &Cancel::new())
+            .unwrap();
+        match readings.as_slice() {
+            [PredicateReading::True] | [PredicateReading::False] => {
+                let truth = matches!(readings[0], PredicateReading::True);
+                control = Some(
+                    match control {
+                        None => monitor.start(truth),
+                        Some(before) => monitor.step(before, truth),
+                    }
+                    .unwrap(),
+                );
+            }
+            [PredicateReading::Undefined { cause, .. }] => {
+                witness.evaluation.cause = cause.clone();
+            }
+            other => panic!("unexpected letter: {other:?}"),
+        }
+        let monitor_key = match control {
+            Some(control) => monitor.key(control),
+            None => monitor.unread_key(),
+        }
+        .unwrap();
+        let raw = system.state_key(state).unwrap().0;
+        let key = ProbabilityProductKey::for_formula_state(
+            reference,
+            &raw,
+            &monitor_key,
+            fsl_replay::ProbabilityDocumentIoLimits::default(),
+            &Cancel::new(),
+        )
+        .unwrap();
+        if position == 0 {
+            witness.path.initial_key = key.clone();
+        } else {
+            witness.path.paths[0].steps[position - 1].post_key = key.clone();
+        }
+        witness.product_state = key;
+    }
+}
+
+#[trace("TC-3153", "FR-202-AC-24")]
+#[test]
+fn undefined_replay_stops_at_decisions_with_matching_claim_keys() {
+    use fsl_replay::{replay_probabilistic_undefined, ProbabilityWitnessReplay};
+    let claims = "probabilistic Open using ev on M over (c: M::Coin) under Even on origin { probability >= 0.5 [ always[0,3] holds(c.armed or not c.armed) ] }\n\
+        probabilistic Initial using ev on M over (c: M::Coin) under Even on origin { probability >= 0.5 [ always[0,3] holds(c.armed) ] }\n\
+        probabilistic Later using ev on M over (c: M::Coin) under Even on origin { probability >= 0.5 [ always[0,3] holds(not c.armed) ] }";
+    let world = World::new(&prob_world::armed_coin(claims));
+    let witness = undefined_evidence(&world, "Open");
+    assert_eq!(witness.evaluation.site.position, 2);
+    let system = ModelSystem::new(world.subject().simulation).unwrap();
+    let mut decisions = Vec::new();
+    for name in ["Initial", "Later"] {
+        let mut forged = witness.clone();
+        rekey_undefined(&world, name, &mut forged);
+        let limits = world.request(name, ModelCheckLimits::default()).limits;
+        decisions.push((
+            name,
+            matches!(
+                replay_probabilistic_undefined(
+                    &world.package,
+                    &system,
+                    &forged.path.item,
+                    &forged,
+                    &limits,
+                    &Cancel::new()
+                ),
+                Ok(ProbabilityWitnessReplay::Parity)
+            ),
+        ));
+    }
+    assert!(
+        decisions.iter().all(|(_, parity)| *parity),
+        "decided controls must reject matching-key continuations: {decisions:?}"
+    );
+}
+
+#[trace("FR-201")]
+#[test]
+fn defined_always_items_keep_their_prior_unsupported_disposition() {
+    let claims = "probabilistic True using ev on M over (c: M::Coin) under Even on origin { probability >= 0.5 [ always[0,0] holds(c.v = 0) ] }\n\
+        probabilistic False using ev on M over (c: M::Coin) under Even on origin { probability >= 0.5 [ always[0,0] holds(c.v = 1) ] }";
+    let mut model = prob_world::coin(claims);
+    model
+        .body
+        .push_str("\npre Never using v on M::Coin::drop { false }\n");
+    let world = World::new(&model);
+    for name in ["True", "False"] {
+        let record = settle(&world, name, ModelCheckLimits::default());
+        assert!(
+            record.terminal().is_none(),
+            "defined always must retain its existing unsupported disposition: {record:?}"
+        );
+        assert!(record.exact_probabilistic.is_none());
+        assert!(record.probabilistic_counterexample.is_none());
+    }
+}
+
+fn external_always_world(bound: &str) -> World {
+    let claim = format!("probabilistic External using ev on M over (c: M::Coin) under Even on origin {{ probability {bound} [ always[0,0] holds(c.v = 0) ] }}");
+    let mut model = prob_world::coin(&claim);
+    model
+        .body
+        .push_str("\npre Never using v on M::Coin::drop { false }\n");
+    World::new(&model)
+}
+
+fn external_always_initial_key(world: &World, system: &ModelSystem<'_>) -> ProbabilityProductKey {
+    use fsl_eval::automaton::QualifiedBoundedMonitor;
+    use fsl_semantics::check::{Event, ProbForm};
+    let claim = world.claim("External");
+    let binding = claim_binding(system, claim).unwrap();
+    let reference = binding.as_ref().map(|binding| &binding.reference);
+    let context = fsl_replay::probabilistic_formula_monitor_context(claim, reference).unwrap();
+    let ProbForm::Probability {
+        event: Event::Formula { formula, .. },
+        ..
+    } = &claim.form
+    else {
+        panic!("bounded formula");
+    };
+    let mut monitor =
+        QualifiedBoundedMonitor::for_observations(formula.formula(), &context, 100).unwrap();
+    let control = monitor.start(true).unwrap();
+    let monitor_key = monitor.key(control).unwrap();
+    let raw = system.state_key(&system.initial()[0]).unwrap().0;
+    ProbabilityProductKey::for_formula_state(
+        reference,
+        &raw,
+        &monitor_key,
+        fsl_replay::ProbabilityDocumentIoLimits::default(),
+        &Cancel::new(),
+    )
+    .unwrap()
+}
+
+#[trace("FR-201")]
+#[test]
+fn external_always_probability_certificate_remains_unsupported() {
+    let world = external_always_world(">= 0.5");
+    let system = ModelSystem::new(world.subject().simulation).unwrap();
+    let key = external_always_initial_key(&world, &system);
+    let identity = fsl_replay::probabilistic_claim_identity(world.claim("External")).unwrap();
+    let document = ProbabilityCertificateDocument {
+        cyclic_dtmc: false,
+        identity: identity.clone(),
+        targets: vec![key.clone()],
+        event: None,
+        failures: Vec::new(),
+        reward: None,
+        optimization: fsl_replay::ProbabilityObjective::Workload,
+        timed: None,
+        values: vec![fsl_replay::ExactProbabilityValue {
+            state: key.clone(),
+            value: ratio(1, 1),
+        }],
+        ranking: vec![(key, 0)],
+    };
+    let limits = fsl_replay::ProbabilityDocumentLimits {
+        bytes: 1 << 20,
+        storage_bytes: 1 << 24,
+        states: 100,
+        edges: 100,
+        scalar_bits: 256,
+        accounting: prob_world::UNLIMITED,
+    };
+    let bytes = fsl_replay::write_probability_certificate(&document, limits, &Cancel::new())
+        .expect("well-formed externally offered certificate");
+    let checked = fsl_replay::check_probability_certificate_document(
+        &system,
+        world.package.graph().probabilistic_model().claims(),
+        &identity,
+        &bytes,
+        limits,
+        &Cancel::new(),
+    );
+    assert!(
+        matches!(
+            checked,
+            Err(fsl_replay::ProbabilityDocumentError::Unsupported)
+        ),
+        "defined always must refuse admission: {checked:?}"
+    );
+}
+
+#[trace("FR-202")]
+#[test]
+fn external_always_path_set_remains_unsupported() {
+    let world = external_always_world("<= 0.5");
+    let system = ModelSystem::new(world.subject().simulation).unwrap();
+    let key = external_always_initial_key(&world, &system);
+    let identity = fsl_replay::probabilistic_claim_identity(world.claim("External")).unwrap();
+    let binding = claim_binding(&system, world.claim("External")).unwrap();
+    let witness = fsl_replay::ProbabilisticCounterexample {
+        item: identity.clone(),
+        binding: binding.map(|binding| binding.reference),
+        initial: system.initial().remove(0),
+        initial_key: key,
+        scheduler: Vec::new(),
+        paths: vec![fsl_replay::ProbabilityWitnessPath { steps: Vec::new() }],
+    };
+    let limits = world
+        .request("External", ModelCheckLimits::default())
+        .limits;
+    assert!(matches!(
+        fsl_replay::replay_probabilistic_witness(
+            &world.package,
+            &system,
+            &identity,
+            &witness,
+            &limits,
+            &Cancel::new()
+        ),
+        Err(fsl_replay::ProbabilityWitnessError::Graph(
+            ExactProbabilityGraphError::UnsupportedClaimForm
+        ))
+    ));
 }

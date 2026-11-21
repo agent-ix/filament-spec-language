@@ -65,6 +65,22 @@ pub enum RefinementFailure {
         /// The position of the step's post-state.
         position: u64,
     },
+    /// FR-900: no auxiliary-clock valuation satisfies the mapped
+    /// abstract operation's guard.
+    AbstractClockGuard {
+        /// The position of the concrete step's post-state.
+        position: u64,
+        /// The abstract operation whose clock guard is false.
+        operation: String,
+    },
+    /// FR-900: the mapped abstract state leaves a time invariant during a
+    /// concrete delay.
+    AbstractTimeInvariant {
+        /// The concrete step whose delay crosses the invariant boundary.
+        position: u64,
+        /// The abstract model whose mapped state violates the invariant.
+        model: String,
+    },
     /// A mapping row or step-row argument evaluated undefined (RE-5;
     /// FSpec FR-379's seventh kind).
     Undefined {
@@ -88,6 +104,12 @@ pub enum RefinementFailure {
     /// loop takes abstract steps, and no step of it takes the constraint.
     AbstractUnfair {
         /// The violated constraint of `F_A`.
+        constraint: FairnessConstraint,
+    },
+    /// The hidden candidate graph has no run satisfying this abstract
+    /// fairness constraint along the concrete lasso (FR-899).
+    HiddenUnfair {
+        /// The first violated constraint of `F_A` in source order.
         constraint: FairnessConstraint,
     },
     /// FR-379: a concrete protocol refinement refuses a label that every
@@ -144,10 +166,12 @@ impl RefinementFailure {
             Self::StutterChanged { position }
             | Self::AbstractStepRejected { position, .. }
             | Self::NoAbstractMatch { position }
+            | Self::AbstractClockGuard { position, .. }
+            | Self::AbstractTimeInvariant { position, .. }
             | Self::Undefined { position, .. }
             | Self::RefusalNotPermitted { position, .. }
             | Self::TerminalSuccessMismatch { position, .. } => Some(*position),
-            Self::Divergence { .. } | Self::AbstractUnfair { .. } => None,
+            Self::Divergence { .. } | Self::AbstractUnfair { .. } | Self::HiddenUnfair { .. } => None,
         }
     }
 }
@@ -160,11 +184,25 @@ pub enum Taken {
     Stutter,
     /// Every accepted abstract transition identity, in canonical order.
     Abstract(Vec<ModelTransition>),
+    /// Accepted abstract steps paired with their source and target candidate
+    /// states. `transition: None` is a candidate-local stutter.
+    CandidateSteps(Vec<CandidateStep>),
     /// Abstract protocol transitions accepted by FR-148.
     Protocol(Vec<ProtocolTransition>),
     /// Candidate-specific protocol paths, including internal closure steps.
     /// `candidates[n]` is the state reached by `transitions[n]`.
     ProtocolTraces(Vec<ProtocolTrace>),
+}
+
+/// One abstract transition (or stutter) between hidden-field candidates.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CandidateStep {
+    /// Canonical state-key bytes of the candidate before the concrete step.
+    pub pre_state: Vec<u8>,
+    /// The abstract transition taken, or `None` for stutter.
+    pub transition: Option<ModelTransition>,
+    /// Canonical state-key bytes of the candidate after the concrete step.
+    pub post_state: Vec<u8>,
 }
 
 /// One admitted path through an abstract protocol candidate graph.

@@ -24,6 +24,7 @@
 mod checked;
 mod closed;
 mod copy_swap;
+mod finite;
 mod joint;
 mod product;
 mod projected;
@@ -38,6 +39,11 @@ pub use closed::{
     ClosedStep, ClosedStop, ClosedVerdict, PartnerSearch, Tuples,
 };
 pub use copy_swap::{copy_population, copy_symmetry, CopySwapInputs};
+pub use finite::{
+    evaluate_finite_hyper, replays_finite_refutation, FiniteFalseTuple, FiniteHyperOutcome,
+    FinitePopulationError, FiniteQuantifier, FiniteTrace, FiniteTraceClosure,
+    FiniteTracePopulation, FiniteTupleOutcome,
+};
 pub use joint::cartesian;
 pub use product::{
     BodySense, ComponentStep, Halt, HyperFinding, HyperInputs, HyperKey, HyperProduct, HyperState,

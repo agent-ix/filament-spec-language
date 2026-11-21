@@ -26,24 +26,28 @@ use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 use filament_exact::{Integer, Rational};
 use filament_semantic_value::catalog::InternalFault;
+use filament_semantic_value::fairness::{FairnessGranularity, FairnessKind};
 use filament_semantic_value::model_transition::ModelTransition;
-use fsl_eval::fairness::{analyze, Analysis, EdgeLabel, FairnessError, Graph, Identity, Vertex};
-use fsl_eval::simulation::model::{ModelFinding, ModelSimState};
+use fsl_eval::fairness::{
+    Analysis, Constraint, EdgeLabel, FairnessError, Graph, Identity, Strength, Vertex, analyze,
+};
 use fsl_eval::simulation::ExpansionLimit;
+use fsl_eval::simulation::model::{ModelFinding, ModelSimState};
 use fsl_replay::{
-    abstract_classes, check_step, AbstractClass, ConcreteStep, CounterexampleKind, Lasso,
+    AbstractClass, CandidateFairState, CandidateFairStep, ConcreteStep, CounterexampleKind, Lasso,
     ModelCheckLimit, ReachedLimit, RefinementFailure, Taken, TemporalCounterexample, Undetermined,
+    abstract_classes, candidate_lasso_has_fair_run, check_step,
 };
 use num_bigint::BigInt;
 
 use super::{
     Judgement, Product, TimedRefinementStop, TimedRefinementUndecided, TimedSafetyOutcome,
 };
-use crate::model_check::fair_walk::{fairness_constraints, FairModel};
-use crate::zone_check::concretise::{concretise, Stage, Target};
-use crate::zone_check::liveness::{next_cell, Cells, Sign};
+use crate::model_check::fair_walk::{FairModel, fairness_constraints};
+use crate::zone_check::concretise::{Stage, Target, concretise};
+use crate::zone_check::liveness::{Cells, Sign, next_cell};
 use crate::zone_check::search::{
-    constrain_at, scaled, widen, zone_bytes, Halt, Run, ZoneCheckRefusal, ZoneStats, ZoneUndecided,
+    Halt, Run, ZoneCheckRefusal, ZoneStats, ZoneUndecided, constrain_at, scaled, widen, zone_bytes,
 };
 use crate::zone_check::{Bound, Dbm};
 
@@ -98,6 +102,8 @@ struct Arc {
     via: Via,
     /// The abstract steps a position takes; `None` for a delay.
     taken: Option<Taken>,
+    /// Auxiliary abstract clock operation for a mapped discrete step.
+    auxiliary_transform: Option<super::super::concretise::ClockTransform>,
 }
 
 /// A position's judgement, by its position, its state's key and its step
@@ -174,7 +180,9 @@ impl Product<'_, '_> {
             constrained.insert(text.to_owned());
         }
         let dense = run.timed.tick_period().is_none();
-        let dim = run.timed.places().len() + 1 + usize::from(dense);
+        // The liveness product stores the same concrete + auxiliary clock
+        // valuation as EN-6, followed by its divergence clock.
+        let dim = run.dim() + usize::from(dense);
         let mut bounds: Vec<Option<BigInt>> = run
             .lower
             .iter()
@@ -214,11 +222,20 @@ impl Product<'_, '_> {
             }
         }
         let mut identities = BTreeMap::new();
-        let taken = live.arcs.iter().filter_map(|arc| match &arc.taken {
-            Some(Taken::Abstract(transitions)) => Some(transitions.as_slice()),
-            _ => None,
-        });
-        for transition in enabled.values().flatten().chain(taken.flatten()) {
+        for transition in enabled
+            .values()
+            .flatten()
+            .chain(live.arcs.iter().flat_map(|arc| {
+                arc.taken.iter().flat_map(|taken| match taken {
+                    Taken::Abstract(transitions) => transitions.iter().collect::<Vec<_>>(),
+                    Taken::CandidateSteps(steps) => steps
+                        .iter()
+                        .filter_map(|step| step.transition.as_ref())
+                        .collect(),
+                    Taken::Stutter | Taken::Protocol(_) | Taken::ProtocolTraces(_) => Vec::new(),
+                })
+            }))
+        {
             let key = self
                 .abstract_system
                 .transition_key(transition)
@@ -238,9 +255,14 @@ impl Product<'_, '_> {
                 return Ok(Lived::Ends(Decided::Fault {
                     fault,
                     stats: run.stats(),
-                }))
+                }));
             }
         };
+        let hidden = self
+            .refinement
+            .objects()
+            .iter()
+            .any(|object| !object.hidden.is_empty());
         let mut not_concretised = false;
         for class in &classes {
             let (model, within, kept) = self.fair_model(run, live, class, &enabled)?;
@@ -270,7 +292,32 @@ impl Product<'_, '_> {
                         .ok_or(ZoneCheckRefusal::Fault("walk-edge"))?;
                     cycle.push(index);
                 }
-                if let Some(found) = self.lasso(run, live, class, entry.index(), &cycle)? {
+                let mut named = class.constraint();
+                if hidden {
+                    match self.candidate_loop_has_fair_run(
+                        run,
+                        live,
+                        &cycle,
+                        FairScope::Through(class.constraint()),
+                    )? {
+                        // The fair run answers for the whole component only
+                        // when the component is that one loop; another loop
+                        // through it may still violate, so decide nothing.
+                        Ok(true) if single_loop(&model.graph, &members) => continue,
+                        Ok(true) => {
+                            not_concretised = true;
+                            continue;
+                        }
+                        Ok(false) => {
+                            named = match self.first_unfair_constraint(run, live, &cycle)? {
+                                Ok(index) => index,
+                                Err(ends) => return Ok(Lived::Ends(ends)),
+                            };
+                        }
+                        Err(ends) => return Ok(Lived::Ends(ends)),
+                    }
+                }
+                if let Some(found) = self.lasso(run, live, class, named, entry.index(), &cycle)? {
                     return Ok(Lived::Violated(Box::new(found)));
                 }
                 not_concretised = true;
@@ -307,7 +354,8 @@ impl Product<'_, '_> {
                 Judgement::Fails(_) => continue,
                 Judgement::Ends(ends) => return Ok(Some(ends)),
             };
-            let zero = Dbm::zero(live.dim);
+            let mut zero = Dbm::zero(live.dim);
+            self.auxiliary_invariants(run, q, &mut zero)?;
             for (cell, piece) in run.split(&mut live.cells, &state, &zero)? {
                 let Some(zone) = run.close(&mut live.cells, &state, piece, &cell)? else {
                     continue;
@@ -412,6 +460,11 @@ impl Product<'_, '_> {
                     Moved::To(None) => continue,
                     Moved::Ends(ends) => return Ok(Err(ends)),
                 };
+                let (failure, auxiliary_transform) =
+                    self.auxiliary_step(run, node.q, q, &taken, &mut next)?;
+                if failure.is_some() || next.is_empty() {
+                    continue;
+                }
                 for (cell, piece) in run.split(&mut live.cells, &post, &next)? {
                     let Some(entered) = run.close(&mut live.cells, &post, piece, &cell)? else {
                         continue;
@@ -435,6 +488,7 @@ impl Product<'_, '_> {
                             part: part_index,
                         },
                         taken: Some(taken.clone()),
+                        auxiliary_transform: auxiliary_transform.clone(),
                     };
                     created.extend(add_node(run, live, next, Some(arc))?);
                 }
@@ -446,6 +500,7 @@ impl Product<'_, '_> {
             let mut later = node.zone.clone();
             later.up();
             constrain_at(&mut later, &invariants, &scale)?;
+            self.auxiliary_invariants(run, node.q, &mut later)?;
             for (cell, piece) in run.split(&mut live.cells, &node.state, &later)? {
                 if !next_cell(&node.cell, &cell) {
                     continue;
@@ -466,6 +521,7 @@ impl Product<'_, '_> {
                     to: 0,
                     via: Via::Wait,
                     taken: None,
+                    auxiliary_transform: None,
                 };
                 created.extend(add_node(run, live, next, Some(arc))?);
             }
@@ -490,6 +546,7 @@ impl Product<'_, '_> {
                         to: 0,
                         via: Via::Diverge,
                         taken: None,
+                        auxiliary_transform: None,
                     };
                     created.extend(add_node(run, live, next, Some(arc))?);
                 }
@@ -527,6 +584,7 @@ impl Product<'_, '_> {
             to: 0,
             via: Via::Stutter,
             taken: Some(taken),
+            auxiliary_transform: None,
         };
         Ok(Ok(add_node(run, live, next, Some(arc))?
             .into_iter()
@@ -590,7 +648,7 @@ impl Product<'_, '_> {
                     return Ok(Err(Decided::Fault {
                         fault: InternalFault::new("refinement-liveness", "abstract-expansion"),
                         stats: run.stats(),
-                    }))
+                    }));
                 }
                 Err(stop) => {
                     let reached = match stop.limit {
@@ -629,6 +687,239 @@ impl Product<'_, '_> {
         Ok(Ok(here))
     }
 
+    fn candidate_loop_has_fair_run(
+        &self,
+        run: &mut Run<'_, '_, '_>,
+        live: &Live,
+        cycle: &[usize],
+        scope: FairScope,
+    ) -> Result<Result<bool, Decided>, Halt> {
+        let mut positions = Vec::with_capacity(cycle.len());
+        let mut transitions = BTreeSet::<ModelTransition>::new();
+        for &arc_index in cycle {
+            run.poll()?;
+            let arc = live
+                .arcs
+                .get(arc_index)
+                .ok_or(ZoneCheckRefusal::Fault("candidate-loop-arc"))?;
+            let source = live
+                .nodes
+                .get(arc.from)
+                .ok_or(ZoneCheckRefusal::Fault("candidate-loop-source"))?;
+            let mut candidates = Vec::new();
+            for candidate in &self.positions[source.q].abstract_states {
+                run.poll()?;
+                let (key, _) = self
+                    .abstract_system
+                    .state_key_of(candidate)
+                    .map_err(|_| ZoneCheckRefusal::Fault("candidate-loop-state-key"))?;
+                let expansion = match self.abstract_system.expand_state(candidate) {
+                    Ok(expansion) => expansion,
+                    Err(stop) if stop.is_internal_failure() => {
+                        return Err(ZoneCheckRefusal::Fault("candidate-loop-expansion").into());
+                    }
+                    Err(stop) => {
+                        let reached = match stop.limit {
+                            Some(ExpansionLimit::EvaluationMeter(counter)) => ReachedLimit {
+                                limit: ModelCheckLimit::EvaluationMeter { counter },
+                                value: fsl_replay::meter_bound(
+                                    &self.abstract_system.meter(),
+                                    counter,
+                                ),
+                            },
+                            Some(ExpansionLimit::MaxCandidates) | None => ReachedLimit {
+                                limit: ModelCheckLimit::MaxCandidates,
+                                value: self.abstract_system.max_candidates(),
+                            },
+                        };
+                        return Ok(Err(Decided::Stopped {
+                            cause: TimedRefinementStop::Step(reached),
+                            stats: run.stats(),
+                        }));
+                    }
+                };
+                if expansion
+                    .findings
+                    .iter()
+                    .any(|finding| matches!(finding, ModelFinding::ContractUndetermined { .. }))
+                {
+                    return Ok(Err(Decided::Undecided {
+                        cause: TimedRefinementUndecided::Undetermined(
+                            Undetermined::UndecidedSuccessor,
+                        ),
+                        stats: run.stats(),
+                    }));
+                }
+                let enabled: Vec<_> = expansion
+                    .successors
+                    .into_iter()
+                    .map(|(transition, _)| transition)
+                    .collect();
+                transitions.extend(enabled.iter().cloned());
+                candidates.push((key, enabled));
+            }
+            positions.push(candidates);
+            match arc.taken.as_ref() {
+                Some(Taken::CandidateSteps(rows)) => {
+                    transitions.extend(rows.iter().filter_map(|row| row.transition.clone()));
+                }
+                Some(Taken::Stutter) | None => {}
+                Some(Taken::Abstract(_)) => {
+                    return Err(ZoneCheckRefusal::Fault(
+                        "hidden-model-edge-retains-candidate-steps",
+                    )
+                    .into());
+                }
+                Some(Taken::Protocol(_) | Taken::ProtocolTraces(_)) => {
+                    return Err(ZoneCheckRefusal::Fault(
+                        "hidden-model-edge-is-not-a-protocol-edge",
+                    )
+                    .into());
+                }
+            }
+        }
+        let numbered: BTreeMap<_, _> = transitions
+            .into_iter()
+            .enumerate()
+            .map(|(index, transition)| (transition, Identity::new(widen(index))))
+            .collect();
+        let fair_positions = positions
+            .iter()
+            .map(|candidates| {
+                candidates
+                    .iter()
+                    .map(|(key, enabled)| {
+                        Ok(CandidateFairState {
+                            key: key.clone(),
+                            enabled: enabled
+                                .iter()
+                                .map(|transition| {
+                                    numbered.get(transition).copied().ok_or(
+                                        ZoneCheckRefusal::Fault(
+                                            "enabled-candidate-transition-numbered",
+                                        ),
+                                    )
+                                })
+                                .collect::<Result<Vec<_>, _>>()?,
+                        })
+                    })
+                    .collect::<Result<Vec<_>, ZoneCheckRefusal>>()
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let fair_steps = cycle
+            .iter()
+            .enumerate()
+            .map(|(index, &arc_index)| {
+                let arc = &live.arcs[arc_index];
+                let source = &positions[index];
+                let rows = match arc.taken.as_ref() {
+                    Some(Taken::CandidateSteps(rows)) => rows
+                        .iter()
+                        .map(|row| {
+                            Ok(CandidateFairStep {
+                                pre_state: row.pre_state.clone(),
+                                transition: row
+                                    .transition
+                                    .as_ref()
+                                    .map(|transition| {
+                                        numbered.get(transition).copied().ok_or(
+                                            ZoneCheckRefusal::Fault(
+                                                "taken-candidate-transition-numbered",
+                                            ),
+                                        )
+                                    })
+                                    .transpose()?,
+                                post_state: row.post_state.clone(),
+                            })
+                        })
+                        .collect::<Result<Vec<_>, ZoneCheckRefusal>>()?,
+                    Some(Taken::Stutter) | None => source
+                        .iter()
+                        .map(|(key, _)| CandidateFairStep {
+                            pre_state: key.clone(),
+                            transition: None,
+                            post_state: key.clone(),
+                        })
+                        .collect(),
+                    _ => return Err(ZoneCheckRefusal::Fault("candidate-loop-taken-shape")),
+                };
+                Ok(rows)
+            })
+            .collect::<Result<Vec<_>, ZoneCheckRefusal>>()?;
+        let fairness_constraints: Vec<_> = self
+            .refinement
+            .abstract_operation_fairness()
+            .cloned()
+            .collect();
+        let mut constraints = Vec::new();
+        for (index, constraint) in fairness_constraints.iter().enumerate() {
+            if !scope.covers(index) {
+                continue;
+            }
+            let operation = constraint.operation();
+            let name = self
+                .abstract_system
+                .operation_text(operation.declaring_type(), operation.name())
+                .ok_or(ZoneCheckRefusal::Fault("candidate-fairness-operation"))?;
+            let covered: Vec<_> = numbered
+                .iter()
+                .filter_map(|(transition, identity)| {
+                    (transition.operation() == name).then_some(*identity)
+                })
+                .collect();
+            let strength = Strength::from(constraint.kind());
+            match constraint.granularity() {
+                FairnessGranularity::Whole => {
+                    constraints.push(Constraint::new(strength, covered));
+                }
+                FairnessGranularity::Each => constraints.extend(
+                    covered
+                        .into_iter()
+                        .map(|identity| Constraint::new(strength, [identity])),
+                ),
+            }
+        }
+        match candidate_lasso_has_fair_run(&fair_positions, &fair_steps, &constraints, run.cancel) {
+            Ok(fair) => Ok(Ok(fair)),
+            Err(error) => Err(fairness(
+                run,
+                match error {
+                    fsl_replay::CandidateLivenessError::Fairness(error) => error,
+                    fsl_replay::CandidateLivenessError::InvalidGraph => FairnessError::EmptyLoop,
+                },
+            )),
+        }
+    }
+
+    /// FR-899's naming rule for a loop no candidate run satisfies `F_A` along:
+    /// the first constraint, in source order, that every candidate cycle
+    /// violates on its own; when each is satisfiable alone, the first
+    /// constraint whose prefix no candidate cycle satisfies jointly. Replay
+    /// applies the same rule.
+    fn first_unfair_constraint(
+        &self,
+        run: &mut Run<'_, '_, '_>,
+        live: &Live,
+        cycle: &[usize],
+    ) -> Result<Result<usize, Decided>, Halt> {
+        let count = self.refinement.abstract_operation_fairness().count();
+        for index in 0..count {
+            match self.candidate_loop_has_fair_run(run, live, cycle, FairScope::Only(index))? {
+                Ok(false) => return Ok(Ok(index)),
+                Ok(true) => {}
+                Err(ends) => return Ok(Err(ends)),
+            }
+        }
+        for index in 0..count {
+            match self.candidate_loop_has_fair_run(run, live, cycle, FairScope::Through(index))? {
+                Ok(false) => return Ok(Ok(index)),
+                Ok(true) => {}
+                Err(ends) => return Ok(Err(ends)),
+            }
+        }
+        Err(ZoneCheckRefusal::Fault("an-unsatisfied-candidate-fairness-prefix-exists").into())
+    }
+
     /// The product as the fairness kernels read it for `class`: each
     /// vertex with the concrete steps enabled at its instants, the edges
     /// that do not take `class`, divergence and positions as acceptance
@@ -645,6 +936,11 @@ impl Product<'_, '_> {
         class: &AbstractClass,
         enabled: &BTreeMap<usize, Vec<ModelTransition>>,
     ) -> Result<(FairModel, BTreeSet<Vertex>, Vec<Vec<usize>>), Halt> {
+        let hidden = self
+            .refinement
+            .objects()
+            .iter()
+            .any(|object| !object.hidden.is_empty());
         let mut transitions: Vec<ModelTransition> = Vec::new();
         let mut number = |transition: &ModelTransition| -> Identity {
             let index = match transitions.iter().position(|held| held == transition) {
@@ -671,10 +967,11 @@ impl Product<'_, '_> {
         for (from, out) in live.out.iter().enumerate() {
             for &index in out {
                 let arc = &live.arcs[index];
-                if arc
-                    .taken
-                    .as_ref()
-                    .is_some_and(|taken| class.is_taken_by(taken))
+                if !hidden
+                    && arc
+                        .taken
+                        .as_ref()
+                        .is_some_and(|taken| class.is_taken_by(taken))
                 {
                     continue;
                 }
@@ -708,7 +1005,13 @@ impl Product<'_, '_> {
                 .add_acceptance_set(set)
                 .map_err(|_| ZoneCheckRefusal::Fault("acceptance-set"))?;
         }
-        let within: BTreeSet<Vertex> = handles
+        let constraint = self
+            .refinement
+            .abstract_operation_fairness()
+            .nth(class.constraint())
+            .ok_or(ZoneCheckRefusal::Fault("class-constraint"))?;
+        let strong = !hidden && constraint.kind() == FairnessKind::Strong;
+        let class_enabled: Vec<Vertex> = handles
             .iter()
             .zip(&live.nodes)
             .filter(|(_, node)| {
@@ -718,6 +1021,16 @@ impl Product<'_, '_> {
             })
             .map(|(handle, _)| *handle)
             .collect();
+        if strong {
+            graph
+                .add_acceptance_set(class_enabled.iter().copied())
+                .map_err(|_| ZoneCheckRefusal::Fault("strong-abstract-acceptance"))?;
+        }
+        let within: BTreeSet<Vertex> = if hidden || strong {
+            handles.iter().copied().collect()
+        } else {
+            class_enabled.iter().copied().collect()
+        };
         let concrete_fairness: Vec<_> = self
             .refinement
             .concrete_operation_fairness()
@@ -752,6 +1065,7 @@ impl Product<'_, '_> {
         run: &mut Run<'_, '_, '_>,
         live: &mut Live,
         class: &AbstractClass,
+        named: usize,
         entry: usize,
         cycle: &[usize],
     ) -> Result<Option<TemporalCounterexample>, Halt> {
@@ -764,10 +1078,19 @@ impl Product<'_, '_> {
         let constraint = self
             .refinement
             .abstract_operation_fairness()
-            .nth(class.constraint())
+            .nth(named)
             .ok_or(ZoneCheckRefusal::Fault("class-constraint"))?
             .clone();
-        let failure = if taking {
+        let hidden = self
+            .refinement
+            .objects()
+            .iter()
+            .any(|object| !object.hidden.is_empty());
+        let failure = if hidden {
+            RefinementFailure::HiddenUnfair {
+                constraint: constraint.clone(),
+            }
+        } else if taking || constraint.kind() == FairnessKind::Strong {
             RefinementFailure::AbstractUnfair { constraint }
         } else {
             RefinementFailure::Divergence {
@@ -790,7 +1113,7 @@ impl Product<'_, '_> {
             blocked: Vec::new(),
             final_delay: None,
         };
-        let places = run.timed.places().len();
+        let places = run.dim() - 1;
         let mut stem = path_to(live, entry);
         if live.nodes[entry].tail {
             // The idle tail: the stem to the quiescent state, then its
@@ -989,6 +1312,15 @@ fn stage(run: &mut Run<'_, '_, '_>, live: &mut Live, arc: usize) -> Result<Stage
                 elapses,
                 target: run.timed(run.timed.invariants(&post))?,
                 before: run.cell_zone(&mut live.cells, &source.state, &source.cell)?,
+                after: None,
+                auxiliary_carries: arc
+                    .auxiliary_transform
+                    .as_ref()
+                    .map_or_else(Vec::new, |transform| transform.carries.clone()),
+                auxiliary_resets: arc
+                    .auxiliary_transform
+                    .as_ref()
+                    .map_or_else(Vec::new, |transform| transform.resets.clone()),
                 piece: run.cell_zone(&mut live.cells, &post, &target.cell)?,
                 step: Some((step, part)),
                 position: Vec::new(),
@@ -1002,6 +1334,9 @@ fn stage(run: &mut Run<'_, '_, '_>, live: &mut Live, arc: usize) -> Result<Stage
             elapses,
             target: invariants,
             before: None,
+            after: None,
+            auxiliary_carries: Vec::new(),
+            auxiliary_resets: Vec::new(),
             piece: run.cell_zone(&mut live.cells, &target.state, &target.cell)?,
             step: None,
             position: Vec::new(),
@@ -1017,5 +1352,67 @@ fn fairness(run: &Run<'_, '_, '_>, error: FairnessError) -> Halt {
     match error {
         FairnessError::Cancelled => run.stop(crate::zone_check::search::ZoneStop::Cancelled),
         _ => ZoneCheckRefusal::Fault("fairness-graph").into(),
+    }
+}
+
+/// Which abstract fairness constraints a candidate-run check demands: the
+/// first `through + 1` jointly, or one alone.
+#[derive(Clone, Copy)]
+enum FairScope {
+    Through(usize),
+    Only(usize),
+}
+
+impl FairScope {
+    fn covers(self, constraint: usize) -> bool {
+        match self {
+            Self::Through(last) => constraint <= last,
+            Self::Only(only) => constraint == only,
+        }
+    }
+}
+
+/// Whether every vertex of `members` has exactly one edge staying inside
+/// `members`, so the component's only loop is its one cycle. Edges the
+/// filter removed are counted, which only makes a component fail this test.
+fn single_loop(graph: &Graph, members: &BTreeSet<Vertex>) -> bool {
+    members.iter().all(|vertex| {
+        graph
+            .edges_from(*vertex)
+            .iter()
+            .filter(|edge| members.contains(&edge.target))
+            .count()
+            == 1
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ix_trace_rs::trace;
+
+    /// FR-899 "Timed subjects": a fair candidate run on one greedy loop
+    /// answers for a component only when the component is that one loop. A
+    /// ring is one loop; a ring with a second loop through one of its
+    /// vertices is a component whose other loop is not examined.
+    #[trace("TC-2536")]
+    #[test]
+    fn only_a_component_that_is_one_loop_is_answered_by_its_greedy_loop() {
+        let mut graph = Graph::new();
+        let first = graph.add_vertex([]);
+        let second = graph.add_vertex([]);
+        graph
+            .add_edge(first, second, EdgeLabel::Stutter)
+            .expect("known vertices");
+        graph
+            .add_edge(second, first, EdgeLabel::Stutter)
+            .expect("known vertices");
+        let members: BTreeSet<Vertex> = [first, second].into_iter().collect();
+        assert!(single_loop(&graph, &members));
+
+        graph
+            .add_edge(first, first, EdgeLabel::Stutter)
+            .expect("known vertices");
+        assert!(!single_loop(&graph, &members));
     }
 }

@@ -1031,7 +1031,9 @@ pub(super) fn zone_refusal(refusal: &ZoneCheckRefusal) -> Refusal {
         ZoneCheckRefusal::RequiresBound(_) => Refusal::RequiresBound,
         ZoneCheckRefusal::Symmetry(_) => symmetry(),
         // The forms EN-6 does not decide yet.
-        ZoneCheckRefusal::UnsupportedForm | ZoneCheckRefusal::CarriedClocks => {
+        ZoneCheckRefusal::UnsupportedForm
+        | ZoneCheckRefusal::CarriedClocks
+        | ZoneCheckRefusal::HiddenFieldTimedAbstract => {
             Refusal::Unsupported(NOT_YET)
         }
         // A request defect: an obligation that is not the item's.
@@ -1251,6 +1253,7 @@ mod tests {
             | Refusal::FailedWithDetail(code, _)
             | Refusal::Failed(code) => Some(code.to_string()),
             Refusal::RequiresBound
+            | Refusal::RequiresFiniteHyperBound { .. }
             | Refusal::NotStatistical
             | Refusal::InvalidOptionValue { .. }
             | Refusal::NotEmitted
