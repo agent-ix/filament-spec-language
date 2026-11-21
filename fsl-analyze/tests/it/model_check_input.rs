@@ -105,7 +105,7 @@ fn the_package_route_input_builds_the_source_route_model_system() {
 }
 
 /// An operation parameter resolves its unit from authenticated source declarations.
-#[trace("TC-2958", "FR-940-AC-6", "FR-505-AC-7")]
+#[trace("TC-2958", "FR-940-AC-6")]
 #[test]
 fn package_operation_parameters_read_admitted_unit_names() {
     let mut model: serde_json::Value = serde_json::from_slice(&document(true)).expect("model JSON");

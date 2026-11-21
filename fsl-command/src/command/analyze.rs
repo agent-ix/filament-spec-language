@@ -513,7 +513,7 @@ mod package_intake_tests {
             ))
         };
         let record = || AdmissionRecord {
-            catalog: CatalogCode::new("invalid_runtime_input", "wrong-model"),
+            catalog: CatalogCode::new("invalid_model_binding", "wrong-model-selection"),
             fields: Default::default(),
             path: Vec::new(),
             kernel: None,
@@ -522,7 +522,7 @@ mod package_intake_tests {
             (PendingPackageForm::World(slot()), "runtime_invariant"),
             (
                 PendingPackageForm::Model(AdmissionFailure::Refused(Box::new(record()))),
-                "invalid_runtime_input",
+                "invalid_model_binding",
             ),
             (
                 PendingPackageForm::Operations(AssemblyRefusal {
@@ -559,7 +559,7 @@ mod package_intake_tests {
         }
         let cause = package_input_refusal(
             PendingPackageForm::Model(AdmissionFailure::Incomplete(Box::new(AdmissionRecord {
-                catalog: CatalogCode::new("incomplete_population", "missing-evidence"),
+                    catalog: CatalogCode::new("incomplete_population", "incomplete-scope"),
                 ..record()
             }))),
             "test",
