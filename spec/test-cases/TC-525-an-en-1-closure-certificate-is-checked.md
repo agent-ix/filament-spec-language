@@ -13,7 +13,7 @@ relationships:
 Verify that `check_closure` accepts a safety proof's closure and rejects a
 missing initial state, a missing successor and a bad state.
 
-Scope: FR-338-AC-1 to FR-338-AC-7, FR-338-AC-10, FR-338-AC-16, FR-338-AC-23 to FR-338-AC-27 and FR-338-AC-30. Canonical translation-state cases below
+Scope: FR-338-AC-1 to FR-338-AC-7, FR-338-AC-10, FR-338-AC-16, FR-338-AC-23 to FR-338-AC-27, FR-338-AC-30 and FR-338-AC-31. Canonical translation-state cases below
 are prospective qualification procedures; this artifact claims no execution.
 
 ## Test Procedure
@@ -128,6 +128,10 @@ Tag the tests `#[trace("TC-525", "FR-338-AC-n")]`.
     once[1,1] holds(c.value = 2)`; remove one reached product state; replace
     every activation by `"each"`; check the guarded variant `when (c.value >=
     2)`.
+18. FR-338-AC-31: over the repaired `Fill` check the `eventually[0,2]` clause
+    and its `eventually[0,1]` variant, tamper the accepted certificate, and
+    run `Echo`'s `eventually[1,2]` clause with and without a resolved
+    fairness constraint, from source and from the S4 package.
 
 ## Expected Results
 
@@ -197,3 +201,4 @@ Tag the tests `#[trace("TC-525", "FR-338-AC-n")]`.
   activation is `"each-activate"`.
 - Step 17: accepted and `proved`, `Certified`; `BadState` at model state 2 and at the terminal
   stutter; `SuccessorMissing`; `ShapeMismatch`; the guarded variant accepted.
+- Step 18: accepted and `proved`, `Certified`; `BadState`; `SuccessorMissing`; `ShapeMismatch`; `WitnessFails` without fairness, accepted with it; source and package agree.

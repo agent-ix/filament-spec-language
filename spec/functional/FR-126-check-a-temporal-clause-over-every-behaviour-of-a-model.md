@@ -233,7 +233,9 @@ automaton states and the depth reached.
   over a model subject SHALL carry the `ClosureCertificate` of every explored
   product state in its `Holds`, keyed as FR-338 "Unguarded `on each` TP-1 and
   TP-3 clause" states; FR-127 settles it `proved` when the checker accepts it.
-  A TP-3 clause over a protocol subject carries none.
+  A TP-3 clause over a protocol subject carries the certificate FR-338 "TP-3
+  clause over a protocol subject" states, and a clause with a future interval
+  is `Holds` only when no fair zero-distance cycle keeps its debt open.
 - For a `ReachableInvariant` (TP-1) or `Safety` (TP-3) clause and for a
   `DeadlockFreedom` item, the engine SHALL build a deterministic bad-prefix
   monitor: the automaton of the formula itself, trimmed to the states from

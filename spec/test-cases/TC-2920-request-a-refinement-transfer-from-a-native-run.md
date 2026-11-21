@@ -21,7 +21,7 @@ Verify the `refinement_transfer` request member and its outcome. Scope: FR-1030-
 5. Run `PrevStutter`, `always (holds(c.value = 2) implies once[1,1] holds(c.value = 1))`, through `ThirdRefinesSpec` with no `premises`.
 6. Run `StuckTwo` (declared in `TRANSFER_DECLARATIONS`, no fairness) through `CasRefinesCounter` with no `premises`, and read the outcome. The transfer outcome carries no lasso: slot 1 is `refuted` only through the production replay gate, and the lossless equality of a written and read closure lasso and its post-read replay over the source and package routes are asserted by the FR-128-AC-14 and FR-128-AC-15 tests over the same closure-stutter mechanism.
 7. Use `temporal PendingTwo using inf over (c: Spec::Counter) clock "model-steps" on origin { always (holds(c.value = 1) implies eventually holds(c.value = 2)) }`, the template of `StuckTwo`, declared in `TRANSFER_DECLARATIONS`, and run it through `CasRefinesCounter` with no `premises`.
-8. Declare `PrevSafeEach`, `SoonTwoEach`, `PrevJumpEach` and `PrevStutterEach` as FR-1030-AC-8 and AC-9 give them, and run `PrevSafeEach` and `SoonTwoEach` through `ThirdRefinesSpec` with no `premises`.
+8. Declare `PrevSafeEach`, `SoonTwoEach`, `PrevSafeWhen`, `PrevJumpEach` and `PrevStutterEach` as FR-1030-AC-8 and AC-9 give them, and run `PrevSafeEach`, `SoonTwoEach` and `PrevSafeWhen` through `ThirdRefinesSpec` with no `premises`.
 9. Run `PrevJumpEach` and `PrevStutterEach` through `ThirdRefinesSpec` with no `premises`.
 10. Run `PrevSafeEach` through `ThirdRefinesSpec` with `abstract.initial` naming a snapshot of `value` 1.
 11. Settle `PrevSafeEach`'s abstract claim from the checked package S4 emits for the unit, and settle its transfer through `planner::settle` over that package.
