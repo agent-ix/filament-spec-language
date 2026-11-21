@@ -1329,7 +1329,7 @@ impl OutcomeItem {
                     UnavailabilityCause::ZeroDelayCycle { states } => {
                         item.states = Some(ItemCauseStates::Cycle(states.clone()));
                     }
-                    UnavailabilityCause::TimedFormShape { span, claim } => match claim {
+                    UnavailabilityCause::TimedFormShape { span, claim, .. } => match claim {
                         Some(claim) => item.locus = Some(ItemLocus::Claim(WireLocus::of(claim))),
                         None => {
                             item.at = Some(ItemWhere::Text(format!("{}..{}", span.start, span.end)))
@@ -3702,6 +3702,7 @@ mod tests {
             UnavailabilityCause::TimedFormShape {
                 span: fsl_foundation::Span { start: 20, end: 32 },
                 claim: None,
+                member: None,
             },
         );
         let wire = serde_json::to_value(OutcomeItem::from_terminal(&timed_form))
