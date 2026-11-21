@@ -143,7 +143,7 @@ fn materialize_inner(
         ) => {
             let context = fsl_replay::probabilistic_formula_monitor_context(claim, reference)?;
             Some(
-                QualifiedBoundedMonitor::from_monitor(
+                QualifiedBoundedMonitor::from_observation_monitor(
                     formula.formula(),
                     &context,
                     monitor,
@@ -191,7 +191,7 @@ fn materialize_inner(
             return Err(ProbabilityWitnessError::Refused);
         };
         let context = fsl_replay::probabilistic_formula_monitor_context(claim, reference)?;
-        let mut initial_monitor = QualifiedBoundedMonitor::new(
+        let mut initial_monitor = QualifiedBoundedMonitor::for_observations(
             formula.formula(),
             &context,
             limits.model.max_automaton_states,

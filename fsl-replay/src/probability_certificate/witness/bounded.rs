@@ -132,6 +132,7 @@ pub(super) fn replay(
                 &mut storage,
                 &mut transition_count,
                 cancel,
+                step::ActionRefusal::ExpansionRefused,
                 |post| {
                     let next = monitor
                         .step(

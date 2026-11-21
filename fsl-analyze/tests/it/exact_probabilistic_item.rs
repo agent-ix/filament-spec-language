@@ -1083,7 +1083,8 @@ fn rekey_undefined(
     else {
         panic!("bounded formula");
     };
-    let mut monitor = QualifiedBoundedMonitor::new(formula.formula(), &context, 100).unwrap();
+    let mut monitor =
+        QualifiedBoundedMonitor::for_observations(formula.formula(), &context, 100).unwrap();
     let predicate = formula.condition(monitor.atom().index()).unwrap();
     witness.evaluation.site.locus = fsl_replay::UndefinedLocus::Atom(monitor.atom());
     let mut control = None;
@@ -1191,4 +1192,123 @@ fn defined_always_items_keep_their_prior_unsupported_disposition() {
         assert!(record.exact_probabilistic.is_none());
         assert!(record.probabilistic_counterexample.is_none());
     }
+}
+
+fn external_always_world(bound: &str) -> World {
+    let claim = format!("probabilistic External using ev on M over (c: M::Coin) under Even on origin {{ probability {bound} [ always[0,0] holds(c.v = 0) ] }}");
+    let mut model = prob_world::coin(&claim);
+    model
+        .body
+        .push_str("\npre Never using v on M::Coin::drop { false }\n");
+    World::new(&model)
+}
+
+fn external_always_initial_key(world: &World, system: &ModelSystem<'_>) -> ProbabilityProductKey {
+    use fsl_eval::automaton::QualifiedBoundedMonitor;
+    use fsl_semantics::check::{Event, ProbForm};
+    let claim = world.claim("External");
+    let binding = claim_binding(system, claim).unwrap();
+    let reference = binding.as_ref().map(|binding| &binding.reference);
+    let context = fsl_replay::probabilistic_formula_monitor_context(claim, reference).unwrap();
+    let ProbForm::Probability {
+        event: Event::Formula { formula, .. },
+        ..
+    } = &claim.form
+    else {
+        panic!("bounded formula");
+    };
+    let mut monitor =
+        QualifiedBoundedMonitor::for_observations(formula.formula(), &context, 100).unwrap();
+    let control = monitor.start(true).unwrap();
+    let monitor_key = monitor.key(control).unwrap();
+    let raw = system.state_key(&system.initial()[0]).unwrap().0;
+    ProbabilityProductKey::for_formula_state(
+        reference,
+        &raw,
+        &monitor_key,
+        fsl_replay::ProbabilityDocumentIoLimits::default(),
+        &Cancel::new(),
+    )
+    .unwrap()
+}
+
+#[trace("FR-201")]
+#[test]
+fn external_always_probability_certificate_remains_unsupported() {
+    let world = external_always_world(">= 0.5");
+    let system = ModelSystem::new(world.subject().simulation).unwrap();
+    let key = external_always_initial_key(&world, &system);
+    let identity = fsl_replay::probabilistic_claim_identity(world.claim("External")).unwrap();
+    let document = ProbabilityCertificateDocument {
+        cyclic_dtmc: false,
+        identity: identity.clone(),
+        targets: vec![key.clone()],
+        event: None,
+        failures: Vec::new(),
+        reward: None,
+        optimization: fsl_replay::ProbabilityObjective::Workload,
+        timed: None,
+        values: vec![fsl_replay::ExactProbabilityValue {
+            state: key.clone(),
+            value: ratio(1, 1),
+        }],
+        ranking: vec![(key, 0)],
+    };
+    let limits = fsl_replay::ProbabilityDocumentLimits {
+        bytes: 1 << 20,
+        storage_bytes: 1 << 24,
+        states: 100,
+        edges: 100,
+        scalar_bits: 256,
+        accounting: prob_world::UNLIMITED,
+    };
+    let bytes = fsl_replay::write_probability_certificate(&document, limits, &Cancel::new())
+        .expect("well-formed externally offered certificate");
+    assert!(matches!(
+        fsl_replay::check_probability_certificate_document(
+            &system,
+            world.package.graph().probabilistic_model().claims(),
+            &identity,
+            &bytes,
+            limits,
+            &Cancel::new()
+        ),
+        Err(fsl_replay::ProbabilityDocumentError::Graph(
+            ExactProbabilityGraphError::UnsupportedClaimForm
+        ))
+    ));
+}
+
+#[trace("FR-202")]
+#[test]
+fn external_always_path_set_remains_unsupported() {
+    let world = external_always_world("<= 0.5");
+    let system = ModelSystem::new(world.subject().simulation).unwrap();
+    let key = external_always_initial_key(&world, &system);
+    let identity = fsl_replay::probabilistic_claim_identity(world.claim("External")).unwrap();
+    let binding = claim_binding(&system, world.claim("External")).unwrap();
+    let witness = fsl_replay::ProbabilisticCounterexample {
+        item: identity.clone(),
+        binding: binding.map(|binding| binding.reference),
+        initial: system.initial().remove(0),
+        initial_key: key,
+        scheduler: Vec::new(),
+        paths: vec![fsl_replay::ProbabilityWitnessPath { steps: Vec::new() }],
+    };
+    let limits = world
+        .request("External", ModelCheckLimits::default())
+        .limits;
+    assert!(matches!(
+        fsl_replay::replay_probabilistic_witness(
+            &world.package,
+            &system,
+            &identity,
+            &witness,
+            &limits,
+            &Cancel::new()
+        ),
+        Err(fsl_replay::ProbabilityWitnessError::Graph(
+            ExactProbabilityGraphError::UnsupportedClaimForm
+        ))
+    ));
 }

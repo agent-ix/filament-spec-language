@@ -57,16 +57,36 @@ impl QualifiedBoundedMonitor {
             )
     }
 
-    /// Retain a producer's already reached monitor without copying its
+    /// Retain a defined-value eventual producer monitor without copying its
     /// cache. Its complete translation identity must match the checked
     /// formula before any local handle can be projected into a key.
     pub fn from_monitor(
         formula: &CheckedFormula,
         context: &StateContext,
-        mut monitor: Monitor<PropertyAutomaton>,
+        monitor: Monitor<PropertyAutomaton>,
         max_states: u64,
     ) -> Result<Self, QualifiedBoundedError> {
-        let mut expected = Self::new(formula, context, max_states)?;
+        Self::retain(Self::new(formula, context, max_states)?, monitor)
+    }
+
+    /// Retain a producer monitor for undefined observation replay, including
+    /// bounded always. Defined certificate callers use [`Self::from_monitor`].
+    pub fn from_observation_monitor(
+        formula: &CheckedFormula,
+        context: &StateContext,
+        monitor: Monitor<PropertyAutomaton>,
+        max_states: u64,
+    ) -> Result<Self, QualifiedBoundedError> {
+        Self::retain(
+            Self::for_observations(formula, context, max_states)?,
+            monitor,
+        )
+    }
+
+    fn retain(
+        mut expected: Self,
+        mut monitor: Monitor<PropertyAutomaton>,
+    ) -> Result<Self, QualifiedBoundedError> {
         let initial = monitor.viable_initial()?.ok_or(AutomatonError::Invariant {
             invariant: "qualified-bounded-viable-root",
         })?;
@@ -89,9 +109,23 @@ impl QualifiedBoundedMonitor {
         Ok(expected)
     }
 
-    /// Build the actual formula monitor and its FR-338 context. Other
-    /// profiles, operators and activations are explicitly refused.
+    /// Build an origin event-position eventual monitor for defined values.
+    /// Bounded always is admitted only by [`Self::for_observations`].
+    /// Other profiles, operators and activations are explicitly refused.
     pub fn new(
+        formula: &CheckedFormula,
+        context: &StateContext,
+        max_states: u64,
+    ) -> Result<Self, QualifiedBoundedError> {
+        if !Self::supports(formula, context.profile) {
+            return Err(TranslationRefusal::NotTranslated(NotTranslated).into());
+        }
+        Self::for_observations(formula, context, max_states)
+    }
+
+    /// Build control for replaying possibly undefined bounded observations.
+    /// Unlike the defined certificate constructor, this admits bounded always.
+    pub fn for_observations(
         formula: &CheckedFormula,
         context: &StateContext,
         max_states: u64,

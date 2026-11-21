@@ -74,7 +74,7 @@ pub fn replay_probabilistic_undefined(
         } => {
             let context = probabilistic_formula_monitor_context(claim, reference)?;
             Some(
-                QualifiedBoundedMonitor::new(
+                QualifiedBoundedMonitor::for_observations(
                     formula.formula(),
                     &context,
                     limits.model.max_automaton_states,
@@ -322,6 +322,7 @@ pub fn replay_probabilistic_undefined(
             &mut storage,
             &mut transition_count,
             cancel,
+            step::ActionRefusal::UnsupportedDraw,
             |post| Ok((key_of(system, reference, post, limits, cancel)? == expected).then_some(())),
         )?;
         mass = bounded::arithmetic(

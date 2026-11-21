@@ -67,3 +67,31 @@ The core undefined-replay logic is sound for the forms it admits.
 1. `exact_probabilistic_item::undefined_replay` and `exact_probabilistic_item::an_undefined_evaluation_settles_refuted_whatever_the_threshold` at the frozen head (already queued).
 2. After FND-004's fix, the re-keyed `Decided` case, with the `decided` disjunct temporarily removed locally, to show the test fails.
 3. For FND-001, an analyzer-level defined `probability >= 0.5 [ always[0,1] holds(..) ]` item over a model where it is proved, and one where it is refuted, through `exact_probabilistic_item`, confirming the certificate and refutation replay settle as expected.
+
+## New findings (disposition pass 1)
+
+| ID | Severity | Summary | Refs |
+| --- | --- | --- | --- |
+| FND-010 | low | In the shared `step::replay`, an `actions_with_cancel` inner refusal now maps to `UnsupportedDraw` (settles `not_yet`) for `witness/bounded.rs` as well. The old bounded replay mapped it to `ExpansionRefused` (settles `broken()`, exact.rs:2318-2322). On producer-built evidence this is effectively unreachable, but external wire evidence replayed through the facade gets a different settlement. The extraction should either keep each caller's mapping or record the unified choice deliberately. | fsl-replay/src/probability_certificate/witness/step.rs:85-88; fsl-analyze/src/analyze/exact.rs:2311-2322 |
+
+## Dispositions
+
+Round 1: fix head `92c54c46a8cb242a7c6cdafa1252093cf4881bcd`, commits 542451c23c, ecc1fc3216 and 92c54c46a8 over `96d6bd53e6`. Static review only; no cargo was run by the reviewer.
+
+Evidence available this round:
+
+- **Remote run at the original head `96d6bd53e6`** (draco): 19 passed, 1 failed, 0 ignored. Per command: 1 passed; 2 passed and 1 failed; 12 passed; 4 passed. The failure, `undefined_replay_distinguishes_workload_repeated_keys_and_scheduler_choices`, panicked at `prob_world.rs:418` before replay with `IncompleteWorkload` (Even lacked `Coin::keep`) and `UnresolvedWorkload Work`. QSL-2158 comment c9de75e4 records this.
+- **Coder mutation run** (`/tmp/qsl2158-undefined-mutation.log`): with both the open-control and the decided guards removed, `undefined_replay_stops_at_decisions_with_matching_claim_keys` failed (exit 101) with `[("Initial",false),("Later",false)]`.
+- **Remote rerun at the fix head** (22 tests): pending when this round was written.
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | still-open | The analyzer is confined: `exact.rs:948` admits always via `supports_observations`, and after a defined build `exact.rs:1020-1031` returns `not_yet` through the restored eventually-only `supports`. `defined_always_items_keep_their_prior_unsupported_disposition` covers that. But `QualifiedBoundedMonitor::new` (qualified_bounded.rs:94-108) still has no `Eventually` kind check. The defined-path checkers that call it without `supports` therefore still admit `always[0,h]`: the non-fair bounded certificate checker (`probability_certificate/bounded.rs:170`, via document.rs:1159-1197) and the wire-facade bounded witness replay (`witness/bounded.rs:48`). On main both refused always. An external always certificate or path-set witness (for example through tools/fsl-probability-check or `replay_probabilistic_witness`) is now checked or reproduced, with no test. Fix: restore the kind check in `new` and add an observation constructor used only by the undefined replay and producer, or guard those checker entries with `supports`. Add a refusal test. |
+| FND-002 | fixed | Shared `witness/step.rs` (`scheduler`, `replay`) is used by `bounded.rs:105,125` and `undefined.rs:96,315`. Budgets are not weakened, and several checks became stricter: meter `visit` replaces bare `poll_cancel` in the scheduler and candidate loops, `undefined` now also runs `check_bits(step_mass)`, and storage charges a `ProbabilityWitnessStep` size. Positive probability, unique match, anchor/reached-by and the checked edge count are kept. The bounded suite is in the pending remote rerun. See FND-010 for one settlement drift. |
+| FND-003 | fixed | One mapping, `impl From<ProbabilityDocumentError> for ProbabilityWitnessError` (witness.rs:701-725), with `Accounting` mapped to an `EvaluationMeter` Limit. `bounded::document_error` delegates to it, the analyzer copy is deleted, and a test asserts `Accounting` gives `Limit{EvaluationMeter, 0}`. |
+| FND-004 | fixed | `undefined_replay_stops_at_decisions_with_matching_claim_keys` re-keys the evidence under each claim's own monitor (`rekey_undefined`), covering a position-0 decision (`Initial`) and a later decision (`Later`). The mutation run shows it fails when the guards are removed. The two guards are redundant with each other, so only their joint removal changes behaviour. |
+| FND-005 | fixed | `ProducerFailure::{Invariant, Stopped}`. `Refused`, `ExpansionRefused`, `MissingSuccessor`, `UnsupportedInitial` and `ClaimNotBound` from `materialize` settle `broken()`. Limits, cancellation and build issues keep the settled outcomes. |
+| FND-006 | fixed | Direct `replay_probabilistic_undefined` calls on a replay subject with `work_units = 0` and `max_candidates = 0` expect a typed `Build` issue that settles `LimitReached{EvaluationMeter, 0}` or `LimitReached{MaxCandidates, 0}`. |
+| FND-007 | fixed | The request is built lazily inside the `Undefined` arm, with `proof_bounds` moved by `mem::take`; the probabilistic builder does not read them. There is a comment bounding the second exploration. |
+| FND-008 | fixed | The doc comment and all `qualified-eventually-*` invariants were renamed to `qualified-bounded-*`. No test matches the old names. |
+| FND-009 | fixed | `wrong_item` renamed to `own_item`. |

@@ -48,3 +48,23 @@ The reverse-gap and stub checks were done by reading the source. No tests were r
 Plan completion: not assessed
 
 Semantic review: not run as a separate fan-out. Intent, test and code judgements come from the same reviewer's code-review pass (SR-202611210022442313144108502).
+
+## Dispositions
+
+Round 1: fix head `92c54c46a8`. Matrix recomputed with `quire matrix --scope . --format json` (quire 0.52.0):
+
+- FR-202-AC-5, AC-24, AC-25 and AC-26 are all `tagged`.
+- AC-24's binders now include `undefined_replay_stops_at_decisions_with_matching_claim_keys`.
+- AC-26's binders are only the workload/scheduler and limits/cancellation tests.
+
+Actual remote evidence at the original head, replacing the "pending" wording in the Summary: 19 passed and 1 failed. The failure was a fixture `IncompleteWorkload` in the AC-25/AC-26 test before replay; the fixture now adds `weight Coin::keep = 0`. The rerun at the fix head was pending when this round was written.
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | still-open | The analyzer path is confined. The fsl-replay defined certificate checker (`probability_certificate/bounded.rs:170`) and the wire-facade bounded witness replay (`witness/bounded.rs:48`) still admit `always[0,h]` through the ungated `QualifiedBoundedMonitor::new`, with no owning criterion or test. Same as code-review SR-202611210022442313144108502 FND-001. |
+| FND-002 | fixed | The matching-key `Initial` and `Later` re-keyed forgeries settle Parity. The mutation log shows the test fails with the guards removed. |
+| FND-003 | fixed | Direct replay work and expansion stops are asserted to settle `LimitReached` (`exact_probabilistic_item.rs:945-994`). |
+| FND-004 | fixed | AC-5 is tagged by `an_undefined_evaluation_settles_refuted_whatever_the_threshold` and `undefined_replay_checks_first_read_location_control_and_package_ownership`. The computed matrix reports `tagged`. |
+| FND-005 | fixed | The AC-26 tag was removed from `undefined_replay_checks_first_read_location_control_and_package_ownership`, which is now tagged AC-5 and AC-24. |
+| FND-006 | fixed | `undefined_evidence` asserts the wire `evidence.undefined.where.product_state.key` equals base64url of `product_state` for every produced witness. |
+| FND-007 | fixed | A tampered `Every`/`Bounded` scheduler entry through `exact_probabilistic_item_witness_tampered` settles `Inconclusive(ReplayRefused(InvalidRuntimeInput))` with no counterexample. `tamper_witness` is now threaded into `undefined::run`. |

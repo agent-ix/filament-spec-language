@@ -2,6 +2,21 @@
 //! Semantic step replay shared by finite path sets and undefined paths.
 use super::*;
 
+/// Preserve the entry point's established settlement of a semantic action refusal.
+#[derive(Clone, Copy)]
+pub(super) enum ActionRefusal {
+    ExpansionRefused,
+    UnsupportedDraw,
+}
+impl ActionRefusal {
+    fn error(self) -> ExactProbabilityGraphError {
+        match self {
+            Self::ExpansionRefused => ExactProbabilityGraphError::ExpansionRefused,
+            Self::UnsupportedDraw => ExactProbabilityGraphError::UnsupportedDraw,
+        }
+    }
+}
+
 pub(super) fn scheduler<'a>(
     rows: &'a [(ProbabilityProductKey, ProductAction)],
     limits: &ExactProbLimits,
@@ -46,6 +61,7 @@ pub(super) fn replay<T>(
     storage: &mut u64,
     edges: &mut usize,
     cancel: &Cancel,
+    action_refusal: ActionRefusal,
     mut project: impl FnMut(&ModelSimState) -> Result<Option<T>, ProbabilityWitnessError>,
 ) -> Result<(Rational, ModelSimState, T), ProbabilityWitnessError> {
     let ProductAction::Identity(schedule) = &step.choice else {
@@ -85,7 +101,7 @@ pub(super) fn replay<T>(
         for candidate in system
             .actions_with_cancel(state, cancel)
             .map_err(|stop| cancelled_expansion(stop, cancel))?
-            .map_err(|_| ExactProbabilityGraphError::UnsupportedDraw)?
+            .map_err(|_| action_refusal.error())?
         {
             if candidate.identity != *action {
                 continue;
