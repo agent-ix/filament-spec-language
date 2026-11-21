@@ -1293,10 +1293,14 @@ fn a_fair_loop_of_a_timed_component_does_not_hide_an_unfair_one() {
     let world = two_loop_world(true);
     let counterexample = violation(check(&world));
     assert!(names(&counterexample).iter().all(|name| name == "poll"));
-    assert_eq!(
-        counterexample.prefix[0].delay,
-        Some(Rational::from_integer(Integer::one()))
-    );
+    // FR-241: the loop elapses positive time; `x <= 1 ms` while quiescent
+    // bounds each wait, but the zone representative need not be the bound.
+    let delay = counterexample.prefix[0]
+        .delay
+        .clone()
+        .expect("the poll step carries a delay");
+    assert!(delay > Rational::from_integer(Integer::zero()), "{delay:?}");
+    assert!(delay <= Rational::from_integer(Integer::one()), "{delay:?}");
     assert_eq!(hidden_unfair_name(&counterexample), "idle");
     assert!(matches!(
         replay(&world, &counterexample),

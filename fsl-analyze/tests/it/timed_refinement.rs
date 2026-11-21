@@ -448,18 +448,13 @@ fn the_liveness_half_of_a_timed_abstract_hidden_field_is_decided() {
         "{:?}",
         outcome.safety
     );
-    // The dense component holds several concrete-fair loops, so a fair
-    // candidate run on one loop does not answer for it: undecided, as in
-    // `timed_hidden_free_initial_valuation_with_a_multi_loop_component_is_undecided`.
-    // FR-899-AC-9's per-component check is QSL-2243 remaining item (iv).
+    // FR-899-AC-9's per-component check: every concrete-fair loop of the
+    // dense component takes `send`, so each has a fair candidate run.
     assert!(
         matches!(
             outcome.liveness,
             Some(TimedLivenessHalf::Checked(
-                TimedLivenessOutcome::Undecided {
-                    cause: TimedRefinementUndecided::Zone(ZoneUndecided::LassoNotConcretized),
-                    ..
-                }
+                TimedLivenessOutcome::Holds { .. }
             ))
         ),
         "{:?}",
