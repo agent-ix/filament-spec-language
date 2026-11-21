@@ -142,6 +142,9 @@ fn admitted_source(source: &str, slot: ValueType) -> Result<Value, AdmissionReco
     let raw = snapshot(source);
     let types = TypeEnvironment::default();
     let mut references = References {
+        canonical_limits: quire_canonical::Limits::new(
+            u64::try_from(source.len()).expect("test input fits u64"),
+        ),
         views: &[],
         types: &types,
         admitted: BTreeMap::new(),
