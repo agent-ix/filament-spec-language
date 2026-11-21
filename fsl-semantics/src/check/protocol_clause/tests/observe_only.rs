@@ -172,7 +172,7 @@ fn a_side_effect_under_observe_only_refuses() {
     let sent = protocol(
         "",
         "role R on M::Actor; role S on M::Actor;",
-        &format!("observe sequence Review {{ send Sent via Note as (sent: Boolean) {{ true }}; }}"),
+        "observe sequence Review { send Sent via Note as (sent: Boolean) { true }; }",
     )
     .replace("run observe", &format!("{channel}\nrun observe"));
     let found = located_refusals(&sent);

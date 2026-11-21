@@ -383,7 +383,6 @@ struct CaseArms<'r> {
 struct OpenArm {
     member: usize,
     binders: Vec<Slot>,
-    names: Vec<String>,
 }
 
 /// Which operand of a pair is being typed.
@@ -777,7 +776,7 @@ enum SeqStage {
         high: Box<Node>,
         slot: Slot,
         maximum: Option<u64>,
-        binder_type: ValueType,
+        binder_type: Box<ValueType>,
     },
 }
 
@@ -1493,7 +1492,7 @@ impl<'a> Typer<'a> {
                         location,
                         cause: CheckCause::ReferenceLiteralTypeMismatch {
                             name: type_name.clone(),
-                            actual: declared,
+                            actual: Box::new(declared),
                         },
                     });
                 };
@@ -3496,7 +3495,6 @@ impl<'a> Typer<'a> {
                 let LetFrame {
                     branches,
                     location,
-                    name,
                     annotation,
                     ..
                 } = *frame;
@@ -3596,11 +3594,6 @@ impl<'a> Typer<'a> {
             arms.open = Some(OpenArm {
                 member,
                 binders,
-                names: arm
-                    .binders
-                    .iter()
-                    .map(|binder| binder.name.clone())
-                    .collect(),
             });
             frame.stage = CaseStage::Arms(arms);
             frames.push(Frame::Case(frame));
@@ -4244,7 +4237,6 @@ impl<'a> Typer<'a> {
                     value_type,
                     type_argument,
                     location,
-                    binder,
                     ..
                 } = *frame;
                 if matches!(visit, Visit::Sum) && !summand_of_family(&value_type, &body.value_type)
@@ -4458,7 +4450,7 @@ impl<'a> Typer<'a> {
             ),
             (None, None) => {
                 return self
-                    .finish_population(form, source, slot, binder, None, None, &location)
+                    .finish_population(form, source, slot, None, None, &location)
                     .map(Step::Typed);
             }
         };
@@ -4495,7 +4487,6 @@ impl<'a> Typer<'a> {
                         form,
                         source,
                         slot,
-                        binder,
                         location,
                         ..
                     } = *frame;
@@ -4503,7 +4494,6 @@ impl<'a> Typer<'a> {
                         form,
                         source,
                         slot,
-                        &binder,
                         Some(typed),
                         None,
                         &location,
@@ -4516,7 +4506,6 @@ impl<'a> Typer<'a> {
                     form,
                     source,
                     slot,
-                    binder,
                     typed_condition,
                     location,
                     ..
@@ -4525,7 +4514,6 @@ impl<'a> Typer<'a> {
                     form,
                     source,
                     slot,
-                    &binder,
                     typed_condition,
                     Some(typed),
                     &location,
@@ -4544,7 +4532,6 @@ impl<'a> Typer<'a> {
         form: PopulationForm,
         source: Node,
         slot: Slot,
-        binder: &str,
         condition: Option<Node>,
         body: Option<Node>,
         location: &Location,

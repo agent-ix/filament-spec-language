@@ -3838,11 +3838,9 @@ impl<'a> Lowering<'a> {
             }
         }
         self.functions_open = false;
-        if !self.deferred_mixed_settlement {
-            if !self.has_unresolved_function_placeholders() {
-                if let Err(refusal) = self.settle() {
-                    refusals.push(refusal);
-                }
+        if !self.deferred_mixed_settlement && !self.has_unresolved_function_placeholders() {
+            if let Err(refusal) = self.settle() {
+                refusals.push(refusal);
             }
         }
         refusals

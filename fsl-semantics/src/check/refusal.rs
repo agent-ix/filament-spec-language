@@ -3231,7 +3231,7 @@ pub enum CheckCause {
         /// The type name as written, including its source span.
         name: fsl_forms::NameForm,
         /// The kind the name resolved to.
-        actual: ValueType,
+        actual: Box<ValueType>,
     },
     /// FR-480: an empty key cannot identify an object. The source locus is
     /// the string token.

@@ -2382,6 +2382,10 @@ impl PackageDeclarations {
     /// without it the check ends there and reports the refusals found so far,
     /// since the later stages would only add consequences of the refusal (an
     /// unkeyed reference to the protocol, a work budget it already spent).
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "one internal pipeline entry whose callers pass the stage flags; a parameter struct is a separate refactor"
+    )]
     fn check_retaining_protocols(
         mut self,
         mode: CheckMode,
@@ -8640,14 +8644,12 @@ impl PackageDeclarations {
         }
         // Every occurrence is recorded by now.
         graph.occurrences_by_location = occurrences_by_location(&graph.occurrences);
-        if let Err(refusals) = reward_validation::check_reward_signs(
+        reward_validation::check_reward_signs(
             &graph,
             reward_evaluator,
             &mut contract_meter,
             limits.work_budget(),
-        ) {
-            return Err(refusals);
-        }
+        )?;
         Ok(graph)
     }
 }
