@@ -184,7 +184,7 @@ impl BarePackage<'_> {
         let aliases = match self.witness() {
             Ok((_, identities)) => identities
                 .source_record_rows()
-                .map(|row| (&row.structural_node, row.type_handle.clone()))
+                .map(|row| (&row.structural_node, row.record_key.clone()))
                 .chain(
                     identities
                         .source_union_rows()
