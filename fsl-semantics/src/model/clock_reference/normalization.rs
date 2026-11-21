@@ -709,4 +709,50 @@ mod tests {
         .expect("identical paths in different authenticated scopes coexist");
         assert_eq!(distinct.entries().count(), 2);
     }
+
+    #[trace("FR-1040-AC-9", "TC-3084")]
+    #[test]
+    fn complete_ownership_ambiguity_retains_both_original_source_units() {
+        let facts: Vec<_> = ["first", "second"]
+            .into_iter()
+            .map(|authority| SourceDeclarationFact {
+                owner: SourceOwner::new(authority, "shared-identity").expect("source owner"),
+                node: NodeKey::new(
+                    "checked",
+                    vec![filament_exact::PathSegment::Text(authority.to_owned())],
+                    0,
+                )
+                .expect("transient typed join key"),
+                name: vec![Identifier::new("W").expect("qualified declaration")],
+                original: None,
+            })
+            .collect();
+        let declarations = SourceDeclarations::from_facts(facts).expect("two authenticated units");
+        assert_eq!(
+            declarations
+                .row_scope("W")
+                .expect("no global short-name lookup"),
+            None
+        );
+        let error = declarations
+            .row_scope("ix://shared-identity/W")
+            .expect_err("one full rendering cannot select either authenticated source unit");
+        let ClockDeclarationResolutionError::Ambiguous(ambiguity) = error else {
+            panic!("ownership ambiguity must retain its typed refusal");
+        };
+        let authorities: Vec<_> = [&ambiguity.first, &ambiguity.second]
+            .into_iter()
+            .map(|origin| match origin {
+                OriginalClockMemberOrigin::Source { owner, .. } => owner.authority(),
+                other => panic!("source provenance was lost: {other:?}"),
+            })
+            .collect();
+        assert_eq!(authorities, ["first", "second"]);
+        let cause = crate::check::CheckCause::AmbiguousClockDeclaration(Box::new(ambiguity));
+        assert_eq!(
+            cause.code(),
+            fsl_foundation::diagnostic::Code::AmbiguousDeclaration
+        );
+        assert_eq!(cause.cause(), Some("ambiguous-name"));
+    }
 }
