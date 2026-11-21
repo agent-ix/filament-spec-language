@@ -134,3 +134,159 @@ or hash or pin. FSpec is unchanged and is not required. No new findings.
 **Round-1 verdict: PASS.** The normative spec scope of the FR-202 and FR-1043
 mean/fraction refutation amendment is accepted on BASE. This verdict makes no
 claim about the implementation, the tests, or whether the PR can merge.
+
+## New findings
+
+### Round 2 scope extension
+
+This round extends BASE scope to two more pure-spec commits:
+
+- `d80cc467ebc3f7904e1babf3654ac9767f0fd02f` (FR-203: certified conditional
+  vacuity);
+- `75a71e3f3c0b4a7233b22b88bb40c3bb81951fd7` (FR-1042, FR-202, TC-3151:
+  checked bound policy hints).
+
+The working docs are byte-identical to these commits, and no later commit
+touches `spec/`. `quire validate --scope .` on the four docs exits 0. Its one
+warning, `ac:vague-response` at FR-1042 line 227, is on the unchanged
+FR-1042-AC-1. `quire properties` extracts FR-203-AC-10/11 and
+FR-1042-AC-12/13/14, each once. `git diff --check` is clean on both commits.
+
+| ID | Severity | Summary | Refs | Escape Cause |
+| --- | --- | --- | --- | --- |
+| FND-008 | high | FR-201's failure table is unamended, and FR-1042 reuses FR-201's rules and loci. It still makes "a lower bound on a maximum without `policy`" `Malformed` at `policy` (FR-201 line 105), and "a policy entry is missing" `InequalityFails` (line 100). This contradicts FR-1042 lines 84-86 and 129-150, which make `policy` an optional hint and synthesize the choice when it is absent. Adverse case: FR-1042-AC-3's `lower` `s` `7/16`, rank 1, offered with no `policy` (and AC-12's and AC-13's no-row `lower` maximum documents) is accepted under FR-1042 but rejected `Malformed` at `policy` under FR-201. Fix: amend FR-201 lines 100 and 105 so they do not apply to FR-1042 hint documents, or scope them to the profiles that still require `policy`. | FR-1042, FR-201, FR-1042-AC-3, FR-1042-AC-12, FR-1042-AC-13 | wrong-requirement |
+| FND-009 | medium | The witness can disagree with the checker's choice on a valid refutation. FR-202 lines 133-137 require the counterexample's scheduler to equal the checker's selected policy, which is the first satisfying action when a hint is absent. EN-5, however, forms its witness from "the optimizer's attaining policy" with ties broken by canonical transition order (lines 97-100), and nothing requires it to emit hints matching that witness. Adverse case: a refuting `upper` on the minimum has slack, and the canonical-first action satisfies `Q ≤ y` but is not the attaining action. The checker then selects the first action, the witness takes the attaining one, and replay settles `ReplayParity` instead of `refuted`. The orderings are also named inconsistently: "canonical action order" in FR-202 versus "canonical full-product-action order" in FR-1042. Fix: require EN-5 to emit a hint equal to its witness choice at each existential state, or to form the witness from the selected policy, and use one order term. | FR-202, FR-1042 | missing-requirement |
+| FND-010 | medium | FR-203 lines 111-119 apply the vacuous `Exhaustive` settlement to every "conditional claim" with no reachable activation. FR-1043 line 73 still proves an every-scheduler quantile through a `shifted` document "0 with no activated state reachable", and line 163 settles it `ExactValue`. FR-203-AC-10 names no scheduler. Adverse case: every-scheduler `quantile 0.5 of (steps from holds(false) until … within 4) <= 2` settles `proved` `Exhaustive` with a `Vacuous` certificate under FR-203. Under FR-1043 it settles `proved` `ExactValue` from a `shifted` document, and that value is undefined, which the vacuity ruling forbids fabricating. Fix: state which conditional forms take the vacuity route, align the FR-1043 every-scheduler row and settlement, and name the scheduler in AC-10. | FR-203, FR-1043, FR-203-AC-10 | wrong-requirement |
+| FND-011 | low | FR-203 lines 120-133 and AC-10/11 require FR-331's contract to admit a `conditional` `vacuous` certificate on an `exhaustive` basis. FSpec origin/main `247a3941` schema.json line 1465 still sets `certificate: false` for `exhaustive`. FR-203's Dependencies and References name only FSpec FR-411, not the FR-331/FR-412 companion exception. Adverse case: a reader who validates AC-10 against current FSpec gets a schema refusal and cannot tell the AC depends on an unlanded companion. Fix: name the FSpec FR-331/FR-412 companion in FR-203's References. | FR-203, FR-203-AC-10, FR-203-AC-11 | missing-requirement |
+
+Round-2 checks that passed:
+
+- **Vacuity ruling.** FR-203 meets it. The vacuous case is value-free
+  `Exhaustive` and `Certified`, and settles only after independent acceptance
+  of `Conditional` `Vacuous`, with absence of activation rederived for every
+  initial state and binding, an opaque acceptance bound to package, subject,
+  claim and binding, and complete exploration. No fabricated 0 or `0/0`, no
+  new basis, and no numeric entries, bounds or `evidence`. Other `exhaustive`
+  results keep their no-certificate restriction. `exact-value` still requires
+  a `Rational`; the sketch change from `ExtRational` to `Rational` matches
+  that. Infinity stays unsupported per FR-201 lines 832-833. Rejection with
+  reachable activation is `InequalityFails`, which agrees with FR-201 line 106.
+- **Policy-hint ruling.** FR-1042 meets it. The checker rebuilds every action
+  for an `upper` on a minimum or a `lower` on a maximum. A present hint must
+  name an enabled action that satisfies all per-state conditions, or it
+  rejects without fallback; a nonexistent or disabled hint gives
+  `InequalityFails`, which agrees with FR-201 line 100. An absent hint is
+  existential: the first satisfying action is selected, with `InequalityFails`
+  versus `RankBroken` stated. Terminal-stutter and post-state choices use
+  existing actions, with no new wire form. Universal rows remain universal.
+- **Arithmetic on `W`.** `Q_go = 1/2`, and `wait` loops back to `s`. AC-3's
+  `7/16` is met by `go`, while `wait` satisfies the inequality but fails
+  progress. AC-14's `1/4` fails with `go` (`1/2`) and passes with `wait`;
+  `lower` `1` fails progress with `wait` and fails the inequality with `go`,
+  so it gives `RankBroken`. AC-13's `1/2`, `1/8` and `7/8` are correct for
+  `1/4` and `3/4`. AC-12's all-zero fraction is correct.
+- **Unchanged rules.** The existing `ReplayParity` mismatch rule, the
+  accepted-refutation rule and the equality rules are unchanged. TC-3151's
+  scope and steps match AC-12 to AC-14.
+- **No ceremony.** No hash, pin or tracking ceremony is introduced.
+
+### Round 2 dispositions
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-008 | still-open | Round 2: new finding; no fix yet. |
+| FND-009 | still-open | Round 2: new finding; no fix yet. |
+| FND-010 | still-open | Round 2: new finding; no fix yet. |
+| FND-011 | still-open | Round 2: new finding; no fix yet. |
+
+FND-001 to FND-007 keep their latest outcome, `fixed` in round 1, and need no
+new row.
+
+**Round-2 verdict: FAIL** for the extended BASE scope (FR-203, FR-1042,
+FR-202, TC-3151) because of FND-008 to FND-011. The mean-refutation
+amendment's own BASE acceptance from round 1 is unchanged. This verdict makes
+no claim about the implementation or about whether the PR can merge.
+
+### Round 3 new findings
+
+This round rechecks FND-008 to FND-011 against pure-spec fix commit
+`89e3c26ee2a2d2dba4c1917d445b9337cc9fe9a1`, which changes only FR-201,
+FR-202, FR-203 and FR-1043. FR-1042 and TC-3151 are unchanged from
+`75a71e3f3c`. The working docs are byte-identical to the commit, and no later
+commit touches `spec/`.
+
+- `quire validate --scope .` on the four docs exits 0 with no output.
+- `quire properties` extracts FR-1043-AC-10, FR-202-AC-30 and
+  FR-203-AC-10/11, each once.
+- `git diff --check` is clean.
+
+| ID | Severity | Summary | Refs | Escape Cause |
+| --- | --- | --- | --- | --- |
+| FND-012 | medium | The new precedence preamble in FR-1043 (lines 68-75) says the numeric quantile rows "apply only when activation is reachable". No rule says how the checker rejects a numeric document offered where its own search finds activation unreachable. The `<= c` every-scheduler row still accepts a `shifted` initial value "at least 0" with no activation qualifier. FR-203-AC-11 covers only certificates offered on an `exhaustive` basis. Adverse case: every-scheduler `quantile 0.5 of (steps from holds(false) until holds(true) within 4) <= 2` is offered as an `exact` `shifted` document with every value 0, or as a workload `ratio` with denominator 0. One checker reads the row and accepts a fabricated numeric `ExactValue`; another rejects under an unnamed rule. Fix: name the rule and locus (for example `InequalityFails` at the initial key), require settlement `inconclusive`, `CertificateRejected`, and add the case to FR-1043-AC-10. | FR-1043, FR-1043-AC-10, FR-203 | missing-requirement |
+
+### Round 3 dispositions
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-008 | fixed | Round 3: FR-201's `InequalityFails` row now reads "a policy entry required by its profile is missing". The `Malformed` row adds "where its profile requires that member (excluding FR-1042 optional-hint documents)". A new paragraph applies the `value-bounds/v1` optional-hint rules, whose profile name matches FR-1042 line 30: first-satisfying canonical selection, no fallback for a present hint, and `InequalityFails`/`RankBroken`. It contains no contradiction with FR-1042-AC-3, AC-12, AC-13 or AC-14. Other profiles, including `Optimum` `reset`, keep their rules. |
+| FND-009 | fixed | Round 3: FR-202 exempts mean-bound certificates from the optimizer-witness rule and requires EN-5 to build the witness from the policy its independent FR-1042 check returns. Matching hints are optional where a representable form exists; implicit stutter and post-state choices get no invented operation. The order term is unified as "canonical full-product-action order". New FR-202-AC-30 covers the slack case and old-witness `ReplayParity`. A fixture exists: with an initial `y` of `1/2` at `>= 3/5` on AC-8's model, both `fast` and `slow` satisfy the bound. |
+| FND-010 | fixed | Round 3: FR-1043's preamble gives vacuity precedence for every conditional reading, under a workload or every scheduler, with or without fairness. The every-scheduler tight-0 branch now requires activation to remain reachable, and settlement separates vacuous `Exhaustive` from numeric `ExactValue`. FR-203's scope covers every FR-201 conditional reading, and FR-203-AC-10 names the claim under a workload and under every scheduler, with and without fairness. FR-201 already accepts `Vacuous` under both scheduler clauses (lines 685-690, FR-201-AC-53). The one remaining gap, typed rejection of a numeric document for a vacuous claim, is FND-012. |
+| FND-011 | fixed | Round 3: FR-203 adds `depends_on` links to FSpec FR-331 and FR-412, and a References entry stating that FR-331 owns the value-free `exhaustive` carrier with its sole `vacuous` certificate exception and forbidden `evidence`, and FR-412 owns the `vacuous` certificate and its independent check. The dependency is stated in normative terms; the FSpec companion (#787) has not merged, and the actual pin comes later. |
+| FND-012 | still-open | Round 3: new finding; no fix yet. |
+
+FND-001 to FND-007 stay `fixed` from round 1.
+
+**Round-3 verdict: FAIL** on FND-012 alone. FND-008 to FND-011 are fixed.
+This verdict covers normative spec acceptance only. It makes no claim about
+the implementation or about whether the PR can merge.
+
+### Round 4 new findings
+
+This round rechecks FND-012 against pure-spec fix commit
+`373bfe30686284837cb172b4b0b63974132faaa7`, which changes only FR-1043. All
+other docs are unchanged from `89e3c26ee2` and `75a71e3f3c`. The working docs
+are byte-identical to the commit, and no later commit touches `spec/`.
+`quire validate --scope .` on FR-1043 exits 0, and `git diff --check` is clean.
+
+| ID | Severity | Summary | Refs | Escape Cause |
+| --- | --- | --- | --- | --- |
+| FND-013 | medium | The new FR-1043 rejection (lines 75-81) and FR-1043-AC-10 reject a workload `ratio` with denominator 0 when activation is unreachable, with `InequalityFails` at the initial complete key. FR-1043's workload row uses "FR-201's `conditional` `ratio`", and the unamended FR-201 lines 643-645 accept it: "At an initial key where the denominator is 0 it SHALL confirm by its own reachability search that no first activating state is reachable, and that instance holds vacuously." That rule does not require any initial key to activate. Adverse case: FR-203-AC-10's claim under a resolved workload, offered as a `ratio` whose denominator is 0 at every initial key. Under FR-201 every instance holds vacuously and the `Ratio` is accepted on the proof side; under FR-1043 it is rejected `InequalityFails`. Fix: state the precedence. In FR-1043, say the all-unreachable rejection overrides FR-201's per-key vacuity for this profile, or qualify FR-201 lines 643-645 so they apply only when some initial key activates. | FR-1043, FR-1043-AC-10, FR-201 | wrong-requirement |
+
+### Round 4 dispositions
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-012 | fixed | Round 3's gap is closed. FR-1043 now rejects any offered numeric quantile certificate (an all-zero `exact` or bound `shifted` document, or a workload `ratio` with denominator 0) with `InequalityFails` at the initial complete product key, settling `inconclusive`, `CertificateRejected{rule, at}` with no `ExactValue`. The every-scheduler `shifted` row is now qualified by "with activation reachable in the complete product" for both `<= c` and `>= c`. AC-10 adds the negative offerings, and the rule and locus match FR-201 line 106. The one remaining conflict with FR-201's `Ratio` prose is FND-013. |
+| FND-013 | still-open | Round 4: new finding; no fix yet. |
+
+FND-001 to FND-011 stay `fixed`.
+
+**Round-4 verdict: FAIL** on FND-013 alone. It is a single precedence
+sentence, fixable in FR-1043 or FR-201. Every other branch is consistent: the
+comparison-event and mean rows are not conditional and are unaffected, the
+workload row routes unreachable activation to vacuity, and the shifted row
+and the tight-0 branch both require reachable activation. This verdict covers
+normative spec acceptance only. It makes no claim about the implementation or
+about whether the PR can merge.
+
+### Round 5 dispositions (targeted FND-013 verification)
+
+This is a targeted check of FND-013 only, made under an explicit architecture
+exception and not a full review round. It covers pure-spec commit
+`1d8d38109c78083a994d1f7737182c207971002a`, which changes only FR-201 and
+FR-1043. The working docs are byte-identical to the commit, and no later
+commit touches `spec/`. `quire validate --scope .` on both docs exits 0 with
+no output, and `git diff --check` is clean.
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-013 | fixed | Round 5: FR-201 lines 643-652 now treat a denominator-0 initial key as vacuous "only when at least one other initial key has reachable activation". When no initial key has reachable activation, the numeric `Ratio` is rejected `InequalityFails` at the first initial complete product key in canonical order, settling `inconclusive`, `CertificateRejected{rule, at}`, and the claim is certified only through an accepted `Vacuous` certificate with the value-free `Exhaustive` basis under FR-203. FR-1043 lines 82-85 point mixed-key workload ratios to FR-201's per-key rule. The FR-201 and FR-1043 outcomes now agree, and the locus matches FR-201 line 106 and FR-1043's "initial complete product key", which FR-201 refines with canonical order. |
+
+FND-001 to FND-012 stay `fixed`.
+
+**Final verdict: PASS.** All findings FND-001 to FND-013 are closed. The
+normative BASE spec scope is accepted for FR-202 and FR-1043 (mean/fraction
+refutation, vacuity precedence), FR-203 (certified conditional vacuity), and
+FR-1042, FR-201 and TC-3151 (policy hints, profile exceptions, ratio vacuity
+precedence). This verdict makes no claim about the implementation or the
+tests, or about whether the PR can merge.
