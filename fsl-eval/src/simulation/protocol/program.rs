@@ -1157,9 +1157,17 @@ impl<'a> Program<'a> {
         slots.push(None);
         package_binders.push(Some(package.finish_binder.clone()));
         binder_types.push(package.finish_binder_type.clone());
+        let finish_name = package
+            .form
+            .finish
+            .node
+            .declaration
+            .as_ref()
+            .and_then(|declaration| declaration.qualified_name.get(2))
+            .ok_or_else(|| ProtocolRefusal::fault("a-package-finish-is-named"))?;
         let finish = Finish {
             node: finish_node,
-            text: format!("{}::finish", package.name),
+            text: finish_name.to_string(),
             constraint: None,
             binder: (finish_slot, package.finish_binder_type.clone()),
         };
