@@ -73,3 +73,12 @@ Disposition pass 1, checked against frozen head 4c9cfbd385be4faef17d13a13dfed542
 | FND-006 | fixed | closure_replay::a_closure_lasso_the_evaluator_does_not_refute_disagrees now settles the item through settle_model_check_over_stutter_closure and asserts TerminalValue::Inconclusive(ReplayParity(NoValue)) with no counterexample |
 
 Runtime cutoff (root Titan results file, read at 14:12 PST): 13/13 unique tests passed across mixed heads, 11 at 8ae3989f and the two original previous-transfer root tests at 4c9cfbd385; 8ae..4c9 differs in tests/it/plan_export_surface.rs alone.
+
+## Dispositions (pass 2)
+
+Disposition pass 2, narrow: it covers only the new findings FND-007 and FND-008, checked against frozen head 806445b30b8d5e07073efe9e68bd5920f8604e14 (parent 4c9cfbd385, base cf8d85826d unchanged). The diff from 4c9 to 806 is one test trace attribute, two Markdown files and the three SR copies; no production code or test body changed.
+
+| FND | Outcome | Reason |
+| --- | --- | --- |
+| FND-007 | deferred | Architecture ruled that ownership of the full-unit BoundedTwo, MissingTemporalClockSelection and held-ids NotEmitted interaction lies with the existing QSL-2744 (#3329), whatever the causality runs show. #3378 merges on the valid emittable fixture, with the previous-transfer assertions unchanged and its 13 focused tests passing. The deferral is recorded once on QSL-2744 in comment 2f361160-1684-4fc1-8db5-b1520a83b6e3. |
+| FND-008 | fixed | missed_deadline_settles_only_with_a_replayed_positive_time_lasso now carries #[trace("TC-523", "FR-128-AC-11")] beside its existing tags, and the body is byte-identical |

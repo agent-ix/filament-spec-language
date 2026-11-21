@@ -38,3 +38,13 @@ FR-128-AC-11 and FR-1030-AC-6/7 are internally consistent with the rulings and w
 - FR-1030-AC-6: examined, consistent with the ruling; TC drift is FND-001
 - FR-1030-AC-7: examined, consistent with the ruling; TC drift is FND-002
 - TC-2920 steps 6-7 and expected results: context_only, read to check verification consistency
+
+## Dispositions
+
+Disposition pass 1, checked against frozen head 806445b30b8d5e07073efe9e68bd5920f8604e14 (parent 4c9cfbd385, base cf8d85826d), against the FR-1030 transfer ruling, the flagless-task-entry ruling and the replay_task_product_trace signature, which takes a product and a counterexample but no request or flag.
+
+| FND | Outcome | Reason |
+| --- | --- | --- |
+| FND-001 | fixed | TC-2920 step 6 and its expected result now state that the outcome carries no lasso, that slot 1 is refuted only through the production replay gate, and that the written/read equality and post-read replay are asserted by the FR-128-AC-14/15 tests; this matches FR-1030-AC-6 |
+| FND-002 | fixed | step 7 now uses PendingTwo as declared in TRANSFER_DECLARATIONS, without "proposed, not yet in the fixture, not run"; plan_export_surface::a_closure_violation_after_a_real_step_refutes_its_premise runs it (tag TC-2920/FR-1030-AC-7) |
+| FND-003 | fixed | FR-128-AC-11 now limits "with it selected" to the timed and protocol entries, which carry the request's flag, and says the typed task-product entry takes no flag and refuses a closure step categorically, which matches the source |
