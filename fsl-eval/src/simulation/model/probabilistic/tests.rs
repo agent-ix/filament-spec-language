@@ -290,6 +290,73 @@ fn probability_candidate_then_claim_predicate_and_reward_use_the_same_allowance(
     });
 }
 
+#[trace("FR-120-AC-35", "FR-107-AC-1")]
+#[test]
+fn probability_clause_factory_preserves_precondition_short_circuit_and_whole_set_refusal() {
+    use super::super::{contracts, walk};
+    use crate::value::ClauseSetOutcome;
+    let mut model = world::link();
+    model.body = "pre A using v on M::Msg::send_a { false }\npre B using v on M::Msg::send_a { self.attempts >= 0 }\n".to_owned();
+    let world = World::new(&model);
+    let exercise = |system: super::ModelSystem<'_>| {
+        let start = initial(&system);
+        let walk = walk::walk_of(&system, &start, None).unwrap();
+        let clauses = &system.clauses.preconditions;
+        assert_eq!(clauses.len(), 2);
+        let observations: Vec<_> = clauses
+            .iter()
+            .map(|clause| {
+                let mut observations = contracts::invariant_observations(&walk, clause, 0);
+                observations.pre = observations.current.take();
+                observations.parameters = vec![("lost".to_owned(), Value::Boolean(false))];
+                observations
+            })
+            .collect();
+        let set: Vec<_> = clauses
+            .iter()
+            .zip(&observations)
+            .rev()
+            .map(|(clause, observations)| (clause.qualified.clone(), observations))
+            .collect();
+        let scope = filament_exact::WorkScope::new(system.meter_limits());
+        let mut calls = 0;
+        let evaluated = system
+            .evaluator()
+            .evaluate_clause_set(&set, &mut || {
+                calls += 1;
+                scope.meter()
+            })
+            .unwrap();
+        assert_eq!(evaluated.outcome, ClauseSetOutcome::False);
+        assert_eq!(
+            calls, 1,
+            "canonical A stops the reversed input set before B gets a meter"
+        );
+        assert_eq!(evaluated.results.len(), 1);
+        assert_eq!(evaluated.results[0].name, clauses[0].qualified);
+        let prefix = scope.consumed_work();
+        calls = 0;
+        let duplicates = vec![set[0].clone(), set[0].clone()];
+        assert!(system
+            .evaluator()
+            .evaluate_clause_set(&duplicates, &mut || {
+                calls += 1;
+                scope.meter()
+            })
+            .is_err());
+        assert_eq!(calls, 0);
+        assert_eq!(
+            scope.consumed_work(),
+            prefix,
+            "a malformed set is refused whole"
+        );
+    };
+    exercise(world.system());
+    through_the_wire(&world, |input| {
+        exercise(world.admit_input(input, 1_000_000).unwrap())
+    });
+}
+
 #[trace("TC-636", "FR-201-AC-22", "FR-202-AC-22", "FR-282-AC-17")]
 #[test]
 fn caller_cancellation_enters_qualified_contract_and_state_predicate_meters() {

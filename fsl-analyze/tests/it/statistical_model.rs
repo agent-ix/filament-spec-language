@@ -63,28 +63,25 @@ fn run(
     )
 }
 
-/// Two real initial-state tests execute serially with the same per-test
+/// Two real binding tests execute serially with the same per-test
 /// confidence. The minimum allowance that completes either alone cannot be
 /// replenished when the second test starts.
 #[trace("FR-120-AC-35", "FR-191-AC-8")]
 #[test]
-fn serial_initial_tests_share_the_probability_work_allowance() {
+fn serial_binding_tests_share_the_probability_work_allowance() {
     let claims = "probabilistic One using ev on M over (n: M::Node) under Steady on origin with alpha 0.2, beta 0.2, indifference 0.4 { probability >= 0.5 [ always[0,0] holds(n.healthy) ] }\nprobabilistic Two using ev on M over (n: M::Node) under Steady on origin with alpha 0.4, beta 0.4, indifference 0.4 { probability >= 0.5 [ always[0,0] holds(n.healthy) ] }";
-    let world = World::new(&prob_world::health(
+    let model = prob_world::health(
         "self.healthy = pre(self.healthy)",
         "true: 1, false: 1",
         false,
         claims,
-    ));
+    );
+    let one_world = World::new(&model);
+    let two_world = World::with_objects(&model, &["a", "b"]);
     let run_with = |bound, two| {
+        let world = if two { &two_world } else { &one_world };
         let mut subject = world.subject();
         subject.simulation.meter.work_units = bound;
-        if two {
-            subject
-                .simulation
-                .initial
-                .push(subject.simulation.initial[0].clone());
-        }
         check_statistical(
             StatisticalRequest {
                 subject,
@@ -133,7 +130,7 @@ fn serial_initial_tests_share_the_probability_work_allowance() {
         provenance,
     }) = two
     else {
-        panic!("the later initial test must spend the same allowance: {two:?}")
+        panic!("the later binding test must spend the same allowance: {two:?}")
     };
     assert!(
         matches!(
@@ -151,11 +148,12 @@ fn serial_initial_tests_share_the_probability_work_allowance() {
     assert_eq!(partial.samples, one.basis.samples);
     assert_eq!(provenance.tests.len(), 2);
     assert_eq!(provenance.tests[0].initial, 0);
-    assert_eq!(provenance.tests[1].initial, 1);
+    assert_eq!(provenance.tests[1].initial, 0);
+    assert_ne!(provenance.tests[0].binding, provenance.tests[1].binding);
     assert_eq!(provenance.tests[0].traces.count, one.basis.draws);
     assert_eq!(
-        provenance.tests[1].traces.count, 0,
-        "the first test spends the allowance before the second draws"
+        provenance.tests[1].traces.count, 1,
+        "the existing serial sampler reports its attempted unpaid draw"
     );
 }
 
