@@ -14,9 +14,10 @@ use filament_semantic_value::model_transition::ModelTransition;
 use fsl_analyze::plan_search::{
     search, CertificateKind, CertificateOutcome, CertificateRule, Direction, MonitorStep,
     ObjectiveKind, PlanFault, PlanLengths, PlanLimit, PlanResult, PlanRules, PlanSearchError,
-    PlanSearchLimits, PlanSearchRequest, PlanStatus, PlanStopCause, PlanView, RuleStop,
+    PlanSearchLimits, PlanSearchRequest, PlanStatus, PlanStep, PlanStopCause, PlanView, RuleStop,
 };
 use fsl_eval::simulation::model::{ModelSimState, ModelSystem};
+use fsl_eval::simulation::TransitionSystem;
 use ix_trace_rs::trace;
 use serde_json::json;
 
@@ -89,6 +90,8 @@ struct Counter<'w> {
     world: &'w World,
     names: BTreeMap<String, String>,
     goal: i64,
+    /// The actual field declared by this fixture's model.
+    value_field: &'static str,
     cost: Cost,
     policies: Vec<Policy>,
     /// An evaluation meter of `work_units` charged once per goal evaluation.
@@ -97,6 +100,7 @@ struct Counter<'w> {
     /// Cancelled (requested) at the goal evaluation after one held.
     trip: Option<Cancel>,
     found: bool,
+    native: Option<std::sync::Arc<[(filament_exact::EffectiveId, String)]>>,
 }
 
 impl<'w> Counter<'w> {
@@ -110,17 +114,19 @@ impl<'w> Counter<'w> {
             world,
             names,
             goal,
+            value_field: "value",
             cost: Cost::Length,
             policies: Vec::new(),
             work_units: None,
             used: 0,
             trip: None,
             found: false,
+            native: None,
         }
     }
 
     fn value(&self, state: &ModelSimState) -> i64 {
-        self.world.domain.integer(state, "c", "value")
+        self.world.domain.integer(state, "c", self.value_field)
     }
 
     fn operation(&self, step: &ModelTransition) -> &str {
@@ -134,6 +140,10 @@ fn integer(value: i64) -> Rational {
 
 impl PlanRules for Counter<'_> {
     type StepKey = (u8, Vec<String>);
+
+    fn native_operations(&self) -> Option<std::sync::Arc<[(filament_exact::EffectiveId, String)]>> {
+        self.native.clone()
+    }
 
     fn direction(&self) -> Direction {
         match self.cost {
@@ -952,8 +962,7 @@ const SMALL_INTEGERS: ScalarLimits = ScalarLimits {
 
 /// The cube invariant that the `SMALL_INTEGERS` meter cannot decide from
 /// `value = 4` up (an evaluation stopped by the meter: FR-120 "Invariants").
-const CUBE: &str =
-    "invariant Cube using v on M::Counter at current { self.value * self.value * self.value >= 0 }\n";
+const CUBE: &str = "invariant Cube using v on M::Counter at current { self.value * self.value * self.value >= 0 }\n";
 
 fn undecided_system(world: &World) -> ModelSystem<'_> {
     ModelSystem::new(world.subject(&["c"], SMALL_INTEGERS).simulation).expect("admits")
@@ -1027,4 +1036,656 @@ fn an_undecided_prune_caps_a_found_plan_at_incomplete() {
     .unwrap();
     assert_eq!(result.status, PlanStatus::Incomplete);
     assert!(result.plan.is_none());
+}
+
+/// A source plan with one non-safety policy whose truth needs continuation.
+fn source_policy_world(start: &[(&str, serde_json::Value)]) -> World {
+    World::new(
+        model_world::counter(),
+        "type Lengths = Int[0, 0];\n\
+         synthesis Reach using t grammar M::Counter domain Lengths satisfies { true };\n",
+        model_world::INFINITE,
+        &[model_world::Clause {
+            activation: "on origin",
+            formula: "eventually holds(c.value = 3)",
+        }],
+        start,
+    )
+}
+
+/// Policy prefixes, separate policies and terminal reads all use the
+/// request meter; a successful exact-bound first read leaves no second budget.
+#[test]
+#[trace("FR-1011-AC-2", "FSpec-FR-801-AC-2")]
+fn source_policy_reads_share_the_request_work_counter() {
+    use filament_exact::{LimitKind, Meter};
+    use fsl_analyze::plan_source::SourcePlan;
+    use fsl_eval::simulation::model::{read_clause, ClauseReading};
+    use fsl_eval::simulation::TransitionSystem;
+
+    let world = source_policy_world(&[("c", json!({"value": {"integer": "0"}}))]);
+    let system = world_system(&world);
+    let state = system
+        .initial()
+        .into_iter()
+        .next()
+        .expect("one initial state");
+    let node = &world.package.graph().temporal_clauses()[0];
+    let mut calibration = Meter::new(UNLIMITED);
+    assert_eq!(
+        read_clause(
+            &system,
+            node,
+            std::slice::from_ref(&state),
+            false,
+            &mut calibration
+        )
+        .expect("the policy reads the initial prefix"),
+        ClauseReading::Undecided,
+    );
+    let one_read = calibration.consumed(LimitKind::WorkUnits);
+    assert!(one_read > 0, "the policy read must charge work");
+    let limits = ScalarLimits {
+        work_units: one_read,
+        ..UNLIMITED
+    };
+    let synthesis = &world.package.graph().syntheses()[0];
+    for next in ["other-policy", "advance", "terminal"] {
+        let mut rules =
+            SourcePlan::new(&world.package, synthesis, &system, vec![node, node], limits)
+                .expect("the source plan and policies are checked");
+        let MonitorStep::Continue(monitor) = rules
+            .policy_start(0, &state)
+            .expect("the exact-bound first policy read completes")
+        else {
+            panic!("an unsettled prefix is retained");
+        };
+        let stopped = match next {
+            "other-policy" => rules.policy_start(1, &state).map(|_| ()),
+            "advance" => rules.policy_advance(0, &monitor, &state).map(|_| ()),
+            "terminal" => rules.policy_accepts(0, &monitor, &state).map(|_| ()),
+            _ => unreachable!("the listed read modes are exhaustive"),
+        };
+        assert!(
+            matches!(stopped,
+                Err(RuleStop::Accounting { counter: "work_units", value }) if value == one_read
+            ),
+            "the next policy read uses the exhausted request budget: {stopped:?}"
+        );
+    }
+}
+
+/// A policy quantified over two objects shares one budget across instances.
+#[test]
+#[trace("FR-1011-AC-2", "FSpec-FR-801-AC-2")]
+fn source_policy_instances_share_the_request_work_counter() {
+    use filament_exact::{LimitKind, Meter};
+    use fsl_eval::simulation::model::{read_clause, ClauseReading};
+    use fsl_eval::simulation::TransitionSystem;
+
+    let both = source_policy_world(&[
+        ("c", json!({"value": {"integer": "0"}})),
+        ("d", json!({"value": {"integer": "0"}})),
+    ]);
+    let system = ModelSystem::new(both.subject(&["c", "d"], UNLIMITED).simulation)
+        .expect("both objects are in the universe");
+    let state = system
+        .initial()
+        .into_iter()
+        .next()
+        .expect("one initial state");
+    let node = &both.package.graph().temporal_clauses()[0];
+    let mut calibration = Meter::new(UNLIMITED);
+    assert_eq!(
+        read_clause(
+            &system,
+            node,
+            std::slice::from_ref(&state),
+            false,
+            &mut calibration,
+        )
+        .expect("both instances read with an unlimited budget"),
+        ClauseReading::Undecided
+    );
+    let total_work = calibration.consumed(LimitKind::WorkUnits);
+    assert!(
+        total_work > 1,
+        "two nontrivial policy instances charge work"
+    );
+    let budget = total_work - 1;
+    let mut meter = Meter::new(ScalarLimits {
+        work_units: budget,
+        ..UNLIMITED
+    });
+    assert_eq!(
+        read_clause(
+            &system,
+            &both.package.graph().temporal_clauses()[0],
+            std::slice::from_ref(&state),
+            false,
+            &mut meter,
+        )
+        .expect("accounting is a typed policy reading"),
+        ClauseReading::Incomplete {
+            counter: "work_units",
+            value: budget
+        }
+    );
+}
+
+/// Closing an unmet eventual policy rejects the candidate; quantifying the
+/// same policy over an empty population holds vacuously.
+#[test]
+#[trace("FSpec-FR-803")]
+fn source_policy_acceptance_requires_closed_truth_and_preserves_vacuity() {
+    use filament_exact::Meter;
+    use fsl_analyze::plan_source::SourcePlan;
+    use fsl_eval::simulation::model::{read_clause, ClauseReading};
+    use fsl_eval::simulation::TransitionSystem;
+
+    for empty in [false, true] {
+        let objects = if empty {
+            Vec::new()
+        } else {
+            vec![("c", json!({"value": {"integer": "0"}}))]
+        };
+        let world = source_policy_world(&objects);
+        let keys = if empty { vec![] } else { vec!["c"] };
+        let system = ModelSystem::new(world.subject(&keys, UNLIMITED).simulation)
+            .expect("the declared population is complete");
+        let state = system
+            .initial()
+            .into_iter()
+            .next()
+            .expect("one initial state");
+        let node = &world.package.graph().temporal_clauses()[0];
+        let mut rules = SourcePlan::new(
+            &world.package,
+            &world.package.graph().syntheses()[0],
+            &system,
+            vec![node],
+            UNLIMITED,
+        )
+        .expect("the source plan is checked");
+        let MonitorStep::Continue(monitor) = rules
+            .policy_start(0, &state)
+            .expect("the initial policy prefix reads")
+        else {
+            panic!("the initial prefix cannot refute eventual truth");
+        };
+        assert_eq!(
+            rules
+                .policy_accepts(0, &monitor, &state)
+                .expect("the closed policy reads"),
+            empty
+        );
+        assert_eq!(
+            read_clause(
+                &system,
+                node,
+                std::slice::from_ref(&state),
+                true,
+                &mut Meter::new(UNLIMITED),
+            )
+            .expect("the closed policy is readable"),
+            if empty {
+                ClauseReading::Holds
+            } else {
+                ClauseReading::Violated
+            }
+        );
+    }
+}
+
+/// A genuine authored native model, retaining its declared operation order.
+fn native_plan_world(model: &str, contracts: &str, start: &[(&str, serde_json::Value)]) -> World {
+    let source = fsl_cst::diagnostic::read_source(
+        fsl_foundation::SourceIdentity::new("test", "native-plan-model"),
+        "native-plan-model.fsl",
+        model.as_bytes(),
+        fsl_cst::Limits::default().source_bytes,
+    )
+    .expect("the authored native model source admits");
+    let packages =
+        fsl_semantics::model::intake::package_input_from_sources([("test/native-plan", &source)])
+            .expect("the authored model compiles without modifying emitted JSON");
+    World::new(
+        Domain {
+            package: "test/native-plan",
+            object: "Counter",
+            population: "counters",
+            document: packages["test/native-plan"].clone(),
+        },
+        contracts,
+        model_world::INFINITE,
+        &[],
+        start,
+    )
+}
+
+fn native_order(
+    system: &ModelSystem<'_>,
+    names: &[&str],
+) -> Vec<(filament_exact::EffectiveId, String)> {
+    let operations = system.operations();
+    names
+        .iter()
+        .map(|name| {
+            let (declaring, _, _) = operations
+                .iter()
+                .find(|(_, found, _)| found == name)
+                .expect("the declared operation exists");
+            (declaring.clone(), (*name).to_owned())
+        })
+        .collect()
+}
+
+/// The callback gates an invocation before any precondition or frame trial
+/// consumes its request evaluation budget.
+#[test]
+#[trace("FSpec-FR-801", "FR-1011")]
+fn native_invocation_gate_precedes_contract_evaluation() {
+    use filament_exact::LimitKind;
+    use fsl_eval::simulation::model::{
+        NativeCandidateControl, NativeCandidateEvent, NativeCandidateVisit,
+    };
+    let world = native_plan_world(
+        "language \"ix:native\" edition \"1-draft\"; domain \"test/native-plan\"; type ValueRange = Int[0,3]; object Counter { number: ValueRange; operation apply(): Boolean modifies self.number; } population counters: Counter;",
+        "post Applied using v on M::Counter::apply { convert<Integer>(self.number) = pre(self.number) + 1 }\n",
+        &[("c", json!({"number":{"integer":"0"}}))]);
+    let system = world_system(&world);
+    system.share_evaluation_meter(UNLIMITED);
+    let mut began = 0;
+    let visit = system
+        .visit_plan_candidates(
+            &system.initial()[0],
+            &native_order(&system, &["apply"]),
+            None,
+            &mut |event| match event {
+                NativeCandidateEvent::Begin(_) => {
+                    began += 1;
+                    NativeCandidateControl::Stop
+                }
+                NativeCandidateEvent::Completed { .. }
+                | NativeCandidateEvent::Disabled(_)
+                | NativeCandidateEvent::Undetermined { .. } => {
+                    panic!("a stopped invocation evaluates no contract or frame")
+                }
+            },
+        )
+        .expect("the caller can stop at the invocation gate");
+    assert_eq!(visit, NativeCandidateVisit::Stopped);
+    assert_eq!(began, 1);
+    assert_eq!(system.evaluation_meter().consumed(LimitKind::WorkUnits), 0);
+}
+
+/// Raw rejected frame trials spend evaluation accounting, while remaining
+/// one logical invocation with the same two distinct Boolean results.
+#[test]
+#[trace("FSpec-FR-801", "FR-1011")]
+fn rejected_native_frame_trials_do_not_become_extra_invocations() {
+    use filament_exact::LimitKind;
+    use fsl_eval::simulation::model::{
+        NativeCandidateControl, NativeCandidateEvent, NativeCandidateVisit,
+    };
+    let mut charges = Vec::new();
+    for upper in [1, 3] {
+        let model = format!("language \"ix:native\" edition \"1-draft\"; domain \"test/native-plan\"; type ValueRange = Int[0,{upper}]; object Counter {{ number: ValueRange; operation apply(): Boolean modifies self.number; }} population counters: Counter;");
+        let world = native_plan_world(
+            &model,
+            "post Applied using v on M::Counter::apply { self.number = 1 }\n",
+            &[("c", json!({"number":{"integer":"0"}}))],
+        );
+        let system = world_system(&world);
+        system.share_evaluation_meter(UNLIMITED);
+        let (mut began, mut outcomes) = (0, Vec::new());
+        let visit = system
+            .visit_plan_candidates(
+                &system.initial()[0],
+                &native_order(&system, &["apply"]),
+                None,
+                &mut |event| {
+                    match event {
+                        NativeCandidateEvent::Begin(_) => began += 1,
+                        NativeCandidateEvent::Completed { state, outcome, .. } => {
+                            outcomes.push((outcome, world.domain.integer(state, "c", "number")))
+                        }
+                        NativeCandidateEvent::Disabled(_)
+                        | NativeCandidateEvent::Undetermined { .. } => {
+                            panic!("the postcondition admits exactly one state for both results")
+                        }
+                    }
+                    NativeCandidateControl::Continue
+                },
+            )
+            .expect("finite raw trials complete");
+        assert_eq!(visit, NativeCandidateVisit::Complete);
+        assert_eq!(began, 1);
+        assert_eq!(outcomes, [(Some(0), 1), (Some(1), 1)]);
+        charges.push(system.evaluation_meter().consumed(LimitKind::WorkUnits));
+    }
+    assert!(
+        charges[1] > charges[0],
+        "extra rejected frame trials spend only evaluation work: {charges:?}"
+    );
+}
+
+/// The receiver is ordered before parameters. Typed Int order puts 2 before
+/// 10 even though canonical JSON text would do the reverse.
+#[test]
+#[trace("FSpec-FR-804", "FR-1012")]
+fn native_invocations_follow_operation_receiver_and_typed_argument_order() {
+    use fsl_eval::simulation::model::{
+        NativeCandidateControl, NativeCandidateEvent, NativeCandidateVisit,
+    };
+    let world = native_plan_world(
+        "language \"ix:native\" edition \"1-draft\"; domain \"test/native-plan\"; type ValueRange = Int[0,0]; type ArgumentRange = Int[2,10]; object Counter { number: ValueRange; operation zeta(amount: ArgumentRange); operation alpha(amount: ArgumentRange); } population counters: Counter;",
+        "", &[("9",json!({"number":{"integer":"0"}})),("10",json!({"number":{"integer":"0"}}))]);
+    let system = ModelSystem::new(world.subject(&["9", "10"], UNLIMITED).simulation)
+        .expect("both native receivers admit");
+    let mut invocations = Vec::new();
+    let operations = system.operations();
+    let visit = system
+        .visit_plan_candidates(
+            &system.initial()[0],
+            &native_order(&system, &["zeta", "alpha"]),
+            None,
+            &mut |event| {
+                if let NativeCandidateEvent::Begin(transition) = event {
+                    let name = operations
+                        .iter()
+                        .find(|(_, _, text)| *text == transition.operation())
+                        .expect("declared operation")
+                        .1;
+                    let receiver: serde_json::Value =
+                        serde_json::from_str(transition.receiver().expect("a receiver")).unwrap();
+                    let argument: serde_json::Value =
+                        serde_json::from_str(&transition.arguments()[0]).unwrap();
+                    invocations.push((
+                        name.to_owned(),
+                        receiver["identity"].as_str().unwrap().to_owned(),
+                        argument["value"].as_str().unwrap().parse::<i64>().unwrap(),
+                    ));
+                    NativeCandidateControl::Skip
+                } else {
+                    panic!("a skipped invocation produces no evaluation event")
+                }
+            },
+        )
+        .expect("the finite invocation product visits without evaluation");
+    assert_eq!(visit, NativeCandidateVisit::Complete);
+    let mut expected = Vec::new();
+    for operation in ["zeta", "alpha"] {
+        for receiver in ["10", "9"] {
+            for argument in 2..=10 {
+                expected.push((operation.to_owned(), receiver.to_owned(), argument));
+            }
+        }
+    }
+    assert_eq!(invocations, expected);
+}
+
+/// Result ordering precedes canonical state ordering and keeps every native
+/// result/post-state pair, including different results sharing one post-state.
+#[test]
+#[trace("FSpec-FR-804", "FR-1012")]
+fn native_outcomes_keep_all_results_in_result_then_state_order() {
+    use fsl_eval::simulation::model::{
+        NativeCandidateControl, NativeCandidateEvent, NativeCandidateVisit,
+    };
+    let world = native_plan_world(
+        "language \"ix:native\" edition \"1-draft\"; domain \"test/native-plan\"; type ValueRange = Int[0,2]; object Counter { number: ValueRange; operation choose(): Boolean modifies self.number; } population counters: Counter;",
+        "post Chosen using v on M::Counter::choose { (not result and self.number >= 1) or (result and self.number <= 1) }\n",
+        &[("c",json!({"number":{"integer":"0"}}))]);
+    let system = world_system(&world);
+    let mut outcomes = Vec::new();
+    let visit = system
+        .visit_plan_candidates(
+            &system.initial()[0],
+            &native_order(&system, &["choose"]),
+            None,
+            &mut |event| {
+                match event {
+                    NativeCandidateEvent::Begin(_) => {}
+                    NativeCandidateEvent::Completed { state, outcome, .. } => {
+                        outcomes.push((outcome, world.domain.integer(state, "c", "number")))
+                    }
+                    NativeCandidateEvent::Disabled(_)
+                    | NativeCandidateEvent::Undetermined { .. } => {
+                        panic!("four valid native pairs exist")
+                    }
+                }
+                NativeCandidateControl::Continue
+            },
+        )
+        .expect("the finite native relation completes");
+    assert_eq!(visit, NativeCandidateVisit::Complete);
+    assert_eq!(
+        outcomes,
+        [(Some(0), 1), (Some(1), 2), (Some(2), 0), (Some(3), 1)]
+    );
+}
+
+/// Native replay binds the exact ordinal, even when two results share one
+/// post-state. The certificate also retains every ordinal's successor row.
+#[test]
+#[trace("FSpec-FR-650", "FSpec-FR-804", "FR-1012")]
+fn native_replay_and_certificate_bind_each_multiple_outcome_ordinal() {
+    use fsl_analyze::plan_search::replay;
+    let world = native_plan_world(
+        "language \"ix:native\" edition \"1-draft\"; domain \"test/native-plan\"; type ValueRange = Int[0,2]; object Counter { number: ValueRange; operation choose(): Boolean modifies self.number; } population counters: Counter;",
+        "post Chosen using v on M::Counter::choose { (not result and self.number >= 1) or (result and self.number <= 1) }\n",
+        &[("c",json!({"number":{"integer":"0"}}))]);
+    let system = world_system(&world);
+    let mut rules = Counter::new(&world, &system, 2);
+    rules.value_field = "number";
+    rules.native = Some(native_order(&system, &["choose"]).into());
+    let result = run(
+        &mut rules,
+        &system,
+        (1, 1),
+        PlanSearchLimits::default(),
+        None,
+    )
+    .expect("the finite native plan replays and checks");
+    assert_eq!(result.status, PlanStatus::Optimal);
+    assert!(result.certified);
+    assert_eq!(
+        result.certificate.as_ref().expect("a certificate").outcome,
+        CertificateOutcome::Accepted
+    );
+    let plan = result.plan.expect("a one-step native plan");
+    assert_eq!(plan.steps.len(), 1);
+    assert_eq!(plan.steps[0].outcome_ordinal(), Some(1));
+    assert_eq!(
+        replay::replay(
+            &system,
+            &mut rules,
+            &plan,
+            PlanLengths::new(1, 1).unwrap(),
+            ObjectiveKind::StepSum
+        )
+        .unwrap(),
+        integer(1)
+    );
+    for ordinal in [None, Some(0), Some(4)] {
+        let mut forged = plan.clone();
+        forged.steps[0] = PlanStep::new(plan.steps[0].invocation().clone(), ordinal);
+        assert!(
+            matches!(
+                replay::replay(
+                    &system,
+                    &mut rules,
+                    &forged,
+                    PlanLengths::new(1, 1).unwrap(),
+                    ObjectiveKind::StepSum
+                ),
+                Err(PlanSearchError::ReplayFailed { step: 0, .. })
+            ),
+            "ordinal {ordinal:?} must not select the recorded post-state"
+        );
+    }
+    // Ordinals 0 and 3 both reach value1. Removing just ordinal3 must
+    // still break closure rather than being covered by ordinal0's state.
+    let fault = PlanFault::DropSuccessor {
+        entry: 0,
+        successor: 3,
+    };
+    let tampered = run(
+        &mut rules,
+        &system,
+        (1, 1),
+        PlanSearchLimits::default(),
+        Some(&fault),
+    )
+    .expect("a rejected certificate remains an honest feasible result");
+    assert!(!tampered.certified);
+    assert_eq!(
+        tampered
+            .certificate
+            .expect("a certificate rejection")
+            .outcome,
+        CertificateOutcome::Rejected {
+            rule: CertificateRule::Closure,
+            entry: 0
+        }
+    );
+}
+
+/// An ordinal on a single-outcome invocation, or a receiver of another
+/// admitted model member, cannot replay as the recorded native invocation.
+#[test]
+#[trace("FSpec-FR-650", "FSpec-FR-804", "FR-1012")]
+fn native_replay_refuses_single_outcome_ordinals_and_wrong_receivers() {
+    use fsl_analyze::plan_search::replay;
+    let world = native_plan_world(
+        "language \"ix:native\" edition \"1-draft\"; domain \"test/native-plan\"; type ValueRange = Int[0,1]; object Counter { number: ValueRange; operation settle() modifies self.number; } object Other { number: ValueRange; } population counters: Counter;",
+        "post Settles using v on M::Counter::settle { self.number = 1 }\n",
+        &[("c",json!({"number":{"integer":"0"}}))]);
+    let system = world_system(&world);
+    let mut rules = Counter::new(&world, &system, 1);
+    rules.value_field = "number";
+    rules.native = Some(native_order(&system, &["settle"]).into());
+    let result = run(
+        &mut rules,
+        &system,
+        (1, 1),
+        PlanSearchLimits::default(),
+        None,
+    )
+    .expect("the single-outcome plan replays");
+    assert_eq!(result.status, PlanStatus::Optimal);
+    let plan = result.plan.expect("a reported plan");
+    assert_eq!(plan.steps[0].outcome_ordinal(), None);
+    let mut ordinal = plan.clone();
+    ordinal.steps[0] = PlanStep::new(plan.steps[0].invocation().clone(), Some(0));
+    assert!(
+        matches!(
+            replay::replay(
+                &system,
+                &mut rules,
+                &ordinal,
+                PlanLengths::new(1, 1).unwrap(),
+                ObjectiveKind::StepSum
+            ),
+            Err(PlanSearchError::ReplayFailed { step: 0, .. })
+        ),
+        "single-outcome invocations require an absent ordinal"
+    );
+    let mut receiver: serde_json::Value = serde_json::from_str(
+        plan.steps[0]
+            .receiver()
+            .expect("an object operation has a receiver"),
+    )
+    .unwrap();
+    receiver["object_type"]["original"]["node"] = json!("ix://test/native-plan/Other");
+    receiver["universe"]["path"][2] = json!("ix://test/native-plan/Other");
+    let invocation = ModelTransition::new(
+        plan.steps[0].operation().to_owned(),
+        Some(receiver.to_string()),
+        plan.steps[0].arguments().to_vec(),
+        quire_canonical::Limits::new(4096),
+    )
+    .expect("the forged foreign receiver remains canonical typed JSON");
+    let mut foreign = plan.clone();
+    foreign.steps[0] = PlanStep::new(invocation, None);
+    assert!(
+        matches!(
+            replay::replay(
+                &system,
+                &mut rules,
+                &foreign,
+                PlanLengths::new(1, 1).unwrap(),
+                ObjectiveKind::StepSum
+            ),
+            Err(PlanSearchError::ReplayFailed { step: 0, .. })
+        ),
+        "a different model member cannot reuse Counter's invocation"
+    );
+}
+
+/// The implicit outcome collection uses the caller's named retention size,
+/// without publishing a partial sorted invocation or imposing a hidden cap.
+#[test]
+#[trace("FSpec-FR-801", "FR-1011-AC-2")]
+fn native_outcome_collection_names_its_retained_value_limit() {
+    use filament_exact::LimitKind;
+    use fsl_eval::simulation::model::{
+        NativeCandidateControl, NativeCandidateEvent, NativeCandidateVisit,
+    };
+    use fsl_eval::simulation::ExpansionLimit;
+    let world = native_plan_world(
+        "language \"ix:native\" edition \"1-draft\"; domain \"test/native-plan\"; type ValueRange = Int[0,1]; object Counter { number: ValueRange; operation choose(): Boolean modifies self.number; } population counters: Counter;",
+        "", &[("c",json!({"number":{"integer":"0"}}))]);
+    for bound in [6, 21] {
+        let system = world_system(&world);
+        system.share_evaluation_meter(ScalarLimits {
+            value_occurrences: bound,
+            ..UNLIMITED
+        });
+        let mut began = 0;
+        let mut outcomes = Vec::new();
+        let visit = system.visit_plan_candidates(
+            &system.initial()[0],
+            &native_order(&system, &["choose"]),
+            None,
+            &mut |event| {
+                match event {
+                    NativeCandidateEvent::Begin(_) => began += 1,
+                    NativeCandidateEvent::Completed { state, outcome, .. } => {
+                        outcomes.push((outcome, world.domain.integer(state, "c", "number")));
+                    }
+                    NativeCandidateEvent::Disabled(_)
+                    | NativeCandidateEvent::Undetermined { .. } => {
+                        panic!("all four Boolean-result/post-state pairs are valid");
+                    }
+                }
+                NativeCandidateControl::Continue
+            },
+        );
+        assert_eq!(began, 1);
+        if bound == 6 {
+            let stop = visit.expect_err("the second retained outcome exceeds the named size");
+            assert_eq!(stop.cause.code(), "resource_exhausted");
+            assert_eq!(stop.cause.cause(), "insufficient-next-charge");
+            assert_eq!(
+                stop.limit,
+                Some(ExpansionLimit::EvaluationMeter(LimitKind::ValueOccurrences))
+            );
+            assert_eq!(LimitKind::ValueOccurrences.as_str(), "value_occurrences");
+            assert!(
+                outcomes.is_empty(),
+                "an incomplete collection publishes no partial sorted outcomes: {outcomes:?}"
+            );
+        } else {
+            assert_eq!(
+                visit.expect("the exact total size admits all outcomes"),
+                NativeCandidateVisit::Complete
+            );
+            assert_eq!(
+                outcomes,
+                [(Some(0), 0), (Some(1), 1), (Some(2), 0), (Some(3), 1)]
+            );
+        }
+    }
 }

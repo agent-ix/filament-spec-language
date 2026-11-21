@@ -370,7 +370,7 @@ pub enum V2ReadRefusal {
         /// `Locus::Artifact` at IR's pointer, `/contract_version`.
         locus: Box<Locus>,
     },
-    /// IR's I04 `checked_package` reader refused the wire, carrying its own
+    /// Strict checked-package admission refused the wire, carrying the shared
     /// closed refusal code, the pointer of the value it refused, and (where
     /// IR determined one) the paired cause tag and offending node key.
     /// Covers envelope-shape, canonical-form, semantic-graph
@@ -384,7 +384,8 @@ pub enum V2ReadRefusal {
     /// duplicate set of variants (team decision, no-copy rule).
     #[error("checked-package/v2 wire refused ({refusal:?})")]
     Envelope {
-        /// IR's refusal. Boxed: IR's refusal is the largest payload, and
+        /// Shared reader refusal, including FSL's plan-candidate type rule.
+        /// Boxed: this refusal is the largest payload, and
         /// every read's `Result` carries this type.
         refusal: Box<CheckedPackageRefusal>,
         /// `Locus::Artifact` at IR's pointer; `None` when IR refused the
@@ -831,6 +832,17 @@ pub(crate) fn read_checked_package_v2_at(
                     }),
                 });
             }
+            if let Some(refusal) = crate::bare_synthesis::plan_candidate_refusal(&package) {
+                let locus = Artifact::new(artifact_identity)
+                    .at_ir(refusal.loci.first().and_then(|locus| locus.path.as_ref()));
+                return match locus {
+                    Ok(locus) => refused(V2ReadRefusal::Envelope {
+                        refusal: Box::new(refusal),
+                        locus: locus.map(Box::new),
+                    }),
+                    Err(fault) => refused(V2ReadRefusal::Fault(fault)),
+                };
+            }
             let timed_models = match CheckedTimedModel::from_admitted(&package) {
                 Ok(models) => models,
                 Err(invariant) => {
@@ -879,7 +891,8 @@ pub(crate) fn read_checked_package_v2_at(
                 Err(refusal) => refused(V2ReadRefusal::Structural(Box::new(refusal))),
             }
         }
-        CheckedPackageDispatchResult::Refused(refusal) => {
+        CheckedPackageDispatchResult::Refused(mut refusal) => {
+            crate::bare_synthesis::locate_plan_candidate_refusal(bytes, &mut refusal);
             let artifact = Artifact::new(artifact_identity);
             let locus =
                 match artifact.at_ir(refusal.loci.first().and_then(|locus| locus.path.as_ref())) {

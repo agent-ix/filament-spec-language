@@ -641,6 +641,9 @@ impl<'a> ModelSystem<'a> {
                 // preflight before an attempt can expand frames.
                 clock_selectors: None,
                 post_presence: None,
+                candidate_visitor: None,
+                visitor_stopped: std::cell::Cell::new(false),
+                retained_occurrences: std::cell::RefCell::new(filament_exact::Integer::one()),
             }),
             None => walk_of(self, observed.state(), None),
         }

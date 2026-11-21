@@ -221,6 +221,192 @@ pub fn is_plan_synthesis(package: &CheckedPackageV2, declaration: &CheckedNodeId
     })
 }
 
+/// The source-plan binder is a plan record, never its object grammar.
+/// Generic graph admission supplies identity and reference validity; this
+/// FSL declaration rule checks the parameter's admitted type family.
+pub(crate) fn plan_candidate_refusal(
+    package: &CheckedPackageV2,
+) -> Option<filament_contract_model::CheckedPackageRefusal> {
+    use filament_contract_model::{
+        CheckedNodeKind as Kind, CheckedPackageRefusalCause as Cause,
+        CheckedPackageRefusalCode as Code, CheckedPackageRefusalLocation, ClaimForm,
+        CompositeTypeForm, HybridForm, ModelForm, ValueForm,
+    };
+    let nodes = &package.resolved_graph().nodes;
+    // Borrow the retained ids rather than cloning structural-key trees.
+    let parameters: std::collections::BTreeMap<_, _> = nodes
+        .iter()
+        .filter(|node| package.node_kind(&node.node_id) == Some(Kind::Value(ValueForm::Parameter)))
+        .map(|node| (&node.node_id, &node.semantic_type))
+        .collect();
+    for (position, node) in nodes.iter().enumerate() {
+        if package.node_kind(&node.node_id) != Some(Kind::Claim(ClaimForm::SynthesisRequest)) {
+            continue;
+        }
+        let Some(grammar) = binding(&node.body, "grammar").and_then(reference) else {
+            continue;
+        };
+        if !matches!(
+            package.node_kind(grammar),
+            Some(Kind::Model(ModelForm::ObjectType) | Kind::Hybrid(HybridForm::Model))
+        ) {
+            continue;
+        }
+        let CheckedTerm::Aggregate { members } = &node.body else {
+            continue;
+        };
+        let Some((at, candidate)) =
+            members
+                .iter()
+                .enumerate()
+                .find_map(|(at, member)| match member {
+                    CheckedTerm::Binding { name, value, .. } if &**name == "candidate" => {
+                        Some((at, &**value))
+                    }
+                    _ => None,
+                })
+        else {
+            continue;
+        };
+        let candidate_type = reference(candidate).and_then(|id| parameters.get(id));
+        if candidate_type.is_some_and(|ty| {
+            package.node_kind(ty) == Some(Kind::CompositeType(CompositeTypeForm::Record))
+        }) {
+            continue;
+        }
+        return Some(filament_contract_model::CheckedPackageRefusal {
+            code: Code::InvalidPackage,
+            cause: Some(Cause::InvalidValue),
+            loci: vec![CheckedPackageRefusalLocation {
+                path: Some(candidate_binding_path(position, at)),
+                source_region: None,
+            }],
+            locus: Some(node.node_id.clone()),
+            contract_version: None,
+            document_pointer: None,
+            extension_detail: None,
+            protocol_detail: None,
+            type_argument_detail: None,
+        });
+    }
+    None
+}
+
+/// Locate only a strict parameter-type refusal at the uniquely joined plan
+/// candidate binding. The original refusal code, cause and node are retained.
+pub(crate) fn locate_plan_candidate_refusal(
+    bytes: &[u8],
+    refusal: &mut filament_contract_model::CheckedPackageRefusal,
+) {
+    use filament_contract_model::{
+        CheckedPackageRefusalCause as Cause, CheckedPackageRefusalCode as Code,
+    };
+    if !matches!(
+        refusal.code,
+        Code::InvalidSemanticGraph | Code::InvalidPackage
+    ) || !matches!(refusal.cause, None | Some(Cause::InvalidValue))
+    {
+        return;
+    }
+    let Some(primary) = refusal.loci.first() else {
+        return;
+    };
+    let Some(path) = primary.path.as_ref() else {
+        return;
+    };
+    let Some(position) = path
+        .as_str()
+        .strip_prefix("/semantic_graph/nodes/")
+        .and_then(|path| path.strip_suffix("/semantic_type"))
+        .and_then(|position| position.parse::<usize>().ok())
+    else {
+        return;
+    };
+    let Ok(mut wire) = serde_json::from_slice::<serde_json::Value>(bytes) else {
+        return;
+    };
+    let Ok(graph) = fsl_semantics::check::wire_id::WireGraph::of_package_value(&wire) else {
+        return;
+    };
+    let Some(locus) = refusal.locus.as_ref().and_then(|id| graph.key(id).ok()) else {
+        return;
+    };
+    if graph.keys().get(position) != Some(&locus) {
+        return;
+    }
+    if fsl_semantics::check::wire_id::resolve_operand_slots(&mut wire).is_err() {
+        return;
+    }
+    let Some(nodes) = wire["semantic_graph"]["nodes"].as_array() else {
+        return;
+    };
+    let Some(parameter) = nodes
+        .get(position)
+        .filter(|node| node["node_tag"] == "value" && node["semantic_form"] == "parameter")
+    else {
+        return;
+    };
+    let mut joined = None;
+    for (claim_at, claim) in nodes.iter().enumerate().filter(|(_, node)| {
+        node["node_tag"] == "claim" && node["semantic_form"] == "synthesis_request"
+    }) {
+        let Some(members) = claim["body"]["members"].as_array() else {
+            continue;
+        };
+        let grammar = members
+            .iter()
+            .find(|member| member["term"] == "binding" && member["name"] == "grammar")
+            .map(|member| &member["value"]);
+        let Some(grammar) = grammar
+            .filter(|value| value["term"] == "reference")
+            .map(|value| &value["target"])
+        else {
+            continue;
+        };
+        if grammar != &parameter["semantic_type"] {
+            continue;
+        }
+        let mut targets = nodes.iter().filter(|node| &node["node_id"] == grammar);
+        let Some(target) = targets.next() else {
+            continue;
+        };
+        if targets.next().is_some()
+            || !((target["node_tag"] == "model" && target["semantic_form"] == "object_type")
+                || (target["node_tag"] == "hybrid" && target["semantic_form"] == "hybrid_model"))
+        {
+            continue;
+        }
+        for (at, member) in members
+            .iter()
+            .enumerate()
+            .filter(|(_, member)| member["term"] == "binding" && member["name"] == "candidate")
+        {
+            if member["value"]["term"] == "reference"
+                && member["value"]["target"] == parameter["node_id"]
+            {
+                if joined.is_some() {
+                    return;
+                }
+                joined = Some((claim_at, at));
+            }
+        }
+    }
+    if let Some((claim_at, at)) = joined {
+        refusal.loci[0].path = Some(candidate_binding_path(claim_at, at));
+    }
+}
+
+fn candidate_binding_path(position: usize, at: usize) -> filament_contract_model::JsonPointer {
+    filament_contract_model::JsonPointer::root()
+        .key("semantic_graph")
+        .key("nodes")
+        .index(position)
+        .key("body")
+        .key("members")
+        .index(at)
+        .key("value")
+}
+
 fn binding<'a>(term: &'a CheckedTerm, name: &str) -> Option<&'a CheckedTerm> {
     let CheckedTerm::Aggregate { members } = term else {
         return None;

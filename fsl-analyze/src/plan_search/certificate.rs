@@ -5,7 +5,6 @@
 //! [`ModelSystem`] and re-evaluates goal, policy and objective itself.
 
 use filament_exact::{Cancel, Rational};
-use filament_semantic_value::model_transition::ModelTransition;
 use fsl_eval::simulation::model::{ModelSimState, ModelSystem};
 use fsl_eval::simulation::TransitionSystem;
 
@@ -86,13 +85,13 @@ pub struct Entry {
     monitors: Vec<Vec<u8>>,
     /// The entry that admitted this node and the step, for re-reading the
     /// node's representative prefix.
-    parent: Option<(usize, ModelTransition)>,
+    parent: Option<(usize, super::PlanStep)>,
     /// `pi` for a potential certificate (`None` is no reachable goal); the
     /// goal node's objective value for a closure certificate.
     value: Option<Rational>,
     /// One record per enabled, prefix-admissible step, in step order: the
     /// step and the successor's entry index.
-    successors: Vec<(ModelTransition, usize)>,
+    successors: Vec<(super::PlanStep, usize)>,
 }
 
 /// A written certificate.
@@ -341,19 +340,100 @@ pub(crate) fn check<R: PlanRules>(
         if entry.key.depth >= lengths.max() {
             continue;
         }
-        let expansion = match system.successors(&entry.state) {
-            Ok(expansion) => expansion,
-            Err(_) => return reject(CertificateRule::Closure, index),
-        };
-        let mut derived: Vec<_> = expansion
-            .successors
-            .into_iter()
-            .map(|(step, state)| (rules.step_key(&step), step, state))
-            .collect();
-        derived.sort_by(|left, right| left.0.cmp(&right.0));
+        let native = rules.native_operations();
+        let mut derived = Vec::new();
+        if let Some(operations) = &native {
+            use fsl_eval::simulation::model::{
+                ClauseOutcome, NativeCandidateControl as Control, NativeCandidateEvent as Event,
+            };
+            let mut denied = None;
+            let mut refused = false;
+            let visited = system.visit_plan_candidates(
+                &entry.state,
+                operations,
+                Some(cancel),
+                &mut |event| match event {
+                    Event::Begin(_) | Event::Disabled(_) => Control::Continue,
+                    Event::Completed {
+                        transition,
+                        state,
+                        outcome,
+                    } => match meter.charge() {
+                        Ok(()) => {
+                            derived.push((
+                                (rules.step_key(transition), outcome),
+                                super::PlanStep::new(transition.clone(), outcome),
+                                state.clone(),
+                            ));
+                            Control::Continue
+                        }
+                        Err(stop) => {
+                            denied = Some(stop);
+                            Control::Stop
+                        }
+                    },
+                    Event::Undetermined { outcome, .. } => match outcome {
+                        ClauseOutcome::KernelUndefined(_) | ClauseOutcome::FamilyUndefined(_) => {
+                            Control::Continue
+                        }
+                        ClauseOutcome::Incomplete(incomplete) => {
+                            denied = Some(PlanStopCause::LimitReached {
+                                limit: incomplete.limit_kind.as_str(),
+                                value: incomplete.limit,
+                                setting: format!("accounting.{}", incomplete.limit_kind.as_str()),
+                            });
+                            Control::Stop
+                        }
+                        ClauseOutcome::KernelRefused(_)
+                        | ClauseOutcome::FamilyRefused(_)
+                        | ClauseOutcome::NotBoolean
+                        | ClauseOutcome::Stopped(_) => {
+                            refused = true;
+                            Control::Stop
+                        }
+                    },
+                },
+            );
+            if let Some(stop) = denied {
+                return Err(stop);
+            }
+            if let Err(stop) = visited {
+                if let Some(cause) = cancel.cause() {
+                    return Err(PlanStopCause::Cancelled(cause));
+                }
+                match super::expansion_stop(stop, system) {
+                    super::Stop::Cause(cause) => return Err(cause),
+                    super::Stop::Error(_) | super::Stop::Negative(_) => {
+                        return reject(CertificateRule::Closure, index)
+                    }
+                }
+            }
+            if refused {
+                return reject(CertificateRule::Closure, index);
+            }
+        } else {
+            let expansion = match system.successors(&entry.state) {
+                Ok(expansion) => expansion,
+                Err(_) => return reject(CertificateRule::Closure, index),
+            };
+            derived = expansion
+                .successors
+                .into_iter()
+                .map(|(step, state)| {
+                    (
+                        (rules.step_key(&step), None),
+                        super::PlanStep::from(step),
+                        state,
+                    )
+                })
+                .collect();
+            derived.sort_by(|left, right| left.0.cmp(&right.0));
+        }
         let mut records = 0_usize;
         for (_, step, state) in derived {
-            meter.charge()?;
+            if native.is_none() {
+                meter.charge()?;
+            }
             match invariants_hold(system, &state)? {
                 Some(true) => {}
                 Some(false) => continue,
@@ -521,7 +601,7 @@ fn objective_value<R: PlanRules>(
     rules: &mut R,
     kind: ObjectiveKind,
     states: &[ModelSimState],
-    steps: &[ModelTransition],
+    steps: &[super::PlanStep],
 ) -> Result<Option<Rational>, PlanStopCause> {
     match kind {
         ObjectiveKind::General => rules
@@ -562,7 +642,7 @@ fn parent_records(entries: &[Entry], index: usize) -> bool {
 fn goal_holds<R: PlanRules>(
     rules: &mut R,
     states: &[ModelSimState],
-    steps: &[ModelTransition],
+    steps: &[super::PlanStep],
     monitors: &[Vec<u8>],
 ) -> Result<bool, PlanStopCause> {
     let view = PlanView { states, steps };
@@ -585,7 +665,7 @@ fn goal_holds<R: PlanRules>(
 
 /// The representative prefix of entry `index`, read from the entries. The
 /// walk is bounded by the entry's step count, so a parent cycle cannot loop.
-fn prefix(entries: &[Entry], mut index: usize) -> (Vec<ModelSimState>, Vec<ModelTransition>) {
+fn prefix(entries: &[Entry], mut index: usize) -> (Vec<ModelSimState>, Vec<super::PlanStep>) {
     let mut states = vec![entries[index].state.clone()];
     let mut steps = Vec::new();
     for _ in 0..entries[index].key.depth {
