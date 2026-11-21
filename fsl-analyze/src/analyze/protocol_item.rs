@@ -19,16 +19,15 @@ use fsl_foundation::source::provenance::OccurrenceKey;
 use fsl_foundation::RequestIndex;
 use fsl_package::CheckedPackage;
 use fsl_replay::{
-    replay_protocol_trace_with_temporal_selections, DeclineCode, ModelCheckItem,
-    ModelTraceReplayResult, ModelTraceSubject, ProofRefusalCause, ProtocolCertificateRequest,
-    ProtocolTraceSubject, ReplayRefusal, ReplayTargetMembers, RequestTargetWire,
-    TemporalCounterexample,
+    DeclineCode, ModelCheckItem, ModelTraceReplayResult, ModelTraceSubject, ProofRefusalCause,
+    ProtocolCertificateRequest, ProtocolTraceSubject, ReplayRefusal, ReplayTargetMembers,
+    RequestTargetWire, TemporalCounterexample,
 };
 use fsl_route::request::ItemKind;
 use fsl_route::Mode;
 use fsl_semantics::check::{Capability, TemporalClauseNode};
 
-use super::clause_item::{clause_name, replay_wire, ReplayInputs, ReplayShape, CLAUSE_TRANSCRIPT};
+use super::clause_item::{clause_name, ReplayInputs, ReplayShape, CLAUSE_TRANSCRIPT};
 use super::derived_item::{derived_target, NoLetters};
 use super::items::{admission, settle_protocol_item, ProtocolItem, BROKEN};
 use super::request::ProtocolBinding;
@@ -337,10 +336,19 @@ pub(super) fn protocol_clause_item<'a>(
                     max_candidates: form.max_candidates,
                     timed: None,
                 };
+                let captured = super::replay_context::ProtocolCapture::default();
                 let replay = |payload: &TemporalCounterexample<ProtocolTransition>| {
-                    replay_protocol(&inputs, &trace, node, &claim, payload, letters)
+                    replay_protocol(
+                        &inputs,
+                        &trace,
+                        node,
+                        &claim,
+                        payload,
+                        letters,
+                        (&captured, cancel),
+                    )
                 };
-                settle_protocol_item(
+                let report = settle_protocol_item(
                     ProtocolItem {
                         request: ProtocolCheckRequest {
                             temporal_clock_selections: &[],
@@ -365,7 +373,35 @@ pub(super) fn protocol_clause_item<'a>(
                     },
                     form.reductions.constraint.as_deref(),
                     cancel,
-                )
+                );
+                let encoded = super::replay_context::CaptureSlot::default();
+                let mut spelled = None;
+                if let (
+                    Some((wire, envelope, _emission, terminal)),
+                    EngineReport::Protocol(record, Some(subject)),
+                ) = (captured.into_inner(), &report)
+                {
+                    if record.counterexample.is_some() {
+                        spelled = super::replay_context::protocol(
+                            &inputs,
+                            &wire,
+                            &envelope,
+                            &trace,
+                            subject,
+                            super::replay_context::ProtocolRecording {
+                                slot: &encoded,
+                                system: &system,
+                                cancel,
+                                terminal,
+                            },
+                        );
+                    }
+                }
+                let report = match spelled {
+                    Some(wire) => EngineReport::Spelled(Box::new(report), wire),
+                    None => report,
+                };
+                EngineReport::Captured(Box::new(report), encoded.into_inner())
             },
         )
         .claimed(anchored),
@@ -389,7 +425,12 @@ fn replay_protocol(
     claim: &OccurrenceKey,
     payload: &TemporalCounterexample<ProtocolTransition>,
     letters: &dyn ModelLetters,
+    recording: (
+        &super::replay_context::ProtocolCapture,
+        &filament_exact::Cancel,
+    ),
 ) -> Result<ModelTraceReplayResult, ReplayRefusal> {
+    let (captured, cancel) = recording;
     let fault = |cause: &'static str| ReplayRefusal::Fault(InternalFault::new("analyze", cause));
     let shape = match node {
         Some(node) => {
@@ -417,13 +458,27 @@ fn replay_protocol(
             }
         }
     };
-    let (wire, envelope) = replay_wire(inputs, shape, payload)?;
-    replay_protocol_trace_with_temporal_selections(
+    let (wire, envelope, emission) =
+        super::clause_item::replay_wire_recording(inputs, shape, payload)?;
+    let retained = std::cell::RefCell::new(Ok(None));
+    let observe = |key: &fsl_eval::simulation::StateKey| {
+        let mut saved = retained.borrow_mut();
+        if saved.as_ref().is_ok_and(|key| key.is_none()) {
+            *saved =
+                super::replay_context::retain_terminal_key(key, inputs.provision, cancel).map(Some);
+        }
+    };
+    let recording = (wire.clone(), envelope.clone());
+    let result = fsl_replay::replay_protocol_trace_with_recording(
         wire,
         trace,
         &envelope,
         letters,
         &super::clause_item::clock_selections(inputs.package, inputs.provision),
         inputs.limits.replay,
-    )
+        Some(&observe),
+    );
+    let (wire, envelope) = recording;
+    captured.replace(Some((wire, envelope, emission, retained.into_inner())));
+    result
 }

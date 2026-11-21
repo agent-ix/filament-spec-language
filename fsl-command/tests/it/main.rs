@@ -18,6 +18,7 @@ mod native_workflow_family_cases;
 mod negotiation;
 mod package_run;
 mod prepared_command;
+mod producer_replay_context;
 mod probabilistic_package_locus;
 mod protocol_refusal_names;
 mod protocol_recommendation;

@@ -18,12 +18,15 @@ pub struct SourceProvision {
     entries: BTreeMap<(String, String), Vec<u8>>,
     temporal_selections: Vec<fsl_package::TemporalClockSelection>,
     normalization_owner: Option<Arc<fsl_semantics::model::intake::SelectedModels>>,
+    library_packages:
+        Option<Arc<BTreeMap<fsl_semantics::library::LibraryName, fsl_package::EmittedPackage>>>,
 }
 
 impl PartialEq for SourceProvision {
     fn eq(&self, other: &Self) -> bool {
         self.entries == other.entries
             && self.temporal_selections == other.temporal_selections
+            && self.library_packages == other.library_packages
             && match (&self.normalization_owner, &other.normalization_owner) {
                 (Some(left), Some(right)) => Arc::ptr_eq(left, right),
                 (None, None) => true,
@@ -61,6 +64,24 @@ impl SourceProvision {
     /// supplied one. Absence never authorizes a replacement admission.
     pub fn normalization_owner(&self) -> Option<&fsl_semantics::model::intake::SelectedModels> {
         self.normalization_owner.as_deref()
+    }
+
+    /// Retain genuine selected-library package handles before acquisition's
+    /// CheckedUnit is narrowed to a package view.
+    #[must_use]
+    pub fn with_library_packages(
+        mut self,
+        packages: Arc<BTreeMap<fsl_semantics::library::LibraryName, fsl_package::EmittedPackage>>,
+    ) -> Self {
+        self.library_packages = Some(packages);
+        self
+    }
+
+    /// Original emitted library packages, without a re-emission substitute.
+    pub fn library_packages(
+        &self,
+    ) -> Option<&BTreeMap<fsl_semantics::library::LibraryName, fsl_package::EmittedPackage>> {
+        self.library_packages.as_deref()
     }
 
     /// Retain the actual clock selections admitted with these source units.
@@ -1274,6 +1295,12 @@ fn work<'a>(
                     packages: binding.packages,
                     emit: limits.emit,
                     shared,
+                },
+                super::replay_context::HybridInputs {
+                    package,
+                    binding: binding.clone(),
+                    limits: *limits,
+                    provision,
                 },
             )
             .unwrap_or_else(absent)

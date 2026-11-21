@@ -3197,6 +3197,16 @@ impl OutcomeDocument {
         Self::from_replay_row(result, 0, Ok(row))
     }
 
+    /// Retain the actual native temporal replay row under the existing result
+    /// payload. The native replay adapter has already settled its category.
+    pub(crate) fn with_replay_row(mut self, row: serde_json::Value) -> Self {
+        self.result = Some(OutcomeResult::Replayed(ReplayedOutcome {
+            kind: "replayed",
+            results: vec![row],
+        }));
+        self
+    }
+
     /// An FR-286 internal-failure outcome when one FR-323 result row failed
     /// to serialize. The row position identifies which row could not be
     /// written; no partial replay result is retained.

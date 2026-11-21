@@ -57,7 +57,32 @@
       },
       "unevaluatedProperties": false
     },
-    "item": {"type": "object", "required": ["request_index", "category"], "properties": {"request_index": {"type": "integer", "minimum": 0}, "result": {"type": "string"}, "category": {"type": "string"}}, "additionalProperties": true},
+    "item": {"type": "object", "required": ["request_index", "category"], "properties": {"request_index": {"type": "integer", "minimum": 0}, "result": {"type": "string"}, "category": {"type": "string"}, "replay_context": {"$ref": "#/$defs/replayContext"}}, "additionalProperties": true},
+    "replayContext": {
+      "type": "object", "required": ["request", "source_bytes", "documents", "family", "payload", "envelope", "subject", "certificate"],
+      "properties": {
+        "request": {"$ref": "#/$defs/replayContextRequest"},
+        "source_bytes": {"type": "array", "items": {"type": "object", "required": ["bytes_path", "bytes"], "properties": {"bytes_path": {"type": "string"}, "bytes": {"$ref": "#/$defs/replayContextBytes"}}, "additionalProperties": false}},
+        "documents": {"type": "array", "items": {"type": "object", "required": ["kind", "selection", "bytes"], "properties": {"kind": {"enum": ["domain-package", "snapshot", "universe", "observation", "dependency-package"]}, "selection": {"type": ["string", "null"]}, "bytes": {"$ref": "#/$defs/replayContextBytes"}}, "additionalProperties": false}},
+        "family": {"enum": ["model-temporal", "protocol-temporal", "hybrid"]},
+        "payload": {"type": "object"}, "envelope": {"type": ["object", "null"]},
+        "subject": {"type": "object"}, "certificate": {"type": ["object", "null"]}
+      },
+      "additionalProperties": false
+    },
+    "replayContextBytes": {"type": "array", "items": {"type": "integer", "minimum": 0, "maximum": 255}},
+    "replayContextRequest": {
+      "type": "object", "required": ["package", "profile_selections", "dependencies", "replay_target", "obligation_identity", "backend", "state_environment", "accounting_limits", "stage_limits", "supplied_limits", "object_environment", "declared_domains", "byte_provision"],
+      "properties": {
+        "package": {"type": "object"}, "profile_selections": {"type": "array"},
+        "dependencies": {"type": "array"}, "replay_target": {"type": "object"},
+        "obligation_identity": {"type": "object"}, "backend": {"type": "string"},
+        "state_environment": {"type": "array"}, "accounting_limits": {"type": "object", "additionalProperties": {"type": "string"}},
+        "stage_limits": {"type": "object", "additionalProperties": {"type": "string"}}, "supplied_limits": {"type": ["object", "null"]},
+        "object_environment": {"type": ["object", "null"]}, "declared_domains": {"type": "array"}, "byte_provision": {"type": "array"}
+      },
+      "additionalProperties": false
+    },
     "aggregate": {"type": "object", "required": ["status", "gaps"], "properties": {"status": {"type": "string"}, "gaps": {"type": "array", "items": {"type": "object", "required": ["request_index", "reason", "result"], "properties": {"request_index": {"type": "integer"}, "reason": {"type": "string"}, "result": {"type": "string"}}, "unevaluatedProperties": false}}}, "unevaluatedProperties": false}
   }
 }

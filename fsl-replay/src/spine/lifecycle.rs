@@ -1061,7 +1061,7 @@ impl CheckedUnit {
     }
 
     /// The retained v2 bytes of every resolved library, shared not copied.
-    pub(crate) fn shared_library_packages(
+    pub fn shared_library_packages(
         &self,
     ) -> &Arc<BTreeMap<LibraryName, pkg::EmittedPackage>> {
         &self.library_packages

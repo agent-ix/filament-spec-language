@@ -39,6 +39,7 @@ pub(super) fn is_replay_request(bytes: &[u8]) -> bool {
     }
     serde_json::from_slice::<Peek>(bytes).is_ok_and(|peek| {
         peek.format == fsl_foundation::wire_format::WireFormat::ReplayRequest.as_str()
+            || peek.format == crate::replay_context::FORMAT
     })
 }
 
@@ -50,6 +51,25 @@ pub(super) fn run_bytes(
     bytes: &[u8],
     dependent_bytes: usize,
 ) -> Result<RunResult> {
+    #[derive(serde::Deserialize)]
+    struct Peek {
+        format: String,
+    }
+    if serde_json::from_slice::<Peek>(bytes)
+        .is_ok_and(|peek| peek.format == crate::replay_context::FORMAT)
+    {
+        let replayed = crate::replay_context::replay(bytes)
+            .map_err(|error| RunCause::ReplayContext(Box::new(error)))?;
+        let outcome = replayed.into_outcome();
+        let value = serde_json::to_value(&outcome).map_err(RunCause::Output)?;
+        return Ok(RunResult {
+            exit_code: outcome.category().exit_code(),
+            value: NativeResult::replay_document(value),
+            outcome: Some(outcome),
+            requirements: None,
+            sources: crate::Sources::default(),
+        });
+    }
     let Object(envelope): Object<wire::Envelope<'_>> = serde_json::from_slice(bytes)?;
     let limits = fsl_replay::ReplayLimits::default();
     let mut intake = intake_with_bytes(directory, FileCounts::default(), dependent_bytes)?;

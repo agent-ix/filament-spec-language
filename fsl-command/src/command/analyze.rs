@@ -606,6 +606,7 @@ fn run_input(
             let settled = settle_items(
                 checked.package(),
                 checked.model_admission_owner().cloned(),
+                checked.shared_library_packages().clone(),
                 &packages,
                 units,
                 selections,
@@ -618,7 +619,7 @@ fn run_input(
             )?;
             Ok(RunResult {
                 exit_code: settled.exit_code,
-                value: NativeResult::analyze_document(settled.document),
+                value: NativeResult::analyze_settled(settled),
                 outcome: None,
                 requirements: None,
                 sources: crate::Sources::default(),
@@ -659,13 +660,21 @@ pub(super) struct RoutedItems {
 pub(super) fn settle_items<'u>(
     package: &fsl_package::CheckedPackage,
     normalization_owner: Option<std::sync::Arc<fsl_semantics::model::intake::SelectedModels>>,
+    library_packages: std::sync::Arc<
+        std::collections::BTreeMap<
+            fsl_semantics::library::LibraryName,
+            fsl_package::EmittedPackage,
+        >,
+    >,
     packages: &fsl_semantics::model::intake::PackageInput,
     units: impl IntoIterator<Item = &'u FormalSource>,
     selections: &[fsl_package::TemporalClockSelection],
     routed: &RoutedItems,
     settle: &Settle<'_>,
 ) -> Result<SettledRun> {
-    let mut provision = SourceProvision::default().with_temporal_selections(selections.to_vec());
+    let mut provision = SourceProvision::default()
+        .with_temporal_selections(selections.to_vec())
+        .with_library_packages(library_packages);
     if let Some(owner) = normalization_owner {
         provision = provision.with_normalization_owner(owner);
     }

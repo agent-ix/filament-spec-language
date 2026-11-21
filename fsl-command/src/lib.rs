@@ -12,6 +12,7 @@ pub mod command;
 pub mod emit_checked_v2;
 pub mod formal_source;
 pub mod replay_request;
+pub mod replay_context;
 pub mod sources;
 pub mod unique_json;
 

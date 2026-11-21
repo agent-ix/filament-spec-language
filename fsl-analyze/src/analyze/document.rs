@@ -3758,6 +3758,9 @@ pub struct SettledRun {
     pub records: Vec<TerminalRecord>,
     /// Exactly one reproduced counterexample per `refuted` record.
     pub counterexamples: Vec<super::ItemCounterexample>,
+    /// Original context bytes or explicit capture failure, separate from the
+    /// semantic JSON view so package lexical bytes cannot be re-emitted there.
+    pub replay_contexts: BTreeMap<RequestIndex, super::CapturedReplayContext>,
     /// Each item's FR-621 entry, in [`Self::records`] order.
     pub items: Vec<Value>,
     /// FR-635's registry, sorted by backend.
@@ -3769,6 +3772,14 @@ pub struct SettledRun {
 }
 
 impl SettledRun {
+    /// Borrow original raw contexts for the external producer's raw writer.
+    pub fn raw_replay_contexts(&self) -> BTreeMap<RequestIndex, &serde_json::value::RawValue> {
+        self.replay_contexts
+            .iter()
+            .filter_map(|(index, capture)| capture.raw().map(|raw| (*index, raw)))
+            .collect()
+    }
+
     /// The canonical RFC 8785 bytes of the FR-621 document.
     pub fn to_bytes(&self) -> Result<Vec<u8>, fsl_foundation::canonical_json::CanonicalJsonError> {
         fsl_foundation::canonical_json::encode(&self.document)
@@ -4397,9 +4408,19 @@ fn write_run(
             .chain(simulated.iter().map(|(_, category)| category.exit_code())),
     )
     .unwrap_or(0);
+    let replay_contexts = outcome
+        .details
+        .into_iter()
+        .filter_map(|detail| {
+            detail
+                .replay_context
+                .map(|context| (detail.request_index, context))
+        })
+        .collect();
     Ok(SettledRun {
         records,
         counterexamples: outcome.counterexamples,
+        replay_contexts,
         items,
         registry,
         document,

@@ -64,6 +64,7 @@ pub(super) fn hybrid_item<'a>(
     manifest: Vec<Value>,
     candidates: Vec<fsl_foundation::BackendId>,
     spelling: Spelling<'a>,
+    capture_inputs: super::replay_context::HybridInputs<'a>,
 ) -> Option<AnalyzeItem<'a>> {
     let graph = package.graph();
     let position = graph
@@ -95,6 +96,7 @@ pub(super) fn hybrid_item<'a>(
                         "established-invariant-broken",
                     )));
                 };
+                let mut proving_budget = form.limits;
                 let answer = if let Some(provider) = engine.hybrid_provider() {
                     // FSpec FR-779: an option value outside its domain
                     // settles before any solver step.
@@ -113,6 +115,7 @@ pub(super) fn hybrid_item<'a>(
                             .and_then(|bounds| bounds.max_solver_steps)
                             .unwrap_or(u64::MAX),
                     );
+                    proving_budget = budget;
                     let request = HybridSolveRequest {
                         graph,
                         wire: &wire,
@@ -211,7 +214,7 @@ pub(super) fn hybrid_item<'a>(
                             }
                             None => Ok(Value::Null),
                         };
-                        EngineReport::Hybrid(Box::new(HybridReport {
+                        let report = HybridReport {
                             disagreement,
                             value: if trusted {
                                 plugin_trust(settled.value)
@@ -221,7 +224,21 @@ pub(super) fn hybrid_item<'a>(
                             counterexample: settled.counterexample.map(Box::new),
                             certificate: settled.certificate,
                             wire,
-                        }))
+                        };
+                        let context =
+                            super::replay_context::hybrid(super::replay_context::HybridCapture {
+                                inputs: &capture_inputs,
+                                claim,
+                                form,
+                                backend: engine.id(),
+                                budget: proving_budget,
+                                emitted: &emitted,
+                                report: &report,
+                            });
+                        EngineReport::Captured(
+                            Box::new(EngineReport::Hybrid(Box::new(report))),
+                            context,
+                        )
                     }
                     Err(refusal) => fault_of(&refusal, work_units),
                 }

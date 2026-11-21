@@ -1918,6 +1918,16 @@ impl<'a, M: MemoryModel> ProtocolSystem<'a, M> {
         &self.model
     }
 
+    /// The selected model-initial document index behind one protocol initial
+    /// state. Initial construction ranges over model states, then retained
+    /// `over` values; this preserves that order without searching identities.
+    pub fn initial_model_index(&self, index: usize) -> Option<usize> {
+        if index >= self.initial.len() || self.over_values.is_empty() {
+            return None;
+        }
+        Some(index / self.over_values.len())
+    }
+
     /// The checked protocol clause.
     pub fn protocol(&self) -> &'a CheckedProtocol {
         self.protocol

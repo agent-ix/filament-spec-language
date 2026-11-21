@@ -105,6 +105,32 @@ pub fn read<E: From<RequestDefect>>(
     decode(&value, provide, package, documents)
 }
 
+/// Admit the source-free common mapping before the family's checked graph is
+/// available. Native source readback occurs after genuine reconstruction.
+pub(crate) fn read_common_context_descriptor<E: From<RequestDefect>>(
+    descriptor: &fsl_replay::replay_context::RequestDescriptor,
+    input_bytes: u64,
+    provide: impl FnMut(&str, &str) -> Result<Vec<u8>, E>,
+    documents: Vec<Vec<u8>>,
+) -> Result<fsl_replay::replay_context::ReplayReconstructionWire, E> {
+    let bytes = serde_json::to_vec(descriptor)
+        .map_err(|error| RequestDefect::new("/request", error.to_string()))?;
+    let package = fsl_replay::ReplayPackage::read(descriptor.package.get().as_bytes(), input_bytes)
+        .map_err(|error| RequestDefect::new("/request/package", error.to_string()))?;
+    let value = Deep::new(
+        crate::unique_json::read(&bytes)
+            .map_err(|message| RequestDefect::new("/request", message))?,
+    );
+    decode_parts(
+        &value,
+        provide,
+        package,
+        documents,
+        |_| Ok(()),
+        |parts, ()| Ok(parts),
+    )
+}
+
 /// Refuse a `clocks` member, any other member outside [`MEMBERS`], and then
 /// the first missing member in [`MEMBERS`] order.
 #[ix_trace_rs::string_edge]
@@ -218,10 +244,28 @@ fn optional<T>(
 #[ix_trace_rs::string_edge]
 fn decode<E: From<RequestDefect>>(
     value: &Value,
-    mut provide: impl FnMut(&str, &str) -> Result<Vec<u8>, E>,
+    provide: impl FnMut(&str, &str) -> Result<Vec<u8>, E>,
     raw_package: fsl_replay::ReplayPackage,
     documents: Vec<Vec<u8>>,
 ) -> Result<ReplayRequestWire, E> {
+    decode_parts(
+        value,
+        provide,
+        raw_package,
+        documents,
+        |graph| read_source(value, graph),
+        |parts, source| Ok(parts.with_source(source, None)),
+    )
+}
+
+fn decode_parts<E: From<RequestDefect>, T, F>(
+    value: &Value,
+    mut provide: impl FnMut(&str, &str) -> Result<Vec<u8>, E>,
+    raw_package: fsl_replay::ReplayPackage,
+    documents: Vec<Vec<u8>>,
+    read_family: impl FnOnce(&fsl_replay::WireGraph) -> Result<F, E>,
+    finish: impl FnOnce(fsl_replay::replay_context::ReplayReconstructionWire, F) -> Result<T, E>,
+) -> Result<T, E> {
     let package = &value["package"];
     let graph = fsl_replay::WireGraph::of_package_value(package)
         .map_err(|message| RequestDefect::new("/package", message))?;
@@ -303,34 +347,7 @@ fn decode<E: From<RequestDefect>>(
     };
     // The public request reader, rather than this adapter, decides missing or
     // conflicting target members and whether an occurrence is applicable.
-    let source_value = &value["source"];
-    let replay_source = match text(&source_value["kind"], "/source/kind")? {
-        "witness" => ReplaySource::Witness(
-            fsl_replay::Witness::parse(text(&source_value["transcript"], "/source/transcript")?)
-                .map_err(|error| RequestDefect::new("/source/transcript", error.to_string()))?,
-        ),
-        "input" => ReplaySource::Input(
-            array(&source_value["assignments"], "/source/assignments")?
-                .iter()
-                .enumerate()
-                .map(|(index, assignment)| {
-                    Ok(fsl_replay::CanonicalAssignment {
-                        parameter: node(
-                            &assignment["parameter"],
-                            &format!("/source/assignments/{index}/parameter"),
-                            &graph,
-                        )?,
-                        value: witness(
-                            &assignment["value"],
-                            &format!("/source/assignments/{index}/value"),
-                            &graph,
-                        )?,
-                    })
-                })
-                .collect::<Result<Vec<_>, RequestDefect>>()?,
-        ),
-        _ => return Err(RequestDefect::new("/source/kind", "unknown replay source").into()),
-    };
+    let family = read_family(&graph)?;
     let mut stage_limits = BTreeMap::new();
     for (setting, bound) in object(&value["stage_limits"], "/stage_limits")? {
         let pointer = format!("/stage_limits/{setting}");
@@ -441,8 +458,7 @@ fn decode<E: From<RequestDefect>>(
             ))
         })
         .collect::<Result<_, RequestDefect>>()?;
-    Ok(ReplayRequestWire {
-        certificate: None,
+    let parts = fsl_replay::replay_context::ReplayReconstructionWire {
         package: raw_package,
         profile_selections: array(&value["profile_selections"], "/profile_selections")?
             .iter()
@@ -455,7 +471,6 @@ fn decode<E: From<RequestDefect>>(
             .collect::<Result<_, RequestDefect>>()?,
         dependencies,
         replay_target: std::mem::take(&mut target_wire),
-        source: replay_source,
         obligation_identity: fsl_package::ObligationIdentity::new(
             node(
                 &obligation["node_id"],
@@ -485,6 +500,41 @@ fn decode<E: From<RequestDefect>>(
             .collect::<Result<_, _>>()?,
         byte_provision,
         documents,
+    };
+    finish(parts, family)
+}
+
+fn read_source<E: From<RequestDefect>>(
+    value: &Value,
+    graph: &fsl_replay::WireGraph,
+) -> Result<ReplaySource, E> {
+    let source_value = &value["source"];
+    Ok(match text(&source_value["kind"], "/source/kind")? {
+        "witness" => ReplaySource::Witness(
+            fsl_replay::Witness::parse(text(&source_value["transcript"], "/source/transcript")?)
+                .map_err(|error| RequestDefect::new("/source/transcript", error.to_string()))?,
+        ),
+        "input" => ReplaySource::Input(
+            array(&source_value["assignments"], "/source/assignments")?
+                .iter()
+                .enumerate()
+                .map(|(index, assignment)| {
+                    Ok(fsl_replay::CanonicalAssignment {
+                        parameter: node(
+                            &assignment["parameter"],
+                            &format!("/source/assignments/{index}/parameter"),
+                            graph,
+                        )?,
+                        value: witness(
+                            &assignment["value"],
+                            &format!("/source/assignments/{index}/value"),
+                            graph,
+                        )?,
+                    })
+                })
+                .collect::<Result<Vec<_>, RequestDefect>>()?,
+        ),
+        _ => return Err(RequestDefect::new("/source/kind", "unknown replay source").into()),
     })
 }
 

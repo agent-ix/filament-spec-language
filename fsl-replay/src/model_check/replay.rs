@@ -70,6 +70,9 @@ use fsl_semantics::check::{CheckedTemporalClause, FormulaNodeId, TerminalKeys, T
 use fsl_semantics::library::LibraryName;
 use fsl_semantics::model::observation::DocumentRef;
 
+pub(crate) mod model_readback;
+pub(crate) mod protocol_readback;
+pub(crate) mod reconstruction;
 mod timed;
 
 #[cfg(test)]
@@ -1250,6 +1253,33 @@ pub fn replay_protocol_trace_with_temporal_selections(
     temporal_selections: &[fsl_package::TemporalClockSelection],
     replay_limits: ReplayLimits,
 ) -> Result<ModelTraceReplayResult, ReplayRefusal> {
+    replay_protocol_trace_with_recording(
+        wire,
+        subject,
+        envelope,
+        letters,
+        temporal_selections,
+        replay_limits,
+        None,
+    )
+}
+
+/// Replay the same protocol request while exposing its genuine retained final
+/// key for an empty-prefix terminal stutter, after native prefix/loop validation.
+/// The observer does not determine the native settlement and must use its
+/// existing operation budget when retaining evidence.
+///
+/// # Errors
+/// Returns the native request admission or replay refusal unchanged.
+pub fn replay_protocol_trace_with_recording(
+    wire: ReplayRequestWire,
+    subject: &ProtocolTraceSubject,
+    envelope: &WitnessEnvelope<TemporalCounterexample<ProtocolTransition>>,
+    letters: &dyn ModelLetters,
+    temporal_selections: &[fsl_package::TemporalClockSelection],
+    replay_limits: ReplayLimits,
+    terminal_key: Option<&dyn Fn(&fsl_eval::simulation::StateKey)>,
+) -> Result<ModelTraceReplayResult, ReplayRefusal> {
     replay_on(
         wire,
         temporal_selections,
@@ -1307,6 +1337,7 @@ pub fn replay_protocol_trace_with_temporal_selections(
             };
             let built = |refusal| refused(ModelTraceRefusal::Protocol(refusal));
             let replayed = ProtocolReplay {
+                terminal_key,
                 payload,
                 clause,
                 letters,
@@ -1540,6 +1571,7 @@ pub fn replay_protocol_trace_from_package(
         Some(clause)
     };
     let replayed = ProtocolReplay {
+        terminal_key: None,
         payload,
         clause: clause.as_ref(),
         letters,
@@ -1577,6 +1609,7 @@ pub fn replay_protocol_trace_from_package(
 
 /// What a protocol replay settles over its rebuilt system.
 struct ProtocolReplay<'r> {
+    terminal_key: Option<&'r dyn Fn(&fsl_eval::simulation::StateKey)>,
     payload: &'r TemporalCounterexample<ProtocolTransition>,
     clause: Option<&'r CheckedTemporalClause>,
     letters: &'r dyn ModelLetters,
@@ -1641,6 +1674,16 @@ impl ProtocolReplay<'_> {
         };
         if let Some(lasso) = payload.lasso.as_ref() {
             close_loop(system, &positions, lasso.clone())?;
+        }
+        if payload.prefix.is_empty()
+            && payload
+                .lasso
+                .as_ref()
+                .is_some_and(|lasso| lasso.terminal_stutter)
+        {
+            if let (Some(observe), Some(position)) = (self.terminal_key, positions.last()) {
+                observe(&position.state_key);
+            }
         }
         Ok(match (&payload.kind, self.clause) {
             (CounterexampleKind::Deadlock, _) => deadlock(system, payload, &positions, &steps)?,

@@ -15,6 +15,8 @@
 //! closure finds ([`crate::timed::explore`]); a time-lock counterexample
 //! settles by TD-1's two arms.
 
+pub(super) mod readback;
+
 use filament_exact::{Integer, Meter, Rational};
 use filament_semantic_value::catalog::Category;
 use filament_semantic_value::fairness::{FairnessConstraint, FairnessGranularity, FairnessKind};
@@ -416,8 +418,26 @@ fn delay_by(
     delay: &Rational,
     step: Option<usize>,
 ) -> Result<Option<TimedState>, ReplayRefusal> {
+    match read_delay(timed, state, delay, step) {
+        Ok(state) => Ok(Some(state)),
+        Err(DelayReadError::Replay(refusal)) => Err(refusal),
+        Err(DelayReadError::Stop(_)) => Ok(None),
+    }
+}
+
+enum DelayReadError {
+    Replay(ReplayRefusal),
+    Stop(fsl_eval::simulation::model::TimedStop),
+}
+
+fn read_delay(
+    timed: &TimedSystem<'_, '_>,
+    state: &TimedState,
+    delay: &Rational,
+    step: Option<usize>,
+) -> Result<TimedState, DelayReadError> {
     match timed.delay(state, delay) {
-        Ok(Some(delayed)) => Ok(Some(delayed)),
+        Ok(Some(delayed)) => Ok(delayed),
         Ok(None) => {
             let bar = if delay < &zero() {
                 DelayBar::Negative
@@ -435,20 +455,20 @@ fn delay_by(
                         );
                         match timed.broken_invariant(&end) {
                             Ok(Some(invariant)) => DelayBar::TimeInvariant(invariant),
-                            Ok(None) => return Err(fault("an-inadmissible-delay-has-a-bar")),
-                            Err(_) => return Ok(None),
+                            Ok(None) => return Err(DelayReadError::Replay(fault("an-inadmissible-delay-has-a-bar"))),
+                            Err(stop) => return Err(DelayReadError::Stop(stop)),
                         }
                     }
-                    Err(_) => return Ok(None),
+                    Err(stop) => return Err(DelayReadError::Stop(stop)),
                 }
             };
-            Err(refused(ModelTraceRefusal::DelayNotAdmissible {
+            Err(DelayReadError::Replay(refused(ModelTraceRefusal::DelayNotAdmissible {
                 step,
                 delay: delay.clone(),
                 bar,
-            }))
+            })))
         }
-        Err(_) => Ok(None),
+        Err(stop) => Err(DelayReadError::Stop(stop)),
     }
 }
 

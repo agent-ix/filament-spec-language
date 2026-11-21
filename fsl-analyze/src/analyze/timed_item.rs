@@ -28,7 +28,7 @@ use fsl_route::Mode;
 use fsl_semantics::check::{Capability, TemporalClauseNode};
 use fsl_semantics::family::ClassifyFailure;
 
-use super::clause_item::{clause_name, replay_over, ReplayInputs, ReplayShape, CLAUSE_TRANSCRIPT};
+use super::clause_item::{clause_name, replay_over_recording, ReplayInputs, ReplayShape, CLAUSE_TRANSCRIPT};
 use super::derived_item::{derived_target, NoLetters, DEADLOCK_TRANSCRIPT};
 use super::items::{
     admission, joined_replay, settle_zone_item, TimedItem, BROKEN, CLAUSE_FAMILY, INVALID_VALUE,
@@ -166,6 +166,7 @@ fn run(read: &Run<'_, '_>, cancel: &filament_exact::Cancel) -> EngineReport {
         }),
     };
     let reductions = form.reductions.clone();
+    let captured = super::replay_context::CaptureSlot::default();
     let item = TimedItem {
         request: ZoneCheckRequest {
             subject: &timed,
@@ -192,7 +193,7 @@ fn run(read: &Run<'_, '_>, cancel: &filament_exact::Cancel) -> EngineReport {
         },
         certificate_limits: CertificateCheckLimits::default(),
         replay: Box::new(|payload| {
-            replay_over(
+            replay_over_recording(
                 &inputs,
                 ReplayShape {
                     target: RequestTargetWire::state_clause(name.clone()),
@@ -203,10 +204,18 @@ fn run(read: &Run<'_, '_>, cancel: &filament_exact::Cancel) -> EngineReport {
                 },
                 payload,
                 &letters,
+                Some(super::replay_context::ModelRecording {
+                    slot: &captured,
+                    system: &system,
+                    cancel,
+                    over: payload.over_binding.as_ref().and_then(|instance| letters.instance_reference(instance)),
+                    terminal: super::replay_context::timed_terminal(&timed, payload, provision, cancel),
+                }),
             )
         }),
     };
-    settle_zone_item(item, cancel)
+    let report = settle_zone_item(item, cancel);
+    EngineReport::Captured(Box::new(report), captured.into_inner())
 }
 
 /// The refusal of a timed subject the request's binding cannot build: an
@@ -325,6 +334,7 @@ pub(super) fn zone_derived_item<'a>(
                     }),
                 };
                 let reductions = form.reductions.clone();
+                let captured = super::replay_context::CaptureSlot::default();
                 let (zone_item, certified, obligation) = match kind {
                     ItemKind::TimeLockFreedom => (
                         ZoneCheckItem::TimeLockFreedom,
@@ -358,7 +368,7 @@ pub(super) fn zone_derived_item<'a>(
                     certificate_limits: CertificateCheckLimits::default(),
                     replay: joined_replay(
                         Box::new(|payload| {
-                            replay_over(
+                            replay_over_recording(
                                 &inputs,
                                 ReplayShape {
                                     target: RequestTargetWire::function(
@@ -372,12 +382,17 @@ pub(super) fn zone_derived_item<'a>(
                                 },
                                 payload,
                                 &NoLetters,
+                                Some(super::replay_context::ModelRecording {
+                                    slot: &captured, system: &system, cancel, over: None,
+                                    terminal: super::replay_context::timed_terminal(&timed, payload, provision, cancel),
+                                }),
                             )
                         }),
                         package.graph().terminal_keys(),
                     ),
                 };
-                settle_zone_item(item, cancel)
+                let report = settle_zone_item(item, cancel);
+                EngineReport::Captured(Box::new(report), captured.into_inner())
             },
         )
         .claimed(claimed),

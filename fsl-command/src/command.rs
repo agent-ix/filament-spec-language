@@ -1098,6 +1098,9 @@ pub enum RunCause {
     /// FR-336's replay request mapping, missing, or does not decode.
     #[error("invalid replay request: {0}")]
     ReplayRequest(crate::replay_request::RequestDefect),
+    /// FR-621: serialized reconstruction or the actual native recheck refused.
+    #[error(transparent)]
+    ReplayContext(Box<crate::replay_context::ContextReplayError>),
     /// FR-862: a `byte_provision` file could not be read, or exceeds the
     /// request's file-count or byte ceilings.
     #[error("replay byte_provision file {bytes_path}: {cause}")]
@@ -1272,6 +1275,7 @@ impl RunCause {
                 Code::RuntimeInvariant
             }
             Self::ReplayRequest(_) => Code::InvalidRequest,
+            Self::ReplayContext(error) => error.code(),
             Self::ReplayBytes { cause, .. } => cause.code(),
             Self::Replay(failure) => failure.refusal.code(),
             Self::ReplayOutput { .. } => Code::OutputFailure,
@@ -1303,6 +1307,7 @@ impl RunCause {
             Self::MonitorCancelled => filament_semantic_value::catalog::Category::Incomplete,
             Self::ReplayBytes { cause, .. } => cause.category(),
             Self::Replay(failure) => failure.outcome.category(),
+            Self::ReplayContext(error) => error.category(),
             Self::ReplayOutput { .. } => {
                 filament_semantic_value::catalog::Category::InternalFailure
             }
@@ -1369,6 +1374,7 @@ impl RunError {
             RunCause::AnalyzeRefused(refusal) => refusal.document(),
             RunCause::MonitorRefused(refusal) => refusal.document(),
             RunCause::Replay(failure) => failure.outcome.clone(),
+            RunCause::ReplayContext(error) => error.outcome(None),
             RunCause::ReplayOutput { outcome, .. } => outcome.as_ref().clone(),
             RunCause::Source(failure) => OutcomeDocument::new(operation, None, self.category())
                 .with_diagnostics(vec![OutcomeDiagnostic::from_source_diagnostic(

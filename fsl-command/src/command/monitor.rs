@@ -760,6 +760,7 @@ fn drive(
                         super::analyze::settle_items(
                             checked.package(),
                             checked.model_admission_owner().cloned(),
+                            checked.shared_library_packages().clone(),
                             &packages,
                             std::iter::once(&program).chain(libraries.iter().copied()),
                             selections,

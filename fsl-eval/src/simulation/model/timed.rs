@@ -53,6 +53,7 @@ use crate::temporal::UndefinedCause;
 use crate::value::Provenance;
 
 mod over_time;
+mod initial;
 pub use over_time::{DelayInterval, ScheduledWindow, TimeLock, TimedTerminalClass};
 mod race;
 pub use race::{
@@ -1431,31 +1432,29 @@ impl<'s, 'a> TimedSystem<'s, 'a> {
     /// The initial timed states: each initial model state with every clock 0.
     pub fn initial(&self) -> Vec<TimedState> {
         if self.free_delay {
-            return self
-                .system
-                .initial
-                .iter()
-                .cloned()
-                .map(|discrete| TimedState::new(discrete, ClockValuation::new(Vec::new())))
-                .collect();
+            return self.system.initial.iter().cloned().map(|discrete| {
+                TimedState::new(discrete, ClockValuation::new(Vec::new()))
+            }).collect();
         }
-        // A slot the initial state does not hold is not live; its value is
-        // reset when the slot becomes live.
         let zero = ClockValuation(vec![zero(); self.places.len()]);
-        let mut discrete: Vec<(u64, ModelSimState)> = Vec::new();
+        let mut discrete = Vec::new();
         for state in &self.system.initial {
             discrete.extend(self.unbounded_counts(state));
         }
-        // Ascending count (FR-230 "Initial element count"), each base
-        // state's own order kept among equal counts.
         discrete.sort_by_key(|(added, _)| *added);
-        discrete
-            .into_iter()
-            .map(|(_, discrete)| TimedState {
-                discrete,
-                clocks: zero.clone(),
-            })
-            .collect()
+        discrete.into_iter().map(|(_, discrete)| TimedState { discrete, clocks: zero.clone() }).collect()
+    }
+
+    /// Initial states in their native order, retaining the original model
+    /// snapshot index through clock-count expansion and its stable sort.
+    /// Admission and cancellation precede candidate construction and ordering;
+    /// the caller supplies its existing native execution meter.
+    pub fn initial_with_model_indices(
+        &self,
+        budget: &mut dyn filament_exact::IntegerDecimalBudget,
+        cancel: &filament_exact::Cancel,
+    ) -> Result<Vec<(usize, TimedState)>, super::ModelKeyError> {
+        initial::read(self, budget, cancel)
     }
 
     /// `state` with each element count of a pure-clock collection with no

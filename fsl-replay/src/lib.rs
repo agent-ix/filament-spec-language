@@ -111,6 +111,7 @@ mod proof_result;
 pub mod protocol_analysis;
 mod refinement;
 mod refinement_query;
+pub mod replay_context;
 mod request;
 mod result;
 mod scalar;
@@ -356,7 +357,8 @@ pub use model_check::replay::{
     behaviour_valuations, evaluate_model_trace, evaluate_protocol_trace,
     replay_checked_source_model_trace, replay_model_trace, replay_model_trace_from_package,
     replay_model_trace_with_temporal_selections, replay_protocol_trace,
-    replay_protocol_trace_from_package, replay_protocol_trace_with_temporal_selections,
+    replay_protocol_trace_from_package, replay_protocol_trace_with_recording,
+    replay_protocol_trace_with_temporal_selections,
     BehaviourValuationEnd, BehaviourValuations, DelayBar, HandoffSupply, ModelTraceEnd,
     ModelTraceRefusal, ModelTraceReplayResult, ModelTraceRun, ModelTraceSettlement,
     ModelTraceSubject, ModelTraceValue, ProtocolTraceEnd, ProtocolTraceRun, ProtocolTraceSubject,

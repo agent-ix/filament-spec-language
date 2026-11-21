@@ -1502,6 +1502,15 @@ fn replay_hybrid(
     compiled: &Recompiled,
     counterexample: &HybridCounterexample,
 ) -> Result<ReplayResult, ReplayRefusal> {
+    replay_hybrid_with_meter(request, compiled, counterexample, None)
+}
+
+pub(crate) fn replay_hybrid_with_meter(
+    request: ReplayRequest,
+    compiled: &Recompiled,
+    counterexample: &HybridCounterexample,
+    consumer_accounting: Option<ScalarLimits>,
+) -> Result<ReplayResult, ReplayRefusal> {
     let target = request
         .replay_target()
         .ok_or(ReplayRefusal::WrongModelGraphEntry)?;
@@ -1546,7 +1555,9 @@ fn replay_hybrid(
         .transpose()
         .map_err(|refusal| ReplayRefusal::HybridCertificate(refusal.under("/replay")))?;
 
-    let work_units = request.accounting_limits().work_units;
+    let work_units = consumer_accounting
+        .unwrap_or_else(|| request.accounting_limits())
+        .work_units;
     let mut meter = HybridReplayMeter::new(work_units);
     let static_outcome = match static_replay(graph, claim, &counterexample.trace, &mut meter) {
         Ok(outcome) => outcome,
@@ -2061,14 +2072,14 @@ pub(crate) fn spine_run_count() -> u64 {
 /// package input, applying ADR-015 D-4's seven rules in order: each rule
 /// over every entry, in entry order, before the next.
 pub(crate) fn recompile(
-    request: &ReplayRequest,
+    request: &impl crate::request::RecompilationInput,
     limits: &CallerLimits,
 ) -> Result<Recompiled, ReplayRefusal> {
     recompile_with_temporal_selections(request, limits, &[])
 }
 
 pub(crate) fn recompile_with_temporal_selections(
-    request: &ReplayRequest,
+    request: &impl crate::request::RecompilationInput,
     limits: &CallerLimits,
     temporal_selections: &[fsl_package::TemporalClockSelection],
 ) -> Result<Recompiled, ReplayRefusal> {
@@ -2238,7 +2249,10 @@ pub(crate) fn recompile_with_temporal_selections(
 
 /// Compose the request location only when the genuine compiler owner path
 /// identifies an explicitly supplied list. Ordinary compile failures stay intact.
-fn locate_refinement_internals(request: &ReplayRequest, failure: ReplayRefusal) -> ReplayRefusal {
+fn locate_refinement_internals(
+    request: &impl crate::request::RecompilationInput,
+    failure: ReplayRefusal,
+) -> ReplayRefusal {
     let (refusal, protocol_results) = match failure {
         ReplayRefusal::Recompile { refusal, .. } => (refusal, None),
         ReplayRefusal::RecompileWithProtocolResults {
@@ -2329,7 +2343,7 @@ fn locate_dependency_clock_refusal(
 }
 
 fn refinement_internals_pointer(
-    request: &ReplayRequest,
+    request: &impl crate::request::RecompilationInput,
     refusal: &CompileRefusal,
 ) -> Option<String> {
     let (owner, refusal) = match refusal {
@@ -2381,7 +2395,7 @@ fn internals_value(
 /// I1's package input: every domain package document the provision carries,
 /// keyed by the identity it declares (QC-1).
 fn domain_packages(
-    request: &ReplayRequest,
+    request: &impl crate::request::RecompilationInput,
 ) -> Result<fsl_semantics::model::intake::PackageInput, ReplayRefusal> {
     package_input(request.byte_provision().package_documents())
         .map_err(|refusal| ReplayRefusal::DomainPackages(Box::new(refusal)))
@@ -2433,7 +2447,7 @@ struct DefinitionDocumentOwners {
     package_identities: BTreeSet<String>,
 }
 impl DefinitionDocumentOwners {
-    fn from_request(request: &ReplayRequest) -> Self {
+    fn from_request(request: &impl crate::request::RecompilationInput) -> Self {
         let source_owners = request
             .byte_provision()
             .documents()
@@ -2459,7 +2473,7 @@ impl DefinitionDocumentOwners {
 }
 /// The proved package's source references in canonical owner order.
 fn package_sources<'a>(
-    request: &'a ReplayRequest,
+    request: &'a impl crate::request::RecompilationInput,
     definition_documents: &DefinitionDocumentOwners,
 ) -> Result<Vec<&'a DefinitionSourceRef>, ReplayRefusal> {
     canonical_sources(

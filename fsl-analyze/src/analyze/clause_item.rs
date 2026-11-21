@@ -222,6 +222,7 @@ impl<'a> ClauseSubject<'a> {
                     clause: subject.node.clause(),
                     letters: &letters,
                 };
+                let captured = super::replay_context::CaptureSlot::default();
                 let report = settle_model_item(
                     ModelItem {
                         request: ModelCheckRequest {
@@ -254,11 +255,21 @@ impl<'a> ClauseSubject<'a> {
                                 .and_then(|temporal| temporal.smt_encoding)
                                 .unwrap_or_default(),
                         },
-                        replay: Box::new(|payload| subject.replay(payload, &letters)),
+                        replay: Box::new(|payload| {
+                            let over = payload.over_binding.as_ref()
+                                .and_then(|instance| letters.instance_reference(instance));
+                            subject.replay_recording(
+                                payload,
+                                &letters,
+                                Some(super::replay_context::ModelRecording {
+                                    slot: &captured, system: &system, cancel, over, terminal: Ok(None),
+                                }),
+                            )
+                        }),
                     },
                     cancel,
                 );
-                match report {
+                let report = match report {
                     EngineReport::Model(model) => {
                         let over = model
                             .counterexample
@@ -268,7 +279,8 @@ impl<'a> ClauseSubject<'a> {
                         EngineReport::Clause(model, over, None)
                     }
                     other => other,
-                }
+                };
+                EngineReport::Captured(Box::new(report), captured.into_inner())
             },
         )
         .claimed(claim)
@@ -321,6 +333,15 @@ impl<'a> ClauseSubject<'a> {
         payload: &TemporalCounterexample,
         letters: &dyn fsl_eval::model_subject::ModelLetters,
     ) -> Result<ModelTraceReplayResult, ReplayRefusal> {
+        self.replay_recording(payload, letters, None)
+    }
+
+    fn replay_recording(
+        &self,
+        payload: &TemporalCounterexample,
+        letters: &dyn fsl_eval::model_subject::ModelLetters,
+        recording: Option<super::replay_context::ModelRecording<'_, '_>>,
+    ) -> Result<ModelTraceReplayResult, ReplayRefusal> {
         let fault =
             |cause: &'static str| ReplayRefusal::Fault(InternalFault::new("analyze", cause));
         let name = clause_name(self.node).map_err(|_| fault("clause-name"))?;
@@ -342,7 +363,12 @@ impl<'a> ClauseSubject<'a> {
             transcript: CLAUSE_TRANSCRIPT,
         };
         if clause_has_reference_literal(self.package.graph(), self.node) {
-            let (_, envelope) = replay_wire(&inputs, shape, payload)?;
+            let (wire, envelope, _emission) = replay_wire_recording(&inputs, shape, payload)?;
+            if let Some(recording) = recording {
+                super::replay_context::model(
+                    &inputs, &wire, &envelope, recording,
+                );
+            }
             let system = ModelSystem::new(self.simulation()).map_err(ReplayRefusal::Admission)?;
             let letters = system
                 .clause_letters(self.node)
@@ -356,7 +382,7 @@ impl<'a> ClauseSubject<'a> {
                 self.limits.accounting,
             );
         }
-        replay_over(&inputs, shape, payload, letters)
+        replay_over_recording(&inputs, shape, payload, letters, recording)
     }
 }
 
@@ -438,7 +464,22 @@ pub(super) fn replay_over(
     payload: &TemporalCounterexample,
     letters: &dyn fsl_eval::model_subject::ModelLetters,
 ) -> Result<ModelTraceReplayResult, ReplayRefusal> {
-    let (wire, envelope) = replay_wire(inputs, shape, payload)?;
+    replay_over_recording(inputs, shape, payload, letters, None)
+}
+
+pub(super) fn replay_over_recording(
+    inputs: &ReplayInputs<'_, '_>,
+    shape: ReplayShape,
+    payload: &TemporalCounterexample,
+    letters: &dyn fsl_eval::model_subject::ModelLetters,
+    recording: Option<super::replay_context::ModelRecording<'_, '_>>,
+) -> Result<ModelTraceReplayResult, ReplayRefusal> {
+    let (wire, envelope, _emission) = replay_wire_recording(inputs, shape, payload)?;
+    if let Some(recording) = recording {
+        super::replay_context::model(
+            inputs, &wire, &envelope, recording,
+        );
+    }
     replay_model_trace_with_temporal_selections(
         wire,
         &ModelTraceSubject {
@@ -527,9 +568,9 @@ pub(super) fn clock_selections(
     selections
 }
 
-/// FR-128's replay request and witness envelope for `payload`, the
-/// counterexample of the item `shape` names.
-pub(super) fn replay_wire<T: Clone + fsl_eval::simulation::SubjectTransition>(
+/// Retain FR-128's replay request/envelope and the very emission whose package
+/// bytes enter that request for `shape`'s counterexample.
+pub(super) fn replay_wire_recording<T: Clone + fsl_eval::simulation::SubjectTransition>(
     inputs: &ReplayInputs<'_, '_>,
     shape: ReplayShape,
     payload: &TemporalCounterexample<T>,
@@ -537,6 +578,7 @@ pub(super) fn replay_wire<T: Clone + fsl_eval::simulation::SubjectTransition>(
     (
         ReplayRequestWire,
         WitnessEnvelope<TemporalCounterexample<T>>,
+        fsl_package::Emission,
     ),
     ReplayRefusal,
 > {
@@ -548,7 +590,7 @@ pub(super) fn replay_wire<T: Clone + fsl_eval::simulation::SubjectTransition>(
     )
     .map_err(|_| fault("package-emission"))?;
     let package = read_package(emission.package().bytes(), inputs.limits)?;
-    request_and_envelope(
+    let (wire, envelope) = request_and_envelope(
         WireParts {
             package,
             dependencies: super::request::dependency_wires(inputs.package),
@@ -559,7 +601,8 @@ pub(super) fn replay_wire<T: Clone + fsl_eval::simulation::SubjectTransition>(
         },
         shape,
         payload,
-    )
+    )?;
+    Ok((wire, envelope, emission))
 }
 
 /// What a replay request is written over besides its item: the package, its
@@ -1526,7 +1569,7 @@ protocol Flow using p over (input: M::Widget) on origin {
             refinement: None,
             final_delay: None,
         };
-        let (wire, _) = replay_wire(
+        let (wire, _, _) = replay_wire_recording(
             &inputs,
             ReplayShape {
                 target: RequestTargetWire::function(target.clone(), occurrence.clone()),

@@ -11,45 +11,106 @@ use serde_json::Value;
 
 /// Immutable JSON produced from the typed native result schema.
 /// Construction stays inside the output adapter; callers can inspect or serialize it.
-#[derive(Debug, serde::Serialize)]
-#[serde(transparent)]
-pub struct NativeResult(Value);
+#[derive(Debug)]
+pub struct NativeResult(
+    Value,
+    std::collections::BTreeMap<fsl_foundation::RequestIndex, Box<serde_json::value::RawValue>>,
+);
+
+/// Output encoding preserves original authenticated context fragments.
+#[derive(Debug, thiserror::Error)]
+pub enum NativeOutputError {
+    /// Ordinary native JSON canonicalization failed.
+    #[error(transparent)]
+    Canonical(#[from] fsl_foundation::canonical_json::CanonicalJsonError),
+    /// The raw context could not be attached to its originating native row.
+    #[error(transparent)]
+    Context(#[from] fsl_replay::replay_context::ContextError),
+}
+
+impl serde::Serialize for NativeResult {
+    fn serialize<S: serde::Serializer>(
+        &self,
+        serializer: S,
+    ) -> std::result::Result<S::Ok, S::Error> {
+        match self.context_document().map_err(serde::ser::Error::custom)? {
+            Some(document) => document.serialize(serializer),
+            None => self.0.serialize(serializer),
+        }
+    }
+}
 
 impl NativeResult {
-    /// The native result document's canonical RFC 8785 bytes.
-    pub fn to_bytes(&self) -> Result<Vec<u8>, fsl_foundation::canonical_json::CanonicalJsonError> {
-        fsl_foundation::canonical_json::encode(&self.0)
+    fn plain(document: Value) -> Self {
+        Self(document, Default::default())
+    }
+
+    fn context_document(
+        &self,
+    ) -> std::result::Result<
+        Option<crate::replay_context::RawContextOutcome>,
+        fsl_replay::replay_context::ContextError,
+    > {
+        if self.1.is_empty() {
+            return Ok(None);
+        }
+        let contexts = self
+            .1
+            .iter()
+            .map(|(index, raw)| (*index, raw.as_ref()))
+            .collect();
+        crate::replay_context::RawContextOutcome::analyze(&self.0, &contexts).map(Some)
+    }
+
+    /// Native output bytes, preserving authenticated context fragments verbatim.
+    pub fn to_bytes(&self) -> Result<Vec<u8>, NativeOutputError> {
+        match self.context_document()? {
+            Some(document) => Ok(document.to_bytes().to_vec()),
+            None => Ok(fsl_foundation::canonical_json::encode(&self.0)?),
+        }
     }
 
     /// The FR-661 build inventory emitted by `version`.
     pub(super) fn version_document(document: Value) -> Self {
-        Self(document)
+        Self::plain(document)
     }
 
     /// The in-process `check` command's native check outcome document.
     pub(super) fn check_document(document: Value) -> Self {
-        Self(document)
+        Self::plain(document)
     }
 
     /// The `export` run result: FSpec FR-817's outcome as the `export` member.
     pub(super) fn export_document(document: Value) -> Self {
-        Self(document)
+        Self::plain(document)
     }
 
     /// A lifecycle capability refusal with no semantic result or export package.
     pub(super) fn capability_document(document: Value) -> Self {
-        Self(document)
+        Self::plain(document)
     }
 
     /// The FR-1038 plan run result: FSpec FR-824's outcome as the
     /// `verification_plan` member.
     pub(super) fn plan_document(document: Value) -> Self {
-        Self(serde_json::json!({"verification_plan": document}))
+        Self::plain(serde_json::json!({"verification_plan": document}))
     }
 
     /// The FR-621 `analyze` document, written by `fsl-analyze`.
     pub(super) fn analyze_document(document: Value) -> Self {
-        Self(document)
+        Self::plain(document)
+    }
+
+    /// Attach original producer contexts separately from the semantic JSON view.
+    pub(super) fn analyze_settled(settled: fsl_analyze::analyze::document::SettledRun) -> Self {
+        Self(
+            settled.document,
+            settled
+                .replay_contexts
+                .into_iter()
+                .filter_map(|(index, context)| context.into_raw().map(|raw| (index, raw)))
+                .collect(),
+        )
     }
 
     /// Mark generated flow items whose bounded tuple expansion stopped
@@ -117,22 +178,22 @@ impl NativeResult {
 
     /// The FR-644 `filament.monitor-run/1` document.
     pub(super) fn monitor_document(document: Value) -> Self {
-        Self(document)
+        Self::plain(document)
     }
 
     /// The FR-931 lowering document, its `tl_lowering` record.
     pub(super) fn lowering_document(document: Value) -> Self {
-        Self(document)
+        Self::plain(document)
     }
 
     /// FR-1037's bounded synthesis outcome.
     pub(super) fn synthesis_document(document: Value) -> Self {
-        Self(document)
+        Self::plain(document)
     }
 
     /// The FR-190 result record of a direct model-based test request.
     pub(super) fn model_based_test_document(record: Value) -> Self {
-        Self(serde_json::json!({
+        Self::plain(serde_json::json!({
             "format": "native-run-result/2",
             "model_based_test": record,
         }))
@@ -140,15 +201,16 @@ impl NativeResult {
 
     /// The FR-862 replay result: FR-323's `results` disposition.
     pub(super) fn replay_document(document: Value) -> Self {
-        Self(document)
+        Self::plain(document)
     }
 
     /// The FR-651 result document for several independently settled items.
     pub(super) fn items_document(document: Value) -> Self {
-        Self(document)
+        Self::plain(document)
     }
 
-    /// Inspect the encoded observations without changing the admitted shape.
+    /// Inspect semantic observations. Authenticated reconstruction fragments
+    /// remain in the raw carrier used by Serialize, Display and to_bytes.
     pub fn as_value(&self) -> &Value {
         &self.0
     }
@@ -156,7 +218,10 @@ impl NativeResult {
 
 impl std::fmt::Display for NativeResult {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        self.0.fmt(formatter)
+        match self.context_document().map_err(|_| std::fmt::Error)? {
+            Some(document) => document.fmt(formatter),
+            None => self.0.fmt(formatter),
+        }
     }
 }
 
@@ -404,6 +469,16 @@ pub(super) fn error(error: &RunError, artifact: bool) -> Result<Value, serde_jso
         RunCause::ReplayRequest(_) | RunCause::ReplayBytes { .. } => {
             (types::Stage::Request, types::Details::None)
         }
+        RunCause::ReplayContext(error) => (
+            match error.replay_refusal() {
+                Some(
+                    fsl_replay::ReplayRefusal::Recompile { refusal, .. }
+                    | fsl_replay::ReplayRefusal::RecompileWithProtocolResults { refusal, .. },
+                ) => types::Stage::Spine(refusal.stage()),
+                _ => types::Stage::Request,
+            },
+            types::Details::None,
+        ),
         RunCause::ReplayOutput { .. } => (types::Stage::Output, types::Details::None),
         RunCause::Replay(failure) => (
             match &failure.refusal {
@@ -478,6 +553,7 @@ pub(super) fn error(error: &RunError, artifact: bool) -> Result<Value, serde_jso
             RunCause::AnalyzePackage { cause, .. } => cause.as_deref(),
             RunCause::Spine(failure) => failure.refusal.cause(),
             RunCause::Replay(failure) => failure.refusal.cause(),
+            RunCause::ReplayContext(error) => error.cause(),
             RunCause::SpineRun(refusal) => match refusal.as_ref() {
                 fsl_replay::spine::RunRefusal::Compile(refusal) => refusal.cause(),
                 fsl_replay::spine::RunRefusal::Argument { defect, .. } => Some(defect.cause),
@@ -608,7 +684,7 @@ fn clause_report_with_record(
     Ok(RunResult {
         // FR-285: a finite-window `pending` exits 0 and `indeterminate` 11.
         exit_code: report.disposition.exit_code(),
-        value: NativeResult(value),
+        value: NativeResult::plain(value),
         outcome: Some(outcome),
         requirements: None,
         sources: crate::Sources::default(),
@@ -1016,7 +1092,7 @@ fn spine_run_document(
     };
     Ok(RunResult {
         exit_code,
-        value: NativeResult(serde_json::to_value(document).map_err(RunCause::Output)?),
+        value: NativeResult::plain(serde_json::to_value(document).map_err(RunCause::Output)?),
         outcome: Some(lifecycle),
         requirements: results,
         sources: crate::Sources::default(),

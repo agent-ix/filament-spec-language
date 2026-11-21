@@ -29,8 +29,11 @@ use fsl_package::ObligationIdentity;
 use fsl_semantics::library::LibraryName;
 
 mod package;
+mod reconstruction;
 use filament_contract_model::CheckedRefinementInternal;
 pub use package::{ReplayPackage, ReplayPackageAdmissionRefusal};
+pub(crate) use reconstruction::RecompilationInput;
+pub use reconstruction::{ReplayReconstructionInput, ReplayReconstructionWire};
 
 /// The `filament.value.accounting/v1` scalar environment a replay starts from
 /// (FR-071's "state environment"). Opaque to #231: only the executor (#243)
@@ -806,64 +809,122 @@ impl ReplayRequestRefusal {
 /// byte-provision entries' actual raw bytes among them -- never a
 /// caller-declared number a request could understate to launder an
 /// oversized byte provision past the bound (B3).
-fn measured_encoded_bytes(wire: &ReplayRequestWire) -> usize {
-    let mut bytes = 0usize;
-    let mut add = |length| bytes = bytes.saturating_add(length);
-    add(wire.package.bytes().len());
-    if let Some(certificate) = &wire.certificate {
-        add(certificate.to_string().len());
-    }
-    for selection in &wire.profile_selections {
-        add(selection.profile().len());
-        add(selection.value().len());
-    }
-    for name in wire.stage_limits.keys() {
-        add(name.len());
-        add(std::mem::size_of::<u64>());
-    }
-    for entry in &wire.dependencies {
-        add(entry.identity.len());
-        for source in &entry.sources {
-            add(DefinitionSourceRef::wire_len(source));
+struct InputMeasurement<'a> {
+    package: &'a ReplayPackage,
+    certificate: Option<&'a serde_json::Value>,
+    profile_selections: &'a [ProfileSelection],
+    stage_limits: &'a BTreeMap<String, u64>,
+    dependencies: &'a [DependencyEntryWire],
+    replay_target: &'a RequestTargetWire,
+    backend: &'a str,
+    state_environment: &'a StateEnvironment,
+    byte_provision: &'a [(String, String, Vec<u8>)],
+    declared_domains: &'a [DeclaredDomain],
+    source: Option<&'a ReplaySource>,
+    object_environment: Option<&'a ObjectEnvironmentRef>,
+}
+
+impl<'a> InputMeasurement<'a> {
+    fn of_request(wire: &'a ReplayRequestWire) -> Self {
+        Self {
+            package: &wire.package,
+            certificate: wire.certificate.as_ref(),
+            profile_selections: &wire.profile_selections,
+            stage_limits: &wire.stage_limits,
+            dependencies: &wire.dependencies,
+            replay_target: &wire.replay_target,
+            backend: &wire.backend,
+            state_environment: &wire.state_environment,
+            byte_provision: &wire.byte_provision,
+            declared_domains: &wire.declared_domains,
+            source: Some(&wire.source),
+            object_environment: wire.object_environment.as_ref(),
         }
-        if let Some(rows) = &entry.refinement_internals {
-            for row in rows {
-                // Typed sequence slots also bound empty names and entries;
-                // no serialization or retained clone is needed to count them.
-                add(std::mem::size_of::<CheckedRefinementInternal>());
-                add(row.refinement.len());
-                for internal in &row.internal {
-                    add(std::mem::size_of::<Box<str>>());
-                    add(internal.len());
+    }
+
+    fn of_common(wire: &'a ReplayReconstructionWire) -> Self {
+        Self {
+            package: &wire.package,
+            certificate: None,
+            profile_selections: &wire.profile_selections,
+            stage_limits: &wire.stage_limits,
+            dependencies: &wire.dependencies,
+            replay_target: &wire.replay_target,
+            backend: &wire.backend,
+            state_environment: &wire.state_environment,
+            byte_provision: &wire.byte_provision,
+            declared_domains: &wire.declared_domains,
+            source: None,
+            object_environment: wire.object_environment.as_ref(),
+        }
+    }
+
+    fn bytes(&self) -> usize {
+        let wire = self;
+        let mut bytes = 0usize;
+        let mut add = |length| bytes = bytes.saturating_add(length);
+        add(wire.package.bytes().len());
+        if let Some(certificate) = wire.certificate {
+            add(certificate.to_string().len());
+        }
+        for selection in wire.profile_selections {
+            add(selection.profile().len());
+            add(selection.value().len());
+        }
+        for name in wire.stage_limits.keys() {
+            add(name.len());
+            add(std::mem::size_of::<u64>());
+        }
+        for entry in wire.dependencies {
+            add(entry.identity.len());
+            for source in &entry.sources {
+                add(DefinitionSourceRef::wire_len(source));
+            }
+            if let Some(rows) = &entry.refinement_internals {
+                for row in rows {
+                    // Typed sequence slots also bound empty names and entries;
+                    // no serialization or retained clone is needed to count them.
+                    add(std::mem::size_of::<CheckedRefinementInternal>());
+                    add(row.refinement.len());
+                    for internal in &row.internal {
+                        add(std::mem::size_of::<Box<str>>());
+                        add(internal.len());
+                    }
                 }
             }
         }
+        add(wire.replay_target.members.measured_bytes());
+        if let Some(over) = &wire.replay_target.over {
+            add(over.population.len());
+            add(over.key.len());
+        }
+        add(wire.backend.len());
+        for (name, value) in wire.state_environment.entries() {
+            add(name.len());
+            add(value.len());
+        }
+        for (authority, identity, value) in wire.byte_provision {
+            add(authority.len());
+            add(identity.len());
+            add(value.len());
+        }
+        for declared in wire.declared_domains {
+            add(crate::witness::finite_bound_bytes(declared.bound()));
+        }
+        if let Some(source) = wire.source {
+            add(source.measured_bytes());
+        }
+        if let Some(environment) = wire.object_environment {
+            let labels = environment.identity();
+            add(labels.authority.len());
+            add(labels.identity.len());
+        }
+        bytes
     }
-    add(wire.replay_target.members.measured_bytes());
-    if let Some(over) = &wire.replay_target.over {
-        add(over.population.len());
-        add(over.key.len());
-    }
-    add(wire.backend.len());
-    for (name, value) in wire.state_environment.entries() {
-        add(name.len());
-        add(value.len());
-    }
-    for (authority, identity, value) in &wire.byte_provision {
-        add(authority.len());
-        add(identity.len());
-        add(value.len());
-    }
-    for declared in &wire.declared_domains {
-        add(crate::witness::finite_bound_bytes(declared.bound()));
-    }
-    add(wire.source.measured_bytes());
-    if let Some(environment) = &wire.object_environment {
-        let labels = environment.identity();
-        add(labels.authority.len());
-        add(labels.identity.len());
-    }
-    bytes
+}
+
+fn measured_encoded_bytes(wire: &ReplayRequestWire) -> usize {
+    InputMeasurement::of_request(wire).bytes()
 }
 
 /// Which sources a decoded request's byte provision must cover.
@@ -958,6 +1019,28 @@ impl ReplayRequest {
             }
             (Some(replay_target), over)
         };
+        let (wire, source, certificate) = wire.into_reconstruction();
+        let common = ReplayReconstructionInput::decode_after_target(
+            wire,
+            limits,
+            provision,
+            encoded_input_bytes,
+            replay_target,
+            over,
+        )?;
+        Ok(common.bind(source, certificate))
+    }
+}
+
+impl ReplayReconstructionInput {
+    fn decode_after_target(
+        wire: ReplayReconstructionWire,
+        limits: ReplayLimits,
+        provision: Provision,
+        encoded_input_bytes: usize,
+        replay_target: Option<ReplayTarget>,
+        over: Option<ReplayOverBinding>,
+    ) -> Result<Self, ReplayRequestRefusal> {
         for selection in &wire.profile_selections {
             if !KNOWN_SEMANTIC_PROFILES.contains(&selection.profile()) {
                 return Err(ReplayRequestRefusal::UnknownSemanticProfile {
@@ -1038,8 +1121,6 @@ impl ReplayRequest {
             dependencies,
             replay_target,
             over,
-            source: wire.source,
-            hybrid_certificate: wire.certificate,
             profile_selections: wire.profile_selections,
             obligation_identity: wire.obligation_identity.clone(),
             backend: BackendId::new(wire.backend),
@@ -1053,7 +1134,9 @@ impl ReplayRequest {
             replay_limits: limits,
         })
     }
+}
 
+impl ReplayRequest {
     /// This request's members, in wire-packet shape, for round-tripping
     /// through [`Self::decode`] (FR-071-AC-1's construct -> serialize ->
     /// read round trip).

@@ -46,6 +46,8 @@ mod items;
 mod protocol_item;
 mod reduction_item;
 mod reference_output;
+mod replay_context;
+pub use replay_context::CapturedReplayContext;
 mod refinement_item;
 pub(crate) mod request;
 pub(crate) use request::dependency_packages;
@@ -863,6 +865,8 @@ impl std::fmt::Debug for DocumentGraphs {
 /// What an item's engine reported beside its terminal record (FR-621).
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ItemDetail {
+    /// Original raw reconstruction context or its explicit retention failure.
+    pub replay_context: Option<CapturedReplayContext>,
     /// The item's request index.
     pub request_index: RequestIndex,
     /// The states, transitions and automaton states an explicit-state
@@ -913,6 +917,7 @@ impl ItemDetail {
         let protocol = record.protocol_check.as_deref();
         Self {
             request_index: record.request_index,
+            replay_context: record.replay_context.clone(),
             exploration: model
                 .and_then(|model| model.exploration)
                 .or_else(|| {
@@ -1735,6 +1740,10 @@ pub struct Disposed {
 /// What an engine reports for one item. Only the crate's item adapters
 /// construct one, from the engine's own layer-6 settlement.
 pub(crate) enum EngineReport {
+    /// An already scoped counterexample, moved from its genuine owner writer.
+    Spelled(Box<EngineReport>, Box<serde_json::Value>),
+    /// A native report with separately retained original reconstruction input.
+    Captured(Box<EngineReport>, Option<CapturedReplayContext>),
     /// EN-1's replay-gated hyperproperty settlement.
     Hyper(Box<fsl_replay::HyperRecord>),
     /// EN-1's record, settled by `settle_model_check`.
@@ -1800,6 +1809,7 @@ pub(crate) struct FiniteHyperReport {
 }
 
 /// The FR-281 "Engine refusals" table's rows.
+#[derive(Debug)]
 pub(crate) enum Refusal {
     /// `declined`, with the refusal's cause, `DeclineCode` and full
     /// diagnostic.
@@ -2099,6 +2109,10 @@ fn unsupported_kind(kind: Capability) -> Diagnostic {
 /// One item's settlement.
 #[derive(Debug)]
 pub struct AnalyzeRecord {
+    /// Counterexample output already written under the original native owner.
+    pub(crate) spelled_counterexample: Option<Box<serde_json::Value>>,
+    /// Original context retained independently of the native terminal result.
+    pub replay_context: Option<CapturedReplayContext>,
     /// EN-1's hyperproperty record, retaining a reproduced trace tuple.
     pub hyper_check: Option<Box<fsl_replay::HyperRecord>>,
     /// The item's request index.
@@ -2193,6 +2207,8 @@ impl AnalyzeRecord {
     fn of(request_index: RequestIndex, settlement: Settlement) -> Self {
         Self {
             request_index,
+            spelled_counterexample: None,
+            replay_context: None,
             hyper_check: None,
             claim: None,
             settlement,
@@ -2670,7 +2686,11 @@ pub(crate) fn split_records_over(
             terminals.push(terminal);
             continue;
         }
-        let wire = record.spell(package);
+        let wire = record
+            .spelled_counterexample
+            .take()
+            .map(|wire| Ok(*wire))
+            .or_else(|| record.spell(package));
         let counterexample = record.take_counterexample();
         let mut terminal = into_terminal(record);
         if matches!(terminal.value(), TerminalValue::Refuted) {
@@ -2940,6 +2960,16 @@ fn settle(
         )
     };
     match report {
+        EngineReport::Spelled(report, wire) => {
+            let mut record = settle(index, kind, engine, *report);
+            record.spelled_counterexample = Some(wire);
+            record
+        }
+        EngineReport::Captured(report, context) => {
+            let mut record = settle(index, kind, engine, *report);
+            record.replay_context = context;
+            record
+        }
         EngineReport::Hyper(hyper) => {
             let terminal_record = TerminalRecord::of_hyper(index, backend.clone(), &hyper)
                 .unwrap_or_else(|_| TerminalRecord::failed(index, backend));
