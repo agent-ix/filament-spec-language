@@ -129,3 +129,15 @@ Recovery reviewer at `6b084105a37feb1d970a5c84c5d323d58527a009`, after rebase on
 ### Current verdict (round 3)
 
 The code defect FND-007 is fixed by static inspection. No new code finding was found in this bounded disposition. **Not mergeable yet:** the gap artifact's new trace finding, remote focused validation and the specification landings remain pending.
+
+## Dispositions (round 4)
+
+Checked frozen head `9eee3c3c901bf6f9755596f671d51e98f2b61ac3`. Every code finding already has a fixed disposition; no unresolved code finding requires another outcome row. The earlier rows remain intact.
+
+The additional rebase correction handles `Halt::ConstraintUndefined(_)` explicitly as `ProductClosureRefusal::Recompute("constraint-undefined")`. `Product::build` constructs the core universal product with `constraint: None`, and the evaluator's `cut` returns before evaluating constraints when it is `None`. Thus this branch handles an unexpected halt safely by refusing reconstruction; it never converts that halt into an accepted certificate. The new arm is exhaustive and preserves the existing specific limit, cancellation and expansion mappings. The previously added empty key generators and absent constraint remain unchanged.
+
+Static `git diff --check 6b084105a37feb1d970a5c84c5d323d58527a009..HEAD` passes. No Cargo, Python, gate or mutation build ran. The 55-test remote validation at the new head and the two specification landings are still pending; no result is inferred from the prior head.
+
+### Current verdict (round 4)
+
+**No remaining static blocker** in this bounded disposition. No new code finding. Merge remains conditional on focused remote validation and the required specification landings; QSL-2128 retains HP-1 certification and package FR-940-AC-18 as open scope.

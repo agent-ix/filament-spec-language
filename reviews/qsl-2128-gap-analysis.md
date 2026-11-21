@@ -92,3 +92,15 @@ No previously unresolved gap finding required a new disposition row: FND-001 is 
 ### Current verdict (round 3)
 
 **Not mergeable:** new low FND-005 must be resolved and remote focused validation is pending. No code or test changes were made by this reviewer. The declared no-Cargo/no-Python/no-gate policy was followed.
+
+## Dispositions (round 4)
+
+Checked frozen head `9eee3c3c901bf6f9755596f671d51e98f2b61ac3`. Plan completion: not assessed. This remains the bounded disposition of the original manual acceptance-criteria check.
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-005 | fixed | The finite-population test now carries only `#[trace("TC-2535")]`; the overclaimed `FR-898-AC-3` tag is removed. Its declaration, population, proof, refutation and replay assertions are byte-unchanged from the reviewed candidate. The existing smoke coverage is preserved without claiming the three-trace position-1 criterion. |
+
+### Current verdict (round 4)
+
+**No remaining static blocker:** all original and new gap findings have a latest explicit outcome, and FND-001 remains deferred under arch's third-pin-window ruling. Remote focused validation and specification landings remain pending; this pass claims no running test result. No Cargo, Python or gate ran and no code/test changes were made by this reviewer.
