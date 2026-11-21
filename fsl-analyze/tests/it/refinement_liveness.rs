@@ -13,9 +13,10 @@ use fsl_eval::simulation::model::{operation_identity_text, ModelSimulationReques
 use fsl_eval::simulation::Limits;
 use fsl_package::CheckedPackage;
 use fsl_replay::{
-    CounterexampleKind, IncompleteCause, LivenessHalf, ModelCheckLimit, ModelCheckLimits,
-    ModelCheckOutcome, ReachedLimit, RefinementFailure, RefinementOutcome, SafetyOutcome, Taken,
-    TemporalCounterexample, UndecidedCause,
+    open_systems, replay_refinement_trace, CounterexampleKind, IncompleteCause, LivenessHalf,
+    ModelCheckLimit, ModelCheckLimits, ModelCheckOutcome, ReachedLimit, RefinementFailure,
+    RefinementOutcome, RefinementTraceSettlement, SafetyOutcome, Taken, TemporalCounterexample,
+    UndecidedCause,
 };
 use fsl_semantics::check::CheckedRefinement;
 use fsl_semantics::model::observation::DocumentRef;
@@ -341,6 +342,48 @@ fn the_non_taking_candidate_is_hidden_and_a_fair_write_candidate_holds() {
     );
 }
 
+/// The settlement FR-145 replay gives `payload` over `world`.
+fn replayed(
+    world: &AuxWorld<'_>,
+    payload: &TemporalCounterexample,
+) -> RefinementTraceSettlement {
+    let systems = open_systems(
+        world.refinement(),
+        &world.concrete_request(AUX_UNLIMITED),
+        world.package(),
+        vec![world.abstract_initial()],
+    )
+    .expect("the subjects open");
+    replay_refinement_trace(world.refinement(), &systems, payload).expect("the trace replays")
+}
+
+/// Replay reproduces exactly the failure `payload` records.
+fn assert_reproduced(world: &AuxWorld<'_>, payload: &TemporalCounterexample) {
+    match replayed(world, payload) {
+        RefinementTraceSettlement::Reproduced { failure, .. } => {
+            assert_eq!(Some(failure), payload.refinement);
+        }
+        other => panic!("the failure reproduces: {other:?}"),
+    }
+}
+
+/// The operations of `payload`'s stem and of its loop, by name.
+fn stem_and_loop(payload: &TemporalCounterexample) -> (Vec<String>, Vec<String>) {
+    let entry = payload.lasso.as_ref().expect("a lasso").entry;
+    let name = |step: &fsl_replay::ModelStep| {
+        step.transition
+            .operation()
+            .rsplit(|c: char| !c.is_alphanumeric() && c != '_')
+            .next()
+            .unwrap_or_default()
+            .to_owned()
+    };
+    (
+        payload.prefix[..entry].iter().map(name).collect(),
+        payload.prefix[entry..].iter().map(name).collect(),
+    )
+}
+
 /// FR-899-AC-6 / TC-2536 CX-1: an abstract fire taken only along a candidate
 /// path that cannot recur does not make the concrete tick loop fair.
 #[trace("TC-2536", "FR-899-AC-6")]
@@ -354,13 +397,18 @@ fn cx1_refutes_when_fire_only_leaves_the_candidate_cycle() {
         }\n";
     let unit = Unit::hidden_fairness_model(2, 0, &["advance", "fire"], contracts);
     let refinement = hidden_tick_refinement("ensure fair weak Spec::M::fire;\n");
-    let outcome = check_aux(&unit.world(&refinement));
+    let world = unit.world(&refinement);
+    let outcome = check_aux(&world);
     assert!(matches!(outcome.safety, SafetyOutcome::Holds { .. }));
     let counterexample = lasso(outcome);
     assert!(matches!(
         counterexample.refinement,
         Some(RefinementFailure::HiddenUnfair { .. })
     ));
+    let (stem, cycle) = stem_and_loop(&counterexample);
+    assert_eq!(stem, ["tick", "tick"]);
+    assert_eq!(cycle, ["tick"]);
+    assert_reproduced(&world, &counterexample);
 }
 
 /// FR-899-AC-7 / TC-2536 CX-2: each constraint has a fair candidate alone,
@@ -381,11 +429,35 @@ fn cx2_requires_one_candidate_run_to_satisfy_all_fairness_constraints() {
     let refinement = hidden_tick_refinement(
         "ensure fair weak Spec::M::fire1;\nensure fair weak Spec::M::fire2;\n",
     );
-    let counterexample = lasso(check_aux(&unit.world(&refinement)));
-    let Some(RefinementFailure::HiddenUnfair { constraint }) = counterexample.refinement else {
+    let world = unit.world(&refinement);
+    let counterexample = lasso(check_aux(&world));
+    let Some(RefinementFailure::HiddenUnfair { constraint }) = counterexample.refinement.as_ref()
+    else {
         panic!("the joint candidate constraint prefix refutes");
     };
     assert_eq!(constraint.operation().name(), "fire2");
+    assert_reproduced(&world, &counterexample);
+
+    // Replay does not reproduce the same lasso under another constraint's name.
+    let fire1 = world
+        .refinement()
+        .abstract_operation_fairness()
+        .find(|constraint| constraint.operation().name() == "fire1")
+        .cloned()
+        .expect("the fire1 constraint");
+    let mut renamed = counterexample.clone();
+    renamed.refinement = Some(RefinementFailure::HiddenUnfair { constraint: fire1 });
+    assert!(
+        !matches!(
+            replayed(&world, &renamed),
+            RefinementTraceSettlement::Reproduced { .. }
+        ),
+        "the first constraint is satisfiable alone, so it is not the one named"
+    );
+
+    // Without `fire2` the one constraint left is satisfiable by a candidate.
+    let without_fire2 = hidden_tick_refinement("ensure fair weak Spec::M::fire1;\n");
+    holds(&check_aux(&unit.world(&without_fire2)));
 }
 
 /// FR-899-AC-8 / TC-2536 CX-3: a candidate that never enables fire supplies
