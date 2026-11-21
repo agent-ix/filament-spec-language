@@ -13,9 +13,13 @@
 //! The quotient's vertices are (task product key, refined region). A
 //! vertex's time successors are its explicit positive-delay edges, so a
 //! certificate node's zone is held to be closed under time by checking each
-//! vertex it holds against those edges. A cycle of the quotient through a
-//! positive-delay edge lets time diverge (every clock is then reset or
-//! saturated, so identical rounds repeat).
+//! vertex it holds against those edges. The admitted witness's cycle must
+//! advance time by a fixed positive amount each round (a clock guarded
+//! above the value its last in-cycle reset gave it, the ordinary checker's
+//! `advancing_cycle` rule), so a Zeno region cycle is not accepted. A
+//! `locked` node is rejected on the weaker over-approximation, any
+//! quotient cycle through a positive delay reachable from it, which can
+//! only reject more.
 //!
 //! A source operation that releases several tasks at once is one source
 //! edge of the lowering with all its activations, so its certificate edge
@@ -48,7 +52,7 @@ use super::super::task_product::{
     TaskProductCertificate, TaskProductKey, TaskQueueBound, TaskSchedulerControl, TaskSubtraction,
     TaskTransitionTemplate,
 };
-use super::super::zone::{Coverage, DiagonalPredicate, TargetShape, Zone, ZoneError};
+use super::super::zone::{Coverage, DiagonalPredicate, Exact, TargetShape, Zone, ZoneError};
 use super::{
     at_edge, at_node, fault, malformed, reject, scaled, CertEdge, CertificateCheckLimits,
     CertificateLocus, CertificateMember, CertificateRule, CheckerFault, DivergentTarget, Halt,
@@ -195,6 +199,24 @@ pub struct QuotientEdge {
     pub identity: usize,
     /// The target vertex.
     pub to: usize,
+    /// The index of the edge's clock effect in `TaskProductQuotient::effects`.
+    pub effect: usize,
+}
+
+/// What one enabled alternative of an edge does to the clocks: the lower
+/// bounds its guard imposes, the clocks it resets to a constant and the
+/// clocks it assigns from another clock. A cycle advances time when a clock
+/// is guarded above the value its last reset in the cycle gave it.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct EdgeEffect {
+    /// `(clock, bound, strict)`: the guard requires `clock > bound` when
+    /// strict, else `clock >= bound`.
+    pub lowers: Vec<(usize, Integer, bool)>,
+    /// `(clock, value)`: reset to a constant.
+    pub resets: Vec<(usize, Integer)>,
+    /// Clocks assigned from another clock, whose value the cycle test does
+    /// not know.
+    pub assigned: Vec<usize>,
 }
 
 /// One initial symbolic state and the regions it meets.
@@ -215,6 +237,8 @@ pub struct TaskProductQuotient {
     pub vertices: Vec<QuotientVertex>,
     /// The distinct edge identities.
     pub identities: Vec<QuotientIdentity>,
+    /// The distinct clock effects of the discrete edges.
+    pub effects: Vec<EdgeEffect>,
     /// The zero-delay edges.
     pub discrete: Vec<QuotientEdge>,
     /// The positive-delay edges, a vertex to a vertex of the same location.
@@ -490,6 +514,13 @@ impl Explorer<'_, '_, '_, '_> {
                     }
                     let amount = self.sc(&subtraction.amount)?;
                     let ceiling = self.sc(&subtraction.ceiling)?;
+                    // FR-418: the subtraction of `c` from `x` is proved
+                    // guarded by `c <= x <= M_x`; a valuation outside that
+                    // range has no completion successor, which the
+                    // exploration would otherwise drop silently.
+                    if !within_range(&post, subtraction.clock, &amount, &ceiling)? {
+                        return Err(QuotientStop::Uncertified);
+                    }
                     post.subtract_bounded(subtraction.clock, &amount, &ceiling)?;
                 }
                 if post.is_empty() {
@@ -505,6 +536,7 @@ impl Explorer<'_, '_, '_, '_> {
                 for reset in &edge.resets {
                     resets.push((reset.clock, self.sc(&reset.value)?));
                 }
+                let effect = self.effect(alternative, &carries, &resets)?;
                 post.assign_clocks(&carries, &resets)?;
                 let (target_key, target) = self.data(&edge.target)?;
                 let zero = Integer::zero();
@@ -523,6 +555,7 @@ impl Explorer<'_, '_, '_, '_> {
                         from: at,
                         identity,
                         to,
+                        effect,
                     });
                 }
             }
@@ -539,9 +572,38 @@ impl Explorer<'_, '_, '_, '_> {
         Ok(())
     }
 
+    /// The index of the clock effect of one enabled alternative.
+    fn effect(
+        &mut self,
+        alternative: &[ClockAtom],
+        carries: &[(usize, usize)],
+        resets: &[(usize, Integer)],
+    ) -> Explored<usize> {
+        let mut lowers = Vec::new();
+        for atom in alternative {
+            // `x >= c` is `0 - x <= -c`.
+            if atom.left == 0 && atom.right != 0 {
+                lowers.push((atom.right, self.sc(&atom.bound)?.negated(), atom.strict));
+            }
+        }
+        let effect = EdgeEffect {
+            lowers,
+            resets: resets.to_vec(),
+            assigned: carries.iter().map(|(to, _)| *to).collect(),
+        };
+        if let Some(found) = self.quotient.effects.iter().position(|own| own == &effect) {
+            return Ok(found);
+        }
+        self.quotient.effects.push(effect);
+        Ok(self.quotient.effects.len() - 1)
+    }
+
     /// The bounded subtractions of an enabled edge, once each.
     fn rows(&mut self, edge: &TaskEdge) -> Explored<()> {
         for subtraction in &edge.subtractions {
+            if !self.work.charge() {
+                return Err(QuotientStop::Work);
+            }
             let row = TaskSubtraction {
                 transition: template_of(&subtraction.template),
                 clock: self.automaton.clocks()[subtraction.clock - 1].name.clone(),
@@ -582,6 +644,9 @@ impl Explorer<'_, '_, '_, '_> {
             }
             let mut rest = Vec::new();
             for piece in &free {
+                if !self.work.charge() {
+                    return Err(QuotientStop::Work);
+                }
                 rest.extend(piece.minus(&urgent)?);
             }
             free = rest;
@@ -667,6 +732,7 @@ fn explore(
         quotient: TaskProductQuotient {
             vertices: Vec::new(),
             identities: Vec::new(),
+            effects: Vec::new(),
             discrete: Vec::new(),
             time: Vec::new(),
             initials: Vec::new(),
@@ -739,11 +805,53 @@ fn quotient_halt<O>(stop: QuotientStop, work: &Work<'_>) -> Halt<O> {
     }
 }
 
+/// Whether every valuation of `zone` has `amount <= clock <= ceiling`, the
+/// range a bounded subtraction is proved over; `subtract_bounded` would
+/// otherwise clip a valuation outside it away without a successor.
+fn within_range(
+    zone: &Zone,
+    clock: usize,
+    amount: &Integer,
+    ceiling: &Integer,
+) -> Result<bool, ZoneError> {
+    let mut range = zone.clone();
+    range.constrain(0, clock, &amount.negated(), false)?;
+    range.constrain(clock, 0, ceiling, false)?;
+    range.includes(zone)
+}
+
+/// `max_certificate_edges` and `max_certificate_bytes`, as the ordinary reader
+/// applies them before it reads anything.
+fn budgets<O>(certificate: &ZoneCertificate<O>, limits: CertificateCheckLimits) -> Step<(), O> {
+    let stop = |limit, value| {
+        Err(Halt::Verdict(ZoneCertificateVerdict::Stopped(
+            IncompleteCause::LimitReached { limit, value },
+        )))
+    };
+    let edges = u64::try_from(certificate.edges.len()).unwrap_or(u64::MAX);
+    if edges > limits.max_certificate_edges {
+        return stop(
+            ModelCheckLimit::CertificateMaxEdges,
+            limits.max_certificate_edges,
+        );
+    }
+    if super::certificate_bytes(certificate) > limits.max_certificate_bytes {
+        return stop(
+            ModelCheckLimit::CertificateMaxBytes,
+            limits.max_certificate_bytes,
+        );
+    }
+    Ok(())
+}
+
 /// The certificate's own shape: members the task-product form carries, and
 /// indices within them.
 fn shape<O>(certificate: &ZoneCertificate<O>, dim: usize) -> Step<(), O> {
     if certificate.scale <= Integer::zero() {
         return malformed(CertificateMember::Scale);
+    }
+    if !certificate.lu_bounds.lower.is_empty() || !certificate.lu_bounds.upper.is_empty() {
+        return malformed(CertificateMember::Bounds);
     }
     if certificate.initials.is_empty() {
         return malformed(CertificateMember::Initials);
@@ -833,6 +941,7 @@ fn compare_member<O>(
 fn compare_subtractions<O>(
     certificate: &ZoneCertificate<O>,
     quotient: &TaskProductQuotient,
+    work: &Work<'_>,
 ) -> Step<(), O> {
     let Some(member) = &certificate.task_product else {
         return malformed(CertificateMember::TaskProduct);
@@ -843,14 +952,20 @@ fn compare_subtractions<O>(
             && left.constant == right.constant
             && left.transition.same_identity(&right.transition)
     };
+    let covered = |from: &[TaskSubtraction], other: &[TaskSubtraction]| -> Step<bool, O> {
+        for row in from {
+            if !work.charge() {
+                return Err(work.stop());
+            }
+            if !other.iter().any(|own| same(row, own)) {
+                return Ok(false);
+            }
+        }
+        Ok(true)
+    };
     let equal = listed.len() == quotient.subtractions.len()
-        && listed
-            .iter()
-            .all(|row| quotient.subtractions.iter().any(|own| same(row, own)))
-        && quotient
-            .subtractions
-            .iter()
-            .all(|own| listed.iter().any(|row| same(row, own)));
+        && covered(listed, &quotient.subtractions)?
+        && covered(&quotient.subtractions, listed)?;
     if equal {
         Ok(())
     } else {
@@ -878,12 +993,13 @@ pub(super) fn check<O: Clone + Eq>(
         return unchecked();
     }
     let work = Work::new(limits.max_check_work, cancel);
+    budgets(certificate, limits)?;
     let dim = automaton.clocks().len() + 1;
     shape(certificate, dim)?;
     compare_member(automaton, certificate, &work)?;
     let quotient =
         explore(automaton, &certificate.scale, &work).map_err(|stop| quotient_halt(stop, &work))?;
-    compare_subtractions(certificate, &quotient)?;
+    compare_subtractions(certificate, &quotient, &work)?;
     let (ceilings, diagonals) = region_parameters(automaton, &certificate.scale)
         .map_err(|stop| quotient_halt(stop, &work))?;
     let mut matcher = Matcher {
@@ -903,7 +1019,7 @@ pub(super) fn check<O: Clone + Eq>(
     }
     matcher.assign()?;
     matcher.canonical()?;
-    let into = quotient_graph(&quotient, cancel)?;
+    let into = quotient_graph(&quotient, &work, cancel)?;
     matcher.locked(&into)?;
     matcher.admitted(&into)
 }
@@ -1043,6 +1159,7 @@ impl<O: Clone + Eq> Matcher<'_, '_, O> {
                 let successor = &self.quotient.vertices[next];
                 let mut hit = None;
                 for position in 0..self.leaving[node].len() {
+                    self.spend()?;
                     let index = self.leaving[node][position];
                     let edge = &self.certificate.edges[index];
                     let target = edge.to;
@@ -1078,14 +1195,51 @@ impl<O: Clone + Eq> Matcher<'_, '_, O> {
         Ok(())
     }
 
-    /// A `locked` node must have no time-divergent continuation.
+    /// A `locked` node must have no time-divergent continuation. Divergence
+    /// here is over-approximated by a quotient cycle through a positive
+    /// delay (a Zeno cycle counts), which can only reject more: it is sound
+    /// for this direction and never decides an acceptance.
     fn locked(&self, into: &Divergence) -> Step<(), O> {
         for &(node, vertex) in &self.pairs {
+            self.spend()?;
             if self.certificate.nodes[node].locked && into.reaches[vertex] {
                 return reject(CertificateRule::BadState, at_node(node));
             }
         }
         Ok(())
+    }
+
+    /// The vertices of `now` and every vertex a run of delays reaches.
+    fn close(&self, into: &Divergence, now: &BTreeSet<usize>) -> Step<BTreeSet<usize>, O> {
+        let mut all = now.clone();
+        let mut stack: Vec<usize> = now.iter().copied().collect();
+        while let Some(vertex) = stack.pop() {
+            for &next in &into.delay[vertex] {
+                self.spend()?;
+                if all.insert(next) {
+                    stack.push(next);
+                }
+            }
+        }
+        Ok(all)
+    }
+
+    /// The quotient edges out of `vertex` that the certificate edge `index`
+    /// labels and whose pair the certificate holds.
+    fn taken<'s>(
+        &'s self,
+        into: &'s Divergence,
+        vertex: usize,
+        index: usize,
+    ) -> impl Iterator<Item = &'s QuotientEdge> + 's {
+        let edge = &self.certificate.edges[index];
+        into.by_from[vertex]
+            .iter()
+            .map(|&position| &self.quotient.discrete[position])
+            .filter(move |step| {
+                self.quotient.identities[step.identity].labels(edge)
+                    && self.pairs.contains(&(edge.to, step.to))
+            })
     }
 
     /// The TD-6 witness, replayed on the quotient.
@@ -1095,22 +1249,21 @@ impl<O: Clone + Eq> Matcher<'_, '_, O> {
         };
         let fails = |node: usize| reject(CertificateRule::WitnessFails, at_node(node));
         let mut at = witness.start;
-        let mut now: BTreeSet<(usize, bool)> = self
+        let mut now: BTreeSet<usize> = self
             .initial_nodes
             .iter()
             .filter(|(node, _)| *node == at)
-            .flat_map(|(_, vertices)| vertices.iter().map(|&vertex| (vertex, false)))
+            .flat_map(|(_, vertices)| vertices.iter().copied())
             .collect();
         if now.is_empty() {
             return fails(at);
         }
         for &index in &witness.path {
-            self.spend()?;
             let edge = &self.certificate.edges[index];
             if edge.from != at || !self.used[index] {
                 return fails(at);
             }
-            now = self.step(into, &now, index);
+            now = self.step(into, &now, index)?;
             at = edge.to;
             if now.is_empty() {
                 return fails(at);
@@ -1119,10 +1272,10 @@ impl<O: Clone + Eq> Matcher<'_, '_, O> {
         let holds = match &witness.target {
             DivergentTarget::Quiescent(node) => {
                 *node == at
-                    && into
-                        .close(&now)
+                    && self
+                        .close(into, &now)?
                         .iter()
-                        .any(|&(vertex, _)| into.idles[vertex])
+                        .any(|&vertex| into.idles[vertex])
             }
             DivergentTarget::Terminal(_) => false,
             DivergentTarget::Cycle(cycle) => self.repeats(into, at, cycle, &now)?,
@@ -1138,32 +1291,30 @@ impl<O: Clone + Eq> Matcher<'_, '_, O> {
     fn step(
         &self,
         into: &Divergence,
-        now: &BTreeSet<(usize, bool)>,
+        now: &BTreeSet<usize>,
         index: usize,
-    ) -> BTreeSet<(usize, bool)> {
-        let edge = &self.certificate.edges[index];
+    ) -> Step<BTreeSet<usize>, O> {
         let mut next = BTreeSet::new();
-        for &(vertex, positive) in &into.close(now) {
-            for step in &self.quotient.discrete {
-                if step.from == vertex
-                    && self.quotient.identities[step.identity].labels(edge)
-                    && self.pairs.contains(&(edge.to, step.to))
-                {
-                    next.insert((step.to, positive));
-                }
+        for vertex in self.close(into, now)? {
+            for step in self.taken(into, vertex, index) {
+                self.spend()?;
+                next.insert(step.to);
             }
         }
-        next
+        Ok(next)
     }
 
     /// Whether `cycle` is a closed walk of the quotient through a vertex of
-    /// `start`, with a positive delay on it.
+    /// `start` along which time advances by a fixed positive amount each
+    /// round: a clock guarded above the value its last reset in the cycle
+    /// gave it, so no Zeno cycle (a never-reset clock held open by an
+    /// invariant while another is reset every round) passes.
     fn repeats(
         &self,
         into: &Divergence,
         at: usize,
         cycle: &[usize],
-        start: &BTreeSet<(usize, bool)>,
+        start: &BTreeSet<usize>,
     ) -> Step<bool, O> {
         let edges = &self.certificate.edges;
         let chained = !cycle.is_empty()
@@ -1176,51 +1327,103 @@ impl<O: Clone + Eq> Matcher<'_, '_, O> {
         if !chained {
             return Ok(false);
         }
-        for &(vertex, _) in &into.close(start) {
-            self.spend()?;
-            let mut now = BTreeSet::from([(vertex, false)]);
-            for &index in cycle {
-                self.spend()?;
-                now = self.step(into, &now, index);
-            }
-            if into.close(&now).contains(&(vertex, true)) {
+        for &vertex in &self.close(into, start)? {
+            let mut effects = Vec::new();
+            if self.walk(into, cycle, 0, vertex, vertex, &mut effects)? {
                 return Ok(true);
             }
         }
         Ok(false)
     }
+
+    /// Whether the rest of `cycle` from `position` closes at `origin` with an
+    /// advancing sequence of clock effects.
+    fn walk(
+        &self,
+        into: &Divergence,
+        cycle: &[usize],
+        position: usize,
+        current: usize,
+        origin: usize,
+        effects: &mut Vec<usize>,
+    ) -> Step<bool, O> {
+        let reached = self.close(into, &BTreeSet::from([current]))?;
+        if position == cycle.len() {
+            return Ok(reached.contains(&origin) && self.advances(effects));
+        }
+        for vertex in reached {
+            for step in self.taken(into, vertex, cycle[position]) {
+                self.spend()?;
+                effects.push(step.effect);
+                let found = self.walk(into, cycle, position + 1, step.to, origin, effects)?;
+                effects.pop();
+                if found {
+                    return Ok(true);
+                }
+            }
+        }
+        Ok(false)
+    }
+
+    /// Whether some edge of the cycle guards a clock `x >= b` (or `x > b`)
+    /// with `b` above the value `r` of the last reset of `x` before it,
+    /// going back around the cycle; an assignment from another clock, or no
+    /// reset at all, proves nothing.
+    fn advances(&self, effects: &[usize]) -> bool {
+        let length = effects.len();
+        let data = &self.quotient.effects;
+        for (position, &effect) in effects.iter().enumerate() {
+            for (clock, bound, _) in &data[effect].lowers {
+                for back in 1..=length {
+                    let earlier = &data[effects[(position + length - back) % length]];
+                    if earlier.assigned.contains(clock) {
+                        break;
+                    }
+                    if let Some((_, value)) = earlier
+                        .resets
+                        .iter()
+                        .rev()
+                        .find(|(reset, _)| reset == clock)
+                    {
+                        if bound > value {
+                            return true;
+                        }
+                        break;
+                    }
+                }
+            }
+        }
+        false
+    }
 }
 
 /// The quotient's time-divergence facts.
 struct Divergence {
-    /// Whether a divergent vertex is reachable from the vertex.
+    /// Whether a vertex on a cycle through a positive delay is reachable
+    /// from the vertex.
     reaches: Vec<bool>,
     /// Whether time can pass at the vertex forever without leaving it.
     idles: Vec<bool>,
     delay: Vec<Vec<usize>>,
-}
-
-impl Divergence {
-    /// `now` and every vertex a delay reaches, marking a positive delay.
-    fn close(&self, now: &BTreeSet<(usize, bool)>) -> BTreeSet<(usize, bool)> {
-        let mut all = now.clone();
-        let mut stack: Vec<(usize, bool)> = now.iter().copied().collect();
-        while let Some((vertex, positive)) = stack.pop() {
-            for &next in &self.delay[vertex] {
-                if all.insert((next, true)) {
-                    stack.push((next, true));
-                }
-                let _ = positive;
-            }
-        }
-        all
-    }
+    /// The positions in `TaskProductQuotient::discrete` of each vertex's
+    /// outgoing edges.
+    by_from: Vec<Vec<usize>>,
 }
 
 /// The strongly connected components of the quotient, and with them the
-/// vertices a time-divergent continuation reaches: a component is divergent
-/// when a positive-delay edge lies inside it.
-fn quotient_graph<O>(quotient: &TaskProductQuotient, cancel: &Cancel) -> Step<Divergence, O> {
+/// vertices from which a cycle through a positive delay is reachable.
+fn quotient_graph<O>(
+    quotient: &TaskProductQuotient,
+    work: &Work<'_>,
+    cancel: &Cancel,
+) -> Step<Divergence, O> {
+    let spend = || {
+        if work.charge() {
+            Ok(())
+        } else {
+            Err(work.stop())
+        }
+    };
     let count = quotient.vertices.len();
     let mut graph = Graph::new();
     let vertices: Vec<_> = (0..count)
@@ -1228,13 +1431,17 @@ fn quotient_graph<O>(quotient: &TaskProductQuotient, cancel: &Cancel) -> Step<Di
         .collect();
     let mut from: Vec<Vec<usize>> = vec![Vec::new(); count];
     let mut delay: Vec<Vec<usize>> = vec![Vec::new(); count];
-    for edge in &quotient.discrete {
+    let mut by_from: Vec<Vec<usize>> = vec![Vec::new(); count];
+    for (position, edge) in quotient.discrete.iter().enumerate() {
+        spend()?;
         graph
             .add_edge(vertices[edge.from], vertices[edge.to], EdgeLabel::Stutter)
             .map_err(|_| fault(CheckerFault::Graph))?;
         from[edge.to].push(edge.from);
+        by_from[edge.from].push(position);
     }
     for &(source, target) in &quotient.time {
+        spend()?;
         graph
             .add_edge(vertices[source], vertices[target], EdgeLabel::Stutter)
             .map_err(|_| fault(CheckerFault::Graph))?;
@@ -1254,23 +1461,22 @@ fn quotient_graph<O>(quotient: &TaskProductQuotient, cancel: &Cancel) -> Step<Di
     let mut component = vec![usize::MAX; count];
     for (number, members) in found.iter().enumerate() {
         for vertex in members.vertices() {
+            spend()?;
             component[vertex.index()] = number;
         }
     }
-    let mut divergent = vec![false; count];
+    let mut cyclic = vec![false; found.len()];
     for &(source, target) in &quotient.time {
+        spend()?;
         if component[source] == component[target] {
-            for (vertex, own) in component.iter().enumerate() {
-                if *own == component[source] {
-                    divergent[vertex] = true;
-                }
-            }
+            cyclic[component[source]] = true;
         }
     }
-    let mut reaches = divergent.clone();
-    let mut stack: Vec<usize> = (0..count).filter(|&vertex| divergent[vertex]).collect();
+    let mut reaches: Vec<bool> = component.iter().map(|&own| cyclic[own]).collect();
+    let mut stack: Vec<usize> = (0..count).filter(|&vertex| reaches[vertex]).collect();
     while let Some(vertex) = stack.pop() {
         for &before in &from[vertex] {
+            spend()?;
             if !reaches[before] {
                 reaches[before] = true;
                 stack.push(before);
@@ -1284,6 +1490,7 @@ fn quotient_graph<O>(quotient: &TaskProductQuotient, cancel: &Cancel) -> Step<Di
         reaches,
         idles,
         delay,
+        by_from,
     })
 }
 
@@ -1381,5 +1588,33 @@ pub(super) fn route<O>(
                     .collect(),
             ))
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A one-clock zone `low <= x <= high`.
+    fn between(low: i64, high: i64) -> Zone {
+        let mut zone = Zone::universe(2);
+        zone.constrain(0, 1, &Integer::from(-low), false)
+            .expect("lower");
+        zone.constrain(1, 0, &Integer::from(high), false)
+            .expect("upper");
+        zone
+    }
+
+    /// FR-418: a bounded subtraction is proved over `c <= x <= M_x`; a zone
+    /// reaching outside that range is not within it, so the exploration
+    /// settles `Uncertified` instead of clipping the valuation away.
+    #[test]
+    fn a_zone_outside_the_subtraction_range_is_not_within_it() {
+        let (amount, ceiling) = (Integer::from(2_i64), Integer::from(5_i64));
+        assert!(within_range(&between(2, 5), 1, &amount, &ceiling).unwrap());
+        assert!(within_range(&between(3, 4), 1, &amount, &ceiling).unwrap());
+        assert!(!within_range(&between(1, 4), 1, &amount, &ceiling).unwrap());
+        assert!(!within_range(&between(3, 6), 1, &amount, &ceiling).unwrap());
+        assert!(!within_range(&Zone::universe(2), 1, &amount, &ceiling).unwrap());
     }
 }

@@ -312,6 +312,16 @@ fn verdict(
     certificate: &Certificate,
     limits: CertificateCheckLimits,
 ) -> Result<ZoneCertificateVerdict, ZoneCertificateRefusal<OccurrenceKey>> {
+    verdict_with(world, claim_name, certificate, limits, &Cancel::new())
+}
+
+fn verdict_with(
+    world: &World,
+    claim_name: &str,
+    certificate: &Certificate,
+    limits: CertificateCheckLimits,
+    cancel: &Cancel,
+) -> Result<ZoneCertificateVerdict, ZoneCertificateRefusal<OccurrenceKey>> {
     check_zone_certificate(
         ZoneCertificateRequest {
             simulation: world.request(),
@@ -325,7 +335,7 @@ fn verdict(
         |obligation: &OccurrenceKey| CertificateItem::Schedulability(obligation),
         certificate,
         limits,
-        &Cancel::new(),
+        cancel,
     )
 }
 
@@ -432,7 +442,6 @@ fn big(value: u64) -> Integer {
 /// FR-418-AC-12 and AC-13 (member recompute): every member the checker
 /// recomputes must match, so each way of changing one is malformed at
 /// `task_product`.
-#[trace("TC-371", "FR-418-AC-13")]
 #[test]
 fn a_member_that_differs_from_its_recomputation_is_malformed() {
     let tampers: Vec<(&str, &str, Box<dyn Fn(&mut Certificate)>)> = vec![
@@ -585,7 +594,7 @@ fn an_out_of_range_activation_rank_leaves_the_successor_missing() {
 /// The certificate is canonical (ruling U5): an edge or node the
 /// recomputation does not produce is rejected, and a removed edge leaves
 /// its node's successor missing.
-#[trace("TC-371", "FR-418-AC-13")]
+#[trace("TC-371", "FR-418-AC-19")]
 #[test]
 fn the_certificate_is_the_reachable_closure() {
     let world = solo();
@@ -686,7 +695,7 @@ fn one_interleaving_of_simultaneous_releases_cannot_be_removed() {
 /// A node that does not cover the initial zero valuation is
 /// `initial-missing`; a successor outside its target's zone is
 /// `successor-missing` (two DBM columns swapped).
-#[trace("TC-371", "FR-418-AC-12")]
+#[trace("TC-371", "FR-418-AC-2")]
 #[test]
 fn a_node_that_does_not_cover_is_rejected() {
     let world = solo();
@@ -697,13 +706,12 @@ fn a_node_that_does_not_cover_is_rejected() {
         zone.constrain(0, 1, &Integer::from(-1_i64), false)
             .expect("constrain");
     });
-    let (rule, _) = rejected(result);
-    assert!(
-        matches!(
-            rule,
-            CertificateRule::InitialMissing | CertificateRule::Malformed
-        ),
-        "{rule:?}"
+    assert_eq!(
+        rejected(result),
+        (
+            CertificateRule::InitialMissing,
+            CertificateLocus::ModelState(built.quotient.initials[0].key.clone())
+        )
     );
     // Two clock columns swapped in the last node's DBM.
     let last = built.certificate.nodes.len() - 1;
@@ -734,8 +742,10 @@ fn a_node_that_does_not_cover_is_rejected() {
         }
         c.nodes[last].zone = Zone::from_matrix(dim, cells).expect("matrix");
     });
-    let (rule, _) = rejected(swapped);
-    assert_ne!(rule, CertificateRule::UnreachedNode);
+    assert_eq!(
+        rejected(swapped),
+        (CertificateRule::SuccessorMissing, node_at(2))
+    );
 }
 
 /// ZC-18's ready-order tamper: the queue order is part of the node key, so
@@ -852,7 +862,7 @@ fn an_edf_tie_dispatches_the_canonically_first_task() {
 /// ADR-026 TD-6 on the quotient: a `locked` node that reaches time
 /// divergence is `bad-state`; an `admitted` witness that idles where time
 /// cannot pass forever fails.
-#[trace("TC-371", "FR-418-AC-13")]
+#[trace("TC-371", "FR-418-AC-2")]
 #[test]
 fn divergence_and_the_admitted_witness_are_replayed_on_the_quotient() {
     let world = solo();
@@ -881,7 +891,7 @@ fn divergence_and_the_admitted_witness_are_replayed_on_the_quotient() {
 
 /// A work limit below the graph's size settles
 /// `incomplete` naming `max_check_work`, never an acceptance.
-#[trace("TC-371", "FR-418-AC-13")]
+#[trace("TC-371", "FR-418-AC-20")]
 #[test]
 fn a_work_limit_below_the_graph_is_incomplete() {
     let world = solo();
@@ -904,7 +914,7 @@ fn a_work_limit_below_the_graph_is_incomplete() {
 /// Ruling U6: a dual-WCET set with a mode switch is not covered by the
 /// closed finite product, so its check settles `certificate-unchecked`
 /// whatever the certificate says.
-#[trace("TC-371", "FR-418-AC-12")]
+#[trace("TC-371", "FR-418-AC-21")]
 #[test]
 fn a_mixed_criticality_set_is_certificate_unchecked() {
     let world = world_for(
@@ -1055,5 +1065,457 @@ fn a_no_release_closure_is_accepted_only_when_no_release_is_reachable() {
         )),
         (CertificateRule::SuccessorMissing, node_at(0)),
         "ZC-28"
+    );
+}
+
+/// The nodes of `built` whose state key a missed vertex of the quotient
+/// carries.
+fn missed_nodes(built: &Built) -> Vec<usize> {
+    let keys: Vec<_> = built
+        .quotient
+        .vertices
+        .iter()
+        .filter(|vertex| vertex.missed)
+        .map(|vertex| &vertex.key)
+        .collect();
+    built
+        .certificate
+        .nodes
+        .iter()
+        .enumerate()
+        .filter(|(_, node)| keys.contains(&&node.state_key))
+        .map(|(index, _)| index)
+        .collect()
+}
+
+/// Two fixed-priority tasks at utilisation 2/3 + 2/3: the lower priority
+/// task misses its deadline.
+fn over_utilised() -> World {
+    world_for(
+        "O",
+        &["p", "q"],
+        "taskset O {\n\
+         task p periodic 3 ms deadline 3 ms bcet 2 ms wcet 2 ms priority 1 lo;\n\
+         task q periodic 3 ms deadline 3 ms bcet 2 ms wcet 2 ms priority 2 lo;\n\
+         }\n\
+         schedulable OFp on O under fixed_priority;\n",
+    )
+}
+
+/// A reachable deadline miss is `bad-state` when its node is not locked
+/// (the `here.missed` rule), and `certificate-unchecked` when the node is
+/// locked on a real miss node.
+#[trace("TC-371", "FR-418-AC-13")]
+#[test]
+fn a_reachable_deadline_miss_is_bad_state_or_unchecked_when_locked() {
+    let world = over_utilised();
+    let built = build(&world, "OFp");
+    let missed = missed_nodes(&built);
+    assert!(!missed.is_empty(), "the over-utilised pair misses");
+    let (rule, at) = rejected(verdict(
+        &world,
+        "OFp",
+        &built.certificate,
+        CertificateCheckLimits::default(),
+    ));
+    assert_eq!(rule, CertificateRule::BadState);
+    assert!(
+        missed.iter().any(|&node| at == node_at(node)),
+        "{at:?} is not a miss node"
+    );
+    let mut locked = built.certificate.clone();
+    for &node in &missed {
+        locked.nodes[node].locked = true;
+    }
+    assert_eq!(
+        verdict(&world, "OFp", &locked, CertificateCheckLimits::default()),
+        Ok(ZoneCertificateVerdict::Stopped(
+            fsl_replay::IncompleteCause::CertificateUnchecked
+        ))
+    );
+}
+
+/// A source with a clock `x` that is never reset (held to 1 ms) and a clock
+/// `y` that a `tick` operation resets whenever it is positive: time can
+/// pass only by ever smaller steps summing to less than 1 ms (Zeno).
+fn zeno() -> World {
+    zeno_with(false)
+}
+
+/// [`zeno`] with a `park` operation after which the cap no longer holds, so
+/// time can pass forever and the product has a real witness.
+fn parked() -> World {
+    zeno_with(true)
+}
+
+fn zeno_with(park: bool) -> World {
+    let all: [(&str, &[&str]); 3] = [
+        ("fire_a", &["phase"]),
+        ("tick", &["y"]),
+        ("park", &["phase"]),
+    ];
+    let operations = &all[..if park { 3 } else { 2 }];
+    let parking = if park {
+        "pre Park using v on M::Call::park { self.phase = 0 }\n\
+         post Parked using v on M::Call::park { self.phase = 1 }\n"
+    } else {
+        ""
+    };
+    world(
+        &document(&["x", "y"], operations),
+        TIMED,
+        &format!(
+            "{DENSE}taskset Z {{\n\
+             task a periodic 4 ms deadline 4 ms bcet 1 ms wcet 1 ms priority 1 lo;\n\
+             }}\n\
+             schedulable ZFp on Z under fixed_priority;\n\
+             post Fire_a using v on M::Call::fire_a {{ self.phase = pre(self.phase) }}\n\
+             release Z.a on M::Call::fire_a;\n\
+             pre Tick using v on M::Call::tick {{ self.y > 0 ms }}\n\
+             post Ticked using v on M::Call::tick {{ self.y = 0 ms }}\n\
+             time invariant Cap when {{ self.phase = 0 }} {{ self.x <= 1 ms }}\n\
+             {parking}"
+        ),
+    )
+}
+
+/// A cycle of region steps that never advances time by a fixed amount
+/// (the Zeno `tick` cycle) is not an `admitted` witness: the rule is the
+/// ordinary checker's `advancing_cycle`, not any quotient cycle through a
+/// positive delay.
+#[trace("TC-371", "FR-418-AC-13")]
+#[test]
+fn a_zeno_region_cycle_is_not_an_admitted_witness() {
+    let world = zeno();
+    let built = build(&world, "ZFp");
+    let admitted = built.certificate.admitted.as_ref().expect("a witness");
+    assert!(
+        matches!(admitted.target, DivergentTarget::Cycle(_)),
+        "the only divergence the product has is the Zeno cycle: {:?}",
+        admitted.target
+    );
+    let (rule, _) = rejected(verdict(
+        &world,
+        "ZFp",
+        &built.certificate,
+        CertificateCheckLimits::default(),
+    ));
+    assert_eq!(rule, CertificateRule::WitnessFails);
+}
+
+/// [`no_release`]'s task set, with a source that binds `a`'s release to an
+/// operation: the one difference between the two sources.
+fn releasable() -> World {
+    world_for(
+        "N",
+        &["a"],
+        "taskset N {\n\
+         task a periodic 4 ms deadline 4 ms bcet 1 ms wcet 2 ms priority 1 lo;\n\
+         }\n\
+         schedulable NFp on N under fixed_priority;\n",
+    )
+}
+
+/// ZC-28 made discriminating: the certificate over the release-free source
+/// is accepted, and the same certificate (equal but for the claim it names)
+/// over the source that binds the release is `successor-missing`, so the
+/// reachable release is the only defect.
+#[trace("TC-371", "FR-418-AC-14")]
+#[test]
+fn a_reachable_release_is_the_only_defect_of_a_no_release_closure() {
+    let free = no_release();
+    let bound = releasable();
+    let accepted = no_release_certificate(&free, "NFp");
+    let mut refused = no_release_certificate(&bound, "NFp");
+    assert_eq!(
+        verdict(&free, "NFp", &accepted, CertificateCheckLimits::default()),
+        Ok(ZoneCertificateVerdict::Accepted)
+    );
+    assert_eq!(accepted.nodes[0].state_key, refused.nodes[0].state_key);
+    assert_eq!(accepted.nodes[0].zone, refused.nodes[0].zone);
+    assert_eq!(accepted.task_product, refused.task_product);
+    assert_eq!(
+        rejected(verdict(
+            &bound,
+            "NFp",
+            &refused,
+            CertificateCheckLimits::default()
+        )),
+        (CertificateRule::SuccessorMissing, node_at(0))
+    );
+    // Adding the release edge the source has does not repair it: a
+    // task-transition edge is not part of this method.
+    let donor = build(&solo(), "SFp").certificate;
+    let mut template =
+        donor.edges[template_edge(&donor, fsl_replay::TaskTransitionAction::Activate)].clone();
+    template.from = 0;
+    template.to = 0;
+    refused.edges.push(template);
+    let (rule, _) = rejected(verdict(
+        &bound,
+        "NFp",
+        &refused,
+        CertificateCheckLimits::default(),
+    ));
+    assert!(
+        matches!(
+            rule,
+            CertificateRule::Malformed | CertificateRule::SuccessorMissing
+        ),
+        "{rule:?}"
+    );
+}
+
+/// FR-418-AC-14: scheduler clock metadata under the no-release method is
+/// refused as a malformed `task_product`.
+#[trace("TC-371", "FR-418-AC-14")]
+#[test]
+fn a_no_release_closure_refuses_scheduler_clock_metadata() {
+    let world = no_release();
+    let mut certificate = no_release_certificate(&world, "NFp");
+    certificate
+        .task_product
+        .as_mut()
+        .unwrap()
+        .clock_ceilings
+        .push(fsl_replay::TaskClockCeiling {
+            clock: "scheduler".to_owned(),
+            maximum: big(4),
+        });
+    assert_eq!(
+        rejected(verdict(
+            &world,
+            "NFp",
+            &certificate,
+            CertificateCheckLimits::default()
+        )),
+        malformed_member()
+    );
+}
+
+/// The certificate edge and byte budgets bound the finite-product route as
+/// they bound the ordinary one, and a cancelled check settles cancelled.
+#[trace("TC-371", "FR-418-AC-20")]
+#[test]
+fn the_certificate_budgets_and_cancellation_stop_the_task_product_check() {
+    let world = solo();
+    let built = build(&world, "SFp");
+    let edges = CertificateCheckLimits {
+        max_certificate_edges: 1,
+        ..CertificateCheckLimits::default()
+    };
+    assert_eq!(
+        verdict(&world, "SFp", &built.certificate, edges),
+        Ok(ZoneCertificateVerdict::Stopped(
+            fsl_replay::IncompleteCause::LimitReached {
+                limit: fsl_replay::ModelCheckLimit::CertificateMaxEdges,
+                value: 1,
+            }
+        ))
+    );
+    let bytes = CertificateCheckLimits {
+        max_certificate_bytes: 1,
+        ..CertificateCheckLimits::default()
+    };
+    assert_eq!(
+        verdict(&world, "SFp", &built.certificate, bytes),
+        Ok(ZoneCertificateVerdict::Stopped(
+            fsl_replay::IncompleteCause::LimitReached {
+                limit: fsl_replay::ModelCheckLimit::CertificateMaxBytes,
+                value: 1,
+            }
+        ))
+    );
+    let cancel = Cancel::new();
+    cancel.cancel(filament_exact::CancelCause::Requested);
+    assert_eq!(
+        verdict_with(
+            &world,
+            "SFp",
+            &built.certificate,
+            CertificateCheckLimits::default(),
+            &cancel
+        ),
+        Ok(ZoneCertificateVerdict::Stopped(
+            fsl_replay::IncompleteCause::Cancelled {
+                source: filament_exact::CancelCause::Requested
+            }
+        ))
+    );
+}
+
+/// The nodes of the quotient that share a state key with exactly one other
+/// region, and are neither initial nor the only way into their key.
+fn two_region_node(built: &Built) -> Option<(usize, Vec<usize>)> {
+    let mut by_key: BTreeMap<_, Vec<usize>> = BTreeMap::new();
+    for (index, vertex) in built.quotient.vertices.iter().enumerate() {
+        by_key.entry(&vertex.key).or_default().push(index);
+    }
+    for (key, regions) in by_key {
+        if regions.len() != 2 {
+            continue;
+        }
+        let node = built
+            .certificate
+            .nodes
+            .iter()
+            .position(|node| &node.state_key == key)
+            .expect("the key's node");
+        if !built.certificate.initials.contains(&node) {
+            return Some((node, regions));
+        }
+    }
+    None
+}
+
+/// FR-418-AC-18: a target whose `Z` is the union of two whole refined
+/// regions covers a successor in either of them; the same node reduced to
+/// one region alone leaves the other region's successor missing.
+#[trace("TC-371", "FR-418-AC-18")]
+#[test]
+fn a_union_of_two_regions_covers_a_successor_in_either_and_one_region_does_not() {
+    let (world, claim, built, node, regions) = [
+        (solo(), "SFp"),
+        (tied(), "EEdf"),
+        (preempting(), "QFp"),
+        (parked(), "ZFp"),
+    ]
+    .into_iter()
+    .find_map(|(world, claim)| {
+        let built = build(&world, claim);
+        let (node, regions) = two_region_node(&built)?;
+        Some((world, claim, built, node, regions))
+    })
+    .expect("a fixture with a non-initial key of exactly two regions");
+    let (first, second) = (
+        &built.quotient.vertices[regions[0]].zone,
+        &built.quotient.vertices[regions[1]].zone,
+    );
+    assert_eq!(
+        built.certificate.nodes[node].zone,
+        hull(first, second),
+        "the node is the union of its two regions"
+    );
+    assert_eq!(
+        verdict(
+            &world,
+            claim,
+            &built.certificate,
+            CertificateCheckLimits::default()
+        ),
+        Ok(ZoneCertificateVerdict::Accepted)
+    );
+    let reduced = edit(&world, claim, |c| {
+        c.nodes[node].zone = first.clone();
+    });
+    let (rule, at) = rejected(reduced);
+    assert_eq!(rule, CertificateRule::SuccessorMissing);
+    let sources: Vec<CertificateLocus> = std::iter::once(node)
+        .chain(
+            built
+                .certificate
+                .edges
+                .iter()
+                .filter(|edge| edge.to == node)
+                .map(|edge| edge.from),
+        )
+        .map(node_at)
+        .collect();
+    assert!(sources.contains(&at), "{at:?}");
+}
+
+/// A canonical zone from hand-written rows of non-strict bounds.
+fn rows(rows: &[[i64; 6]]) -> Zone {
+    let cells: Vec<_> = rows
+        .iter()
+        .flatten()
+        .map(|&value| Some((Integer::from(value), false)))
+        .collect();
+    Zone::from_matrix(6, cells).expect("a matrix")
+}
+
+/// FR-418-AC-13 (ZC-19/ZC-23 shape): the periodic task `a` (period 4 ms,
+/// work 1 ms) has four nodes, written out by hand here rather than read
+/// from the checker's own quotient: the idle initial state, the released
+/// job, the running job and the completed job, one release edge each way
+/// round the period. The zones are over the clocks `a.arrival`,
+/// `a.slot0.service`, `a.slot0.deadline`, `a.slot1.service` and
+/// `a.slot1.deadline`; only the state keys are taken from the recomputation.
+#[trace("TC-371", "FR-418-AC-13")]
+#[test]
+fn a_hand_written_certificate_for_one_periodic_task_is_accepted() {
+    let world = solo();
+    let built = build(&world, "SFp");
+    let mut certificate = built.certificate.clone();
+    let zero = [[0; 6]; 6];
+    let running = [
+        [0, 0, 0, 0, 0, 0],
+        [1, 0, 0, 0, 1, 1],
+        [1, 0, 0, 0, 1, 1],
+        [1, 0, 0, 0, 1, 1],
+        [0, 0, 0, 0, 0, 0],
+        [0, 0, 0, 0, 0, 0],
+    ];
+    let completed = [
+        [0, -1, 0, 0, 0, 0],
+        [4, 0, 4, 4, 4, 4],
+        [0, -1, 0, 0, 0, 0],
+        [0, -1, 0, 0, 0, 0],
+        [0, -1, 0, 0, 0, 0],
+        [0, -1, 0, 0, 0, 0],
+    ];
+    let zones = [zero, zero, running, completed];
+    assert_eq!(certificate.nodes.len(), zones.len());
+    for (node, zone) in certificate.nodes.iter_mut().zip(&zones) {
+        node.zone = rows(zone);
+    }
+    let shape: Vec<_> = certificate
+        .edges
+        .iter()
+        .map(|edge| {
+            (
+                edge.from,
+                edge.to,
+                edge.task_transition.as_ref().map(|t| t.action),
+            )
+        })
+        .collect();
+    use fsl_replay::TaskTransitionAction::{Activate, Complete, Dispatch};
+    assert_eq!(
+        shape,
+        [
+            (0, 1, Some(Activate)),
+            (1, 2, Some(Dispatch)),
+            (2, 3, Some(Complete)),
+            (3, 1, Some(Activate)),
+        ]
+    );
+    certificate.initials = vec![0];
+    certificate.admitted = Some(DivergenceWitness {
+        start: 0,
+        path: Vec::new(),
+        target: DivergentTarget::Quiescent(0),
+    });
+    assert_eq!(
+        verdict(
+            &world,
+            "SFp",
+            &certificate,
+            CertificateCheckLimits::default()
+        ),
+        Ok(ZoneCertificateVerdict::Accepted)
+    );
+    // The same certificate with the completed node's zone narrowed to the
+    // origin does not cover what the running node completes into.
+    let mut narrowed = certificate.clone();
+    narrowed.nodes[3].zone = rows(&zero);
+    assert_eq!(
+        rejected(verdict(
+            &world,
+            "SFp",
+            &narrowed,
+            CertificateCheckLimits::default(),
+        )),
+        (CertificateRule::SuccessorMissing, node_at(2))
     );
 }
