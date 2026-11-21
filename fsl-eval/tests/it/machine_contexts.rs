@@ -1676,7 +1676,7 @@ fn a_context_set_field_follows_the_collection_rules_of_an_object_field() {
 /// FR-663, FR-106-AC-15, FR-106-AC-21 (TC-1045): a context-field refusal
 /// carries `fields["path"]`, the RFC 6901 pointer to the failing member in the
 /// supplied snapshot, and it resolves there.
-#[trace("TC-1045", "FR-106-AC-15", "FR-106-AC-21")]
+#[trace("TC-1045", "FR-106-AC-44", "FR-663-AC-1")]
 #[test]
 fn a_context_field_refusal_carries_a_pointer_that_resolves_in_the_snapshot() {
     let orders = Orders::new(false);
