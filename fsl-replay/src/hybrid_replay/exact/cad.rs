@@ -766,3 +766,120 @@ pub(super) fn project(
     }
     Ok((levels, set.iter().map(Polynomial::univariate).collect()))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn n(i: i64) -> Rational {
+        Rational::from_integer(i.into())
+    }
+    fn c(i: i64) -> Polynomial {
+        Polynomial::constant(n(i))
+    }
+    fn square(p: &Polynomial, meter: &mut HybridReplayMeter) -> Polynomial {
+        p.mul(p, meter).expect("unlimited algebra")
+    }
+
+    /// Trace: FR-450
+    /// A reducible polynomial with repeated roots defines +sqrt(2).
+    /// Specialization lowers degree three to one, and separately nullifies
+    /// an entire fiber. The surviving root is exactly -1.
+    #[test]
+    fn cad_specialized_degree_and_nullified_fiber_are_decided_before_prs() {
+        let time = ExactReal::Rational(n(0));
+        let mut meter = HybridReplayMeter::new(u64::MAX);
+        let x = Polynomial::variable(1);
+        let y = Polynomial::variable(2);
+        let vanishing = square(&x, &mut meter).sub(&c(2), &mut meter).unwrap();
+        let reducible = square(&vanishing, &mut meter)
+            .mul(&x.sub(&c(3), &mut meter).unwrap(), &mut meter)
+            .unwrap();
+        let fiber = vanishing.mul(&square(&y, &mut meter), &mut meter).unwrap();
+        let lowered = fiber
+            .mul(&y, &mut meter)
+            .unwrap()
+            .add(&y, &mut meter)
+            .unwrap()
+            .add(&c(1), &mut meter)
+            .unwrap();
+        let mut kernel = Kernel::new(&time, &mut meter);
+        let roots = kernel.roots(&reducible, 1).unwrap();
+        assert_eq!(roots.len(), 3, "-sqrt(2), sqrt(2), 3, each distinct");
+        kernel.prefix.push(Coordinate::Root(roots[1].clone()));
+        assert_eq!(kernel.sign(&x).unwrap(), Ordering::Greater);
+        assert!(
+            kernel.roots(&fiber, 2).unwrap().is_empty(),
+            "identically zero fiber has no isolated roots"
+        );
+        let roots = kernel.roots(&lowered, 2).unwrap();
+        assert_eq!(roots.len(), 1, "specialized fiber is y+1");
+        kernel.prefix.push(Coordinate::Root(roots[0].clone()));
+        let y_plus_one = y.add(&c(1), kernel.meter).unwrap();
+        assert_eq!(kernel.sign(&y_plus_one).unwrap(), Ordering::Equal);
+        assert_eq!(kernel.sign(&y).unwrap(), Ordering::Less);
+    }
+
+    /// Trace: FR-450
+    /// The tower x=sqrt(2), y=sqrt(2+x) is correlated: y^2-x-2=0,
+    /// and y^2-3=x-1>0. Neither root is represented by an unrelated field
+    /// quotient. Negative leading coefficients exercise signed PRS parity.
+    #[test]
+    fn cad_correlated_algebraic_tower_preserves_signs_and_root_branches() {
+        let time = ExactReal::Rational(n(0));
+        let mut meter = HybridReplayMeter::new(u64::MAX);
+        let x = Polynomial::variable(1);
+        let y = Polynomial::variable(2);
+        let p = square(&x, &mut meter).sub(&c(2), &mut meter).unwrap();
+        let q = square(&y, &mut meter)
+            .sub(&x, &mut meter)
+            .unwrap()
+            .sub(&c(2), &mut meter)
+            .unwrap()
+            .neg(&mut meter)
+            .unwrap();
+        let comparison = square(&y, &mut meter).sub(&c(3), &mut meter).unwrap();
+        let mut kernel = Kernel::new(&time, &mut meter);
+        let roots = kernel.roots(&p, 1).unwrap();
+        assert_eq!(roots.len(), 2);
+        kernel.prefix.push(Coordinate::Root(roots[1].clone()));
+        let roots = kernel.roots(&q, 2).unwrap();
+        assert_eq!(roots.len(), 2);
+        for (root, sign) in roots.into_iter().zip([Ordering::Less, Ordering::Greater]) {
+            kernel.prefix.push(Coordinate::Root(root));
+            assert_eq!(kernel.sign(&q).unwrap(), Ordering::Equal);
+            assert_eq!(kernel.sign(&y).unwrap(), sign);
+            assert_eq!(kernel.sign(&comparison).unwrap(), Ordering::Greater);
+            kernel.prefix.pop();
+        }
+    }
+
+    /// Trace: FR-450
+    /// Full reducta expose the discriminant even when the formal leading
+    /// coefficient specializes to zero; coefficient-only x-constraints
+    /// must survive elimination of y and then reach the time partition.
+    #[test]
+    fn cad_projection_carries_coefficients_and_lower_degree_discriminants() {
+        let mut meter = HybridReplayMeter::new(u64::MAX);
+        let t = Polynomial::variable(0);
+        let x = Polynomial::variable(1);
+        let y = Polynomial::variable(2);
+        let y2 = square(&y, &mut meter);
+        let y3 = y2.mul(&y, &mut meter).unwrap();
+        let p = t
+            .mul(&y3, &mut meter)
+            .unwrap()
+            .add(&y2, &mut meter)
+            .unwrap()
+            .add(&x, &mut meter)
+            .unwrap();
+        let fixed = x.sub(&t, &mut meter).unwrap();
+        let (levels, time) = project(vec![p, fixed], 2, &mut meter).unwrap();
+        assert!(levels[0].iter().any(|p| p.degree(1).unwrap_or(0) > 0));
+        assert!(
+            time.iter()
+                .any(|p| p.degree().unwrap_or(0) > 0 && p.eval(&n(0)).is_zero()),
+            "t=0 degree drop must remain a partition boundary"
+        );
+    }
+}
