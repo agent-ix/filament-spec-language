@@ -101,6 +101,8 @@ pub(crate) fn evaluate_hyper_holds(
     meter: &mut Meter,
 ) -> Result<Evaluation, CallFailure> {
     let fault = |invariant| CallFailure::Fault(InternalFault::new("S6a", invariant));
+    clause.package_atom(atom)
+        .ok_or_else(|| fault("hyper-atom-resolved-by-clause"))?;
     if slots.len() != clause.atom_slots().len() {
         return Err(fault("hyper-atom-binds-one-value-per-slot"));
     }
