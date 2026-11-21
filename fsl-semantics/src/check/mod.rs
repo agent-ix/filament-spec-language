@@ -552,8 +552,8 @@ pub use hyper_clause::{
     CheckedFiniteTraceQuantifier, CheckedHyper, CheckedHyperClause, CheckedModelRelation,
     CheckedQuantifier, CheckedStepPredicate, CopyGenerator, CopyGroup, HyperCause,
     HyperDeclaration, HyperDeclarations, HyperForm, HyperIdentity, HyperTraceFamily,
-    HyperUnsupported, MatchPart, ModelAlias, ObjectParameter, OperationContractClaim, StepRead,
-    STUTTER_TEXT,
+    HyperUnsupported, MatchPart, ModelAlias, ObjectParameter, OperationContractClaim,
+    PackageHyperForm, PackageHyperParameter, PackageHyperQuantifier, StepRead, STUTTER_TEXT,
 };
 pub use identity::{
     to_kernel_value_type, CheckedClauseKind, CheckedTypeNode, CompositeForm,

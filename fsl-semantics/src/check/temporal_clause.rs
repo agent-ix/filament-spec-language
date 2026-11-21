@@ -2728,6 +2728,104 @@ pub enum PackageClauseRefusal {
     ClockBinding,
 }
 
+impl CheckedFormula {
+    /// Rebuild the shared package formula arena without retaining source bodies.
+    pub(crate) fn of_package_nodes(
+        formula: &[PackageFormulaNode],
+    ) -> Result<(Self, Vec<CheckedOperator>), PackageClauseRefusal> {
+        let mut nodes = Vec::with_capacity(formula.len());
+        let mut operators = Vec::new();
+        for (index, node) in formula.iter().enumerate() {
+            let id = |operand: &usize| FormulaNodeId(*operand);
+            let (checked, operator) = match node {
+                PackageFormulaNode::Constant(value) => (FormulaNode::Constant(*value), None),
+                PackageFormulaNode::Holds { span } => (FormulaNode::Holds { span: *span }, None),
+                PackageFormulaNode::Not(only) => {
+                    (FormulaNode::Not(id(only)), Some(TemporalOperator::Not))
+                }
+                PackageFormulaNode::And(left, right) => (
+                    FormulaNode::And(id(left), id(right)),
+                    Some(TemporalOperator::And),
+                ),
+                PackageFormulaNode::Or(left, right) => (
+                    FormulaNode::Or(id(left), id(right)),
+                    Some(TemporalOperator::Or),
+                ),
+                PackageFormulaNode::Implies(left, right) => (
+                    FormulaNode::Implies(id(left), id(right)),
+                    Some(TemporalOperator::Implies),
+                ),
+                PackageFormulaNode::Unary {
+                    operator,
+                    interval,
+                    operand,
+                } => (
+                    FormulaNode::Unary {
+                        operator: *operator,
+                        interval: interval.clone(),
+                        operand: id(operand),
+                    },
+                    Some(match operator {
+                        UnaryTemporal::Eventually => TemporalOperator::Eventually,
+                        UnaryTemporal::Always => TemporalOperator::Always,
+                        UnaryTemporal::Once => TemporalOperator::Once,
+                        UnaryTemporal::Historically => TemporalOperator::Historically,
+                    }),
+                ),
+                PackageFormulaNode::Binary {
+                    operator,
+                    interval,
+                    left,
+                    right,
+                } => (
+                    FormulaNode::Binary {
+                        operator: *operator,
+                        interval: interval.clone(),
+                        left: id(left),
+                        right: id(right),
+                    },
+                    Some(match operator {
+                        BinaryTemporal::Until => TemporalOperator::Until,
+                        BinaryTemporal::Release => TemporalOperator::Release,
+                        BinaryTemporal::Since => TemporalOperator::Since,
+                        BinaryTemporal::Triggered => TemporalOperator::Triggered,
+                    }),
+                ),
+            };
+            if checked
+                .operands()
+                .any(|operand| operand.0 <= index || operand.0 >= formula.len())
+            {
+                return Err(PackageClauseRefusal::Arena);
+            }
+            if let Some(operator) = operator {
+                let interval = match &checked {
+                    FormulaNode::Unary { interval, .. } | FormulaNode::Binary { interval, .. } => {
+                        interval.clone()
+                    }
+                    _ => None,
+                };
+                operators.push(CheckedOperator {
+                    node: TemporalNodeId::from_index(index),
+                    operator,
+                    interval,
+                });
+            }
+            nodes.push(checked);
+        }
+        if nodes.is_empty() {
+            return Err(PackageClauseRefusal::Arena);
+        }
+        Ok((
+            Self {
+                nodes,
+                root: FormulaNodeId(0),
+            },
+            operators,
+        ))
+    }
+}
+
 /// A bounded package formula's horizon, as [`horizon`] reads it from the
 /// source form. Each operator precedes its operands in the arena; a sum past
 /// `u64` is the work-budget stage limit the source form raises.
@@ -2813,94 +2911,10 @@ impl CheckedTemporalClause {
         position_limit: u64,
     ) -> Result<Self, PackageClauseRefusal> {
         let bounded = form.profile.is_bounded();
-        let mut nodes = Vec::with_capacity(form.formula.len());
-        let mut operators = Vec::new();
-        for (index, node) in form.formula.iter().enumerate() {
-            let id = |operand: &usize| FormulaNodeId(*operand);
-            let (checked, operator) = match node {
-                PackageFormulaNode::Constant(value) => (FormulaNode::Constant(*value), None),
-                PackageFormulaNode::Holds { span } => (FormulaNode::Holds { span: *span }, None),
-                PackageFormulaNode::Not(only) => {
-                    (FormulaNode::Not(id(only)), Some(TemporalOperator::Not))
-                }
-                PackageFormulaNode::And(left, right) => (
-                    FormulaNode::And(id(left), id(right)),
-                    Some(TemporalOperator::And),
-                ),
-                PackageFormulaNode::Or(left, right) => (
-                    FormulaNode::Or(id(left), id(right)),
-                    Some(TemporalOperator::Or),
-                ),
-                PackageFormulaNode::Implies(left, right) => (
-                    FormulaNode::Implies(id(left), id(right)),
-                    Some(TemporalOperator::Implies),
-                ),
-                PackageFormulaNode::Unary {
-                    operator,
-                    interval,
-                    operand,
-                } => (
-                    FormulaNode::Unary {
-                        operator: *operator,
-                        interval: interval.clone(),
-                        operand: id(operand),
-                    },
-                    Some(match operator {
-                        UnaryTemporal::Eventually => TemporalOperator::Eventually,
-                        UnaryTemporal::Always => TemporalOperator::Always,
-                        UnaryTemporal::Once => TemporalOperator::Once,
-                        UnaryTemporal::Historically => TemporalOperator::Historically,
-                    }),
-                ),
-                PackageFormulaNode::Binary {
-                    operator,
-                    interval,
-                    left,
-                    right,
-                } => (
-                    FormulaNode::Binary {
-                        operator: *operator,
-                        interval: interval.clone(),
-                        left: id(left),
-                        right: id(right),
-                    },
-                    Some(match operator {
-                        BinaryTemporal::Until => TemporalOperator::Until,
-                        BinaryTemporal::Release => TemporalOperator::Release,
-                        BinaryTemporal::Since => TemporalOperator::Since,
-                        BinaryTemporal::Triggered => TemporalOperator::Triggered,
-                    }),
-                ),
-            };
-            if checked
-                .operands()
-                .any(|operand| operand.0 <= index || operand.0 >= form.formula.len())
-            {
-                return Err(PackageClauseRefusal::Arena);
-            }
-            if let Some(operator) = operator {
-                let interval = match &checked {
-                    FormulaNode::Unary { interval, .. } | FormulaNode::Binary { interval, .. } => {
-                        interval.clone()
-                    }
-                    _ => None,
-                };
-                operators.push(CheckedOperator {
-                    node: TemporalNodeId::from_index(index),
-                    operator,
-                    interval,
-                });
-            }
-            nodes.push(checked);
-        }
-        if nodes.is_empty() {
-            return Err(PackageClauseRefusal::Arena);
-        }
-        let horizon = bounded.then(|| package_horizon(&nodes)).transpose()?;
-        let formula = CheckedFormula {
-            nodes,
-            root: FormulaNodeId(0),
-        };
+        let (formula, operators) = CheckedFormula::of_package_nodes(&form.formula)?;
+        let horizon = bounded
+            .then(|| package_horizon(&formula.nodes))
+            .transpose()?;
         let mut roots: Vec<&ValueType> = vec![&form.over.1];
         roots.extend(form.trigger.iter().map(|(_, value_type)| value_type));
         roots.extend(form.captures.iter().map(|(_, value_type)| value_type));

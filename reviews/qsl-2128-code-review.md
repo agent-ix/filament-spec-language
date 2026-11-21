@@ -1,143 +1,120 @@
 ---
-id: SR-202611210022442313144108430
-title: "Code review — QSL-2128 PR #3093 model-subject hyper checks through analyze (post-rebase squash dc59305f00)"
+id: SR-21282001
+title: "QSL-2128 universal package hyper reader code review"
 type: SpecReview
 analysis: code-review
-scope: "agent-ix/filament-spec-language; PR #3093 diff origin/main...dc59305f00 (37 files): fsl-analyze/src/analyze{,/document,/hyper_route,/request}.rs, fsl-analyze/src/model_check/hyper{,/projected,/single}.rs, fsl-replay/src/certificate{,/product,/scc}.rs, fsl-replay/src/model_check/{existential_outcome,existential_settle,hyper_outcome,hyper_settle,settle}.rs, fsl-replay/src/outcome/counterexample.rs, fsl-eval/src/hyper/{copy_swap,mod}.rs, tests fsl-analyze/tests/it/*.rs"
 review_set: subset
-evaluated_revision: "dc59305f00"
+scope: "agent-ix/filament-spec-language; PR3396; fsl-package/src/checked_views.rs; fsl-package/src/checked_views/hyper.rs; fsl-package/src/checked_views/hyper/normal.rs; fsl-package/src/checked_views/subject.rs; fsl-package/src/emit/tests/hyper_clause.rs; fsl-semantics/src/check/hyper_clause.rs; fsl-semantics/src/check/mod.rs; fsl-semantics/src/check/temporal_clause.rs"
 relationships:
-  - target: ix://agent-ix/filament-spec-language/FR-163
-    type: references
-  - target: ix://agent-ix/filament-spec-language/FR-173
-    type: references
+  - {target: "ix://agent-ix/filament-spec-language/FR-940", type: references}
 ---
 
 ## Summary
 
-Ticket: QSL-2128. Code review with the rust-review lane folded in. The review covers the squashed head dc59305f00, compared against the pre-rebase head f1692df174. It also checks that #3231's event-position verdicts survive the port of `hyper_item.rs` into `hyper_route.rs`.
-
-How the port was checked. A per-file comparison of the patch lines in the original PR (merge base 5865aa2ffe..f1692df174) and the squash (origin/main...HEAD) gives the following:
-- 24 of the 38 original files are byte-identical in content.
-- The rest differ only in import order, in main's per-alias `owned`/`slot_of` systems, in the `HoldsClosed { stats, .. }` arm, and in the `ClosedWitnessed` refusal.
-- `hyper_counterexample_wire` and `TerminalRecord::of_hyper` were dropped from the squash because #3231 already put them on main.
-- The `single()` HP-5 route, `settle_hyper_check(.., requested_limits, Some(&certificate), cancel, ..)`, `requested_limits` and the `checker`/`exploration` wiring are all present.
-
-Nothing from the original PR was lost.
-
-Tests run, name-filtered, at dc59305f00:
-- The hyper_closed, hyper_wire, closure_certificate, hyper_settle, hyper_witness, hyper_world, hyper_replay, hyper_single, hyper_swap, hyper_projected, hyper_reductions and analyze_family_cli two-model filters: 194 passed, 7 failed, 5 ignored. The 7 failures are the known Nonzero `BodyUnproved` baseline reds.
-- fsl-replay `probability_certificate::claim_binding_uses_the_checked_node_not_name_or_source_order` fails the same way (`AmbiguousName "Same"`) on a clean origin/main 3c7b98bebb worktree. It is a baseline red, not caused by this PR.
+Ticket: QSL-2128. Independent code-review including the Rust lane at frozen c08a0e682f1980f6ec17003422dd5dceba122107 against ba280846beb6e8bf79c89b179c8841839c203090. All eight changed files were examined. No edits to the candidate, build, runtime test, benchmark, aggregate gate, or dependency update were performed by this reviewer.
 
 ## Verdict
 
-**NOT MERGEABLE as is (2 medium, 1 low here; see the gap-analysis SR for the high).**
-
-What holds:
-- The port is faithful.
-- #3231's verdicts are untouched: every hyper_closed test passes, as do both two-model analyze tests. `HoldsClosed` still settles `proved` with no certificate, the per-alias `for_alias` systems and the bounded-body refusal are unchanged, and `decide_closed`'s `certificate: None` is sound because no closed outcome reads a certificate.
-- The event-position gate is sound. No event-position item reaches the lasso/product-trap settlement:
-  - HP-5 under event-position is diverted before `single()`;
-  - `check_hyper` sends every other event-position form to `decide_closed`;
-  - `settle_existential`'s `ClosedWitnessed` refusal is unreachable from `analyze` and refuses rather than settles.
-- The FR-163 checker recomputes closure from the initial states independently and checks the components before the violation rule. The certificate errors it can produce are rejections or refusals, so no wrong `proved` was found.
-
-The defects are completeness defects on the multi-model and event-position HP-5 paths, both reproduced in a throwaway worktree.
+CONDITIONAL: three medium defects require resolution in the original PR. This review covers the infinite-trace universal reader/constructor slice; it does not require or claim complete AC-16, AC-19 or the later AC-18 certificate journey. PR3395 must merge first, followed by a fresh code rebase and the lead's final gate.
 
 ## Findings
 
 | ID | Severity | Summary | Refs |
 | --- | --- | --- | --- |
-| FND-001 | medium | Multi-model hyper proofs are rejected by their own checker. The engine builds its certificates over the `for_alias` per-model systems, but the checker rebuilds over `ModelSystem::new` of the whole request. Reproduced: a two-model infinite-trace HP-2 that holds (`always holds(v.h @ a = w.h @ b)`) settles `inconclusive` `certificate-rejected` `initial-missing`, exit 22, where `proved` is expected | fsl-replay/src/certificate/product.rs:173; fsl-replay/src/certificate/product.rs:273; fsl-analyze/src/analyze/hyper_route.rs:141-154; fsl-replay/src/model_check/existential_settle.rs:38; fsl-analyze/src/model_check/hyper/single.rs:135 |
-| FND-002 | medium | Event-position HP-5 through `analyze` still settles `unsupported`/`not-yet-implemented` (exit 21). Reproduced on both of FR-173-AC-6's HP-5 bodies. The gate comment says the clause "keeps its own route", but it falls through to `check_hyper`, which refuses `FormNotDecided`. FR-173-AC-6 says the HP-5 case is analyzed through native-analyze/1 and is never `not-yet-implemented` | fsl-analyze/src/analyze/hyper_route.rs:98-117; fsl-replay/src/model_check/existential_settle.rs:156-158 |
-| FND-003 | low | Import and format churn in the 2024 style edition (the crate is edition 2021). It adds about 39 `cargo fmt --check` hunks beyond main's 537, in files such as settle.rs, analyze.rs, certificate.rs, scc.rs and the test imports, and reflows code the PR does not otherwise touch | fsl-replay/src/model_check/settle.rs:19-46; fsl-analyze/src/analyze.rs:56-107 |
+| FND-001 | medium | Hyper facts depend on forbidden expression source-map regions: changing only a holds node's expression region changes the reconstructed formula span although FR-940 permits only the claim row's declaration_region. | fsl-package/src/checked_views/hyper.rs:272 |
+| FND-002 | medium | Normal-form formula traversal and repeated body encodings bypass the shared work counter, allowing accepted formula/quantifier combinations to exceed FORMULA_VISITS and incur quadratic byte-copy work without the intended Pending refusal. | fsl-package/src/checked_views/hyper/normal.rs:295 |
+| FND-003 | medium | The checked constructor accepts copy classes containing undeclared variables or inconsistent with their generators, publishing a checked clause whose declared symmetry group disagrees with its executable swaps. | fsl-semantics/src/check/hyper_clause.rs:714 |
 
-## Findings detail
+## Evidence
 
-- **FND-001.**
-  - The mismatch: `Run::certificates` passes `self.systems`, which `alias_system` → `ModelSystem::for_alias` builds over each alias's own model and its filtered snapshot. `ProductClosureRequest.subjects` holds the whole `simulation` once per alias, and both `complete_scope` and `check` call `ModelSystem::new` on it. In a unit that selects two or more models, the checker's initial product keys hold every model's populations, so the first initial state is missing from the certificate.
-  - Why it is honest but wrong: the direction is safe (a rejection, never an acceptance), but every multi-model infinite-trace HP-2/HP-3/HP-6 proof is lost. The PR's own `hyper_wire`/`hyper_settle` tests are single-model, so none catches this.
-  - The same split exists on the HP-5 path: `single()` uses the `for_alias` system for `bound_reference` but the `ModelSystem::new(alone)` system for search and settlement.
-  - Fix: carry the per-alias provision in the request, or rebuild through `for_alias` with it, in `complete_scope`, `check` and `settle_existential`, and add a two-model infinite-trace proved test.
-  - Lockstep product certification across several models is not in itself unsound. The defect is only the system mismatch.
-- **FND-002.**
-  - Soundness is fine: the refusal is honest, and the lasso settlement correctly does not handle closed witnesses.
-  - This matches main before the PR, and #3231 declared the HP-5 analyze route unbuilt. It is acceptable for v1 only if it is tracked: the code comment should say it refuses, and a ticket should own the route.
-  - Fix: route event-position HP-5 through `check_single_existential` (which already decides by `decide_closed`), then settle `ClosedWitnessed` and the closed `Trapped` as `HoldsClosed` and the closed replay do.
-- **FND-003.** Run `cargo fmt` with the repo's own edition, or revert the hunks that only reorder.
+FND-001: FR-940, immediately after the hyper-facts table, says: "It reads no source text, no `source_map` region other than the `declaration_region` of its row, no occurrence site label and no `NodeRef` path." The same text remains in proposed PR3395 head 190a304cc2c8e86748ad96bdd83320c0bc28f143. Lines 272-293 instead select expression regions by node/source/containment and put the selected coordinates into PackageFormulaNode::Holds. A valid expression provenance region moved within the unchanged declaration changes form.formula, with no semantic graph, claim row or selected model change. If multiple occurrences share the holds node, the fallback changes its span to the entire declaration. This concerns package provenance; no physical source file is needed to trigger it. Resolve the forbidden dependency and specify/test the source-free span policy; preserve the existing temporal constructor's public behavior.
+
+FND-002: only expression() decrements work_left (normal.rs:114-117). body() visits every formula entry and combines full child bytes (295-350), without decrementing it. A universal clause with q same-alias quantifiers and m nested temporal/not operators around true has no atoms, hence expression() is never called. The initial body and q-1 successful swap trials all leave the counter unchanged. formula_graph_of bounds one expansion to m <= FORMULA_VISITS, but does not bound these repeated encodings: q*m can exceed FORMULA_VISITS. For a unary chain, each combine() copies the growing suffix, so one trial copies Theta(m^2) bytes; these are graph references, not recursively nested CheckedTerms, so term-depth admission is not a bound on the chain. Charge formula visits, swap bookkeeping and encoding sizes against explicit bounded work/storage before allocation, with a typed refusal on exhaustion. This is a static failure scenario; no benchmark claim is made.
+
+FND-003: start from the real emitted Equal form used by the added positive test. Set form.copy_group.classes[0][1] to "ghost" and leave the generator {first:0, second:1, atoms:[0]} unchanged. The constructor never reads classes in its validation and therefore succeeds; rebuilt.copy_group() exposes [[a,ghost]] although the prefix is [a,b]. fsl-eval/src/hyper/copy_swap.rs uses the classes for copy_symmetry while its CopySwap uses the generators for actual exchanges, so these are observably different groups. Overlapping classes, missing generators and cross-alias generators are likewise structurally unchecked. Validate that classes are disjoint ordered known universal variables of one alias and that generators exactly describe their consecutive pairs, or restrict construction so only validated reader facts can enter. This finding does not require reconstructing source expressions or proving arbitrary supplied normal bytes.
+
+## Scope
+
+Examined: FR-940 hyper-form inputs, package normal form, outputs and malformed-node boundary; FR-940-AC-16's Equal reader/constructor subset; FR-940-AC-19's unknown-trace and duplicate-level boundary subset. Context only: FR-940-AC-18's later source overwrite/delete and certificate journey; FSpec FR-402 seven bindings/model-step facts; pinned IR a03c86b3's duplicate-level admission rule. No applicable AssuranceProfile was found. The spec changes in PR3395 are owned by a separate reviewer.
+
+All changed public types/methods, temporal helper extraction, exact occurrence lookup, seven-binding reads, operation constraint metadata, copy-slot decoding, checked numeric conversions, atom-node references, type-domain classification and refusal variants were examined. No vendored code, duplicate arena implementation, warning suppression, gate weakening, unsafe code, new dependency, source-expression reconstruction or test double of the reviewed production path was added.
+
+## Validation
+
+The positive test exercises real emission, strict admission, identity supply and reconstruction. Its assertions compare name/span/aliases/parameters/quantifiers/arena/operators/copy group to S3, require [a,b] and atoms [0], and require source conditions absent with package atoms present. Its holds-only loop is preceded by exact arena equality and an exact one-atom assertion, so it is not an unguarded vacuous success. Negative tests check strict unknown-trace admission followed by the typed form refusal, pinned-reader duplicate-level rejection, and three constructor Shape refusals. They do not test the new findings.
+
+Inspected implementation logs record the three new focused runtime passes and the existing four-temporal-clause parity pass before rebase. Package/analyzer test compilation passed before rebase; package library clippy passed after rebase. The semantics library log has three unchanged-main errors (typing.rs:2193,2197 wildcard_enum_match_arm; synthesis.rs:148 too_many_arguments). These are producer logs, not fresh reviewer executions or an exact-final-head gate. The temporal arena helper is a direct extraction with unchanged traversal, bounds, operators and horizon application. Reviewer git diff --check passed. The lead retains the final exact-head aggregate check.
 
 ## New findings (disposition pass 1)
 
-Checked at b11222a44b. The rebased base b845664df0 has the same per-file PR content as dc59305f00. All focused filters run on that head: 198 passed, 7 failed, 4 ignored; the 7 failures are the same Nonzero baseline. The fsl-replay filters (product, existential, hyper_settle, scc) and fsl-eval filters (copy_swap, closed) all pass.
-
-The new tests fail on the old code. In a throwaway worktree, b845664df0 was run with the head's test files:
-- `analyze_hyper_two_model_infinite_trace_proof_is_checked` fails with `inconclusive`;
-- `analyze_event_position_single_existential_is_proved_or_trapped` fails with `not-yet-implemented`;
-- `hyper_step_relation_through_analyze` fails with `unsupported`.
-
 | ID | Severity | Summary | Refs |
 | --- | --- | --- | --- |
-| FND-004 | high | A step-relation proof is labelled `certified` though no certificate was checked. The new `relation_item` maps `ModelRelationOutcome::Holds` to `HyperOutcome::HoldsClosed`, and `settle_hyper_check` settles that as `Row::proved`, whose label is `Certified`. No FR-163 certificate exists or is checked. FR-182 says an EN-1 `proved` settles only after the FR-163 checker accepts its certificate, and that a proof whose method has no checker is labelled `Uncertified`. FR-163-AC-1/AC-6 name the `Det` certificate | fsl-analyze/src/analyze/hyper_route.rs:420-423; fsl-replay/src/model_check/hyper_settle.rs:261-263 |
-| FND-005 | medium | `relation_item` turns `ModelRelationOutcome::Undecided` (an undetermined body evaluation, or a stopped execution graph) into `Refusal::Failed(BROKEN)`. FR-182 V-6/V-7 settle these as `inconclusive` or `incomplete`, not `failed` | fsl-analyze/src/analyze/hyper_route.rs:450-452 |
-| FND-006 | low | The event-position HP-5 settlement loses some causes. `settle_closed` settles a stopped closed search as `incomplete` `ResourceExhausted` without its reached limit (`stopped_run(.., None)`; probe at `max_states` 1: cause `limit-reached` with no limit named). Any outcome other than `ClosedWitnessed`/`Trapped`, such as `NoInitialState`, becomes `Err(Input("HP-5-closed-outcome"))` and then `failed`, not `inconclusive` `NoInitialState` | fsl-replay/src/model_check/existential_settle.rs:278; fsl-replay/src/model_check/existential_settle.rs:361 |
+| FND-004 | low | The new encoding-boundary regression has no trace attribute or Trace comment, so its real assertions do not bind to the required criterion under the repository's traceability convention. | fsl-package/src/checked_views/hyper/normal.rs:647 |
+
+This is the new `encoding_checks_the_complete_size_before_spending_or_allocating` test. Its nearest doc comment describes budget admission and its sole attribute is `#[test]`. The adjacent atom-free budget regression correctly has `#[trace("FR-940-AC-16")]`. Rust Style, Testing, "Placement and traceability" requires every new test in a traced repository to bind the criterion it asserts with the declared tag form. Add the appropriate criterion tag to the encoding-boundary test; do not add a handwritten matrix or change the oracle. This is a static missing-tag finding, not a claim that the unavailable matrix returned an untracked symbol.
 
 ## Dispositions
 
-| FND | outcome | reason |
-| --- | --- | --- |
-| FND-001 | fixed | `alias_systems` (product.rs:173-186) rebuilds every alias through `ModelSystem::for_alias`, and both `complete_scope` and `check` use it. `hyper_route` hands the checker per-alias subjects with that alias's snapshot provision. `check_single_existential` and `settle_existential` use `for_alias` on the first alias. The new `analyze_hyper_two_model_infinite_trace_proof_is_checked` settles `proved`/`certified`, and it fails on b845664df0 with `inconclusive`, so it can fail |
-| FND-002 | fixed | The gate is gone: every HP-5 clause goes to `single()`, and event-position clauses settle through `settle_closed`, which reruns `closed_executions` and `judge_closed_tuple` and checks each witness path step by step. Both FR-173-AC-6 bodies pass through analyze (`proved` with a 2-step closed witness; `refuted` with a trap), and the test fails on the old code with `not-yet-implemented`. The `Input("HP-5-closed-witness")` arm is now unreachable: event-position returns to `settle_closed` before the match, and only `decide_closed` (event-position only) produces `ClosedWitnessed`. Loose ends are recorded as FND-006 |
-| FND-003 | fixed | The reorder and reflow churn is reverted. `cargo fmt --check` gives 569 hunks against origin/main 23e65543a3's 559. The difference is about 11 hunks in the PR's own new lines (hyper_route.rs, existential_settle.rs, hyper_wire.rs, hyper_world.rs and others) plus one hunk analyze.rs no longer has. No hunk only reorders untouched code |
-
-## New findings (disposition pass 2)
-
-Checked at 76286373c9; fix commit 76286373c9 on top of the rebased 320a21349e. Focused filters: 201 passed, 7 failed, 4 ignored; the 7 failures are the same Nonzero baseline. The fsl-replay product, existential and hyper_settle filters pass.
-
-The new tests fail on the pre-fix code (320a21349e plus the head's hyper_wire.rs, in a throwaway worktree):
-- `hyper_step_relation_through_analyze` fails with `certification` `certified`;
-- `a_stopped_event_position_search_names_the_limit_it_reached` fails with `limit_reached` null.
-The two new hyper_settle tests name `HyperOutcome::HoldsUnchecked`, which does not exist before the fix.
-
-| ID | Severity | Summary | Refs |
-| --- | --- | --- | --- |
-| FND-007 | medium | An EN-1 HP-1 (step-relation) proof now settles `proved` `Uncertified` with no certificate, and no FR-182 row allows that. V-1 reaches `proved` only with an `Accepted` FR-163 certificate, and V-3's `Uncertified` is defined only for `k`-induction. FR-163-AC-1 (the `Det` certificate is `Accepted`) and FR-163-AC-6 (an HP-1 certificate rejects `ViolatingMember`) require an HP-1 certificate and checker, which `check_product_closure` does not build (its `Product::build` refuses every form other than HP-2/3/5/6 with `Input("form")`). The label is honest, but the settlement is outside the spec. Either build the HP-1 certificate, or amend FR-182 with an uncertified EN-1 HP-1 row and file a ticket for it | fsl-analyze/src/analyze/hyper_route.rs:420; fsl-replay/src/model_check/hyper_settle.rs:264-268 |
-
-## Dispositions (round 2)
+Pass 1 examined frozen 6c702fe86e5e4c3f1ba86de57a8a158ffbd57f7a. Local and GitHub heads match and the worktree is clean. The original Findings table above is unchanged.
 
 | FND | outcome | reason |
 | --- | --- | --- |
-| FND-004 | fixed | No relation proof is labelled `certified` any more: `ModelRelationOutcome::Holds` maps to the new `HyperOutcome::HoldsUnchecked`, which settles `Row::proof(Exhaustive, Uncertified, ClosedScope)` with `certificates` empty. The analyze test asserts `uncertified` and fails on the pre-fix code. Whether `proved`+`Uncertified` is allowed for EN-1 HP-1 at all is recorded as FND-007 |
-| FND-005 | fixed | `ModelRelationOutcome::Undecided` (an expansion stop or an undetermined body) now maps to `HyperOutcome::Undecided{UndecidedSuccessor}`, which settles `inconclusive` (FR-182 V-6). The `relation_item` arm itself has no analyze-level test, only the settle-level `an_undecided_relation_run_settles_inconclusive_not_failed`. The arm is a one-line constructor, so that gap is low risk |
-| FND-006 | fixed | `settle_closed` now maps an `Executions{limit}` stop to `incomplete` naming `MaxStates` with its value, `Cancelled` to `Cancelled{source}`, and an expansion stop to `inconclusive` `UndecidedSuccessor`. `settle_existential` sends only `ClosedWitnessed`/`Trapped` to `settle_closed`, so `NoInitialState` and `NoDecision` now take the shared arms: `inconclusive` `NoInitialState`, and `stopped_run` with `decide_closed`'s reached limit. The `HP-5-closed-outcome` refusal is now unreachable. `a_stopped_event_position_search_names_the_limit_it_reached` fails on the pre-fix code. The cancelled, expansion-stop and no-initial-state paths have no test (low residual) |
+| FND-001 | fixed | The reader now uses only the claim declaration region for Holds spans; a valid expression-region mutation is strictly admitted and asserted to leave the complete formula, atoms, copy group, normal bytes and claim span unchanged. The source comparison canonicalizes only Holds annotations under separately reviewed PR3395; no production source or temporal constructor spans are changed. |
+| FND-002 | fixed | Formula visits, swap trials, atom lookup, comparisons, variable copies, metadata serialization, output sizes and sorting now consume one cumulative finite work/storage Budget before variable-sized output allocations; atom-free and unary-growth regressions assert typed Pending refusal and a positive small-swap control. |
+| FND-003 | fixed | Classes must contain disjoint known quantifier variables in order, share an alias, and exactly match ordered consecutive-pair generators; emitted Equal mutations cover ghost, overlap, missing/reversed/extra groups and cross-alias swaps with Shape refusals. |
+| FND-004 | still-open | The new encoding boundary test at normal.rs:647 has no declared trace tag in this frozen head. |
 
-## Dispositions (round 3)
+### Fixed excerpts (pass 1)
 
-Recovery reviewer at `6b084105a37feb1d970a5c84c5d323d58527a009`, after rebase onto `cd7d1a7b6f`. The original reviewer session is unavailable. This pass retains the original findings and prior dispositions and examines the bounded fix delta from `925fadc330`.
+FND-001 after_excerpt:
+
+```rust
+let region = &row.declaration_region;
+```
+
+FND-002 after_excerpt:
+
+```rust
+let size = std::iter::once(tag)
+    .chain(parts.iter().map(Vec::as_slice))
+    .try_fold(0usize, |total, part| {
+        total.checked_add(8)?.checked_add(part.len())
+    })
+    .ok_or_else(|| pending(budget.node, "hyper-normal-form-work"))?;
+budget.charge(size, size)?;
+let mut bytes = Vec::with_capacity(size);
+```
+
+FND-003 after_excerpt:
+
+```rust
+let index = quantifiers
+    .iter()
+    .position(|q| &q.variable == variable)
+    .ok_or(Shape)?;
+if !seen.insert(index) || indices.last().is_some_and(|last| *last >= index) {
+    return Err(Shape);
+}
+```
+
+### Pass 1 validation and current status
+
+CONDITIONAL: original three medium defects fixed; new low FND-004 remains open for the second allowed coder fix round. No other new behavioral defect found in the fix delta. All seven named runtime logs under implementation/fix-1 record one selected test passing each, including the four new regressions; focused test compilation and package library clippy pass in producer logs. The exact-size regression checks both refusal paths leave the counters intact and the exact allowance succeeds; the atom-free regression has independent positive and work/storage-negative controls. The positive Equal comparison retains exact semantic-node/operator/operand checks and normalizes only diagnostic Holds spans, with source and rebuilt declaration spans already compared equal. No temporal production delta was added in fix 1. Reviewer diff --check passed; no build, benchmark or matrix retry was run. Rebase after PR3395/main, affected temporal parity and the lead's exact-final-head gate remain pending.
+
+### Disposition pass 2
+
+Frozen head: fea9089a83522c4af2ced2edc846ce817bdc25f2. Local and GitHub heads match and the worktree is clean. Against pass 1, the sole source change adds the declared trace attribute to the encoding-boundary regression; production behavior and test assertions are unchanged. The trace macro import already exists in this test module. The two committed review artifacts matched the previous canonical disposition files by SHA-256 before this append.
 
 | FND | outcome | reason |
 | --- | --- | --- |
-| FND-007 | fixed | `HyperOutcome::HoldsUnchecked` now settles `Row::incomplete(IncompleteCause::CertificateUnchecked, None)`, never `Proved`. The API test asserts the exact incomplete value, category, no certificates and no counterexample. The analyze test asserts exit 22 and `bounded-search-incomplete` / `certificate-unchecked`, with no certification/certificate/counterexample. Arch authorized this existing cause and category; FSpec PR #788 and FSL spec PR #3298 supply the corresponding wording and FR-182 row before code merge. Accepted-certificate HP-1 remains explicitly open on QSL-2128, as does package FR-940-AC-18 pending the third pin window. |
+| FND-004 | fixed | The exact encoding-boundary test now carries the module's existing trace macro with FR-940-AC-16, binding its budget-admission assertions to the package-form criterion. |
 
-### Round 3 scope and validation
+FND-004 after_excerpt:
 
-- FR-182 HP-1 settlement and the existing FND-007: checked. FR-163/FR-127/ADR-018 accepted-core-certificate requirement remains in force; no new unchecked proof is introduced.
-- FR-174 "Outcomes": checked against the symmetry settlement guard. The requirement expressly allows `Proved{basis: Reduced, certification: Uncertified}` for key symmetry. The engine still admits and executes the key reduction, emits no incompatible copy-only certificates for it, and settlement takes that row before raw-binding certificate reconstruction. Copy-swap-only results still require the core checker; the constraint-with-no-cut test asserts `Certified` and a nonempty certificate list.
-- `Product::build` reconstructs the unreduced/copy-swap product with empty key generators and no constraint, consistent with the existing certificate domain. Key-symmetry results do not take this path.
-- Rust API, implementation, testing and wire rules were read. No CI workflow, schema or pin changes occur in the bounded fix. Static `git diff --check origin/main...HEAD` passes. No Cargo, Python, mutation build or gate was run in this reviewer session, per the lead's explicit host policy.
-- The remote 55-test validation is pending. This pass does not claim passing test counts. Code merge also waits for the two specification amendments. See the gap artifact's new FND-005 before treating the PR as mergeable.
+```rust
+#[trace("FR-940-AC-16")]
+#[test]
+fn encoding_checks_the_complete_size_before_spending_or_allocating() {
+```
 
-### Current verdict (round 3)
-
-The code defect FND-007 is fixed by static inspection. No new code finding was found in this bounded disposition. **Not mergeable yet:** the gap artifact's new trace finding, remote focused validation and the specification landings remain pending.
-
-## Dispositions (round 4)
-
-Checked frozen head `9eee3c3c901bf6f9755596f671d51e98f2b61ac3`. Every code finding already has a fixed disposition; no unresolved code finding requires another outcome row. The earlier rows remain intact.
-
-The additional rebase correction handles `Halt::ConstraintUndefined(_)` explicitly as `ProductClosureRefusal::Recompute("constraint-undefined")`. `Product::build` constructs the core universal product with `constraint: None`, and the evaluator's `cut` returns before evaluating constraints when it is `None`. Thus this branch handles an unexpected halt safely by refusing reconstruction; it never converts that halt into an accepted certificate. The new arm is exhaustive and preserves the existing specific limit, cancellation and expansion mappings. The previously added empty key generators and absent constraint remain unchanged.
-
-Static `git diff --check 6b084105a37feb1d970a5c84c5d323d58527a009..HEAD` passes. No Cargo, Python, gate or mutation build ran. The 55-test remote validation at the new head and the two specification landings are still pending; no result is inferred from the prior head.
-
-### Current verdict (round 4)
-
-**No remaining static blocker** in this bounded disposition. No new code finding. Merge remains conditional on focused remote validation and the required specification landings; QSL-2128 retains HP-1 certification and package FR-940-AC-18 as open scope.
+Current code-review verdict: PASS for this frozen bounded slice, conditional on the separately pending PR3395 spec merge, fresh rebase after the reserved pin window, affected temporal parity and the lead's exact-final-head gate. FND-001/002/003 remain fixed from pass 1; FND-004 is now fixed; no findings remain open and no new findings were identified. Reviewer diff --check passed. No additional runtime/build/benchmark or matrix attempt was needed or performed for this attribute-only source change. The repository-wide audit remains incomplete as honestly recorded in SR-21282002; full AC-18 and the broader AC-16/AC-19 journeys remain outside this delivered slice.
