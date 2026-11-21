@@ -643,6 +643,26 @@ impl Product<'_, '_> {
                 // anywhere on the initial zone: the initial state fails like
                 // one the abstract side cannot start, a `locked` entry node
                 // unless the failure refutes (FR-900 "Delay").
+                // Time diverging in it, by delay alone or by steps, refutes at
+                // the empty prefix (FR-900 "Delay").
+                if run
+                    .escape(&discrete, &settled, &scale, &lower, &upper)?
+                    .diverges
+                {
+                    let failure = RefinementFailure::AbstractTimeInvariant {
+                        position: 0,
+                        model: self.refinement.abstract_model().to_owned(),
+                    };
+                    return Ok(Ended::Outcome(TimedSafetyOutcome::Violated {
+                        counterexample: Box::new(refuted(
+                            index,
+                            Vec::new(),
+                            failure,
+                            CounterexampleKind::Formula,
+                        )),
+                        stats: run.stats(),
+                    }));
+                }
                 locked_failure = true;
                 let node = self.store(
                     run,
@@ -860,8 +880,15 @@ impl Product<'_, '_> {
                         let (pieces, failures) =
                             self.step_pieces(run, q, *next, taken, successor.zone.clone())?;
                         for (failed_zone, operation) in failures {
+                            // Time passes after the landing: the region is
+                            // judged, and kept as a node, on the delayed zone.
+                            let mut delayed = failed_zone.clone();
+                            run.settle_at(&successor.state, &mut delayed, &scale)?;
+                            if delayed.is_empty() {
+                                continue;
+                            }
                             let escape =
-                                run.escape(&successor.state, &failed_zone, &scale, &lower, &upper)?;
+                                run.escape(&successor.state, &delayed, &scale, &lower, &upper)?;
                             if escape.diverges {
                                 let failure = RefinementFailure::AbstractClockGuard {
                                     position: widen(depth.saturating_add(1)),
@@ -885,7 +912,7 @@ impl Product<'_, '_> {
                                 run,
                                 successor.state.clone(),
                                 LOCKED_ENTRY,
-                                failed_zone,
+                                delayed,
                                 None,
                                 Some((arrival, None)),
                                 None,

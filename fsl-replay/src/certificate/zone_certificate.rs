@@ -1562,6 +1562,13 @@ impl<O> Checker<'_, '_, O> {
             else {
                 return malformed(CertificateMember::Scale);
             };
+            // An abstract invariant's negation is a lower-bound comparison, so
+            // each abstract clock keeps `L = U = max(L, U)`, as the producer's.
+            for (low, high) in auxiliary_lower.iter_mut().zip(auxiliary_upper.iter_mut()) {
+                let most = low.clone().max(high.clone());
+                low.clone_from(&most);
+                *high = most;
+            }
             lower.append(&mut auxiliary_lower);
             upper.append(&mut auxiliary_upper);
         }
@@ -2942,6 +2949,12 @@ impl<O> Checker<'_, '_, O> {
                         positions += 1;
                         if piece.locks {
                             if decided {
+                                // Time passes after the landing: the lock is
+                                // judged on the delayed zone.
+                                self.settle(step.post(), &mut next)?;
+                                if next.is_empty() {
+                                    continue;
+                                }
                                 found.push(Successor {
                                     step: Some(step.clone()),
                                     part: Some(part),

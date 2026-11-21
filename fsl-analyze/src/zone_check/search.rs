@@ -1159,6 +1159,18 @@ impl<'r, 's, 'a> Run<'r, 's, 'a> {
     pub(super) fn include_auxiliary_timed(&mut self, auxiliary: &'r TimedSystem<'s, 'a>) {
         let (auxiliary_scale, auxiliary_lower, auxiliary_upper) =
             scaled_bounds(auxiliary, None, &[]);
+        // An abstract time invariant is an upper bound, but the death and
+        // `AbstractTimeInvariant` splits test its negation, a lower-bound
+        // comparison: each abstract clock keeps `L = U = max(L, U)`, so
+        // coverage never hides a delay past the invariant.
+        let (auxiliary_lower, auxiliary_upper): (Vec<_>, Vec<_>) = auxiliary_lower
+            .into_iter()
+            .zip(auxiliary_upper)
+            .map(|(low, high)| {
+                let most = low.max(high);
+                (most.clone(), most)
+            })
+            .unzip();
         let common_scale = scale_constants(&[
             Rational::from_integer(Integer::from_big(self.scale.clone())),
             Rational::from_integer(Integer::from_big(auxiliary_scale.clone())),

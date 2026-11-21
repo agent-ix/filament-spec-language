@@ -6,7 +6,7 @@
 //! post candidates of the rows whose guard holds, and FR-245's checker
 //! recomputes both with code of its own.
 
-use filament_exact::Cancel;
+use filament_exact::{Cancel, Integer};
 use fsl_analyze::zone_check::{
     certificate_item, check_timed_refinement, TimedLivenessHalf, TimedRefinementRefusal,
     TimedSafetyOutcome, ZoneCheckLimits, ZoneCheckRefusal,
@@ -676,4 +676,216 @@ fn timed_hidden_safety_is_reported_beside_the_liveness_refusal() {
         "{:?}",
         outcome.liveness
     );
+}
+
+/// A looping world: the concrete `send` needs `x = 1`, resets `x` and is held
+/// by `x <= 1`; the abstract `send` has no guard and does not reset `y`, so
+/// `y` grows by one per loop. `invariants` are the abstract time invariants,
+/// over `candidates`.
+fn looping(candidates: &[([bool; 3], Option<bool>)], invariants: &str) -> Refining {
+    let abstract_document = abstract_document(&[("send", &["inflight"])]);
+    let concrete = document(&["x"], &[("send", &["inflight", "x"])]);
+    refining(
+        &abstract_document,
+        &concrete,
+        &format!(
+            "{DENSE}time A dense unit ms;\n\
+             post ASend using v on A::Call::send {{ self.inflight }}\n\
+             pre ASendable using v on A::Call::send {{ self.y >= 0 ms }}\n\
+             {invariants}\n\
+             time invariant MInv when {{ true }} {{ self.x <= 1 ms }}\n\
+             pre MSend using v on M::Call::send {{ self.x = 1 ms }}\n\
+             post MSent using v on M::Call::send {{ self.inflight and self.x = 0 ms }}\n{}",
+            refinement("self.inflight").replace(" late = self.late;", "")
+        ),
+    )
+    .unwrap_or_else(|refusals| panic!("{refusals:?}"))
+    .with_abstract_candidates(&abstract_document, candidates)
+}
+
+/// Abstract invariants are upper bounds, but the delay past one is found by
+/// their negation, a lower-bound comparison: coverage must keep every
+/// abstract invariant constant on both sides, or a zone with a smaller `y`
+/// covers one closer to dying and the loop looks harmless.
+#[trace("TC-2538", "FR-900")]
+#[test]
+fn timed_hidden_a_looping_delay_past_a_single_invariant_is_refuted() {
+    let world = looping(
+        &[([false; 3], Some(false))],
+        "time invariant Y when { true } { self.y <= 3 ms }",
+    );
+    assert_time_invariant(safety_with_limits(&world));
+}
+
+#[trace("TC-2538", "FR-900")]
+#[test]
+fn timed_hidden_a_looping_delay_past_two_invariants_is_refuted() {
+    let world = looping(
+        &[([false; 3], Some(true)), ([false; 3], Some(false))],
+        "time invariant Y3 when { self.h } { self.y <= 3 ms }\n\
+         time invariant Y5 when { not self.h } { self.y <= 5 ms }",
+    );
+    assert_time_invariant(safety_with_limits(&world));
+}
+
+/// A landing state held by `x <= 5` with a step `b` (guard `x >= 3`) into a
+/// state with no invariant: the abstract `send` guard fails at landing, and
+/// time diverges after the landing by `b`, so the failure refutes.
+fn landing(abstract_guard: &str) -> Refining {
+    let abstract_document = abstract_document(&[("send", &["inflight"])]);
+    let concrete = document(&["x"], &[("send", &["inflight"]), ("b", &["late"])]);
+    refining(
+        &abstract_document,
+        &concrete,
+        &format!(
+            "{DENSE}time A dense unit ms;\n\
+             post ASend using v on A::Call::send {{ self.inflight }}\n\
+             pre ASendable using v on A::Call::send {{ {abstract_guard} }}\n\
+             time invariant Cap when {{ self.inflight and not self.late }} {{ self.x <= 5 ms }}\n\
+             pre MSend using v on M::Call::send {{ self.x >= 1 ms }}\n\
+             post MSent using v on M::Call::send {{ self.inflight }}\n\
+             pre MB using v on M::Call::b {{ self.inflight and not self.late and self.x >= 3 ms }}\n\
+             post MBd using v on M::Call::b {{ self.late }}\n{}",
+            refinement("self.inflight")
+                .replace(" late = self.late;", "")
+                .replace(
+                    "step M::Call::send -> A::Call::send(self);",
+                    "step M::Call::send -> A::Call::send(self);\nstep M::Call::b -> stutter;"
+                )
+        ),
+    )
+    .unwrap_or_else(|refusals| panic!("{refusals:?}"))
+    .with_abstract_hidden_initials(&abstract_document, &[false])
+}
+
+/// The guard failure is judged on the delayed landing zone, so it refutes;
+/// a certificate that locks the landing node on an undelayed zone is
+/// rejected: the successor's delayed zone is not covered.
+#[trace("TC-2538", "FR-900")]
+#[test]
+fn timed_hidden_a_landing_lock_is_judged_after_the_delay() {
+    let failing = landing("self.y < 0 ms");
+    let TimedSafetyOutcome::Violated { counterexample, .. } = safety_with_limits(&failing) else {
+        panic!("time diverges after the landing, by b");
+    };
+    assert!(matches!(
+        counterexample.refinement.as_ref(),
+        Some(RefinementFailure::AbstractClockGuard { .. })
+    ));
+    let holding = landing("self.y >= 0 ms");
+    let certificate = certified(&holding);
+    let reserved = certificate
+        .refinement
+        .as_ref()
+        .expect("a refinement part")
+        .positions
+        .len();
+    let landed = certificate
+        .edges
+        .iter()
+        .find(|edge| edge.transition.is_some() && edge.from == certificate.initials[0])
+        .expect("the send edge")
+        .to;
+    let mut forged = certificate.clone();
+    let node = &mut forged.nodes[landed];
+    node.locked = true;
+    node.automaton_state = reserved;
+    // The undelayed landing zone: x at most 2.
+    let two = Integer::from(2_i64) * forged.scale.clone();
+    forged.nodes[landed]
+        .zone
+        .constrain(1, 0, &two, false)
+        .expect("a clock");
+    assert!(
+        matches!(
+            checked(&failing, &forged),
+            ZoneCertificateVerdict::Rejected(_)
+        ),
+        "a lock on an undelayed zone is rejected"
+    );
+}
+
+/// A world whose only concrete step is never enabled and whose abstract
+/// candidate is dead at zero: time diverges by delay alone.
+#[trace("TC-2538", "FR-900")]
+#[test]
+fn timed_hidden_a_dead_initial_state_with_pure_delay_is_refuted() {
+    let abstract_document = abstract_document(&[("send", &["inflight"])]);
+    let concrete = document(&["x"], &[("send", &["inflight"])]);
+    let world = refining(
+        &abstract_document,
+        &concrete,
+        &format!(
+            "{DENSE}time A dense unit ms;\n\
+             post ASend using v on A::Call::send {{ self.inflight }}\n\
+             pre ASendable using v on A::Call::send {{ self.y >= 0 ms }}\n\
+             time invariant Dead when {{ true }} {{ self.y < 0 ms }}\n\
+             pre MSend using v on M::Call::send {{ self.x < 0 ms }}\n\
+             post MSent using v on M::Call::send {{ self.inflight }}\n{}",
+            refinement("self.inflight").replace(" late = self.late;", "")
+        ),
+    )
+    .unwrap_or_else(|refusals| panic!("{refusals:?}"))
+    .with_abstract_hidden_initials(&abstract_document, &[false]);
+    let counterexample = assert_time_invariant(safety_with_limits(&world));
+    assert!(counterexample.prefix.is_empty());
+}
+
+/// A dead initial state beside a healthy one, time-locked by the concrete
+/// invariant `x <= 0`: a `locked` entry node the checker requires.
+fn dead_locked_initial() -> Refining {
+    let abstract_document = abstract_document(&[("send", &["inflight"])]);
+    let concrete = document(&["x"], &[("send", &["inflight"])]);
+    refining(
+        &abstract_document,
+        &concrete,
+        &format!(
+            "{DENSE}time A dense unit ms;\n\
+             post ASend using v on A::Call::send {{ self.inflight }}\n\
+             pre ASendable using v on A::Call::send {{ self.y >= 0 ms }}\n\
+             time invariant Dead when {{ self.inflight and self.h }} {{ self.y < 0 ms }}\n\
+             time invariant Lock when {{ self.inflight }} {{ self.x <= 0 ms }}\n\
+             pre MSend using v on M::Call::send {{ self.x >= 0 ms }}\n\
+             post MSent using v on M::Call::send {{ self.inflight }}\n{}",
+            refinement("self.inflight").replace(" late = self.late;", "")
+        ),
+    )
+    .unwrap_or_else(|refusals| panic!("{refusals:?}"))
+    .with_concrete_initials(&concrete, &[[false; 3], [true, false, false]])
+    .with_abstract_candidates(
+        &abstract_document,
+        &[
+            ([false; 3], Some(false)),
+            ([true, false, false], Some(true)),
+        ],
+    )
+}
+
+#[trace("TC-2538", "FR-900")]
+#[test]
+fn timed_hidden_a_dead_initial_entry_is_required_and_locked() {
+    let world = dead_locked_initial();
+    let certificate = certified(&world);
+    assert_eq!(
+        checked(&world, &certificate),
+        ZoneCertificateVerdict::Accepted
+    );
+    let dead = *certificate.initials.last().expect("two initial nodes");
+    assert!(certificate.nodes[dead].locked);
+    let mut unlocked = certificate.clone();
+    unlocked.nodes[dead].locked = false;
+    match checked(&world, &unlocked) {
+        ZoneCertificateVerdict::Rejected(rejection) => {
+            assert_eq!(rejection.rule, CertificateRule::InitialMismatch);
+        }
+        other => panic!("an unlocked dead initial entry is rejected: {other:?}"),
+    }
+    let mut omitted = certificate.clone();
+    omitted.initials.pop();
+    match checked(&world, &omitted) {
+        ZoneCertificateVerdict::Rejected(rejection) => {
+            assert_eq!(rejection.rule, CertificateRule::InitialMissing);
+        }
+        other => panic!("an omitted dead initial entry is rejected: {other:?}"),
+    }
 }
