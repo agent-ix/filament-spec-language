@@ -523,10 +523,16 @@ pub struct ValueInvariantObservations {
 /// admitted current snapshot, including FR-106's retained recursive closure.
 /// Each tuple is `(reference, exact population node, value-relative path)`.
 /// The population is never inferred from a reference's present membership.
+/// Clock-reference data requires the actual declaration table and runtime
+/// identity byte limit; it does not add an object-population closure seed.
 pub fn admit_protocol_reference_seeds(
     types: &TypeEnvironment,
     observation: &Observation,
     seeds: &[(ObjectReference, filament_exact::NodeKey, Vec<PathStep>)],
+    clock_context: Option<(
+        &super::clock_reference::normalization::ClockDeclarationTable,
+        fsl_foundation::IdentityLimits,
+    )>,
 ) -> Result<(), AdmissionFailure> {
     let environment = &observation.environment;
     let mut required: Vec<(String, Vec<PathStep>)> = Vec::new();
@@ -537,6 +543,18 @@ pub fn admit_protocol_reference_seeds(
             record.path = path.clone();
             return Err(refuse(record));
         };
+        if super::clock_reference::is_clock_type(reference.object_type()) {
+            admit_protocol_clock_seed(
+                types,
+                environment,
+                reference,
+                node,
+                provenance,
+                clock_context,
+            )
+            .map_err(|record| refuse(record.at(path.clone())))?;
+            continue;
+        }
         let compatible = provenance.member_types().iter().any(|(member, universe)| {
             reference.universe() == universe
                 && types.conforms(reference.object_type().clone(), member.clone())
@@ -583,6 +601,9 @@ pub fn admit_protocol_reference_seeds(
     }
 
     for (reference, node, path) in seeds {
+        if super::clock_reference::is_clock_type(reference.object_type()) {
+            continue;
+        }
         let Some(provenance) = environment.population_provenance(node) else {
             return Err(fault("validated-protocol-population-stays-admitted"));
         };
@@ -600,6 +621,84 @@ pub fn admit_protocol_reference_seeds(
             record.path = path.clone();
             return Err(refuse(record));
         }
+    }
+    Ok(())
+}
+
+fn admit_protocol_clock_seed(
+    types: &TypeEnvironment,
+    environment: &ObjectEnvironment,
+    reference: &ObjectReference,
+    node: &filament_exact::NodeKey,
+    provenance: &super::object_environment::PopulationProvenance,
+    context: Option<(
+        &super::clock_reference::normalization::ClockDeclarationTable,
+        fsl_foundation::IdentityLimits,
+    )>,
+) -> Result<(), AdmissionRecord> {
+    use super::clock_reference::identity::{DeclarationScope, IdentityError, PlaceIdentity};
+
+    let Some((table, limits)) = context else {
+        return Err(
+            admission_record(Code::UnknownRequiredFeature, "unsupported-feature")
+                .with("reason", "clock-reference-binder-authority"),
+        );
+    };
+    let identity = PlaceIdentity::decode(
+        reference.object().as_str(),
+        quire_canonical::Limits::new(limits.input_bytes),
+    )
+    .map_err(|error| match error {
+        IdentityError::Canonical(quire_canonical::Error::Limit(limit))
+        | IdentityError::Read(quire_canonical::ReadError::Limit(limit)) => {
+            limit_record(&LimitExceeded::new(
+                Setting::IdentityInputBytes,
+                limit.bound,
+                u128::from(limit.required),
+            ))
+        }
+        IdentityError::Canonical(quire_canonical::Error::Allocation { requested })
+        | IdentityError::Read(quire_canonical::ReadError::Allocation { requested }) => {
+            allocation_failed_record(requested)
+        }
+        IdentityError::Malformed | IdentityError::Canonical(_) | IdentityError::Read(_) => {
+            admission_record(Code::InvalidRuntimeInput, "invalid-value")
+        }
+    })?;
+    let declarations = table.source_declarations();
+    let scope = declarations
+        .declaration_scope_for_node(node)
+        .or_else(|| declarations.catalog_scope(provenance.declaration()))
+        .ok_or_else(|| {
+            admission_record(Code::UnknownRequiredFeature, "unsupported-feature")
+                .with("reason", "missing-type-representation")
+        })?;
+    if matches!(scope, DeclarationScope::Source { .. }) {
+        return Err(
+            admission_record(Code::UnknownRequiredFeature, "unsupported-feature")
+                .with("reason", "missing-type-representation"),
+        );
+    }
+    let dangling = || {
+        admission_record(
+            Code::DanglingReference,
+            "absent-target-in-complete-population",
+        )
+        .with("population", provenance.declaration().node.clone())
+        .with("object", reference.object().to_string())
+    };
+    let owner = environment
+        .population_members(&provenance.declaration().node)
+        .and_then(|members| {
+            members
+                .iter()
+                .find(|member| member.object().as_str() == identity.owner)
+        })
+        .ok_or_else(dangling)?;
+    if reference.universe() != owner.universe()
+        || !super::clock_reference::is_declared_identity(&identity, scope, owner, table, types)
+    {
+        return Err(dangling());
     }
     Ok(())
 }
