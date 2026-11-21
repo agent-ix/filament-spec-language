@@ -98,6 +98,10 @@ pub struct PackageAttemptContext {
 
 /// The package-native protocol program needed by selection and execution.
 pub struct PackageProtocolProgram<'a> {
+    /// The protocol's intended terminal states, read from its admitted obligation.
+    pub(super) terminal: PackageTerminal,
+    /// Origin captures in authored initialization order.
+    pub(super) captures: Vec<PackageCapture>,
     /// The admitted protocol name.
     pub name: String,
     /// The `run` root control.
@@ -126,6 +130,39 @@ pub struct PackageProtocolProgram<'a> {
     pub finish_binder_key: NodeKey,
     /// The admitted value type of the finish result binder.
     pub finish_binder_type: filament_exact::ValueType,
+}
+
+/// A protocol terminal declaration read directly from the admitted package.
+pub(super) enum PackageTerminal {
+    /// No terminal declaration: a stopped live instance is deadlocked.
+    None,
+    /// Every stopped state is intended.
+    Any,
+    /// The admitted condition decides whether a stopped state is intended.
+    When(ProtocolSlot),
+}
+
+pub(super) struct PackageCapture {
+    pub(super) name: String,
+    pub(super) binder: fsl_package::CheckedNodeId,
+    pub(super) value_type: filament_exact::ValueType,
+    pub(super) initializer: ProtocolSlot,
+}
+
+fn member<'t>(
+    term: &'t fsl_package::CheckedTerm,
+    name: &str,
+) -> Option<&'t fsl_package::CheckedTerm> {
+    use fsl_package::CheckedTerm;
+    let members = match term {
+        CheckedTerm::Application { arguments, .. } => arguments,
+        CheckedTerm::Aggregate { members } => members,
+        _ => return None,
+    };
+    members.iter().find_map(|term| match term {
+        CheckedTerm::Binding { name: bound, value } if &**bound == name => Some(&**value),
+        _ => None,
+    })
 }
 
 /// Why a package protocol could not become an executable program.
@@ -202,7 +239,7 @@ impl<'a> PackageProtocolProgram<'a> {
         form: ProtocolExecutionView<'a>,
         memory: ResolvedMemory,
     ) -> Result<Self, PackageProgramRefusal> {
-        let _package =
+        let admitted =
             input
                 .admitted_package()
                 .ok_or_else(|| PackageProgramRefusal::UnknownProtocol {
@@ -218,11 +255,102 @@ impl<'a> PackageProtocolProgram<'a> {
                 ControlOperation::Compensate,
             ));
         }
-        if form.protocol.terminal().is_some() {
-            return Err(PackageProgramRefusal::Unsupported(
-                ControlOperation::Terminal,
+        let terminal = match form.protocol.terminal() {
+            None => PackageTerminal::None,
+            Some(id) => {
+                let mode = admitted
+                    .resolved_graph()
+                    .nodes
+                    .iter()
+                    .find(|node| &node.node_id == id)
+                    .and_then(|node| match &node.body {
+                        fsl_package::CheckedTerm::Application { arguments, .. } => {
+                            arguments.iter().find_map(|argument| match argument {
+                                fsl_package::CheckedTerm::Binding { name, value }
+                                    if &**name == "mode" =>
+                                {
+                                    match value.literal_read().map(|literal| literal.value) {
+                                        Some(fsl_package::CheckedLiteralValue::Text(mode)) => {
+                                            Some(mode)
+                                        }
+                                        _ => None,
+                                    }
+                                }
+                                _ => None,
+                            })
+                        }
+                        _ => None,
+                    });
+                match mode {
+                    Some("any") => PackageTerminal::Any,
+                    Some("when") => PackageTerminal::When(
+                        input
+                            .evaluator
+                            .package_protocol_slot(id, "condition", None)
+                            .ok_or_else(|| PackageProgramRefusal::MissingIdentity(id.clone()))?,
+                    ),
+                    _ => return Err(PackageProgramRefusal::MissingIdentity(id.clone())),
+                }
+            }
+        };
+        let clause = admitted
+            .resolved_graph()
+            .nodes
+            .iter()
+            .find(|node| &node.node_id == form.protocol.clause())
+            .ok_or_else(|| {
+                PackageProgramRefusal::MissingIdentity(form.protocol.clause().clone())
+            })?;
+        let Some(fsl_package::CheckedTerm::Aggregate {
+            members: capture_rows,
+        }) = member(&clause.body, "captures")
+        else {
+            return Err(PackageProgramRefusal::MissingIdentity(
+                clause.node_id.clone(),
             ));
-        }
+        };
+        let captures = capture_rows
+            .iter()
+            .enumerate()
+            .map(|(index, row)| {
+                let Some(fsl_package::CheckedTerm::Reference { target: binder }) =
+                    member(row, "binder")
+                else {
+                    return Err(PackageProgramRefusal::MissingIdentity(
+                        clause.node_id.clone(),
+                    ));
+                };
+                let binder_node = admitted
+                    .resolved_graph()
+                    .nodes
+                    .iter()
+                    .find(|node| &node.node_id == binder)
+                    .ok_or_else(|| PackageProgramRefusal::MissingIdentity(binder.clone()))?;
+                let name = member(&binder_node.body, "name")
+                    .and_then(|term| term.literal_read())
+                    .and_then(|literal| match literal.value {
+                        fsl_package::CheckedLiteralValue::Text(name) => Some(name.to_owned()),
+                        _ => None,
+                    })
+                    .ok_or_else(|| PackageProgramRefusal::MissingIdentity(binder.clone()))?;
+                let value_type = input
+                    .evaluator
+                    .package_protocol_parameter_type(binder)
+                    .ok_or_else(|| PackageProgramRefusal::MissingIdentity(binder.clone()))?;
+                let initializer = input
+                    .evaluator
+                    .package_protocol_slot(&clause.node_id, "captures", Some(index))
+                    .ok_or_else(|| {
+                        PackageProgramRefusal::MissingIdentity(clause.node_id.clone())
+                    })?;
+                Ok(PackageCapture {
+                    name,
+                    binder: binder.clone(),
+                    value_type,
+                    initializer,
+                })
+            })
+            .collect::<Result<Vec<_>, PackageProgramRefusal>>()?;
         let id_by_node: BTreeMap<_, _> = form
             .controls
             .iter()
@@ -470,6 +598,8 @@ impl<'a> PackageProtocolProgram<'a> {
             .package_protocol_parameter_type(&finish_binder)
             .ok_or_else(|| PackageProgramRefusal::MissingIdentity(finish_binder.clone()))?;
         Ok(Self {
+            terminal,
+            captures,
             name: form.name.clone(),
             root,
             over,

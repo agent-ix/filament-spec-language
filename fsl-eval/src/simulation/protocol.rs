@@ -52,7 +52,7 @@ use filament_exact::{Integer, Meter, NodeKey, ObjectReference, Outcome, Value, V
 use filament_semantic_value::catalog::{CatalogCode, InternalFault};
 use fsl_foundation::bound::{DomainKey, DomainKind};
 use fsl_foundation::diagnostic::Code;
-use fsl_semantics::check::{CheckedActivation, CheckedProtocol, CheckedTerminalMember};
+use fsl_semantics::check::{CheckedActivation, CheckedProtocol};
 use fsl_semantics::family::ClaimExtent;
 use quire_canonical::{Encode, Error, Sink, Writer};
 
@@ -102,7 +102,7 @@ pub use package_program::{
     PackageAttemptContext, PackageControl, PackageProgramRefusal, PackageProtocolProgram,
     PackageRole,
 };
-use program::{Program, Rest};
+use program::{Program, Rest, Terminal};
 pub use ra::{CarriedView, Ra, RaComponent};
 pub use race::{AccessRecord, Conflict, DataRace, EarlierKind};
 pub use reach::{ReachRefusal, Reachable, ReachedState};
@@ -3020,10 +3020,10 @@ impl<'a, M: MemoryModel> ProtocolSystem<'a, M> {
         if state.instances.is_empty() {
             return Ok(TerminalClass::Intended);
         }
-        match self.program.terminal {
-            None | Some(CheckedTerminalMember::None) => Ok(TerminalClass::Deadlocked),
-            Some(CheckedTerminalMember::Any) => Ok(TerminalClass::Intended),
-            Some(CheckedTerminalMember::When { predicate, .. }) => {
+        match &self.program.terminal {
+            Terminal::None => Ok(TerminalClass::Deadlocked),
+            Terminal::Any => Ok(TerminalClass::Intended),
+            terminal @ (Terminal::SourceWhen(_) | Terminal::PackageWhen(_)) => {
                 let mut frame = vec![None; self.program.slots.len()];
                 if let Some(first) = frame.first_mut() {
                     *first = Some(state.over.clone());
@@ -3039,7 +3039,30 @@ impl<'a, M: MemoryModel> ProtocolSystem<'a, M> {
                     }
                 }
                 let observed = self.memory.atom_values(&state.memory, &state.model);
-                Ok(match self.evaluate(predicate, frame, &observed)? {
+                let verdict = match terminal {
+                    Terminal::SourceWhen(predicate) => {
+                        self.evaluate(predicate, frame, &observed)?
+                    }
+                    Terminal::PackageWhen(slot) => {
+                        let package = self.package_program.as_ref().ok_or_else(broken)?;
+                        let observation = self.package_observation(&observed)?;
+                        let binders = self.package_binder_values(frame, &observation, slot)?;
+                        let supply = package
+                            .supply_for_slot(slot, binders, Some(&observation))
+                            .map_err(|_| broken())?;
+                        let result = self
+                            .evaluator
+                            .evaluate_package_protocol_slot(
+                                slot,
+                                &supply,
+                                &mut Meter::new(self.model.meter()),
+                            )
+                            .map_err(|_| broken())?;
+                        package_slot_verdict(Some(result))?
+                    }
+                    Terminal::None | Terminal::Any => return Err(broken()),
+                };
+                Ok(match verdict {
                     Verdict::True => TerminalClass::Intended,
                     Verdict::False => TerminalClass::Deadlocked,
                     Verdict::Undecided(outcome) => {
