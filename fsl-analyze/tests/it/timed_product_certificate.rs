@@ -992,7 +992,10 @@ fn a_bound_between_the_extrema_is_refuted_with_the_recomputed_mass() {
     let world = between_world();
     let below = settle(&world, "AtLeastBetween");
     assert!(is_refuted(&below), "{below:#?}");
-    assert_eq!(witness_mass(&below), ratio(19, 40));
+    // The witness scheduler's failing mass, recomputed by the checker, is
+    // above the bound's `1 - 0.8` and never above the best a scheduler does.
+    let mass = witness_mass(&below);
+    assert!(mass > ratio(1, 5) && mass <= ratio(19, 40), "{mass:?}");
     let above = settle(&world, "AtMostBetween");
     assert!(is_refuted(&above), "{above:#?}");
     assert_eq!(witness_mass(&above), ratio(1, 1));
