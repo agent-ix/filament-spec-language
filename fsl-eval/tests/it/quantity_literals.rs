@@ -155,6 +155,95 @@ fn exact_scalar_multiplication_keeps_the_quantity_unit() {
     assert!(truth(&package, "scaled_reversed"));
 }
 
+/// Exact division keeps the written unit, proves guarded divisors and
+/// charges the three quantity scaling operations in order.
+#[trace("TC-1824", "FR-680-AC-5", "FSpec-FR-142-AC-41", "FSpec-TC-1324")]
+#[test]
+fn exact_scalar_division_keeps_the_quantity_unit_and_charges() {
+    use filament_exact::{ChargePoint, InjectedDenial, Integer, Rational};
+    use std::num::NonZeroU64;
+
+    let package = package_with(
+        "dimension Time; unit s : Time = rational(1, 1);\n\
+         unit ms : Time = rational(1, 1000) * s;\n\
+         function original using v(): Quantity<ms> pure { 3 ms }\n\
+         function quotient using v(): Quantity<ms> pure { 3 ms / 2 }\n\
+         function rational_factor using v(): Quantity<ms> pure { 3 ms / rational(1, 2) }\n\
+         function decimal_factor using v(): Quantity<ms> pure { 3 ms / decimal(15, 1) }\n\
+         function guarded using v(d: Quantity<ms>, k: Int[0, 9]): Quantity<ms> pure { if k > 0 then d / k else d }\n\
+         function positive using v(): Quantity<ms> pure { guarded(3 ms, 4) }\n\
+         function zero_branch using v(): Quantity<ms> pure { guarded(3 ms, 0) }",
+    ).expect("exact scaling functions check");
+    let invoke = |name: &str, meter: &mut Meter| {
+        package
+            .call(
+                &QualifiedName::unqualified(name).expect("an identifier"),
+                vec![],
+                &ObjectEnvironment::default(),
+                meter,
+            )
+            .expect("the quantity call runs")
+            .outcome
+    };
+    let FamilyOutcome::Evaluated(Outcome::Completed(Value::Quantity(original))) =
+        invoke("original", &mut Meter::new(UNLIMITED))
+    else {
+        panic!("the source quantity completes");
+    };
+    let points = [
+        ChargePoint::UnitIdentityRead,
+        ChargePoint::UnitRationalArithmetic,
+        ChargePoint::UnitResultRetain,
+    ];
+    for (name, numerator, denominator) in [
+        ("quotient", 3_i64, 2_i64),
+        ("rational_factor", 6, 1),
+        ("decimal_factor", 2, 1),
+        ("positive", 3, 4),
+        ("zero_branch", 3, 1),
+    ] {
+        let mut meter = Meter::new(UNLIMITED);
+        let FamilyOutcome::Evaluated(Outcome::Completed(Value::Quantity(result))) =
+            invoke(name, &mut meter)
+        else {
+            panic!("{name} returns a quantity");
+        };
+        assert_eq!(result.unit(), original.unit(), "{name} keeps ms");
+        assert_eq!(
+            result.magnitude(),
+            &Rational::new(Integer::from(numerator), Integer::from(denominator)).unwrap(),
+            "{name}"
+        );
+        let charges: Vec<_> = crate::support::admitted_charge_points(&meter)
+            .into_iter()
+            .filter(|point| points.contains(point))
+            .collect();
+        assert_eq!(
+            charges,
+            if name == "zero_branch" {
+                vec![]
+            } else {
+                points.to_vec()
+            },
+            "{name}"
+        );
+    }
+    for (index, point) in points.into_iter().enumerate() {
+        let mut meter = Meter::new(UNLIMITED).with_injected_denial(InjectedDenial {
+            point,
+            occurrence: NonZeroU64::new(1).unwrap(),
+        });
+        assert!(
+            matches!(invoke("quotient", &mut meter), FamilyOutcome::Evaluated(Outcome::Incomplete(record)) if record.charge_point == point)
+        );
+        let charges: Vec<_> = crate::support::admitted_charge_points(&meter)
+            .into_iter()
+            .filter(|point| points.contains(point))
+            .collect();
+        assert_eq!(charges, points[..index]);
+    }
+}
+
 /// FR-091-AC-72: the checked package-unit conversion is evaluated with the
 /// specified argument, `2 tick`, and returns `true`.
 #[trace("FR-091-AC-72", "FSpec-FR-142-AC-18", "FSpec-FR-142-AC-19")]

@@ -270,29 +270,69 @@ fn some_takes_the_expected_bounded_element_type() {
     "FSpec-FR-322-AC-451"
 )]
 #[test]
-#[ignore = "QSL-2168 completed; current blocker has no assigned owner: dividing a Quantity by an Integer is still refused with OperandTypeMismatch (Divide), so the scaling does not check"]
 fn a_quantity_scaled_by_a_number_keeps_its_unit() {
     let graph = check(&format!(
         "{UNITS}function f using v(d: Quantity<ms>): Quantity<ms> pure {{ d * 2 }}\n\
          function g using v(d: Quantity<ms>): Quantity<ms> pure {{ 2 * d }}\n\
-         function h using v(d: Quantity<ms>): Quantity<ms> pure {{ d / 2 }}"
+         function h using v(d: Quantity<ms>): Quantity<ms> pure {{ d / 2 }}\n\
+         function guarded using v(d: Quantity<ms>, k: Int[0, 9]): Quantity<ms> pure {{ if k > 0 then d / k else d }}\n\
+         function rational_factor using v(d: Quantity<ms>): Quantity<ms> pure {{ d / rational(1, 2) }}\n\
+         function decimal_factor using v(d: Quantity<ms>): Quantity<ms> pure {{ d / decimal(15, 1) }}"
     ))
     .unwrap_or_else(|refusals| panic!("the scalings check: {refusals:?}"));
-    let rendered = format!("{graph:?}");
-    assert!(
-        rendered.contains("filament.op.quantity.scale"),
-        "{rendered}"
-    );
-    assert!(
-        rendered.contains("filament.op.quantity.scale_div"),
-        "{rendered}"
-    );
+    for identity in [
+        "filament.op.quantity.scale",
+        "filament.op.quantity.scale_div",
+    ] {
+        let applications: Vec<_> = graph
+            .semantic_graph()
+            .nodes()
+            .filter_map(|node| match node.body() {
+                BodyTerm::Application(application)
+                    if application.operation.identity() == identity =>
+                {
+                    Some(application)
+                }
+                _ => None,
+            })
+            .collect();
+        assert!(!applications.is_empty(), "{identity} is lowered");
+        for application in applications {
+            let [MemberTerm::Leaf(LeafTerm::Reference { target }), _] =
+                application.arguments.as_slice()
+            else {
+                panic!("scaling lowers quantity then factor: {application:?}");
+            };
+            let quantity = graph
+                .semantic_graph()
+                .node(
+                    target
+                        .admitted()
+                        .expect("admitted quantity reference")
+                        .clone(),
+                )
+                .expect("quantity operand exists");
+            assert_eq!(
+                quantity.semantic_type().as_ref(),
+                application.result_type.admitted(),
+                "scaling keeps the quantity operand's unit type"
+            );
+        }
+    }
 }
 
 #[trace("TC-1824", "FR-680-AC-5", "FSpec-FR-142-AC-42")]
 #[test]
-#[ignore = "QSL-2168 completed; current blocker has no assigned owner: dividing a Quantity by Int[0, 9] is refused IllTyped (OperandTypeMismatch) where the test expects UndefinedExpression"]
 fn an_unproved_or_ineligible_scaling_is_refused() {
+    for zero in ["0", "rational(0, 1)", "decimal(0, 1)"] {
+        assert_refused(
+            &format!(
+                "{UNITS}function f using v(d: Quantity<ms>): Quantity<ms> pure {{ d / {zero} }}"
+            ),
+            Code::UndefinedExpression,
+            "unproved-nonzero",
+        );
+    }
     assert_refused(
         &format!(
             "{UNITS}function f using v(d: Quantity<ms>, k: Int[0, 9]): Quantity<ms> pure {{ d / k }}"

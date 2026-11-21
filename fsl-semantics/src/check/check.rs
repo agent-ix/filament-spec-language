@@ -4527,9 +4527,11 @@ impl<'a> Typer<'a> {
         let right_literal = super::facts::rational_literal_domain(right.kind());
         let (left_box, right_box) = (self.push(left), self.push(right));
         let (kind, value_type) = match (&left_type, &right_type, operator) {
-            (ValueType::Quantity(unit), factor, ArithmeticOperator::Multiply)
-                if is_exact_quantity_factor(factor) =>
-            {
+            (
+                ValueType::Quantity(unit),
+                factor,
+                ArithmeticOperator::Multiply | ArithmeticOperator::Divide,
+            ) if is_exact_quantity_factor(factor) => {
                 let Some(quantity_unit) = self.units.get(unit.clone()) else {
                     return Err(mismatch(location));
                 };
@@ -4537,9 +4539,16 @@ impl<'a> Typer<'a> {
                     return Err(mismatch(location));
                 }
                 (
-                    NodeKind::QuantityScale {
-                        quantity: left_box,
-                        factor: right_box,
+                    if operator == ArithmeticOperator::Divide {
+                        NodeKind::QuantityScaleDiv {
+                            quantity: left_box,
+                            factor: right_box,
+                        }
+                    } else {
+                        NodeKind::QuantityScale {
+                            quantity: left_box,
+                            factor: right_box,
+                        }
                     },
                     ValueType::Quantity(unit.clone()),
                 )
