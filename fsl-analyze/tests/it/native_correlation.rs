@@ -122,7 +122,7 @@ impl Fixture {
             fsl_package::emit_checked(&self.checked, EmitLimits::fixture()).expect("emission");
         let mut evidence = emission.evidence().clone();
         evidence
-            .insert_domain_package_document(PACKAGE, &self.model)
+            .insert_domain_package_document(PACKAGE, self.model.as_slice())
             .expect("domain evidence");
         let mut wire: Json =
             serde_json::from_slice(emission.package().bytes()).expect("package JSON");
@@ -262,11 +262,14 @@ fn sc_send_receive_uses_real_extents_and_preserves_queue_and_binder_values() {
     let (send, _, queued) = step(&graph, StepKind::Send);
     let (receive, receiving, drained) = step(&graph, StepKind::Receive);
     assert_eq!(queued, receiving);
-    assert_eq!(
+    assert!(matches!(
         send.binder_record(),
-        Some(&filament_exact::Value::Boolean(true))
-    );
-    assert_eq!(receive.binder_record(), send.binder_record());
+        Some(filament_exact::Value::Boolean(true))
+    ));
+    assert!(matches!(
+        receive.binder_record(),
+        Some(filament_exact::Value::Boolean(true))
+    ));
     assert!(graph[queued].key.as_bytes() != graph[drained].key.as_bytes());
     assert!(
         !has_step(&graph, StepKind::Finish),
@@ -348,10 +351,10 @@ fn correlation_only_capture_and_prior_binder_reads_remain_live_after_an_earlier_
         .flat_map(|state| &state.steps)
         .find(|(step, _)| step.node() == Some("Main/Tx"))
         .expect("Tx reads the preserved capture");
-    assert_eq!(
+    assert!(matches!(
         tx.0.binder_record(),
-        Some(&filament_exact::Value::Boolean(true))
-    );
+        Some(filament_exact::Value::Boolean(true))
+    ));
     assert!(has_step(&graph, StepKind::Receive));
     fixture.with_routes(true, |source, native| {
         let source = fill::sc_system(source);
@@ -396,7 +399,7 @@ fn missing_authored_carrier_is_typed_unavailable_but_empty_legacy_group_executes
         fsl_package::emit_checked(&correlated.checked, EmitLimits::fixture()).expect("emission");
     let mut evidence = emission.evidence().clone();
     evidence
-        .insert_domain_package_document(PACKAGE, &correlated.model)
+        .insert_domain_package_document(PACKAGE, correlated.model.as_slice())
         .expect("evidence");
     let mut malformed: Json = serde_json::from_slice(emission.package().bytes()).expect("JSON");
     malformed["protocol_correlation_occurrences"][0]["canonical_index"] = json!(999);
