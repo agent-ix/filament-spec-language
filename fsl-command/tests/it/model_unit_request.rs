@@ -34,7 +34,7 @@ domain "test/plant";
 object Sys { }
 object Pump { }
 object Tank { }
-interface Flow { }
+interface Flow { rate: Integer; }
 part SysPump: Pump [1, 1] in Sys;
 part SysTank: Tank [1, 1] in Sys;
 port PumpOut: Flow [1, 1] out on SysPump;
@@ -186,15 +186,24 @@ fn systems_source_compiles_to_the_same_checked_package_as_its_document() {
         let target = &connection["value"]["target"];
         assert!(!target.is_null(), "{connection}");
         assert_eq!(target["package"], "test/plant");
-        assert_eq!(target["path"], json!(["relation", "relationship", "ix://test/plant/Pipe"]));
+        assert_eq!(
+            target["path"],
+            json!(["relation", "relationship", "ix://test/plant/Pipe"])
+        );
         assert!(nodes.iter().any(|node| &node["node_id"] == target));
         assert!(channel["dependencies"].as_array().unwrap().contains(target));
         let mut ports = Vec::new();
         for role in nodes.iter().filter(|node| node["semantic_form"] == "role") {
-            let member = role["body"]["arguments"].as_array().unwrap().iter()
-                .find(|argument| argument["name"] == "model_member").expect("Port role retains member");
+            let member = role["body"]["arguments"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|argument| argument["name"] == "model_member")
+                .expect("Port role retains member");
             let fields = member["value"]["members"].as_array().unwrap();
-            let field = |name: &str| &fields.iter().find(|field| field["name"] == name).unwrap()["value"]["value"];
+            let field = |name: &str| {
+                &fields.iter().find(|field| field["name"] == name).unwrap()["value"]["value"]
+            };
             assert_eq!(field("package"), "test/plant");
             ports.push(field("node").as_str().unwrap());
         }
@@ -376,8 +385,8 @@ fn systems_source_preserves_independent_connection_admission_causes() {
         (
             SYSTEMS_MODEL
                 .replace(
-                    "interface Flow { }",
-                    "interface Flow { }\ninterface Other { marker: Boolean; }",
+                    "interface Flow { rate: Integer; }",
+                    "interface Flow { rate: Integer; }\ninterface Other { marker: Boolean; }",
                 )
                 .replace("TankIn: Flow", "TankIn: Other"),
             "ill_typed",

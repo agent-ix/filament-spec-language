@@ -45,7 +45,7 @@ Tag both steps `#[trace("TC-3013", "FR-103-AC-11")]`.
    object Sys { }
    object Pump { }
    object Tank { }
-   interface Flow { }
+   interface Flow { rate: Integer; }
    part SysPump: Pump [1, 1] in Sys;
    part SysTank: Tank [1, 1] in Sys;
    port PumpOut: Flow [1, 1] out on SysPump;
