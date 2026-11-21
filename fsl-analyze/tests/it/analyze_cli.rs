@@ -749,7 +749,7 @@ fn a_derived_item_over_a_temporal_clause_is_an_unknown_claim() {
 
 /// Explicit derived items keep their model identity when an authored
 /// temporal clause exists, including when no terminal state is intended.
-#[trace("TC-1586", "FR-626-AC-1", "FR-626-AC-2", "FSpec-FR-366-AC-4")]
+#[trace("TC-1586", "FR-626-AC-1")]
 #[test]
 fn a_deadlock_item_with_an_authored_temporal_clause_refutes_and_replays() {
     for (name, terminal) in [
