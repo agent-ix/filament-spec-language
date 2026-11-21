@@ -69,7 +69,9 @@ A model unit is written in the shared-grammar notation; `header`, `field`,
 `type-ref`, `parameter`, `block`, `frame-clause`, `population-member`,
 `record-decl`, `enum-decl`, `tuple-decl`, `union-decl`, `alias-decl`,
 `dimension-decl` and `unit-decl` are the existing productions, and every
-grammar word below is a reserved spelling of a model unit.
+grammar word below is a reserved spelling of a model unit, except `population`,
+`interface` and `part`, which are keywords only in their declaration position and
+stay identifiers elsewhere.
 
 ```ebnf
 model-unit       = header, 'domain', string, ';', { domain-decl }, EOF ;

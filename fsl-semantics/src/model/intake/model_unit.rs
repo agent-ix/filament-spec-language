@@ -1081,14 +1081,22 @@ fn read_object(
                 index += 1;
                 let (lower, upper, ordered, unique, next) = read_multiplicity(tokens, index)?;
                 index = next;
-                let mut target_role = "target".to_owned();
+                let mut target_role = None;
+                // Without an `inverse` the reverse end is unnamed and
+                // claims no multiplicity.
+                let mut source_multiplicity = json!(
+                    {"lower": 0, "upper": null, "ordered": false, "unique": true}
+                );
                 if tokens
                     .get(index)
                     .is_some_and(|token| token.text == "inverse")
                 {
-                    target_role = tokens.get(index + 1)?.text.clone();
+                    target_role = Some(tokens.get(index + 1)?.text.clone());
                     index += 2;
-                    let (_, _, _, _, next) = read_multiplicity(tokens, index)?;
+                    let (lower, upper, ordered, unique, next) = read_multiplicity(tokens, index)?;
+                    source_multiplicity = json!(
+                        {"lower": lower, "upper": upper, "ordered": ordered, "unique": unique}
+                    );
                     index = next;
                 }
                 if tokens.get(index)?.text != ";" {
@@ -1097,16 +1105,20 @@ fn read_object(
                 let end = tokens.get(index)?.span.end;
                 index += 1;
                 relationship_targets.push((target.clone(), target_span));
+                let mut target_end = json!({
+                    "type": format!("ix://{package}/{target}"),
+                    "multiplicity": {"lower": lower, "upper": upper, "ordered": ordered, "unique": unique},
+                });
+                if let Some(role) = target_role {
+                    target_end["role"] = json!(role);
+                }
                 relationships.push(json!({
                     "identity": format!("ix://{package}/relationship/{name}-{relationship_name}-{target}"),
                     "sourceEnd": {
                         "type": format!("ix://{package}/{name}"), "role": relationship_name,
-                        "multiplicity": {"lower": 1, "upper": 1, "ordered": false, "unique": true},
+                        "multiplicity": source_multiplicity,
                     },
-                    "targetEnd": {
-                        "type": format!("ix://{package}/{target}"), "role": target_role,
-                        "multiplicity": {"lower": lower, "upper": upper, "ordered": ordered, "unique": unique},
-                    },
+                    "targetEnd": target_end,
                     "category": "structural", "composite": false,
                     "direction": "source-to-target",
                     "origin": source_origin(parsed, Span { start: tokens[start].span.start, end }),
@@ -2514,6 +2526,13 @@ fn type_ref(type_name: &str, package: &str) -> String {
         "Float32" => "Float32",
         "Float64" => "Float64",
         "Timestamp" => "Timestamp",
+        "UUID" => "UUID",
+        "String" => "String",
+        "Decimal" => "Decimal",
+        "Bytes" => "Bytes",
+        "Duration" => "Duration",
+        "JsonObject" => "JsonObject",
+        "Clock" => "Clock",
         _ => return format!("ix://{package}/{type_name}"),
     };
     format!("ix://filament/native/{native}")

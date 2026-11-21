@@ -320,6 +320,11 @@ population nodes: Node;
         document["types"][0]["relationships"][0]["targetEnd"]["multiplicity"]["lower"],
         0
     );
+    let relationship = &document["types"][0]["relationships"][0];
+    assert_eq!(relationship["sourceEnd"]["role"], "next");
+    assert!(relationship["targetEnd"].get("role").is_none());
+    assert_eq!(relationship["sourceEnd"]["multiplicity"]["lower"], 0);
+    assert!(relationship["sourceEnd"]["multiplicity"]["upper"].is_null());
     assert_eq!(document["populations"][0]["extent"], "closed");
     let packages = package_input([source.as_bytes()]).expect("model unit becomes package input");
     admit(
@@ -328,6 +333,64 @@ population nodes: Node;
         ModelNormalizationLimits::default().intake,
     )
     .expect("FR-154 admits the compiled relationship document");
+}
+
+#[trace("FR-710-AC-2", "TC-1942")]
+#[test]
+fn a_relationship_inverse_names_and_bounds_the_source_end() {
+    let source = r#"language "ix:native" edition "1-draft";
+domain "example/graph";
+object Node { relationship next: Node [0, 1] inverse prev [0, 2]; }
+population nodes: Node;
+"#;
+    let packages = package_input([source.as_bytes()]).expect("model unit becomes package input");
+    let document: serde_json::Value =
+        serde_json::from_slice(&packages["example/graph"]).expect("compiled document is JSON");
+    let relationship = &document["types"][0]["relationships"][0];
+    assert_eq!(relationship["sourceEnd"]["role"], "next");
+    assert_eq!(relationship["targetEnd"]["role"], "prev");
+    assert_eq!(relationship["targetEnd"]["multiplicity"]["upper"], 1);
+    assert_eq!(relationship["sourceEnd"]["multiplicity"]["lower"], 0);
+    assert_eq!(relationship["sourceEnd"]["multiplicity"]["upper"], 2);
+    admit(
+        "example/graph",
+        &packages,
+        ModelNormalizationLimits::default().intake,
+    )
+    .expect("FR-154 admits the inverse end");
+}
+
+#[trace("FR-710-AC-3", "TC-1942")]
+#[test]
+fn a_model_unit_names_every_native_type() {
+    let natives = [
+        "Boolean", "Integer", "Timestamp", "UUID", "String", "Bytes", "Duration", "JsonObject",
+        "Decimal[0, 2; 10, 2; exact]",
+    ];
+    let fields = natives
+        .iter()
+        .enumerate()
+        .map(|(position, native)| format!("  f{position}: {native};\n"))
+        .collect::<String>();
+    let source = format!(
+        "language \"ix:native\" edition \"1-draft\";\ndomain \"example/natives\";\nobject Holder {{\n{fields}}}\n"
+    );
+    let packages = package_input([source.as_bytes()]).expect("native type names resolve");
+    let document: serde_json::Value =
+        serde_json::from_slice(&packages["example/natives"]).expect("compiled document is JSON");
+    for (position, native) in natives.iter().enumerate() {
+        let name = native.split('[').next().unwrap();
+        assert_eq!(
+            document["types"][0]["fields"][position]["typeRef"],
+            format!("ix://filament/native/{name}")
+        );
+    }
+    admit(
+        "example/natives",
+        &packages,
+        ModelNormalizationLimits::default().intake,
+    )
+    .expect("FR-154 admits the native types");
 }
 
 #[trace("FR-710-AC-4", "TC-1943")]
