@@ -60,8 +60,8 @@ use fsl_package::CheckedPackage;
 use fsl_replay::{
     check_initial, check_step, open_systems, CertifiedPosition, ConcreteStep, CounterexampleKind,
     ReachedLimit, RefinementFailure, RefinementPart, RefinementPosition, RefinementSystems,
-    StepVerdict, SubjectRefusal, Taken, TemporalCounterexample, UndefinedEvaluation, Undetermined,
-    ZoneCertificate,
+    SilentMove, StepVerdict, SubjectRefusal, Taken, TemporalCounterexample, UndefinedEvaluation,
+    Undetermined, ZoneCertificate,
 };
 use fsl_route::deadlock::ItemObligation;
 use fsl_semantics::check::{CheckedRefinement, ClockOp};
@@ -349,7 +349,9 @@ fn check_refinement_with_time_source<S>(
         auxiliary_transforms: Vec::new(),
         initial_invariant_failures: BTreeMap::new(),
         death_cuts: Vec::new(),
+        death_sets: Vec::new(),
         pending_cut: None,
+        pending_death: None,
         diverged: false,
     };
     let ended = product.search(&mut run).and_then(|ended| match ended {
@@ -412,10 +414,18 @@ fn check_refinement_with_time_source<S>(
                 ZoneCheckRefusal::HiddenCandidateLiveness,
             ))
         } else {
-            Some(TimedLivenessHalf::Checked(liveness(
-                &mut product,
-                &mut run,
-            )?))
+            // Rows that disagree on the abstract clock behaviour are a
+            // typed refusal of the liveness half alone: the decided safety
+            // half is still reported.
+            match liveness(&mut product, &mut run) {
+                Ok(outcome) => Some(TimedLivenessHalf::Checked(outcome)),
+                Err(TimedRefinementRefusal::Zone(ZoneCheckRefusal::HiddenCandidateLiveness)) => {
+                    Some(TimedLivenessHalf::Refused(
+                        ZoneCheckRefusal::HiddenCandidateLiveness,
+                    ))
+                }
+                Err(refusal) => return Err(refusal),
+            }
         }
     } else {
         None
@@ -495,8 +505,13 @@ struct Product<'p, 'a> {
     /// branch of the dying candidate's negated invariant), aligned to the
     /// run's retained edges; `None` for every other edge.
     death_cuts: Vec<Option<Vec<PlaceConstraint>>>,
+    /// The dying candidates (indices in the source position, sorted) of each
+    /// retained death edge, aligned to the run's retained edges.
+    death_sets: Vec<Option<Vec<usize>>>,
     /// The cut the next stored arrival takes.
     pending_cut: Option<Vec<PlaceConstraint>>,
+    /// The dying candidates the next stored arrival takes.
+    pending_death: Option<Vec<usize>>,
     /// Whether some position was pruned to fewer alive candidates, so the
     /// liveness half would need one clock valuation per candidate.
     diverged: bool,
@@ -577,10 +592,7 @@ impl Product<'_, '_> {
             let mut zone = Dbm::zero(run.dim());
             run.settle(&discrete, &mut zone)?;
             let q = match judged {
-                Judgement::Passes(q, _) => match self.alive_at_zero(run, q)? {
-                    Some(q) => q,
-                    None => continue,
-                },
+                Judgement::Passes(q, _) => self.alive_at_zero(run, q)?,
                 // The failing step of the empty prefix refutes only when
                 // the initial symbolic state has a point with a
                 // time-divergent continuation; otherwise it holds
@@ -696,6 +708,7 @@ impl Product<'_, '_> {
             self.taken.push(taken);
             self.auxiliary_transforms.push(auxiliary_transform);
             self.death_cuts.push(self.pending_cut.take());
+            self.death_sets.push(self.pending_death.take());
         }
         Ok(match inserted {
             Inserted::Covered(node) => node,
@@ -764,7 +777,7 @@ impl Product<'_, '_> {
                     from: node,
                     step: Some((successor.step, successor.part)),
                     piece: None,
-                    death: None,
+                    death: false,
                 };
                 self.store(
                     run,
@@ -779,7 +792,9 @@ impl Product<'_, '_> {
             }
             return Ok(None);
         }
-        self.deaths(run, node, queue)?;
+        if let Some(outcome) = self.deaths(run, node, queue)? {
+            return Ok(Some(outcome));
+        }
         // Each step's verdict, judged once: the position after it, or its
         // failure.
         let mut judged: BTreeMap<usize, Edge> = BTreeMap::new();
@@ -815,7 +830,7 @@ impl Product<'_, '_> {
                 from: node,
                 step: Some((successor.step, successor.part)),
                 piece: None,
-                death: None,
+                death: false,
             };
             let (next, taken) = match judged.get(&successor.step) {
                 Some(Edge::Passes(next, taken)) => {
@@ -1013,11 +1028,12 @@ impl Product<'_, '_> {
     }
 
     /// The position `q` with the candidates whose own invariant fails at the
-    /// zero valuation removed, interned: `None` when none is left (the
-    /// initial state is cut).
-    fn alive_at_zero(&mut self, run: &Run<'_, '_, '_>, q: usize) -> Result<Option<usize>, Halt> {
+    /// zero valuation removed, interned. When none is alive at zero, `q` is
+    /// kept: the initial invariant failure is then recorded and refuted by the
+    /// auxiliary invariant failure path, as for one candidate.
+    fn alive_at_zero(&mut self, run: &Run<'_, '_, '_>, q: usize) -> Result<usize, Halt> {
         let Some(timed) = run.auxiliary_timed else {
-            return Ok(Some(q));
+            return Ok(q);
         };
         let position = self
             .positions
@@ -1033,16 +1049,13 @@ impl Product<'_, '_> {
                 alive.push(candidate.clone());
             }
         }
-        if alive.is_empty() && !position.abstract_states.is_empty() {
-            return Ok(None);
-        }
-        if alive.len() == position.abstract_states.len() {
-            return Ok(Some(q));
+        if alive.is_empty() || alive.len() == position.abstract_states.len() {
+            return Ok(q);
         }
         self.diverged = true;
         let mut pruned = position;
         pruned.abstract_states = alive;
-        Ok(Some(self.intern(pruned, run)?))
+        self.intern(pruned, run)
     }
 
     /// Stop the run when `count` pieces exceed the transitions its limit
@@ -1077,41 +1090,78 @@ impl Product<'_, '_> {
         Ok((inside, outside))
     }
 
-    /// Split `zone` by which of `candidates` satisfy their own time
-    /// invariant on it, each piece with the indices of the candidates that
-    /// do; a piece where none does is cut.
-    fn entry_pieces(
+    /// Split `zone` by the truth pattern of the candidates' own time
+    /// invariants `invariants` (one list per candidate): each piece with the
+    /// indices of the candidates whose invariant holds on it and the
+    /// constraints that cut it (each holding invariant, and for a failing one
+    /// the convex branch of its negation). Pieces where no candidate holds
+    /// are kept: the caller decides what they are. The checker splits the
+    /// same way.
+    fn pattern_pieces(
         run: &Run<'_, '_, '_>,
-        timed: &TimedSystem<'_, '_>,
         zone: Dbm,
-        candidates: &[ModelState],
-    ) -> Result<Vec<(Dbm, Vec<usize>)>, Halt> {
-        let mut pieces = vec![(zone, Vec::new())];
-        for (index, candidate) in candidates.iter().enumerate() {
-            let invariants = Self::candidate_invariants(run, timed, candidate)?;
-            if invariants.is_empty() {
-                for (_, alive) in &mut pieces {
-                    alive.push(index);
+        invariants: &[Vec<PlaceConstraint>],
+    ) -> Result<Vec<PatternPiece>, Halt> {
+        let mut pieces = vec![PatternPiece {
+            zone,
+            alive: Vec::new(),
+            cut: Vec::new(),
+        }];
+        for (index, own) in invariants.iter().enumerate() {
+            if own.is_empty() {
+                for piece in &mut pieces {
+                    piece.alive.push(index);
                 }
                 continue;
             }
             let mut next = Vec::new();
-            for (piece, alive) in pieces {
-                let (hit, outside) = Self::split(run, &piece, &invariants)?;
-                if !hit.is_empty() {
-                    let mut kept = alive.clone();
-                    kept.push(index);
-                    next.push((hit, kept));
+            for piece in pieces {
+                let mut inside = piece.zone.clone();
+                run.constrain(&mut inside, own)?;
+                if !inside.is_empty() {
+                    let mut alive = piece.alive.clone();
+                    alive.push(index);
+                    let mut cut = piece.cut.clone();
+                    cut.extend(own.iter().cloned());
+                    next.push(PatternPiece {
+                        zone: inside,
+                        alive,
+                        cut,
+                    });
                 }
-                for outside in outside {
-                    next.push((outside, alive.clone()));
+                for branch in negation_branches(own) {
+                    let mut outside = piece.zone.clone();
+                    run.constrain(&mut outside, &branch)?;
+                    if !outside.is_empty() {
+                        let mut cut = piece.cut.clone();
+                        cut.extend(branch);
+                        next.push(PatternPiece {
+                            zone: outside,
+                            alive: piece.alive.clone(),
+                            cut,
+                        });
+                    }
                 }
             }
             Self::bounded(run, next.len())?;
             pieces = next;
         }
-        pieces.retain(|(_, alive)| !alive.is_empty());
         Ok(pieces)
+    }
+
+    /// [`Self::pattern_pieces`] of `zone` over `candidates`; a piece where
+    /// none holds has an empty alive list.
+    fn entry_pieces(
+        run: &Run<'_, '_, '_>,
+        timed: &TimedSystem<'_, '_>,
+        zone: Dbm,
+        candidates: &[ModelState],
+    ) -> Result<Vec<PatternPiece>, Halt> {
+        let mut invariants = Vec::with_capacity(candidates.len());
+        for candidate in candidates {
+            invariants.push(Self::candidate_invariants(run, timed, candidate)?);
+        }
+        Self::pattern_pieces(run, zone, &invariants)
     }
 
     /// The rows of the edge `taken` of the position `source`: each a guarded
@@ -1330,9 +1380,24 @@ impl Product<'_, '_> {
                 }
                 candidates.push(candidate.clone());
             }
-            for (zone, alive) in Self::entry_pieces(run, timed, zone, &candidates)? {
+            for piece in Self::entry_pieces(run, timed, zone, &candidates)? {
+                // No post candidate's invariant holds at landing: the
+                // target invariant disables the step (FR-232), which is the
+                // abstract clock guard's failure.
+                if piece.alive.is_empty() {
+                    let named = operation
+                        .clone()
+                        .unwrap_or_else(|| "mapped-operation".to_owned());
+                    failures.push((piece.zone, named));
+                    continue;
+                }
+                let zone = piece.zone;
                 let mut position = post.clone();
-                position.abstract_states = alive.iter().map(|&at| candidates[at].clone()).collect();
+                position.abstract_states = piece
+                    .alive
+                    .iter()
+                    .map(|&at| candidates[at].clone())
+                    .collect();
                 let leads = if position.abstract_states.len() == post.abstract_states.len() {
                     target
                 } else {
@@ -1349,24 +1414,27 @@ impl Product<'_, '_> {
         Ok((pieces, failures))
     }
 
-    /// Death by time (FR-899 "Timed subjects"): for each alive candidate of
-    /// `node`'s position, when two or more are alive, and each convex branch
-    /// of the negation of its own invariant, a successor whose zone is the
-    /// node's after a delay, cut by the survivors' invariants, the state's,
-    /// and that branch; its position is the node's without the candidate,
-    /// and no step is taken.
-    fn deaths(
+    /// Death by time (FR-899 "Timed subjects"): the node's zone after a delay,
+    /// held to the state's invariants, is split by the truth pattern of all
+    /// alive candidates' invariants. A piece where every alive invariant holds
+    /// is the node itself. A piece where some hold is a silent successor to
+    /// the position of those candidates, the edge naming the set that dies. A
+    /// piece where none holds is a delay that would leave the abstract
+    /// invariant (FR-900 "Delay"): it refutes with `AbstractTimeInvariant`
+    /// when time can diverge there, and is otherwise a `locked` entry node
+    /// the checker requires.
+    fn deaths<S>(
         &mut self,
         run: &mut Run<'_, '_, '_>,
         node: usize,
         queue: &mut VecDeque<usize>,
-    ) -> Result<(), Halt> {
+    ) -> Result<Option<TimedSafetyOutcome<S>>, Halt> {
         let Some(timed) = run.auxiliary_timed else {
-            return Ok(());
+            return Ok(None);
         };
         let state = run.nodes[node].state.clone();
         if !run.elapses(&state)? {
-            return Ok(());
+            return Ok(None);
         }
         let q = run.nodes[node].q;
         let position = self
@@ -1374,55 +1442,107 @@ impl Product<'_, '_> {
             .get(q)
             .ok_or(ZoneCheckRefusal::Fault("auxiliary-position"))?
             .clone();
-        if position.abstract_states.len() < 2 {
-            return Ok(());
+        let count = position.abstract_states.len();
+        if count == 0 {
+            return Ok(None);
         }
-        let mut invariants = Vec::with_capacity(position.abstract_states.len());
+        let mut invariants = Vec::with_capacity(count);
         for candidate in &position.abstract_states {
             invariants.push(Self::candidate_invariants(run, timed, candidate)?);
         }
         let concrete = run.timed(run.timed.invariants(&state))?;
-        for (candidate, own) in invariants.iter().enumerate() {
-            for (branch, negation) in negation_branches(own).into_iter().enumerate() {
-                run.poll()?;
-                let mut next = run.nodes[node].zone.clone();
-                next.up();
-                run.constrain(&mut next, &concrete)?;
-                let mut cut = Vec::new();
-                for (other, constraints) in invariants.iter().enumerate() {
-                    if other != candidate {
-                        cut.extend(constraints.iter().cloned());
+        let mut base = run.nodes[node].zone.clone();
+        base.up();
+        run.constrain(&mut base, &concrete)?;
+        if base.is_empty() {
+            return Ok(None);
+        }
+        let (scale, lower, upper) = (run.scale.clone(), run.lower.clone(), run.upper.clone());
+        let depth = self.depth[node];
+        for piece in Self::pattern_pieces(run, base, &invariants)? {
+            run.poll()?;
+            if piece.alive.len() == count {
+                continue;
+            }
+            let dying: Vec<usize> = (0..count).filter(|at| !piece.alive.contains(at)).collect();
+            let arrival = Arrival {
+                from: node,
+                step: None,
+                piece: None,
+                death: true,
+            };
+            if piece.alive.is_empty() {
+                let dead = piece.zone;
+                let escape = run.escape(&state, &dead, &scale, &lower, &upper)?;
+                if escape.diverges {
+                    let steps = run.steps_for(&state)?;
+                    for successor in run.positions(&state, &dead, &scale)? {
+                        let after =
+                            run.escape(&successor.state, &successor.zone, &scale, &lower, &upper)?;
+                        if !after.diverges {
+                            continue;
+                        }
+                        let step = steps
+                            .get(successor.step)
+                            .ok_or(ZoneCheckRefusal::Fault("refinement-step"))?;
+                        let failure = RefinementFailure::AbstractTimeInvariant {
+                            position: widen(depth.saturating_add(1)),
+                            model: self.refinement.abstract_model().to_owned(),
+                        };
+                        let counterexample = self.counterexample(
+                            run,
+                            node,
+                            (step, successor.part),
+                            (failure, CounterexampleKind::Formula),
+                            &after,
+                            Some(dead.clone()),
+                            None,
+                        )?;
+                        return Ok(Some(TimedSafetyOutcome::Violated {
+                            counterexample: Box::new(counterexample),
+                            stats: run.stats(),
+                        }));
                     }
+                    // Time diverges past the abstract invariant, but no step
+                    // shows it: no counterexample can be built.
+                    return Err(run.undecided(ZoneUndecided::LassoNotConcretized));
                 }
-                cut.extend(negation);
-                run.constrain(&mut next, &cut)?;
-                if next.is_empty() {
-                    continue;
-                }
-                let mut survivors = position.clone();
-                survivors.abstract_states.remove(candidate);
-                let leads = self.intern(survivors, run)?;
-                self.diverged = true;
-                let arrival = Arrival {
-                    from: node,
-                    step: None,
-                    piece: None,
-                    death: Some((candidate, branch)),
-                };
-                self.pending_cut = Some(cut);
+                self.pending_cut = Some(piece.cut);
+                self.pending_death = Some(dying);
                 self.store(
                     run,
                     state.clone(),
-                    leads,
-                    next,
+                    LOCKED_ENTRY,
+                    dead,
                     None,
                     Some((arrival, None)),
                     None,
                     queue,
                 )?;
+                continue;
             }
+            let mut survivors = position.clone();
+            survivors.abstract_states = piece
+                .alive
+                .iter()
+                .map(|&at| position.abstract_states[at].clone())
+                .collect();
+            let leads = self.intern(survivors, run)?;
+            self.diverged = true;
+            self.pending_cut = Some(piece.cut);
+            self.pending_death = Some(dying);
+            self.store(
+                run,
+                state.clone(),
+                leads,
+                piece.zone,
+                None,
+                Some((arrival, None)),
+                None,
+                queue,
+            )?;
         }
-        Ok(())
+        Ok(None)
     }
 
     /// Apply the timed abstract operation selected by the row, then read
@@ -1649,8 +1769,15 @@ impl Product<'_, '_> {
                 node.automaton_state = reserved;
             }
         }
-        let taken = run
-            .edge_order()
+        let order = run.edge_order();
+        for (listed, &edge) in proof.edges.iter_mut().zip(&order) {
+            if let (Some(SilentMove::Dies { candidates }), Some(Some(dying))) =
+                (listed.silent.as_mut(), self.death_sets.get(edge))
+            {
+                candidates.clone_from(dying);
+            }
+        }
+        let taken = order
             .into_iter()
             .map(|edge| self.taken[edge].clone())
             .collect();
@@ -1941,4 +2068,13 @@ enum Matched {
     Stutter,
     /// The row's operation has no guarded step.
     Missing,
+}
+
+/// One piece of a zone split by the truth pattern of candidate invariants:
+/// the indices of the candidates whose invariant holds on it, and the
+/// constraints that cut it.
+struct PatternPiece {
+    zone: Dbm,
+    alive: Vec<usize>,
+    cut: Vec<PlaceConstraint>,
 }

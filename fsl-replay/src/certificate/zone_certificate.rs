@@ -279,7 +279,7 @@ pub struct ProductMark {
 }
 
 /// A product edge that is no position.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum SilentMove {
     /// A delay into the next cell of the node's state (FR-240's split by
     /// the fairness guards).
@@ -287,16 +287,17 @@ pub enum SilentMove {
     /// The reset of the divergence clock `z`, the zone's last clock, once
     /// it has reached 1 (the non-Zeno construction).
     Diverge,
-    /// A refinement form's death by time (FR-899 "Timed subjects"): the
-    /// alive abstract candidate of the source position at index `candidate`
-    /// stops satisfying its own time invariant while time passes in the
-    /// node. The edge's `part` is the index of the convex branch of the
-    /// negated invariant; the target position is the source position with
-    /// that candidate removed, and the edge consumes no `taken`.
+    /// A refinement form's death by time (FR-899 "Timed subjects"): while
+    /// time passes in the node, the alive abstract candidates of the source
+    /// position at the indices `candidates` (sorted, none repeated) stop
+    /// satisfying their own time invariants together, and no other alive
+    /// candidate does. The target position is the source position without
+    /// them; with none left, the target is a `locked` entry node (the delay
+    /// would leave the abstract invariant). The edge consumes no `taken`.
     Dies {
-        /// The index of the dying candidate in the source position's
+        /// The indices of the dying candidates in the source position's
         /// abstract states.
-        candidate: usize,
+        candidates: Vec<usize>,
     },
 }
 
@@ -1280,6 +1281,11 @@ struct Successor {
     /// A death edge's cut: the survivors' invariants and the convex branch
     /// of the dying candidate's negated invariant, over the product clocks.
     cut: Option<Vec<PlaceConstraint>>,
+    /// Whether the successor must be a `locked` entry node with no `taken`:
+    /// a region where the abstract side cannot go on (no alive row holds, no
+    /// post candidate's invariant holds, or no alive candidate's invariant
+    /// holds after a delay), which the producer refutes unless time-locked.
+    locks: bool,
 }
 
 /// The position a refinement form's successor must lead to, and the state
@@ -1293,11 +1299,22 @@ struct Expected {
 /// The clock carries and resets of a row.
 type ClockUpdates = (Vec<(usize, usize)>, Vec<(usize, Rational)>);
 
+/// One piece of a zone split by the truth pattern of candidate invariants:
+/// the indices of the candidates whose invariant holds, and the constraints
+/// that cut it.
+struct PatternPiece {
+    zone: Zone,
+    alive: Vec<usize>,
+    cut: Vec<PlaceConstraint>,
+}
+
 /// One piece of a discrete step's zone: the valuations at which the same
 /// alive rows hold, and the position they lead to.
 struct Piece {
     zone: Zone,
     position: Option<Expected>,
+    /// See [`Successor::locks`].
+    locks: bool,
 }
 
 /// The atomic comparisons whose disjunction negates `op`.
@@ -1685,7 +1702,7 @@ impl<O> Checker<'_, '_, O> {
                 &edge.transition,
                 &edge.task_transition,
                 edge.part,
-                edge.silent,
+                edge.silent.as_ref(),
             ) {
                 (Some(_), None, Some(_), None) => true,
                 (None, None, None, None) => windowed || live.is_some(),
@@ -1955,17 +1972,15 @@ impl<O> Checker<'_, '_, O> {
             let mut expected: Option<RefinementPosition> = None;
             if let StepVerdict::Passes { post, .. } = &verdict {
                 // A candidate whose invariant fails at the initial valuation is
-                // not alive; the alive ones hold on the whole initial zone.
+                // not alive while another is. With none alive at zero the
+                // position keeps every candidate: the initial invariant failure
+                // is the producer's to refute, as for one candidate.
                 let mut pruned = (**post).clone();
-                pruned.abstract_states = self.alive_at_zero(&pruned.abstract_states)?;
-                if pruned.abstract_states.is_empty() && !post.abstract_states.is_empty() {
-                    zone.constrain(0, 0, &Integer::zero(), true)?;
+                let alive = self.alive_at_zero(&pruned.abstract_states)?;
+                if !alive.is_empty() {
+                    pruned.abstract_states = alive;
                 }
-                self.auxiliary_invariants(
-                    &pruned,
-                    &mut zone,
-                    CertificateLocus::ModelState(state_key.clone()),
-                )?;
+                self.auxiliary_invariants(&pruned, &mut zone)?;
                 expected = Some(pruned);
             }
             if zone.is_empty() {
@@ -2015,12 +2030,7 @@ impl<O> Checker<'_, '_, O> {
 
     /// Intersect a product zone with the invariants of the mapped abstract
     /// states, whose clock places follow the concrete places.
-    fn auxiliary_invariants(
-        &self,
-        position: &RefinementPosition,
-        zone: &mut Zone,
-        _at: CertificateLocus,
-    ) -> Step<(), O> {
+    fn auxiliary_invariants(&self, position: &RefinementPosition, zone: &mut Zone) -> Step<(), O> {
         // Every alive candidate's invariant holds (FR-899 "Timed subjects");
         // a candidate whose own invariant stops holding leaves the alive set
         // by a death edge, so the cut is exact only together with those.
@@ -2105,41 +2115,70 @@ impl<O> Checker<'_, '_, O> {
         Ok((inside, outside))
     }
 
-    /// Split `zone` by which of `candidates` satisfy their own time
-    /// invariant on it, each piece with the indices of the candidates that
-    /// do; a piece where none does is cut, as the product cuts every zone to
-    /// the alive candidates' invariants.
-    fn entry_pieces(
+    /// Split `zone` by the truth pattern of the candidates' own time
+    /// invariants `invariants` (one list per candidate): each piece with the
+    /// indices of the candidates whose invariant holds on it and the
+    /// constraints that cut it. A piece where none holds is kept, with an
+    /// empty alive list. The producer splits the same way.
+    fn pattern_pieces(
         &self,
         zone: Zone,
-        candidates: &[ModelState],
-    ) -> Step<Vec<(Zone, Vec<usize>)>, O> {
-        let mut pieces = vec![(zone, Vec::new())];
-        for (index, candidate) in candidates.iter().enumerate() {
-            let invariants = self.candidate_invariants(candidate)?;
-            if invariants.is_empty() {
-                for (_, alive) in &mut pieces {
-                    alive.push(index);
+        invariants: &[Vec<PlaceConstraint>],
+    ) -> Step<Vec<PatternPiece>, O> {
+        let mut pieces = vec![PatternPiece {
+            zone,
+            alive: Vec::new(),
+            cut: Vec::new(),
+        }];
+        for (index, own) in invariants.iter().enumerate() {
+            if own.is_empty() {
+                for piece in &mut pieces {
+                    piece.alive.push(index);
                 }
                 continue;
             }
             let mut next = Vec::new();
-            for (piece, alive) in pieces {
-                let (hit, outside) = self.split(&piece, &invariants)?;
-                if !hit.is_empty() {
-                    let mut kept = alive.clone();
-                    kept.push(index);
-                    next.push((hit, kept));
+            for piece in pieces {
+                let mut inside = piece.zone.clone();
+                self.constrain(&mut inside, own)?;
+                if !inside.is_empty() {
+                    let mut alive = piece.alive.clone();
+                    alive.push(index);
+                    let mut cut = piece.cut.clone();
+                    cut.extend(own.iter().cloned());
+                    next.push(PatternPiece {
+                        zone: inside,
+                        alive,
+                        cut,
+                    });
                 }
-                for outside in outside {
-                    next.push((outside, alive.clone()));
+                for branch in negation_branches(own) {
+                    let mut zone = piece.zone.clone();
+                    self.constrain(&mut zone, &branch)?;
+                    if !zone.is_empty() {
+                        let mut cut = piece.cut.clone();
+                        cut.extend(branch);
+                        next.push(PatternPiece {
+                            zone,
+                            alive: piece.alive.clone(),
+                            cut,
+                        });
+                    }
                 }
             }
             self.charge(u64::try_from(next.len()).unwrap_or(u64::MAX))?;
             pieces = next;
         }
-        pieces.retain(|(_, alive)| !alive.is_empty());
         Ok(pieces)
+    }
+
+    /// [`Self::pattern_pieces`] of `zone` over `candidates`.
+    fn entry_pieces(&self, zone: Zone, candidates: &[ModelState]) -> Step<Vec<PatternPiece>, O> {
+        let mut invariants = Vec::with_capacity(candidates.len());
+        for candidate in candidates {
+            invariants.push(self.candidate_invariants(candidate)?);
+        }
+        self.pattern_pieces(zone, &invariants)
     }
 
     /// The pieces of a node's zone along a discrete step's edge, with the
@@ -2160,6 +2199,14 @@ impl<O> Checker<'_, '_, O> {
             Ok(vec![Piece {
                 zone,
                 position: None,
+                locks: false,
+            }])
+        };
+        let locks = |zone: Zone| -> Step<Vec<Piece>, O> {
+            Ok(vec![Piece {
+                zone,
+                position: None,
+                locks: true,
             }])
         };
         let Some(timed) = self.auxiliary_timed else {
@@ -2211,10 +2258,15 @@ impl<O> Checker<'_, '_, O> {
                 }
                 match matched {
                     Some(step) => rows.push((Some(step), None)),
-                    None => return Ok(Vec::new()),
+                    // The operation has no guarded step: the producer's
+                    // `mapped-operation` failure.
+                    None => return locks(zone),
                 }
             }
             Taken::CandidateSteps(steps) => {
+                if steps.is_empty() {
+                    return locks(zone);
+                }
                 for row in &steps {
                     let Some(transition) = &row.transition else {
                         rows.push((None, Some(row.post_state.clone())));
@@ -2310,8 +2362,14 @@ impl<O> Checker<'_, '_, O> {
                 .filter_map(|(row, held)| (*held).then_some(row))
                 .collect();
             // No row survives: the abstract clock guard fails there, which
-            // the producer reports or keeps as a time-locked entry node.
+            // the producer reports or keeps as a time-locked entry node that
+            // the checker requires.
             if !rows.is_empty() && holding.is_empty() {
+                pieces.push(Piece {
+                    zone: piece,
+                    position: None,
+                    locks: true,
+                });
                 continue;
             }
             let mut agreed: Option<ClockUpdates> = None;
@@ -2360,9 +2418,23 @@ impl<O> Checker<'_, '_, O> {
                 }
                 candidates.push(candidate.clone());
             }
-            for (zone, alive) in self.entry_pieces(piece, &candidates)? {
-                let survivors: Vec<ModelState> =
-                    alive.iter().map(|&at| candidates[at].clone()).collect();
+            for part in self.entry_pieces(piece, &candidates)? {
+                // No post candidate's invariant holds at landing: the target
+                // invariant disables the step, a locked entry node too.
+                if part.alive.is_empty() {
+                    pieces.push(Piece {
+                        zone: part.zone,
+                        position: None,
+                        locks: true,
+                    });
+                    continue;
+                }
+                let zone = part.zone;
+                let survivors: Vec<ModelState> = part
+                    .alive
+                    .iter()
+                    .map(|&at| candidates[at].clone())
+                    .collect();
                 let alive_keys = self.candidate_keys(&survivors)?;
                 let mut position = (*post).clone();
                 position.abstract_states = survivors;
@@ -2372,17 +2444,19 @@ impl<O> Checker<'_, '_, O> {
                         position,
                         alive: alive_keys,
                     }),
+                    locks: false,
                 });
             }
         }
         Ok(pieces)
     }
 
-    /// The successors by death of an alive candidate (FR-899 "Timed
-    /// subjects"): for each alive candidate of the node's position, when two
-    /// or more are alive, and each convex branch of the negation of its own
-    /// invariant, the node's zone after a delay, held to the survivors'
-    /// invariants and the state's, and cut by that branch.
+    /// The successors by death of alive candidates (FR-899 "Timed subjects"):
+    /// the node's zone after a delay, held to the state's invariants, split by
+    /// the truth pattern of all alive candidates' invariants. A piece where
+    /// every one holds is the node itself. A piece where some hold is a silent
+    /// successor to the position of those candidates, the edge naming the set
+    /// that dies; a piece where none holds must be a `locked` entry node.
     fn death_successors(
         &self,
         state: &ModelSimState,
@@ -2396,53 +2470,57 @@ impl<O> Checker<'_, '_, O> {
         let Some(position) = self.known.get(q).cloned().flatten() else {
             return Ok(());
         };
-        if position.abstract_states.len() < 2 {
+        let count = position.abstract_states.len();
+        if count == 0 {
             return Ok(());
         }
-        let mut invariants = Vec::with_capacity(position.abstract_states.len());
+        let mut invariants = Vec::with_capacity(count);
         for candidate in &position.abstract_states {
             invariants.push(self.candidate_invariants(candidate)?);
         }
         let concrete = self.invariants(state)?;
         let state_key = self.state_key(state)?;
-        for (candidate, own) in invariants.iter().enumerate() {
-            for (branch, negation) in negation_branches(own).into_iter().enumerate() {
-                let mut next = zone.clone();
-                next.up();
-                self.constrain(&mut next, &concrete)?;
-                let mut cut = Vec::new();
-                for (other, constraints) in invariants.iter().enumerate() {
-                    if other != candidate {
-                        cut.extend(constraints.iter().cloned());
-                    }
-                }
-                cut.extend(negation);
-                self.constrain(&mut next, &cut)?;
-                if next.is_empty() {
-                    continue;
-                }
+        let mut base = zone.clone();
+        base.up();
+        self.constrain(&mut base, &concrete)?;
+        if base.is_empty() {
+            return Ok(());
+        }
+        for piece in self.pattern_pieces(base, &invariants)? {
+            if piece.alive.len() == count {
+                continue;
+            }
+            let dying: Vec<usize> = (0..count).filter(|at| !piece.alive.contains(at)).collect();
+            let mut successor = Successor {
+                step: None,
+                part: Some(0),
+                horizon: None,
+                frees: false,
+                state_key: state_key.clone(),
+                q,
+                zone: piece.zone,
+                silent: Some(SilentMove::Dies { candidates: dying }),
+                mark: None,
+                cell: None,
+                read: None,
+                expect: None,
+                cut: Some(piece.cut),
+                locks: piece.alive.is_empty(),
+            };
+            if !successor.locks {
                 let mut survivors = position.clone();
-                survivors.abstract_states.remove(candidate);
+                survivors.abstract_states = piece
+                    .alive
+                    .iter()
+                    .map(|&at| position.abstract_states[at].clone())
+                    .collect();
                 let alive = self.candidate_keys(&survivors.abstract_states)?;
-                found.push(Successor {
-                    step: None,
-                    part: Some(branch),
-                    horizon: None,
-                    frees: false,
-                    state_key: state_key.clone(),
-                    q,
-                    zone: next,
-                    silent: Some(SilentMove::Dies { candidate }),
-                    mark: None,
-                    cell: None,
-                    read: None,
-                    expect: Some(Expected {
-                        position: survivors,
-                        alive,
-                    }),
-                    cut: Some(cut),
+                successor.expect = Some(Expected {
+                    position: survivors,
+                    alive,
                 });
             }
+            found.push(successor);
         }
         Ok(())
     }
@@ -2730,19 +2808,36 @@ impl<O> Checker<'_, '_, O> {
                                 Some(cell) => cell.includes(&target.zone)?,
                                 None => true,
                             };
-                        let leads = match &successor.expect {
-                            Some(expected) if same => {
-                                target.automaton_state < usize::MAX
-                                    && self
-                                        .position_is(target.automaton_state, &expected.position)?
+                        let leads = if successor.locks {
+                            // A region the abstract side cannot go on from
+                            // leads to a `locked` entry node, with no `taken`.
+                            let (reserved, untaken) = match &self.refined {
+                                Some(refined) => (
+                                    refined.part.positions.len(),
+                                    refined.part.taken.get(index).is_none_or(Option::is_none),
+                                ),
+                                None => (usize::MAX, false),
+                            };
+                            target.locked && target.automaton_state == reserved && untaken
+                        } else {
+                            match &successor.expect {
+                                Some(expected) if same => {
+                                    target.automaton_state < usize::MAX
+                                        && self.position_is(
+                                            target.automaton_state,
+                                            &expected.position,
+                                        )?
+                                }
+                                _ => true,
                             }
-                            _ => true,
                         };
                         if same && leads && self.binds(target.automaton_state, successor.q) {
                             self.covers[index] = Some(position);
                             let expected =
                                 successor.expect.as_ref().map(|expected| &expected.position);
-                            if let Some(step) = &successor.step {
+                            if successor.locks {
+                                // Judged by `leads`.
+                            } else if let Some(step) = &successor.step {
                                 self.refine_edge(node, index, step, expected)?;
                             } else if matches!(successor.silent, Some(SilentMove::Dies { .. })) {
                                 self.refine_death(node, index, expected)?;
@@ -2833,17 +2928,34 @@ impl<O> Checker<'_, '_, O> {
                             continue;
                         }
                         positions += 1;
+                        if piece.locks {
+                            if decided {
+                                found.push(Successor {
+                                    step: Some(step.clone()),
+                                    part: Some(part),
+                                    horizon: None,
+                                    frees: false,
+                                    state_key: state_key.clone(),
+                                    q,
+                                    zone: next,
+                                    silent: None,
+                                    mark: None,
+                                    cell: None,
+                                    read: None,
+                                    expect: None,
+                                    cut: None,
+                                    locks: true,
+                                });
+                            }
+                            continue;
+                        }
                         if decided {
                             if self.window.is_some() {
                                 next.free(self.horizon_clock())?;
                             }
                             self.settle(step.post(), &mut next)?;
                             if let Some(expected) = &piece.position {
-                                self.auxiliary_invariants(
-                                    &expected.position,
-                                    &mut next,
-                                    at_node(node),
-                                )?;
+                                self.auxiliary_invariants(&expected.position, &mut next)?;
                             }
                             if !next.is_empty() {
                                 found.push(Successor {
@@ -2860,6 +2972,7 @@ impl<O> Checker<'_, '_, O> {
                                     read: None,
                                     expect: piece.position,
                                     cut: None,
+                                    locks: false,
                                 });
                             }
                             continue;
@@ -2897,6 +3010,7 @@ impl<O> Checker<'_, '_, O> {
                                 read: None,
                                 expect: None,
                                 cut: None,
+                                locks: false,
                             });
                         }
                     }
@@ -2944,6 +3058,7 @@ impl<O> Checker<'_, '_, O> {
                     read: None,
                     expect: None,
                     cut: None,
+                    locks: false,
                 });
             }
         }
@@ -3553,7 +3668,7 @@ impl<O> Checker<'_, '_, O> {
         if let Some(cell) = &successor.cell {
             // A liveness product's move, within the target's cell.
             let post = successor.step.as_ref().map_or(source, GuardedStep::post);
-            match (&successor.step, successor.silent) {
+            match (&successor.step, successor.silent.as_ref()) {
                 (Some(step), _) => {
                     let part = successor
                         .part
@@ -3584,7 +3699,7 @@ impl<O> Checker<'_, '_, O> {
             return Ok(next);
         }
         if let (None, Some(SilentMove::Dies { .. }), Some(cut)) =
-            (&successor.step, successor.silent, &successor.cut)
+            (&successor.step, successor.silent.as_ref(), &successor.cut)
         {
             // A death edge: time passes, then only the valuations at which the
             // survivors' invariants hold and the candidate's fails remain.
@@ -3627,7 +3742,7 @@ impl<O> Checker<'_, '_, O> {
         let invariants = self.invariants(post)?;
         let mut zone = target.clone();
         if let (None, Some(SilentMove::Dies { .. }), Some(cut)) =
-            (&successor.step, successor.silent, &successor.cut)
+            (&successor.step, successor.silent.as_ref(), &successor.cut)
         {
             self.constrain(&mut zone, cut)?;
         }
@@ -3643,7 +3758,7 @@ impl<O> Checker<'_, '_, O> {
             zone.down();
             hold(&mut zone)?;
         }
-        match successor.silent {
+        match successor.silent.as_ref() {
             Some(SilentMove::Wait) => {
                 if !zone.is_empty() {
                     zone.down();

@@ -563,6 +563,7 @@ impl<O> Checker<'_, '_, O> {
                                 read: Some(read.clone()),
                                 expect: None,
                                 cut: None,
+                                locks: false,
                             });
                         }
                     }
@@ -599,6 +600,7 @@ impl<O> Checker<'_, '_, O> {
                     read: None,
                     expect: None,
                     cut: None,
+                    locks: false,
                 });
             }
         }
@@ -628,6 +630,7 @@ impl<O> Checker<'_, '_, O> {
                         read: None,
                         expect: None,
                         cut: None,
+                        locks: false,
                     });
                 }
             }
@@ -662,6 +665,7 @@ impl<O> Checker<'_, '_, O> {
                         read: Some(read),
                         expect: None,
                         cut: None,
+                        locks: false,
                     });
                 }
             }

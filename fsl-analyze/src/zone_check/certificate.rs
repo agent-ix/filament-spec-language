@@ -218,7 +218,7 @@ impl Run<'_, '_, '_> {
                         .clone();
                     (Some(transition), Some(part))
                 }
-                None => (None, death.map(|(_, branch)| branch)),
+                None => (None, death.then_some(0)),
             };
             let horizon = match piece {
                 Some(piece) => Some(
@@ -237,7 +237,10 @@ impl Run<'_, '_, '_> {
                 part,
                 horizon,
                 to,
-                silent: death.map(|(candidate, _)| SilentMove::Dies { candidate }),
+                // The product fills in the dying candidates of a death edge.
+                silent: death.then(|| SilentMove::Dies {
+                    candidates: Vec::new(),
+                }),
             });
         }
         let witnessed = admitted(&edges, &steps, root, witness)

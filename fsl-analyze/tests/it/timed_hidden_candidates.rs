@@ -8,17 +8,18 @@
 
 use filament_exact::Cancel;
 use fsl_analyze::zone_check::{
-    certificate_item, check_timed_refinement, TimedRefinementRefusal, TimedSafetyOutcome,
-    ZoneCheckLimits, ZoneCheckRefusal,
+    certificate_item, check_timed_refinement, TimedLivenessHalf, TimedRefinementRefusal,
+    TimedSafetyOutcome, ZoneCheckLimits, ZoneCheckRefusal,
 };
 use fsl_replay::{
     check_zone_certificate, CertEdge, CertificateCheckLimits, CertificateRule, CertifiedItem,
-    RefinementFailure, SilentMove, ZoneCertificate, ZoneCertificateRequest, ZoneCertificateVerdict,
+    DivergentTarget, RefinementFailure, RefinementTraceSettlement, SilentMove,
+    TemporalCounterexample, ZoneCertificate, ZoneCertificateRequest, ZoneCertificateVerdict,
 };
 use fsl_route::deadlock::ItemObligation;
 use ix_trace_rs::trace;
 
-use crate::timed_refinement::{obligation, refinement, safety_request, the_refinement};
+use crate::timed_refinement::{obligation, refinement, replay, safety_request, the_refinement};
 use crate::timed_world::{document, refining, renamed_package, wire_field, Refining, DENSE};
 
 type Certificate = ZoneCertificate<ItemObligation<&'static str>>;
@@ -198,7 +199,9 @@ fn timed_hidden_an_unjustified_death_edge_is_rejected() {
         part: Some(0),
         horizon: None,
         to: certificate.initials[0],
-        silent: Some(SilentMove::Dies { candidate: 0 }),
+        silent: Some(SilentMove::Dies {
+            candidates: vec![0],
+        }),
     });
     altered
         .refinement
@@ -333,5 +336,344 @@ fn timed_hidden_candidates_with_different_resets_are_refused_distinctly() {
             TimedRefinementRefusal::Zone(ZoneCheckRefusal::HiddenCandidateClockBlocks)
         ),
         "{refused:?}"
+    );
+}
+
+/// A hidden-candidate world with a settable concrete guard, abstract guard,
+/// abstract post row and time invariants, over `candidates` (each the
+/// `inflight`, `late` and `retried` flags and the hidden `h`). With
+/// `resets`, the abstract `send` resets `y`; `concrete_invariants` are
+/// appended to the concrete side.
+fn custom(
+    candidates: &[([bool; 3], Option<bool>)],
+    (concrete_guard, abstract_guard, abstract_post): (&str, &str, &str),
+    (invariants, resets): (&str, bool),
+) -> Refining {
+    let modifies: &[&str] = if resets {
+        &["inflight", "y"]
+    } else {
+        &["inflight"]
+    };
+    let abstract_document = abstract_document(&[("send", modifies)]);
+    let concrete = document(&["x"], &[("send", &["inflight"])]);
+    refining(
+        &abstract_document,
+        &concrete,
+        &format!(
+            "{DENSE}time A dense unit ms;\n\
+             post ASend using v on A::Call::send {{ {abstract_post} }}\n\
+             pre ASendable using v on A::Call::send {{ {abstract_guard} }}\n\
+             {invariants}\n\
+             pre MSend using v on M::Call::send {{ {concrete_guard} }}\n\
+             post MSent using v on M::Call::send {{ self.inflight }}\n{}",
+            refinement("self.inflight").replace(" late = self.late;", "")
+        ),
+    )
+    .unwrap_or_else(|refusals| panic!("{refusals:?}"))
+    .with_abstract_candidates(&abstract_document, candidates)
+}
+
+/// The reviewer's three candidates: `h` set, `late` set and neither.
+const THREE: [([bool; 3], Option<bool>); 3] = [
+    ([false, false, false], Some(true)),
+    ([false, true, false], Some(false)),
+    ([false, false, false], Some(false)),
+];
+
+/// The first two of [`THREE`] die at `y > 1`; the third has no invariant.
+const PAIR_DIES: &str = "time invariant IA when { self.h } { self.y <= 1 ms }\n\
+                         time invariant IB when { self.late } { self.y <= 1 ms }";
+
+/// The reviewer's finding-1 world: the first two candidates die together at
+/// `y = 1`, the third survives, and the concrete send needs `x >= 2`.
+fn pair_dies(abstract_guard: &str) -> Refining {
+    custom(
+        &THREE,
+        ("self.x >= 2 ms", abstract_guard, "self.inflight"),
+        (PAIR_DIES, false),
+    )
+}
+
+/// Two candidates that die at the same instant must not hide the third: the
+/// survivor's guard `y < 1` fails at the send, which needs `x >= 2`. A death
+/// edge that removed one candidate at a time never left the node, and the
+/// violation was missed.
+#[trace("TC-2538", "FR-899")]
+#[test]
+fn timed_hidden_simultaneous_deaths_expose_the_survivors_guard_failure() {
+    let world = pair_dies("self.h or self.late or self.y < 1 ms");
+    let TimedSafetyOutcome::Violated { counterexample, .. } = safety_with_limits(&world) else {
+        panic!("the survivor's guard fails after the simultaneous deaths");
+    };
+    assert!(matches!(
+        counterexample.refinement.as_ref(),
+        Some(RefinementFailure::AbstractClockGuard { .. })
+    ));
+}
+
+/// The same world where the survivor's guard holds: the refinement holds, the
+/// certificate carries one death edge naming both dying candidates, and
+/// FR-245's checker accepts it.
+#[trace("TC-2538", "FR-899")]
+#[test]
+fn timed_hidden_simultaneous_deaths_are_one_edge_the_checker_accepts() {
+    let world = pair_dies("self.h or self.late or self.y >= 0 ms");
+    let certificate = certified(&world);
+    assert!(
+        certificate.edges.iter().any(|edge| matches!(
+            &edge.silent,
+            Some(SilentMove::Dies { candidates }) if candidates.len() == 2
+        )),
+        "{:?}",
+        certificate.edges
+    );
+    assert_eq!(
+        checked(&world, &certificate),
+        ZoneCertificateVerdict::Accepted
+    );
+}
+
+/// The certificate without edge `index`, its `taken` row and the witness
+/// indices shifted with it.
+fn without_edge(certificate: &Certificate, index: usize) -> Certificate {
+    let mut altered = certificate.clone();
+    altered.edges.remove(index);
+    altered
+        .refinement
+        .as_mut()
+        .expect("a refinement part")
+        .taken
+        .remove(index);
+    let shift = |edge: &mut usize| {
+        assert_ne!(*edge, index, "the divergence witness avoids the edge");
+        if *edge > index {
+            *edge -= 1;
+        }
+    };
+    if let Some(admitted) = altered.admitted.as_mut() {
+        admitted.path.iter_mut().for_each(shift);
+        if let DivergentTarget::Cycle(cycle) = &mut admitted.target {
+            cycle.iter_mut().for_each(shift);
+        }
+    }
+    altered
+}
+
+/// The index of the first edge of `certificate` for which `wanted` holds
+/// that no divergence witness path uses.
+fn unwitnessed_edge(certificate: &Certificate, wanted: impl Fn(&CertEdge) -> bool) -> usize {
+    let used = certificate
+        .admitted
+        .as_ref()
+        .map(|admitted| admitted.path.clone())
+        .unwrap_or_default();
+    certificate
+        .edges
+        .iter()
+        .enumerate()
+        .position(|(index, edge)| wanted(edge) && !used.contains(&index))
+        .expect("an edge no witness uses")
+}
+
+/// A death edge the checker derives cannot be dropped from a certificate:
+/// its successor then has no edge that covers it.
+#[trace("TC-2538", "FR-899")]
+#[test]
+fn timed_hidden_a_removed_death_edge_is_rejected() {
+    let world = pair_dies("self.h or self.late or self.y >= 0 ms");
+    let certificate = certified(&world);
+    let index = unwitnessed_edge(&certificate, |edge| {
+        matches!(edge.silent, Some(SilentMove::Dies { .. }))
+    });
+    let altered = without_edge(&certificate, index);
+    match checked(&world, &altered) {
+        ZoneCertificateVerdict::Rejected(rejection) => {
+            assert_eq!(rejection.rule, CertificateRule::SuccessorMissing);
+        }
+        other => panic!("a missing death edge is rejected: {other:?}"),
+    }
+}
+
+/// The refutation `AbstractTimeInvariant` of `outcome`.
+fn assert_time_invariant(outcome: TimedSafetyOutcome<&'static str>) -> TemporalCounterexample {
+    let TimedSafetyOutcome::Violated { counterexample, .. } = outcome else {
+        panic!("the delay leaves the abstract invariant: {outcome:?}");
+    };
+    assert!(
+        matches!(
+            counterexample.refinement.as_ref(),
+            Some(RefinementFailure::AbstractTimeInvariant { .. })
+        ),
+        "{:?}",
+        counterexample.refinement
+    );
+    *counterexample
+}
+
+/// FR-900 "Delay": a delay that would leave the abstract invariant fails
+/// with `AbstractTimeInvariant`, here after a step that resets `y`, when
+/// every alive candidate dies at once.
+#[trace("TC-2538", "FR-900")]
+#[test]
+fn timed_hidden_all_candidates_dying_is_an_abstract_time_invariant_failure() {
+    let world = custom(
+        &[([false; 3], Some(true)), ([false; 3], Some(false))],
+        (
+            "self.x >= 1 ms",
+            "self.y >= 0 ms",
+            "self.inflight and self.y = 0 ms",
+        ),
+        (
+            "time invariant J1 when { self.inflight and self.h } { self.y <= 1 ms }\n\
+             time invariant J2 when { self.inflight and not self.h } { self.y <= 1 ms }",
+            true,
+        ),
+    );
+    assert_time_invariant(safety_with_limits(&world));
+}
+
+/// The same for one candidate whose invariant runs out during a delay, and
+/// FR-145 reproduces the counterexample.
+#[trace("TC-2538", "FR-900")]
+#[test]
+fn timed_hidden_a_single_candidate_running_out_of_invariant_is_refuted() {
+    let world = custom(
+        &[([false; 3], Some(false))],
+        (
+            "self.x >= 1 ms",
+            "self.y >= 0 ms",
+            "self.inflight and self.y = 0 ms",
+        ),
+        (
+            "time invariant K when { self.inflight } { self.y <= 1 ms }",
+            true,
+        ),
+    );
+    let counterexample = assert_time_invariant(safety_with_limits(&world));
+    assert!(matches!(
+        replay(&world, &counterexample),
+        RefinementTraceSettlement::Reproduced {
+            failure: RefinementFailure::AbstractTimeInvariant { .. },
+            ..
+        }
+    ));
+}
+
+/// The world of the previous test where the concrete side is time-locked
+/// beyond the abstract invariant (`x <= 3` once sent): no time-divergent
+/// behaviour reaches the dead region, so it is a `locked` entry node, which
+/// the checker requires.
+fn locked_dead_region() -> Refining {
+    custom(
+        &[([false; 3], Some(false))],
+        (
+            "self.x >= 1 ms",
+            "self.y >= 0 ms",
+            "self.inflight and self.y = 0 ms",
+        ),
+        (
+            "time invariant K when { self.inflight } { self.y <= 1 ms }\n\
+             time invariant MInv when { self.inflight } { self.x <= 3 ms }",
+            true,
+        ),
+    )
+}
+
+#[trace("TC-2538", "FR-900")]
+#[test]
+fn timed_hidden_a_time_locked_dead_region_is_a_required_locked_node() {
+    let world = locked_dead_region();
+    let certificate = certified(&world);
+    let index = unwitnessed_edge(&certificate, |edge| {
+        matches!(edge.silent, Some(SilentMove::Dies { .. })) && certificate.nodes[edge.to].locked
+    });
+    assert_eq!(
+        checked(&world, &certificate),
+        ZoneCertificateVerdict::Accepted
+    );
+    let altered = without_edge(&certificate, index);
+    match checked(&world, &altered) {
+        ZoneCertificateVerdict::Rejected(rejection) => {
+            assert_eq!(rejection.rule, CertificateRule::SuccessorMissing);
+        }
+        other => panic!("a missing locked entry edge is rejected: {other:?}"),
+    }
+}
+
+/// An initial state whose abstract candidate is dead at the zero valuation
+/// (`y >= 1`) beside a healthy one refutes: it is not cut away.
+#[trace("TC-2538", "FR-900")]
+#[test]
+fn timed_hidden_an_initial_state_with_no_candidate_alive_at_zero_is_refuted() {
+    let abstract_document = abstract_document(&[("send", &["inflight"])]);
+    let concrete = document(&["x"], &[("send", &["inflight"])]);
+    let world = refining(
+        &abstract_document,
+        &concrete,
+        &format!(
+            "{DENSE}time A dense unit ms;\n\
+             post ASend using v on A::Call::send {{ self.inflight }}\n\
+             pre ASendable using v on A::Call::send {{ self.y >= 0 ms }}\n\
+             time invariant Late when {{ self.inflight }} {{ self.y >= 1 ms }}\n\
+             pre MSend using v on M::Call::send {{ self.x >= 0 ms }}\n\
+             post MSent using v on M::Call::send {{ self.inflight }}\n{}",
+            refinement("self.inflight").replace(" late = self.late;", "")
+        ),
+    )
+    .unwrap_or_else(|refusals| panic!("{refusals:?}"))
+    .with_concrete_initials(&concrete, &[[false; 3], [true, false, false]])
+    .with_abstract_candidates(
+        &abstract_document,
+        &[
+            ([false; 3], Some(false)),
+            ([true, false, false], Some(false)),
+        ],
+    );
+    assert_time_invariant(safety_with_limits(&world));
+}
+
+/// The liveness half's refusal is its own: the decided safety half is still
+/// reported when candidates' rows disagree (a stutter beside a guarded step).
+#[trace("TC-2538", "FR-899")]
+#[test]
+fn timed_hidden_safety_is_reported_beside_the_liveness_refusal() {
+    let abstract_document = abstract_document(&[("send", &["inflight"])]);
+    let concrete = document(&["x"], &[("send", &["inflight"])]);
+    let world = refining(
+        &abstract_document,
+        &concrete,
+        &format!(
+            "{DENSE}time A dense unit ms;\n\
+             post ASend using v on A::Call::send {{ self.inflight = false }}\n\
+             pre ASendable using v on A::Call::send {{ self.y >= 5 ms }}\n\
+             pre MSend using v on M::Call::send {{ self.x >= 1 ms }}\n\
+             post MSent using v on M::Call::send {{ self.inflight }}\n{}",
+            refinement("false")
+                .replace(" late = self.late;", "")
+                .replace(
+                    "step M::Call::send -> A::Call::send(self);",
+                    "step M::Call::send -> any;\nensure fair weak A::Call::send;"
+                )
+        ),
+    )
+    .unwrap_or_else(|refusals| panic!("{refusals:?}"))
+    .with_abstract_hidden_initials(&abstract_document, &[false, true]);
+    let mut request = safety_request(&world);
+    request.limits = LIMITS;
+    let outcome = check_timed_refinement(request, &Cancel::new()).expect("EN-6 takes it");
+    assert!(
+        matches!(outcome.safety, TimedSafetyOutcome::Holds { .. }),
+        "{:?}",
+        outcome.safety
+    );
+    assert!(
+        matches!(
+            outcome.liveness,
+            Some(TimedLivenessHalf::Refused(
+                ZoneCheckRefusal::HiddenCandidateLiveness
+            ))
+        ),
+        "{:?}",
+        outcome.liveness
     );
 }
