@@ -2894,13 +2894,50 @@ pub struct AmbiguousQualified {
     pub candidates: Vec<QualifiedCandidate>,
 }
 
+/// The tag of FSpec FR-402's reserved slot-parameter form.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub enum SlotTag {
+    /// `slot`, with two fields.
+    Slot,
+    /// `op`, with one field.
+    Op,
+    /// `rcv`, with one field.
+    Rcv,
+    /// `arg`, with four fields.
+    Arg,
+}
+
+impl SlotTag {
+    /// The tag a name begins with, before its first `_`.
+    pub(crate) fn of(name: &str) -> Option<Self> {
+        match name.split_once('_')?.0 {
+            "slot" => Some(Self::Slot),
+            "op" => Some(Self::Op),
+            "rcv" => Some(Self::Rcv),
+            "arg" => Some(Self::Arg),
+            _ => None,
+        }
+    }
+}
+
+impl std::fmt::Display for SlotTag {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::Slot => "slot",
+            Self::Op => "op",
+            Self::Rcv => "rcv",
+            Self::Arg => "arg",
+        })
+    }
+}
+
 /// [`CheckCause::ReservedSlotName`]'s payload.
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub struct ReservedSlotName {
     /// The reserved identifier, as written.
     pub name: String,
-    /// The slot tag it decodes as: `slot`, `op`, `rcv` or `arg`.
-    pub tag: String,
+    /// The slot tag it decodes as.
+    pub tag: SlotTag,
     /// The identifier's own span, when the declaring form records one;
     /// otherwise the refusal's location names the declaring node.
     pub span: Option<Span>,

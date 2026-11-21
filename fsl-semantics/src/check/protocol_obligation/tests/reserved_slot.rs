@@ -47,7 +47,7 @@ fn reserved(declarations: &str) -> (Vec<Found>, Vec<CheckRefusal>) {
             });
             Some(Found {
                 name: cause.name.clone(),
-                tag: cause.tag.clone(),
+                tag: cause.tag.to_string(),
                 region,
             })
         })
@@ -70,7 +70,7 @@ fn found(name: &str, tag: &str, region: &str) -> Found {
 /// FR-488-AC-29: a function parameter in the reserved form refuses at the
 /// parameter's identifier, naming the identifier and its tag, whether the
 /// escape is canonical or not.
-#[trace("TC-3082", "FR-488-AC-29", "FR-402-AC-12")]
+#[trace("TC-3082", "FR-488-AC-29")]
 #[test]
 fn a_function_parameter_in_the_reserved_slot_form_is_refused_at_the_identifier() {
     for (name, tag) in [("op_sa", "op"), ("op_s_x41", "op"), ("rcv_sa", "rcv")] {
@@ -129,9 +129,9 @@ fn protocol_binders_in_the_reserved_slot_form_are_refused_at_the_identifier() {
     }
 }
 
-/// FR-488-AC-29, FR-402-AC-12: a name outside the form is an ordinary
+/// FR-488-AC-29: a name outside the form is an ordinary
 /// identifier and checks.
-#[trace("TC-3082", "FR-488-AC-29", "FR-402-AC-12")]
+#[trace("TC-3082", "FR-488-AC-29")]
 #[test]
 fn a_near_miss_of_the_reserved_slot_form_is_admitted() {
     for name in [

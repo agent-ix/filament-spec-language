@@ -96,6 +96,7 @@ mod receiver_frames;
 mod refinement_adverse;
 mod refinement_rows;
 mod refused_package;
+mod reserved_slot;
 mod retained_rows;
 mod schedulability_claims;
 mod selected_model_rows;

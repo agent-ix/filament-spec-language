@@ -69,7 +69,7 @@ use super::model_spelling::{ModelSpellings, Spelled};
 use super::navigation::Relationships;
 use super::refusal::{
     CheckCause, CheckRefusal, CheckingLimitKind, CheckingStage, IdentityForm, IdentityNode,
-    IdentityObserving, KeyFault, Obligation, ReservedSlotName, StageLimitCause,
+    IdentityObserving, KeyFault, Obligation, ReservedSlotName, SlotTag, StageLimitCause,
 };
 use crate::model::operation::OperationTable;
 use crate::value::definition::{AdmittedIeeeProfile, DefinitionRole, admit_ieee_profile};
@@ -6199,12 +6199,12 @@ pub(crate) fn reserved_slot_refusal(
     if !filament_contract_model::is_slot_parameter_name(name) {
         return None;
     }
-    let tag = name.split('_').next().unwrap_or(name);
+    let tag = SlotTag::of(name)?;
     Some(refuse(
         location,
         CheckCause::ReservedSlotName(Box::new(ReservedSlotName {
             name: name.to_owned(),
-            tag: tag.to_owned(),
+            tag,
             span,
         })),
     ))
