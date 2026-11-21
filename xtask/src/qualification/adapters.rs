@@ -411,7 +411,7 @@ fn diagnostic(diagnostic: &fsl_cst::diagnostic::CompleteDiagnostic) -> Result<Ex
     })
 }
 
-fn front_end_failure(failure: spine::FrontEndFailure) -> Result<Execution, Failure> {
+pub(super) fn front_end_failure(failure: spine::FrontEndFailure) -> Result<Execution, Failure> {
     match failure {
         StageFailure::RefusedWithPayload(refusal, _) => {
             front_end_failure(StageFailure::Refused(*refusal))
