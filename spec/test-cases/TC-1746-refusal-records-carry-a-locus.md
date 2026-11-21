@@ -60,7 +60,7 @@ Tag the tests `#[trace("TC-1746", "<AC id>")]`.
   diagnostic locus is exactly TC-3081's imported-point vector. No endpoint
   has a `byte` member; no native source-label pair is attached to the
   imported path and point. Both document readers preserve that form under
-  FR-267-AC-30.
+  FR-267-AC-33.
 - Step 5: changing the program labels/path leaves the imported locus
   unchanged. Changing only the imported URI changes only its
   `sourceIdentity`; the `ix://` URI remains exact and does not introduce

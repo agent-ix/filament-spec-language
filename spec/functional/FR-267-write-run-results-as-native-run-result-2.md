@@ -396,8 +396,8 @@ FR-093-AC-5/6's closed, complete scope with no activation.
   machine-output reader keeps an `Indeterminate` run's label and reason
   (FR-285-AC-7).
 - `reason` is FR-501's indeterminate reason, a closed object whose `kind`
-  is one of: `missing-valuation` with `position`, `atom` (the atom's source
-  text) and, for an instance-bound atom of an evidence call (FR-524),
+  is one of: `missing-valuation` with `position`, `atom` (the atom name under
+  FR-283's caller-text/canonical rendering rule) and, for an instance-bound atom of an evidence call (FR-524),
   `instance` and `also_held_by` (an array of instance names) together;
   `conflicting-valuation` with `position` and `atom`; `incomplete-input`,
   `missing-history` and `straddles-bound` with no other member.
@@ -446,7 +446,8 @@ FR-093-AC-5/6's closed, complete scope with no activation.
 - For a `TraceInput::Model` result, `counterexample` SHALL use FSpec
   FR-364's model arm and the existing native `interval` member. The pinned
   backend-provider schema's `TemporalCounterexample`, `ModelStep`, `State`
-  and `TransitionIdentity` definitions specify the model members: non-null
+  and `TransitionIdentity` definitions specify the model members, subject
+  only to the current native reference exception below: non-null
   `initial_state` in `Count` form; non-null `over_binding` holding the actual
   typed reference for this authored clause; and closed steps
   `{transition, post_state}`, with `post_state` the closed `{key}` containing
@@ -464,6 +465,43 @@ FR-093-AC-5/6's closed, complete scope with no activation.
   `violated` row SHALL always carry one. This authored-clause binding rule
   does not change the null binding of FSpec's generic deadlock arm, which is
   not a temporal clause-run result.
+- **Current native temporal model reference encoding.** At model
+  `over_binding`, transition `receiver`, and references in transition
+  `arguments` (including recursively nested typed values), the writer and
+  strict reader SHALL use the existing native producer's closed object
+  `{"type":"reference","universe":U,"object_type":E,"identity":S}`.
+  `U` is the structural checked-package `NodeId` `{package, path, ordinal}`
+  of the universe root. `E` is the native `EffectiveId`: its required
+  `original` is the declaration key `{package, node}` and its required
+  `owner_effective_type` is null or another such effective identity, under
+  the existing effective-identity grammar. `S` is the object's UTF-8
+  identity text, not hexadecimal identity octets. For example, a produced
+  `Counter` binding with object identity `a` in the admitted `test/counters`
+  fixture (`fsl-eval/tests/it/model_simulation.rs`) has
+  `"object_type":{"owner_effective_type":null,"original":{"package":"test/counters","node":"ix://test/counters/Counter"}}`
+  and `"identity":"a"`; `universe` remains the actual produced node id.
+  The same native shape SHALL be used coherently across model value
+  projection, outcome counterexamples and task-product transition wires.
+  This exception changes no other model-arm member or typed-value rule.
+  The strict native reader SHALL validate this shape alone, without
+  accepting both native and backend reference encodings. FR-650's native
+  call/run value `{reference:{universe,type,object_identity}}` is a
+  different grammar and does not authorize this temporal encoding.
+- **Remaining QSL-2726 canonical reference conversion.** The required end
+  state is FSpec FR-181's backend `TypedValue.reference`: `universe` and
+  `object_type` are declaration `NodeId`s and `identity` is lowercase
+  even-length hexadecimal identity octets. Authoritative package-bound
+  conversion and replay restoration remain a separate change after the
+  current model-arm reader/writer change, covering all existing reference
+  producers: model projection, outcome counterexamples and task-product
+  receivers and arguments, including nested references. Conversion SHALL
+  resolve the actual admitted declaration identities and identity bytes;
+  guessed node ids or merely hex-encoding the present identity text do not
+  establish that mapping. Until that conversion lands, the current native
+  model reference SHALL NOT be claimed to conform to the backend schema's
+  `TypedValue.reference`. The native model-arm change SHALL remain
+  internally consistent with the current producers in the meantime; the
+  exception grants no general relaxation of the model contract.
 - The native reader SHALL discriminate counterexample arms by `trace` and
   restore the equal typed payload. It SHALL refuse, naming the offending
   member, a model arm with null or non-`Count` `initial_state`, null or
@@ -730,10 +768,11 @@ disposition kinds the document carries are the ones FSpec FR-352 registers.
 | FR-267-AC-27 | Through `command::run`, the AC-25 run whose snapshot replaces the payload object of a field of `child` with one whose `kind` is the JSON number `1` refuses `invalid_runtime_input`/`wrong-value-kind` (FR-106 payload check 1) with a `document` locus: the snapshot's labels and path, `pointer` to that `kind` member, `object` `{config_history, child}` and `member` `kind`; it reads back equal. A replay request whose member names no member of its package refuses with a `document` locus whose `pointer` is that request member and whose `member` is its name, never an `artifact` locus; an absent request file keeps a `null` locus. | Test (TC-3081) |
 | FR-267-AC-28 | A closed, complete scope (a lasso or a closed finite trace) of a guarded clause with every guard false writes `temporal` as `{"kind":"inactive"}`, no disposition `truth` or `outcome`, and axes activation `inactive`, execution `completed` and truth `null`; the reader restores the inactive verdict. Adding disposition truth `true` refuses. | Test |
 | FR-267-AC-29 | A locus `{"kind": "input", "member": "selection.json", "operand": "handoff", "pointer": null}` in AC-25's refused document reads back equal, and so does `{"kind": "input", "member": null, "operand": "handoff", "pointer": null}`; the reader refuses, naming `disposition.refusal.locus`, an `input` locus without `member`, one without `pointer`, one whose `operand` is `null`, one carrying `identity` beside its three members, and one whose `pointer` is `selection` (not an RFC 6901 pointer); a locus whose `kind` is `file` is refused as outside the six rows. | Test (TC-3081) |
-| FR-267-AC-30 | Replacing AC-25's refusal locus with TC-3081's imported point reads back with the exact `sourceIdentity`, path and point and absent bytes. Its ordinary native-span control reads back with both byte offsets and no `sourceIdentity`. The same two loci in `filament-outcome/1` diagnostics read back equally. Neither reading derives native source labels from the imported URI. | Test |
-| FR-267-AC-31 | In each document kind, TC-3081's missing imported identity, identity on a byte-bearing span, one-sided byte, null identity, null byte, unequal point endpoints and added native source-pair mutations each refuse at the locus or its defective member. A byte-zero endpoint does not repair an imported point with unavailable bytes. | Test |
-| FR-267-AC-30 | FR-330-AC-19's model violations write canonical `native-run-result/2` documents and read back equal typed model-arm counterexamples, preserving initial index, typed binding, fairness, transition identities, state keys, loop boundary, interval and report `trace_position`; a later failing activation keeps its nonzero position. The initially terminal case round-trips its actual terminal key. A model `Undefined` document with no counterexample reads back with its reason and position; any carried undefined witness round-trips the model state-key envelope and actual truncated prefix. AC-13's snapshot and FR-330-AC-18's sample documents retain their observed-arm forms. | Test (TC-1160) |
+| FR-267-AC-30 | FR-330-AC-19's model violations write canonical `native-run-result/2` documents and read back equal typed model-arm counterexamples, preserving initial index, typed binding under the current native reference exception, fairness, transition identities, state keys, loop boundary, interval and report `trace_position`; a later failing activation keeps its nonzero position. The initially terminal case round-trips its actual terminal key. A model `Undefined` document with no counterexample reads back with its reason and position; any carried undefined witness round-trips the model state-key envelope and actual truncated prefix. AC-13's snapshot and FR-330-AC-18's sample documents retain their observed-arm forms. | Test (TC-1160) |
 | FR-267-AC-31 | The strict reader refuses AC-30's model document with `initial_state` null, a decimal string, negative or above the `Count` maximum; with null or malformed typed-reference binding; with a document or sample step in either prefix or loop; with a mixed step, unknown member, missing transition member or malformed base64url state key; or with `trace_position` unequal to the report position. It refuses a carried undefined model envelope with `document` or `sample` instead of `state_key`, and AC-13's observed document with a model step, non-null initial state or non-null binding. Removing `counterexample` from a `violated` row still refuses. A well-shaped foreign key or binding is subjected to FR-128's semantic replay checks, independently of this structural read. | Test (TC-1160) |
+| FR-267-AC-32 | AC-30's actually produced model binding and transition references strictly read and round-trip with `universe` a `NodeId`, `object_type` an `EffectiveId` and `identity` UTF-8 text (`a` in the Counter fixture), including references nested in typed arguments. Independently deleting or adding a reference member, giving `universe` the wrong kind, replacing `object_type` with a backend `NodeId`, corrupting its effective identity, or making `identity` non-text refuses naming the offending member in each reference position. Substituting FR-650's run-value wrapper refuses. These native shape assertions establish no backend-schema reference conformance and do not replace semantic replay authentication. | Test (TC-1160) |
+| FR-267-AC-33 | Replacing AC-25's refusal locus with TC-3081's imported point reads back with the exact `sourceIdentity`, path and point and absent bytes. Its ordinary native-span control reads back with both byte offsets and no `sourceIdentity`. The same two loci in `filament-outcome/1` diagnostics read back equally. Neither reading derives native source labels from the imported URI. | Test |
+| FR-267-AC-34 | In each document kind, TC-3081's missing imported identity, identity on a byte-bearing span, one-sided byte, null identity, null byte, unequal point endpoints and added native source-pair mutations each refuse at the locus or its defective member. A byte-zero endpoint does not repair an imported point with unavailable bytes. | Test |
 
 ## Dependencies
 

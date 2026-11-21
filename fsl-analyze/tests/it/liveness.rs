@@ -1046,7 +1046,11 @@ fn the_counter_behaviour_is_positions_anchored_by_initialization_then_each_inc_a
     assert_eq!(initial.len(), 1, "one initial state");
     let mut state = initial.remove(0);
     let mut values = vec![value(&state.model, "c")];
-    let mut anchors = vec![state.model.anchor().clone()];
+    let mut anchors = vec![state
+        .model
+        .required_anchor()
+        .expect("an admitted initial anchor")
+        .clone()];
     let mut incs = Vec::new();
     for _ in 0..3 {
         let mut steps = product.successors(&state).expect("expands").successors;
@@ -1059,7 +1063,13 @@ fn the_counter_behaviour_is_positions_anchored_by_initialization_then_each_inc_a
         incs.push(identity);
         state = next;
         values.push(value(&state.model, "c"));
-        anchors.push(state.model.anchor().clone());
+        anchors.push(
+            state
+                .model
+                .required_anchor()
+                .expect("an actual handler anchor")
+                .clone(),
+        );
     }
     assert_eq!(values, [0, 1, 2, 3]);
     assert_eq!(anchors[0].kind, AnchorKind::Initialization);

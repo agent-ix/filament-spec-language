@@ -195,9 +195,23 @@ spellings").
   translation, witness-set step and fairness-enabledness predicates (ADR-018
   LA-2), using no `fsl-analyze` code.
 - **HP-1 reconstruction.** The HP-1 certificate checker SHALL read the
-  checked relation and reconstruct each alias's initial
-  states and every supplied member's successors through its `ModelSystem`,
-  using no retained engine graph. The checker SHALL recompute every edge
+  checked relation and independently reconstruct each alias's complete
+  reachable state set by canonical breadth-first expansion from its initial
+  states through its `ModelSystem`, using no retained engine graph. Each
+  supplied state set SHALL equal that independently reachable set. The
+  producer emits the reachable closure; a closed unreachable superset adds
+  no proof strength, and exact equality lets the checker use the existing
+  model admission and successor primitives without a state-key decoder.
+  When reconstruction completes with missing initial states, the checker SHALL reject
+  `InitialMissing`, first by alias declaration order and then by ascending
+  state-key octets.
+  When all initial membership checks pass, the checker SHALL compare each alias's supplied and reachable sets in alias declaration
+  order, selecting the least key in their symmetric difference by state-key
+  octets.
+  When the selected key is missing from the supplied set, the checker SHALL reject `SuccessorMissing` at that missing key.
+  When the selected key is extra in the supplied set, including a noncanonical or foreign key, the checker SHALL reject `Malformed` at that supplied key. This ordering also
+  applies when missing and extra keys occur together. Every admitted member
+  is therefore independently reached and expanded. The checker SHALL recompute every edge
   independently of the certificate's edge sequences. After closure is
   checked, the checker SHALL compare each supplied execution's complete
   typed edge sequence with the recomputed applicable edges; a missing,
@@ -227,7 +241,8 @@ spellings").
 - **Closure.** Every recomputed successor of every member, canonicalised by
   FR-174's copy-swap rule when `reduction` is set, SHALL be a member;
   otherwise the checker SHALL reject with rule `SuccessorMissing`, naming
-  the member.
+  the member. For HP-1, the exact-set comparison and missing-key locus in
+  "HP-1 reconstruction" apply instead; the temporal product rule is unchanged.
 - **Undefined.** No member's body letters, `μ_U` or `μ_E` SHALL evaluate
   undefined, refused or incomplete; otherwise the checker SHALL reject with
   rule `UndefinedMember`.
@@ -295,7 +310,7 @@ spellings").
 | FR-163-AC-7 | For ADR-023 HC-2 with zero universal variables, a supplied key with an empty universal tuple and its actual witness set retains both on serialization and reading; the empty witness set remains distinct from an absent witness set. No component is added to satisfy a nonempty-array constraint. | Test (TC-646) |
 | FR-163-AC-8 | **RETIRED (staleness check withdrawn).** The certificate carries no `package_id` and the checker compares no package identity. | Test (TC-1198), retired |
 | FR-163-AC-9 | Production order. §8.1's secure `NonInterference` proof run twice writes byte-equal RFC 8785 certificates, whose `closure` keys are ascending, whose components are in FR-126's component order over the self-composed product's canonical breadth-first indices, and whose components each list their states ascending in the closure's key order. The same certificate with two components that no edge joins listed in the other order is still `Accepted`. | Test (TC-646) |
-| FR-163-AC-10 | The HP-1 `Det` certificate of FR-179-AC-1 produced twice has byte-equal RFC 8785 serialization and one subject closure for its repeated alias, with ascending state keys and no automaton key; the independent checker accepts it after evaluating 64 tuples. Removing its initial key rejects `InitialMissing`; removing a noninitial key required as a successor rejects `SuccessorMissing` at the source member; reversing two keys or duplicating one rejects `Malformed` at the first offending state key before recomputation. Each state rejection serializes without an automaton key. | Test |
+| FR-163-AC-10 | The HP-1 `Det` certificate of FR-179-AC-1 produced twice has byte-equal RFC 8785 serialization and one subject closure for its repeated alias, with ascending state keys and no automaton key; the independent checker accepts it after evaluating 64 tuples. Removing its initial key rejects `InitialMissing` at that missing key; removing a noninitial reachable key rejects `SuccessorMissing` at that missing key. Adding an unreachable, foreign or noncanonical key rejects `Malformed` at that key. Initial membership failures precede other set differences; subsequent simultaneous missing and extra keys select the least symmetric-difference key in alias declaration order then state-key octet order. Reversing two keys or duplicating one rejects `Malformed` at the first offending state key before recomputation. Each state rejection serializes without an automaton key. | Test |
 | FR-163-AC-11 | Over two secure-vault model aliases declared `V` then `N` and execution bindings `(y: N::Vault::step, x: V::Vault::step, z: V::Vault::step)`, a relation with body `true` has exactly the subject-closure alias sequence `[V, N]`, with execution entries `[x, z]` and `[y]` respectively, retaining both alias entries even for equal state keys. Each execution contains its complete typed applicable edges and the certificate is accepted. Omitting `N`, duplicating `V`, adding a third alias, reversing the alias entries or removing or altering a supplied execution edge refuses the certificate request with no certificate verdict or proof. | Test |
 | FR-163-AC-12 | FR-163-AC-6's false and undefined tuple rejections serialize the complete labelled edges in execution-binding order. Edges with equal pre-state and arguments but unequal post-states remain distinguishable; edges with equal pre-state, transition and post-state but unequal typed results remain distinguishable. A no-result edge serializes `result: null`, while an edge returning a typed null retains that typed value. Neither tuple acquires an automaton key. | Test |
 | FR-163-AC-13 | Checking FR-179-AC-1's certificate independently with `max_relation_tuples` 63 stops before evaluating tuple 64, naming `MaxRelationTuples`, value 63, count 64 and the complete labelled tuple 64 as its first unpaid tuple; settlement is incomplete with setting `model_check.max_relation_tuples`, no counterexample and the unchanged limit-cause shape, never `CertificateUnchecked` or proved. With 64 it accepts, including when the engine already evaluated its 64 tuples under the same request setting. A second independent check with 64 also accepts. | Test |

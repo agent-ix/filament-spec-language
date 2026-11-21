@@ -35,8 +35,7 @@ use super::footprints::ReadCheck;
 use super::walk::{stop, Applied, Budget, ContractFinding, FindingCase, Row, Selected, Walk};
 use super::{
     handler_anchor, identity_limits, state_document, Application, ClauseInfo, ClauseOutcome,
-    FieldChange, ModelFinding, ModelSimState, ModelSystem, StepEffect, WrittenSlots, BROKEN,
-    EXHAUSTED,
+    FieldChange, ModelFinding, ModelSystem, StepEffect, WrittenSlots, BROKEN, EXHAUSTED,
 };
 use crate::simulation::expansion::ExpansionStop;
 use crate::simulation::footprint::Footprint;
@@ -188,6 +187,7 @@ pub(super) fn apply(
         successors,
         mut enabled,
         mut enabled_transitions,
+        mut recommendations,
         selected_transitions,
         mut charged,
     } = outputs;
@@ -211,6 +211,7 @@ pub(super) fn apply(
             quire_canonical::to_vec(&transition, text_limits()).map_err(|_| stop(BROKEN))?;
         let footprint = walk
             .enforcement
+            .filter(|_| recommendations.is_none())
             .map(|enforcement| {
                 enforcement.footprint_of(system, application, &row.reference, &args, &transition)
             })
@@ -256,6 +257,15 @@ pub(super) fn apply(
                 }
                 continue;
             }
+        }
+
+        if let Some(recommendations) = recommendations.as_deref_mut() {
+            recommendations.push(super::application::RecommendedApplication {
+                operation: application.text.clone(),
+                receiver: row.reference.clone(),
+                arguments: args.into_iter().map(|(_, value)| value).collect(),
+            });
+            continue;
         }
 
         let application_run = Run {
@@ -397,6 +407,8 @@ pub(super) fn precondition_cases(
 /// Where [`apply`] records what one application found: its contract
 /// findings, its successors and, when given, its enabled argument vectors.
 pub(super) struct Outputs<'o> {
+    /// Preconditions-only calls; when present, no post-state is computed.
+    pub(super) recommendations: Option<&'o mut Vec<super::application::RecommendedApplication>>,
     /// The contract findings.
     pub(super) contract: &'o mut Vec<ContractFinding>,
     /// The successors.
@@ -1800,18 +1812,26 @@ impl Run<'_, '_, '_> {
                         .as_ref()
                         .map(|value| text_of(value, self.walk.system.typing()))
                         .transpose()?;
-                    successors.push(Applied {
+                    let successor = |candidate, effect, result| Applied {
                         transition: self.transition.clone(),
-                        state: ModelSimState {
-                            state: candidate,
-                            anchor: handler_anchor(&self.application.text),
-                            reached_by: Some(effect),
-                        },
+                        state: self.walk.state.reached(
+                            candidate,
+                            handler_anchor(&self.application.text),
+                            effect,
+                        ),
                         receiver: self.row.reference.clone(),
                         arguments: self.args.iter().map(|(_, value)| value.clone()).collect(),
                         result,
-                    });
-                    return Ok(());
+                    };
+                    match self.walk.result_policy {
+                        super::walk::ResultPolicy::FirstResult => {
+                            successors.push(successor(candidate, effect, result));
+                            return Ok(());
+                        }
+                        super::walk::ResultPolicy::AllResults => {
+                            successors.push(successor(candidate.clone(), effect.clone(), result));
+                        }
+                    }
                 }
                 Conjunction::False(_) => {}
                 Conjunction::Undecided(undecided) => {

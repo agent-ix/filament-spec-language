@@ -15,7 +15,7 @@ relationships:
 Verify that a snapshot or model-header refusal written as `native-run-result/2`
 carries a `document` locus that the strict reader reads back, and that the
 reader keeps the locus kind set closed. Scope: FR-267-AC-25 to FR-267-AC-27
-and FR-267-AC-29 to FR-267-AC-31. The imported-point vectors also check the
+and FR-267-AC-29, FR-267-AC-33 and FR-267-AC-34. The imported-point vectors also check the
 same locus contract in `filament-outcome/1` diagnostics.
 
 ## Test Procedure

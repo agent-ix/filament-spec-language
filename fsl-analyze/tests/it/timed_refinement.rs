@@ -5,9 +5,10 @@
 
 use filament_exact::{Cancel, Integer, Rational};
 use fsl_analyze::zone_check::{
-    check_free_delay_refinement, check_timed_model, check_timed_refinement, TimedRefinementRefusal,
-    TimedRefinementRequest, TimedRefinementUndecided, TimedSafetyOutcome, ZoneCheckItem,
-    ZoneCheckLimits, ZoneCheckOutcome, ZoneCheckRefusal, ZoneCheckRequest, ZoneUndecided,
+    check_free_delay_refinement, check_timed_model, check_timed_refinement, TimedLivenessHalf,
+    TimedRefinementRefusal, TimedRefinementRequest, TimedRefinementStop, TimedRefinementUndecided,
+    TimedSafetyOutcome, ZoneCheckItem, ZoneCheckLimit, ZoneCheckLimits, ZoneCheckOutcome,
+    ZoneCheckRefusal, ZoneCheckRequest, ZoneStop, ZoneUndecided,
 };
 use fsl_eval::simulation::model::{ModelSystem, TimedSystem};
 use fsl_eval::simulation::Limits;
@@ -365,13 +366,13 @@ fn an_abstract_clock_guard_refutes_and_replays_the_exact_delay() {
     ));
 }
 
-/// FR-900-AC-2 with an unmapped abstract field: which abstract clock guards
-/// and resets apply then depends on the hidden valuation, which the product
-/// does not track, so EN-6 refuses the combination instead of settling the
-/// safety half `proved` over guards it skipped.
+/// FR-900-AC-2 with an unmapped abstract field: the abstract clock guard of
+/// the step the concrete send maps to applies through the hidden candidate's
+/// step rows, so the guard violation is found rather than skipped and the
+/// safety half is not settled `proved`.
 #[trace("TC-2538", "FR-900-AC-2")]
 #[test]
-fn a_timed_abstract_side_with_a_hidden_field_is_refused() {
+fn a_timed_abstract_side_with_a_hidden_field_applies_the_abstract_clock_guard() {
     let concrete = document(&["x"], &[("send", &["inflight"])]);
     let abstract_model = renamed_package(
         &document(&["y"], &[("send", &["inflight"])]),
@@ -390,9 +391,172 @@ fn a_timed_abstract_side_with_a_hidden_field_is_refused() {
         ),
     )
     .unwrap_or_else(|refusals| panic!("{refusals:?}"));
+    let outcome = safety(&world);
+    let TimedSafetyOutcome::Violated { counterexample, .. } = outcome else {
+        panic!("the abstract clock guard refutes the refinement: {outcome:?}");
+    };
+    assert!(matches!(
+        counterexample.refinement.as_ref(),
+        Some(RefinementFailure::AbstractClockGuard { .. })
+    ));
+    assert!(matches!(
+        replay_attempt(&world, &counterexample),
+        Ok(RefinementTraceSettlement::Reproduced { .. })
+    ));
+}
+
+/// FR-899 "Timed subjects", the narrowed refusal: with `any` the concrete
+/// send is matched by both a stutter and the abstract `send`, so the hidden
+/// candidate rows mix a step that is guarded with a stutter that is not. The
+/// product keeps one abstract clock valuation, so it refuses rather than
+/// follow either row.
+#[trace("TC-2538", "FR-899")]
+#[test]
+fn a_hidden_candidate_that_stutters_while_another_steps_is_refused() {
+    let concrete = document(&["x"], &[("send", &["inflight"])]);
+    let abstract_model = renamed_package(
+        &document(&["y"], &[("send", &["inflight"])]),
+        "test/abstract",
+    );
+    let world = refining(
+        &abstract_model,
+        &concrete,
+        &format!(
+            "{DENSE}time A dense unit ms;\n\
+             post ASend using v on A::Call::send {{ self.inflight = false }}\n\
+             pre ASendable using v on A::Call::send {{ self.y >= 1 ms }}\n\
+             pre MSend using v on M::Call::send {{ self.x >= 0 ms }}\n\
+             post MSent using v on M::Call::send {{ self.inflight }}\n{}",
+            refinement("false")
+                .replace(" late = self.late;", "")
+                .replace("-> A::Call::send(self)", "-> any")
+        ),
+    )
+    .unwrap_or_else(|refusals| panic!("{refusals:?}"));
     let refused = check_timed_refinement(safety_request(&world), &Cancel::new())
         .err()
-        .expect("the hidden field under a timed abstract side is refused");
+        .expect("mixed stutter and step rows are refused");
+    assert!(
+        matches!(
+            refused,
+            TimedRefinementRefusal::Zone(ZoneCheckRefusal::HiddenFieldTimedAbstract)
+        ),
+        "{refused:?}"
+    );
+}
+
+/// The refinement of a timed `A` with a hidden `late` by `M`, requiring weak
+/// fairness of the abstract `send`; `guard` is `M`'s `send` guard.
+fn timed_hidden_fair(guard: &str) -> Refining {
+    let concrete = document(&["x"], &[("send", &["inflight"])]);
+    let abstract_model = renamed_package(
+        &document(&["y"], &[("send", &["inflight"])]),
+        "test/abstract",
+    );
+    refining(
+        &abstract_model,
+        &concrete,
+        &format!(
+            "{DENSE}time A dense unit ms;\n\
+             post ASend using v on A::Call::send {{ self.inflight }}\n\
+             pre ASendable using v on A::Call::send {{ self.y >= 1 ms }}\n\
+             pre MSend using v on M::Call::send {{ {guard} }}\n\
+             post MSent using v on M::Call::send {{ self.inflight }}\n{}",
+            refinement("self.inflight")
+                .replace(" late = self.late;", "")
+                .replace(
+                    "step M::Call::send -> A::Call::send(self);",
+                    "step M::Call::send -> A::Call::send(self);\nensure fair weak A::Call::send;"
+                )
+        ),
+    )
+    .unwrap_or_else(|refusals| panic!("{refusals:?}"))
+}
+
+/// A timed abstract side with a hidden field and an abstract fairness
+/// obligation has no liveness half yet: the holding safety half is decided
+/// and the liveness half is reported refused with its own typed refusal,
+/// rather than answered from untimed enabledness.
+#[trace("TC-2536", "FR-899")]
+#[test]
+fn the_liveness_half_of_a_timed_abstract_hidden_field_is_refused() {
+    let world = timed_hidden_fair("self.x >= 1 ms");
+    let outcome = check_timed_refinement(safety_request(&world), &Cancel::new())
+        .expect("the safety half is decided");
+    assert!(
+        matches!(outcome.safety, TimedSafetyOutcome::Holds { .. }),
+        "{:?}",
+        outcome.safety
+    );
+    assert!(
+        matches!(
+            outcome.liveness,
+            Some(TimedLivenessHalf::Refused(
+                ZoneCheckRefusal::HiddenFieldTimedAbstractLiveness
+            ))
+        ),
+        "{:?}",
+        outcome.liveness
+    );
+}
+
+/// The same refinement whose concrete send is too early for the abstract
+/// guard: the violated safety half is still reported, with no liveness half.
+#[trace("TC-2536", "FR-899")]
+#[test]
+fn a_violated_safety_half_is_reported_despite_the_refused_liveness_half() {
+    let world = timed_hidden_fair("self.x >= 0 ms");
+    let outcome = check_timed_refinement(safety_request(&world), &Cancel::new())
+        .expect("the safety half is decided");
+    let TimedSafetyOutcome::Violated { counterexample, .. } = outcome.safety else {
+        panic!("the abstract clock guard refutes: {:?}", outcome.safety);
+    };
+    assert!(matches!(
+        counterexample.refinement.as_ref(),
+        Some(RefinementFailure::AbstractClockGuard { .. })
+    ));
+    assert!(outcome.liveness.is_none(), "{:?}", outcome.liveness);
+}
+
+/// FR-899 "Timed subjects": `h` is hidden and free at the initial state (two initial
+/// candidates, `h` false and true), and
+/// the abstract time invariant `when self.h { y <= 0 }` reads differently
+/// for them. The product keeps one abstract clock valuation, so it refuses
+/// instead of intersecting the invariants.
+#[trace("TC-2538", "FR-899")]
+#[test]
+fn hidden_candidates_that_disagree_on_the_abstract_time_invariant_are_refused() {
+    let concrete = document(&["x"], &[("send", &["inflight"])]);
+    let mut abstract_document: serde_json::Value =
+        serde_json::from_slice(&document(&["y"], &[("send", &["inflight"])]))
+            .expect("abstract package JSON");
+    abstract_document["types"][1]["fields"]
+        .as_array_mut()
+        .expect("abstract object fields")
+        .push(crate::timed_world::wire_field(
+            "h",
+            "ix://filament/native/Boolean",
+        ));
+    let abstract_document =
+        renamed_package(&abstract_document.to_string().into_bytes(), "test/abstract");
+    let world = refining(
+        &abstract_document,
+        &concrete,
+        &format!(
+            "{DENSE}time A dense unit ms;\n\
+             post ASend using v on A::Call::send {{ self.inflight }}\n\
+             pre ASendable using v on A::Call::send {{ self.y >= 1 ms }}\n\
+             time invariant Trap when {{ self.h }} {{ self.y <= 0 ms }}\n\
+             pre MSend using v on M::Call::send {{ self.x >= 1 ms }}\n\
+             post MSent using v on M::Call::send {{ self.inflight }}\n{}",
+            refinement("self.inflight").replace(" late = self.late;", "")
+        ),
+    )
+    .unwrap_or_else(|refusals| panic!("{refusals:?}"))
+    .with_abstract_hidden_initials(&abstract_document, &[false, true]);
+    let refused = check_timed_refinement(safety_request(&world), &Cancel::new())
+        .err()
+        .expect("candidates that disagree on the invariant are refused");
     assert!(
         matches!(
             refused,
@@ -403,10 +567,11 @@ fn a_timed_abstract_side_with_a_hidden_field_is_refused() {
 }
 
 /// The default timed profile supplies the selector bound for concrete
-/// ClockRef data before refinement's independent hidden-field refusal.
+/// ClockRef data, and a hidden abstract field no longer refuses the check.
 #[trace("TC-3084", "FR-1040-AC-8")]
 #[test]
 fn clock_reference_selectors_use_the_timed_profile_before_refinement_gates() {
+    const ZONE_BYTES: u64 = 4 << 20;
     let mut concrete: Json =
         serde_json::from_slice(&document(&["x", "q"], &[("send", &["inflight", "r"])]))
             .expect("JSON");
@@ -473,14 +638,25 @@ fn clock_reference_selectors_use_the_timed_profile_before_refinement_gates() {
     );
     let mut request = safety_request(&world);
     request.concrete = concrete_request;
-    let refused = check_timed_refinement(request, &Cancel::new())
-        .expect_err("the existing hidden abstract field gate still applies");
+    // The hidden abstract field no longer refuses, and the timed
+    // constructor's default selector bound is applied (no `RequiresBound`
+    // refusal). The product of this fixture grows past any small zone budget,
+    // so a low explicit limit makes the run end at exactly that limit.
+    request.limits.max_zone_bytes = ZONE_BYTES;
+    let outcome = check_timed_refinement(request, &Cancel::new())
+        .expect("the hidden abstract field and the selector bound are both admitted");
     assert!(
         matches!(
-            refused,
-            TimedRefinementRefusal::Zone(ZoneCheckRefusal::HiddenFieldTimedAbstract)
+            &outcome.safety,
+            TimedSafetyOutcome::Stopped {
+                cause: TimedRefinementStop::Zone(ZoneStop::LimitReached(
+                    ZoneCheckLimit::MaxZoneBytes(ZONE_BYTES)
+                )),
+                ..
+            }
         ),
-        "the timed constructor's default bound precedes this gate: {refused:?}"
+        "the run stops at the explicit zone budget: {:?}",
+        outcome.safety
     );
 }
 

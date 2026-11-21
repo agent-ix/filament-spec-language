@@ -42,6 +42,24 @@ pub(crate) struct Applications {
     pub(crate) findings: Vec<ModelFinding>,
 }
 
+/// One operation application admitted by its preconditions alone.
+pub(crate) struct RecommendedApplication {
+    /// The operation's canonical declaration identity.
+    pub(crate) operation: String,
+    /// The receiver of the recommended call.
+    pub(crate) receiver: ObjectReference,
+    /// Arguments in declared parameter order.
+    pub(crate) arguments: Vec<Value>,
+}
+
+/// Preconditions-only applications and their undecided contract findings.
+pub(crate) struct Recommendations {
+    /// Every application whose selected precondition holds.
+    pub(crate) applications: Vec<RecommendedApplication>,
+    /// Findings from preconditions that decided no Boolean.
+    pub(crate) findings: Vec<ModelFinding>,
+}
+
 /// ADR-027 PD-4: how the first application of an attempt, in canonical
 /// order, reads its selected preconditions.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -222,6 +240,47 @@ impl<'a> ModelSystem<'a> {
         self.apply_operation_matching(observed, operation, select, None, budget)
     }
 
+    /// Enumerate calls using the ordinary operation loop, stopping after its
+    /// selected preconditions, before any frame or post-state is computed.
+    pub(crate) fn recommend_operation(
+        &self,
+        observed: &ModelSimState,
+        operation: &OperationRef<'_>,
+        select: &dyn Fn(NodeKey) -> bool,
+        budget: &mut Budget,
+    ) -> Result<Recommendations, ExpansionStop> {
+        let walk = walk_of(self, observed, None)?;
+        let mut contract = Vec::new();
+        let mut successors = Vec::new();
+        let mut applications = Vec::new();
+        for row in &walk.rows {
+            let Some(application) = self.application_at(row, operation) else {
+                continue;
+            };
+            let clauses = walk.selected(row, application, select);
+            frames::apply(
+                &walk,
+                row,
+                application,
+                &clauses,
+                budget,
+                frames::Outputs {
+                    contract: &mut contract,
+                    successors: &mut successors,
+                    recommendations: Some(&mut applications),
+                    enabled: None,
+                    enabled_transitions: None,
+                    selected_transitions: None,
+                    charged: None,
+                },
+            )?;
+        }
+        Ok(Recommendations {
+            applications,
+            findings: sorted_contract_findings(contract),
+        })
+    }
+
     /// As [`Self::apply_operation`], checking only candidate identities in
     /// `selected_transitions` when supplied. The full argument domain is
     /// still enumerated and charged against `budget`.
@@ -265,6 +324,7 @@ impl<'a> ModelSystem<'a> {
                 frames::Outputs {
                     contract: &mut contract,
                     successors: &mut successors,
+                    recommendations: None,
                     enabled: None,
                     enabled_transitions: None,
                     selected_transitions,
@@ -307,6 +367,7 @@ impl<'a> ModelSystem<'a> {
                 frames::Outputs {
                     contract: &mut contract,
                     successors: &mut successors,
+                    recommendations: None,
                     enabled: None,
                     enabled_transitions: Some(&mut transitions),
                     selected_transitions,
@@ -547,7 +608,7 @@ impl<'a> ModelSystem<'a> {
                 quire_canonical::Limits::new(super::identity_limits().input_bytes),
             )
             .ok()
-            .map(|bytes| (bytes, format!("{:?}", state.anchor)));
+            .map(|bytes| (bytes, format!("{:?}", state.anchor())));
         Observed {
             state,
             identity,
@@ -567,6 +628,7 @@ impl<'a> ModelSystem<'a> {
     ) -> Result<Walk<'s, 'a>, ExpansionStop> {
         match self.remembered_observation(observed) {
             Some(observation) => Ok(Walk {
+                result_policy: super::walk::ResultPolicy::FirstResult,
                 key_policy: None,
                 cancel: None,
                 system: self,
@@ -625,7 +687,7 @@ impl<'a> ModelSystem<'a> {
         let Some(departure) = departure(identities.base, &state.state) else {
             return self.observed(state);
         };
-        let key = (format!("{:?}", state.anchor), departure);
+        let key = (format!("{:?}", state.anchor()), departure);
         if let Some(identity) = identities.known.borrow().get(&key) {
             return Observed {
                 state,

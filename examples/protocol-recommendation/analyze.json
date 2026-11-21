@@ -1,0 +1,15 @@
+{
+  "format": "native-analyze/1",
+  "request": {
+    "program": {"source": {"file": "workflow.native", "authority": "example", "identity": "recommendation", "document": "Recommendation", "formal_revision": 1}},
+    "models": [{"format": "semantic-ir/2.0.0", "source": {"file": "../../fsl-command/tests/fixtures/cli-contract/counter.semantic-ir.json", "authority": "example", "identity": "counter-model", "document": "Counter", "formal_revision": 1}}],
+    "documents": [{"file": "start.json"}],
+    "subject": {
+      "initial_states": [{"authority": "example", "identity": "recommendation-start"}],
+      "universes": [{"authority": "example", "identity": "recommendation-start"}],
+      "protocol": {"protocol": "Review", "over": {"reference": {"population": "ix://test/counter/counters", "key": "counter"}},
+        "roles": {"Auditor": {"type": "model-binding", "selection": "test/counter"}, "Seller": {"type": "model-binding", "selection": "test/counter"}}}
+    },
+    "items": [{"claim": "Review", "kind": "global-conformance", "temporal": {"item_kind": "deadlock-freedom"}}]
+  }
+}

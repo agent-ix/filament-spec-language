@@ -107,6 +107,13 @@ qualify:
 	@test -n "$(CORPUS)" || { echo "usage: make qualify CORPUS=<dir>" >&2; exit 2; }
 	cargo run --package xtask -- qualify --corpus "$(CORPUS)"
 
+# This standalone check needs the caller-selected orchestrating driver.
+# It is intentionally absent from ci and all conformance lanes.
+.PHONY: backend-agreement
+backend-agreement:
+	@test -n "$(CORPUS)" || { echo "usage: FSL=/absolute/path/fsl make backend-agreement CORPUS=<dir>" >&2; exit 2; }
+	cargo run --package xtask -- backend-agreement --corpus "$(CORPUS)"
+
 # FR-080-AC-2: denies the inventory/linkme/ctor crates outright
 # (deny.toml), so a future contributor cannot repopulate the registry through
 # a link-time/plugin-discovery mechanism instead of the ordinary value FR-075

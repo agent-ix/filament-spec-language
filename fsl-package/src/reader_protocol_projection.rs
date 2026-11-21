@@ -2547,14 +2547,33 @@ impl<'wire> ReaderBuilder<'_, 'wire> {
                 let ValueType::Rational(domain) = &value_type else {
                     return Err(fault("reader-rational-division-has-rational-result").into());
                 };
-                Ok((
+                // The catalog identity is shared by integer operands promoted
+                // to a Rational result and by Rational operands; the operand
+                // type selects the node.
+                let operand_types = [*left, *right].map(|operand| &self.nodes[operand].value_type);
+                let kind = if operand_types
+                    .iter()
+                    .all(|ty| matches!(ty, ValueType::Integer | ValueType::Int(_)))
+                {
                     NodeKind::Divide {
                         left: *left,
                         right: *right,
                         domain: domain.clone(),
-                    },
-                    children,
-                ))
+                    }
+                } else if operand_types
+                    .iter()
+                    .all(|ty| matches!(ty, ValueType::Rational(_)))
+                {
+                    NodeKind::Rational {
+                        operator: ArithmeticOperator::Divide,
+                        left: *left,
+                        right: *right,
+                        domain: domain.clone(),
+                    }
+                } else {
+                    return Err(fault("reader-rational-division-operands-share-a-type").into());
+                };
+                Ok((kind, children))
             }
             Some(
                 "filament.op.rational.add"
@@ -3606,7 +3625,8 @@ impl<'wire> ReaderBuilder<'_, 'wire> {
             {
                 ValueType::String
             }
-            Err(_) => return Err(unsupported()),
+            Err(error) => bounded_rational_literal_type(error, literal.type_id, self.index)
+                .ok_or_else(unsupported)?,
         };
         Ok(self.push(ReaderProjectedNode::leaf(
             NodeKind::Literal(CheckedLiteral(value)),
@@ -4319,14 +4339,60 @@ fn literal_value(
         Literal::Timestamp(value) => {
             Value::Timestamp(Timestamp::from_canonical_text(&value.to_string()).ok()?)
         }
+        Literal::Enum(case) => {
+            let projection = index.projections.get(type_id)?.as_ref().ok()?;
+            let ValueType::Enum(shape) = projection.value_type() else {
+                return None;
+            };
+            let (rank, variant) = shape
+                .variants()
+                .enumerate()
+                .find(|(_, variant)| variant.case() == case)?;
+            Value::Enum(filament_exact::EnumMember::new(
+                variant.clone(),
+                u32::try_from(rank).ok()?,
+            ))
+        }
         _ => return None,
     })
+}
+
+/// The `Rational[..]` type of a literal declared with a bounded
+/// `rational_range`. The exact-type projection of that declaration fails at its
+/// semantic type, the bare `scalar_type/rational`; the bounds are read from
+/// the declaration itself, never from that scalar.
+fn bounded_rational_literal_type(
+    error: &filament_contract_model::ExactTypeProjectionError,
+    type_id: &CheckedNodeId,
+    index: &WireIndex<'_>,
+) -> Option<ValueType> {
+    if error.code != filament_contract_model::ExactTypeProjectionErrorCode::UnsupportedExactType
+        || error.form.as_deref() != Some("scalar_type/rational")
+    {
+        return None;
+    }
+    let range = index.node(type_id)?;
+    if range.node_tag.as_ref() != "bounded_domain"
+        || range.semantic_form.as_ref() != "rational_range"
+        || error.at.as_deref() != Some(&range.semantic_type)
+        || !has_form(
+            index.node(&range.semantic_type)?,
+            WireTag::ScalarType,
+            WireForm::Rational,
+        )
+    {
+        return None;
+    }
+    rational_range_type(range).ok()
 }
 
 fn project_literal_type(type_id: &CheckedNodeId, index: &WireIndex<'_>) -> Option<ValueType> {
     match index.projections.get(type_id)?.as_ref() {
         Ok(projection) => Some(projection.value_type().clone()),
         Err(error) => {
+            if let Some(value_type) = bounded_rational_literal_type(error, type_id, index) {
+                return Some(value_type);
+            }
             if !matches!(
                 error.code,
                 filament_contract_model::ExactTypeProjectionErrorCode::UnsupportedExactType

@@ -56,7 +56,7 @@ pub(super) struct Attempt<'a> {
     pub(super) binds: Option<usize>,
 }
 
-/// One checked recommendation's operation call and optional result filter.
+/// One checked recommendation's operation call and result-free constraint.
 pub(super) struct Recommendation<'a> {
     pub(super) role: String,
     pub(super) declaring: EffectiveId,
@@ -64,7 +64,6 @@ pub(super) struct Recommendation<'a> {
     pub(super) receiver: EffectiveId,
     pub(super) contracts: std::sync::Arc<BTreeSet<NodeKey>>,
     pub(super) constraint: Option<&'a CheckedBody>,
-    pub(super) binds: Option<usize>,
 }
 
 /// One `parallel`'s join (ADR-027 ST-6, ST-7).
@@ -658,12 +657,6 @@ impl<'a> Program<'a> {
         let mut recommendations = BTreeMap::new();
         for recommendation in &protocol.recommendations {
             let node = ProtocolNodeId(recommendation.declaration);
-            let binder = binder_of.get(&node).copied();
-            let binds = binder.filter(|slot| {
-                protocol.slots.binders.get(*slot).is_some_and(|binder| {
-                    recommendation.operation.declaration.result() == Some(&binder.value_type)
-                })
-            });
             recommendations.insert(
                 node,
                 Recommendation {
@@ -675,7 +668,6 @@ impl<'a> Program<'a> {
                         recommendation.contracts.iter().cloned().collect(),
                     ),
                     constraint: body_of(node),
-                    binds,
                 },
             );
         }
@@ -1348,7 +1340,28 @@ impl<'a> Program<'a> {
             spans: BTreeMap::new(),
             reader_positions: Vec::new(),
             loop_of: BTreeMap::new(),
-            replicated: Vec::new(),
+            replicated: package
+                .roles
+                .iter()
+                .filter(|role| role.replicated)
+                .map(|role| {
+                    let owns = package
+                        .controls
+                        .values()
+                        .filter(|control| control.role.as_ref() == Some(&role.node))
+                        .map(|control| control.id)
+                        .collect();
+                    Ok(Replicated {
+                        name: role.name.clone(),
+                        object: role.model_identity.clone(),
+                        max: role.maximum.ok_or_else(|| {
+                            ProtocolRefusal::fault("a-package-replicated-role-has-a-maximum")
+                        })?,
+                        lifetime: Lifetime::Workflow,
+                        owns,
+                    })
+                })
+                .collect::<Result<Vec<_>, ProtocolRefusal>>()?,
             acting: BTreeMap::new(),
             activation: None,
             activation_slot: None,
@@ -1356,6 +1369,11 @@ impl<'a> Program<'a> {
             captures,
             capture_slots,
         };
+        for (index, role) in program.replicated.iter().enumerate() {
+            for node in &role.owns {
+                program.acting.insert(*node, index);
+            }
+        }
         program.spans = program.spans()?;
         program.loop_of = program.enclosing_loops()?;
         program.reader_positions = program
