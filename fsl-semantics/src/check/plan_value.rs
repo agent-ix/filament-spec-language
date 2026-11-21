@@ -180,7 +180,6 @@ pub(crate) fn declare(
     named: &NamedScope,
     form: &fsl_forms::SynthesisForm,
     grammar: &EffectiveId,
-    lengths: &ValueType,
     location: &Location,
 ) -> Result<CheckedPlan, CheckRefusal> {
     let types = scope.types();
@@ -357,7 +356,7 @@ pub(crate) fn declare(
         plan.clone(),
         "plan",
         CompositeShape::Record(vec![
-            FieldDeclaration::new("length", lengths.clone(), Presence::Required),
+            FieldDeclaration::new("length", ValueType::Integer, Presence::Required),
             FieldDeclaration::new(
                 "final",
                 ValueType::Composite(state.clone()),
