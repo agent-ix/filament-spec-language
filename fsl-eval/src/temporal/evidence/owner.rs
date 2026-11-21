@@ -189,12 +189,13 @@ fn admit_defined(
             .get(source_index)
             .ok_or_else(|| fault("supplied-index-names-a-request-position"))?;
         let event_time_nanos = scaled_nanos(observed.stamp, &time_factor, position)?;
-        // The owner now admits an unrecorded ingestion instant. Absence is
-        // never promoted to an asserted arrival or an ordering premise.
-        let ingestion_time_nanos = position
-            .arrival
-            .map(|arrival| scaled_nanos(arrival, &time_factor, position))
-            .transpose()?;
+        // FR-944-AC-8 interim rule (QSL-2524): a position with no arrival
+        // carries its event time as a placeholder ingestion instant; it is
+        // never reported and no owner answer that depends on it is read.
+        let ingestion_time_nanos = Some(match position.arrival {
+            Some(arrival) => scaled_nanos(arrival, &time_factor, position)?,
+            None => event_time_nanos,
+        });
         let anchor = anchor_of(
             clock,
             observed.stamp,
@@ -273,7 +274,7 @@ fn admit_defined(
     required.dedup();
     let membership = population::derive_membership(&required, owner_limits)
         .map_err(|error| owner_fault(error.code().as_str(), error.detail()))?;
-    let range = clock_range(clock, &anchors, &time_factor)?;
+    let range = clock_range(clock, &anchors)?;
     let member_by_identity: BTreeMap<Identity, Anchor> = records
         .iter()
         .map(|record| (record.identity.clone(), record.anchor))
@@ -841,11 +842,7 @@ fn hex(bytes: &[u8]) -> String {
 }
 
 fn clock_unit(clock: &ClockConfiguration) -> &str {
-    match clock {
-        ClockConfiguration::EventPosition { .. } => "position",
-        ClockConfiguration::FixedSample { unit, .. } | ClockConfiguration::Timed { unit } => unit,
-        ClockConfiguration::TimestampedEvent { timestamp_unit } => timestamp_unit,
-    }
+    super::package::clock_time_unit(clock).unwrap_or("position")
 }
 
 fn nanos_per_tick(
@@ -958,11 +955,7 @@ fn scaled_clock_number(
         .map_err(|_| unrepresentable(position, "clock_number"))
 }
 
-fn clock_range(
-    clock: &ClockConfiguration,
-    anchors: &[Anchor],
-    time_factor: &filament_exact::Rational,
-) -> Result<ClockRange, CallFailure> {
+fn clock_range(clock: &ClockConfiguration, anchors: &[Anchor]) -> Result<ClockRange, CallFailure> {
     let first = anchors
         .first()
         .copied()
@@ -992,7 +985,7 @@ fn clock_range(
                     .ok_or_else(|| fault("clock-range-fits"))?,
             })
         }
-        (ClockConfiguration::FixedSample { epoch, period, .. }, Anchor::FixedSample { .. }) => {
+        (ClockConfiguration::FixedSample { .. }, Anchor::FixedSample { .. }) => {
             let min = anchors
                 .iter()
                 .filter_map(|anchor| match anchor {
@@ -1020,7 +1013,6 @@ fn clock_range(
                     _ => None,
                 })
                 .ok_or_else(|| fault("fixed-sample-clock-has-anchor"))?;
-            let _ = (epoch, period, time_factor);
             Ok(ClockRange::FixedSample {
                 start: min,
                 end_exclusive: max
@@ -1056,7 +1048,6 @@ fn clock_range(
             if exclusive <= min {
                 return Err(fault("timestamp-clock-range-is-nonempty"));
             }
-            let _ = time_factor;
             Ok(ClockRange::Timestamp {
                 start_nanos: min,
                 end_nanos: exclusive,
@@ -1367,7 +1358,7 @@ mod tests {
 
     #[test]
     #[ix_trace_rs::trace("TC-3036", "FR-944-AC-8")]
-    fn recorded_arrivals_are_scaled_and_absence_is_not_an_asserted_instant() {
+    fn recorded_arrivals_are_scaled_and_absence_takes_the_event_time_as_the_interim_instant() {
         let mut observed = position("arrival", 3, Valuation::True);
         observed.arrival = Some(8);
         let owner = admitted(&[observed], ClockCover::Exact, false).expect("recorded arrival");
@@ -1381,7 +1372,10 @@ mod tests {
             false,
         )
         .expect("placeholder arrival");
-        assert_eq!(owner.qualified.records()[0].ingestion_time_nanos, None);
+        assert_eq!(
+            owner.qualified.records()[0].ingestion_time_nanos,
+            Some(3_000_000)
+        );
     }
 
     #[test]
@@ -1660,7 +1654,7 @@ mod tests {
     }
 
     #[test]
-    #[ix_trace_rs::trace("TC-2624", "FR-944-AC-16", "FR-944-AC-4")]
+    #[ix_trace_rs::trace("TC-2624", "FR-944-AC-16")]
     fn completeness_revision_vectors_keep_boundary_and_fact_regressions_distinct() {
         use crate::temporal::ProgressCompleteness;
         use filament_observation::authority::completeness as owner_completeness;

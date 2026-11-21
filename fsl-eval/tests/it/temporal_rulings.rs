@@ -10,10 +10,9 @@ use filament_eval::CallFailure;
 use filament_exact::{Meter, ScalarLimits};
 use fsl_eval::temporal::evidence::{
     evaluate_temporal_evidence, ActivationState, ActivationStop, CaptureFact, CapturedValue,
-    Completeness, Disposition, Evicted, EvidenceCounter, EvidenceIncomplete, EvidenceLedger,
-    EvidenceRequest, ExecutionDisposition, FaultKind, FaultSubject, Indeterminate, InstanceState,
-    NonValueKind, Payload, Receipt, Relation, SubjectOccurrence, TemporalEvidenceLimits,
-    TriggerEvidence, TriggerRecord, TriggerScope, Truth, UnknownKind,
+    Evicted, EvidenceCounter, EvidenceIncomplete, EvidenceLedger, EvidenceRequest,
+    ExecutionDisposition, FaultKind, FaultSubject, Indeterminate, InstanceState, NonValueKind,
+    Payload, Receipt, Relation, SubjectOccurrence, TemporalEvidenceLimits, TriggerEvidence, Truth,
 };
 use fsl_eval::temporal::{ProgressClosure, ProgressCompleteness, Valuation};
 use fsl_semantics::check::SCALAR_LIMITS_UNLIMITED;
@@ -311,47 +310,47 @@ fn one_evicted_visit_is_charged_per_hit() {
 #[test]
 fn execution_is_carried_into_unknown_and_changes_nothing_else() {
     let (env, p) = each();
-    let with = |execution, closure, evidence, record| {
-        let mut one = input(Vec::new());
+    let subject = env.subject(&[]);
+    // The scope with no instance is the owner's activation view; the call
+    // carries the execution disposition beside it.
+    let with = |execution, closure, evidence| {
+        let mut one = request(
+            &env,
+            (0..3)
+                .map(|i| position(i, &[(p, Valuation::True)]))
+                .collect(),
+        );
         one.execution = execution;
-        one.scope = TriggerScope {
-            closure,
-            evidence,
-            record,
-        };
-        activated(&env, one).disposition
+        one.trigger_scope = closure;
+        one.trigger_evidence = evidence;
+        let result = call(&env, &subject, &one).expect("a result");
+        assert_eq!(result.execution, execution);
+        (
+            result.activation,
+            result.non_value.map(|non_value| non_value.code),
+        )
     };
     for execution in [
         ExecutionDisposition::Completed,
         ExecutionDisposition::Failed,
     ] {
-        for (evidence, kind) in [
-            (TriggerEvidence::Admitted, UnknownKind::Open),
-            (TriggerEvidence::Missing, UnknownKind::Missing),
-            (TriggerEvidence::Refused, UnknownKind::Refused),
+        for (evidence, code) in [
+            (TriggerEvidence::Admitted, "trigger-scope-open"),
+            (TriggerEvidence::Missing, "trigger-evidence-missing"),
+            (TriggerEvidence::Refused, "trigger-evidence-refused"),
         ] {
             assert_eq!(
-                with(
-                    execution,
-                    ProgressClosure::Open,
-                    evidence,
-                    TriggerRecord::Complete
-                ),
-                Disposition::Unknown {
-                    kind,
-                    completeness: Completeness::Complete,
-                    execution
-                }
+                with(execution, ProgressClosure::Open, evidence),
+                (ActivationState::Unknown, Some(code))
             );
         }
         assert_eq!(
             with(
                 execution,
                 ProgressClosure::Closed,
-                TriggerEvidence::Admitted,
-                TriggerRecord::Complete
+                TriggerEvidence::Admitted
             ),
-            Disposition::Inactive
+            (ActivationState::Inactive, Some("no-trigger-admitted"))
         );
     }
     // Through the call: Unknown carries it; an admitted delivery does not

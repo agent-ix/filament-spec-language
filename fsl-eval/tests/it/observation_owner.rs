@@ -331,7 +331,7 @@ fn observation_producers_are_caller_owned_without_global_storage() {
 }
 
 #[test]
-#[trace("TC-2624", "FR-944-AC-14", "FR-944-AC-3")]
+#[trace("TC-2624", "FR-944-AC-14")]
 fn evidence_calls_consume_optional_activation_views_for_scopes_and_instances() {
     use crate::temporal_activation as fixture;
     use fsl_eval::temporal::evidence::{ActivationState, NonValueKind, TriggerEvidence, Truth};

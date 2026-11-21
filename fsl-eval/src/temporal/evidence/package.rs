@@ -150,29 +150,40 @@ struct SourceCheck<'p> {
     clauses: Vec<TemporalClauseRef>,
 }
 
+/// The time unit a clock counts in; none for an event-position clock, which
+/// counts positions.
+pub(super) fn clock_time_unit(clock: &fsl_package::ClockConfiguration) -> Option<&str> {
+    match clock {
+        fsl_package::ClockConfiguration::EventPosition { .. } => None,
+        fsl_package::ClockConfiguration::FixedSample { unit, .. }
+        | fsl_package::ClockConfiguration::Timed { unit } => Some(unit),
+        fsl_package::ClockConfiguration::TimestampedEvent { timestamp_unit } => {
+            Some(timestamp_unit)
+        }
+    }
+}
+
 fn collect_time_unit_scales(
     rows: &PackageRows,
     source: Option<&SourceCheck<'_>>,
+    bare: Option<&BarePackage<'_>>,
 ) -> BTreeMap<Box<str>, filament_exact::Rational> {
     let mut scales = BTreeMap::new();
     for binding in &rows.bindings {
-        let unit = match &binding.clock {
-            fsl_package::ClockConfiguration::EventPosition { .. } => continue,
-            fsl_package::ClockConfiguration::FixedSample { unit, .. }
-            | fsl_package::ClockConfiguration::Timed { unit } => unit.as_ref(),
-            fsl_package::ClockConfiguration::TimestampedEvent { timestamp_unit } => {
-                timestamp_unit.as_ref()
-            }
+        let Some(unit) = clock_time_unit(&binding.clock) else {
+            continue;
         };
-        let scale = source.and_then(|source| {
-            source
+        let scale = match (source, bare) {
+            (Some(source), _) => source
                 .read
                 .source()
                 .graph()
                 .time_unit_scale(unit)
                 .ok()
-                .cloned()
-        });
+                .cloned(),
+            (None, Some(bare)) => bare.time_unit_scale(unit),
+            (None, None) => None,
+        };
         if let Some(scale) = scale {
             scales.insert(unit.into(), scale);
         }
@@ -341,12 +352,13 @@ impl<'p> EvidencePackage<'p> {
                 budget,
             )?)
         };
+        let time_unit_scales = collect_time_unit_scales(&rows, None, Some(bare));
         Ok(Self::assemble(
             bare.package(),
             bare.canonical_bytes(),
             None,
             projections,
-            BTreeMap::new(),
+            time_unit_scales,
             rows,
         ))
     }
@@ -375,7 +387,7 @@ impl<'p> EvidencePackage<'p> {
             Some(Err(_)) | None => SelectedExactIdentities::empty(),
         };
         let projections = Self::project_captures(package, &rows, &identities, budget)?;
-        let time_unit_scales = collect_time_unit_scales(&rows, source.as_ref());
+        let time_unit_scales = collect_time_unit_scales(&rows, source.as_ref(), None);
         Ok(Self::assemble(
             package,
             canonical_package_bytes,
@@ -628,14 +640,7 @@ impl<'p> EvidencePackage<'p> {
         );
         let key = view.declaration_key().ok_or_else(unresolved)?;
         let time_unit_scale = chosen.clock.and_then(|clock| {
-            let unit = match &clock.clock {
-                fsl_package::ClockConfiguration::EventPosition { .. } => return None,
-                fsl_package::ClockConfiguration::FixedSample { unit, .. }
-                | fsl_package::ClockConfiguration::Timed { unit } => unit.as_ref(),
-                fsl_package::ClockConfiguration::TimestampedEvent { timestamp_unit } => {
-                    timestamp_unit.as_ref()
-                }
-            };
+            let unit = clock_time_unit(&clock.clock)?;
             self.time_unit_scales.get(unit).cloned()
         });
         Ok(EvidenceSubject {
