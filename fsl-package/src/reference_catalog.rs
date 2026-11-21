@@ -430,8 +430,10 @@ impl<'a> ReferenceCatalog<'a> {
     pub fn from_checked_model(
         source: &'a CheckedPackage,
         model: &'a StateModel,
-        budget: &mut NativeJoinBudget,
+        budget: &mut dyn filament_exact::IntegerDecimalBudget,
     ) -> Result<Self, ReferenceCatalogError> {
+        let mut charged = CoreCatalogBudget(budget);
+        let budget: &mut dyn CatalogBudget = &mut charged;
         let mut declarations = Vec::new();
         for row in source.graph().selected_exact_declaration_rows() {
             work(budget, 1)?;

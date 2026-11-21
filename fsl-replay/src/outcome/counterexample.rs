@@ -25,6 +25,8 @@ use crate::model_check::counterexample::{
 };
 use crate::refinement::{RefinementFailure, StepRejection};
 
+mod scoped;
+
 /// Why a counterexample has no wire spelling here.
 #[derive(Clone, Debug, Eq, PartialEq, thiserror::Error)]
 pub enum CounterexampleWireError {
