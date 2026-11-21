@@ -1064,7 +1064,7 @@ impl Product<'_, '_> {
         &self,
         run: &mut Run<'_, '_, '_>,
         live: &mut Live,
-        class: &AbstractClass,
+        _class: &AbstractClass,
         named: usize,
         entry: usize,
         cycle: &[usize],

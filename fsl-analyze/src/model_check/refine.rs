@@ -3122,7 +3122,7 @@ impl Run<'_, '_> {
         path: &[RetainedPathEdge],
         enabled: &[Vec<CandidateEnabled>],
         classes: &[AbstractClass],
-        abstract_fairness: &[FairnessConstraint],
+        _abstract_fairness: &[FairnessConstraint],
         numbered: &BTreeMap<&ModelTransition, Identity>,
         constraints: &[Constraint],
         scope: FairScope,
