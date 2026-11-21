@@ -1139,6 +1139,20 @@ impl<'a> PackageProtocolWork<'a> {
                             detail,
                         ));
                     }
+                    Err(fsl_eval::simulation::protocol::PackageProgramRefusal::RepeatProof {
+                        node,
+                    }) => {
+                        let mut detail = serde_json::Map::new();
+                        detail.insert("fact".to_owned(), serde_json::json!("repeat-proof"));
+                        detail.insert("node".to_owned(), serde_json::json!(node));
+                        return EngineReport::Refused(Refusal::UnsupportedWithDetail(
+                            filament_semantic_value::catalog::CatalogCode::new(
+                                "unsupported_construct",
+                                "not-yet-implemented",
+                            ),
+                            detail,
+                        ));
+                    }
                     Err(_) => {
                         return EngineReport::Refused(Refusal::Declined(
                             fsl_replay::ProofRefusalCause::InvalidInput,

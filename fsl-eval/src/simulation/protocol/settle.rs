@@ -286,7 +286,26 @@ impl<M: MemoryModel> ProtocolSystem<'_, M> {
                 Cursor::Guard(node) => {
                     let repeat = self.program.repeat(node)?;
                     let variant = self.loop_proof_decision(instance, path, node, model)?;
-                    match self.decide(instance, path, node, repeat.guard, model)? {
+                    let decision = match &repeat.guard {
+                        super::program::LoopGuard::Source(guard) => {
+                            self.decide(instance, path, node, guard, model)?
+                        }
+                        super::program::LoopGuard::Package => {
+                            let frame = self.frame(instance, path, node);
+                            match self
+                                .evaluate_package_control(node, frame, model)?
+                                .ok_or_else(|| {
+                                    ProtocolRefusal::fault("a-package-repeat-has-a-guard")
+                                })? {
+                                Verdict::True => Decision::Value(true),
+                                Verdict::False => Decision::Value(false),
+                                Verdict::Undecided(outcome) => Decision::Undecided(Box::new(
+                                    undetermined(self.program.text(node)?, outcome),
+                                )),
+                            }
+                        }
+                    };
+                    match decision {
                         Decision::Undecided(finding) => return Ok(Settled::Undecided(finding)),
                         Decision::Value(false) => {
                             instance.loop_variants.remove(&(node, path.clone()));

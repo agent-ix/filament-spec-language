@@ -128,6 +128,8 @@ pub enum Unsupported {
     PackageControl(fsl_package::protocol_view::ControlOperation),
     /// A package control's correlation premises have no executable form yet.
     PackageCorrelation,
+    /// A package repeat's loop proof has no executable package form yet.
+    PackageRepeatProof,
     /// A package protocol declares a replicated role this program does not
     /// step yet.
     PackageReplicatedRole,
@@ -141,6 +143,7 @@ impl Unsupported {
             Self::UnenumerableRecord => "step binder of an unenumerable record type",
             Self::PackageControl(_) => "package protocol control",
             Self::PackageCorrelation => "package protocol correlation",
+            Self::PackageRepeatProof => "package repeat proof",
             Self::PackageReplicatedRole => "package replicated role",
         }
     }
@@ -1602,6 +1605,9 @@ impl<'a, M: MemoryModel> ProtocolSystem<'a, M> {
                 }
                 PackageProgramRefusal::Correlation { .. } => {
                     ProtocolRefusal::Unsupported(Unsupported::PackageCorrelation)
+                }
+                PackageProgramRefusal::RepeatProof { .. } => {
+                    ProtocolRefusal::Unsupported(Unsupported::PackageRepeatProof)
                 }
                 _ => ProtocolRefusal::fault("a-selected-package-protocol-builds"),
             })?;

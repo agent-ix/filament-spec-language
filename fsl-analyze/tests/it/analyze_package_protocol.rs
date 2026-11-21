@@ -56,6 +56,247 @@ fn package_run(ws: &Workspace, request_path: &std::path::Path) -> Run {
     analyze(&package_request(ws, request_path).0)
 }
 
+fn repeat_attempt(name: &str, binder: &str, constraint: &str) -> String {
+    crate::fill::attempt(name, "touch", "", binder, constraint).replace(" by w ", " by Machining ")
+}
+
+fn repeat_request(ws: &Workspace, controls: &str, finish: &str) -> std::path::PathBuf {
+    channel_request(
+        ws,
+        finite_channel_model(),
+        "ordering unordered delivery exactly-once-premise capacity 4 overflow block",
+        controls,
+        finish,
+    )
+}
+
+fn repeat_parity(ws: &Workspace, path: &std::path::Path) -> Value {
+    let source = analyze(path);
+    let source_document = source.document();
+    assert!(source.item(0).get("record").is_some(), "{source_document}");
+    assert!(
+        matches!(source_document["last_stage"].as_str(), Some("S6c" | "S8")),
+        "{source_document}"
+    );
+    let (package_path, _) = package_request(ws, path);
+    std::fs::remove_file(ws.path("program.fsl")).expect("remove repeat source before package run");
+    let package = analyze(&package_path);
+    let package_document = package.document();
+    for member in ["items", "aggregate", "last_stage", "category"] {
+        assert_eq!(
+            package_document[member], source_document[member],
+            "{member}: {package_document}"
+        );
+    }
+    assert_eq!(package.exit, source.exit, "{package_document}");
+    source.item(0)
+}
+
+/// A received payload remains live across the repeat's entry and back edge.
+#[trace(
+    "TC-2958",
+    "FR-940-AC-6",
+    "FR-206-AC-5",
+    "FR-383-AC-6",
+    "FR-218",
+    "FR-531",
+    "FR-390",
+    "FR-850"
+)]
+#[test]
+fn package_repeat_reads_the_earlier_receive_on_entry_and_revisit() {
+    for (name, guard, expected) in [
+        ("false", "seen.n != 0", "refuted"),
+        ("true", "seen.n = 0", "proved"),
+    ] {
+        let ws = Workspace::new(&format!("package-repeat-received-{name}"));
+        let controls = channel_send("Handed", "handed", "handed.n = k.v")
+            + "receive Inspected via Release of Handed as (seen: M::Attempt) { seen.n = 0 };"
+            + &format!(
+                "repeat Again by Machining visible (seen.n) while {{ {guard} }} {}",
+                repeat_attempt("Remachined", "again", "again")
+            );
+        let path = channel_request(
+            &ws,
+            finite_channel_model(),
+            "ordering unordered delivery at-least-once capacity 4 overflow block",
+            &controls,
+            "false",
+        );
+        let item = repeat_parity(&ws, &path);
+        assert_eq!(label(&item), expected, "{item}");
+        if name == "false" {
+            let prefix = item["counterexample"]["prefix"]
+                .as_array()
+                .expect("false finish prefix");
+            let steps: Vec<_> = prefix
+                .iter()
+                .map(|step| step["transition"]["step"].as_str().expect("step kind"))
+                .collect();
+            assert_eq!(steps, ["send", "receive"], "{item}");
+            assert_eq!(item["replay"]["reproduced"], true, "{item}");
+        }
+    }
+}
+
+/// A bounded repeat executes its body at most max times and then its authored exhaustion.
+#[trace("TC-2958", "FR-940-AC-6", "FR-206-AC-5", "FR-383-AC-6")]
+#[test]
+fn package_repeat_maximum_enters_the_stepful_exhausted_continuation() {
+    for maximum in [0, 2] {
+        let ws = Workspace::new(&format!("package-repeat-maximum-{maximum}"));
+        let controls = format!(
+            "repeat Again by Machining visible () max {maximum} while {{ true }} {} exhausted {}",
+            repeat_attempt("Remachined", "again", "again"),
+            repeat_attempt("Exhausted", "out", "out")
+        );
+        let item = repeat_parity(&ws, &repeat_request(&ws, &controls, "false"));
+        assert_eq!(label(&item), "refuted", "{item}");
+        let prefix = item["counterexample"]["prefix"]
+            .as_array()
+            .expect("exhausted finish prefix");
+        let nodes: Vec<_> = prefix
+            .iter()
+            .map(|step| step["transition"]["node"].as_str().expect("step node"))
+            .collect();
+        let mut expected = vec!["Main/Again/Remachined"; maximum];
+        expected.push("Main/Again/Exhausted");
+        assert_eq!(nodes, expected, "{item}");
+        assert_eq!(item["replay"]["reproduced"], true, "{item}");
+    }
+}
+
+/// A body-bound guard has the native post-test mode and executes once when false.
+#[trace("TC-2958", "FR-940-AC-6", "FR-880-AC-8", "FR-882-AC-6")]
+#[test]
+fn package_repeat_post_test_false_guard_executes_once() {
+    let ws = Workspace::new("package-repeat-post-test");
+    let controls = format!(
+        "repeat Again by Machining visible (again) while {{ again }} {}",
+        repeat_attempt("Remachined", "again", "not again")
+    );
+    let item = repeat_parity(&ws, &repeat_request(&ws, &controls, "false"));
+    assert_eq!(label(&item), "refuted", "{item}");
+    let prefix = item["counterexample"]["prefix"]
+        .as_array()
+        .expect("post-test finish prefix");
+    assert_eq!(prefix.len(), 1, "{item}");
+    assert_eq!(prefix[0]["transition"]["step"], "attempt", "{item}");
+    assert_eq!(
+        prefix[0]["transition"]["node"], "Main/Again/Remachined",
+        "{item}"
+    );
+    assert_eq!(item["replay"]["reproduced"], true, "{item}");
+}
+
+/// A blocked repeat body preserves its real deadlock and bounded replay refusal.
+#[trace("TC-2958", "FR-940-AC-6", "FR-940-AC-22", "FR-206-AC-5")]
+#[test]
+fn package_repeat_blocked_attempt_preserves_replay_refusal() {
+    for (scenario, guard, constraint) in [
+        ("blocked", "true", "false"),
+        ("undefined", "6 mod 0 = 0", "again"),
+    ] {
+        let controls = format!(
+            "repeat Again by Machining visible () while {{ {guard} }} {}",
+            repeat_attempt("Remachined", "again", constraint)
+        );
+        let ws = Workspace::new(&format!("package-repeat-{scenario}"));
+        let item = repeat_parity(&ws, &repeat_request(&ws, &controls, "closing"));
+        assert_eq!(label(&item), "refuted", "{item}");
+        if scenario == "blocked" {
+            assert_eq!(
+                item["counterexample"]["blocked"][0]["rest"]["node"], "Main/Again/Remachined",
+                "{item}"
+            );
+            assert_eq!(
+                item["counterexample"]["blocked"][0]["cause"]["type"], "constraint",
+                "{item}"
+            );
+        } else {
+            assert_eq!(
+                item["record"]["cause"]["kind"], "undefined-evaluation",
+                "{item}"
+            );
+            assert_eq!(
+                item["counterexample"]["kind"]["type"], "undefined-evaluation",
+                "{item}"
+            );
+            assert_eq!(
+                item["counterexample"]["kind"]["cause"], "division-by-zero",
+                "{item}"
+            );
+        }
+        assert_eq!(item["replay"]["reproduced"], true, "{item}");
+
+        let bounded = Workspace::new(&format!("package-repeat-replay-bound-{scenario}"));
+        let path = repeat_request(&bounded, &controls, "closing");
+        let (package_path, bytes) = package_request(&bounded, &path);
+        let limit = u64::try_from(bytes.len() / 2).expect("package byte bound");
+        let source = crate::analyze_cli_support::analyze_under_replay_bytes(&path, limit);
+        assert!(
+            source.item(0).get("record").is_some(),
+            "{}",
+            source.document()
+        );
+        let source_item = source.item(0);
+        let cause = &source_item["record"]["cause"];
+        assert_eq!(cause["kind"], "replay-refused", "{cause}");
+        assert_eq!(cause["code"], "stage_limit_exceeded", "{cause}");
+        assert_eq!(cause["cause"], "input-bytes-exceeded", "{cause}");
+        std::fs::remove_file(bounded.path("program.fsl"))
+            .expect("remove source before bounded replay");
+        let package = crate::analyze_cli_support::analyze_under_replay_bytes(&package_path, limit);
+        assert_eq!(package.item(0), source.item(0), "{}", package.document());
+        assert_eq!(package.exit, source.exit);
+    }
+}
+
+/// Proof-bearing repeats never execute as if their authored proof were absent.
+#[trace("TC-2958", "FR-940-AC-6", "FR-730")]
+#[test]
+fn package_repeat_proof_refuses_before_execution() {
+    let ws = Workspace::new("package-repeat-proof");
+    let controls = format!(
+        "repeat Again by Machining visible () invariant {{ true }} variant {{ 1 }} while {{ false }} {}",
+        repeat_attempt("Remachined", "again", "again")
+    );
+    let path = repeat_request(&ws, &controls, "closing");
+    let source = analyze(&path);
+    assert!(
+        source.item(0).get("record").is_some(),
+        "{}",
+        source.document()
+    );
+    assert_eq!(label(&source.item(0)), "proved", "{}", source.document());
+    let (package_path, _) = package_request(&ws, &path);
+    std::fs::remove_file(ws.path("program.fsl")).expect("remove source before proof refusal");
+    let package = analyze(&package_path);
+    let item = package.item(0);
+    assert_eq!(package.exit, 21, "{}", package.document());
+    assert_eq!(
+        item["record"]["diagnostic"]["code"], "unsupported_construct",
+        "{item}"
+    );
+    assert_eq!(
+        item["record"]["diagnostic"]["cause"], "not-yet-implemented",
+        "{item}"
+    );
+    assert_eq!(
+        item["record"]["diagnostic"]["detail"]["fact"], "repeat-proof",
+        "{item}"
+    );
+    assert_eq!(
+        item["record"]["diagnostic"]["detail"]["node"]["path"]
+            .as_array()
+            .expect("repeat node path")
+            .last(),
+        Some(&json!("Again")),
+        "{item}"
+    );
+    assert!(item.get("exploration").is_none(), "{item}");
+}
+
 fn receive_fifo_request(
     ws: &Workspace,
     key: &str,

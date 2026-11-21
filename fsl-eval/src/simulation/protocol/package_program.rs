@@ -39,7 +39,7 @@ pub struct PackageControl {
     pub(super) join: Option<PackageJoin>,
     /// The resolved source default, for a `parallel`.
     pub memory_default: Option<MemoryModelName>,
-    /// The operation's admitted constraint slot, for expression controls.
+    /// The operation's admitted predicate slot: a constraint or repeat guard.
     pub constraint: Option<ProtocolSlot>,
     /// The operation's operation-anchor identity, for an `attempt`.
     pub operation_anchor: Option<NodeKey>,
@@ -134,6 +134,8 @@ pub struct PackageProtocolProgram<'a> {
     pub(super) captures: Vec<PackageCapture>,
     /// Channels and their admitted queue premises.
     pub(super) channels: Vec<PackageChannel>,
+    /// Repeat continuations and bounds read from admitted control members.
+    pub(super) loops: BTreeMap<ProtocolNodeId, super::program::Loop<'a>>,
     /// The admitted protocol name.
     pub name: String,
     /// The `run` root control.
@@ -316,6 +318,12 @@ pub enum PackageProgramRefusal {
         /// The admitted control whose `related` group is nonempty.
         node: fsl_package::CheckedNodeId,
     },
+    /// A repeat carries proof expressions without executable package readers.
+    #[error("unsupported_construct/not-yet-implemented: package repeat proof at {node:?}")]
+    RepeatProof {
+        /// The admitted repeat whose proof is nonempty.
+        node: fsl_package::CheckedNodeId,
+    },
     /// A node referenced by the control tree has no package execution entry.
     #[error("the package control tree references an absent control")]
     UnknownControl,
@@ -495,6 +503,76 @@ impl<'a> PackageProtocolProgram<'a> {
             .get(form.protocol.run())
             .copied()
             .ok_or(PackageProgramRefusal::UnknownControl)?;
+        let mut loops = BTreeMap::new();
+        for control in form
+            .controls
+            .iter()
+            .filter(|control| control.operation == ControlOperation::Repeat)
+        {
+            let absent = || PackageProgramRefusal::MissingIdentity(control.node.node_id.clone());
+            let body = &control.node.body;
+            let Some(fsl_package::CheckedTerm::Aggregate { members: proof }) =
+                member(body, "proof")
+            else {
+                return Err(absent());
+            };
+            if !proof.is_empty() {
+                return Err(PackageProgramRefusal::RepeatProof {
+                    node: control.node.node_id.clone(),
+                });
+            }
+            let reference = |name| match member(body, name) {
+                Some(fsl_package::CheckedTerm::Reference { target }) => {
+                    id_by_node.get(target).copied().ok_or_else(absent)
+                }
+                _ => Err(absent()),
+            };
+            let Some(fsl_package::CheckedTerm::Aggregate { members: maximum }) =
+                member(body, "maximum")
+            else {
+                return Err(absent());
+            };
+            let max = match maximum.as_slice() {
+                [] => None,
+                [maximum] => match maximum.literal_read().map(|literal| literal.value) {
+                    Some(fsl_package::CheckedLiteralValue::Integer(value)) => {
+                        Some(value.to_string().parse::<u64>().map_err(|_| absent())?)
+                    }
+                    _ => return Err(absent()),
+                },
+                _ => return Err(absent()),
+            };
+            let Some(fsl_package::CheckedTerm::Aggregate { members: exhausted }) =
+                member(body, "exhausted")
+            else {
+                return Err(absent());
+            };
+            let exhausted = match exhausted.as_slice() {
+                [] => None,
+                [fsl_package::CheckedTerm::Reference { target }] => {
+                    Some(*id_by_node.get(target).ok_or_else(absent)?)
+                }
+                _ => return Err(absent()),
+            };
+            let post_test = match member(body, "test") {
+                None => false,
+                Some(test) => match test.literal_read().map(|literal| literal.value) {
+                    Some(fsl_package::CheckedLiteralValue::Text("post")) => true,
+                    _ => return Err(absent()),
+                },
+            };
+            loops.insert(
+                control.id,
+                super::program::Loop {
+                    body: reference("body")?,
+                    exhausted,
+                    max,
+                    post_test,
+                    guard: super::program::LoopGuard::Package,
+                    proof: None,
+                },
+            );
+        }
         let path_parent = |control: &fsl_package::protocol_view::ProtocolControlView<'_>| {
             form.controls
                 .iter()
@@ -669,18 +747,46 @@ impl<'a> PackageProtocolProgram<'a> {
                     None,
                     Vec::new(),
                 ),
+                ControlBody::Other(ControlOperation::Repeat) => {
+                    let repeat = loops
+                        .get(&control.id)
+                        .ok_or(PackageProgramRefusal::UnknownControl)?;
+                    (
+                        std::iter::once(repeat.body)
+                            .chain(repeat.exhausted)
+                            .collect(),
+                        Vec::new(),
+                        None,
+                        None,
+                        None,
+                        None,
+                        None,
+                        None,
+                        None,
+                        Vec::new(),
+                    )
+                }
                 _ => return Err(PackageProgramRefusal::Unsupported(control.operation)),
             };
-            let constraint = if matches!(
-                &control.body,
-                ControlBody::Attempt { .. }
-                    | ControlBody::Send { .. }
-                    | ControlBody::Receive { .. }
-            ) {
+            let constraint = if control.operation == ControlOperation::Repeat
+                || matches!(
+                    &control.body,
+                    ControlBody::Attempt { .. }
+                        | ControlBody::Send { .. }
+                        | ControlBody::Receive { .. }
+                ) {
                 Some(
                     input
                         .evaluator
-                        .package_protocol_slot(&control.node.node_id, "constraint", None)
+                        .package_protocol_slot(
+                            &control.node.node_id,
+                            if control.operation == ControlOperation::Repeat {
+                                "guard"
+                            } else {
+                                "constraint"
+                            },
+                            None,
+                        )
                         .ok_or_else(|| {
                             PackageProgramRefusal::MissingIdentity(control.node.node_id.clone())
                         })?,
@@ -808,6 +914,7 @@ impl<'a> PackageProtocolProgram<'a> {
             terminal,
             captures,
             channels,
+            loops,
             name: form.name.clone(),
             root,
             over,
@@ -825,8 +932,8 @@ impl<'a> PackageProtocolProgram<'a> {
         })
     }
 
-    /// Evaluate one admitted package expression slot for a control. Controls
-    /// without a constraint have no expression to evaluate. The supplied
+    /// Evaluate one admitted package predicate slot for a control. Controls
+    /// without a constraint or guard have no expression to evaluate. The supplied
     /// binder values and population provenance are checked by the package
     /// evaluator against the slot's admitted identity.
     pub fn evaluate_control_constraint(
