@@ -1527,7 +1527,7 @@ fn a_host_that_loses_the_checked_model_input_reaches_a_real_internal_fault() {
 }
 
 #[test]
-#[trace("FR-111", "FR-660")]
+#[trace("TC-1741", "FR-660-AC-7")]
 fn an_unknown_request_capability_keeps_the_required_feature_classification() {
     // FR-111 Behavior/capability inventory: a capability outside the closed
     // inventory is unknown_required_feature/unknown-feature, not a malformed
@@ -1564,6 +1564,38 @@ fn an_unknown_request_capability_keeps_the_required_feature_classification() {
         panic!("one diagnostic: {outcome:?}");
     };
     assert_eq!(diagnostic.cause(), Some("unknown-feature"));
+    assert!(
+        refusal.to_string().contains("original:unknown-capability"),
+        "message must name the capability: {refusal}"
+    );
+    let failure = refusal.value().expect("native-compile/1 failure renders");
+    assert_eq!(failure["cause"], "unknown-feature", "{failure}");
+    assert_eq!(failure["code"], "unknown_required_feature", "{failure}");
+    assert!(
+        failure["message"]
+            .as_str()
+            .is_some_and(|m| m.contains("original:unknown-capability")),
+        "{failure}"
+    );
+
+    // FR-660-AC-7 counter-case: a closed-inventory capability does not refuse
+    // unknown-feature (AC-7 states no further outcome; the `{}` document is
+    // not validated here and compilation succeeds).
+    let mut inventory = request.clone();
+    inventory["request"]["extensions"][0]["capabilities"] = serde_json::json!(["V1-SRC-001"]);
+    let inventory_path = directory.path().join("inventory-request.json");
+    std::fs::write(
+        &inventory_path,
+        serde_json::to_vec(&inventory).expect("inventory request encodes"),
+    )
+    .expect("own input");
+    if let Err(refusal) = fsl_command::command::compile(&inventory_path) {
+        assert_ne!(
+            refusal.cause.code(),
+            CompleteCode::UnknownRequiredFeature,
+            "{refusal:?}"
+        );
+    }
     assert!(DOCUMENTATION.contains("| unknown_required_feature |"));
 }
 
