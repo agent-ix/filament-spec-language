@@ -48,3 +48,9 @@ The protocol-subject testability gap in AC-29's last sentence is recorded once, 
 - FR-338 state-algebra table, history and window rows (context_only)
 - FR-1030 statement paragraph L133-143 (examined, clean)
 - FR-1030-AC-1, AC-5 (context_only)
+
+## Dispositions
+
+| FND | Outcome | Reason |
+| --- | --- | --- |
+| FND-001 | fixed | Round 2 (head 8ccf5300). AC-29 now says "the empty certificate offered for a clause violated at the origin, or whose atom is undefined there, is rejected `BadState` at the origin under `["safety",[]]`". This matches the statement's empty-certificate rule and the tests. Its later clause, "violated later, or whose atom is undefined at a later model state … at that model state under `["safety",[]]`", matches the round-2 code and the fourth vector. It does not conflict with the statement, because the statement's predecessor-locus sentence governs a `when` condition, which an `on origin` TP-3 clause does not have. No new policy. |
