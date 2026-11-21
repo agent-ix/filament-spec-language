@@ -60,7 +60,7 @@ use fsl_package::CheckedPackage;
 use fsl_replay::{
     CertifiedPosition, ConcreteStep, CounterexampleKind, ReachedLimit, RefinementFailure,
     RefinementPart, RefinementPosition, RefinementSystems, StepVerdict, SubjectRefusal, Taken,
-    TemporalCounterexample, UnavailabilityCause, UndefinedEvaluation, Undetermined,
+    TemporalCounterexample, UndefinedEvaluation, Undetermined,
     ZoneCertificate, check_initial, check_step, open_systems,
 };
 use fsl_route::deadlock::ItemObligation;
@@ -163,11 +163,8 @@ pub enum TimedSafetyOutcome<S> {
 pub struct TimedRefinementOutcome<S> {
     /// The safety half.
     pub safety: TimedSafetyOutcome<S>,
-    /// The liveness half: `None` with `F_A` empty. With a non-empty `F_A`
-    /// it is `Unsupported` for a refinement with a hidden abstract field,
-    /// whatever the safety half is; otherwise it
-    /// is `None` when the safety half is other than `Holds`, and `Checked`
-    /// when it holds.
+    /// The liveness half: `None` with `F_A` empty or when the safety half is
+    /// other than `Holds`, and `Checked` when it holds.
     pub liveness: Option<TimedLivenessHalf>,
 }
 
@@ -176,8 +173,6 @@ pub struct TimedRefinementOutcome<S> {
 pub enum TimedLivenessHalf {
     /// The second phase ran on the symbolic product.
     Checked(TimedLivenessOutcome),
-    /// The second phase did not run (ADR-020 AX-5).
-    Unsupported(UnavailabilityCause),
 }
 
 /// The second phase's outcome over a timed concrete subject: only

@@ -1363,10 +1363,8 @@ impl OutcomeItem {
                     | UnavailabilityCause::Disposition
                     | UnavailabilityCause::MissingFairnessPremise { .. }
                     | UnavailabilityCause::UnsupportedReduction { .. }
-                    | UnavailabilityCause::HiddenFieldLiveness
                     | UnavailabilityCause::UnsupportedHyperForm { .. }
                     | UnavailabilityCause::UnsupportedSmtFragment
-                    | UnavailabilityCause::StrongAbstractFairness
                     | UnavailabilityCause::NotMarkov
                     | UnavailabilityCause::ConfidenceBeyondPrecision
                     | UnavailabilityCause::PunctualInterval { .. } => {}

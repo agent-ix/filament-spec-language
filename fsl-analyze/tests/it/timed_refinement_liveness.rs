@@ -12,7 +12,7 @@ use fsl_analyze::zone_check::{
 use fsl_eval::simulation::Limits;
 use fsl_replay::{
     Lasso, ModelTraceRefusal, RefinementFailure, RefinementTraceSettlement, ReplayRefusal,
-    TemporalCounterexample, UnavailabilityCause, open_systems, replay_timed_refinement_trace,
+    TemporalCounterexample, open_systems, replay_timed_refinement_trace,
 };
 use ix_trace_rs::trace;
 
@@ -518,8 +518,7 @@ fn an_idle_tail_that_never_takes_an_enabled_class_refutes() {
 }
 
 /// FR-899-AC-3 on the timed path: strong abstract fairness refutes a
-/// time-divergent loop that leaves the class enabled and untaken. A hidden
-/// abstract field remains unsupported.
+/// time-divergent loop that leaves the class enabled and untaken.
 #[trace("TC-1170", "FR-430-AC-5", "FR-899-AC-3")]
 #[test]
 fn the_timed_liveness_half_honours_strong_abstract_fairness() {
@@ -836,23 +835,6 @@ fn the_item_keeps_the_safety_record_unless_safety_is_proved() {
         |_: &TemporalCounterexample| -> Result<RefinementTraceSettlement, ReplayRefusal> {
             panic!("no lasso is replayed")
         };
-
-    let unsupported = TimedRefinementOutcome {
-        safety: outcome.safety.clone(),
-        liveness: Some(TimedLivenessHalf::Unsupported(
-            UnavailabilityCause::StrongAbstractFairness,
-        )),
-    };
-    let record = settle_timed_refinement(
-        &unsupported,
-        &Cancel::new(),
-        |_| Ok(ZoneCertificateVerdict::Accepted),
-        no_replay,
-    );
-    assert_eq!(
-        record.value,
-        TerminalValue::Unsupported(UnavailabilityCause::StrongAbstractFairness)
-    );
 
     let rejection = CertificateRejection {
         rule: CertificateRule::BadState,

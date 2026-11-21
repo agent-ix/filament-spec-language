@@ -1142,7 +1142,7 @@ fn an_unsupported_liveness_half_does_not_replace_a_safety_half_that_is_not_prove
                 stats: RunStats::default(),
             },
             liveness: Some(LivenessHalf::Unsupported(
-                UnavailabilityCause::HiddenFieldLiveness,
+                UnavailabilityCause::SolverAbsent,
             )),
         },
     );
@@ -1153,9 +1153,7 @@ fn an_unsupported_liveness_half_does_not_replace_a_safety_half_that_is_not_prove
     assert_eq!(settled.safety, Some(settled.record.value.clone()));
     assert_eq!(
         settled.liveness,
-        Some(TerminalValue::Unsupported(
-            UnavailabilityCause::HiddenFieldLiveness
-        ))
+        Some(TerminalValue::Unsupported(UnavailabilityCause::SolverAbsent))
     );
 }
 
