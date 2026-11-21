@@ -177,6 +177,7 @@ fn healthy(unit: &CheckedUnit, total: i64) -> bool {
         post: None,
         self_object: this,
         self_population: None,
+        value_origins: Default::default(),
         invocation: None,
         self_kind: SelfKind::Object,
         receiver_pre: None,
