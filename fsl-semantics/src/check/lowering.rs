@@ -5864,7 +5864,7 @@ impl<'a> Lowering<'a> {
                         Operation {
                             member: Some(Member::TypeArgument {
                                 declaration: object,
-                alias: None,
+                                alias: None,
                             }),
                             mode: Some(OperationMode::Absence(*absence)),
                             ..plain("filament.op.model.lookup")

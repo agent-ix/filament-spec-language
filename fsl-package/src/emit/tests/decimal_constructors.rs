@@ -197,7 +197,7 @@ fn a_quotient_by_a_nonzero_literal_lowers_one_div_node() {
 fn a_literal_beside_a_typed_operand_lowers_at_the_peers_type() {
     // `p_literal` pins P's own type node: its literal is typed by P.
     let emission = emitted(
-        "type P = Decimal[0, 100000; 2, 2; exact];\n\
+        "type P = Decimal[0, 100000; 1, 2; exact];\n\
          type R = Decimal[0, 1000; 1, 1; exact];\n\
          function f using v(r: R): P pure { convert<P>(decimal(15, 1) + r) }\n\
          function p_literal using v(): P pure { decimal(150, 2) }\n",
@@ -227,5 +227,24 @@ fn a_literal_beside_a_typed_operand_lowers_at_the_peers_type() {
         "the conversion's result_type is P's type node"
     );
     assert_eq!(convert["arguments"].as_array().map(Vec::len), Some(1));
+    admitted(&emission);
+}
+
+/// FR-093-AC-42, FSpec FR-149: with `P` at `Decimal[0, 100000; 2, 2; exact]`
+/// (minimum scale above `R`'s) the same expression is a range narrowing, so
+/// the conversion lowers one `filament.op.numeric.narrow` and no `convert`.
+#[trace("FR-093-AC-42", "TC-1232")]
+#[test]
+fn a_conversion_into_a_higher_minimum_scale_is_a_range_narrowing() {
+    let emission = emitted(
+        "type P = Decimal[0, 100000; 2, 2; exact];\n\
+         type R = Decimal[0, 1000; 1, 1; exact];\n\
+         function f using v(r: R): P pure { convert<P>(decimal(15, 1) + r) }\n",
+    );
+    assert_eq!(
+        applications(&emission, "filament.op.numeric.narrow").len(),
+        1
+    );
+    assert!(applications(&emission, "filament.op.numeric.convert").is_empty());
     admitted(&emission);
 }
