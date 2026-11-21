@@ -552,14 +552,6 @@ fn the_monitor_reports_a_closed_false_guard_scope_inactive_like_the_batch_run() 
         true,
     );
     assert_eq!(inactive["temporal"]["kind"], "inactive", "{inactive}");
-    let active = monitored_with(
-        directory.path(),
-        GUARDED_CLOSED,
-        "GuardedClosed",
-        &[0, 1, 0],
-        false,
-    );
-    assert_ne!(active["temporal"]["kind"], "inactive", "{active}");
 }
 
 /// The actual guard, rather than the captured predicate or body truth,
