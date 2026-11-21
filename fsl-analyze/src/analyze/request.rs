@@ -518,6 +518,20 @@ pub(crate) fn analyze_bound<'a>(
         };
         dependency_graphs.insert(name, graph);
     }
+    // The result's node ids are held against these graphs, so a package or
+    // component that has none ends the run before any engine runs.
+    if let Err(cause) = &own {
+        return Err(StageFailure::Refused(super::AnalyzeRefusal::Emission(
+            cause.clone(),
+        )));
+    }
+    for component in components.values() {
+        if let Some(Err(cause)) = dependency_graphs.get(component.graph().package_name()) {
+            return Err(StageFailure::Refused(super::AnalyzeRefusal::Emission(
+                cause.clone(),
+            )));
+        }
+    }
     let component_runs: BTreeMap<RequestIndex, super::RunInput<'_>> = components
         .iter()
         .map(|(index, package)| (*index, super::RunInput::source(package)))

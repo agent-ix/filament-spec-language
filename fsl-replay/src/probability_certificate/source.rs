@@ -346,7 +346,8 @@ fn check_recompiled(
     }
     let certificate = resolved.as_deref().unwrap_or(request.certificate);
     let claims = checked.package().graph().probabilistic_model().claims();
-    super::bind_claim(claims, &claimed(request.item, held.is_some()), cancel).map_err(ProbabilityDocumentError::from)?;
+    super::bind_claim(claims, &claimed(request.item, held.is_some()), cancel)
+        .map_err(ProbabilityDocumentError::from)?;
     let snapshots = request.provision.snapshots();
     let simulation = ModelSimulationRequest {
         input: fsl_eval::simulation::model::ModelCheckInput::source(checked.package()),
@@ -402,13 +403,23 @@ fn refuse_foreign_claim(
 struct HeldCertificate(serde_json::Value);
 
 impl HeldCertificate {
-    /// The document, when its identity path holds an index segment.
+    /// The document, when an index segment `{"node": i}` appears anywhere in it
+    /// or its identity names a model: the form an analyze result writes.
     fn read(bytes: &[u8]) -> Option<Self> {
         let value: serde_json::Value = serde_json::from_slice(bytes).ok()?;
-        let held = value["identity"]["node_id"]["path"]
-            .as_array()?
-            .iter()
-            .any(|segment| segment.get("node").is_some());
+        let mut held = !value["identity"]["model"].is_null();
+        let mut pending = vec![&value];
+        while let Some(current) = pending.pop() {
+            match current {
+                serde_json::Value::Object(object) => {
+                    held |=
+                        object.len() == 1 && object.get("node").is_some_and(|node| node.is_u64());
+                    pending.extend(object.values());
+                }
+                serde_json::Value::Array(items) => pending.extend(items.iter()),
+                _ => {}
+            }
+        }
         held.then_some(Self(value))
     }
 

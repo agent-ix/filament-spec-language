@@ -106,6 +106,7 @@ admitted, and each item adds the stage that settled it:
 | An item whose counterexample is built as a typed witness and not replayed | `S7` |
 | An item whose counterexample is replayed (its `replay` member is present) | `S8` |
 | A cancelled request, and an internal failure (an engine or evaluator fault), category internal-failure | `null` (FR-286) |
+| A request whose package, or a dependency an item is analyzed over, has no admitted emission, so the document's node ids cannot be held | `null`; the run reports the emit limit or the strict reader's refusal as its cause, never internal-failure |
 
 A document with several items takes the greatest of `S4` and its items'
 stages. Every settled document therefore names a stage, `S4` or later, and
@@ -136,22 +137,22 @@ Each item, in request order, carries:
 
 An item holds every node id as an FSpec FR-322 document-held id: each operand
 of the id's path is the index segment `{"node": i}` naming
-`semantic_graph.nodes[i]` of the package the item is analyzed over, and no
-path holds a node id object. That covers the `certificate` and its
-`identity` and `document`, the `request` claim locus, the `counterexample`
-and the `record` and `accounting` members, on every item including a
-simulation item. The package is the request's own admitted package, or for an
-item with a `package` member, the dependency that member names, whose graph
-is the one its `dependencies.json` entry carries. An identity's `model` is
-the owning model's identity text and is never null, in the item's
-`certificate.identity` and in every identity inside it. A reader resolves an
-id back to its structural key with the same graph; a document with a node
-id that is not held, an index its package does not have, a `package` member
-that names no dependency of the request, or a `package` member on an item
-An id whose `package` is a dependency of the request is held in that
-dependency's graph wherever it appears, a composition's `request.premises`
-among them; the premises sent to a provider are written the same way, and a
-restated `premises` list is read in either form.
+`semantic_graph.nodes[i]` of one package graph, and no path holds a node id
+object. That covers the `certificate` and its `identity` and `document`, the
+`request` claim locus, the `counterexample` and the `record` and `accounting`
+members, on every item including a simulation item. The graph is the request's
+own admitted package, or for an item with a `package` member, the dependency
+that member names, whose graph is the one its `dependencies.json` entry
+carries. A node id's own `package` member names the node's owner and never
+selects a graph (FSpec FR-322 "Scope"). An identity's `model` is the owning
+model's identity text and is never null, in the item's `certificate.identity`
+and in every identity inside it. A reader resolves an id back to its structural
+key with the same graph. A document with a node id that is not held, an index
+its package does not have, a `package` member that names no dependency of the
+request, or a `package` member on an item over the request's own package is
+not a result of this standard.
+
+Until FSpec FR-322 defines a segment that names a node of a dependency's graph, an item whose `request.kind` is `composition` and that has no `package` member writes in its FR-201 structural form, every operand a nested node id, exactly those node ids that have no held form in the request package's graph because the id or one of its operands is a node of a direct dependency's graph (the nested `package` names that dependency). Every other node id of the document is held. A node id that has no held form for any other reason fails the run as an internal failure. A reader recognises the exception by the item's `request.kind` `composition`, the absence of `package`, and a nested operand whose `package` is a dependency of the request.
 
 ### Item notes
 
@@ -307,8 +308,8 @@ The Counter fixture is FR-620's.
 | FR-621-AC-13 | A request over FR-246-AC-1's `Ctl` with the third WCET 6 and the items `CtlFp` and `CtlEdf` gives two `refuted` items, category `violation`, exit 10, each with a `counterexample` entry whose `counterexample` is FSpec FR-419's `schedulability-miss`: for `CtlFp` `analysis` `fixed-priority` and `miss` `{"kind": "response", "task": "c", "job": "0", "iterates": [6, 10, 13], "response": 13, "bound": 12}` in unit `ms`, for `CtlEdf` `analysis` `edf` and `miss` `{"kind": "utilization", "utilization": 13/12}`; neither carries `replay`, the document's `last_stage` is `S7`, and no item is refused for a missing counterexample. Over the unchanged `Ctl` both items are `proved` with no `counterexample`. | Test (TC-2960) |
 | FR-621-AC-14 | A hybrid item whose `bounded-solver` proof FSpec FR-193 settles `insufficient-horizon` and whose entry carries a `flowpipe` writes `certificate` with exactly `identity` and `form`; a refuted hybrid item that exact replay reproduces and whose provider entry carried a `validated-witness` writes `certificate` with exactly `identity` and `form`; FSpec FR-652-AC-5's accepted certificate writes `checker`, `accepted` `true` and `form`; its `[1, 10]` variant writes `accepted` `false`, `rule` `jump` and `at` `/certificate/steps/160`; a witness check the work limit stops writes the `incomplete` item with `accepted` `false`, `rule` `work-limit` and an `at` rooted at `/certificate`. | Test (TC-3035) |
 | FR-621-AC-15 | A statistical `probability` item over FR-193's violating model with `max_witnesses` 2, whose engine finds five sampled witnesses, writes a `measured` record with two `witnesses`, the first two in trace-index order, and `notes` `[{"code": "witnesses-beyond-limit", "details": {"kept": "2", "found": "5"}}]`; with `max_witnesses` 8 the item has no `notes` member. A kept witness with a member that has no FSpec FR-410 spelling is left out of `witnesses` and named by one `witness-omitted` note holding its `test`, its `trace` and the pointer `at` of that member, and the notes sort by `code`, then `test` and `trace` by numeric value, so a witness with `test` `"9"` precedes one with `"10"`. In each case the item's record, category, exit code and every identity are those of the same item with `notes` removed. | Test (TC-3136) |
-| FR-621-AC-16 | Over the probability fixture `Eventually`, the `proved` exact item writes `certificate.identity` and `certificate.document` that validate against FSpec's backend-provider `CertificateIdentity` and `ProbabilityCertificate`, with `identity.model` the owning model's identity text and a `node_id` path whose operands are `{"node": i}`; the item's `request.claim.node` equals `certificate.identity.node_id`; the `refuted` exact item `TooLikely` writes a `request.claim` that validates as FSpec's `Locus`, a `counterexample` entry that validates against FSpec's `CounterexampleEntry`, and no path that holds a node id object; and the independent EN-5 checker accepts the proved item's `certificate.document` as written, with the item naming the same model. | Test (TC-3154) |
-| FR-621-AC-17 | A composition's component-guarantee premise item writes a `package` member naming its dependency and node ids that index that dependency's graph, so that item holds no node id object whose path holds a node id; the composition's own items write no `package` member; and a run whose package has no admitted emission (the emit limit is reached) reports the typed cause, the strict reader's refusal or an unavailable graph, and writes no document with a structural node id. | Test (TC-3154) |
+| FR-621-AC-16 | Over the probability fixture `Eventually`, the `proved` exact item writes `certificate.identity` and `certificate.document` that validate against FSpec's backend-provider `CertificateIdentity` and `ProbabilityCertificate`, with `identity.model` the owning model's identity text and a `node_id` path whose operands are `{"node": i}`; the item's `request.claim.node` equals `certificate.identity.node_id`; the `refuted` exact item `TooLikely` writes a `request.claim` that validates as FSpec's `Locus`, a `counterexample` in which no node id's path holds a node id object; this criterion does not assert that the `counterexample` validates against `CounterexampleEntry`; and the independent EN-5 checker accepts the proved item's `certificate.document` as written, with the item naming the same model. | Test (TC-3154) |
+| FR-621-AC-17 | A composition's component-guarantee premise item writes a `package` member naming its dependency and node ids that index that dependency's graph, so that item holds no node id object whose path holds a node id; the composition's own items write no `package` member, and keep in structural form exactly the node ids whose id or operand is a node of a direct dependency's graph while every other node id is held; and a run whose package has no admitted emission (the emit limit is reached) reports the typed cause, the strict reader's refusal or an unavailable graph, and writes no document with a structural node id. | Test (TC-3154) |
 
 ## Dependencies
 

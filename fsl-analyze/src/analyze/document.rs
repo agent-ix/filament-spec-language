@@ -1682,7 +1682,6 @@ mod package_run;
 
 pub use composition_item::CompositionClaim;
 pub use held_identity::HeldIdentityError;
-pub(crate) use held_identity::{hold_in_dependencies, structural_in_dependencies};
 
 pub use package_run::{
     settle_package_run, PackageRun, PackageRunError, PendingFamily, PendingPackageFamily,
@@ -4276,7 +4275,11 @@ fn write_run(
         hold_item(&mut item, &outcome.graphs, echo)?;
         items.push(item);
     }
-    items.extend(simulated.iter().map(|(written, _)| written.clone()));
+    for (written, _) in simulated {
+        let mut item = written.clone();
+        hold_item(&mut item, &outcome.graphs, None)?;
+        items.push(item);
+    }
     items.sort_by_key(|item| item["request_index"].as_u64().unwrap_or(u64::MAX));
     document["items"] = Value::Array(items.clone());
     document["aggregate"] = json!({
@@ -4374,16 +4377,24 @@ fn hold_item(
         return Ok(());
     }
     let graph = match dependency {
-        Some(identity) => graphs.dependencies.get(identity).unwrap_or(&graphs.own),
+        Some(identity) => graphs
+            .dependencies
+            .get(identity)
+            .unwrap_or(&Err(super::GraphUnavailable::NotEmitted)),
         None => &graphs.own,
     }
     .as_ref()
     .map_err(|cause| held_identity::HeldIdentityError::NoGraph(cause.clone()))?;
+    // FSpec FR-322 has no segment for a node of a dependency's graph: a
+    // composition item over the request's own package keeps those ids
+    // structural (FR-621 "Node ids in an item").
+    let composition = (dependency.is_none() && item["request"]["kind"] == "composition")
+        .then_some(&graphs.dependencies);
     let model = echo
         .and_then(|echo| echo.identity.as_ref())
         .and_then(|identity| identity["model"].as_str())
         .map(str::to_owned);
-    *item = held_identity::hold(item, graph, &graphs.dependencies, model.as_deref())?;
+    *item = held_identity::hold(item, graph, composition, model.as_deref())?;
     Ok(())
 }
 

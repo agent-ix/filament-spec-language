@@ -1085,6 +1085,7 @@ const fn analyze_refusal_cause(refusal: &crate::analyze::AnalyzeRefusal) -> &'st
         crate::analyze::AnalyzeRefusal::Binding(_) | crate::analyze::AnalyzeRefusal::Package(_) => {
             "invalid-value"
         }
+        crate::analyze::AnalyzeRefusal::Emission(_) => "resource-exhausted",
     }
 }
 
