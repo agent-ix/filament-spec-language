@@ -228,8 +228,8 @@ impl MonitorRecord {
 `MonitorRecord::atom()` is the name of the atom an `InsufficientData` or
 `Indeterminate` record names, and is `None` for every other record. The
 name follows the atom rendering rule in Behavior: whole caller source text
-when one region or byte-identical candidate texts identify it, and FR-931's
-canonical printed form when a shared node has differing candidate texts.
+when one region or byte-identical candidate texts identify it, and the
+canonical printed form below when a shared node has differing candidate texts.
 A `holds` atom includes the whole `holds(...)`. An `InsufficientData` record's atom is its aggregate, such as
 `count over past[0, 9] min_count 2 >= 1`. An `Indeterminate` record's atom
 is the `atom` its FR-501 reason (`MissingValuation`,
@@ -489,13 +489,15 @@ clause reports no verdict for the others.
     is not the selected locus.
   - When several candidate regions have differing caller texts, the
     `monitor` operation SHALL return the checked node's canonical printed
-    form under FR-931's existing atom printer, shared with TL lowering,
+    form under FR-931's existing atom printer for `holds` leaves, or under
+    "Canonical window-aggregate labels" below for aggregate leaves,
     and the selected claim declaration's actual region as its locus.
     The `monitor` operation SHALL retain the original evaluator outcome or
     refusal unchanged. This valid case introduces no attribution refusal
     or new disposition row.
   Text SHALL come from caller `sources` matched by native source reference.
-  The report layer owns text retrieval and canonical printing; an
+  The report layer owns text retrieval and canonical printing, reusing
+  FR-931's expression, literal and identity printers; an
   occurrence-source helper supplies admitted regions and occurrence identity,
   never text. Source rank, formula-use pairing by order, label-string
   deduplication and synthetic loci SHALL NOT select an occurrence. Atom
@@ -559,6 +561,53 @@ the coarser declaration locus above does not assert per-use attribution.
   `UndefinedEvaluation{where, cause}` naming the position and the undefined
   reason.
 
+### Canonical window-aggregate labels
+
+When the differing-text branch names a window aggregate, the report layer SHALL
+assemble its canonical label from the checked aggregate and its checked
+expressions under the following rule, on both source and checked-package
+routes. This defines aggregate label assembly; FR-931's TL lowering still
+has no aggregate proposition and gains none from this rule.
+
+The label has one of these heads, chosen by the checked aggregate kind:
+
+| Kind | Head |
+| --- | --- |
+| count | `count` |
+| sum, min, max | the kind word followed by ` of ` and `T(value)` |
+| fraction | `fraction holds(` + `T(predicate)` + `)` |
+| quantile | `quantile ` + `R(q)` + ` of ` + `T(value)` |
+
+Here `T` is FR-931's checked-expression printer with the selected clause's
+actual binder names and declaration identities, without the outer `holds`
+wrapper. `R` is FR-931's exact rational literal spelling
+`rational(n, d)` in lowest terms with positive denominator. An existing
+filter appends ` where holds(` + `T(filter)` + `)`; an absent filter appends
+nothing. Every head then appends, in this exact order:
+
+` over past[` + `B(lower)` + `, ` + `B(upper)` + `] min_count ` + `I(min_count)` + ` ` + `comparison` + ` ` + `T(threshold)`.
+
+`I` is FR-931's decimal integer literal printer. `comparison` is exactly
+`<`, `<=`, `=`, `>=` or `>`, as selected by the checked comparison. The
+`past[...]` punctuation and spacing follow FR-003. A position bound `B`
+prints with `I`. A duration bound `B` prints its normalized exact magnitude
+with `R`, one space and its selected clock unit's declaration key under
+FR-931's identity rule. Both duration bounds use the same selected unit
+after FR-194/FR-337's exact conversion; authored unit aliases and the
+original choice of equivalent time unit do not enter the label. The label
+always includes the checked `min_count`, including `1` when omitted in
+source under FR-194. The threshold retains its checked conversion and
+FR-931 literal spelling. No source reformatting or token-preserving source
+formatter selects a canonical spelling.
+
+The report layer SHALL print all admitted aggregate kinds, including
+quantity-bearing components, under this rule. Missing implementation of a
+specified component printer is implementation work, not an attribution
+refusal or remaining rendering scope. The unique and byte-identical cases
+still retain exact caller text. All three cases retain the original
+evaluator result, refusal, category, basis, support positions and aggregate
+`count`/`min_count`; the shared cases use the actual claim declaration locus.
+
 ## Acceptance Criteria
 
 | ID | Criteria | Verification |
@@ -582,6 +631,7 @@ the coarser declaration locus above does not assert per-use attribution.
 | FR-283-AC-17 | Over the `Finite` trace `c.value` 0, 1, 2, FR-330-AC-1's `Bounded` (event-position) returns `violation` at position 0 with `truth` `false`, and FR-330-AC-2's `Reaches` (infinite-trace) returns `success` with `truth` `true`, its prefix being a good prefix (FR-328). The same records come back when the request also sets `limits.max_window_values` to 1 and when it passes an empty `temporal_selections`. A `Document` trace of the same snapshots carrying `"closed": true`, and one carrying `"open": true`, are each refused `invalid_runtime_input`/`unknown-member` naming that member, before any position is admitted. | Test (TC-2323) |
 
 | FR-283-AC-18 | On both source and checked-package routes, TC-1295 rows 45–47 give exact whole caller text and exact expression locus for a unique candidate, identical caller text and the actual coarser claim declaration locus for shared byte-identical candidates, and FR-931's literal canonical name `holds(p.ok)` and that declaration locus for shared differing spellings. The original verdict or refusal, category and support positions remain unchanged, with no attribution refusal for valid differing texts. Missing caller sources and invalid selected spans retain `SourceNotSupplied`; no handoff fallback supplies them. | Test |
+| FR-283-AC-19 | TC-1295's aggregate controls retain exact caller text for unique and byte-identical regions and render differing shared regions by the canonical aggregate assembly above, including omitted versus explicit `min_count 1` and equivalent reformatted duration bounds. Both routes use the actual declaration locus for shared regions and retain the original evaluator outcome and aggregate counts. Changing a window, filter, threshold, kind or normalized min_count changes the checked aggregate and is not collapsed by label identity; missing source or invalid spans retain `SourceNotSupplied`, never a canonical fallback. | Test |
 
 ## Dependencies
 
@@ -591,7 +641,8 @@ the coarser declaration locus above does not assert per-use attribution.
 - [FR-106](FR-106-admit-snapshots-and-invocations.md): position admission.
 - FR-330: the `Temporal` selection, `TraceInput`, the trace-subject route and `TemporalCounterexample`; FR-327 to FR-329: the trace evaluator; FR-267: the temporal-disposition rows the verdict follows; FR-261: the shared reader.
 - FR-194: window aggregates and `max_window_values`; FR-501 and FR-504: the finite-window and progressed evaluations; FR-522 and FR-515: binding authentication against the package's rows; FR-100: the rendered `locus`.
-- FR-931: canonical atom printing for shared nodes with differing caller text.
+- FR-931: canonical `holds` printing and the expression, literal and identity
+  component printers used by canonical window-aggregate label assembly.
 - [FR-275](FR-275-take-a-typed-request-limits-and-cancel-on-every-lifecycle-operation.md): the call shape.
 - ADR-018 (draft): the temporal clauses.
 - FSpec FR-300: the `monitor` operation; FSpec FR-362: the missing fairness

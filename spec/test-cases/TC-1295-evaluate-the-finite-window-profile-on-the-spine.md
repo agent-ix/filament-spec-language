@@ -16,7 +16,8 @@ relationships:
 
 ## Description
 
-Verify FR-501-AC-1 to AC-26, FR-501-AC-31, FR-283-AC-18 and
+Verify FR-501-AC-1 to AC-26, FR-501-AC-31, FR-501-AC-32,
+FR-283-AC-18, FR-283-AC-19 and
 FR-330-AC-9 (the finite-window part): the
 spine evaluator returns a definite verdict on a closed complete window, pending
 or indeterminate only for a genuinely unresolved obligation, and never refuses
@@ -82,6 +83,28 @@ field-printing rule exercised by `holds(c.versionNumber <= 2)` in
 `tests/it/request_surface_s1_16.rs`); the expected name SHALL be this literal,
 not a call to the implementation's printer.
 
+For rows 48–50 and 52, use the existing `sampled` fixture in
+`fsl-package/src/emit/tests/temporal_aggregate.rs`: `Sample` has
+`v: Int[0, 9]` and `w: Int[0, 9]`, clause `Window` binds `e: Sample` under
+the event-position profile. Put the stated aggregate or conjunction under
+`always[0,0]`, with one sample `{v: 0, w: 1}`. For row 51 use that file's
+`package_window` fixture under the timestamped profile, importing the
+existing `example/config-version` model as `Config`, selecting clock
+`events` in `ix://example/config-version/unit/ms`. Supply one Sample at
+stamp 0, `W` 0 and `C(0)`. Put the stated conjunction under `always[0,0]`.
+This uses the fixture's actual `Config::s`/`Config::ms` normalization,
+not a guessed unit identity. Exercise source and checked-package rendering
+with their actual evaluated records and equal caller sources. The
+record-subject source run is an additional monitor control for
+`InsufficientData`. Verify the shared checked node and all candidate regions
+as in rows 45–47; an equal-body fixture that never creates multiple
+candidates does not satisfy these controls.
+
+All expected aggregate labels below are literal independent oracles for
+FR-283's assembly, not output captured from a printer. These acceptance
+procedures prescribe the rendering behavior; this specification change
+claims no package aggregate evaluator or printer implementation coverage.
+
 | # | Clause (`on origin` unless stated) | Trace and progress | Expected |
 | --- | --- | --- | --- |
 | 1 | `always[0,5] holds(p)` | stamps 0,2,5; p = T,F,T; W 5; C(5) | `Completed(false)` at position 0 |
@@ -131,6 +154,22 @@ not a call to the implementation's printer.
 | 45 | UniqueRegionExactText: `always[0,5] holds( p.ok )` | one `Expression` candidate for the atom in `StampedPulse`; the stated samples and progress | both routes name the atom exactly `holds( p.ok )` and use that exact expression region as locus; verdict `Completed(false)`, basis `closed-scope`, support exactly {(position 1, that checked atom)} |
 | 46 | SharedIdenticalText: `always[0,5] (holds( p.ok ) and holds( p.ok ))` | one shared atom with both whole caller texts byte-identical; the stated samples and progress | both routes name it exactly `holds( p.ok )` and use `StampedPulse`'s actual claim declaration region as the coarser locus, never either expression region; original false verdict, basis and support positions retained |
 | 47 | SharedDifferingText: `always[0,5] (holds( p.ok ) and holds(p.ok))` | one shared checked atom with differing caller text bytes; the stated samples and progress | both routes name it exactly `holds(p.ok)` by FR-931 and use `StampedPulse`'s actual claim declaration region as the coarser locus; original false verdict, `closed-scope` basis and position-1 support retained; no attribution refusal or additional result row |
+| 48 | UniqueAggregateText: `count over past[0,9] min_count 2 >= 1` | one aggregate region; the stated Sample | name exactly `count over past[0,9] min_count 2 >= 1` and that exact expression locus; monitor retains `InsufficientData`, position 0, count 1, min_count 2 |
+| 49 | SharedIdenticalAggregateText: two copies of row 48's atom joined by `and` | byte-identical caller text at two regions for one shared checked aggregate | name exactly row 48's caller text; actual `Window` declaration locus, never either expression; original insufficient-data result and counts unchanged |
+| 50 | SharedDefaultAggregateText: `count where holds(e.v > 1) over past[0,9] >= 1` and `count where holds( e.v>1 ) over past[ 0 , 9 ] min_count 1 >= 1`, joined by `and` | differing text but one shared checked aggregate under FR-194's default min_count rule | canonical name exactly `count where holds(e.v > 1) over past[0, 9] min_count 1 >= 1`, actual `Window` declaration locus; monitor retains `InsufficientData`, position 0, count 0, min_count 1; neither authored spelling is selected by rank |
+| 51 | SharedDurationAggregateText: `count where holds(e.v > 1) over past[0 Config::s, 3 Config::s] >= 1` and `count where holds( e.v>1 ) over past[ 0 Config::ms , 3000 Config::ms ] min_count 1 >= 1`, joined by `and` | equivalent duration bounds normalized to selected ms, with differing source bytes and omitted versus explicit min_count | canonical name exactly `count where holds(e.v > 1) over past[rational(0, 1) ix://example/config-version/unit/ms, rational(3000, 1) ix://example/config-version/unit/ms] min_count 1 >= 1`; actual `Window` declaration locus; original result, counts, basis and support positions unchanged; no attribution refusal |
+| 52 | AggregateKindsAndComponents: for each literal label in the following table, use two source spellings differing only in whitespace (and `0.5` versus `rational(1, 2)` for quantile) | same shared-node/candidate checks; one stated Sample; min_count 2 | exact literal label from the following table, actual declaration locus, original insufficient-data count 1 and min_count 2; quantity components follow row 51's literal rule rather than a no-printer refusal |
+
+Row 52's independent labels cover every aggregate kind and optional parts:
+
+| Kind | Exact canonical label |
+| --- | --- |
+| count | `count over past[0, 9] min_count 2 >= 1` |
+| sum | `sum of e.v over past[0, 9] min_count 2 <= 15` |
+| min | `min of e.v over past[0, 9] min_count 2 >= 0` |
+| max | `max of e.v over past[0, 9] min_count 2 <= 9` |
+| fraction | `fraction holds(e.v > 1) over past[0, 9] min_count 2 >= rational(1, 2)` |
+| quantile with filter | `quantile rational(1, 2) of e.v where holds(e.w = 1) over past[0, 9] min_count 2 <= 9` |
 
 ## Expected Results
 
@@ -157,3 +196,16 @@ not a call to the implementation's printer.
   refusal and category under the same attribution rule. These assertions
   establish no exact per-use attribution for repeated nodes: that remains
   QSL-2726's later admitted use-to-occurrence work.
+- Rows 48–52 also assert exact names and true loci, retaining all evaluator
+  fields rather than converting an aggregate outcome to a different row.
+  Reverse candidate enumeration and move whitespace between the two
+  candidates: the differing-text canonical result stays equal. Repeat the
+  missing/wrong source, short-byte and split-UTF-8 controls at each candidate
+  and the selected declaration region; each retains `SourceNotSupplied`.
+  Independently change the normalized min_count, one bound, kind, filter or
+  threshold: each semantically different aggregate stays a distinct checked
+  node, even if another printed label coincides. Reformatting source,
+  omitting the default min_count or converting equivalent duration units
+  does not authorize source rank, label deduplication, a synthetic locus or
+  an attribution refusal. FR-931 TL lowering remains unchanged and does not
+  gain an aggregate proposition from these rendering tests.

@@ -81,9 +81,10 @@ clause `Fair`, TC-847's undefined and `GuardUndefined` clauses, FR-328-AC-1's
     reference arguments, including references inside existing recursive
     typed-value containers: exactly `type`, `universe`, `object_type` and
     `identity`, with `type` `reference`, the actual universe `NodeId`, native
-    `EffectiveId` object type and identity UTF-8 text. The Counter object `a`
-    has `object_type` exactly
-    `{"owner_effective_type":null,"original":{"package":"counter","node":"Counter"}}`
+    `EffectiveId` object type and identity UTF-8 text. Use the admitted
+    `test/counters` model from `fsl-eval/tests/it/model_simulation.rs` for this
+    reference control. Its Counter object `a` has `object_type` exactly
+    `{"owner_effective_type":null,"original":{"package":"test/counters","node":"ix://test/counters/Counter"}}`
     and `identity` exactly `"a"`. Read and re-encode the produced documents.
     Independently apply the missing/extra member, wrong-kind universe,
     backend-node object type, malformed effective identity, non-text identity

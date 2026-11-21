@@ -177,11 +177,13 @@ checked-package routes SHALL apply FR-283's atom rendering rule. The explicit
   text and the selected claim declaration's actual region as a coarser locus,
   never an arbitrary candidate's region.
 - Several candidates with differing caller texts SHALL give the checked
-  node's canonical printed form from FR-931's existing TL-lowering atom
-  printer and the selected claim declaration's actual region as locus.
+  node's canonical printed form: FR-931's existing TL-lowering atom printer
+  for `holds` leaves, and FR-283's canonical window-aggregate assembly for
+  aggregate leaves. Both use the selected claim declaration's actual region
+  as locus.
 
 The report layer SHALL obtain caller text from `sources` by native source
-reference and reuse that canonical printer; occurrence-source helpers supply
+reference and reuse those canonical component printers; occurrence-source helpers supply
 regions and identity, never text. Both routes SHALL preserve FR-283's
 `SourceNotSupplied` refusal for a missing or wrong reference, short bytes or
 split UTF-8 span at each text region read or actual selected locus. A handoff
@@ -498,6 +500,7 @@ as its own ticket, referenced from QSL-1493; it is not part of this repository.
 | FR-501-AC-30 | AC-29's request with no late-data cutoff reads all three observations and its result writes no `late` member; adding the cutoff changes the result identity; with `HistoryCutoff` and the cutoff together, `once[0,4] holds(p)` reports `MissingHistory` for the activation that reaches before the trace and no observation is `late` because of it. | Test (TC-1547) |
 
 | FR-501-AC-31 | TC-1295 rows 45–47, run over both source and checked-package routes with equal caller sources, preserve the false verdict, `closed-scope` basis and position-1 decision support while rendering a unique atom as exact `holds( p.ok )` with its expression locus, byte-identical shared atoms as that text with the actual claim declaration locus, and differing shared spellings as exact FR-931 canonical `holds(p.ok)` with that declaration locus. Neither shared case chooses a candidate by rank or invents a per-use locus; valid differing text adds no attribution refusal. | Test |
+| FR-501-AC-32 | TC-1295's timestamped aggregate controls apply FR-283's unique, identical and differing-text rules to named aggregates and decision-support names on both routes, including normalized duration bounds and default min_count. Differing spellings use canonical aggregate assembly and the actual declaration locus, without attribution refusal or a new outcome row; the original evaluator result, basis, support positions and insufficient-data counts are unchanged. | Test |
 
 ## Dependencies
 

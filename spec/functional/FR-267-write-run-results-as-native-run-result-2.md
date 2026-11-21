@@ -439,8 +439,9 @@ FR-093-AC-5/6's closed, complete scope with no activation.
   `owner_effective_type` is null or another such effective identity, under
   the existing effective-identity grammar. `S` is the object's UTF-8
   identity text, not hexadecimal identity octets. For example, a produced
-  `Counter` binding with object identity `a` has
-  `"object_type":{"owner_effective_type":null,"original":{"package":"counter","node":"Counter"}}`
+  `Counter` binding with object identity `a` in the admitted `test/counters`
+  fixture (`fsl-eval/tests/it/model_simulation.rs`) has
+  `"object_type":{"owner_effective_type":null,"original":{"package":"test/counters","node":"ix://test/counters/Counter"}}`
   and `"identity":"a"`; `universe` remains the actual produced node id.
   The same native shape SHALL be used coherently across model value
   projection, outcome counterexamples and task-product transition wires.
