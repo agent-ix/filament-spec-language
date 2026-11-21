@@ -171,6 +171,30 @@ fn a_recommendation_ignores_selected_postconditions() {
     assert_eq!(item["replay"]["reproduced"], true, "{item}");
 }
 
+/// A result-free constraint can disable advice; reading its binder refuses
+/// during checking because a recommendation has no operation result.
+#[test]
+#[trace("FSpec-FR-822-AC-3")]
+fn a_recommendation_constraint_has_no_operation_result() {
+    let source = SOURCE.replace(
+        "as (advice: Boolean) { true }",
+        "as (advice: Boolean) { false }",
+    );
+    let outcome = run(&source);
+    assert_eq!(outcome.exit, 10, "{}", outcome.document);
+    let item = &outcome.document["items"][0];
+    assert_eq!(item["counterexample"]["prefix"], json!([]), "{item}");
+    let source = SOURCE.replace(
+        "as (advice: Boolean) { true }",
+        "as (advice: Boolean) { advice }",
+    );
+    let outcome = run(&source);
+    assert_eq!(outcome.exit, 20, "{}", outcome.document);
+    assert_eq!(outcome.document["last_stage"], "S3");
+    assert_eq!(outcome.document["items"], json!([]));
+    assert_eq!(outcome.document["diagnostics"][0]["code"], "ill_typed");
+}
+
 /// The acting object is carried inside the record for a replicated role.
 #[test]
 #[trace("FSpec-FR-822-AC-3")]
