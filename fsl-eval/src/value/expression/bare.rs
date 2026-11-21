@@ -440,6 +440,7 @@ fn evaluate_state_clause(
         current,
         pre,
         bindings,
+        reference_origins,
         trail,
         receiver_path,
     } = super::bind_clause(clause.observation(), &names, binds_result, observations)?;
@@ -452,6 +453,7 @@ fn evaluate_state_clause(
             .collect();
     let (evaluation, trail) =
         Machine::with_world(World::Bytes(&world), current, pre, Some(&reads), meter, &[])
+            .with_reference_origins(reference_origins)
             .with_trail(trail)
             .run_traced(
                 ReaderNode::root(clause.projection()),

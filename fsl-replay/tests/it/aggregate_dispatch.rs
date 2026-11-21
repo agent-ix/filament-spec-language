@@ -389,6 +389,7 @@ fn run_d10(checked: &spine::CheckedUnit) -> (String, u64) {
         }),
         post: None,
         self_object: reference,
+        self_population: None,
         invocation: None,
         self_kind: fsl_semantics::model::observation::SelfKind::Object,
         receiver_pre: None,
