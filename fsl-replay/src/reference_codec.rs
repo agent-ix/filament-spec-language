@@ -1573,14 +1573,33 @@ mod tests {
             universes(),
         ))
         .expect("actual source model system");
-        let read = fsl_package::read_evaluation_package(
+        let emission = fsl_package::emit_checked(checked, EmitLimits::new(16_777_216))
+            .expect("genuine source emission");
+        let emitted: Value = serde_json::from_slice(emission.package().bytes())
+            .expect("the captured emitted package is JSON");
+        let node6 = emitted["semantic_graph"]["nodes"]
+            .as_array()
+            .and_then(|nodes| nodes.get(6))
+            .expect("the captured emitted graph has node 6");
+        eprintln!(
+            "node6 kind={}/{}",
+            node6["node_tag"], node6["semantic_form"]
+        );
+        eprintln!("node6 owner={}", node6["owner"]);
+        let read = fsl_package::read_evaluation_emission(
             checked,
+            &emission,
             LibraryName::new(checked.graph().package_name().to_owned()).unwrap(),
             &packages,
             V2ReadLimits::bounded(16_777_216),
             EmitLimits::new(16_777_216),
-        )
-        .expect("source emission and strict package admission");
+            fsl_package::SourceWitnessSupplier::new(&emission),
+        );
+        match &read {
+            Ok(_) => eprintln!("reader refusing check=none (admitted)"),
+            Err(refusal) => eprintln!("reader refusing check={refusal:?}"),
+        }
+        let read = read.expect("source emission and strict package admission");
         let mut joins = NativeJoinBudget::new(10_000_000, 10_000_000);
         let source_catalog =
             ReferenceCatalog::from_source(&read, system.reference_model(), &mut joins)
