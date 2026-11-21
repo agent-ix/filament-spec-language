@@ -1909,13 +1909,13 @@ impl Scope {
     /// distinct dimension nodes of one equivalence class (FR-093 "Dimension
     /// equivalence"): the conversions the kernel's same-dimension relation
     /// refuses and an equivalence admits.
-    fn across_class(
+    fn across_class<'u>(
         &self,
-        source: &filament_semantic_value::quantity::QuantityUnit,
-        target: &filament_semantic_value::quantity::QuantityUnit,
+        source: &'u filament_semantic_value::quantity::QuantityUnit,
+        target: &'u filament_semantic_value::quantity::QuantityUnit,
     ) -> Option<(
-        &filament_semantic_value::unit::Unit,
-        &filament_semantic_value::unit::Unit,
+        &'u filament_semantic_value::unit::Unit,
+        &'u filament_semantic_value::unit::Unit,
     )> {
         use filament_semantic_value::quantity::QuantityUnit;
         let (QuantityUnit::Declared(source), QuantityUnit::Declared(target)) = (source, target)
