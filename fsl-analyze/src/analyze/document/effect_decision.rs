@@ -14,7 +14,9 @@ use super::{DocumentSelection, ItemSelection, SettledRun};
 
 /// Recognize the existing receipt document family when assembling formal
 /// premises. Admission still validates the complete selected bytes separately.
-pub(crate) fn is_receipt(bytes: &[u8]) -> bool {
+/// Command document intake uses the same classifier to keep opaque receipt
+/// contents out of its ordinary document metadata decoder.
+pub fn is_receipt(bytes: &[u8]) -> bool {
     quire_canonical::read(bytes, u64::try_from(bytes.len()).unwrap_or(u64::MAX)).is_ok_and(
         |document| {
             document
