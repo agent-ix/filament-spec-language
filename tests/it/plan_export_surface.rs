@@ -1643,7 +1643,6 @@ fn transfer_premise(identity: &Value, result: &str) -> Value {
 #[trace("TC-2920", "FR-1030-AC-1")]
 #[trace("TC-2870", "FR-1020-AC-1")]
 #[trace("FSpec-TC-2000", "FSpec-FR-820-AC-1")]
-#[ignore = "QSL-2247: PrevSafe and SoonTwo are TP-3 past and interval forms with no core certificate checker, so their premise settles failed (FR-127, ADR-018 V-1)"]
 fn a_step_for_step_refinement_transfers_previous_and_interval_clauses_proved() {
     let (exit, value) = transfer_run(
         &[(
@@ -1674,11 +1673,11 @@ fn a_step_for_step_refinement_transfers_previous_and_interval_clauses_proved() {
 }
 
 /// FR-1030-AC-2, AC-5, FR-1020-AC-2: a step-for-step refinement decides its
-/// transfers by the clause's premises, which a TP-3 form no core checker
-/// certifies settles as a typed unproved slot 1, never `proved`; a
-/// certifiable clause transfers `proved`; the terminal-stutter clause is
-/// refuted at slot 1; and a refinement whose step map has a `stutter` row
-/// names the first position-counting operator.
+/// transfers by the clause's premises, which the core certifies for the TP-3
+/// past and interval clauses and the invariant alike, so each transfers
+/// `proved`; the terminal-stutter clause is refuted at slot 1; and a
+/// refinement whose step map has a `stutter` row names the first
+/// position-counting operator.
 #[test]
 #[trace("TC-2920", "FR-1030-AC-2")]
 #[trace("TC-2920", "FR-1030-AC-5")]
@@ -1697,33 +1696,21 @@ fn previous_transfers_only_through_a_step_for_step_refinement() {
         )],
         true,
     );
-    assert_eq!(exit, 22, "{value}");
+    assert_eq!(exit, 0, "{value}");
     assert_eq!(
         value["refinement_transfer"]["refinement"]["step_for_step"]["holds"], true,
         "{value}"
     );
-    for clause in ["PrevSafe", "SoonTwo"] {
+    for clause in ["PrevSafe", "SoonTwo", "AtMostTwo"] {
         let result = transfer(&value, clause);
-        assert_eq!(result["value"], "inconclusive", "{value}");
-        assert_eq!(result["cause"]["type"], "premise-unproved", "{value}");
-        assert_eq!(result["cause"]["premise"], 1, "{value}");
-        // No core checker certifies a TP-3 past or interval proof, so its
-        // premise settles `failed` (FR-127, ADR-018 V-1), never `proved`.
-        assert_eq!(result["cause"]["result"], "failed", "{value}");
-        assert_eq!(result["slots"][1]["value"], "failed", "{value}");
+        assert_eq!(result["value"], "proved", "{value}");
+        assert_eq!(result["basis"], "decisive-witness", "{value}");
         assert_eq!(
-            result["transfer"]["fragment"]["class"], "position-counting",
+            result["transfer"]["premises"].as_array().map(Vec::len),
+            Some(2),
             "{value}"
         );
     }
-    let result = transfer(&value, "AtMostTwo");
-    assert_eq!(result["value"], "proved", "{value}");
-    assert_eq!(result["basis"], "decisive-witness", "{value}");
-    assert_eq!(
-        result["transfer"]["premises"].as_array().map(Vec::len),
-        Some(2),
-        "{value}"
-    );
 
     let (exit, value) = transfer_run(
         &[(

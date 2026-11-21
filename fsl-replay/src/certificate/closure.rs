@@ -44,6 +44,12 @@
 //! `InstanceBoundReached` with the distinct instance-limited model states
 //! (after `MemoryBoundReached`), never an acceptance.
 //!
+//! A TP-3 clause on origin over a model subject is closed over its bad-prefix
+//! monitor's states: the checker rebuilds the monitor from the recompiled
+//! clause, keys each reached monitor state by its viable elementary
+//! configurations (obligations, past memory, windows, acceptance), and a
+//! terminal model state stutters until its product state repeats.
+//!
 //! TP-1 and deadlock freedom have no future interval, so FR-338's
 //! non-progress acceptance check does not apply: they keep pure bad-prefix
 //! closure. A bounded `eventually[0,u]` clause (TP-2) is closed over its
@@ -63,8 +69,9 @@ use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use filament_exact::{Cancel, Meter, ScalarLimits};
 use filament_semantic_value::catalog::InternalFault;
 use fsl_eval::automaton::{
-    Atom, AutomatonStateKey, BoundedKind, BoundedState, BoundedTranslation, Letter, SafetyItem,
-    SafetyState, SafetyTranslation, StateId, SubjectKind,
+    translate, Atom, AutomatonStateKey, BoundedKind, BoundedState, BoundedTranslation, Letter,
+    Monitor, PropertyAutomaton, SafetyItem, SafetyState, SafetyStates, SafetyTranslation, StateId,
+    SubjectKind,
 };
 use fsl_eval::model_subject::{
     refused_invariant, AtomStop, ModelLetters, ModelSubject, ProtocolSubject,
@@ -814,6 +821,22 @@ struct LivenessPending<S: SubjectSystem> {
     index: usize,
 }
 
+/// What a TP-3 instance's run keeps: the monitor rebuilt from the clause, its
+/// key context, the instance's binding and the product states reached.
+struct MonitoredRun<'k> {
+    monitor: Monitor<PropertyAutomaton>,
+    keys: &'k SafetyStates,
+    binding: &'k fsl_eval::model_subject::ModelInstance,
+    visited: BTreeSet<(StateKey, StateId)>,
+}
+
+/// A reached TP-3 product state waiting to expand its model component.
+struct MonitoredPending<S: SubjectSystem> {
+    state: S::State,
+    at: ProductStateRef,
+    monitor: StateId,
+}
+
 /// The reached product states of one TP-4 instance, with the recording
 /// index each has.
 type Reached = BTreeMap<(StateKey, StateId), usize>;
@@ -947,6 +970,9 @@ impl<S: SubjectSystem> Check<'_, S> {
                 Translation::Bounded(translation) => {
                     self.run_bounded(binding, translation, &initial)?;
                 }
+                Translation::Monitored(keys) => {
+                    self.run_monitored(binding, keys, &initial)?;
+                }
                 Translation::Liveness(translation) => {
                     self.run_liveness(binding, translation, &initial)?;
                 }
@@ -1033,8 +1059,15 @@ impl<S: SubjectSystem> Check<'_, S> {
         let mut queue = VecDeque::new();
         for (_, _, state_key, state) in initial {
             self.poll()?;
-            let Some(letter) =
-                self.liveness_letter(translation, *letters, clause, binding, state, true, true)?
+            let Some(letter) = self.property_letter(
+                &translation.automaton,
+                *letters,
+                clause,
+                binding,
+                state,
+                true,
+                true,
+            )?
             else {
                 let at = self.product_liveness(translation, state_key.clone(), start)?;
                 return Err(Self::reject(CertificateRule::BadState, at));
@@ -1107,8 +1140,8 @@ impl<S: SubjectSystem> Check<'_, S> {
             for (transition, state_key, state) in self.ordered(expansion.successors)? {
                 self.poll()?;
                 let counted = self.system.counts_step(&transition);
-                let Some(letter) = self.liveness_letter(
-                    translation,
+                let Some(letter) = self.property_letter(
+                    &translation.automaton,
                     *letters,
                     clause,
                     binding,
@@ -1144,6 +1177,198 @@ impl<S: SubjectSystem> Check<'_, S> {
         Ok(())
     }
 
+    /// The closure of a TP-3 instance's product of model states and the
+    /// clause's bad-prefix monitor states (FR-338 `["safety", branches]`):
+    /// the monitor is rebuilt from the recompiled clause, each reached
+    /// monitor state is keyed by its viable elementary configurations, and a
+    /// terminal model state stutters until its product state repeats.
+    fn run_monitored(
+        &mut self,
+        binding: Option<&fsl_eval::model_subject::ModelInstance>,
+        keys: &SafetyStates,
+        initial: &[Initial<S>],
+    ) -> Step<()> {
+        let ModelCheckItem::Clause { letters, clause } = self.item else {
+            return Err(fault("monitored-clause-item").into());
+        };
+        let binding = binding.ok_or_else(|| fault("monitored-clause-binding"))?;
+        let max_states = self.limits.max_automaton_states;
+        let automaton =
+            translate(clause, max_states).map_err(|error| self.automaton_error(error))?;
+        let mut run = MonitoredRun {
+            monitor: Monitor::bad_prefix(automaton, max_states)
+                .map_err(|error| self.automaton_error(error))?,
+            keys,
+            binding,
+            visited: BTreeSet::new(),
+        };
+        let start = run
+            .monitor
+            .initial()
+            .map_err(|error| self.automaton_error(error))?;
+        let mut queue = VecDeque::new();
+        for (_, _, state_key, state) in initial {
+            self.poll()?;
+            let letter = self.property_letter(
+                run.monitor.automaton(),
+                *letters,
+                clause,
+                binding,
+                state,
+                true,
+                true,
+            )?;
+            let after = match letter {
+                Some(letter) => run
+                    .monitor
+                    .step(start, letter)
+                    .map_err(|error| self.automaton_error(error))?,
+                None => {
+                    let at = self.product_rejecting(keys, state_key.clone())?;
+                    return Err(Self::reject(CertificateRule::BadState, at));
+                }
+            };
+            queue.extend(self.reach_monitored(
+                &mut run,
+                state.clone(),
+                state_key.clone(),
+                after,
+                CertificateRule::InitialMissing,
+            )?);
+        }
+        while let Some(pending) = queue.pop_front() {
+            self.poll()?;
+            let (expansion, cut) = self.expand(&pending.state, &pending.at)?;
+            if expansion.successors.is_empty() {
+                // A state whose every step the memory or instance bound cut
+                // is a boundary state, never stuttered (ADR-025 MB-3,
+                // ADR-027 AE-4); any other terminal state stutters for ever,
+                // each stutter a counted step re-reading its letter (FR-125).
+                if cut.memory || cut.instances {
+                    continue;
+                }
+                queue.extend(self.monitored_step(&mut run, &pending, None, true)?);
+                continue;
+            }
+            for (transition, state_key, state) in self.ordered(expansion.successors)? {
+                self.poll()?;
+                self.charge_edge()?;
+                let counted = self.system.counts_step(&transition);
+                let edge = Some((&state, &state_key));
+                queue.extend(self.monitored_step(&mut run, &pending, edge, counted)?);
+            }
+        }
+        Ok(())
+    }
+
+    /// Read the letter of the model state `edge` reaches from `pending` (its
+    /// own model state when `edge` is `None`, the terminal stutter) and
+    /// reach the monitor state that results.
+    fn monitored_step(
+        &mut self,
+        run: &mut MonitoredRun<'_>,
+        pending: &MonitoredPending<S>,
+        edge: Option<(&S::State, &StateKey)>,
+        counted: bool,
+    ) -> Step<Option<MonitoredPending<S>>> {
+        let ModelCheckItem::Clause { letters, clause } = self.item else {
+            return Err(fault("monitored-clause-item").into());
+        };
+        let (state, state_key) = edge.unwrap_or((&pending.state, &pending.at.model_state));
+        let letter = self.property_letter(
+            run.monitor.automaton(),
+            *letters,
+            clause,
+            run.binding,
+            state,
+            counted,
+            false,
+        )?;
+        let Some(letter) = letter else {
+            let at = self.product_rejecting(run.keys, state_key.clone())?;
+            return Err(Self::reject(CertificateRule::BadState, at));
+        };
+        let after = run
+            .monitor
+            .step(pending.monitor, letter)
+            .map_err(|error| self.automaton_error(error))?;
+        self.reach_monitored(
+            run,
+            state.clone(),
+            state_key.clone(),
+            after,
+            CertificateRule::SuccessorMissing,
+        )
+    }
+
+    /// Reach `state` in the monitor state `after`: reject a rejecting
+    /// monitor state, then require the product state in the certificate
+    /// under `missing`. `None` when this instance reached it before.
+    fn reach_monitored(
+        &mut self,
+        run: &mut MonitoredRun<'_>,
+        state: S::State,
+        state_key: StateKey,
+        after: StateId,
+        missing: CertificateRule,
+    ) -> Step<Option<MonitoredPending<S>>> {
+        let at = self.product_monitored(run, state_key.clone(), after)?;
+        if run
+            .monitor
+            .is_rejecting(after)
+            .map_err(|error| self.automaton_error(error))?
+        {
+            return Err(Self::reject(CertificateRule::BadState, at));
+        }
+        if !run.visited.insert((state_key, after)) {
+            return Ok(None);
+        }
+        if self.reached >= self.limits.limits.max_states {
+            return Err(stopped(
+                ModelCheckLimit::MaxStates,
+                widen(self.limits.limits.max_states),
+            ));
+        }
+        self.reached += 1;
+        if !self.members.contains(&at) {
+            return Err(Self::reject(missing, at));
+        }
+        Ok(Some(MonitoredPending {
+            state,
+            at,
+            monitor: after,
+        }))
+    }
+
+    /// The product state of `state_key` and the monitor state `state`, keyed
+    /// by its viable elementary configurations.
+    fn product_monitored(
+        &mut self,
+        run: &MonitoredRun<'_>,
+        state_key: StateKey,
+        state: StateId,
+    ) -> Step<ProductStateRef> {
+        let configurations = run
+            .monitor
+            .configurations(state, run.keys.max_key_bytes())
+            .map_err(|error| self.automaton_error(error))?;
+        let key = run
+            .keys
+            .key(&configurations)
+            .map_err(|_| ClosureRefusal::Encoding)?;
+        self.product_of(state_key, key)
+    }
+
+    /// The rejecting product state `["safety",[]]` of `state_key`.
+    fn product_rejecting(
+        &mut self,
+        keys: &SafetyStates,
+        state_key: StateKey,
+    ) -> Step<ProductStateRef> {
+        let key = keys.key(&[]).map_err(|_| ClosureRefusal::Encoding)?;
+        self.product_of(state_key, key)
+    }
+
     /// The stutter edge of the pending model state: the model state repeats
     /// under the property automaton's successors of its letter.
     #[allow(clippy::too_many_arguments)]
@@ -1157,8 +1382,8 @@ impl<S: SubjectSystem> Check<'_, S> {
         visited: &mut Reached,
         queue: &mut VecDeque<LivenessPending<S>>,
     ) -> Step<()> {
-        let letter = self.liveness_letter(
-            translation,
+        let letter = self.property_letter(
+            &translation.automaton,
             letters,
             clause,
             binding,
@@ -1197,12 +1422,12 @@ impl<S: SubjectSystem> Check<'_, S> {
         Ok(())
     }
 
-    /// Read a TP-4 clause's letter, activation and captures at one model
+    /// Read a clause's letter, activation and captures at one model
     /// state. `counted` describes the step into this position.
     #[allow(clippy::too_many_arguments)]
-    fn liveness_letter(
+    fn property_letter(
         &self,
-        translation: &LivenessTranslation,
+        automaton: &PropertyAutomaton,
         letters: &dyn ModelLetters,
         clause: &fsl_semantics::check::CheckedTemporalClause,
         binding: &fsl_eval::model_subject::ModelInstance,
@@ -1213,7 +1438,7 @@ impl<S: SubjectSystem> Check<'_, S> {
         let state = self.system.atom_state(state);
         let state = state.as_ref();
         let mut letter = Letter::default();
-        let when = translation.automaton.when();
+        let when = automaton.when();
         let active = if let Some(when) = when {
             self.poll()?;
             let mut meter = Meter::new(self.meter);
@@ -1270,17 +1495,17 @@ impl<S: SubjectSystem> Check<'_, S> {
                 Err(AtomStop::Unobservable(stop)) => return Err(self.expansion_stop(stop)),
             }
         }
-        for (index, atom) in translation.automaton.atoms().iter().enumerate() {
+        for (index, atom) in automaton.atoms().iter().enumerate() {
             let Some(holds) = self.atom(letters, *atom, binding, state)? else {
                 return Ok(None);
             };
             if holds {
-                let atom = Atom::new(index).map_err(|_| fault("tp4-atom-in-range"))?;
+                let atom = Atom::new(index).map_err(|_| fault("letter-atom-in-range"))?;
                 letter = letter.with(atom);
             }
         }
         if !counted {
-            if let Some(uncounted) = translation.automaton.uncounted() {
+            if let Some(uncounted) = automaton.uncounted() {
                 letter = letter.with(uncounted);
             }
         }
@@ -1365,7 +1590,10 @@ impl<S: SubjectSystem> Check<'_, S> {
             fsl_eval::automaton::AutomatonError::StateLimit { limit } => {
                 stopped(ModelCheckLimit::MaxAutomatonStates, limit)
             }
-            _ => fault("tp4-automaton-transition").into(),
+            fsl_eval::automaton::AutomatonError::KeyEncodingLimit { .. } => {
+                ClosureRefusal::Encoding.into()
+            }
+            _ => fault("automaton-transition").into(),
         }
     }
 

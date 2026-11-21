@@ -19,9 +19,10 @@ use filament_exact::{Cancel, ValueType};
 use filament_semantic_value::catalog::InternalFault;
 use filament_semantic_value::fairness::PropertyForm;
 use fsl_eval::automaton::{
-    closure_shape, translate, translate_counted, AutomatonError, AutomatonKind, BoundedTranslation,
-    BuchiStates, ContextBinding, NotTranslated, PropertyAutomaton, SafetyTranslation, StateContext,
-    SubjectKind, TranslationRefusal, MAX_ATOMS,
+    closure_shape, invariant_atom, is_safety_translated, translate, translate_counted,
+    AutomatonError, AutomatonKind, BoundedTranslation, BuchiStates, ContextBinding, NotTranslated,
+    PropertyAutomaton, SafetyStates, SafetyTranslation, StateContext, SubjectKind,
+    TranslationRefusal, MAX_ATOMS,
 };
 use fsl_eval::model_subject::{ModelInstance, ModelLetters, ModelSubject};
 use fsl_eval::simulation::model::ModelSystem;
@@ -101,12 +102,16 @@ pub struct Instance {
     pub translation: Translation,
 }
 
-/// The canonical translation of one instance (FR-338): a safety item's, or a
-/// bounded clause's.
+/// The canonical translation of one instance (FR-338): a safety item's, a
+/// bounded clause's, or a safety monitor's.
 #[derive(Debug)]
 pub enum Translation {
     /// A TP-1 clause or the deadlock-freedom item.
     Safety(SafetyTranslation),
+    /// A TP-3 clause over an ordinary subject whose product states are the
+    /// bad-prefix monitor's `["safety", branches]` keys: obligations, past
+    /// memory, interval windows and acceptance membership.
+    Monitored(SafetyStates),
     /// A bounded `eventually[0,u]` or `always[0,u]` clause on origin (TP-2).
     Bounded(BoundedTranslation),
     /// A TP-4 liveness clause, built only for the closure checker.
@@ -135,6 +140,7 @@ impl Translation {
     pub fn admits(&self, octets: &[u8]) -> bool {
         match self {
             Self::Safety(translation) => translation.admit(octets).is_ok(),
+            Self::Monitored(states) => states.admit(octets).is_ok(),
             Self::Bounded(translation) => translation.admit(octets).is_ok(),
             Self::Liveness(translation) => translation.keys.admit(octets).is_ok(),
         }
@@ -387,6 +393,15 @@ impl ModelCheckItem<'_> {
                                     clause, &context,
                                 )?)
                             }
+                        } else if invariant_atom(clause).is_none()
+                            && clause.activation() == Activation::Origin
+                            && tp4.is_some_and(|tp4| tp4.subject_kind == SubjectKind::Ordinary)
+                            && is_safety_translated(clause)
+                        {
+                            Translation::Monitored(
+                                SafetyStates::clause(clause, &context, SubjectKind::Ordinary)
+                                    .map_err(ItemRefusal::Translation)?,
+                            )
                         } else {
                             Translation::Safety(SafetyTranslation::reachable_invariant(
                                 clause, &context,

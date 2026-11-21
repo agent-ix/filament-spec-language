@@ -1069,3 +1069,30 @@ fn a_protocol_subject_certificate_with_the_bounded_each_translation_is_refused()
         "{refused:?}"
     );
 }
+
+/// FR-338-AC-29: a TP-3 clause over a protocol subject has no certificate.
+/// `always (p implies eventually[0,5] p)` holds over the repaired `Fill`
+/// with an empty closure certificate, which the core refuses to admit, so
+/// FR-127 settles it `failed`, never `proved`.
+#[trace("TC-525", "FR-338-AC-29")]
+#[test]
+fn a_tp3_proof_over_a_protocol_subject_never_settles_proved() {
+    let case = Case::new(
+        &(fill_unit("self.v <= 1", "")
+            + "temporal Claim using t0 over (k: M::Cell) clock \"model-steps\" on origin \
+               { always (holds(k.v <= 3) implies eventually[0,5] holds(k.v <= 3)) }\n"),
+    );
+    let letters = CellV(|_| true);
+    let outcome = case.check("Fill", &letters);
+    let ModelCheckOutcome::Holds { certificate, .. } = &outcome else {
+        panic!("{:?}", outcome.stats());
+    };
+    let ProofCertificate::Closure(certificate) = certificate else {
+        panic!("a safety clause holds with a closure: {certificate:?}");
+    };
+    assert!(certificate.states.is_empty(), "{certificate:?}");
+    assert_eq!(
+        case.label("Fill", &letters, &outcome),
+        ResultLabel::Failed
+    );
+}

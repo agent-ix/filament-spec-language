@@ -59,10 +59,14 @@
 //! scheduler constraints exclude, because a thread can still move, is no
 //! behaviour and the run proves.
 //!
-//! Remaining work: QSL-878 gives the other TP-2 and TP-3 translation states
-//! their FR-338 canonical keys. Until it lands such a `Holds` carries an empty
-//! closure certificate, which the core checker cannot admit, so it never
-//! settles `proved`. A liveness clause (TP-4) is decided by `liveness`,
+//! An infinite-trace TP-3 clause on origin over a model subject (past and
+//! interval operators included) is keyed by the viable elementary
+//! configurations of its bad-prefix monitor state (FR-338 `["safety",
+//! branches]`): every explored model state with the key of the monitor state
+//! it was read to. A TP-3 clause over a protocol subject, or any other
+//! shape with no canonical translation, carries an empty closure certificate,
+//! which the core checker cannot admit, so it never settles `proved`. A
+//! liveness clause (TP-4) is decided by `liveness`,
 //! which adds the second phase; an `on each` activation with a `when`
 //! condition is read through [`ModelLetters::activation`] at each position
 //! the clause reads. A clause with no instance is `Undecided(NoInstance)`
@@ -75,9 +79,9 @@ use filament_semantic_value::catalog::InternalFault;
 use filament_semantic_value::fairness::{FairnessConstraint, PropertyForm};
 use filament_semantic_value::model_transition::ModelTransition;
 use fsl_eval::automaton::{
-    closure_shape, translate, translate_counted, Atom, AutomatonError, AutomatonKind, BoundedState,
-    BoundedTranslation, Gba, GbaBuilder, Guard, KeyRefusal, Letter, Monitor, SafetyAutomaton,
-    SafetyState, StateId, SubjectKind,
+    closure_shape, invariant_atom, is_safety_translated, translate, translate_counted, Atom,
+    AutomatonError, AutomatonKind, BoundedState, BoundedTranslation, Gba, GbaBuilder, Guard,
+    KeyRefusal, Letter, Monitor, SafetyAutomaton, SafetyState, StateId, SubjectKind,
 };
 use fsl_eval::fairness::{EdgeLabel, Vertex};
 use fsl_eval::model_subject::{
@@ -591,12 +595,22 @@ pub(crate) fn check_model_with_stutter_closure(
     let system =
         read_system(&request).map_err(|failure| ModelCheckRefusal::Admission(Box::new(failure)))?;
     check_model_bounds(&system, BOUND_POSITIONS).map_err(not_simulated)?;
+    // A loop-proof item is decided over a protocol subject only; a stated
+    // subject kind below must not instance it over a model.
+    if matches!(
+        request.item,
+        ModelCheckItem::LoopInvariant { .. } | ModelCheckItem::LoopTermination { .. }
+    ) {
+        return Err(ModelCheckRefusal::Item(ItemRefusal::LoopProofOverModel));
+    }
     let (instances, root_cancelled) = if certified {
-        match request.item.instances(
+        match request.item.instances_for(
             &request.subject,
             &system,
             request.temporal_clock_selections,
             cancel,
+            SubjectKind::Ordinary,
+            max_automaton_states,
         ) {
             Ok(instances) => (instances, None),
             Err(ItemRefusal::ClauseRoot(ClauseRootRefusal::Cancelled(cause))) => {
@@ -1790,10 +1804,20 @@ fn prepare(
     // certificate.
     let guarded = matches!(clause.activation(), Activation::Each { guarded: true });
     let each = matches!(clause.activation(), Activation::Each { .. });
+    // An infinite-trace TP-3 clause on origin over a model subject, whose
+    // steps all count, is keyed by its monitor's viable configurations (FR-338
+    // `["safety", branches]`). A protocol subject's steps that do not count
+    // need the non-progress search, so its TP-3 proof carries no certificate.
+    let monitored = form == Some(PropertyForm::Safety)
+        && counting == Counting::Every
+        && clause.activation() == Activation::Origin
+        && invariant_atom(clause).is_none()
+        && is_safety_translated(clause);
     let certified = (!guarded
         && form == Some(PropertyForm::ReachableInvariant)
         && clause.profile() == TemporalProfile::InfiniteTrace)
-        || (closure_shape(clause).is_some() && (!each || counting == Counting::Every));
+        || (closure_shape(clause).is_some() && (!each || counting == Counting::Every))
+        || monitored;
     let last_read = match clause.activation() {
         Activation::Origin if bounded => clause.horizon(),
         Activation::Origin => closure_shape(clause).map(|(_, upper, _)| upper),
@@ -1827,7 +1851,7 @@ fn bounded_translations(instances: &[Instance]) -> Vec<BoundedTranslation> {
         .iter()
         .filter_map(|instance| match &instance.translation {
             Translation::Bounded(translation) => Some(translation.clone()),
-            Translation::Safety(_) | Translation::Liveness(_) => None,
+            Translation::Safety(_) | Translation::Monitored(_) | Translation::Liveness(_) => None,
         })
         .collect()
 }
@@ -2060,9 +2084,10 @@ impl<S: SubjectSystem> Run<'_, S> {
     /// The closure certificate of a run that proved its item: for a TP-1
     /// clause or the deadlock-freedom item, every explored model state under
     /// each instance's carried root; for a bounded clause, every explored
-    /// model state under the canonical bounded state it was read to. Sorted
-    /// by model state then key. With no instance translation (a clause of
-    /// another shape) it is empty; Remaining work: QSL-878.
+    /// model state under the canonical bounded state it was read to; for a
+    /// TP-3 clause, under the key of its monitor's viable configurations.
+    /// Sorted by model state then key. With no instance translation (a clause
+    /// of another shape) it is empty.
     fn certificate(&self, instances: &[Instance]) -> Result<ClosureCertificate, ModelCheckRefusal> {
         let mut states = Vec::with_capacity(self.nodes.len().saturating_mul(instances.len()));
         for (index, instance) in instances.iter().enumerate() {
@@ -2073,6 +2098,25 @@ impl<S: SubjectSystem> Run<'_, S> {
                         model_state: node.key.clone(),
                         automaton_state: key.clone(),
                     }));
+                }
+                Translation::Monitored(translation) => {
+                    for node in &self.nodes {
+                        let state = node
+                            .monitor
+                            .get(index)
+                            .ok_or_else(|| fault("a-monitored-node-has-a-monitor-state"))?;
+                        let configurations = self
+                            .monitor
+                            .configurations(*state, translation.max_key_bytes())
+                            .map_err(ModelCheckRefusal::Translation)?;
+                        if configurations.is_empty() {
+                            return Err(fault("a-proved-run-reaches-no-rejecting-state"));
+                        }
+                        states.push(ProductStateRef {
+                            model_state: node.key.clone(),
+                            automaton_state: translation.key(&configurations)?,
+                        });
+                    }
                 }
                 // The producer refuses liveness clauses before instancing; only
                 // the closure checker builds this variant.
