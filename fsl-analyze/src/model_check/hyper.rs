@@ -186,7 +186,8 @@ pub struct HyperCheckRequest<'a> {
     /// (ADR-023 HV-3): a lasso of more joint steps for an HP-2 or HP-3 item,
     /// more moves for an HP-6 item.
     pub max_depth: Option<usize>,
-    /// The evaluation meter budget of each atom and each `μ_U` evaluation.
+    /// The evaluation meter budget of each atom and each `μ_U` evaluation,
+    /// and of the finite graph pass's traversal/canonicalization work.
     pub meter: ScalarLimits,
     /// The reductions the request selects. Copy-swap is not among them: the
     /// compiler applies it when the clause has the symmetry (FR-174).
