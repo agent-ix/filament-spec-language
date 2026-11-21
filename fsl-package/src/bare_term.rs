@@ -1242,7 +1242,7 @@ impl<'p> BarePackage<'p> {
                 |id| bodies.node(id),
                 true,
                 &|| BareClauseRefusal::from(fault("clause-form-shape-is-admitted")),
-                &mut |_position, atom, work| {
+                &mut |_position, atom, work: &mut MeteredForm<'_>| {
                     let mut found = None;
                     let mut multiple = false;
                     for entry in self.package().source_map() {
@@ -1461,9 +1461,7 @@ impl<'p> BarePackage<'p> {
                         name: bound, value, ..
                     } = field
                     {
-                        if bound.kind()
-                            == filament_contract_model::CheckedBindingNameKind::Other("name")
-                        {
+                        if &**bound == "name" {
                             name = text(value);
                             break;
                         }
