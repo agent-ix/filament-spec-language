@@ -114,73 +114,11 @@ fn an_initial_boundary_never_becomes_a_deadlock_or_a_safety_stutter() {
 
 #[trace("FR-158-AC-2", "FR-158-AC-3")]
 #[test]
-#[ignore = "QSL-2713: oracle contradicts FR-126 Bindings (budgets shared, product_states summed over the 3 Counter bindings): needs a spec ruling"]
 fn a_liveness_initial_boundary_never_gains_a_stutter_lasso() {
     let world = constrained_count(&[
         infinite("always holds(x.v <= 3)"),
         infinite("eventually holds(x.v = 3)"),
     ]);
-    let actual = world
-        .run(
-            Some(1),
-            vec![atom(|v| Some(v == 3))],
-            constraint("Started"),
-            None,
-            ModelCheckLimits {
-                limits: Limits {
-                    max_states: 1,
-                    ..Limits::default()
-                },
-                ..ModelCheckLimits::default()
-            },
-        )
-        .expect("one initial boundary fits exactly");
-    assert_eq!(
-        actual,
-        ModelCheckOutcome::Reduction {
-            cause: ReductionCause::ConstraintReached { boundary_states: 1 },
-            stats: actual.stats(),
-        }
-    );
-    assert_eq!(actual.stats().product_states, 1);
-    assert_eq!(actual.stats().product_edges, 0);
-    assert_eq!(actual.stats().stutter_edges, 0);
-}
-
-#[trace("FR-158-AC-1", "FR-158-AC-3")]
-#[test]
-fn a_false_initial_letter_refutes_before_the_initial_constraint_cuts() {
-    let world = constrained_count(&[infinite("always holds(x.v = 1)")]);
-    let outcome = run(
-        &world,
-        Some(0),
-        vec![atom(|v| Some(v == 1))],
-        constraint("Started"),
-    );
-    let evidence = violation(&outcome);
-    assert_eq!(evidence.kind, CounterexampleKind::Formula);
-    assert!(evidence.prefix.is_empty());
-    assert_eq!(path(&world, &outcome), [(0, 0, 0)]);
-    assert_eq!(outcome.stats().product_states, 1);
-    assert_eq!(outcome.stats().product_edges, 0);
-    assert_eq!(
-        world
-            .settle_clause(0, vec![atom(|v| Some(v == 1))], &outcome)
-            .value,
-        TerminalValue::Refuted
-    );
-}
-
-#[trace("FR-158-AC-2", "FR-158-AC-3")]
-#[test]
-fn a_liveness_initial_boundary_is_stored_per_binding_and_never_stutter_extended() {
-    let world = constrained_count(&[
-        infinite("always holds(x.v <= 3)"),
-        infinite("eventually holds(x.v = 3)"),
-    ]);
-    // FR-126 "Bindings and ranking": the three `Counter` bindings share the
-    // run's `max_states` and `product_states` is the sum over them, so three
-    // stored states is the exact budget for one initial boundary state each.
     let actual = world
         .run(
             Some(1),
@@ -206,6 +144,60 @@ fn a_liveness_initial_boundary_is_stored_per_binding_and_never_stutter_extended(
     assert_eq!(actual.stats().product_states, 3);
     assert_eq!(actual.stats().product_edges, 0);
     assert_eq!(actual.stats().stutter_edges, 0);
+
+    // FR-126 "Bindings and ranking": the three `Counter` bindings share the
+    // run's `max_states` and `product_states` is the sum over them, so a
+    // budget of one stops the run on the state limit.
+    let stopped = world
+        .run(
+            Some(1),
+            vec![atom(|v| Some(v == 3))],
+            constraint("Started"),
+            None,
+            ModelCheckLimits {
+                limits: Limits {
+                    max_states: 1,
+                    ..Limits::default()
+                },
+                ..ModelCheckLimits::default()
+            },
+        )
+        .expect("the run stops rather than refuses");
+    assert_eq!(
+        stopped,
+        ModelCheckOutcome::Stopped {
+            cause: IncompleteCause::ResourceExhausted,
+            limit: Some(ReachedLimit {
+                limit: ModelCheckLimit::MaxStates,
+                value: 1,
+            }),
+            stats: stopped.stats(),
+        }
+    );
+}
+
+#[trace("FR-158-AC-1", "FR-158-AC-3")]
+#[test]
+fn a_false_initial_letter_refutes_before_the_initial_constraint_cuts() {
+    let world = constrained_count(&[infinite("always holds(x.v = 1)")]);
+    let outcome = run(
+        &world,
+        Some(0),
+        vec![atom(|v| Some(v == 1))],
+        constraint("Started"),
+    );
+    let evidence = violation(&outcome);
+    assert_eq!(evidence.kind, CounterexampleKind::Formula);
+    assert!(evidence.prefix.is_empty());
+    assert_eq!(path(&world, &outcome), [(0, 0, 0)]);
+    assert_eq!(outcome.stats().product_states, 1);
+    assert_eq!(outcome.stats().product_edges, 0);
+    assert_eq!(
+        world
+            .settle_clause(0, vec![atom(|v| Some(v == 1))], &outcome)
+            .value,
+        TerminalValue::Refuted
+    );
 }
 
 #[trace("FR-158-AC-2")]
