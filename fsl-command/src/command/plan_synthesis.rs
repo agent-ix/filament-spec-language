@@ -278,11 +278,11 @@ pub(super) fn run(
                 cause: "missing-name",
                 reason: format!("no temporal clause is named `{name}`"),
             })?;
-        let same_model = match (node.clause().over().1.clone(), checked.grammar()) {
+        let same_model = match (&node.clause().over().1, checked.grammar()) {
             (ValueType::Reference(over), ValueType::Reference(grammar)) => {
                 let graph = package.graph();
                 graph
-                    .object_type_key(over)
+                    .object_type_key(over.clone())
                     .zip(graph.object_type_key(grammar.clone()))
                     .is_some_and(|(over, grammar)| over.package == grammar.package)
             }
