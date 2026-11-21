@@ -5,7 +5,6 @@
 
 use filament_semantic_value::catalog::Category;
 use fsl_analyze::plan::{PlanDecision, PlanResult, PlanStatus};
-use fsl_eval::simulation::model::{ModelBasedTestEvidence, ModelBasedTestRecord};
 use serde_json::{json, Value};
 
 /// The decision of a `measured` step (FSpec FR-409).
@@ -223,6 +222,7 @@ fn step_value(step: &StepDisposition) -> Value {
 /// A terminal record that does not serialize.
 pub fn dispositions(
     outcome: fsl_analyze::plan::PlanOutcome,
+    package: &str,
 ) -> Result<Vec<StepDisposition>, serde_json::Error> {
     outcome
         .dispositions
@@ -235,7 +235,11 @@ pub fn dispositions(
                 method: disposition.method,
                 evidence: disposition.evidence,
                 blocked_by: disposition.blocked_by,
-                result: disposition.result.as_ref().map(result_value).transpose()?,
+                result: disposition
+                    .result
+                    .as_ref()
+                    .map(|result| result_value(result, package))
+                    .transpose()?,
             })
         })
         .collect()
@@ -264,7 +268,7 @@ fn status(disposition: &fsl_analyze::plan::PlanDisposition) -> StepStatus {
 /// record as `analyze` writes it, a `measured` record with its FR-410
 /// decision at `verdict.decision.type`, simulation runs as FR-181 writes
 /// them, and a `model_based_test` step's FR-190 record.
-fn result_value(result: &PlanResult) -> Result<Value, serde_json::Error> {
+fn result_value(result: &PlanResult, package: &str) -> Result<Value, serde_json::Error> {
     Ok(match result {
         PlanResult::Analysis(record) => {
             let mut entry = serde_json::to_value(fsl_replay::OutcomeItem::from_terminal(record))?;
@@ -281,71 +285,12 @@ fn result_value(result: &PlanResult) -> Result<Value, serde_json::Error> {
             entry
         }
         PlanResult::Simulation(runs) => runs.clone(),
-        PlanResult::ModelBasedTest(record) => model_based_test_record(record),
+        PlanResult::ModelBasedTest(record) => super::super::model_based_test::result_json(record, package),
         PlanResult::NotRun {
             code,
             cause,
             member,
         } => json!({"refusal": {"code": code, "cause": cause, "member": member}}),
-    })
-}
-
-fn evidence_name(evidence: ModelBasedTestEvidence) -> &'static str {
-    match evidence {
-        ModelBasedTestEvidence::Tested => "tested",
-        ModelBasedTestEvidence::Refuted => "refuted",
-        ModelBasedTestEvidence::Inconclusive => "inconclusive",
-        ModelBasedTestEvidence::Incomplete => "incomplete",
-        ModelBasedTestEvidence::Failed => "failed",
-        ModelBasedTestEvidence::Unsupported => "unsupported",
-    }
-}
-
-/// FSpec FR-190's result record of a `model_based_test` step: its `result`
-/// and `cause` carry the step's FR-331 settlement.
-fn model_based_test_record(record: &ModelBasedTestRecord) -> Value {
-    use fsl_eval::simulation::model::ModelBasedTestCause;
-    let cause = record.cause.as_ref().map(|cause| match cause {
-        ModelBasedTestCause::NoEvaluatedCase => json!({"type": "no-evaluated-case"}),
-        ModelBasedTestCause::LimitReached {
-            limit,
-            value,
-            setting,
-        } => json!({
-            "type": "limit-reached",
-            "limit": limit.as_str(),
-            "value": value,
-            "setting": setting,
-        }),
-        ModelBasedTestCause::ToolFailure { defect } => json!({
-            "type": "tool-failure",
-            "defect": format!("{defect:?}"),
-        }),
-        ModelBasedTestCause::NoContractLevelReading => {
-            json!({"type": "no-contract-level-reading"})
-        }
-    });
-    json!({
-        "clause": record.clause,
-        "result": evidence_name(record.result),
-        "cause": cause,
-        "evidence": evidence_name(record.evidence),
-        "seed": record.seed,
-        "max_cases": record.max_cases,
-        "max_trace_length": record.max_trace_length,
-        "max_value_bits": record.max_value_bits,
-        "cases": {
-            "generated": record.counts.generated,
-            "passed": record.counts.passing,
-            "failed": record.counts.failing,
-            "discarded": record.counts.discarded,
-        },
-        "checks": {"evaluated": record.checks.evaluated},
-        "provenance": {
-            "seed": record.seed,
-            "max_value_bits": record.provenance.max_value_bits,
-        },
-        "counterexample": record.counterexample.is_some(),
     })
 }
 

@@ -504,9 +504,6 @@ pub fn run_model_based_test(
     if !is_state && request.subject.is_some() {
         return Err(refuse("subject", "unknown-member"));
     }
-    if is_value && request.max_trace_length.is_some() {
-        return Err(refuse("max_trace_length", "unknown-member"));
-    }
     if request.max_trace_length == Some(0) {
         return Err(refuse("max_trace_length", "invalid-value"));
     }
@@ -865,8 +862,30 @@ fn run_model_based_test_with_system_and_admission(
         reachability_limits,
         admission,
     );
+    if let Err(ModelBasedTestError::Expansion(ExpansionStop {
+        limit: Some(ExpansionLimit::EvaluationMeter(kind)),
+        ..
+    })) = &outcome
+    {
+        if let Some(name) = clause_name(system, identity) {
+            return Ok(text_limit_record(
+                Some(system),
+                ModelBasedRunLimits::for_run(system, position_limit, reachability_limits),
+                name,
+                sampler,
+                seed,
+                max_cases,
+                max_trace_length,
+                max_value_bits,
+                *kind,
+                scalar_limit(&system.meter_limits(), *kind),
+            ));
+        }
+    }
     let defect = match &outcome {
-        Err(ModelBasedTestError::Shrink(_)) => ModelBasedTestDefect::InvalidShrink,
+        Err(ModelBasedTestError::Shrink(ModelShrinkError::NotCounterexample)) => {
+            ModelBasedTestDefect::InvalidShrink
+        }
         Err(ModelBasedTestError::OracleDisagreement { .. }) => {
             ModelBasedTestDefect::OracleDisagreement
         }
@@ -887,6 +906,24 @@ fn run_model_based_test_with_system_and_admission(
         reachability_limits,
         defect,
     )
+}
+
+/// The configured bound of the counter `kind`.
+fn scalar_limit(limits: &filament_exact::ScalarLimits, kind: filament_exact::LimitKind) -> u64 {
+    use filament_exact::LimitKind;
+    match kind {
+        LimitKind::IntegerBits => limits.integer_bits,
+        LimitKind::DecimalDigits => limits.decimal_digits,
+        LimitKind::ScaleExpansion => limits.scale_expansion,
+        LimitKind::TextInputBytes => limits.text_input_bytes,
+        LimitKind::TextScalars => limits.text_scalars,
+        LimitKind::NormalizedScalars => limits.normalized_scalars,
+        LimitKind::UnitEdges => limits.unit_edges,
+        LimitKind::ValueOccurrences => limits.value_occurrences,
+        LimitKind::WorkUnits => limits.work_units,
+        LimitKind::ResultUnits => limits.result_units,
+        LimitKind::LiveOccurrences => u64::MAX,
+    }
 }
 
 /// The checked name of the clause or value function `identity` selects.
@@ -1177,7 +1214,8 @@ fn text_limit_record(
     max_cases: u64,
     max_trace_length: usize,
     max_value_bits: Option<u64>,
-    stop: filament_exact::Incomplete,
+    limit_kind: filament_exact::LimitKind,
+    limit: u64,
 ) -> ModelBasedTestResult {
     let operations = model.map(|system| {
         system
@@ -1190,8 +1228,8 @@ fn text_limit_record(
                 },
                 status: super::ModelOperationCoverageStatus::NotCovered {
                     reason: ModelOperationCoverageReason::Undetermined {
-                        limit: ModelOperationCoverageLimit::Accounting(stop.limit_kind),
-                        value: u128::from(stop.limit),
+                        limit: ModelOperationCoverageLimit::Accounting(limit_kind),
+                        value: u128::from(limit),
                     },
                 },
             })
@@ -1241,9 +1279,9 @@ fn text_limit_record(
         result: ModelBasedTestEvidence::Incomplete,
         evidence: ModelBasedTestEvidence::Incomplete,
         cause: Some(ModelBasedTestCause::LimitReached {
-            limit: stop.limit_kind,
-            value: stop.limit,
-            setting: format!("accounting.{}", stop.limit_kind.as_str()),
+            limit: limit_kind,
+            value: limit,
+            setting: format!("accounting.{}", limit_kind.as_str()),
         }),
         counterexample: None,
     }
@@ -1346,7 +1384,8 @@ fn run_model_based_value_function_entry(
             max_cases,
             trace_length,
             max_value_bits,
-            stop,
+            stop.limit_kind,
+            stop.limit,
         ));
     }
     run_model_based_value_function(
@@ -1939,7 +1978,8 @@ fn run_model_based_contract_clause(
             max_cases,
             max_trace_length,
             max_value_bits,
-            stop,
+            stop.limit_kind,
+            stop.limit,
         ));
     }
     let partitions = match contract_partition_cases(
@@ -2017,7 +2057,8 @@ where
             max_cases,
             max_trace_length,
             max_value_bits,
-            stop,
+            stop.limit_kind,
+            stop.limit,
         ));
     }
     let mut generated_cases = Vec::new();

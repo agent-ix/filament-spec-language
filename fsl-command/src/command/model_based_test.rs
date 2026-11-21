@@ -238,7 +238,10 @@ fn counterexample_json(result: &fsl_eval::simulation::model::ModelBasedTestResul
     }
 }
 
-fn result_json(result: &fsl_eval::simulation::model::ModelBasedTestResult, domain: &str) -> Value {
+pub(super) fn result_json(
+    result: &fsl_eval::simulation::model::ModelBasedTestResult,
+    domain: &str,
+) -> Value {
     use fsl_eval::simulation::model::{
         ModelBasedTestCause, ModelBasedTestDiscardReason, ModelOperationCoverageReasonKind,
         ModelOperationCoverageSummaryStatus,
@@ -540,9 +543,6 @@ pub(super) fn prepare(
     }
     if is_state_clause && selection.max_trace_length.is_none() {
         return Err(refuse("max_trace_length", "missing-member"));
-    }
-    if !is_state_clause && selection.max_trace_length.is_some() {
-        return Err(refuse("max_trace_length", "unknown-member"));
     }
     if !is_state_clause && selection.initial.is_some() {
         return Err(refuse("initial", "unknown-member"));

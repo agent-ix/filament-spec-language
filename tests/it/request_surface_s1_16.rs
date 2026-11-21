@@ -1094,6 +1094,15 @@ fn model_based_test_request_rules() {
         "{first}"
     );
     assert_eq!(first, mbt(bounded.clone()), "deterministic");
+    let mut with_length = bounded.clone();
+    with_length["max_trace_length"] = json!(3);
+    let with_length = mbt(with_length);
+    for member in ["status", "cases", "partitions", "counterexample"] {
+        assert_eq!(
+            with_length["model_based_test"][member], first["model_based_test"][member],
+            "a value clause accepts max_trace_length and does not use it: {member}"
+        );
+    }
     for (member, value, code, cause) in [
         ("max_cases", json!(0), "invalid_runtime_input", "invalid-value"),
         ("max_cases", json!(-1), "invalid_runtime_input", "invalid-value"),
