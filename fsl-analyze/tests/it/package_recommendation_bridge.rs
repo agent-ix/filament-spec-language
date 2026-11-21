@@ -37,7 +37,7 @@ fn source_and_package(ws: &Workspace, source: &str) -> (Value, Value) {
 /// The same selector executes admitted bytes, preserving canonical call
 /// identity, model states and exact replay through the blocked check.
 #[test]
-#[trace("FR-1046-AC-2", "FR-940-AC-6", "FSpec-FR-822-AC-3")]
+#[trace("FR-940-AC-6", "FSpec-FR-822-AC-3")]
 fn package_recommendations_preserve_native_steps_and_replay() {
     let ws = Workspace::new("recommendation-bridge-positive");
     let (source, package) = source_and_package(&ws, SOURCE);
