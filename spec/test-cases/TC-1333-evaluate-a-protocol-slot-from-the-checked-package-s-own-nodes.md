@@ -117,12 +117,16 @@ function ordinary_power using v(): Boolean pure { 2 m ^ 2 = 4 m * 1 m }
    under generous meters: they return `1 s`, `3 beat` and true respectively.
    Addition, subtraction and comparison of distinct nominal units still refuse
    the same type mismatch without explicit conversion.
-7. Compile and admit a library owning `Time` and `s`, then import it and relate
-   local `Beat` to that library's actual `Time`. Assert an admitted equivalence
-   operand carries that exact direct package reference and resolves to its
-   source owner. Emit/read the importing package with the actual dependency
-   artifact and its witnesses. Both routes convert `1 beat` to `1/4` of that
-   dependency's `s` with identical unit identity and kernel charges.
+7. Compile and admit genuine declarations of dependency-owned `Time` and `s`
+   and local `Beat` and `beat`. Use the checked IR writer to relate those
+   actual dimension ids through a typed Package operand, and fully admit that
+   package with the exact dependency selection and admitted evidence. Assert
+   the operand resolves to that dependency's actual source owner. Supply the
+   genuine dependency artifact and its witnesses to the bare graph builder:
+   its runtime conversion of `1 beat` returns exact `1/4` of the dependency's
+   `s`, with that unit's actual identity. This admitted-package test does not
+   require source-library quantity exports or foreign-operand emission, whose
+   producer contract remains separate; steps 1–6 retain both-route parity.
 
 Tag each test with `TC-1333` and the criteria it actually verifies; row 23 carries `FR-533-AC-23`. Rows 1 and 2 also carry FR-390-AC-11 and FR-520-AC-9.
 
