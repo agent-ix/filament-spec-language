@@ -309,16 +309,22 @@ impl SettledRun {
             }
         }
         let mut failures = BTreeMap::new();
-        for found in &self.counterexamples {
-            let super::super::Counterexample::Protocol { counterexample, .. } =
-                &found.counterexample
-            else {
+        let found_by_item: BTreeMap<_, _> = self
+            .counterexamples
+            .iter()
+            .map(|found| (found.request_index, found))
+            .collect();
+        let mut keys: BTreeMap<&[u8], (&[u8], &DocumentSelection)> = BTreeMap::new();
+        for (item_index, entries) in selected.iter().enumerate() {
+            if entries.is_empty() {
+                continue;
+            }
+            let index = fsl_foundation::RequestIndex::new(item_index);
+            let Some(found) = found_by_item.get(&index) else {
                 continue;
             };
-            let index = found.request_index;
-            let Some(entries) = selected
-                .get(index.get())
-                .filter(|entries| !entries.is_empty())
+            let super::super::Counterexample::Protocol { counterexample, .. } =
+                &found.counterexample
             else {
                 continue;
             };
@@ -334,7 +340,6 @@ impl SettledRun {
                     *count = count.saturating_add(1);
                 }
             }
-            let mut keys: BTreeMap<&[u8], (&[u8], &DocumentSelection)> = BTreeMap::new();
             for (position, document) in entries.iter().enumerate() {
                 let receipt = receipts
                     .get(document)
@@ -391,7 +396,7 @@ impl SettledRun {
             else {
                 continue;
             };
-            let Some((_, refusal)) = failures.iter().find(|(key, _)| key.get() == index) else {
+            let Some(refusal) = failures.get(&fsl_foundation::RequestIndex::new(index)) else {
                 continue;
             };
             let request_index = item["request_index"].clone();
@@ -414,10 +419,9 @@ impl SettledRun {
         if let Some(gaps) = self.document["aggregate"]["gaps"].as_array_mut() {
             for gap in gaps {
                 if let Some(index) = gap["request_index"].as_u64() {
-                    if failures
-                        .keys()
-                        .any(|key| u64::try_from(key.get()).ok() == Some(index))
-                    {
+                    if usize::try_from(index).ok().is_some_and(|index| {
+                        failures.contains_key(&fsl_foundation::RequestIndex::new(index))
+                    }) {
                         gap["result"] = Value::String("invalid-request".to_owned());
                     }
                 }
