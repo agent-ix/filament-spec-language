@@ -2508,12 +2508,24 @@ fn resolve_schedule_claim(
         false,
         candidates,
     );
+    // EN-7's closed-form analysis has no finite bound to request. EN-6's
+    // explicitly selected task-product analysis retains its bounded mode.
+    let extent = if named
+        .as_ref()
+        .is_some_and(|backend| backend.as_str() == crate::zone_check::manifest::BACKEND_ID)
+    {
+        ExtentClassification::Bounded
+    } else {
+        ExtentClassification::Unbounded {
+            finite_bound_available: false,
+        }
+    };
     Some(ResolvedItem::Claim(Box::new(ResolvedClaim {
         item: ClaimItem {
             request_index: index,
             claim,
             kind: Capability::Schedulability,
-            extent: ExtentClassification::Bounded,
+            extent,
             backend: named,
             candidates: candidate_list(&candidates),
             options: ItemOptions {
