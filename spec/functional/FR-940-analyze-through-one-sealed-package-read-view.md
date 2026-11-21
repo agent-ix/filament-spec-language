@@ -689,7 +689,17 @@ reason details through its existing `UnsupportedWithDetail` settlement,
 before exploration and without source fallback; sibling item families SHALL
 remain available. Present
 malformed evidence SHALL be a strict-reader whole-package refusal with
-the reader's existing code, cause and pointer. The FSL package form SHALL
+code `invalid_semantic_graph` and no cause. With
+`P = /semantic_graph/nodes/N/body/members/4`, a wrong final binding or its
+name SHALL point to `P`, a non-Group value to `P/value`, a malformed entry
+to `P/value/members/K`, a duplicate or unknown alias to that entry's
+`name`, and a wrong alias/root join or reference to that entry's
+`value/target`. The reader SHALL check supplied entries in sequence and
+report the first offending entry; only after those checks SHALL a missing
+alias point to `P/value/members/LEN`, where `LEN` is the supplied entry
+count. This is the optional fifth member of the current four-binding
+FR-351 body, not a migration to the separate seven-field FR-477 form.
+The FSL package form SHALL
 consume the admitted witness as its alias and certificate order. Source
 certificate order SHALL remain unchanged. Implementing this member
 requires the corresponding Contract IR producer/reader contract and its
