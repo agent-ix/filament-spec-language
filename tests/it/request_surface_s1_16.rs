@@ -799,10 +799,11 @@ fn a_work_limited_synthesis_is_incomplete() {
 
 fn reach(objective: &str, policy: Value) -> Value {
     let unit = format!(
-        "{MODEL_HEADER}type Lengths = Int[0, 3];\n\
-         temporal NotOne using v over (c: Config::ConfigVersion) clock \"model-steps\" \
+        "{MODEL_HEADER}profile t = \"filament.temporal.infinite-trace/v1\";\n\
+         type Lengths = Int[0, 3];\n\
+         temporal NotOne using t over (c: Config::ConfigVersion) clock \"model-steps\" \
          on origin {{ always holds(c.versionNumber != 1) }}\n\
-         temporal SomeTime using v over (c: Config::ConfigVersion) clock \"model-steps\" \
+         temporal SomeTime using t over (c: Config::ConfigVersion) clock \"model-steps\" \
          on origin {{ eventually holds(c.versionNumber = 3) }}\n\
          synthesis Reach using v grammar Config::ConfigVersion domain Lengths \
          {objective} satisfies {{ Reach.length >= 1 }};\n"
