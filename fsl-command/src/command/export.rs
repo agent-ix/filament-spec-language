@@ -125,7 +125,7 @@ pub(super) fn run_bytes(
     limits: RunLimits,
     overrides: &RequestOverrides<'_>,
 ) -> Result<Option<RunResult>> {
-    let mut document: Value = serde_json::from_slice(bytes).map_err(RunCause::Json)?;
+    let mut document = admitted_document(bytes)?;
     if document.get("format").and_then(Value::as_str)
         != Some(fsl_foundation::wire_format::WireFormat::RunRequest.as_str())
     {
@@ -175,7 +175,7 @@ pub(super) fn run_bytes(
     }
     if let (Some(_), Some(program)) = (&package_selection, package_program) {
         document["format"] = json!(fsl_foundation::wire_format::WireFormat::RunRequest.as_str());
-        let package_request_bytes = serde_json::to_vec(&document).map_err(RunCause::Output)?;
+        let package_request_bytes = serde_json::to_vec(&*document).map_err(RunCause::Output)?;
         let package_request: wire::Request = super::request(&package_request_bytes)?;
         super::package_run::validate_request(&package_request)?;
         let Some(package) = package_request.package.as_ref() else {
@@ -230,10 +230,30 @@ pub(super) fn run_bytes(
         return finish(&request, &mapped, &program, output.as_deref());
     }
     document["format"] = json!(fsl_foundation::wire_format::WireFormat::CompileRequest.as_str());
-    let compile = serde_json::to_vec(&document).map_err(RunCause::Output)?;
+    let compile = serde_json::to_vec(&*document).map_err(RunCause::Output)?;
     let compile: wire::CompileRequest = super::request(&compile)?;
     let mapped = compile_and_map(directory, &compile, &request, limits, overrides)?;
     finish(&request, &mapped.0, &mapped.1, output.as_deref())
+}
+
+/// Admit the raw tree before any selection or dependent file is inspected.
+/// The shared reader preserves duplicate names until it can refuse them;
+/// the typed envelope rejects additional top-level members.
+pub(super) fn admitted_document(bytes: &[u8]) -> Result<crate::unique_json::Deep> {
+    let document = match crate::unique_json::read(bytes) {
+        Ok(document) => document,
+        Err(reason) => {
+            let _: Value = serde_json::from_slice(bytes).map_err(RunCause::Json)?;
+            return Err(RunCause::ClauseRequest {
+                member: "request".to_owned(),
+                reason,
+            });
+        }
+    };
+    let document = crate::unique_json::Deep::new(document);
+    let super::Object(_): super::Object<wire::Envelope<'_>> =
+        serde_json::from_slice(bytes).map_err(RunCause::Json)?;
+    Ok(document)
 }
 
 /// Read the exact source identity/version pair an export request supplies
@@ -730,6 +750,42 @@ mod tests {
     use crate::command::RunError;
     use fsl_foundation::Code;
     use ix_trace_rs::trace;
+
+    /// Raw duplicates must refuse before a missing source can be opened.
+    #[test]
+    #[trace("TC-104", "FR-026")]
+    fn duplicate_envelope_members_refuse_before_source_io() {
+        for bytes in [
+            br#"{"format":"native-run/1","request":{"models":[],"models":[{}],"program":{"source":{"file":"absent.native"}},"export":{}}}"#.as_slice(),
+            br#"{"format":"native-run/1","request":{"models":[],"program":{"source":{"file":"absent.native"}},"export":{"profile":"a","profile":"b"}}}"#.as_slice(),
+            br#"{"format":"native-run/1","request":{},"request":{"export":{}}}"#.as_slice(),
+        ] {
+            let directory = tempfile::tempdir().unwrap();
+            let cause = run_bytes(
+                directory.path(),
+                bytes,
+                RunLimits::default(),
+                &RequestOverrides::default(),
+            )
+            .err()
+            .expect("the repeated key must be refused");
+            assert_eq!(cause.code(), Code::InvalidRequest);
+            assert!(cause.to_string().contains("duplicate object key"), "{cause}");
+            assert_eq!(directory.path().read_dir().unwrap().count(), 0);
+        }
+    }
+
+    /// An unknown envelope member cannot disappear during export conversion.
+    #[test]
+    #[trace("TC-104", "FR-026")]
+    fn unknown_envelope_member_refuses_before_export_selection() {
+        let cause =
+            admitted_document(br#"{"format":"native-run/1","request":{"export":{}},"extra":true}"#)
+                .err()
+                .expect("closed envelope");
+        assert_eq!(cause.code(), Code::InvalidRequest);
+        assert!(cause.to_string().contains("extra"), "{cause}");
+    }
 
     /// FSpec FR-817-AC-17: a package the run compiled but admission refuses
     /// stops the export with the refusal's own code, cause and pointer and
