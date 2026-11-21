@@ -175,6 +175,45 @@ fn with_record(functions: Vec<FunctionDeclaration>) -> CheckedPackage {
     linked(record_types(), functions)
 }
 
+/// Repeated text in a record constructor keeps its position through strict read-back.
+#[trace("TC-416", "FR-093")]
+#[test]
+fn repeated_record_operands_keep_identity_when_reordered() {
+    let declarations = [
+        "function makeA using v(): R pure { R { a: \"c\", b: \"b\" } }",
+        "function makeB using v(): R pure { R { a: \"c\", b: \"c\" } }",
+    ];
+    let emit = |order: [usize; 2]| {
+        let (_, emission) = emit_from_text(&format!(
+            "record R {{ a: String; b: String; }}\n{}\n{}",
+            declarations[order[0]], declarations[order[1]]
+        ));
+        assert!(
+            matches!(read_back(&emission), Read::Verified { .. }),
+            "record values strictly admit"
+        );
+        let wire = wire(&emission);
+        let mut values: Vec<_> = nodes(&wire)
+            .iter()
+            .filter(|node| node["semantic_form"] == "record_value")
+            .map(|node| (node["body"].to_string(), node["node_id"].clone()))
+            .collect();
+        values.sort_by(|left, right| left.0.cmp(&right.0));
+        assert_eq!(values.len(), 2);
+        values
+    };
+    let forward = emit([0, 1]);
+    let reversed = emit([1, 0]);
+    assert_ne!(
+        forward[0].1, forward[1].1,
+        "distinct records retain distinct keys"
+    );
+    assert_eq!(
+        forward, reversed,
+        "each admitted record retains its structural key"
+    );
+}
+
 /// `fadd(f, g) = f + g` over `Float64[mode]`.
 fn float_add(mode: &str) -> CheckedPackage {
     float_add_of(BuiltinType::Float64, mode)
