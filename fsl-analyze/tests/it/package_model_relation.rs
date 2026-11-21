@@ -44,6 +44,174 @@ fn forget_source(ws: &Workspace) {
         .expect("delete retained sources");
 }
 
+/// Compare the two real evaluator ports on labelled reachable edges, retaining
+/// every admitted charge rather than only comparing the terminal verdict.
+fn assert_tuple_evaluator_parity(
+    ws: &Workspace,
+    bytes: &[u8],
+    swap_observations: bool,
+) -> [bool; 3] {
+    use filament_exact::Meter;
+    use fsl_eval::simulation::model::{ModelEvaluator, ModelRelationTuple, ModelSystem};
+    use fsl_eval::simulation::TransitionSystem;
+    use fsl_eval::value::ModelRelationEvaluation;
+
+    let compiled = fsl_command::checked_handoff::compile(&ws.path(HANDOFF))
+        .expect("source handoff compiles for evaluator comparison");
+    let model = std::fs::read(ws.path("model.json")).expect("model fixture");
+    let (packages, snapshots, initial) = initial_world(&model);
+    let limits = fsl_package::V2ReadLimits::bounded(1 << 24);
+    let admitted = fsl_package::admit_checked_package(bytes, &packages, limits)
+        .expect("the evaluator package admits");
+    let mut budget = limits.native_join_limits().budget();
+    let identities = ReadIdentityRows::read(
+        &std::fs::read(ws.path(&format!("{HANDOFF}/identities.json"))).expect("identities"),
+        &admitted,
+        &mut budget,
+    )
+    .expect("identities admit");
+    let equality = std::fs::read(ws.path(&format!("{HANDOFF}/equality.json")))
+        .ok()
+        .map(|bytes| ReadEqualityRows::read(&bytes, &admitted).expect("equality admits"));
+    let bare = BarePackage::new(&admitted)
+        .with_supply(
+            BareSupply {
+                identities: &identities,
+                equality: equality.as_ref(),
+            },
+            &mut budget,
+        )
+        .expect("supply joins");
+    let source = compiled.checked();
+    let relation = &source.graph().step_relations()[0];
+    let descriptor =
+        ModelRelationDescriptor::of_source(source, relation).expect("source descriptor");
+    let form = bare
+        .model_relation_form(&bare.claim_name(relation.name()).expect("claim"))
+        .expect("package relation form");
+    let package_descriptor =
+        ModelRelationDescriptor::of_package(&bare, &form).expect("package descriptor");
+    let subject =
+        crate::relation_claims::subjects(source, &packages, &snapshots, &initial).remove(0);
+    let systems: Vec<_> = descriptor
+        .execution_aliases()
+        .iter()
+        .map(|alias| {
+            ModelSystem::for_alias(subject.simulation.clone(), alias).expect("execution system")
+        })
+        .collect();
+    assert_eq!(systems.len(), 2, "the fixture has two labelled executions");
+    let edges: Vec<Vec<_>> = systems
+        .iter()
+        .map(|system| {
+            system
+                .initial()
+                .into_iter()
+                .flat_map(|pre| {
+                    system
+                        .relation_successors(&pre, &Cancel::new())
+                        .expect("reachable edges")
+                        .successors
+                        .into_iter()
+                        .map(move |(edge, post)| (pre.clone(), edge, post))
+                })
+                .collect()
+        })
+        .collect();
+    assert!(edges.iter().all(|edges| !edges.is_empty()));
+    let mut observed = [false; 3];
+    let mut swapped_differs = false;
+    for left in &edges[0] {
+        for right in &edges[1] {
+            let chosen = [left, right];
+            let pre: Vec<_> = chosen
+                .iter()
+                .zip(&systems)
+                .map(|(edge, system)| system.observe(edge.0.state()).expect("pre observation"))
+                .collect();
+            let post: Vec<_> = chosen
+                .iter()
+                .zip(&systems)
+                .map(|(edge, system)| system.observe(edge.2.state()).expect("post observation"))
+                .collect();
+            let transitions: Vec<_> = chosen.iter().map(|edge| &edge.1.transition).collect();
+            let results: Vec<_> = chosen.iter().map(|edge| edge.1.result.as_deref()).collect();
+            let before: Vec<_> = pre.iter().map(|value| value.environment()).collect();
+            let after: Vec<_> = post.iter().map(|value| value.environment()).collect();
+            let mut source_meter = Meter::new(UNLIMITED);
+            let expected = source
+                .evaluate_model_relation(
+                    &descriptor,
+                    ModelRelationTuple {
+                        transitions: &transitions,
+                        results: &results,
+                        pre: &before,
+                        post: &after,
+                    },
+                    &mut source_meter,
+                )
+                .expect("source tuple evaluates");
+            let mut package_meter = Meter::new(UNLIMITED);
+            let actual = bare
+                .evaluate_model_relation(
+                    &package_descriptor,
+                    ModelRelationTuple {
+                        transitions: &transitions,
+                        results: &results,
+                        pre: &before,
+                        post: &after,
+                    },
+                    &mut package_meter,
+                )
+                .expect("package tuple evaluates");
+            assert_eq!(actual, expected);
+            assert!(!source_meter.charge_log_truncated());
+            assert!(!package_meter.charge_log_truncated());
+            assert!(!source_meter.admitted_charges().is_empty());
+            assert_eq!(
+                package_meter.admitted_charges(),
+                source_meter.admitted_charges()
+            );
+            match expected {
+                ModelRelationEvaluation::Holds => observed[0] = true,
+                ModelRelationEvaluation::Refuted => observed[1] = true,
+                ModelRelationEvaluation::Undefined(_) => observed[2] = true,
+                ModelRelationEvaluation::Undetermined(_) => panic!("unlimited tuple undecided"),
+            }
+            if swap_observations {
+                let mut swapped_pre = before.clone();
+                let mut swapped_post = after.clone();
+                // Swap one execution's pre/post meanings, leaving its labelled
+                // transition and the other execution unchanged.
+                swapped_pre[0] = after[0];
+                swapped_post[0] = before[0];
+                swapped_pre[1] = before[1];
+                swapped_post[1] = after[1];
+                let swapped = bare
+                    .evaluate_model_relation(
+                        &package_descriptor,
+                        ModelRelationTuple {
+                            transitions: &transitions,
+                            results: &results,
+                            pre: &swapped_pre,
+                            post: &swapped_post,
+                        },
+                        &mut Meter::new(UNLIMITED),
+                    )
+                    .expect("swapped observation projection evaluates");
+                swapped_differs |= swapped != actual;
+            }
+        }
+    }
+    if swap_observations {
+        assert!(
+            swapped_differs,
+            "a real changing field detects swapped pre/post"
+        );
+    }
+    observed
+}
+
 /// Includes a real post-state violation, runtime undefined body and counted stops.
 #[trace("FR-940-AC-24", "FR-940-AC-25")]
 #[test]
@@ -101,10 +269,15 @@ fn hp1_package_analyze_matches_source_after_source_deletion() {
             json!({"items": [{"claim": "Det", "temporal": temporal}]}),
         );
         let source = analyze(&path);
+        assert!(!source.item(0).is_null(), "{case}: {}", source.document());
         assert_eq!(label(&source.item(0)), expected, "{}", source.document());
         let request: Value = serde_json::from_slice(&std::fs::read(path).expect("request file"))
             .expect("request JSON");
-        let (members, _) = package_selection(&ws, &request["request"]);
+        let (members, bytes) = package_selection(&ws, &request["request"]);
+        let tuple_outcomes = assert_tuple_evaluator_parity(&ws, &bytes, false);
+        let expected_tuple = if case == "undefined" { 2 }
+            else if expected == "refuted" { 1 } else { 0 };
+        assert!(tuple_outcomes[expected_tuple], "{case}: expected actual tuple outcome");
         forget_source(&ws);
         let package = analyze_package(&ws, "package.json", &members);
         assert_eq!(package.exit, source.exit, "{}", package.document());
@@ -290,7 +463,7 @@ fn ordered_handoff(
     ws: &Workspace,
     separate_models: bool,
 ) -> (Value, Vec<u8>, fsl_semantics::model::intake::PackageInput) {
-    let declarations = "relation Ordered using v over (y: N::Vault::step, x: V::Vault::step) { pre(x.self.h) = pre(x.self.h) and pre(y.self.h) = pre(y.self.h) and x.self.l = x.self.l and y.self.l = y.self.l }\ninvariant Sibling using v on V::Vault { true }";
+    let declarations = "relation Ordered using v over (y: N::Vault::step, x: V::Vault::step) { pre(x.self.h) = pre(x.self.h) and pre(y.self.h) = pre(y.self.h) and x.self.l = x.i and y.self.l = y.i }\ninvariant Sibling using v on V::Vault at current { true }";
     let (unit, model, other, snapshots, extra) = if separate_models {
         let (unit, model, other, snapshot) =
             hyper_world::two_model_request_files((0, 0), declarations);
@@ -422,6 +595,9 @@ fn hp1_package_forms_preserve_declaration_order_and_distinct_aliases() {
             package.subjects()[0].identity == package.subjects()[1].identity,
             !separate_models
         );
+        if !separate_models {
+            assert_tuple_evaluator_parity(&ws, &bytes, true);
+        }
         drop(source_read);
         drop(compiled);
         forget_source(&ws);
@@ -443,7 +619,7 @@ fn hp1_package_forms_preserve_declaration_order_and_distinct_aliases() {
     }
 }
 
-#[trace("FR-940-AC-27")]
+#[trace("FR-940-AC-26", "FR-940-AC-27")]
 #[test]
 fn hp1_package_bad_order_evidence_refuses_but_legacy_absence_is_item_local() {
     let ws = Workspace::new("hp1-package-order-admission");
@@ -511,6 +687,104 @@ fn hp1_package_bad_order_evidence_refuses_but_legacy_absence_is_item_local() {
             "defect {defect}"
         );
     }
+    // The consumer must retain the strict reader's first refusal at the
+    // whole-request boundary, including integrity checks that precede joins.
+    let binders = original["semantic_graph"]["nodes"][position]["body"]["members"][1]["value"]
+        ["members"][0]["value"]["members"][2]["value"]["members"]
+        .as_array()
+        .expect("execution binders");
+    let parameter_positions: Vec<_> = binders
+        .iter()
+        .map(|binding| {
+            nodes
+                .iter()
+                .position(|node| node["node_id"] == binding["target"])
+                .expect("execution parameter node")
+        })
+        .collect();
+    assert!(
+        parameter_positions.len() >= 2,
+        "receiver and actual argument"
+    );
+    let receiver = parameter_positions[0];
+    let argument = parameter_positions[1];
+    forget_source(&ws);
+    for defect in 0..4 {
+        let mut altered = original.clone();
+        let graph = altered["semantic_graph"]["nodes"]
+            .as_array_mut()
+            .expect("nodes");
+        match defect {
+            0 => {
+                let receiver_level = graph[receiver]["body"]["members"][1]["value"].clone();
+                assert_ne!(
+                    graph[argument]["body"]["members"][1]["value"],
+                    receiver_level
+                );
+                graph[argument]["body"]["members"][1]["value"] = receiver_level;
+            }
+            1 => {
+                graph[argument]["body"]["members"]
+                    .as_array_mut()
+                    .expect("parameter body")
+                    .pop();
+            }
+            2 => {
+                assert_ne!(
+                    graph[argument]["semantic_type"],
+                    graph[receiver]["semantic_type"]
+                );
+                graph[argument]["semantic_type"] = graph[receiver]["semantic_type"].clone();
+            }
+            3 => {
+                let root = graph
+                    .iter()
+                    .find(|node| {
+                        node["node_tag"] == "model" && node["semantic_form"] == "model_root"
+                    })
+                    .expect("selected root")["node_id"]
+                    .clone();
+                graph[position]["body"]["members"][3]["value"]["target"] = root;
+            }
+            _ => unreachable!(),
+        }
+        let bytes = serde_json::to_vec(&altered).expect("malformed package JSON");
+        let refused = fsl_package::admit_checked_package(
+            &bytes,
+            &packages,
+            fsl_package::V2ReadLimits::bounded(1 << 24),
+        )
+        .expect_err("malformed execution evidence refuses before evaluation");
+        assert!(refused
+            .pointer
+            .as_deref()
+            .is_some_and(|path| path.starts_with("/semantic_graph/nodes/")));
+        ws.write(&format!("{HANDOFF}/checked-package.json"), &bytes);
+        let run = analyze_package(&ws, &format!("malformed-{defect}.json"), &members);
+        let document = run.document();
+        assert_eq!(run.exit, 20, "defect {defect}: {document}");
+        assert_eq!(
+            document["items"].as_array().map(Vec::len),
+            Some(0),
+            "{document}"
+        );
+        let diagnostic = &document["diagnostics"][0];
+        assert_eq!(
+            diagnostic["code"],
+            refused.code.as_str(),
+            "defect {defect}: {document}"
+        );
+        assert_eq!(
+            diagnostic["cause"],
+            json!(refused.cause),
+            "defect {defect}: {document}"
+        );
+        assert_eq!(
+            diagnostic["details"]["path"],
+            json!(refused.pointer),
+            "defect {defect}: {document}"
+        );
+    }
     let mut legacy = original;
     legacy["semantic_graph"]["nodes"][position]["body"]["members"]
         .as_array_mut()
@@ -529,7 +803,6 @@ fn hp1_package_bad_order_evidence_refuses_but_legacy_absence_is_item_local() {
         Err(fsl_package::ModelRelationFormRefusal::MissingSubjectDeclarationOrder { .. })
     ));
     ws.write(&format!("{HANDOFF}/checked-package.json"), &bytes);
-    forget_source(&ws);
     let run = analyze_package(&ws, "legacy.json", &members);
     assert_eq!(label(&run.item(0)), "unsupported", "{}", run.document());
     assert_eq!(
@@ -551,7 +824,7 @@ fn hp1_package_bad_order_evidence_refuses_but_legacy_absence_is_item_local() {
 #[test]
 fn hp1_package_ambiguous_model_read_fails_only_its_item() {
     let ws = Workspace::new("hp1-package-ambiguous-read");
-    let declarations = "relation Ambiguous using v over (x: V::Vault::step, y: V::Vault::step) { (if x.i = 0 then x.self else y.self).l = 0 }\ninvariant Sibling using v on V::Vault { true }";
+    let declarations = "relation Ambiguous using v over (x: V::Vault::step, y: V::Vault::step) { (if x.i = 0 then x.self else y.self).l = 0 }\ninvariant Sibling using v on V::Vault at current { true }";
     let (unit, model, snapshots) =
         request_files_over_starts(Vault::Secure, false, &STARTS, declarations);
     let path = request_over(
