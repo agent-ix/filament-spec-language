@@ -4811,7 +4811,9 @@ mod order_tests {
                     function unbounded using v(p: Population<M::Widget>): Boolean pure { true }\n\
                     function zero using v(p: Population<M::Widget>[0]): Boolean pure { true }\n\
                     function maximum using v(p: Population<M::Widget>[18446744073709551615]): Boolean pure { true }\n\
-                    function reference using v(p: Reference<M::Widget>): Boolean pure { true }\n";
+                    function reference using v(p: Reference<M::Widget>): Boolean pure { true }\n\
+                    function nested using v(p: Option<Population<M::Widget>[1]>): Boolean pure { true }\n\
+                    function population using v(p: Population<M::Widget>[0]): Population<M::Widget>[0] pure { p }\n";
         let parsed = fsl_cst::parse(
             fsl_foundation::SourceIdentity::new("agent-ix", "test:population-projection"),
             "population.native",
@@ -4880,6 +4882,18 @@ mod order_tests {
                 "{name}"
             );
         }
+        assert!(
+            matches!(
+                package.project_function("nested"),
+                Err(crate::BareSelectionFailure::FunctionParameterType { position: 0, .. })
+            ),
+            "a population nested under Option has no run value form"
+        );
+        let projection = package.project_function("population").unwrap().unwrap();
+        assert_eq!(
+            projection.selected_function().unwrap().result_type,
+            &ValueType::Population(Some(0))
+        );
         let projection = package.project_function("reference").unwrap().unwrap();
         assert!(matches!(
             projection.selected_function().unwrap().parameters[0].value_type,
