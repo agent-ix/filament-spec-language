@@ -5,7 +5,7 @@
 
 use filament_exact::{Cancel, Integer, Rational};
 use fsl_analyze::zone_check::{
-    TimedRefinementRequest, TimedRefinementUndecided, TimedSafetyOutcome, ZoneCheckItem,
+    TimedRefinementRefusal, TimedRefinementRequest, TimedRefinementUndecided, ZoneCheckRefusal, TimedSafetyOutcome, ZoneCheckItem,
     ZoneCheckLimits, ZoneCheckOutcome, ZoneCheckRequest, ZoneUndecided,
     check_free_delay_refinement, check_timed_model, check_timed_refinement,
 };
@@ -363,6 +363,43 @@ fn an_abstract_clock_guard_refutes_and_replays_the_exact_delay() {
         replay_attempt(&world, &altered),
         Ok(RefinementTraceSettlement::Reproduced { .. })
     ));
+}
+
+/// FR-900-AC-2 with an unmapped abstract field: which abstract clock guards
+/// and resets apply then depends on the hidden valuation, which the product
+/// does not track, so EN-6 refuses the combination instead of settling the
+/// safety half `proved` over guards it skipped.
+#[trace("TC-2538", "FR-900-AC-2")]
+#[test]
+fn a_timed_abstract_side_with_a_hidden_field_is_refused() {
+    let concrete = document(&["x"], &[("send", &["inflight"])]);
+    let abstract_model = renamed_package(
+        &document(&["y"], &[("send", &["inflight"])]),
+        "test/abstract",
+    );
+    let world = refining(
+        &abstract_model,
+        &concrete,
+        &format!(
+            "{DENSE}time A dense unit ms;\n\
+             post ASend using v on A::Call::send {{ self.inflight }}\n\
+             pre ASendable using v on A::Call::send {{ self.y >= 1 ms }}\n\
+             pre MSend using v on M::Call::send {{ self.x >= 0 ms }}\n\
+             post MSent using v on M::Call::send {{ self.inflight }}\n{}",
+            refinement("self.inflight").replace(" late = self.late;", "")
+        ),
+    )
+    .unwrap_or_else(|refusals| panic!("{refusals:?}"));
+    let refused = check_timed_refinement(safety_request(&world), &Cancel::new())
+        .err()
+        .expect("the hidden field under a timed abstract side is refused");
+    assert!(
+        matches!(
+            refused,
+            TimedRefinementRefusal::Zone(ZoneCheckRefusal::HiddenFieldTimedAbstract)
+        ),
+        "{refused:?}"
+    );
 }
 
 /// FR-900-AC-5: an untimed concrete model admits arbitrary delays between
