@@ -3226,6 +3226,7 @@ impl PackageDeclarations {
             &self.package_name,
             &self.models,
             &dispatch_tables,
+            &mut contract_meter,
         )?;
         let mut seen_operations = std::collections::BTreeSet::new();
         for operation in &scope.dispatch_operations {

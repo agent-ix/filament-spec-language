@@ -322,3 +322,74 @@ fn mixed_operation_receivers_use_a_sealed_typed_union() {
     assert_eq!(ordinal.value_type(), &ValueType::Integer);
     assert_eq!(ordinal.presence(), Presence::Optional);
 }
+
+/// Optional X and required Option<X> normalize to one record value type;
+/// their native invocation omission flags remain a separate concern.
+#[test]
+#[trace("FSpec-FR-800", "FR-1013")]
+fn normalized_option_parameters_do_not_report_a_shared_record_collision() {
+    use super::model_operations::{
+        assemble_units, config_version_document_with_operations, empty_frame, operation,
+        operation_parameter,
+    };
+    use serde_json::{json, Value};
+    for optional_first in [false, true] {
+        let required = operation(
+            "requiredOption",
+            json!([operation_parameter(
+                "requiredOption",
+                "amount",
+                "ix://example/config-version/MaybeBool"
+            )]),
+            None,
+            empty_frame(),
+        );
+        let mut parameter =
+            operation_parameter("optionalBool", "amount", "ix://filament/native/Boolean");
+        parameter["presence"] = json!("optional");
+        let optional = operation("optionalBool", json!([parameter]), None, empty_frame());
+        let operations = if optional_first {
+            vec![optional, required]
+        } else {
+            vec![required, optional]
+        };
+        let mut document: Value =
+            serde_json::from_slice(&config_version_document_with_operations(operations)).unwrap();
+        let identity = "ix://example/config-version/MaybeBool";
+        document["types"].as_array_mut().unwrap().push(json!({
+            "identity":identity, "displayName":"MaybeBool", "kind":"option", "roles":[],
+            "inner":"ix://filament/native/Boolean", "constraints":[], "extensions":[], "unknownPolicy":"reject",
+            "origin":{"generated":{"generatorIdentity":identity,"generatorVersion":"1.0.0","inputIdentities":[identity]}}
+        }));
+        let bytes = serde_json::to_vec(&document).unwrap();
+        let mut declarations = assemble_units(
+            &[(
+                "normalized-arguments",
+                r#"
+profile v = "filament.temporal.infinite-trace/v1";
+model Config = "example/config-version";
+type Lengths = Int[0,1];
+synthesis Reach using v grammar Config::ConfigVersion domain Lengths satisfies { true };
+"#,
+            )],
+            &[bytes.as_slice()],
+        );
+        declarations
+            .link_dispatch(ModelNormalizationLimits::default())
+            .expect("both normalized declarations admit and link");
+        let refusals = declarations
+            .check(
+                CheckMode::Linked,
+                CheckingLimits::default(),
+                &crate::reward_evaluator::ZeroRewardEvaluator,
+            )
+            .expect_err("the individual Option/optional form remains explicitly staged");
+        assert!(
+            refusals.iter().any(|refusal| matches!(&refusal.cause,
+            fsl_semantics::check::CheckCause::PlanUnsupported { form, .. }
+                if form.contains("amount") && !form.contains("conflicting")
+                    && !(form.contains("requiredOption") && form.contains("optionalBool")))),
+            "{refusals:?}"
+        );
+    }
+}

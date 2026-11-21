@@ -156,6 +156,7 @@ pub(crate) fn check_forms(
     package_name: &str,
     models: &[super::lowering::AdmittedModel],
     dispatch_tables: &[super::DispatchTable],
+    sealing_meter: &mut filament_exact::Meter,
 ) -> Result<Vec<CheckedSynthesis>, Vec<CheckRefusal>> {
     let mut checked = Vec::with_capacity(forms.len());
     for (index, form) in forms.iter().enumerate() {
@@ -219,6 +220,7 @@ pub(crate) fn check_forms(
                 // Use the same source ownership, model correspondence and
                 // lowering path as final emission. FR441 binds the member to
                 // this settled structural id, never the private plan handle.
+                // Reuse the owning checker session meter and cancellation.
                 let owner = super::node_key::SourceOwner::from(source);
                 let owners = source_owners
                     .iter()
@@ -227,7 +229,6 @@ pub(crate) fn check_forms(
                     })
                     .collect();
                 let mut occurrences = super::family::OccurrenceMap::default();
-                let mut meter = filament_exact::Meter::new(filament_exact::ScalarLimits::default());
                 let mut sealing = super::lowering::Lowering::new_with_source_owners(
                     &plan.scope,
                     &owner,
@@ -238,7 +239,7 @@ pub(crate) fn check_forms(
                     None,
                     0,
                     &mut occurrences,
-                    &mut meter,
+                    sealing_meter,
                     package_name,
                 );
                 let settled = sealing
