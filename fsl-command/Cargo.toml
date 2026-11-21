@@ -37,10 +37,11 @@ serde = { version = "1.0.228", features = ["derive"] }
 serde_json = { version = "1.0.151", features = ["raw_value", "unbounded_depth"] }
 thiserror = "2.0.20"
 # ADR-011, FR-931: the temporal correspondence stage is this crate's
-# only; no other FSL crate names the TL crates. Both dependencies use the
-# `tl-syntax` v0.4.0 tag, so they name one `Formula` type.
-tl-mltl = { git = "https://github.com/agent-ix/tl-mltl", rev = "d8457736d431b1401802e81581d43a715a227549", features = ["infinite-trace"] }
-tl-syntax = { git = "https://github.com/agent-ix/tl-syntax.git", tag = "v0.4.0", default-features = false, features = ["alloc", "serde"] }
+# only; no other FSL crate names the TL crates. The evaluator and bridge
+# share the same public syntax and evaluator types.
+tl-mltl = { git = "https://github.com/agent-ix/tl-mltl", rev = "06cda7776a3566ae90e223c3bc286c254618d39a", features = ["infinite-trace"] }
+tl-syntax = { git = "https://github.com/agent-ix/tl-syntax.git", rev = "9f7b1c868df605cb6e885291db95a948cd08829c", default-features = false, features = ["alloc", "serde"] }
+filament-mltl = { git = "https://github.com/agent-ix/filament-mltl", rev = "94f3eb20927d70bbdc8af72e7b0333485e9c583f" }
 
 [dev-dependencies]
 tempfile = "3.27.0"
