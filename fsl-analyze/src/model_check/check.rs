@@ -549,6 +549,16 @@ pub fn check_model(
     request: ModelCheckRequest<'_>,
     cancel: &Cancel,
 ) -> Result<ModelCheckOutcome, ModelCheckRefusal> {
+    check_model_with_stutter_closure(request, cancel, false)
+}
+
+/// Decide one model item, optionally adding the unfair self-loop at every
+/// state required by FR-380's liveness premise form.
+pub(crate) fn check_model_with_stutter_closure(
+    request: ModelCheckRequest<'_>,
+    cancel: &Cancel,
+    stutter_closure: bool,
+) -> Result<ModelCheckOutcome, ModelCheckRefusal> {
     if let ModelCheckItem::Clause { clause, .. } = request.item {
         if clause.property_form() == Some(PropertyForm::Liveness) {
             // FR-159 (a) reads the clause alone, so it settles before the
@@ -565,7 +575,7 @@ pub fn check_model(
                     }));
                 }
             }
-            return super::liveness::check(request, cancel);
+            return super::liveness::check(request, cancel, stutter_closure);
         }
     }
     if !request.reductions.is_empty() {

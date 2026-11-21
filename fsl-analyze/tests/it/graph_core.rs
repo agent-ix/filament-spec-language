@@ -875,7 +875,9 @@ impl PropertyComponent<Model> for AnchoredProperty {
     ) -> Result<Vec<String>, ExpansionStop> {
         Ok(vec![match transition {
             ProductTransition::Model(identity) => identity.clone(),
-            ProductTransition::TerminalStutter => "stutter".to_owned(),
+            ProductTransition::TerminalStutter | ProductTransition::StutterClosure => {
+                "stutter".to_owned()
+            }
         }])
     }
     fn findings(&self, _state: &String, _model: &usize) -> Result<Vec<()>, ExpansionStop> {

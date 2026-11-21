@@ -169,7 +169,7 @@ impl From<SpineStage> for OutcomeStage {
         match stage {
             SpineStage::Source => Self::S1,
             SpineStage::Forms => Self::S2,
-            SpineStage::Intake => Self::I1,
+            SpineStage::Intake | SpineStage::Compile => Self::I1,
             SpineStage::Assembly | SpineStage::Check => Self::S3,
             SpineStage::Emit => Self::S4,
         }
@@ -184,7 +184,7 @@ impl From<SpineStage> for OutcomeStage {
 /// from clause runs"), written only on an item whose category is that
 /// category, which only a clause run gives
 /// ([`OutcomeItem::from_clause_run`]).
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ItemLabel {
     /// The claim was proved.

@@ -1770,6 +1770,20 @@ impl CheckedRefinement {
         &self.steps
     }
 
+    /// Whether this model refinement's step map is step-for-step. The caller
+    /// supplies whether the selected concrete subject declares dense time;
+    /// no concrete behavior is explored. Every row must map a concrete
+    /// operation to an abstract operation step. Protocol rows, `stutter`, `any`, and dense-time
+    /// subjects do not preserve the step positions required by `previous`
+    /// and bounded interval operators.
+    pub fn is_step_for_step(&self, concrete_time_is_dense: bool) -> bool {
+        !concrete_time_is_dense
+            && self.steps.iter().all(|row| {
+                matches!(&row.class, StepClass::Operation(_))
+                    && matches!(&row.target, StepTarget::Abstract { .. })
+            })
+    }
+
     /// Every authored step row's source region in source-row order.
     pub fn step_sources(&self) -> &[RefinementStepSource] {
         &self.step_sources

@@ -290,7 +290,7 @@ pub fn check_closure(
     limits: &ModelCheckLimits,
     cancel: &Cancel,
 ) -> Result<TemporalCertificateCheck, ClosureRefusal> {
-    check_model(request, Proof::closure(certificate), limits, cancel)
+    check_model(request, Proof::closure(certificate), limits, cancel, false)
 }
 
 /// FR-339: check `certificate`, a liveness (TP-4) proof's component
@@ -309,7 +309,36 @@ pub fn check_components(
     limits: &ModelCheckLimits,
     cancel: &Cancel,
 ) -> Result<TemporalCertificateCheck, ClosureRefusal> {
-    check_model(request, Proof::components(certificate), limits, cancel)
+    check_model(
+        request,
+        Proof::components(certificate),
+        limits,
+        cancel,
+        false,
+    )
+}
+
+/// [`check_components`] over the item's stutter closure (FSpec FR-380): the
+/// recomputed product graph carries FR-380's unfair self-loop at every model
+/// state with an enabled operation, as the run that produced `certificate`
+/// explored it.
+///
+/// # Errors
+///
+/// [`ClosureRefusal`] as [`check_components`] returns it.
+pub fn check_components_over_stutter_closure(
+    request: &CertificateRequest<'_>,
+    certificate: &ComponentCertificate,
+    limits: &ModelCheckLimits,
+    cancel: &Cancel,
+) -> Result<TemporalCertificateCheck, ClosureRefusal> {
+    check_model(
+        request,
+        Proof::components(certificate),
+        limits,
+        cancel,
+        true,
+    )
 }
 
 fn check_model(
@@ -317,6 +346,7 @@ fn check_model(
     proof: Proof<'_>,
     limits: &ModelCheckLimits,
     cancel: &Cancel,
+    stutter_closure: bool,
 ) -> Result<TemporalCertificateCheck, ClosureRefusal> {
     let simulation = request.subject.simulation.clone();
     let system = if matches!(request.item, ModelCheckItem::DeadlockFreedom) {
@@ -335,6 +365,7 @@ fn check_model(
         proof,
         limits,
         cancel,
+        stutter_closure,
     )
 }
 
@@ -542,6 +573,7 @@ fn check_protocol_system<S: SubjectSystem>(
         proof,
         limits,
         cancel,
+        false,
     )
 }
 
@@ -567,6 +599,7 @@ fn check_system<S: SubjectSystem>(
     proof: Proof<'_>,
     limits: &ModelCheckLimits,
     cancel: &Cancel,
+    stutter_closure: bool,
 ) -> Result<TemporalCertificateCheck, ClosureRefusal> {
     let meter = subject.simulation.meter;
     let budgets = Budgets::of(&subject.simulation);
@@ -650,6 +683,7 @@ fn check_system<S: SubjectSystem>(
     }
 
     let mut check = Check {
+        stutter_closure,
         system,
         model,
         item,
@@ -780,6 +814,9 @@ type SubjectExpansion<S> = (
 );
 
 struct Check<'c, S: SubjectSystem> {
+    /// Whether every model state with an enabled operation also has FSpec
+    /// FR-380's unfair stutter edge, as the run being checked explored it.
+    stutter_closure: bool,
     system: &'c S,
     /// The subject's model system, which reads an invariant item's letter
     /// over each reached state's model state (FR-951).
@@ -995,45 +1032,31 @@ impl<S: SubjectSystem> Check<'_, S> {
             // ADR-018 SM-4: a model state with no step continues along its
             // stutter edge, unless a method bound cut its steps (ADR-025
             // MB-3, ADR-027 AE-4): a boundary state is never stuttered.
-            if expansion.successors.is_empty() && !(cut.memory || cut.instances) {
-                let letter = self.liveness_letter(
+            let stutters = !(cut.memory || cut.instances);
+            if expansion.successors.is_empty() && stutters {
+                self.liveness_stutter(
                     translation,
                     *letters,
                     clause,
                     binding,
-                    &pending.state,
-                    true,
-                    false,
+                    &pending,
+                    &mut visited,
+                    &mut queue,
                 )?;
-                let Some(letter) = letter else {
-                    let at = self.product_liveness(
-                        translation,
-                        pending.at.model_state.clone(),
-                        pending.automaton,
-                    )?;
-                    return Err(Self::reject(CertificateRule::BadState, at));
-                };
-                let successors = translation
-                    .automaton
-                    .successors(pending.automaton, letter)
-                    .map_err(|error| self.automaton_error(error))?;
-                for automaton in successors {
-                    self.poll()?;
-                    self.charge_edge()?;
-                    let (to, next) = self.reach_liveness(
-                        translation,
-                        pending.state.clone(),
-                        pending.at.model_state.clone(),
-                        automaton,
-                        CertificateRule::SuccessorMissing,
-                        &mut visited,
-                    )?;
-                    if let Some(recording) = &mut self.recording {
-                        recording.edge(self.system, pending.index, to, None)?;
-                    }
-                    queue.extend(next);
-                }
                 continue;
+            }
+            // FSpec FR-380: the stutter closure adds the same edge at every
+            // state that has steps.
+            if self.stutter_closure && stutters {
+                self.liveness_stutter(
+                    translation,
+                    *letters,
+                    clause,
+                    binding,
+                    &pending,
+                    &mut visited,
+                    &mut queue,
+                )?;
             }
             for (transition, state_key, state) in self.ordered(expansion.successors)? {
                 self.poll()?;
@@ -1071,6 +1094,59 @@ impl<S: SubjectSystem> Check<'_, S> {
                     queue.extend(next);
                 }
             }
+        }
+        Ok(())
+    }
+
+    /// The stutter edge of the pending model state: the model state repeats
+    /// under the property automaton's successors of its letter.
+    #[allow(clippy::too_many_arguments)]
+    fn liveness_stutter(
+        &mut self,
+        translation: &mut LivenessTranslation,
+        letters: &dyn ModelLetters,
+        clause: &fsl_semantics::check::CheckedTemporalClause,
+        binding: &fsl_eval::model_subject::ModelInstance,
+        pending: &LivenessPending<S>,
+        visited: &mut Reached,
+        queue: &mut VecDeque<LivenessPending<S>>,
+    ) -> Step<()> {
+        let letter = self.liveness_letter(
+            translation,
+            letters,
+            clause,
+            binding,
+            &pending.state,
+            true,
+            false,
+        )?;
+        let Some(letter) = letter else {
+            let at = self.product_liveness(
+                translation,
+                pending.at.model_state.clone(),
+                pending.automaton,
+            )?;
+            return Err(Self::reject(CertificateRule::BadState, at));
+        };
+        let successors = translation
+            .automaton
+            .successors(pending.automaton, letter)
+            .map_err(|error| self.automaton_error(error))?;
+        for automaton in successors {
+            self.poll()?;
+            self.charge_edge()?;
+            let (to, next) = self.reach_liveness(
+                translation,
+                pending.state.clone(),
+                pending.at.model_state.clone(),
+                automaton,
+                CertificateRule::SuccessorMissing,
+                visited,
+            )?;
+            if let Some(recording) = &mut self.recording {
+                recording.edge(self.system, pending.index, to, None)?;
+            }
+            queue.extend(next);
         }
         Ok(())
     }

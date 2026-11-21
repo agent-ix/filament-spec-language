@@ -33,8 +33,8 @@ use filament_exact::{Cancel, ObjectReference, ValueType};
 use super::{AnalyzeItem, EngineReport, Refusal};
 use crate::claim_family::{claim_family, kind_family};
 use crate::model_check::{
-    check_model, check_protocol_constrained, manifest as en1, HyperRefusal, LivenessRefusal,
-    ModelCheckRefusal, ModelCheckRequest, ProtocolCheckRequest,
+    check_model_with_stutter_closure, check_protocol_constrained, manifest as en1, HyperRefusal,
+    LivenessRefusal, ModelCheckRefusal, ModelCheckRequest, ProtocolCheckRequest,
 };
 use crate::statistical::{check_statistical, manifest as en4, StatisticalRequest};
 use crate::zone_check::{
@@ -98,6 +98,9 @@ pub(super) const INVALID_VALUE: CatalogCode =
 pub struct ModelItem<'a> {
     /// The EN-1 run.
     pub request: ModelCheckRequest<'a>,
+    /// Whether this temporal liveness item is checked over the abstract
+    /// subject's stutter closure (FR-380).
+    pub stutter_closure: bool,
     /// The closure checker's request over the same subject and item.
     pub certificate: CertificateRequest<'a>,
     /// Replays the run's counterexample.
@@ -209,18 +212,26 @@ fn bound_over(
 pub(super) fn settle_model_item(item: ModelItem<'_>, cancel: &Cancel) -> EngineReport {
     let ModelItem {
         request,
+        stutter_closure,
         certificate,
         replay,
     } = item;
     let limits = request.limits;
-    match check_model(request, cancel) {
-        Ok(outcome) => EngineReport::Model(Box::new(fsl_replay::settle_model_check(
-            &outcome,
-            &limits,
-            &certificate,
-            cancel,
-            replay,
-        ))),
+    match check_model_with_stutter_closure(request, cancel, stutter_closure) {
+        Ok(outcome) => {
+            let record = if stutter_closure {
+                fsl_replay::settle_model_check_over_stutter_closure(
+                    &outcome,
+                    &limits,
+                    &certificate,
+                    cancel,
+                    replay,
+                )
+            } else {
+                fsl_replay::settle_model_check(&outcome, &limits, &certificate, cancel, replay)
+            };
+            EngineReport::Model(Box::new(record))
+        }
         Err(refusal) => EngineReport::Refused(model_refusal(&refusal)),
     }
 }
@@ -1131,6 +1142,7 @@ pub(super) fn model_refusal(refusal: &ModelCheckRefusal) -> Refusal {
         ModelCheckRefusal::StateUnobservable(stop) => Refusal::Failed(stop.cause),
         // The forms and subjects EN-1 does not decide yet.
         ModelCheckRefusal::ProtocolRefinement
+        | ModelCheckRefusal::Liveness(LivenessRefusal::ClosureStutterLoop)
         | ModelCheckRefusal::FormNotDecided { .. }
         | ModelCheckRefusal::CaptureRead { .. }
         | ModelCheckRefusal::WeakLiveness
@@ -1408,6 +1420,12 @@ mod tests {
         assert_eq!(
             unsupported(ModelCheckRefusal::Hyper(
                 HyperRefusal::NotSingleExistential { form: None }
+            )),
+            not_yet
+        );
+        assert_eq!(
+            unsupported(ModelCheckRefusal::Liveness(
+                LivenessRefusal::ClosureStutterLoop
             )),
             not_yet
         );

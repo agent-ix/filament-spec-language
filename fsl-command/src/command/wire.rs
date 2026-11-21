@@ -309,6 +309,63 @@ pub(super) struct Request {
     /// FSpec FR-190's direct model-based testing request member.
     #[serde(default, deserialize_with = "present_json_value")]
     pub model_based_test: Option<serde_json::Value>,
+    /// FR-1030: transfer abstract temporal clauses through a checked model
+    /// refinement, exclusive with the other native-run selections.
+    #[serde(default, deserialize_with = "from_object_opt")]
+    pub refinement_transfer: Option<RefinementTransfer>,
+}
+
+/// FR-1030's closed native-run transfer request member.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct RefinementTransfer {
+    pub refinement: String,
+    #[serde(rename = "abstract", deserialize_with = "from_object")]
+    pub abstract_subject: TransferSubject,
+    #[serde(deserialize_with = "from_object")]
+    pub concrete: TransferSubject,
+    #[serde(deserialize_with = "string_list")]
+    pub clauses: Vec<String>,
+    #[serde(deserialize_with = "from_object")]
+    pub observations: std::collections::BTreeMap<String, String>,
+    #[serde(default, deserialize_with = "from_object_opt")]
+    pub premises: Option<TransferPremises>,
+    #[serde(default, deserialize_with = "from_object")]
+    pub limits: TransferLimits,
+    #[serde(default, deserialize_with = "from_object_opt")]
+    pub observation_limits: Option<fsl_replay::spine::ObservationLimitsWire>,
+}
+
+/// One selected model and its initialization snapshots.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct TransferSubject {
+    pub model: String,
+    #[serde(deserialize_with = "string_list")]
+    pub initial: Vec<String>,
+}
+
+/// Optional FR-492 premise results, retained as values for the planner's
+/// strict result readers.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct TransferPremises {
+    #[serde(default, deserialize_with = "present_json_value")]
+    pub refinement: Option<serde_json::Value>,
+    #[serde(default, deserialize_with = "from_object")]
+    pub claims: std::collections::BTreeMap<String, serde_json::Value>,
+}
+
+/// FR-1030's planner budget.
+#[derive(Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct TransferLimits {
+    #[serde(default, deserialize_with = "counter")]
+    pub max_work: Option<u64>,
+}
+
+fn string_list<'de, D: serde::Deserializer<'de>>(decoder: D) -> Result<Vec<String>, D::Error> {
+    Vec::<String>::deserialize(decoder)
 }
 
 fn from_object_opt<'de, D: serde::Deserializer<'de>, T: serde::Deserialize<'de>>(

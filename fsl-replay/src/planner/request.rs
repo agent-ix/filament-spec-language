@@ -701,7 +701,10 @@ fn read_slot_result(
 
 /// Read a premise result `{request, result}` with FR-331's strict readers.
 #[ix_trace_rs::string_edge]
-fn read_premise_parts(value: &Value, pointer: &str) -> Result<(PremiseItem, ResultEntry), Refusal> {
+pub(super) fn read_premise_parts(
+    value: &Value,
+    pointer: &str,
+) -> Result<(PremiseItem, ResultEntry), RequestRefusal> {
     let members = object(value, pointer)?;
     let request_pointer = child(pointer, "request");
     let item = read_premise_item(require(members, "request", pointer)?)
