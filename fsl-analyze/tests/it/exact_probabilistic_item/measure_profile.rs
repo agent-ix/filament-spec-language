@@ -1574,3 +1574,158 @@ fn valid_mean_bounds_on_the_threshold_and_wrong_bound_roles_are_rejected() {
         );
     }
 }
+
+#[trace("FR-1043-AC-2", "FR-1043-AC-7", "FR-202-AC-10")]
+#[test]
+fn residual_measure_paths_replay_one_positive_physical_draw_and_reject_wrong_posts() {
+    let claims = claim(
+        "Event",
+        "every scheduler",
+        "probability >= 0.5 [steps from holds(true) until holds(m.delivered) within 1 <= 1]",
+    ) + &claim(
+        "Quantile",
+        "every scheduler",
+        "quantile 0.5 of (steps from holds(true) until holds(m.delivered) within 1) <= 1",
+    );
+    let mut model = retry(&claims);
+    model.body = model.body.replace("self.delivered = (lost = 1)", "true");
+    let world = World::new(&model);
+    let system = ModelSystem::new(world.subject().simulation).unwrap();
+    for name in ["Event", "Quantile"] {
+        let record = settle(&world, name, ModelCheckLimits::default());
+        assert_eq!(
+            record.terminal().unwrap().value(),
+            &TerminalValue::Refuted,
+            "{:?}",
+            record.settlement
+        );
+        let token = record.probabilistic_counterexample.as_ref().unwrap();
+        let witness = token.evidence();
+        assert!(token.mass() > &ratio(1, 2));
+        assert!(witness.paths.iter().all(|path| path.steps.len() == 1
+            && path.steps[0].draw.is_some()
+            && path.steps[0].transition.is_some()));
+        assert!(witness.scheduler.iter().any(|(key, action)| {
+            let state: Value = serde_json::from_slice(key.as_bytes()).unwrap();
+            !state[7].is_null() && matches!(action, fsl_replay::ProductAction::PostState(_))
+        }));
+        let replay = |offered: &fsl_replay::ProbabilisticCounterexample| {
+            fsl_replay::replay_probabilistic_witness(
+                &world.package,
+                &system,
+                &offered.item,
+                offered,
+                &fsl_analyze::exact_probabilistic::ExactProbLimits::default(),
+                &Cancel::new(),
+            )
+        };
+        let baseline = replay(witness);
+        assert!(
+            matches!(
+                baseline,
+                Ok(fsl_replay::ProbabilityWitnessReplay::Reproduced(_))
+            ),
+            "{baseline:?}"
+        );
+        let mut forged = witness.clone();
+        forged
+            .scheduler
+            .iter_mut()
+            .find(|(_, action)| matches!(action, fsl_replay::ProductAction::PostState(_)))
+            .unwrap()
+            .1 = fsl_replay::ProductAction::PostState(witness.initial_key.clone());
+        let rejected = replay(&forged);
+        assert!(
+            !matches!(
+                rejected,
+                Ok(fsl_replay::ProbabilityWitnessReplay::Reproduced(_))
+            ),
+            "{rejected:?}"
+        );
+        let first = &witness.paths[0].steps[0];
+        let original = system.state_key(&first.post).unwrap().0;
+        let alternate = system
+            .actions_with_cancel(&witness.initial, &Cancel::new())
+            .unwrap()
+            .unwrap()
+            .into_iter()
+            .filter(|action| Some(&action.identity) == first.action.as_ref())
+            .flat_map(|action| action.draws)
+            .filter(|draw| {
+                fsl_eval::simulation::model::same_values(&draw.random, first.draw.as_ref().unwrap())
+            })
+            .flat_map(|draw| draw.successors)
+            .map(|(_, post)| post)
+            .find(|post| system.state_key(post).unwrap().0 != original)
+            .expect("an actual alternative post-state");
+        let mut forged = witness.clone();
+        forged.paths[0].steps[0].post = alternate;
+        let rejected = replay(&forged);
+        assert!(
+            !matches!(
+                rejected,
+                Ok(fsl_replay::ProbabilityWitnessReplay::Reproduced(_))
+            ),
+            "{rejected:?}"
+        );
+    }
+}
+
+#[trace("FR-1043-AC-7", "FR-202-AC-26")]
+#[test]
+fn a_residual_undefined_measure_keeps_its_pending_policy_and_unadvanced_control() {
+    let model = prob_world::tossed_coin("probabilistic Q using ev on M over (c:M::Coin) under every scheduler on origin { quantile 0.5 of (steps from holds(c.v = 0) until holds(c.v = 1) within 2) <= 1 }");
+    let world = World::new(&model);
+    let record = settle(&world, "Q", ModelCheckLimits::default());
+    assert_eq!(
+        record.terminal().unwrap().value(),
+        &TerminalValue::Refuted,
+        "{:?}",
+        record.settlement
+    );
+    let token = record.probabilistic_counterexample.as_ref().unwrap();
+    let undefined = token.undefined().unwrap();
+    assert_eq!(undefined.evaluation.site.position, 1);
+    assert_eq!(undefined.path.paths[0].steps.len(), 1);
+    assert_eq!(token.mass(), &ratio(1, 2));
+    assert!(undefined
+        .path
+        .scheduler
+        .iter()
+        .any(|(_, action)| matches!(action, fsl_replay::ProductAction::PostState(_))));
+    let system = ModelSystem::new(world.subject().simulation).unwrap();
+    let replay = |offered: &fsl_replay::ProbabilityUndefinedWitness| {
+        fsl_replay::replay_probabilistic_undefined(
+            &world.package,
+            &system,
+            &offered.path.item,
+            offered,
+            &fsl_analyze::exact_probabilistic::ExactProbLimits::default(),
+            &Cancel::new(),
+        )
+    };
+    let baseline = replay(undefined);
+    assert!(
+        matches!(
+            baseline,
+            Ok(fsl_replay::ProbabilityWitnessReplay::Reproduced(_))
+        ),
+        "{baseline:?}"
+    );
+    let mut wrong = undefined.clone();
+    wrong
+        .path
+        .scheduler
+        .iter_mut()
+        .find(|(_, action)| matches!(action, fsl_replay::ProductAction::PostState(_)))
+        .unwrap()
+        .1 = fsl_replay::ProductAction::PostState(wrong.path.initial_key.clone());
+    let rejected = replay(&wrong);
+    assert!(
+        !matches!(
+            rejected,
+            Ok(fsl_replay::ProbabilityWitnessReplay::Reproduced(_))
+        ),
+        "{rejected:?}"
+    );
+}

@@ -1928,11 +1928,25 @@ pub fn probabilistic_wire(
         written["instance"] = Json::Null;
         written["evidence"] = json!({"type":"subsystem","certificates":[certificate]});
     }
-    if !scheduler.is_empty() {
-        let entries = scheduler
-            .iter()
-            .map(|(at, choice)| Ok(json!({"state": state(at)?, "choice": identity(choice)?})))
-            .collect::<Result<Vec<_>, CounterexampleWireError>>()?;
+    let mut entries = scheduler
+        .iter()
+        .map(|(at, choice)| Ok(json!({"state": state(at)?, "choice": identity(choice)?})))
+        .collect::<Result<Vec<_>, CounterexampleWireError>>()?;
+    for (at, choice) in &witness.scheduler {
+        if matches!(
+            choice,
+            crate::ProductAction::PostState(_) | crate::ProductAction::TerminalStutter
+        ) {
+            let choice = choice
+                .to_bytes()
+                .map_err(|_| Unspelled("probabilistic internal choice"))?;
+            let choice: Json = serde_json::from_slice(&choice)
+                .map_err(|_| Unspelled("probabilistic internal choice"))?;
+            let at = fsl_eval::simulation::StateKey::from_canonical_bytes(at.as_bytes().to_vec());
+            entries.push(json!({"state":state(&at)?,"choice":choice}));
+        }
+    }
+    if !entries.is_empty() {
         written["scheduler"] = json!({"entries": entries});
     }
     Ok(written)

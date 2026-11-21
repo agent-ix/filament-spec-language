@@ -229,6 +229,7 @@ fn materialize_inner(
     let [initial] = initials.as_slice() else {
         return Err(ProbabilityWitnessError::Refused);
     };
+    let mut measure_source = None;
     let initial_key = if path.steps.is_empty() {
         match monitor.as_ref() {
             Some(monitor) => {
@@ -309,6 +310,10 @@ fn materialize_inner(
                 storage,
             )
             .map_err(ProbabilityWitnessError::from)?;
+        measure_source = Some((
+            control.ok_or(ProbabilityWitnessError::Refused)?,
+            sums.clone().ok_or(ProbabilityWitnessError::Refused)?,
+        ));
         let mut admission = fsl_replay::ProbabilityKeyAdmission::new(
             meter,
             storage,
@@ -364,10 +369,16 @@ fn materialize_inner(
         if matches!(claim.scheduler, ProbScheduler::Every) {
             scheduler.insert(source_key.clone(), choice.clone());
             spelled.push((
-                system
-                    .state_key(&state)
-                    .map_err(|_| ProbabilityWitnessError::Refused)?
-                    .1,
+                if measured {
+                    fsl_eval::simulation::StateKey::from_canonical_bytes(
+                        source_key.as_bytes().to_vec(),
+                    )
+                } else {
+                    system
+                        .state_key(&state)
+                        .map_err(|_| ProbabilityWitnessError::Refused)?
+                        .1
+                },
                 action.clone(),
             ));
         }
@@ -410,6 +421,65 @@ fn materialize_inner(
             return Err(ProbabilityWitnessError::Refused);
         };
         let post_key = key(&step.target)?;
+        if measured && step.resolved.is_some() && matches!(claim.scheduler, ProbScheduler::Every) {
+            let (control, sums) = measure_source
+                .as_ref()
+                .ok_or(ProbabilityWitnessError::Refused)?;
+            let mut scope = measure_scope.borrow_mut();
+            let (meter, storage) = &mut *scope;
+            let mut admission = fsl_replay::ProbabilityKeyAdmission::new(
+                meter,
+                storage,
+                document_limits.storage_bytes,
+                cancel,
+            );
+            let raw = system
+                .state_key_bytes_with_budget(
+                    &state,
+                    fsl_foundation::IdentityLimits::default(),
+                    &mut admission,
+                    cancel,
+                )
+                .map_err(|error| ProbabilityWitnessError::from(admission.refusal(error)))?;
+            let pending = system
+                .pending_key_bytes_with_budget(
+                    action,
+                    &draw,
+                    fsl_foundation::IdentityLimits::default(),
+                    &mut admission,
+                    cancel,
+                )
+                .map_err(|error| ProbabilityWitnessError::from(admission.refusal(error)))?;
+            drop(admission);
+            let pending = fsl_replay::measure_probability_product_key(
+                reference,
+                &raw,
+                *control,
+                sums,
+                Some(&pending),
+                reward.as_ref(),
+                document_limits,
+                cancel,
+                meter,
+                storage,
+            )
+            .map_err(ProbabilityWitnessError::from)?;
+            scheduler.insert(
+                pending,
+                fsl_replay::ProductAction::PostState(post_key.clone()),
+            );
+        }
+        if measured {
+            measure_source = Some((
+                step.target
+                    .monitor
+                    .ok_or(ProbabilityWitnessError::Refused)?,
+                step.target
+                    .accumulator
+                    .clone()
+                    .ok_or(ProbabilityWitnessError::Refused)?,
+            ));
+        }
         steps.push(ProbabilityWitnessStep {
             choice,
             action: Some(action.clone()),

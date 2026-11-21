@@ -7,12 +7,16 @@ use super::*;
 pub(super) enum ActionRefusal {
     ExpansionRefused,
     UnsupportedDraw,
+    /// Measure replay has independently checked the pending post-state policy.
+    CheckedResidual,
 }
 impl ActionRefusal {
     fn error(self) -> ExactProbabilityGraphError {
         match self {
             Self::ExpansionRefused => ExactProbabilityGraphError::ExpansionRefused,
-            Self::UnsupportedDraw => ExactProbabilityGraphError::UnsupportedDraw,
+            Self::UnsupportedDraw | Self::CheckedResidual => {
+                ExactProbabilityGraphError::UnsupportedDraw
+            }
         }
     }
 }
@@ -126,15 +130,17 @@ pub(super) fn replay<T>(
     if step.elapsed != rational(0) || crate::Schedule::of(system, action).as_ref() != Ok(schedule) {
         return Err(ProbabilityWitnessError::Refused);
     }
-    let mut issue = None;
-    model_distributions(system, state, workload, cancel, &mut |failure| {
-        issue = Some(failure)
-    })
-    .map_err(|error| {
-        issue.map_or(ProbabilityWitnessError::Graph(error), |issue| {
-            ProbabilityWitnessError::Build(Box::new(issue))
+    if !matches!(action_refusal, ActionRefusal::CheckedResidual) {
+        let mut issue = None;
+        model_distributions(system, state, workload, cancel, &mut |failure| {
+            issue = Some(failure)
         })
-    })?;
+        .map_err(|error| {
+            issue.map_or(ProbabilityWitnessError::Graph(error), |issue| {
+                ProbabilityWitnessError::Build(Box::new(issue))
+            })
+        })?;
+    }
     let mut candidates = Vec::new();
     if let Some(workload) = workload {
         for candidate in system

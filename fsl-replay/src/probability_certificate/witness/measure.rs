@@ -85,6 +85,114 @@ fn key(
     .map_err(bounded::document_error)
 }
 
+/// Check the second scheduler choice of a physical draw before permitting
+/// resolved replay. Its key retains the source control and exact draw.
+#[allow(clippy::too_many_arguments)]
+fn residual_choice(
+    system: &ModelSystem<'_>,
+    state: &ModelSimState,
+    reference: Option<&ObjectReference>,
+    control: MonitorState,
+    sums: &Accumulator,
+    reward: Option<&ProbabilityRewardObjective>,
+    offered: &ProbabilityWitnessStep,
+    workload: Option<&Workload>,
+    scheduler: &BTreeMap<&ProbabilityProductKey, &ProductAction>,
+    used: &mut BTreeSet<ProbabilityProductKey>,
+    seen: &mut BTreeSet<ProbabilityProductKey>,
+    edges: &mut usize,
+    execution: &ExactProbLimits,
+    limits: ProbabilityDocumentLimits,
+    meter: &mut filament_exact::Meter,
+    storage: &mut u64,
+    cancel: &Cancel,
+) -> Result<step::ActionRefusal, ProbabilityWitnessError> {
+    if workload.is_some() || matches!(offered.choice, ProductAction::TerminalStutter) {
+        return Ok(step::ActionRefusal::UnsupportedDraw);
+    }
+    let (Some(identity), Some(draw)) = (&offered.action, &offered.draw) else {
+        return Err(ProbabilityWitnessError::Refused);
+    };
+    let mut admission = ProbabilityKeyAdmission::new(meter, storage, limits.storage_bytes, cancel);
+    let actions = system
+        .actions_with_budget(
+            state,
+            fsl_foundation::IdentityLimits::default(),
+            &mut admission,
+            cancel,
+        )
+        .map_err(|error| match error {
+            fsl_eval::simulation::model::ModelKeyExpansionError::Key(error) => {
+                bounded::document_error(admission.refusal(error))
+            }
+            fsl_eval::simulation::model::ModelKeyExpansionError::Expansion(error) => {
+                cancelled_expansion(error, cancel)
+            }
+        })?
+        .map_err(|_| ExactProbabilityGraphError::UnsupportedDraw)?;
+    let residual = actions
+        .iter()
+        .filter(|action| &action.identity == identity)
+        .flat_map(|action| &action.draws)
+        .any(|candidate| same_values(&candidate.random, draw) && candidate.successors.len() > 1);
+    if !residual {
+        return Ok(step::ActionRefusal::UnsupportedDraw);
+    }
+    let raw = system
+        .state_key_bytes_with_budget(
+            state,
+            fsl_foundation::IdentityLimits::default(),
+            &mut admission,
+            cancel,
+        )
+        .map_err(|error| bounded::document_error(admission.refusal(error)))?;
+    let pending = system
+        .pending_key_bytes_with_budget(
+            identity,
+            draw,
+            fsl_foundation::IdentityLimits::default(),
+            &mut admission,
+            cancel,
+        )
+        .map_err(|error| bounded::document_error(admission.refusal(error)))?;
+    drop(admission);
+    let pending = measure_probability_product_key(
+        reference,
+        &raw,
+        control,
+        sums,
+        Some(&pending),
+        reward,
+        limits,
+        cancel,
+        meter,
+        storage,
+    )
+    .map_err(bounded::document_error)?;
+    bounded::admit_state(&pending, seen, storage, execution)?;
+    *edges = edges
+        .checked_add(1)
+        .ok_or(ExactProbabilityGraphError::TooManyEdges)?;
+    if *edges > execution.model.limits.max_transitions {
+        return Err(ExactProbabilityGraphError::EdgeLimitReached.into());
+    }
+    let expected = ProductAction::PostState(offered.post_key.clone());
+    if scheduler.get(&pending).copied() != Some(&expected) {
+        return Err(ProbabilityWitnessError::Refused);
+    }
+    let actual =
+        storage.saturating_add(u64::try_from(pending.as_bytes().len()).unwrap_or(u64::MAX));
+    if actual > limits.storage_bytes {
+        return Err(ProbabilityWitnessError::Limit {
+            limit: ModelCheckLimit::CertificateMaxWorkingBytes,
+            value: limits.storage_bytes,
+        });
+    }
+    *storage = actual;
+    used.insert(pending);
+    Ok(step::ActionRefusal::CheckedResidual)
+}
+
 pub(super) fn replay(
     system: &ModelSystem<'_>,
     claim: &CheckedProbabilisticClaim,
@@ -192,6 +300,25 @@ pub(super) fn replay(
                 }
                 used.insert(current.clone());
             }
+            let refusal = residual_choice(
+                system,
+                &state,
+                reference,
+                control,
+                &sums,
+                selected.reward.as_ref(),
+                offered,
+                workload,
+                &scheduler,
+                &mut used,
+                &mut seen,
+                &mut edges,
+                limits,
+                document_limits,
+                &mut meter,
+                &mut storage,
+                cancel,
+            )?;
             let (probability, post, (next, next_sums, post_truths, post_key)) = step::replay(
                 system,
                 &state,
@@ -202,7 +329,7 @@ pub(super) fn replay(
                 &mut storage,
                 &mut edges,
                 cancel,
-                step::ActionRefusal::UnsupportedDraw,
+                refusal,
                 |post, rewards, meter, storage| {
                     let post_truths = if selected.control.reads_post(Some(control)) {
                         read(system, &selected.predicates, reference, post, cancel)?
@@ -619,6 +746,25 @@ pub(super) fn replay_undefined(
             }
             used.insert(current);
         }
+        let refusal = residual_choice(
+            system,
+            &state,
+            reference,
+            control,
+            &sums,
+            selected.reward.as_ref(),
+            offered_step,
+            workload,
+            &scheduler,
+            &mut used,
+            &mut seen,
+            &mut edges,
+            limits,
+            document_limits,
+            &mut meter,
+            &mut storage,
+            cancel,
+        )?;
         let (probability, post, next_rewards) = step::replay(
             system,
             &state,
@@ -629,7 +775,7 @@ pub(super) fn replay_undefined(
             &mut storage,
             &mut edges,
             cancel,
-            step::ActionRefusal::UnsupportedDraw,
+            refusal,
             |post, rewards, meter, storage| {
                 let actual = key(
                     system,

@@ -2091,9 +2091,45 @@ fn replay_produced_witness(
     scheduler.sort_by(|a, b| a.0.cmp(&b.0));
     let mut paths = Vec::new();
     let mut conversion_work = 0usize;
+    let mut residual_used = std::collections::BTreeSet::new();
     for path in produced.paths {
         let mut partials = vec![(first.clone(), Vec::new())];
-        for step in path.steps {
+        let mut produced_steps = path.steps.into_iter();
+        while let Some(mut step) = produced_steps.next() {
+            if measure
+                && product
+                    .states
+                    .get(step.to.index())
+                    .is_some_and(|state| state.pending.is_some())
+            {
+                let Some(resolved) = produced_steps.next() else {
+                    return broken();
+                };
+                if !matches!(step.action, ProductAction::Identity(_))
+                    || !matches!(resolved.action, ProductAction::PostState(_))
+                    || resolved.probability != Rational::from_integer(1_i64.into())
+                {
+                    return broken();
+                }
+                let Some(pending) = product.states.get(step.to.index()) else {
+                    return broken();
+                };
+                let pending = match key_of(pending) {
+                    Ok(key) => key,
+                    Err(error) => return document_failure(error, subject),
+                };
+                if let Err(issue) = witness_charge(
+                    &mut producer_meter,
+                    &mut producer_storage,
+                    pending.as_bytes().len(),
+                    limits,
+                    cancel,
+                ) {
+                    return settled(&issue, subject);
+                }
+                residual_used.insert(pending);
+                step.to = resolved.to;
+            }
             if cancel.poll() {
                 if let Some(cause) = cancel.tripped() {
                     return settled(&ExactProbBuildIssue::Cancelled(cause), subject);
@@ -2289,7 +2325,7 @@ fn replay_produced_witness(
                 key = &step.post_key;
             }
         }
-        scheduler.retain(|(key, _)| used.contains(key));
+        scheduler.retain(|(key, _)| used.contains(key) || residual_used.contains(key));
     }
     let mut witness = ProbabilisticCounterexample {
         item: item.clone(),
