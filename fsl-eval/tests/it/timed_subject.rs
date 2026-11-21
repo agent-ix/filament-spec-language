@@ -930,7 +930,6 @@ fn clock_reference_world_with_profiles(
         .push(reference);
     let mut reference_field = wire_field("r", &ident("ClockRef"));
     reference_field["presence"] = json!("optional");
-    reference_field["multiplicity"]["lower"] = json!(0);
     document["types"][1]["fields"]
         .as_array_mut()
         .expect("fields")
