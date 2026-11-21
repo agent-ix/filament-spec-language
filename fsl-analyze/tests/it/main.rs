@@ -49,6 +49,7 @@ mod hybrid_provider;
 mod hybrid_reference;
 mod hybrid_requests;
 mod hyper;
+mod hyper_closed;
 mod hyper_lowering;
 mod hyper_object_free;
 mod hyper_projected;

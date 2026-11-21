@@ -540,7 +540,7 @@ impl CheckedHyperClause {
     }
 
     /// The clause's form (FR-173); `None` under a profile other than
-    /// infinite-trace.
+    /// infinite-trace and event-position false-extension.
     pub fn form(&self) -> Option<&HyperForm> {
         self.form.as_ref()
     }
@@ -1361,14 +1361,18 @@ fn check_behaviours<'a>(
     };
     let parameters = checked_parameters(form, declarations, &aliases, &mut found);
 
-    // The body: operators and intervals as an infinite-trace clause checks
-    // them. A clause under another profile records its profile and no form,
-    // so no bounded-profile rule applies to it here.
+    // The body: operators and intervals as the clause's profile checks them. A
+    // clause under the event-position profile is bounded (FR-326): every
+    // operator needs a closed interval. A fixed-sample or timestamped-event
+    // clause records its profile and no form, and the infinite-trace profile
+    // admits an unbounded operator.
     let mut temporal_causes: Vec<TemporalCause> = Vec::new();
     let reading = if profile == TemporalProfile::Timed {
         IntervalReading::TimedUnread
     } else {
-        IntervalReading::Steps { bounded: false }
+        IntervalReading::Steps {
+            bounded: profile == TemporalProfile::EventPositionFalseExtension,
+        }
     };
     let (operators, _) = checked_operators(&form.body, &reading, &mut temporal_causes)?;
     found.extend(temporal_causes.into_iter().map(Found::Temporal));
@@ -1546,13 +1550,20 @@ fn check_behaviours<'a>(
         .collect();
     let body = build_formula(&form.body, &intervals)?;
 
-    let form_class = (profile == TemporalProfile::InfiniteTrace).then(|| {
-        classify(
+    // FR-173: a body under the event-position profile meets every rule that
+    // requires the safety fragment, because a closed finite trace decides its
+    // truth (ADR-018 TP-2, CX-1); any other profile records no form.
+    let form_class = match profile {
+        TemporalProfile::InfiniteTrace => Some(classify(
             &quantifiers,
             form.align_skip.is_some(),
             in_safety_fragment(&body),
-        )
-    });
+        )),
+        TemporalProfile::EventPositionFalseExtension => {
+            Some(classify(&quantifiers, form.align_skip.is_some(), true))
+        }
+        _ => None,
+    };
     if let (Some(HyperForm::SingleExistential), Some(block)) = (&form_class, &form.match_block) {
         let span = form.match_span.unwrap_or(root_span(&block.spans));
         return Err(Found::Hyper(HyperCause::SingleExistentialMatch { span }).into_failure());

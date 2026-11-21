@@ -30,6 +30,7 @@ use crate::model_operations::{
 
 const INFINITE: &str = "filament.temporal.infinite-trace/v1";
 const EVENT: &str = "filament.temporal.event-position.false-extension/v1";
+const FIXED: &str = "filament.temporal.fixed-sample.false-extension/v1";
 const VAULT: &str = "example/config-version";
 const SAVING: &str = "example/device-saving";
 const NORMAL: &str = "example/device-normal";
@@ -648,10 +649,11 @@ fn a_clause_outside_the_admitted_forms_names_its_rule() {
 
 /// FR-173-AC-3: a single-existential clause with a `match` block refuses at
 /// the block; the same noninterference under the event-position profile
-/// records its profile and no form.
-#[trace("TC-598")]
+/// records its profile and form `Universal`, and under the fixed-sample profile
+/// its profile and no form.
+#[trace("TC-598", "FR-173-AC-3")]
 #[test]
-fn a_single_existential_clause_admits_no_match_and_another_profile_has_no_form() {
+fn a_single_existential_clause_admits_no_match_and_the_event_profile_classifies() {
     let (text, cause) = hyper_cause(
         &["V"],
         "hyper Possible using inf over behaviours (v: V::ConfigVersion) \
@@ -669,12 +671,20 @@ fn a_single_existential_clause_admits_no_match_and_another_profile_has_no_form()
         (Code::UnsupportedConstruct, "expression-form")
     );
 
-    let event = clause_under(&["V"], EVENT, &non_interference());
+    let event = clause_under(
+        &["V"],
+        EVENT,
+        &non_interference().replace("always holds", "always [0, 2] holds"),
+    );
     assert_eq!(
         event.profile(),
         TemporalProfile::EventPositionFalseExtension
     );
-    assert_eq!(event.form(), None);
+    assert_eq!(event.form(), Some(&HyperForm::Universal));
+
+    let fixed = clause_under(&["V"], FIXED, &non_interference());
+    assert_eq!(fixed.profile(), TemporalProfile::FixedSampleFalseExtension);
+    assert_eq!(fixed.form(), None);
 }
 
 /// FR-173-AC-4 (S3): the clause records one subject alias per distinct model
@@ -2087,4 +2097,39 @@ fn a_finite_trace_set_defect_refuses_with_its_named_cause() {
         panic!("an infinite-trace profile refuses: {outcome:?}");
     };
     assert_eq!(refusal.cause.code(), Code::IllTyped);
+}
+
+/// FR-173 "Event-position form" with FR-326: a temporal operator with no
+/// closed upper bound has no finite horizon over closed finite traces, so the
+/// event-position profile refuses it as a bare operator, as it does outside a
+/// hyper clause; a closed interval is admitted.
+#[trace("TC-2243", "FR-173-AC-6")]
+#[test]
+fn an_event_position_clause_refuses_an_operator_without_a_closed_upper_bound() {
+    for body in [
+        "always holds(v.versionNumber @ a = v.versionNumber @ b)",
+        "always [0, *] holds(v.versionNumber @ a = v.versionNumber @ b)",
+        "eventually holds(v.versionNumber @ a = v.versionNumber @ b)",
+    ] {
+        let declaration = format!(
+            "hyper H using inf over behaviours (v: V::ConfigVersion) \
+             forall trace a of V forall trace b of V {{ {body} }}"
+        );
+        let (_, outcome) = check_under(&["V"], EVENT, &declaration);
+        let Err(StageFailure::Refused(refusal)) = outcome else {
+            panic!("{body}: a refusal, not {outcome:?}");
+        };
+        let code = refusal.cause.catalog_code().expect("a catalogued refusal");
+        assert_eq!(
+            (code.code(), code.cause()),
+            ("unsupported_construct", "expression-form"),
+            "{body}: {:?}",
+            refusal.cause
+        );
+    }
+    let bounded = "hyper H using inf over behaviours (v: V::ConfigVersion) \
+                   forall trace a of V forall trace b of V \
+                   { always [0, 2] holds(v.versionNumber @ a = v.versionNumber @ b) }";
+    let checked = clause_under(&["V"], EVENT, bounded);
+    assert_eq!(checked.form(), Some(&HyperForm::Universal));
 }

@@ -426,3 +426,103 @@ pub fn evaluate_projected_prefix<L: TupleLetters>(
         meter,
     )
 }
+
+/// The body's atoms at a joint position of a tuple of closed finite traces
+/// (FR-173 "Event-position form"): a component whose trace has ended is read
+/// false by every atom that reads it (FR-043 false extension).
+struct ClosedLockstep<'a, L> {
+    body: &'a CheckedHyperClause,
+    letters: &'a mut L,
+    lens: &'a [u64],
+    scratch: Vec<ComponentPosition>,
+}
+
+impl<L: TupleLetters> TemporalLetters for ClosedLockstep<'_, L> {
+    fn atom(
+        &mut self,
+        atom: FormulaNodeId,
+        position: TemporalPosition,
+        meter: &mut Meter,
+    ) -> Result<AtomReading, LetterStop> {
+        let index = position.index();
+        let reads = self
+            .body
+            .component_reads(atom)
+            .ok_or_else(|| LetterStop::Fault(fault("closed-atom-has-component-reads")))?;
+        let past = reads
+            .values()
+            .any(|component| self.lens.get(*component).is_none_or(|len| index >= *len));
+        if past {
+            return Ok(AtomReading::False);
+        }
+        self.scratch.clear();
+        for len in self.lens {
+            self.scratch.push(ComponentPosition {
+                position: TemporalPosition::new(index.min(len.saturating_sub(1))),
+                stutter: false,
+            });
+        }
+        self.letters.atom(atom, position, &self.scratch, meter)
+    }
+
+    fn activation(
+        &mut self,
+        _position: TemporalPosition,
+        _meter: &mut Meter,
+    ) -> Result<AtomReading, LetterStop> {
+        Err(LetterStop::Fault(fault("hyper-body-activates-on-origin")))
+    }
+}
+
+/// Evaluate `body` over a tuple of closed finite traces, one per variable in
+/// quantifier order, trace `c` having `lens[c] >= 1` positions (FR-173
+/// "Event-position form", ADR-023 HM-2, ADR-018 CX-1).
+///
+/// Joint position `j` is position `j` of every component; a joint position
+/// past a component's last position lies outside its closed scope, and every
+/// atom that reads that component there is false. The terminal state is not
+/// stutter-extended and no trace is a lasso. The outcome is the temporal
+/// evaluator's on the closed joint trace of the longest component, under the
+/// clause's own profile: `Violated`'s `at` is the activation that is false.
+///
+/// # Errors
+///
+/// [`TemporalRefusal::TupleArity`] for a tuple whose count differs from the
+/// clause's variables, [`TemporalRefusal::EmptyTrace`] for a component of no
+/// position, and the evaluator's refusal for a profile that reads no closed
+/// trace. An `align skip` clause is read over the caller's visible positions:
+/// `lens` are the lengths of the projected traces (ADR-023 PA-2).
+pub fn evaluate_closed_tuple<L: TupleLetters>(
+    body: &CheckedHyperClause,
+    lens: &[u64],
+    letters: &mut L,
+    meter: &mut Meter,
+) -> Result<TemporalOutcome, TemporalRefusal> {
+    if lens.len() != body.quantifiers().len() {
+        return Err(TemporalRefusal::TupleArity {
+            expected: body.quantifiers().len(),
+            found: lens.len(),
+        });
+    }
+    if lens.contains(&0) {
+        return Err(TemporalRefusal::EmptyTrace);
+    }
+    let joint = lens
+        .iter()
+        .copied()
+        .max()
+        .ok_or(TemporalRefusal::EmptyTrace)?;
+    let mut lockstep = ClosedLockstep {
+        body,
+        letters,
+        lens,
+        scratch: Vec::with_capacity(lens.len()),
+    };
+    engine::run(
+        subject(body),
+        TemporalTrace::Finite { len: joint },
+        Goal::Clause,
+        &mut lockstep,
+        meter,
+    )
+}

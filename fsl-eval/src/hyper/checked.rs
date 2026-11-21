@@ -41,11 +41,28 @@ impl<'s> CheckedStepMatch<'s> {
         labels: &[StepLabel<'_>],
         meter: &mut Meter,
     ) -> Result<MatchReading, MatchIncomplete> {
-        let count = match part {
-            MatchPart::Universal => self.clause.mu_universal().len(),
-            MatchPart::Existential => self.clause.mu_existential().len(),
+        let conjuncts = match part {
+            MatchPart::Universal => self.clause.mu_universal(),
+            MatchPart::Existential => self.clause.mu_existential(),
         };
-        for conjunct in 0..count {
+        // A conjunct that reads a component whose closed trace has ended is not
+        // evaluated at this joint step (FR-173 "Event-position form").
+        let ended: Vec<&str> = self
+            .clause
+            .quantifiers()
+            .iter()
+            .zip(labels)
+            .filter(|(_, label)| matches!(label, StepLabel::Ended))
+            .map(|(quantifier, _)| quantifier.variable.as_str())
+            .collect();
+        for (conjunct, draft) in conjuncts.iter().enumerate() {
+            if draft
+                .variables()
+                .iter()
+                .any(|variable| ended.contains(&variable.as_str()))
+            {
+                continue;
+            }
             let evaluation = match self.package.evaluate_step_predicate(
                 self.clause,
                 part,

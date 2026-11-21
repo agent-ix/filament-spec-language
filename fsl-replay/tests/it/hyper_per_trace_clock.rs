@@ -14,7 +14,7 @@ use crate::vault_world::World;
 fn a_two_model_event_position_hyper_clause_emits_rows_per_trace() {
     let declaration = "hyper Saves using ep over behaviours (d: V::Vault, e: N::Vault) \
          forall trace s of V forall trace n of N \
-         { always holds(d.l @ s != e.l @ n) }";
+         { always [0, 2] holds(d.l @ s != e.l @ n) }";
     let world = World::two_aliases(declaration, &crate::vault_world::SECURE);
     let clause = world.clause();
     let graph = world.package().graph();

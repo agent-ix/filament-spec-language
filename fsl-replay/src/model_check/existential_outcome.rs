@@ -35,6 +35,14 @@ pub enum ExistentialOutcome {
         /// The causes of the run's open nodes.
         open: BTreeSet<OpenCause>,
     },
+    /// Event-position HP-5 (FR-173 "Event-position form"): for every initial
+    /// state, one closed finite execution of the subject on which the body
+    /// holds, in initial-state order, from an exhaustive search of the closed
+    /// executions.
+    ClosedWitnessed {
+        /// One closed witness trace per initial state.
+        paths: Vec<ModelPath>,
+    },
     /// The first initial state, in subject order, whose part of the product
     /// is closed and holds no fair accepting cycle. The stem is empty: it
     /// names the initial state alone.

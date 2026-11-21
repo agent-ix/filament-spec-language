@@ -21,6 +21,7 @@ pub(crate) struct Undecodable;
 /// another operation, and otherwise holds the decoded text.
 pub(crate) fn slot_value(read: &StepRead, label: &StepLabel<'_>) -> Result<Value, Undecodable> {
     match (read, label) {
+        (_, StepLabel::Ended) => Err(Undecodable),
         (StepRead::Operation { .. }, StepLabel::Stutter) => {
             Ok(Value::String(STUTTER_TEXT.to_owned()))
         }
@@ -30,7 +31,7 @@ pub(crate) fn slot_value(read: &StepRead, label: &StepLabel<'_>) -> Result<Value
         (StepRead::Receiver { object, .. }, label) => {
             let payload = ValueType::Reference(object.clone());
             let present = match label {
-                StepLabel::Stutter => None,
+                StepLabel::Stutter | StepLabel::Ended => None,
                 StepLabel::Operation(step) => match step.receiver() {
                     None => None,
                     Some(text) => Some(Value::Reference(parse_reference(text).ok_or(Undecodable)?)),
@@ -41,7 +42,7 @@ pub(crate) fn slot_value(read: &StepRead, label: &StepLabel<'_>) -> Result<Value
         (StepRead::Argument(argument), label) => {
             let payload = argument.parameter_type.clone();
             let present = match label {
-                StepLabel::Stutter => None,
+                StepLabel::Stutter | StepLabel::Ended => None,
                 StepLabel::Operation(step)
                     if step.operation() != operation_text(&argument.operation) =>
                 {

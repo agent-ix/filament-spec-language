@@ -100,7 +100,8 @@ pub use tick_monitor::{
 pub use tick_shape::{operator_parts, temporal_leaves, NodeShape, TickShape};
 pub use timed::{evaluate_timed_at, TimedTrace};
 pub use tuple::{
-    evaluate_projected_prefix, evaluate_tuple, ComponentPosition, ComponentTrace, TupleLetters,
+    evaluate_closed_tuple, evaluate_projected_prefix, evaluate_tuple, ComponentPosition,
+    ComponentTrace, TupleLetters,
 };
 pub use window::{
     AggregateAtom, AggregateKind, AggregateSample, AggregateTerm, InsufficientData, PastWindow,
