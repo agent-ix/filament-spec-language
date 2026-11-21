@@ -24,7 +24,8 @@ pub struct ClockPlaceId {
     pub selectors: Vec<u64>,
 }
 
-/// Clock-place templates retained from the checked graph for value admission.
+/// Run-local clock-place templates retained from one checked graph for typed
+/// values. Producer-local v1 keys do not authenticate transported identities.
 #[derive(Clone, Debug, Default)]
 pub struct DeclaredClockPlaces(Vec<(filament_exact::EffectiveId, NodeKey, Vec<Option<u64>>)>);
 
@@ -58,7 +59,8 @@ impl DeclaredClockPlaces {
     }
 
     /// Decide whether `reference` names a declared instance owned by `owner`.
-    /// The caller supplies an owner admitted from the referenced population.
+    /// Both values must belong to the same checked run. The caller supplies
+    /// an owner admitted from that run's referenced population.
     pub fn contains(
         &self,
         reference: &ObjectReference,

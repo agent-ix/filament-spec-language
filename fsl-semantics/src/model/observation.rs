@@ -1705,8 +1705,8 @@ impl<'a> ModelSelections<'a> {
         self.selections
     }
 
-    /// Supply the checked graph's declared clock-place templates explicitly
-    /// for admission of stored clock references.
+    /// Supply the checked graph's run-local clock-place templates for
+    /// observing internally generated typed Clock-reference data.
     #[must_use]
     pub fn with_clock_places(mut self, models: &'a [crate::check::TimedModel]) -> Self {
         self.clock_models = models;
