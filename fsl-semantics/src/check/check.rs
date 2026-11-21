@@ -69,7 +69,7 @@ use super::model_spelling::{ModelSpellings, Spelled};
 use super::navigation::Relationships;
 use super::refusal::{
     CheckCause, CheckRefusal, CheckingLimitKind, CheckingStage, IdentityForm, IdentityNode,
-    IdentityObserving, KeyFault, Obligation, StageLimitCause,
+    IdentityObserving, KeyFault, Obligation, ReservedSlotName, StageLimitCause,
 };
 use crate::model::operation::OperationTable;
 use crate::value::definition::{AdmittedIeeeProfile, DefinitionRole, admit_ieee_profile};
@@ -3312,7 +3312,8 @@ impl<'a> Typer<'a> {
         self.signatures
     }
 
-    /// Bind a parameter or local name, refusing a name already in scope.
+    /// Bind a parameter or local name, refusing a name in FR-488's reserved
+    /// slot form or already in scope.
     pub(crate) fn bind(
         &mut self,
         name: &str,
@@ -3320,6 +3321,9 @@ impl<'a> Typer<'a> {
         location: &Location,
         kind: LocalKind,
     ) -> Result<Slot, CheckRefusal> {
+        if let Some(refusal) = reserved_slot_refusal(name, None, location) {
+            return Err(refusal);
+        }
         if kind == LocalKind::Bound
             && self
                 .hyper
@@ -6181,6 +6185,29 @@ fn catalogued_step(
         other,
     )
     .is_continue()
+}
+
+/// FR-488 "Reserved slot names": the refusal of `name` when FSpec FR-402's
+/// slot decoder accepts it, at its own `span` when the declaring form records
+/// one and otherwise at `location`. The decoder is contract-ir's, so the
+/// reserved set is exactly the set a reader classifies as a slot parameter.
+pub(crate) fn reserved_slot_refusal(
+    name: &str,
+    span: Option<Span>,
+    location: &Location,
+) -> Option<CheckRefusal> {
+    if !filament_contract_model::is_slot_parameter_name(name) {
+        return None;
+    }
+    let tag = name.split('_').next().unwrap_or(name);
+    Some(refuse(
+        location,
+        CheckCause::ReservedSlotName(Box::new(ReservedSlotName {
+            name: name.to_owned(),
+            tag: tag.to_owned(),
+            span,
+        })),
+    ))
 }
 
 /// Check a function signature's declared types and bind its parameters.

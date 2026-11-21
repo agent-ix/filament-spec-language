@@ -2894,6 +2894,18 @@ pub struct AmbiguousQualified {
     pub candidates: Vec<QualifiedCandidate>,
 }
 
+/// [`CheckCause::ReservedSlotName`]'s payload.
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub struct ReservedSlotName {
+    /// The reserved identifier, as written.
+    pub name: String,
+    /// The slot tag it decodes as: `slot`, `op`, `rcv` or `arg`.
+    pub tag: String,
+    /// The identifier's own span, when the declaring form records one;
+    /// otherwise the refusal's location names the declaring node.
+    pub span: Option<Span>,
+}
+
 /// [`CheckCause::AmbiguousMember`]'s payload.
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub struct AmbiguousMember {
@@ -3095,6 +3107,12 @@ pub enum CheckCause {
     /// `ambiguous-name`, naming every candidate. Boxed like the other
     /// payload-bearing causes, to keep `CheckCause` small.
     AmbiguousMember(Box<AmbiguousMember>),
+    /// FR-488 "Reserved slot names": a source identifier in FSpec FR-402's
+    /// reserved slot-parameter form where it would name a `value`/`parameter`
+    /// node: `ambiguous_declaration` / `ambiguous-name`, naming the
+    /// identifier and its slot tag. Boxed like the other payload-bearing
+    /// causes, to keep `CheckCause` small.
+    ReservedSlotName(Box<ReservedSlotName>),
     /// FR-317: `q::m` names more than one candidate, a union, an enum or an
     /// import alias: `ambiguous_declaration` / `ambiguous-name`, naming every
     /// candidate.
@@ -3794,9 +3812,10 @@ impl CheckCause {
             | Self::MissingSelf => Code::MissingDeclaration,
             Self::ExecutionPointBinding(_) => Code::InvalidModelBinding,
             Self::ClockReadingCall(_) => Code::InvalidTimedModel,
-            Self::AmbiguousName { .. } | Self::AmbiguousMember(_) | Self::AmbiguousQualified(_) => {
-                Code::AmbiguousDeclaration
-            }
+            Self::AmbiguousName { .. }
+            | Self::AmbiguousMember(_)
+            | Self::AmbiguousQualified(_)
+            | Self::ReservedSlotName(_) => Code::AmbiguousDeclaration,
             Self::UnsupportedNavigation(_)
             | Self::ObjectReadInValueInvariant
             | Self::PopulationFormOutsideRefinement
@@ -3888,9 +3907,10 @@ impl CheckCause {
             | Self::MissingSelf => Some("missing-name"),
             Self::ExecutionPointBinding(_) => Some("malformed-declaration"),
             Self::ClockReadingCall(_) => Some("clock-read-outside-constraint"),
-            Self::AmbiguousName { .. } | Self::AmbiguousMember(_) | Self::AmbiguousQualified(_) => {
-                Some("ambiguous-name")
-            }
+            Self::AmbiguousName { .. }
+            | Self::AmbiguousMember(_)
+            | Self::AmbiguousQualified(_)
+            | Self::ReservedSlotName(_) => Some("ambiguous-name"),
             Self::UnsupportedNavigation(_)
             | Self::ObjectReadInValueInvariant
             | Self::PopulationFormOutsideRefinement => Some("expression-form"),

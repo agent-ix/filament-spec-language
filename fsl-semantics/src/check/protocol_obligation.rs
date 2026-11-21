@@ -39,7 +39,7 @@ use fsl_forms::{
 };
 use fsl_foundation::Span;
 
-use super::check::{NamedScope, Scope, StateContext, Typer, bind_parameters};
+use super::check::{NamedScope, Scope, StateContext, Typer, bind_parameters, reserved_slot_refusal};
 use super::facts::Definedness;
 use super::ir::CheckedBody;
 use super::lowering::{ProtocolSite, protocol_location};
@@ -553,9 +553,58 @@ impl Checker<'_, '_> {
         }
     }
 
+    /// FR-488: every `over` input, activation parameter, capture, trigger,
+    /// forward, retry and recovery binder of the protocol written in the
+    /// reserved slot form refuses at its own identifier. Returns whether any
+    /// did.
+    fn refuse_reserved_slot_names(&mut self) -> bool {
+        let protocol = self.protocol;
+        let activation = match &protocol.activation {
+            ActivationForm::Origin => None,
+            ActivationForm::Each { parameter, .. } => Some(&parameter.name),
+        };
+        let templates = protocol.compensations.iter().flat_map(|template| {
+            [
+                &template.forward.name,
+                &template.trigger.name,
+                &template.retry.earlier.name,
+                &template.retry.later.name,
+                &template.recover.binder.name,
+            ]
+            .into_iter()
+            .chain(
+                template
+                    .registration_captures
+                    .iter()
+                    .chain(&template.activation_captures)
+                    .map(|capture| &capture.parameter.name),
+            )
+        });
+        let names = protocol
+            .binders
+            .iter()
+            .map(|binder| &binder.name)
+            .chain(activation)
+            .chain(protocol.captures.iter().map(|capture| &capture.parameter.name))
+            .chain(templates);
+        let location = protocol_location(&protocol.name.name, ProtocolSite::ActivationGuard);
+        let before = self.refusals.len();
+        for name in names {
+            if let Some(refusal) =
+                reserved_slot_refusal(&name.name, Some(name.span), &location)
+            {
+                self.refusals.push((name.span, refusal));
+            }
+        }
+        self.refusals.len() > before
+    }
+
     fn run(&mut self, cx: &mut CheckContext<'_, Scope>) -> Option<CheckedObligations> {
         let protocol = self.protocol;
         let types = self.resolve_types();
+        if self.refuse_reserved_slot_names() {
+            return None;
+        }
 
         let activation = self.activation(&types, cx);
 

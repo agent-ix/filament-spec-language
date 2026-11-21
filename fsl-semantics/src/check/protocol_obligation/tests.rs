@@ -25,6 +25,7 @@ use crate::check::{
 };
 
 mod recorded;
+mod reserved_slot;
 
 mod fixture {
     use crate as semantics;

@@ -374,6 +374,9 @@ impl DeclarationRegions {
             CheckCause::ReferenceLiteralTypeMismatch { name, .. } => {
                 region(&self.source, self.embedding.as_deref(), name.span)
             }
+            CheckCause::ReservedSlotName(cause) if cause.span.is_some() => {
+                region(&self.source, self.embedding.as_deref(), cause.span?)
+            }
             CheckCause::EmptyReferenceLiteralKey { span } => {
                 region(&self.source, self.embedding.as_deref(), *span)
             }
