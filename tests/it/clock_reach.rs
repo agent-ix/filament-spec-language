@@ -335,3 +335,116 @@ fn an_absent_aggregate_valuation_is_a_missing_valuation() {
         );
     }
 }
+
+/// `responses()` with its progress replaced: `watermark`, completeness
+/// through `through`, scope and execution open.
+fn responses_with_progress(watermark: u64, through: u64) -> Value {
+    let mut trace = responses();
+    trace["timestamped"]["progress"] = json!({"watermark": watermark,
+        "completeness": {"complete": {"through": through}},
+        "scope": "open", "execution": "open"});
+    trace
+}
+
+/// FR-194-AC-16 through `command::run`: a window not asserted complete is
+/// never a final violation. AC-13's p95 unit over AC-1's 20 latencies, with
+/// watermark 19 and completeness through 9, is `pending-window` with deadline
+/// 300000; with completeness through 19 it is `violated`, exit 10.
+#[test]
+#[trace("TC-629", "FR-194-AC-16")]
+fn a_window_not_asserted_complete_is_pending_until_it_is_covered() {
+    let directory = tempfile::tempdir().unwrap();
+    let clocks = json!({"plant-ms": {"kind": "timestamped_event", "timestamp_unit": "ms"}});
+    let unit = quantile_unit("0.95");
+    let (exit, pending) = run(
+        directory.path(),
+        &unit,
+        clocks.clone(),
+        "P",
+        responses_with_progress(19, 9),
+    );
+    assert_eq!(exit, 0, "{pending}");
+    let temporal = &pending["disposition"]["temporal"];
+    assert_eq!(temporal["kind"], "pending-window", "{pending}");
+    assert_eq!(temporal["deadline"], 300_000, "{pending}");
+    let (exit, covered) = run(
+        directory.path(),
+        &unit,
+        clocks,
+        "P",
+        responses_with_progress(19, 19),
+    );
+    assert_eq!(exit, 10, "{covered}");
+    assert_eq!(
+        covered["disposition"]["temporal"]["kind"], "violated",
+        "{covered}"
+    );
+}
+
+/// FR-194-AC-17 through `command::run`: AC-1's trace with the response
+/// stamped 18 ms holding no valuation of the aggregate (the request names it by position and atom node), complete through 300000, is
+/// `indeterminate` (exit 11) with reason `missing-valuation`, never
+/// `invalid-value` and never a quantile over the other 19 values.
+#[test]
+#[trace("TC-629", "FR-194-AC-17")]
+fn a_window_member_without_a_valuation_is_a_missing_valuation() {
+    let directory = tempfile::tempdir().unwrap();
+    let clocks = json!({"plant-ms": {"kind": "timestamped_event", "timestamp_unit": "ms"}});
+    let mut trace = responses();
+    // The aggregate atom is node 1 (as in `an_absent_aggregate_valuation_is_a_missing_valuation`);
+    // the observation at position 18 holds no valuation for it, so every
+    // window that reads position 18 is a missing valuation.
+    trace["timestamped"]["missing"] = json!([{"position": 18, "atom": 1}]);
+    // FR-641: the entry marks an admitted observation's valuation absent; the
+    // observation itself still admits, so its sample keeps a `latency`, here
+    // 100 ms: read, the `quantile 0.95` atom at 19 would be false and the run
+    // `violated`, so only the member rule makes it `indeterminate`; the 0.9 case
+    // is `indeterminate` at 18 from the atom-level absence alone.
+    trace["timestamped"]["observations"][18]["position"]["sample"]["latency"]["magnitude"]
+        ["numerator"] = json!("100");
+    for quantile in ["0.95", "0.9"] {
+        let (exit, document) = run(
+            directory.path(),
+            &quantile_unit(quantile),
+            clocks.clone(),
+            "P",
+            trace.clone(),
+        );
+        assert_eq!(exit, 11, "{quantile}: {document}");
+        assert_eq!(
+            document["disposition"]["temporal"]["kind"], "indeterminate",
+            "{quantile}: {document}"
+        );
+        assert_eq!(
+            document["disposition"]["temporal"]["reason"]["kind"], "missing-valuation",
+            "{quantile}: {document}"
+        );
+        assert_eq!(
+            document["disposition"]["temporal"]["reason"]["position"], 18,
+            "{quantile}: {document}"
+        );
+    }
+}
+
+/// FR-194-AC-16, `min_count 30`: with completeness through 9 and watermark 19,
+/// and again complete through 300000 with watermark 300000, the run reports
+/// `insufficient-data` at position 0 with count 1 and `min_count` 30: FR-501
+/// "Verdicts" returns an undefined atom in evaluation order before any
+/// pending activation, and the atoms at positions 0 to 9 are covered and short
+/// of 30 values.
+#[test]
+#[trace("TC-629", "FR-194-AC-16")]
+fn a_covered_window_short_of_min_count_is_undefined_through_run() {
+    let directory = tempfile::tempdir().unwrap();
+    let clocks = json!({"plant-ms": {"kind": "timestamped_event", "timestamp_unit": "ms"}});
+    let unit =
+        aggregate_unit("quantile 0.95 of r.latency over past[0 ms, 300 s] min_count 30 <= 5 ms");
+    for trace in [responses_with_progress(19, 9), responses()] {
+        let (_, document) = run(directory.path(), &unit, clocks.clone(), "P", trace);
+        let temporal = &document["disposition"]["temporal"];
+        assert_eq!(temporal["kind"], "insufficient-data", "{temporal}");
+        assert_eq!(temporal["position"], 0, "{temporal}");
+        assert_eq!(temporal["count"], 1, "{temporal}");
+        assert_eq!(temporal["min_count"], 30, "{temporal}");
+    }
+}

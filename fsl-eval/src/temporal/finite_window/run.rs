@@ -248,6 +248,10 @@ pub(super) struct Run<'a, L: TemporalLetters> {
     /// The valuations read, by (position, atom class).
     cells: HashMap<(usize, usize), Cell>,
     undefined: BTreeMap<(usize, usize), UndefinedCause>,
+    /// The aggregate valuations whose window is not asserted complete
+    /// (FR-194-AC-16): each is a missing valuation with reason
+    /// `IncompleteInput`, never read.
+    incomplete: HashSet<(usize, usize)>,
     frames: HashMap<(usize, usize), ScanFrame>,
     /// The `temporal.visit` charges admitted so far.
     visits: u64,
@@ -429,6 +433,7 @@ impl<'a, L: TemporalLetters> Run<'a, L> {
             classes,
             cells: seed.cells,
             undefined: seed.undefined,
+            incomplete: HashSet::new(),
             frames: HashMap::new(),
             visits: 0,
         })
@@ -813,6 +818,13 @@ impl<L: TemporalLetters> Run<'_, L> {
             .node_id(class)
             .ok_or_else(|| fault("atom-has-node-id"))?;
         let at = position_of(member)?;
+        // FR-194-AC-16: a window the completeness does not reach the latest
+        // stamp of may still gain a member.
+        let unfinished = member < self.trace.observed
+            && match self.letters.aggregate_lag(id) {
+                Some(lag) => !self.established(self.stamp(member)?.saturating_sub(lag), 0),
+                None => false,
+            };
         let Run {
             letters,
             meter,
@@ -831,10 +843,25 @@ impl<L: TemporalLetters> Run<'_, L> {
             *visits = visits.saturating_add(1);
             Ok(())
         };
-        match letters
+        let valuation = letters
             .valuation_with_window_visits(id, at, meter, &mut aggregate_visit)
-            .map_err(|stop| Stop::at(stop, at, Some(class)))?
-        {
+            .map_err(|stop| Stop::at(stop, at, Some(class)))?;
+        let valuation = match valuation {
+            // Both possibilities with reason `IncompleteInput`; a window
+            // short of `min_count` is then two-valued, never
+            // `InsufficientData`. An undefined filter, value or predicate at a
+            // present position stays undefined: no continuation removes it.
+            Valuation::True
+            | Valuation::False
+            | Valuation::Undefined(UndefinedCause::InsufficientData(_))
+                if unfinished =>
+            {
+                self.incomplete.insert((member, class));
+                Valuation::Missing
+            }
+            other => other,
+        };
+        match valuation {
             Valuation::True => self.set_cell((member, class), Cell::True),
             Valuation::False => self.set_cell((member, class), Cell::False),
             Valuation::Missing => self.set_cell((member, class), Cell::Missing),
@@ -1157,7 +1184,18 @@ impl<L: TemporalLetters> Run<'_, L> {
             .map(|(position, node, cell)| (*position, Some((*node, *cell))))
             .chain(straddled.iter().map(|position| (*position, None)))
             .collect();
-        sources.sort_by_key(|(position, source)| (*position, source.map(|(node, _)| node)));
+        // Completeness before a valuation (FR-501 "Verdicts"): an aggregate
+        // whose window is not asserted complete comes first.
+        let unfinished = |position: usize, source: Option<(usize, Cell)>| {
+            source.is_some_and(|(node, _)| self.incomplete.contains(&(position, node)))
+        };
+        sources.sort_by_key(|(position, source)| {
+            (
+                !unfinished(*position, *source),
+                *position,
+                source.map(|(node, _)| node),
+            )
+        });
         let describe = |position: usize, source: Option<(usize, Cell)>| match source {
             Some((node, Cell::Conflicting)) => {
                 let atom = self
@@ -1169,6 +1207,9 @@ impl<L: TemporalLetters> Run<'_, L> {
                     position: position_of(position)?,
                     atom,
                 })
+            }
+            Some((node, _)) if self.incomplete.contains(&(position, node)) => {
+                Ok(IndeterminateReason::IncompleteInput)
             }
             Some((node, _)) => {
                 let atom = self
