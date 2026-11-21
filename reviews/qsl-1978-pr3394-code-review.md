@@ -118,6 +118,8 @@ scope:
 | --- | --- | --- |
 | FND-001 | fixed | Round 1: Both machine and process assembly now call push_model_type, which propagates inline_integers and preserves shared interval/collision validation; object assembly uses the same helper. |
 | FND-002 | fixed | Round 1: Both aliases mint ABC under unchanged FCD case-preserving owner/capitalized field-slug rules. All four other collision rows, both authored orders, and exact code/cause/span assertions remain. |
+| FND-003 | fixed | Round 2: reserved count replaced by number/LevelNumber, with complete machine/process fixture bodies and all original interval, identity, origin and refusal oracles retained. |
+
 
 ## Disposition round 1 evidence
 
@@ -130,3 +132,47 @@ FND-002: the false fifth row is replaced by A.bC and AB.c, both of which mint AB
 Static disposition: both original defects are fixed; no new defect found. Focused production cargo check success was supplied by the lead; this reviewer ran no cargo, runtime tests, build, Kani or matrix. Own git diff --check passed. The six affected inline_integer_ runtime functions on this exact head remain pending at the time of this review; there is no claim that they passed. The previous exact-head initial result remains 31 passed and 1 failed at the initial head, not a current-head runtime result. If all six affected functions pass, the retained combined focused inventory is 35 distinct test functions (33 semantics and 2 analyze), not 37. Landing remains conditional on actual current-head runtime evidence, predecessor integration and the lead's final gate.
 
 Gap assurance remains bounded and CONDITIONAL: the initial matrix accepted-size refusal is unresolved, no repeated oversized matrix request was run, and no engine-backed repository PASS is asserted. The new source behavior is still owned by FR-710 Compilation, FSpec FR-154 scalar/constraints and FCD FR-095 identity rules. No new schema, kind, identity namespace or numeric family was added. Plan completion: not assessed.
+
+## New findings (disposition pass 2)
+
+| ID | Severity | Summary | Refs | Escape Cause |
+| --- | --- | --- | --- | --- |
+| FND-003 | high | The round-1 machine/process fixtures use reserved count as a field identifier, causing all three new tests to fail during parsing before their intended admission and refusal assertions execute. | fsl-semantics/tests/it/model_unit_input.rs:1321; fsl-cst/src/token.rs:165 | implementation-bug-despite-evidence |
+
+This row records the actual round-1 fixture defect subsequently fixed in the reviewed round-2 delta; it is not an unresolved defect at the round-2 head. The lead supplied d01d8c1c41547bb937bc21c403a2ee4e38145463 runtime results after the first disposition was posted: the three old inline functions passed and all three new machine/process functions failed in parsing. Thus round-1 source inspection established the production propagation fix, but the new runtime oracles were not exercised. The machine parser's backtracking reported expected states at the reserved field token; the source issue is the Count keyword (fsl-cst/src/token.rs:165), not an absent requirement for an extra custom kind.
+
+## Disposition round 2 evidence
+
+Reviewed round-2 source head `de6a521870893d6d9a9bc8da131251fc77598586` relative to `d01d8c1c41547bb937bc21c403a2ee4e38145463`. Production code is unchanged. FND-001 and FND-002 retain their verified fixed outcomes; all initial findings and round-1 disposition rows remain verbatim.
+
+The new fixtures replace reserved count with legal number and consistently update LevelCount to LevelNumber, including both authored collision source orders. The machine has operation toggle, Open/Shut states and its transition; the process has operation go and a begin step. These are established FR-710 / current CST fixture forms. All exact interval [-2,3], admitted field-to-scalar binding, typeRef, origin endpoints, bounds origins, reversed/overflow refusal, exact code/cause/span and genuine generated/generated collision assertions remain. No grammar or production behavior is widened to accommodate a test.
+
+The two-used-kind expectation is preserved and grounded in FCD semantic-ir.schema.json TypeDefinition.states/transitions/steps, which reference the nested state/transition/step definitions. Those definitions have identity/origin and their own member data, without custom kind fields. Current read_state_machine and read_process put those records into the owning wire node; they do not emit separate custom type definitions for them. Each fixture therefore uses its owner meaning and generated scalar value_type; adding enum or state/step construct meanings would be incorrect.
+
+Runtime history is kept separate by head: the initial head had 31 passes and 1 incorrect collision-fixture failure; d01 had three affected old inline passes and three new fixture parse failures. None of those counts is a claim that the initial 32 all passed or that the new oracles ran at d01. The retained final focused inventory is 35 distinct functions (33 semantics, 2 analyze), subject to actual final affected-test evidence. Reviewer ran no cargo, runtime, build, baseline, Kani or matrix. Own diff --check passed.
+
+Gap assurance remains CONDITIONAL: the initial computed-matrix accepted-size refusal remains unresolved and no oversized retry was run. No new unowned behavior, stub, invented kind, schema or numeric family was added by the fixture repair. Plan completion: not assessed. No whole-repository assurance PASS or QSL-1978 completion is claimed.
+
+## Current runtime evidence
+
+The lead supplied the affected machine/process test result at exact source head `de6a521870893d6d9a9bc8da131251fc77598586`: `model_unit_input::inline_integer_machine_and_process_fields_` ran three tests, all passed, zero failed or ignored, command exit 0. The new tests now reach their admission, exact interval, identity/origin and refusal oracles. FND-003 is fixed with actual runtime evidence, and the propagation regression checks supporting FND-001 now pass.
+
+Retained focused evidence totals 35 distinct test functions: 27 unaffected semantics functions from the initial head, the three old inline functions passing at d01d8c1c41547bb937bc21c403a2ee4e38145463, the three new machine/process functions passing at de6a521870893d6d9a9bc8da131251fc77598586, and two analyze functions from the initial head. These are retained results across the reviewed source deltas, not a single-head execution of 35 tests and not a whole-crate runtime suite.
+
+Owned code disposition: all three recorded defects fixed, no unresolved source finding at de6a521870893d6d9a9bc8da131251fc77598586. Approval remains conditional on the requested dependency-pin/current-main integration review and the lead's exact-final-head all-target gate after latest review artifact custody. Finite predecessor must land first. The final-round review remains open for that integration delta; no final comment has been posted yet.
+
+## Dependency integration inspection
+
+Inspected rebased source head `71739753afe2d0a9de02ce02f59d08764f268e90` on base `cf8d85826db560569cd8806cce07007d4b493e0c`, with merged pin commit `21edb2ead1c8b69768beedaab003e077ce4ed042` verified as an ancestor. The three owned Rust files and FR-710/TC-1942 are byte-identical to the previously reviewed de6 source; the branch has no local pin edits or API workarounds. Its net own diff contains the three Rust files and two review artifacts.
+
+The current main dependency delta selects filament-contract-model revision `96554ea506a19b16ff9863ad3d30066578bc609c` and filament-specification revision `f6b0480cd90f5d1b5c5ea64f694895bb7b5ce2e0`. FSpec FR-154 and FR-208 source files are unchanged between the prior and current pins. FCD identity/schema dependency remains at the reviewed revision. Relevant model-member reader changes admit hyphens in artifact IDs while retaining the member-name rule; the scalar-operands production code is unchanged. Current-main model intake, model-unit producer, domain-package records and this branch's native plan test module have no integration delta. Adjacent changes concern composition/checked-package functionality; this review does not independently qualify that upstream functionality. No relevant inline Integer API adaptation or new source defect was found.
+
+The full focused 35-function requalification on this new-pin source head is pending at the time of this integration inspection. This is a source review, not a claim that old-pin runtime results establish new-pin execution. Final artifacts/comments remain open for actual new-pin results and any material finite-predecessor integration delta.
+
+## Final round 2 verdict
+
+All three recorded defects are fixed. The lead supplied new-pin requalification at exact source head `71739753afe2d0a9de02ce02f59d08764f268e90`: all 33 model_unit_input tests and both selected analyze tests passed, 35 passed total, zero failed or ignored, command exit 0. This is one pinned-head focused run. The lead also supplied the new-pin production cargo check success for fsl-semantics and fsl-analyze (exit 0, with the existing unrelated sample_fingerprint warning). The reviewer executed no cargo/build/runtime gate.
+
+Owned code review: APPROVED, conditional only on the lead validating any subsequent finite-predecessor/current-main source or dependency delta and running the mandatory all-target gate at the exact final custody head. There is no unresolved owned source finding or pending owned runtime check at this reviewed head. The latest two review artifacts must be committed before that final gate; no artifact commit may follow the gate it is supposed to cover. Finite predecessor lands first; this review does not authorize landing ahead of it or closing QSL-1978. A subsequent material integration delta must receive a bounded continuation of this same final review, not a new initial review or a third fix cycle.
+
+Gap verdict remains CONDITIONAL for the documented unavailable matrix; no full-repository assurance PASS is asserted. Original finding rows and historical round-1 evidence/outcomes remain unchanged. The later actual runtime and integration evidence above supersedes only historical pending statements, without rewriting that history.
