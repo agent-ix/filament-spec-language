@@ -3317,6 +3317,280 @@ fn package_remainder_tl_atoms_keep_canonical_text_and_first_occurrence_ids() {
     assert_eq!(formula.matches("p1").count(), 1, "{formula}");
 }
 
+#[test]
+#[trace("TC-3019", "FR-1039-AC-8", "FR-100-AC-23")]
+fn package_remainder_caller_source_carrier_refuses_before_file_io() {
+    let directory = tempfile::tempdir().unwrap();
+    let valid = source("unavailable.native");
+    let mut cases = vec![
+        (Value::Null, "/request/sources".to_owned()),
+        (json!({}), "/request/sources".to_owned()),
+        (json!([[]]), "/request/sources/0".to_owned()),
+    ];
+    for field in [
+        "file",
+        "authority",
+        "identity",
+        "document",
+        "formal_revision",
+    ] {
+        let mut missing = valid.clone();
+        missing.as_object_mut().unwrap().remove(field);
+        cases.push((json!([missing]), format!("/request/sources/0/{field}")));
+        let mut wrong = valid.clone();
+        wrong[field] = if field == "formal_revision" {
+            json!(-1)
+        } else {
+            json!(7)
+        };
+        cases.push((json!([wrong]), format!("/request/sources/0/{field}")));
+    }
+    let mut extra = valid.clone();
+    extra["text"] = json!("unused");
+    cases.push((json!([extra]), "/request/sources/0/text".to_owned()));
+    let mut repeated = valid.clone();
+    repeated["file"] = json!("another.native");
+    repeated["document"] = json!("Other");
+    cases.push((
+        json!([valid.clone(), repeated]),
+        "/request/sources/1".to_owned(),
+    ));
+    for (sources, pointer) in cases {
+        let (code, value) = write_request(
+            directory.path(),
+            &json!({"format":"native-run/1", "request":{
+            "models":[], "package":{"file":"unavailable-package.json"},
+            "sources":sources, "tl_lowering":{"clause":"Low"}}}),
+        );
+        assert_eq!(code, 20, "{value}");
+        assert_eq!(value["stage"], "request", "{value}");
+        assert_eq!(value["code"], "invalid-request", "{value}");
+        assert!(
+            value["message"].as_str().unwrap().contains(&pointer),
+            "{pointer}: {value}"
+        );
+    }
+    for sources in [json!([]), json!([valid])] {
+        let (code, value) = write_request(
+            directory.path(),
+            &json!({"format":"native-run/1", "request":{
+            "models":[], "program":{"source":source("unavailable-program.native")},
+            "sources":sources, "call":{"function":"f","arguments":[]}}}),
+        );
+        assert_eq!(code, 20, "{value}");
+        assert_eq!(value["stage"], "request", "{value}");
+        assert!(
+            value["message"]
+                .as_str()
+                .unwrap()
+                .contains("/request/sources"),
+            "{value}"
+        );
+    }
+    for (field, supplied) in [("document", json!("")), ("formal_revision", json!(0))] {
+        let mut selected = source("unavailable.native");
+        selected[field] = supplied;
+        let (code, value) = write_request(
+            directory.path(),
+            &json!({"format":"native-run/1", "request":{
+            "models":[], "package":{"file":"unavailable-package.json"},
+            "sources":[selected], "tl_lowering":{"clause":"Low"}}}),
+        );
+        assert_eq!(code, 20, "{value}");
+        assert_eq!(value["stage"], "request", "{value}");
+        assert_eq!(value["code"], "invalid_identifier", "{value}");
+        assert!(
+            value
+                .to_string()
+                .contains(&format!("/request/sources/0/{field}")),
+            "{value}"
+        );
+    }
+    let selected = source("unavailable.native");
+    let mut raw_cases = vec![(
+        "\"sources\":[],\"sources\":[]".to_owned(),
+        "/request/sources".to_owned(),
+    )];
+    let rendered = serde_json::to_string(&selected).unwrap();
+    for field in [
+        "file",
+        "authority",
+        "identity",
+        "document",
+        "formal_revision",
+    ] {
+        raw_cases.push((
+            format!(
+                "\"sources\":[{},\"{field}\":{}}}]",
+                &rendered[..rendered.len() - 1],
+                selected[field]
+            ),
+            format!("/request/sources/0/{field}"),
+        ));
+    }
+    for value in ["18446744073709551616", "1.5", "null"] {
+        let mut selected = selected.clone();
+        selected.as_object_mut().unwrap().remove("formal_revision");
+        let rendered = serde_json::to_string(&selected).unwrap();
+        raw_cases.push((
+            format!(
+                "\"sources\":[{},\"formal_revision\":{value}}}]",
+                &rendered[..rendered.len() - 1]
+            ),
+            "/request/sources/0/formal_revision".to_owned(),
+        ));
+    }
+    for (members, pointer) in raw_cases {
+        let raw = format!("{{\"format\":\"native-run/1\",\"request\":{{\"models\":[],\"package\":{{\"file\":\"unavailable-package.json\"}},{members},\"tl_lowering\":{{\"clause\":\"Low\"}}}}}}");
+        let path = directory.path().join("raw.json");
+        std::fs::write(&path, raw).unwrap();
+        let refusal = fsl_command::command::run(&path, |_, _| {})
+            .err()
+            .expect("malformed carrier refuses");
+        let value = refusal.value().unwrap();
+        assert_eq!(refusal.category().exit_code(), 20, "{value}");
+        assert_eq!(value["code"], "invalid-request", "{value}");
+        assert_eq!(value["stage"], "request", "{value}");
+        assert!(
+            value["message"].as_str().unwrap().contains(&pointer),
+            "{pointer}: {value}"
+        );
+    }
+}
+
+#[test]
+#[trace("TC-3019", "FR-1039-AC-9", "FR-1039-AC-12")]
+fn package_remainder_caller_sources_admit_and_leave_tl_atoms_canonical() {
+    let directory = tempfile::tempdir().unwrap();
+    spine::write(directory.path(), Case::Healthy).unwrap();
+    let unit = low(EVENT_POSITION, "always[0,3] holds( c.versionNumber <= 2 )");
+    let models = compile_handoff(directory.path(), &unit);
+    std::fs::write(directory.path().join("caller.native"), &unit).unwrap();
+    let request = json!({"format":"native-run/1", "request":{
+        "models":models,"package":{"directory":"handoff"},"tl_lowering":{"clause":"Low"}}});
+    let expected = write_request(directory.path(), &request);
+    assert_eq!(expected.0, 0, "{:?}", expected);
+    let mut selected = source("unit.native");
+    selected["file"] = json!("caller.native");
+    selected["document"] = json!("Other");
+    selected["formal_revision"] = json!(7);
+    for sources in [json!([]), json!([selected.clone()])] {
+        let mut supplied = request.clone();
+        supplied["request"]["sources"] = sources;
+        assert_eq!(write_request(directory.path(), &supplied), expected);
+    }
+    selected["file"] = json!("unavailable.native");
+    let mut unavailable = request.clone();
+    unavailable["request"]["sources"] = json!([selected]);
+    let (code, value) = write_request(directory.path(), &unavailable);
+    assert_eq!(code, 20, "{value}");
+    assert_eq!(value["stage"], "file", "{value}");
+    assert_eq!(value["code"], "io_error", "{value}");
+    for (bytes, blank_label) in [
+        (vec![0xff], None),
+        (b"\xef\xbb\xbftext".to_vec(), None),
+        (b"text\0".to_vec(), None),
+        (unit.as_bytes().to_vec(), Some("authority")),
+        (unit.as_bytes().to_vec(), Some("identity")),
+    ] {
+        std::fs::write(directory.path().join("offered.native"), bytes).unwrap();
+        let mut selected = source("offered.native");
+        if let Some(label) = blank_label {
+            selected[label] = json!("");
+        }
+        let from_source = write_request(
+            directory.path(),
+            &json!({"format":"native-run/1", "request":{
+            "models":[],"program":{"source":selected},"call":{"function":"f","arguments":[]}}}),
+        );
+        let mut supplied = request.clone();
+        supplied["request"]["sources"] = json!([selected]);
+        let from_package = write_request(directory.path(), &supplied);
+        assert_eq!(from_package, from_source);
+        assert_eq!(from_package.0, 20, "{:?}", from_package);
+        assert_eq!(from_package.1["stage"], "source", "{:?}", from_package);
+    }
+}
+
+#[test]
+#[trace("TC-3019", "FR-026-AC-8")]
+fn package_remainder_caller_sources_share_intake_limits_at_the_boundary() {
+    use fsl_command::command::{prepare_run, RunLimits};
+    let directory = tempfile::tempdir().unwrap();
+    spine::write(directory.path(), Case::Healthy).unwrap();
+    let unit = low(EVENT_POSITION, "always[0,3] holds(c.versionNumber <= 2)");
+    let models = compile_handoff(directory.path(), &unit);
+    std::fs::write(directory.path().join("caller.native"), &unit).unwrap();
+    let mut sources = Vec::new();
+    for index in 0..61 {
+        let mut selected = source("caller.native");
+        selected["identity"] = json!(format!("test:render:{index}"));
+        sources.push(selected);
+    }
+    let mut request = json!({"format":"native-run/1", "request":{
+        "models":models,"package":{"file":"package.json","equality":"handoff/equality.json"},
+        "sources":sources,"tl_lowering":{"clause":"Low"}}});
+    let path = directory.path().join("bounded.json");
+    let bytes = serde_json::to_vec(&request).unwrap();
+    std::fs::write(&path, &bytes).unwrap();
+    let dependent_bytes = [
+        "package.json",
+        "handoff/equality.json",
+        "spine-model.semantic-ir.json",
+    ]
+    .into_iter()
+    .map(|file| {
+        std::fs::metadata(directory.path().join(file))
+            .unwrap()
+            .len() as usize
+    })
+    .sum::<usize>()
+        + 61 * unit.len();
+    let limits = RunLimits {
+        request_bytes: bytes.len(),
+        dependent_bytes,
+        ..RunLimits::default()
+    };
+    prepare_run(&path, limits).expect("64 selected files exactly at both byte bounds admit");
+    for (limits, setting) in [
+        (
+            RunLimits {
+                request_bytes: bytes.len() - 1,
+                ..limits
+            },
+            "request_bytes",
+        ),
+        (
+            RunLimits {
+                dependent_bytes: dependent_bytes - 1,
+                ..limits
+            },
+            "dependent_bytes",
+        ),
+    ] {
+        let refusal = prepare_run(&path, limits)
+            .err()
+            .expect("one byte over stops intake");
+        assert_eq!(refusal.category().exit_code(), 22, "{refusal}");
+        assert!(refusal.to_string().contains(setting), "{refusal}");
+    }
+    let mut selected = source("caller.native");
+    selected["identity"] = json!("test:render:62");
+    request["request"]["sources"]
+        .as_array_mut()
+        .unwrap()
+        .push(selected);
+    std::fs::write(&path, serde_json::to_vec(&request).unwrap()).unwrap();
+    let refusal = prepare_run(&path, RunLimits::default())
+        .err()
+        .expect("65 files stops intake");
+    assert_eq!(refusal.category().exit_code(), 22, "{refusal}");
+    assert!(refusal.to_string().contains("64"), "{refusal}");
+    request["request"]["sources"] = json!([]);
+    std::fs::write(&path, serde_json::to_vec(&request).unwrap()).unwrap();
+    prepare_run(&path, RunLimits::default()).expect("the next invocation has fresh budgets");
+}
+
 /// FR-1039 Outputs: timed record samples share the snapshot timed evaluator,
 /// with a selected role clock and exact endpoint inclusion.
 #[test]

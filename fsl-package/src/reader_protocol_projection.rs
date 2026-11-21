@@ -102,6 +102,73 @@ impl ReaderProtocolProjection {
             .and_then(|node| node.occurrence.as_ref())
     }
 
+    /// Resolve a captured semantic location through its actual occurrence
+    /// and the owning admitted package. Equal locations with unequal source
+    /// attributions are ambiguous; a structural match never chooses a site.
+    pub fn source_at_location(
+        &self,
+        package: &crate::BarePackage<'_>,
+        location: &Location,
+    ) -> Result<
+        Option<fsl_foundation::source::provenance::SourceRegion>,
+        crate::occurrence_source::OccurrenceSourceRefusal,
+    > {
+        let mut selected = None;
+        for node in self
+            .nodes
+            .iter()
+            .filter(|node| node.location.as_ref() == Some(location))
+        {
+            let Some(application) = &node.term else {
+                continue;
+            };
+            let occurrence = node
+                .occurrence
+                .as_ref()
+                .ok_or(crate::occurrence_source::OccurrenceSourceRefusal::UnknownOccurrence)?;
+            let owner = if application.package.as_ref() == package.package().name() {
+                package
+            } else {
+                package
+                    .dependency_views()
+                    .iter()
+                    .find(|view| view.package().name() == application.package.as_ref())
+                    .ok_or(crate::occurrence_source::OccurrenceSourceRefusal::UnknownNode)?
+            };
+            let admitted = owner
+                .package()
+                .resolved_graph()
+                .nodes
+                .iter()
+                .find(|candidate| candidate.node_id == *application)
+                .ok_or(crate::occurrence_source::OccurrenceSourceRefusal::UnknownNode)?;
+            let admitted_occurrence = admitted
+                .occurrences
+                .iter()
+                .find(|candidate| {
+                    candidate.ordinal == occurrence.origin().ordinal()
+                        && crate::checked_v2::role_spelling(&candidate.role)
+                            == occurrence.origin().role().as_str()
+                })
+                .ok_or(crate::occurrence_source::OccurrenceSourceRefusal::UnknownOccurrence)?;
+            let region = crate::occurrence_source::occurrence_source(
+                owner.package(),
+                application,
+                admitted_occurrence,
+                None,
+            )?
+            .region;
+            if selected
+                .as_ref()
+                .is_some_and(|previous| previous != &region)
+            {
+                return Err(crate::occurrence_source::OccurrenceSourceRefusal::AmbiguousRegion);
+            }
+            selected = Some(region);
+        }
+        Ok(selected)
+    }
+
     /// Ordered child node indices.
     pub fn children(&self, index: usize) -> Option<&[usize]> {
         self.nodes.get(index).map(|node| node.children.as_slice())

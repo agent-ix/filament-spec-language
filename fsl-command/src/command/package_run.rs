@@ -35,6 +35,7 @@ pub struct PreparedPackageRun {
     selection: serde_json::Value,
     /// The domain package sources the request supplied.
     models: Vec<fsl_foundation::Source>,
+    sources: Vec<fsl_foundation::Source>,
 }
 
 /// What a package run does once the package is admitted.
@@ -81,11 +82,12 @@ pub(super) struct AdmittedPackage {
     pub(super) observations: Vec<Vec<u8>>,
     pub(super) selection: serde_json::Value,
     pub(super) models: Vec<fsl_foundation::Source>,
+    pub(super) sources: Vec<fsl_foundation::Source>,
 }
 
 impl PreparedPackageRun {
     pub(super) fn sources(&self) -> crate::Sources {
-        crate::Sources::from_sources(self.models.iter().cloned())
+        crate::Sources::from_sources(self.models.iter().chain(&self.sources).cloned())
     }
 }
 
@@ -238,6 +240,7 @@ pub(super) fn prepare(
         work: Work::Call(Box::new(spine_call)),
         selection: admitted.selection,
         models: admitted.models,
+        sources: admitted.sources,
     })
 }
 
@@ -391,6 +394,7 @@ fn prepare_clause(
         work: Work::Clause(Box::new(work)),
         selection: admitted.selection,
         models: admitted.models,
+        sources: admitted.sources,
     })
 }
 
@@ -519,6 +523,7 @@ fn prepare_lowering(
         work: Work::Lowering(lowering, admitted.snapshot),
         selection: admitted.selection,
         models: admitted.models,
+        sources: admitted.sources,
     })
 }
 
@@ -631,7 +636,7 @@ pub(super) fn admit_files(
                 Selected::Directory(_) => 2,
             },
             models: request.models.len(),
-            observations: files.len(),
+            observations: files.len() + request.sources.as_ref().map_or(0, Vec::len),
             extensions: 0,
         },
         dependent_bytes,
@@ -704,6 +709,18 @@ pub(super) fn admit_files(
             )
         }
     };
+    let sources = request
+        .sources
+        .as_deref()
+        .unwrap_or_default()
+        .iter()
+        .enumerate()
+        .map(|(index, selected)| {
+            intake
+                .source(selected, &format!("/request/sources/{index}"))
+                .map(|source| source.source().clone())
+        })
+        .collect::<Result<Vec<_>>>()?;
     let observations = files
         .iter()
         .map(|file| intake.file(file, intake.remaining))
@@ -723,6 +740,7 @@ pub(super) fn admit_files(
             .iter()
             .map(|document| document.source().clone())
             .collect(),
+        sources,
     })
 }
 
@@ -837,6 +855,7 @@ pub(super) fn execute(prepared: PreparedPackageRun) -> Result<RunResult> {
         work,
         selection,
         models,
+        sources,
     } = prepared;
     // A `{file}` selection carries no handoff rows: its call reads only the
     // declarations the package's own nodes give (FR-1039 "a `call` runs from
@@ -878,7 +897,7 @@ pub(super) fn execute(prepared: PreparedPackageRun) -> Result<RunResult> {
         Work::Call(call) => *call,
         Work::Clause(work) => {
             let mut result = execute_clause(&bare, &packages, model_limits, *work)?;
-            result.sources = crate::Sources::from_sources(models);
+            result.sources = crate::Sources::from_sources(models.into_iter().chain(sources));
             return Ok(result);
         }
         Work::Lowering(lowering, snapshot) => {
@@ -906,7 +925,7 @@ pub(super) fn execute(prepared: PreparedPackageRun) -> Result<RunResult> {
                     output::clause_report(*reported.report, &reported.selection)?
                 }
             };
-            result.sources = crate::Sources::from_sources(models);
+            result.sources = crate::Sources::from_sources(models.into_iter().chain(sources));
             return Ok(result);
         }
     };
@@ -943,6 +962,6 @@ pub(super) fn execute(prepared: PreparedPackageRun) -> Result<RunResult> {
         fsl_replay::spine::run_package(&bare, &call, &objects, &filament_exact::Cancel::new())
             .map_err(|refusal| RunCause::SpineRun(Box::new(*refusal)))?;
     let mut result = output::spine_run_result_for_package(&selection, &call.function, outcome)?;
-    result.sources = crate::Sources::from_sources(models);
+    result.sources = crate::Sources::from_sources(models.into_iter().chain(sources));
     Ok(result)
 }
