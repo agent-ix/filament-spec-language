@@ -907,10 +907,11 @@ fn the_checker_refuses_a_workload_that_weighs_an_enabled_operation_at_zero() {
     );
     let mut doc = document(&settle(&world, "Every"));
     doc["objective"]["optimization"] = json!("workload");
-    assert!(matches!(
-        check(&world, "Weighted", &doc),
-        Err(ProbabilityDocumentError::Unsupported)
-    ));
+    let result = check(&world, "Weighted", &doc);
+    assert!(
+        matches!(result, Err(ProbabilityDocumentError::Unsupported)),
+        "{result:?}"
+    );
 }
 
 /// The exact value of a `proved` record, when it is one.
