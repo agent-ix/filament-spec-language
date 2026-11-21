@@ -624,7 +624,6 @@ fn a_100000_member_function_protocol_cycle_is_budgeted_and_order_invariant() {
 /// 100,000-member graph and its emitted package.
 #[trace("FR-383-AC-25")]
 #[test]
-#[ignore = "QSL-2691: protocol_locations validation currently scans the package once per row; at 100,000 rows this exceeds the focused-test runtime"]
 fn a_100000_member_function_protocol_cycle_reads_back_at_i2() {
     let (emission, model_digest) = emitted_100000_member_cycle();
     let mut evidence = read_evidence(&emission);
