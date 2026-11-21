@@ -188,7 +188,7 @@ fn emitted_source_place_member_type_matches_its_target_node_identity() {
         admitted,
         timed_models,
         ..
-    } = read_back(&emission)
+    } = super::read_back(&emission)
     else {
         panic!("the actual emitted source declarations admit");
     };
@@ -297,7 +297,7 @@ fn source_and_bare_clock_templates_preserve_optional_indexed_tuple_and_case_path
         admitted,
         timed_models,
         ..
-    } = read_back(&emission)
+    } = super::read_back(&emission)
     else {
         panic!("actual emitted package admits");
     };
