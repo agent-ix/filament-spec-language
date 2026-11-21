@@ -17,6 +17,7 @@ Verify that an equality whose operand is an integer division application (the sh
 1. Compile each source of FR-495-AC-24 through the public `compile_package` (and `compile_package_with_integer_division` for `div` and `rem`) with the `example/config-version` model selected.
 2. Read each package with `CheckedPackageV2::read`, supplying the package's required features and the model document as evidence.
 3. For each source, find the equality application, the position of its `mod`, `div` or `rem` operand, the builtin `Integer` node, and the equality decision.
+4. Compile, read and evaluate at `n = 4` the three equalities of FR-495-AC-26 between two division results.
 
 ## Expected Results
 
