@@ -13,6 +13,8 @@ use fsl_semantics::model::object_environment::ObjectEnvironment;
 use fsl_semantics::model::population::PopulationBinding;
 use serde_json::{Map, Value};
 use std::cell::RefCell;
+mod json;
+mod values;
 
 #[cfg(test)]
 #[path = "../../examples/config-version/spine_unit.rs"]
@@ -370,61 +372,53 @@ impl Scope<'_, '_> {
         Ok(number)
     }
     fn json(&mut self, value: &Value, depth: usize) -> Result<Value, ReferenceCodecError> {
-        self.work(1)?;
-        if depth > self.max_depth.min(64) {
+        if depth > self.max_depth {
             return Err(self.fail(ReferenceFailure::DepthLimit));
         }
-        match value {
-            Value::Null => Ok(Value::Null),
-            Value::Bool(value) => Ok(Value::Bool(*value)),
-            Value::Number(value) => Ok(Value::Number(value.clone())),
-            Value::String(value) => Ok(Value::String(self.text(value)?)),
-            Value::Array(values) => {
-                let mut out = self.array(values.len())?;
-                for value in values {
-                    out.push(self.json(value, depth + 1)?);
-                }
-                Ok(Value::Array(out))
-            }
-            Value::Object(values) => {
-                let mut out = Map::new();
-                for (name, value) in values {
-                    let value = self.json(value, depth + 1)?;
-                    self.put(&mut out, name, value)?;
-                }
-                Ok(Value::Object(out))
-            }
+        let remaining = self.max_depth - depth;
+        match self.with_admission(|admission| admission.borrowed_json(value, remaining)) {
+            Err(ReferenceCodecError::Key {
+                source: ModelKeyError::Unsupported(json::DEPTH),
+                ..
+            }) => Err(self.fail(ReferenceFailure::DepthLimit)),
+            other => other,
         }
     }
     fn same_json(&mut self, left: &Value, right: &Value) -> Result<bool, ReferenceCodecError> {
-        self.work(1)?;
-        match (left, right) {
-            (Value::String(left), Value::String(right)) => self.equal_text(left, right),
-            (Value::Array(left), Value::Array(right)) if left.len() == right.len() => {
-                for (left, right) in left.iter().zip(right) {
-                    if !self.same_json(left, right)? {
+        let mut pending = Vec::new();
+        values::push(self, &mut pending, (left, right))?;
+        while let Some((left, right)) = pending.pop() {
+            self.work(1)?;
+            match (left, right) {
+                (Value::String(left), Value::String(right)) => {
+                    if !self.equal_text(left, right)? {
                         return Ok(false);
                     }
                 }
-                Ok(true)
-            }
-            (Value::Object(left), Value::Object(right)) if left.len() == right.len() => {
-                for ((left_name, left), (right_name, right)) in left.iter().zip(right) {
-                    if !self.equal_text(left_name, right_name)? || !self.same_json(left, right)? {
-                        return Ok(false);
+                (Value::Array(left), Value::Array(right)) if left.len() == right.len() => {
+                    for pair in left.iter().zip(right).rev() {
+                        values::push(self, &mut pending, pair)?;
                     }
                 }
-                Ok(true)
+                (Value::Object(left), Value::Object(right)) if left.len() == right.len() => {
+                    for ((left_name, left), (right_name, right)) in left.iter().zip(right).rev() {
+                        if !self.equal_text(left_name, right_name)? {
+                            return Ok(false);
+                        }
+                        values::push(self, &mut pending, (left, right))?;
+                    }
+                }
+                (Value::Null, Value::Null) => {}
+                (Value::Bool(left), Value::Bool(right)) if left == right => {}
+                (Value::Number(left), Value::Number(right)) if left == right => {}
+                _ => return Ok(false),
             }
-            (Value::Null, Value::Null) => Ok(true),
-            (Value::Bool(left), Value::Bool(right)) => Ok(left == right),
-            (Value::Number(left), Value::Number(right)) => Ok(left == right),
-            _ => Ok(false),
         }
+        Ok(true)
     }
 
     fn validate_effective(&mut self, mut value: &Value) -> Result<(), ReferenceCodecError> {
-        for _ in 0..=self.max_depth.min(64) {
+        for _ in 0..=self.max_depth {
             self.work(1)?;
             let map = self.closed(value, &["original", "owner_effective_type"])?;
             let key = self.closed(&map["original"], &["package", "node"])?;
@@ -587,11 +581,12 @@ impl Scope<'_, '_> {
         key: &str,
         value: Value,
     ) -> Result<(), ReferenceCodecError> {
+        let mut value = json::DeepJson(Some(value));
         // serde_json's map has no fallible reserve API. Account its node and
         // key before insertion, including tree linkage capacity.
         self.reserve(size_of::<(String, Value)>().saturating_mul(4))?;
         let key = self.text(key)?;
-        map.insert(key, value);
+        map.insert(key, value.0.take().expect("admitted member value"));
         Ok(())
     }
 
@@ -725,7 +720,7 @@ impl Scope<'_, '_> {
     }
 
     fn effective_json(&mut self, effective: &EffectiveId) -> Result<Value, ReferenceCodecError> {
-        if effective.owner_chain().len() > self.max_depth.min(64) {
+        if effective.owner_chain().len() > self.max_depth {
             return Err(self.fail(ReferenceFailure::DepthLimit));
         }
         let mut owner = Value::Null;
@@ -744,44 +739,47 @@ impl Scope<'_, '_> {
         Ok(owner)
     }
 
-    // Closed structural NodeId read, with a finite stack policy shared with
-    // the surrounding typed value. It preserves every node and segment.
+    // Validate structural nodes iteratively; JSON copying uses the shared stack.
     fn node(&mut self, value: &Value, depth: usize) -> Result<Value, ReferenceCodecError> {
-        self.work(1)?;
-        if depth > self.max_depth.min(64) {
-            return Err(self.fail(ReferenceFailure::DepthLimit));
+        let mut pending = Vec::new();
+        values::push(self, &mut pending, (value, depth))?;
+        while let Some((value, depth)) = pending.pop() {
+            self.work(1)?;
+            if depth > self.max_depth {
+                return Err(self.fail(ReferenceFailure::DepthLimit));
+            }
+            let map = self.closed(value, &["package", "path", "ordinal"])?;
+            let package = self.string(&map["package"])?;
+            self.work(package.len())?;
+            if package.is_empty()
+                || map["ordinal"]
+                    .as_u64()
+                    .filter(|n| *n <= 9_007_199_254_740_991)
+                    .is_none()
+            {
+                return Err(self.fail(ReferenceFailure::MalformedWire));
+            }
+            let segments = map["path"]
+                .as_array()
+                .filter(|path| !path.is_empty())
+                .ok_or_else(|| self.fail(ReferenceFailure::MalformedWire))?;
+            for segment in segments.iter().rev() {
+                match segment {
+                    Value::String(text) => self.work(text.len())?,
+                    Value::Object(_) => {
+                        values::push(self, &mut pending, (segment, depth.saturating_add(1)))?
+                    }
+                    _ => return Err(self.fail(ReferenceFailure::MalformedWire)),
+                }
+            }
         }
-        let map = self.closed(value, &["package", "path", "ordinal"])?;
-        let package = self.string(&map["package"])?;
-        let ordinal = map["ordinal"]
-            .as_u64()
-            .filter(|n| *n <= 9_007_199_254_740_991)
-            .ok_or_else(|| self.fail(ReferenceFailure::MalformedWire))?;
-        let Some(path) = map["path"].as_array().filter(|p| !p.is_empty()) else {
-            return Err(self.fail(ReferenceFailure::MalformedWire));
-        };
-        if package.is_empty() {
-            return Err(self.fail(ReferenceFailure::MalformedWire));
-        }
-        let mut segments = self.array(path.len())?;
-        for segment in path {
-            segments.push(match segment {
-                Value::String(text) => Value::String(self.text(text)?),
-                Value::Object(_) => self.node(segment, depth + 1)?,
-                _ => return Err(self.fail(ReferenceFailure::MalformedWire)),
-            });
-        }
-        let mut out = Map::new();
-        let package = Value::String(self.text(package)?);
-        self.put(&mut out, "package", package)?;
-        self.put(&mut out, "path", Value::Array(segments))?;
-        self.put(&mut out, "ordinal", Value::from(ordinal))?;
-        Ok(Value::Object(out))
+        self.with_admission(|admission| admission.borrowed_json(value, usize::MAX))
     }
 }
 
 impl<'c, 'm, 'r> ReferenceCodec<'c, 'm, 'r> {
     /// Borrow one shared resource scope for a nested external carrier.
+    /// `max_depth` is the caller's limit; `usize::MAX` means no depth limit.
     pub fn scope<'s>(
         &'s self,
         budget: &'s mut dyn IntegerDecimalBudget,
@@ -878,19 +876,14 @@ impl<'c, 'm, 'r> ReferenceCodec<'c, 'm, 'r> {
         scope.poll()?;
         Ok(result)
     }
-    fn value(
+    fn value_with_children(
         &self,
         value: &Value,
         restore: bool,
-        depth: usize,
+        _depth: usize,
         scope: &mut Scope<'_, 'm>,
+        children: &mut impl Iterator<Item = Value>,
     ) -> Result<Value, ReferenceCodecError> {
-        scope.work(1)?;
-        // Match the existing certificate typed-value ceiling and respect a
-        // stricter caller policy. No caller can enable unbounded Rust recursion.
-        if depth > scope.max_depth.min(64) {
-            return Err(scope.fail(ReferenceFailure::DepthLimit));
-        }
         let kind = value
             .get("type")
             .and_then(Value::as_str)
@@ -919,7 +912,7 @@ impl<'c, 'm, 'r> ReferenceCodec<'c, 'm, 'r> {
             _ => return Err(scope.fail(ReferenceFailure::MalformedWire)),
         };
         let map = scope.closed(value, fields)?;
-        let mut out = Map::new();
+        let mut out = json::DeepMap(Map::new());
         for name in fields {
             let input = &map[*name];
             let output = scope.member(name, |s| {
@@ -927,14 +920,16 @@ impl<'c, 'm, 'r> ReferenceCodec<'c, 'm, 'r> {
                     return if input.is_null() {
                         Ok(Value::Null)
                     } else {
-                        self.value(input, restore, depth + 1, s)
+                        children
+                            .next()
+                            .ok_or_else(|| s.fail(ReferenceFailure::MalformedWire))
                     };
                 }
                 if matches!(*name, "elements" | "components" | "entries" | "fields") {
                     let array = input
                         .as_array()
                         .ok_or_else(|| s.fail(ReferenceFailure::MalformedWire))?;
-                    let mut items = s.array(array.len())?;
+                    let mut items = json::DeepArray(s.array(array.len())?);
                     for (index, element) in array.iter().enumerate() {
                         s.reserve(20)?;
                         let index = index.to_string();
@@ -946,7 +941,7 @@ impl<'c, 'm, 'r> ReferenceCodec<'c, 'm, 'r> {
                                     &["name", "value"]
                                 };
                                 let row = s.closed(element, names)?;
-                                let mut converted = Map::new();
+                                let mut converted = json::DeepMap(Map::new());
                                 for child in names {
                                     let item = s.member(child, |s| {
                                         if *child == "name" {
@@ -955,21 +950,25 @@ impl<'c, 'm, 'r> ReferenceCodec<'c, 'm, 'r> {
                                         } else if *name == "fields" && row[*child].is_null() {
                                             Ok(Value::Null)
                                         } else {
-                                            self.value(&row[*child], restore, depth + 1, s)
+                                            children.next().ok_or_else(|| {
+                                                s.fail(ReferenceFailure::MalformedWire)
+                                            })
                                         }
                                     })?;
                                     s.put(&mut converted, child, item)?;
                                 }
-                                Ok(Value::Object(converted))
+                                Ok(Value::Object(std::mem::take(&mut converted.0)))
                             }
-                            _ => self.value(element, restore, depth + 1, s),
+                            _ => children
+                                .next()
+                                .ok_or_else(|| s.fail(ReferenceFailure::MalformedWire)),
                         })?;
                         items.push(converted);
                     }
                     if matches!(kind, "set" | "bag" | "map") {
                         sort_values(&mut items, kind == "map", kind != "bag", s)?;
                     }
-                    return Ok(Value::Array(items));
+                    return Ok(Value::Array(std::mem::take(&mut items.0)));
                 }
                 if kind == "boolean" && *name == "value" {
                     return input
@@ -1005,7 +1004,7 @@ impl<'c, 'm, 'r> ReferenceCodec<'c, 'm, 'r> {
             })?;
             scope.put(&mut out, name, output)?;
         }
-        Ok(Value::Object(out))
+        Ok(Value::Object(std::mem::take(&mut out.0)))
     }
 
     /// Bind a catalog to the exact runtime owners that will replay its values.
@@ -1229,6 +1228,7 @@ impl<'c, 'm, 'r> ReferenceCodec<'c, 'm, 'r> {
 
     /// Admit the borrowed writer's native typed bytes before converting its
     /// references under the original caller budget.
+    /// `max_depth` is the caller's limit; `usize::MAX` means no depth limit.
     ///
     /// # Errors
     /// Original typed wire, authority, normalization and caller failures.
@@ -1248,8 +1248,13 @@ impl<'c, 'm, 'r> ReferenceCodec<'c, 'm, 'r> {
         };
         let text = std::str::from_utf8(written)
             .map_err(|_| scope.fail(ReferenceFailure::MalformedWire))?;
-        let value = parse_text(text, &mut scope)?;
-        self.value(&value, false, 0, &mut scope)
+        let value = json::DeepJson(Some(parse_text(text, &mut scope)?));
+        self.value(
+            value.0.as_ref().expect("admitted native value"),
+            false,
+            0,
+            &mut scope,
+        )
     }
 
     /// Restore a closed backend typed value to its exact native representation.
@@ -1610,14 +1615,13 @@ pub fn admit_native_value_bytes(
 }
 
 fn parse_text(text: &str, scope: &mut Scope<'_, '_>) -> Result<Value, ReferenceCodecError> {
-    scope.work(text.len())?;
-    let bytes = text
-        .len()
-        .checked_mul(64)
-        .ok_or_else(|| scope.stopped(ModelKeyError::SizeOverflow))?;
-    scope.reserve(bytes)?;
-    // serde's default recursion ceiling also protects the pre-conversion tree.
-    serde_json::from_str(text).map_err(|_| scope.fail(ReferenceFailure::MalformedWire))
+    match scope.with_admission(|admission| admission.json_value(text.as_bytes())) {
+        Err(ReferenceCodecError::Key {
+            source: ModelKeyError::Unsupported(json::MALFORMED),
+            ..
+        }) => Err(scope.fail(ReferenceFailure::MalformedWire)),
+        other => other,
+    }
 }
 
 fn canonical_text(
@@ -1799,15 +1803,7 @@ impl<'a> Admission<'a> {
         let bytes = self.encoded(quire_canonical::Limits::new(u64::MAX), |writer| {
             fsl_foundation::node_wire::encode_node_key(node, writer)
         })?;
-        self.work(bytes.len())?;
-        self.reserve(
-            bytes
-                .len()
-                .checked_mul(64)
-                .ok_or(ModelKeyError::SizeOverflow)?,
-        )?;
-        serde_json::from_slice(&bytes)
-            .map_err(|_| ModelKeyError::Unsupported("native universe node"))
+        self.json_value(&bytes)
     }
 
     fn finish<T>(self, result: Result<T, ModelKeyError>) -> Result<T, ModelKeyError> {
@@ -2163,16 +2159,11 @@ mod tests {
         assert_eq!(task_wire["source_transition"]["arguments"][0], wire);
         let restored = carrier.restore_task_template(&task_wire).unwrap();
         assert!(template.same_identity(&restored));
-        assert_eq!(
-            template.to_wire().unwrap_err(),
-            crate::TaskProductWireError::ReferenceContextRequired
-        );
-        assert_eq!(
-            crate::TaskTransitionTemplate::from_wire(&task_wire)
-                .unwrap_err()
-                .reason,
-            crate::TaskProductShapeReason::ReferenceContextRequired
-        );
+        let original_wire = template
+            .to_wire()
+            .expect("unchanged unscoped source spelling");
+        assert!(template
+            .same_identity(&crate::TaskTransitionTemplate::from_wire(&original_wire).unwrap()));
         task_wire["source_transition"]["arguments"][0]["identity"] = json!("FF");
         assert!(
             matches!(carrier.restore_task_template(&task_wire), Err(ReferenceCodecError::Refused { reason: ReferenceFailure::InvalidIdentity, pointer }) if pointer == "/source_transition/arguments/0/identity")

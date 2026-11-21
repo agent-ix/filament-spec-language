@@ -4,9 +4,116 @@
 
 use super::*;
 
-struct Position {
+struct Position<'a> {
     argument: usize,
     next: u64,
+    run: &'a std::sync::Mutex<filament_semantic_value::supplied_stop::SuppliedRun>,
+}
+
+impl Position<'_> {
+    fn charge(
+        &self,
+        node: u64,
+        event: filament_semantic_value::supplied_stop::SuppliedEvent,
+        units: usize,
+    ) -> Result<(), ReadStop> {
+        let mut run = self
+            .run
+            .lock()
+            .expect("conversion admission does not unwind");
+        for _ in 0..units {
+            run.charge_conversion(
+                self.argument,
+                event,
+                filament_semantic_value::supplied_stop::SuppliedLocus::Witness {
+                    argument: self.argument,
+                    position: node,
+                },
+            )
+            .map_err(|stop| {
+                ReadStop::Refusal(Box::new(super::super::RunRefusal::Supplied(stop)))
+            })?;
+        }
+        Ok(())
+    }
+
+    fn preflight(&self, form: &Json, node: u64) -> Result<(), ReadStop> {
+        use filament_semantic_value::supplied_stop::SuppliedEvent;
+        self.charge(node, SuppliedEvent::WitnessPreflight, 1)?;
+        if let Some(object) = form.as_object() {
+            for (name, value) in object {
+                self.charge(node, SuppliedEvent::DescriptorQuery, name.len())?;
+                if let Some(text) = value.as_str() {
+                    self.charge(node, SuppliedEvent::WitnessMaterialization, text.len())?;
+                }
+            }
+        }
+        self.charge(node, SuppliedEvent::WitnessMaterialization, 1)
+    }
+
+    fn array(&self, length: usize) -> Result<Vec<Json>, ReadStop> {
+        self.charge(
+            self.next.saturating_sub(1),
+            filament_semantic_value::supplied_stop::SuppliedEvent::ChildScheduling,
+            length,
+        )?;
+        let bytes = length
+            .checked_mul(std::mem::size_of::<Json>())
+            .ok_or(ReadStop::Fault("canonical-array-size-fits"))?;
+        let mut values = Vec::new();
+        values.try_reserve_exact(length).map_err(|_| {
+            ReadStop::Refusal(Box::new(super::super::RunRefusal::Reference(Box::new(
+                crate::reference_codec::ReferenceCodecError::Key {
+                    pointer: String::new(),
+                    source: fsl_eval::simulation::model::ModelKeyError::Encoding(
+                        fsl_eval::simulation::EncodingRefusal::Allocation { requested: bytes },
+                    ),
+                },
+            ))))
+        })?;
+        Ok(values)
+    }
+
+    fn copied_selector(&self, value: &Json, node: u64) -> Result<Json, ReadStop> {
+        use filament_semantic_value::supplied_stop::SuppliedEvent;
+        let mut pending = vec![value];
+        while let Some(value) = pending.pop() {
+            self.charge(node, SuppliedEvent::WitnessMaterialization, 1)?;
+            let children = match value {
+                Json::Array(values) => values.len(),
+                Json::Object(values) => values.len(),
+                _ => 0,
+            };
+            self.charge(node, SuppliedEvent::ChildScheduling, children)?;
+            let bytes = children
+                .checked_mul(std::mem::size_of::<&Json>())
+                .ok_or(ReadStop::Fault("selector-copy-size-fits"))?;
+            pending.try_reserve_exact(children).map_err(|_| {
+                ReadStop::Refusal(Box::new(super::super::RunRefusal::Reference(Box::new(
+                    crate::reference_codec::ReferenceCodecError::Key {
+                        pointer: String::new(),
+                        source: fsl_eval::simulation::model::ModelKeyError::Encoding(
+                            fsl_eval::simulation::EncodingRefusal::Allocation { requested: bytes },
+                        ),
+                    },
+                ))))
+            })?;
+            match value {
+                Json::String(text) => {
+                    self.charge(node, SuppliedEvent::DescriptorQuery, text.len())?
+                }
+                Json::Array(values) => pending.extend(values),
+                Json::Object(values) => {
+                    for (name, value) in values {
+                        self.charge(node, SuppliedEvent::DescriptorQuery, name.len())?;
+                        pending.push(value);
+                    }
+                }
+                Json::Null | Json::Bool(_) | Json::Number(_) => {}
+            }
+        }
+        Ok(value.clone())
+    }
 }
 
 impl Forms<'_> {
@@ -15,12 +122,17 @@ impl Forms<'_> {
         form: &Json,
         declared: &ValueType,
         argument: usize,
+        run: &std::sync::Mutex<filament_semantic_value::supplied_stop::SuppliedRun>,
     ) -> Result<Value, ReadStop> {
         let normalized = self.canonical_input(
             form,
             declared,
             &mut Path::new(),
-            &mut Position { argument, next: 0 },
+            &mut Position {
+                argument,
+                next: 0,
+                run,
+            },
         )?;
         self.read(&normalized, declared).map_err(|stop| match stop {
             ReadStop::Defect(mut defect) => {
@@ -40,13 +152,14 @@ impl Forms<'_> {
         position: &mut Position,
     ) -> Result<Json, ReadStop> {
         let node = position.next;
+        position.preflight(form, node)?;
         position.next = position
             .next
             .checked_add(1)
             .ok_or(ReadStop::Fault("canonical-preorder-fits-u64"))?;
         if matches!(declared, ValueType::Population(_)) {
             identity_form::closed(form, &["population"], path)?;
-            return Ok(form.clone());
+            return Ok(json!({"population": position.copied_selector(&form["population"], node)?}));
         }
         let object = form.as_object().ok_or_else(|| wrong_kind(path))?;
         let tag = object
@@ -104,10 +217,14 @@ impl Forms<'_> {
             }
             ValueType::Rational(_) => {
                 closed(object, &["type", "numerator", "denominator"], path)?;
+                integer_text(&object["numerator"], path, "numerator")?;
+                integer_text(&object["denominator"], path, "denominator")?;
                 Ok(native_form(object, "rational"))
             }
             ValueType::Decimal(_) => {
                 closed(object, &["type", "coefficient", "scale"], path)?;
+                integer_text(&object["coefficient"], path, "coefficient")?;
+                integer_text(&object["scale"], path, "scale")?;
                 let mut value = native_form(object, "decimal");
                 let _ = integer_text(&object["scale"], path, "scale")?;
                 value["scale"] = object["scale"].clone();
@@ -115,6 +232,7 @@ impl Forms<'_> {
             }
             ValueType::Float(_) => {
                 closed(object, &["type", "bits"], path)?;
+                string_member(object, "bits", path)?;
                 Ok(native_form(object, wanted))
             }
             ValueType::Text(_) | ValueType::String | ValueType::Uuid => {
@@ -129,10 +247,12 @@ impl Forms<'_> {
             }
             ValueType::Bytes | ValueType::JsonObject => {
                 closed(object, &["type", "text"], path)?;
+                string_member(object, "text", path)?;
                 Ok(native_form(object, wanted))
             }
             ValueType::Timestamp => {
                 closed(object, &["type", "nanoseconds"], path)?;
+                integer_text(&object["nanoseconds"], path, "nanoseconds")?;
                 Ok(native_form(object, wanted))
             }
             ValueType::Option(payload) => {
@@ -161,7 +281,7 @@ impl Forms<'_> {
                 let entries = object["entries"]
                     .as_array()
                     .ok_or_else(|| wrong_kind_at(path, "entries"))?;
-                let mut normalized = Vec::with_capacity(entries.len());
+                let mut normalized = position.array(entries.len())?;
                 path.push("entries");
                 for (index, entry) in entries.iter().enumerate() {
                     path.push(&index.to_string());
@@ -213,6 +333,7 @@ impl Forms<'_> {
                 &mut Position {
                     argument: position.argument,
                     next: node,
+                    run: position.run,
                 },
             ),
             ValueType::Population(_) => Err(ReadStop::Fault("population-already-read")),
@@ -294,7 +415,7 @@ impl Forms<'_> {
             .as_array()
             .ok_or_else(|| wrong_kind_at(path, segment))?;
         path.push(segment);
-        let mut normalized = Vec::with_capacity(values.len());
+        let mut normalized = position.array(values.len())?;
         for (index, value) in values.iter().enumerate() {
             normalized.push(self.canonical_child(
                 value,
@@ -343,10 +464,23 @@ impl Forms<'_> {
                     ));
                 }
                 let mut normalized = Map::new();
+                let parent = position.next.saturating_sub(1);
+                position.charge(
+                    parent,
+                    filament_semantic_value::supplied_stop::SuppliedEvent::ChildScheduling,
+                    entries.len(),
+                )?;
                 path.push("fields");
                 for (index, (entry, field)) in entries.iter().zip(fields).enumerate() {
                     path.push(&index.to_string());
                     let entry = identity_form::closed(entry, &["name", "value"], path)?;
+                    if let Some(name) = entry["name"].as_str() {
+                        position.charge(
+                            parent,
+                            filament_semantic_value::supplied_stop::SuppliedEvent::DescriptorQuery,
+                            name.len(),
+                        )?;
+                    }
                     if entry["name"].as_str() != Some(field.name()) {
                         return Err(defect_below(
                             Code::InvalidRuntimeInput,
@@ -434,7 +568,7 @@ impl Forms<'_> {
             ));
         }
         path.push("components");
-        let mut normalized = Vec::with_capacity(values.len());
+        let mut normalized = position.array(values.len())?;
         for (index, (value, declared)) in values.iter().zip(positions).enumerate() {
             normalized.push(self.canonical_child(
                 value,

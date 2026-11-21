@@ -1494,7 +1494,7 @@ pub(crate) fn admit_wire_arguments(
         let read = if let Some(selected) = &wire.selected_object {
             forms.read(&serde_json::json!({"reference": {"population": selected.population, "key": selected.key}}), value_type)
         } else if call.canonical_values {
-            forms.read_canonical(&wire.value, value_type, position)
+            forms.read_canonical(&wire.value, value_type, position, run)
         } else {
             match &wire.value {
                 serde_json::Value::Number(number) => match number.as_i64() {

@@ -356,6 +356,84 @@ fn canonical_run_package_reference_roundtrip_uses_retained_snapshot_owners() {
     assert_eq!(second.document["result"]["value"], reference);
 }
 
+/// Review FND-002: valid deep results exceed both former JSON and codec caps.
+#[test]
+#[trace("FR-650")]
+fn review_fix_deep_completed_values_use_actual_depth_policy() {
+    fn source(reference: bool) -> String {
+        let profile = if reference { "model" } else { "value" };
+        let mut source = format!("language \"ix:native\" edition \"1-draft\";\nprofile v = \"filament.{profile}.complete/v1\";\n");
+        if reference {
+            source.push_str(&format!(
+                "model Config = {:?};\n",
+                config_domain::PACKAGE_IDENTITY
+            ));
+        }
+        let arguments = if reference {
+            "x: Config::ConfigVersion"
+        } else {
+            ""
+        };
+        let actual = if reference { "x" } else { "" };
+        for index in 0..100 {
+            let ty = if index == 0 {
+                if reference {
+                    "Config::ConfigVersion".to_owned()
+                } else {
+                    "Integer".to_owned()
+                }
+            } else {
+                format!("D{}", index - 1)
+            };
+            source.push_str(&format!("record D{index} {{ inner: {ty}; }}\n"));
+            let inner = if index == 0 {
+                if reference {
+                    "x".to_owned()
+                } else {
+                    "5".to_owned()
+                }
+            } else {
+                format!("Make{}({actual})", index - 1)
+            };
+            source.push_str(&format!("function Make{index} using v({arguments}): D{index} pure {{ D{index}{{inner: {inner}}} }}\n"));
+        }
+        source.push_str(&format!(
+            "function Deep using v({arguments}): D99 pure {{ Make99({actual}) }}\n"
+        ));
+        source
+    }
+    let case = Case::new();
+    case.write("deep.native", source(false).as_bytes());
+    let plain_result = plain(&case.json("deep.json", &request("deep.native", "Deep", &[])));
+    let document = plain_result.expect("execute", "success", 0);
+    let mut leaf = &document["result"]["value"];
+    for _ in 0..100 {
+        assert_eq!(leaf["type"], "record");
+        leaf = &leaf["fields"][0]["value"];
+    }
+    assert_eq!(leaf, &json!({"type":"integer","value":"5"}));
+
+    let (case, mut job, population) = reference_call_world();
+    job["request"].as_object_mut().unwrap().remove("call");
+    job["request"]["items"] = json!({"observations":{"current":"current.json"},"selections":[{"call":{
+        "function":"Keep","snapshot":"current","arguments":[{"parameter":"x","value":{"each":{"population":population}}}]
+    }}]});
+    let reference = plain(&case.json("input-reference.json", &job));
+    assert_eq!(reference.exit, 0, "{}", reference.document);
+    let input = reference.document["items"][0]["result"]["outcome"]["value"].clone();
+    case.write("world.native", source(true).as_bytes());
+    job["request"].as_object_mut().unwrap().remove("items");
+    job["request"]["call"] = json!({"function":"Deep","snapshot":"current.json","arguments":[{"parameter":"x","value":input}]});
+    let deep_reference = plain(&case.json("deep-reference.json", &job));
+    let document = deep_reference.expect("execute", "success", 0);
+    let mut leaf = &document["result"]["value"];
+    for _ in 0..100 {
+        assert_eq!(leaf["type"], "record");
+        leaf = &leaf["fields"][0]["value"];
+    }
+    assert_eq!(leaf, &input);
+}
+
 /// Run the owner-maintained corpus in place; the source checkout is never
 /// copied into this repository and its refusal snapshots are not the oracle.
 #[test]

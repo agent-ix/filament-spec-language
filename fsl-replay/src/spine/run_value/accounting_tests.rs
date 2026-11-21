@@ -9,7 +9,7 @@ use fsl_eval::execution::{
 };
 use fsl_package::ReferenceCatalog;
 use fsl_semantics::model::accounting::{ChargePoint, LimitKind};
-use fsl_semantics::model::intake::package_input;
+use fsl_semantics::model::intake::{package_input, PackageInput};
 use fsl_semantics::model::object_environment::ObjectEnvironment;
 use fsl_semantics::model::observation::{admit_current_snapshot, DocumentRef, ObservationLimits};
 use serde_json::json;
@@ -214,4 +214,134 @@ fn canonical_run_catalog_preserves_normalization_work_denial() {
     assert_eq!(denial.consumed, consumed);
     assert_eq!(denial.charge_point, ChargePoint::ReferenceCatalog);
     assert!(denial.next_charge > 0);
+}
+
+/// Review FND-001: unmigrated certificate consumers retain their original IO.
+#[test]
+fn review_fix_legacy_certificate_reference_roundtrip() {
+    let fixture = fixture(None);
+    let [reference] = fixture.objects.references() else {
+        panic!("one genuine object")
+    };
+    let value =
+        fsl_eval::simulation::model::value_json(&Value::Reference(reference.clone())).unwrap();
+    let text = serde_json::to_string(&value).unwrap();
+    let transition = filament_semantic_value::model_transition::ModelTransition::new(
+        r#"{"name":"keep"}"#.into(),
+        Some(text.clone()),
+        vec![text],
+        quire_canonical::Limits::new(100_000),
+    )
+    .unwrap();
+    let template = crate::TaskTransitionTemplate {
+        action: crate::TaskTransitionAction::Release,
+        task_set: "tasks".into(),
+        task: "task".into(),
+        job_rank: 0,
+        slot: 0,
+        release: transition.clone(),
+        source_transition: Some(transition),
+        priority: Some(1),
+    };
+    let wire = template
+        .to_wire()
+        .expect("existing certificate writer accepts native references");
+    let restored = crate::TaskTransitionTemplate::from_wire(&wire)
+        .expect("existing certificate reader accepts its reference spelling");
+    assert!(template.same_identity(&restored));
+}
+
+/// Review FND-003: zero conversion allowance stops before collection staging.
+#[test]
+fn review_fix_canonical_staging_admits_conversion_before_allocation() {
+    let packages = PackageInput::new();
+    let compiled = crate::spine::compose(fsl_foundation::SourceIdentity::new("test", "conversion-before-copy"),
+        "conversion.native", b"language \"ix:native\" edition \"1-draft\"; profile v = \"filament.value.complete/v1\"; function keep using v(flag: Boolean, x: Sequence<Integer>[0, 50000]): Sequence<Integer>[0, 50000] pure { x }",
+        &packages, &crate::spine::DependencyInput::default(), crate::spine::SpineLimits::default()).unwrap();
+    let scope = compiled.package.graph().scope();
+    let forms = super::Forms::new(scope.types(), scope.enums());
+    let declared = &compiled
+        .package
+        .graph()
+        .callable("keep")
+        .unwrap()
+        .parameters[1]
+        .1;
+    let input =
+        json!({"type":"sequence", "elements": vec![json!({"type":"integer","value":"5"}); 50_000]});
+    let run = std::sync::Mutex::new(
+        SuppliedRun::new(
+            SuppliedLimits::default().with_conversion_work_units(0),
+            Cancel::new(),
+        )
+        .unwrap(),
+    );
+    let stop = forms
+        .read_canonical(&input, declared, 1, &run)
+        .expect_err("conversion must be admitted before the additional tree exists");
+    let super::ReadStop::Refusal(refusal) = stop else {
+        panic!("typed conversion refusal")
+    };
+    let crate::spine::RunRefusal::Supplied(stop) = *refusal else {
+        panic!("original supplied stop")
+    };
+    assert_eq!(stop.context.phase, SuppliedPhase::Conversion);
+    assert_eq!(stop.context.parameter, Some(1));
+    assert_eq!(
+        stop.context.event,
+        Some(filament_semantic_value::supplied_stop::SuppliedEvent::WitnessPreflight)
+    );
+    assert_eq!(stop.context.consumed, 0);
+    assert_eq!(run.lock().unwrap().admission_spent(), 0);
+    let allowed =
+        std::sync::Mutex::new(SuppliedRun::new(SuppliedLimits::default(), Cancel::new()).unwrap());
+    assert!(matches!(
+        forms
+            .read_canonical(
+                &json!({"type":"sequence","elements":[{"type":"integer","value":"5"}]}),
+                declared,
+                1,
+                &allowed
+            )
+            .unwrap(),
+        Value::Collection(_)
+    ));
+}
+
+/// Review FND-002: a genuine catalog obeys the caller rather than a hidden64.
+#[test]
+fn review_fix_codec_depth_policy_has_no_implicit_ceiling() {
+    let fixture = fixture(None);
+    let models = fixture.compiled.models.selected_models();
+    let mut owner =
+        super::NormalizationReferenceBudget::source(models, ChargePoint::ReferenceCatalog);
+    let catalog =
+        ReferenceCatalog::from_checked_call(&fixture.compiled.package, models, &mut owner).unwrap();
+    let codec = ReferenceCodec::for_checked_call(
+        &catalog,
+        &fixture.compiled.package,
+        models,
+        &fixture.objects,
+    )
+    .unwrap();
+    let mut value = json!({"type":"integer","value":"5"});
+    for _ in 0..100 {
+        value = json!({"type":"sequence","elements":[value]});
+    }
+    let cancel = Cancel::new();
+    let mut denied = ConversionWork::default();
+    assert!(matches!(
+        codec.encode_value(&value, &mut denied, &cancel, 63),
+        Err(crate::ReferenceCodecError::Refused {
+            reason: crate::ReferenceFailure::DepthLimit,
+            ..
+        })
+    ));
+    let mut allowed = ConversionWork::default();
+    assert_eq!(
+        codec
+            .encode_value(&value, &mut allowed, &cancel, usize::MAX)
+            .unwrap(),
+        value
+    );
 }
