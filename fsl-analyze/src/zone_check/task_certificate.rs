@@ -517,7 +517,14 @@ fn read_back(
     (read_identity == identity
         && read.admitted == built.admitted
         && read.lu_bounds == built.lu_bounds
-        && read.edges == built.edges
+        && read.edges.len() == built.edges.len()
+        && read.edges.iter().zip(&built.edges).all(|(read, built)| {
+            read.from == built.from
+                && read.to == built.to
+                && read.part == built.part
+                && read.horizon == built.horizon
+                && read.silent == built.silent
+        })
         && written == wire)
         .then_some((wire, read))
 }
