@@ -255,7 +255,8 @@ fn composition_provider(
 #[test]
 fn a_registered_provider_receives_the_composition_with_its_premises() {
     let ws = Workspace::new("compose-provider");
-    let path = request(&ws, &system(), json!([composition("Sys")]));
+    let item = json!({"claim": "Sys", "kind": "composition", "options": {"profile": "p1"}});
+    let path = request(&ws, &system(), json!([item]));
     let seen = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
     let run = analyze_with_providers(&path, vec![composition_provider(&seen)]);
     let document = run.document();
@@ -279,6 +280,8 @@ fn a_registered_provider_receives_the_composition_with_its_premises() {
         sent_items[0]["premises"], items[0]["request"]["premises"],
         "the derived slot keys reach the provider"
     );
+    assert_eq!(sent_items[0]["options"], json!({"profile": "p1"}));
+    assert_eq!(items[0]["request"]["options"], json!({"profile": "p1"}));
     assert_eq!(sent_items[0]["candidates"]["backends"], json!([PROVIDER]));
 }
 
@@ -723,31 +726,60 @@ fn a_composition_is_a_default_item() {
     assert_eq!(run.exit, 21, "{document}");
 }
 
-/// FR-1044-AC-10, second half: over the unit's `package` handoff the same
-/// items, records and exit code. The package route reads no composition
-/// term (QSL-2739: package form), so it refuses the request typed, naming
-/// the `composition` family.
-#[trace("FR-1044-AC-10")]
-#[test]
-fn the_package_route_refuses_a_composition_typed() {
-    let ws = Workspace::new("compose-ac10-package");
-    let path = request_for(&ws, &system(), BOUNDED, Some(json!([composition("Sys")])));
+/// The package handoff of the source request at `path`.
+fn package_handoff(ws: &Workspace, path: &std::path::Path) -> PathBuf {
     let source: Value =
-        serde_json::from_slice(&std::fs::read(&path).expect("the request reads")).expect("JSON");
-    let (selected, _) = package_selection(&ws, &source["request"]);
-    let handoff = ws.write(
+        serde_json::from_slice(&std::fs::read(path).expect("the request reads")).expect("JSON");
+    let (selected, _) = package_selection(ws, &source["request"]);
+    ws.write(
         "analyze-package.json",
         json!({"format": "native-analyze/1", "request": selected})
             .to_string()
             .as_bytes(),
-    );
-    let run = analyze(&handoff);
+    )
+}
+
+/// Asserts the package route refused the whole request as not yet
+/// implemented, with `message` in its diagnostic and no item settled.
+fn assert_package_refusal(run: &crate::analyze_cli_support::Run, message: &str) {
     let document = run.document();
+    let diagnostic = &document["diagnostics"][0];
+    assert_eq!(run.exit, 21, "{document}");
     assert_eq!(document["category"], "refusal", "{document}");
+    assert_eq!(diagnostic["code"], "unsupported_construct", "{diagnostic}");
+    assert_eq!(diagnostic["cause"], "not-yet-implemented", "{diagnostic}");
     assert!(
-        document.to_string().contains("composition family"),
-        "the refusal names the composition family: {document}"
+        diagnostic["message"]
+            .as_str()
+            .is_some_and(|text| text.contains(message)),
+        "{diagnostic}"
     );
+    assert_eq!(document["items"], json!([]), "{document}");
+}
+
+/// FR-1044 "Current system behavior" (QSL-2739): the package route has no
+/// form of a component composition, so a package holding one refuses a
+/// request with no `items` whole, naming the composition rule, rather than
+/// settle without it.
+#[test]
+fn the_package_default_items_refuse_a_composition_typed() {
+    let ws = Workspace::new("compose-package-default");
+    let path = request_for(&ws, &system(), BOUNDED, None);
+    let run = analyze(&package_handoff(&ws, &path));
+    assert_package_refusal(&run, "the composition rule has no package form yet");
+}
+
+/// FR-1044 "Current system behavior" (QSL-2739): a name the package carries
+/// no row for, while it holds a composition, is refused as an unnamed claim,
+/// as for any claim the package does not name; it is not `unknown-claim`.
+#[test]
+fn a_package_item_naming_a_composition_refuses_as_an_unnamed_claim() {
+    let ws = Workspace::new("compose-package-named");
+    for name in ["Sys", "Typo"] {
+        let path = request_for(&ws, &system(), BOUNDED, Some(json!([composition(name)])));
+        let run = analyze(&package_handoff(&ws, &path));
+        assert_package_refusal(&run, "items[0] names the unnamed-claim family");
+    }
 }
 
 /// FR-1044-AC-10, second half, once the package route reads a composition:
@@ -762,15 +794,7 @@ fn the_package_route_settles_the_same_items() {
         compose("Sys", "interface", "")
     );
     let path = request_for(&ws, &body, BOUNDED, None);
-    let source: Value =
-        serde_json::from_slice(&std::fs::read(&path).expect("the request reads")).expect("JSON");
-    let (selected, _) = package_selection(&ws, &source["request"]);
-    let handoff = ws.write(
-        "analyze-package.json",
-        json!({"format": "native-analyze/1", "request": selected})
-            .to_string()
-            .as_bytes(),
-    );
+    let handoff = package_handoff(&ws, &path);
     let by_source = analyze(&path);
     let by_package = analyze(&handoff);
     assert_eq!(by_package.exit, by_source.exit);

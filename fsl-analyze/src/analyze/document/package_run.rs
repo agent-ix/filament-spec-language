@@ -146,9 +146,9 @@ pub enum PendingFamily {
     UnnamedClaim,
     /// An item decided over a protocol subject (FSL FR-1033).
     ProtocolSubject,
-    /// A name the package carries no row for while it holds a component
-    /// composition: its derived slots and component packages have no package
-    /// form yet (FSL FR-1044), so the name is not settled `unknown-claim`.
+    /// The default items of a package that holds a component composition,
+    /// whose derived slots and component packages have no package form yet
+    /// (FSL FR-1044).
     Composition,
     /// A temporal clause fact its package form does not read yet.
     ClauseFact(&'static str),
@@ -280,6 +280,19 @@ pub fn settle_package_run(
         engines,
         limits,
     } = run;
+    // FSL FR-1044: a package's component composition has no package form
+    // yet, so the default items of a package that holds one are refused
+    // whole rather than written without it.
+    if items.is_none() {
+        if let Some(node) = unnamed_composition(package) {
+            return Err(PackageRunError::Pending(PendingPackageFamily {
+                request_index: None,
+                note: None,
+                family: PendingFamily::Composition,
+                node: Some(node),
+            }));
+        }
+    }
     let defaults = items.is_none().then(|| default_selections(package));
     let items: &[ItemSelection] = items.or(defaults.as_deref()).unwrap_or_default();
     if let Some(refusal) =
@@ -775,16 +788,7 @@ fn resolve_names<'s>(
                 };
             }
             if unnamed {
-                let composition = view.unnamed_claims().into_iter().any(|id| {
-                    view.package().resolved_graph().nodes.iter().any(|node| {
-                        &node.node_id == id && &*node.semantic_form == "component_composition"
-                    })
-                });
-                return Err(pending(if composition {
-                    PendingFamily::Composition
-                } else {
-                    PendingFamily::UnnamedClaim
-                }));
+                return Err(pending(PendingFamily::UnnamedClaim));
             }
             Ok(Named::Settled(unknown_claim(index, name)))
         })
@@ -1573,6 +1577,21 @@ impl<'a> WorkInputs<'_, 'a> {
             negotiated.diagnostic.clone(),
         )
     }
+}
+
+/// The node of the first component composition the package holds, which no
+/// name table row carries.
+fn unnamed_composition(view: &dyn AnalysisView) -> Option<CheckedNodeId> {
+    let unnamed = view.unnamed_claims();
+    view.package()
+        .resolved_graph()
+        .nodes
+        .iter()
+        .find(|node| {
+            unnamed.contains(&&node.node_id)
+                && crate::claim_family::is_component_composition(&node.semantic_form)
+        })
+        .map(|node| node.node_id.clone())
 }
 
 /// FR-620 "Subject, compilation and default items" over a package, as the

@@ -52,6 +52,11 @@ impl Form {
     }
 }
 
+/// Whether the `semantic_form` word names a component composition.
+pub(crate) fn is_component_composition(word: &str) -> bool {
+    Form::from_wire(word) == Form::ComponentComposition
+}
+
 /// The occurrence roles the reader selects by, decoded once at
 /// [`Role::from_wire`].
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

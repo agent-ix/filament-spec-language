@@ -273,10 +273,16 @@ AC below stays as written and open on QSL-2739.
   that carries the lattice. Which profile declares the lattice, and its
   binding, are decisions for the standard before the second PR.
 - **AC-10, `package` handoff.** The package route reads no composition term's
-  slots or component packages, so a `package` request that names a
-  composition refuses the whole request, typed, naming the `composition`
-  family as not yet implemented (FR-940), and settles no item. The owner is
-  the package-consumer API lane.
+  slots or component packages, and a package names a composition by no name
+  row. A `package` request with no `items` over a package that holds a
+  composition therefore refuses the whole request, typed (`unsupported_construct`,
+  `not-yet-implemented`, exit 21), naming the `composition` rule as having no
+  package form yet (FR-940), and settles no item; it does not settle without
+  the composition. A `package` request whose item names a composition, or a
+  name the package carries no row for while it holds an unnamed claim,
+  refuses the same way naming the `unnamed-claim` family; it is not
+  `unknown-claim`. The owner of the package form is the package-consumer API
+  lane.
 - **Text mode.** Text rendering of the outcome belongs to the external driver.
   No test in this repository exercises it, and this requirement does not
   weaken the text half of the fixture.
