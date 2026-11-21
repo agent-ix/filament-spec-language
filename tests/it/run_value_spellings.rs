@@ -453,6 +453,33 @@ fn a_population_result_is_a_set_of_references() {
 }
 
 #[test]
+#[trace(
+    "FSpec-FR-180-AC-2",
+    "FSpec-FR-180-AC-5",
+    "FSpec-FR-049-AC-8",
+    "FR-046-AC-6"
+)]
+fn source_queries_aggregate_a_complete_population_view() {
+    let directory = spine_dir(
+        "type Total = Int[0, 2000];\n\
+         type Count = Int[0, 4];\n\
+         function totalVersions using v(p: Population<Config::ConfigVersion>[4]): Total pure {\
+           sum<Total>(r in allInstances<Config::ConfigVersion>(p): deref(r).versionNumber)\
+         }\n\
+         function countNewer using v(p: Population<Config::ConfigVersion>[4]): Count pure {\
+           count<Count>(r in allInstances<Config::ConfigVersion>(p): deref(r).versionNumber > 1)\
+         }\n",
+    );
+    let arguments = json!([{"parameter": "p", "value": {"population": population()}}]);
+
+    let sum = completed(&spine_call(directory.path(), "totalVersions", arguments.clone()));
+    assert_eq!(sum, json!({"integer": "3"}));
+
+    let count = completed(&spine_call(directory.path(), "countNewer", arguments));
+    assert_eq!(count, json!({"integer": "1"}));
+}
+
+#[test]
 #[trace("TC-2376", "FR-650-AC-15")]
 fn a_foreign_universe_refuses_and_call_selection_snapshot() {
     let directory = spine_dir(SAME);
