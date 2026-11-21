@@ -2751,7 +2751,7 @@ fn timed_step_for(
     elapsed: &Rational,
     wanted: Option<&serde_json::Value>,
 ) -> Option<(
-    fsl_eval::simulation::model::ModelTransition,
+    filament_semantic_value::model_transition::ModelTransition,
     fsl_eval::simulation::model::ModelSimState,
 )> {
     use fsl_eval::simulation::model::{ClockValuation, TimedState, TimedSystem};
