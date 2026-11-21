@@ -212,6 +212,10 @@ mod backend_agreement {
                     Recheck::ReproducedWithEvaluatedWitness
                 }
                 Ok(Verdict::Holds) => Recheck::Inconclusive,
+                Ok(Verdict::Stopped(_)) => Recheck::Refused {
+                    code: "resource_exhausted".into(),
+                    cause: "replay-accounting-limit".into(),
+                },
                 other => panic!("reference evaluation must decide the fixture: {other:?}"),
             }
         }

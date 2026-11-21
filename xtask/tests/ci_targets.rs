@@ -28,6 +28,23 @@ fn ci_checks(makefile: &str) -> Vec<&str> {
     line.split_whitespace().collect()
 }
 
+#[trace("TC-1193", "FR-448-AC-5")]
+#[test]
+fn backend_agreement_remains_a_standalone_target() {
+    let makefile = fs::read_to_string(workspace().join("Makefile")).expect("read the Makefile");
+    assert!(!ci_checks(&makefile).contains(&"backend-agreement"));
+    let recipe = makefile
+        .split_once("backend-agreement:\n")
+        .expect("standalone target")
+        .1
+        .lines()
+        .take_while(|line| line.starts_with('\t') || line.is_empty())
+        .collect::<Vec<_>>();
+    assert!(recipe
+        .iter()
+        .any(|line| line.contains("--package xtask -- backend-agreement --corpus")));
+}
+
 #[trace("FR-765-AC-1", "TC-2190")]
 #[test]
 fn ci_includes_examples_check() {

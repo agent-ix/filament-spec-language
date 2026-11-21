@@ -23,7 +23,7 @@ use xtask::{
 const USAGE: &str = "usage: cargo xtask seam-probe\n       cargo xtask string-edge\n       \
                      cargo xtask route-lint\n       cargo xtask checked-input\n       \
                      cargo xtask test-suites <lane> [<cargo test args>]\n       \
-                     cargo xtask conformance\n       \
+                     cargo xtask conformance\n       cargo xtask backend-agreement --corpus <dir> [--capability <id>]... [--limit <setting>=<value>]... [--text]\n       \
                      cargo xtask ci\n       cargo xtask examples-check\n       cargo xtask refinement versioning <corpus>\n       \
                      cargo xtask pin-check [--manifest <Cargo.toml-or-directory>]\n       cargo xtask refinement layering <corpus>\n       \
                      cargo xtask refinement layering <corpus>\n       \

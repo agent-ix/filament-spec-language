@@ -406,10 +406,7 @@ pub fn execute_with_fspec(fspec: &Path, operands: &[OsString]) -> Result<Executi
     execute_with_parts(fspec, operands, None)
 }
 
-/// [`execute_with_fspec`] over `matrix`, or the published matrix: the verdict
-/// is `qualified` only when the corpus and every FR-567 part pass. The parts
-/// beyond the corpus run after every preflight refusal, so a refused run
-/// executes no matrix case.
+/// Shared corpus, schema, scope and settings preflight. No vector executes here.
 fn prepare(fspec: &Path, operands: &[OsString]) -> Result<PreparedCorpus> {
     let args = parse_args(operands)?;
     let limits = fsl_replay::CallerLimits::from_operands(args.limits.iter().map(String::as_str))
@@ -555,6 +552,7 @@ struct PreparedCorpus {
     default_scope: bool,
 }
 
+/// Qualification over the preflight corpus and the selected lifecycle matrix.
 pub(crate) fn execute_with_parts(
     fspec: &Path,
     operands: &[OsString],
