@@ -21,10 +21,12 @@ pub(super) fn run(
         Ok(system) => system,
         Err(error) => return build_refusal(ProductRefusal::Admission(error), subject),
     };
-    let built = materialize(&system, claim, &path, monitor, limits, cancel);
+    let built =
+        materialize(&system, claim, &path, monitor, limits, cancel).map_err(ProducerFailure::from);
     let (witness, scheduler) = match built {
         Ok(built) => built,
-        Err(error) => return failure(error, subject, limits),
+        Err(ProducerFailure::Invariant) => return broken(),
+        Err(ProducerFailure::Stopped(error)) => return failure(error, subject, limits),
     };
     let Some(package) = system.source_package() else {
         return not_yet();
@@ -105,27 +107,6 @@ type SpelledScheduler = Vec<(
     fsl_eval::simulation::model::ScheduledIdentity,
 )>;
 
-fn document_error(error: ProbabilityDocumentError) -> ProbabilityWitnessError {
-    match error {
-        ProbabilityDocumentError::Limit { limit, bound, .. } => ProbabilityWitnessError::Limit {
-            limit: limit.model_limit(),
-            value: bound,
-        },
-        ProbabilityDocumentError::Cancelled(cause) => {
-            ProbabilityWitnessError::Graph(ExactProbabilityGraphError::Cancelled(cause))
-        }
-        ProbabilityDocumentError::Graph(error) => ProbabilityWitnessError::Graph(error),
-        ProbabilityDocumentError::Build(issue) => ProbabilityWitnessError::Build(issue),
-        ProbabilityDocumentError::Accounting(incomplete) => ProbabilityWitnessError::Limit {
-            limit: ModelCheckLimit::EvaluationMeter {
-                counter: incomplete.limit_kind,
-            },
-            value: incomplete.limit,
-        },
-        _ => ProbabilityWitnessError::Refused,
-    }
-}
-
 fn materialize(
     system: &ModelSystem<'_>,
     claim: &fsl_semantics::check::CheckedProbabilisticClaim,
@@ -162,8 +143,8 @@ fn materialize(
     };
     let key = |state: &crate::exact_probabilistic::ProbKey| -> Result<ProbabilityProductKey, ProbabilityWitnessError> {
         match monitor.as_ref() {
-            Some(monitor) => bounded_product_key(state, reference, monitor, limits.document, cancel).map_err(document_error),
-            None => ProbabilityProductKey::for_model_state_with_limits(reference, &state.model, limits.document, cancel).map_err(document_error),
+            Some(monitor) => bounded_product_key(state, reference, monitor, limits.document, cancel).map_err(ProbabilityWitnessError::from),
+            None => ProbabilityProductKey::for_model_state_with_limits(reference, &state.model, limits.document, cancel).map_err(ProbabilityWitnessError::from),
         }
     };
     let initials = system.initial();
@@ -183,7 +164,7 @@ fn materialize(
                     limits.document,
                     cancel,
                 )
-                .map_err(document_error)?
+                .map_err(ProbabilityWitnessError::from)?
             }
             None => key(&path.key)?,
         }
@@ -225,13 +206,13 @@ fn materialize(
             .state_key(initial)
             .map_err(|_| ProbabilityWitnessError::Refused)?;
         ProbabilityProductKey::for_formula_state(reference, &raw, &control, limits.document, cancel)
-            .map_err(document_error)?
+            .map_err(ProbabilityWitnessError::from)?
     } else {
         let (raw, _) = system
             .state_key(initial)
             .map_err(|_| ProbabilityWitnessError::Refused)?;
         ProbabilityProductKey::for_model_state_with_limits(reference, &raw, limits.document, cancel)
-            .map_err(document_error)?
+            .map_err(ProbabilityWitnessError::from)?
     };
     let mut state = initial.clone();
     let mut steps = Vec::new();
@@ -344,4 +325,23 @@ fn materialize(
         },
         spelled,
     ))
+}
+
+enum ProducerFailure {
+    Invariant,
+    Stopped(ProbabilityWitnessError),
+}
+impl From<ProbabilityWitnessError> for ProducerFailure {
+    fn from(error: ProbabilityWitnessError) -> Self {
+        match error {
+            ProbabilityWitnessError::Refused
+            | ProbabilityWitnessError::Graph(
+                ExactProbabilityGraphError::ExpansionRefused
+                | ExactProbabilityGraphError::MissingSuccessor
+                | ExactProbabilityGraphError::UnsupportedInitial
+                | ExactProbabilityGraphError::ClaimNotBound,
+            ) => Self::Invariant,
+            error => Self::Stopped(error),
+        }
+    }
 }

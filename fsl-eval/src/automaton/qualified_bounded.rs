@@ -42,6 +42,16 @@ impl QualifiedBoundedMonitor {
         profile == TemporalProfile::EventPositionFalseExtension
             && matches!(
                 super::bounded::bounded_formula_shape(formula),
+                Some((BoundedKind::Eventually, _, _))
+            )
+    }
+
+    /// Whether the qualified control can replay observations of this formula,
+    /// including an undefined read of a bounded always obligation.
+    pub fn supports_observations(formula: &CheckedFormula, profile: TemporalProfile) -> bool {
+        profile == TemporalProfile::EventPositionFalseExtension
+            && matches!(
+                super::bounded::bounded_formula_shape(formula),
                 Some((BoundedKind::Eventually | BoundedKind::Always, _, _))
             )
     }
@@ -57,20 +67,20 @@ impl QualifiedBoundedMonitor {
     ) -> Result<Self, QualifiedBoundedError> {
         let mut expected = Self::new(formula, context, max_states)?;
         let initial = monitor.viable_initial()?.ok_or(AutomatonError::Invariant {
-            invariant: "qualified-eventually-viable-root",
+            invariant: "qualified-bounded-viable-root",
         })?;
         let root = expected
             .monitor
             .viable_initial()?
             .ok_or(AutomatonError::Invariant {
-                invariant: "qualified-eventually-viable-root",
+                invariant: "qualified-bounded-viable-root",
             })?;
         let bytes = fsl_foundation::IdentityLimits::default().input_bytes;
         if monitor.automaton().state_key(initial, bytes)?
             != expected.monitor.automaton().state_key(root, bytes)?
         {
             return Err(AutomatonError::Invariant {
-                invariant: "qualified-eventually-matching-translation",
+                invariant: "qualified-bounded-matching-translation",
             }
             .into());
         }
@@ -141,7 +151,7 @@ impl QualifiedBoundedMonitor {
             let debt = self.monitor.automaton().bounded_deadline(*member)?;
             if remaining.is_some_and(|previous| previous != debt) {
                 return Err(AutomatonError::Invariant {
-                    invariant: "qualified-eventually-one-debt",
+                    invariant: "qualified-bounded-one-debt",
                 }
                 .into());
             }
@@ -151,7 +161,7 @@ impl QualifiedBoundedMonitor {
             .map(|remaining| BoundedState::Open { remaining })
             .ok_or_else(|| {
                 AutomatonError::Invariant {
-                    invariant: "qualified-eventually-has-debt",
+                    invariant: "qualified-bounded-has-debt",
                 }
                 .into()
             })

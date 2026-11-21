@@ -835,7 +835,7 @@ fn run_timed_mean(
 }
 
 fn run(
-    request: ProductRequest<'_>,
+    mut request: ProductRequest<'_>,
     cancel: &Cancel,
     tamper: Option<&dyn Fn(&mut ExactProbabilityCertificate)>,
     tamper_witness: Option<&dyn Fn(&mut ProbabilisticCounterexample)>,
@@ -945,7 +945,10 @@ fn run(
         else {
             return not_yet();
         };
-        if !fsl_eval::automaton::QualifiedBoundedMonitor::supports(formula.formula(), profile) {
+        if !fsl_eval::automaton::QualifiedBoundedMonitor::supports_observations(
+            formula.formula(),
+            profile,
+        ) {
             return not_yet();
         }
     }
@@ -970,14 +973,7 @@ fn run(
         };
         let identity = budget.identity;
         let mut admission = budget.admission();
-        let undefined_request = ProductRequest {
-            subject: fsl_eval::model_subject::ModelSubject {
-                simulation: simulation.clone(),
-                proof_bounds: request.subject.proof_bounds.clone(),
-            },
-            claim,
-            limits,
-        };
+        let proof_bounds = std::mem::take(&mut request.subject.proof_bounds);
         match build_retaining_monitor_with_budget(request, identity, &mut admission, cancel) {
             Ok(built) => built,
             Err(BudgetedProductError::Product(error)) => return build_refusal(error, subject),
@@ -985,6 +981,18 @@ fn run(
                 return document_failure(admission.refusal(error), subject);
             }
             Err(BudgetedProductError::Undefined(_)) => {
+                // The proof-only budgeted builder does not retain a failing path.
+                // Re-explore only that case under the same finite state, edge,
+                // expansion and evaluation limits; keys are bounded by the
+                // model identity owner, then admitted again by native replay.
+                let undefined_request = ProductRequest {
+                    subject: fsl_eval::model_subject::ModelSubject {
+                        simulation: simulation.clone(),
+                        proof_bounds,
+                    },
+                    claim,
+                    limits,
+                };
                 match build_retaining_monitor(undefined_request, cancel) {
                     Ok(built) => built,
                     Err(error) => return build_refusal(error, subject),
@@ -1003,6 +1011,16 @@ fn run(
             return undefined::run(simulation, claim, path, monitor, &limits, cancel, subject)
         }
     };
+    if let Some(formula) = bounded_formula {
+        let Some(profile) =
+            fsl_semantics::check::TemporalProfile::from_identity(claim.profile.identity())
+        else {
+            return not_yet();
+        };
+        if !fsl_eval::automaton::QualifiedBoundedMonitor::supports(formula.formula(), profile) {
+            return not_yet();
+        }
+    }
     let [(_, _, start)] = product.initial.as_slice() else {
         return not_yet();
     };

@@ -64,19 +64,6 @@ pub(super) fn replay(
             value: limits.max_witness_paths,
         });
     }
-    if witness.scheduler.len() > limits.model.limits.max_states {
-        return Err(ExactProbabilityGraphError::LimitReached.into());
-    }
-    let mut scheduler = BTreeMap::new();
-    let mut previous = None;
-    for (key, action) in &witness.scheduler {
-        poll_cancel(cancel)?;
-        if previous.is_some_and(|previous| previous >= key) {
-            return Err(ProbabilityWitnessError::Refused);
-        }
-        previous = Some(key);
-        scheduler.insert(key, action);
-    }
     let initial = system.initial();
     let [initial] = initial.as_slice() else {
         return Err(ExactProbabilityGraphError::UnsupportedInitial.into());
@@ -115,17 +102,7 @@ pub(super) fn replay(
     // A cylinder includes its semantic choice and draw, even when several
     // disjoint draws produce exactly the same model and monitor state.
     let mut cylinders: Vec<&ProbabilityWitnessPath> = Vec::new();
-    for (key, action) in &witness.scheduler {
-        poll_cancel(cancel)?;
-        let action = action
-            .to_bytes()
-            .map_err(|_| ProbabilityWitnessError::Refused)?;
-        retain(
-            key.as_bytes().len().saturating_add(action.len()),
-            &mut storage,
-            limits,
-        )?;
-    }
+    let scheduler = step::scheduler(&witness.scheduler, limits, &mut meter, &mut storage, cancel)?;
     for path in &witness.paths {
         poll_cancel(cancel)?;
         let mut state = initial.clone();
@@ -141,125 +118,40 @@ pub(super) fn replay(
             ) {
                 return Ok(ProbabilityWitnessReplay::Parity);
             }
-            let ProductAction::Identity(schedule) = &step.choice else {
-                return Err(ProbabilityWitnessError::Refused);
-            };
-            let (Some(step_action), Some(step_transition), Some(step_draw)) =
-                (&step.action, &step.transition, &step.draw)
-            else {
-                return Err(ProbabilityWitnessError::Refused);
-            };
-            if step.elapsed != rational(0)
-                || crate::Schedule::of(system, step_action).as_ref() != Ok(schedule)
-                || workload.is_none() && scheduler.get(&key).copied() != Some(&step.choice)
-            {
+            if workload.is_none() && scheduler.get(&key).copied() != Some(&step.choice) {
                 return Err(ProbabilityWitnessError::Refused);
             }
             visited_choices.insert(key.clone());
-            // Validate all successors against the admitted Markov restriction,
-            // including unrepresented draws and residual choices.
-            let mut issue = None;
-            model_distributions(system, &state, workload, cancel, &mut |failure| {
-                issue = Some(failure)
-            })
-            .map_err(|error| {
-                issue.map_or(ProbabilityWitnessError::Graph(error), |issue| {
-                    ProbabilityWitnessError::Build(Box::new(issue))
-                })
-            })?;
-            let mut candidates = Vec::new();
-            if let Some(workload) = workload {
-                for candidate in system
-                    .weighted_steps_with_cancel(&state, workload, cancel)
-                    .map_err(|stop| cancelled_expansion(stop, cancel))?
-                    .map_err(|_| ExactProbabilityGraphError::UnsupportedDraw)?
-                {
-                    if candidate.identity.as_ref() == Some(step_action)
-                        && candidate.transition == TransitionId::Operation(step_transition.clone())
-                        && same_values(&candidate.random, step_draw)
-                    {
-                        candidates.push((candidate.probability, candidate.post));
-                    }
-                }
-            } else {
-                for action in system
-                    .actions_with_cancel(&state, cancel)
-                    .map_err(|stop| cancelled_expansion(stop, cancel))?
-                    .map_err(|_| ExactProbabilityGraphError::ExpansionRefused)?
-                {
-                    if action.identity != *step_action {
-                        continue;
-                    }
-                    for draw in action.draws {
-                        if !same_values(&draw.random, step_draw) {
-                            continue;
-                        }
-                        for (transition, post) in draw.successors {
-                            if transition == *step_transition {
-                                candidates.push((draw.probability.clone(), post));
-                            }
-                        }
-                    }
-                }
-            }
-            let mut matched = None;
-            for (step_mass, post) in candidates {
-                poll_cancel(cancel)?;
-                let next = monitor
-                    .step(
-                        control,
-                        observes(system, predicate, reference, &post, cancel)?,
-                    )
-                    .map_err(monitor_error)?;
-                let post_key = key_of(&post, next, &monitor)?;
-                if post_key == step.post_key
-                    && key_of(&step.post, next, &monitor)? == post_key
-                    && post.anchor() == step.post.anchor()
-                    && post.reached_by() == step.post.reached_by()
-                {
-                    if matched.is_some() {
-                        return Err(ExactProbabilityGraphError::UnsupportedDraw.into());
-                    }
-                    matched = Some((step_mass, post, next, post_key));
-                }
-            }
-            let Some((step_mass, post, next, post_key)) = matched else {
-                return Err(ProbabilityWitnessError::Refused);
-            };
-            if step_mass <= rational(0) {
-                return Err(ProbabilityWitnessError::Refused);
-            }
-            transition_count = transition_count
-                .checked_add(1)
-                .ok_or(ExactProbabilityGraphError::TooManyEdges)?;
-            if transition_count > limits.model.limits.max_transitions {
-                return Err(ExactProbabilityGraphError::EdgeLimitReached.into());
-            }
-            check_bits(&step_mass, limits.max_rational_bits)?;
+            let (step_mass, post, (next, post_key)) = step::replay(
+                system,
+                &state,
+                workload,
+                step,
+                limits,
+                &mut meter,
+                &mut storage,
+                &mut transition_count,
+                cancel,
+                |post| {
+                    let next = monitor
+                        .step(
+                            control,
+                            observes(system, predicate, reference, post, cancel)?,
+                        )
+                        .map_err(monitor_error)?;
+                    let post_key = key_of(post, next, &monitor)?;
+                    Ok((post_key == step.post_key
+                        && key_of(&step.post, next, &monitor)? == post_key)
+                        .then_some((next, post_key)))
+                },
+            )?;
             probability = arithmetic(
                 filament_exact::RationalArithmetic::Multiply(&probability, &step_mass),
                 &mut meter,
                 cancel,
             )?;
             check_bits(&probability, limits.max_rational_bits)?;
-            // Reserve the retained typed evidence using its owners' canonical
-            // representations. The transition includes the resolved arguments;
-            // a second copy admits the explicit draw vector in the evidence.
-            let action_bytes = system
-                .scheduled_identity_key(step_action)
-                .map_err(|stop| cancelled_expansion(stop, cancel))?;
-            let transition_bytes = system
-                .transition_key(step_transition)
-                .map_err(|_| ExactProbabilityGraphError::ExpansionRefused)?;
-            retain(
-                post_key
-                    .as_bytes()
-                    .len()
-                    .saturating_add(action_bytes.len())
-                    .saturating_add(transition_bytes.len().saturating_mul(2)),
-                &mut storage,
-                limits,
-            )?;
+            retain(post_key.as_bytes().len(), &mut storage, limits)?;
             state = post;
             control = next;
             key = post_key;
@@ -413,18 +305,7 @@ pub(super) fn arithmetic(
     }
 }
 pub(super) fn document_error(error: ProbabilityDocumentError) -> ProbabilityWitnessError {
-    match error {
-        ProbabilityDocumentError::Limit { limit, bound, .. } => ProbabilityWitnessError::Limit {
-            limit: limit.model_limit(),
-            value: bound,
-        },
-        ProbabilityDocumentError::Cancelled(cause) => {
-            ProbabilityWitnessError::Graph(ExactProbabilityGraphError::Cancelled(cause))
-        }
-        ProbabilityDocumentError::Graph(error) => ProbabilityWitnessError::Graph(error),
-        ProbabilityDocumentError::Build(issue) => ProbabilityWitnessError::Build(issue),
-        _ => ProbabilityWitnessError::Refused,
-    }
+    error.into()
 }
 
 pub(super) fn monitor_error(error: QualifiedBoundedError) -> ProbabilityWitnessError {

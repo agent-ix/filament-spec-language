@@ -13,6 +13,7 @@ use fsl_eval::simulation::model::{
 use fsl_package::CheckedPackage;
 
 mod bounded;
+mod step;
 mod undefined;
 pub use undefined::{replay_probabilistic_undefined, ProbabilityUndefinedWitness};
 
@@ -688,5 +689,32 @@ fn check_bits(value: &Rational, max: u64) -> Result<(), ProbabilityWitnessError>
         })
     } else {
         Ok(())
+    }
+}
+
+impl From<ProbabilityDocumentError> for ProbabilityWitnessError {
+    fn from(error: ProbabilityDocumentError) -> Self {
+        match error {
+            ProbabilityDocumentError::Limit { limit, bound, .. } => Self::Limit {
+                limit: limit.model_limit(),
+                value: bound,
+            },
+            ProbabilityDocumentError::Cancelled(cause) => {
+                Self::Graph(ExactProbabilityGraphError::Cancelled(cause))
+            }
+            ProbabilityDocumentError::Graph(error) => Self::Graph(error),
+            ProbabilityDocumentError::Build(issue) => Self::Build(issue),
+            ProbabilityDocumentError::Accounting(incomplete) => Self::Limit {
+                limit: ModelCheckLimit::EvaluationMeter {
+                    counter: incomplete.limit_kind,
+                },
+                value: incomplete.limit,
+            },
+            ProbabilityDocumentError::IntegerText { bit_bound, .. } => Self::Limit {
+                limit: ModelCheckLimit::ExactProbMaxRationalBits,
+                value: bit_bound,
+            },
+            _ => Self::Refused,
+        }
     }
 }

@@ -91,31 +91,16 @@ pub fn replay_probabilistic_undefined(
         _ => return Err(ExactProbabilityGraphError::UnsupportedClaimForm.into()),
     };
     let mut control: Option<StateId> = None;
-    let mut scheduler = BTreeMap::new();
-    let mut previous = None;
     let mut storage = 0;
     let mut meter = filament_exact::Meter::new(system.meter_limits()).with_cancel(cancel.clone());
-    if evidence.scheduler.len() > limits.model.limits.max_states {
-        return Err(ExactProbabilityGraphError::LimitReached.into());
-    }
-    for (key, action) in &evidence.scheduler {
-        bounded::visit(&mut meter, cancel)?;
-        if previous.is_some_and(|previous| previous >= key) {
-            return Err(ProbabilityWitnessError::Refused);
-        }
-        previous = Some(key);
-        bounded::retain(
-            key.as_bytes().len().saturating_add(
-                action
-                    .to_bytes()
-                    .map_err(|_| ProbabilityWitnessError::Refused)?
-                    .len(),
-            ),
-            &mut storage,
-            limits,
-        )?;
-        scheduler.insert(key, action);
-    }
+    let scheduler = step::scheduler(
+        &evidence.scheduler,
+        limits,
+        &mut meter,
+        &mut storage,
+        cancel,
+    )?;
+    let mut transition_count = 0;
     let initials = system.initial();
     let [initial] = initials.as_slice() else {
         return Err(ExactProbabilityGraphError::UnsupportedInitial.into());
@@ -337,83 +322,18 @@ pub fn replay_probabilistic_undefined(
             return Err(ProbabilityWitnessError::Refused);
         }
         used.insert(key);
-        let mut issue = None;
-        model_distributions(system, &state, workload, cancel, &mut |failure| {
-            issue = Some(failure)
-        })
-        .map_err(|error| {
-            issue.map_or(ProbabilityWitnessError::Graph(error), |issue| {
-                ProbabilityWitnessError::Build(Box::new(issue))
-            })
-        })?;
-        let mut candidates = Vec::new();
-        if let Some(workload) = workload {
-            for candidate in system
-                .weighted_steps_with_cancel(&state, workload, cancel)
-                .map_err(|stop| cancelled_expansion(stop, cancel))?
-                .map_err(|_| ExactProbabilityGraphError::UnsupportedDraw)?
-            {
-                if candidate.identity.as_ref() == Some(action)
-                    && candidate.transition == TransitionId::Operation(transition.clone())
-                    && same_values(&candidate.random, draw)
-                {
-                    candidates.push((candidate.probability, candidate.post));
-                }
-            }
-        } else {
-            for candidate in system
-                .actions_with_cancel(&state, cancel)
-                .map_err(|stop| cancelled_expansion(stop, cancel))?
-                .map_err(|_| ExactProbabilityGraphError::UnsupportedDraw)?
-            {
-                if candidate.identity != *action {
-                    continue;
-                }
-                for candidate_draw in candidate.draws {
-                    if !same_values(&candidate_draw.random, draw) {
-                        continue;
-                    }
-                    for (candidate_transition, post) in candidate_draw.successors {
-                        if candidate_transition == *transition {
-                            candidates.push((candidate_draw.probability.clone(), post));
-                        }
-                    }
-                }
-            }
-        }
         let expected = key_of(system, reference, &step.post, limits, cancel)?;
-        let mut matched = None;
-        for (probability, post) in candidates {
-            bounded::visit(&mut meter, cancel)?;
-            if key_of(system, reference, &post, limits, cancel)? == expected
-                && post.anchor() == step.post.anchor()
-                && post.reached_by() == step.post.reached_by()
-            {
-                if matched.is_some() {
-                    return Err(ExactProbabilityGraphError::UnsupportedDraw.into());
-                }
-                matched = Some((probability, post));
-            }
-        }
-        let Some((probability, post)) = matched else {
-            return Err(ProbabilityWitnessError::Refused);
-        };
-        if probability <= rational(0) {
-            return Err(ProbabilityWitnessError::Refused);
-        }
-        let action_bytes = system
-            .scheduled_identity_key(action)
-            .map_err(|stop| cancelled_expansion(stop, cancel))?;
-        let transition_bytes = system
-            .transition_key(transition)
-            .map_err(|_| ExactProbabilityGraphError::ExpansionRefused)?;
-        bounded::retain(
-            action_bytes
-                .len()
-                .saturating_add(transition_bytes.len().saturating_mul(2))
-                .saturating_add(std::mem::size_of::<ProbabilityWitnessStep>()),
-            &mut storage,
+        let (probability, post, ()) = step::replay(
+            system,
+            &state,
+            workload,
+            step,
             limits,
+            &mut meter,
+            &mut storage,
+            &mut transition_count,
+            cancel,
+            |post| Ok((key_of(system, reference, post, limits, cancel)? == expected).then_some(())),
         )?;
         mass = bounded::arithmetic(
             filament_exact::RationalArithmetic::Multiply(&mass, &probability),
