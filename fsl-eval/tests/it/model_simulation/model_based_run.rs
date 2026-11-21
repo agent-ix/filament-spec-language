@@ -21,6 +21,24 @@ const RESET: &str = "pre CanReset using v on M::Counter::reset { self.value = 5 
 const JAM: &str = "pre CanJam using v on M::Counter::jam { self.value > 5 }\n\
                    post Jam using v on M::Counter::jam { self.value = 0 }";
 
+/// FSpec FR-190's typed evidence retains FR-301's exit code for every result
+/// category, including unsupported and internal-failure outcomes.
+#[test]
+fn model_based_test_evidence_preserves_fr301_exit_codes() {
+    use ModelBasedTestEvidence::{Failed, Incomplete, Inconclusive, Refuted, Tested, Unsupported};
+
+    for (evidence, expected) in [
+        (Tested, 0),
+        (Refuted, 10),
+        (Inconclusive, 22),
+        (Incomplete, 22),
+        (Failed, 30),
+        (Unsupported, 21),
+    ] {
+        assert_eq!(evidence.exit_code(), expected, "{evidence:?}");
+    }
+}
+
 fn counter_run_world(invariant: &str, expression: &str) -> World {
     let clauses = format!(
         "{INC}\n{RESET}\n{JAM}\ninvariant {invariant} using v on M::Counter at current {{ {expression} }}"
@@ -1763,17 +1781,24 @@ fn model_based_entry_refuses_missing_and_invalid_request_members() {
         exploration: Limits::default(),
         position_limit: 10_000,
     };
-    assert_eq!(
-        fsl_eval::simulation::model::run_model_based_test(
-            &value_world.package,
-            &value_request,
-            &NativeAdmission,
-            &cancel,
-        )
-        .expect_err("value clauses do not consume max_trace_length")
-        .cause,
-        "unknown-member"
-    );
+    let with_length = fsl_eval::simulation::model::run_model_based_test(
+        &value_world.package,
+        &value_request,
+        &NativeAdmission,
+        &cancel,
+    )
+    .expect("a value clause accepts max_trace_length and does not use it");
+    let mut without_length = value_request.clone();
+    without_length.max_trace_length = None;
+    let without_length = fsl_eval::simulation::model::run_model_based_test(
+        &value_world.package,
+        &without_length,
+        &NativeAdmission,
+        &cancel,
+    )
+    .expect("the same value clause runs without max_trace_length");
+    assert_eq!(with_length.counts, without_length.counts);
+    assert_eq!(with_length.evidence, without_length.evidence);
     value_request.max_trace_length = None;
     value_request.max_value_bits = Some(8);
     assert_eq!(
@@ -1915,7 +1940,8 @@ fn model_based_entry_refuses_missing_and_invalid_request_members() {
     )
     .expect_err("an empty checked domain refuses before generation");
     assert_eq!(refusal.member, "clause");
-    assert_eq!(refusal.cause, "invalid_model_binding/malformed-declaration");
+    assert_eq!(refusal.code, "invalid_model_binding");
+    assert_eq!(refusal.cause, "malformed-declaration");
 }
 
 fn ac7_model_world() -> World {

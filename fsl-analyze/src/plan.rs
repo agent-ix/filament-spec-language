@@ -590,10 +590,9 @@ fn model_based_test(
         Err(refusal) => {
             // The entry refused the request before any case ran: a refusal
             // as it is outside a plan, never an internal failure.
-            let (code, cause) = refusal_catalog(refusal.cause);
-            let mut settled = not_run(code, cause, refusal.member);
+            let mut settled = not_run(refusal.code, refusal.cause, refusal.member);
             // A stop by cancellation or the run's deadline is incomplete.
-            settled.status = if refusal.cause == "cancelled" {
+            settled.status = if refusal.code == "cancelled" {
                 PlanStatus::Incomplete
             } else {
                 PlanStatus::Declined
@@ -1206,17 +1205,6 @@ mod tests {
                 }
             );
         }
-    }
-}
-
-/// The catalog `(code, cause)` of an FR-752 entry refusal's `cause`: either
-/// `code/cause`, a bare `invalid_*` code, or a bare cause under
-/// `invalid_runtime_input`.
-fn refusal_catalog(cause: &'static str) -> (&'static str, &'static str) {
-    match cause.split_once('/') {
-        Some(pair) => pair,
-        None if cause.starts_with("invalid_") => (cause, "invalid-value"),
-        None => ("invalid_runtime_input", cause),
     }
 }
 

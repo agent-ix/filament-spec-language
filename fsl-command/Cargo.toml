@@ -18,9 +18,9 @@ fsl-foundation = { path = "../fsl-foundation" }
 fsl-cst = { path = "../fsl-cst" }
 fsl-replay = { path = "../fsl-replay" }
 fsl-eval = { path = "../fsl-eval" }
+filament-checked = { workspace = true }
 filament-eval = { workspace = true }
 fsl-semantics = { path = "../fsl-semantics" }
-filament-checked = { workspace = true }
 fsl-analyze = { path = "../fsl-analyze" }
 fsl-inspect = { path = "../fsl-inspect" }
 fsl-route = { path = "../fsl-route" }

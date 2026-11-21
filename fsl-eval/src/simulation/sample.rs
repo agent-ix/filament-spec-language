@@ -145,7 +145,17 @@ pub(crate) fn sample<S: TransitionSystem>(
                 successors,
                 findings,
             } => (successors, findings),
-            Expanded::Stopped(stop) => break StopReason::Stopped(stop.cause),
+            Expanded::Stopped(stop) => {
+                let state_findings = system.findings_at_stop(&current);
+                if !state_findings.is_empty() {
+                    findings.push(StateFindings {
+                        state: current_key.clone(),
+                        depth: steps.len(),
+                        findings: state_findings,
+                    });
+                }
+                break StopReason::Stopped(stop.cause);
+            }
         };
         if !state_findings.is_empty() {
             findings.push(StateFindings {

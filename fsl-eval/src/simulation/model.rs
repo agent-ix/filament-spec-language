@@ -2259,6 +2259,17 @@ impl TransitionSystem for ModelRunView<'_, '_> {
             None => self.system.successors(state),
         }
     }
+
+    fn state_findings(
+        &self,
+        state: &Self::State,
+    ) -> Option<Result<Vec<Self::Finding>, ExpansionStop>> {
+        self.system.state_findings(state)
+    }
+
+    fn stopped_findings(&self, state: &Self::State, stop: ExpansionStop) -> Vec<Self::Finding> {
+        self.system.stopped_findings(state, stop)
+    }
 }
 
 /// The identity limits `explore_model` and `sample_model` encode under.
@@ -2566,6 +2577,17 @@ fn rebuild_model_trace(
             Expanded::Stopped(stop) => {
                 if index < requested.len() {
                     return Ok(None);
+                }
+                let state_findings = system.findings_at_stop(&current);
+                if !state_findings.is_empty() {
+                    let (_, state_key) = system.state_key(&current).map_err(|refusal| {
+                        ModelShrinkError::NotSimulated(NotSimulated::KeyEncoding(refusal))
+                    })?;
+                    findings.push(StateFindings {
+                        state: state_key,
+                        depth: index,
+                        findings: state_findings,
+                    });
                 }
                 stopped = Some(StopReason::Stopped(stop.cause));
                 break;

@@ -145,6 +145,7 @@ pub(super) fn prepare(
         (request.clause.is_some(), "clause"),
         (request.items.is_some(), "items"),
         (request.verification_plan.is_some(), "verification_plan"),
+        (request.model_based_test.is_some(), "model_based_test"),
     ] {
         if present {
             return Err(invalid(

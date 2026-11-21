@@ -54,7 +54,8 @@ pub struct SampleProvenance {
 }
 
 /// One executable path: the starting state's complete canonical key, the
-/// ordered transitions taken from it and the findings of the states it expanded.
+/// ordered transitions taken from it and the findings of each expanded state,
+/// plus findings evaluated alone at its stopped final state when available.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Trace<T, F> {
     /// The complete canonical key of the state the path starts from.
@@ -168,7 +169,10 @@ pub fn replay<S: TransitionSystem>(
                 successors,
                 findings,
             } => (successors, findings),
-            Expanded::Stopped(stop) if recorded == Some(stop.cause) => break,
+            Expanded::Stopped(stop) if recorded == Some(stop.cause) => {
+                check.expanded(index, system.findings_at_stop(&current))?;
+                break;
+            }
             Expanded::Stopped(stop) => {
                 return Err(ReplayError::Stopped {
                     step: index,
