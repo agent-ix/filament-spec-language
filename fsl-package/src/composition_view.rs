@@ -3,9 +3,10 @@
 
 use filament_contract_model::{
     CheckedComponentClause, CheckedCompositionComponent, CheckedCompositionPremise,
-    CheckedEnvironmentEntry, CheckedFairnessSupply, CheckedNodeId, CheckedNodePathSegment,
-    CheckedOccurrence, CheckedOccurrenceRole, CheckedOperandEntry, CheckedPackageV2, CheckedTerm,
-    ClaimNameRow, NativeJoinBudget, NativeJoinLocus, TemporalClauseName,
+    CheckedEnvironmentEntry, CheckedEnvironmentSupplies, CheckedFairnessSupply, CheckedNodeId,
+    CheckedNodePathSegment, CheckedOccurrence, CheckedOccurrenceRole, CheckedOperandEntry,
+    CheckedPackageV2, CheckedTerm, ClaimNameRow, NativeJoinBudget, NativeJoinLocus,
+    TemporalClauseName,
 };
 
 use crate::native_row::{self, NativeRowError};
@@ -38,6 +39,9 @@ pub enum CompositionViewRefusal {
         /// The authentic owner-held clause reference.
         clause: CheckedNodeId,
     },
+    /// More than one authenticated component package resolves a context.
+    #[error("the composition context resolves in more than one component owner")]
+    AmbiguousContext,
     /// A canonical member position cannot be represented as an occurrence.
     #[error("the composition member position is out of range")]
     MemberOrdinal,
@@ -402,6 +406,67 @@ impl<'p> CompositionView<'p> {
         Err(CompositionViewRefusal::UnknownComponent)
     }
 
+    /// Resolve an actual scheduling member's context in its unique admitted
+    /// component package. Neither the root graph nor an ID's package spelling
+    /// supplies a fallback owner.
+    pub fn supply_context_with_budget(
+        &self,
+        supply: &CheckedFairnessSupply,
+        budget: &mut NativeJoinBudget,
+    ) -> Result<OwnedNodeRef<'p>, CompositionViewRefusal> {
+        let mut work = ProjectionWork::metered(budget)?;
+        let mut authentic = false;
+        for candidate in self.supplies {
+            work.visit()?;
+            if std::ptr::eq(candidate, supply) {
+                authentic = true;
+                break;
+            }
+        }
+        if !authentic {
+            for environment in self.environment {
+                work.visit()?;
+                if let CheckedEnvironmentSupplies::Fairness(candidate) = &environment.supplies {
+                    if std::ptr::eq(candidate, supply) {
+                        authentic = true;
+                        break;
+                    }
+                }
+            }
+        }
+        if !authentic {
+            return Err(CompositionViewRefusal::UnknownTarget);
+        }
+        let reference = self.resolve_reference(&supply.context, &mut work)?;
+        let mut owner = None;
+        for dependency in self.package.direct_dependencies() {
+            work.visit()?;
+            let mut selected = false;
+            for component in self.components {
+                work.visit()?;
+                if component.package.as_ref() == dependency.name() {
+                    selected = true;
+                    break;
+                }
+            }
+            if !selected {
+                continue;
+            }
+            work.visit()?;
+            if dependency.structural_key(&reference).is_some() {
+                if owner.is_some() {
+                    return Err(CompositionViewRefusal::AmbiguousContext);
+                }
+                owner = Some(dependency);
+            }
+        }
+        Ok(OwnedNodeRef {
+            owner: owner.ok_or(CompositionViewRefusal::UnknownTarget)?,
+            node: reference,
+            name: None,
+        })
+    }
+
     fn target(
         &self,
         component: &CheckedCompositionComponent,
@@ -417,6 +482,21 @@ impl<'p> CompositionView<'p> {
             }
         }
         let owner = owner.ok_or(CompositionViewRefusal::MissingOwner)?;
+        let reference = self.resolve_reference(target, work)?;
+        owner
+            .structural_key(&reference)
+            .ok_or(CompositionViewRefusal::UnknownTarget)?;
+        Ok(OwnedNodeRef {
+            owner,
+            node: reference,
+            name: None,
+        })
+    }
+    fn resolve_reference(
+        &self,
+        target: &CheckedNodeId,
+        work: &mut ProjectionWork<'_>,
+    ) -> Result<CheckedNodeId, CompositionViewRefusal> {
         work.node(target)?;
         // resolve_node_held copies dependency operand package strings, while
         // local index/structural operands retain shared handles.
@@ -441,14 +521,7 @@ impl<'p> CompositionView<'p> {
             .package
             .resolve_node_held(self.holder, target)
             .ok_or(CompositionViewRefusal::UnknownTarget)?;
-        owner
-            .structural_key(&reference)
-            .ok_or(CompositionViewRefusal::UnknownTarget)?;
-        Ok(OwnedNodeRef {
-            owner,
-            node: reference,
-            name: None,
-        })
+        Ok(reference)
     }
 }
 
