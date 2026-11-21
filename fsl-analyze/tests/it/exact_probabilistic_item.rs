@@ -706,6 +706,13 @@ fn undefined_replay_checks_first_read_location_control_and_package_ownership() {
         Ok(ProbabilityWitnessReplay::Parity)
     ));
     let mut forged = witness.clone();
+    forged.evaluation.cause =
+        fsl_eval::temporal::UndefinedCause::Kernel(filament_exact::Undefined::DivisionByZero);
+    assert!(matches!(
+        replay(&forged),
+        Ok(ProbabilityWitnessReplay::Parity)
+    ));
+    let mut forged = witness.clone();
     forged.product_state = forged.path.initial_key.clone();
     assert!(matches!(
         replay(&forged),
@@ -859,6 +866,31 @@ fn undefined_replay_preserves_limits_and_cancellation_at_the_final_poll() {
     let system = ModelSystem::new(world.subject().simulation).unwrap();
     let witness = undefined_evidence(&world, "Dropped");
     let limits = world.request("Dropped", ModelCheckLimits::default()).limits;
+    for budget in ["work", "expansion", "storage", "paths"] {
+        let mut request = world.request("Dropped", ModelCheckLimits::default());
+        match budget {
+            "work" => request.subject.simulation.meter.work_units = 0,
+            "expansion" => request.subject.simulation.expansion.max_candidates = 0,
+            "storage" => request.limits.document.storage_bytes = 0,
+            "paths" => request.limits.max_witness_paths = 0,
+            _ => unreachable!(),
+        }
+        let record = analyze_items(
+            &Engines::fsl().unwrap(),
+            vec![exact_probabilistic_item(RequestIndex::new(0), request)],
+            &Cancel::new(),
+        )
+        .remove(0);
+        assert!(
+            matches!(
+                record.terminal().expect("stopped terminal").value(),
+                TerminalValue::Incomplete(IncompleteCause::LimitReached { .. })
+            ),
+            "{budget}: {record:?}"
+        );
+        assert!(record.probabilistic_counterexample.is_none(), "{budget}");
+        assert!(record.exact_probabilistic.is_none(), "{budget}");
+    }
     let run = |limits: &fsl_analyze::exact_probabilistic::ExactProbLimits, cancel: &Cancel| {
         replay_probabilistic_undefined(
             &world.package,
