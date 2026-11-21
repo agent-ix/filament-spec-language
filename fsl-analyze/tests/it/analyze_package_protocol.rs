@@ -56,16 +56,29 @@ fn package_run(ws: &Workspace, request_path: &std::path::Path) -> Run {
     analyze(&package_request(ws, request_path).0)
 }
 
-fn terminal_request(ws: &Workspace, terminal: &str, blocked: bool) -> std::path::PathBuf {
+fn terminal_request(
+    ws: &Workspace,
+    captures: &str,
+    terminal: &str,
+    blocked: bool,
+) -> std::path::PathBuf {
     let run = if blocked {
-        crate::fill::attempt("Blocked", "setTwo", "TwoPre, TwoPost", "result", "true")
+        format!(
+            "sequence Main {{ {} }}",
+            crate::fill::attempt("Blocked", "setTwo", "TwoPre, TwoPost", "attempted", "true")
+        )
     } else {
         "sequence Main {}".to_owned()
     };
     let body = format!(
-        "{}{}",
-        crate::fill::contracts("false"),
-        crate::fill::protocol("Flow", terminal, &run, "d")
+        "{}protocol Flow using pp over (k: M::Cell) on origin {{
+            {captures}
+            role w on M::Cell;
+            {terminal}
+            run {run}
+            finish Done as (d: Boolean) {{ d }};
+        }}",
+        crate::fill::contracts("false")
     );
     let unit = crate::fill::unit_text_with(crate::fill::PROTOCOL_PROFILE, &body);
     let mut documents = crate::fill::Documents::new();
@@ -76,7 +89,7 @@ fn terminal_request(ws: &Workspace, terminal: &str, blocked: bool) -> std::path:
         &unit,
         &crate::fill::document(),
         &snapshots,
-        json!({"items": [{"claim": "Flow", "kind": "global-conformance",
+        json!({"items": [{"claim": "Flow", "kind": "temporal-satisfaction",
         "temporal": {"item_kind": "deadlock-freedom", "subject": {"protocol": {
             "protocol": "Flow",
             "over": {"reference": {"population": "ix://test/fill/cells", "key": "c"}},
@@ -96,8 +109,13 @@ fn package_terminal_classifies_blocked_live_instances() {
         ("false", "terminal when { k.v = 1 };", "refuted"),
     ] {
         let ws = Workspace::new(&format!("package-terminal-{name}"));
-        let path = terminal_request(&ws, terminal, true);
+        let path = terminal_request(&ws, "", terminal, true);
         let source = analyze(&path);
+        assert!(
+            source.item(0).get("record").is_some(),
+            "source terminal {name}: {}",
+            source.document()
+        );
         assert_eq!(label(&source.item(0)), expected, "{}", source.document());
         let (package_path, _) = package_request(&ws, &path);
         std::fs::remove_file(ws.path("program.fsl"))
@@ -127,8 +145,13 @@ fn package_terminal_preserves_finished_instances() {
         ("false", "terminal when { k.v = 1 };"),
     ] {
         let ws = Workspace::new(&format!("package-terminal-finished-{name}"));
-        let path = terminal_request(&ws, terminal, false);
+        let path = terminal_request(&ws, "", terminal, false);
         let source = analyze(&path);
+        assert!(
+            source.item(0).get("record").is_some(),
+            "source finished {name}: {}",
+            source.document()
+        );
         assert_eq!(label(&source.item(0)), "proved", "{}", source.document());
         let package = package_run(&ws, &path);
         assert_eq!(package.item(0), source.item(0), "{}", package.document());
@@ -143,9 +166,19 @@ fn package_terminal_reads_origin_captures_in_authored_order() {
     for (name, predicate, expected) in [("true", "saved", "proved"), ("false", "later", "refuted")]
     {
         let ws = Workspace::new(&format!("package-terminal-captures-{name}"));
-        let members = format!("capture saved: Boolean = k.v = 0; capture later: Boolean = not saved; terminal when {{ {predicate} }};");
-        let path = terminal_request(&ws, &members, true);
+        let members = format!("terminal when {{ {predicate} }};");
+        let path = terminal_request(
+            &ws,
+            "capture saved: Boolean = k.v = 0; capture later: Boolean = not saved;",
+            &members,
+            true,
+        );
         let source = analyze(&path);
+        assert!(
+            source.item(0).get("record").is_some(),
+            "source capture {name}: {}",
+            source.document()
+        );
         assert_eq!(label(&source.item(0)), expected, "{}", source.document());
         let (package_path, _) = package_request(&ws, &path);
         std::fs::remove_file(ws.path("program.fsl"))
@@ -166,12 +199,18 @@ fn package_terminal_preserves_replay_refusal_code_and_cause() {
     let ws = Workspace::new("package-terminal-replay-bound");
     let path = terminal_request(
         &ws,
-        "capture saved: Boolean = k.v = 1; terminal when { saved };",
+        "capture saved: Boolean = k.v = 1;",
+        "terminal when { saved };",
         true,
     );
     let (package_path, bytes) = package_request(&ws, &path);
     let below = u64::try_from(bytes.len() / 2).expect("the package length");
     let source = crate::analyze_cli_support::analyze_under_replay_bytes(&path, below);
+    assert!(
+        source.item(0).get("record").is_some(),
+        "source replay refusal: {}",
+        source.document()
+    );
     assert_eq!(
         label(&source.item(0)),
         "inconclusive",
