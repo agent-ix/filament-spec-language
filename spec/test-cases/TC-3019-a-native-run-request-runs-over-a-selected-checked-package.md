@@ -87,10 +87,13 @@ semantics. Scope: FR-1039-AC-1 to AC-12, FR-100-AC-23 and FR-026-AC-8.
 The carrier and resource cases for steps 8 and 9 are:
 
 For retained host failures, assert the outer `native-run-result/2.code`
-separately from any native diagnostic code. The formal constructor refusal
-has outer `invalid-identifier` and `details.code` `invalid_identifier`;
-the file failure has outer `io-error` and its existing path/OS-code details.
-The native catalog's underscore spellings are unchanged.
+separately from any native diagnostic code. Both formal constructor failures
+have outer `invalid-identifier`, stage `request` and exit 20. The original
+diagnostic at `/details/code` is `invalid_identifier` for a rejected
+`document` and `invalid_source_revision` for a rejected `formal_revision`;
+`/details/path` names the corresponding field. The file failure has outer
+`io-error` and its existing path/OS-code details. The native catalog's
+underscore spellings are unchanged; no `details.diagnostic` wrapper is added.
 
 | Input variation | Expected diagnostic and point of failure |
 | --- | --- |
@@ -99,7 +102,8 @@ The native catalog's underscore spellings are unchanged.
 | entry is `null`, scalar or a positional array | same code/stage/exit, `/request/sources/0`, before I/O |
 | independently omit each of the five required fields, add `text`, or repeat each field | same code/stage/exit, naming `/request/sources/0/<field>`, before I/O |
 | non-string `file`, `authority`, `identity` or `document`; non-integer, negative, null or above-u64 `formal_revision` | same code/stage/exit, naming that field, before I/O |
-| invalid formal document, or `formal_revision` zero | outer `invalid-identifier`, stage `request`, exit 20, naming the constructor-invalid field, before I/O; constructor `details.code` remains `invalid_identifier` |
+| `document` is `""`, all other fields valid | outer `invalid-identifier`, stage `request`, exit 20, `/details/code` exactly `invalid_identifier` and `/details/path` `/request/sources/0/document`, before I/O |
+| `formal_revision` is `0`, all other fields valid | outer `invalid-identifier`, stage `request`, exit 20, `/details/code` exactly `invalid_source_revision` and `/details/path` `/request/sources/0/formal_revision`, before I/O |
 | second entry repeats the first native pair, despite different path or formal metadata | `invalid-request`, stage `request`, exit 20, `/request/sources/1`, before I/O |
 | `program` beside either empty or non-empty `sources` | `invalid-request`, stage `request`, exit 20, `/request/sources`, before I/O |
 | valid package/model inputs, unavailable explicitly selected source | outer `io-error`, stage `file`, exit 20, retaining its file path |
