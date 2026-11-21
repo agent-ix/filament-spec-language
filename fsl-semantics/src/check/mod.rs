@@ -623,7 +623,9 @@ pub use temporal_clause::{
     TemporalDeclarations, TemporalSelection, TemporalTraceFamily, TimeNominalForm, TimeNominalNode,
     TimeNominalOrigin, TimeSourceKind, TimedPropertyForm, UnaryTemporal, DEFAULT_CLOCK_ROLE,
 };
-pub use temporal_clause::{PackageClauseForm, PackageClauseRefusal, PackageFormulaNode};
+pub use temporal_clause::{
+    PackageClauseForm, PackageClauseRefusal, PackageFormulaNode, PackagePropertyRefusal,
+};
 pub use timed_model::{
     CheckedTimedPredicate, ClockConstraint, ClockField, ClockGuard, ClockId, ClockOp,
     ClockParameterRange, ClockReset, ClockResets, CollectionWrite, ConstraintNodes,
