@@ -2808,7 +2808,7 @@ impl PackageDeclarations {
                 let identifier = spans
                     .and_then(|spans| spans.get(position))
                     .and_then(|span| {
-                        Some(Span {
+                        Some(fsl_foundation::Span {
                             start: span.start,
                             end: span.start.checked_add(name.len())?,
                         })
