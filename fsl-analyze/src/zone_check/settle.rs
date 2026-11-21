@@ -354,6 +354,7 @@ fn certified<O>(
             ZoneCertificateRefusal::Package(_)
             | ZoneCertificateRefusal::Admission(_)
             | ZoneCertificateRefusal::TimedSubject(_)
+            | ZoneCertificateRefusal::TaskProductPlan(_)
             | ZoneCertificateRefusal::UnsupportedItem
             | ZoneCertificateRefusal::Unbounded
             | ZoneCertificateRefusal::Undecided

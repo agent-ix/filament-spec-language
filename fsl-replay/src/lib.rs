@@ -187,6 +187,8 @@ pub use certificate::task_product::{
 };
 pub use certificate::zone::{LuBounds, Zone, ZoneError};
 pub use certificate::zone_certificate::{
+    explore_task_product, recomputed_member, QuotientEdge, QuotientIdentity, QuotientInitial, QuotientStop,
+    QuotientVertex, TaskProductQuotient,
     check_zone_certificate, AcceptanceSet, CertEdge, CertNode, CertificateCheckLimits,
     CertificateItem, CertifiedItem, CheckerFault, ComponentReason, Components, DivergenceWitness,
     DivergentTarget, FairnessMember, ItemIdentity, NonZeno, ProductMark, RefinementIdentity,
