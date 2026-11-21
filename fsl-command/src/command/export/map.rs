@@ -195,7 +195,7 @@ fn protocol_over_type(
 }
 
 enum RoleModelBinding {
-    Type(String),
+    Type(Option<String>),
     WholeModel(String),
 }
 
@@ -225,12 +225,12 @@ fn role_model_binding(
                 .position(target)
                 .ok_or_else(|| internal("a protocol role model type names no node"))?;
             let node = graph.node(position);
-            let Some(CheckedNodeOwner::Model { identity, .. }) = node.owner.as_ref() else {
-                return Err(internal(
-                    "a protocol role model type has no selected-model owner",
-                ));
+            let model = match node.owner.as_ref() {
+                Some(CheckedNodeOwner::Model { identity, .. }) => Some(identity.to_string()),
+                Some(CheckedNodeOwner::Source { .. } | CheckedNodeOwner::ModelRoot { .. })
+                | None => None,
             };
-            Ok(RoleModelBinding::Type(identity.to_string()))
+            Ok(RoleModelBinding::Type(model))
         }
         CheckedTerm::Literal {
             value_kind: LiteralKind::Text,
@@ -826,7 +826,18 @@ fn validate_protocol_bindings(
                     });
                 }
                 let role_model = match role_model_binding(graph, role_node)? {
-                    RoleModelBinding::Type(model) => Some(model),
+                    RoleModelBinding::Type(Some(model)) => Some(model),
+                    RoleModelBinding::Type(None) => {
+                        return Err(RunCause::ExportRequest {
+                            path: format!(
+                                "/request/export/protocols/{binding_index}/roles/{role_path}"
+                            ),
+                            cause: "wrong-role-mapping",
+                            reason: format!(
+                                "the static role `{role_name}` is not declared on a selected model type"
+                            ),
+                        });
+                    }
                     RoleModelBinding::WholeModel(selection) => {
                         if !selected_models.contains(&selection.as_str()) {
                             return Err(RunCause::ExportRequest {

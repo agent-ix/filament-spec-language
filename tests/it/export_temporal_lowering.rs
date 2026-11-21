@@ -2990,10 +2990,30 @@ fn whole_model_roles_on_two_selected_models_are_auto_bound() {
 #[test]
 #[trace("FSpec-FR-813-AC-24")]
 fn a_present_over_object_of_the_wrong_declared_type_refuses_role_mapping() {
-    let (exit, value) = export_two_model_protocol(
-        "role a on Counter;\nrole b on Spec;\n",
+    let tail = format!(
+        "{}protocol Hand using P over (k: Counter::Counter) on origin {{\n\
+             role a on Counter::Counter;\n\
+             requires temporal T;\n\
+             run sequence Main {{ check Ok using v {{ true }}; }}\n\
+             finish Done as (d: Counter::Counter) {{ true }};\n\
+         }}\n",
+        clause_tail("always holds(c.value <= 5)")
+    );
+    let (exit, value) = export_unit_with_protocol_role_and_over_type(
+        &tail,
+        Target::Tla,
+        None,
+        "filament.temporal.infinite-trace/v1",
+        true,
+        true,
+        true,
+        "example/counter-third",
+        "c",
         json!({}),
-        "Spec::Counter",
+        None,
+        None,
+        "model-binding",
+        Some("ix://example/counter-third/Level"),
     );
     assert_eq!(exit, 20, "{value}");
     assert_eq!(value["code"], "invalid_runtime_input", "{value}");
