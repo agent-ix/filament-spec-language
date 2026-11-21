@@ -428,7 +428,8 @@ fn reachable_operands(graph: &CheckedGraph, key: &NodeKey) -> HashSet<NodeKey> {
 
 /// The application a position names: of the applications lowered at its
 /// location and not `taken` by an enclosing position at the same location,
-/// the one no other of them takes as an operand. An attribute read lowers a
+/// the parent's next direct operand, or the one no other candidate takes as
+/// an operand when no parent operand names the visit. An attribute read lowers a
 /// `deref` and the `project` over it at one position; an implicit coercion
 /// and its operand are two positions at one location.
 fn term_application<'c>(
@@ -444,9 +445,31 @@ fn term_application<'c>(
         }
     }
     // One application at the position is the position's own; only several
-    // need ordering by reach, which walks their operands.
+    // need the parent operand context or ordering by reach.
     if let [only] = keys[..] {
         return Ok(Some(only));
+    }
+    // A shared descendant can be read by several sibling parts of one
+    // lowering. The parent's direct operand order identifies this visit
+    // before transitive reach through another sibling can hide it. Count
+    // visits rather than distinct keys: both operands may name one node.
+    if let Some((parent, earlier)) = under {
+        if let Some(parent) = graph.semantic_graph().node(parent.clone()) {
+            let seen = earlier.iter().filter(|key| keys.contains(key)).count();
+            let named = parent
+                .body()
+                .leaves()
+                .into_iter()
+                .filter_map(|leaf| match leaf {
+                    LeafTerm::Reference { target } => target.admitted(),
+                    LeafTerm::Literal { .. } | LeafTerm::DependencyReference { .. } => None,
+                })
+                .filter(|operand| keys.contains(operand))
+                .nth(seen);
+            if let Some(key) = named.and_then(|operand| keys.iter().find(|key| **key == operand)) {
+                return Ok(Some(*key));
+            }
+        }
     }
     // A recursive call reaches its own application again: only another
     // application at the position makes one an operand.
@@ -465,34 +488,6 @@ fn term_application<'c>(
         })
         .map(|(_, key)| key)
         .collect();
-    if let [first, _, ..] = outermost[..] {
-        // Sibling parts of one lowering (an IEEE ordering's two halves) are
-        // outermost together; the parent's application reads them in the
-        // order the checked tree holds its children.
-        let named = under.and_then(|(parent, earlier)| {
-            let operands = graph
-                .semantic_graph()
-                .node(parent.clone())?
-                .body()
-                .leaves()
-                .into_iter()
-                .filter_map(|leaf| match leaf {
-                    LeafTerm::Reference { target } => target.admitted(),
-                    LeafTerm::Literal { .. } | LeafTerm::DependencyReference { .. } => None,
-                })
-                .collect::<Vec<_>>();
-            operands
-                .into_iter()
-                .find(|operand| {
-                    !earlier.contains(operand) && outermost.iter().any(|key| ***key == **operand)
-                })
-                .and_then(|operand| outermost.iter().find(|key| ****key == *operand).copied())
-        });
-        return match named {
-            Some(key) => Ok(Some(key)),
-            None => Err(refusal(first)),
-        };
-    }
     let mut outer = outermost.into_iter();
     match (outer.next(), outer.next()) {
         (Some(key), None) => Ok(Some(key)),
