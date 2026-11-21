@@ -69,7 +69,9 @@ impl<'a> Scope<'a> {
         if let Some(budget) = &mut *self.budget.borrow_mut() {
             budget
                 .accounted_charge(kind, amount, self.locus)
-                .map_err(|_| quire_canonical::Error::ReservationDenied)?;
+                .map_err(|denied| quire_canonical::Error::ReservationDenied {
+                    requested: usize::try_from(denied.amount).unwrap_or(usize::MAX),
+                })?;
         }
         Ok(())
     }
