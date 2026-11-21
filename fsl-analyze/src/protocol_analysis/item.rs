@@ -91,27 +91,24 @@ impl ProtocolAnalysisArtifact {
     /// FR-352, which no settled result does.
     pub fn record(&self) -> Result<ProtocolAnalysisRecord, ProtocolRecordError> {
         let settlement = self.settlement();
-        let (key, witness) = match self {
-            Self::Projection(result) => (
-                &result.key,
-                match &result.outcome {
-                    AnalysisOutcome::Refuted(counterexample) => {
-                        Some(&counterexample.separating_witness)
-                    }
-                    _ => None,
-                },
-            ),
-            Self::Realizability(result) => (
-                &result.key,
-                match &result.outcome {
-                    AnalysisOutcome::Refuted(counterexample) => {
-                        Some(counterexample.separating_witness())
-                    }
-                    _ => None,
-                },
-            ),
+        let key = match self {
+            Self::Projection(result) => &result.key,
+            Self::Realizability(result) => &result.key,
         };
-        ProtocolAnalysisRecord::new(key.clone(), &settlement, witness)
+        ProtocolAnalysisRecord::new(key.clone(), &settlement, self.separating_witness())
+    }
+
+    fn separating_witness(&self) -> Option<&fsl_replay::SeparatingWitnessRecord> {
+        match self {
+            Self::Projection(result) => match &result.outcome {
+                AnalysisOutcome::Refuted(found) => Some(&found.separating_witness),
+                _ => None,
+            },
+            Self::Realizability(result) => match &result.outcome {
+                AnalysisOutcome::Refuted(found) => Some(found.separating_witness()),
+                _ => None,
+            },
+        }
     }
 }
 
@@ -282,6 +279,9 @@ pub(crate) fn settle(
             backend,
             &artifact.settlement(),
             Some(key.clone()),
+            artifact
+                .separating_witness()
+                .map(|witness| witness.value_path.clone()),
         ),
         artifact,
     )

@@ -1875,6 +1875,53 @@ fn protocol_counterexample_outcomes_keep_both_realizability_bodies() {
         assert_eq!(item["result"], "refuted");
         assert_eq!(item["counterexample"], *found[at].wire.as_ref().unwrap());
     }
+
+    let mut other_root = hidden.request(64);
+    other_root
+        .assessed_root
+        .as_mut()
+        .unwrap()
+        .observation
+        .as_mut()
+        .unwrap()
+        .identity = "another-protocol-claim".to_owned();
+    let records = analyze_items(
+        &Engines::fsl().unwrap(),
+        vec![realizability_item(
+            RequestIndex::new(1),
+            &hidden.admitted,
+            other_root,
+        )],
+        &Cancel::new(),
+    );
+    let (other_terminals, mut other_found) = split_records(records, &hidden.checked);
+    assert_eq!(other_found.len(), 1, "the second genuine analysis refutes");
+    assert_eq!(
+        terminals[0].protocol_analysis_key(),
+        other_terminals[0].protocol_analysis_key(),
+        "assessed roots are not structural-key members"
+    );
+    assert_ne!(
+        terminals[0].protocol_analysis_root(),
+        other_terminals[0].protocol_analysis_root(),
+        "the requests name different assessed observation roots"
+    );
+    fsl_analyze::analyze::analyze_item(&other_terminals[0], &other_found)
+        .expect("the genuine counterexample belongs to its own root");
+    let mut substituted = other_found.pop().unwrap();
+    let Counterexample::ProtocolAnalysis(native) = &substituted.counterexample else {
+        panic!("a genuine native protocol-analysis counterexample");
+    };
+    assert_eq!(
+        substituted.wire.as_ref().unwrap(),
+        &native.to_wire().unwrap()
+    );
+    assert_eq!(substituted.backend, found[0].backend);
+    substituted.request_index = terminals[0].request_index();
+    assert!(matches!(
+        fsl_analyze::analyze::analyze_item(&terminals[0], &[substituted]),
+        Err(fsl_replay::OutcomeItemError::CounterexampleAssociation)
+    ), "matching typed evidence and wire from a different assessed root must not attach to the original item");
 }
 
 /// Expected member-specific numeric view; the native FR-352 record remains numeric.

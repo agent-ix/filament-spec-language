@@ -27,6 +27,15 @@ pub enum ProtocolAnalysisCounterexample {
 }
 
 impl ProtocolAnalysisCounterexample {
+    /// The decisive witness, including the assessed root of the refutation.
+    #[must_use]
+    pub fn separating_witness(&self) -> &SeparatingWitnessRecord {
+        match self {
+            Self::Realizability(found) => found.separating_witness(),
+            Self::Projection(found) => &found.separating_witness,
+        }
+    }
+
     /// The native analysis key of the refutation.
     #[must_use]
     pub fn key(&self) -> &ProtocolAnalysisKey {
