@@ -4125,9 +4125,9 @@ fn package_remainder_call_and_condition_refusals_keep_caller_source_loci() {
         type Total = Int[0, 4000];\n\
         function totalVersions using v(p: Population<Config::ConfigVersion>[4]): Total pure { sum<Total>(r in allInstances<Config::ConfigVersion>(p): deref(r).versionNumber) }\n\
         temporal C using t over (c: Config::ConfigVersion) clock \"model-steps\" on origin \
-        { always[0,5] holds(sum<Total>(r in allInstances<Config::ConfigVersion>(Config::config_history): deref(r).versionNumber) >= 0) }\n\
+        { always[0,5] holds(size(allInstances<Config::ConfigVersion>(Config::config_history)) >= 0) }\n\
         temporal Other using t over (c: Config::ConfigVersion) clock \"model-steps\" on origin \
-        { always[0,5] holds(sum<Total>(r in allInstances<Config::ConfigVersion>(Config::config_history): deref(r).versionNumber) >= 0) }\n";
+        { always[0,5] holds(size(allInstances<Config::ConfigVersion>(Config::config_history)) >= 0) }\n";
     let directory = tempfile::tempdir().unwrap();
     spine::write(directory.path(), Case::Incomplete).unwrap();
     std::fs::write(directory.path().join("caller.native"), unit).unwrap();
