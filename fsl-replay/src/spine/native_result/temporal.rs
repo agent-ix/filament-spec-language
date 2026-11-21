@@ -188,7 +188,14 @@ pub(super) enum ProgressValueWire {
 }
 
 #[derive(Serialize)]
-pub(super) struct CounterexampleWire {
+#[serde(untagged)]
+pub(super) enum CounterexampleWire {
+    Observed(ObservedCounterexampleWire),
+    Model(serde_json::Value),
+}
+
+#[derive(Serialize)]
+pub(super) struct ObservedCounterexampleWire {
     trace: &'static str,
     kind: CounterexampleKindWire,
     initial_state: (),
@@ -367,7 +374,7 @@ fn counterexample_wire(
         }
         _ => return Err(NativeRunResultError::Counterexample),
     };
-    Ok(CounterexampleWire {
+    Ok(CounterexampleWire::Observed(ObservedCounterexampleWire {
         trace: "observed",
         kind,
         initial_state: (),
@@ -387,7 +394,7 @@ fn counterexample_wire(
             },
         }),
         trace_position: position,
-    })
+    }))
 }
 
 fn closure(value: ProgressClosure) -> &'static str {
@@ -532,22 +539,43 @@ impl From<&TemporalIndeterminateReason> for ReasonWire {
 
 /// The counterexample at `at` the report holds, in its wire spelling.
 fn checked_counterexample(
-    counterexample: Option<&ObservedTemporalCounterexample>,
+    counterexample: Option<&crate::ClauseRunCounterexample>,
     at: u64,
     reason: Option<&'static str>,
 ) -> Result<CounterexampleWire, NativeRunResultError> {
     let counterexample = counterexample.ok_or(NativeRunResultError::Counterexample)?;
-    if counterexample.trace_position.index() != at {
-        return Err(NativeRunResultError::Counterexample);
+    match counterexample {
+        crate::ClauseRunCounterexample::Observed(counterexample) => {
+            if counterexample.trace_position.index() != at {
+                return Err(NativeRunResultError::Counterexample);
+            }
+            counterexample_wire(counterexample, reason)
+        }
+        crate::ClauseRunCounterexample::Model(counterexample) => {
+            if counterexample.trace_position.index() != at || reason.is_some() {
+                return Err(NativeRunResultError::Counterexample);
+            }
+            let mut wire = crate::outcome::model_clause_wire(counterexample)
+                .map_err(|_| NativeRunResultError::Counterexample)?;
+            wire["trace_position"] = serde_json::Value::from(at);
+            wire["interval"] =
+                serde_json::to_value(counterexample.interval.map(|interval| IntervalWire {
+                    lower: interval.lower().to_string(),
+                    upper: match interval.upper() {
+                        fsl_foundation::bound::TemporalUpper::Finite(upper) => upper.to_string(),
+                        fsl_foundation::bound::TemporalUpper::Open => "*".to_owned(),
+                    },
+                }))?;
+            Ok(CounterexampleWire::Model(wire))
+        }
     }
-    counterexample_wire(counterexample, reason)
 }
 
 /// FR-283's `counterexample` of a violation or an undefined evaluation, as
 /// a JSON value in the one wire spelling; `None` for every other verdict.
 pub(super) fn item_counterexample(
     verdict: &TemporalVerdict,
-    counterexample: Option<&ObservedTemporalCounterexample>,
+    counterexample: Option<&crate::ClauseRunCounterexample>,
 ) -> Result<Option<serde_json::Value>, NativeRunResultError> {
     let (at, reason) = match verdict {
         TemporalVerdict::Violated { at } => (*at, None),
@@ -578,7 +606,7 @@ pub(super) fn item_counterexample(
 /// The `temporal` member and `outcome` of a verdict's table row.
 pub(super) fn verdict_wire(
     verdict: &TemporalVerdict,
-    counterexample: Option<&ObservedTemporalCounterexample>,
+    counterexample: Option<&crate::ClauseRunCounterexample>,
 ) -> Result<(TemporalWire, Option<Outcome>), NativeRunResultError> {
     let checked = |at: u64, reason| checked_counterexample(counterexample, at, reason);
     Ok(match verdict {

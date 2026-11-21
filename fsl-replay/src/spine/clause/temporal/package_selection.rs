@@ -345,7 +345,7 @@ fn finished(
     refused_at: Option<u64>,
 ) -> ClauseRunReport {
     let mut finished = report(disposition, ClauseRunUsage::from_meter(meter, admitted));
-    finished.counterexample = counterexample;
+    finished.counterexample = counterexample.map(Into::into);
     finished.refused_at = refused_at;
     finished
 }
@@ -486,6 +486,8 @@ fn run_model(
         Err(refusal) => return stopped(replay_refusal(refusal), admitted),
     };
     let ModelTraceRun {
+        bound_over,
+        terminal_state,
         call_failure,
         outcome,
         decisive,
@@ -530,7 +532,15 @@ fn run_model(
         },
         &mut meter,
     );
+    let counterexample = super::super::model_trace::model_counterexample(
+        clause,
+        &disposition,
+        payload,
+        bound_over,
+        terminal_state,
+    );
     let mut report = finished(disposition, (&meter, admitted), None, None);
+    report.counterexample = counterexample.map(crate::ClauseRunCounterexample::Model);
     report.decisive = decisive;
     Ok(report)
 }

@@ -1704,7 +1704,7 @@ fn run_sampled(
         with_counterexample(clause, request.trace, disposition, observed.undefined);
     let usage = ClauseRunUsage::from_meter(&meter, AdmissionUsage::default());
     let mut finished = disposition_report(disposition, usage);
-    finished.counterexample = counterexample;
+    finished.counterexample = counterexample.map(Into::into);
     finished.refused_at = refused_at;
     finished.authenticated_temporal_selection = authenticated;
     finished
@@ -1789,7 +1789,7 @@ pub(crate) fn with_subject_counterexample(
     };
     if needs {
         match counterexample(node.clause(), trace, &report.disposition, first_undefined) {
-            Some(built) => report.counterexample = Some(built),
+            Some(built) => report.counterexample = Some(built.into()),
             None => {
                 report.disposition = ClauseDisposition::EvaluateFault(
                     filament_semantic_value::catalog::InternalFault::new(
@@ -1980,6 +1980,9 @@ pub(super) fn run_temporal(run: &CompiledRun<'_>, request: &TemporalRun<'_>) -> 
             authenticated_temporal_selection,
         );
         finished.decisive = model.decisive;
+        finished.counterexample = model
+            .counterexample
+            .map(crate::ClauseRunCounterexample::Model);
         return finished;
     }
     let Some(shape) = trace.shape() else {
@@ -2298,7 +2301,7 @@ pub(super) fn run_temporal(run: &CompiledRun<'_>, request: &TemporalRun<'_>) -> 
             with_counterexample(node.clause(), trace, disposition, timed.undefined);
         let usage = ClauseRunUsage::from_meter(&meter, admitted);
         let mut finished = report(disposition, usage, authenticated_temporal_selection.clone());
-        finished.counterexample = counterexample;
+        finished.counterexample = counterexample.map(Into::into);
         finished.refused_at = refused_at;
         return finished;
     }
@@ -2547,7 +2550,7 @@ pub(super) fn run_temporal(run: &CompiledRun<'_>, request: &TemporalRun<'_>) -> 
         let mut finished = report(disposition, usage, authenticated_temporal_selection.clone());
         finished.finite_window = window.report;
         finished.refused_at = window.refused_at;
-        finished.counterexample = counterexample;
+        finished.counterexample = counterexample.map(Into::into);
         finished.decisive = decisive;
         if accepted {
             finished.ledger = accepted_ledger.or_else(|| ledger.cloned());
@@ -2595,7 +2598,7 @@ pub(super) fn run_temporal(run: &CompiledRun<'_>, request: &TemporalRun<'_>) -> 
         let mut finished = report(disposition, usage, authenticated_temporal_selection.clone());
         finished.finite_window = window.report;
         finished.refused_at = window.refused_at;
-        finished.counterexample = counterexample;
+        finished.counterexample = counterexample.map(Into::into);
         if accepted {
             finished.ledger = accepted_ledger.or_else(|| ledger.cloned());
         }
@@ -2668,7 +2671,7 @@ pub(super) fn run_temporal(run: &CompiledRun<'_>, request: &TemporalRun<'_>) -> 
     let mut usage = ClauseRunUsage::from_meter(&meter, admitted);
     usage.ledger_positions = u64::try_from(ledger_positions).unwrap_or(u64::MAX);
     let mut report = report(disposition, usage, authenticated_temporal_selection);
-    report.counterexample = counterexample;
+    report.counterexample = counterexample.map(Into::into);
     report.decisive = decisive;
     report.refused_at = refused_at;
     if accepted {

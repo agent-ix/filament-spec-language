@@ -1465,11 +1465,11 @@ pub struct ClauseRunReport {
     /// FR-330, FR-501 "Result report": the basis, decision support, premises
     /// and result identity of a finite-window run; `None` for every other run.
     pub finite_window: Option<FiniteWindowReport>,
-    /// FR-330 Outputs: the observed-arm counterexample (FSpec FR-364) of a
+    /// FR-330 Outputs: the observed or model counterexample (FSpec FR-364) of a
     /// temporal `violation`, a `Completed(false)` or an `Undefined` that is
     /// a violation, built from what the entry ran; `None` for every other
     /// report.
-    pub counterexample: Option<crate::ObservedTemporalCounterexample>,
+    pub counterexample: Option<crate::ClauseRunCounterexample>,
     /// FR-330 Outputs, FR-283: the decisive information of a temporal
     /// violation (`Completed(false)`) whose deciding `holds` atom FR-107's
     /// evaluator decides, beside `counterexample` and never inside it;

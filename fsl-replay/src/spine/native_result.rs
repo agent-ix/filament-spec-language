@@ -2959,7 +2959,7 @@ struct AdmittedWire {
 impl Disposition {
     fn of(
         value: &ClauseDisposition,
-        counterexample: Option<&crate::ObservedTemporalCounterexample>,
+        counterexample: Option<&crate::ClauseRunCounterexample>,
         selection: Option<&super::ClauseRunSelection>,
     ) -> Result<Self, NativeRunResultError> {
         let mut result = Self {

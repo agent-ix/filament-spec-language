@@ -1188,6 +1188,7 @@ fn temporal<T: Spelling>(
     counterexample: &TemporalCounterexample<T>,
     over: Option<&ObjectReference>,
     claim: Option<&OccurrenceKey>,
+    terminal_state: Option<&fsl_eval::simulation::StateKey>,
 ) -> Result<Json, CounterexampleWireError> {
     let mut race_member = None;
     let mut loop_proof_member = None;
@@ -1236,15 +1237,14 @@ fn temporal<T: Spelling>(
         .as_ref()
         .is_some_and(|lasso| lasso.terminal_stutter)
     {
-        let last = counterexample
-            .prefix
-            .last()
+        let terminal = terminal_state
+            .or_else(|| counterexample.prefix.last().map(|last| &last.post_state))
             .ok_or(CounterexampleWireError::Unspelled(
                 "initial terminal stutter",
             ))?;
         let mut stutter = json!({
             "transition": {"type": "terminal-stutter"},
-            "post_state": state(&last.post_state)?,
+            "post_state": state(terminal)?,
         });
         match counterexample
             .lasso
@@ -1319,7 +1319,21 @@ pub fn temporal_wire(
     over: Option<&ObjectReference>,
     claim: Option<&OccurrenceKey>,
 ) -> Result<Json, CounterexampleWireError> {
-    temporal(counterexample, over, claim)
+    temporal(counterexample, over, claim, None)
+}
+
+/// Serialize a native authored-clause witness with the same model codec.
+/// The supplied terminal key was retained from actual replay, including
+/// when no transition precedes the terminal initial state.
+pub(crate) fn model_clause_wire(
+    counterexample: &crate::ModelClauseCounterexample,
+) -> Result<Json, CounterexampleWireError> {
+    temporal(
+        &counterexample.behaviour,
+        Some(&counterexample.over),
+        None,
+        Some(&counterexample.terminal_state),
+    )
 }
 
 /// The FSpec FR-364 wire form for a task-product counterexample. Source
@@ -1330,7 +1344,7 @@ pub fn task_temporal_wire(
     over: Option<&ObjectReference>,
     claim: Option<&OccurrenceKey>,
 ) -> Result<Json, CounterexampleWireError> {
-    temporal(counterexample, over, claim)
+    temporal(counterexample, over, claim, None)
 }
 
 /// The step alphabet a resolved item fixes for its counterexample document
@@ -1419,7 +1433,7 @@ pub fn task_temporal_wire_with_queue_growth(
             "task queue-growth counterexample shape",
         ));
     }
-    let mut written = temporal(counterexample, over, claim)?;
+    let mut written = temporal(counterexample, over, claim, None)?;
     written["queue_growth"] = queue_growth;
     written["trace_position"] = json!(trace_position);
     Ok(written)
@@ -1766,7 +1780,7 @@ pub fn protocol_temporal_wire(
     subject: &ProtocolWire,
     claim: Option<&OccurrenceKey>,
 ) -> Result<Json, CounterexampleWireError> {
-    let mut written = temporal(counterexample, Some(&subject.over), claim)?;
+    let mut written = temporal(counterexample, Some(&subject.over), claim, None)?;
     let roles: serde_json::Map<String, Json> = subject
         .roles
         .iter()
