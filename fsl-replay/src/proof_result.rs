@@ -1559,6 +1559,7 @@ pub struct TerminalRecord {
     backend: Option<BackendId>,
     value: TerminalValue,
     replay: Option<ReplayResult>,
+    protocol_analysis_key: Option<crate::protocol_analysis::ProtocolAnalysisKey>,
     /// The one diagnostic a `failed` record carries, when its settlement
     /// names one (FR-192: an internal failure's
     /// `runtime_invariant`/`established-invariant-broken`, or an expansion
@@ -1652,6 +1653,7 @@ impl TerminalRecord {
             backend: Some(backend),
             value: TerminalValue::Refuted,
             replay: Some(replay.clone()),
+            protocol_analysis_key: None,
             diagnostic: None,
             exact_certificate: None,
             exact_certificate_document: None,
@@ -1853,15 +1855,20 @@ impl TerminalRecord {
     }
 
     /// ADR-036 PA-20 (FSL FR-573): the record of a settled protocol
-    /// analysis. A `refuted` settlement exists only for a counterexample
-    /// that replayed, which each protocol analysis engine checks before it
-    /// returns one.
+    /// analysis. The engine establishes its native counterexample before
+    /// returning `refuted`; acting-instance projection decisions are typed
+    /// witnesses and other decisive protocol results are replayed. `key`
+    /// retains the native projection or realizability key, or is absent for
+    /// a global-conformance settlement.
     pub fn of_protocol_analysis(
         request_index: RequestIndex,
         backend: BackendId,
         settlement: &crate::protocol_analysis::ProtocolAnalysisSettlement,
+        key: Option<crate::protocol_analysis::ProtocolAnalysisKey>,
     ) -> Self {
-        Self::with_backend(request_index, backend, settlement.value.clone())
+        let mut record = Self::with_backend(request_index, backend, settlement.value.clone());
+        record.protocol_analysis_key = key;
+        record
     }
 
     /// Build a tested record with the producing backend identity.
@@ -1907,6 +1914,7 @@ impl TerminalRecord {
             backend: None,
             value: TerminalValue::Declined { cause, code },
             replay: None,
+            protocol_analysis_key: None,
             diagnostic: Some(diagnostic),
             exact_certificate: None,
             exact_certificate_document: None,
@@ -1940,6 +1948,7 @@ impl TerminalRecord {
             backend: None,
             value: TerminalValue::Unsupported(UnavailabilityCause::Disposition),
             replay: None,
+            protocol_analysis_key: None,
             diagnostic: Some(diagnostic),
             exact_certificate: None,
             exact_certificate_document: None,
@@ -1966,6 +1975,7 @@ impl TerminalRecord {
                 code: DeclineCode::Fsl(Code::InvalidRequest),
             },
             replay: None,
+            protocol_analysis_key: None,
             diagnostic: Some(diagnostic),
             exact_certificate: None,
             exact_certificate_document: None,
@@ -1983,6 +1993,7 @@ impl TerminalRecord {
             backend: None,
             value: TerminalValue::Failed,
             replay: None,
+            protocol_analysis_key: None,
             diagnostic: Some(diagnostic),
             exact_certificate: None,
             exact_certificate_document: None,
@@ -2142,6 +2153,7 @@ impl TerminalRecord {
             backend: None,
             value: TerminalValue::Unsupported(UnavailabilityCause::HybridProviderAbsent),
             replay: None,
+            protocol_analysis_key: None,
             diagnostic: Some(NegotiationOutcome::UnsupportedRequestedCapability.code()),
             exact_certificate: None,
             exact_certificate_document: None,
@@ -2168,6 +2180,7 @@ impl TerminalRecord {
             backend: Some(backend),
             value: TerminalValue::Unsupported(UnavailabilityCause::Disposition),
             replay: None,
+            protocol_analysis_key: None,
             diagnostic: Some(CatalogCode::new("unsupported_construct", "expression-form")),
             exact_certificate: None,
             exact_certificate_document: None,
@@ -2189,6 +2202,7 @@ impl TerminalRecord {
             backend: Some(backend),
             value: TerminalValue::Unsupported(UnavailabilityCause::Disposition),
             replay: None,
+            protocol_analysis_key: None,
             diagnostic: Some(CatalogCode::new(
                 "unsupported_projection",
                 "tool-unavailable",
@@ -2225,6 +2239,7 @@ impl TerminalRecord {
             backend: Some(backend),
             value,
             replay: None,
+            protocol_analysis_key: None,
             diagnostic: if invalid_not_markov {
                 Some(CatalogCode::new(
                     "runtime_invariant",
@@ -2259,6 +2274,7 @@ impl TerminalRecord {
                 value
             },
             replay: None,
+            protocol_analysis_key: None,
             diagnostic: invalid_not_markov
                 .then(|| CatalogCode::new("runtime_invariant", "established-invariant-broken")),
             exact_certificate: None,
@@ -2272,6 +2288,12 @@ impl TerminalRecord {
     /// The `request_index` of the item this record was read for.
     pub fn request_index(&self) -> RequestIndex {
         self.request_index
+    }
+
+    /// The original protocol-analysis key retained when its native result settled.
+    /// Global-conformance records carry no projection or realizability key.
+    pub fn protocol_analysis_key(&self) -> Option<&crate::protocol_analysis::ProtocolAnalysisKey> {
+        self.protocol_analysis_key.as_ref()
     }
 
     /// The certificate accepted for this exact probabilistic proof, if any.

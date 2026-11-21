@@ -2,7 +2,7 @@
 //! FSpec FR-331 and FR-286's complete protocol-analysis counterexample body.
 
 use filament_contract_model::CheckedNodeId;
-use fsl_eval::simulation::protocol::{send_record_json, transition_json};
+use fsl_eval::simulation::protocol::{send_record_json, transition_json, StepKind};
 use fsl_package::protocol_view::{Port, PortRef};
 use serde::Serialize;
 use serde_json::Value;
@@ -14,6 +14,9 @@ use super::{
 use crate::result::{ProtocolWitnessWire, SeparatingWitnessRecord};
 use crate::CounterexampleWireError;
 
+mod key;
+use key::KeyWire;
+
 /// A decisive, natively replayed protocol-analysis counterexample.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ProtocolAnalysisCounterexample {
@@ -24,6 +27,18 @@ pub enum ProtocolAnalysisCounterexample {
 }
 
 impl ProtocolAnalysisCounterexample {
+    /// The native analysis key that the refutation was replayed under.
+    #[must_use]
+    pub fn key(&self) -> &ProtocolAnalysisKey {
+        match self {
+            Self::Realizability(found) => match found.as_ref() {
+                RealizabilityCounterexample::IndistinguishableHistories { key, .. }
+                | RealizabilityCounterexample::EnvironmentDefeat { key, .. } => key,
+            },
+            Self::Projection(found) => &found.key,
+        }
+    }
+
     /// Spell the complete FR-331 body using the native identity codecs.
     ///
     /// # Errors
@@ -54,7 +69,7 @@ enum BodyType {
 #[serde(tag = "kind", rename_all = "kebab-case")]
 enum Evidence<'a> {
     IndistinguishableHistories {
-        key: &'a ProtocolAnalysisKey,
+        key: KeyWire<'a>,
         role: &'a CheckedNodeId,
         history_a: PlayWire,
         history_b: PlayWire,
@@ -64,13 +79,13 @@ enum Evidence<'a> {
         separating_witness: ProtocolWitnessWire,
     },
     EnvironmentDefeat {
-        key: &'a ProtocolAnalysisKey,
+        key: KeyWire<'a>,
         defeats_per_branch: Vec<BranchWire>,
         obligation: &'a CheckedNodeId,
         separating_witness: ProtocolWitnessWire,
     },
     Projection {
-        key: &'a ProtocolAnalysisKey,
+        key: KeyWire<'a>,
         role: &'a CheckedNodeId,
         decision: DecisionWire<'a>,
         separating_witness: ProtocolWitnessWire,
@@ -109,7 +124,7 @@ impl RealizabilityCounterexample {
                 obligation,
                 separating_witness,
             } => Evidence::IndistinguishableHistories {
-                key,
+                key: KeyWire::of(key),
                 role,
                 history_a: play(history_a)?,
                 history_b: play(history_b)?,
@@ -124,7 +139,7 @@ impl RealizabilityCounterexample {
                 obligation,
                 separating_witness,
             } => Evidence::EnvironmentDefeat {
-                key,
+                key: KeyWire::of(key),
                 defeats_per_branch: defeats_per_branch
                     .iter()
                     .map(|branch| {
@@ -179,7 +194,7 @@ impl ProjectionCounterexample {
             },
         };
         body(Evidence::Projection {
-            key: &self.key,
+            key: KeyWire::of(&self.key),
             role: &self.role,
             decision,
             separating_witness: witness(&self.separating_witness)?,
@@ -217,6 +232,10 @@ fn play(play: &Play) -> Result<PlayWire, CounterexampleWireError> {
         .steps
         .iter()
         .map(|step| {
+            if (step.transition.kind() == StepKind::Send) != step.transition.send_record().is_some()
+            {
+                return Err(CounterexampleWireError::Unspelled("send record placement"));
+            }
             Ok(StepWire {
                 successor: ordinal(step.successor)?,
                 transition: transition_json(&step.transition)

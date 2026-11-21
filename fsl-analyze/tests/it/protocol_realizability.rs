@@ -1603,7 +1603,13 @@ fn a_symbolic_capacity_is_decided_at_its_bound_value_under_bounded() {
 
 /// The shared outcome adapter retains complete real arena refutations and
 /// their originating item association for both realizability alternatives.
-#[trace("FR-286-AC-33", "FR-286-AC-34", "FR-573-AC-2", "FSpec-FR-331-AC-61")]
+#[trace(
+    "FR-286-AC-33",
+    "FR-286-AC-34",
+    "FR-286-AC-37",
+    "FR-573-AC-2",
+    "FSpec-FR-331-AC-61"
+)]
 #[test]
 fn protocol_counterexample_outcomes_keep_both_realizability_bodies() {
     use fsl_analyze::analyze::{analyze_document, split_records, Counterexample};
@@ -1629,11 +1635,139 @@ fn protocol_counterexample_outcomes_keep_both_realizability_bodies() {
                 wire.get("counterexample").is_none(),
                 "FR-352 excludes the body"
             );
-            (wire["analysis"]["key"].clone(), wire["witness"].clone())
+            (
+                counterexample_key(&wire["analysis"]["key"]),
+                wire["witness"].clone(),
+            )
         })
         .collect();
     let (terminals, found) = split_records(records, &hidden.checked);
     assert_eq!(found.len(), 2);
+    assert!(matches!(
+        fsl_analyze::analyze::analyze_item(&terminals[0], &[]),
+        Err(fsl_replay::OutcomeItemError::MissingCounterexample)
+    ));
+    assert!(matches!(
+        fsl_analyze::analyze::analyze_item(&terminals[0], &found[1..]),
+        Err(fsl_replay::OutcomeItemError::MissingCounterexample)
+    ));
+    for original in &found {
+        let Counterexample::ProtocolAnalysis(native) = &original.counterexample else {
+            unreachable!()
+        };
+        let entry = |backend, native, wire| fsl_analyze::analyze::ItemCounterexample {
+            request_index: original.request_index,
+            backend,
+            counterexample: Counterexample::ProtocolAnalysis(native),
+            wire: Ok(wire),
+        };
+        let body = original.wire.as_ref().unwrap();
+        let mut large = native.clone();
+        let ProtocolAnalysisCounterexample::Realizability(large_native) = large.as_mut() else {
+            unreachable!()
+        };
+        let large_key = match large_native.as_mut() {
+            RealizabilityCounterexample::IndistinguishableHistories { key, .. }
+            | RealizabilityCounterexample::EnvironmentDefeat { key, .. } => key,
+        };
+        let fsl_replay::protocol_analysis::ProtocolAnalysisKey::Realizability(large_key) =
+            large_key
+        else {
+            unreachable!()
+        };
+        large_key.bounds.max_depth = u64::MAX;
+        large_key.bounds.max_history = Some(u64::MAX);
+        large_key.premises.channels[0].delivery =
+            fsl_replay::protocol_analysis::DeliveryPremise::Between {
+                lower: u64::MAX,
+                upper: u64::MAX,
+            };
+        large_key.premises.channels[0].capacity =
+            fsl_replay::protocol_analysis::CapacityPremise::Literal { value: u64::MAX };
+        large_key.premises.channels[1].capacity =
+            fsl_replay::protocol_analysis::CapacityPremise::Symbolic {
+                name: "slots".to_owned(),
+                value: Some(u64::MAX),
+            };
+        let encoded = large.to_wire().unwrap();
+        for pointer in [
+            "/key/bounds/max_depth",
+            "/key/bounds/max_history",
+            "/key/channels/0/delivery/lower",
+            "/key/channels/0/delivery/upper",
+            "/key/channels/0/capacity/value",
+            "/key/channels/1/capacity/value",
+        ] {
+            assert_eq!(encoded.pointer(pointer).unwrap(), "18446744073709551615");
+        }
+        fsl_foundation::canonical_json::encode(&encoded)
+            .expect("full u64 key quantities remain lossless in the body");
+        let stored: serde_json::Value =
+            serde_json::from_str(&large.key().to_json().unwrap()).unwrap();
+        assert_eq!(
+            stored["bounds"]["max_depth"].as_u64(),
+            Some(u64::MAX),
+            "FR-352 stored key encoding remains numeric"
+        );
+        let wrong_backend = entry(
+            BackendId::new("another-backend"),
+            native.clone(),
+            body.clone(),
+        );
+        assert!(matches!(
+            fsl_analyze::analyze::analyze_item(
+                &terminals[original.request_index.get()],
+                &[wrong_backend]
+            ),
+            Err(fsl_replay::OutcomeItemError::CounterexampleAssociation)
+        ));
+        let mut substituted = native.clone();
+        let key = match substituted.as_mut() {
+            ProtocolAnalysisCounterexample::Realizability(found) => match found.as_mut() {
+                RealizabilityCounterexample::IndistinguishableHistories { key, .. }
+                | RealizabilityCounterexample::EnvironmentDefeat { key, .. } => key,
+            },
+            ProtocolAnalysisCounterexample::Projection(_) => unreachable!(),
+        };
+        let fsl_replay::protocol_analysis::ProtocolAnalysisKey::Realizability(key) = key else {
+            unreachable!()
+        };
+        key.definition_key.push_str("/another-analysis");
+        let wrong_key_wire = substituted.to_wire().unwrap();
+        let wrong_key = entry(original.backend.clone(), substituted, wrong_key_wire);
+        assert!(matches!(
+            fsl_analyze::analyze::analyze_item(
+                &terminals[original.request_index.get()],
+                &[wrong_key]
+            ),
+            Err(fsl_replay::OutcomeItemError::CounterexampleAssociation)
+        ));
+        let other = &found[1 - original.request_index.get()];
+        let swapped_body = entry(
+            original.backend.clone(),
+            native.clone(),
+            other.wire.as_ref().unwrap().clone(),
+        );
+        assert!(matches!(
+            fsl_analyze::analyze::analyze_item(
+                &terminals[original.request_index.get()],
+                &[swapped_body]
+            ),
+            Err(fsl_replay::OutcomeItemError::CounterexampleBodyMismatch)
+        ));
+        for member in ["key", "obligation", "separating_witness"] {
+            let mut changed = body.clone();
+            changed.as_object_mut().unwrap().remove(member);
+            let changed = entry(original.backend.clone(), native.clone(), changed);
+            assert!(matches!(
+                fsl_analyze::analyze::analyze_item(
+                    &terminals[original.request_index.get()],
+                    &[changed]
+                ),
+                Err(fsl_replay::OutcomeItemError::CounterexampleBodyMismatch)
+            ));
+        }
+    }
     for (at, ((key, witness), found)) in expected_keys.iter().zip(&found).enumerate() {
         assert_eq!(found.request_index, RequestIndex::new(at));
         assert_eq!(
@@ -1734,10 +1868,33 @@ fn protocol_counterexample_outcomes_keep_both_realizability_bodies() {
     let document = analyze_document(&terminals, &found).expect("refutations have their bodies");
     let wire: serde_json::Value = serde_json::from_slice(&document.to_bytes().unwrap()).unwrap();
     let items = wire["items"].as_array().unwrap();
+    assert_eq!(wire["last_stage"], "S8");
     assert_eq!(items.len(), 2);
     for (at, item) in items.iter().enumerate() {
         assert_eq!(item["request_index"], at);
         assert_eq!(item["result"], "refuted");
         assert_eq!(item["counterexample"], *found[at].wire.as_ref().unwrap());
     }
+}
+
+/// Expected member-specific numeric view; the native FR-352 record remains numeric.
+pub(crate) fn counterexample_key(native: &serde_json::Value) -> serde_json::Value {
+    let mut key = native.clone();
+    for member in ["max_depth", "max_history"] {
+        if let Some(value) = key["bounds"][member].as_u64() {
+            key["bounds"][member] = serde_json::Value::String(value.to_string());
+        }
+    }
+    for channel in key["channels"].as_array_mut().unwrap() {
+        if let Some(value) = channel["capacity"]["value"].as_u64() {
+            channel["capacity"]["value"] = serde_json::Value::String(value.to_string());
+        }
+        if channel["delivery"]["kind"] == "between" {
+            for member in ["lower", "upper"] {
+                let value = channel["delivery"][member].as_u64().unwrap();
+                channel["delivery"][member] = serde_json::Value::String(value.to_string());
+            }
+        }
+    }
+    key
 }

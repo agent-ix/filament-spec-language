@@ -1575,7 +1575,14 @@ fn a_bounded_spawn_projects_to_one_local_role_class() {
 
 /// Both native projection decisions survive the shared outcome adapter with
 /// their complete evidence, without a synthesized local graph.
-#[trace("FR-286-AC-35", "FR-573-AC-2", "FR-570-AC-6", "FR-890-AC-5")]
+#[trace(
+    "FR-286-AC-35",
+    "FR-286-AC-37",
+    "FR-573-AC-2",
+    "FR-570-AC-6",
+    "FR-890-AC-5",
+    "FR-621"
+)]
 #[test]
 fn protocol_counterexample_outcomes_keep_both_projection_decisions() {
     use filament_exact::Cancel;
@@ -1646,7 +1653,10 @@ fn protocol_counterexample_outcomes_keep_both_projection_decisions() {
         assert_eq!(body.as_object().unwrap().len(), 6);
         assert_eq!(body["type"], "protocol-analysis-counterexample");
         assert_eq!(body["kind"], "projection");
-        assert_eq!(body["key"], record["analysis"]["key"]);
+        assert_eq!(
+            body["key"],
+            crate::protocol_realizability::counterexample_key(&record["analysis"]["key"])
+        );
         assert_eq!(body["role"], json!(native.role));
         assert_eq!(body["separating_witness"], record["witness"]);
         let decision = &body["decision"];
@@ -1720,6 +1730,14 @@ fn protocol_counterexample_outcomes_keep_both_projection_decisions() {
         let wire: serde_json::Value =
             serde_json::from_slice(&document.to_bytes().unwrap()).unwrap();
         assert_eq!(wire["items"][0]["result"], "refuted");
+        assert_eq!(
+            wire["last_stage"],
+            if kind == "acting-instance" {
+                "S7"
+            } else {
+                "S8"
+            }
+        );
         assert_eq!(&wire["items"][0]["counterexample"], body);
     }
 }

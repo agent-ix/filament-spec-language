@@ -272,8 +272,17 @@ pub(crate) fn settle(
     index: RequestIndex,
     backend: BackendId,
 ) -> (TerminalRecord, ProtocolAnalysisArtifact) {
+    let key = match &artifact {
+        ProtocolAnalysisArtifact::Projection(result) => &result.key,
+        ProtocolAnalysisArtifact::Realizability(result) => &result.key,
+    };
     (
-        TerminalRecord::of_protocol_analysis(index, backend, &artifact.settlement()),
+        TerminalRecord::of_protocol_analysis(
+            index,
+            backend,
+            &artifact.settlement(),
+            Some(key.clone()),
+        ),
         artifact,
     )
 }
