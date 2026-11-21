@@ -167,12 +167,13 @@ fn malformed_and_truncated_records_are_refusal_events() {
     );
 }
 
-/// QSL-2671, FR-644-AC-2: a stream whose first line is blank is one explicit
+/// QSL-2671, FR-644 Behavior (a malformed record is refused; AC-2 states only the
+/// unknown-member case, so it is not tagged): a stream whose first line is blank is one explicit
 /// malformed record. It gives a `refusal` event at physical record 0, the
 /// following observation is still accepted as the first position, and the
 /// summary counts the refused record.
 #[test]
-#[trace("FR-644-AC-2")]
+#[trace("FR-644")]
 fn a_leading_blank_line_is_one_refused_record() {
     let (_case, path) = load();
     let mut input = b"\n".to_vec();
@@ -205,11 +206,11 @@ fn a_leading_blank_line_is_one_refused_record() {
     assert_eq!(summary["refused"], 1, "{summary}");
 }
 
-/// QSL-2671, FR-644-AC-2: a blank or whitespace-only line between records is
-/// refused too, and leaves the session as the stream without it. An absent
-/// stream stays a legitimate empty trace, not a refusal.
+/// QSL-2671, FR-644 Behavior: a blank or whitespace-only line between records is
+/// refused too, and leaves the session as the stream without it. An empty
+/// stdin stream (not an absent source) stays a legitimate empty trace.
 #[test]
-#[trace("FR-644-AC-2")]
+#[trace("FR-644")]
 fn blank_and_whitespace_lines_are_refused_and_absence_is_not() {
     let (_case, path) = load();
     let mut input = records(&[2], false);
@@ -224,6 +225,22 @@ fn blank_and_whitespace_lines_are_refused_and_absence_is_not() {
         .collect();
     assert_eq!(refused, vec![1, 2], "{events:?}");
     assert_eq!(summary["refused"], 2, "{summary}");
+
+    let clean = monitor(&path, &[records(&[2], false), records(&[4], true)].concat());
+    let (clean_events, clean_summary) = clean.completed(0);
+    let good: Vec<Value> = events
+        .iter()
+        .filter(|event| event["category"] != "refusal")
+        .cloned()
+        .map(|mut event| {
+            if event["record"].as_u64() > Some(2) {
+                event["record"] = json!(event["record"].as_u64().unwrap_or(0) - 2);
+            }
+            event
+        })
+        .collect();
+    assert_eq!(good, clean_events, "events");
+    assert_eq!(summary["clauses"], clean_summary["clauses"], "summary");
 
     let stream = monitor(&path, b"");
     let (events, summary) = stream.completed(0);
@@ -305,5 +322,50 @@ fn odd_input_refuses_before_the_stream() {
             "{}",
             outcome.document
         );
+    }
+}
+
+/// The batch form: the `records` file of a `native-monitor/1` request through
+/// `command::run`, as `(events, summary)`.
+fn batch(file: &[u8]) -> (Vec<Value>, Value) {
+    let mut document = request();
+    document["request"]["records"] = json!("records.jsonl");
+    let (case, path) = case_with(SOURCE.as_bytes(), &document);
+    case.write("records.jsonl", file);
+    let result = fsl_command::command::run_with_limits_and_overrides(
+        &path,
+        fsl_command::command::RunLimits::default(),
+        &fsl_command::command::RequestOverrides::default(),
+        &crate::negotiation::Fr290,
+    )
+    .expect("the batch run completes");
+    let run = result.value.as_value().clone();
+    assert_eq!(run["format"], "filament.monitor-run/1", "{run}");
+    (
+        run["events"].as_array().expect("events").clone(),
+        run["summary"].clone(),
+    )
+}
+
+/// QSL-2671, FR-644 Inputs ("a file of records gives the events a live stream
+/// of the same records gives"): a records file that ends in a newline and has
+/// no `end` record gives no spurious refusal for the terminator, and one with
+/// a trailing blank line refuses that line as one blank record, each exactly
+/// as the same bytes run as a stream.
+#[test]
+#[trace("FR-644")]
+fn a_records_file_gives_the_events_of_the_same_stream() {
+    let (_case, path) = load();
+    let terminated = records(&[2, 4], false);
+    let mut blank_tail = terminated.clone();
+    blank_tail.push(b'\n');
+    for (file, refused) in [(terminated, 0), (blank_tail, 1)] {
+        let (events, summary) = batch(&file);
+        let stream = monitor(&path, &file);
+        let (stream_events, stream_summary) = stream.completed(0);
+        assert_eq!(summary["refused"], refused, "{summary}");
+        assert_eq!(events, stream_events, "events");
+        assert_eq!(summary["records"], stream_summary["records"], "{summary}");
+        assert_eq!(summary["clauses"], stream_summary["clauses"], "{summary}");
     }
 }
