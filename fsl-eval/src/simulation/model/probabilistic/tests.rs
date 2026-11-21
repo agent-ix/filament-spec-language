@@ -15,6 +15,175 @@ use crate::simulation::model::ModelSimState;
 use crate::simulation::sampled::world::{self, field, initial, World};
 use crate::simulation::TransitionSystem;
 
+#[trace("FR-120-AC-35", "FR-120-AC-36")]
+#[test]
+fn probability_work_scope_accumulates_real_expansions_on_source_and_package_routes() {
+    let world = World::new(&world::link());
+    let exercise = |mut system: super::ModelSystem<'_>| {
+        let ample = filament_exact::WorkScope::new(system.meter_limits());
+        system.probability_work = Some(ample.clone());
+        let start = initial(&system);
+        let first = system.actions(&start).unwrap().unwrap();
+        assert_eq!(first.len(), 2);
+        let work = ample.consumed_work();
+        assert!(work > 1);
+        let mut limits = system.meter_limits();
+        limits.work_units = work * 2 - 1;
+        let scope = filament_exact::WorkScope::new(limits);
+        system.probability_work = Some(scope.clone());
+        assert_eq!(system.actions(&start).unwrap().unwrap().len(), 2);
+        let stopped = system.actions(&start).unwrap_err();
+        assert_eq!(
+            stopped.limit,
+            Some(crate::simulation::ExpansionLimit::EvaluationMeter(
+                filament_exact::LimitKind::WorkUnits
+            ))
+        );
+        assert!(scope.consumed_work() >= work);
+        assert!(scope.consumed_work() <= limits.work_units);
+        assert!(
+            !system.shares_evaluation_meter(),
+            "probability preserves narrowing"
+        );
+        system.probability_work = Some(filament_exact::WorkScope::new(limits));
+        assert_eq!(
+            system.actions(&start).unwrap().unwrap().len(),
+            2,
+            "a new item starts fresh"
+        );
+    };
+    exercise(world.system());
+    through_the_wire(&world, |input| {
+        exercise(world.admit_input(input, 1_000_000).unwrap())
+    });
+}
+
+#[trace("FR-120-AC-35")]
+#[test]
+fn probability_clause_factory_shares_work_but_keeps_other_counters_fresh() {
+    use super::super::{contracts, walk, ClauseOutcome};
+    use crate::value::ClauseSetOutcome;
+    use filament_eval::FamilyOutcome;
+    use filament_exact::{LimitKind, Outcome, WorkScope};
+    let mut model = world::link();
+    model.body.push_str("invariant A using v on M::Msg at current { self.attempts >= 0 }\ninvariant B using v on M::Msg at current { self.attempts >= 0 }\n");
+    let world = World::new(&model);
+    let exercise = |system: super::ModelSystem<'_>| {
+        let start = initial(&system);
+        let walk = walk::walk_of(&system, &start, None).unwrap();
+        let clauses = &system.clauses.invariants;
+        assert_eq!(clauses.len(), 2);
+        let observations: Vec<_> = clauses
+            .iter()
+            .map(|clause| contracts::invariant_observations(&walk, clause, 0))
+            .collect();
+        let set: Vec<_> = clauses
+            .iter()
+            .zip(&observations)
+            .map(|(clause, observation)| (clause.qualified.clone(), observation))
+            .collect();
+        let probe = WorkScope::new(system.meter_limits());
+        let mut first_meter = probe.meter();
+        let one = system
+            .evaluator()
+            .evaluate_clause(&set[0].0, set[0].1, &mut first_meter)
+            .unwrap();
+        assert!(matches!(
+            one.evaluation.outcome,
+            FamilyOutcome::Evaluated(Outcome::Completed(Value::Boolean(true)))
+        ));
+        let work = probe.consumed_work();
+        assert!(work > 0);
+        let mut limits = system.meter_limits();
+        limits.work_units = work * 2 - 1;
+        let scope = WorkScope::new(limits);
+        let evaluated = system
+            .evaluator()
+            .evaluate_clause_set(&set, &mut || scope.meter())
+            .unwrap();
+        assert_eq!(evaluated.outcome, ClauseSetOutcome::Incomplete);
+        assert_eq!(evaluated.results.len(), 2);
+        let contracts::Verdict::Undecided(ClauseOutcome::Incomplete(denied)) =
+            contracts::verdict(&evaluated.results[1].evaluation.evaluation.outcome)
+        else {
+            panic!("the second clause is unpaid")
+        };
+        assert_eq!(denied.limit_kind, LimitKind::WorkUnits);
+        assert_eq!(denied.limit, limits.work_units);
+        assert_eq!(denied.consumed, scope.consumed_work());
+        // Set each additive non-work counter to one clause's actual prefix.
+        // Both clauses still fit because each factory invocation is fresh.
+        for kind in [LimitKind::ValueOccurrences, LimitKind::ResultUnits] {
+            match kind {
+                LimitKind::ValueOccurrences => {
+                    limits.value_occurrences = first_meter.consumed(kind)
+                }
+                LimitKind::ResultUnits => limits.result_units = first_meter.consumed(kind),
+                _ => unreachable!(),
+            }
+        }
+        limits.work_units = work * 2;
+        let fresh = WorkScope::new(limits);
+        let complete = system
+            .evaluator()
+            .evaluate_clause_set(&set, &mut || fresh.meter())
+            .unwrap();
+        assert_eq!(complete.outcome, ClauseSetOutcome::True);
+        assert_eq!(fresh.consumed_work(), work * 2);
+        let cancel = filament_exact::Cancel::new();
+        let prefix = WorkScope::new(limits);
+        let mut calls = 0;
+        let cancelled = system
+            .evaluator()
+            .evaluate_clause_set(&set, &mut || {
+                calls += 1;
+                if calls == 2 {
+                    cancel.cancel(filament_exact::CancelCause::Requested);
+                }
+                prefix.meter().with_cancel(cancel.clone())
+            })
+            .unwrap();
+        assert_eq!(cancelled.outcome, ClauseSetOutcome::Incomplete);
+        assert_eq!(
+            prefix.consumed_work(),
+            work,
+            "cancellation preserves the admitted first clause"
+        );
+    };
+    exercise(world.system());
+    through_the_wire(&world, |input| {
+        exercise(world.admit_input(input, 1_000_000).unwrap())
+    });
+}
+
+#[trace("FR-120-AC-36")]
+#[test]
+fn probability_candidate_local_denial_precedes_shared_work_and_commits_only_admissions() {
+    use crate::simulation::ExpansionLimit;
+    use filament_exact::{LimitKind, WorkScope};
+    let world = World::new(&world::link());
+    let mut system = world.system_within(1);
+    let mut limits = system.meter_limits();
+    limits.work_units = 1;
+    let scope = WorkScope::new(limits);
+    system.probability_work = Some(scope.clone());
+    let mut budget = system.budget();
+    budget.charge().unwrap();
+    assert_eq!(scope.consumed_work(), 1);
+    assert_eq!(
+        budget.charge().unwrap_err().limit,
+        Some(ExpansionLimit::MaxCandidates)
+    );
+    assert_eq!(scope.consumed_work(), 1);
+    assert_eq!(budget.used(), 1);
+    let mut another = system.budget();
+    assert_eq!(
+        another.charge().unwrap_err().limit,
+        Some(ExpansionLimit::EvaluationMeter(LimitKind::WorkUnits))
+    );
+    assert_eq!(another.used(), 0);
+}
+
 #[trace("TC-636", "FR-201-AC-22", "FR-202-AC-22", "FR-282-AC-17")]
 #[test]
 fn caller_cancellation_enters_qualified_contract_and_state_predicate_meters() {

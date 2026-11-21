@@ -147,7 +147,8 @@ pub fn check_statistical(
         .simulation
         .source_package()
         .ok_or_else(|| fault("the-statistical-check-reads-source-forms"))?;
-    let system = ModelSystem::new(subject.simulation)
+    let scope = filament_exact::WorkScope::new(scalar_limits);
+    let system = ModelSystem::new_with_work_scope(subject.simulation, scope, cancel)
         .map_err(|failure| StatisticalRefusal::Admission(Box::new(failure)))?;
     let group = if symmetry.is_empty() {
         None
@@ -169,7 +170,7 @@ pub fn check_statistical(
     let mut model = ModelSampler {
         shared: Rc::new(RefCell::new(shared)),
     };
-    let clause_meter = filament_exact::Meter::new(scalar_limits).with_cancel(cancel.clone());
+    let clause_meter = system.fresh_meter().with_cancel(cancel.clone());
     check_sampled_with_meter(
         SampledRequest {
             claim: &statistical,

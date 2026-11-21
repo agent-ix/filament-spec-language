@@ -121,13 +121,15 @@ fn build_configured(
         .simulation
         .source_package()
         .ok_or_else(|| fault("the-product-reads-source-forms"))?;
-    let system = ModelSystem::new_with_cancel(subject.simulation, cancel).map_err(|failure| {
-        if let Some(cause) = cancel.tripped() {
-            ProductRefusal::Stopped(ProductStop::Cancelled(cause))
-        } else {
-            ProductRefusal::Admission(failure)
-        }
-    })?;
+    let scope = filament_exact::WorkScope::new(subject.simulation.meter);
+    let system =
+        ModelSystem::new_with_work_scope(subject.simulation, scope, cancel).map_err(|failure| {
+            if let Some(cause) = cancel.tripped() {
+                ProductRefusal::Stopped(ProductStop::Cancelled(cause))
+            } else {
+                ProductRefusal::Admission(failure)
+            }
+        })?;
     match TimedSystem::new(&system, &claim.subject.alias) {
         Ok(timed) => {
             if key_policy.is_some() {
@@ -211,8 +213,7 @@ fn build_configured(
         workload,
         kind,
         plan,
-        measure_meter: filament_exact::Meter::new(system.meter_limits())
-            .with_cancel(cancel.clone()),
+        measure_meter: system.fresh_meter().with_cancel(cancel.clone()),
         reads,
         bindings,
         max_states: limits.limits.max_states,
