@@ -95,8 +95,6 @@ pub(super) struct ClauseRead {
     /// The node of each atom's Boolean operand, in formula order.
     pub(super) atoms: Vec<usize>,
     pub(super) fairness: Vec<FairRead>,
-    /// Protocol subjects whose only behavior is the admitted origin stutter.
-    pub(super) protocols: Vec<String>,
 }
 
 /// A temporal clause with its atoms lowered.
@@ -115,8 +113,6 @@ pub(super) struct ClauseLow {
     pub(super) cur: Vec<E>,
     pub(super) next: Vec<E>,
     pub(super) fairness: Vec<FairLow>,
-    /// Protocol subjects whose only behavior is the admitted origin stutter.
-    pub(super) protocols: Vec<String>,
 }
 
 /// A fairness constraint over an exported operation.
@@ -270,81 +266,29 @@ pub(super) fn read(graph: &Graph<'_>, name: &str, position: usize) -> Lower<Clau
             "a clause the package does not read as a temporal clause",
         )
     })?;
-    let mut protocols = Vec::new();
-    for protocol in view.requirements() {
+    if let Some(protocol) = view.requirements().first() {
+        let protocol_position = at_node(graph, protocol)?;
+        let protocol_node = graph.node(protocol_position);
         let row = graph
             .package
             .protocol_activation_relation()
             .into_iter()
-            .find(|row| &row.clause == *protocol && row.required_temporal == node.node_id);
-        if !row.is_some_and(|row| row.activation == CheckedProtocolActivation::Origin) {
+            .find(|row| &row.clause == protocol && row.required_temporal == node.node_id);
+        if let Some(CheckedProtocolActivation::Each { trigger }) = row.map(|row| row.activation) {
+            let trigger_position = at_node(graph, &trigger)?;
+            let trigger_node = graph.node(trigger_position);
+            let construct = format!("{}/{}", trigger_node.node_tag, trigger_node.semantic_form);
             return defer_at(
-                at_node(graph, protocol)?,
-                "protocol/protocol_clause",
-                "a required protocol without one `on origin` activation row",
+                trigger_position,
+                &construct,
+                "a required temporal clause on a protocol `on each` activation row",
             );
         }
-        let protocol_position = at_node(graph, protocol)?;
-        let protocol_node = graph.node(protocol_position);
-        let (protocol_id, protocol_name) = fsl_package::protocol_view::declaration(protocol_node)
-            .map_err(|_| {
-            refusal(
-                "protocol/protocol_clause",
-                "a protocol without a declaration",
-            )
-        })?;
-        let protocol_view = fsl_package::protocol_view::protocol_view(graph.package, protocol_id)
-            .map_err(|_| {
-            refusal(
-                "protocol/protocol_clause",
-                "a required protocol the package view cannot read",
-            )
-        })?;
-        let controls_are_stutter_only = !protocol_view.controls().is_empty()
-            && protocol_view.controls().iter().all(|control| {
-                let Some(control_position) = graph.position(control) else {
-                    return false;
-                };
-                let control_node = graph.node(control_position);
-                match fsl_package::protocol_view::control_operation(control_node).ok() {
-                    Some(fsl_package::protocol_view::ControlOperation::Sequence) => true,
-                    Some(fsl_package::protocol_view::ControlOperation::Check) => {
-                        binding_is_true(graph, control_node, "condition")
-                    }
-                    _ => false,
-                }
-            });
-        let finish_is_stutter_only = graph
-            .position(protocol_view.finish())
-            .is_some_and(|finish| binding_is_true(graph, graph.node(finish), "constraint"));
-        let is_stutter_only = protocol_view.channels().is_empty()
-            && protocol_view.queues().is_empty()
-            && protocol_view.compensations().is_empty()
-            && protocol_view.terminal().is_none()
-            && protocol_view.requirements().len() == 1
-            && protocol_view.requirements()[0] == &node.node_id
-            && controls_are_stutter_only
-            && finish_is_stutter_only;
-        if !is_stutter_only || !super::fairness_of(graph, position)?.is_empty() {
-            return defer_at(
-                protocol_position,
-                "protocol/protocol_clause",
-                "a required protocol outside the channel-free, literal-true check/finish origin subset",
-            );
-        }
-        if !stutter_invariant(view.formula_graph(), 0) {
-            return defer_at(
-                protocol_position,
-                "protocol/protocol_clause",
-                "a protocol subject with a formula outside the unbounded stutter-invariant subset",
-            );
-        }
-        protocols.push(
-            protocol_name
-                .iter()
-                .map(|part| part.as_ref())
-                .collect::<Vec<_>>()
-                .join("::"),
+        let construct = format!("{}/{}", protocol_node.node_tag, protocol_node.semantic_form);
+        return defer_at(
+            protocol_position,
+            &construct,
+            "a protocol-required temporal clause that this build does not lower",
         );
     }
     if let Activation::Each { trigger, .. } = view.activation() {
@@ -419,81 +363,7 @@ pub(super) fn read(graph: &Graph<'_>, name: &str, position: usize) -> Lower<Clau
         refuse_at,
         atoms,
         fairness: super::fairness_of(graph, position)?,
-        protocols,
     })
-}
-
-/// Whether a formula is invariant under the protocol projection's control-only
-/// stuttering. Bounded and past operators are intentionally excluded.
-fn stutter_invariant(uses: &[FormulaNodeUse<'_>], at: usize) -> bool {
-    let Some(root) = uses.get(at) else {
-        return false;
-    };
-    let Some(kind) = root.kind() else {
-        return false;
-    };
-    if root.interval.is_some()
-        || !matches!(
-            kind,
-            FormulaOperation::True
-                | FormulaOperation::False
-                | FormulaOperation::Holds
-                | FormulaOperation::Not
-                | FormulaOperation::And
-                | FormulaOperation::Or
-                | FormulaOperation::Implies
-                | FormulaOperation::Always
-                | FormulaOperation::Eventually
-        )
-    {
-        return false;
-    }
-    root.operands
-        .iter()
-        .all(|&index| stutter_invariant(uses, index))
-}
-
-/// Admit only a literal-true protocol predicate; other shapes need protocol
-/// state semantics that this exporter does not represent.
-fn binding_is_true(
-    graph: &Graph<'_>,
-    node: &filament_contract_model::CheckedSemanticNodeV2,
-    name: &str,
-) -> bool {
-    let Ok(body) = serde_json::to_value(&node.body) else {
-        return false;
-    };
-    let Some(target) = body
-        .get("arguments")
-        .and_then(serde_json::Value::as_array)
-        .into_iter()
-        .flatten()
-        .find(|argument| {
-            argument.get("term").and_then(serde_json::Value::as_str) == Some("binding")
-                && argument.get("name").and_then(serde_json::Value::as_str) == Some(name)
-        })
-        .and_then(|argument| argument.get("value"))
-        .and_then(|value| value.get("target"))
-        .cloned()
-    else {
-        return false;
-    };
-    let Ok(target) = serde_json::from_value::<filament_contract_model::CheckedNodeId>(target)
-    else {
-        return false;
-    };
-    let Some(position) = graph.position(&target) else {
-        return false;
-    };
-    let Ok(literal) = serde_json::to_value(&graph.node(position).body) else {
-        return false;
-    };
-    literal.get("term").and_then(serde_json::Value::as_str) == Some("literal")
-        && literal
-            .get("value_kind")
-            .and_then(serde_json::Value::as_str)
-            == Some("boolean")
-        && literal.get("value") == Some(&serde_json::Value::Bool(true))
 }
 
 // ---- Lean 4 --------------------------------------------------------------
@@ -685,18 +555,6 @@ fn lean_fair(input: &Input<'_>, clause: &ClauseLow) -> Lower<Option<String>> {
 /// Lower the clauses of `input` to Lean 4.
 pub(super) fn lean(input: &Input<'_>, out: &mut Vec<Definition>) -> Lower<()> {
     let mut universes = std::collections::BTreeSet::new();
-    if input
-        .temporals
-        .iter()
-        .any(|clause| !clause.protocols.is_empty())
-    {
-        out.push(define(
-            input.first,
-            Some("PBehaviour".to_owned()),
-            "structure PBehaviour where\n  st : Nat -> State\n  init : Init (st 0)\n  next : forall n, st (n + 1) = st n".to_owned(),
-            None,
-        ));
-    }
     for clause in input.temporals {
         let object = input
             .objects
@@ -734,11 +592,6 @@ pub(super) fn lean(input: &Input<'_>, out: &mut Vec<Definition>) -> Lower<()> {
         let atom = mangle("at_", &clause.name);
         let holds = mangle("holds_", &clause.name);
         let ob = mangle("Ob_", &clause.name);
-        let behavior = if clause.protocols.is_empty() {
-            "Behaviour"
-        } else {
-            "PBehaviour"
-        };
         let binder = &clause.binder;
         for (index, e) in clause.cur.iter().enumerate() {
             out.push(define(
@@ -761,7 +614,7 @@ pub(super) fn lean(input: &Input<'_>, out: &mut Vec<Definition>) -> Lower<()> {
             clause.position,
             Some(holds.clone()),
             format!(
-                "def {holds} (b : {behavior}) ({binder} : List Nat) (i : Int) : Prop :=\n  {formula}"
+                "def {holds} (b : Behaviour) ({binder} : List Nat) (i : Int) : Prop :=\n  {formula}"
             ),
             obligation,
         ));
@@ -777,27 +630,15 @@ pub(super) fn lean(input: &Input<'_>, out: &mut Vec<Definition>) -> Lower<()> {
             ));
             premise = format!("{fair} b -> ");
         }
-        let protocol_rows = if clause.protocols.is_empty() {
-            vec![None]
-        } else {
-            clause.protocols.iter().map(Some).collect()
-        };
-        for (index, protocol) in protocol_rows.into_iter().enumerate() {
-            let theorem = match protocol {
-                None => ob.clone(),
-                Some(_) if index == 0 => ob.clone(),
-                Some(protocol) => mangle("Ob_", &format!("{}_{}", clause.name, protocol)),
-            };
-            out.push(define(
-                clause.position,
-                Some(theorem.clone()),
-                format!(
-                    "def {theorem} : Prop :=\n  forall b : {behavior}, {premise}forall {binder}, {} {binder} -> (forall j : Nat, {ok} (b.st j) {binder}) /\\ {holds} b {binder} 0",
-                    mangle("Ids_", &object.name)
-                ),
-                obligation,
-            ));
-        }
+        out.push(define(
+            clause.position,
+            Some(ob.clone()),
+            format!(
+                "def {ob} : Prop :=\n  forall b : Behaviour, {premise}forall {binder}, {} {binder} -> (forall j : Nat, {ok} (b.st j) {binder}) /\\ {holds} b {binder} 0",
+                mangle("Ids_", &object.name)
+            ),
+            obligation,
+        ));
     }
     Ok(())
 }

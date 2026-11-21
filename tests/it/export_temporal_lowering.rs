@@ -126,8 +126,45 @@ fn export_unit_with_protocol_binding(
     bind_protocol: bool,
     bind_roles: bool,
 ) -> (u8, Value) {
+    export_unit_with_protocol_options(
+        tail,
+        target,
+        start,
+        profile,
+        fixed,
+        bind_protocol,
+        bind_roles,
+        "example/counter-third",
+        "c",
+        json!({}),
+        None,
+        None,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn export_unit_with_protocol_options(
+    tail: &str,
+    target: Target,
+    start: Option<i64>,
+    profile: &str,
+    fixed: bool,
+    bind_protocol: bool,
+    bind_roles: bool,
+    role_selection: &str,
+    over_key: &str,
+    capacities: Value,
+    fidelity: Option<&str>,
+    output: Option<&str>,
+) -> (u8, Value) {
     let directory = tempfile::tempdir().unwrap();
     let mut export = json!({"profile": target.profile(), "obligations": ["T"]});
+    if let Some(fidelity) = fidelity {
+        export["minimum_fidelity"] = json!(fidelity);
+    }
+    if let Some(output) = output {
+        export["output"] = json!(output);
+    }
     if bind_protocol && tail.contains("protocol Hand") {
         let mut roles = serde_json::Map::new();
         if bind_roles {
@@ -135,7 +172,7 @@ fn export_unit_with_protocol_binding(
                 if tail.contains(&format!("role {role} on")) {
                     roles.insert(
                         role.to_owned(),
-                        json!({"type": "model-binding", "selection": "example/counter-third"}),
+                        json!({"type": "model-binding", "selection": role_selection}),
                     );
                 }
             }
@@ -143,9 +180,10 @@ fn export_unit_with_protocol_binding(
         export["protocols"] = json!([{
             "protocol": "Hand",
             "over": {"reference": {
-                "population": "ix://example/counter-third/counters", "key": "c"
+                "population": "ix://example/counter-third/counters", "key": over_key
             }},
-            "roles": roles
+            "roles": roles,
+            "capacities": capacities,
         }]);
     }
     let path = counter_request(directory.path(), export);
@@ -180,13 +218,20 @@ fn export_unit_with_protocol_binding(
         format!("{unit}{tail}"),
     )
     .unwrap();
-    match fsl_command::command::run(&path, &crate::negotiation::Fr290) {
+    let result = match fsl_command::command::run(&path, &crate::negotiation::Fr290) {
         Ok(result) => (
             result.exit_code,
             serde_json::from_str(&result.value.to_string()).unwrap(),
         ),
         Err(error) => (error.category().exit_code(), error.value().unwrap()),
+    };
+    if let Some(output) = output {
+        assert!(
+            !directory.path().join(output).exists(),
+            "refused export wrote its requested file"
+        );
     }
+    result
 }
 
 fn exported_text(body: &str, target: Target) -> String {
@@ -2387,11 +2432,11 @@ fn a_non_object_subject_is_refused_at_its_binder() {
     }
 }
 
-/// FSpec FR-813-AC-17: the safe origin protocol subset admits an exact
-/// protocol selection and exports its stutter-only behavior.
+/// FR-1015-AC-15 and FSpec FR-813-AC-24: even a valid origin protocol binding
+/// remains a typed refusal while this mapper does not lower protocol subjects.
 #[test]
-#[trace("FSpec-TC-1972", "FSpec-FR-813-AC-17")]
-fn a_check_only_protocol_subject_uses_its_origin_requirement() {
+#[trace("FSpec-TC-1972", "FSpec-FR-813-AC-24", "FR-1015-AC-15")]
+fn a_valid_origin_protocol_subject_is_unimplemented_under_both_fidelity_floors() {
     let tail = format!(
         "{}protocol Hand using P over (k: Counter::Counter) on origin {{\n\
              role a on Counter::Counter;\n\
@@ -2402,22 +2447,65 @@ fn a_check_only_protocol_subject_uses_its_origin_requirement() {
         clause_tail("always holds(c.value <= 5)")
     );
     for target in [Target::Tla, Target::Lean] {
-        let (exit, value) = export_tail(&tail, target);
-        assert_eq!(exit, 0, "{value}");
-        assert_eq!(value["export"]["records"][0]["disposition"], "preserved");
-        let text = value["export"]["target_text"].as_str().unwrap();
-        match target {
-            Target::Tla => {
-                assert!(
-                    text.contains("PSpec_Hand == Init /\\ [][UNCHANGED vars]_vars"),
-                    "{text}"
-                );
-                assert!(text.contains("THEOREM Th_T == PSpec_Hand =>"), "{text}");
-            }
-            Target::Lean => {
-                assert!(text.contains("structure PBehaviour where"), "{text}");
-                assert!(text.contains("forall b : PBehaviour"), "{text}");
-            }
+        let family = match target {
+            Target::Tla => "tla",
+            Target::Lean => "lean",
+        };
+        for fidelity in [None, Some("any")] {
+            let (exit, value) = export_unit_with_protocol_options(
+                &tail,
+                target,
+                None,
+                "filament.temporal.infinite-trace/v1",
+                true,
+                true,
+                true,
+                "example/counter-third",
+                "c",
+                json!({}),
+                fidelity,
+                Some("should-not-exist.export"),
+            );
+            assert_eq!(exit, 21, "{value}");
+            assert_eq!(value["export"]["status"], "refused", "{value}");
+            assert!(value["export"].get("target_text").is_none(), "{value}");
+            assert!(value["export"].get("package").is_none(), "{value}");
+            let refusal = &value["export"]["refusal"];
+            assert_eq!(refusal["code"], "unimplemented_capability", "{value}");
+            assert_eq!(refusal["cause"], "unimplemented-meaning", "{value}");
+            assert_eq!(
+                refusal["capability"],
+                format!("export:{family}:protocol/protocol_clause"),
+                "{value}"
+            );
+            assert_eq!(refusal["target"], family, "{value}");
+            assert_eq!(refusal["construct"], "protocol/protocol_clause", "{value}");
+            assert!(refusal["node"].is_string(), "{value}");
+            assert!(
+                refusal["locus"].is_object() || refusal["locus"].is_null(),
+                "{value}"
+            );
+            let fields: std::collections::BTreeSet<_> = refusal
+                .as_object()
+                .unwrap()
+                .keys()
+                .map(String::as_str)
+                .collect();
+            assert_eq!(
+                fields,
+                [
+                    "capability",
+                    "cause",
+                    "code",
+                    "construct",
+                    "locus",
+                    "node",
+                    "target"
+                ]
+                .into_iter()
+                .collect(),
+                "{value}"
+            );
         }
     }
 }
@@ -2445,6 +2533,118 @@ fn a_protocol_subject_with_an_unbound_static_role_refuses_wrong_role_mapping() {
 }
 
 #[test]
+#[trace("FSpec-FR-813-AC-24")]
+fn a_protocol_static_role_binding_to_another_model_refuses_wrong_role_mapping() {
+    let tail = format!(
+        "{}protocol Hand using P over (k: Counter::Counter) on origin {{\n\
+             role a on Counter::Counter;\n\
+             requires temporal T;\n\
+             run sequence Main {{ check Ok using v {{ true }}; }}\n\
+             finish Done as (d: Counter::Counter) {{ true }};\n\
+         }}\n",
+        clause_tail("always holds(c.value <= 5)")
+    );
+    let (exit, value) = export_unit_with_protocol_options(
+        &tail,
+        Target::Tla,
+        None,
+        "filament.temporal.infinite-trace/v1",
+        true,
+        true,
+        true,
+        "example/another-model",
+        "c",
+        json!({}),
+        None,
+        None,
+    );
+    assert_eq!(exit, 20, "{value}");
+    assert_eq!(value["code"], "invalid_runtime_input", "{value}");
+    assert_eq!(value["cause"], "wrong-role-mapping", "{value}");
+    assert_eq!(
+        value["details"]["path"], "/request/export/protocols/0/roles/a",
+        "{value}"
+    );
+}
+
+#[test]
+#[trace("FSpec-FR-813-AC-24")]
+fn a_protocol_over_key_absent_from_the_initial_snapshot_refuses_wrong_role_mapping() {
+    let tail = format!(
+        "{}protocol Hand using P over (k: Counter::Counter) on origin {{\n\
+             role a on Counter::Counter;\n\
+             requires temporal T;\n\
+             run sequence Main {{ check Ok using v {{ true }}; }}\n\
+             finish Done as (d: Counter::Counter) {{ true }};\n\
+         }}\n",
+        clause_tail("always holds(c.value <= 5)")
+    );
+    let (exit, value) = export_unit_with_protocol_options(
+        &tail,
+        Target::Tla,
+        None,
+        "filament.temporal.infinite-trace/v1",
+        true,
+        true,
+        true,
+        "example/counter-third",
+        "absent",
+        json!({}),
+        None,
+        None,
+    );
+    assert_eq!(exit, 20, "{value}");
+    assert_eq!(value["code"], "invalid_runtime_input", "{value}");
+    assert_eq!(value["cause"], "wrong-role-mapping", "{value}");
+    assert_eq!(
+        value["details"]["path"], "/request/export/protocols/0/over",
+        "{value}"
+    );
+}
+
+#[test]
+#[trace("FSpec-FR-813-AC-24")]
+fn a_protocol_whole_model_role_is_auto_bound_and_rejects_a_request_binding() {
+    let tail = format!(
+        "{}protocol Hand using P over (k: Counter::Counter) on origin {{\n\
+             role a on Counter;\n\
+             requires temporal T;\n\
+             run sequence Main {{ check Ok using v {{ true }}; }}\n\
+             finish Done as (d: Counter::Counter) {{ true }};\n\
+         }}\n",
+        clause_tail("always holds(c.value <= 5)")
+    );
+    let (exit, value) = export_unit_with_protocol_options(
+        &tail,
+        Target::Tla,
+        None,
+        "filament.temporal.infinite-trace/v1",
+        true,
+        true,
+        true,
+        "example/counter-third",
+        "c",
+        json!({}),
+        None,
+        None,
+    );
+    assert_eq!(exit, 20, "{value}");
+    assert_eq!(value["code"], "invalid_runtime_input", "{value}");
+    assert_eq!(value["cause"], "wrong-role-mapping", "{value}");
+    assert_eq!(
+        value["details"]["path"], "/request/export/protocols/0/roles/a",
+        "{value}"
+    );
+    assert!(
+        value["message"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("auto-bound"),
+        "{value}"
+    );
+}
+
+#[test]
 #[trace("FSpec-TC-1972", "FSpec-FR-813-AC-24")]
 fn a_protocol_each_requirement_is_refused_at_its_activation_trigger() {
     let tail = format!(
@@ -2463,16 +2663,16 @@ fn a_protocol_each_requirement_is_refused_at_its_activation_trigger() {
     }
 }
 
-/// FSpec FR-813-AC-24: origin-required protocol subjects outside the
-/// check-only subset keep a typed refusal at the protocol clause.
+/// FR-1015-AC-15: origin-required protocol subjects keep a typed refusal at
+/// the protocol clause while the mapper does not lower protocol semantics.
 #[test]
 #[trace("FSpec-TC-1972", "FSpec-FR-813-AC-24")]
-fn a_channel_protocol_subject_keeps_its_typed_refusal() {
+fn a_valid_symbolic_channel_capacity_reaches_the_protocol_typed_refusal() {
     let tail = format!(
         "{}protocol Hand using P over (k: Counter::Counter) on origin {{\n\
              role a on Counter::Counter;\n\
              role b on Counter::Counter;\n\
-             channel ch from a to b carries Boolean ordering unordered delivery exactly-once-premise capacity 1 overflow block;\n\
+             channel ch from a to b carries Boolean ordering unordered delivery exactly-once-premise capacity symbolic(Cap) overflow block;\n\
              requires temporal T;\n\
              run sequence Main {{ check Ok using v {{ true }}; }}\n\
              finish Done as (d: Counter::Counter) {{ true }};\n\
@@ -2480,14 +2680,40 @@ fn a_channel_protocol_subject_keeps_its_typed_refusal() {
         clause_tail("always holds(c.value <= 5)")
     );
     for target in [Target::Tla, Target::Lean] {
-        let refusal = refusal_of(&tail, target);
+        let (exit, value) = export_unit_with_protocol_options(
+            &tail,
+            target,
+            None,
+            "filament.temporal.infinite-trace/v1",
+            true,
+            true,
+            true,
+            "example/counter-third",
+            "c",
+            json!({"Cap": "1"}),
+            None,
+            None,
+        );
+        assert_eq!(exit, 21, "{value}");
+        assert_eq!(
+            value["export"]["refusal"]["code"], "unimplemented_capability",
+            "{value}"
+        );
+        assert_eq!(
+            value["export"]["refusal"]["cause"], "unimplemented-meaning",
+            "{value}"
+        );
+        assert_eq!(
+            value["export"]["refusal"]["construct"], "protocol/protocol_clause",
+            "{value}"
+        );
+        let refusal = &value["export"]["refusal"];
         assert_eq!(refusal["construct"], "protocol/protocol_clause");
     }
 }
 
-/// FR-813-AC-17's bounded origin projection admits only proven constant-true
-/// check and finish predicates; a changing or false condition keeps a typed
-/// refusal at the protocol clause.
+/// A nonliteral check or finish predicate remains within the same typed
+/// protocol refusal boundary as every other protocol subject.
 #[test]
 #[trace("FSpec-TC-1972", "FSpec-FR-813-AC-17")]
 fn a_protocol_subject_origin_with_a_nontrivial_check_or_finish_keeps_its_refusal() {

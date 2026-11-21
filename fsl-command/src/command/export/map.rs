@@ -167,9 +167,16 @@ fn protocol_over_type(
     parameter_object_type(graph, over)
 }
 
-/// Whether a protocol role is a static binding to an object type. Whole-model
-/// roles carry a text literal and are auto-bound by FR-425 instead.
-fn role_is_type_bound(node: &filament_contract_model::CheckedSemanticNodeV2) -> Result<bool> {
+enum RoleModelBinding {
+    Type,
+    WholeModel(String),
+}
+
+/// The model selected for a role. Whole-model roles carry a text literal and
+/// are auto-bound by FR-425 instead of appearing in the request.
+fn role_model_binding(
+    node: &filament_contract_model::CheckedSemanticNodeV2,
+) -> Result<RoleModelBinding> {
     let body = serde_json::to_value(&node.body)
         .map_err(|_| internal("a protocol role body does not serialize"))?;
     let value = body
@@ -184,9 +191,13 @@ fn role_is_type_bound(node: &filament_contract_model::CheckedSemanticNodeV2) -> 
         .and_then(|argument| argument.get("value"))
         .ok_or_else(|| internal("a protocol role has no model binding"))?;
     match value.get("term").and_then(Value::as_str) {
-        Some("reference") => Ok(true),
+        Some("reference") => Ok(RoleModelBinding::Type),
         Some("literal") if value.get("value_kind").and_then(Value::as_str) == Some("text") => {
-            Ok(false)
+            let selection = value
+                .get("value")
+                .and_then(Value::as_str)
+                .ok_or_else(|| internal("a whole-model role has no selected model identity"))?;
+            Ok(RoleModelBinding::WholeModel(selection.to_owned()))
         }
         _ => Err(internal(
             "a protocol role model binding has an unreadable shape",
@@ -609,13 +620,6 @@ fn validate_protocol_bindings(
                     reason: "the required protocol binding has no `over` selection".to_owned(),
                 });
             }
-            if !binding.capacities.is_empty() {
-                return Err(RunCause::ExportRequest {
-                    path: format!("/request/export/protocols/{binding_index}/capacities"),
-                    cause: "unsupported-selection",
-                    reason: "symbolic protocol capacities are outside the origin subset".to_owned(),
-                });
-            }
             let selected_models: Vec<_> = graph.package.selected_model_packages().collect();
             let [selected_model] = selected_models.as_slice() else {
                 return Err(RunCause::ExportRequest {
@@ -712,7 +716,23 @@ fn validate_protocol_bindings(
                             .to_owned(),
                     });
                 }
-                let type_bound = role_is_type_bound(role_node)?;
+                let type_bound = match role_model_binding(role_node)? {
+                    RoleModelBinding::Type => true,
+                    RoleModelBinding::WholeModel(selection) => {
+                        if selection != *selected_model {
+                            return Err(RunCause::ExportRequest {
+                                path: format!(
+                                    "/request/export/protocols/{binding_index}/roles/{role_path}"
+                                ),
+                                cause: "wrong-role-mapping",
+                                reason: format!(
+                                    "the whole-model role is auto-bound to `{selected_model}` and cannot select `{selection}`"
+                                ),
+                            });
+                        }
+                        false
+                    }
+                };
                 if type_bound {
                     required_roles.insert(role_name.to_owned());
                 }
@@ -729,9 +749,11 @@ fn validate_protocol_bindings(
                             "/request/export/protocols/{binding_index}/roles/{role_path}"
                         ),
                         cause: "wrong-role-mapping",
-                        reason: format!(
-                            "the required static role `{role_name}` has no model binding"
-                        ),
+                        reason: if type_bound {
+                            format!("the required static role `{role_name}` has no model binding")
+                        } else {
+                            format!("the whole-model role `{role_name}` is auto-bound and must not have a request binding")
+                        },
                     });
                 }
             }
