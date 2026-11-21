@@ -818,8 +818,7 @@ mod tests {
                 RunLimits::default(),
                 &RequestOverrides::default(),
             )
-            .err()
-            .expect("the repeated key must be refused");
+            .expect_err("the repeated key must be refused");
             assert_eq!(cause.code(), Code::InvalidRequest);
             assert!(cause.to_string().contains("duplicate object key"), "{cause}");
             assert_eq!(directory.path().read_dir().unwrap().count(), 0);
