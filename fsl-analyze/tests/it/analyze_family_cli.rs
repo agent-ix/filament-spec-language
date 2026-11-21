@@ -594,7 +594,7 @@ fn schedulability_edf_full_matches_en7_before_negotiation() {
     closed_form_schedule_request("FullEdf", "proved", 0, "edf");
 }
 
-#[trace("TC-1593", "FR-633-AC-3", "FR-247-AC-2")]
+#[trace("TC-1593", "FR-247-AC-2")]
 #[test]
 fn schedulability_edf_over_matches_en7_before_negotiation() {
     closed_form_schedule_request("OverEdf", "refuted", 10, "edf");
