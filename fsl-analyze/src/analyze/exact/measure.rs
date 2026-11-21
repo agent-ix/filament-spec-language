@@ -617,7 +617,6 @@ fn refute_mean(
             .ok_or(ProbabilityDocumentError::Malformed)
     };
     let mut scheduler = Vec::new();
-    let mut spelled = Vec::new();
     if matches!(claim.scheduler, ProbScheduler::Every) {
         for state in product.ids() {
             let Some(action) = crate::exact_probabilistic::policy_action(product, state, policy)
@@ -631,12 +630,6 @@ fn refute_mean(
                 Ok(key) => key,
                 Err(error) => return document_failure(error, subject),
             };
-            if let crate::exact_probabilistic::ProductAction::Identity(identity) = &action {
-                spelled.push((
-                    fsl_eval::simulation::StateKey::from_canonical_bytes(key.as_bytes().to_vec()),
-                    identity.clone(),
-                ));
-            }
             let action = match canonical_action(system, product, &action, &key_of) {
                 Ok(action) => action,
                 Err(_) => return not_yet(),
@@ -674,9 +667,40 @@ fn refute_mean(
             let ProbForm::MeanOfFraction { bound, .. } = &claim.form else {
                 return broken();
             };
+            let mut spelled = Vec::new();
+            for (key, action) in &token.evidence().scheduler {
+                let fsl_replay::ProductAction::Identity(schedule) = action else {
+                    continue;
+                };
+                let Some(state) = product.ids().find(|state| {
+                    product
+                        .states
+                        .get(state.index())
+                        .and_then(|state| state.certificate_state.as_ref())
+                        == Some(key)
+                }) else {
+                    return broken();
+                };
+                let identity = product.outgoing(state).iter().find_map(|edge| {
+                    let crate::exact_probabilistic::ProductAction::Identity(identity) =
+                        &edge.choice
+                    else {
+                        return None;
+                    };
+                    (fsl_replay::Schedule::of(system, identity).as_ref() == Ok(schedule))
+                        .then_some(identity)
+                });
+                let Some(identity) = identity else {
+                    return broken();
+                };
+                spelled.push((
+                    fsl_eval::simulation::StateKey::from_canonical_bytes(key.as_bytes().to_vec()),
+                    identity.clone(),
+                ));
+            }
             let scope = package.graph().scope();
             let wire = fsl_replay::probabilistic_wire(
-                &witness,
+                token.evidence(),
                 bound,
                 scope.types(),
                 scope.variant_types(),

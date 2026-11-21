@@ -658,6 +658,47 @@ fn an_undefined_measure_after_merged_draws_replays_a_real_positive_draw() {
     assert_eq!(token.mass(), &ratio(1, 4));
 }
 
+fn assert_vacuity_result_schema(terminal: &TerminalRecord, certificate: &Value) {
+    let published = crate::published_fspec::json("proposals/backend-provider-v1/schema.json");
+    let package = crate::published_fspec::json("proposals/checked-package-v2/schema.json");
+    let schema =
+        json!({"$schema":published["$schema"],"$defs":published["$defs"],"$ref":"#/$defs/Result"});
+    let schema = jsonschema::JSONSchema::options()
+        .with_draft(jsonschema::Draft::Draft202012)
+        .with_document("urn:filament:checked-package:v2".into(), package)
+        .compile(&schema)
+        .unwrap();
+    let outcome = serde_json::to_value(fsl_replay::OutcomeItem::from_terminal(terminal)).unwrap();
+    let result = json!({"request_index":terminal.request_index().get(),
+        "backend":terminal.backend().unwrap().as_str(),"kind":"probabilistic-satisfaction",
+        "result":outcome["result"],"basis":outcome["basis"],"certification":outcome["certification"],
+        "certificate":certificate});
+    if let Err(errors) = schema.validate(&result) {
+        panic!(
+            "actual certified vacuity carrier: {:?}\n{result}",
+            errors.map(|error| error.to_string()).collect::<Vec<_>>()
+        );
+    }
+    let mut ordinary = result.clone();
+    ordinary["certificate"]["kind"] = json!("exact");
+    assert!(
+        !schema.is_valid(&ordinary),
+        "exhaustive forbids every other certificate kind"
+    );
+    let mut evidence = result.clone();
+    evidence["evidence"] = json!({});
+    assert!(
+        !schema.is_valid(&evidence),
+        "generic evidence remains forbidden"
+    );
+    let mut scalar_free_exact = result;
+    scalar_free_exact["basis"] = json!({"type":"exact-value"});
+    assert!(
+        !schema.is_valid(&scalar_free_exact),
+        "exact-value still needs its actual rational"
+    );
+}
+
 #[trace("FR-1043-AC-10", "FR-203-AC-10", "FR-203-AC-11")]
 #[test]
 fn unreachable_activation_has_a_certified_value_free_vacuity_basis_for_each_scheduler() {
@@ -703,6 +744,7 @@ fn unreachable_activation_has_a_certified_value_free_vacuity_basis_for_each_sche
             assert_eq!(document["kind"], "conditional");
             assert_eq!(document["conditional"], json!({"mode":"vacuous"}));
             assert_eq!(document["values"], json!([]));
+            assert_vacuity_result_schema(terminal, &document);
             let checked = check(&world, name, &document);
             assert!(
                 matches!(
@@ -1825,4 +1867,122 @@ fn a_residual_undefined_measure_keeps_its_pending_policy_and_unadvanced_control(
         ),
         "{rejected:?}"
     );
+}
+
+#[trace("FR-202-AC-30", "FR-1043-AC-9")]
+#[test]
+fn a_slack_mean_bound_emits_the_checked_policy_and_refuses_the_old_optimizer_policy() {
+    let world = World::new(&retry(&claim(
+        "Q",
+        "every scheduler",
+        "mean of fraction holds(m.delivered) over [0,2] >= rational(1,2)",
+    )));
+    let record = settle(&world, "Q", ModelCheckLimits::default());
+    let old = record
+        .probabilistic_counterexample
+        .as_ref()
+        .unwrap()
+        .evidence();
+    let mut document = mean_bound(old, false, true);
+    let root = URL_SAFE_NO_PAD.encode(old.initial_key.as_bytes());
+    document["values"]
+        .as_array_mut()
+        .unwrap()
+        .iter_mut()
+        .find(|row| row["state"] == root)
+        .unwrap()["value"] = json!({"numerator":"49","denominator":"100"});
+    let hinted = document.clone();
+    document["policy"]
+        .as_array_mut()
+        .unwrap()
+        .retain(|row| row["state"] != root);
+    let mismatch = replay_mean_document(&world, old, &document);
+    assert!(
+        matches!(mismatch, Ok(fsl_replay::ProbabilityWitnessReplay::Parity)),
+        "{mismatch:?}"
+    );
+    let mut empty = old.clone();
+    empty.scheduler.clear();
+    let selected = replay_mean_document(&world, &empty, &document);
+    let Ok(fsl_replay::ProbabilityWitnessReplay::Reproduced(selected)) = selected else {
+        panic!("{selected:?}");
+    };
+    let selected_root = selected
+        .evidence()
+        .scheduler
+        .iter()
+        .find(|(key, _)| key == &old.initial_key)
+        .unwrap();
+    let old_root = old
+        .scheduler
+        .iter()
+        .find(|(key, _)| key == &old.initial_key)
+        .unwrap();
+    assert_ne!(
+        selected_root.1, old_root.1,
+        "both actions must really satisfy the slack bound"
+    );
+    let accepted = replay_mean_document(&world, selected.evidence(), &document);
+    assert!(
+        matches!(
+            accepted,
+            Ok(fsl_replay::ProbabilityWitnessReplay::Reproduced(_))
+        ),
+        "{accepted:?}"
+    );
+    let hint_accepted = replay_mean_document(&world, old, &hinted);
+    assert!(
+        matches!(
+            hint_accepted,
+            Ok(fsl_replay::ProbabilityWitnessReplay::Reproduced(_))
+        ),
+        "{hint_accepted:?}"
+    );
+    let policy = selected.evidence().scheduler.clone();
+    let bytes = serde_json::to_vec(&document).unwrap();
+    let item = fsl_analyze::analyze::exact_probabilistic_item_witness_tampered(
+        RequestIndex::new(0),
+        world.request("Q", ModelCheckLimits::default()),
+        move |witness| {
+            witness.scheduler = policy.clone();
+            witness.subsystem = Some(Box::new(
+                fsl_replay::ProbabilitySubsystemCertificate::from_bytes(
+                    &bytes,
+                    document_limits(),
+                    &Cancel::new(),
+                )
+                .unwrap(),
+            ));
+        },
+    );
+    let result = analyze_items(&Engines::fsl().unwrap(), vec![item], &Cancel::new()).remove(0);
+    assert_eq!(
+        result.terminal().unwrap().value(),
+        &TerminalValue::Refuted,
+        "{:?}",
+        result.settlement
+    );
+    let evidence = result.probabilistic_counterexample.as_ref().unwrap();
+    assert_eq!(evidence.evidence().scheduler, selected.evidence().scheduler);
+    let wire = evidence.wire.as_ref().unwrap();
+    let row = wire["scheduler"]["entries"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|row| row["state"]["key"] == root)
+        .unwrap();
+    assert!(
+        row["choice"]["operation"].to_string().contains("fast"),
+        "the wire must use the checked selection: {row}"
+    );
+    let mismatch = settle_mean_document(&world, "Q", &document);
+    assert!(
+        matches!(
+            mismatch.terminal().unwrap().value(),
+            TerminalValue::Inconclusive(InconclusiveCause::ReplayParity(_))
+        ),
+        "{:?}",
+        mismatch.settlement
+    );
+    assert!(mismatch.probabilistic_counterexample.is_none());
 }
