@@ -3469,6 +3469,27 @@ fn package_remainder_caller_source_carrier_refuses_before_file_io() {
             "{pointer}: {value}"
         );
     }
+    let mut invalid_revision = source("unavailable.native");
+    invalid_revision["formal_revision"] = json!(0);
+    for members in [
+        "\"sources\":[],\"sources\":null".to_owned(),
+        format!("\"sources\":[{invalid_revision}],\"sources\":42"),
+    ] {
+        let raw = format!("{{\"format\":\"native-run/1\",\"request\":{{\"models\":[],\"package\":{{\"file\":\"unavailable-package.json\"}},{members},\"call\":{{\"function\":\"unused\",\"arguments\":[]}}}}}}");
+        let path = directory.path().join("priority.json");
+        std::fs::write(&path, raw).unwrap();
+        let refused = fsl_command::command::run(&path, &crate::negotiation::Fr290)
+            .err()
+            .unwrap();
+        let value = refused.value().unwrap();
+        assert_eq!(refused.category().exit_code(), 20);
+        assert_eq!(value["code"], "invalid-request", "{value}");
+        assert_eq!(value["stage"], "request", "{value}");
+        assert_eq!(
+            value["message"],
+            "invalid clause request member /request/sources: repeated member"
+        );
+    }
 }
 
 #[test]
@@ -4109,11 +4130,11 @@ fn package_window_adapter_controls(
     }
 }
 
-/// Real kernel refusals retain their source record and caller-rendered span;
+/// Real evaluated refusals retain their source record and caller-rendered span;
 /// caller text provisioning remains a call-stage boundary on the byte route.
 #[test]
 #[trace("TC-3019", "FR-1039-AC-11", "TC-451", "FR-100-AC-9")]
-fn package_remainder_condition_refusal_keeps_caller_source_locus() {
+fn package_remainder_call_and_condition_refusals_keep_caller_source_loci() {
     use fsl_foundation::{Source, SourceIdentity, Span};
     let unit = "language \"ix:native\" edition \"1-draft\";\n\
         profile v = \"filament.model.complete/v1\";\n\
@@ -4124,6 +4145,7 @@ fn package_remainder_condition_refusal_keeps_caller_source_locus() {
         function ints using v(xs: Sequence<Integer>[0, 3]): Sequence<Integer>[0, 3] pure { xs }\n\
         type Total = Int[0, 4000];\n\
         function same using v(r: Config::ConfigVersion): Config::ConfigVersion pure { r }\n\
+        function totalVersions using v(p: Population<Config::ConfigVersion>[4]): Total pure { sum<Total>(r in allInstances<Config::ConfigVersion>(p): deref(r).versionNumber) }\n\
         temporal C using t over (c: Counter) clock \"sensor\" on origin \
         { always[0,5] holds(size(allInstances<Config::ConfigVersion>(Config::config_history)) >= 0) }\n\
         temporal Other using t over (c: Counter) clock \"sensor\" on origin \
@@ -4141,12 +4163,20 @@ fn package_remainder_condition_refusal_keeps_caller_source_locus() {
         unit.len(),
     )
     .unwrap_or_else(|refusal| panic!("valid caller source: {}", refusal.error.message));
-    for (member, selection, term) in [(
-        "clause",
-        json!({"selection":{"temporal":{"name":"C","trace":{"finite":[level_sample(1)]}}},
-                "observations":{}}),
-        "allInstances<Config::ConfigVersion>(Config::config_history)",
-    )] {
+    for (member, selection, term) in [
+        (
+            "call",
+            json!({"function":"totalVersions","snapshot":"spine-snapshot.json",
+            "arguments":[{"parameter":"p","value":{"population":format!("ix://{}/config_history", spine::PACKAGE_IDENTITY)}}]}),
+            "allInstances<Config::ConfigVersion>(p)",
+        ),
+        (
+            "clause",
+            json!({"selection":{"temporal":{"name":"C","trace":{"finite":[level_sample(1)]}}},
+            "observations":{}}),
+            "allInstances<Config::ConfigVersion>(Config::config_history)",
+        ),
+    ] {
         let owner = if member == "call" {
             0
         } else {
@@ -4182,7 +4212,15 @@ fn package_remainder_condition_refusal_keeps_caller_source_locus() {
         let refusal = outcome(&expected.1);
         assert_eq!(refusal["kind"], "refused", "{}", expected.1);
         assert_eq!(refusal["code"], "incomplete_population", "{refusal}");
-        assert_eq!(refusal["cause"], "missing-required-artifact", "{refusal}");
+        assert_eq!(
+            refusal["cause"],
+            if member == "call" {
+                "incomplete-scope"
+            } else {
+                "missing-required-artifact"
+            },
+            "{refusal}"
+        );
         assert_eq!(
             refusal["fields"],
             json!({"population":format!("ix://{}/config_history", spine::PACKAGE_IDENTITY)})
@@ -4191,6 +4229,10 @@ fn package_remainder_condition_refusal_keeps_caller_source_locus() {
             refusal["locus"],
             json!({"file":"caller.native","span":span})
         );
+        if member == "clause" {
+            fsl_replay::spine::read_native_run_result(&serde_json::to_vec(&expected.1).unwrap())
+                .unwrap();
+        }
         let mut request = json!({"format":"native-run/1","request":{
             "models":models,"package":{"directory":"handoff"},"sources":[caller]
         }});
@@ -4233,18 +4275,23 @@ fn package_remainder_condition_refusal_keeps_caller_source_locus() {
             .remove("sources");
         assert_missing(&missing);
         missing = request.clone();
+        missing["request"]["sources"] = json!([]);
+        assert_missing(&missing);
+        missing = request.clone();
         missing["request"]["sources"][0]["identity"] = json!("wrong-reference");
         assert_missing(&missing);
         std::fs::write(directory.path().join("caller.native"), "short").unwrap();
         assert_missing(&request);
-        let mut split = unit.as_bytes().to_vec();
-        split[start - 1..start + 1].copy_from_slice("é".as_bytes());
-        assert!(
-            std::str::from_utf8(&split).is_ok(),
-            "the entire caller document remains valid UTF-8"
-        );
-        std::fs::write(directory.path().join("caller.native"), split).unwrap();
-        assert_missing(&request);
+        for endpoint in [start, start + term.len()] {
+            let mut split = unit.as_bytes().to_vec();
+            split[endpoint - 1..endpoint + 1].copy_from_slice("é".as_bytes());
+            assert!(
+                std::str::from_utf8(&split).is_ok(),
+                "the entire caller document remains valid UTF-8"
+            );
+            std::fs::write(directory.path().join("caller.native"), split).unwrap();
+            assert_missing(&request);
+        }
         std::fs::write(directory.path().join("caller.native"), unit).unwrap();
     }
 }
