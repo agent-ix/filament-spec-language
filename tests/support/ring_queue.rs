@@ -415,6 +415,18 @@ pub fn check_models(
     timed: bool,
     body: &str,
 ) -> Result<Checked, Vec<Refused>> {
+    check_models_with_profiles(queue, concrete, timed, "", body)
+}
+
+/// [`check_models`] with additional profile selections before model selections.
+/// `profiles` contains complete declarations, including their trailing newline.
+pub fn check_models_with_profiles(
+    queue: &[u8],
+    concrete: (&str, &str, &[u8]),
+    timed: bool,
+    profiles: &str,
+    body: &str,
+) -> Result<Checked, Vec<Refused>> {
     let mut packages = BTreeMap::new();
     let mut selections = String::new();
     for (alias, identity, bytes) in [("Q", QUEUE, queue), concrete] {
@@ -432,7 +444,7 @@ pub fn check_models(
          profile v = \"filament.value.complete/v1\";\n\
          profile m = \"filament.model.complete/v1\";\n\
          profile inf = \"filament.temporal.infinite-trace/v1\";\n\
-         {temporal}{selections}{body}\n"
+         {temporal}{profiles}{selections}{body}\n"
     );
     let parsed = fsl_cst::parse(
         fsl_foundation::SourceIdentity::new("test", "tc-544"),
