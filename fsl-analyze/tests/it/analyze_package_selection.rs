@@ -70,7 +70,9 @@ fn a_package_analyze_refuses_request_clocks_before_file_intake() {
     assert!(first_diagnostic(&run).to_string().contains("missing-file"));
 
     let body = format!("record ClockReading {{ ready: Boolean; }}\ntemporal Clocked using ep over (r: ClockReading) clock \"events\" on origin {{ always[0,1] holds(r.ready) }}\n{}", bounded());
-    let source = counter_request(&ws, &body, json!([{"claim": "Bounded"}]));
+    // The source control admits a required clock selection without requesting
+    // an engine item; the clock must still be supplied to compilation.
+    let source = counter_request(&ws, &body, json!([]));
     let program = std::fs::read_to_string(ws.path("program.fsl")).expect("source program");
     let program = program.replace(
         "profile t0 = \"filament.temporal.infinite-trace/v1\";",
