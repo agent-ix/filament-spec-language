@@ -2,22 +2,29 @@
 //! FSpec FR-418's task-product state key: a node's `s`, "the complete
 //! source-plus-scheduler product key modulo the finite live-job renaming".
 //!
-//! The key is the discrete part of a symbolic task-product state. Every
-//! clock-valued quantity the concrete task-search key (`TaskProductSystem::
-//! state_key`, which is what `task_search` nodes carry) writes as a rational
-//! (source clock values, arrival ages, a job's demand, jitter, remaining
-//! deadline and service) lives in the node's DBM instead, so it is absent
-//! here. The remaining fields use that key's token grammar and its transport:
-//! the canonical octets are written as one `|`-separated text, and the wire
-//! spelling is the unpadded base64url of those octets in a `{key}` State
-//! locus (FR-331), which is how `task_search` nodes carry theirs.
+//! The key is the discrete part of a symbolic task-product state. It is
+//! written by `fsl_eval::simulation::model::write_task_control`, the same
+//! function that writes the scheduler part of the concrete task-search key
+//! (`TaskProductSystem::state_key`), so there is one grammar and one place
+//! that defines the symbolic extension (job rank, ready-queue order, pending
+//! changes located by rank). The clock-valued quantities the concrete key
+//! spells as rationals live in the node's DBM and are left out; the wire
+//! spelling is the unpadded base64url of the octets in a `{key}` State locus
+//! (FR-331), as `task_search` nodes carry theirs.
 //!
 //! Live jobs are named by their finite rank and slot, never by occurrence or
 //! generation, so two states that differ only by a completed job's reused
-//! slot share one key.
+//! slot share one key. A rank is the job's position among its task's live
+//! jobs by deadline-clock age, oldest first, ties by generation (FR-418).
+//! The key holds neither ages nor generations, so it can check only that
+//! ranks are dense; that each rank agrees with its deadline clock is a fact
+//! about the node's zone, which the checker verifies against its own
+//! recomputation.
 
 use filament_semantic_value::model_transition::ModelTransition;
-use fsl_eval::simulation::model::{canonical_json, AllowancePhase, CriticalityMode};
+use fsl_eval::simulation::model::{
+    write_task_control, AllowancePhase, CriticalityMode, TaskKeyControl, TaskKeyJob, TaskKeyPending,
+};
 use fsl_eval::simulation::StateKey;
 
 /// Whether a task has been activated yet. The age since its last arrival is
@@ -118,6 +125,9 @@ pub enum TaskProductKeyRefusal {
     /// A pending change names no live job.
     #[error("a pending budget change names no live job")]
     DanglingChange,
+    /// Two pending changes name one job.
+    #[error("two pending budget changes name one job")]
+    DuplicateChange,
     /// A source transition has no canonical spelling.
     #[error("a source transition has no canonical identity")]
     Transition,
@@ -199,6 +209,14 @@ impl TaskProductKey {
         if control.queue.len() != ready || !queued_ready || !distinct {
             return Err(TaskProductKeyRefusal::QueueMismatch);
         }
+        for (index, change) in control.pending_budget_changes.iter().enumerate() {
+            let repeated = control.pending_budget_changes[..index]
+                .iter()
+                .any(|other| other.task == change.task && other.rank == change.rank);
+            if repeated {
+                return Err(TaskProductKeyRefusal::DuplicateChange);
+            }
+        }
         for change in &control.pending_budget_changes {
             let live = control
                 .jobs
@@ -223,55 +241,57 @@ impl TaskProductKey {
         &self.control
     }
 
-    /// The key's canonical octets: the source key in lowercase hex, then one
-    /// `|`-separated field per concrete-key field that is not clock-valued.
+    /// The key's canonical octets: the source key in lowercase hex, then the
+    /// scheduler control as `write_task_control` writes it, without the
+    /// clock-valued fields.
     ///
     /// # Errors
     ///
     /// [`TaskProductKeyRefusal::Transition`] when a transition identity has
     /// no canonical spelling.
     pub fn octets(&self) -> Result<StateKey, TaskProductKeyRefusal> {
+        let control = &self.control;
+        let key_control = TaskKeyControl {
+            arrivals: control
+                .arrivals
+                .iter()
+                .map(|phase| match phase {
+                    TaskArrivalPhase::NotArrived => None,
+                    // The age is an arrival clock, so only `=` is discrete.
+                    TaskArrivalPhase::Arrived => Some("=".to_owned()),
+                })
+                .collect(),
+            jobs: control
+                .jobs
+                .iter()
+                .map(|job| TaskKeyJob {
+                    task: job.task,
+                    rank: Some(job.rank),
+                    slot: job.slot,
+                    concrete: Vec::new(),
+                    high_allowance: job.allowance == AllowancePhase::Hi,
+                    ready: job.phase != TaskJobPhase::Pending,
+                    running: job.phase == TaskJobPhase::Running,
+                    release: &job.release,
+                })
+                .collect(),
+            queue: Some(control.queue.clone()),
+            high_mode: control.mode == CriticalityMode::Hi,
+            pending: control
+                .pending_budget_changes
+                .iter()
+                .map(|change| TaskKeyPending {
+                    task: change.task,
+                    index: change.rank,
+                    generation_occurrence: None,
+                    source_transition: &change.source_transition,
+                })
+                .collect(),
+            missed: control.missed,
+        };
         let mut text = self.source.hex();
-        // Arrival phases: `task:-;` before the first activation, `task:=;`
-        // after it (the concrete key writes the age where `=` stands).
-        text.push('|');
-        for (task, phase) in self.control.arrivals.iter().enumerate() {
-            text.push_str(&format!("{task}:"));
-            text.push(match phase {
-                TaskArrivalPhase::NotArrived => '-',
-                TaskArrivalPhase::Arrived => '=',
-            });
-            text.push(';');
-        }
-        for job in &self.control.jobs {
-            text.push('|');
-            text.push_str(&format!("{}:{}:{}:", job.task, job.rank, job.slot));
-            text.push(match job.allowance {
-                AllowancePhase::Lo => 'l',
-                AllowancePhase::Hi => 'h',
-            });
-            text.push(':');
-            text.push(match job.phase {
-                TaskJobPhase::Pending => 'p',
-                TaskJobPhase::Ready => 'r',
-                TaskJobPhase::Running => 'x',
-            });
-            text.push(':');
-            text.push_str(&transition_text(&job.release)?);
-        }
-        text.push_str("|q");
-        for (task, rank) in &self.control.queue {
-            text.push_str(&format!(":{task}.{rank}"));
-        }
-        text.push(match self.control.mode {
-            CriticalityMode::Lo => 'l',
-            CriticalityMode::Hi => 'h',
-        });
-        for change in &self.control.pending_budget_changes {
-            text.push_str(&format!(":{}@{}:", change.task, change.rank));
-            text.push_str(&transition_text(&change.source_transition)?);
-        }
-        text.push(if self.control.missed { '!' } else { '.' });
+        write_task_control(&mut text, &key_control)
+            .map_err(|_| TaskProductKeyRefusal::Transition)?;
         Ok(StateKey::from_canonical_bytes(text.into_bytes()))
     }
 
@@ -286,11 +306,6 @@ impl TaskProductKey {
         let octets = self.octets()?;
         crate::state_key_wire(&octets).map_err(|_| TaskProductKeyRefusal::Transition)
     }
-}
-
-fn transition_text(transition: &ModelTransition) -> Result<String, TaskProductKeyRefusal> {
-    let value = canonical_json(transition).ok_or(TaskProductKeyRefusal::Transition)?;
-    serde_json::to_string(&value).map_err(|_| TaskProductKeyRefusal::Transition)
 }
 
 #[cfg(test)]
@@ -336,7 +351,7 @@ mod tests {
     }
 
     /// The octets use the task-search key's grammar and transport.
-    #[trace("TC-371", "FR-418-AC-13")]
+    #[trace("TC-371", "FR-418-AC-9")]
     #[test]
     fn the_key_is_the_task_search_grammar_in_unpadded_base64url() {
         let key = TaskProductKey::new(
@@ -355,7 +370,7 @@ mod tests {
         assert_eq!(
             text,
             format!(
-                "{}|0:=;1:-;|0:0:1:l:x:{{\"arguments\":[],\"operation\":\"\\\"Task::release\\\"\",\"receiver\":null,\"type\":\"transition\"}}|0:1:0:l:r:{{\"arguments\":[],\"operation\":\"\\\"Task::release\\\"\",\"receiver\":null,\"type\":\"transition\"}}|q:0.1l.",
+                "{}|0:=;1:-;|0:0:1:l:r:x:{{\"arguments\":[],\"operation\":\"\\\"Task::release\\\"\",\"receiver\":null,\"type\":\"transition\"}}|0:1:0:l:r:-:{{\"arguments\":[],\"operation\":\"\\\"Task::release\\\"\",\"receiver\":null,\"type\":\"transition\"}}|q:0.1l.",
                 source().hex()
             )
         );
@@ -368,7 +383,6 @@ mod tests {
     }
 
     /// Listing order does not matter; slot reuse by a later rank does.
-    #[trace("TC-371", "FR-418-AC-13")]
     #[test]
     fn the_key_is_canonical_in_the_job_listing_order() {
         let forward = control(
@@ -405,7 +419,6 @@ mod tests {
     }
 
     /// An inconsistent finite renaming is not a key.
-    #[trace("TC-371", "FR-418-AC-13")]
     #[test]
     fn an_inconsistent_renaming_is_refused() {
         let refused = |control| TaskProductKey::new(source(), control).expect_err("refused");
@@ -453,6 +466,22 @@ mod tests {
                 vec![(0, 0)]
             )),
             TaskProductKeyRefusal::QueueMismatch
+        );
+    }
+
+    /// Two pending changes for one job are not a function of the job.
+    #[test]
+    fn two_pending_changes_for_one_job_are_refused() {
+        let mut scheduler = control(vec![job(0, 0, 0, TaskJobPhase::Pending)], Vec::new());
+        let change = TaskPendingBudgetChange {
+            task: 0,
+            rank: 0,
+            source_transition: release(),
+        };
+        scheduler.pending_budget_changes = vec![change.clone(), change];
+        assert_eq!(
+            TaskProductKey::new(source(), scheduler).expect_err("refused"),
+            TaskProductKeyRefusal::DuplicateChange
         );
     }
 }

@@ -181,7 +181,8 @@ pub use certificate::task_product::{
     TaskArrivalKind, TaskArrivalPhase, TaskClockCeiling, TaskClosureEvidence, TaskClosureMethod,
     TaskDiagonalConstraint, TaskDiagonalOperator, TaskJobPhase, TaskLiveJob,
     TaskPendingBudgetChange, TaskProductCertificate, TaskProductKey, TaskProductKeyRefusal,
-    TaskProductShapeReason, TaskProductShapeRefusal, TaskProductWireError, TaskQueueBound,
+    same_source_transition, TaskProductShapeReason, TaskProductShapeRefusal,
+    TaskProductWireError, TaskQueueBound,
     TaskSchedulerControl, TaskSubtraction, TaskTimeProgress, TaskTransitionTemplate,
 };
 pub use certificate::zone::{LuBounds, Zone, ZoneError};

@@ -11,7 +11,9 @@ pub use key::{
     TaskArrivalPhase, TaskJobPhase, TaskLiveJob, TaskPendingBudgetChange, TaskProductKey,
     TaskProductKeyRefusal, TaskSchedulerControl,
 };
-pub use wire::{TaskProductShapeReason, TaskProductShapeRefusal, TaskProductWireError};
+pub use wire::{
+    same_source_transition, TaskProductShapeReason, TaskProductShapeRefusal, TaskProductWireError,
+};
 
 /// A checked arrival rule copied into the FR-418 task-product certificate.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -129,8 +131,9 @@ impl TaskQueueBound {
 pub struct TaskClockCeiling {
     /// The auxiliary clock name.
     pub clock: String,
-    /// Its positive ceiling in scaled clock units.
-    pub maximum: u64,
+    /// Its positive ceiling in scaled clock units, of any size (FR-418
+    /// writes it as an arbitrary-precision integer string).
+    pub maximum: Integer,
 }
 
 /// The comparison used by an FR-418 diagonal constraint.
@@ -202,8 +205,8 @@ pub struct TaskSubtraction {
     pub transition: TaskTransitionTemplate,
     /// The clock place updated.
     pub clock: String,
-    /// The strictly positive scaled amount.
-    pub constant: u64,
+    /// The strictly positive scaled amount, of any size.
+    pub constant: Integer,
 }
 
 /// The independently checked closure claim the producer supplies for

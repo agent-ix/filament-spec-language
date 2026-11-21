@@ -165,10 +165,195 @@ fn integer(value: &Value, pointer: &str) -> Result<Integer, TaskProductShapeRefu
         .or_else(|_| refuse(pointer, TaskProductShapeReason::NotCanonical))
 }
 
-fn positive_u64(value: &Value, pointer: &str) -> Result<u64, TaskProductShapeRefusal> {
-    match integer(value, pointer)?.to_u64() {
-        Some(0) | None => refuse(pointer, TaskProductShapeReason::NotCanonical),
-        Some(value) => Ok(value),
+fn positive_integer(value: &Value, pointer: &str) -> Result<Integer, TaskProductShapeRefusal> {
+    let value = integer(value, pointer)?;
+    if value.is_zero() || value.is_negative() {
+        return refuse(pointer, TaskProductShapeReason::NotCanonical);
+    }
+    Ok(value)
+}
+
+/// The deepest `TypedValue` nesting the reader admits.
+const MAX_TYPED_DEPTH: usize = 64;
+
+/// Checks `value` against the schema's `TypedValue` definition (FSpec
+/// FR-181): a closed object per `type`.
+fn typed_value(value: &Value, pointer: &str, depth: usize) -> Result<(), TaskProductShapeRefusal> {
+    if depth > MAX_TYPED_DEPTH {
+        return refuse(pointer, TaskProductShapeReason::NotCanonical);
+    }
+    let Some(kind) = value.get("type").and_then(Value::as_str) else {
+        return refuse(pointer, TaskProductShapeReason::WrongKind);
+    };
+    let at = |name: &str| child(pointer, name);
+    let hex = |name: &str, width: usize, even: bool| -> Result<(), TaskProductShapeRefusal> {
+        let spelling = member_str(value, name).unwrap_or("");
+        let digits = spelling
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte));
+        let sized = if even {
+            spelling.len() % 2 == 0
+        } else {
+            spelling.len() == width
+        };
+        if digits && sized {
+            Ok(())
+        } else {
+            refuse(&at(name), TaskProductShapeReason::NotCanonical)
+        }
+    };
+    let nested = |value: &Value, name: String| typed_value(value, &name, depth + 1);
+    let list = |map: &Map<String, Value>, name: &str| -> Result<(), TaskProductShapeRefusal> {
+        for (index, element) in array(member(map, name), &at(name))?.iter().enumerate() {
+            nested(element, child(&at(name), index))?;
+        }
+        Ok(())
+    };
+    match kind {
+        "null" => object(value, pointer, &["type"], &[]).map(drop),
+        "integer" => {
+            let map = object(value, pointer, &["type", "value"], &[])?;
+            integer(member(map, "value"), &at("value")).map(drop)
+        }
+        "boolean" => {
+            let map = object(value, pointer, &["type", "value"], &[])?;
+            match member(map, "value") {
+                Value::Bool(_) => Ok(()),
+                _ => refuse(&at("value"), TaskProductShapeReason::WrongKind),
+            }
+        }
+        "float32" => {
+            object(value, pointer, &["type", "bits"], &[])?;
+            match member_str(value, "bits") {
+                Some(_) => hex("bits", 8, false),
+                None => refuse(&at("bits"), TaskProductShapeReason::WrongKind),
+            }
+        }
+        "float64" => {
+            object(value, pointer, &["type", "bits"], &[])?;
+            match member_str(value, "bits") {
+                Some(_) => hex("bits", 16, false),
+                None => refuse(&at("bits"), TaskProductShapeReason::WrongKind),
+            }
+        }
+        "rational" => {
+            let map = object(
+                value,
+                pointer,
+                &["type", "numerator", "denominator"],
+                &["unit"],
+            )?;
+            integer(member(map, "numerator"), &at("numerator"))?;
+            positive_integer(member(map, "denominator"), &at("denominator"))?;
+            map.get("unit")
+                .map_or(Ok(()), |unit| text(unit, &at("unit")).map(drop))
+        }
+        "decimal" => {
+            let map = object(value, pointer, &["type", "coefficient", "scale"], &["unit"])?;
+            integer(member(map, "coefficient"), &at("coefficient"))?;
+            integer(member(map, "scale"), &at("scale"))?;
+            map.get("unit")
+                .map_or(Ok(()), |unit| text(unit, &at("unit")).map(drop))
+        }
+        "text" => {
+            let map = object(value, pointer, &["type", "value"], &[])?;
+            match member(map, "value") {
+                Value::String(_) => Ok(()),
+                _ => refuse(&at("value"), TaskProductShapeReason::WrongKind),
+            }
+        }
+        "option" => {
+            let map = object(value, pointer, &["type", "value"], &[])?;
+            match member(map, "value") {
+                Value::Null => Ok(()),
+                inner => nested(inner, at("value")),
+            }
+        }
+        "set" | "bag" | "sequence" | "ordered-set" => {
+            let map = object(value, pointer, &["type", "elements"], &[])?;
+            list(map, "elements")
+        }
+        "record" => {
+            let map = object(value, pointer, &["type", "name", "fields"], &[])?;
+            text(member(map, "name"), &at("name"))?;
+            for (index, field) in array(member(map, "fields"), &at("fields"))?
+                .iter()
+                .enumerate()
+            {
+                let base = child(&at("fields"), index);
+                let row = object(field, &base, &["name", "value"], &[])?;
+                text(member(row, "name"), &child(&base, "name"))?;
+                match member(row, "value") {
+                    Value::Null => {}
+                    inner => nested(inner, child(&base, "value"))?,
+                }
+            }
+            Ok(())
+        }
+        "tuple" => {
+            let map = object(value, pointer, &["type", "name", "components"], &[])?;
+            text(member(map, "name"), &at("name"))?;
+            list(map, "components")
+        }
+        "enum" => {
+            let map = object(value, pointer, &["type", "name", "member"], &[])?;
+            text(member(map, "name"), &at("name"))?;
+            text(member(map, "member"), &at("member")).map(drop)
+        }
+        "union" => {
+            let map = object(
+                value,
+                pointer,
+                &["type", "name", "member", "components"],
+                &[],
+            )?;
+            text(member(map, "name"), &at("name"))?;
+            text(member(map, "member"), &at("member"))?;
+            list(map, "components")
+        }
+        "reference" => {
+            let map = object(
+                value,
+                pointer,
+                &["type", "universe", "object_type", "identity"],
+                &[],
+            )?;
+            node_id(member(map, "universe"), &at("universe"))?;
+            node_id(member(map, "object_type"), &at("object_type"))?;
+            match member_str(value, "identity") {
+                Some(_) => hex("identity", 0, true),
+                None => refuse(&at("identity"), TaskProductShapeReason::WrongKind),
+            }
+        }
+        _ => refuse(&at("type"), TaskProductShapeReason::UnknownVariant),
+    }
+}
+
+fn member_str<'v>(value: &'v Value, name: &str) -> Option<&'v str> {
+    value.get(name).and_then(Value::as_str)
+}
+
+/// A checked-package `NodeId`: `{ordinal, package, path}`.
+fn node_id(value: &Value, pointer: &str) -> Result<(), TaskProductShapeRefusal> {
+    let map = object(value, pointer, &["ordinal", "package", "path"], &[])?;
+    count(member(map, "ordinal"), &child(pointer, "ordinal"))?;
+    text(member(map, "package"), &child(pointer, "package"))?;
+    array(member(map, "path"), &child(pointer, "path")).map(drop)
+}
+
+/// Whether two source transitions have one wire spelling. The FR-331 wire
+/// carries an operation as one string (a declaration's `name` or `node`
+/// identity, or the operation text), so a transition read from a certificate
+/// equals the checker's own transition exactly when their wire spellings
+/// agree; structural `==` on a read transition is exact only when both sides
+/// were built from a string-valued operation.
+pub fn same_source_transition(left: &ModelTransition, right: &ModelTransition) -> bool {
+    match (
+        crate::task_source_transition_wire(left),
+        crate::task_source_transition_wire(right),
+    ) {
+        (Ok(left), Ok(right)) => left == right,
+        _ => false,
     }
 }
 
@@ -252,9 +437,7 @@ fn source_transition(
     }
     let operation = text(member(map, "operation"), &child(pointer, "operation"))?;
     let typed = |value: &Value, at: String| -> Result<String, TaskProductShapeRefusal> {
-        if value.get("type").and_then(Value::as_str).is_none() {
-            return refuse(&at, TaskProductShapeReason::WrongKind);
-        }
+        typed_value(value, &at, 0)?;
         serde_json::to_string(value).or_else(|_| refuse(&at, TaskProductShapeReason::NotCanonical))
     };
     let receiver = match member(map, "receiver") {
@@ -359,6 +542,23 @@ impl TaskTransitionTemplate {
         map.insert("taskset".to_owned(), json!(self.task_set));
         map.insert("type".to_owned(), json!("task-transition-template"));
         Ok(Value::Object(map))
+    }
+
+    /// Whether `other` names the same finite template, comparing source
+    /// transitions by their wire spelling ([`same_source_transition`]).
+    pub fn same_identity(&self, other: &Self) -> bool {
+        self.action == other.action
+            && self.task_set == other.task_set
+            && self.task == other.task
+            && self.job_rank == other.job_rank
+            && self.slot == other.slot
+            && self.priority == other.priority
+            && same_source_transition(&self.release, &other.release)
+            && match (&self.source_transition, &other.source_transition) {
+                (None, None) => true,
+                (Some(left), Some(right)) => same_source_transition(left, right),
+                _ => false,
+            }
     }
 }
 
@@ -625,7 +825,7 @@ fn read_ceiling(value: &Value, pointer: &str) -> Result<TaskClockCeiling, TaskPr
     let map = object(value, pointer, &["clock", "maximum"], &[])?;
     Ok(TaskClockCeiling {
         clock: text(member(map, "clock"), &child(pointer, "clock"))?,
-        maximum: positive_u64(member(map, "maximum"), &child(pointer, "maximum"))?,
+        maximum: positive_integer(member(map, "maximum"), &child(pointer, "maximum"))?,
     })
 }
 
@@ -662,7 +862,7 @@ fn read_subtraction(
             &child(pointer, "transition"),
         )?,
         clock: text(member(map, "clock"), &child(pointer, "clock"))?,
-        constant: positive_u64(member(map, "constant"), &child(pointer, "constant"))?,
+        constant: positive_integer(member(map, "constant"), &child(pointer, "constant"))?,
     })
 }
 
@@ -672,16 +872,47 @@ mod tests {
 
     use super::*;
 
-    const ZC19: &str = r#"{"abstraction":"bounded-subtraction-diagonal/v1","clock_ceilings":[],"diagonal_constraints":[],"queue_bounds":[{"arrival":"periodic","interarrival":{"denominator":"1","numerator":"2"},"max_jitter":{"denominator":"1","numerator":"0"},"max_jobs":1,"relative_deadline":{"denominator":"1","numerator":"2"},"task":"A","taskset":"S","work_lower":{"denominator":"1","numerator":"1"},"work_upper":{"denominator":"1","numerator":"1"}}],"subtractions":[{"clock":"A.service","constant":"1","transition":{"action":"complete","job_rank":0,"release":{"arguments":[],"operation":"Task::release","receiver":null,"type":"transition"},"slot":0,"source_transition":null,"task":"A","taskset":"S","type":"task-transition-template"}}],"time_progress":{"closure":"recompute-all-reachable-successors/v1","live_job_cap":1,"method":"closed-finite-product/v1"}}"#;
+    const VECTORS: &str = "proposals/backend-provider-v1/zone-certificate-vectors.json";
 
-    const ZC26: &str = r#"{"abstraction":"bounded-subtraction-diagonal/v1","clock_ceilings":[],"diagonal_constraints":[],"queue_bounds":[{"arrival":"periodic","interarrival":{"denominator":"1","numerator":"2"},"max_jitter":{"denominator":"1","numerator":"0"},"max_jobs":1,"relative_deadline":{"denominator":"1","numerator":"2"},"task":"A","taskset":"S","work_lower":{"denominator":"1","numerator":"1"},"work_upper":{"denominator":"1","numerator":"2"}}],"subtractions":[],"time_progress":{"closure":"recompute-all-source-successors-no-task-release/v1","live_job_cap":0,"method":"closed-no-release-product/v1"}}"#;
-
-    fn parse(text: &str) -> Value {
-        serde_json::from_str(text).expect("fixture is JSON")
+    fn vectors() -> Value {
+        let bytes = filament_specification::published_file(VECTORS).expect("FSpec publishes ZC");
+        serde_json::from_slice(bytes).expect("the vectors are JSON")
     }
 
-    fn mutated(text: &str, edit: impl FnOnce(&mut Value)) -> Value {
-        let mut value = parse(text);
+    fn vector(id: &str) -> Value {
+        vectors()["vectors"]
+            .as_array()
+            .expect("vectors")
+            .iter()
+            .find(|vector| vector["id"] == id)
+            .unwrap_or_else(|| panic!("vector {id}"))
+            .clone()
+    }
+
+    /// A published certificate's `task_product` member.
+    fn member_of(id: &str) -> Value {
+        vector(id)["document"]["task_product"].clone()
+    }
+
+    /// A malformed vector applied to its base document, and the value at its
+    /// pointer, which the vector replaces.
+    fn malformed(id: &str) -> (Value, String) {
+        let all = vectors();
+        let row = all["malformed_vectors"]
+            .as_array()
+            .expect("malformed vectors")
+            .iter()
+            .find(|row| row["id"] == id)
+            .unwrap_or_else(|| panic!("malformed vector {id}"))
+            .clone();
+        let mut document = vector(row["base"].as_str().expect("base"))["document"].clone();
+        let pointer = row["pointer"].as_str().expect("pointer").to_owned();
+        *document.pointer_mut(&pointer).expect("pointer") = row["value"].clone();
+        (document, pointer)
+    }
+
+    fn mutated(base: &Value, edit: impl FnOnce(&mut Value)) -> Value {
+        let mut value = base.clone();
         edit(&mut value);
         value
     }
@@ -690,14 +921,21 @@ mod tests {
         TaskProductCertificate::from_wire(value).expect_err("the shape is refused")
     }
 
-    /// ZC-19 and ZC-26 read and write back to the published bytes.
+    /// The published members read and write back to the published bytes.
     #[trace("TC-371", "FR-418-AC-11")]
     #[test]
     fn the_published_members_round_trip_byte_for_byte() {
-        for fixture in [ZC19, ZC26] {
-            let read = TaskProductCertificate::from_wire(&parse(fixture)).expect("reads");
+        for id in ["ZC-19", "ZC-23", "ZC-26", "ZC-30"] {
+            let document = vector(id)["document"].clone();
+            let canonical = vector(id)["canonical_text"].as_str().map(str::to_owned);
+            let read = TaskProductCertificate::from_wire(&document["task_product"])
+                .unwrap_or_else(|error| panic!("{id}: {error}"));
             let written = read.to_wire().expect("writes");
-            assert_eq!(serde_json::to_string(&written).expect("text"), fixture);
+            assert_eq!(written, document["task_product"], "{id}");
+            if let Some(canonical) = canonical {
+                let text = serde_json::to_string(&written).expect("text");
+                assert!(canonical.contains(&text), "{id} canonical bytes");
+            }
         }
     }
 
@@ -705,186 +943,314 @@ mod tests {
     #[trace("TC-371", "FR-418-AC-11")]
     #[test]
     fn a_template_round_trips_and_carries_an_optional_priority() {
-        let mut value = parse(ZC19)["subtractions"][0]["transition"].clone();
+        let mut value = member_of("ZC-19")["subtractions"][0]["transition"].clone();
         value["priority"] = json!(3);
         let template = TaskTransitionTemplate::from_wire(&value).expect("reads");
         assert_eq!(template.priority, Some(3));
         assert_eq!(template.to_wire().expect("writes"), value);
+        let mut other = value.clone();
+        other["priority"] = json!(4);
+        let other = TaskTransitionTemplate::from_wire(&other).expect("reads");
+        assert!(template.same_identity(&template));
+        assert!(!template.same_identity(&other));
     }
 
-    /// ZC-20 and ZC-22: an exact task identity is not a template.
+    /// ZC-20 and ZC-21 as published: an exact identity or an occurrence is
+    /// not a template.
     #[trace("TC-371", "FR-418-AC-11")]
     #[test]
-    fn an_exact_task_identity_is_refused_in_place_of_a_template() {
-        let value = mutated(ZC19, |value| {
-            let transition = &mut value["subtractions"][0]["transition"];
-            transition["type"] = json!("task-transition");
-        });
-        let refused = refusal(&value);
-        assert_eq!(refused.pointer, "/subtractions/0/transition/type");
-        assert_eq!(refused.reason, TaskProductShapeReason::UnknownVariant);
-        let rejection = refused.rejection();
-        assert_eq!(rejection.rule, CertificateRule::Malformed);
+    fn the_published_exact_task_identity_vectors_are_not_templates() {
+        for (id, reason) in [
+            ("ZC-20", TaskProductShapeReason::UnknownMember),
+            ("ZC-21", TaskProductShapeReason::UnknownMember),
+        ] {
+            let (document, pointer) = malformed(id);
+            let refused =
+                TaskTransitionTemplate::from_wire(document.pointer(&pointer).expect("transition"))
+                    .expect_err("refused");
+            assert_eq!(refused.reason, reason, "{id}");
+        }
     }
 
-    /// ZC-21: an occurrence, generation or demand added to a template.
+    /// ZC-22, ZC-27 and ZC-29 as published.
     #[trace("TC-371", "FR-418-AC-11")]
     #[test]
-    fn an_occurrence_or_generation_added_to_a_template_is_refused() {
-        for member in ["job", "generation", "demand", "jitter", "deadline"] {
-            let value = mutated(ZC19, |value| {
-                value["subtractions"][0]["transition"][member] = json!(0);
-            });
-            let refused = refusal(&value);
+    fn the_published_malformed_members_are_refused_at_task_product() {
+        for (id, pointer) in [
+            ("ZC-22", "/subtractions/0/transition/deadline"),
+            ("ZC-27", "/time_progress/live_job_cap"),
+            ("ZC-29", "/queue_bounds"),
+        ] {
+            let (document, _) = malformed(id);
+            let refused = refusal(&document["task_product"]);
+            assert_eq!(refused.pointer, pointer, "{id}");
+            let rejection = refused.rejection();
+            assert_eq!(rejection.rule, CertificateRule::Malformed);
             assert_eq!(
-                refused.reason,
-                TaskProductShapeReason::UnknownMember,
-                "{member}"
+                rejection.at,
+                CertificateLocus::CertificateMember(
+                    filament_contract_model::CertificateMember::TaskProduct
+                )
             );
         }
     }
 
-    /// ZC-27 and AC-11: zero cap, unknown method and a producer-asserted
-    /// closure label are refused.
+    /// Occurrence, generation and exact quantities on a template.
     #[trace("TC-371", "FR-418-AC-11")]
     #[test]
-    fn a_zero_cap_an_unknown_method_or_a_foreign_closure_label_is_refused() {
-        let zero = mutated(ZC19, |value| {
-            value["time_progress"]["live_job_cap"] = json!(0)
-        });
-        assert_eq!(refusal(&zero).pointer, "/time_progress/live_job_cap");
-        let method = mutated(ZC19, |value| {
+    fn an_occurrence_or_generation_added_to_a_template_is_refused() {
+        let base = member_of("ZC-19");
+        for name in ["job", "generation", "demand", "jitter", "deadline"] {
+            let value = mutated(&base, |value| {
+                value["subtractions"][0]["transition"][name] = json!(0);
+            });
+            assert_eq!(
+                refusal(&value).reason,
+                TaskProductShapeReason::UnknownMember,
+                "{name}"
+            );
+        }
+    }
+
+    /// Unknown method, foreign closure label, and a policy member.
+    #[trace("TC-371", "FR-418-AC-11")]
+    #[test]
+    fn an_unknown_method_a_foreign_closure_label_or_a_policy_is_refused() {
+        let base = member_of("ZC-19");
+        let method = mutated(&base, |value| {
             value["time_progress"]["method"] = json!("closed-finite-product/v2");
         });
         assert_eq!(
             refusal(&method).reason,
             TaskProductShapeReason::UnknownVariant
         );
-        let label = mutated(ZC19, |value| {
+        let label = mutated(&base, |value| {
             value["time_progress"]["closure"] = json!("asserted-closed");
         });
         assert_eq!(
             refusal(&label).reason,
             TaskProductShapeReason::UnknownVariant
         );
-        let swapped = mutated(ZC19, |value| {
+        let swapped = mutated(&base, |value| {
             value["time_progress"]["closure"] =
                 json!("recompute-all-source-successors-no-task-release/v1");
         });
         assert_eq!(refusal(&swapped).pointer, "/time_progress/closure");
-    }
-
-    /// ZC-29 and the wire spellings of counts and integers.
-    #[trace("TC-371", "FR-418-AC-11")]
-    #[test]
-    fn empty_queue_bounds_and_non_canonical_numbers_are_refused() {
-        let empty = mutated(ZC26, |value| value["queue_bounds"] = json!([]));
-        assert_eq!(refusal(&empty).pointer, "/queue_bounds");
-        let float = mutated(ZC19, |value| {
-            value["queue_bounds"][0]["max_jobs"] = json!(1.0);
+        let zero = mutated(&base, |value| {
+            value["time_progress"]["live_job_cap"] = json!(0)
         });
-        assert_eq!(refusal(&float).reason, TaskProductShapeReason::NotCanonical);
-        let zero_jobs = mutated(ZC19, |value| {
-            value["queue_bounds"][0]["max_jobs"] = json!(0)
-        });
-        assert_eq!(refusal(&zero_jobs).pointer, "/queue_bounds/0/max_jobs");
-        let leading = mutated(ZC19, |value| {
-            value["subtractions"][0]["constant"] = json!("01");
-        });
+        assert_eq!(refusal(&zero).pointer, "/time_progress/live_job_cap");
+        let policy = mutated(&base, |value| value["policy"] = json!("edf"));
         assert_eq!(
-            refusal(&leading).reason,
-            TaskProductShapeReason::NotCanonical
+            refusal(&policy).reason,
+            TaskProductShapeReason::UnknownMember
         );
-        let number = mutated(ZC19, |value| {
-            value["subtractions"][0]["constant"] = json!(1)
-        });
-        assert_eq!(refusal(&number).reason, TaskProductShapeReason::WrongKind);
-        let unreduced = mutated(ZC19, |value| {
-            value["queue_bounds"][0]["interarrival"] =
-                json!({"numerator": "4", "denominator": "2"});
-        });
-        assert_eq!(
-            refusal(&unreduced).reason,
-            TaskProductShapeReason::NotCanonical
-        );
-        let missing = mutated(ZC19, |value| {
+        let missing = mutated(&base, |value| {
             value
                 .as_object_mut()
                 .expect("object")
                 .remove("subtractions");
         });
         assert_eq!(refusal(&missing).reason, TaskProductShapeReason::Missing);
-        let policy = mutated(ZC19, |value| value["policy"] = json!("edf"));
-        assert_eq!(
-            refusal(&policy).reason,
-            TaskProductShapeReason::UnknownMember
-        );
     }
 
-    /// ZC-27 (AC-14 shape): a positive cap, scheduler clocks, diagonals or
+    /// AC-14 shape: a positive cap, scheduler clocks, diagonals or
     /// subtractions under the no-release method.
     #[trace("TC-371", "FR-418-AC-14")]
     #[test]
     fn the_no_release_method_refuses_a_cap_and_scheduler_metadata() {
-        let cap = mutated(ZC26, |value| {
+        let base = member_of("ZC-26");
+        let cap = mutated(&base, |value| {
             value["time_progress"]["live_job_cap"] = json!(1)
         });
         assert_eq!(refusal(&cap).pointer, "/time_progress/live_job_cap");
-        let ceiling = mutated(ZC26, |value| {
+        let ceiling = mutated(&base, |value| {
             value["clock_ceilings"] = json!([{"clock": "A.service", "maximum": "2"}]);
         });
         assert_eq!(refusal(&ceiling).pointer, "/clock_ceilings");
-        let diagonal = mutated(ZC26, |value| {
+        let diagonal = mutated(&base, |value| {
             value["diagonal_constraints"] =
                 json!([{"left": "a", "operator": "<=", "right": "b", "constant": "-1"}]);
         });
         assert_eq!(refusal(&diagonal).pointer, "/diagonal_constraints");
-        let subtraction = mutated(ZC26, |value| {
-            value["subtractions"] = parse(ZC19)["subtractions"].clone();
+        let subtraction = mutated(&base, |value| {
+            value["subtractions"] = member_of("ZC-19")["subtractions"].clone();
         });
         assert_eq!(refusal(&subtraction).pointer, "/subtractions");
-        let label = mutated(ZC26, |value| {
+        let label = mutated(&base, |value| {
             value["time_progress"]["closure"] = json!("recompute-all-reachable-successors/v1");
         });
         assert_eq!(refusal(&label).pointer, "/time_progress/closure");
-        assert!(TaskProductCertificate::from_wire(&parse(ZC26)).is_ok());
+        assert!(TaskProductCertificate::from_wire(&base).is_ok());
     }
 
-    /// Ceilings, diagonals and every operator round-trip.
-    #[trace("TC-371", "FR-418-AC-11")]
+    /// Counts and integer strings: the 2^53 bound, floats, `-0`, `+1`,
+    /// leading zeros, and zero or negative denominators.
+    #[trace("TC-371", "FR-418-AC-7")]
     #[test]
-    fn ceilings_and_diagonal_constraints_round_trip() {
-        let value = mutated(ZC19, |value| {
-            value["clock_ceilings"] = json!([{"clock": "A.service", "maximum": "4"}]);
-            value["diagonal_constraints"] = json!([
+    fn counts_and_integer_strings_follow_the_number_encoding() {
+        let base = member_of("ZC-19");
+        let jobs = |value: Value| mutated(&base, |doc| doc["queue_bounds"][0]["max_jobs"] = value);
+        assert!(TaskProductCertificate::from_wire(&jobs(json!(9_007_199_254_740_991_u64))).is_ok());
+        assert_eq!(
+            refusal(&jobs(json!(9_007_199_254_740_992_u64))).reason,
+            TaskProductShapeReason::NotCanonical
+        );
+        assert_eq!(
+            refusal(&jobs(json!(1.0))).reason,
+            TaskProductShapeReason::NotCanonical
+        );
+        assert_eq!(refusal(&jobs(json!(0))).pointer, "/queue_bounds/0/max_jobs");
+        for spelling in ["01", "+1", "-0", "-1", "0", ""] {
+            let value = mutated(&base, |doc| {
+                doc["subtractions"][0]["constant"] = json!(spelling);
+            });
+            assert_eq!(
+                refusal(&value).reason,
+                TaskProductShapeReason::NotCanonical,
+                "{spelling:?}"
+            );
+        }
+        let number = mutated(&base, |doc| doc["subtractions"][0]["constant"] = json!(1));
+        assert_eq!(refusal(&number).reason, TaskProductShapeReason::WrongKind);
+        let diagonal = |constant: &str| {
+            mutated(&base, |doc| {
+                doc["diagonal_constraints"] =
+                    json!([{"constant": constant, "left": "a", "operator": "<", "right": "b"}]);
+            })
+        };
+        assert!(TaskProductCertificate::from_wire(&diagonal("-5")).is_ok());
+        assert_eq!(
+            refusal(&diagonal("-0")).reason,
+            TaskProductShapeReason::NotCanonical
+        );
+        for (numerator, denominator) in [("4", "2"), ("1", "0"), ("1", "-1"), ("1", "+2")] {
+            let value = mutated(&base, |doc| {
+                doc["queue_bounds"][0]["interarrival"] =
+                    json!({"numerator": numerator, "denominator": denominator});
+            });
+            assert_eq!(
+                refusal(&value).reason,
+                TaskProductShapeReason::NotCanonical,
+                "{numerator}/{denominator}"
+            );
+        }
+        let priority = |value: Value| {
+            let mut template = member_of("ZC-19")["subtractions"][0]["transition"].clone();
+            template["priority"] = value;
+            TaskTransitionTemplate::from_wire(&template)
+        };
+        assert!(priority(json!(2)).is_ok());
+        assert_eq!(
+            priority(json!("2")).expect_err("kind").reason,
+            TaskProductShapeReason::WrongKind
+        );
+        assert_eq!(
+            priority(json!(-1)).expect_err("sign").reason,
+            TaskProductShapeReason::NotCanonical
+        );
+    }
+
+    /// Ceilings and subtraction constants carry any size.
+    #[trace("TC-371", "FR-418-AC-7")]
+    #[test]
+    fn ceilings_and_constants_of_any_size_round_trip() {
+        let huge = "340282366920938463463374607431768211456123";
+        let value = mutated(&member_of("ZC-19"), |doc| {
+            doc["clock_ceilings"] = json!([{"clock": "A.service", "maximum": huge}]);
+            doc["subtractions"][0]["constant"] = json!(huge);
+            doc["diagonal_constraints"] = json!([
                 {"constant": "-1", "left": "a", "operator": "<", "right": "b"},
                 {"constant": "0", "left": "a", "operator": "<=", "right": "b"},
                 {"constant": "2", "left": "a", "operator": ">", "right": "b"},
-                {"constant": "3", "left": "a", "operator": ">=", "right": "b"},
+                {"constant": huge, "left": "a", "operator": ">=", "right": "b"},
             ]);
         });
         let read = TaskProductCertificate::from_wire(&value).expect("reads");
-        assert_eq!(read.diagonal_constraints.len(), 4);
+        assert_eq!(read.clock_ceilings[0].maximum.to_string(), huge);
+        assert_eq!(read.subtractions[0].constant.to_string(), huge);
         assert_eq!(read.to_wire().expect("writes"), value);
-        let bad = mutated(ZC19, |value| {
-            value["diagonal_constraints"] =
-                json!([{"constant": "0", "left": "a", "operator": "=", "right": "b"}]);
+        let zero = mutated(&value, |doc| {
+            doc["clock_ceilings"][0]["maximum"] = json!("0")
+        });
+        assert_eq!(refusal(&zero).reason, TaskProductShapeReason::NotCanonical);
+        let bad = mutated(&value, |doc| {
+            doc["diagonal_constraints"][0]["operator"] = json!("=")
         });
         assert_eq!(refusal(&bad).reason, TaskProductShapeReason::UnknownVariant);
     }
 
-    /// Every shape refusal is `malformed` at `{member: task_product}`.
+    fn template_with(release: Value) -> Value {
+        let mut template = member_of("ZC-19")["subtractions"][0]["transition"].clone();
+        template["release"] = release;
+        template
+    }
+
+    /// Receivers and arguments are `TypedValue`s.
     #[trace("TC-371", "FR-418-AC-11")]
     #[test]
-    fn a_shape_refusal_maps_to_malformed_at_the_task_product_member() {
-        let refused = refusal(&json!(null));
-        let rejection = refused.rejection();
-        assert_eq!(rejection.rule, CertificateRule::Malformed);
-        assert_eq!(
-            rejection.at,
-            CertificateLocus::CertificateMember(
-                filament_contract_model::CertificateMember::TaskProduct
-            )
+    fn a_receiver_or_argument_must_be_a_typed_value() {
+        let identity = |receiver: Value, arguments: Value| {
+            json!({"type": "transition", "operation": "Cell::set",
+                   "receiver": receiver, "arguments": arguments})
+        };
+        let good = identity(
+            json!({"type": "record", "name": "Cell", "fields": [
+                {"name": "n", "value": {"type": "integer", "value": "1"}},
+                {"name": "m", "value": null}]}),
+            json!([{"type": "option", "value": null},
+                   {"type": "set", "elements": [{"type": "text", "value": "x"}]},
+                   {"type": "boolean", "value": true},
+                   {"type": "float32", "bits": "3f800000"}]),
         );
+        assert!(TaskTransitionTemplate::from_wire(&template_with(good)).is_ok());
+        for bad in [
+            identity(json!({"type": "x"}), json!([])),
+            identity(json!({"type": "integer"}), json!([])),
+            identity(json!({"type": "integer", "value": "01"}), json!([])),
+            identity(json!(null), json!([{"type": "boolean", "value": 1}])),
+            identity(json!(null), json!([{"type": "float32", "bits": "ZZ"}])),
+            identity(
+                json!(null),
+                json!([{"type": "set", "elements": [{"type": "?"}]}]),
+            ),
+            identity(
+                json!(null),
+                json!([{"type": "text", "value": "a", "extra": 1}]),
+            ),
+        ] {
+            assert!(
+                TaskTransitionTemplate::from_wire(&template_with(bad.clone())).is_err(),
+                "{bad}"
+            );
+        }
+    }
+
+    fn transition(operation: &str) -> ModelTransition {
+        ModelTransition::new(operation.to_owned(), None, Vec::new(), IDENTITY_LIMITS)
+            .expect("canonical identity")
+    }
+
+    /// A checked transition's node-identity operation is spelled on the wire
+    /// as one string; comparison is by that spelling, and a plain string and
+    /// a `{"name"}` identity are one wire identity.
+    #[trace("TC-371", "FR-418-AC-11")]
+    #[test]
+    fn source_transitions_compare_by_their_wire_spelling() {
+        let node = transition(r#"{"node":"n1","package":"p"}"#);
+        let named = transition(r#"{"name":"Task::release"}"#);
+        let plain = transition(r#""Task::release""#);
+        let wire = crate::task_source_transition_wire(&node).expect("wire");
+        assert_eq!(wire["operation"], "n1");
+        let read = source_transition(&wire, "").expect("reads");
+        assert_ne!(read, node, "structural equality sees the flattening");
+        assert!(same_source_transition(&read, &node));
+        assert!(same_source_transition(&named, &plain));
+        assert!(!same_source_transition(&node, &plain));
+        let mut template = TaskTransitionTemplate::from_wire(&template_with(wire)).expect("reads");
+        let mut other = template.clone();
+        template.release = node;
+        other.release = read;
+        assert!(template.same_identity(&other));
     }
 }
