@@ -629,7 +629,7 @@ pub enum UnavailabilityCause {
     },
     /// FR-182 V-8: an SMT hyper encoding is outside its supported fragment.
     UnsupportedSmtFragment,
-    /// FR-192: a drawn step of an EN-4 run broke the Markov condition
+    /// FR-187: a drawn step of an EN-4 or EN-5 run broke the Markov condition
     /// (ADR-024 PM-3). Wire cause `not-markov`.
     NotMarkov(Box<fsl_eval::simulation::model::NotMarkov>),
     /// FR-192: a choice's scaled weight total exceeds `2^256`, so no draw is
@@ -1394,6 +1394,17 @@ impl ReportedInconclusiveCause {
 }
 
 impl TerminalValue {
+    fn invalid_not_markov(&self) -> bool {
+        matches!(
+            self,
+            Self::Unsupported(UnavailabilityCause::NotMarkov(cause))
+                if cause.post_states == 1
+                    || u64::try_from(cause.post_state_examples.len()).ok()
+                        != Some(cause.post_states.min(2))
+                    || cause.post_state_examples.windows(2).any(|pair| pair[0] >= pair[1])
+        )
+    }
+
     /// Map this value to its ADR-013 O-16 category. Exhaustive with no `_`
     /// arm; a further `TerminalValue` variant fails this match to compile
     /// rather than silently falling into an existing row (FR-069's
@@ -1906,6 +1917,7 @@ impl TerminalRecord {
     }
 
     /// Build an unsupported record with the producing backend identity.
+    /// Malformed NotMarkov evidence settles as an internal failure.
     pub fn unsupported(
         request_index: RequestIndex,
         backend: BackendId,
@@ -2194,14 +2206,7 @@ impl TerminalRecord {
         backend: BackendId,
         value: TerminalValue,
     ) -> Self {
-        let invalid_not_markov = matches!(
-            &value,
-            TerminalValue::Unsupported(UnavailabilityCause::NotMarkov(cause))
-                if cause.post_states == 1
-                    || u64::try_from(cause.post_state_examples.len()).ok()
-                        != Some(cause.post_states.min(2))
-                    || cause.post_state_examples.windows(2).any(|pair| pair[0] >= pair[1])
-        );
+        let invalid_not_markov = value.invalid_not_markov();
         let value = if invalid_not_markov {
             TerminalValue::Failed
         } else {
@@ -2244,12 +2249,18 @@ impl TerminalRecord {
         reason = "used by fsl-replay's crate-local outcome fixtures"
     )]
     pub(crate) fn from_value(request_index: RequestIndex, value: TerminalValue) -> Self {
+        let invalid_not_markov = value.invalid_not_markov();
         Self {
             request_index,
             backend: None,
-            value,
+            value: if invalid_not_markov {
+                TerminalValue::Failed
+            } else {
+                value
+            },
             replay: None,
-            diagnostic: None,
+            diagnostic: invalid_not_markov
+                .then(|| CatalogCode::new("runtime_invariant", "established-invariant-broken")),
             exact_certificate: None,
             exact_certificate_document: None,
             disposition_detail: None,

@@ -537,7 +537,7 @@ pub struct ItemCause {
     /// The current tagged identity of `stale-dependency`.
     #[serde(skip_serializing_if = "Option::is_none")]
     recompiled: Option<StaleIdentityWire>,
-    /// The timed state named by FR-331's sampling refusal causes.
+    /// The model state named by FR-331's probabilistic refusal causes.
     #[serde(skip_serializing_if = "Option::is_none")]
     state: Option<TimedStateWire>,
     /// The typed transition identity named by `not-stochastic`.

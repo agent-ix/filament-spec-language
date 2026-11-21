@@ -455,6 +455,25 @@ mod tests {
         TerminalValue::Incomplete(IncompleteCause::LimitReached { limit, value })
     }
 
+    /// EN-4 preserves terminal validation's diagnostic when its raw payload
+    /// claims one successor or omits the required actual post-state evidence.
+    #[trace("TC-622", "FR-187-AC-3", "TC-1166", "FR-192-AC-1")]
+    #[test]
+    fn malformed_not_markov_keeps_the_terminal_invariant_diagnostic() {
+        for count in [1, 2, 4] {
+            let mut cause = not_markov();
+            cause.post_states = count;
+            let record = settle(&StatisticalOutcome::Unsupported {
+                cause: StatisticalUnsupported::NotMarkov(Box::new(cause)),
+                provenance: provenance(),
+            });
+            let wire = wire(record);
+            assert_eq!(wire["result"], "failed", "{wire}");
+            assert_eq!(wire["cause"]["kind"], "established-invariant-broken");
+            assert!(wire["cause"].get("post_state_count").is_none(), "{wire}");
+        }
+    }
+
     /// FR-192's map from `StatisticalOutcome`: a completed run settles
     /// `measured` with its decision, accepted as success, rejected as a
     /// violation and undecided as inconclusive; a budget, an expansion that
