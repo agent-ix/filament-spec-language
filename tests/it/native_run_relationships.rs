@@ -869,11 +869,14 @@ fn assert_identity_refusal(rows: Vec<Value>) {
         producer_with_relationships(vec![("producer:Order-ships-Shipment", ORDER, SHIPMENT)]),
     );
     let output = run_selected("shipments", "o1", rows, Some(selection));
-    assert_run_relationship_refusal(
-        &output,
-        "invalid-request",
-        None,
-        Some("/call/snapshot/relationships/0/instances/0/identity"),
+    let failure = request_failure(&output);
+    assert_eq!(output.status.code(), Some(20), "{failure}");
+    assert_eq!(failure["code"], "invalid-request", "{failure}");
+    assert_eq!(failure["stage"], "request", "{failure}");
+    assert_eq!(
+        failure["details"]["path"],
+        "/call/snapshot/relationships/0/instances/0/identity",
+        "{failure}"
     );
 }
 
@@ -1072,11 +1075,14 @@ fn unknown_relationship_type_in_correlation_is_invalid_request_after_snapshot_re
         vec![unknown.clone()],
         Some(relationship_selection(json!([]))),
     );
-    assert_run_relationship_refusal(
-        &correlated,
-        "invalid-request",
-        None,
-        Some("/call/snapshot/relationships/0/relationship"),
+    let failure = request_failure(&correlated);
+    assert_eq!(correlated.status.code(), Some(20), "{failure}");
+    assert_eq!(failure["code"], "invalid-request", "{failure}");
+    assert_eq!(failure["stage"], "request", "{failure}");
+    assert_eq!(
+        failure["details"]["path"],
+        "/call/snapshot/relationships/0/relationship",
+        "{failure}"
     );
 
     let ordinary = run_selected("shipments", "o1", vec![unknown], None);
