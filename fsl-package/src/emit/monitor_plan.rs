@@ -1308,7 +1308,7 @@ pub(super) fn follow_final_collections(
 }
 
 /// The shared tail: index the graph, encode and wrap the bytes.
-fn finish(
+pub(super) fn finish(
     base: &CheckedPackageV2,
     retained: &Emission,
     changes: &[(CheckedNodeId, CheckedNodeId)],
@@ -1361,8 +1361,28 @@ fn finish(
         });
         rows
     });
+    let correlation_rows = match base.protocol_correlation_provenance() {
+        filament_contract_model::ProtocolCorrelationProvenance::Complete(table) => {
+            let mut rows = table
+                .groups()
+                .flat_map(|group| group.clauses().iter().cloned())
+                .collect::<Vec<_>>();
+            for row in &mut rows {
+                rekey.id(&mut row.control);
+            }
+            rows.sort_by(|left, right| {
+                (&left.control, left.occurrence.ordinal, left.source_ordinal).cmp(&(
+                    &right.control,
+                    right.occurrence.ordinal,
+                    right.source_ordinal,
+                ))
+            });
+            Some(rows)
+        }
+        filament_contract_model::ProtocolCorrelationProvenance::Unavailable(_) => None,
+    };
     let package = EmittedPackage::new(base.name(), |name| {
-        filament_contract_model::encode_checked_package_v2(
+        filament_contract_model::encode_checked_package_v2_with_protocol_correlation_occurrences(
             name,
             &lock,
             &semantic_graph,
@@ -1379,6 +1399,8 @@ fn finish(
                 schedulability_claims: None,
                 operation_bodies: operation_bodies.as_deref(),
             },
+            None,
+            correlation_rows.as_deref(),
             &capability_report,
             &diagnostics,
             limits.canonical(),

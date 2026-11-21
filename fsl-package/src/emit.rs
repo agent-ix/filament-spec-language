@@ -12,23 +12,24 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque};
 
 use filament_contract_model::{
-    encode_checked_package_v2, ApplicationOperator, CheckedAbstractionField,
-    CheckedAbstractionFrame, CheckedAbstractionObject, CheckedAbstractionParameter,
-    CheckedAbstractionPopulation, CheckedArtifactRef, CheckedCapability,
-    CheckedCapabilityDisposition, CheckedComponentClause, CheckedCompositionComponent,
-    CheckedCompositionPremise, CheckedDeclaration, CheckedDependencyClockSelection,
-    CheckedDependencySelection, CheckedDiagnosticsV2, CheckedDimensionOperand, CheckedEffectiveId,
-    CheckedEnvironmentEntry, CheckedEnvironmentSupplies, CheckedFairnessGranularity,
-    CheckedFairnessKind, CheckedFairnessSupply, CheckedFieldScope, CheckedFrameModification,
-    CheckedGuaranteeMeasure, CheckedGuaranteeProgress, CheckedJson, CheckedNodeId, CheckedNodeKind,
-    CheckedNodeOwner, CheckedNodeTag, CheckedOccurrence, CheckedOccurrenceRole,
-    CheckedOperandEntry, CheckedOperationAnchorBody, CheckedOriginalDeclarationId,
-    CheckedPackageEvidence, CheckedPackageLockV2, CheckedPackageSidecarsRef,
-    CheckedPackageSourceCorrespondenceRef, CheckedPackageV2, CheckedRational,
-    CheckedRefinementStepRowRegion, CheckedScopedDeletion, CheckedSelection, CheckedSelectionRole,
-    CheckedSemanticGraphV2, CheckedSemanticNodeV2, CheckedSourceMapEntry, CheckedSourceRef,
-    CheckedSourceRegion, CheckedTerm, DimensionTerm, LiteralKind, NominalBody, OperationBody,
-    OperationBodyRow, ProtocolForm, ScalarTypeForm, StateForm, ValueForm,
+    encode_checked_package_v2_with_protocol_correlation_occurrences, ApplicationOperator,
+    CheckedAbstractionField, CheckedAbstractionFrame, CheckedAbstractionObject,
+    CheckedAbstractionParameter, CheckedAbstractionPopulation, CheckedArtifactRef,
+    CheckedCapability, CheckedCapabilityDisposition, CheckedComponentClause,
+    CheckedCompositionComponent, CheckedCompositionPremise, CheckedDeclaration,
+    CheckedDependencyClockSelection, CheckedDependencySelection, CheckedDiagnosticsV2,
+    CheckedDimensionOperand, CheckedEffectiveId, CheckedEnvironmentEntry,
+    CheckedEnvironmentSupplies, CheckedFairnessGranularity, CheckedFairnessKind,
+    CheckedFairnessSupply, CheckedFieldScope, CheckedFrameModification, CheckedGuaranteeMeasure,
+    CheckedGuaranteeProgress, CheckedJson, CheckedNodeId, CheckedNodeKind, CheckedNodeOwner,
+    CheckedNodeTag, CheckedOccurrence, CheckedOccurrenceRole, CheckedOperandEntry,
+    CheckedOperationAnchorBody, CheckedOriginalDeclarationId, CheckedPackageEvidence,
+    CheckedPackageLockV2, CheckedPackageSidecarsRef, CheckedPackageSourceCorrespondenceRef,
+    CheckedPackageV2, CheckedRational, CheckedRefinementStepRowRegion, CheckedScopedDeletion,
+    CheckedSelection, CheckedSelectionRole, CheckedSemanticGraphV2, CheckedSemanticNodeV2,
+    CheckedSourceMapEntry, CheckedSourceRef, CheckedSourceRegion, CheckedTerm, DimensionTerm,
+    LiteralKind, NominalBody, OperationBody, OperationBodyRow, ProtocolCorrelationProvenance,
+    ProtocolCorrelationRow, ProtocolForm, ScalarTypeForm, StateForm, ValueForm,
 };
 use serde::Deserialize;
 
@@ -3268,6 +3269,88 @@ fn recorded_occurrences(
         by_node.entry(key).or_default().push((occurrence, location));
     }
     Ok(by_node)
+}
+
+/// Emit every authored related clause against its actual recorded control
+/// occurrence and final full node id (FSpec FR-831). Canonical positions
+/// were retained before lowering deduplicated the records.
+fn protocol_correlation_rows(
+    graph: &CheckedGraph,
+    emitted_node_ids: &HashMap<NodeKey, CheckedNodeId>,
+    source_map: &[CheckedSourceMapEntry],
+) -> Result<Vec<ProtocolCorrelationRow>, EmitRefusal> {
+    let mut rows = Vec::new();
+    for protocol in graph.protocols() {
+        let mut ordinals = BTreeMap::new();
+        for clause in &protocol.slots.related {
+            let source_ordinal = ordinals.entry(clause.node).or_insert(0u64);
+            let key = graph
+                .protocol_node_keys(&protocol.name)
+                .and_then(|keys| keys.nodes.get(&clause.node))
+                .ok_or(EmitRefusal::SourceMapInvariant)?;
+            let control = emitted_node_ids
+                .get(key)
+                .ok_or(EmitRefusal::SourceMapInvariant)?;
+            let path = &protocol
+                .controls
+                .control(clause.node)
+                .ok_or(EmitRefusal::SourceMapInvariant)?
+                .path;
+            let location = Location::root(
+                filament_semantic_value::location::ExpressionOwner::TypeDeclaration {
+                    name: fsl_semantics::check::protocol_site(
+                        &protocol.name,
+                        fsl_semantics::check::ProtocolSite::Control(path),
+                    ),
+                },
+            );
+            let mut recorded = graph
+                .occurrences_at(&location)
+                .iter()
+                .filter(|(node, origin)| node == key && origin.role().as_str() == "declaration");
+            let (_, origin) = recorded.next().ok_or(EmitRefusal::SourceMapInvariant)?;
+            if recorded.next().is_some() {
+                return Err(EmitRefusal::SourceMapInvariant);
+            }
+            let occurrence = checked_occurrence(origin).ok_or(EmitRefusal::SourceMapInvariant)?;
+            let mut entries = source_map.iter().filter(|entry| {
+                entry.node_id == *control
+                    && entry.role == occurrence.role
+                    && entry.ordinal == occurrence.ordinal
+            });
+            let entry = entries.next().ok_or(EmitRefusal::SourceMapInvariant)?;
+            if entries.next().is_some() || entry.regions.is_empty() {
+                return Err(EmitRefusal::SourceMapInvariant);
+            }
+            let alias = &protocol
+                .relationships
+                .get(clause.relationship)
+                .ok_or(EmitRefusal::SourceMapInvariant)?
+                .name;
+            let canonical_index = clause
+                .canonical_index()
+                .and_then(|index| u64::try_from(index).ok())
+                .ok_or(EmitRefusal::SourceMapInvariant)?;
+            rows.push(ProtocolCorrelationRow {
+                control: control.clone(),
+                occurrence,
+                canonical_index,
+                alias: alias.as_str().into(),
+                source_ordinal: *source_ordinal,
+            });
+            *source_ordinal = source_ordinal
+                .checked_add(1)
+                .ok_or(EmitRefusal::SourceMapInvariant)?;
+        }
+    }
+    rows.sort_by(|left, right| {
+        (&left.control, left.occurrence.ordinal, left.source_ordinal).cmp(&(
+            &right.control,
+            right.occurrence.ordinal,
+            right.source_ordinal,
+        ))
+    });
+    Ok(rows)
 }
 
 /// Joins each equality producer row to the exact occurrence and checked id
@@ -6530,8 +6613,17 @@ pub fn emit_timed_models(
         })
         .collect::<Vec<_>>()
     });
+    let correlation_rows = match base.protocol_correlation_provenance() {
+        ProtocolCorrelationProvenance::Complete(table) => Some(
+            table
+                .groups()
+                .flat_map(|group| group.clauses().iter().cloned())
+                .collect::<Vec<_>>(),
+        ),
+        ProtocolCorrelationProvenance::Unavailable(_) => None,
+    };
     let package = EmittedPackage::new(base.name(), |name| {
-        encode_checked_package_v2(
+        encode_checked_package_v2_with_protocol_correlation_occurrences(
             name,
             &lock,
             &semantic_graph,
@@ -6548,6 +6640,8 @@ pub fn emit_timed_models(
                 schedulability_claims: None,
                 operation_bodies: base.operation_body_rows(),
             },
+            None,
+            correlation_rows.as_deref(),
             &capability_report,
             &diagnostics,
             limits.canonical(),
@@ -7660,6 +7754,7 @@ fn emit_package_inner(
         .operation_effects()
         .filter(|rows| operation_effects_are_carried(rows, &nodes));
     let operation_body_rows = operation_body_rows(graph, &emitted_node_ids, &nodes);
+    let correlation_rows = protocol_correlation_rows(graph, &producer_node_ids, &source_map)?;
     let operand_rows = write_operand_slots(&mut nodes, limits)?;
     let semantic_graph = CheckedSemanticGraphV2 {
         graph_version: GRAPH_V2.into(),
@@ -7675,7 +7770,7 @@ fn emit_package_inner(
         entries: Vec::new(),
     };
     let package = EmittedPackage::new(graph.package_name(), |name| {
-        encode_checked_package_v2(
+        encode_checked_package_v2_with_protocol_correlation_occurrences(
             name,
             &lock,
             &semantic_graph,
@@ -7695,6 +7790,8 @@ fn emit_package_inner(
                 schedulability_claims: (!schedulability_claim_rows.is_empty())
                     .then_some(schedulability_claim_rows.as_slice()),
             },
+            None,
+            Some(&correlation_rows),
             &capability_report,
             &diagnostics,
             limits.canonical(),

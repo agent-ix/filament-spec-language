@@ -182,6 +182,16 @@ pub struct CheckedRelated {
     pub relationship: usize,
     /// The first and second end, each of its relationship end's type.
     pub ends: [CheckedBody; 2],
+    /// The canonical record position established by S4 before deduplication.
+    pub(crate) canonical_index: Option<usize>,
+}
+
+impl CheckedRelated {
+    /// The position of this authored clause in its control's canonical
+    /// `related` array, once S4 has lowered the control (FSpec FR-831).
+    pub fn canonical_index(&self) -> Option<usize> {
+        self.canonical_index
+    }
 }
 
 /// The nodes that read one binder (FR-218 "Scopes").
@@ -1357,6 +1367,7 @@ pub(crate) fn check(
                     node: ProtocolNodeId(node),
                     relationship,
                     ends,
+                    canonical_index: None,
                 });
             }
         }
