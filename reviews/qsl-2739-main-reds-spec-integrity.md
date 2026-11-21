@@ -45,3 +45,11 @@ and derived model aliases (`:827-837`) before `unnamed` (`:839-841`). The narrow
 "a non-derived item whose name no name table row or declaration carries". An alternative is to leave
 the sentence and accept the imprecision as current-behaviour prose. The earlier wording had the
 same imprecision. This PR rewrote the sentence, so it is in scope.
+
+## Dispositions
+
+Round 1, checked at PR #3348 head `b1414504a4404010a2e96fa9226fcddbe160ab3a`.
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | The FR-1044 Current behavior AC-10 bullet now applies `unnamed-claim` only after ordinary claim, declaration and model-alias resolution, and names the `declaration` and `model-alias` outcomes. This matches `resolve_names` order (`package_run.rs` declared_names, then the derived model alias, then `unnamed`). Current-behaviour prose only. The normative AC-10 row is unchanged. |

@@ -75,3 +75,11 @@ read as AC-10 being delivered.
 - Semantic review: skipped as a separate fan-out. The targeted intent↔test↔code agreement above was
   done inline for the changed oracles only.
 - Runtime: none. Test outcomes are pending Draco qualification and no result is claimed.
+
+## Dispositions
+
+Round 1, checked at PR #3348 head `b1414504a4404010a2e96fa9226fcddbe160ab3a`.
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | `#[trace("FR-1044-AC-10")]` was removed from `a_composition_is_a_default_item`. The test body, the AC-10 text and the `#[ignore]`d parity test are unchanged. FR-1044-AC-10 now computes as untagged until the QSL-2739 package owner delivers the full criterion. That is the honest state, not a new finding. |

@@ -95,3 +95,11 @@ kinds whose presence suppresses `unknown-claim` and omits composition, so the do
 matches the code at line 717. Suggested fix: name the presence fact for what it is (for example
 `composition_node`) or state that the producer writes no composition name row yet, and add the
 composition to the `resolve_names` doc list.
+
+## Dispositions
+
+Round 1, checked at PR #3348 head `b1414504a4404010a2e96fa9226fcddbe160ab3a` (fix commit b1414504a4 over 79aa75be18).
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | The private helper was renamed `admitted_composition` (both call sites, no references remain in source). Its doc now states the producer fact rather than an unchecked property, and the `resolve_names` doc lists the component composition among the things that suppress `unknown-claim`. No behaviour change. |

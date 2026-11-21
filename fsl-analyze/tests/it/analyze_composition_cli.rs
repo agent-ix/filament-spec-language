@@ -899,17 +899,18 @@ fn package_handoff(ws: &Workspace, path: &std::path::Path) -> PathBuf {
     )
 }
 
-/// Asserts the public `package` handoff of a composition unit is refused
-/// whole at the request stage, exit 20, with no item: the typed
-/// `unsupported_construct`/`not-yet-implemented` pending refusal whose message
-/// names the family at `detail`. Nothing settles, so the package route's own
+/// Asserts the public `package` handoff of a composition unit is settled
+/// whole as unsupported, exit 21, with no item: the well-formed request meets
+/// a family the package route cannot read yet, typed
+/// `unsupported_construct`/`not-yet-implemented`, whose message names the
+/// family at `detail`. Nothing settles, so the package route's own
 /// resolution of a composition is not exercised (QSL-2739: package-consumer
 /// API).
 fn assert_package_pending(run: &crate::analyze_cli_support::Run, detail: &str) {
     let document = run.document();
     let diagnostics = document["diagnostics"].as_array().expect("diagnostics");
-    assert_eq!(run.exit, 20, "{document}");
-    assert_eq!(document["category"], "refusal", "{document}");
+    assert_eq!(run.exit, 21, "{document}");
+    assert_eq!(document["category"], "unsupported", "{document}");
     assert_eq!(document["items"], json!([]), "{document}");
     assert!(document["last_stage"].is_null(), "{document}");
     assert_eq!(diagnostics.len(), 1, "{document}");
@@ -925,7 +926,7 @@ fn assert_package_pending(run: &crate::analyze_cli_support::Run, detail: &str) {
 }
 
 /// FR-1044 "Current system behavior" (QSL-2739): a `package` handoff of a
-/// unit with composition declarations, requested with no `items`, is refused
+/// unit with composition declarations, requested with no `items`, is settled
 /// whole as the composition family and settles no item, `Local` included.
 #[test]
 fn the_package_default_items_refuse_a_composition() {
@@ -939,7 +940,7 @@ fn the_package_default_items_refuse_a_composition() {
 
 /// FR-1044 "Current system behavior" (QSL-2739): an item naming a
 /// composition, or a name no package row carries, over a `package` handoff of
-/// that unit is refused whole as the unnamed-claim family: the package carries
+/// that unit is settled whole as the unnamed-claim family: the package carries
 /// no name row for the composition, so neither name settles `unknown-claim`.
 #[test]
 fn a_package_item_naming_a_composition_is_refused() {
