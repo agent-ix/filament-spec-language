@@ -1060,7 +1060,12 @@ fn clock_reference_domains_require_a_selector_bound() {
             .expect("real owner")
             .object();
         expected.extend((0..maximum).map(|slot| {
-            fsl_semantics::model::clock_reference::encode(owner, q, &[slot]).expect("declared q id")
+            fsl_semantics::model::clock_reference::encode(
+                owner,
+                q,
+                &[Value::Integer(Integer::from(slot))],
+            )
+            .expect("declared q id")
         }));
         actual.sort();
         expected.sort();
