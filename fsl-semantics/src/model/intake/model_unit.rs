@@ -850,7 +850,7 @@ pub fn compile_model_unit_with_causes(
         .into_iter()
         .map(|(name, meaning)| {
             let members = match name {
-                "object_type" => json!({"identityFields": "required"}),
+                "object_type" => json!({"identityFields": "optional"}),
                 "record_value_type" => json!({"identityFields": "optional"}),
                 "tuple_type" => json!({"positions": "required"}),
                 "variant_type" => json!({"variants": "required"}),
@@ -894,7 +894,7 @@ pub fn compile_model_unit_with_causes(
                     "targetElement": "required",
                 }),
                 "machine" => json!({"states": "required", "transitions": "required"}),
-                "process" => json!({"identityFields": "required", "steps": "required"}),
+                "process" => json!({"identityFields": "optional", "steps": "required"}),
                 "store" => json!({"persists": "required"}),
                 "population" => json!({}),
                 _ => json!({}),
@@ -916,6 +916,16 @@ pub fn compile_model_unit_with_causes(
             })
         })
         .collect::<Vec<_>>();
+    for wire in &mut types {
+        let empty = wire["identityFields"]
+            .as_array()
+            .is_some_and(|fields| fields.is_empty());
+        if empty {
+            if let Some(object) = wire.as_object_mut() {
+                object.remove("identityFields");
+            }
+        }
+    }
     let document = json!({
         "contractVersion": "2.0.0",
         "canonicalization": {"algorithm": "rfc8785-v1"},
@@ -1071,10 +1081,12 @@ fn read_object(
                 index += 1;
                 let (lower, upper, ordered, unique, next) = read_multiplicity(tokens, index)?;
                 index = next;
+                let mut target_role = "target".to_owned();
                 if tokens
                     .get(index)
                     .is_some_and(|token| token.text == "inverse")
                 {
+                    target_role = tokens.get(index + 1)?.text.clone();
                     index += 2;
                     let (_, _, _, _, next) = read_multiplicity(tokens, index)?;
                     index = next;
@@ -1088,11 +1100,11 @@ fn read_object(
                 relationships.push(json!({
                     "identity": format!("ix://{package}/relationship/{name}-{relationship_name}-{target}"),
                     "sourceEnd": {
-                        "type": format!("ix://{package}/{name}"), "role": "source",
+                        "type": format!("ix://{package}/{name}"), "role": relationship_name,
                         "multiplicity": {"lower": 1, "upper": 1, "ordered": false, "unique": true},
                     },
                     "targetEnd": {
-                        "type": format!("ix://{package}/{target}"), "role": relationship_name,
+                        "type": format!("ix://{package}/{target}"), "role": target_role,
                         "multiplicity": {"lower": lower, "upper": upper, "ordered": ordered, "unique": unique},
                     },
                     "category": "structural", "composite": false,
@@ -1497,7 +1509,7 @@ fn read_map_type(
             "identity": format!("ix://{package}/{name}"),
             "displayName": name,
             "kind": "map",
-            "roles": [],
+            "roles": [], "constraints": [], "extensions": [], "unknownPolicy": "reject",
             "keys": type_ref(&keys, package),
             "values": type_ref(&values, package),
             "bound": {"lower": lower, "upper": upper},
@@ -2272,6 +2284,7 @@ fn read_operation(
             "identity": format!("ix://{package}/{owner}/{name}/{parameter_name}"),
             "name": parameter_name,
             "typeRef": reference,
+            "presence": "required", "nullable": false, "defaultKind": "none",
             "multiplicity": {"lower": 1, "upper": 1, "ordered": false, "unique": true},
             "origin": source_origin(parsed, Span { start: parameter_start, end: parameter_end }),
         }));
@@ -2412,7 +2425,12 @@ fn read_clause_declaration(
     }
     let text_end = tokens.get(index)?.span.start;
     let end = tokens.get(index)?.span.end;
-    let text = parsed.source().text().get(text_start..text_end)?.to_owned();
+    let text = parsed
+        .source()
+        .text()
+        .get(text_start..text_end)?
+        .trim()
+        .to_owned();
     index += 1;
     if tokens.get(index).is_some_and(|token| token.text == ";") {
         index += 1;
@@ -2495,6 +2513,7 @@ fn type_ref(type_name: &str, package: &str) -> String {
         "Rational" => "Rational",
         "Float32" => "Float32",
         "Float64" => "Float64",
+        "Timestamp" => "Timestamp",
         _ => return format!("ix://{package}/{type_name}"),
     };
     format!("ix://filament/native/{native}")

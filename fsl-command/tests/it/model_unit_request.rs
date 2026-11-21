@@ -581,3 +581,90 @@ fn a_compile_request_over_a_model_unit_writes_its_document() {
         assert!(!directory.path().join(output_path).exists());
     }
 }
+
+const GRAPH: &str = "language \"ix:native\" edition \"1-draft\";
+domain \"example/graph\";
+object Node { relationship next: Node [0, 1]; }
+population nodes: Node;
+";
+
+const GRAPH_PROGRAM: &str = "language \"ix:native\" edition \"1-draft\";
+profile P = \"filament.model.complete/v1\";
+model M = \"example/graph\";
+invariant I using P on M::Node at current { reaches(self, self, next) }
+";
+
+/// The `nodes` snapshot of the compiled relationship: `a` and `b` link to
+/// each other, `c` links to nothing.
+fn graph_snapshot() -> Value {
+    let node = |key: &str| {
+        json!({"key": key, "type": "ix://example/graph/Node", "fields": {}})
+    };
+    let end = |key: &str| json!({"population": "ix://example/graph/nodes", "key": key});
+    json!({
+        "format": "filament.state.snapshot/v1",
+        "identity": {"authority": "agent-ix", "identity": "test:graph:current"},
+        "observation": "current",
+        "anchor": {"kind": "handler", "name": "validate"},
+        "model": {"identity": "example/graph"},
+        "populations": [{
+            "population": "ix://example/graph/nodes",
+            "complete": true,
+            "objects": [node("a"), node("b"), node("c")],
+        }],
+        "relationships": [{
+            "relationship": "ix://example/graph/relationship/Node-next-Node",
+            "complete": true,
+            "instances": [
+                {"source": end("a"), "target": end("b")},
+                {"source": end("b"), "target": end("a")},
+            ],
+        }],
+    })
+}
+
+/// Runs the graph invariant over node `key`: the exit code and the result.
+fn run_graph_clause(directory: &Path, key: &str) -> (u8, Value) {
+    std::fs::write(directory.join("graph.fsl"), GRAPH).unwrap();
+    std::fs::write(directory.join("program.fsl"), GRAPH_PROGRAM).unwrap();
+    std::fs::create_dir_all(directory.join("data")).unwrap();
+    std::fs::write(
+        directory.join("data/current.json"),
+        serde_json::to_vec(&graph_snapshot()).unwrap(),
+    )
+    .unwrap();
+    let request = json!({"format": "native-run/1", "request": {
+        "models": [{"format": "native-model-unit/1", "source": source("graph.fsl")}],
+        "clause": {
+            "selection": {"clause": {"name": "I", "observation": "current",
+                "self": {"population": "ix://example/graph/nodes", "key": key},
+                "anchor": {"kind": "handler", "name": "validate"}}},
+            "observations": {"current": "data/current.json"}},
+        "program": {"source": source("program.fsl")}}});
+    let path = directory.join("graph-run.json");
+    std::fs::write(&path, serde_json::to_vec(&request).unwrap()).unwrap();
+    match command::run(&path, &crate::negotiation::Fr290) {
+        Ok(result) => (result.exit_code, result.value.as_value().clone()),
+        Err(error) => (error.category().exit_code(), error.value().unwrap()),
+    }
+}
+
+#[test]
+#[trace("TC-1942", "FR-710-AC-2")]
+fn reaches_checks_and_evaluates_over_a_model_unit_relationship() {
+    let directory = tempfile::tempdir().unwrap();
+    let (exit, value) = run_graph_clause(directory.path(), "a");
+    assert_eq!(exit, 0, "{value}");
+    assert_eq!(
+        value["disposition"]["outcome"]["value"],
+        json!({"kind": "boolean", "value": true}),
+        "{value}"
+    );
+    let (exit, control) = run_graph_clause(directory.path(), "c");
+    assert_eq!(exit, 10, "{control}");
+    assert_eq!(
+        control["disposition"]["outcome"]["value"],
+        json!({"kind": "boolean", "value": false}),
+        "{control}"
+    );
+}

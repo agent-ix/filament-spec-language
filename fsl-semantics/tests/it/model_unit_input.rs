@@ -605,7 +605,7 @@ unit m: Length = rational(1, 1);
 fn a_model_unit_compiles_and_admits_an_event_type() {
     let source = r#"language "ix:native" edition "1-draft";
 domain "example/events";
-event Placed { timestamp: Integer; occurs timestamp; }
+event Placed { timestamp: Timestamp; occurs timestamp; }
 "#;
     let packages = package_input([source.as_bytes()]).expect("event model compiles");
     let (_, document) = admit(
@@ -628,7 +628,7 @@ event Placed { timestamp: Integer; occurs timestamp; }
 fn a_model_unit_compiles_and_admits_a_namespace() {
     let source = r#"language "ix:native" edition "1-draft";
 domain "example/namespaces";
-object Node { value: Integer; }
+object Node { amount: Integer; }
 namespace Terms { members Node; term node_term = "a node"; }
 "#;
     let packages = package_input([source.as_bytes()]).expect("namespace model compiles");
@@ -716,7 +716,7 @@ allocate Alloc from pump to pump;
 fn a_model_unit_compiles_and_admits_a_state_machine() {
     let source = r#"language "ix:native" edition "1-draft";
 domain "example/machines";
-event Placed { timestamp: Integer; occurs timestamp; }
+event Placed { timestamp: Timestamp; occurs timestamp; }
 machine Gate { active: Boolean; operation toggle(); states (Open, Shut); transition Open -> Shut on toggle emits Placed; }
 "#;
     let packages = package_input([source.as_bytes()]).expect("state machine model compiles");
@@ -740,7 +740,7 @@ machine Gate { active: Boolean; operation toggle(); states (Open, Shut); transit
 fn a_model_unit_compiles_and_admits_a_process() {
     let source = r#"language "ix:native" edition "1-draft";
 domain "example/processes";
-event Placed { timestamp: Integer; occurs timestamp; }
+event Placed { timestamp: Timestamp; occurs timestamp; }
 process Flow { n: Integer; operation go(); step start: begin consumes Placed; }
 "#;
     let packages = package_input([source.as_bytes()]).expect("process model compiles");
@@ -764,8 +764,8 @@ process Flow { n: Integer; operation go(); step start: begin consumes Placed; }
 fn a_model_unit_compiles_and_admits_a_persistence_interface() {
     let source = r#"language "ix:native" edition "1-draft";
 domain "example/stores";
-object Node { value: Integer; }
-store Nodes persists Node { operation write_record(record: Reference<Node>); }
+object Node { amount: Integer; }
+store Nodes persists Node { operation write_record(entry: Reference<Node>); }
 "#;
     let packages = package_input([source.as_bytes()]).expect("store model compiles");
     let (_, document) = admit(
@@ -857,7 +857,7 @@ dimension Length;
 unit m: Length = rational(1, 1);
 object Node identity (id) {
   id: Int[0, 9];
-  note: Option<Text>;
+  note: Option<Integer>;
   tags: Integer [0, *] ordered unique;
   relationship next: Node [0, 1] inverse prev [0, 1];
   operation bump(): Boolean modifies self.id {
@@ -866,10 +866,10 @@ object Node identity (id) {
   }
   invariant Bounded { self.id >= 0 };
 }
-event Placed { timestamp: Integer; occurs timestamp; }
+event Placed { timestamp: Timestamp; occurs timestamp; }
 machine Gate { active: Boolean; operation toggle(); states (Open, Shut); transition Open -> Shut on toggle emits Placed; }
 process Flow { n: Integer; operation go(); step start: begin consumes Placed; }
-store Nodes persists Node { operation write_record(record: Reference<Node>); }
+store Nodes persists Node { operation write_record(entry: Reference<Node>); }
 namespace Terms { members Node, Gate; term node_term = "a node"; }
 population nodes: Node;
 open symmetric population peers: Node;
