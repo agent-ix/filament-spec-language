@@ -261,6 +261,7 @@ impl SemanticNode {
     pub(super) fn component_composition(
         key: NodeKey,
         name: &str,
+        owner: SourceOwner,
         term: super::node_key::CompositionTerm,
     ) -> Self {
         Self::declared(
@@ -271,7 +272,7 @@ impl SemanticNode {
                 semantic_form: "component_composition",
                 semantic_type: None,
                 declaration: Identifier::new(name).ok().map(|name| vec![name]),
-                owner: None,
+                owner: Some(Owner::Source(owner)),
                 body: BodyTerm::Composition(term),
             },
         )

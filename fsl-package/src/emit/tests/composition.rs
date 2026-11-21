@@ -676,18 +676,18 @@ fn composition_declaration_and_canonical_members_keep_their_authored_regions() {
     let world = World::new();
     let declaration = "compose Sys rule interface { \
         component Producer from P using M; \
-        guarantee Producer::Sends; \
-        environment Zulu by \"scheduler\" fair weak each M::Producer::send; \
-        supplies fair weak each M::Producer::send; \
         component Consumer from Q using M; \
+        guarantee Producer::Sends; \
         guarantee Producer::Counted; \
-        rely Producer::Sends on Consumer::Bounded; \
-        depends Producer::Sends on Consumer::Done; \
         guarantee Consumer::Done; \
-        supplies fair strong each M::Producer::send; \
         guarantee Consumer::Bounded; \
+        rely Producer::Sends on Consumer::Bounded; \
         rely Consumer::Done on Producer::Counted; \
+        depends Producer::Sends on Consumer::Done; \
         depends Consumer::Done on Producer::Sends; \
+        supplies fair weak each M::Producer::send; \
+        supplies fair strong each M::Producer::send; \
+        environment Zulu by \"scheduler\" fair weak each M::Producer::send; \
         environment Alpha by \"scheduler\" fair weak each M::Producer::send; }";
     let source = unit(declaration);
     let package = world.compile(declaration, None).expect("the source checks");
@@ -741,6 +741,12 @@ fn composition_declaration_and_canonical_members_keep_their_authored_regions() {
     assert_eq!(
         node["declaration"]["qualified_name"],
         serde_json::json!(["Sys"])
+    );
+    assert_eq!(
+        node["owner"],
+        serde_json::json!({
+            "kind": "source", "authority": "agent-ix", "identity": "test:composition"
+        })
     );
     let entries: Vec<_> = admitted
         .source_map()
