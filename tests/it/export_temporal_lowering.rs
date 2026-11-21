@@ -225,7 +225,6 @@ fn export_unit_with_protocol_options(
         fidelity,
         output,
         "model-binding",
-        None,
     )
 }
 

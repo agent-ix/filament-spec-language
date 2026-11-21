@@ -270,7 +270,7 @@ pub(super) fn read(graph: &Graph<'_>, name: &str, position: usize) -> Lower<Clau
     for protocol in view.requirements() {
         if let Some(row) = activation_rows
             .iter()
-            .find(|row| &row.clause == protocol && row.required_temporal == node.node_id)
+            .find(|row| &row.clause == *protocol && row.required_temporal == node.node_id)
         {
             if let CheckedProtocolActivation::Each { trigger } = &row.activation {
                 let trigger_position = at_node(graph, &trigger)?;
