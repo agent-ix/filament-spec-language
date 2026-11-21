@@ -2166,7 +2166,7 @@ fn record_value_type_declaration_keys_as_a_model_node() {
 /// a Clock place only when its alias-resolved type is `Clock`; a collection
 /// over `Clock` has no data position and no model-union payload form, so it is
 /// never read as a Clock.
-#[trace("FR-531-AC-47")]
+#[trace("TC-1331", "FR-531-AC-47")]
 #[test]
 fn a_union_payload_is_a_clock_only_when_its_resolved_type_is_clock() {
     use crate::model::domain_package::{AliasTypeRecord, MapTypeRecord, SequenceTypeRecord};

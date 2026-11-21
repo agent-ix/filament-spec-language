@@ -1328,7 +1328,7 @@ fn budgeted_converted_model_enum_shapes_are_joined_by_the_native_monitor_closure
 /// The public final-emission union rows (case ranks, authored positions, the
 /// Clock and data payload facts) are the real producer rows the native monitor
 /// closure joins for an admitted model payload union.
-#[trace("FR-531-AC-45", "FR-531-AC-46")]
+#[trace("TC-1331", "FR-531-AC-45", "FR-531-AC-46")]
 #[test]
 fn emission_model_union_rows_are_joined_by_the_native_monitor_closure() {
     reach_model_type(ReachedModelType::Union);
@@ -1336,7 +1336,7 @@ fn emission_model_union_rows_are_joined_by_the_native_monitor_closure() {
 
 /// The same reached union with no row supplied is refused, so the accepted
 /// join above depends on the emission's rows.
-#[trace("FR-531-AC-46")]
+#[trace("TC-1331", "FR-531-AC-46")]
 #[test]
 fn a_reached_model_union_without_its_row_is_refused_by_the_native_monitor_closure() {
     reach_model_type(ReachedModelType::UnionWithoutRows);

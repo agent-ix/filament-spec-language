@@ -396,6 +396,36 @@ Enum return values and `=` and `!=` evaluation use these joined shapes and nativ
 equality decisions. Held structural-node membership establishes fact locality;
 the original selected-model declaration identity remains unchanged.
 
+### Selected model union producer
+
+A selected model's payload-bearing variant type is a model-owned union. When
+the checked package reaches one, the checking stage SHALL retain, on its
+`SemanticGraph` (`selected_model_unions`), the selected document's identity and,
+for each case, its name, original case identity, authored position and payload.
+`VariantRecord.position` is the case's index in the selected document's authored
+`variants`; reordering the authored cases changes positions and no key, export
+or canonical order. A case's payload SHALL be classified `Clock` only when its
+alias-resolved payload type is `Clock`, `Data` when it has one checked data
+position, and `None` when it has no payload. Lowering SHALL refuse a case with
+no payload form with the typed `UnsupportedUnionPayload` fault, and a case with
+no authored variant record with `MissingUnionVariant`, and retain no row for it.
+
+The final `Emission` SHALL expose these facts through
+`Emission::selected_model_union_rows`, a borrowed slice of Contract IR's
+`SelectedModelUnionRow`, one per emitted union. Each row carries the emitted
+structural node, the selected document's identity, the original composite type
+handle, the settled declaration key and the cases in ascending UTF-8 byte order
+of case name, each with its canonical rank, authored position, original case
+identity, sealed member and `Data`, `Clock` or `None` payload. The producer
+SHALL NOT supply an empty stand-in or a caller-built row. A monitor plan
+emitted over the emission keeps the rows, with node ids re-keyed to the plan's
+nodes, and a caller passes them as `SelectedMonitorClosureRows::model_unions`
+to Contract IR's native closure, which joins them against the package's selected
+model. This producer adds no `model_unions` member to `identities.json`; the
+identities format, the bare reader and the evaluation of union values are not
+changed by it. A `Clock` payload is a clock place, not a data position, and
+no `Value::Clock` is introduced.
+
 A document whose `format` is `filament.checked-handoff.identities/4` or `/3` is refused as the old format, with no read of its rows and no fallback to an empty `source_tuples`, `source_operations` or `source_objects`, or to members without clock entries. All eleven members are required, including empty arrays for empty producer channels. The reader SHALL reject `/1`, `/2`, `/3`, `/4`, an absent member, a member entry with both or neither of `type_node` and `member_type`, a `value_type` present without `type_node` or absent with it, a clock entry whose `member_type` is no clock rendering or that names a binding of its node,
 an unknown or repeated member and a malformed row; it SHALL NOT supply an empty
 default, read a legacy variant or silently omit a row that cannot be represented.
@@ -1094,10 +1124,11 @@ outcome map. Each carries a "Consumer entry" section that points here.
 | FR-531-AC-42 | A selected model with `Tier` cases `Gold`, `Standard` and an unused payload-free variant with non-identifier cases in noncanonical authored order writes all three required model-enum channels in identities/5. Reading the file preserves every original declaration, member and shape; full runtime projection retains both enums, and the bare world resolves every case to its authenticated canonical rank and member identity. Calling enum-valued functions, including a nested typed parameter round trip, and equality and inequality callers from source and the bytes gives equal values, variants, ranks and semantic charge logs; renaming the model alias changes no enum value identity. | Test (TC-1331) |
 | FR-531-AC-43 | Omitting or repeating any required enum channel, an unknown channel, or identities/4 refuses without a partial read. Foreign selected-document claims, missing or repeated members, reversed shape variants, and reordered canonical case rows each fail the native witness join. | Test (TC-1331) |
 | FR-531-AC-44 | For original model-enum rows, one cumulative native budget covers producer materialization, native identity join and full runtime projection. The exact measured work and storage ceilings succeed with the same consumed totals; zero and one-less work or storage ceilings refuse with the original first-unpaid resource and no partial enum view. | Test (TC-1331) |
-| FR-531-AC-45 | For an admitted selected model that declares a payload-bearing variant type reached by the checked package, `Emission::selected_model_union_rows` returns one `SelectedModelUnionRow` per emitted union, borrowed from the emission without a native budget charge. Each row carries the emitted structural node, the selected document's identity, the original composite type handle, the settled declaration key, and its cases in ascending UTF-8 byte order of case name. Each case carries its canonical rank, its authored position in the selected document, its original case identity, its sealed member and exactly one payload: `Data` with the lowered payload node and original value type, `Clock`, or `None`. A union whose composite, sealed members or payload nodes cannot be joined to the emission is a writer fault; the accessor never returns an empty stand-in, a row built by the caller, or a row for a model that declares no union. | Test |
-| FR-531-AC-46 | When the rows of `Emission::selected_model_union_rows` are passed as `model_unions` of `SelectedMonitorClosureRows` for a monitor whose typed input reaches a union that has a `Clock`, a `Data` and a `None` case authored out of canonical order, the native closure admits and projects the union node, and the rows retain each case's rank, authored position and payload kind. The same closure given no union rows refuses with `Exact(UnavailableIdentityWitness)`. | Test |
-| FR-531-AC-47 | A union case's payload is classified `Clock` only when its alias-resolved payload type is `Clock`; a payload that resolves to a sequence or map over `Clock` or has more than one checked data position has no model-union payload form and is never classified `Clock`; it yields no payload form, so no `Clock` row is retained for it. | Test |
-| FR-531-AC-48 | `VariantRecord.position` is the case's index in the selected document's authored `variants`. Reordering the authored cases changes each case's position and no key, export or canonical case order. | Test |
+| FR-531-AC-45 | For an admitted selected model that declares a payload-bearing variant type reached by the checked package, `Emission::selected_model_union_rows` returns one `SelectedModelUnionRow` per emitted union. Each row carries the emitted structural node, the selected document's identity, the original composite type handle, the settled declaration key, and its cases in ascending UTF-8 byte order of case name. Each case carries its canonical rank, authored position in the selected document, original case identity, sealed member and exactly one payload: `Data` with the lowered payload node and original value type, `Clock`, or `None`. | Test (TC-1331) |
+| FR-531-AC-46 | When the rows of `Emission::selected_model_union_rows` are passed as `model_unions` of `SelectedMonitorClosureRows` for a monitor whose typed input reaches a union with `Idle`, `Circle(Integer)` and `Armed(Clock)` cases authored out of canonical order, the native closure admits and projects the union node, and the rows retain each case's rank, authored position and payload kind. The same closure given no union rows refuses with `Exact(UnavailableIdentityWitness)`. | Test (TC-1331) |
+| FR-531-AC-47 | A union case's payload is classified `Clock` when its alias-resolved payload type is `Clock`, including through an alias. A payload that resolves to a sequence or map over `Clock`, a payload with a data position but no authored payload type, and a payload with more than one checked data position are each not classified `Clock` and have no payload form. | Test (TC-1331) |
+| FR-531-AC-48 | `VariantRecord.position` is the case's index in the selected document's authored `variants`. Reordering the authored cases changes each case's position and no key, export or canonical case order. | Test (TC-1331) |
+| FR-531-AC-49 | Lowering a union case that has no payload form refuses with the typed `UnsupportedUnionPayload` fault (invariant `union-payload-has-ir-form`), and lowering a case with no authored variant record refuses with `MissingUnionVariant` (invariant `union-case-variant-retained`). Each refusal retains no row for the union and omits no case silently. | Inspection |
 
 ## Dependencies
 

@@ -45,3 +45,13 @@ Residual, not findings:
 - A Clock-bearing union under equality was not exercised.
 
 Evidence read, not rerun: arch-test-run receipts qsl2743acc-a1 (1 passed), a2 (2 passed), a3 (30 passed) and a6 (15 passed). Their log mtimes are after the head commit, and the coder report states head d3be81c5f5. No full crate or workspace suite was run, and no repository-wide claim is made.
+
+## Dispositions
+
+Disposition round 1. Head 5f6b1a76e5358f75d38c5d401dd0479d2d82183f, rebased on cf8d85826d (pin 21edb2ea). Same reviewer, run 59b28e57-7cbb-423a-b6ed-b607ed3538ff.
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | The new `union_payload_form` (`fsl-semantics/src/check/lowering/model.rs:3976`) returns `Clock` only when `unaliased(payload)` is `(Clock, 0)`. A payload with no data position that is not an alias-resolved Clock gets no form, and lowering raises `KeyFault::UnsupportedUnionPayload` (`model.rs:2972`). Reachability correction: the coder reports that public intake (`variant_payload_is_value_type`) refuses alias, sequence and map payloads. Their abandoned end-to-end fixture failed at that refusal (log qsl2743fix1-b, removed before the final commits). The original premise that such a case reaches lowering through public intake was therefore not established, and the fix is a hardened classifier rather than a repair of a reachable false row. The classifier is unit-tested by `a_union_payload_is_a_clock_only_when_its_resolved_type_is_clock` (qsl2743fix1-e, 1 passed at 5f6b1a76). |
+| FND-002 | fixed | `KeyFault::MissingUnionVariant` (`refusal.rs:3527`, invariant `union-case-variant-retained`) and `KeyFault::UnsupportedUnionPayload` (`refusal.rs:3531`, invariant `union-payload-has-ir-form`) replace `UnknownDeclaration` at `model.rs:2956` and `model.rs:2972`. Both go through the existing `fault(...)` envelope. I inspected the wiring statically; no test exercises it, because public intake makes the branch unreachable. |
+| FND-003 | fixed | One borrowed owner-filtered `BTreeMap<&str, &VariantRecord>` pass per union (`model.rs:2943-2951`), then one O(log k) lookup per case. The cost is now O(R + k log k) per union and O(U·R + Σk log k) across U unions. It is not linear overall: each union still scans all R model records once, because `ModelIndex` has no owner-keyed variant index. That matches the "one owner pass per union" remedy the finding named. |

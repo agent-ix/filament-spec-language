@@ -43,3 +43,11 @@ Stubs and inflation:
 - The positive test destructures exactly one row and asserts exact case tuples.
 
 Focused evidence read: a1 enum closure (1 passed), a2 union closure plus adverse (2 passed), a3 semantics variant_type (30 passed), a6 package variant_types (15 passed). Semantic review (intent vs test vs code) is covered by the companion code-review SR-967175026302197768900474181941935084680. Repository baseline assurance failures are out of scope and unqualified here.
+
+## Dispositions
+
+Disposition round 1. Head 5f6b1a76e5358f75d38c5d401dd0479d2d82183f. Same reviewer, run 59b28e57-7cbb-423a-b6ed-b607ed3538ff. The matrix axis is still unassessed: no matrix was re-run, and no repository-wide assurance is claimed.
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | FR-531 gains AC-45 (accessor and complete rows), AC-46 (native closure join and missing-row refusal), AC-47 (Clock classification) and AC-48 (`VariantRecord.position`). The union closure tests are retagged: `monitor_root.rs:1331` carries AC-45 and AC-46, and `monitor_root.rs:1339` carries AC-46. The classifier test (`lowering/model/tests.rs:2169`) carries AC-47, and the reorder oracle (`variant_type.rs:316`) adds AC-48. Neither union test is tagged FR-531-AC-30 any more. Remaining quality defects in the new ACs (no owning statement, an untested clause, outcome wording, TC binding) are recorded in the new spec-review SRs SR-967175026302197768900474181941935084682 and SR-967175026302197768900474181941935084683. |
