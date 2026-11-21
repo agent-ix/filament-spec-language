@@ -115,8 +115,8 @@ their document identity.
 Tag the tests `#[trace("TC-464", "FR-106-AC-n")]`. Bind step 7 to
 `FR-106-AC-72` and step 8's three undeclared-place cases to
 `FR-106-AC-73`. Bind the cross-route, two-population and removed-path
-controls of steps 7 and 8 additionally to `FR-106-AC-74`; bind step 9 to
-`FR-106-AC-75`.
+controls of steps 7 and 8 additionally to `FR-106-AC-76`; bind step 9 to
+`FR-106-AC-77`.
 Bind step 10 to `FR-230-AC-43` and `FR-230-AC-45`; these encoding controls
 are not substitutes for AC-72/AC-73.
 

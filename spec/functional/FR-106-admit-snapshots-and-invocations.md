@@ -440,7 +440,7 @@ origins and producing no partial place table or admitted observation.
 > to STEP2, including map-keyed Clock-reference identities, which remain
 > unsupported. This note does not relax the required admission behavior.
 
-> STEP2 targets also include AC-74/AC-75, FR-1040-AC-9 and FR-230's
+> STEP2 targets also include AC-76/AC-77, FR-1040-AC-9 and FR-230's
 > route-neutral identity criteria. They remain unmet until implementation
 > and acceptance proof; the STEP1 boundary above remains in force.
 
@@ -453,6 +453,17 @@ origins and producing no partial place table or admitted observation.
 > One population and populations with distinct keys remain supported. This
 > partial boundary leaves the same-key population identity criteria unmet;
 > map-keyed clock identities also remain unsupported.
+> Clock-reference domain enumeration is also deferred: model construction
+> refuses `unknown_required_feature`/`unsupported-feature`, naming
+> `clock-reference-enumeration`, before reward or frame probing. Ordinary
+> native-Clock timed simulation retains its existing bounds and selectors.
+> An unseeded refinement-row receiver supplies no population authority and
+> is not a v2 Clock-reference producer; seeded clause and protocol inputs
+> remain the supported authority seams.
+>
+> The Clock route and declaration-table criteria reviewed as AC-74/AC-75
+> are now AC-76/AC-77. The relationship criteria on the repaired main branch
+> retain AC-74/AC-75 and their existing text; the Clock wording is unchanged.
 >
 > Reference-origin metadata is a flat parent-linked typed-prefix arena
 > populated by the existing admission walk, with at most one entry per
