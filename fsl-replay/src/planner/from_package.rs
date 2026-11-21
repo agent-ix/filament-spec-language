@@ -27,7 +27,6 @@ use fsl_semantics::check::{
     Correspondence as SemCorrespondence, ExtentClass as SemExtent, GuaranteeSlot, ItemPlacement,
     SlotBacking as SemBacking, SlotKey as SemSlotKey, SlotRole as SemRole, Supplies,
 };
-use serde_json::{json, Value};
 
 use super::declaration::{
     ClauseFacts, ClauseForm, DerivedSlot, EnvSupplies, EnvironmentMember, ItemRole,
@@ -36,7 +35,7 @@ use super::declaration::{
 use super::json::canonical_text;
 use super::key::{
     ClaimKind, Correspondence, CorrespondenceRole, ExtentClass, FairnessKey, ItemKey, KeyWireError,
-    LocalKey, OperationRef, SlotKey, TemporalItemKind, TemporalKey,
+    LocalKey, OperationRef, SlotKey,
 };
 use super::mismatch::interface_mismatch;
 
@@ -87,20 +86,7 @@ pub enum DeclarationRefusal {
 /// slot's FR-176 assumption set, part of its slot key). A subject with no
 /// assumptions carries no `assumptions` member.
 pub fn subject_text(identity: &str, assumptions: &[NodeKey]) -> Result<String, KeyWireError> {
-    let mut subject = json!({
-        "identity": identity,
-        "initial_states": [],
-        "universes": [],
-        "proof_bounds": [],
-    });
-    if !assumptions.is_empty() {
-        let nodes: Result<Vec<Value>, KeyWireError> = assumptions
-            .iter()
-            .map(|node| Ok(fsl_foundation::node_wire::node_key_to_json(node)?))
-            .collect();
-        subject["assumptions"] = Value::Array(nodes?);
-    }
-    Ok(canonical_text(&subject))
+    super::key_build::subject_text(identity, assumptions)
 }
 
 impl PlannerDeclaration {
@@ -255,26 +241,8 @@ pub(super) struct ItemKeyInput<'a> {
     pub extent: ExtentClass,
 }
 
-pub(super) fn item_key_from_input(mut input: ItemKeyInput<'_>) -> Result<ItemKey, KeyWireError> {
-    let temporal = if input.kind == ClaimKind::TemporalSatisfaction {
-        input.fairness.sort();
-        Some(TemporalKey {
-            subject: subject_text(input.subject_identity, input.assumptions)?,
-            item_kind: TemporalItemKind::Formula,
-            fairness: input.fairness,
-            stutter_closure: input.stutter_closure,
-        })
-    } else {
-        None
-    };
-    Ok(ItemKey {
-        claim: input.claim,
-        kind: input.kind,
-        temporal,
-        correspondence: input.correspondence,
-        premises: Vec::new(),
-        extent: input.extent,
-    })
+pub(super) fn item_key_from_input(input: ItemKeyInput<'_>) -> Result<ItemKey, KeyWireError> {
+    super::key_build::item_key(input, None).map_err(|_| KeyWireError)
 }
 
 /// The text of a constraint as a local slot key member.
