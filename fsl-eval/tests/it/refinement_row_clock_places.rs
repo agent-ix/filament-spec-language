@@ -872,9 +872,27 @@ fn clock_reference_external_observations_are_explicitly_unsupported() {
             identity: "ordinary".to_owned(),
         },
     ) {
-        ObservationAdmission::Admitted(_) => {}
-        ObservationAdmission::Refused(record) | ObservationAdmission::Incomplete(record) => {
-            panic!("ordinary Bare admission: {record:?}")
+        ObservationAdmission::Refused(record) => assert_eq!(
+            record,
+            filament_semantic_value::admission::AdmissionRecord {
+                catalog: filament_semantic_value::catalog::CatalogCode::new(
+                    "unknown_required_feature",
+                    "unsupported-feature"
+                ),
+                fields: BTreeMap::from([
+                    (
+                        "package",
+                        ordinary_package.graph().package_name().to_owned()
+                    ),
+                    ("reason", "missing-type-representation".to_owned())
+                ]),
+                path: Vec::new(),
+                kernel: None,
+            },
+            "ordinary missing representation keeps its existing refusal"
+        ),
+        ObservationAdmission::Admitted(_) | ObservationAdmission::Incomplete(_) => {
+            panic!("ordinary unreached type projection must preserve its refusal")
         }
         ObservationAdmission::Fault(fault) => panic!("ordinary Bare fault: {fault:?}"),
     }
