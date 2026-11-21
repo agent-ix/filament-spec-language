@@ -270,7 +270,7 @@ fn finite_parameter_refusals(model: &Value, label: &str) -> Vec<(Value, Value, O
         let failure = if running {
             fsl_command::command::run(&path, &crate::negotiation::Fr290).map(|_| ()).unwrap_err()
         } else {
-            *fsl_command::command::compile_outcome(&path).map(|_| ()).unwrap_err()
+            fsl_command::command::compile_outcome(&path).map(|_| ()).unwrap_err()
         };
         assert_eq!(failure.category().exit_code(),20,"{failure}");
         let native = failure.value().unwrap();

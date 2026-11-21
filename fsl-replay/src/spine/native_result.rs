@@ -2665,8 +2665,8 @@ pub fn read_outcome_diagnostics(
             reason: "a diagnostic array is required",
         });
     };
-    for entry in entries {
-        let details = tree.node(*entry).and_then(|entry| entry.get("details"));
+    for entry in entries.clone() {
+        let details = entry.get("details");
         if !details.is_some_and(|details| matches!(details.node(), Node::Object(_) | Node::Null)) {
             return Err(NativeRunReadError::Invalid {
                 member: "diagnostics.details",
@@ -2685,7 +2685,16 @@ pub fn read_outcome_diagnostics(
         .canonical(&diagnostics)
         .map_err(|_| budget.copy_failure("diagnostics", "cannot copy diagnostics"))?;
     budget.charge(u64::try_from(encoded.len()).unwrap_or(u64::MAX))?;
-    let decoded: Vec<OutcomeDiagnosticRead> = read_typed(&encoded)?;
+    let decoded: Vec<OutcomeDiagnosticRead> =
+        read_typed(&encoded).map_err(|error| match error {
+            NativeRunReadError::MalformedMember { member, source } => {
+                NativeRunReadError::MalformedMember {
+                    member: format!("diagnostics{member}"),
+                    source,
+                }
+            }
+            other => other,
+        })?;
     for diagnostic in &decoded {
         if diagnostic.cause.is_none() || diagnostic.locus.is_none() || diagnostic._details.is_none()
         {
@@ -2695,7 +2704,13 @@ pub fn read_outcome_diagnostics(
             });
         }
         if let Some(locus) = diagnostic.locus() {
-            validate_refusal_locus(locus)?;
+            validate_refusal_locus(locus).map_err(|error| match error {
+                NativeRunReadError::Invalid { reason, .. } => NativeRunReadError::Invalid {
+                    member: "diagnostics.locus",
+                    reason,
+                },
+                other => other,
+            })?;
         }
     }
     Ok(decoded)
