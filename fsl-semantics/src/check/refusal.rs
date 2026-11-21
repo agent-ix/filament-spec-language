@@ -3522,6 +3522,13 @@ pub enum KeyFault {
     UnknownDeclaration(filament_checked::key::DeclarationKey),
     /// A domain package record of a kind no checked node names.
     UnnamedRecordKind(filament_checked::key::DeclarationKey),
+    /// A selected model union case whose authored `VariantRecord` the admitted
+    /// package does not hold under the union's declaration.
+    MissingUnionVariant(filament_checked::key::DeclarationKey),
+    /// A selected model union case, named by its variant declaration, whose
+    /// payload has no model-union IR form: a collection over `Clock`, or a
+    /// payload with several data positions.
+    UnsupportedUnionPayload(filament_checked::key::DeclarationKey),
     /// A compound `UnitId` the check stage's unit scope does not hold.
     UnheldUnit(filament_exact::UnitId),
     /// An enum shape member has no unique exact source or admitted-model identity.
@@ -3621,6 +3628,8 @@ impl KeyFault {
             Self::EmptyNode(_) => "declaration-node-nonempty",
             Self::UnknownDeclaration(_) => "declaration-record-present",
             Self::UnnamedRecordKind(_) => "record-kind-named",
+            Self::MissingUnionVariant(_) => "union-case-variant-retained",
+            Self::UnsupportedUnionPayload(_) => "union-payload-has-ir-form",
             Self::UnheldUnit(_) => "compound-unit-held",
             Self::MissingEnumMember(_) => "enum-member-identity-retained",
             Self::UnheldNominal(_) => "unit-nominal-preimage-held",

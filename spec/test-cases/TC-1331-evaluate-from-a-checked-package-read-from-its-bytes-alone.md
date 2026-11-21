@@ -19,7 +19,7 @@ relationships:
 ## Description
 
 Verify the bytes-only entry and its selected-monitor preparation boundary.
-Scope: FR-531-AC-1 through FR-531-AC-35. **R** is the package of FR-517.
+Scope: FR-531-AC-1 through FR-531-AC-35, and FR-531-AC-45 through FR-531-AC-48. **R** is the package of FR-517.
 The isolated bytes-only consumer test crate depends on `filament-contract-model`,
 `fsl-package` and `fsl-eval` only. Producer transport and selected-monitor
 preparation tests additionally obtain authentic final emissions, admitted model
@@ -54,6 +54,9 @@ rows or bytes to the consumer.
 | 22 | 23 | two `with_supply` on one budget; selection, world and projection calls on the first package | cumulative counters; the second refused at the first crossing charge; no further native charge from the calls |
 | 23 | 24 | for `with_supply`, `from_read` and `from_emission`, also reuse one budget for two joins at (2W, 2S), (2W - 1, 2S) and (2W, 2S - 1); independently measure each entry's native work W and storage S: evaluation view, `from_read`, `from_emission`, handoff writer; run each at (W, S), (W - 1, S), (W, S - 1) | exact bounds succeed; work and storage one short respectively refuse with the correct setting and `ViewFailure::Exhausted`, `PackageMismatch::Exhausted` or `Error::NativeJoinExhausted`; a refused writer leaves no directory; opaque-budget denials preserve the original configured bound, native locus and setting, and actual is cumulative consumed plus first unpaid charge |
 | 24 | 25 | signature inspection of the six entries; a search for `NativeJoinBudget::new` in library sources | mutable-reference parameters; none below an entry; no `Copy` or `Clone` on `BarePackage` |
+| 25 | 45, 46 | the admitted model union `Mode` with cases authored `Idle`, `Circle(Integer)`, `Armed(Clock)`; a final monitor-plan emission whose typed input reaches it; `Emission::selected_model_union_rows` | one row; the selected document, the cases in UTF-8 order `Armed`, `Circle`, `Idle` with ranks 0, 1, 2 and authored positions 2, 1, 0, and `Clock`, `Data`, `None` payloads; those rows as `SelectedMonitorClosureRows::model_unions` are admitted by the native closure and the union node projects; the same closure with no rows refuses `Exact(UnavailableIdentityWitness)` |
+| 26 | 47 | the payload classifier over normalized records: `Clock`, an alias of `Clock`, a sequence over `Clock`, a map over `Clock`, no payload, one data position, a data position with no payload type, two data positions | `Clock`, `Clock`, no form, no form, `None`, `Data`, no form, no form; public intake refuses alias, sequence and map payloads, so this step claims no end-to-end admission |
+| 27 | 48 | two documents of one variant type with the cases authored in opposite order | positions follow authored order; keys, exports and canonical order are equal |
 
 For AC-26, write and read an authentic source-union emission with nullary and positional payload members, comparing complete original rows and native joined rows and byte-identical rewrites. For AC-27, reject format `/2`, absent `source_unions`, empty member identities, stale member names, foreign source owners and conflicting repeated rows with typed refusals and no partial read. Verify absent union witnesses through the bare union refusal tests.
 
@@ -155,6 +158,18 @@ package bytes, build the `BarePackage` and compare `call_requirements` for
 `f`, `f2`, `sq` and `g` with `call_requirements_for` over the compiled unit;
 then remove `f2`'s second row and expect the strict reader's refusal with no
 `BarePackage`. Bind it `#[trace("TC-1331", "FR-531-AC-35")]`.
+
+**Model union producer (FR-531-AC-45 to AC-48).** Emit a monitor plan whose typed
+input reaches the AC-45 union, read `Emission::selected_model_union_rows`, and
+compare each row and case with the authored source facts; pass the rows to the
+native closure and project the union node; repeat with no rows and require
+`Exact(UnavailableIdentityWitness)`. Bind these two tests
+`#[trace("TC-1331", "FR-531-AC-45", "FR-531-AC-46")]` and
+`#[trace("TC-1331", "FR-531-AC-46")]`. Run the classifier over normalized
+records with the AC-47 tag and the reorder oracle with AC-48; neither adds an
+end-to-end admission claim, and the Clock payload adds no timed amount, reset or
+`Value::Clock` claim. The typed lowering faults of FR-531-AC-49 are checked by
+inspection of `model_union_payloads` and `KeyFault`, not by a runtime test.
 
 ## Expected Results
 

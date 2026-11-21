@@ -611,7 +611,10 @@ pub use state_graph_claim::{
 pub use temporal_clause::check_clauses;
 
 pub use fsl_forms::AggregateComparison;
-pub use lowering::{collection_kind, CollectionShape, PlaceRow, PlaceStep};
+pub use lowering::{
+    collection_kind, CollectionShape, PlaceRow, PlaceStep, SelectedModelUnion,
+    SelectedModelUnionCase, SelectedModelUnionPayload,
+};
 pub use temporal_clause::{
     Activation, AggregateKind, AggregateWindow, BinaryTemporal, CaptureSite, CheckedAggregate,
     CheckedFormula, CheckedInterval, CheckedOperator, CheckedProtocolFairness,

@@ -5337,7 +5337,7 @@ pub(super) fn read_variant_type(
                 }
             },
         };
-        cases.push((name, identity, payload_type));
+        cases.push((name, identity, payload_type, position));
     }
     if let Ok(found) = Refusals::try_from(refusals) {
         return Err(found);
@@ -5348,15 +5348,16 @@ pub(super) fn read_variant_type(
         name: artifact.to_owned(),
         members: cases
             .iter()
-            .map(|(name, _, _)| (*name).to_owned())
+            .map(|(name, _, _, _)| (*name).to_owned())
             .collect(),
     }));
-    for (name, identity, payload_type) in cases {
+    for (name, identity, payload_type, position) in cases {
         records.push(DomainPackageRecord::Variant(VariantRecord {
             key: declaration_key(package, identity),
             owner: owner.clone(),
             case: name.to_owned(),
             payload_type,
+            position,
         }));
     }
     Ok(())
@@ -13477,6 +13478,7 @@ mod tests {
                     owner: at(name),
                     case: "Red".to_owned(),
                     payload_type: payload,
+                    position: 0,
                 }),
             ]
         };
