@@ -207,10 +207,15 @@ impl StdioHost {
         cancel: &Cancel,
     ) -> Next {
         loop {
+            if cancel.cause().is_none() && started.elapsed() >= deadline {
+                return Next::TimedOut;
+            }
+            let received = frames.recv_timeout(POLL);
+            // A result can arrive after the deadline during this wait.
+            // Decide the stop before admitting any bytes, with caller
+            // cancellation first; its acknowledgement may still be drained.
             if let Some(cause) = cancel.cause() {
-                // Observe cancellation before queued bytes or the provider's
-                // independent deadline, while still draining an acknowledgement.
-                if let Ok(frame) = frames.recv_timeout(POLL) {
+                if let Ok(frame) = received {
                     return match frame {
                         Frame::Envelope { .. } | Frame::Closed => Next::Frame(frame),
                         Frame::Refused(_) => Next::Cancelled(cause),
@@ -221,7 +226,7 @@ impl StdioHost {
             if started.elapsed() >= deadline {
                 return Next::TimedOut;
             }
-            match frames.recv_timeout(POLL) {
+            match received {
                 Ok(frame) => return Next::Frame(frame),
                 Err(RecvTimeoutError::Timeout) => {}
                 Err(RecvTimeoutError::Disconnected) => return Next::Frame(Frame::Closed),
