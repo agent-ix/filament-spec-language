@@ -518,7 +518,7 @@ fn the_independent_measure_checker_preserves_caller_limits_and_cancellation() {
         ),
         (
             fsl_replay::ProbabilityDocumentLimits {
-                scalar_bits: 3,
+                scalar_bits: 4,
                 ..limits
             },
             fsl_replay::ProbabilityDocumentLimit::RationalBits,
@@ -2368,12 +2368,14 @@ fn zero_weight_fraction_replays_its_tentative_value_before_an_outside_window_pre
     }
 }
 
-#[trace("FR-1043-AC-7", "FR-202-AC-26")]
+/// A skipped finite object domain does not skip the reward's mandatory
+/// typing/definedness and parameter-only-context contracts.
+#[trace("FR-185-AC-4")]
 #[test]
-fn object_parameter_reward_undefined_is_replayed_with_its_actual_draw() {
-    for scheduler in ["Steady", "every scheduler"] {
-        let mut model = retry(&claim("Q", scheduler,
-            "probability >= 0.5 [accumulate duration from holds(true) until holds(m.delivered) within 2 <= 1]"));
+fn object_parameter_reward_candidates_are_checked_before_runtime() {
+    use fsl_semantics::check::{CheckCause, IllTypedCause, Obligation};
+    let source = |expression: &str| {
+        let mut model = retry(&claim("Q", "Steady", "probability >= 0.5 [accumulate duration from holds(true) until holds(m.delivered) within 2 <= 1]"));
         model
             .operations
             .iter_mut()
@@ -2381,46 +2383,35 @@ fn object_parameter_reward_undefined_is_replayed_with_its_actual_draw() {
             .unwrap()
             .parameters
             .push(("peer", "ix://test/retry/Msg".into()));
-        model.body += "\nreward duration on Msg::fast = if peer = peer then 1 mod 0 else 0;\n";
-        let world = World::new(&model);
-        let system =
-            ModelSystem::new(world.subject().simulation).expect("the object parameter is admitted");
-        let record = settle(&world, "Q", ModelCheckLimits::default());
-        assert_eq!(
-            record.terminal().unwrap().value(),
-            &TerminalValue::Refuted,
-            "an admitted actual reward read must retain Undefined, not BROKEN: {:?}",
-            record.settlement
-        );
-        let token = record.probabilistic_counterexample.as_ref().unwrap();
-        let undefined = token.undefined().expect("reward undefined evidence");
-        assert_eq!(undefined.evaluation.site.position, 1);
-        assert_eq!(undefined.path.paths[0].steps.len(), 1);
-        assert!(token.mass() > &ratio(0, 1));
-        let step = undefined.path.paths[0].steps.first().unwrap();
-        assert!(step.action.is_some() && step.draw.is_some() && step.transition.is_some());
-        assert_eq!(
-            system.state_key(&step.post).unwrap().1,
-            undefined.evaluation.site.state_key
-        );
-        let wire = token.wire.as_ref().unwrap();
-        assert_eq!(wire["evidence"]["undefined"]["cause"], "division-by-zero");
-        let replay = fsl_replay::replay_probabilistic_undefined(
-            &world.package,
-            &system,
-            &undefined.path.item,
-            undefined,
-            &fsl_analyze::exact_probabilistic::ExactProbLimits::default(),
-            &Cancel::new(),
-        );
+        model.body += &format!("\nreward duration on Msg::fast = {expression};\n");
+        model
+    };
+    for (expression, expected) in [
+        ("if peer = peer then 1 mod 0 else 0", 0),
+        ("if peer.delivered then 1 else 0", 1),
+        ("if deref(peer).delivered then 1 else 0", 2),
+    ] {
+        let Err(refusals) = World::try_new(&source(expression)) else {
+            panic!("must refuse before runtime: {expression}");
+        };
         assert!(
-            matches!(
-                replay,
-                Ok(fsl_replay::ProbabilityWitnessReplay::Reproduced(_))
-            ),
-            "{replay:?}"
+            refusals.iter().any(|refusal| match expected {
+                0 => matches!(refusal.cause, CheckCause::Unproved(Obligation::Nonzero)),
+                1 => matches!(
+                    refusal.cause,
+                    CheckCause::IllTyped(IllTypedCause::TypeMismatch)
+                ),
+                _ => refusal.cause.cause() == Some("state-read-in-reward"),
+            }),
+            "{expression}: {refusals:?}"
         );
     }
+    let admitted = World::new(&source("if peer = peer then 1 else 0"));
+    let system = ModelSystem::new(admitted.subject().simulation).unwrap();
+    let initial = system.initial().remove(0);
+    let actions = system.actions(&initial).unwrap().unwrap();
+    assert!(!actions.is_empty());
+    assert!(actions.iter().flat_map(|action| &action.draws).any(|draw| draw.rewards.iter().any(|(reward, value)| reward.as_str() == "duration" && matches!(value, filament_exact::Value::Integer(value) if value == &Integer::one()))));
 }
 
 #[trace("TC-3152", "FR-1043-AC-1", "FR-203-AC-12")]
