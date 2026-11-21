@@ -764,22 +764,52 @@ pub struct AnalyzeOutcome {
 /// The node graphs of the packages a run analyzed, which index the node ids of
 /// its result document (FSpec FR-322 "Operand index segments"): the request's
 /// own package and, for each item over a dependency, that dependency.
-#[derive(Clone, Default)]
+#[derive(Clone)]
 pub struct DocumentGraphs {
-    /// The graph of the request's own admitted package; `None` when the
-    /// package did not emit.
-    pub own: Option<fsl_semantics::check::wire_id::WireGraph>,
+    /// The graph of the request's own admitted package.
+    pub own: Result<fsl_semantics::check::wire_id::WireGraph, GraphUnavailable>,
     /// The graph of the admitted dependency package an item is analyzed
     /// over, by request index.
-    pub components:
-        std::collections::BTreeMap<RequestIndex, fsl_semantics::check::wire_id::WireGraph>,
+    pub components: std::collections::BTreeMap<
+        RequestIndex,
+        Result<fsl_semantics::check::wire_id::WireGraph, GraphUnavailable>,
+    >,
+}
+
+/// Why a package has no graph to write a result's node ids against.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum GraphUnavailable {
+    /// The package emitted no complete admitted bytes: the emitter refused
+    /// or reached its limit, and the strict reader named no refusal.
+    NotEmitted,
+    /// The admitted bytes hold no readable `semantic_graph`.
+    Unreadable(String),
+}
+
+impl Default for DocumentGraphs {
+    fn default() -> Self {
+        Self {
+            own: Err(GraphUnavailable::NotEmitted),
+            components: std::collections::BTreeMap::new(),
+        }
+    }
+}
+
+impl DocumentGraphs {
+    /// The graph of the package whose emission is `bytes`.
+    pub fn of_bytes(
+        bytes: &[u8],
+    ) -> Result<fsl_semantics::check::wire_id::WireGraph, GraphUnavailable> {
+        fsl_semantics::check::wire_id::WireGraph::of_package_bytes(bytes)
+            .map_err(GraphUnavailable::Unreadable)
+    }
 }
 
 impl std::fmt::Debug for DocumentGraphs {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter
             .debug_struct("DocumentGraphs")
-            .field("own", &self.own.is_some())
+            .field("own", &self.own.as_ref().map(|_| ()))
             .field("components", &self.components.keys().collect::<Vec<_>>())
             .finish()
     }

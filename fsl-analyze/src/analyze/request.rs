@@ -497,29 +497,22 @@ pub(crate) fn analyze_bound<'a>(
     check_provision(package, provision)
         .map_err(|failure| StageFailure::Refused(super::AnalyzeRefusal::Provision(failure)))?;
     let shared = read.as_ref().map(crate::provider::Shared::of);
-    let own = read.as_ref().and_then(|read| {
-        fsl_semantics::check::wire_id::WireGraph::of_package_bytes(
-            read.emission().package().bytes(),
-        )
-        .ok()
-    });
+    let own = match &read {
+        Some(read) => super::DocumentGraphs::of_bytes(read.emission().package().bytes()),
+        None => Err(super::GraphUnavailable::NotEmitted),
+    };
     let mut component_graphs = BTreeMap::new();
     for (index, component) in components {
-        match crate::provider::read_package(component, binding.packages, limits.emit) {
-            Ok(read) => {
-                if let Ok(graph) = fsl_semantics::check::wire_id::WireGraph::of_package_bytes(
-                    read.emission().package().bytes(),
-                ) {
-                    component_graphs.insert(*index, graph);
-                }
-            }
+        let graph = match crate::provider::read_package(component, binding.packages, limits.emit) {
+            Ok(read) => super::DocumentGraphs::of_bytes(read.emission().package().bytes()),
             Err(crate::provider::NotAdmitted::Refused(refusal)) => {
                 return Err(StageFailure::Refused(super::AnalyzeRefusal::Package(
                     refusal,
                 )));
             }
-            Err(crate::provider::NotAdmitted::Other) => {}
-        }
+            Err(crate::provider::NotAdmitted::Other) => Err(super::GraphUnavailable::NotEmitted),
+        };
+        component_graphs.insert(*index, graph);
     }
     let component_runs: BTreeMap<RequestIndex, super::RunInput<'_>> = components
         .iter()
