@@ -4108,3 +4108,143 @@ fn package_window_adapter_controls(
         );
     }
 }
+
+/// Real kernel refusals retain their source record and caller-rendered span;
+/// caller text provisioning remains a call-stage boundary on the byte route.
+#[test]
+#[trace("TC-3019", "FR-1039-AC-11", "TC-451", "FR-100-AC-9")]
+fn package_remainder_call_and_condition_refusals_keep_caller_source_loci() {
+    use fsl_foundation::{Source, SourceIdentity, Span};
+    let unit = "language \"ix:native\" edition \"1-draft\";\n\
+        profile v = \"filament.value.complete/v1\";\n\
+        profile t = \"filament.temporal.timestamped-event.finite-window/v1\";\n\
+        record Counter { level: Int[0, 9]; }\n\
+        type Zero = Int[0, 0];\n\
+        function ints using v(xs: Sequence<Integer>[0, 3]): Sequence<Integer>[0, 3] pure { xs }\n\
+        function refusingCount using v(n: Integer): Zero pure { count<Zero>(m in ints(sequence[n]): m > 0) }\n\
+        temporal C using t over (c: Counter) clock \"sensor\" on origin \
+        { always[0,5] holds(count<Zero>(m in ints(sequence[c.level]): m > 0) = 0) }\n\
+        temporal Other using t over (c: Counter) clock \"sensor\" on origin \
+        { always[0,5] holds(count<Zero>(m in ints(sequence[c.level]): m > 0) = 0) }\n";
+    let directory = tempfile::tempdir().unwrap();
+    spine::write(directory.path(), Case::Healthy).unwrap();
+    std::fs::write(directory.path().join("caller.native"), unit).unwrap();
+    let clocks = json!({"sensor":{"kind":"timestamped_event","timestamp_unit":"ms"}});
+    compile_handoff_with_clocks(directory.path(), unit, Some(clocks.clone()));
+    let offered = Source::read_typed(
+        SourceIdentity::new("agent-ix", "test:s1-16:unit.native"),
+        "caller.native",
+        unit.as_bytes(),
+        unit.len(),
+    )
+    .unwrap_or_else(|refusal| panic!("valid caller source: {}", refusal.error.message));
+    for (member, selection, term) in [
+        (
+            "call",
+            json!({"function":"refusingCount","arguments":[{"parameter":"n","value":1}]}),
+            "count<Zero>(m in ints(sequence[n]): m > 0)",
+        ),
+        (
+            "clause",
+            json!({"selection":{"temporal":{"name":"C","trace":{"timestamped":{
+            "observations":[{"position":level_sample(1),"stamp":0}],
+            "progress":{"watermark":5,"completeness":{"complete":{"through":5}},"scope":"closed","execution":"closed"},
+            "lower_boundary":"authoritative-origin",
+            "binding":{"profile":"filament.temporal.timestamped-event.finite-window/v1","clock":"sensor","parameters":clocks["sensor"]}
+        }}}},"observations":{}}),
+            "count<Zero>(m in ints(sequence[c.level]): m > 0)",
+        ),
+    ] {
+        let start = unit.find(term).unwrap();
+        let span = serde_json::to_value(
+            offered
+                .locate(Span {
+                    start,
+                    end: start + term.len(),
+                })
+                .unwrap(),
+        )
+        .unwrap();
+        let mut caller = source("unit.native");
+        caller["file"] = json!("caller.native");
+        caller["document"] = json!("CallerDocument");
+        caller["formal_revision"] = json!(19);
+        let mut source_request = json!({"format":"native-run/1","request":{
+            "models":[],"program":{"source":caller},"clocks":clocks
+        }});
+        source_request["request"][member] = selection.clone();
+        let expected = write_request(directory.path(), &source_request);
+        assert_eq!(expected.0, 20, "source {member}: {}", expected.1);
+        let outcome = |value: &Value| {
+            if member == "call" {
+                value["outcome"].clone()
+            } else {
+                value["disposition"]["outcome"].clone()
+            }
+        };
+        let refusal = outcome(&expected.1);
+        assert_eq!(refusal["kind"], "refused", "{}", expected.1);
+        assert_eq!(refusal["code"], "integer_out_of_domain", "{refusal}");
+        assert_eq!(refusal["cause"], "outside-domain", "{refusal}");
+        assert_eq!(refusal["fields"], json!({"expected":"Int[0, 0]"}));
+        assert_eq!(
+            refusal["locus"],
+            json!({"file":"caller.native","span":span})
+        );
+        let mut request = json!({"format":"native-run/1","request":{
+            "models":[],"package":{"directory":"handoff"},"sources":[caller]
+        }});
+        request["request"][member] = selection;
+        for (document, revision) in [("CallerDocument", 19), ("AnotherDocument", 27)] {
+            request["request"]["sources"][0]["document"] = json!(document);
+            request["request"]["sources"][0]["formal_revision"] = json!(revision);
+            let actual = write_request(directory.path(), &request);
+            assert_eq!(actual.0, expected.0, "package {member}: {}", actual.1);
+            assert_eq!(
+                outcome(&actual.1),
+                refusal,
+                "package {member}: {}",
+                actual.1
+            );
+            if member == "clause" {
+                assert_eq!(actual, expected, "all original condition report fields");
+                fsl_replay::spine::read_native_run_result(&serde_json::to_vec(&actual.1).unwrap())
+                    .unwrap();
+            }
+        }
+        let assert_missing = |request: &Value| {
+            let result = write_request(directory.path(), request);
+            assert_eq!(result.0, 20, "{member}: {}", result.1);
+            assert_eq!(result.1["code"], "invalid_runtime_input", "{}", result.1);
+            assert_eq!(result.1["cause"], "missing-member", "{}", result.1);
+            assert_eq!(result.1["stage"], "call", "{}", result.1);
+            assert_eq!(result.1["details"], json!({"field":"sources"}));
+            assert!(result.1["message"]
+                .as_str()
+                .unwrap()
+                .contains("test:s1-16:unit.native"));
+            assert!(result.1.get("outcome").is_none());
+            assert!(result.1.get("disposition").is_none());
+        };
+        let mut missing = request.clone();
+        missing["request"]
+            .as_object_mut()
+            .unwrap()
+            .remove("sources");
+        assert_missing(&missing);
+        missing = request.clone();
+        missing["request"]["sources"][0]["identity"] = json!("wrong-reference");
+        assert_missing(&missing);
+        std::fs::write(directory.path().join("caller.native"), "short").unwrap();
+        assert_missing(&request);
+        let mut split = unit.as_bytes().to_vec();
+        split[start - 1..start + 1].copy_from_slice("é".as_bytes());
+        assert!(
+            std::str::from_utf8(&split).is_ok(),
+            "the entire caller document remains valid UTF-8"
+        );
+        std::fs::write(directory.path().join("caller.native"), split).unwrap();
+        assert_missing(&request);
+        std::fs::write(directory.path().join("caller.native"), unit).unwrap();
+    }
+}
