@@ -673,6 +673,9 @@ pub struct AdmittedObservations {
     pub post: Option<Observation>,
     /// The selected self object's reference.
     pub self_object: ObjectReference,
+    /// The actual population explicitly selected for this receiver. Context
+    /// receivers and unattributed trusted values have no population origin.
+    pub self_population: Option<filament_exact::NodeKey>,
     /// The selected invocation, whatever kind `self` is: some for a
     /// postcondition and for a precondition selected by `Invocation`, none
     /// for an invariant and for a precondition selected by `PreCall`.
@@ -3027,6 +3030,10 @@ fn admit_invariant(
         &environment.environment,
         self_object,
     )?;
+    let self_population = environment
+        .environment
+        .population_node(&self_object.population)
+        .cloned();
 
     Ok(AdmittedObservations {
         usage: read.usage,
@@ -3040,6 +3047,7 @@ fn admit_invariant(
         pre: None,
         post: None,
         self_object: self_reference,
+        self_population,
         invocation: None,
         self_kind: SelfKind::Object,
         receiver_pre: None,
@@ -3816,6 +3824,10 @@ fn admit_pre_call(
     };
 
     let usage = input.invocation_usage.merged_with(input.pre.usage);
+    let self_population = input
+        .self_object
+        .and_then(|object| admitted.environment.population_node(&object.population))
+        .cloned();
     let observation = Observation {
         identity: input.pre.identity,
         environment: admitted.environment,
@@ -3834,6 +3846,7 @@ fn admit_pre_call(
         pre,
         post: None,
         self_object: self_reference,
+        self_population,
         invocation: input.receiver_invocation.cloned(),
         self_kind: SelfKind::of(state_machine),
         receiver_pre,
@@ -3908,6 +3921,12 @@ fn admit_operation(
         )?;
     }
 
+    let self_population = invocation
+        .call
+        .self_object
+        .as_ref()
+        .and_then(|object| admitted.pre.environment.population_node(&object.population))
+        .cloned();
     let usage = admitted.usage();
     let pre = Observation {
         identity: admitted.documents.pre.identity,
@@ -3929,6 +3948,7 @@ fn admit_operation(
             pre: None,
             post: None,
             self_object: admitted.self_reference,
+            self_population: None,
             invocation: Some(admitted.invocation),
             self_kind: admitted.self_kind,
             receiver_pre: None,
@@ -3946,6 +3966,7 @@ fn admit_operation(
         pre: Some(pre),
         post: Some(post),
         self_object: admitted.self_reference,
+        self_population,
         invocation: Some(admitted.invocation),
         self_kind: admitted.self_kind,
         receiver_pre: admitted.receiver_pre,

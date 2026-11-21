@@ -162,6 +162,7 @@ impl Walk<'_, '_, '_> {
             self.meter,
             graph.dispatch_tables(),
         )
+        .with_reference_origins(self.setup.reference_origins.clone())
         .run_frame(node, self.frame.clone())
         .map_err(|_| Short::Fault("collection-write-evaluation-fault"))?;
         match evaluation.outcome {

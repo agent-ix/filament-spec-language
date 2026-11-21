@@ -753,6 +753,11 @@ fn pre_observations(
         pre: Some(walk.observation.clone()),
         post: None,
         self_object: row.reference.clone(),
+        self_population: walk
+            .observation
+            .environment
+            .population_node(&row.population.node)
+            .cloned(),
         invocation: None,
         self_kind: SelfKind::Object,
         receiver_pre: None,
@@ -1128,6 +1133,12 @@ impl Run<'_, '_, '_> {
                 pre: Some(self.walk.observation.clone()),
                 post: Some(self.walk.observation.clone()),
                 self_object: self.row.reference.clone(),
+                self_population: self
+                    .walk
+                    .observation
+                    .environment
+                    .population_node(&self.row.population.node)
+                    .cloned(),
                 invocation: None,
                 self_kind: SelfKind::Object,
                 receiver_pre: None,
@@ -1878,6 +1889,12 @@ impl Run<'_, '_, '_> {
                 pre: Some(self.walk.observation.clone()),
                 post: Some(post.clone()),
                 self_object: self.row.reference.clone(),
+                self_population: self
+                    .walk
+                    .observation
+                    .environment
+                    .population_node(&self.row.population.node)
+                    .cloned(),
                 invocation: None,
                 self_kind: SelfKind::Object,
                 receiver_pre: None,
@@ -2005,6 +2022,12 @@ impl Run<'_, '_, '_> {
             pre: Some(self.walk.observation.clone()),
             post: Some(post),
             self_object: self.row.reference.clone(),
+            self_population: self
+                .walk
+                .observation
+                .environment
+                .population_node(&self.row.population.node)
+                .cloned(),
             invocation: None,
             self_kind: SelfKind::Object,
             receiver_pre: None,

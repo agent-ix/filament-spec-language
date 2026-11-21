@@ -1919,6 +1919,7 @@ struct ClauseSetup<'a> {
     current: &'a ObjectEnvironment,
     pre: Option<&'a ObjectEnvironment>,
     bindings: Vec<Value>,
+    reference_origins: Vec<Vec<ProtocolReferenceOccurrence>>,
     trail: s6a::separation::Trail,
     receiver_path: Option<s6a::separation::RuntimeValuePath>,
 }
@@ -1960,6 +1961,7 @@ impl<'a> ClauseSetup<'a> {
             current,
             pre,
             bindings,
+            reference_origins,
             trail,
             receiver_path,
         } = bind_clause(
@@ -1973,6 +1975,7 @@ impl<'a> ClauseSetup<'a> {
             current,
             pre,
             bindings,
+            reference_origins,
             trail,
             receiver_path,
         })
@@ -1986,6 +1989,7 @@ pub(super) struct ClauseBinding<'a> {
     pub(super) current: &'a ObjectEnvironment,
     pub(super) pre: Option<&'a ObjectEnvironment>,
     pub(super) bindings: Vec<Value>,
+    pub(super) reference_origins: Vec<Vec<ProtocolReferenceOccurrence>>,
     pub(super) trail: s6a::separation::Trail,
     pub(super) receiver_path: Option<s6a::separation::RuntimeValuePath>,
 }
@@ -2043,6 +2047,13 @@ pub(super) fn bind_clause<'a>(
                 CallFailure::Fault(InternalFault::new("S6a", "clause-parameter-not-admitted"))
             })?;
         bindings.push(value);
+    }
+    let mut reference_origins = vec![Vec::new(); bindings.len()];
+    if let Some(population) = &observations.self_population {
+        reference_origins[0].push(ProtocolReferenceOccurrence {
+            path: Vec::new(),
+            population: population.clone(),
+        });
     }
     let pre = observations
         .pre
@@ -2112,6 +2123,7 @@ pub(super) fn bind_clause<'a>(
             .as_ref()
             .map(|observation| &observation.environment),
         bindings,
+        reference_origins,
         trail,
         receiver_path,
     })
@@ -2939,7 +2951,8 @@ impl CheckedPackageEvaluation for CheckedPackage {
             setup.pre,
             setup.bindings,
             setup.trail,
-        );
+        )
+        .with_reference_origins(setup.reference_origins);
         let evaluation = evaluate_declaration(
             S6aFamilyKind::ProtocolClause,
             &identity,
@@ -3026,6 +3039,7 @@ impl CheckedPackageEvaluation for CheckedPackage {
             graph.dispatch_tables(),
         )
         .with_trail(setup.trail)
+        .with_reference_origins(setup.reference_origins)
         .separate(
             declaration.slots(),
             setup.bindings,
@@ -3109,6 +3123,7 @@ pub(crate) fn source_post_targets(
                 &mut meter,
                 graph.dispatch_tables(),
             )
+            .with_reference_origins(setup.reference_origins.clone())
             .run_frame(node, frame.clone())
             .map(|evaluation| evaluation.outcome)
             .map_err(CallFailure::Fault)
