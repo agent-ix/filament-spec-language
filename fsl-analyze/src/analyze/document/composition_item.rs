@@ -532,7 +532,7 @@ enum Unavailable {
     NotDependency,
 }
 
-/// A catalog code FSpec FR-272 gives no cause: the cause is the empty string,
+/// A code FSpec FR-272-AC-22 gives no cause: the cause is the empty string,
 /// which writes no `cause` member.
 fn without_cause(code: &'static str) -> CatalogCode {
     CatalogCode::new(code, "")
@@ -551,13 +551,10 @@ fn unavailable(index: RequestIndex, name: &str, failure: &Unavailable) -> Box<Re
                 ProofRefusalCause::InvalidInput
             },
             DeclineCode::Fsl(refusal.code),
-            // A reader refusal that names no cause writes none; only a missing
-            // import has a catalog cause of its own (FSpec FR-272).
-            if refusal.cause.is_some() || refusal.code == Code::MissingImport {
-                CatalogCode::new(refusal.code.as_str(), refusal.catalog_cause())
-            } else {
-                without_cause(refusal.code.as_str())
-            },
+            // FSpec FR-272-AC-22: only the reader-vocabulary codes carry no
+            // cause, and `Code` names none of them, so a reader refusal keeps
+            // its catalog cause.
+            CatalogCode::new(refusal.code.as_str(), refusal.catalog_cause()),
         ),
         Unavailable::Emission(GraphUnavailable::EmitRefused(refusal)) => {
             TerminalRecord::disposition_declined(
@@ -579,7 +576,7 @@ fn unavailable(index: RequestIndex, name: &str, failure: &Unavailable) -> Box<Re
                 index,
                 ProofRefusalCause::InvalidInput,
                 DeclineCode::Fsl(Code::InvalidPackage),
-                without_cause("invalid_package"),
+                CatalogCode::new("invalid_package", "invalid-value"),
             )
         }
         Unavailable::NotDependency => TerminalRecord::disposition_declined(
@@ -748,9 +745,9 @@ fn component_graphs(
                         Err(crate::provider::NotAdmitted::Refused(refusal)) => {
                             Err(Unavailable::Refused(refusal))
                         }
-                        Err(crate::provider::NotAdmitted::Other(refusal)) => Err(Unavailable::Emission(
-                            GraphUnavailable::of_not_admitted(refusal),
-                        )),
+                        Err(crate::provider::NotAdmitted::Other(refusal)) => Err(
+                            Unavailable::Emission(GraphUnavailable::of_not_admitted(refusal)),
+                        ),
                     }
                 }
             };
@@ -819,18 +816,18 @@ mod tests {
             None,
         )));
         assert_eq!(code, "invalid_package");
-        assert_eq!(cause, "");
+        assert_eq!(cause, "invalid-value");
     }
 
-    /// FR-1044-AC-15: a reader refusal that names no cause writes none, never
-    /// the `invalid-value` default; a reader cause is written as read.
+    /// FR-1044-AC-15: an `invalid_package` reader refusal without a cause keeps
+    /// `invalid-value`; a reader cause is written as read.
     #[trace("TC-3155", "FR-1044-AC-15")]
     #[test]
-    fn a_reader_refusal_without_a_cause_writes_no_cause() {
+    fn a_reader_refusal_without_a_cause_keeps_its_catalog_cause() {
         let none = reader_refusal(Code::InvalidPackage, None);
         assert_eq!(
             settled(&Unavailable::Refused(none)),
-            ("invalid_package", "")
+            ("invalid_package", "invalid-value")
         );
         let named = reader_refusal(Code::InvalidPackage, Some("ambiguous-name"));
         assert_eq!(
