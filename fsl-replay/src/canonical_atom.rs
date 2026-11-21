@@ -1119,6 +1119,26 @@ fn canonical_identity(key: &NodeKey) -> Result<String, String> {
     Ok(format!("ix://{}/{}", key.package(), path.join("/")))
 }
 
+fn unit_identity(key: &NodeKey) -> Result<String, String> {
+    let view = key.view();
+    let mut path = view.path();
+    // NodeOwner::nominal_key places a model unit's actual declaration
+    // identity in its third segment at ordinal 0. Source and definition
+    // units use their declaration path at UNIT_ORDINAL (2).
+    if view.ordinal() == 0 {
+        if let (
+            Some(filament_exact::PathSegmentView::Text("scalar_type")),
+            Some(filament_exact::PathSegmentView::Text("unit")),
+            Some(filament_exact::PathSegmentView::Text(identity)),
+            None,
+        ) = (path.next(), path.next(), path.next(), path.next())
+        {
+            return Ok(identity.to_owned());
+        }
+    }
+    canonical_identity(key)
+}
+
 /// Build labels solely from the retained checked source conditions and their
 /// positional clause binders. Source slices are deliberately not involved.
 pub fn source_labels(
@@ -1260,7 +1280,7 @@ fn literal_text(value: &Value, declarations: &BTreeMap<NodeKey, String>) -> Resu
                 "rational({}, {}) {}",
                 value.magnitude().numerator(),
                 value.magnitude().denominator(),
-                canonical_identity(unit)?
+                unit_identity(unit)?
             ))
         }
         Value::Decimal(value) => Ok(format!(
@@ -1287,6 +1307,7 @@ mod tests {
     use super::*;
     use filament_checked::node::ConnectiveOrigin;
     use filament_exact::{IeeeValue, Integer, IntegerInterval, Quantity, Rational, UnitId};
+    use fsl_semantics::value::{ModelSubject, NodeOwner, OwnerSubject};
     use ix_trace_rs::trace;
 
     fn ordinary(nodes: &mut Vec<ExpressionNode>, kind: NodeKind<usize, CheckedLiteral>) -> usize {
@@ -1418,17 +1439,11 @@ mod tests {
                 "rational(3000, 1) ix://another/clock/unit/ms",
             ),
         ] {
-            let unit = UnitId::declared(
-                NodeKey::new(
-                    package,
-                    vec![
-                        filament_exact::PathSegment::Text("unit".into()),
-                        filament_exact::PathSegment::Text("ms".into()),
-                    ],
-                    0,
-                )
-                .unwrap(),
-            );
+            let owner = NodeOwner::Model(ModelSubject {
+                identity: package.to_owned(),
+                node: format!("ix://{package}/unit/ms"),
+            });
+            let unit = UnitId::declared(owner.nominal_key("unit", &["ms".to_owned()], 2).unwrap());
             let quantity = Quantity::new(
                 Rational::new(Integer::from(numerator), Integer::from(denominator)).unwrap(),
                 unit.clone(),
@@ -1441,6 +1456,29 @@ mod tests {
             );
             assert_eq!(render(nodes, root).unwrap(), expected);
         }
+    }
+
+    #[test]
+    #[trace("TC-3039", "FR-931-AC-11", "FR-931-AC-12")]
+    fn a_source_unit_path_is_not_a_model_unit_identity() {
+        let owner = NodeOwner::Source(OwnerSubject::new("agent-ix", "clock", "clock"));
+        let unit = UnitId::declared(
+            owner
+                .nominal_key(
+                    "unit",
+                    &["scalar_type".to_owned(), "unit".to_owned(), "ms".to_owned()],
+                    2,
+                )
+                .unwrap(),
+        );
+        let value = Value::Quantity(Quantity::new(
+            Rational::from_integer(Integer::from(3_i64)),
+            unit,
+        ));
+        assert_eq!(
+            literal_text(&value, &BTreeMap::new()).unwrap(),
+            "rational(3, 1) ix://clock/scalar_type/unit/ms"
+        );
     }
 
     const A: u64 = 0x3ff0_0000_0000_0000;
