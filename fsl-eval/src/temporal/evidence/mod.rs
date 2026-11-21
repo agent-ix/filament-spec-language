@@ -29,9 +29,9 @@ mod work;
 
 pub use super::facts::{ClauseFacts, ClauseFormula};
 pub use activation::{
-    activate, scope_disposition, Activation, ActivationFault, ActivationInput, ActivationStop,
-    ClauseShape, Completeness, Contradiction, Disposition, ExecutionDisposition, FaultKind,
-    FaultSubject, Instance, InstanceState, SurplusCapture, UnknownKind,
+    activate, Activation, ActivationFault, ActivationInput, ActivationStop, ClauseShape,
+    Completeness, Contradiction, Disposition, ExecutionDisposition, FaultKind, FaultSubject,
+    Instance, InstanceState, SurplusCapture, UnknownKind,
 };
 pub use binding::{
     authenticate_clock, AuthenticatedBinding, BindingMismatch, ClauseSelection,

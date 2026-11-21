@@ -16,12 +16,12 @@ use filament_exact::Meter;
 use fsl_eval::temporal::evidence::SubjectOccurrence;
 use fsl_eval::temporal::evidence::{
     activate, evaluate_temporal_evidence, ActivationInput, ActivationRow, ActivationState,
-    ActivationStop, CaptureFact, CapturedValue, CompletenessRecord, Disposition, Evicted,
-    EvidenceCounter, EvidenceIncomplete, EvidencePosition, EvidenceRef, EvidenceRequest,
-    EvidenceResult, EvidenceSubject, ExecutionDisposition, ExecutionOrigin, FaultKind,
-    FaultSubject, Indeterminate, InstanceState, NonValueKind, ObligationKey, Payload, Receipt,
-    Relation, SemanticTriggerIdentity, Settlement, TemporalEvidenceLimits, TriggerDelivery,
-    TriggerEvidence, TriggerRecord, TriggerScope, Truth, UnknownKind,
+    ActivationStop, CaptureFact, CapturedValue, CompletenessRecord, Evicted, EvidenceCounter,
+    EvidenceIncomplete, EvidencePosition, EvidenceRef, EvidenceRequest, EvidenceResult,
+    EvidenceSubject, ExecutionDisposition, ExecutionOrigin, FaultKind, FaultSubject, Indeterminate,
+    InstanceState, NonValueKind, ObligationKey, Payload, Receipt, Relation,
+    SemanticTriggerIdentity, Settlement, TemporalEvidenceLimits, TriggerDelivery, TriggerEvidence,
+    TriggerRecord, TriggerScope, Truth,
 };
 use fsl_eval::temporal::evidence::{CallMeter, ClauseFacts, ClauseShape, TraceBinding};
 use fsl_eval::temporal::{
@@ -198,8 +198,19 @@ impl Env {
     pub(crate) fn subject(&self, bound: &[u64]) -> EvidenceSubject<'_> {
         EvidenceSubject {
             package_identity: "a".to_owned(),
-            canonical_package_bytes: None,
-            time_unit_scale: None,
+            // The owner takes the package bytes as an opaque selection; this
+            // low-level fixture holds no package, so it names the same opaque
+            // bytes the owner unit fixtures use.
+            canonical_package_bytes: Some(b"{}"),
+            time_unit_scale: match &self.binding.parameters {
+                ClockConfiguration::EventPosition { .. } => None,
+                ClockConfiguration::FixedSample { .. } => {
+                    Some(filament_exact::Rational::from_integer(1_i64.into()))
+                }
+                ClockConfiguration::TimestampedEvent { .. } | ClockConfiguration::Timed { .. } => {
+                    Some(filament_exact::Rational::new(1_i64.into(), 1000_i64.into()).expect("ms"))
+                }
+            },
             signal: &self.declaration,
             declaration: &self.declaration,
             profile: &self.profile,
@@ -447,7 +458,6 @@ fn distinct_identities_make_distinct_instances_even_with_equal_content() {
             delivery("t2", "r1", "same", &["5"]),
         ]),
     );
-    assert_eq!(activation.disposition, Disposition::Active);
     assert_eq!(activation.instances.len(), 2);
     assert_ne!(
         activation.instances[0].identity,
@@ -618,7 +628,6 @@ fn a_false_guard_makes_no_instance_and_an_unknown_guard_is_a_fault() {
     let all_false = activated(&env, input(vec![falsified.clone()]));
     assert!(all_false.instances.is_empty());
     assert_eq!(all_false.guard_false, [id("t1")]);
-    assert_eq!(all_false.disposition, Disposition::Inactive);
     assert_eq!(all_false.ledger.instance_count(), 0);
     let mut unknown = delivery("t2", "r1", "p", &["5"]);
     unknown.guard = None;
@@ -754,7 +763,6 @@ fn a_faulted_instance_leaves_its_sibling_active() {
     let mut broken = delivery("t2", "r1", "p", &["5"]);
     broken.captures[0] = CaptureFact::Missing;
     let activation = activated(&env, input(vec![delivery("t1", "r1", "p", &["5"]), broken]));
-    assert_eq!(activation.disposition, Disposition::Active);
     assert!(matches!(
         activation.instances[0].state,
         InstanceState::Active
@@ -871,57 +879,51 @@ fn deliveries_captures_and_instances_are_charged_on_their_counters() {
 )]
 #[test]
 fn a_scope_with_no_instance_reports_one_of_four_dispositions() {
-    let env = env(EACH, ONE_CAPTURE);
-    let with = |closure, evidence, record| {
-        let mut request = input(Vec::new());
-        request.scope = TriggerScope {
-            closure,
-            evidence,
-            record,
-        };
-        let activation = activated(&env, request);
-        assert!(activation.instances.is_empty());
-        activation.disposition
+    // FR-861: the disposition of a scope with no instance is the observation
+    // owner's activation view; the call reports it as the activation state
+    // and its non-value code.
+    let (env, p) = each_env();
+    let subject = env.subject(&[]);
+    let with = |closure, evidence, record: ProgressCompleteness| {
+        let mut asked = request(&env, at_t0(&[(p, Valuation::True)]));
+        asked.trigger_scope = closure;
+        asked.trigger_evidence = evidence;
+        if let Some(held) = asked.completeness.as_mut() {
+            held.state = record;
+        }
+        let result = call(&env, &subject, &asked).expect("a result");
+        (
+            result.activation,
+            result.non_value.map(|non_value| non_value.code),
+        )
     };
-    let unknown = |kind, completeness| Disposition::Unknown {
-        kind,
-        completeness,
-        execution: ExecutionDisposition::Completed,
-    };
-    use fsl_eval::temporal::evidence::Completeness::{Complete, Incomplete};
+    let complete = ProgressCompleteness::Complete { through: 100 };
+    let unknown = |code| (ActivationState::Unknown, Some(code));
     assert_eq!(
-        with(
-            ProgressClosure::Closed,
-            TriggerEvidence::Admitted,
-            TriggerRecord::Complete
-        ),
-        Disposition::Inactive
+        with(ProgressClosure::Closed, TriggerEvidence::Admitted, complete),
+        (ActivationState::Inactive, Some("no-trigger-admitted"))
     );
     assert_eq!(
-        with(
-            ProgressClosure::Open,
-            TriggerEvidence::Admitted,
-            TriggerRecord::Complete
-        ),
-        unknown(UnknownKind::Open, Complete)
+        with(ProgressClosure::Open, TriggerEvidence::Admitted, complete),
+        unknown("trigger-scope-open")
     );
     for closure in [ProgressClosure::Closed, ProgressClosure::Open] {
         assert_eq!(
-            with(closure, TriggerEvidence::Missing, TriggerRecord::Complete),
-            unknown(UnknownKind::Missing, Complete)
+            with(closure, TriggerEvidence::Missing, complete),
+            unknown("trigger-evidence-missing")
         );
         assert_eq!(
-            with(closure, TriggerEvidence::Refused, TriggerRecord::Complete),
-            unknown(UnknownKind::Refused, Complete)
+            with(closure, TriggerEvidence::Refused, complete),
+            unknown("trigger-evidence-refused")
         );
     }
     assert_eq!(
         with(
             ProgressClosure::Closed,
             TriggerEvidence::Admitted,
-            TriggerRecord::Incomplete
+            ProgressCompleteness::Incomplete
         ),
-        unknown(UnknownKind::Open, Incomplete)
+        unknown("trigger-scope-open")
     );
 }
 

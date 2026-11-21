@@ -37,7 +37,8 @@ pub const IDENTITIES_FORMAT: &str = "filament.checked-handoff.identities/5";
 
 /// A checked package as a bytes-only consumer holds it (FR-531).
 ///
-/// `BarePackage::new` is the one constructor; nothing builds one from bytes,
+/// `BarePackage::new` is the one constructor (`with_canonical_bytes` attaches
+/// the bytes the package was already read from); nothing builds one from bytes,
 /// from a decoded graph or from a term (FR-531-AC-2):
 ///
 /// ```compile_fail,E0599
@@ -155,13 +156,44 @@ impl<'p> BarePackage<'p> {
         &self.dependency_views
     }
 
-    /// The bare package and exact input bytes from one successful reader
-    /// handoff. The bytes are retained by the read that admitted this exact
-    /// package; callers cannot provide a mismatched slice.
-    pub fn from_admitted_read(read: &'p crate::AdmittedPackageRead<'_>) -> Self {
-        let mut bare = Self::new(read.admitted());
-        bare.canonical_bytes = Some(read.canonical_bytes());
-        bare
+    /// This package with the exact canonical bytes it was read from.
+    ///
+    /// The caller passes the bytes the strict reader admitted `package` from
+    /// (a reader-backed value has them from
+    /// `AdmittedPackageRead::canonical_bytes`). FR-531-AC-2 forbids a
+    /// `BarePackage` signature that names `AdmittedPackageRead`, so this
+    /// takes the slice, not the read.
+    #[must_use]
+    pub fn with_canonical_bytes(mut self, bytes: &'p [u8]) -> Self {
+        self.canonical_bytes = Some(bytes);
+        self
+    }
+
+    /// The exact scale of the time unit `unit` to seconds, read from the
+    /// package's own source-owned unit definitions, when it holds one: a
+    /// declared unit of the `Time` dimension named `unit` with no offset.
+    #[must_use]
+    pub fn time_unit_scale(&self, unit: &str) -> Option<filament_exact::Rational> {
+        use filament_semantic_value::quantity::QuantityUnit;
+        use filament_semantic_value::unit::NominalUnitForm;
+        let named = |segments: &[String], name: &str| {
+            segments.last().is_some_and(|last| last == name) || segments.join("::") == name
+        };
+        self.units.ids().find_map(|id| {
+            let QuantityUnit::Declared(declared) = self.units.get(id)? else {
+                return None;
+            };
+            let node = self.units.nominal_node(&declared.key())?;
+            if !matches!(node.form, NominalUnitForm::Unit { .. })
+                || !named(&node.declaration.qualified_declaration, unit)
+                || declared.is_affine()
+            {
+                return None;
+            }
+            let dimension = self.units.nominal_node(&declared.dimension_node())?;
+            named(&dimension.declaration.qualified_declaration, "Time")
+                .then(|| declared.canonical().scale().clone())
+        })
     }
 
     /// The exact canonical bytes admitted for this package, when available.
