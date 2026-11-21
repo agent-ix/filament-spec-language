@@ -11,7 +11,11 @@
 //! whose `model` the engine left null the owning model's text. A reader of
 //! the result resolves the form back with [`WireGraph::structural_value`].
 
+use std::collections::BTreeMap;
+
 use fsl_semantics::check::wire_id::WireGraph;
+
+use crate::analyze::GraphUnavailable;
 use serde_json::Value;
 
 /// Why an item could not be written in the document-held form.
@@ -68,11 +72,12 @@ pub(super) fn needs_hold(value: &Value) -> bool {
 pub(super) fn hold(
     value: &Value,
     graph: &WireGraph,
+    dependencies: &BTreeMap<String, Result<WireGraph, GraphUnavailable>>,
     model: Option<&str>,
 ) -> Result<Value, HeldIdentityError> {
     let mut held = match graph.document_value(value) {
         Ok(held) => held,
-        Err(_) => hold_each(value, graph)?,
+        Err(_) => hold_each(value, graph, dependencies)?,
     };
     if let Some(model) = model {
         let mut pending = vec![&mut held];
@@ -94,9 +99,15 @@ pub(super) fn hold(
 /// form. An id with an operand that is no node of `graph` stays structural:
 /// the pinned `NodeId` path takes only a string, a `{"node": i}` index and an
 /// operand slot, so it has no spelling for a node of another package's graph.
-/// A composition's own claim over a component's nodes is such an id; FSpec
-/// FR-322 does not yet say how a result names it.
-fn hold_each(value: &Value, graph: &WireGraph) -> Result<Value, HeldIdentityError> {
+/// An id whose own package is a dependency is held in that dependency's graph
+/// (FSpec FR-322); a composition's own claim over a component's nodes is
+/// the id that has no spelling, and FR-322 does not yet say how a result names
+/// it.
+fn hold_each(
+    value: &Value,
+    graph: &WireGraph,
+    dependencies: &BTreeMap<String, Result<WireGraph, GraphUnavailable>>,
+) -> Result<Value, HeldIdentityError> {
     let mut held = value.clone();
     let mut pending = vec![&mut held];
     while let Some(current) = pending.pop() {
@@ -105,7 +116,14 @@ fn hold_each(value: &Value, graph: &WireGraph) -> Result<Value, HeldIdentityErro
             .and_then(Value::as_array)
             .is_some_and(|path| path.iter().any(|segment| segment.get("package").is_some()));
         if nested {
+            let dependency = current
+                .get("package")
+                .and_then(Value::as_str)
+                .and_then(|package| dependencies.get(package))
+                .and_then(|graph| graph.as_ref().ok());
             if let Ok(id) = graph.document_value(current) {
+                *current = id;
+            } else if let Some(Ok(id)) = dependency.map(|graph| graph.document_value(current)) {
                 *current = id;
             }
             continue;
@@ -117,4 +135,56 @@ fn hold_each(value: &Value, graph: &WireGraph) -> Result<Value, HeldIdentityErro
         }
     }
     Ok(held)
+}
+
+/// `value` with every node id object whose package has a graph in `graphs`
+/// replaced by `convert` of it; an id whose conversion fails is left as it is.
+fn map_ids(
+    value: &Value,
+    graphs: &BTreeMap<String, WireGraph>,
+    convert: fn(&WireGraph, &Value) -> Result<Value, String>,
+) -> Value {
+    let mut mapped = value.clone();
+    let mut pending = vec![&mut mapped];
+    while let Some(current) = pending.pop() {
+        let is_id = current.as_object().is_some_and(|object| {
+            object.len() == 3
+                && object.contains_key("package")
+                && object.contains_key("path")
+                && object.contains_key("ordinal")
+        });
+        if is_id {
+            let converted = current
+                .get("package")
+                .and_then(Value::as_str)
+                .and_then(|package| graphs.get(package))
+                .and_then(|graph| convert(graph, current).ok());
+            if let Some(converted) = converted {
+                *current = converted;
+            }
+            continue;
+        }
+        match current {
+            Value::Object(object) => pending.extend(object.values_mut()),
+            Value::Array(items) => pending.extend(items.iter_mut()),
+            _ => {}
+        }
+    }
+    mapped
+}
+
+/// `value` with each id that names a node of a dependency written in that
+/// dependency's document-held form (FSpec FR-322: an id that names a node of
+/// another package's graph is held in that graph).
+pub(crate) fn hold_in_dependencies(value: &Value, graphs: &BTreeMap<String, WireGraph>) -> Value {
+    map_ids(value, graphs, WireGraph::document_value)
+}
+
+/// [`hold_in_dependencies`] read back: each id of a dependency's graph as its
+/// structural key's FR-201 identity value.
+pub(crate) fn structural_in_dependencies(
+    value: &Value,
+    graphs: &BTreeMap<String, WireGraph>,
+) -> Value {
+    map_ids(value, graphs, WireGraph::structural_value)
 }

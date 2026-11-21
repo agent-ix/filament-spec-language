@@ -368,11 +368,17 @@ impl serde::Serialize for ProviderRequest<'_> {
     fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         use base64::Engine as _;
         use serde::ser::{Error as _, SerializeMap as _};
+        let mut dependency_graphs = std::collections::BTreeMap::new();
+        for dependency in &self.dependencies {
+            let graph =
+                WireGraph::of_package_bytes(&dependency.package).map_err(S::Error::custom)?;
+            dependency_graphs.insert(dependency.identity.clone(), graph);
+        }
         let items = self
             .items
             .iter()
             .zip(&self.targets)
-            .map(|(item, target)| request_item_wire(&self.graph, item, target))
+            .map(|(item, target)| request_item_wire(&self.graph, &dependency_graphs, item, target))
             .collect::<Result<Vec<_>, _>>()
             .map_err(S::Error::custom)?;
         let mut dependencies: Vec<&fsl_replay::HybridProcessDependency> =
@@ -468,6 +474,7 @@ fn proof_bound_wire(
 /// (FR-331 "Identity and validation").
 fn request_item_wire(
     graph: &WireGraph,
+    dependency_graphs: &std::collections::BTreeMap<String, WireGraph>,
     item: &RequirementItem,
     target: &ProviderTarget<'_>,
 ) -> Result<serde_json::Value, serde_json::Error> {
@@ -535,7 +542,10 @@ fn request_item_wire(
         if let ProviderTarget::Composition(composition) = target {
             members.insert(
                 "premises".to_owned(),
-                serde_json::Value::Array(composition.premises().to_vec()),
+                crate::analyze::document::hold_in_dependencies(
+                    &serde_json::Value::Array(composition.premises().to_vec()),
+                    dependency_graphs,
+                ),
             );
         }
     }
