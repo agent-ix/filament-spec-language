@@ -12,10 +12,11 @@ relationships:
 
 Verify that a `ValueBounds` proof carries a `lower` and an `upper`
 `value-bounds/v1` document, that the checker applies each kind's conditions
-over the base profile's product, and that forms with no dyadic method settle
-a typed incomplete result.
+over the base profile's product, probability and expected-reward bases
+alike, that settlement checks the pairing, and that the long-run form, which
+has no dyadic method, settles a typed incomplete result.
 
-Scope: FR-1042-AC-2 to FR-1042-AC-5, FR-1042-AC-7, FR-1042-AC-8.
+Scope: FR-1042-AC-2 to FR-1042-AC-5 and FR-1042-AC-7 to FR-1042-AC-10.
 
 ## Test Procedure
 
@@ -26,10 +27,15 @@ Scope: FR-1042-AC-2 to FR-1042-AC-5, FR-1042-AC-7, FR-1042-AC-8.
 3. Over the `Health` chain offer FR-1042-AC-5's `lower`/`upper` pair for
    `probability >= 0.75 [always[0,2] holds(ok)]`, then with the rank 2
    changed to 3, then with `upper` `13/16` at horizon 2.
-4. Settle FR-201-AC-27's long-run claim with `max_rational_bits` 4 and
-   FR-201-AC-35's expected-reward claim with `max_rational_bits` 1.
+4. Settle FR-201-AC-27's long-run claim with `max_rational_bits` 4; hand
+   settlement a fully explored `lower` proof with no counterpart.
 5. Run step 1 pre-cancelled and with each caller limit exhausted; offer
    either document with another identity and with a changed `base`.
+6. Over FR-201-AC-35's retry chain offer FR-1042-AC-9's reward documents,
+   `upper` `7/4`, `upper` without `ranking`, and an `upper` row 0 on a
+   closed zero-cost loop.
+7. Over FR-1043-AC-2's model at level 0.5 offer a `lower` naming only the
+   initial key at value 0.
 
 Tag the tests `#[trace("TC-3151", "FR-1042-AC-n")]`.
 
@@ -44,7 +50,11 @@ Tag the tests `#[trace("TC-3151", "FR-1042-AC-n")]`.
   rejected `RankBroken` at `s`.
 - Step 3: `ValueBounds{25/32, 7/8}`; `RankBroken`; `InequalityFails` at
   the horizon-2 key.
-- Step 4: each `Incomplete(LimitReached{MaxRationalBits, …,
-  exact_prob.max_rational_bits})`, no certificate.
+- Step 4: `Incomplete(LimitReached{MaxRationalBits, …,
+  exact_prob.max_rational_bits})`, no certificate; `failed`,
+  `runtime_invariant`/`established-invariant-broken`.
 - Step 5: `incomplete` with the actual limit; refusal before enumeration;
   objective mismatch.
+- Step 6: `proved`; `InequalityFails` at `s`; `Malformed` at `ranking`;
+  `RankBroken` at the loop state.
+- Step 7: `InequalityFails` at the initial key.

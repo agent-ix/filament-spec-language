@@ -31,8 +31,6 @@ relationships:
     type: references
   - target: ix://agent-ix/filament-spec-language/FR-1043
     type: references
-  - target: ix://agent-ix/filament-spec-language/FR-1044
-    type: references
 ---
 # FR-201: Check a probability certificate
 
@@ -135,8 +133,8 @@ product state form `{product_key}`, with `part` when present, and the second as 
   ([FR-1042](FR-1042-certify-value-bounds-with-lower-and-upper-certificates.md))
   and every claim over a bounded measure
   ([FR-1043](FR-1043-certify-finite-horizon-measure-verdicts.md)); an
-  undefined evaluation refutes with the evidence of
-  [FR-1044](FR-1044-replay-an-undefined-evaluation-witness.md).
+  undefined evaluation refutes with FR-202's `Undefined` evidence, which its
+  checked-subject undefined entry replays.
 - The independent checker binary `fsl-probability-check` SHALL accept, in a
   process that links no `fsl-analyze` code, every certificate EN-5 emits,
   of each of the kinds `Exact`, `Lower`, `Upper`, `LongRun` and
@@ -171,8 +169,8 @@ explicitly unsupported rather than be encoded as this profile.
   even when the underlying model graph is cyclic. For `always`, `targets`
   are the accepting decided states the qualified monitor reaches once P
   has held through position h, and a terminal state closes by FR-126's
-  profile false-extension, as for `eventually`. Other bounded temporal
-  forms are written in the general form above.
+  profile false-extension, as for `eventually`. Other temporal forms remain
+  unsupported by this profile.
   Both subsets retain FR-196's Markov successor restrictions.
   Workload admission SHALL require a single resolved
   distribution at each live state. Unsupported shape, profile version,
@@ -583,7 +581,9 @@ ordinal, action-key transport, qualitative-set field or formula AST is added.
   trusted replay data: every
   reachable product state for an `Upper`, `Exact` or `LongRun` certificate,
   and the states the certificate names and their successors for a `Lower`
-  one, an unexplored successor counting as value 0.
+  one, an unexplored successor counting as value 0, or as the objective's
+  least payoff where that is negative (`−q` for ADR-028 XF-2's shifted
+  reward), so that an unnamed state never raises a lower bound.
 - It SHALL recompute the decided states, `Prob0` and `Prob1`, and components
   with its own graph code. When the objective has a fairness set, it SHALL
   derive the maximal fair end components using FR-200's refinement before
@@ -611,7 +611,12 @@ ordinal, action-key transport, qualitative-set field or formula AST is added.
 A proof of a conditioned reading (FR-196 "Conditioned readings": an `on each`
 instance, or a quantile under a workload) SHALL carry a `Conditional`
 certificate in the general form, written in FSpec FR-412's `conditional`
-spelling. A quantile over every scheduler keeps its ADR-028 XF-2
+spelling. A workload quantile whose values exceed `max_rational_bits`
+is the exception: its FR-1043 `shifted` payoff is certified by FR-1042's
+`lower` and `upper` documents instead, because under a workload that leaves
+no choice `E[[act] · ([M <= c] − q)] = Pr(act) · (ratio − q)` has the sign of
+`ratio − q`; for the `>= c` form an upper value of 0 proves the claim only
+when the checker finds no activating state reachable. A quantile over every scheduler keeps its ADR-028 XF-2
 shifted-reward certificate of "General checking conditions": an `Upper`
 certificate for `max E[Y]` for the `>=` form, and a `Lower` or `Exact`
 certificate for `min E[X] >= 0` for the `<=` form. The checker SHALL
@@ -1298,6 +1303,7 @@ initial states/bindings and refutations remain outside this profile.
 | FR-201-AC-44 | For WAIT self R=0 versus GO to B R=1, minimum V(s)=1 accepts with rank 1. Bogus minimum V(s)=0 or 1/2 satisfies Bellman equality through WAIT but rejects RankBroken because no tight action progresses. Maximum is infinity: no finite native document is emitted, and bogus maximum V(s)=1 rejects RankBroken despite Bellman equality. A zero-cost positive-exit retry accepts V(s)=0 with positive rank at bound 0; rank 0 rejects. Non-B terminals and closed zero-cost classes have infinity and cannot pass vacuous universal progress. Minimum initial safe exit cost 1 versus another action to an infinite non-B trap retains unsupported mixed-infinite coverage without a finite document; fabricated finite trap rows fail properness and missing rows fail coverage. | Test |
 | FR-201-AC-45 | AC-43/44 documents round-trip canonically through a fresh checker without analyzer/provider linkage. Entry-B cost is counted once, initial B has V/rank zero, and an otherwise admitted post-B cycle adds no rows or costs. Wrong checked reward/model/unit, targets, optimization/profile, identity or binding; changed actual draw R; false values/progress; malformed rational/JSON/full-key data; missing/duplicate/out-of-order/extra rows and model-only keys prevent acceptance under the precise existing rule/locus. Old acyclic and DTMC bytes/verdicts, producer preferences and sealed acceptance remain unchanged. | Test |
 | FR-201-AC-46 | Actual pre-cancellation and phase-observed Requested/Deadline or byte/state/edge/work/storage/representation/arithmetic exhaustion during original/stopped admission, actual raw/internal/full keys, all-action/draw/B/reward/unit reconstruction, exact sums, tightness and universal/existential progress preserve the typed cause without accepted truth. Earlier model/negative-reward refusal and deferred undefined or unsupported evaluation are not coerced to zero or omitted actions. Unsupported shape/fairness/workload/timed/multi-post/refutation/infinity forms issue no new-profile proof; zero direct instances preserve UnsupportedBinding/unsupported without invented evidence. No new bound directions or full all-expansion memory qualification are claimed. | Test |
+| FR-201-AC-56 | A `Health` chain whose `ok` state stays `ok` with `9/10` per step and otherwise moves to a fault state: `probability >= 0.75 [always[0,2] holds(ok)]` under its workload settles `proved`, `ExactValue{81/100}`, with a `reachability/v1` bounded document whose undecided keys (remaining horizon 2 and 1) have values `81/100` and `9/10` and ranks 2 and 1, whose `targets` are the accepting decided keys after position 2, and which `fsl-probability-check` accepts; the fault state is a rejecting decided key with value 0, and a variant whose fault state is terminal closes by false extension with the same values. The value `81/100` replaced by `9/10` is rejected `InequalityFails` at the initial key. | Test (TC-636) |
 
 | FR-201-AC-47 | The bounded fair profile admits the exact Every/minimum AtLeast and maximum AtMost slice with nonempty checked weak/strong whole/each operation fairness; horizon zero and transported 0/1 values work with interior source bounds. The fair and unfair bounded fixture both have minimum 24/25, while fair result/objective retain the exact checked set. Fairness-empty documents retain existing bytes. Unsupported shapes and zero instances emit no new-profile proof. | Test |
 | FR-201-AC-48 | Canonical fairness records reuse the closed shared operation target and independently match the resolved checked set, including inherited declaring identities and whole/each receiver semantics. Authored reorder/duplicate spellings normalize identically; missing, extra, changed-kind/granularity/model/name, duplicate or out-of-order records and malformed/foreign targets cannot establish the claim. Distinct weak/strong constraints are retained. | Test |
@@ -1308,7 +1314,6 @@ initial states/bindings and refutations remain outside this profile.
 | FR-201-AC-53 | Over the variant where `g` is unreachable, a `Vacuous` certificate is accepted under both scheduler clauses, and over the model itself it is rejected `InequalityFails` at the initial state; a `Conditional` certificate without `conditional` is rejected `Malformed` naming `conditional`, one whose `mode` is `"workload"` `Malformed` naming `mode`, a `Ratio` certificate offered under every scheduler `Malformed` naming `mode`, and a `Ratio` certificate whose `numerator` is a `Lower` certificate `Malformed` naming `numerator`. | Test (TC-3061) |
 | FR-201-AC-54 | Over FSpec FR-407-AC-18's model with the further action `stay` at `s0` (FR-196-AC-16), for `probability >= rational(1, 2)` over every scheduler, the `Optimum` certificate whose `reset` has `x(s0) = 1/2`, `x` at the state after `a` from which `g` is unreachable `1/2`, policy `b` at `s0` and ranks 1 and 2 is accepted: under `stay` and `Reset`, `1/2 <= 1/2`, under `a`, `1/2 <= 1/4 + (3/4)(1/2) = 5/8`, under `b`, `1/2 <= 1/2`. A `reset` with `x(s0) = 0` and policy `stay` is rejected `RankBroken` at `s0` with `part` `reset`, since `stay` has no successor of smaller rank; with policy `b` it is rejected `InequalityFails` at `s0`, since `F_b(x) = 1/2`. So the improper value 0 is never certified. For `<= rational(9, 10)` the `reset` with `y(s0) = 1` and policy `a` (`1/4 + (3/4)(1) = 1`) is accepted and the claim is refuted. | Test (TC-3061) |
 | FR-201-AC-55 | On FR-201-AC-54's `stay` model, for `<= rational(9, 10)` over every scheduler, an `Optimum` certificate whose `reset` has `y(s0) = 1/2`, policy `b` and no row for the state `u` after `a` from which `g` is unreachable is rejected `Malformed` at `values` and proves nothing. Read with `u` as 0, it would pass `F_a(y) = 1/4 <= 1/2`, although the true maximum is 1. With `u` at `1/2` it is rejected `InequalityFails` at `s0` with `part` `reset` (`F_a(y) = 5/8`). Without a fairness set, a `Randomized` `reset` policy entry is rejected `Malformed` at `policy`. | Test (TC-3061) |
-| FR-201-AC-56 | A `Health` chain whose `ok` state stays `ok` with `9/10` per step and otherwise moves to a fault state: `probability >= 0.75 [always[0,2] holds(ok)]` under its workload settles `proved`, `ExactValue{81/100}`, with a `reachability/v1` bounded document whose undecided keys (remaining horizon 2 and 1) have values `81/100` and `9/10` and ranks 2 and 1, whose `targets` are the accepting decided keys after position 2, and which `fsl-probability-check` accepts; the fault state is a rejecting decided key with value 0, and a variant whose fault state is terminal closes by false extension with the same values. The value `81/100` replaced by `9/10` is rejected `InequalityFails` at the initial key. | Test (TC-636) |
 
 ## Dependencies
 

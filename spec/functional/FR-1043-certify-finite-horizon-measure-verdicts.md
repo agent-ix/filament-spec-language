@@ -156,7 +156,7 @@ accumulated amount in its key, checks each part's equations and the ratio
 - An accepted proof SHALL settle `proved`, `ExactValue` (the ratio for a
   workload quantile, the probability or mean otherwise), certified; a
   refutation SHALL keep FR-202's quantile two-mass or path-set evidence;
-  an undefined reward or predicate SHALL settle by FR-1044. EN-5 SHALL
+  an undefined reward or predicate SHALL settle by FR-202's `Undefined` evidence. EN-5 SHALL
   write the values and ranks it computed by FR-197's backward induction,
   which are exactly these.
 

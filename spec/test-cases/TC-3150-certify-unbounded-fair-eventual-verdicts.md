@@ -29,7 +29,7 @@ to `u`, whose only action loops at `u`.
 2. Offer AC-1's document with `s` at 0 and at `1/4`, with `f` at `1/2`, with
    its fairness record removed, changed and duplicated.
 3. Over the `drift` variant, settle `probability >= 0.25 […]`, then offer
-   values `s` 0, `u` 0 (ranks 1, 0) and `u` at `1/2`.
+   values `s` 0, `u` 0, `g` 1, `f` 0 (ranks 1, 0, 0, 0) and `u` at `1/2`.
 4. Settle `probability <= 0.5 […]` and `probability <= 0.4 […]` over `W`
    under `fair strong go`.
 5. Run AC-1 pre-cancelled and with each caller limit exhausted during
