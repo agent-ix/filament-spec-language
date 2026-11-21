@@ -4913,6 +4913,47 @@ mod order_tests {
             &checked.graph().callable("reference").unwrap().parameters[0].1,
             "the package retains the source-selected object identity"
         );
+        let selected = fsl_semantics::model::observation::DocumentRef {
+            authority: "agent-ix".to_owned(),
+            identity: "test:population-snapshot".to_owned(),
+        };
+        let snapshot = serde_json::to_vec(&serde_json::json!({
+            "format": "filament.state.snapshot/v1",
+            "identity": {"authority": selected.authority, "identity": selected.identity},
+            "observation": "current",
+            "model": {"identity": "acme/orders"},
+            "populations": [],
+        }))
+        .unwrap();
+        let provision = BTreeMap::from([(selected.clone(), snapshot.clone())]);
+        let limits = fsl_semantics::model::observation::ObservationLimits::default();
+        let model_limits = fsl_semantics::model::accounting::ModelNormalizationLimits::default();
+        let (objects, usage, views) = package
+            .admit_call_snapshot_with_views(&packages, model_limits, &provision, &selected, limits)
+            .unwrap();
+        let (legacy_objects, legacy_usage) = package
+            .admit_call_snapshot(&packages, model_limits, &provision, &selected, limits)
+            .unwrap();
+        assert_eq!(usage, legacy_usage);
+        assert_eq!(usage.document_bytes, u64::try_from(snapshot.len()).unwrap());
+        assert_eq!(
+            objects.population_completeness(),
+            legacy_objects.population_completeness()
+        );
+        assert_eq!(views.len(), 1);
+        assert_eq!(views[0].model_selection().identity, "acme/orders");
+        let ValueType::Reference(expected) =
+            &checked.graph().callable("reference").unwrap().parameters[0].1
+        else {
+            panic!("the source parameter is a reference");
+        };
+        assert!(
+            views[0]
+                .type_identities()
+                .values()
+                .any(|identity| identity == expected),
+            "retained views preserve the source-selected effective identity"
+        );
         let empty_rows = crate::ReadIdentityRows::of_rows(
             &admitted,
             Vec::new(),
