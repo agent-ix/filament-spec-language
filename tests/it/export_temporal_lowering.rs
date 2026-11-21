@@ -4,7 +4,7 @@
 //! clause's definitions in each target, and the clause shapes the TLA+
 //! encoding does not cover.
 
-use crate::plan_export_surface::{COUNTER_UNIT, counter_request};
+use crate::plan_export_surface::{COUNTER_UNIT, counter_model, counter_request, source};
 use ix_trace_rs::trace;
 use serde_json::{Value, json};
 
@@ -15,6 +15,60 @@ const HEAD: &str =
 enum Target {
     Tla,
     Lean,
+}
+
+fn checked_protocol_identity_and_locus(tail: &str) -> (String, Value) {
+    let directory = tempfile::tempdir().unwrap();
+    std::fs::write(directory.path().join("counter.json"), counter_model()).unwrap();
+    let unit = COUNTER_UNIT.replace(
+        "model Counter",
+        "profile t = \"filament.temporal.infinite-trace/v1\";\n\
+         profile P = \"filament.protocol.finite-global/v1\";\n\
+         model Counter",
+    );
+    std::fs::write(
+        directory.path().join("unit.native"),
+        format!("{unit}{tail}"),
+    )
+    .unwrap();
+    let request = json!({
+        "format": "native-compile/1",
+        "request": {
+            "models": [{"format": "semantic-ir/2.0.0", "source": {
+                "file": "counter.json", "authority": "agent-ix",
+                "identity": "example/counter-third", "document": "Counter",
+                "formal_revision": 1
+            }}],
+            "program": {"source": source("unit.native")}
+        }
+    });
+    let path = directory.path().join("compile.json");
+    std::fs::write(&path, request.to_string()).unwrap();
+    let bytes = fsl_command::command::compile(&path).expect("the checked fixture compiles");
+    let package: Value = serde_json::from_slice(&bytes).unwrap();
+    let node = package["semantic_graph"]["nodes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|node| node["node_tag"] == "protocol" && node["semantic_form"] == "protocol_clause")
+        .expect("the checked graph contains Hand");
+    let node_id = node["node_id"].clone();
+    let checked_node_id: filament_contract_model::CheckedNodeId =
+        serde_json::from_value(node_id.clone()).unwrap();
+    let identity = fsl_replay::protocol_analysis::node_text(&checked_node_id).unwrap();
+    let mut locus = package["source_map"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|entry| entry["node_id"] == node_id)
+        .and_then(|entry| entry["regions"].as_array())
+        .and_then(|regions| regions.first())
+        .map(|region| region.clone())
+        .unwrap_or(Value::Null);
+    if locus.is_object() {
+        locus["kind"] = json!("region");
+    }
+    (identity, locus)
 }
 
 impl Target {
@@ -171,6 +225,7 @@ fn export_unit_with_protocol_options(
         fidelity,
         output,
         "model-binding",
+        None,
     )
 }
 
@@ -189,6 +244,41 @@ fn export_unit_with_protocol_role_type(
     fidelity: Option<&str>,
     output: Option<&str>,
     role_type: &str,
+) -> (u8, Value) {
+    export_unit_with_protocol_role_and_over_type(
+        tail,
+        target,
+        start,
+        profile,
+        fixed,
+        bind_protocol,
+        bind_roles,
+        role_selection,
+        over_key,
+        capacities,
+        fidelity,
+        output,
+        role_type,
+        None,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn export_unit_with_protocol_role_and_over_type(
+    tail: &str,
+    target: Target,
+    start: Option<i64>,
+    profile: &str,
+    fixed: bool,
+    bind_protocol: bool,
+    bind_roles: bool,
+    role_selection: &str,
+    over_key: &str,
+    capacities: Value,
+    fidelity: Option<&str>,
+    output: Option<&str>,
+    role_type: &str,
+    over_object_type: Option<&str>,
 ) -> (u8, Value) {
     let directory = tempfile::tempdir().unwrap();
     let mut export = json!({"profile": target.profile(), "obligations": ["T"]});
@@ -220,6 +310,18 @@ fn export_unit_with_protocol_role_type(
         }]);
     }
     let path = counter_request(directory.path(), export);
+    if let Some(object_type) = over_object_type {
+        let file = directory.path().join("counter-0.json");
+        let mut snapshot: Value = serde_json::from_slice(&std::fs::read(&file).unwrap()).unwrap();
+        let object = snapshot["populations"][0]["objects"]
+            .as_array_mut()
+            .unwrap()
+            .iter_mut()
+            .find(|object| object["key"] == over_key)
+            .expect("the over object exists in the fixture");
+        object["type"] = json!(object_type);
+        std::fs::write(&file, serde_json::to_vec(&snapshot).unwrap()).unwrap();
+    }
     if let Some(start) = start {
         let file = directory.path().join("counter-0.json");
         let snapshot = std::fs::read_to_string(&file).unwrap();
@@ -265,6 +367,62 @@ fn export_unit_with_protocol_role_type(
         );
     }
     result
+}
+
+fn export_two_model_protocol(
+    role_declarations: &str,
+    roles: Value,
+    over_type: &str,
+) -> (u8, Value) {
+    use crate::support::refinement_cas::{self, Variant};
+
+    let directory = tempfile::tempdir().unwrap();
+    let mut export = json!({"profile": Target::Tla.profile(), "obligations": ["T"],
+        "protocols": [{"protocol": "Hand", "over": {"reference": {
+            "population": "ix://example/counter-third/counters", "key": "c"
+        }}, "roles": roles, "capacities": {}}]});
+    let request_path = counter_request(directory.path(), export.take());
+    let documents = refinement_cas::documents(Variant::CAS);
+    std::fs::write(directory.path().join("spec.json"), &documents[0]).unwrap();
+    let tail = format!(
+        "{}protocol Hand using P over (k: {over_type}) on origin {{\n\
+             {role_declarations}\
+             requires temporal T;\n\
+             run sequence Main {{ check Ok using v {{ true }}; }}\n\
+             finish Done as (d: Counter::Counter) {{ true }};\n\
+         }}\n",
+        clause_tail("always holds(c.value <= 5)")
+    );
+    let unit = COUNTER_UNIT.replace(
+        "model Counter",
+        "profile t = \"filament.temporal.infinite-trace/v1\";\n\
+         profile P = \"filament.protocol.finite-global/v1\";\n\
+         model Counter",
+    );
+    let unit = unit.replace(
+        "model Counter = \"example/counter-third\";\n",
+        "model Counter = \"example/counter-third\";\n\
+         model Spec = \"example/counter-spec\";\n",
+    );
+    let unit = format!("{unit}{tail}");
+    std::fs::write(directory.path().join("unit.native"), unit).unwrap();
+    let mut request: Value =
+        serde_json::from_slice(&std::fs::read(&request_path).unwrap()).unwrap();
+    request["request"]["models"].as_array_mut().unwrap().push(
+        json!({"format": "semantic-ir/2.0.0", "source": {
+            "file": "spec.json", "authority": "agent-ix",
+            "identity": "example/counter-spec", "document": "Counter",
+            "formal_revision": 1
+        }}),
+    );
+    std::fs::write(&request_path, serde_json::to_vec(&request).unwrap()).unwrap();
+    match fsl_command::command::run(&request_path, &crate::negotiation::Fr290) {
+        Ok(result) => (
+            result.exit_code,
+            serde_json::from_str(&result.value.to_string()).unwrap(),
+        ),
+        Err(error) => (error.category().exit_code(), error.value().unwrap()),
+    }
 }
 
 fn exported_text(body: &str, target: Target) -> String {
@@ -2479,6 +2637,7 @@ fn a_valid_origin_protocol_subject_is_unimplemented_under_both_fidelity_floors()
          }}\n",
         clause_tail("always holds(c.value <= 5)")
     );
+    let (expected_node, expected_locus) = checked_protocol_identity_and_locus(&tail);
     for target in [Target::Tla, Target::Lean] {
         let family = match target {
             Target::Tla => "tla",
@@ -2513,12 +2672,8 @@ fn a_valid_origin_protocol_subject_is_unimplemented_under_both_fidelity_floors()
             );
             assert_eq!(refusal["target"], family, "{value}");
             assert_eq!(refusal["construct"], "protocol/protocol_clause", "{value}");
-            assert!(
-                !refusal["node"].as_str().unwrap_or_default().is_empty(),
-                "{value}"
-            );
-            let locus = &refusal["locus"];
-            assert!(locus.is_null() || locus["kind"] == "region", "{value}");
+            assert_eq!(refusal["node"], expected_node, "{value}");
+            assert_eq!(refusal["locus"], expected_locus, "{value}");
             let fields: std::collections::BTreeSet<_> = refusal
                 .as_object()
                 .unwrap()
@@ -2776,6 +2931,75 @@ fn a_present_role_binding_with_the_wrong_type_refuses_wrong_role_mapping() {
     assert_eq!(value["cause"], "wrong-role-mapping", "{value}");
     assert_eq!(
         value["details"]["path"], "/request/export/protocols/0/roles/a",
+        "{value}"
+    );
+}
+
+#[test]
+#[trace("FSpec-FR-813-AC-24")]
+fn protocol_roles_bind_to_their_own_model_in_a_two_model_package() {
+    let declarations = "role a on Counter::Counter;\n\
+                       role b on Spec::Counter;\n";
+    let valid = export_two_model_protocol(
+        declarations,
+        json!({
+            "a": {"type": "model-binding", "selection": "example/counter-third"},
+            "b": {"type": "model-binding", "selection": "example/counter-spec"}
+        }),
+        "Counter::Counter",
+    );
+    assert_eq!(valid.0, 21, "{}", valid.1);
+    assert_eq!(
+        valid.1["export"]["refusal"]["construct"],
+        "protocol/protocol_clause"
+    );
+
+    let swapped = export_two_model_protocol(
+        declarations,
+        json!({
+            "a": {"type": "model-binding", "selection": "example/counter-spec"},
+            "b": {"type": "model-binding", "selection": "example/counter-third"}
+        }),
+        "Counter::Counter",
+    );
+    assert_eq!(swapped.0, 20, "{}", swapped.1);
+    assert_eq!(swapped.1["code"], "invalid_runtime_input", "{}", swapped.1);
+    assert_eq!(swapped.1["cause"], "wrong-role-mapping", "{}", swapped.1);
+    assert_eq!(
+        swapped.1["details"]["path"], "/request/export/protocols/0/roles/a",
+        "{}",
+        swapped.1
+    );
+}
+
+#[test]
+#[trace("FR-425-AC-13", "FR-1015-AC-15")]
+fn whole_model_roles_on_two_selected_models_are_auto_bound() {
+    let (exit, value) = export_two_model_protocol(
+        "role a on Counter;\nrole b on Spec;\n",
+        json!({}),
+        "Counter::Counter",
+    );
+    assert_eq!(exit, 21, "{value}");
+    assert_eq!(
+        value["export"]["refusal"]["construct"],
+        "protocol/protocol_clause"
+    );
+}
+
+#[test]
+#[trace("FSpec-FR-813-AC-24")]
+fn a_present_over_object_of_the_wrong_declared_type_refuses_role_mapping() {
+    let (exit, value) = export_two_model_protocol(
+        "role a on Counter;\nrole b on Spec;\n",
+        json!({}),
+        "Spec::Counter",
+    );
+    assert_eq!(exit, 20, "{value}");
+    assert_eq!(value["code"], "invalid_runtime_input", "{value}");
+    assert_eq!(value["cause"], "wrong-role-mapping", "{value}");
+    assert_eq!(
+        value["details"]["path"], "/request/export/protocols/0/over",
         "{value}"
     );
 }

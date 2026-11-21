@@ -11,7 +11,8 @@ use super::lower;
 use super::request::{EffectiveLimits, Request, Target};
 use super::{Disposition, Mapped, Record, Unlowered};
 use filament_contract_model::{
-    CheckedBindingNameKind, CheckedNodeId, CheckedPackageV2, CheckedTerm, LiteralKind,
+    CheckedBindingNameKind, CheckedNodeId, CheckedNodeOwner, CheckedNodePathSegment,
+    CheckedPackageV2, CheckedTerm, LiteralKind,
 };
 use filament_exact::NodeKey;
 use fsl_semantics::check::wire_id::WireGraph;
@@ -148,7 +149,7 @@ fn binding_reference(
 }
 
 /// The selected model object type identity of a reference-typed parameter.
-fn parameter_object_type(graph: &Graph<'_>, position: usize) -> Option<String> {
+fn parameter_object_type(graph: &Graph<'_>, position: usize) -> Option<(String, String)> {
     let parameter = graph.node(position);
     let term = graph.package.term(&parameter.semantic_type)?;
     fn object_reference<'a>(
@@ -174,33 +175,34 @@ fn parameter_object_type(graph: &Graph<'_>, position: usize) -> Option<String> {
     }
     let target = object_reference(graph.package, term)?;
     let position = graph.position(target)?;
-    let (_, declaration) = fsl_package::protocol_view::declaration(graph.node(position)).ok()?;
-    Some(
-        declaration
-            .iter()
-            .map(|part| part.as_ref())
-            .collect::<Vec<_>>()
-            .join("::"),
-    )
+    let node = graph.node(position);
+    let CheckedNodeOwner::Model { identity, .. } = node.owner.as_ref()? else {
+        return None;
+    };
+    let CheckedNodePathSegment::Name(object_type_identity) = node.node_id.path.last()? else {
+        return None;
+    };
+    Some((object_type_identity.to_string(), identity.to_string()))
 }
 
 /// The type identity named by a protocol's `over` parameter.
 fn protocol_over_type(
     graph: &Graph<'_>,
     protocol: &filament_contract_model::CheckedSemanticNodeV2,
-) -> Option<String> {
+) -> Option<(String, String)> {
     let over = binding_reference(graph, protocol, "over")?;
     parameter_object_type(graph, over)
 }
 
 enum RoleModelBinding {
-    Type,
+    Type(String),
     WholeModel(String),
 }
 
 /// The model selected for a role. Whole-model roles carry a text literal and
 /// are auto-bound by FR-425 instead of appearing in the request.
 fn role_model_binding(
+    graph: &Graph<'_>,
     node: &filament_contract_model::CheckedSemanticNodeV2,
 ) -> Result<RoleModelBinding> {
     let CheckedTerm::Application { arguments, .. } = &node.body else {
@@ -218,7 +220,18 @@ fn role_model_binding(
         })
         .ok_or_else(|| internal("a protocol role has no model binding"))?;
     match value {
-        CheckedTerm::Reference { .. } => Ok(RoleModelBinding::Type),
+        CheckedTerm::Reference { target } => {
+            let position = graph
+                .position(target)
+                .ok_or_else(|| internal("a protocol role model type names no node"))?;
+            let node = graph.node(position);
+            let Some(CheckedNodeOwner::Model { identity, .. }) = node.owner.as_ref() else {
+                return Err(internal(
+                    "a protocol role model type has no selected-model owner",
+                ));
+            };
+            Ok(RoleModelBinding::Type(identity.to_string()))
+        }
         CheckedTerm::Literal {
             value_kind: LiteralKind::Text,
             value,
@@ -653,16 +666,26 @@ fn validate_protocol_bindings(
             continue;
         }
         let node = graph.node(root);
-        // A temporal subject refusal is classified by the lowerer. In
-        // particular, a formula past the bounded view's work budget must keep
-        // its typed construct/resource outcome instead of becoming a mapper
-        // invariant while this request preflight inspects protocol bindings.
-        let Ok(subject) =
-            fsl_package::checked_views::temporal_subject(graph.package, &node.node_id)
-        else {
-            continue;
-        };
-        for protocol_id in subject.requirements() {
+        // Formula expansion can exhaust the bounded temporal view before it
+        // exposes requirements. The admitted activation relation carries the
+        // requirement edges independently, so preflight can still validate
+        // supplied bindings without replacing the lowerer's typed refusal.
+        let protocols: Vec<CheckedNodeId> =
+            match fsl_package::checked_views::temporal_subject(graph.package, &node.node_id) {
+                Ok(subject) => subject
+                    .requirements()
+                    .iter()
+                    .map(|id| (*id).clone())
+                    .collect(),
+                Err(_) => graph
+                    .package
+                    .protocol_activation_relation()
+                    .into_iter()
+                    .filter(|row| row.required_temporal == node.node_id)
+                    .map(|row| row.clause)
+                    .collect(),
+            };
+        for protocol_id in &protocols {
             let Some(protocol_position) = graph.position(protocol_id) else {
                 return Err(internal("a temporal requirement names no package protocol"));
             };
@@ -747,10 +770,23 @@ fn validate_protocol_bindings(
                         object.get("key").and_then(Value::as_str)
                             == Some(over.reference.key.as_str())
                     });
-                let protocol_over_type = protocol_over_type(graph, protocol_node);
-                if selected_object.is_none_or(|object| {
-                    object.get("type").and_then(Value::as_str) != protocol_over_type.as_deref()
-                }) {
+                let Some((protocol_over_type, owner_model)) =
+                    protocol_over_type(graph, protocol_node)
+                else {
+                    return Err(RunCause::ExportRequest {
+                        path: format!("/request/export/protocols/{binding_index}/over"),
+                        cause: "wrong-role-mapping",
+                        reason:
+                            "the protocol `over` parameter has no selected object type identity"
+                                .to_owned(),
+                    });
+                };
+                if selected_model.is_some_and(|model| model != owner_model)
+                    || selected_object.is_none_or(|object| {
+                        object.get("type").and_then(Value::as_str)
+                            != Some(protocol_over_type.as_str())
+                    })
+                {
                     return Err(RunCause::ExportRequest {
                         path: format!("/request/export/protocols/{binding_index}/over"),
                         cause: "wrong-role-mapping",
@@ -789,12 +825,10 @@ fn validate_protocol_bindings(
                             .to_owned(),
                     });
                 }
-                let type_bound = match role_model_binding(role_node)? {
-                    RoleModelBinding::Type => true,
+                let role_model = match role_model_binding(graph, role_node)? {
+                    RoleModelBinding::Type(model) => Some(model),
                     RoleModelBinding::WholeModel(selection) => {
-                        if selected_model.is_some_and(|model| selection != model)
-                            || !selected_models.contains(&selection.as_str())
-                        {
+                        if !selected_models.contains(&selection.as_str()) {
                             return Err(RunCause::ExportRequest {
                                 path: format!(
                                     "/request/export/protocols/{binding_index}/roles/{role_path}"
@@ -805,19 +839,27 @@ fn validate_protocol_bindings(
                                 ),
                             });
                         }
-                        false
+                        None
                     }
                 };
-                if type_bound {
+                let type_bound = role_model.is_some();
+                if let Some(role_model) = &role_model {
                     required_roles.insert(role_name.to_owned());
+                    if !selected_models.contains(&role_model.as_str()) {
+                        return Err(RunCause::ExportRequest {
+                            path: format!(
+                                "/request/export/protocols/{binding_index}/roles/{role_path}"
+                            ),
+                            cause: "wrong-role-mapping",
+                            reason: format!(
+                                "the static role `{role_name}` is declared on unselected model `{role_model}`"
+                            ),
+                        });
+                    }
                 }
-                let role_binding_is_valid = if type_bound {
+                let role_binding_is_valid = if let Some(role_model) = role_model {
                     binding.roles.get(role_name).is_some_and(|role| {
-                        role.kind == "model-binding"
-                            && selected_model.map_or_else(
-                                || selected_models.contains(&role.selection.as_str()),
-                                |model| role.selection == model,
-                            )
+                        role.kind == "model-binding" && role.selection == role_model
                     })
                 } else {
                     !binding.roles.contains_key(role_name)
