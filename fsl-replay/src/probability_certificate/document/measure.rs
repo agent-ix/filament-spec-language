@@ -1935,6 +1935,11 @@ pub(super) fn check(
         let mut coverage = Vec::new();
         let mut least: Option<Rational> = None;
         for (index, key) in &denominator_graph.initials {
+            charge(
+                &mut storage,
+                limits.storage_bytes,
+                u64::try_from(std::mem::size_of::<(u32, Option<Rational>)>()).unwrap_or(u64::MAX),
+            )?;
             let numerator = numerator_values
                 .get(key)
                 .ok_or(ProbabilityDocumentError::Malformed)?;
@@ -1954,6 +1959,16 @@ pub(super) fn check(
                 filament_exact::RationalArithmetic::Divide(numerator, denominator),
                 &mut meter,
                 cancel,
+            )?;
+            check_value_bits(&value, limits.scalar_bits)?;
+            charge(
+                &mut storage,
+                limits.storage_bytes,
+                value
+                    .numerator()
+                    .magnitude_bits()
+                    .saturating_add(value.denominator().magnitude_bits())
+                    .div_ceil(8),
             )?;
             if !ordered(
                 if plan.strict {
@@ -2007,7 +2022,14 @@ pub(super) fn check(
             bytes,
         );
         if let ExactProbabilityCertificateCheck::Accepted(token) = &mut accepted {
-            token.initial_values = Some(coverage);
+            let binding = claim_binding(system, claim)?.map(|binding| crate::ExactBinding {
+                population: binding.instance.population.node,
+                key: binding.instance.key,
+            });
+            token.initial_values = Some(CheckedInitialValues {
+                values: coverage,
+                binding,
+            });
         }
         return Ok(accepted);
     }

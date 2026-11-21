@@ -2439,7 +2439,7 @@ pub fn exact_probabilistic_item_witness_tampered<'a>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use fsl_replay::TerminalValue;
+    use fsl_replay::{ProbabilityCertificateRejection, TerminalValue};
     use ix_trace_rs::trace;
 
     #[trace("TC-1197", "FR-201-AC-6", "FR-203-AC-3")]

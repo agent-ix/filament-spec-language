@@ -1740,6 +1740,9 @@ impl TerminalRecord {
                 extremum,
             }],
         };
+        if !accepted.initial_entries_match(&entries) {
+            return None;
+        }
         let mut record = Self::with_backend(
             request_index,
             backend,
