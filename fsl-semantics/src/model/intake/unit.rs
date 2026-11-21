@@ -117,6 +117,68 @@ impl Clone for NormalizationOwner {
     }
 }
 
+/// One domain package's normalized view and genuine declaration identities,
+/// retained with the meter that produced them, without a source-unit alias.
+#[derive(Debug)]
+pub struct NormalizedModel {
+    view: EffectiveView,
+    provenance: NormalizedModelProvenance,
+}
+
+#[derive(Debug)]
+pub(crate) struct NormalizedModelProvenance {
+    rows: SelectedExactRows,
+    meter: NormalizationOwner,
+}
+
+impl NormalizedModel {
+    pub(crate) fn from_parts(view: EffectiveView, provenance: NormalizedModelProvenance) -> Self {
+        Self { view, provenance }
+    }
+
+    /// The actual effective view used by snapshot admission.
+    pub fn view(&self) -> &EffectiveView {
+        &self.view
+    }
+
+    /// Declaration identities produced from this model's normalized records.
+    pub fn exact_declaration_rows(&self) -> &[SelectedExactDeclarationRow] {
+        &self.provenance.rows.declarations
+    }
+
+    /// Field identities produced from this model's normalized records.
+    pub fn exact_field_rows(&self) -> &[SelectedExactFieldRow] {
+        &self.provenance.rows.fields
+    }
+
+    /// Tuple identities produced from this model's normalized records.
+    pub fn tuple_declaration_rows(
+        &self,
+    ) -> &[filament_contract_model::SelectedTupleDeclarationRow] {
+        &self.provenance.rows.tuples
+    }
+
+    /// Work consumed by the original normalization and identity producer.
+    pub fn consumed(&self, kind: crate::model::accounting::LimitKind) -> u64 {
+        self.provenance.meter.consumed(kind)
+    }
+
+    /// Charge reference inspection before its work or storage against this
+    /// model's original ceiling, counter and cancellation handle.
+    pub fn charge_reference_work(
+        &self,
+        point: ChargePoint,
+        units: u64,
+    ) -> Result<(), NormalizationIncomplete> {
+        self.provenance
+            .meter
+            .0
+            .lock()
+            .expect("normalization owner operations do not unwind")
+            .charge(Charge::new(point).work(units))
+    }
+}
+
 impl std::ops::Deref for SelectedModels {
     type Target = [SelectedModel];
 
@@ -526,6 +588,7 @@ pub struct UnitIntakeRefusal {
 /// Produce IR's selected-identity rows from the exact admitted document and
 /// normalization that `SelectedModel` retains. The row payloads are minted
 /// here; consumers only validate and carry these rows with the package.
+#[derive(Debug)]
 struct SelectedExactRows {
     declarations: Vec<SelectedExactDeclarationRow>,
     fields: Vec<SelectedExactFieldRow>,
@@ -536,6 +599,38 @@ struct SelectedExactRows {
 enum SelectedExactRowsError {
     Limit(NormalizationIncomplete),
     Invariant,
+}
+
+/// The alias-free producer shared by source-unit intake and snapshot intake.
+fn normalize_with_exact_rows(
+    package: &DomainPackage,
+    meter: &mut Meter,
+) -> Result<(EffectiveView, SelectedExactRows), UnitIntakeCause> {
+    let view = match normalize_on(package, meter) {
+        NormalizeOutcome::Completed(view) => view,
+        NormalizeOutcome::Refused(refusals) => return Err(UnitIntakeCause::Refused(refusals)),
+        NormalizeOutcome::Incomplete(incomplete) => return Err(UnitIntakeCause::Limit(incomplete)),
+    };
+    let rows = selected_exact_rows(package, &view, meter).map_err(|error| match error {
+        SelectedExactRowsError::Limit(incomplete) => UnitIntakeCause::Limit(incomplete),
+        SelectedExactRowsError::Invariant => UnitIntakeCause::Invariant,
+    })?;
+    Ok((view, rows))
+}
+
+pub(crate) fn normalize_model_with_provenance(
+    package: &DomainPackage,
+    limits: ModelNormalizationLimits,
+) -> Result<(EffectiveView, NormalizedModelProvenance), UnitIntakeCause> {
+    let mut meter = Meter::new(limits).with_cancel(Cancel::new());
+    let (view, rows) = normalize_with_exact_rows(package, &mut meter)?;
+    Ok((
+        view,
+        NormalizedModelProvenance {
+            rows,
+            meter: NormalizationOwner::new(meter),
+        },
+    ))
 }
 
 fn charge_selected_row_inspection(meter: &mut Meter) -> Result<(), SelectedExactRowsError> {
@@ -777,26 +872,15 @@ pub fn admit_unit_with_cancel(
                 .map_or(UnitIntakeCause::Invariant, UnitIntakeCause::Refused);
             refuse(selection, cause)
         })?;
-        let view = match normalize_on(&package, &mut meter) {
-            NormalizeOutcome::Completed(view) => view,
-            NormalizeOutcome::Refused(refusals) => {
-                return Err(refuse(selection, UnitIntakeCause::Refused(refusals)));
-            }
-            NormalizeOutcome::Incomplete(incomplete) => {
-                return Err(refuse(selection, UnitIntakeCause::Limit(incomplete)));
-            }
-        };
-        let SelectedExactRows {
-            declarations,
-            fields,
-            tuples,
-        } = selected_exact_rows(&package, &view, &mut meter).map_err(|error| {
-            let cause = match error {
-                SelectedExactRowsError::Limit(incomplete) => UnitIntakeCause::Limit(incomplete),
-                SelectedExactRowsError::Invariant => UnitIntakeCause::Invariant,
-            };
-            refuse(selection, cause)
-        })?;
+        let (
+            view,
+            SelectedExactRows {
+                declarations,
+                fields,
+                tuples,
+            },
+        ) = normalize_with_exact_rows(&package, &mut meter)
+            .map_err(|cause| refuse(selection, cause))?;
         exact_declarations.extend(declarations);
         exact_fields.extend(fields);
         tuple_declarations.extend(tuples);

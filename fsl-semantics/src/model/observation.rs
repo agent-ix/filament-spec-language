@@ -40,6 +40,9 @@ use fsl_foundation::Setting;
 use crate::model::accounting::ModelNormalizationLimits;
 use crate::model::domain_package::{DomainPackage, DomainPackageRef, OperationEffect};
 use crate::model::intake::{admit_selections, read_records, PackageInput};
+use crate::model::intake::{
+    normalize_model_with_provenance, NormalizedModel, NormalizedModelProvenance, UnitIntakeCause,
+};
 use crate::model::normalize::{normalize, EffectiveView, NormalizeOutcome};
 use crate::model::object_environment::ObjectEnvironment;
 use crate::model::operation::{OperationDeclaration, OperationLookup, OperationTable};
@@ -1609,6 +1612,7 @@ impl<'v> RawItems<'v> {
 #[derive(Debug)]
 pub(crate) struct ModelView {
     pub(crate) view: EffectiveView,
+    provenance: Option<NormalizedModelProvenance>,
     pub(crate) clock_places: std::sync::Arc<super::clock_reference::DeclaredClockPlaces>,
     by_effective_id: BTreeMap<EffectiveId, DeclarationKey>,
     /// Whether the view is the unit's own source package (FR-569), whose
@@ -1626,17 +1630,10 @@ impl ModelView {
             .collect();
         Self {
             view,
+            provenance: None,
             clock_places: std::sync::Arc::default(),
             by_effective_id,
             source: false,
-        }
-    }
-
-    /// The view of the unit's own source package.
-    pub(crate) fn source(view: EffectiveView) -> Self {
-        Self {
-            source: true,
-            ..Self::new(view)
         }
     }
 
@@ -1748,6 +1745,21 @@ pub(crate) fn model_views<'a>(
     packages: &PackageInput,
     limits: ModelNormalizationLimits,
 ) -> Result<Vec<ModelView>, AdmissionFailure> {
+    model_views_retaining(model_selections, packages, limits, SnapshotProvenance::Omit)
+}
+
+#[derive(Clone, Copy)]
+enum SnapshotProvenance {
+    Omit,
+    Retain,
+}
+
+fn model_views_retaining<'a>(
+    model_selections: impl Into<ModelSelections<'a>>,
+    packages: &PackageInput,
+    limits: ModelNormalizationLimits,
+    provenance: SnapshotProvenance,
+) -> Result<Vec<ModelView>, AdmissionFailure> {
     let model_selections = model_selections.into();
     let mut views = Vec::with_capacity(model_selections.selections.len());
     let mut included_sources = BTreeSet::new();
@@ -1770,12 +1782,9 @@ pub(crate) fn model_views<'a>(
         if source.is_some() {
             included_sources.insert(selection.identity.as_str());
         }
-        let view = normalize_view(&domain_package, limits)?;
-        views.push(if source.is_some() {
-            ModelView::source(view)
-        } else {
-            ModelView::new(view)
-        });
+        let mut view = normalize_model_view(&domain_package, limits, provenance)?;
+        view.source = source.is_some();
+        views.push(view);
     }
     // Source declarations are always part of a checked unit, even when the
     // unit selects no model package (or selects only unrelated model
@@ -1785,7 +1794,9 @@ pub(crate) fn model_views<'a>(
         if !included_sources.insert(source.model_selection.identity.as_str()) {
             continue;
         }
-        views.push(ModelView::source(normalize_view(source, limits)?));
+        let mut view = normalize_model_view(source, limits, provenance)?;
+        view.source = true;
+        views.push(view);
     }
     let clock_places = std::sync::Arc::new(super::clock_reference::DeclaredClockPlaces::new(
         model_selections.clock_models,
@@ -1794,6 +1805,38 @@ pub(crate) fn model_views<'a>(
         view.clock_places = clock_places.clone();
     }
     Ok(views)
+}
+
+fn normalize_model_view(
+    package: &DomainPackage,
+    limits: ModelNormalizationLimits,
+    provenance: SnapshotProvenance,
+) -> Result<ModelView, AdmissionFailure> {
+    match provenance {
+        SnapshotProvenance::Omit => normalize_view(package, limits).map(ModelView::new),
+        SnapshotProvenance::Retain => {
+            let (view, provenance) =
+                normalize_model_with_provenance(package, limits).map_err(|cause| match cause {
+                    UnitIntakeCause::Limit(incomplete) => {
+                        caller_budget_refusal(&incomplete.denial(), INSUFFICIENT_NEXT_CHARGE)
+                    }
+                    UnitIntakeCause::Invariant => fault("model-reconsistent-normalize"),
+                    UnitIntakeCause::Refused(refusals) => refusals
+                        .iter()
+                        .find_map(|refusal| {
+                            let denial = refusal.cause.denial()?;
+                            Some(caller_budget_refusal(
+                                &denial,
+                                refusal.cause.catalog_code().cause(),
+                            ))
+                        })
+                        .unwrap_or_else(|| fault("model-reconsistent-normalize")),
+                })?;
+            let mut view = ModelView::new(view);
+            view.provenance = Some(provenance);
+            Ok(view)
+        }
+    }
 }
 
 /// The effective view of `package`, normalized again under `limits`.
@@ -2122,6 +2165,7 @@ pub fn admit_current_snapshot_with_views<'a>(
         (provision, selected, limits),
         &[],
         &[],
+        SnapshotProvenance::Omit,
     )
     .map(|(environment, usage, views)| {
         (
@@ -2130,6 +2174,41 @@ pub fn admit_current_snapshot_with_views<'a>(
             views.into_iter().map(|view| view.view).collect(),
         )
     })
+}
+
+/// Admit a current snapshot while retaining each model's actual normalized
+/// view, declaration identities and original normalization meter. The
+/// provenance is produced during that same admission, without aliases or a
+/// second normalization. Identity inspection consumes the existing model's
+/// normalization work budget in addition to ordinary snapshot admission.
+pub fn admit_current_snapshot_with_provenance<'a>(
+    model_selections: impl Into<ModelSelections<'a>>,
+    types: &TypeEnvironment,
+    packages: &PackageInput,
+    model_limits: ModelNormalizationLimits,
+    provision: &BTreeMap<DocumentRef, Vec<u8>>,
+    selected: &DocumentRef,
+    limits: ObservationLimits,
+) -> Result<(ObjectEnvironment, AdmissionUsage, Vec<NormalizedModel>), AdmissionFailure> {
+    let (environment, usage, views) = admit_current_environment_with_views(
+        model_selections,
+        types,
+        (packages, model_limits),
+        (provision, selected, limits),
+        &[],
+        &[],
+        SnapshotProvenance::Retain,
+    )?;
+    let models = views
+        .into_iter()
+        .map(|view| {
+            let provenance = view
+                .provenance
+                .ok_or_else(|| fault("missing-normalization-provenance"))?;
+            Ok(NormalizedModel::from_parts(view.view, provenance))
+        })
+        .collect::<Result<Vec<_>, AdmissionFailure>>()?;
+    Ok((environment, usage, models))
 }
 
 /// FR-106's `ValueInvariants` selection: admit one current snapshot without
@@ -2415,6 +2494,7 @@ fn admit_current_environment<'a>(
         (provision, selected, limits),
         arguments,
         required,
+        SnapshotProvenance::Omit,
     )
     .map(|(environment, usage, _)| (environment, usage))
 }
@@ -2432,8 +2512,9 @@ fn admit_current_environment_with_views<'a>(
     ),
     arguments: &[ObjectReference],
     required: &[String],
+    provenance: SnapshotProvenance,
 ) -> Result<(ObjectEnvironment, AdmissionUsage, Vec<ModelView>), AdmissionFailure> {
-    let views = model_views(model_selections, packages, model_limits)?;
+    let views = model_views_retaining(model_selections, packages, model_limits, provenance)?;
     let read = read_document(DocumentKind::Snapshot, provision, selected, limits, &views)?;
     let snapshot = read
         .as_snapshot()
