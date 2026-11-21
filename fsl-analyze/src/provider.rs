@@ -554,24 +554,34 @@ pub enum ProviderVerdict {
         /// The reported assignment.
         counterexample: Vec<Value>,
     },
-    /// The provider transport exceeded one of FR-287's byte limits.
+    /// The provider exceeded one of FR-287's transport or process limits.
     Failed {
-        /// The FR-287 transport setting that was exceeded.
+        /// The FR-287 setting that was exceeded.
         limit: ProviderLimit,
         /// The typed FR-331/FR-462 failure cause.
+        cause: ToolFailure,
+    },
+    /// A process died without enough evidence to attribute its death to a
+    /// particular resource limit. This never invents a measured limit breach.
+    ProcessFailed {
+        /// The observed process failure: `Crash` or `NonzeroExit`.
         cause: ToolFailure,
     },
     /// The provider neither proved nor refuted the claim.
     Unknown,
 }
 
-/// The FR-287 provider transport byte limits that settle an item as failed.
+/// The FR-287 provider limits that settle an item as failed.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ProviderLimit {
     /// `max_frame_bytes`.
     MaxFrameBytes,
     /// `max_total_bytes`.
     MaxTotalBytes,
+    /// `max_memory_bytes`, enforced by the process host.
+    MaxMemoryBytes,
+    /// `max_cpu_ms`, enforced by the process host.
+    MaxCpuMs,
 }
 
 impl ProviderLimit {
@@ -580,6 +590,8 @@ impl ProviderLimit {
         match self {
             Self::MaxFrameBytes => "max_frame_bytes",
             Self::MaxTotalBytes => "max_total_bytes",
+            Self::MaxMemoryBytes => "max_memory_bytes",
+            Self::MaxCpuMs => "max_cpu_ms",
         }
     }
 
@@ -588,6 +600,11 @@ impl ProviderLimit {
             (self, cause),
             (Self::MaxFrameBytes, ToolFailure::FrameLength { .. })
                 | (Self::MaxTotalBytes, ToolFailure::TotalBytes { .. })
+                | (
+                    Self::MaxMemoryBytes,
+                    ToolFailure::Crash | ToolFailure::NonzeroExit
+                )
+                | (Self::MaxCpuMs, ToolFailure::Crash)
         )
     }
 }
@@ -1163,6 +1180,7 @@ pub(crate) fn finish(
             ProviderVerdict::Failed { .. } => EngineReport::Refused(Refusal::Failed(
                 InternalFault::new("external-provider", "limit-cause-mismatch").catalog_code(),
             )),
+            ProviderVerdict::ProcessFailed { cause } => process_failure(cause),
             // A composition has no replay: its counterexample is not
             // replayable (FSpec FR-290 "Replay context").
             ProviderVerdict::Refuted { .. } if composition => EngineReport::Provider(Box::new(
@@ -1196,6 +1214,7 @@ fn report(
             }
             return EngineReport::Provider(Box::new(ProviderReport::Failed(cause)));
         }
+        ProviderVerdict::ProcessFailed { cause } => return process_failure(cause),
         ProviderVerdict::Refuted { counterexample } => counterexample,
     };
     let parameters = target.parameters().iter().map(|p| p.wire()).collect();
@@ -1213,6 +1232,17 @@ fn report(
         // asks for a bound.
         Err(ValueRefusal::RequiresBound) => EngineReport::Refused(Refusal::Failed(
             InternalFault::new("external-provider", "replay-needs-no-bound").catalog_code(),
+        )),
+    }
+}
+
+fn process_failure(cause: ToolFailure) -> EngineReport {
+    match cause {
+        ToolFailure::Crash | ToolFailure::NonzeroExit => {
+            EngineReport::Provider(Box::new(ProviderReport::Failed(cause)))
+        }
+        _ => EngineReport::Refused(Refusal::Failed(
+            InternalFault::new("external-provider", "process-cause-mismatch").catalog_code(),
         )),
     }
 }
