@@ -365,6 +365,143 @@ pub struct StructuralKeys {
     by_operand: HashMap<*const CheckedNodeId, (Arc<CheckedNodeId>, NodeKey)>,
 }
 
+/// Why a bounded structural-key conversion stopped.
+#[derive(Debug, thiserror::Error)]
+pub enum StructuralKeyMaterializationError {
+    /// A reference is not a document-independent structural identity.
+    #[error(transparent)]
+    Wire(#[from] WireIdError),
+    /// The caller's original cumulative native allowance denied a charge.
+    #[error("native structural-key charge denied: {denied:?} (bound {configured_bound}, locus {locus:?})")]
+    Budget {
+        /// The original first unpaid resource and attempted cumulative amount.
+        denied: NativeJoinDeniedCharge,
+        /// The original configured bound for that resource.
+        configured_bound: u64,
+        /// The original non-owning locus on the shared invocation ledger.
+        locus: Option<NativeJoinLocus>,
+    },
+    /// A prepaid working container or string could not reserve storage.
+    #[error(transparent)]
+    Allocation(#[from] TryReserveError),
+}
+
+trait KeyProvision {
+    type Error: From<WireIdError>;
+    fn work(&mut self) -> Result<(), Self::Error>;
+    fn room<T>(&mut self, list: &mut Vec<T>) -> Result<(), Self::Error>;
+    fn text(&mut self, value: &str) -> Result<String, Self::Error>;
+    fn cache_room(&mut self, cache: &mut StructuralKeys) -> Result<(), Self::Error>;
+    fn key(
+        &mut self,
+        package: String,
+        path: Vec<PathSegment>,
+        ordinal: u64,
+    ) -> Result<NodeKey, Self::Error>;
+}
+
+struct UnmeteredKey;
+
+impl KeyProvision for UnmeteredKey {
+    type Error = WireIdError;
+    fn work(&mut self) -> Result<(), Self::Error> {
+        Ok(())
+    }
+    fn room<T>(&mut self, list: &mut Vec<T>) -> Result<(), Self::Error> {
+        list.reserve(1);
+        Ok(())
+    }
+    fn text(&mut self, value: &str) -> Result<String, Self::Error> {
+        Ok(value.to_owned())
+    }
+    fn cache_room(&mut self, _: &mut StructuralKeys) -> Result<(), Self::Error> {
+        Ok(())
+    }
+    fn key(
+        &mut self,
+        package: String,
+        path: Vec<PathSegment>,
+        ordinal: u64,
+    ) -> Result<NodeKey, Self::Error> {
+        Ok(NodeKey::new(package, path, ordinal)?)
+    }
+}
+
+struct MeteredKey<'a> {
+    budget: &'a mut NativeJoinBudget,
+    locus: NativeJoinLocus,
+}
+
+impl MeteredKey<'_> {
+    fn charge(
+        &mut self,
+        kind: NativeJoinChargeKind,
+        amount: u128,
+    ) -> Result<(), StructuralKeyMaterializationError> {
+        self.budget
+            .accounted_charge(kind, amount, self.locus)
+            .map_err(|denied| StructuralKeyMaterializationError::Budget {
+                configured_bound: match denied.kind {
+                    NativeJoinChargeKind::Work => self.budget.work_limit(),
+                    NativeJoinChargeKind::Storage => self.budget.storage_limit(),
+                },
+                locus: self.budget.first_unpaid_locus(),
+                denied,
+            })
+    }
+    fn storage(&mut self, amount: u128) -> Result<(), StructuralKeyMaterializationError> {
+        self.charge(NativeJoinChargeKind::Storage, amount)
+    }
+}
+
+impl KeyProvision for MeteredKey<'_> {
+    type Error = StructuralKeyMaterializationError;
+    fn work(&mut self) -> Result<(), Self::Error> {
+        self.charge(NativeJoinChargeKind::Work, 1)
+    }
+    fn room<T>(&mut self, list: &mut Vec<T>) -> Result<(), Self::Error> {
+        if list.len() == list.capacity() {
+            let additional = list.len().max(1);
+            self.storage(1 + list.len() as u128 + additional as u128)?;
+            list.try_reserve_exact(additional)?;
+        }
+        Ok(())
+    }
+    fn text(&mut self, value: &str) -> Result<String, Self::Error> {
+        self.work()?;
+        self.charge(NativeJoinChargeKind::Work, value.len() as u128)?;
+        if !value.is_empty() {
+            self.storage(1 + value.len() as u128)?;
+        }
+        let mut text = String::new();
+        text.try_reserve_exact(value.len())?;
+        text.push_str(value);
+        Ok(text)
+    }
+    fn cache_room(&mut self, cache: &mut StructuralKeys) -> Result<(), Self::Error> {
+        self.storage(1)?;
+        cache.by_operand.try_reserve(1)?;
+        Ok(())
+    }
+    fn key(
+        &mut self,
+        package: String,
+        path: Vec<PathSegment>,
+        ordinal: u64,
+    ) -> Result<NodeKey, Self::Error> {
+        self.work()?;
+        NodeKey::try_new_with(package, path, ordinal, &mut |bytes| {
+            self.storage(1 + bytes as u128)
+        })
+        .map_err(|error| match error {
+            filament_exact::NodeKeyConstructionError::Policy(error) => error,
+            filament_exact::NodeKeyConstructionError::Construction(error) => {
+                Self::Error::Wire(WireIdError::Key(error))
+            }
+        })
+    }
+}
+
 impl StructuralKeys {
     /// The key of `id`, which holds no index segment.
     ///
@@ -372,59 +509,95 @@ impl StructuralKeys {
     ///
     /// [`WireIdError::NoGraph`] at an index segment, or [`WireIdError::Key`].
     pub fn key(&mut self, id: &CheckedNodeId) -> Result<NodeKey, WireIdError> {
+        self.key_with(id, &mut UnmeteredKey)
+    }
+
+    /// Convert only this identity's requested shared descendants under the
+    /// caller's cumulative allowance. Cached operands retain their paid keys;
+    /// each actual new copy/reservation is prepaid, including Exact's opaque
+    /// constructor reservations. No package graph or fresh budget is built.
+    pub fn try_key(
+        &mut self,
+        id: &CheckedNodeId,
+        budget: &mut NativeJoinBudget,
+        locus: NativeJoinLocus,
+    ) -> Result<NodeKey, StructuralKeyMaterializationError> {
+        self.key_with(id, &mut MeteredKey { budget, locus })
+    }
+
+    fn key_with<P: KeyProvision>(
+        &mut self,
+        id: &CheckedNodeId,
+        provision: &mut P,
+    ) -> Result<NodeKey, P::Error> {
+        provision.work()?;
         // Explicit post-order over operand allocations not yet converted.
-        let mut pending: Vec<(Arc<CheckedNodeId>, bool)> = id
-            .path
-            .iter()
-            .filter_map(|segment| match segment {
-                CheckedNodePathSegment::Node(operand) => Some((operand.clone(), false)),
-                _ => None,
-            })
-            .collect();
+        let mut pending = Vec::new();
+        for segment in &id.path {
+            provision.work()?;
+            if let CheckedNodePathSegment::Node(operand) = segment {
+                provision.room(&mut pending)?;
+                pending.push((Arc::clone(operand), false));
+            }
+        }
         while let Some((node, expanded)) = pending.pop() {
+            provision.work()?;
             if self.by_operand.contains_key(&Arc::as_ptr(&node)) {
                 continue;
             }
             if !expanded {
-                pending.push((node.clone(), true));
+                provision.room(&mut pending)?;
+                pending.push((Arc::clone(&node), true));
                 for segment in &node.path {
+                    provision.work()?;
                     if let CheckedNodePathSegment::Node(operand) = segment {
                         if !self.by_operand.contains_key(&Arc::as_ptr(operand)) {
-                            pending.push((operand.clone(), false));
+                            provision.room(&mut pending)?;
+                            pending.push((Arc::clone(operand), false));
                         }
                     }
                 }
                 continue;
             }
-            let key = self.shallow(&node)?;
+            let key = self.shallow(&node, provision)?;
+            provision.cache_room(self)?;
             self.by_operand.insert(Arc::as_ptr(&node), (node, key));
         }
-        self.shallow(id)
+        self.shallow(id, provision)
     }
 
     /// The key of `id`, every operand already converted.
-    fn shallow(&self, id: &CheckedNodeId) -> Result<NodeKey, WireIdError> {
-        let path = id
-            .path
-            .iter()
-            .map(|segment| match segment {
-                CheckedNodePathSegment::Name(name) => Ok(PathSegment::Text(name.to_string())),
-                CheckedNodePathSegment::Index(index) => Err(WireIdError::NoGraph { index: *index }),
+    fn shallow<P: KeyProvision>(
+        &self,
+        id: &CheckedNodeId,
+        provision: &mut P,
+    ) -> Result<NodeKey, P::Error> {
+        let mut path = Vec::new();
+        for segment in &id.path {
+            provision.work()?;
+            provision.room(&mut path)?;
+            path.push(match segment {
+                CheckedNodePathSegment::Name(name) => PathSegment::Text(provision.text(name)?),
+                CheckedNodePathSegment::Index(index) => {
+                    return Err(WireIdError::NoGraph { index: *index }.into())
+                }
                 CheckedNodePathSegment::Operand(slot) => {
-                    Err(WireIdError::OperandSlot { slot: *slot })
+                    return Err(WireIdError::OperandSlot { slot: *slot }.into())
                 }
                 CheckedNodePathSegment::Dependency { package, node } => {
-                    Err(WireIdError::DependencyPosition {
-                        package: package.to_string(),
+                    return Err(WireIdError::DependencyPosition {
+                        package: provision.text(package)?,
                         node: *node,
-                    })
+                    }
+                    .into())
                 }
-                CheckedNodePathSegment::Node(operand) => Ok(PathSegment::Node(
-                    self.by_operand[&Arc::as_ptr(operand)].1.clone(),
-                )),
-            })
-            .collect::<Result<_, _>>()?;
-        Ok(NodeKey::new(&*id.package, path, id.ordinal)?)
+                CheckedNodePathSegment::Node(operand) => {
+                    PathSegment::Node(self.by_operand[&Arc::as_ptr(operand)].1.clone())
+                }
+            });
+        }
+        let package = provision.text(&id.package)?;
+        provision.key(package, path, id.ordinal)
     }
 }
 
@@ -1979,6 +2152,111 @@ mod tests {
             out_of_range_segment(&value, 19),
             Some(("/claim/node/path/2/node".to_owned(), 50))
         );
+    }
+
+    /// Structural conversion pays only newly materialized descendants, keeps
+    /// exact finite limits and preserves the original first unpaid charge.
+    #[ix_trace_rs::trace("FSpec-FR-322-AC-510", "FR-531-AC-39")]
+    #[test]
+    fn structural_key_materialization_preserves_paid_cache_and_exact_bounds() {
+        let child = Arc::new(CheckedNodeId {
+            package: "owner".into(),
+            path: vec![CheckedNodePathSegment::Name("child".into())],
+            ordinal: 0,
+        });
+        let root = CheckedNodeId {
+            package: "owner".into(),
+            path: vec![
+                CheckedNodePathSegment::Name("root".into()),
+                CheckedNodePathSegment::Node(Arc::clone(&child)),
+                CheckedNodePathSegment::Node(child),
+            ],
+            ordinal: 0,
+        };
+        let locus = NativeJoinLocus {
+            source: filament_contract_model::NativeJoinLocusSource::Package,
+            form: "composition_slot_key",
+        };
+        let expected = StructuralKeys::default()
+            .key(&root)
+            .expect("legacy structural key");
+        let mut keys = StructuralKeys::default();
+        let mut budget = NativeJoinBudget::new(1_000_000, 1_000_000);
+        assert_eq!(
+            keys.try_key(&root, &mut budget, locus).expect("paid key"),
+            expected
+        );
+        let first = budget.consumed();
+        assert!(first.work > 0 && first.storage > 0);
+        assert_eq!(
+            keys.by_operand.len(),
+            1,
+            "the shared descendant is converted once"
+        );
+        assert_eq!(
+            keys.try_key(&root, &mut budget, locus)
+                .expect("paid cached key"),
+            expected
+        );
+        let second = budget.consumed();
+        assert!(second.work - first.work < first.work);
+        assert!(second.storage - first.storage < first.storage);
+        assert_eq!(keys.by_operand.len(), 1);
+        let mut exact = NativeJoinBudget::new(first.work, first.storage);
+        assert_eq!(
+            StructuralKeys::default()
+                .try_key(&root, &mut exact, locus)
+                .expect("exact allowance"),
+            expected
+        );
+        assert_eq!(exact.consumed(), first);
+        for (work, storage, kind) in [
+            (first.work - 1, 1_000_000, NativeJoinChargeKind::Work),
+            (1_000_000, first.storage - 1, NativeJoinChargeKind::Storage),
+        ] {
+            let mut budget = NativeJoinBudget::new(work, storage);
+            let mut keys = StructuralKeys::default();
+            let error = keys
+                .try_key(&root, &mut budget, locus)
+                .expect_err("one unpaid unit");
+            let StructuralKeyMaterializationError::Budget {
+                denied,
+                configured_bound,
+                locus: original,
+            } = error
+            else {
+                panic!("the native denial remains typed");
+            };
+            assert_eq!(denied.kind, kind);
+            assert_eq!(Some(denied), budget.first_unpaid());
+            assert_eq!(
+                configured_bound,
+                match kind {
+                    NativeJoinChargeKind::Work => work,
+                    NativeJoinChargeKind::Storage => storage,
+                }
+            );
+            assert_eq!(original, Some(locus));
+            let consumed = budget.consumed();
+            assert!(matches!(keys.try_key(&root, &mut budget, locus),
+                Err(StructuralKeyMaterializationError::Budget { denied: repeated, .. }) if repeated == denied));
+            assert_eq!(budget.consumed(), consumed);
+        }
+        let malformed = CheckedNodeId {
+            package: "owner".into(),
+            path: vec![CheckedNodePathSegment::Index(2)],
+            ordinal: 0,
+        };
+        assert!(matches!(
+            StructuralKeys::default().try_key(
+                &malformed,
+                &mut NativeJoinBudget::new(1_000_000, 1_000_000),
+                locus
+            ),
+            Err(StructuralKeyMaterializationError::Wire(
+                WireIdError::NoGraph { index: 2 }
+            ))
+        ));
     }
 
     /// FR-322 "Scope": a peer assumption id resolves in the graph of the
