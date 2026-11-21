@@ -259,6 +259,7 @@ fn assembly_limit(cause: &AssemblyCause) -> Option<ReachedLimit> {
         | AssemblyCause::UnitGraphTopology { .. }
         | AssemblyCause::DimensionEquivalence { .. }
         | AssemblyCause::NominalAdmission(_)
+        | AssemblyCause::DimensionClassProjection(_)
         | AssemblyCause::UnsuppliedImport { .. }
         | AssemblyCause::UnadmittedModel { .. }
         | AssemblyCause::UnsupportedModelMember { .. }

@@ -3,9 +3,10 @@
 //! evaluated value (FR-093 "Dimension equivalence", FR-093-AC-46; FSpec
 //! FR-142-AC-26).
 
-use filament_eval::FamilyOutcome;
+use filament_eval::{Evaluation, FamilyOutcome, FamilyResult};
 use filament_exact::{
-    Integer, Meter, Outcome, Quantity as ExactQuantity, Rational, Value, ValueType,
+    ChargePoint, Integer, LimitKind, Meter, Outcome, Quantity as ExactQuantity, Rational, Value,
+    ValueType,
 };
 use fsl_eval::value::{CheckedPackageEvaluation, QualifiedName};
 use fsl_package::CheckedPackage;
@@ -176,5 +177,238 @@ fn a_quotient_across_an_equivalence_class_takes_the_class_root() {
         units(QUARTER)
     ))
     .expect("checks");
+    let graph = package.graph().semantic_graph();
+    let quotients: Vec<_> = graph
+        .nodes()
+        .filter_map(|node| match node.body() {
+            BodyTerm::Application(application)
+                if application.operation.identity() == "filament.op.quantity.div" =>
+            {
+                Some(application)
+            }
+            _ => None,
+        })
+        .collect();
+    let [left, right] = quotients.as_slice() else {
+        panic!("u4 lowers two quantity divisions");
+    };
+    assert_eq!(left.result_type, right.result_type);
+    let result = graph
+        .node(left.result_type.admitted().expect("a result type").clone())
+        .expect("the compound unit");
+    assert_eq!(result.semantic_form(), "compound_unit");
+    let BodyTerm::Aggregate(terms) = result.body() else {
+        panic!("the compound unit carries its terms");
+    };
+    assert!(terms.members.is_empty(), "the quotient is dimensionless");
     assert!(truth_at(&package, "u4", fraction(6, 1)));
+}
+
+fn call(package: &impl CheckedPackageEvaluation, name: &str, meter: &mut Meter) -> Evaluation {
+    package
+        .call(
+            &QualifiedName::unqualified(name).expect("an identifier"),
+            vec![],
+            &ObjectEnvironment::default(),
+            meter,
+        )
+        .unwrap_or_else(|error| panic!("{name} runs: {error:?}"))
+}
+
+fn quantity(evaluation: &Evaluation) -> &ExactQuantity {
+    match &evaluation.outcome {
+        FamilyOutcome::Evaluated(Outcome::Completed(Value::Quantity(quantity))) => quantity,
+        other => panic!("a completed quantity, got {other:?}"),
+    }
+}
+
+/// FR-093-AC-46: class conversion traverses the shared unit graph under
+/// the evaluation's meter, including the class identification edge.
+#[trace("FR-093-AC-46")]
+#[test]
+fn a_class_conversion_obeys_the_callers_meter() {
+    let program = format!(
+        "{}function cross using v(): Quantity<s> pure {{ convert<Quantity<s>>(1 beat) }}\n",
+        units(QUARTER)
+    );
+    let package = package_with(&program).expect("the conversion checks");
+    let mut measured = Meter::new(UNLIMITED);
+    let evaluation = call(&package, "cross", &mut measured);
+    assert_eq!(quantity(&evaluation).magnitude(), &fraction(1, 4));
+    let points: Vec<_> = measured
+        .admitted_charges()
+        .iter()
+        .map(|charge| charge.point)
+        .collect();
+    assert_eq!(
+        points
+            .iter()
+            .filter(|point| **point == ChargePoint::UnitEdge)
+            .count(),
+        1,
+        "one identification edge, even when the representative is Beat"
+    );
+    assert!(points.contains(&ChargePoint::UnitRationalArithmetic));
+    assert!(points.contains(&ChargePoint::UnitTargetDomain));
+    assert!(points.contains(&ChargePoint::UnitResultRetain));
+
+    for counter in [
+        LimitKind::WorkUnits,
+        LimitKind::UnitEdges,
+        LimitKind::IntegerBits,
+        LimitKind::ValueOccurrences,
+        LimitKind::ResultUnits,
+    ] {
+        let required = measured.consumed(counter);
+        assert!(required > 0, "the conversion measures {counter:?}");
+        let bound = required - 1;
+        let mut limits = UNLIMITED;
+        match counter {
+            LimitKind::WorkUnits => limits.work_units = bound,
+            LimitKind::UnitEdges => limits.unit_edges = bound,
+            LimitKind::IntegerBits => limits.integer_bits = bound,
+            LimitKind::ValueOccurrences => limits.value_occurrences = bound,
+            LimitKind::ResultUnits => limits.result_units = bound,
+            _ => unreachable!("only the five selected counters"),
+        }
+        let mut meter = Meter::new(limits);
+        let evaluation = call(&package, "cross", &mut meter);
+        let FamilyOutcome::Evaluated(Outcome::Incomplete(record)) = &evaluation.outcome else {
+            panic!("{counter:?}={bound} returns no converted value: {evaluation:?}");
+        };
+        assert_eq!(record.limit_kind, counter);
+        assert_eq!(record.limit, bound);
+        assert_eq!(record.consumed, meter.consumed(counter));
+        if counter == LimitKind::UnitEdges {
+            assert_eq!(record.charge_point, ChargePoint::UnitEdge);
+            assert_eq!(record.consumed, 0, "the denied edge is not charged");
+            let location = evaluation
+                .location
+                .as_ref()
+                .expect("the conversion is located");
+            assert_eq!(location.depth(), 0, "the function's conversion root");
+            let region = package.graph().region(location).expect("the source span");
+            let expression = "convert<Quantity<s>>(1 beat)";
+            assert_eq!(
+                region.end() - region.start(),
+                u64::try_from(expression.len()).expect("a source length")
+            );
+        }
+    }
+}
+
+fn with_bare<T>(
+    package: &CheckedPackage,
+    run: impl FnOnce(&fsl_package::BarePackage<'_>) -> T,
+) -> T {
+    use fsl_semantics::library::LibraryName;
+    use fsl_semantics::model::intake::package_input;
+
+    let emission = fsl_package::emit_checked(package, fsl_package::EmitLimits::fixture())
+        .expect("the checked unit emits");
+    let no_models = package_input(std::iter::empty::<&[u8]>()).expect("no model inputs");
+    let read = fsl_package::read_evaluation_emission(
+        package,
+        &emission,
+        LibraryName::new("fixture").expect("a package name"),
+        &no_models,
+        fsl_package::V2ReadLimits::fixture(),
+        fsl_package::EmitLimits::fixture(),
+        fsl_package::SourceWitnessSupplier::new(&emission),
+    )
+    .expect("the bytes are admitted");
+    let budget = || fsl_package::V2ReadLimits::fixture().native_join_budget();
+    let identities = emission
+        .identity_rows(read.admitted(), &mut budget())
+        .expect("identity rows");
+    let equality = emission
+        .equality_witness(read.admitted(), &mut budget())
+        .expect("equality rows");
+    let bare = fsl_package::BarePackage::new(read.admitted())
+        .with_supply(
+            fsl_package::BareSupply {
+                identities: &identities,
+                equality: Some(&equality),
+            },
+            &mut budget(),
+        )
+        .expect("the package supply joins");
+    run(&bare)
+}
+
+/// FR-533-AC-23: until the IR reader exposes equivalence definitions, the
+/// bytes-only route reports the bounded unsupported construct at the
+/// conversion, while ordinary and affine conversions still evaluate.
+#[trace("FR-533-AC-23")]
+#[test]
+fn a_package_class_conversion_is_typed_unsupported_until_reconstruction() {
+    use filament_semantic_value::catalog::CatalogCode;
+
+    let program = format!(
+        "{}\
+         unit shifted : Beat = rational(1, 1) * beat + rational(2, 1);\n\
+         function cross using v(): Quantity<s> pure {{ convert<Quantity<s>>(1 beat) }}\n\
+         function affine_class using v(): Quantity<s> pure {{ convert<Quantity<s>>(1 shifted) }}\n\
+         function quotient using v(): Boolean pure {{ 6 s / 3 beat = 8 s / 1 s }}\n\
+         function same using v(): Quantity<s> pure {{ convert<Quantity<s>>(1000 ms) }}\n\
+         function affine_same using v(): Quantity<beat> pure {{ convert<Quantity<beat>>(1 shifted) }}\n",
+        units(QUARTER)
+    );
+    let package = package_with(&program).expect("the unit checks");
+    assert_eq!(
+        quantity(&call(&package, "affine_class", &mut Meter::new(UNLIMITED))).magnitude(),
+        &fraction(3, 4)
+    );
+    with_bare(&package, |bare| {
+        for (name, expression) in [
+            ("cross", "convert<Quantity<s>>(1 beat)"),
+            ("affine_class", "convert<Quantity<s>>(1 shifted)"),
+            ("quotient", "6 s / 3 beat"),
+        ] {
+            let mut meter = Meter::new(UNLIMITED);
+            let evaluation = call(bare, name, &mut meter);
+            let FamilyOutcome::FamilyEvaluated(FamilyResult::Refused(cause)) = &evaluation.outcome
+            else {
+                panic!("a typed unsupported conversion, got {evaluation:?}");
+            };
+            assert_eq!(
+                cause.catalog_code(),
+                CatalogCode::new("unsupported_construct", "not-yet-implemented")
+            );
+            let fields = cause
+                .catalog_fields()
+                .expect("the unsupported construct payload");
+            assert_eq!(
+                fields.get("what").map(String::as_str),
+                Some("dimension-equivalence-package-reconstruction")
+            );
+            let location = evaluation
+                .location
+                .as_ref()
+                .expect("the conversion's location");
+            let depth = if name == "quotient" { 1 } else { 0 };
+            assert_eq!(location.depth(), depth);
+            let region = package
+                .graph()
+                .region(location)
+                .expect("the source conversion span");
+            let prefix = "language \"ix:native\" edition \"1-draft\";\nprofile v = \"filament.value.complete/v1\";\n";
+            let full = format!("{prefix}{program}");
+            let start = usize::try_from(region.start()).expect("the source start fits");
+            let end = usize::try_from(region.end()).expect("the source end fits");
+            assert_eq!(&full[start..end], expression);
+            assert!(!meter
+                .admitted_charges()
+                .iter()
+                .any(|charge| charge.point == ChargePoint::UnitRationalArithmetic));
+        }
+        assert_eq!(
+            quantity(&call(bare, "same", &mut Meter::new(UNLIMITED))).magnitude(),
+            &fraction(1, 1)
+        );
+        assert_eq!(
+            quantity(&call(bare, "affine_same", &mut Meter::new(UNLIMITED))).magnitude(),
+            &fraction(3, 1)
+        );
+    });
 }
