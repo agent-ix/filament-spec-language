@@ -2828,11 +2828,6 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
             // FR-322: `eval` queues a `case` through `Task::Select`, never
             // `Task::Apply`.
             NodeKind::Case { .. } => return Err(invariant("evaluation-apply-node-invalid")),
-            // Quantity scaling is applied below with the source unit kept on
-            // the result (FR-142 quantity scaling).
-            NodeKind::QuantityScaleDiv { .. } => {
-                return Err(unsupported_construct("quantity_scale"));
-            }
             NodeKind::TupleProject {
                 operand,
                 declaration,
@@ -3351,7 +3346,8 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
                 self.units.form(unit);
                 Value::Quantity(quantity)
             }
-            NodeKind::QuantityScale { .. } => {
+            NodeKind::QuantityScale { .. } | NodeKind::QuantityScaleDiv { .. } => {
+                let division = matches!(node.kind(), NodeKind::QuantityScaleDiv { .. });
                 let factor = match self.pop()? {
                     Value::Integer(value) => Rational::from_integer(value),
                     Value::Rational(value) => value,
@@ -3382,7 +3378,14 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
                 if self.units.resolve(&quantity).is_none() {
                     return Err(unresolved_unit());
                 }
-                let operation = RationalArithmetic::Multiply(quantity.magnitude(), &factor);
+                if division && factor.numerator() == &filament_exact::Integer::zero() {
+                    return Err(Stop::Undefined(Undefined::DivisionByZero).into());
+                }
+                let operation = if division {
+                    RationalArithmetic::Divide(quantity.magnitude(), &factor)
+                } else {
+                    RationalArithmetic::Multiply(quantity.magnitude(), &factor)
+                };
                 self.meter.charge(
                     Charge::new(ChargePoint::UnitIdentityRead)
                         .size(LimitKind::ValueOccurrences, 1)
@@ -3393,7 +3396,14 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
                         LimitKind::IntegerBits,
                         filament_exact::rational_arithmetic_bits(operation),
                     ))?;
-                let magnitude = quantity.magnitude().mul(&factor);
+                let magnitude = if division {
+                    quantity
+                        .magnitude()
+                        .div(&factor)
+                        .ok_or(Stop::Undefined(Undefined::DivisionByZero))?
+                } else {
+                    quantity.magnitude().mul(&factor)
+                };
                 self.meter
                     .charge(Charge::new(ChargePoint::UnitResultRetain).results(1))?;
                 Value::Quantity(Quantity::new(magnitude, quantity.unit().clone()))

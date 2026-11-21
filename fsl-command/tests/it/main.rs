@@ -27,5 +27,6 @@ mod request_overrides;
 mod revision_validation;
 mod run_requirement_items;
 mod short_circuit_integer_division;
+mod quantity_scaling;
 mod temporal_owner_cohort;
 mod wire_schema;
