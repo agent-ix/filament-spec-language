@@ -319,3 +319,32 @@ fn an_unproved_narrowing_reports_the_target_range() {
         bounds("-3", "10")
     );
 }
+
+/// FR-093-AC-67: a decimal operand is proved by the declared ranges of its
+/// typed operands under exact interval arithmetic, so `s * 0.1` (at most 1.0)
+/// narrows into a target that holds 5.0 although the product is written at
+/// `s`'s own wider type.
+#[trace("FR-093-AC-67", "FR-093-AC-42", "FSpec-FR-149")]
+#[test]
+fn decimal_arithmetic_over_declared_ranges_proves_a_narrowing() {
+    assert_operation(
+        "type S = Decimal[0, 100; 1, 1; exact];\n\
+         type T = Decimal[0, 50; 1, 1; exact];\n\
+         function f using v(s: S): T pure { convert<T>(s * decimal(1, 1)) }",
+        "filament.op.numeric.narrow",
+        CheckMode::Linked,
+    );
+}
+
+/// FR-093-AC-67: when the exact interval of the sum exceeds the target
+/// (`1.5 + s` reaches 11.5, the target holds 5.0), the narrowing stays
+/// `undefined_expression`/`unproved-range`.
+#[trace("FR-093-AC-67", "FR-093-AC-42", "FSpec-FR-149")]
+#[test]
+fn decimal_sum_that_can_exceed_the_target_refuses_unproved_range() {
+    assert_unproved(
+        "type S = Decimal[0, 100; 1, 1; exact];\n\
+         type T = Decimal[0, 50; 1, 1; exact];\n\
+         function f using v(s: S): T pure { convert<T>(decimal(15, 1) + s) }",
+    );
+}

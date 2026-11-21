@@ -1260,6 +1260,31 @@ fn variant_type_identity(path: &[filament_exact::PathSegment]) -> Option<&String
     }
 }
 
+/// `data` with each source operand fact that lowers at `Integer` (an integer
+/// division, or a control node over one) retyped to the node type the operand
+/// lowers at, so the emitted fact witness names the type the graph carries
+/// (FR-495-AC-24).
+fn data_at_lowered_types(
+    node: CheckedNode<'_>,
+    mut data: EqualityProducerData,
+) -> EqualityProducerData {
+    for fact in &mut data.operand_type_facts {
+        if fact.role != super::ir::EqualityUnitOperandRole::Source {
+            continue;
+        }
+        let lowered = node
+            .children()
+            .into_iter()
+            .nth(fact.operand_position)
+            .filter(|child| child.value_type() == &fact.value_type)
+            .map(|child| child.lowered_value_type().into_owned());
+        if let Some(lowered) = lowered {
+            fact.value_type = lowered;
+        }
+    }
+    data
+}
+
 fn refuse(location: &Location, cause: CheckCause) -> CheckRefusal {
     CheckRefusal {
         location: location.clone(),
@@ -6109,6 +6134,7 @@ impl<'a> Lowering<'a> {
                     };
                     let identity =
                         self.equality_identity(node, key.clone(), location.clone(), &data)?;
+                    let data = data_at_lowered_types(node, data);
                     self.equality_producer_data
                         .insert((key.clone(), location.clone()), data);
                     self.equality_producer_identities
