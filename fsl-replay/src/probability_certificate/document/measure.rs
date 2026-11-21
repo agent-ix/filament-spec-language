@@ -405,6 +405,7 @@ pub fn measure_probability_product_key(
             budget: &scope,
             max_bytes: identity.input_bytes,
         };
+        key.validate().map_err(ModelKeyError::Unsupported)?;
         writer::encode_admitted(&key, identity.input_bytes, &mut Reserve(&scope))
             .map(ProbabilityProductKey::from_canonical_bytes)
             .map_err(|error| {

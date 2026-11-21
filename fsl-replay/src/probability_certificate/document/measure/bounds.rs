@@ -118,32 +118,6 @@ pub(in crate::probability_certificate) fn admit_subsystem(
     validate_ranges(&document, limits, cancel, &mut meter)
 }
 
-struct Transition<'a> {
-    schedule: quire_canonical::NodeRef<'a>,
-    operation: &'a str,
-}
-impl Encode for Transition<'_> {
-    fn encode_into<S: Sink + ?Sized>(&self, writer: &mut Writer<'_, S>) -> Result<(), Error> {
-        let Node::Array(parts) = self.schedule.node() else {
-            return Err(Error::ReservationDenied { requested: 0 });
-        };
-        let parts = parts.collect::<Vec<_>>();
-        let [_operation, receiver, arguments] = parts.as_slice() else {
-            return Err(Error::ReservationDenied { requested: 0 });
-        };
-        writer.begin_object()?;
-        writer.name("type")?;
-        writer.string("transition")?;
-        writer.name("operation")?;
-        writer.string(self.operation)?;
-        writer.name("receiver")?;
-        receiver.encode_into(writer)?;
-        writer.name("arguments")?;
-        arguments.encode_into(writer)?;
-        writer.end_object()
-    }
-}
-
 fn policy_action(
     choice: &str,
     state: &State,
@@ -151,72 +125,20 @@ fn policy_action(
     cancel: &Cancel,
     storage: &mut u64,
 ) -> Result<Option<usize>, ProbabilityDocumentError> {
-    #[derive(Deserialize)]
-    #[serde(deny_unknown_fields)]
-    struct TransitionShape {
-        #[serde(rename = "type")]
-        kind: String,
-        operation: String,
-        receiver: Box<serde_json::value::RawValue>,
-        arguments: Vec<Box<serde_json::value::RawValue>>,
-    }
-    let shape: TransitionShape = serde_json::from_str(choice)
-        .map_err(|_| ProbabilityDocumentError::MalformedMember("policy"))?;
-    if shape.kind != "transition"
-        || shape.operation.is_empty()
-        || !(shape.receiver.get() == "null" || shape.receiver.get().starts_with('{'))
-        || shape
-            .arguments
-            .iter()
-            .any(|value| !value.get().starts_with('{'))
-    {
-        return Err(ProbabilityDocumentError::MalformedMember("policy"));
-    }
-    let admission = RefCell::new(writer::Admission::with_used(
+    poll(cancel)?;
+    charge(
+        storage,
         limits.storage_bytes,
-        cancel,
-        *storage,
-    ));
-    for (index, action) in state.actions.iter().enumerate() {
-        poll(cancel)?;
-        let Some(crate::ProductAction::Identity(schedule)) = action else {
-            continue;
-        };
-        let parsed = quire_canonical::read_with_reservation(
-            schedule.as_bytes(),
-            limits.bytes,
-            &mut writer::Reserve(&admission),
-        );
-        *storage = admission.borrow().used();
-        if let Some(error) = admission.borrow_mut().take_stop() {
-            return Err(error);
-        }
-        let parsed = parsed.map_err(|_| ProbabilityDocumentError::MalformedMember("policy"))?;
-        let Node::Array(parts) = parsed.root().node() else {
-            return Err(ProbabilityDocumentError::MalformedMember("policy"));
-        };
-        let operation = parts
-            .into_iter()
-            .next()
-            .ok_or(ProbabilityDocumentError::MalformedMember("policy"))?;
-        let operation = writer::encode_reserved(&operation, limits.bytes, &admission)?;
-        let operation = std::str::from_utf8(&operation)
-            .map_err(|_| ProbabilityDocumentError::MalformedMember("policy"))?;
-        let expected = writer::encode_reserved(
-            &Transition {
-                schedule: parsed.root(),
-                operation,
-            },
-            limits.bytes,
-            &admission,
-        )?;
-        *storage = admission.borrow().used();
-        if expected == choice.as_bytes() {
-            return Ok(Some(index));
-        }
-    }
-    *storage = admission.borrow().used();
-    Ok(None)
+        u64::try_from(choice.len())
+            .unwrap_or(u64::MAX)
+            .saturating_mul(4),
+    )?;
+    let hinted = crate::Schedule::read_transition(
+        choice.as_bytes(),
+        quire_canonical::Limits::new(limits.bytes),
+    )
+    .map_err(|_| ProbabilityDocumentError::MalformedMember("policy"))?;
+    Ok(state.actions.iter().position(|action| matches!(action, Some(crate::ProductAction::Identity(schedule)) if schedule == &hinted)))
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -414,30 +336,43 @@ pub(super) fn check(
             }
             continue;
         }
+        let choice_storage = storage;
         charge(
             &mut storage,
             limits.storage_bytes,
-            u64::try_from(state.actions.len().saturating_mul(std::mem::size_of::<(
-                &str,
-                &[u8],
-                usize,
-            )>()))
+            u64::try_from(
+                state
+                    .actions
+                    .len()
+                    .saturating_mul(std::mem::size_of::<(Vec<u8>, usize)>()),
+            )
             .unwrap_or(u64::MAX),
         )?;
         let mut choices = Vec::new();
         for (index, action) in state.actions.iter().enumerate() {
-            let (tag, bytes): (&str, &[u8]) = match action {
-                None => ("", &[]),
-                Some(crate::ProductAction::Identity(schedule)) => ("identity", schedule.as_bytes()),
-                Some(crate::ProductAction::PostState(target)) => ("post-state", target.as_bytes()),
-                Some(crate::ProductAction::TerminalStutter) => ("terminal-stutter", &[]),
+            let capacity = match action {
+                Some(crate::ProductAction::Identity(schedule)) => schedule.as_bytes().len(),
+                Some(crate::ProductAction::PostState(target)) => target.as_bytes().len(),
+                Some(crate::ProductAction::TerminalStutter) | None => 0,
                 Some(_) => return Err(ProbabilityDocumentError::Unsupported),
-            };
-            choices.push((tag, bytes, index));
+            }
+            .saturating_add(32);
+            charge(
+                &mut storage,
+                limits.storage_bytes,
+                u64::try_from(capacity.saturating_mul(2)).unwrap_or(u64::MAX),
+            )?;
+            let bytes = action
+                .as_ref()
+                .map(crate::ProductAction::to_bytes)
+                .transpose()
+                .map_err(|_| ProbabilityDocumentError::Malformed)?
+                .unwrap_or_default();
+            choices.push((bytes, index));
         }
-        choices.sort_by(|a, b| (a.0, a.1).cmp(&(b.0, b.1)));
+        choices.sort_by(|a, b| a.0.cmp(&b.0));
         let mut satisfying = None;
-        for (_, _, index) in choices {
+        for (_, index) in choices {
             if policy.get(key).is_some_and(|hint| *hint != index) {
                 continue;
             }
@@ -475,6 +410,7 @@ pub(super) fn check(
                 break;
             }
         }
+        storage = choice_storage;
         if needs_policy {
             let Some(index) = satisfying else {
                 return Ok(rejection(

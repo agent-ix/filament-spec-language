@@ -3,9 +3,7 @@
 
 use super::{Accumulator, Amount, MeasurePhase, MonitorState};
 use crate::simulation::model::ModelKeyBudget;
-use filament_exact::{
-    Integer, IntegerDecimalBudgetError, IntegerDecimalError, NodeKey, ObjectReference, UnitId,
-};
+use filament_exact::{Integer, NodeKey, ObjectReference, UnitId};
 use quire_canonical::{Encode, Error, NodeRef, Sink, Writer};
 use std::cell::RefCell;
 
@@ -43,40 +41,43 @@ pub struct MeasureProductKey<'a, 'budget> {
 }
 
 impl MeasureProductKey<'_, '_> {
+    /// Validate structural control and reward members before budgeted encoding.
+    ///
+    /// # Errors
+    /// A non-measure control, mismatched accumulator or missing/extraneous reward.
+    pub fn validate(&self) -> Result<(), &'static str> {
+        if !matches!(
+            (self.control, self.accumulator),
+            (
+                MonitorState::Measure { .. },
+                Accumulator::Steps { .. } | Accumulator::Reward { .. }
+            ) | (
+                MonitorState::Fraction { .. },
+                Accumulator::CountFraction { .. } | Accumulator::WeightedFraction { .. }
+            )
+        ) {
+            return Err("measure control and accumulator differ");
+        }
+        if matches!(
+            self.accumulator,
+            Accumulator::Reward { .. } | Accumulator::WeightedFraction { .. }
+        ) != self.reward.is_some()
+        {
+            return Err("measure reward descriptor differs");
+        }
+        Ok(())
+    }
+
     fn integer<S: Sink + ?Sized>(
         &self,
         value: &Integer,
         writer: &mut Writer<'_, S>,
     ) -> Result<(), Error> {
-        self.budget
-            .borrow_mut()
+        let mut budget = self.budget.borrow_mut();
+        budget
             .integer(value)
             .map_err(|_| Error::ReservationDenied { requested: 0 })?;
-        let text = value
-            .try_to_decimal_string_with_budget(
-                usize::try_from(self.max_bytes).unwrap_or(usize::MAX),
-                &mut **self.budget.borrow_mut(),
-            )
-            .map_err(|error| match error {
-                IntegerDecimalBudgetError::Denied => Error::ReservationDenied { requested: 0 },
-                IntegerDecimalBudgetError::Decimal(IntegerDecimalError::Allocation {
-                    requested,
-                }) => Error::Allocation { requested },
-                IntegerDecimalBudgetError::Decimal(IntegerDecimalError::ByteLimit {
-                    required,
-                    limit,
-                }) => Error::Limit(quire_canonical::LimitExceeded {
-                    kind: quire_canonical::LimitKind::CanonicalBytes,
-                    bound: u64::try_from(limit).unwrap_or(u64::MAX),
-                    required: u64::try_from(required).unwrap_or(u64::MAX),
-                }),
-                IntegerDecimalBudgetError::Decimal(IntegerDecimalError::OutputSizeOverflow) => {
-                    Error::Allocation {
-                        requested: usize::MAX,
-                    }
-                }
-            })?;
-        writer.string(&text)
+        fsl_foundation::scalar_wire::integer(value, self.max_bytes, Some(&mut **budget), writer)
     }
     fn rational<S: Sink + ?Sized>(
         &self,
@@ -111,39 +112,21 @@ impl MeasureProductKey<'_, '_> {
     fn reward<S: Sink + ?Sized>(&self, writer: &mut Writer<'_, S>) -> Result<(), Error> {
         let reward = self
             .reward
-            .ok_or(Error::ReservationDenied { requested: 0 })?;
+            .ok_or_else(|| Error::Serialize("reward descriptor required".into()))?;
         writer.begin_array()?;
         fsl_foundation::node_wire::encode_node_key(reward.model, writer)?;
         writer.string(reward.name.as_str())?;
         writer.end_array()?;
-        match reward.unit {
-            None => writer.null(),
-            Some(unit) => {
-                writer.begin_array()?;
-                if let Some(key) = unit.declared_key() {
-                    writer.string("declared")?;
-                    fsl_foundation::node_wire::encode_node_key(key, writer)?;
-                } else {
-                    writer.string("compound")?;
-                    writer.begin_array()?;
-                    for (key, exponent) in unit.compound_terms().unwrap_or_default() {
-                        writer.begin_object()?;
-                        writer.name("unit")?;
-                        fsl_foundation::node_wire::encode_node_key(key, writer)?;
-                        writer.name("exponent")?;
-                        self.integer(exponent, writer)?;
-                        writer.end_object()?;
-                    }
-                    writer.end_array()?;
-                }
-                writer.end_array()
-            }
-        }
+        fsl_foundation::scalar_wire::unit(reward.unit, writer, |value, writer| {
+            self.integer(value, writer)
+        })
     }
 }
 
 impl Encode for MeasureProductKey<'_, '_> {
     fn encode_into<S: Sink + ?Sized>(&self, writer: &mut Writer<'_, S>) -> Result<(), Error> {
+        self.validate()
+            .map_err(|cause| Error::Serialize(cause.into()))?;
         writer.begin_array()?;
         writer.string("filament.probability-product-key/v1")?;
         match self.binding {
@@ -179,7 +162,7 @@ impl Encode for MeasureProductKey<'_, '_> {
                 })?;
             }
             MonitorState::Formula(_) | MonitorState::Deadline { .. } => {
-                return Err(Error::ReservationDenied { requested: 0 })
+                return Err(Error::Serialize("control is not a bounded measure".into()))
             }
         }
         writer.end_array()?;

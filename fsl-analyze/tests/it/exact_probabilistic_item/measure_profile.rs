@@ -1162,13 +1162,31 @@ fn mean_bound(
             .iter()
             .map(|row| row["state"].clone())
             .collect::<Vec<_>>();
-        document["policy"] = Value::Array(witness.scheduler.iter().filter_map(|(key, action)| {
-            let state = json!(URL_SAFE_NO_PAD.encode(key.as_bytes()));
-            if !states.contains(&state) { return None; }
-            let fsl_replay::ProductAction::Identity(schedule) = action else { return None; };
-            let triple: Value = serde_json::from_slice(schedule.as_bytes()).unwrap();
-            Some(json!({"state":state,"choice":{"type":"transition","operation":serde_json::to_string(&triple[0]).unwrap(),"receiver":triple[1],"arguments":triple[2]}}))
-        }).collect());
+        document["policy"] = Value::Array(
+            witness
+                .scheduler
+                .iter()
+                .filter_map(|(key, action)| {
+                    let state = json!(URL_SAFE_NO_PAD.encode(key.as_bytes()));
+                    if !states.contains(&state) {
+                        return None;
+                    }
+                    let fsl_replay::ProductAction::Identity(schedule) = action else {
+                        return None;
+                    };
+                    let transition = schedule
+                        .transition_identity(quire_canonical::Limits::new(document_limits().bytes))
+                        .unwrap();
+                    let choice: Value = serde_json::from_slice(
+                        &transition
+                            .canonical_bytes(quire_canonical::Limits::new(document_limits().bytes))
+                            .unwrap(),
+                    )
+                    .unwrap();
+                    Some(json!({"state":state,"choice":choice}))
+                })
+                .collect(),
+        );
     }
     document
 }
