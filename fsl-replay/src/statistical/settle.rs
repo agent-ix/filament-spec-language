@@ -17,7 +17,7 @@ use fsl_foundation::{BackendId, RequestIndex};
 
 use super::{
     ClaimForm, Decision, StatisticalLimit, StatisticalMethod, StatisticalOutcome,
-    StatisticalRefusal, StatisticalStop, StatisticalUnsupported,
+    StatisticalRefusal, StatisticalStop, StatisticalUnsupported, UndecidedCause,
 };
 use crate::model_check::limits::{meter_bound, ModelCheckLimit};
 use crate::proof_result::{
@@ -150,15 +150,19 @@ pub fn settle_statistical(
         // FSpec FR-410 requires an `estimate` value of the verdict and of
         // every test row. A test that counted no sample, or a regenerative
         // run with no cycle of positive weight, has none (a test an
-        // undefined sample rejected is the one FR-409 row without an
-        // estimate), so the run did not complete its method: it settles `incomplete`, naming
+        // undefined sample rejected, and one whose first sample reached an
+        // undecided successor, are the FR-409 rows without an estimate), so the run did not complete its method: it settles `incomplete`, naming
         // `max_samples` and the samples it counted, and no verdict is
         // written.
         StatisticalOutcome::Completed(verdict)
             if verdict
                 .tests
                 .iter()
-                .any(|test| test.estimate.is_none() && test.undefined.is_none()) =>
+                .any(|test| {
+                    test.estimate.is_none()
+                        && test.undefined.is_none()
+                        && test.decision != Decision::Undecided(UndecidedCause::UndecidedSuccessor)
+                }) =>
         {
             StatisticalRecord::of(TerminalValue::Incomplete(IncompleteCause::LimitReached {
                 limit: ModelCheckLimit::Statistical(StatisticalLimit::MaxSamples),
@@ -329,7 +333,7 @@ mod tests {
     use crate::outcome::{Operation, OutcomeDocument, OutcomeItem};
     use crate::statistical::{
         Confidence, Coverage, StatisticalBasis, StatisticalLimit, StatisticalProvenance,
-        StatisticalVerdict, UndecidedCause,
+        StatisticalVerdict, TestResult, UndecidedCause,
     };
 
     fn ratio(numerator: i64, denominator: i64) -> Rational {
@@ -447,6 +451,41 @@ mod tests {
     /// `runtime_invariant`/`established-invariant-broken` when internal and
     /// its own cause otherwise; an unsupported run settles `unsupported`
     /// with its cause.
+    /// FR-409: a test whose first sample reaches an undecided successor
+    /// counted nothing and has no estimate, and still settles `measured`
+    /// `undecided` with cause `undecided-successor`, never `incomplete`.
+    #[trace("TC-627", "FR-192-AC-1")]
+    #[test]
+    fn an_undecided_successor_without_an_estimate_settles_measured_undecided() {
+        let undecided = Decision::Undecided(UndecidedCause::UndecidedSuccessor);
+        let StatisticalOutcome::Completed(mut verdict) = completed(undecided) else {
+            unreachable!("a completed outcome")
+        };
+        verdict.estimate = None;
+        verdict.interval = None;
+        verdict.tests = vec![TestResult {
+            index: 0,
+            initial: 0,
+            binding: None,
+            reference: None,
+            decision: undecided,
+            estimate: None,
+            interval: None,
+            quantile: None,
+            samples: 0,
+            draws: 0,
+            undefined: None,
+        }];
+        let record = settle(&StatisticalOutcome::Completed(verdict));
+        assert_eq!(record.measured(), Some(undecided));
+        let json = wire(record);
+        assert_eq!(json["result"], "measured", "{json}");
+        assert_eq!(json["measured"], "undecided", "{json}");
+        assert_eq!(json["cause"]["kind"], "undecided-successor", "{json}");
+        assert!(json["verdict"].is_object(), "{json}");
+        assert!(json["verdict"].get("estimate").is_none(), "{json}");
+    }
+
     #[trace("TC-627", "FR-192-AC-1")]
     #[test]
     fn each_outcome_row_settles_as_the_map_states() {

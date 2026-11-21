@@ -96,3 +96,19 @@ Pass 1 head: `c7c7e1663a038600bb0530e0619f2abec5fdb022`, rebased on main `82e13e
 | FND-005 | fixed | `StatisticalRefusal::DelayWeighting` → `UnsettledRefusal::NotYetImplemented` → `unsupported` not-yet-implemented; `delay_weighting_from_source_is_not_yet_implemented_not_a_method_error` checks it. |
 | FND-006 | fixed | The seven reasons read `QSL-2158 open, <AC>: <what is missing>`, so QSL-2158 stays open. |
 | FND-007 | fixed | The trace is moved to the four tests, the duplicate wrapper is deleted, and `exact_every_scheduler_from_source` asserts `certificate.accepted` and `kind`. |
+
+## New findings (disposition pass 2)
+
+Pass 2 head: `aabe560acb16118ee103f200e60dd1d291a802d4` (fix commits `d39b2fc20`, `aabe560ac`). Schema: FSpec `proposals/backend-provider-v1/schema.json` at `origin/main` `cd89fcb31`. Ruling text: open FSpec PR #777, FR-410.
+
+| ID | Severity | Summary | Refs |
+| --- | --- | --- | --- |
+| FND-010 | high | The new settle guard turns every completed verdict that has a test with no estimate and no undefined sample into `incomplete` `LimitReached{statistical.max_samples, value: samples counted}`. A test that meets an undecided successor on its first sample (`undecided_successor(tally.estimate())`, statistical.rs:531-537; for example the `undetermined` world with samples 0) used to settle `measured` `undecided` `undecided-successor`, as FSpec FR-331:354 and FR-409 define. It now reports a `max_samples` limit (16,777,216) as reached at value 0. Raising that limit changes nothing, so the cause is false. This is a wrong settlement and is worse than main on the library route (`settle_statistical`). Fix: exempt `Decision::Undecided(UndecidedSuccessor)` tests in the guard and in both estimate checks of `statistical_verdict_wire`, as the undefined rejection is exempted, so the item settles `measured` and does not fall to `failed`. | fsl-replay/src/statistical/settle.rs:157-167; fsl-replay/src/outcome.rs:1754-1761, 1824-1828 |
+
+## Dispositions (round 2)
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-003 | deferred | Spelling every witness waits on FSpec #777 (`scheduled`, `stutter`, `censored`). The verdict now writes `witnesses: []` and wire errors settle the item `failed`/`internal-fault`, so no error is swallowed in the verdict. Two parts go to the QSL-2158 checklist: surfacing the omitted witnesses, and `claim_locus_wire(..).ok()` at document.rs:3582. |
+| FND-008 | fixed | Every `Count` member is a JSON integer (`json!(test.index)`, `samples`, `draws`, `m`, `grid`, `min_cycles`). `provenance` is exactly `{seed, sampler, tests}`, and the tests assert `as_u64()`, `grid == 8` and that `delay_grid_bits` is absent. |
+| FND-009 | fixed | The trace on the delay-refusal test is removed. |

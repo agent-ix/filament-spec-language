@@ -1871,14 +1871,16 @@ fn statistical_verdict_wire(
             "decision".to_owned(),
             statistical_decision_wire(test.decision, test.undefined.as_ref())?,
         );
-        // A test an undefined sample rejected has no estimate and the schema
-        // has no spelling for that; any other test without one never reaches
+        // A test an undefined sample rejected, or whose first sample reached
+        // an undecided successor, has no estimate and the schema has no
+        // spelling for that; any other test without one never reaches
         // a verdict (it settles `incomplete`).
         match statistical_estimate_wire(test.estimate.as_ref(), test.quantile.as_ref()) {
             Some(estimate) => {
                 result.insert("estimate".to_owned(), estimate);
             }
-            None if test.undefined.is_some() => {}
+            None if test.undefined.is_some()
+                || test.decision == Decision::Undecided(statistical::UndecidedCause::UndecidedSuccessor) => {}
             None => return Err(CounterexampleWireError::Unspelled("test estimate")),
         }
         if let Some(interval) = statistical_interval_wire(test.interval.as_ref()) {
@@ -1945,7 +1947,9 @@ fn statistical_verdict_wire(
     });
     match statistical_estimate_wire(verdict.estimate.as_ref(), verdict.quantile.as_ref()) {
         Some(estimate) => value["estimate"] = estimate,
-        None if rejection.is_some() => {}
+        None if rejection.is_some()
+            || verdict.decision
+                == Decision::Undecided(statistical::UndecidedCause::UndecidedSuccessor) => {}
         None => return Err(CounterexampleWireError::Unspelled("verdict estimate")),
     }
     if let Some(interval) = statistical_interval_wire(verdict.interval.as_ref()) {
