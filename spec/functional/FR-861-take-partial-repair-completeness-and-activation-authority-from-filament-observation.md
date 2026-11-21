@@ -36,8 +36,8 @@ intervals (its FR-007), activation-scope, progress and completeness
 authority (its FR-008), and the affected-region plan of a revision repair
 (its FR-010). FSL SHALL hold no implementation of those four rule sets of
 its own; where it applies one, the implementation SHALL be
-`filament-observation`'s. `fsl-eval` SHALL call the owner's `partial`, `completeness` and
-`activation` authority modules where it applies those rules, as
+`filament-observation`'s. `fsl-eval` SHALL call the owner's `partial`,
+`completeness` and `activation` authority modules where it applies those rules, as
 `fsl-analyze` already calls the owner's `clock` and `progress` modules
 (FR-251), and SHALL hold no second copy of them. `fsl-eval` applies no
 affected-region planning (Behavior), so it holds no repair rule and calls
@@ -124,7 +124,12 @@ The evaluator's reports, unchanged: FR-501's, FR-502's and FR-524's.
   the former FR-944-AC-4 and FR-944-AC-16 selection and `revise` tests, the
   former FR-861-AC-4 tracked-exception test, and the repair tests of the
   former FR-861-AC-3 and FR-944-AC-3.
-- Every FR-502, FR-820 and FR-993 test SHALL pass unchanged.
+- Every FR-502, FR-820 and FR-993 test SHALL pass unchanged, except
+  `a_retained_identity_at_one_stamp_does_not_cover_it_at_another_stamp`,
+  which asserted stamp-keyed membership contrary to FR-502's "Ordering and
+  membership use the identity only".
+- That test SHALL assert that the identity is held and the request
+  accepted.
 
 ## Acceptance Criteria
 
