@@ -5,8 +5,8 @@ mod types;
 
 use super::{LimitKind, RunCause, RunError, RunResult};
 use crate::formal_source::FormalSource;
-use fsl_foundation::Diagnostic;
 use fsl_foundation::source::SourceReadCause;
+use fsl_foundation::Diagnostic;
 use serde_json::Value;
 
 /// Immutable JSON produced from the typed native result schema.
@@ -308,6 +308,20 @@ pub(super) fn error(error: &RunError, artifact: bool) -> Result<Value, serde_jso
                     }
                 })
                 .collect::<Vec<_>>();
+            let kernel = record.kernel.as_ref().map(|cause| {
+                use filament_exact::ConstructionCause;
+                match cause {
+                    ConstructionCause::MissingField => serde_json::json!({"cause": "missing-field"}),
+                    ConstructionCause::UndeclaredField => serde_json::json!({"cause": "undeclared-field"}),
+                    ConstructionCause::DuplicateField => serde_json::json!({"cause": "duplicate-field"}),
+                    ConstructionCause::NullForRequiredField => serde_json::json!({"cause": "null-for-required-field"}),
+                    ConstructionCause::WrongArity { declared, supplied } => serde_json::json!({"cause": "wrong-arity", "declared": declared, "supplied": supplied}),
+                    ConstructionCause::TypeMismatch => serde_json::json!({"cause": "type-mismatch"}),
+                    ConstructionCause::UuidNoncanonical => serde_json::json!({"cause": "uuid-noncanonical"}),
+                    ConstructionCause::TimestampNoncanonical => serde_json::json!({"cause": "timestamp-noncanonical"}),
+                    ConstructionCause::TimestampOutOfDomain => serde_json::json!({"cause": "timestamp-out-of-domain"}),
+                }
+            });
             (
                 types::Stage::Request,
                 types::Details::Object(serde_json::Map::from_iter([
@@ -318,6 +332,7 @@ pub(super) fn error(error: &RunError, artifact: bool) -> Result<Value, serde_jso
                         serde_json::json!("/request/synthesis/initial"),
                     ),
                     ("fields".to_owned(), serde_json::json!(record.fields)),
+                    ("kernel".to_owned(), serde_json::json!(kernel)),
                 ])),
             )
         }
@@ -718,10 +733,10 @@ fn spine_origin(origin: &filament_semantic_value::location::ExpressionOwner) -> 
 
 #[cfg(all(test, feature = "quire-extraction"))]
 mod extraction_tests {
-    use super::{RunCause, extraction_regions_for_locus};
+    use super::{extraction_regions_for_locus, RunCause};
     use crate::command::ExtractionFailureStage;
     use fsl_foundation::{Source, SourceIdentity};
-    use serde_json::{Value, json};
+    use serde_json::{json, Value};
 
     fn verified_map() -> fsl_foundation::source_map::SourceMap {
         let markdown = "# Doc\n\n## Invariants\n\n### valid_clause\n```ix:native\nopaque\n```\n";

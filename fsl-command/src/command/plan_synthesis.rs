@@ -15,23 +15,23 @@ use std::time::Duration;
 use filament_exact::{Cancel, Integer, ValueType};
 use fsl_analyze::analyze::document::{DocumentSelection, SubjectSelection};
 use fsl_analyze::plan_search::{
-    Direction, PlanLengths, PlanResult, PlanSearchError, PlanSearchRequest, search,
+    search, Direction, PlanLengths, PlanResult, PlanSearchError, PlanSearchRequest,
 };
 use fsl_analyze::plan_source::{PlanSourceError, SourcePlan};
 use fsl_eval::simulation::model::{
-    ExpansionLimits, ModelCheckInput, ModelSimState, ModelSimulationRequest, ModelSystem,
-    declaration_identity_text, typed_value_json,
+    declaration_identity_text, typed_value_json, ExpansionLimits, ModelCheckInput, ModelSimState,
+    ModelSimulationRequest, ModelSystem,
 };
 use fsl_foundation::Code;
 use fsl_package::CheckedPackage;
 use fsl_semantics::check::CheckedSynthesis;
 use fsl_semantics::model::accounting::ModelNormalizationLimits;
 use fsl_semantics::model::observation::{DocumentProvision, ObservationLimits};
-use serde_json::{Map, Value as Json, json};
+use serde_json::{json, Map, Value as Json};
 
 use super::plan_request::{
-    self, NATIVE_RUN_POINTER, OutcomeHeader, PlanObjective, PlanRequest, PlanRequestRefusal,
-    RenderedPlan, RenderedStep, ValueForm,
+    self, OutcomeHeader, PlanObjective, PlanRequest, PlanRequestRefusal, RenderedPlan,
+    RenderedStep, ValueForm, NATIVE_RUN_POINTER,
 };
 use super::{Intake, RunCause};
 
@@ -470,9 +470,7 @@ fn render(
                 .iter()
                 .zip(step.arguments())
                 .map(|((name, _), text)| {
-                    let value = serde_json::from_str(text).map_err(|_| {
-                        method_failure("a reported argument is not canonical typed JSON")
-                    })?;
+                    let value = rendered_argument(text)?;
                     Ok((name.clone(), value))
                 })
                 .collect::<Result<_, RunCause>>()?;
@@ -492,6 +490,15 @@ fn render(
         })
         .collect::<Result<Vec<_>, _>>()?;
     Ok(Some(RenderedPlan { steps, states }))
+}
+
+fn rendered_argument(text: &str) -> Result<Json, RunCause> {
+    let value: Json = serde_json::from_str(text)
+        .map_err(|_| method_failure("a reported argument is not canonical typed JSON"))?;
+    if !value.is_object() || value.get("type").and_then(Json::as_str).is_none() {
+        return Err(method_failure("a reported argument has no typed value"));
+    }
+    Ok(value)
 }
 
 fn method_failure(reason: &str) -> RunCause {
@@ -539,4 +546,29 @@ fn state_document(
         "format": "filament.state.snapshot/v1",
         "populations": populations,
     }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn reported_argument_corruption_is_a_method_failure() {
+        for text in ["{", "null", "[]", "{}"] {
+            let failure = rendered_argument(text)
+                .expect_err("a reported argument must retain its typed value");
+            assert!(matches!(
+                failure,
+                RunCause::SynthesisRequest {
+                    code: Code::RuntimeInvariant,
+                    cause: "evaluation-fault",
+                    ..
+                }
+            ));
+        }
+        assert_eq!(
+            rendered_argument(r#"{"type":"integer","value":"3"}"#).unwrap(),
+            json!({"type":"integer", "value":"3"})
+        );
+    }
 }

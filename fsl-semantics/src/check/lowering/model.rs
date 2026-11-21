@@ -20,18 +20,18 @@ use filament_exact::{
 };
 
 use super::{
-    Lowering, NodeContent, generated_location, identifiers, refuse, require_admitted,
-    type_declaration,
+    generated_location, identifiers, refuse, require_admitted, type_declaration, Lowering,
+    NodeContent,
 };
 use crate::check::assemble::DimensionEquivalence;
 use crate::check::family::OccurrenceRole;
 
-use crate::check::VariantTypeDeclaration;
 use crate::check::node_key::{
     Binding, BindingValue, BodyTerm, GroupMember, GroupTerm, LeafTerm, MemberTerm, ModelOwner,
     NodeRef, NodeTag, Owner,
 };
 use crate::check::refusal::{CheckCause, CheckRefusal, KeyFault};
+use crate::check::VariantTypeDeclaration;
 use crate::model::domain_package::{
     DomainPackage, DomainPackageRecord, DomainPackageRef, NativeValueType, PopulationRecord,
     ValueTypeRef,
@@ -582,7 +582,7 @@ impl AdmittedModel {
     pub(crate) fn admitted_connection_ends(&self, key: &DeclarationKey) -> Option<[ValueType; 2]> {
         use crate::model::accounting::Meter;
         use crate::model::systems::{
-            ConnectionCheckOutcome, ConnectionOutcome, Kind, check_connection,
+            check_connection, ConnectionCheckOutcome, ConnectionOutcome, Kind,
         };
 
         let DomainPackageRecord::Relationship(relationship) = self.records.get(key)? else {

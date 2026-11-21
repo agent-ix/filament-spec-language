@@ -952,8 +952,7 @@ const SMALL_INTEGERS: ScalarLimits = ScalarLimits {
 
 /// The cube invariant that the `SMALL_INTEGERS` meter cannot decide from
 /// `value = 4` up (an evaluation stopped by the meter: FR-120 "Invariants").
-const CUBE: &str =
-    "invariant Cube using v on M::Counter at current { self.value * self.value * self.value >= 0 }\n";
+const CUBE: &str = "invariant Cube using v on M::Counter at current { self.value * self.value * self.value >= 0 }\n";
 
 fn undecided_system(world: &World) -> ModelSystem<'_> {
     ModelSystem::new(world.subject(&["c"], SMALL_INTEGERS).simulation).expect("admits")
@@ -1033,7 +1032,7 @@ fn an_undecided_prune_caps_a_found_plan_at_incomplete() {
 fn source_policy_world(start: &[(&str, serde_json::Value)]) -> World {
     World::new(
         model_world::counter(),
-        "type Lengths = Int[0, 1];\n\
+        "type Lengths = Int[0, 0];\n\
          synthesis Reach using t grammar M::Counter domain Lengths satisfies { true };\n",
         model_world::INFINITE,
         &[model_world::Clause {
@@ -1167,7 +1166,7 @@ fn source_policy_instances_share_the_request_work_counter() {
 /// Closing an unmet eventual policy rejects the candidate; quantifying the
 /// same policy over an empty population holds vacuously.
 #[test]
-#[trace("FSpec-FR-803-AC-2", "FSpec-FR-803-AC-5")]
+#[trace("FSpec-FR-803")]
 fn source_policy_acceptance_requires_closed_truth_and_preserves_vacuity() {
     use filament_exact::Meter;
     use fsl_analyze::plan_source::SourcePlan;

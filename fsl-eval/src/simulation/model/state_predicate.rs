@@ -17,9 +17,9 @@ use filament_semantic_value::location::ExpressionLocation as Location;
 use fsl_semantics::check::{CheckedStateGraphClaim, PredicateRole, StatePredicate};
 use fsl_semantics::model::object_environment::PlacePresences;
 
-use super::contracts::{Verdict, verdict};
+use super::contracts::{verdict, Verdict};
 use super::walk::{exhausted, stop, walk_of};
-use super::{BROKEN, ClauseOutcome, ModelSimState, ModelSystem};
+use super::{ClauseOutcome, ModelSimState, ModelSystem, BROKEN};
 use crate::simulation::expansion::{ExpansionLimit, ExpansionStop};
 use crate::temporal::UndefinedCause;
 use crate::value::evaluate_state_predicate_with_reference_bindings;

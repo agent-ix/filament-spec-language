@@ -303,8 +303,12 @@ pub(crate) fn declare(
             .iter()
             .find(|operation| operation.name() == name)
             .ok_or_else(|| unsupported(location))?;
-        for (parameter, value_type) in operation.parameters() {
-            let reason = if !carried(value_type) {
+        for (position, (parameter, value_type)) in operation.parameters().iter().enumerate() {
+            let reason = if operation.parameter_is_optional(position) {
+                Some(format!(
+                    "optional parameter {parameter} of operation {name}"
+                ))
+            } else if !carried(value_type) {
                 Some(format!(
                     "operation {name} parameter {parameter} of type {value_type:?}; source planning currently carries only Boolean and finite Int parameters"
                 ))

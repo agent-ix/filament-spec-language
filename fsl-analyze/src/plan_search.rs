@@ -606,7 +606,22 @@ pub(crate) fn admission(
     let mut undetermined = None;
     for finding in system.invariant_findings_at(state)? {
         match finding {
-            ModelFinding::InvariantUndetermined { clause, .. } => {
+            ModelFinding::InvariantUndetermined {
+                clause, evaluation, ..
+            } => {
+                if system.shares_evaluation_meter() {
+                    if let fsl_eval::simulation::model::ClauseOutcome::Incomplete(incomplete) =
+                        evaluation
+                    {
+                        return Err(ExpansionStop {
+                            cause: filament_semantic_value::catalog::CatalogCode::new(
+                                "resource_exhausted",
+                                "insufficient-next-charge",
+                            ),
+                            limit: Some(ExpansionLimit::EvaluationMeter(incomplete.limit_kind)),
+                        });
+                    }
+                }
                 undetermined.get_or_insert(clause);
             }
             _ => return Ok(Admission::Violated),

@@ -15,12 +15,12 @@ use std::collections::BTreeMap;
 
 use filament_checked::node::{NodeKind, Visit};
 use filament_exact::{
-    CollectionKind, CollectionType, EnumMember, FieldValue, Integer, Outcome, Rational,
-    ScalarLimits, Value, ValueType, from_admitted, from_admitted_slots,
+    from_admitted, from_admitted_slots, CollectionKind, CollectionType, EnumMember, FieldValue,
+    Integer, Outcome, Rational, ScalarLimits, Value, ValueType,
 };
 use filament_semantic_value::declaration::CompositeShape;
 use filament_semantic_value::model_transition::ModelTransition;
-use fsl_eval::simulation::model::{ClauseReading, read_clause};
+use fsl_eval::simulation::model::{read_clause, ClauseReading};
 use fsl_eval::simulation::model::{ModelSimState, ModelSystem};
 use fsl_package::CheckedPackage;
 use fsl_semantics::check::{
@@ -176,6 +176,15 @@ impl<'a> SourcePlan<'a> {
                     location: body.root().location().clone(),
                 });
             }
+        }
+        if !policies.is_empty()
+            && !matches!(synthesis.domain(), ValueType::Int(domain) if domain.upper().is_zero())
+        {
+            return Err(PlanSourceError::UnsupportedForm {
+                form: "positive-length temporal policy planning with canonical monitor states"
+                    .to_owned(),
+                location: synthesis.satisfies().root().location().clone(),
+            });
         }
         system.share_evaluation_meter(limits);
         let shape = plan.shape();
@@ -507,7 +516,12 @@ impl<'a> SourcePlan<'a> {
                     });
                     Err(RuleStop::Cancelled(filament_exact::CancelCause::Requested))
                 }
-                filament_eval::FamilyOutcome::FamilyEvaluated(_) => {
+                filament_eval::FamilyOutcome::FamilyEvaluated(
+                    filament_eval::FamilyResult::Undefined(_),
+                ) => Ok(Evaluated::Undefined),
+                filament_eval::FamilyOutcome::FamilyEvaluated(
+                    filament_eval::FamilyResult::Refused(_),
+                ) => {
                     self.fault.get_or_insert_with(|| "a checked plan expression returned a family-owned result unsupported by this adapter".to_owned());
                     Err(RuleStop::Cancelled(filament_exact::CancelCause::Requested))
                 }

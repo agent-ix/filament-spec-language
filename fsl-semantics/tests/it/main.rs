@@ -84,7 +84,6 @@ mod model_systems;
 #[cfg(feature = "test-support")]
 mod model_systems_resolve;
 mod model_unit_input;
-mod synthesis_plan_value;
 mod moved_item_paths;
 mod named_population;
 mod narrowing_conversions;
@@ -103,7 +102,6 @@ mod probabilistic_declarations;
 mod profile_defaults;
 mod quantities;
 mod rational_value_types;
-mod text_to_number;
 mod readme_first_rule_checks;
 #[cfg(feature = "test-support")]
 mod refinement_class_catalog;
@@ -134,6 +132,7 @@ mod state_graph_claims;
 mod strong_fairness;
 #[cfg(feature = "test-support")]
 mod symmetric_population;
+mod synthesis_plan_value;
 #[cfg(feature = "test-support")]
 mod task_set_releases;
 #[cfg(feature = "test-support")]
@@ -149,6 +148,7 @@ mod temporal_clock_names;
 mod temporal_fairness;
 #[cfg(feature = "test-support")]
 mod terminal_declarations;
+mod text_to_number;
 #[cfg(feature = "test-support")]
 mod timed_declarations;
 #[cfg(feature = "test-support")]
@@ -159,8 +159,8 @@ mod type_decisions;
 #[cfg(feature = "test-support")]
 mod type_environment_model;
 mod typed_size;
-mod unit_typed_members;
 mod union_payload_widening;
+mod unit_typed_members;
 mod variant_fields;
 mod variant_type;
 

@@ -26,10 +26,19 @@ population orders: Order;
 /// Checks a unit declaring `Lengths` as `lengths` and one plan synthesis with
 /// `objective` and `goal`; the checked plan synthesis, or the refusals.
 fn check(lengths: &str, objective: &str, goal: &str) -> Result<CheckedSynthesis, String> {
+    check_model(SHOP, lengths, objective, goal)
+}
+
+fn check_model(
+    model_text: &str,
+    lengths: &str,
+    objective: &str,
+    goal: &str,
+) -> Result<CheckedSynthesis, String> {
     let model = fsl_cst::diagnostic::read_source(
         fsl_foundation::SourceIdentity::new("agent-ix", "test:shop-model"),
         "shop.fsl",
-        SHOP.as_bytes(),
+        model_text.as_bytes(),
         fsl_cst::Limits::default().source_bytes,
     )
     .expect("the model source is admitted");
@@ -83,7 +92,7 @@ fn check(lengths: &str, objective: &str, goal: &str) -> Result<CheckedSynthesis,
         .clone())
 }
 
-#[trace("FSpec-FR-800-AC-1", "FSpec-TC-1950")]
+#[trace("FSpec-FR-800")]
 #[test]
 fn a_plan_goal_reads_the_typed_plan_value() {
     let checked = check(
@@ -105,7 +114,7 @@ fn a_plan_goal_reads_the_typed_plan_value() {
     );
 }
 
-#[trace("FSpec-FR-802-AC-1", "FSpec-TC-1952")]
+#[trace("FSpec-FR-802")]
 #[test]
 fn a_plan_objective_is_typed_without_an_expected_domain_type() {
     let checked = check("Int[0, 3]", "minimize Reach.length", "Reach.length >= 1")
@@ -122,8 +131,52 @@ fn a_plan_declaration_refuses_what_the_plan_value_does_not_have() {
     assert!(refusals.contains("TypeMismatch"), "{refusals}");
     let refusals = check("Int[0, 3]", "minimize Reach.elapsed", "Reach.length >= 1")
         .expect_err("an untimed plan has no `elapsed`");
-    assert!(refusals.contains("MissingName(\"elapsed\")"), "{refusals}");
+    assert!(
+        refusals.contains("PlanUnknownField") && refusals.contains("field: \"elapsed\""),
+        "{refusals}"
+    );
     let refusals =
         check("Int[0, 3]", "", "Reach.unknown = 0").expect_err("an unknown plan field is refused");
-    assert!(refusals.contains("MissingName(\"unknown\")"), "{refusals}");
+    assert!(
+        refusals.contains("PlanUnknownField") && refusals.contains("field: \"unknown\""),
+        "{refusals}"
+    );
+}
+
+/// The source adapter names finite argument forms it does not yet carry;
+/// it never emits an argument record that silently omits those fields.
+#[trace("FR-1013", "FSpec-FR-800")]
+#[test]
+fn unsupported_operation_parameters_are_named_before_search() {
+    for (parameter, declarations) in [
+        ("Integer", ""),
+        ("Order", ""),
+        ("Choice", "enum Choice { First, Second }\n"),
+    ] {
+        let model = SHOP.replace(
+            "operation pay()",
+            &format!("operation pay(amount: {parameter})"),
+        );
+        let model = model.replace("object Order", &format!("{declarations}object Order"));
+        let refusal = check_model(&model, "Int[0,1]", "", "true")
+            .expect_err("an unsupported argument type cannot be dropped from a step");
+        assert!(refusal.contains("PlanUnsupported"), "{refusal}");
+        assert!(
+            refusal.contains("operation pay parameter amount"),
+            "{refusal}"
+        );
+    }
+    let model = SHOP
+        .replace("operation pay()", "operation pay(amount: Boolean)")
+        .replace(
+            "population orders:",
+            "object Other { operation change(amount: Int[0,3]): Boolean; }\npopulation orders:",
+        );
+    let refusal = check_model(&model, "Int[0,1]", "", "true")
+        .expect_err("conflicting argument fields cannot be silently omitted");
+    assert!(refusal.contains("PlanUnsupported"), "{refusal}");
+    assert!(
+        refusal.contains("parameter amount has conflicting types"),
+        "{refusal}"
+    );
 }

@@ -1403,9 +1403,9 @@ fn exclusive_member(request: &super::wire::Request) -> super::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::{
+        ascending, run_value_synthesis, search_integer_domain, select_claim_rows,
         CandidateEvaluator, Direction, Halt, ObjectiveSpec, SearchDisposition, SearchLimits,
-        SearchResult, StopCause, SynthesisOutcomeDocument, ValueRun, ascending,
-        run_value_synthesis, search_integer_domain, select_claim_rows,
+        SearchResult, StopCause, SynthesisOutcomeDocument, ValueRun,
     };
     use filament_exact::{Integer, IntegerInterval};
     use ix_trace_rs::trace;

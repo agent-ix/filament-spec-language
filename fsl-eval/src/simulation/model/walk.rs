@@ -12,8 +12,8 @@ use fsl_semantics::model::state::ModelState;
 
 use super::footprints::Enforcement;
 use super::{
-    Application, BROKEN, ClauseInfo, EXHAUSTED, ModelFinding, ModelSimState, ModelSystem,
-    contracts, frames, state_document,
+    contracts, frames, state_document, Application, ClauseInfo, ModelFinding, ModelSimState,
+    ModelSystem, BROKEN, EXHAUSTED,
 };
 use crate::simulation::expansion::{Expansion, ExpansionLimit, ExpansionStop};
 

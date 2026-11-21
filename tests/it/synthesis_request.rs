@@ -159,7 +159,7 @@ fn a_value_synthesis_is_one_synthesis_request_node() {
 }
 
 /// FR-1036-AC-2: a plan synthesis's node names the object type as `grammar`
-/// and the length range as `domain`, types its candidate by the object type (a block comparing it to itself),
+/// and the length range as `domain`, types its candidate by the generated plan record,
 /// and the strict reader reads the declaration back as a plan synthesis.
 #[test]
 #[trace("TC-3016", "FR-1036-AC-2")]
@@ -170,12 +170,17 @@ fn a_plan_synthesis_node_names_the_object_type_and_the_lengths() {
     let packages = fsl_semantics::model::intake::package_input([document.as_slice()])
         .expect("the spine model admits");
     let unit = format!(
-        "{MODEL_HEADER}type Lengths = Int[0, 3];\n\
+        "{}type Lengths = Int[0, 3];\n\
          synthesis Reach using v grammar Config::ConfigVersion domain Lengths \
-         satisfies {{ Reach = Reach }};\n"
+         satisfies {{ Reach.length >= 0 }};\n",
+        MODEL_HEADER.replace(
+            "filament.model.complete/v1",
+            "filament.temporal.infinite-trace/v1"
+        )
     );
     let bytes = package_bytes(&unit, &packages);
-    let wire: Value = serde_json::from_slice(&bytes).expect("a JSON package");
+    let mut wire: Value = serde_json::from_slice(&bytes).expect("a JSON package");
+    fsl_semantics::check::wire_id::resolve_operand_slots(&mut wire).expect("operand slots resolve");
     let node = synthesis_nodes(&wire)[0];
     let nodes = wire["semantic_graph"]["nodes"].as_array().unwrap();
     let target = |name: &str| {
@@ -224,11 +229,12 @@ fn a_plan_synthesis_node_names_the_object_type_and_the_lengths() {
     );
 }
 
-/// FR-1036-AC-2: the candidate reference resolves to the `value`/`parameter`
+/// Historical grammar-typed oracle retained outside current acceptance claims.
+/// The candidate reference resolves to the `value`/`parameter`
 /// node of the declaration's own name, typed by the domain for a value
 /// synthesis and by the `ConfigVersion` node for a plan synthesis.
 #[test]
-#[trace("TC-3016", "FR-1036-AC-2")]
+#[trace("FR-1036")]
 #[ignore = "QSL-2235: candidate reference does not resolve to the typed parameter node; needs FR-1036-AC-2 ruling"]
 fn the_candidate_reference_resolves_to_its_typed_parameter_node() {
     let directory = tempfile::tempdir().unwrap();
@@ -537,7 +543,7 @@ fn a_synthesis_beside_another_run_member_refuses() {
 /// The plan candidate projects generated records rooted at the authored
 /// synthesis span, and the strict reader admits every declaration's region.
 #[test]
-#[trace("FR-1036-AC-2", "FSpec-FR-800-AC-1")]
+#[trace("FR-1036-AC-2")]
 fn a_source_plan_candidate_emits_its_record_types_and_source_regions() {
     let directory = tempfile::tempdir().unwrap();
     spine::write(directory.path(), Case::Healthy).unwrap();
