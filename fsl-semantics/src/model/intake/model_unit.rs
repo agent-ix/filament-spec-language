@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! FR-710: compile an FSL model unit to its FR-154 domain-package document.
 
+use agent_ix_extraction_frontend::identity::PackageIdentity;
 use fsl_forms::cst::{self, CompleteCause, CompleteCode, CompleteDiagnostic, ParsedSource};
 use fsl_foundation::diagnostic::{Code, Diagnostic};
 use fsl_foundation::{Phase, Source, SourceIdentity, Span};
@@ -238,6 +239,7 @@ pub fn compile_model_unit_with_causes(
     let mut connection_ends = Vec::new();
     let mut supertype_references = Vec::new();
     let mut object_links = Vec::new();
+    let mut inline_integers = Vec::new();
     let mut has_object_type = false;
     let mut has_record_type = false;
     let mut has_tuple_type = false;
@@ -283,12 +285,13 @@ pub fn compile_model_unit_with_causes(
                     )]);
                 }
                 references.extend(object.relationship_targets.iter().cloned());
-                supertype_references.extend(object.links.supertypes.iter().cloned());
-                types.extend(object.additional_types);
-                let mut links = object.links;
-                links.type_index = types.len();
-                object_links.push(links);
-                types.push(object.wire);
+                push_model_type(
+                    object,
+                    &mut types,
+                    &mut object_links,
+                    &mut supertype_references,
+                    &mut inline_integers,
+                );
                 has_object_type = true;
                 index = next;
             }
@@ -393,6 +396,7 @@ pub fn compile_model_unit_with_causes(
                     &mut types,
                     &mut object_links,
                     &mut supertype_references,
+                    &mut inline_integers,
                 );
                 has_event_type = true;
                 index = next;
@@ -449,6 +453,7 @@ pub fn compile_model_unit_with_causes(
                     &mut types,
                     &mut object_links,
                     &mut supertype_references,
+                    &mut inline_integers,
                 );
                 has_systems_interface = true;
                 index = next;
@@ -577,12 +582,13 @@ pub fn compile_model_unit_with_causes(
                         format!("declaration {} is declared more than once", machine.name),
                     )]);
                 }
-                supertype_references.extend(machine.links.supertypes.iter().cloned());
-                types.extend(machine.additional_types);
-                let mut links = machine.links;
-                links.type_index = types.len();
-                object_links.push(links);
-                types.push(machine.wire);
+                push_model_type(
+                    machine,
+                    &mut types,
+                    &mut object_links,
+                    &mut supertype_references,
+                    &mut inline_integers,
+                );
                 has_state_machine = true;
                 index = next;
             }
@@ -605,12 +611,13 @@ pub fn compile_model_unit_with_causes(
                         format!("declaration {} is declared more than once", process.name),
                     )]);
                 }
-                supertype_references.extend(process.links.supertypes.iter().cloned());
-                types.extend(process.additional_types);
-                let mut links = process.links;
-                links.type_index = types.len();
-                object_links.push(links);
-                types.push(process.wire);
+                push_model_type(
+                    process,
+                    &mut types,
+                    &mut object_links,
+                    &mut supertype_references,
+                    &mut inline_integers,
+                );
                 has_process = true;
                 index = next;
             }
@@ -638,6 +645,7 @@ pub fn compile_model_unit_with_causes(
                     &mut types,
                     &mut object_links,
                     &mut supertype_references,
+                    &mut inline_integers,
                 );
                 has_persistence_interface = true;
                 index = next;
@@ -782,6 +790,7 @@ pub fn compile_model_unit_with_causes(
                     &mut types,
                     &mut object_links,
                     &mut supertype_references,
+                    &mut inline_integers,
                 );
                 has_record_type = true;
                 index = next;
@@ -863,7 +872,42 @@ pub fn compile_model_unit_with_causes(
             }
         }
     }
-    let _ = limits;
+    has_value_type |= !inline_integers.is_empty();
+    for (name, span) in inline_integers {
+        if !declaration_names.insert(name.clone()) {
+            return Err(vec![diagnostic(
+                parsed,
+                CompleteCode::AmbiguousDeclaration,
+                CompleteCause::AmbiguousName,
+                span,
+                format!("constrained field type {name} collides with another declaration"),
+            )]);
+        }
+        let node = format!("ix://{identity}/{name}");
+        let mut definitions = types.iter().filter(|definition| {
+            definition.get("identity").and_then(Value::as_str) == Some(node.as_str())
+        });
+        let Some(definition) = definitions.next() else {
+            return Err(vec![diagnostic(
+                parsed,
+                CompleteCode::RuntimeInvariant,
+                CompleteCause::EstablishedInvariantBroken,
+                span,
+                "a constrained field type has no definition",
+            )]);
+        };
+        if definitions.next().is_some() {
+            return Err(vec![diagnostic(
+                parsed,
+                CompleteCode::AmbiguousDeclaration,
+                CompleteCause::AmbiguousName,
+                span,
+                format!("constrained field type {name} collides with another generated type"),
+            )]);
+        }
+        super::read_value_type(&identity, definition, &node, "$.types")
+            .map_err(|refusal| vec![project_link_refusal(parsed, span, &refusal)])?;
+    }
     let mut meanings = Vec::new();
     if has_object_type {
         meanings.push(("object_type", "filament.meaning.model.object-type/v1"));
@@ -1180,7 +1224,9 @@ fn push_model_type(
     types: &mut Vec<Value>,
     links: &mut Vec<ObjectLinks>,
     references: &mut Vec<(String, Span)>,
+    inline_integers: &mut Vec<(String, Span)>,
 ) {
+    inline_integers.extend(model.inline_integers);
     references.extend(model.links.supertypes.iter().cloned());
     types.extend(model.additional_types);
     let mut model_links = model.links;
@@ -1436,6 +1482,8 @@ struct ObjectRead {
     name_span: Span,
     wire: Value,
     additional_types: Vec<Value>,
+    /// Existing FCD constrained-field aliases and their authored type spans.
+    inline_integers: Vec<(String, Span)>,
     relationship_targets: Vec<(String, Span)>,
     links: ObjectLinks,
 }
@@ -1529,6 +1577,7 @@ fn read_object(
     let mut relationships = Vec::new();
     let mut clauses = Vec::new();
     let mut additional_types = Vec::new();
+    let mut inline_integers = Vec::new();
     let mut relationship_targets = Vec::new();
     let mut field_links = Vec::new();
     let mut operation_links = Vec::new();
@@ -1614,6 +1663,7 @@ fn read_object(
                     return None;
                 }
                 index += 1;
+                let type_start = tokens.get(index)?.span.start;
                 let mut type_name = tokens.get(index)?.text.clone();
                 index += 1;
                 let mut type_reference = None;
@@ -1656,9 +1706,41 @@ fn read_object(
                     }));
                     type_reference = Some(option_identity);
                 }
+                if type_name == "Int" && tokens.get(index).is_some_and(|token| token.text == "[") {
+                    let (bounds, next) = read_scalar_bounds(tokens, index)?;
+                    index = next;
+                    let span = Span {
+                        start: type_start,
+                        end: tokens[index - 1].span.end,
+                    };
+                    let (org, package_name) = package.split_once('/')?;
+                    let identities = PackageIdentity::new(org, package_name);
+                    // A bounded field uses FCD's constrained-field alias;
+                    // its source remains the inline type, not a new name.
+                    let identity = identities.alias_identity(&name, &field_name).ok()?;
+                    let alias = super::type_identity_segment(package, &identity)?.to_owned();
+                    let constraints = bounds.into_iter().map(|(keyword, value)| {
+                        Some(json!({
+                            "identity": identities.type_constraint_identity(&alias, keyword).ok()?,
+                            "keyword": keyword, "operands": {"value":value},
+                            "appliesTo": "ix://filament/native/Integer",
+                            "diagnosticCode": format!("bound.{keyword}"),
+                            "origin": json!({"source": source_span(parsed, span)}),
+                        }))
+                    }).collect::<Option<Vec<_>>>()?;
+                    additional_types.push(scalar_type_definition(
+                        package,
+                        &identity,
+                        "integer",
+                        constraints,
+                        json!({"source": source_span(parsed, span)}),
+                    ));
+                    inline_integers.push((alias, span));
+                    type_reference = Some(identity);
+                }
                 let mut optional = false;
                 let inline_type_bounds =
-                    matches!(type_name.as_str(), "Int" | "Rational" | "Decimal" | "Text")
+                    matches!(type_name.as_str(), "Rational" | "Decimal" | "Text")
                         || (matches!(type_name.as_str(), "Float32" | "Float64")
                             && tokens.get(index + 1).is_some_and(|token| {
                                 matches!(
@@ -1771,6 +1853,7 @@ fn read_object(
             name_span,
             wire,
             additional_types,
+            inline_integers,
             relationship_targets,
         },
         index,
@@ -1799,21 +1882,8 @@ fn read_scalar_alias(
         _ => return None,
     };
     index += 1;
-    let mut bounds = Vec::new();
-    if tokens.get(index).is_some_and(|token| token.text == "[") {
-        index += 1;
-        let lower = signed_integer(tokens, &mut index)?;
-        if tokens.get(index)?.text != "," {
-            return None;
-        }
-        index += 1;
-        let upper = signed_integer(tokens, &mut index)?;
-        if tokens.get(index)?.text != "]" {
-            return None;
-        }
-        index += 1;
-        bounds.extend([("min", lower), ("max", upper)]);
-    }
+    let (bounds, next) = read_scalar_bounds(tokens, index)?;
+    index = next;
     if tokens.get(index)?.text != ";" {
         return None;
     }
@@ -1841,18 +1911,53 @@ fn read_scalar_alias(
         })
         .collect::<Vec<_>>();
     Some((
-        json!({
-            "identity": identity,
-            "displayName": identity,
-            "kind": {"module": package, "name": "value_type"},
-            "roles": [],
-            "origin": source_origin(parsed, Span { start, end }),
-            "extensions": [], "unknownPolicy": "reject", "scalar": scalar,
-            "constraints": constraints,
-        }),
+        scalar_type_definition(
+            package,
+            &identity,
+            scalar,
+            constraints,
+            source_origin(parsed, Span { start, end }),
+        ),
         name,
         index,
     ))
+}
+
+fn scalar_type_definition(
+    package: &str,
+    identity: &str,
+    scalar: &str,
+    constraints: Vec<Value>,
+    origin: Value,
+) -> Value {
+    json!({
+        "identity": identity, "displayName": identity,
+        "kind": {"module": package, "name": "value_type"}, "roles": [],
+        "origin": origin, "extensions": [], "unknownPolicy": "reject",
+        "scalar": scalar, "constraints": constraints,
+    })
+}
+
+fn read_scalar_bounds(
+    tokens: &[Token],
+    mut index: usize,
+) -> Option<(Vec<(&'static str, String)>, usize)> {
+    let mut bounds = Vec::new();
+    if tokens.get(index).is_some_and(|token| token.text == "[") {
+        index += 1;
+        let lower = signed_integer(tokens, &mut index)?;
+        if tokens.get(index)?.text != "," {
+            return None;
+        }
+        index += 1;
+        let upper = signed_integer(tokens, &mut index)?;
+        if tokens.get(index)?.text != "]" {
+            return None;
+        }
+        index += 1;
+        bounds.extend([("min", lower), ("max", upper)]);
+    }
+    Some((bounds, index))
 }
 
 fn signed_integer(tokens: &[Token], index: &mut usize) -> Option<String> {
