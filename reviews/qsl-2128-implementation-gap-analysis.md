@@ -201,6 +201,8 @@ findings:
 | FND-001 | fixed | Round1 at7fb07cd31064fb12e94ae36c038af9e7434b4c15: The real Ordered relation now requires post l=i, not only self-equalities. Actual initial reachable labelled tuples are evaluated through the two real evaluator ports; the package evaluator is then supplied one execution with pre/post observations exchanged and at least one outcome must differ. |
 | FND-002 | fixed | Round1 at7fb07cd31064fb12e94ae36c038af9e7434b4c15: Fresh source/package meters retain complete nonempty admitted charge logs for actual reachable transition tuples. The test compares outcomes and complete charges, checks neither log truncated, and asserts that the intended holding, false and runtime-undefined tuple cases were actually encountered. |
 | FND-003 | fixed | Round1 at7fb07cd31064fb12e94ae36c038af9e7434b4c15: Four malformed raw package variants exercise duplicate parameter level, missing level, wrong argument type and invalid relation body target. After source deletion, the real package analyze boundary must refuse the whole request with exit20, zero items and diagnostic code/cause/path equal to the real strict reader first refusal. No reader copy or fabricated deeper pointer is introduced. |
+| FND-001 | fixed | Round2 at19ddb91ed7 supplies the matching secure N postcondition so the stronger Ordered positive and swapped-observation control are grounded on both subjects. |
+| FND-003 | fixed | Round2 at19ddb91ed7 selects unique literal self/2 and i/3 parameter bodies after asserting execution x and exactly two binders; all four malformed-input boundary oracles remain. |
 
 ## Fix round 1 verdict
 
@@ -245,3 +247,13 @@ dispositions:
     exit20, zero items and diagnostic code/cause/path equal to the real strict reader
     first refusal. No reader copy or fabricated deeper pointer is introduced.
 ```
+
+## Final narrow fix round 2
+
+The exact delta a62a7bed66d73f072603332d0f6581b323f96abc..19ddb91ed77454a4f28734e1d05ddf19282e4f4e changes only package_model_relation.rs. No production source, dependency feature, pin or lockfile changes in this round. This is a refinement of the original AC23/26 test findings, not a new full review.
+
+For FND-003, the malformed-input fixture no longer assumes raw operand-bearing node_id JSON equals a reference target JSON. It asserts the second execution is x with exactly two binders, selects the unique value/parameter nodes whose literal name/level bodies are self/2 and i/3, and fails if either selection is absent or ambiguous. Those levels are explicit facts of this two-execution fixture. The existing four malformed variants and all strict-reader/command code, cause, path, exit20 and zero-item assertions are unchanged. The selection correction makes those intended mutations reachable without altering production ID semantics or manufacturing a rekeyed package.
+
+For FND-001, a secure `post OtherStep using v on N::Vault::step { self.l = i }` is added to the fixture, matching the existing V-side secure postcondition. Both subjects now justify the strengthened Ordered positive conjunction, while the deliberate one-execution pre/post swap still must change a real tuple evaluation. Declaration/execution order, distinct-alias/shared-root cases, real source/package outcome/charge comparisons, complete logs and expected result assertions remain intact. FND-002's charge-log parity changes are unchanged.
+
+Static disposition: CLEAR for the two narrow corrections; the original three findings remain fixed statically. Parent/author reports focused compile PASS in32.69s at19ddb91ed77454a4f28734e1d05ddf19282e4f4e. git diff --check passes. Final runtime acceptance remains CONDITIONAL on the separately reported positive emitted-package/readback InvalidModelBinding owner triage and the parent's exact-head package/source test runs. No reviewer Cargo, runtime, matrix, measurement, Linear operation, source edit or third full review occurred.
