@@ -73,3 +73,24 @@ FND-002 (the cited temporal suite never runs the owner path) block merge. If
 the remainder states them precisely, FND-003 to FND-006 may stay out of this
 partial. Otherwise each needs either the fix named on the ticket or an explicit
 line in the PR's Not-done list.
+
+## New findings (disposition pass 1)
+
+| ID | Severity | Summary | Refs |
+| --- | --- | --- | --- |
+| FND-009 | high | The PR causes the red `the_evaluator_reads_the_clause_only_through_the_facts` (one of the seven reported as pre-existing). The test calls `read_to_string` on every entry of `fsl-eval/src/temporal/evidence`, and this PR adds the `owner/` subdirectory (main has none). `read_to_string(owner/)` fails, so `.expect("source")` panics | tests/it/bare_package.rs:866-873; fsl-eval/src/temporal/evidence/owner/ |
+| FND-010 | medium | The time-unit rule differs between the two routes. On the source route, `time_unit_scale(unit).ok()` turns every `TimeUnitCause` into `s = 1`: `NotTimeDimension`, `OtherTimeDimension`, `AffineUnit`, and `NoTimeDimension` for a declared unit. The bare route refuses a declared unit it cannot read (`declares_unit`, zero factor). A clock naming, say, a declared Length unit therefore evaluates as a step count on the source route and is refused on the bare route. That breaks R-a's own rule ("a declared unit that cannot be read is refused, never s = 1") and FR-944-AC-10. The zero `Rational` used as an "unreadable" sentinel inside a map of real factors is fragile | fsl-eval/src/temporal/evidence/package.rs:176-192; fsl-eval/src/temporal/evidence/owner.rs:850-866; fsl-package/src/bare.rs:194-231 |
+| FND-011 | low | After the recipe change no owner-path test exercises a fixed-sample clock with a rational period or epoch: the root recipe now has integer epoch 0 and integer period 1. Neither the success path (a declared `ms` with period 1/10, which gives an integral 100000 ns) nor the non-integral refusal of `scaled_clock_number` is covered | tests/it/checked_handoff.rs:59-72; fsl-eval/src/temporal/evidence/owner.rs:921-958 |
+
+## Dispositions
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | Root `[dev-dependencies]` now has `filament-observation = { workspace = true }` (Cargo.toml:104-105) |
+| FND-002 | fixed | `Env::subject` now carries `canonical_package_bytes: Some(b"{}")` and a per-clock scale; the owner path is unconditional, so the temporal suite runs through it |
+| FND-003 | fixed | `assess` calls `owner::admit_trace` unconditionally. The local partial fallback, `scope_disposition`, `Activation.disposition` and `no_instance` are deleted. The bare route carries scales, and analyze/synthesis attach bytes (the divergence in the remaining scale handling is FND-010) |
+| FND-004 | fixed | The view is now read and compared by `completeness_agrees`, which faults `owner-completeness-agrees` naming both. It is close to a tautology until `revise` is wired, because the selection is built from the asserted state |
+| FND-005 | fixed | `state_disposition`, `empty_scope_outcome` and `instance_is_active` fault `owner-activation-agrees` on the three impossible answers, with negative unit tests. Taking the Unknown kind from `scope.evidence` is acceptable: the owner has no missing/refused vocabulary, and an Inactive answer over non-Admitted evidence faults |
+| FND-006 | fixed | `instance_activation_agrees` runs only for the instance the request resolves to |
+| FND-007 | fixed | The `clock_range` parameters are removed, and `clock_time_unit` is the one unit helper |
+| FND-008 | fixed | The bare.rs doc now names `with_canonical_bytes` beside `new` |
