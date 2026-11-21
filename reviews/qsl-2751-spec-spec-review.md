@@ -152,3 +152,4 @@ scope:
 | FND-002 | fixed | Verified at fix head 40c49fb70a21cb4ea2a904c9b206f6e9d37df15a: the fixed text is quoted in the dispositions comment's after_excerpt. |
 | FND-003 | fixed | Verified at fix head 40c49fb70a21cb4ea2a904c9b206f6e9d37df15a: the fixed text is quoted in the dispositions comment's after_excerpt. |
 | FND-004 | still-open | New this round (disposition pass 1); it is routed to the same author for a fix round and is not yet fixed. |
+| FND-004 | fixed | Round 2, verified at fix head 9a8e036d4954fb437ccfbb8122e24a00f89c4c7c: FR-1031's select row spells `declared` for a protocol abstract subject as `<alias>::<protocol>`, which matches FR-135-AC-10 and FSpec FR-375's `abstract-subject` (`ident '::' name`, for example `abstract Spec::Twice`). AC-5 and TC-2921 step 5 pin `{"declared": "Spec::Twice", "given": "Spec"}`. The refusal class, API and request members are unchanged. |
