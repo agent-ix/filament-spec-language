@@ -19,6 +19,8 @@ relationships:
     type: references
   - target: ix://agent-ix/filament-spec-language/FR-529
     type: references
+  - target: ix://agent-ix/filament-spec-language/FR-128
+    type: depends_on
 ---
 # FR-1030: Request a refinement transfer from a native run
 
@@ -134,13 +136,26 @@ The run outcome's `refinement_transfer` member:
   unproved slot 1, never `proved`. A past or interval (TP-3) clause `on
   origin` over an ordinary model subject is certified by the core (FR-338),
   so its premise settles `proved`. A TP-3 clause the core does not certify,
-  one `on each` or over a protocol subject, settles `failed`, and a liveness
-  clause whose only violating loop is the abstract stutter closure's own
-  self-loop settles `unsupported` (`ClosureStutterLoop`), which is sound and
-  not a refutation. Each transfer settles `inconclusive`, `premise-unproved`
-  naming slot 1 with that result (architecture rulings of 2026-11-21 on
-  QSL-2247; certifying TP-3 `on each` and protocol forms and replaying a
-  closure-only loop as `refuted` remain scope of QSL-2247).
+  one `on each` or over a protocol subject, settles `failed`; each transfer of
+  such a clause is `inconclusive`, `premise-unproved` naming slot 1 with that
+  result. That limit is honest and stays: it is not a `proved` and not a
+  refusal, and certifying those general modes is outside this requirement
+  (architecture ruling of 2026-11-21 on QSL-2247; a separate related ticket
+  carries it).
+- A liveness clause's abstract premise is settled over the abstract stutter
+  closure (FR-529's `stutter_closure`). A violating loop that is the closure's
+  own self-loop at a nonterminal abstract state is a closure-only lasso. It is
+  written and replayed by FR-128's closure-stutter rule, and slot 1 settles
+  `refuted` through that replay only; it is never `unsupported`
+  (`ClosureStutterLoop`). The transfer then settles `inconclusive`,
+  `premise-unproved` naming slot 1 with `result` `refuted`, since a transfer
+  is never `refuted`, and the exit code is `22`. The abstract claim's
+  selected `stutter_closure`, which FSL reads from the admitted item's
+  obligation identity and not from the slot key FSpec FR-820 matches without
+  it, is the authority for that replay. A fair clause such as `EventuallyTwo`
+  still proves, and a terminal-stutter refutation such as `PrevStutter`'s
+  still replays unchanged. No empty certificate or engine verdict settles a
+  premise `proved`.
 
 ## Acceptance Criteria
 
@@ -151,6 +166,8 @@ The run outcome's `refinement_transfer` member:
 | FR-1030-AC-3 | With `premises.refinement` and `premises.claims.PrevSafe` supplied as complete proved FSpec FR-492 premise results marked `certified`, FSL settles neither premise again and the transfer is `proved`, `uncertified`; with the supplied claim premise `refuted`, the transfer settles `inconclusive`, `premise-unproved` naming slot 1 and `refuted`. | Test (TC-2920) |
 | FR-1030-AC-4 | FSpec FR-380-AC-8's liveness clause, with no `premises`, is settled over the abstract stutter closure and transfers through `CasRefinesCounter` `proved`. | Test (TC-2920) |
 | FR-1030-AC-5 | A transfer premise reads its model with the same semantics as any model-subject claim, so the terminal state repeats under stutter extension: the clause `PrevStutter`, `always (holds(c.value = 2) implies once[1,1] holds(c.value = 1))`, is not proved at the repeated terminal state 2 (the state one step back is 2), and its transfer through the step-for-step `ThirdRefinesSpec` settles `inconclusive`, `premise-unproved` naming slot 1 with `result` `refuted`, the slot's own record showing `refuted`; exit `22`. | Test (TC-2920) |
+| FR-1030-AC-6 | Through `CasRefinesCounter`, the liveness clause `StuckTwo` (`always eventually holds(c.value = 2)`, no fairness) has an abstract premise violated by the closure stutter at value 0 and at value 1, so EN-1 writes one closure-only lasso, whose stem is whichever EN-1's discovery order yields. The run writes slot 1 `refuted` through it. The written lasso reads back through FR-128's reader and replays to `reproduced-with-evaluated-witness`. The transfer is `inconclusive`, `premise-unproved` naming slot 1 with `result` `refuted`, exit `22`, and never `unsupported`. | Test (TC-2920) |
+| FR-1030-AC-7 | The proposed clause `PendingTwo`, declared in `TRANSFER_DECLARATIONS` with `temporal PendingTwo using inf over (c: Spec::Counter) clock "model-steps" on origin { always (holds(c.value = 1) implies eventually holds(c.value = 2)) }` (the template of `StuckTwo`, no fairness), has the closure stutter at value 1 as its only violating loop, since the stutter at value 0 and the terminal stutter at value 2 satisfy it. Through `CasRefinesCounter` slot 1 is `refuted` through the closure-only lasso with a one-step real prefix, and the transfer is `inconclusive`, `premise-unproved` naming slot 1, `result` `refuted`, exit `22`. | Test (TC-2920) |
 
 ## Rationale
 
