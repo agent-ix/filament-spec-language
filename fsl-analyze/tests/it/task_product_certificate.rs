@@ -322,27 +322,6 @@ fn verdict(
     )
 }
 
-fn rejection(
-    world: &World,
-    claim_name: &str,
-    certificate: &Certificate,
-) -> (CertificateRule, CertificateLocus) {
-    match verdict(world, claim_name, certificate, CertificateCheckLimits::default()) {
-        Ok(ZoneCertificateVerdict::Rejected(rejection)) => (rejection.rule, rejection.at),
-        other => panic!("expected a rejection, got {other:?}"),
-    }
-}
-
-fn member_malformed(world: &World, claim: &str, certificate: &Certificate) {
-    assert_eq!(
-        rejection(world, claim, certificate),
-        (
-            CertificateRule::Malformed,
-            CertificateLocus::CertificateMember(CertificateMember::TaskProduct)
-        )
-    );
-}
-
 fn node_at(index: usize) -> CertificateLocus {
     CertificateLocus::ZoneNode {
         node: index as u64,
@@ -390,3 +369,452 @@ fn the_recomputed_periodic_certificate_is_accepted() {
     }
 }
 
+
+fn edit(
+    world: &World,
+    claim: &str,
+    change: impl FnOnce(&mut Certificate),
+) -> Result<ZoneCertificateVerdict, ZoneCertificateRefusal<OccurrenceKey>> {
+    let mut certificate = build(world, claim).certificate;
+    change(&mut certificate);
+    verdict(world, claim, &certificate, CertificateCheckLimits::default())
+}
+
+fn rejected(
+    result: Result<ZoneCertificateVerdict, ZoneCertificateRefusal<OccurrenceKey>>,
+) -> (CertificateRule, CertificateLocus) {
+    match result {
+        Ok(ZoneCertificateVerdict::Rejected(rejection)) => (rejection.rule, rejection.at),
+        other => panic!("expected a rejection, got {other:?}"),
+    }
+}
+
+/// A fixed-priority pair where `q`, released later with the earlier
+/// priority, preempts `p`: its service clock is bounded-subtracted.
+fn preempting() -> World {
+    world_for(
+        "Q",
+        &["p", "q"],
+        "taskset Q {\n\
+         task p periodic 10 ms deadline 10 ms bcet 4 ms wcet 4 ms priority 2 lo;\n\
+         task q sporadic 5 ms deadline 3 ms bcet 1 ms wcet 1 ms priority 1 lo;\n\
+         }\n\
+         schedulable QFp on Q under fixed_priority;\n\
+         schedulable QEdf on Q under edf;\n",
+    )
+}
+
+fn malformed_member() -> (CertificateRule, CertificateLocus) {
+    (
+        CertificateRule::Malformed,
+        CertificateLocus::CertificateMember(CertificateMember::TaskProduct),
+    )
+}
+
+fn big(value: u64) -> Integer {
+    Integer::from(value)
+}
+
+/// FR-418-AC-12 and AC-13 (member recompute): every member the checker
+/// recomputes must match, so each way of changing one is malformed at
+/// `task_product`.
+#[trace("TC-371", "FR-418-AC-13")]
+#[test]
+fn a_member_that_differs_from_its_recomputation_is_malformed() {
+    let tampers: Vec<(&str, &str, Box<dyn Fn(&mut Certificate)>)> = vec![
+        ("max_jobs + 1", "SFp", Box::new(|c| {
+            c.task_product.as_mut().unwrap().queue_bounds[0].max_jobs += 1;
+        })),
+        ("max_jobs - 1", "SFp", Box::new(|c| {
+            c.task_product.as_mut().unwrap().queue_bounds[0].max_jobs -= 1;
+        })),
+        ("cap != sum", "SFp", Box::new(|c| {
+            c.task_product.as_mut().unwrap().time_progress.live_job_cap += 1;
+        })),
+        ("work lower != upper", "SFp", Box::new(|c| {
+            let row = &mut c.task_product.as_mut().unwrap().queue_bounds[0];
+            row.work_lower = crate::zone_search::exact(1, 4000);
+        })),
+        ("a ceiling changed", "SFp", Box::new(|c| {
+            c.task_product.as_mut().unwrap().clock_ceilings[0].maximum = big(9_999_999);
+        })),
+    ];
+    for (name, claim, change) in tampers {
+        assert_eq!(rejected(edit(&solo(), claim, change)), malformed_member(), "{name}");
+    }
+    let diagonals = |c: &Certificate| c.task_product.as_ref().unwrap().diagonal_constraints.len();
+    assert!(diagonals(&build(&preempting(), "QEdf").certificate) > 0, "EDF over two tasks has diagonals");
+    assert_eq!(
+        rejected(edit(&preempting(), "QEdf", |c| {
+            c.task_product.as_mut().unwrap().diagonal_constraints.pop();
+        })),
+        malformed_member(),
+        "a diagonal dropped"
+    );
+    assert_eq!(
+        rejected(edit(&preempting(), "QEdf", |c| {
+            c.task_product.as_mut().unwrap().diagonal_constraints[0].constant = big(9_999_999);
+        })),
+        malformed_member(),
+        "a diagonal constant changed"
+    );
+    // The subtraction table: a preempting fixed-priority pair has a row.
+    let world = preempting();
+    let rows = |c: &Certificate| c.task_product.as_ref().unwrap().subtractions.len();
+    assert_eq!(rows(&build(&world, "QFp").certificate), 1);
+    assert_eq!(
+        rejected(edit(&world, "QFp", |c| {
+            c.task_product.as_mut().unwrap().subtractions[0].constant = big(9_999_999);
+        })),
+        malformed_member(),
+        "a subtraction changed"
+    );
+    assert_eq!(
+        rejected(edit(&world, "QFp", |c| {
+            c.task_product.as_mut().unwrap().subtractions.clear();
+        })),
+        malformed_member(),
+        "a subtraction dropped"
+    );
+}
+
+fn template_edge(
+    certificate: &Certificate,
+    action: fsl_replay::TaskTransitionAction,
+) -> usize {
+    certificate
+        .edges
+        .iter()
+        .position(|edge| {
+            edge.task_transition
+                .as_ref()
+                .is_some_and(|template| template.action == action)
+        })
+        .expect("an edge of that action")
+}
+
+/// FR-418-AC-12 (matcher): an edge whose label the recomputation does not
+/// produce leaves its source node without the recomputed successor.
+#[trace("TC-371", "FR-418-AC-12")]
+#[test]
+fn a_forged_template_leaves_the_successor_missing() {
+    let world = solo();
+    let built = build(&world, "SFp");
+    let dispatch = template_edge(&built.certificate, fsl_replay::TaskTransitionAction::Dispatch);
+    let from = built.certificate.edges[dispatch].from;
+    // A forged priority.
+    let forged = edit(&world, "SFp", |c| {
+        c.edges[dispatch].task_transition.as_mut().unwrap().priority = Some(99);
+    });
+    assert_eq!(rejected(forged), (CertificateRule::SuccessorMissing, node_at(from)));
+    // A slot not bound to the live job (ZC-25's shape).
+    let slot = edit(&world, "SFp", |c| {
+        c.edges[dispatch].task_transition.as_mut().unwrap().slot = 1;
+    });
+    assert_eq!(rejected(slot), (CertificateRule::SuccessorMissing, node_at(from)));
+}
+
+/// FR-418-AC-13 (matcher): an activation whose rank is beyond the
+/// recomputed live-job range is not produced by the recomputation (ZC-24).
+#[trace("TC-371", "FR-418-AC-13")]
+#[test]
+fn an_out_of_range_activation_rank_leaves_the_successor_missing() {
+    let world = solo();
+    let built = build(&world, "SFp");
+    let activate = template_edge(&built.certificate, fsl_replay::TaskTransitionAction::Activate);
+    let from = built.certificate.edges[activate].from;
+    let result = edit(&world, "SFp", |c| {
+        c.edges[activate].task_transition.as_mut().unwrap().job_rank = 7;
+    });
+    assert_eq!(rejected(result), (CertificateRule::SuccessorMissing, node_at(from)));
+}
+
+/// The certificate is canonical (ruling U5): an edge or node the
+/// recomputation does not produce is rejected, and a removed edge leaves
+/// its node's successor missing.
+#[trace("TC-371", "FR-418-AC-13")]
+#[test]
+fn the_certificate_is_the_reachable_closure() {
+    let world = solo();
+    let built = build(&world, "SFp");
+    let count = built.certificate.edges.len();
+    let extra = edit(&world, "SFp", |c| {
+        let copy = c.edges[0].clone();
+        c.edges.push(copy);
+    });
+    assert_eq!(
+        rejected(extra),
+        (CertificateRule::ExtraEdge, CertificateLocus::ZoneEdge { edge: count as u64 })
+    );
+    let nodes = built.certificate.nodes.len();
+    let unreached = edit(&world, "SFp", |c| {
+        let copy = c.nodes[0].clone();
+        c.nodes.push(copy);
+    });
+    assert_eq!(rejected(unreached), (CertificateRule::UnreachedNode, node_at(nodes)));
+    let removed_from = built.certificate.edges[0].from;
+    let removed = edit(&world, "SFp", |c| {
+        let admitted = c.admitted.as_mut().unwrap();
+        assert!(!admitted.path.contains(&0), "the witness does not use edge 0");
+        for edge in &mut admitted.path {
+            *edge -= usize::from(*edge > 0);
+        }
+        if let DivergentTarget::Cycle(cycle) = &mut admitted.target {
+            for edge in cycle {
+                *edge -= usize::from(*edge > 0);
+            }
+        }
+        c.edges.remove(0);
+    });
+    assert_eq!(rejected(removed), (CertificateRule::SuccessorMissing, node_at(removed_from)));
+}
+
+/// Two releases at one instant are two source edges, fired in either order;
+/// removing one interleaving leaves the node's successor missing.
+#[trace("TC-371", "FR-418-AC-13")]
+#[test]
+fn one_interleaving_of_simultaneous_releases_cannot_be_removed() {
+    let world = tied();
+    let built = build(&world, "EEdf");
+    let releases: Vec<usize> = built
+        .certificate
+        .edges
+        .iter()
+        .enumerate()
+        .filter(|(_, edge)| {
+            edge.task_transition.as_ref().is_some_and(|t| {
+                t.action == fsl_replay::TaskTransitionAction::Activate
+            })
+        })
+        .map(|(index, _)| index)
+        .collect();
+    let node = built.certificate.edges[releases[0]].from;
+    let both: Vec<usize> = releases
+        .iter()
+        .copied()
+        .filter(|&index| built.certificate.edges[index].from == node)
+        .collect();
+    assert_eq!(both.len(), 2, "both tasks can release first at the initial node");
+    let last = *both.last().expect("two");
+    let result = edit(&world, "EEdf", |c| {
+        let admitted = c.admitted.as_mut().unwrap();
+        for edge in &mut admitted.path {
+            *edge -= usize::from(*edge > last);
+        }
+        if let DivergentTarget::Cycle(cycle) = &mut admitted.target {
+            for edge in cycle {
+                *edge -= usize::from(*edge > last);
+            }
+        }
+        c.edges.remove(last);
+    });
+    assert_eq!(rejected(result), (CertificateRule::SuccessorMissing, node_at(node)));
+}
+
+/// A node that does not cover the initial zero valuation is
+/// `initial-missing`; a successor outside its target's zone is
+/// `successor-missing` (two DBM columns swapped).
+#[trace("TC-371", "FR-418-AC-12")]
+#[test]
+fn a_node_that_does_not_cover_is_rejected() {
+    let world = solo();
+    let built = build(&world, "SFp");
+    let initial = built.certificate.initials[0];
+    let result = edit(&world, "SFp", |c| {
+        let zone = &mut c.nodes[initial].zone;
+        zone.constrain(0, 1, &Integer::from(-1_i64), false).expect("constrain");
+    });
+    let (rule, _) = rejected(result);
+    assert!(
+        matches!(rule, CertificateRule::InitialMissing | CertificateRule::Malformed),
+        "{rule:?}"
+    );
+    // Two clock columns swapped in the last node's DBM.
+    let last = built.certificate.nodes.len() - 1;
+    let swapped = edit(&world, "SFp", |c| {
+        let zone = &c.nodes[last].zone;
+        let dim = zone.dim();
+        let mut cells = Vec::new();
+        for i in 0..dim {
+            for j in 0..dim {
+                let (i, j) = (
+                    if i == 1 { 2 } else if i == 2 { 1 } else { i },
+                    if j == 1 { 2 } else if j == 2 { 1 } else { j },
+                );
+                cells.push(zone.bound(i, j).expect("bound"));
+            }
+        }
+        c.nodes[last].zone = Zone::from_matrix(dim, cells).expect("matrix");
+    });
+    let (rule, _) = rejected(swapped);
+    assert_ne!(rule, CertificateRule::UnreachedNode);
+}
+
+/// ZC-18's ready-order tamper: the queue order is part of the node key, so
+/// a node whose ready order is reversed is not the recomputed successor.
+#[trace("TC-371", "FR-418-AC-12")]
+#[test]
+fn a_reversed_ready_order_is_not_the_recomputed_key() {
+    let world = tied();
+    let built = build(&world, "EEdf");
+    let target = built
+        .certificate
+        .nodes
+        .iter()
+        .position(|node| String::from_utf8_lossy(node.state_key.as_bytes()).contains("|q:0.0:1.0l."))
+        .expect("a node with two ready jobs");
+    let result = edit(&world, "EEdf", |c| {
+        let text = String::from_utf8_lossy(c.nodes[target].state_key.as_bytes())
+            .replace("|q:0.0:1.0l.", "|q:1.0:0.0l.");
+        c.nodes[target].state_key = text.into_bytes().into();
+    });
+    let (rule, _) = rejected(result);
+    assert_eq!(rule, CertificateRule::SuccessorMissing);
+}
+
+/// ZC-18: for two equal-deadline jobs whose tasks declare no priorities, EDF
+/// is derived from the bound claim and ties break by task name (`a` before
+/// `b`) whatever the declaration order (`b`, `a`); the reversed first
+/// dispatch edge is rejected, and a `policy` member is not a
+/// `TaskProductCertificate`.
+#[trace("TC-371", "FR-418-AC-12")]
+#[test]
+fn an_edf_tie_dispatches_the_canonically_first_task() {
+    let world = tied();
+    let built = build(&world, "EEdf");
+    assert_eq!(
+        verdict(&world, "EEdf", &built.certificate, CertificateCheckLimits::default()),
+        Ok(ZoneCertificateVerdict::Accepted)
+    );
+    let dispatches: Vec<&CertEdge> = built
+        .certificate
+        .edges
+        .iter()
+        .filter(|edge| {
+            edge.task_transition
+                .as_ref()
+                .is_some_and(|t| t.action == fsl_replay::TaskTransitionAction::Dispatch)
+        })
+        .collect();
+    assert!(dispatches.iter().all(|edge| edge.task_transition.as_ref().unwrap().priority.is_none()));
+    // At the node holding both ready jobs the only dispatch is `a`.
+    let both = built
+        .certificate
+        .nodes
+        .iter()
+        .position(|node| String::from_utf8_lossy(node.state_key.as_bytes()).contains("|q:0.0:1.0l."))
+        .expect("a node with two ready jobs");
+    let at_tie: Vec<&str> = built
+        .certificate
+        .edges
+        .iter()
+        .filter(|edge| edge.from == both)
+        .filter_map(|edge| edge.task_transition.as_ref())
+        .filter(|t| t.action == fsl_replay::TaskTransitionAction::Dispatch)
+        .map(|t| t.task.as_str())
+        .collect();
+    assert_eq!(at_tie, ["a"]);
+    let index = built
+        .certificate
+        .edges
+        .iter()
+        .position(|edge| {
+            edge.from == both
+                && edge
+                    .task_transition
+                    .as_ref()
+                    .is_some_and(|t| t.action == fsl_replay::TaskTransitionAction::Dispatch)
+        })
+        .expect("the tie dispatch");
+    let reversed = edit(&world, "EEdf", |c| {
+        c.edges[index].task_transition.as_mut().unwrap().task = "b".to_owned();
+    });
+    assert_eq!(rejected(reversed), (CertificateRule::SuccessorMissing, node_at(both)));
+    // A `policy` member is not a task-product certificate.
+    let mut wire = built
+        .certificate
+        .task_product
+        .as_ref()
+        .unwrap()
+        .to_wire()
+        .expect("wire");
+    wire.as_object_mut()
+        .unwrap()
+        .insert("policy".to_owned(), serde_json::json!("fixed-priority"));
+    assert!(fsl_replay::TaskProductCertificate::from_wire(&wire).is_err());
+}
+
+/// ADR-026 TD-6 on the quotient: a `locked` node that reaches time
+/// divergence is `bad-state`; an `admitted` witness that idles where time
+/// cannot pass forever fails.
+#[trace("TC-371", "FR-418-AC-13")]
+#[test]
+fn divergence_and_the_admitted_witness_are_replayed_on_the_quotient() {
+    let world = solo();
+    let built = build(&world, "SFp");
+    let locked = edit(&world, "SFp", |c| c.nodes[0].locked = true);
+    assert_eq!(rejected(locked), (CertificateRule::BadState, node_at(0)));
+    let release = built
+        .certificate
+        .edges
+        .iter()
+        .position(|edge| edge.from == built.certificate.initials[0] && edge.to != edge.from)
+        .expect("the first step");
+    let to = built.certificate.edges[release].to;
+    let idles_nowhere = edit(&world, "SFp", |c| {
+        c.admitted = Some(DivergenceWitness {
+            start: c.initials[0],
+            path: vec![release],
+            target: DivergentTarget::Quiescent(to),
+        });
+    });
+    assert_eq!(rejected(idles_nowhere), (CertificateRule::WitnessFails, node_at(to)));
+}
+
+/// FR-418-AC-20-style budget: a work limit below the graph's size settles
+/// `incomplete` naming `max_check_work`, never an acceptance.
+#[trace("TC-371", "FR-418-AC-13")]
+#[test]
+fn a_work_limit_below_the_graph_is_incomplete() {
+    let world = solo();
+    let built = build(&world, "SFp");
+    let limits = CertificateCheckLimits {
+        max_check_work: 1,
+        ..CertificateCheckLimits::default()
+    };
+    assert_eq!(
+        verdict(&world, "SFp", &built.certificate, limits),
+        Ok(ZoneCertificateVerdict::Stopped(
+            fsl_replay::IncompleteCause::LimitReached {
+                limit: fsl_replay::ModelCheckLimit::ZoneMaxCheckWork,
+                value: 1,
+            }
+        ))
+    );
+}
+
+/// Ruling U6: a dual-WCET set with a mode switch is not covered by the
+/// closed finite product, so its check settles `certificate-unchecked`
+/// whatever the certificate says.
+#[trace("TC-371", "FR-418-AC-12")]
+#[test]
+fn a_mixed_criticality_set_is_certificate_unchecked() {
+    let world = world_for(
+        "D",
+        &["command", "worker"],
+        "taskset D {\n\
+         task command periodic 4 ms deadline 4 ms bcet 2 ms wcet 2 ms priority 1 hi wcet_hi 3 ms;\n\
+         task worker periodic 4 ms deadline 4 ms bcet 1 ms wcet 1 ms priority 2 lo;\n\
+         }\n\
+         mode D hi on M::Call::fire_command;\n\
+         schedulable DFp on D under fixed_priority;\n",
+    );
+    let mut certificate = build(&solo(), "SFp").certificate;
+    certificate.obligation = claim_of(&world, "DFp").occurrence().expect("occurrence");
+    assert_eq!(
+        verdict(&world, "DFp", &certificate, CertificateCheckLimits::default()),
+        Ok(ZoneCertificateVerdict::Stopped(
+            fsl_replay::IncompleteCause::CertificateUnchecked
+        ))
+    );
+}
