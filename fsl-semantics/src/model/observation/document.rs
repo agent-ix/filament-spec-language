@@ -113,9 +113,6 @@ pub enum ObservationRole {
 
 #[derive(Clone, Debug)]
 pub(super) struct SnapshotDocument {
-    /// The actual document admission byte ceiling, also bounding transported
-    /// clock-place identity decoding and re-encoding.
-    pub(super) canonical_limits: quire_canonical::Limits,
     pub(super) observation: ObservationRole,
     pub(super) anchor: Option<DocAnchor>,
     /// The invocation this snapshot says it observes, when it names one.
@@ -717,7 +714,6 @@ fn read_snapshot_body(
     let relationships = super::relationships::read_relationships(object, meter)?;
     let contexts = read_contexts(object, meter)?;
     Ok(SnapshotDocument {
-        canonical_limits: quire_canonical::Limits::new(meter.limits.document_bytes),
         observation,
         anchor,
         invocation,
@@ -1176,7 +1172,6 @@ fn object_field_kind_matches(
 /// no admitted object. Built once per snapshot, before check 6 walks it, so
 /// a reference resolves whatever the walk order of its target.
 pub(super) struct References<'a> {
-    canonical_limits: quire_canonical::Limits,
     /// Diagnostic provenance for Clock values read from this snapshot.
     document: Option<String>,
     views: &'a [ModelView],
@@ -1215,7 +1210,6 @@ impl<'a> References<'a> {
         views: &'a [ModelView],
         types: &'a TypeEnvironment,
         populations: &'a [RawPopulation],
-        canonical_limits: quire_canonical::Limits,
     ) -> Result<Self, AdmissionFailure> {
         let mut population_nodes = BTreeMap::new();
         for view in views {
@@ -1254,7 +1248,6 @@ impl<'a> References<'a> {
             }
         }
         Ok(Self {
-            canonical_limits,
             document: None,
             views,
             types,
@@ -1422,100 +1415,17 @@ impl<'a> References<'a> {
         Ok(target)
     }
 
-    /// Authenticate a transported identity against its explicit declared
-    /// population and that population's actual admitted owner.
+    /// Transported Clock DATA remains unsupported until both routes have
+    /// completed end-to-end declaration and owner admission. The shared
+    /// codec and trusted same-run values do not authorize RAW input.
     fn resolve_clock(
         &mut self,
-        reference: &SelectedObject,
+        _reference: &SelectedObject,
     ) -> Result<ObjectReference, AdmissionRecord> {
-        use crate::model::clock_reference::{encode_identity, identity::PlaceIdentity};
-
-        let identity = PlaceIdentity::decode(&reference.key, self.canonical_limits)
-            .map_err(clock_identity_record)?;
-        let dangling = || {
-            admission_record(
-                Code::DanglingReference,
-                "absent-target-in-complete-population",
-            )
-            .with("population", reference.population.clone())
-            .with("object", reference.key.clone())
-        };
-        let (view, population) =
-            find_population(self.views, &reference.population).ok_or_else(dangling)?;
-        let table = view.clock_declarations.as_ref().ok_or_else(|| {
+        Err(
             admission_record(Code::UnknownRequiredFeature, "unsupported-feature")
-                .with("reason", "missing-route-neutral-place-identity")
-        })?;
-        let declarations = table.source_declarations();
-        let scope = self
-            .population_nodes
-            .get(&reference.population)
-            .and_then(|node| declarations.declaration_scope_for_node(node))
-            .cloned()
-            .or_else(|| {
-                (!view.is_source())
-                    .then(|| declarations.catalog_scope(&population.key).cloned())
-                    .flatten()
-            })
-            .ok_or_else(|| {
-                admission_record(Code::UnknownRequiredFeature, "unsupported-feature")
-                    .with("reason", "missing-type-representation")
-            })?;
-        if matches!(
-            scope,
-            crate::model::clock_reference::identity::DeclarationScope::Source { .. }
-        ) {
-            return Err(
-                admission_record(Code::UnknownRequiredFeature, "unsupported-feature")
-                    .with("reason", "missing-type-representation"),
-            );
-        }
-        let owner = self
-            .admitted
-            .get(&(reference.population.as_str(), identity.owner.as_str()))
-            .ok_or_else(dangling)?;
-        // Authenticate context independently of whether a clock path survives.
-        if identity.population != scope
-            || !crate::model::clock_reference::is_declared_owner_scope(
-                &identity.template.scope,
-                owner,
-                table,
-                self.types,
-            )
-        {
-            return Err(admission_record(Code::InvalidRuntimeInput, "invalid-value"));
-        }
-        if !crate::model::clock_reference::is_declared_identity(
-            &identity, &scope, owner, table, self.types,
-        ) {
-            return Err(dangling());
-        }
-        let target = encode_identity(owner, &identity, self.canonical_limits)
-            .map_err(clock_identity_record)?;
-        self.clock_references
-            .push((reference.population.clone(), target.clone()));
-        Ok(target)
-    }
-}
-
-/// Preserve resource causes from the shared codec; malformed transported
-/// identities remain typed invalid input at the caller's original locus.
-fn clock_identity_record(
-    error: crate::model::clock_reference::identity::IdentityError,
-) -> AdmissionRecord {
-    use crate::model::clock_reference::identity::IdentityError;
-    match error {
-        IdentityError::Canonical(quire_canonical::Error::Limit(limit))
-        | IdentityError::Read(quire_canonical::ReadError::Limit(limit)) => {
-            super::input_bytes_record(limit.bound, u128::from(limit.required))
-        }
-        IdentityError::Canonical(quire_canonical::Error::Allocation { requested })
-        | IdentityError::Read(quire_canonical::ReadError::Allocation { requested }) => {
-            super::allocation_failed_record(requested)
-        }
-        IdentityError::Malformed | IdentityError::Canonical(_) | IdentityError::Read(_) => {
-            admission_record(Code::InvalidRuntimeInput, "invalid-value")
-        }
+                .with("reason", "missing-route-neutral-place-identity"),
+        )
     }
 }
 
@@ -2559,7 +2469,6 @@ pub fn admit_record_sample(
     }
     let raw = SnapshotValue::record(RECORD_SAMPLE, fields);
     let mut references = References {
-        canonical_limits: quire_canonical::Limits::new(u64::MAX),
         document: None,
         views: &[],
         types,
@@ -3471,7 +3380,7 @@ pub(super) fn admit_population_values<'t>(
     let mut listed = super::relationships::Listed::new();
     let mut completeness = BTreeMap::new();
     let mut keys_by_population: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
-    let mut references = References::over(views, types, populations, snapshot.canonical_limits)?;
+    let mut references = References::over(views, types, populations)?;
     references.document = Some(document.identity.clone());
     let mut out_of_range: Vec<OutOfRange> = Vec::new();
     // FSpec FR-154 "Unit bounds": a supplied value that violates a bound
@@ -5061,13 +4970,11 @@ mod tests {
         .with_optional_parameters(&[true]);
         let types = TypeEnvironment::new([], []).expect("an empty environment admits");
         let mut omitted_references =
-            References::over(&[], &types, &[], quire_canonical::Limits::new(u64::MAX))
-                .expect("empty declared catalog");
+            References::over(&[], &types, &[]).expect("empty declared catalog");
         let omitted = admit_parameters(&mut omitted_references, &operation, &[])
             .expect("an optional argument may be omitted");
         let mut explicit_references =
-            References::over(&[], &types, &[], quire_canonical::Limits::new(u64::MAX))
-                .expect("empty declared catalog");
+            References::over(&[], &types, &[]).expect("empty declared catalog");
         let explicit = admit_parameters(
             &mut explicit_references,
             &operation,
@@ -5091,9 +4998,9 @@ mod tests {
         })
     }
 
-    #[trace("TC-464", "FR-230-AC-45")]
+    #[trace("FR-106", "TC-464")]
     #[test]
-    fn malformed_clock_identity_keeps_its_typed_value_locus() {
+    fn raw_clock_data_refusal_keeps_its_typed_value_locus() {
         let types = TypeEnvironment::default();
         let clock = ValueType::Reference(crate::check::clock_reference_target());
         let raw = reference("ix://model/calls", "place/v1/not-a-v2-identity");
@@ -5115,31 +5022,17 @@ mod tests {
             ),
         ] {
             let mut references =
-                References::over(&[], &types, &[], quire_canonical::Limits::new(4096))
-                    .expect("empty declared catalog");
+                References::over(&[], &types, &[]).expect("empty declared catalog");
             let record = admit_form(&mut references, raw.form(), &slot, None)
-                .expect_err("a legacy place identity is invalid RAW input");
-            assert_eq!(record.catalog.code(), Code::InvalidRuntimeInput.as_str());
-            assert_eq!(record.catalog.cause(), "invalid-value");
+                .expect_err("transported Clock DATA remains unsupported before decoding");
+            assert_eq!(record.catalog.code(), Code::UnknownRequiredFeature.as_str());
+            assert_eq!(record.catalog.cause(), "unsupported-feature");
+            assert_eq!(
+                record.fields,
+                BTreeMap::from([("reason", "missing-route-neutral-place-identity".to_owned())])
+            );
             assert_eq!(record.path, path);
         }
-    }
-
-    #[trace("TC-464", "FR-230-AC-45")]
-    #[test]
-    fn clock_identity_decode_preserves_the_admission_byte_ceiling() {
-        let types = TypeEnvironment::default();
-        let mut references = References::over(&[], &types, &[], quire_canonical::Limits::new(8))
-            .expect("empty declared catalog");
-        let raw = reference("ix://model/calls", "place/v2/too-long");
-        let record = admit_form(
-            &mut references,
-            raw.form(),
-            &ValueType::Reference(crate::check::clock_reference_target()),
-            None,
-        )
-        .expect_err("identity bytes exceed this admission's ceiling");
-        assert_eq!(record, super::super::input_bytes_record(8, 17));
     }
 
     fn empty_population(population: &str, complete: bool) -> RawPopulation {
@@ -5164,13 +5057,8 @@ mod tests {
             empty_population("partial", false),
         ];
         let types = TypeEnvironment::new([], []).expect("an empty environment admits");
-        let references = References::over(
-            &[],
-            &types,
-            &populations,
-            quire_canonical::Limits::new(u64::MAX),
-        )
-        .expect("empty declared catalog");
+        let references =
+            References::over(&[], &types, &populations).expect("empty declared catalog");
 
         let record = references
             .check_closure(&SnapshotValue::present(reference("complete", "k")))
@@ -5222,9 +5110,7 @@ mod tests {
     #[test]
     fn an_out_of_range_integer_with_no_witness_sink_refuses() {
         let types = TypeEnvironment::new([], []).expect("an empty environment admits");
-        let mut references =
-            References::over(&[], &types, &[], quire_canonical::Limits::new(u64::MAX))
-                .expect("empty declared catalog");
+        let mut references = References::over(&[], &types, &[]).expect("empty declared catalog");
         let record = admit_form(
             &mut references,
             snapshot(r#"{"integer":"-1"}"#).form(),
@@ -5250,9 +5136,7 @@ mod tests {
     #[test]
     fn an_out_of_range_integer_with_a_witness_sink_is_admitted_exactly() {
         let types = TypeEnvironment::new([], []).expect("an empty environment admits");
-        let mut references =
-            References::over(&[], &types, &[], quire_canonical::Limits::new(u64::MAX))
-                .expect("empty declared catalog");
+        let mut references = References::over(&[], &types, &[]).expect("empty declared catalog");
         let mut found = Vec::new();
         let admitted = admit_form(
             &mut references,
@@ -5283,9 +5167,7 @@ mod tests {
     #[test]
     fn an_out_of_range_sequence_element_is_witnessed_at_its_index() {
         let types = TypeEnvironment::new([], []).expect("an empty environment admits");
-        let mut references =
-            References::over(&[], &types, &[], quire_canonical::Limits::new(u64::MAX))
-                .expect("empty declared catalog");
+        let mut references = References::over(&[], &types, &[]).expect("empty declared catalog");
         let sequence = filament_exact::ValueType::collection(filament_exact::CollectionType::new(
             CollectionKind::Sequence,
             range_0_1000(),
@@ -5377,7 +5259,6 @@ mod tests {
         assert_eq!(
             admit_form(
                 &mut References {
-                    canonical_limits: quire_canonical::Limits::new(u64::MAX),
                     document: None,
                     views: &[],
                     types: &TypeEnvironment::default(),

@@ -3602,18 +3602,10 @@ fn admit_invocation_documents(
     // reference result against the post snapshot's; either one naming a key
     // absent from its complete population refuses `dangling_reference`
     // (check 8's closure rule, SR-771 FND-001).
-    let mut parameter_references = document::References::over(
-        views,
-        types,
-        &pre_snapshot.populations,
-        pre_snapshot.canonical_limits,
-    )?;
-    let mut result_references = document::References::over(
-        views,
-        types,
-        &post_snapshot.populations,
-        post_snapshot.canonical_limits,
-    )?;
+    let mut parameter_references =
+        document::References::over(views, types, &pre_snapshot.populations)?;
+    let mut result_references =
+        document::References::over(views, types, &post_snapshot.populations)?;
     document::check_untyped_parameters(
         views,
         context_name,
@@ -3979,12 +3971,8 @@ fn admit_pre_call(
     let (parameters, value_origins) = if context.as_context {
         (Vec::new(), AdmittedValueOrigins::default())
     } else {
-        let mut references = document::References::over(
-            context.views,
-            context.types,
-            &snapshot.populations,
-            snapshot.canonical_limits,
-        )?;
+        let mut references =
+            document::References::over(context.views, context.types, &snapshot.populations)?;
         document::check_untyped_parameters(
             context.views,
             context.context_name,

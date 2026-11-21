@@ -466,6 +466,21 @@ origins and producing no partial place table or admitted observation.
 > `missing-type-representation`. Model-owned raw admission and the static
 > SourceOwner declaration-path comparison do not establish that missing
 > materialization capability. QSL-2178 retains this named remainder.
+
+> The current foundation does not admit transported Clock DATA on either
+> route. Source raw-value admission refuses
+> `unknown_required_feature`/`unsupported-feature`, naming
+> `missing-route-neutral-place-identity`, before decoding a place ID and
+> retaining the actual document and nested value locus. Bare may refuse
+> earlier with `missing-type-representation`; it does not claim the same
+> admission stage or field locus. This boundary covers raw scalar, present
+> optional and sequence Clock-reference values, not ordinary references or
+> native-Clock timed simulation. The five end-to-end acceptance tests retain
+> their original oracles as explicitly ignored QSL-2178 debt. Stored `self.r`
+> refinement evaluation, raw round-trip, removed-`x` rejection, scope checks
+> and alias-table snapshot admission remain unproved and unmet. Codec,
+> declaration-table, provenance, generated-reference and static readback
+> controls do not establish these end-to-end criteria. QSL-2178 stays open.
 >
 > The Clock route and declaration-table criteria reviewed as AC-74/AC-75
 > are now AC-76/AC-77. The relationship criteria on the repaired main branch
