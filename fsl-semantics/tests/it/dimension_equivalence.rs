@@ -1296,3 +1296,65 @@ fn an_empty_unit_list_breaks_the_assemblers_invariant() {
         "invalid_package/established-invariant-broken"
     );
 }
+
+/// Checks `function` declared over [`BASES`] and `equivalences`, returning
+/// each refusal's cause.
+fn convert_causes(
+    equivalences: &str,
+    expression: &str,
+) -> Result<(), Vec<fsl_semantics::check::CheckCause>> {
+    use filament_semantic_value::checking::CheckingLimits;
+    let body =
+        format!("{BASES}{equivalences}\nfunction f using v(): Boolean pure {{ {expression} }}");
+    let packages: [Package; 0] = [];
+    let (_, assembled) = assemble_selected_as(("agent-ix", "example"), &packages, &body);
+    assembled
+        .unwrap_or_else(|refusal| panic!("{body}: {refusal:?}"))
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &crate::reward_evaluator::ZeroRewardEvaluator,
+        )
+        .map(|_| ())
+        .map_err(|refusals| refusals.into_iter().map(|refusal| refusal.cause).collect())
+}
+
+/// FR-093 "Dimension equivalence" (QSL-2734): `convert<Quantity<ub>>(3 ua)`
+/// is admitted when `dimension A ~ B` puts the dimensions of `ua` and `ub`
+/// in one class, directly or through a third dimension.
+#[trace("FR-093-AC-46", "FR-091-AC-60")]
+#[test]
+fn convert_across_a_dimension_equivalence_class_checks() {
+    let direct = "dimension A ~ B by 1 ua = 1000 ub;";
+    assert_eq!(
+        convert_causes(direct, "convert<Quantity<ub>>(3 ua) = 3000 ub"),
+        Ok(())
+    );
+    assert_eq!(
+        convert_causes(direct, "convert<Quantity<ua>>(3 ub) = 3 ua"),
+        Ok(())
+    );
+    let chained = "dimension A ~ B by 1 ua = 1 ub;\ndimension B ~ C by 1 ub = 1000 uc;";
+    assert_eq!(
+        convert_causes(chained, "convert<Quantity<uc>>(3 ua) = 3000 uc"),
+        Ok(())
+    );
+}
+
+/// FR-093 "Dimension equivalence": a conversion between units of two
+/// dimension nodes no equivalence relates still refuses
+/// `ill_typed`/`type-mismatch`.
+#[trace("FR-093-AC-46")]
+#[test]
+fn convert_between_unrelated_dimensions_refuses_type_mismatch() {
+    use fsl_semantics::check::{CheckCause, IllTypedCause};
+    let causes = convert_causes(
+        "dimension A ~ B by 1 ua = 1 ub;",
+        "convert<Quantity<uc>>(3 ua) = 3 uc",
+    )
+    .expect_err("C is in no class with A");
+    assert_eq!(
+        causes,
+        vec![CheckCause::IllTyped(IllTypedCause::TypeMismatch)]
+    );
+}

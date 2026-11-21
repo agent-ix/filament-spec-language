@@ -2983,6 +2983,7 @@ impl PackageDeclarations {
                 .collect(),
         )
         .with_declared_units(&self.units)
+        .with_dimension_equivalences(&self.dimension_equivalences)
         .with_protocols(
             self.protocols
                 .iter()
