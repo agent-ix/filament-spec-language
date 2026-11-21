@@ -1843,13 +1843,39 @@ fn the_writer_refuses_native_join_limits_that_cannot_pay_for_the_identity_join()
         built.emission.package().bytes(),
         "the budget oracle and writer must use exactly the same producer package",
     );
+    let dependencies = built.dependency_artifacts();
+    assert!(!dependencies.is_empty(), "the recipe imports a library");
+    // The closed dependency artifacts precede the root on the writer's one
+    // native-join ledger, in selected-identity order.
+    let materialize_dependencies = |budget: &mut filament_contract_model::NativeJoinBudget| {
+        let mut files = Vec::new();
+        for (index, (_, emission, package)) in dependencies.iter().enumerate() {
+            let identities = emission
+                .identity_rows(package, budget)
+                .expect("the allowance pays for dependency identities");
+            files.push((
+                format!("dependencies/{index}/identities.json"),
+                identities.to_bytes(package).expect("dependency identities"),
+            ));
+            let equality = emission
+                .equality_witness(package, budget)
+                .expect("the allowance pays for dependency equality");
+            files.push((
+                format!("dependencies/{index}/equality.json"),
+                equality.to_bytes(package).expect("dependency equality"),
+            ));
+        }
+        files
+    };
     let mut measure = filament_contract_model::NativeJoinBudget::new(1 << 30, 1 << 30);
-    built
+    let dependency_files = materialize_dependencies(&mut measure);
+    let dependency_need = measure.consumed();
+    let identities = built
         .emission
         .identity_rows(read.admitted(), &mut measure)
         .expect("measure the same final emission join the writer performs");
     let need = measure.consumed();
-    assert!(need.work > 0 && need.storage > 0);
+    assert!(need.work > dependency_need.work && need.storage > dependency_need.storage);
     for (limits, code) in [
         (
             fsl_package::NativeJoinLimits::new(need.work - 1, need.storage),
@@ -1860,6 +1886,17 @@ fn the_writer_refuses_native_join_limits_that_cannot_pay_for_the_identity_join()
             Code::ExhaustedStorage,
         ),
     ] {
+        let mut oracle = limits.budget();
+        let _ = materialize_dependencies(&mut oracle);
+        let IdentityFileRefusal::Rows(expected) = built
+            .emission
+            .identity_rows(read.admitted(), &mut oracle)
+            .expect_err("one-short root-identity allowance refuses its final copy")
+        else {
+            panic!("the root-identity denial retains its compact row cause");
+        };
+        assert_eq!(expected.denied(), oracle.first_unpaid());
+        assert_eq!(expected.locus(), oracle.first_unpaid_locus());
         let mut asked = request("event_position", Corpus::None);
         asked.emit.package_name = package_name.clone();
         asked.native_join = limits;
@@ -1876,6 +1913,7 @@ fn the_writer_refuses_native_join_limits_that_cannot_pay_for_the_identity_join()
                         denial.native
                     )
                 };
+                assert_eq!(*native, expected, "resource, amount, locus and full bound");
                 assert_eq!(
                     native.code(),
                     if code == Code::ExhaustedWork {
@@ -1937,6 +1975,7 @@ fn the_writer_refuses_native_join_limits_that_cannot_pay_for_the_identity_join()
         ),
     ] {
         let mut oracle = filament_contract_model::NativeJoinBudget::new(work, storage);
+        let _ = materialize_dependencies(&mut oracle);
         built
             .emission
             .identity_rows(read.admitted(), &mut oracle)
@@ -1976,13 +2015,25 @@ fn the_writer_refuses_native_join_limits_that_cannot_pay_for_the_identity_join()
     exact.native_join =
         fsl_package::NativeJoinLimits::new(complete_need.work, complete_need.storage);
     write(&exact, &target).expect("exact complete work and storage write the directory");
-    assert!(target.join("identities.json").exists());
+    assert_eq!(
+        std::fs::read(target.join("identities.json")).expect("written identity file"),
+        identities
+            .to_bytes(read.admitted())
+            .expect("measured identity file")
+    );
     assert_eq!(
         std::fs::read(target.join("equality.json")).expect("written equality file"),
         equality
             .to_bytes(read.admitted())
             .expect("measured equality file")
     );
+    for (path, bytes) in dependency_files {
+        assert_eq!(
+            std::fs::read(target.join(&path)).expect("written dependency sidecar"),
+            bytes,
+            "{path}"
+        );
+    }
 }
 
 /// Original opaque ceilings and cumulative attempted totals survive every
