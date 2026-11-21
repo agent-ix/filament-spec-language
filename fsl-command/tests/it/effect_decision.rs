@@ -154,6 +154,11 @@ fn receipt_binding_preserves_actual_source_outcome_and_model_truth() {
 fn every_canonical_decision_component_is_matched() {
     let mut fixture = Fixture::new();
     fixture.valid();
+    let mut declaration: Value =
+        serde_json::from_str(fixture.receipt["decision"]["operation"].as_str().unwrap()).unwrap();
+    declaration["package"] = json!("different-domain");
+    let same_name_other_identity =
+        String::from_utf8(canonical_json::encode(&declaration).unwrap()).unwrap();
     for (member, replacement) in [
         ("type", json!("other")),
         ("node", json!("other")),
@@ -161,6 +166,7 @@ fn every_canonical_decision_component_is_matched() {
         ("instance", json!("1")),
         ("actor", json!({"type": "reference", "identity": "other"})),
         ("operation", json!("other")),
+        ("operation", json!(same_name_other_identity)),
         ("receiver", json!({"type": "boolean", "value": false})),
         ("arguments", json!([{"type": "boolean", "value": true}])),
     ] {
@@ -178,6 +184,22 @@ fn every_canonical_decision_component_is_matched() {
             "invalid_runtime_input"
         );
     }
+}
+
+#[test]
+#[trace("FR-1046-AC-5", "FR-1046-AC-6", "FR-1046-AC-12")]
+fn the_full_canonical_grant_and_caller_key_distinguish_requests() {
+    let mut fixture = Fixture::new();
+    fixture.valid();
+    let mut different_grant = fixture.receipt.clone();
+    different_grant["authority_grant"] = json!({"descriptive": {"scope": ["other"]}});
+    different_grant["effect_request"] = json!({"different": "request"});
+    fixture.select("different-grant", &different_grant);
+    let mut different_key = fixture.receipt.clone();
+    different_key["idempotency_key"] = json!("another-caller-key");
+    different_key["effect_request"] = json!({"different": "request"});
+    fixture.select("different-key", &different_key);
+    assert_eq!(fixture.run().document, fixture.baseline.document);
 }
 
 #[test]
@@ -270,6 +292,23 @@ fn malformed_receipt_causes_and_pointers_are_preserved_before_matching() {
         serde_json::to_vec(&domain).unwrap(),
         "invalid-value",
         "/authority_grant/unsafe_integer",
+    ));
+    let overflow = serde_json::to_string(&domain)
+        .unwrap()
+        .replace("9007199254740992", "1e400");
+    cases.push((
+        overflow.into_bytes(),
+        "invalid-value",
+        "/authority_grant/unsafe_integer",
+    ));
+    let duplicate = serde_json::to_string(&fixture.receipt).unwrap().replace(
+        "\"authority_grant\":{}",
+        "\"authority_grant\":{\"scope\":{},\"scope\":{}}",
+    );
+    cases.push((
+        duplicate.into_bytes(),
+        "duplicate-member",
+        "/authority_grant/scope",
     ));
     for (bytes, cause, pointer) in cases {
         fixture.case.write("first.json", &bytes);

@@ -196,11 +196,24 @@ fn read(bytes: &[u8], at: &ReceiptLocation) -> Result<Receipt, ReceiptRefusal> {
             ..at.clone()
         },
     };
+    // IgnoredAny checks JSON syntax without converting its number domain or
+    // materializing values. A syntactically valid unrepresentable number is
+    // invalid-value, rather than a malformed-json refusal selected from prose.
+    let mut syntax = serde_json::Deserializer::from_slice(bytes);
+    if serde::Deserialize::deserialize(&mut syntax)
+        .map(|_: serde::de::IgnoredAny| ())
+        .and_then(|()| syntax.end())
+        .is_err()
+    {
+        return Err(malformed(ReceiptCause::MalformedJson, ""));
+    }
     let mut duplicate = None;
+    let mut domain_pointer = None;
     let mut decoder = serde_json::Deserializer::from_slice(bytes);
     let parsed = UniqueValue {
         pointer: String::new(),
         duplicate: &mut duplicate,
+        domain_pointer: &mut domain_pointer,
     }
     .deserialize(&mut decoder);
     let value = match parsed {
@@ -208,7 +221,10 @@ fn read(bytes: &[u8], at: &ReceiptLocation) -> Result<Receipt, ReceiptRefusal> {
         _ => {
             return Err(match duplicate {
                 Some(pointer) => malformed(ReceiptCause::DuplicateMember, &pointer),
-                None => malformed(ReceiptCause::MalformedJson, ""),
+                None => malformed(
+                    ReceiptCause::InvalidValue,
+                    domain_pointer.as_deref().unwrap_or(""),
+                ),
             })
         }
     };
@@ -483,12 +499,26 @@ fn token(name: &str) -> String {
 struct UniqueValue<'a> {
     pointer: String,
     duplicate: &'a mut Option<String>,
+    domain_pointer: &'a mut Option<String>,
 }
 
 impl<'de> DeserializeSeed<'de> for UniqueValue<'_> {
     type Value = Value;
     fn deserialize<D: serde::Deserializer<'de>>(self, decoder: D) -> Result<Value, D::Error> {
-        decoder.deserialize_any(self)
+        let Self {
+            pointer,
+            duplicate,
+            domain_pointer,
+        } = self;
+        let result = decoder.deserialize_any(Self {
+            pointer: pointer.clone(),
+            duplicate,
+            domain_pointer: &mut *domain_pointer,
+        });
+        if result.is_err() && domain_pointer.is_none() {
+            *domain_pointer = Some(pointer);
+        }
+        result
     }
 }
 
@@ -525,6 +555,7 @@ impl<'de> Visitor<'de> for UniqueValue<'_> {
         while let Some(value) = seq.next_element_seed(UniqueValue {
             pointer: format!("{}/{}", self.pointer, values.len()),
             duplicate: self.duplicate,
+            domain_pointer: self.domain_pointer,
         })? {
             values.push(value);
         }
@@ -541,6 +572,7 @@ impl<'de> Visitor<'de> for UniqueValue<'_> {
             let value = map.next_value_seed(UniqueValue {
                 pointer,
                 duplicate: self.duplicate,
+                domain_pointer: self.domain_pointer,
             })?;
             values.insert(name, value);
         }
