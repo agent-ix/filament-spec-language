@@ -244,7 +244,7 @@ fn emitted_source_place_member_type_matches_its_target_node_identity() {
     );
 }
 
-/// The actual checked and read-back declarations preserve optional records,
+/// The actual checked and read-back declarations preserve optional Clocks,
 /// positional bounds, tuple positions and union tags in the same full path.
 #[trace("FR-230-AC-49", "TC-3084")]
 #[test]
@@ -254,31 +254,48 @@ fn source_and_bare_clock_templates_preserve_optional_indexed_tuple_and_case_path
     };
     use fsl_semantics::model::clock_reference::normalization::SourceDeclarations;
 
-    let source = "language \"ix:native\" edition \"1-draft\";\n\
-        profile T = \"filament.temporal.complete/v1\";\n\
-        dimension Time; unit ms : Time = rational(1, 1);\n\
-        record W { c: Clock; }\n\
-        type AW = W; tuple Pair(AW, Clock);\n\
-        union U { armed(Clock), idle }\n\
-        object Order { maybe: Option<Clock>; q: Sequence<Option<Clock>>[0, 2]; pair: Pair; u: U; }\n\
-        time Order dense unit ms;\n";
-    let packages = fsl_semantics::model::intake::package_input(std::iter::empty::<&[u8]>())
-        .expect("source-only input");
+    // Optional Clock fields use the admitted Model definition, whose
+    // presence/multiplicity are authoritative. Source-owned aggregate
+    // paths exercise the independently admitted record/tuple/union shapes.
+    let mut document: Value = serde_json::from_slice(&clocked_document_with(false))
+        .expect("the checked Model fixture is JSON");
+    let fields = document["types"][1]["fields"]
+        .as_array_mut()
+        .expect("fields");
+    let optional = fields
+        .iter_mut()
+        .find(|field| field["name"] == "x")
+        .expect("x");
+    optional["presence"] = json!("optional");
+    let mut sequence = optional.clone();
+    sequence["identity"] = json!("ix://example/config-version/ConfigVersion/q");
+    sequence["name"] = json!("q");
+    sequence["origin"]["generated"]["generatorIdentity"] = sequence["identity"].clone();
+    sequence["multiplicity"] = json!({"lower": 0, "upper": 2, "ordered": true, "unique": false});
+    fields.push(sequence);
+    let document = serde_json::to_vec(&document).expect("JSON");
+    let packages = fsl_semantics::model::intake::package_input([document.as_slice()])
+        .expect("actual Model input");
+    let source = clocked_unit(
+        "record W { c: Clock; }\n\
+         type AW = W; tuple Pair(AW, Clock);\n\
+         union U { armed(Clock), idle }\n\
+         object Order { pair: Pair; u: U; }\n\
+         time Order dense unit ms;\n",
+    );
     let graph = assemble_with_models(source.as_bytes(), &packages)
-        .expect("source declarations assemble")
+        .expect("Model and source declarations assemble")
         .check(
             CheckMode::Linked,
             CheckingLimits::default(),
             &fsl_semantics::check::test_support::ZeroRewardEvaluator,
         )
-        .unwrap_or_else(|refusals| panic!("source declarations check: {refusals:?}"));
+        .unwrap_or_else(|refusals| panic!("declarations check: {refusals:?}"));
     let declarations = SourceDeclarations::from_graph(&graph).expect("actual source provenance");
-    let [timed] = graph.timed_models() else {
-        panic!("one source timed model");
-    };
-    let mut source_templates = timed
-        .clocks()
+    let mut source_templates = graph
+        .timed_models()
         .iter()
+        .flat_map(|timed| timed.clocks().iter())
         .map(|clock| {
             declarations
                 .clock_template(clock)
@@ -313,12 +330,9 @@ fn source_and_bare_clock_templates_preserve_optional_indexed_tuple_and_case_path
         bare_table.entries().collect::<Vec<_>>(),
         "both routes retain the same complete original member chains"
     );
-    let [timed] = timed_models.as_slice() else {
-        panic!("one admitted timed model");
-    };
-    let mut bare_templates = timed
-        .clock_places
+    let mut bare_templates = timed_models
         .iter()
+        .flat_map(|timed| timed.clock_places.iter())
         .map(|place| {
             declarations
                 .clock_template(place)
