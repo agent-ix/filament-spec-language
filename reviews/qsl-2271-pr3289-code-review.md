@@ -153,6 +153,8 @@ Checked source namespace resolution and protocol declaration ownership against d
 | FND-002 | still-open | Newly exposed malformed-subject branches differ from source at frozen 5d3de7a. Align the new deadlock route with source while retaining race behavior, and verify both absent and mismatched protocol subjects. |
 | FND-002 | fixed | The DeadlockFreedom-only guard returns shared invalid_value for missing and mismatched protocol subjects before the old race-path branches. Verified statically at 49f66b3. |
 | FND-003 | still-open | Valid package requests fail S4 admission; the round-2 delta does not change that path. Runtime parity and the new invalid-subject test remain unverified. |
+| FND-003 | still-open | Round 3 selects the required terminal-fixture closure and removes the traced unrelated variant trigger; actual admission and all five focused runtime tests remain pending. The general variant-reader gap remains architecture-owned outside this slice. |
+| FND-003 | fixed | Required type and construct closure selected at 5cb84ef; Draco reports all five exact-head terminal tests passed, exit 0. General variant-reader limitation remains architecture-owned outside this slice. |
 
 ## Round 1 verdict
 
@@ -175,3 +177,31 @@ New runtime evidence supplied by the lead: all four valid terminal tests at 5d3d
 ## Round 2 verdict
 
 FAIL; not mergeable. FND-002 is statically fixed; FND-003 blocks runtime acceptance.
+
+## Disposition round 3 scope
+
+Reviewed executable delta 49f66b37fbcc62139af3e520f8e7b5c1eb08faed..333f12ccd5697dcfab1f021b1a4d02c63cde8cb3: only terminal_request's domain fixture selection changes. It retains the existing shared model's Level, Cell and Idle declarations, with their full fields and operations; populations and snapshots remain unchanged. This is a selection from the existing fixture, not a replacement semantic implementation or copied model definition.
+
+Checked the required closure in fill::document: Cell.v and Cell.w require Level; Cell operations take Cell peers and return native Boolean; Cell has no supertypes or relationships. Idle is required because the unchanged idles population and initialization snapshot name it. The removed record and variant declarations are unused by the source unit, captures, static role, attempt contracts, finish Boolean, selected populations and snapshots. The valid blocked attempt still has false TwoPre, and the completed program remains an empty sequence. All explicit result, diagnostic, byte-refusal, deleted-source replay, full item and exit assertions are preserved. No next deterministic failure was identified by this static inspection.
+
+The lead reports the original S4 refusal traced to the shared model's complete variant projection in pinned Contract IR 7b76c8b (runtime_type_projection:891), with an existing bare_slots reproduction at 2094. Architecture accepts this bounded terminal-fixture closure and owns placement of that general reader gap. This review does not treat the fixture selection as fixing the general reader limitation; no reader edit or dependency pin changes here.
+
+The five focused terminal tests (including invalid-subject parity) on 333f12c remain pending with Draco. No Cargo, runtime or matrix command ran here, and the prior S4 failures are not replaced by an assumed pass. The invalid-subject test uses the same narrowed fixture and must still cross S4 before its resolver assertions. QSL-2271 remains In Progress for remaining families.
+
+## Round 3 verdict
+
+CONDITIONAL static fixture review; not mergeable until the five focused runtime tests succeed and required gates are satisfied. FND-003 remains open pending that evidence. FND-002 remains statically fixed. No new finding in this delta.
+
+## Disposition round 4 scope
+
+Reviewed fixture correction 333f12ccd5697dcfab1f021b1a4d02c63cde8cb3..5cb84ef9e24d5ef94d32619dd447b87f406190d4: terminal_request now filters model.constructs to value_type, object_type and population alongside the prior type selection. These are exactly the kinds instantiated by Level, Cell/Idle and the retained cells/idles populations. record_value_type and variant_type have no remaining instance. The previous static closure assessment missed the parser rule forbidding those unused construct declarations: Draco's five tests on 333f failed source I1 for that reason before terminal evaluation.
+
+All semantic and refusal assertions remain unchanged. No further deterministic fixture failure was identified by static inspection of construct/type/member/operation/population/snapshot references. No reader, source evaluator, dependency or admission workaround changes. FND-003 remains open pending actual five-test evidence on 5cb84ef. No Cargo/runtime/matrix checks ran here. QSL-2271 remains In Progress.
+
+## Round 4 runtime evidence and final verdict
+
+Draco reports the exact frozen head 5cb84ef9e24d5ef94d32619dd447b87f406190d4 passed all five package_terminal_ test functions: 5 passed, 0 failed, 0 ignored, 2508 filtered, exit 0. Evidence reported by the lead: draco private /tmp/qsl-3289-5cb8.log. This is delegated runtime evidence, not a local rerun or direct access to Draco's filesystem. The fifth test includes missing/mismatched protocol-subject and capacity refusal assertions, so FND-002 now also has runtime confirmation.
+
+FND-003 is fixed for this bounded terminal-family slice: the shared model is selected to its required type and construct closure, avoiding unrelated complete-variant projection, and all source/package terminal, ordered-capture, completed-instance, replay and invalid-subject oracles now pass. The general variant-reader limitation remains architecture-owned and is not claimed fixed by this fixture selection.
+
+The bounded PR review is mergeable, with no open review finding. QSL-2271 remains In Progress for remaining protocol families. No Cargo/runtime/matrix rerun was performed by this reviewer. Repository-wide matrix/full-tree gap assurance is still not assessed; no repository-wide gap PASS is claimed.
