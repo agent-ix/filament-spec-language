@@ -180,9 +180,9 @@ fn package_channel_send_runs_the_complete_loss_head_body() {
 #[trace("TC-2958", "FR-940-AC-6", "FR-206-AC-7", "FR-206-AC-12")]
 #[test]
 fn package_channel_send_preserves_unordered_overflow_records() {
-    let sends = channel_send("First", "first", "first.n = k.v")
-        + &channel_send("Second", "second", "second.n = first.n + 1")
-        + &channel_send("Third", "third", "third.n = second.n + 1");
+    let sends = channel_send("First", "sent_a", "sent_a.n = k.v")
+        + &channel_send("Second", "sent_b", "sent_b.n = sent_a.n + 1")
+        + &channel_send("Third", "sent_c", "sent_c.n = sent_b.n + 1");
     for (overflow, outcome, displaced) in [
         ("reject", "rejected", None),
         ("loss new", "lost", None),
@@ -227,7 +227,7 @@ fn package_channel_send_preserves_capacity_and_constraint_causes() {
         (
             "full",
             "block",
-            "second.n = 1",
+            "sent_b.n = 1",
             "refuted",
             Some("full-queue"),
         ),
@@ -238,11 +238,11 @@ fn package_channel_send_preserves_capacity_and_constraint_causes() {
             "refuted",
             Some("constraint"),
         ),
-        ("loss", "loss head", "second.n = 1", "proved", None),
+        ("loss", "loss head", "sent_b.n = 1", "proved", None),
     ] {
         let ws = Workspace::new(&format!("package-channel-send-{name}"));
-        let sends = channel_send("First", "first", "first.n = 0")
-            + &channel_send("Second", "second", constraint);
+        let sends = channel_send("First", "sent_a", "sent_a.n = 0")
+            + &channel_send("Second", "sent_b", constraint);
         let path =
             channel_send_request(&ws, 1, overflow, "exactly-once-premise", &sends, "closing");
         let item = channel_send_parity(&ws, &path, expected);
@@ -262,8 +262,8 @@ fn package_channel_send_preserves_capacity_and_constraint_causes() {
 #[test]
 fn package_channel_send_preserves_replay_refusal_code_and_cause() {
     let ws = Workspace::new("package-channel-send-replay-bound");
-    let sends = channel_send("First", "first", "first.n = 0")
-        + &channel_send("Second", "second", "second.n = 1");
+    let sends = channel_send("First", "sent_a", "sent_a.n = 0")
+        + &channel_send("Second", "sent_b", "sent_b.n = 1");
     let path = channel_send_request(&ws, 1, "block", "exactly-once-premise", &sends, "closing");
     let (package_path, bytes) = package_request(&ws, &path);
     let below = u64::try_from(bytes.len() / 2).expect("the package length");
@@ -291,7 +291,7 @@ fn package_channel_send_preserves_replay_refusal_code_and_cause() {
 }
 
 /// Extra or malformed capacity bindings refuse with identical typed records.
-#[trace("TC-2958", "FR-940-AC-6", "FR-850-AC-11")]
+#[trace("TC-2958", "FR-940-AC-6")]
 #[test]
 fn package_channel_send_invalid_capacity_records_match_source() {
     for (name, value, cause) in [
@@ -320,6 +320,12 @@ fn package_channel_send_invalid_capacity_records_match_source() {
             "{item}"
         );
         assert_eq!(item["record"]["diagnostic"]["cause"], cause, "{item}");
+        if name == "unknown" {
+            assert_eq!(
+                item["record"]["diagnostic"]["detail"]["capacity"], "extra",
+                "{item}"
+            );
+        }
         let (package_path, _) = package_request(&ws, &path);
         std::fs::remove_file(ws.path("program.fsl")).expect("remove source before package refusal");
         let package = analyze(&package_path);
