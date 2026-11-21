@@ -510,7 +510,7 @@ impl<'de> DeserializeSeed<'de> for UniqueValue<'_> {
             duplicate,
             domain_pointer,
         } = self;
-        let result = decoder.deserialize_any(Self {
+        let result = decoder.deserialize_any(UniqueValue {
             pointer: pointer.clone(),
             duplicate,
             domain_pointer: &mut *domain_pointer,
