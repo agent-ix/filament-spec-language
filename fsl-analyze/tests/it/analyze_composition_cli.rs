@@ -861,7 +861,6 @@ fn a_refuted_premise_keeps_its_own_record() {
 
 /// FR-1044-AC-10: with no `items`, the composition is a default item in
 /// source order, then the subject's derived item, then the premise items.
-#[trace("FR-1044-AC-10")]
 #[test]
 fn a_composition_is_a_default_item() {
     let ws = Workspace::new("compose-ac10");

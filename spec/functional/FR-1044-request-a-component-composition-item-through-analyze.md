@@ -302,10 +302,13 @@ AC below stays as written and open on QSL-2739.
   composition term's slots or component packages. A request with no `items`
   is refused whole at the request stage as
   `unsupported_construct`/`not-yet-implemented` naming the `composition`
-  rule, exit 20, with no item. An item naming a composition or a name no row
-  carries is refused the same way naming the `unnamed-claim` family, never as
-  `unknown-claim`, because the package carries no name row for a composition.
-  A name a row does carry resolves as usual. These typed results are public;
+  rule, exit 20, with no item. An item whose name stays unresolved after
+  ordinary claim, declaration and model-alias resolution, which includes a
+  composition's name, is refused the same way naming the `unnamed-claim`
+  family, never as `unknown-claim`, because the package carries no name row
+  for a composition. A name an ordinary row carries resolves as usual, a
+  non-claim declaration name is refused as `declaration`, and a derived item
+  whose model name does not match settles `model-alias`. These typed results are public;
   the source/package parity of AC-10 stays open and is deferred to the
   package-consumer API lane, which owns the package form.
 - **Text mode.** Text rendering of the outcome belongs to the external driver.
