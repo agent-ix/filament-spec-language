@@ -18,6 +18,9 @@ use crate::timed_model::{
 };
 use fsl_semantics::model::intake::meaning;
 
+#[path = "../../../tests/support/ring_queue.rs"]
+mod ring_queue;
+
 /// `ix://example/config-version/<name>`.
 fn package(name: &str) -> String {
     format!("ix://{PACKAGE}/{name}")
@@ -3818,6 +3821,57 @@ fn a_population_ref_lowers_with_the_binder_as_owner() {
             );
         }
     }
+}
+
+/// FR-1040-AC-3 (refinement-row form), FR-230 "Clock references": in a
+/// refinement row over `calls`, `only(c in C::calls where c.n = 1: ref(c.x))`
+/// and `count(c in C::calls where ref(c.x) = ref(self.x)) >= 0` check and lower
+/// with the binder `c` as the owner term of the `clock_reference.ref`
+/// application, whose place is the timed `Call`'s `clock_place` node.
+#[trace("TC-3084", "FR-1040-AC-3", "FR-230-AC-11")]
+#[test]
+fn a_refinement_row_ref_lowers_with_the_binder_as_owner() {
+    use ring_queue::{check_clock_refinement, clock_refinement};
+    for row in [
+        "busy = only(c in C::calls where c.n = 1: ref(c.x)) = ref(self.x);",
+        "busy = count(c in C::calls where ref(c.x) = ref(self.x)) >= 0;",
+    ] {
+        let graph = check_clock_refinement(&clock_refinement(row))
+            .unwrap_or_else(|refusals| panic!("{row}: {refusals:?}"));
+        let refs = applications_of(&graph, "filament.op.clock_reference.ref");
+        assert!(
+            refs.iter().any(|arguments| {
+                matches!(arguments.as_slice(), [place, owner, ..]
+                    if form_of(&graph, place) == "clock_place"
+                        && form_of(&graph, owner) == "parameter"
+                        && parameter_name(&graph, owner) == "c")
+            }),
+            "{row}: a ref of the member's clock place owned by the binder c in {refs:?}"
+        );
+        let places = graph.timed_model("C").expect("the timed model").clocks();
+        assert_eq!(places.len(), 1, "{row}: the member's one clock place");
+    }
+}
+
+/// FR-1040-AC-3 (refinement-row form), negative: a refinement row whose
+/// population form reads the clock outside a constraint refuses
+/// `invalid_timed_model`/`clock-read-outside-constraint`, as a state row does.
+#[trace("TC-3084", "FR-1040-AC-3", "FR-230-AC-11")]
+#[test]
+fn a_refinement_row_clock_read_outside_a_constraint_is_refused() {
+    use fsl_semantics::check::{CheckCause, TemporalCause};
+    use ring_queue::{check_clock_refinement, clock_refinement};
+    let row = "busy = sum(c in C::calls: c.x) >= 0;";
+    let refusals =
+        check_clock_refinement(&clock_refinement(row)).expect_err("the row reads a clock");
+    assert!(
+        refusals.iter().any(|refusal| matches!(
+            &refusal.cause,
+            CheckCause::Temporal(cause)
+                if matches!(**cause, TemporalCause::ClockReadOutsideConstraint { .. })
+        )),
+        "{refusals:?}"
+    );
 }
 
 /// FR-1040-AC-6: the negative population forms. A clock read as the summand

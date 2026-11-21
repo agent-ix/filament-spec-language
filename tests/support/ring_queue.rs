@@ -489,3 +489,88 @@ pub fn refused(body: &str) -> Vec<Refused> {
         Err(refusals) => refusals,
     }
 }
+
+/// The timed concrete package `example/clock-calls`: `Call { n, x }` with the
+/// clock `x`, over the population `calls`. The refinement-row fixture of
+/// FR-1040-AC-3 (TC-3084): the same `Call` shape as FSpec FR-415-AC-15's.
+pub const CLOCKS: &str = "example/clock-calls";
+
+/// The package `example/clock-calls`: a `Call` with the clock field `x`.
+pub fn clock_calls() -> Vec<u8> {
+    let digit = node(CLOCKS, "Digit");
+    let mut clock = single(CLOCKS, "Call", "x", "ix://filament/native/Clock");
+    clock["multiplicity"]["unique"] = json!(false);
+    document(
+        CLOCKS,
+        vec![
+            bounded(CLOCKS, "Digit", 1),
+            object_type(
+                CLOCKS,
+                "Call",
+                vec![single(CLOCKS, "Call", "n", &digit), clock],
+                Vec::new(),
+            ),
+        ],
+        vec![population(CLOCKS, "calls", "Call")],
+    )
+}
+
+/// The `Queue` object row's field rows of a refinement from the timed `Call`
+/// to the abstract `Queue`, under `time C dense unit ms`.
+pub fn clock_refinement(rows: &str) -> String {
+    format!(
+        "dimension Time;\nunit s : Time = rational(1, 1);\n\
+         unit ms : Time = rational(1, 1000) * s;\n\
+         time C dense unit ms;\n\
+         refinement CallsAreQueue using inf abstract Q concrete C {{\n\
+         population Q::queues from C::calls;\n\
+         object Q::Queue from C::Call {{ {rows} }}\n\
+         }}"
+    )
+}
+
+/// The unit holding `body` over the abstract package and the timed concrete
+/// package `C`, checked, or its refusals.
+pub fn check_clock_refinement(body: &str) -> Result<CheckedGraph, Vec<CheckRefusal>> {
+    let (queue, calls) = (queue_spec(), clock_calls());
+    let mut packages = BTreeMap::new();
+    let mut selections = String::new();
+    for (alias, identity, bytes) in [("Q", QUEUE, &queue), ("C", CLOCKS, &calls)] {
+        selections.push_str(&format!("model {alias} = {identity:?};\n"));
+        packages.extend(package_input([bytes.as_slice()]).unwrap());
+    }
+    let text = format!(
+        "language \"ix:native\" edition \"1-draft\";\n\
+         profile v = \"filament.value.complete/v1\";\n\
+         profile m = \"filament.model.complete/v1\";\n\
+         profile inf = \"filament.temporal.infinite-trace/v1\";\n\
+         profile t = \"filament.temporal.complete/v1\";\n\
+         {selections}{body}\n"
+    );
+    let parsed = fsl_cst::parse(
+        fsl_foundation::SourceIdentity::new("test", "tc-3084"),
+        "unit.native",
+        text.as_bytes(),
+        fsl_cst::Limits::default(),
+    )
+    .expect("S1 admits the unit");
+    assert_eq!(parsed.diagnostics(), [], "the unit is admissible: {text}");
+    let built = fsl_forms::build_unit(&parsed).expect("S2 builds the unit");
+    let selected = admit_unit(
+        &built.selections().models,
+        &packages,
+        ModelNormalizationLimits::default(),
+    )
+    .unwrap_or_else(|refusal| panic!("I1 refused: {refusal:?}"));
+    PackageDeclarations::assemble(
+        parsed.source().reference().clone(),
+        "fixture".to_string(),
+        built,
+        selected,
+        vec![],
+    )
+    .unwrap_or_else(|refusal| panic!("{body}: the unit assembles: {refusal:?}"))
+    .with_unwritten_refinements()
+    .with_unwritten_timed_members()
+    .check(CheckMode::Linked, CheckingLimits::default(), &NoRewards)
+}
