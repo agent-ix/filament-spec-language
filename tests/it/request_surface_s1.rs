@@ -331,6 +331,7 @@ fn run_clause_refusal(path: &Path) -> (Value, fsl_replay::spine::ClauseRunRecord
     (wire, *record)
 }
 
+#[allow(clippy::too_many_arguments, reason = "the refusal assertion independently compares identity, pointer, catalog pair, provenance, and field")]
 fn assert_document_refusal(
     record: &fsl_replay::spine::ClauseRunRecord,
     expected_identity: &Value,

@@ -22,7 +22,7 @@ use fsl_semantics::model::normalize::{self, EffectiveView, ModelRefusalCause, No
 use ix_trace_rs::trace;
 
 fn key(name: &str) -> DeclarationKey {
-    DeclarationKey::fixture(&format!("ix://test/binding/{name}"))
+    DeclarationKey::fixture(format!("ix://test/binding/{name}"))
 }
 
 fn package(records: Vec<DomainPackageRecord>) -> DomainPackage {
