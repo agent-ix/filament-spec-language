@@ -63,6 +63,10 @@ an item carries alike, SHALL hold `code`, `kind` and `locus`. `locus` is
 always present and is exactly one of:
 
 - a source locus (FR-095) for a refusal located in a source unit;
+- the `located` imported-source point of [FR-267](FR-267-write-run-results-as-native-run-result-2.md#refusal-locus-wire)
+  for a refusal located at an imported declaration's retained FCD source point,
+  preserving its exact `sourceIdentity` URI, authored path and line/column
+  without inventing native source labels or byte offsets;
 - an artifact locus (FR-095) for a refusal located in an identified
   artifact;
 - a document locus for a refusal located in a JSON input document (a
@@ -89,6 +93,16 @@ Every non-null locus is one of the six tagged forms of FR-267's
 in a `native-run-result/2` document alike, so the strict reader of either
 document reads every locus its producer writes.
 
+This imported-source projection applies to both compilation and compilation
+reached through native `run`. When the refusal names an operation parameter,
+the adapter SHALL use that parameter's retained origin rather than the PLAN
+declaration's or program's source region. It SHALL use actual retained native
+provenance for a native span; the scheme of an imported `sourceIdentity` URI
+does not establish native provenance. FR-267 owns the two conditional `located`
+forms and their readback/refusal rules. If the parameter has no retained origin,
+its authored position is unavailable and the adapter SHALL NOT substitute a
+program location or a byte-zero point for it.
+
 ## Acceptance Criteria
 
 | ID | Criteria | Verification |
@@ -96,6 +110,7 @@ document reads every locus its producer writes.
 | FR-663-AC-1 | `OutcomeDocument::from_parse` over the `parse` operation's result for `tests/fixtures/spine-compile.native` with identity `agent-ix`/`test:parent` has `result` of kind `parsed` whose `source` is those labels, `path` the fixture path, `bytes` the fixture's byte count, and `usage` the four S1 settings in order with each `bound` the default and each `used` the count the parse reached, `s1.input_bytes` used equal to `bytes`. A unit holding `a < b < c` has a `parsed` result beside its `invalid_syntax` diagnostic. A parse with a blank label has `result` `null`. | Test (TC-1745) |
 | FR-663-AC-2 | Parsing the fixture twice gives equal `result` members; parsing it with `s1.tokens` set to its token count reports `used` equal to `bound` for `s1.tokens`. | Test (TC-1745) |
 | FR-663-AC-3 | A clause run over a current snapshot whose object `child` of population `config_history` lacks a required field `parent` refuses `invalid_runtime_input`/`missing-member` with a document locus naming the snapshot's labels, the pointer to `child`, `object` `{config_history, child}` and `member` `parent`; an unknown member `extra` on that object gives `unknown-member` with `member` `extra` and the pointer to it; a run whose request file is absent gives a refusal record whose `locus` is present and `null`. | Test (TC-1746) |
+| FR-663-AC-4 | For TC-1746's operation-parameter refusal with an imported FCD point, both the compile adapter and the native-run compile adapter write the imported `located` form with the exact URI, path and point, no bytes and no substituted program source-label pair. Changing program labels preserves that locus; removing the parameter origin leaves its authored position unavailable. An `ix://` URI without actual retained native provenance remains imported. | Test |
 
 ## Dependencies
 

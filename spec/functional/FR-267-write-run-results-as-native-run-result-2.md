@@ -235,7 +235,7 @@ the same way in either document.
 | `kind` | Members beside `kind` | What it names |
 | --- | --- | --- |
 | `region` | `source`, a closed `{authority, identity}` object; `start` and `end`, unsigned byte offsets | the half-open byte region of a source unit (FR-095 `Locus::Region`) |
-| `located` | `file`, the authored source path; `span`, a closed `{start, end}` object whose endpoints are closed `{byte, line, column}` objects | a source region rendered over its source, as evaluation records it (FR-096) |
+| `located` | `file`, the authored source path; `span`, a closed `{start, end}` object; `sourceIdentity` present exactly for the imported-source point form below | a rendered native source region (FR-096), or an imported declaration's authored source point without byte offsets |
 | `occurrence` | `occurrence`, the display form of a kernel occurrence key | the regions the occurrence resolves to through the package source map (FR-095 `Locus::Occurrence`) |
 | `artifact` | `identity`, a closed `{authority, identity}` object holding the artifact's FR-001 labels (FR-095's artifact identity; no digest of the artifact is written); `pointer`, an RFC 6901 pointer into it | a position in an identified artifact, which names no source region (FR-095 `Locus::Artifact`) |
 | `document` | `document`, a closed `{authority, identity}` object or `null`; `path`, a string or `null`; `pointer`, an RFC 6901 pointer; `object`, a closed `{population, key}` object or `null`; `member`, a string or `null` | the failing member, or the object holding a missing member, of a JSON input document (FR-663) |
@@ -247,6 +247,40 @@ A `document` locus SHALL always carry all five members. `document` is
 `null` when the failing member belongs to no snapshot object, and `member`
 is `null` when the refusal names no member. Its `pointer` is the pointer
 into the document the refusal names, never a pointer into another document.
+
+The `located` row has exactly two closed forms. An ordinary native span has
+exactly `kind`, `file` and `span`; both endpoints have exactly `byte`, `line`
+and `column`, unchanged from the native span. An imported-source point has
+exactly `kind`, `file`, `sourceIdentity` and `span`; both endpoints have exactly
+`line` and `column`, with no `byte` member. Its `sourceIdentity` is the exact
+URI string retained from the declaration's FCD `origin.source.sourceIdentity`
+([FR-056](FR-056-admit-domain-package-model-declarations.md)),
+and `file` is the retained `origin.source.path`. For a point origin, both
+endpoints retain its `startLine` and `startColumn`; this repeats the known
+point without claiming an end position or byte range. Lines and columns are
+positive JSON integers in both forms. An imported-source point's identity is
+its exact `sourceIdentity`, not its path or the compiling program's labels.
+
+When projecting an imported declaration origin that supplies this point but
+no byte offsets or retained native source-label pair, the writer SHALL use
+the imported-source point form. The writer SHALL preserve the URI without
+normalizing it, deriving native labels from its scheme, or replacing it with
+the program's source identity. Native source labels come only from actual
+retained native provenance; a URI spelling, including `ix://`, does not
+establish that provenance. This form carries no native `{authority, identity}`
+pair. Any accompanying command-error source context SHALL omit that pair
+when it is unavailable for the imported source; it SHALL NOT attach the
+program's pair to the imported path and point. An unavailable byte offset
+SHALL be absent, never zero or `null` as a substitute.
+
+The strict readers of both result documents SHALL restore either `located`
+form without losing its identity or the absence of bytes. They SHALL refuse
+an imported point without `sourceIdentity`, a byte-bearing native span with
+`sourceIdentity`, a span with `byte` on only one endpoint, a `null` member,
+or any member outside the selected closed form. The imported form's two
+endpoints SHALL name the same point. These are existing located wire refusals,
+not new diagnostic codes or causes. A missing origin remains unavailable
+under FR-663; it does not acquire a point at byte zero.
 
 An `input` locus SHALL always carry all three members. `member` is `null`
 exactly when the position is the operand itself, and `pointer` is `null`
@@ -541,7 +575,7 @@ condition is false; the reader refuses `null` or a default in its place.
 | Completed value | `value` | FR-100 | Boolean for Boolean kind | Restore Boolean |
 | Completed value | `decimal` | FR-100 | Exact decimal string for integer kind | Restore integer |
 | Outcome locus | `file` | FR-100 | Authored source path | Restore source |
-| Outcome locus | `span` | FR-100 | Start and end byte, line and column | Restore exact span |
+| Outcome locus | `span` | FR-100; Refusal locus wire above | Native endpoints retain byte, line and column; imported-point endpoints retain line and column without bytes | Restore exact span, including unavailable bytes |
 | Outcome location | `origin` | FR-100 | Semantic origin variant | Restore origin |
 | Outcome location | `path` | FR-100 | Child-index array | Restore path |
 | Internal fault | `stage` | FR-100 | Stable fault stage | Restore stage |
@@ -693,6 +727,8 @@ disposition kinds the document carries are the ones FSpec FR-352 registers.
 | FR-267-AC-27 | Through `command::run`, the AC-25 run whose snapshot replaces the payload object of a field of `child` with one whose `kind` is the JSON number `1` refuses `invalid_runtime_input`/`wrong-value-kind` (FR-106 payload check 1) with a `document` locus: the snapshot's labels and path, `pointer` to that `kind` member, `object` `{config_history, child}` and `member` `kind`; it reads back equal. A replay request whose member names no member of its package refuses with a `document` locus whose `pointer` is that request member and whose `member` is its name, never an `artifact` locus; an absent request file keeps a `null` locus. | Test (TC-3081) |
 | FR-267-AC-28 | A closed, complete scope (a lasso or a closed finite trace) of a guarded clause with every guard false writes `temporal` as `{"kind":"inactive"}`, no disposition `truth` or `outcome`, and axes activation `inactive`, execution `completed` and truth `null`; the reader restores the inactive verdict. Adding disposition truth `true` refuses. | Test |
 | FR-267-AC-29 | A locus `{"kind": "input", "member": "selection.json", "operand": "handoff", "pointer": null}` in AC-25's refused document reads back equal, and so does `{"kind": "input", "member": null, "operand": "handoff", "pointer": null}`; the reader refuses, naming `disposition.refusal.locus`, an `input` locus without `member`, one without `pointer`, one whose `operand` is `null`, one carrying `identity` beside its three members, and one whose `pointer` is `selection` (not an RFC 6901 pointer); a locus whose `kind` is `file` is refused as outside the six rows. | Test (TC-3081) |
+| FR-267-AC-30 | Replacing AC-25's refusal locus with TC-3081's imported point reads back with the exact `sourceIdentity`, path and point and absent bytes. Its ordinary native-span control reads back with both byte offsets and no `sourceIdentity`. The same two loci in `filament-outcome/1` diagnostics read back equally. Neither reading derives native source labels from the imported URI. | Test |
+| FR-267-AC-31 | In each document kind, TC-3081's missing imported identity, identity on a byte-bearing span, one-sided byte, null identity, null byte, unequal point endpoints and added native source-pair mutations each refuse at the locus or its defective member. A byte-zero endpoint does not repair an imported point with unavailable bytes. | Test |
 | FR-267-AC-30 | FR-330-AC-19's model violations write canonical `native-run-result/2` documents and read back equal typed model-arm counterexamples, preserving initial index, typed binding, fairness, transition identities, state keys, loop boundary, interval and report `trace_position`; a later failing activation keeps its nonzero position. The initially terminal case round-trips its actual terminal key. A model `Undefined` document with no counterexample reads back with its reason and position; any carried undefined witness round-trips the model state-key envelope and actual truncated prefix. AC-13's snapshot and FR-330-AC-18's sample documents retain their observed-arm forms. | Test (TC-1160) |
 | FR-267-AC-31 | The strict reader refuses AC-30's model document with `initial_state` null, a decimal string, negative or above the `Count` maximum; with null or malformed typed-reference binding; with a document or sample step in either prefix or loop; with a mixed step, unknown member, missing transition member or malformed base64url state key; or with `trace_position` unequal to the report position. It refuses a carried undefined model envelope with `document` or `sample` instead of `state_key`, and AC-13's observed document with a model step, non-null initial state or non-null binding. Removing `counterexample` from a `violated` row still refuses. A well-shaped foreign key or binding is subjected to FR-128's semantic replay checks, independently of this structural read. | Test (TC-1160) |
 

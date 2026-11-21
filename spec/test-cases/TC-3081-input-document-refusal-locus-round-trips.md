@@ -14,7 +14,9 @@ relationships:
 
 Verify that a snapshot or model-header refusal written as `native-run-result/2`
 carries a `document` locus that the strict reader reads back, and that the
-reader keeps the locus kind set closed. Scope: FR-267-AC-25 to FR-267-AC-27 and FR-267-AC-29.
+reader keeps the locus kind set closed. Scope: FR-267-AC-25 to FR-267-AC-27
+and FR-267-AC-29 to FR-267-AC-31. The imported-point vectors also check the
+same locus contract in `filament-outcome/1` diagnostics.
 
 ## Test Procedure
 
@@ -37,6 +39,35 @@ reader keeps the locus kind set closed. Scope: FR-267-AC-25 to FR-267-AC-27 and 
    run with an absent request file.
 9. Read step 1's document with its locus replaced by each `input` locus of
    FR-267-AC-29, and by each defective `input` locus and the `file` kind.
+10. Replace step 1's refusal locus by the imported-point vector below, then
+    by the native-span control. Read each with the native-result reader.
+    Separately put each vector in an otherwise valid `filament-outcome/1`
+    diagnostic and read it with that document's reader. Re-encode each
+    restored document and read it again.
+11. In each document kind, mutate the imported point independently: remove
+    `sourceIdentity`; set it to `null`; add `byte: 0` to just `start`, just
+    `end`, then both; add `byte: null` to both; change `end.column` to 12;
+    add `source: {"authority":"agent-ix","identity":"program"}` beside
+    the locus members. Separately add `sourceIdentity` to the native-span
+    control. Read each mutated document.
+12. In the valid imported point, replace the URI by
+    `urn:example:invoice:model:v2` while retaining the path and point; then
+    use `ix://external/model` without supplying native provenance. Read and
+    re-encode each. Compare restored loci with the original.
+
+### Located vectors
+
+Imported point, with no native source-label pair or byte offsets:
+
+```json
+{"kind":"located","file":"models/invoice.fcd","sourceIdentity":"urn:example:invoice:model:v1","span":{"start":{"line":7,"column":11},"end":{"line":7,"column":11}}}
+```
+
+Ordinary native-span control, rendering the one-byte source `x`:
+
+```json
+{"kind":"located","file":"model.native","span":{"start":{"byte":0,"line":1,"column":1},"end":{"byte":1,"line":1,"column":2}}}
+```
 
 Tag the tests `#[trace("TC-3081", "<AC id>")]`.
 
@@ -59,3 +90,15 @@ Tag the tests `#[trace("TC-3081", "<AC id>")]`.
   never `artifact`; the absent-file refusal carries a `null` locus.
 - Step 9: the two `input` loci read back equal; each defective one and the
   `file` kind are refused naming `disposition.refusal.locus`.
+- Step 10: both forms read in both document kinds and re-encode without
+  losing any member or adding missing byte/source-label members. The
+  imported URI, path and point remain exact. The ordinary native control
+  retains its real byte zero and one, with no `sourceIdentity` added.
+- Step 11: every mutation is refused naming the locus or its defective
+  member. The original imported form cannot be repaired with fabricated
+  zero-byte members; adding both while retaining `sourceIdentity` is the
+  forbidden native-span-with-imported-identity shape.
+- Step 12: both URIs read and remain exact; each restored locus differs
+  from the original in source identity despite the equal path and point.
+  The `ix://` spelling remains the imported form and does not create a
+  native `{authority, identity}` pair.
