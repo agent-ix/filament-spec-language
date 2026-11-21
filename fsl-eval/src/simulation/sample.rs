@@ -112,29 +112,6 @@ type SampleResult<T, F> = Result<Option<Trace<T, F>>, EncodingRefusal>;
 ///
 /// [`EncodingRefusal`] when a state or transition identity reached during
 /// the run has no RFC 8785 encoding.
-pub(crate) fn sample<S: TransitionSystem>(
-    system: &S,
-    sampler: DefinitionRef,
-    seed: u64,
-    trace_index: u64,
-    max_steps: usize,
-    identity: IdentityLimits,
-    mut end: impl FnMut(&S::State) -> bool,
-) -> SampleResult<S::TransitionId, S::Finding> {
-    sample_using(
-        system,
-        SamplePlan {
-            sampler,
-            seed,
-            trace_index,
-            max_steps,
-            identity,
-        },
-        |state, _| end(state),
-        |state, _| expand(system, state, identity),
-    )
-}
-
 struct SamplePlan {
     sampler: DefinitionRef,
     seed: u64,
@@ -143,7 +120,7 @@ struct SamplePlan {
     identity: IdentityLimits,
 }
 
-fn sample_using<S: TransitionSystem>(
+fn sample<S: TransitionSystem>(
     system: &S,
     plan: SamplePlan,
     mut end: impl FnMut(&S::State, &StateKey) -> bool,
@@ -360,7 +337,7 @@ pub(crate) fn sample_request_using<S: TransitionSystem, R: Root>(
         });
     }
     check_requires_bound(request.domains, request.types, request.position_limit)?;
-    sample_using(
+    sample(
         system,
         SamplePlan {
             sampler: request.sampler.clone(),

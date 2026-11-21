@@ -4304,6 +4304,17 @@ fn write_run(
                     })
             })
             .flatten();
+        let mut axes = OutcomeAxes::of_record(record.value(), disposed);
+        if !disposed {
+            if let Some(super::Counterexample::StateGraph(graph)) = outcome
+                .counterexamples
+                .iter()
+                .find(|found| found.request_index == index)
+                .map(|found| &found.counterexample)
+            {
+                axes.settlement = Some(graph.record.basis);
+            }
+        }
         let mut item = item_document(
             written,
             ItemMembers {
@@ -4313,7 +4324,7 @@ fn write_run(
                 target,
                 detail: detail.cloned(),
                 scoped: echo.is_some_and(|echo| echo.scoped),
-                axes: OutcomeAxes::of_record(record.value(), disposed),
+                axes,
                 producer: record
                     .producer(targets.get(&index))
                     .map(|backend| backend.as_str().to_owned()),

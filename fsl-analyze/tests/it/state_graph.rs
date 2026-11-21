@@ -51,6 +51,58 @@ pub(crate) fn system<'w>(world: &'w World, keys: &[&str]) -> ModelSystem<'w> {
     ModelSystem::new(world.subject(keys, UNLIMITED).simulation).expect("admits")
 }
 
+/// Canonical expansion reuse preserves every draw, ordinal, state key,
+/// finding position and provenance of the public model sampler.
+#[trace("FR-166-AC-1", "FR-166-AC-3", "FR-166-AC-4")]
+#[test]
+fn keyed_model_walks_preserve_the_seeded_trace_and_step_limit() {
+    use fsl_eval::simulation::model::{
+        sample_model_walk, sample_model_walk_keyed, ModelWalkSettings, WalkMemo,
+    };
+    let world = config_world(REACHES_TWO, &[(0, 0)]);
+    let system = system(&world, AB);
+    let sampler =
+        fsl_foundation::selection::DefinitionRef::new("filament", "filament.simulation.sampler/v1")
+            .expect("sampler");
+    let memo = WalkMemo::new();
+    let cancel = Cancel::new();
+    for (seed, trace) in [(0, 0), (7, 3)] {
+        let ordinary = sample_model_walk(
+            &system,
+            0,
+            fsl_eval::simulation::BOUND_POSITIONS,
+            &sampler,
+            seed,
+            trace,
+            12,
+            None,
+            |_| false,
+        )
+        .expect("ordinary walk");
+        let keyed = sample_model_walk_keyed(
+            &system,
+            0,
+            ModelWalkSettings {
+                position_limit: fsl_eval::simulation::BOUND_POSITIONS,
+                sampler: &sampler,
+                seed,
+                trace,
+                max_steps: 12,
+                cancel: Some(&cancel),
+            },
+            &memo,
+            |_, _| false,
+        )
+        .expect("keyed walk");
+        assert_eq!(keyed, ordinary);
+        assert_eq!(keyed.steps.len(), 12);
+        assert_eq!(
+            keyed.provenance.as_ref().expect("provenance").stopped,
+            StopReason::StepLimit
+        );
+    }
+}
+
 /// Every reachable state of `world` over universe `keys`, by breadth-first
 /// enumeration of its `ModelSystem`, with its state key, and the
 /// number of edges.
