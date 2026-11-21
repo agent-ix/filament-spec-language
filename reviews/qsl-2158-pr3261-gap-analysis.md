@@ -46,3 +46,22 @@ FR-741-AC-2 is still partial after this PR. This PR adds the `long-run` kind acc
 - Reverse gap: the new public API (`check_probability_certificate_package`, `ProbabilityPackageRequest`, `ReplayPackage::name_and_sources`) is owned by FR-282-AC-20. The retry in `replay_refutation` is owned by FR-876-AC-2. No unowned behaviour was found. No stubs were found.
 - Semantic review: skipped (not requested). The reviewer's code review covers intent for the changed code.
 - Plan completion: not assessed
+
+## Dispositions
+
+Disposition pass 1 at `955174db08` (fix commits `8fa61c25ec`, `955174db08`), read from git objects; `quoin matrix` not re-run.
+
+| FND | Outcome | Reason |
+| --- | --- | --- |
+| FND-001 | fixed | probability_from_source.rs imports `ix_trace_rs::trace` and every attribute uses the `#[trace(..)]` form. |
+| FND-002 | fixed | The blank row before FR-201-AC-47 is deleted on the branch (see FND-006: main has since reintroduced the split). |
+| FND-003 | fixed | No reason claims a missing profile any more; each names QSL-2158 and the spec batch 5 profile (#3263) that defines it (FR-1041..1043). |
+| FND-004 | fixed | New `a_long_run_item_settles_with_a_long_run_certificate` runs the long-run item through `fsl analyze` and asserts `proved`, `accepted` and kind `long-run`. |
+| FND-005 | fixed | Both halves are fixed: code-review FND-003 (value 0) and FND-004 (package negatives). |
+
+## New findings (disposition pass 1)
+
+| ID | Severity | Summary | Refs |
+| --- | --- | --- | --- |
+| FND-006 | medium | The PR conflicts with main (GitHub `CONFLICTING`): main's #3263 rewrote FR-201's table (AC-47..56), and main still has the blank row (now between FR-201-AC-56 and FR-201-AC-47, main line 1307), so FND-002's fix is lost on a naive resolution. Fix: rebase onto current main, take main's FR-201, and delete the blank line at main:1307. | spec/functional/FR-201-check-a-probability-certificate.md:1307 (origin/main) |
+| FND-007 | low | Five ignore reasons say they "wait for the FR-201/FR-202 closed profile from spec batch 5 (FSL #3263)", but #3263 is merged on main, so after the rebase they wait on implementation, not spec. Fix: reword to "QSL-2158: FR-1041/FR-1042/FR-1043 (<form>) not implemented yet". | tools/fsl-probability-check/tests/it/certificate_kinds.rs:90, 104, 122; fsl-analyze/tests/it/exact_probabilistic_item.rs:603, 632 |

@@ -59,3 +59,19 @@ Of the 17 failures in log `-8`, one is caused by this PR: `bounded_raw_cycle_has
 | FND-007 | medium | QSL-2159: the maximizing retry runs only when `stopped.is_none()`, so the direct-state `until`/`always` forms never retry. An every-scheduler `always` claim over a unit without `random` lines can still settle `unsupported` on the same tie. QSL-2159's diagnosis names `StaysUp` (`always holds(s.up)`) and `CheckoutAvailable` (`always[0,10]`) among the affected claims. The retry is equally sound with `produce_witness_stopping`, because stopped states end the paths. Fix: retry in both arms, and add an `always` case without `random` to FR-876's tests. If this is out of scope, note the limitation on QSL-2159. | fsl-analyze/src/analyze/exact.rs:1884-1912 |
 | FND-008 | low | `product_action::product_key` admits instance and activation independently: a null `instance` with `"active"`, or an instance with a null activation, passes. FR-196 pairs them: an `on origin` key has both null, and an `on each` key has both set. Fix: require both null or both set. | fsl-replay/src/product_action.rs:355-362 |
 | FND-009 | low | The retry repeats the caller's `UnboundedError` to `ExactProbBuildIssue::Limit` mapping verbatim (exact.rs:1028-1050). Fix: factor one `unbounded_issue(error, limits)` helper. | fsl-analyze/src/analyze/exact.rs:1888-1910 |
+
+## Dispositions
+
+Disposition pass 1 at `955174db08` (fix commits `8fa61c25ec`, `955174db08`), read from git objects; no build or test run.
+
+| FND | Outcome | Reason |
+| --- | --- | --- |
+| FND-001 | fixed | bounded.rs reads the monitor at `[5]` and the model at `[4]` in both the raw-cycle filter and the alteration guard, so every alteration now applies. |
+| FND-002 | fixed | bounded_closure.rs asserts `parsed[4]` is the model and `parsed[5]` the monitor. |
+| FND-003 | fixed | New `the_refutation_without_random_has_value_zero` asserts the replayed witness mass is 1, so the event's value under that scheduler is 0. |
+| FND-004 | fixed | Three new refused cases: a provision recompiling to other bytes (`PackageMismatch`), zero sources and unreadable bytes, a wrong package name, and neither/both subjects. |
+| FND-005 | fixed | A stated `package_name` must equal the package's own name, otherwise `PackageName` is refused; tested. |
+| FND-006 | fixed | `PackageRead(ReadError)` and `Package(Box<ReplayRequestRefusal>)` keep typed causes; `PackageSources` is no longer labelled `conflicting_identity`. |
+| FND-007 | fixed | The retry runs in both arms; with `stopped` it maximizes `decide_until` over the open states; an `always` case without `random` is tested. |
+| FND-008 | fixed | `product_key` requires `instance` and `activation` both null or both set; tested by TC-3060. |
+| FND-009 | fixed | One `unbounded_failure` helper serves the solve and the retry. |

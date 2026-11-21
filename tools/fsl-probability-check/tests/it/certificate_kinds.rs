@@ -87,7 +87,7 @@ fn accepted_then_rejected(request: &Value, kinds: &[&str]) {
 /// fairness set: an `exact` certificate the checker accepts.
 #[trace("TC-2065", "FR-201-AC-51")]
 #[test]
-#[ignore = "QSL-2158: waits for the FR-201/FR-202 closed profile from spec batch 5 (FSL #3263): unbounded fair eventual"]
+#[ignore = "QSL-2158: FR-1041 (unbounded fair eventual) not implemented yet"]
 fn an_unbounded_fair_eventual_certificate_is_accepted() {
     let source = likely(
         "inf",
@@ -101,7 +101,7 @@ fn an_unbounded_fair_eventual_certificate_is_accepted() {
 /// certificates the checker accepts.
 #[trace("TC-2065", "FR-201-AC-51")]
 #[test]
-#[ignore = "QSL-2158: waits for the FR-201/FR-202 closed profile from spec batch 5 (FSL #3263): lower/upper value bounds"]
+#[ignore = "QSL-2158: FR-1042 (lower/upper value bounds) not implemented yet"]
 fn value_bounds_certificates_are_accepted() {
     let source = likely(
         "inf",
@@ -119,7 +119,7 @@ fn value_bounds_certificates_are_accepted() {
 /// accepted by the checker.
 #[trace("TC-2065", "FR-201-AC-51")]
 #[test]
-#[ignore = "QSL-2158: waits for the FR-201/FR-202 closed profile from spec batch 5 (FSL #3263): finite-horizon quantile; the claim is false as written (quantile 0.5 <= 3 on link: Pr(M<=3) = 13/27 < 1/2) and must change when implemented"]
+#[ignore = "QSL-2158: FR-1043 (finite-horizon quantile) not implemented yet; the claim is false as written (quantile 0.5 <= 3 on link: Pr(M<=3) = 13/27 < 1/2) and must change when implemented"]
 fn a_finite_horizon_quantile_certificate_is_accepted() {
     let source = likely(
         "ev",

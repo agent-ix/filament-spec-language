@@ -600,7 +600,7 @@ fn a_rejected_check_builds_no_proved_record() {
 /// settles `refuted` after replay.
 #[trace("TC-638", "FR-203-AC-1")]
 #[test]
-#[ignore = "QSL-2158: waits for the FR-201/FR-202 closed profile from spec batch 5 (FSL #3263): finite-horizon measure/quantile (P95)"]
+#[ignore = "QSL-2158: FR-1043 (finite-horizon measure/quantile P95) not implemented yet"]
 fn p95_settles_proved_with_its_exact_value() {
     let claim = "probabilistic P95 using ev on M over (s: M::Server) under Steady on origin \
          { quantile 0.95 of (accumulate duration from holds(s.phase = 1) \
@@ -629,7 +629,7 @@ fn p95_settles_proved_with_its_exact_value() {
 /// `refuted` with its replayed undefined path, whatever the threshold.
 #[trace("TC-641", "FR-203-AC-5")]
 #[test]
-#[ignore = "QSL-2158: waits for the FR-201/FR-202 closed profile from spec batch 5 (FSL #3263): undefined-evaluation witness"]
+#[ignore = "QSL-2158: FR-202 (checked-subject undefined-evaluation witness entry) not implemented yet"]
 fn an_undefined_evaluation_settles_refuted_whatever_the_threshold() {
     for threshold in ["0.5", "0.01"] {
         let claim = format!(
