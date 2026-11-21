@@ -34,11 +34,12 @@ FR-498-AC-1 to FR-498-AC-8.
    re-emit; parse a claim moved, reformatted and commented, and one with a
    changed token, and compare their written content. Compile two claims
    written identically.
-3. Check an elapsed-time claim with an unsupported form and a punctual interval
-   in a non-admitted form, each sharing its name with another claim, and read
-   the settled causes' `{node, occurrence}` locus, and FR-498-AC-8's nested and
-   root punctual events and a `TimedFormShape` cause's member path and FR-331
-   wire locus.
+3. Check an elapsed-time claim and a punctual-interval claim, each sharing
+   its name with another claim, and read their exact verdicts and the
+   selected claim's `{node, occurrence}` locus; check FR-498-AC-8's bounded
+   punctual claim, its nested and root `eventually[2 ms, *]` claims and a
+   `TimedFormShape` cause on the form, and read each cause's member path and
+   FR-331 wire locus.
 4. Read the emitted package with the strict reader and check every row names
    a node of the emitted graph with that node's own `claim` occurrence.
 5. Emit FR-498-AC-5's three claims; read each claim node's body and path;
@@ -75,9 +76,11 @@ Vectors are referenced by FSpec case ID, never copied.
   identity; moving, reformatting and commenting leave written content equal
   and a changed token makes it differ; the identical twins have distinct
   identities.
-- Step 3: each cause carries the selected claim's `{node, occurrence}` locus
-  and no other claim's, and the member paths and wire loci FR-498-AC-8
-  states.
+- Step 3: the elapsed-time, punctual-interval and bounded punctual claims
+  settle exact verdicts against the selected claim's `{node, occurrence}`,
+  never `unsupported` and never `PunctualInterval`; each `TimedFormShape`
+  cause carries that locus and no other claim's, and the member paths and
+  wire loci FR-498-AC-8 states.
 - Step 4: the strict reader admits the package and every row joins its node
   and occurrence.
 - Steps 5 to 7: the bindings, paths, changed and unchanged `node_id`s and

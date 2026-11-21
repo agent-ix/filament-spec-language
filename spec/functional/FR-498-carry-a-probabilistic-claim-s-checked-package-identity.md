@@ -30,14 +30,13 @@ relationships:
 
 ## Description
 
-FSpec FR-421 reports its `timed-form-shape{locus}` and `punctual-interval{locus}`
-causes against a probabilistic claim's exact `{declaration NodeRef, occurrence}`
+FSpec FR-421 reports its verdicts and its `timed-form-shape{locus}` cause against a probabilistic claim's exact `{declaration NodeRef, occurrence}`
 resolved through `checked_term_data.probabilistic_claims` (FSpec FR-322-AC-297).
 [FR-186](./FR-186-check-probabilistic-claim-forms-at-s3.md)'s
 `CheckedProbabilisticClaim` holds only a `name`, a `span` and a normal form,
 neither of which is an identity (ADR-013 R-04), so the exact plan cannot name
 the claim of its exact timed verdicts (FR-204) or the locus of its
-`PunctualInterval` (FR-235) cause; QSL-1416 records that gap. This requirement owns carrying the claim's
+`TimedFormShape` cause; QSL-1416 records that gap. This requirement owns carrying the claim's
 checked-package identity from the producer to the carrier and to those causes.
 
 ## Inputs
@@ -185,10 +184,10 @@ checked-package identity from the producer to the carrier and to those causes.
   checked claim without exactly one corresponding node and occurrence. No
   protocol-location row is substituted for a claim row.
 - An exact timed verdict (FR-204) SHALL be reported against, and the
-  `PunctualInterval` cause (FR-235) SHALL carry, the claim's FR-331 locus `{node, occurrence}` (`node` the claim's declaration `NodeRef`). A claim with no identity (one checked outside an assembled package) SHALL keep the
+  `TimedFormShape` cause SHALL carry, the claim's FR-331 locus `{node, occurrence}` (`node` the claim's declaration `NodeRef`). A claim with no identity (one checked outside an assembled package) SHALL keep the
   refusal that carries the claim's `span` as its locus (FR-186) and SHALL NOT
   report a package locus built from the span.
-- The `TimedFormShape` and `PunctualInterval` causes of a claim with an
+- The `TimedFormShape` cause of a claim with an
   identity SHALL also carry a **member path**, `ClaimMemberPath { body,
   formulas }`, naming the part of the claim that is unsupported: `body` is
   the sequence of FSpec FR-640 binding names from the claim node's body to
@@ -202,6 +201,15 @@ checked-package identity from the producer to the carrier and to those causes.
   alone cannot name it. The member path is FSL's: the cause value and its
   diagnostic carry it, and the FSpec FR-331 cause wire keeps its
   `{node, occurrence}` locus unchanged, so a provider reads no new member.
+- A punctual interval in a probabilistic claim's event formula (`eventually[2 ms, 2 ms]`) is a bounded-window formula, which FSpec FR-421
+  "Admitted forms" decides exactly over the product with the claim's monitor
+  (FSpec FR-421-AC-7, FR-204-AC-14). A probabilistic claim therefore never
+  settles `unsupported` with a `PunctualInterval` cause: that disposition
+  belongs to a timed temporal clause the zone route cannot decide (FR-234,
+  FR-235, FSpec FR-416-AC-3), which is no probabilistic claim and carries
+  the temporal clause's own locus. The member path is carried by the
+  `TimedFormShape` cause of a form FSpec FR-421 does not admit, such as an
+  unbounded operator with a positive lower bound inside a bounded one.
 - The producer SHALL assign the claim node identities when it lowers the
   checked claims, before it writes any `probabilistic_claims` row: each row names
   the identity already associated with its emitted claim node, and writing
@@ -215,17 +223,17 @@ checked-package identity from the producer to the carrier and to those causes.
 | --- | --- | --- |
 | FR-498-AC-1 | A unit with two checked probabilistic claims that share a declared name and differ in written content (the FSL counterpart of FSpec FR-322-AC-297 `PC-01` and `PC-02`; one source cannot give two declarations equal spans), and a third claim with another name, emits exactly three local `claim` nodes with `semantic_form` `probabilistic_claim`, each with one declared `claim` occurrence, and exactly three matching `probabilistic_claims` rows with distinct declaration `NodeRef`s in ascending structural order. Every permutation of the three declarations keeps each claim's `{declaration, occurrence}` and emits byte-identical rows. | Test (TC-1288) |
 | FR-498-AC-2 | Each emitted claim node, its `probabilistic_claims` row and its associated `CheckedProbabilisticClaim` expose the same `{declaration, occurrence}`. Renaming a claim whose name no other claim shares changes its identity and no other claim's (renaming or editing a member of a same-named group may re-rank the rest of its group); moving, reformatting or commenting a claim leaves its written content, and so its identity, unchanged; changing a token of it changes its written content. Two claims written identically are two declarations with distinct identities. | Test (TC-1288) |
-| FR-498-AC-3 | An elapsed-time claim and a punctual-interval claim over a timed subject each settle an exact verdict (FR-204), never `unsupported`, reported against the selected claim's FR-331 locus `{node, occurrence}`, whose `node` is the claim's declaration `NodeRef` (FSpec FR-421-AC-7); a `PunctualInterval` cause on the zone route (FR-235) carries the same locus; for two claims with equal names the result names the selected claim only. | Test (TC-1288) |
+| FR-498-AC-3 | An elapsed-time claim and a punctual-interval claim over a timed subject each settle an exact verdict (FR-204), never `unsupported` and never a `PunctualInterval` cause, reported against the selected claim's FR-331 locus `{node, occurrence}`, whose `node` is the claim's declaration `NodeRef` (FSpec FR-421-AC-7); a `TimedFormShape` cause carries the same locus; for two claims with equal names the result names the selected claim only. | Test (TC-1288) |
 | FR-498-AC-4 | An emitted package has a one-to-one correspondence among each included `CheckedProbabilisticClaim`, one local `claim`/`probabilistic_claim` node with one declared `claim` occurrence, and one matching sidecar row; it has no unmatched node, row or checked claim, every row names a node already in the emitted graph with that node's own occurrence, and the strict reader admits the package. | Test (TC-1288) |
 | FR-498-AC-5 | `Service` (FR-740-AC-1) with a second workload `Bursty on Service` and claims `A` (`under Steady`), `B` (`under Bursty`) and `C` (`under every scheduler`), each `probability >= 0.5 [always[0,2] holds(true)]`, emits three claim nodes whose `subject` references the `example/service` `model_root`, whose `scheduler` binding and path operand name `Steady`'s node, `Bursty`'s node, and an empty fairness set (path `"every"` with no member), whose `reward` is empty and whose `distributions` are the two `Server::attempt` nodes. Renaming `A` to `B` gives two claims named `B` with different paths, each at ordinal 0. Changing one weight of `Steady` changes `A`'s `node_id` and row and leaves `B`'s and `C`'s byte-identical; changing one support weight of `d` changes all three. Writing `Steady`'s weight lines, and the three claims, in another order changes no byte. The strict reader admits each package. | Test (TC-1288) |
 | FR-498-AC-6 | Over `Service` with `reward duration on Server::request = 1 ms;` added, a claim of each form emits the `reward` binding of "Behavior": the two `duration` nodes, in ascending node-id order, for `probability >= 0.5 [accumulate duration from holds(s.phase = Busy) until holds(s.phase = Done) within 10 <= 5 ms]`, ADR-024's `P95`, `probability >= 0.5 [fraction holds(s.phase = Busy) over [0, 10] weighted by duration >= rational(1, 2)]`, `mean of (fraction holds(s.phase = Busy) over [0, 10] weighted by duration) >= 0.5`, `long_run_fraction holds(s.phase = Busy) weighted by duration >= 0.5` and `expected accumulate duration until holds(s.phase = Done) <= 3 ms`; an empty `reward` for `probability >= 0.5 [steps from holds(s.phase = Busy) until holds(s.phase = Done) within 10 >= 3]`, the same fraction and long-run fraction without `weighted by duration`, `[always[0,2] holds(true)]` and, under the infinite-trace profile, `[eventually holds(s.phase = Done)]`. Rewriting `duration` on `Server::request` to `2 ms` changes exactly the first group's claim `node_id`s. Over FR-740-AC-3's `time dense` unit with `delay Call::reply ~ discrete { 1 ms: 90, 3 ms: 10 };`, `expected elapsed until holds(P) <= 3 ms`, `quantile 0.5 of (elapsed from holds(P) until holds(Q) within 5 ms) <= 3 ms` and `long_run_fraction holds(P) weighted by delay >= 0.5`, for state predicates `P` and `Q` of that unit, each emit an empty `reward` and `delays` holding the one `delay_distribution` node, and changing the delay's weight 10 to 20 changes all three `node_id`s. The strict reader admits each package. | Test (TC-1288) |
 | FR-498-AC-7 | Over `Service` (FR-740-AC-1), a unit with ADR-024 §7.2's `P95` (`quantile 0.95 of (accumulate duration from holds(s.phase = Busy) until holds(s.phase = Done) within 10) <= 5 ms` under `Steady`, `on origin`, `with alpha 0.01, beta 0.01, indifference 0.01`) and `A` (`probability >= 0.5 [always[0,2] holds(true)]` under `Steady`) emits `P95`'s node with `form` `kind` `quantile`, `level` the rational `19/20`, `measure` `accumulate` with `within` the integer `10` and `from`/`until` the predicate nodes of `s.phase = Busy` and `s.phase = Done`, `bound` `at_most` the quantity `5` typed at the unit node of `ms`, `over` empty, `activation` `origin` and `confidence` `alpha`, `beta`, `indifference` each `1/100`; and `A`'s with `form` `probability`, `event` `formula` referencing the `temporal`/`formula` node of `always[0,2] holds(true)`, `bound` `at_least` `1/2` and `confidence` empty. Each change below, made alone, changes that claim's `node_id` and `probabilistic_claims` row and leaves the other claim's byte-identical: `P95`'s `5 ms` to `6 ms`, its `<=` to `>=`, its `0.95` to `0.9`, its `alpha 0.01` to `alpha 0.02`, and its confidence parameters removed; `A`'s `0.5` to `0.6`, its `>=` to `<=`, its event to `always[0,3] holds(true)`, its form to `long_run_fraction holds(true) >= 0.5`, and `on origin` to `on each (m: Service::Server)`; and `A` renamed `a`. Each spelling below leaves both claims' `node_id`s and bodies unchanged: `P95`'s threshold written `0.005 s`, its level written `rational(19, 20)`, its confidence written `beta 0.01, indifference 0.01, alpha 0.01`, `A`'s `0.5` written `rational(1, 2)`, `rational(2, 4)` and `decimal(50, 2)`, and whitespace and a comment added to each. A second claim named `A` with `0.6` has another path and ordinal 0; one written `rational(2, 4)` shares `A`'s path and takes ordinal 1. The strict reader admits each package. | Test (TC-1288) |
-| FR-498-AC-8 | Over the timed `Retx` subject, the claim `probability >= 0.99 [always[0 ms, 4 ms] eventually[2 ms, 2 ms] holds(c.late)]`, when its `PunctualInterval` cause is reported on the zone route (FR-235, FR-498-AC-3), carries the locus `{node, occurrence}` of its claim node and the member path `{body: [form, event, formula], formulas: [the formula node of always[0 ms, 4 ms] …, the formula node of eventually[2 ms, 2 ms] holds(c.late)]}`, whose first entry is the node the claim's `event` `formula` binding references and whose second is that node's operand; with `eventually[2 ms, 2 ms] holds(c.late)` as the whole event, `formulas` is that one node. A `TimedFormShape` cause on the claim's form carries `body` `[form]` and empty `formulas`. Each cause's FSpec FR-331 wire `locus` is exactly `{node, occurrence}`, with no member path member. | Test (TC-1288) |
+| FR-498-AC-8 | Over the timed `Retx` subject, the claim `probability >= 0.99 [always[0 ms, 4 ms] eventually[2 ms, 2 ms] holds(c.late)]`, whose punctual interval sits inside a bounded window, settles an exact verdict (FSpec FR-421 "Admitted forms") with no `PunctualInterval` and no `TimedFormShape` cause. The claim `probability >= 0.99 [always[0 ms, 4 ms] eventually[2 ms, *] holds(c.late)]`, which FSpec FR-421 does not admit, refuses with a `TimedFormShape` cause that carries the locus `{node, occurrence}` of its claim node and the member path `{body: [form, event, formula], formulas: [the formula node of always[0 ms, 4 ms] …, the formula node of eventually[2 ms, *] holds(c.late)]}`, whose first entry is the node the claim's `event` `formula` binding references and whose second is that node's operand; with `eventually[2 ms, *] holds(c.late)` as the whole event, `formulas` is that one node. A `TimedFormShape` cause on the claim's form carries `body` `[form]` and empty `formulas`. Each cause's FSpec FR-331 wire `locus` is exactly `{node, occurrence}`, with no member path member. | Test (TC-1288) |
 
 ## Dependencies
 
 - **Upstream:** FR-186 defines `CheckedProbabilisticClaim`; FR-204 owns the
-  exact timed verdicts and FR-235 owns `PunctualInterval`, the results this wires; FSpec FR-322 (FR-322-AC-297), TC-233 and FR-421 own the
+  exact timed verdicts and FR-235 owns `PunctualInterval` for timed temporal clauses, which no probabilistic claim reaches; FSpec FR-322 (FR-322-AC-297), TC-233 and FR-421 own the
   carrier, its reader checks and the locus.
 - **Resolved here:** this requirement defines emission of the local
   `claim`/`probabilistic_claim` node, its structural `NodeRef` (path and
