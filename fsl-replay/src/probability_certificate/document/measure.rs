@@ -429,7 +429,7 @@ fn enumerate(
     let [initial] = initial.as_slice() else {
         return Err(ProbabilityDocumentError::Unsupported);
     };
-    let read = |state| -> Result<Vec<bool>, ProbabilityDocumentError> {
+    let read = |state: &ModelSimState| -> Result<Vec<bool>, ProbabilityDocumentError> {
         let predicates = plan
             .predicates
             .iter()
@@ -460,8 +460,8 @@ fn enumerate(
     let (control, accumulator) = plan.control.start(&truths, meter).map_err(scalar_error)?;
     let control = control.ok_or(ProbabilityDocumentError::Malformed)?;
     let accumulator = accumulator.ok_or(ProbabilityDocumentError::Malformed)?;
-    let key_of = |state,
-                  control,
+    let key_of = |state: &ModelSimState,
+                  control: MonitorState,
                   accumulator: &Accumulator,
                   meter: &mut filament_exact::Meter,
                   storage: &mut u64| {
@@ -1000,26 +1000,6 @@ fn read_wire(
         },
         fairness: fairness::read(&objective.fairness, limits, cancel, meter, storage)?,
     };
-    let (lower, upper) = if payoff == MeasurePayoffKind::Shifted {
-        let level = objective
-            .level
-            .as_ref()
-            .ok_or(ProbabilityDocumentError::ObjectiveMismatch)?;
-        (
-            arithmetic(
-                filament_exact::RationalArithmetic::Negate(level),
-                meter,
-                cancel,
-            )?,
-            arithmetic(
-                filament_exact::RationalArithmetic::Subtract(&super::rational(1), level),
-                meter,
-                cancel,
-            )?,
-        )
-    } else {
-        (super::rational(0), super::rational(1))
-    };
     if wire.values.len() > limits.states || wire.ranking.len() > limits.states {
         return Err(exceeded(
             ProbabilityDocumentLimit::States,
@@ -1031,9 +1011,6 @@ fn read_wire(
     for row in wire.values {
         let state = decode_state(&row.state, limits, cancel, storage)?;
         let value = parse_rational(row.value, meter)?;
-        if value < lower || value > upper {
-            return Err(ProbabilityDocumentError::MalformedMember("values"));
-        }
         if values
             .last()
             .is_some_and(|previous: &ExactProbabilityValue| previous.state >= state)
@@ -1116,10 +1093,12 @@ fn read_wire(
 }
 
 /// Decode strict canonical finite-horizon measure evidence, without accepting it.
-pub fn read_measure_probability_certificate(
+fn decode_measure_probability_certificate(
     bytes: &[u8],
     limits: ProbabilityDocumentLimits,
     cancel: &Cancel,
+    meter: &mut filament_exact::Meter,
+    storage: &mut u64,
 ) -> Result<MeasureProbabilityDocument, ProbabilityDocumentError> {
     poll(cancel)?;
     if u64::try_from(bytes.len()).unwrap_or(u64::MAX) > limits.bytes {
@@ -1129,9 +1108,8 @@ pub fn read_measure_probability_certificate(
             u64::try_from(bytes.len()).unwrap_or(u64::MAX),
         ));
     }
-    let mut storage = 0;
     charge(
-        &mut storage,
+        storage,
         limits.storage_bytes,
         u64::try_from(bytes.len())
             .unwrap_or(u64::MAX)
@@ -1139,19 +1117,81 @@ pub fn read_measure_probability_certificate(
     )?;
     let wire: WireDocument =
         serde_json::from_slice(bytes).map_err(|_| ProbabilityDocumentError::Malformed)?;
-    let document = read_wire(
-        wire,
-        limits,
-        cancel,
-        &mut filament_exact::Meter::new(limits.accounting).with_cancel(cancel.clone()),
-        &mut storage,
-        0,
-    )?;
-    let canonical = encode(&document, limits, cancel)?;
+    let document = read_wire(wire, limits, cancel, meter, storage, 0)?;
+    let canonical = encode_with_storage(&document, limits, cancel, storage)?;
     if canonical != bytes {
         return Err(ProbabilityDocumentError::Noncanonical);
     }
     Ok(document)
+}
+
+/// Decode the strict closed profile and validate its terminal-payoff value range.
+/// Contextual checking compares the checked objective before this range test.
+pub fn read_measure_probability_certificate(
+    bytes: &[u8],
+    limits: ProbabilityDocumentLimits,
+    cancel: &Cancel,
+) -> Result<MeasureProbabilityDocument, ProbabilityDocumentError> {
+    let mut meter = filament_exact::Meter::new(limits.accounting).with_cancel(cancel.clone());
+    let document =
+        decode_measure_probability_certificate(bytes, limits, cancel, &mut meter, &mut 0)?;
+    validate_ranges(&document, limits, cancel, &mut meter)?;
+    Ok(document)
+}
+pub(super) fn identity(
+    bytes: &[u8],
+    limits: ProbabilityDocumentLimits,
+    cancel: &Cancel,
+) -> Result<ObligationIdentity, ProbabilityDocumentError> {
+    Ok(decode_measure_probability_certificate(
+        bytes,
+        limits,
+        cancel,
+        &mut filament_exact::Meter::new(limits.accounting).with_cancel(cancel.clone()),
+        &mut 0,
+    )?
+    .identity)
+}
+fn validate_ranges(
+    document: &MeasureProbabilityDocument,
+    limits: ProbabilityDocumentLimits,
+    cancel: &Cancel,
+    meter: &mut filament_exact::Meter,
+) -> Result<(), ProbabilityDocumentError> {
+    let (lower, upper) = if document.payoff == MeasurePayoffKind::Shifted {
+        let level = document
+            .objective
+            .level
+            .as_ref()
+            .ok_or(ProbabilityDocumentError::ObjectiveMismatch)?;
+        (
+            arithmetic(
+                filament_exact::RationalArithmetic::Negate(level),
+                meter,
+                cancel,
+            )?,
+            arithmetic(
+                filament_exact::RationalArithmetic::Subtract(&super::rational(1), level),
+                meter,
+                cancel,
+            )?,
+        )
+    } else {
+        (super::rational(0), super::rational(1))
+    };
+    for row in &document.values {
+        poll(cancel)?;
+        if row.value < lower || row.value > upper {
+            return Err(ProbabilityDocumentError::MalformedMember("values"));
+        }
+    }
+    if let Some(conditional) = &document.conditional {
+        if let Conditional::Ratio(numerator, denominator) = conditional.as_ref() {
+            validate_ranges(numerator, limits, cancel, meter)?;
+            validate_ranges(denominator, limits, cancel, meter)?;
+        }
+    }
+    Ok(())
 }
 
 struct Events<'a> {
@@ -1314,12 +1354,25 @@ fn encode(
     limits: ProbabilityDocumentLimits,
     cancel: &Cancel,
 ) -> Result<Vec<u8>, ProbabilityDocumentError> {
-    let admission = RefCell::new(writer::Admission::new(limits.storage_bytes, cancel));
+    encode_with_storage(document, limits, cancel, &mut 0)
+}
+fn encode_with_storage(
+    document: &MeasureProbabilityDocument,
+    limits: ProbabilityDocumentLimits,
+    cancel: &Cancel,
+    storage: &mut u64,
+) -> Result<Vec<u8>, ProbabilityDocumentError> {
+    let admission = RefCell::new(writer::Admission::with_used(
+        limits.storage_bytes,
+        cancel,
+        *storage,
+    ));
     let events = Events {
         document,
         text: writer::Text::new(limits, cancel),
     };
     let result = writer::encode_reserved(&events, limits.bytes, &admission);
+    *storage = admission.borrow().used();
     if let Some(error) = events
         .text
         .take_stop()
@@ -1603,7 +1656,18 @@ pub(super) fn check(
     limits: ProbabilityDocumentLimits,
     cancel: &Cancel,
 ) -> Result<ExactProbabilityCertificateCheck, ProbabilityDocumentError> {
-    let document = read_measure_probability_certificate(bytes, limits, cancel)?;
+    let mut meter = filament_exact::Meter::new(limits.accounting).with_cancel(cancel.clone());
+    let mut storage = 0;
+    let document = match decode_measure_probability_certificate(
+        bytes,
+        limits,
+        cancel,
+        &mut meter,
+        &mut storage,
+    ) {
+        Ok(document) => document,
+        Err(error) => return document_admission_error(error),
+    };
     if &document.identity != item {
         return Err(ProbabilityDocumentError::IdentityMismatch);
     }
@@ -1611,8 +1675,6 @@ pub(super) fn check(
         return Err(ProbabilityDocumentError::IdentityMismatch);
     }
     let claim = bind_claim(claims, item, cancel)?;
-    let mut meter = filament_exact::Meter::new(limits.accounting).with_cancel(cancel.clone());
-    let mut storage = 0;
     let plan = plan(
         system,
         claim,
@@ -1624,6 +1686,11 @@ pub(super) fn check(
     )?;
     if plan.objective != document.objective {
         return Err(ProbabilityDocumentError::ObjectiveMismatch);
+    }
+    if document.conditional.is_none() {
+        if let Err(error) = validate_ranges(&document, limits, cancel, &mut meter) {
+            return document_admission_error(error);
+        }
     }
     if let Some(conditional) = &document.conditional {
         let Conditional::Ratio(numerator, denominator) = conditional.as_ref() else {
@@ -1661,6 +1728,9 @@ pub(super) fn check(
                 &mut meter,
                 &mut storage,
             )?;
+            if let Err(error) = validate_ranges(part, limits, cancel, &mut meter) {
+                return document_admission_error(error);
+            }
             let graph_part = enumerate(
                 system,
                 claim,

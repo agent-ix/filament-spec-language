@@ -277,8 +277,11 @@ fn changed_objectives_full_keys_and_shifted_range_never_alias() {
     assert!(
         matches!(
             actual,
-            Err(fsl_replay::ProbabilityDocumentError::MalformedMember(
-                "values"
+            Ok(ExactProbabilityCertificateCheck::Rejected(
+                ProbabilityCertificateRejection {
+                    rule: ProbabilityCertificateRule::Malformed,
+                    at: ProbabilityCertificateLocus::Member("values")
+                }
             ))
         ),
         "{actual:?}"
@@ -397,4 +400,112 @@ fn measure_and_fraction_undefined_reads_replay_the_unadvanced_control() {
             "{replay:?}"
         );
     }
+}
+
+#[trace("TC-3152", "FR-1043-AC-7")]
+#[test]
+fn the_independent_measure_checker_preserves_caller_limits_and_cancellation() {
+    let world = World::new(&retry(&claim(
+        "Q",
+        "every scheduler",
+        &format!("quantile 0.4 of ({}) <= 2", steps()),
+    )));
+    let doc = proof(&world, "Q", ratio(3, 80));
+    let bytes = serde_json::to_vec(&doc).unwrap();
+    let system = ModelSystem::new(world.subject().simulation).unwrap();
+    let item = fsl_replay::probabilistic_claim_identity(world.claim("Q")).unwrap();
+    let limits = fsl_replay::ProbabilityDocumentLimits {
+        bytes: 1_000_000,
+        storage_bytes: 8_000_000,
+        states: 128,
+        edges: 1024,
+        scalar_bits: 128,
+        accounting: fsl_replay::AccountingLimits::default().0,
+    };
+    let run = |limits, cancel: &Cancel| {
+        fsl_replay::check_probability_certificate_document(
+            &system,
+            world.package.graph().probabilistic_model().claims(),
+            &item,
+            &bytes,
+            limits,
+            cancel,
+        )
+    };
+    let actual = run(limits, &Cancel::new());
+    assert!(
+        matches!(actual, Ok(ExactProbabilityCertificateCheck::Accepted(_))),
+        "valid baseline: {actual:?}"
+    );
+    for (offered, expected) in [
+        (
+            fsl_replay::ProbabilityDocumentLimits { bytes: 0, ..limits },
+            fsl_replay::ProbabilityDocumentLimit::Bytes,
+        ),
+        (
+            fsl_replay::ProbabilityDocumentLimits {
+                storage_bytes: 0,
+                ..limits
+            },
+            fsl_replay::ProbabilityDocumentLimit::StorageBytes,
+        ),
+        (
+            fsl_replay::ProbabilityDocumentLimits {
+                states: 0,
+                ..limits
+            },
+            fsl_replay::ProbabilityDocumentLimit::States,
+        ),
+        (
+            fsl_replay::ProbabilityDocumentLimits { edges: 0, ..limits },
+            fsl_replay::ProbabilityDocumentLimit::Edges,
+        ),
+    ] {
+        let actual = run(offered, &Cancel::new());
+        assert!(
+            matches!(actual,Err(fsl_replay::ProbabilityDocumentError::Limit { limit,.. }) if limit==expected),
+            "{expected:?}: {actual:?}"
+        );
+    }
+    for accounting in [
+        filament_exact::ScalarLimits {
+            work_units: 0,
+            ..limits.accounting
+        },
+        filament_exact::ScalarLimits {
+            integer_bits: 0,
+            ..limits.accounting
+        },
+        filament_exact::ScalarLimits {
+            result_units: 0,
+            ..limits.accounting
+        },
+    ] {
+        let actual = run(
+            fsl_replay::ProbabilityDocumentLimits {
+                accounting,
+                ..limits
+            },
+            &Cancel::new(),
+        );
+        assert!(
+            matches!(
+                actual,
+                Err(fsl_replay::ProbabilityDocumentError::Accounting(_))
+            ),
+            "{actual:?}"
+        );
+    }
+    let cancel = Cancel::new();
+    cancel.cancel(CancelCause::Deadline);
+    let actual = run(limits, &cancel);
+    assert!(
+        matches!(
+            actual,
+            Err(fsl_replay::ProbabilityDocumentError::Cancelled(
+                CancelCause::Deadline
+            ))
+        ),
+        "{actual:?}"
+    );
 }

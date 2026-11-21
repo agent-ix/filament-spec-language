@@ -2074,7 +2074,7 @@ pub(super) fn certificate_identity(
     cancel: &Cancel,
 ) -> Result<ObligationIdentity, ProbabilityDocumentError> {
     if profile_dispatch(bytes, limits, cancel)? == ProfileDispatch::Measure {
-        return Ok(measure::read_measure_probability_certificate(bytes, limits, cancel)?.identity);
+        return measure::identity(bytes, limits, cancel);
     }
     if profile_dispatch(bytes, limits, cancel)? == ProfileDispatch::LongRun {
         return long_run::certificate_identity(bytes, limits, cancel);
