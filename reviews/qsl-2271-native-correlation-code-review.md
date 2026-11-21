@@ -123,3 +123,33 @@ scope:
 ## Tool provenance
 
 /home/peter/.npm-global/bin/quire: 0.52.0 (engine 0.62.2); /home/peter/.npm-global/bin/quoin: 0.36.8; spec-artifacts-process@v0.36.0. `quire schema --module /home/peter/.ix/filament/modules/spec-artifacts-process SpecReview` exit 0; stderr UnknownEdgeType ADR.realizes_requirement, TestMatrix.covers, TestMatrixIndex.covers and UnknownRole ADR.FR/NFR when loaded alone. Actual repository-scoped scratch validation is recorded separately in validation logs.
+
+## Dispositions
+
+### Pass 1
+
+Reviewed fixed head 8fed2271bed34117e1158e26468f745d112a4fb9 against e88d82fdf90dc0a4712139658ef9c155ecce7b2f. Original finding rows above are unchanged. Production code is unchanged; this pass covers fixture repairs and test oracles. No new findings.
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | still-open | Fixture repairs are present at 8fed2271bed34117e1158e26468f745d112a4fb9: minimal Level/Cell/Idle model and touch operation, valid declaration order, checks OK/Between/Stop now use using v, and Attempt binder is worked. The initial runtime remains 0 passed/7 failed; no fixed-head seven-test receipt is available. Qualification stays open until those genuine tests execute successfully. Clarification of the original finding: the missing using was on nested check OK (and checks Between/Stop), not on parallel Background memory sc; that parallel syntax was not defective. |
+
+Fixed-head compile evidence supplied by the lead: cargo check --locked -p fsl-package -p fsl-eval -p fsl-analyze --tests -j4, same wrapper-owned target and DEBUG=0/INCREMENTAL=0 environment, exit 0 in 23.50s; log /home/peter/.cache/handoff/protocol-batch-2-native-correlation-fix1-check.log. Reviewer ran no Cargo or runtime. git diff --check exit 0. Fixed-head runtime: PENDING/UNASSESSED. The root reports a relay Redis os11 request failure; it is not a queued test run or product failure. Initial e88 runtime remains historical evidence only (exit 101, 0 passed/7 failed); no new runtime PASS inferred.
+
+Bounded verdict: NOT MERGEABLE — code FND-001 remains open pending actual fixed-head seven-test qualification.
+
+Historical diagnosis clarification: the initial panic said expected using at check OK within parallel Background. The fix correctly adds using v to check OK, Between and Stop. The original finding row is retained for audit history, and its suggestion that parallel memory sc itself lacked using is corrected here.
+
+### Pass 2
+
+Actual FIX1 receipt simple3407-8fed-c1 for head 8fed2271bed34117e1158e26468f745d112a4fb9: exit 101, 4 passed / 3 failed / 0 ignored, 2791 filtered out. Raw log: /home/peter/.cache/handoff/protocol-batch-2-native-correlation-fix1-runtime.log. This supersedes Pass 1 pending status; the initial e88 receipt remains historical (0 passed / 7 failed).
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | still-open | FIX1 now passes four required tests, but three fixture preconditions still prevent complete qualification: binder-liveness setup at native_correlation.rs:371 uses reserved word first; weak-profile setup at :463 declares only one branch and parser refuses expected branch; negative-premise test reaches its native undefined subcase at :338-350 then constructor refuses Option<Reference<Cell>> capture as PackageParameterType / MissingTypeRepresentation. Keep the existing high fixture finding open; use valid admitted fixture forms within the approved slice and obtain the exact seven-test passing receipt. No distinct correlation production defect is established. |
+
+Actual passing tests: sc_send_receive_uses_real_extents_and_preserves_queue_and_binder_values; missing_authored_carrier_is_typed_unavailable_but_empty_legacy_group_executes; unported_attempt_and_recommend_correlations_remain_named_unsupported; replay_reports_first_authored_alias_including_repeated_canonical_premises. The last test executes the new differing canonical-index, earlier-true/later-false, exact Other replay, swapped-order and original repeated-alias assertions. The failing false_send_and_receive_premises_disable_only_their_candidate test executes its genuine Owns/Other negative graph, waiting queue and disabled Receive assertions before failing in the separate undefined capture constructor.
+
+The third failure is a typed parameter-representation precondition at native ProtocolSystem construction, before related-value evaluation. It does not establish a correlation semantic defect, and this review does not authorize or require a general native type port. Production code is unchanged. No new finding is allocated: these are remaining defects of the same genuine qualification fixtures. Reviewer ran no Cargo, tests, services, relay or tracker writes.
+
+Bounded verdict: NOT MERGEABLE. Code FND-001 remains open; the full seven-test filter is red. Existing gap findings remain fixed. Initial findings, Pass 1 rows and diagnosis clarification remain unchanged.

@@ -336,8 +336,11 @@ fn false_send_and_receive_premises_disable_only_their_candidate() {
         1
     );
     let undefined = Fixture::new(
-        "capture missing: Option<Reference<M::Cell>> = none;",
-        &controls("related by Owns (value(missing), k)", ""),
+        "",
+        &controls(
+            "related by Owns ((if 6 mod (if tx then 0 else 1) >= 0 then k else k), k)",
+            "",
+        ),
         true,
     );
     undefined.with_routes(true, |source, native| {
@@ -368,8 +371,8 @@ fn false_send_and_receive_premises_disable_only_their_candidate() {
 #[test]
 fn correlation_only_capture_and_prior_binder_reads_remain_live_after_an_earlier_step() {
     let run = format!(
-        "send First via spare as (first: Reference<M::Cell>) {{ true }}; check Between using v {{ true }}; {}",
-        controls("related by Owns (saved, first)", "related by Owns (first, saved)")
+        "send First via spare as (prior: Reference<M::Cell>) {{ true }}; check Between using v {{ true }}; {}",
+        controls("related by Owns (saved, prior)", "related by Owns (prior, saved)")
     );
     let fixture = Fixture::with_channels("capture saved: Reference<M::Cell> = k;", "channel spare from w to w carries Reference<M::Cell> ordering unordered delivery exactly-once-premise capacity 1 overflow block;", &run, true);
     let graph = fixture.graph();
@@ -460,7 +463,7 @@ fn unported_attempt_and_recommend_correlations_remain_named_unsupported() {
 #[trace("FR-940-AC-6", "FR-731-AC-1")]
 #[test]
 fn weak_package_profile_refuses_correlation_outside_parallel_and_sc_override_executes() {
-    let run = format!("{} parallel Background memory sc {{ branch idle sequence Idle {{ check OK using v {{ true }}; }} }} join all [idle];", controls("related by Owns (k, k)", ""));
+    let run = format!("{} parallel Background memory sc {{ branch idle sequence Idle {{ check OK using v {{ true }}; }} branch other sequence Other {{ check AlsoOK using v {{ true }}; }} }} join all [idle, other];", controls("related by Owns (k, k)", ""));
     let fixture = Fixture::new("", &run, true);
     fixture.with_routes(true, |_, native| {
         let definition = native
@@ -474,7 +477,7 @@ fn weak_package_profile_refuses_correlation_outside_parallel_and_sc_override_exe
         };
         for model in [MemoryModelName::Tso, MemoryModelName::Ra] {
             let selection = [MemorySelection {
-                parallel: "P::Background".to_owned(),
+                parallel: "P::Main::Background".to_owned(),
                 model,
             }];
             assert!(matches!(
@@ -485,7 +488,7 @@ fn weak_package_profile_refuses_correlation_outside_parallel_and_sc_override_exe
         let sc = ResolvedMemory::resolve_package(
             &form,
             &[MemorySelection {
-                parallel: "P::Background".to_owned(),
+                parallel: "P::Main::Background".to_owned(),
                 model: MemoryModelName::Sc,
             }],
         )

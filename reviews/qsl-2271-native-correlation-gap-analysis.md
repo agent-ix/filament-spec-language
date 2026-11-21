@@ -126,3 +126,41 @@ scope:
 ## Tool provenance
 
 /home/peter/.npm-global/bin/quire: 0.52.0 (engine 0.62.2); /home/peter/.npm-global/bin/quoin: 0.36.8; spec-artifacts-process@v0.36.0. `quire schema --module /home/peter/.ix/filament/modules/spec-artifacts-process SpecReview` exit 0; stderr UnknownEdgeType ADR.realizes_requirement, TestMatrix.covers, TestMatrixIndex.covers and UnknownRole ADR.FR/NFR when loaded alone. Actual repository-scoped scratch validation is recorded separately in validation logs.
+
+## Dispositions
+
+### Pass 1
+
+Reviewed fixed head 8fed2271bed34117e1158e26468f745d112a4fb9 against e88d82fdf90dc0a4712139658ef9c155ecce7b2f. Original finding rows above are unchanged. Production code is unchanged; this pass covers fixture repairs and test oracles. No new findings.
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | Inspected differing canonical-index and repeated-row assertions, earlier true owns/later false Other fixture, disabled full-graph Source/Bare parity, exact later Other refusal through BOTH replay routes, swapped-clause disabled graph, and retained original repeat-only case. This repairs the static oracle gap; runtime execution is separately pending. |
+| FND-002 | fixed | Removed the unmatched whole-requirement FR-216 trace; retained FR-731-AC-1 and FR-940-AC-6. New mixed-premise test additionally carries FR-731-AC-2. |
+
+Fixed-head compile evidence supplied by the lead: cargo check --locked -p fsl-package -p fsl-eval -p fsl-analyze --tests -j4, same wrapper-owned target and DEBUG=0/INCREMENTAL=0 environment, exit 0 in 23.50s; log /home/peter/.cache/handoff/protocol-batch-2-native-correlation-fix1-check.log. Reviewer ran no Cargo or runtime. git diff --check exit 0. Fixed-head runtime: PENDING/UNASSESSED. The root reports a relay Redis os11 request failure; it is not a queued test run or product failure. Initial e88 runtime remains historical evidence only (exit 101, 0 passed/7 failed); no new runtime PASS inferred.
+
+Bounded verdict: Both original gap findings fixed by static inspection; execution of the new assertions is pending. NOT MERGEABLE while code-review FND-001 and required runtime qualification remain open.
+
+After excerpt for FND-001:
+
+```rust
+assert_ne!(clauses[0].canonical_index, clauses[1].canonical_index);
+assert_eq!(clauses[0].canonical_index, clauses[2].canonical_index);
+```
+
+After excerpt for FND-002:
+
+```rust
+#[trace("FR-731-AC-1", "FR-940-AC-6")]
+```
+
+### Pass 2
+
+Actual FIX1 receipt simple3407-8fed-c1 for head 8fed2271bed34117e1158e26468f745d112a4fb9: exit 101, 4 passed / 3 failed / 0 ignored, 2791 filtered out. Raw log: /home/peter/.cache/handoff/protocol-batch-2-native-correlation-fix1-runtime.log. This supersedes Pass 1 pending status; the initial e88 receipt remains historical (0 passed / 7 failed).
+
+Both gap findings retain their Pass 1 fixed outcomes. FND-001 now additionally has actual passing runtime evidence: replay_reports_first_authored_alias_including_repeated_canonical_premises passes the differing canonical-index, earlier true/later false exact Other replay, repeated-row and swapped-order assertions. FND-002 remains fixed by the unchanged valid criterion tags and removal of whole-requirement FR-216 from the marker. No finding was open in this artifact before Pass 2, so no duplicate disposition row is appended. No new findings.
+
+Actual passing tests: sc_send_receive_uses_real_extents_and_preserves_queue_and_binder_values; missing_authored_carrier_is_typed_unavailable_but_empty_legacy_group_executes; unported_attempt_and_recommend_correlations_remain_named_unsupported; replay_reports_first_authored_alias_including_repeated_canonical_premises. The last test executes the new differing canonical-index, earlier-true/later-false, exact Other replay, swapped-order and original repeated-alias assertions. The failing false_send_and_receive_premises_disable_only_their_candidate test executes its genuine Owns/Other negative graph, waiting queue and disabled Receive assertions before failing in the separate undefined capture constructor.
+
+Bounded verdict: gap findings fixed; NOT MERGEABLE while code-review FND-001 remains open and the exact required filter reports three fixture failures. No whole-program, weak correlation, Effect/Event or full FR-731 qualification is asserted.
