@@ -293,6 +293,25 @@ no positive case for an optional member typed by an Option or for an Option nest
 an Option through aliases; such a shape is an unmet dependency, not a scope reduction
 (FR-390).
 
+### Dimension equivalence reconstruction boundary
+
+While Contract IR's public reader does not expose the package's admitted
+dimension-equivalence definitions, the bare evaluator SHALL refuse an explicit
+quantity conversion whose declared units are not convertible under the nominal
+unit graph as `unsupported_construct`/`not-yet-implemented`, with
+`what = dimension-equivalence-package-reconstruction`. It SHALL report the
+conversion's retained expression location and return no converted value.
+It SHALL apply the same refusal when a quantity product, quotient or integer
+power would produce a nominal compound unit different from the checked
+class-root result unit, rather than relabeling that value without its class
+conversion. Nominal same-dimension conversions, including affine conversions,
+SHALL retain their existing evaluation behavior.
+
+This bounded refusal preserves the unmet reconstruction dependency of QSL-2734;
+it does not claim source/package parity for dimension classes. The source route
+uses FSV's metered equivalence-aware graph under
+[FR-093](FR-093-lower-checked-value-expressions-to-fr-322-terms.md), AC-46.
+
 ### Observation admission
 
 `BarePackage::admit_protocol_observation(model, packages, model_limits, snapshots,
@@ -475,6 +494,8 @@ FR-520-AC-11 states.
 | FR-533-AC-20 | A strictly admitted variant of **R** constructs `Shape::Circle(sum<M::Total>(receipt in recoveredFull.receipts: receipt))` and matches `Circle(r)` in `Full`'s recovery predicate. Matching, mismatching, empty and activated supplies produce the source route's Boolean values and ordered charges. The bare environment preserves the source union's original type handle, sealed declaration/member identities, member order and payload types; changing the payload changes the predicate, while adding an unrelated union leaves it unchanged. Missing required type projections refuse `MissingTypeRepresentation` before any charge. With `tuple Pair(Boolean, Boolean); union Unrelated { Other, Payload(Pair) }`, a slot that never reads `Unrelated` retains its value and ordered charges, while constructing and matching `Unrelated::Other` refuses `MissingTypeRepresentation` without charging or faulting. | Test (TC-1333) |
 | FR-533-AC-21 | Over the compiled two-record variant of fixture L (TC-1063 row L4e, FR-383-AC-64), in each source order of its two clauses, the in-process route and the bytes route give `Got.related.from[0]`, `Got.related.from[1]` and the `to` end that is a call equal values, equal charge logs and equal projected-root read `Location` values, that of `related.from[i]` being under `protocol Pipeline run Main Got related <i> from` and that of the call `to` end under `... related <k> to`, `k` its record's emitted position; the two `from` ends' `Location` values differ, and neither route returns a `Location` under a `related <start> <end>` origin. | Test (TC-1333) |
 | FR-533-AC-22 | Over a copy of fixture E-P's model that adds one variant (enum) type no slot reads, `with_supply` succeeds, `Refund.trigger.guard` evaluates to the source route's value and charge log, and `admit_protocol_observation` for `M` refuses `unknown_required_feature`/`unsupported-feature` with `package` the package name and `reason` `missing-type-representation`, not an `InternalFault`, where the source route admits the same snapshot (the unmet dependency of "Observation admission"). Over fixture E-P, a native budget that pays every earlier join of `with_supply` and the declaration projection but not the population catalog makes `with_supply` return `NativeJoinFailure::PopulationCatalog` with its setting and a stage limit diagnostic whose bound and attempted total are the catalog error's `limit` and `consumed`, and no `BarePackage`. | Test (TC-1333) |
+
+| FR-533-AC-23 | Under FR-093-AC-46's Beat/Time class with root ratio 1/4, a bare call of `function cross using v(): Quantity<s> pure { convert<Quantity<s>>(1 beat) }` returns `unsupported_construct`/`not-yet-implemented`, `what = dimension-equivalence-package-reconstruction`, at that conversion's retained span, with no quantity and no unit rational arithmetic. An affine unit `shifted = 1 beat + 2` likewise refuses conversion to `s` on the bare route while the source route returns exact `3/4 s`. Bare `1000 ms -> s` returns `1 s`, and bare `1 shifted -> beat` returns `3 beat`. A bare quotient whose checked result combines distinct nominal class roots refuses the same typed unsupported construct rather than returning a quantity with different compound terms. | Test |
 
 ## Dependencies
 

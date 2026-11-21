@@ -5144,7 +5144,7 @@ impl PackageDeclarations {
         // packages, in FR-091's phases: the base pairs before the first
         // dimension turn, every other pair after the last.
         let owners = quantity_owners;
-        let (mut quantities, equivalences) = match quantity_result {
+        let (quantities, equivalences) = match quantity_result {
             Ok(quantities) => {
                 let equivalences = equivalence::assemble(
                     &unit.equivalences,
@@ -5194,9 +5194,9 @@ impl PackageDeclarations {
             }
         };
 
-        if let Some(quantities) = quantities.as_mut() {
+        let runtime_units = if let Some(quantities) = quantities.as_ref() {
             let classes = EquivalenceClasses::new(&equivalences);
-            quantities.graph = quantities
+            let graph = quantities
                 .graph
                 .with_dimension_equivalences(&classes.memberships())
                 .map_err(|refusal| AssemblyRefusal {
@@ -5207,17 +5207,13 @@ impl PackageDeclarations {
                         cause: AssemblyCause::DimensionClassProjection(refusal),
                     }],
                 })?;
-        }
+            filament_semantic_value::quantity::UnitTable::declared(&graph)
+        } else {
+            filament_semantic_value::quantity::UnitTable::default()
+        };
 
         let mut names = Names {
-            unit_table: std::cell::RefCell::new(
-                quantities
-                    .as_ref()
-                    .map(|assembled| {
-                        filament_semantic_value::quantity::UnitTable::declared(&assembled.graph)
-                    })
-                    .unwrap_or_default(),
-            ),
+            unit_table: std::cell::RefCell::new(runtime_units),
             units: quantities
                 .as_ref()
                 .map(|assembled| {
