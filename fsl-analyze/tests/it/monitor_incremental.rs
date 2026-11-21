@@ -420,7 +420,7 @@ fn a_regressing_stamp_is_refused_and_the_ledger_equals_the_batch_run() {
         .expect("opens");
     let cancel = Cancel::new();
     let mut last = None;
-    let mut pending_checkpoint = None;
+    let mut pending_checkpoint: Option<MonitorState> = None;
     for (stamp, level) in [(0, 0), (2, 0), (5, 1), (7, 0)] {
         let observed = text(level);
         session
