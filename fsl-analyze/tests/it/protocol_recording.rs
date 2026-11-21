@@ -1551,3 +1551,48 @@ fn closure_workflow_premise_is_retained_as_recorded_fact() {
     );
     assert_eq!(assessed.closure.premises[0].node, "Pay::Main::Spend");
 }
+
+/// The order protocol requiring a guarded `on each` clause over `Ack` whose
+/// guard is false on every recorded `Ack`, under a bounded profile.
+fn inactive_requirement_protocol() -> fsl_package::CheckedPackage {
+    let protocol = order_protocol(true).replacen(
+        "run sequence Main {",
+        "requires temporal NeverRefused;\nrun sequence Main {",
+        1,
+    );
+    let clause = "temporal NeverRefused using ev over (a: Ack) clock \"events\" \
+         on each (trigger: Ack) when (not trigger.ok) { always[0,0] holds(a.ok) }\n";
+    crate::litmus::package_called_with_profiles(
+        "analysis-unit",
+        "profile ev = \"filament.temporal.event-position.false-extension/v1\";\n",
+        &format!(
+            "record Ack {{ ok: Boolean; }}\n{clause}{}",
+            protocol.replacen("record Ack { ok: Boolean; }\n", "", 1)
+        ),
+    )
+}
+
+fn requirement_verdict(closure: &str) -> RecordingVerdict {
+    let package = inactive_requirement_protocol();
+    let run = recording(
+        complete_observations(),
+        json!({"Buyer": [0], "Seller": [1, 2, 3]}),
+        closure,
+    );
+    let assessed = assess_recording(&package, run.to_string().as_bytes()).expect("readable run");
+    assessed
+        .obligations
+        .iter()
+        .find(|entry| entry.obligation.kind == "requirement")
+        .unwrap_or_else(|| panic!("a requirement obligation: {:#?}", assessed.obligations))
+        .verdict
+}
+
+/// A requirement whose guard never holds creates no obligation: a closed
+/// recording satisfies it, an open one leaves it pending.
+#[trace("FR-895-AC-1")]
+#[test]
+fn an_inactive_requirement_is_satisfied_when_closed_and_pending_when_open() {
+    assert_eq!(requirement_verdict("closed"), RecordingVerdict::Satisfied);
+    assert_eq!(requirement_verdict("open"), RecordingVerdict::Pending);
+}

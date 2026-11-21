@@ -885,8 +885,10 @@ impl<'a> ClauseState<'a> {
         let read = stop
             .map(|(index, sample)| read_sample_stop(self.package, self.node, sample, *index, meter))
             .unwrap_or_default();
+        let inactive = stream.is_some_and(ClauseStream::inactive)
+            && matches!(result, Ok(TemporalOutcome::Holds));
         let observed = ObservedRun {
-            inactive: false,
+            inactive,
             result,
             stopped: read.stopped,
             undefined: read.undefined,
@@ -1033,10 +1035,12 @@ impl<'a> ClauseState<'a> {
                 InternalFault::new("clause-state", "subject-state-has-its-stream"),
             )),
         };
+        let inactive = self.stream.as_ref().is_some_and(ClauseStream::inactive)
+            && matches!(result, Ok(TemporalOutcome::Holds));
         let mut report = subject_report(
             self.node,
             result,
-            false,
+            inactive,
             self.undefined_atom,
             &self.atom_values,
             ClauseRunUsage::from_meter(meter, Default::default()),

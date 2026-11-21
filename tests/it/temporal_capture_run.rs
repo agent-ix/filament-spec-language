@@ -334,6 +334,19 @@ fn the_monitor_reads_each_activations_own_capture() {
 /// of `levels`, each record's disposition equal in category to the batch run
 /// over the records so far.
 fn monitored(directory: &Path, name: &str, levels: &[i64]) -> Value {
+    monitored_with(directory, "", name, levels, false)
+}
+
+/// [`monitored`] over the unit with `extra` declarations appended; `strict`
+/// also requires each record's `temporal` and `truth` to equal the batch
+/// run's (FR-820 Equality), not only its category.
+fn monitored_with(
+    directory: &Path,
+    extra: &str,
+    name: &str,
+    levels: &[i64],
+    strict: bool,
+) -> Value {
     let mut records: Vec<String> = levels
         .iter()
         .map(|level| json!({"observation": sample(*level, false)}).to_string())
@@ -344,7 +357,12 @@ fn monitored(directory: &Path, name: &str, levels: &[i64]) -> Value {
         "models": [], "program": program(), "clocks": clocks(),
         "clauses": [{"name": name}], "trace": {"kind": "finite"},
         "records": "records.jsonl"}});
-    let monitored = run_file(&write(directory, &format!("monitor-{name}.json"), &request));
+    let monitored = run_file(&write_with(
+        directory,
+        extra,
+        &format!("monitor-{name}.json"),
+        &request,
+    ));
     assert_ne!(monitored.status.code(), Some(30));
     let document: Value = serde_json::from_slice(&monitored.stdout).expect("a monitor run");
     let events = document["events"].as_array().expect("events");
@@ -353,8 +371,9 @@ fn monitored(directory: &Path, name: &str, levels: &[i64]) -> Value {
         if let Some(event) = events.iter().find(|event| event["record"] == record) {
             status = event["disposition"].clone();
         }
-        let batch = result(&run(
+        let batch = result(&run_with(
             directory,
+            extra,
             name,
             json!({"finite": moving(&levels[..=record])}),
         ));
@@ -362,6 +381,15 @@ fn monitored(directory: &Path, name: &str, levels: &[i64]) -> Value {
             status["category"], batch["disposition"]["category"],
             "{name} at record {record}: {status} vs {batch}"
         );
+        if strict {
+            for member in ["temporal", "truth"] {
+                assert_eq!(
+                    status.get(member),
+                    batch["disposition"].get(member),
+                    "{name} {member} at record {record}: {status} vs {batch}"
+                );
+            }
+        }
     }
     status
 }
@@ -508,6 +536,30 @@ fn a_closed_finite_trace_with_every_guard_false_is_inactive() {
     ));
     assert_eq!(active["axes"]["activation"], "active", "{active}");
     assert_ne!(temporal(&active)["kind"], "inactive", "{active}");
+}
+
+/// FR-820 Equality: the monitor's carried report over a closed trace whose
+/// every guard is false equals the batch run's for every prefix, inactive.
+#[test]
+#[trace("FSpec-FR-093-AC-5", "FR-267-AC-28")]
+fn the_monitor_reports_a_closed_false_guard_scope_inactive_like_the_batch_run() {
+    let directory = tempfile::tempdir().unwrap();
+    let inactive = monitored_with(
+        directory.path(),
+        GUARDED_CLOSED,
+        "GuardedClosed",
+        &[0, 0, 0],
+        true,
+    );
+    assert_eq!(inactive["temporal"]["kind"], "inactive", "{inactive}");
+    let active = monitored_with(
+        directory.path(),
+        GUARDED_CLOSED,
+        "GuardedClosed",
+        &[0, 1, 0],
+        false,
+    );
+    assert_ne!(active["temporal"]["kind"], "inactive", "{active}");
 }
 
 /// The actual guard, rather than the captured predicate or body truth,

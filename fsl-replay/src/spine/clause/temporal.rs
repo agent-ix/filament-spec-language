@@ -1351,8 +1351,14 @@ pub(crate) fn streamed_sample_report(
         (Some(HoldsStop::Refused { .. }), Ok(_)) => None,
         (stopped, _) => stopped,
     };
+    let inactive = observed.inactive;
     let (disposition, refused_at) =
         observed_disposition(stopped, observed.result, package.graph(), sources);
+    let disposition = if inactive {
+        ClauseDisposition::Temporal(TemporalVerdict::Inactive)
+    } else {
+        disposition
+    };
     let needs_positions = matches!(
         &disposition,
         ClauseDisposition::Temporal(

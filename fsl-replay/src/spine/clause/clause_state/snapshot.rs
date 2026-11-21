@@ -436,8 +436,10 @@ impl<'a> ClauseState<'a> {
             }
             _ => fsl_eval::temporal::SampleStop::default(),
         };
+        let inactive = self.stream.as_ref().is_some_and(ClauseStream::inactive)
+            && matches!(result, Ok(fsl_eval::temporal::TemporalOutcome::Holds));
         let observed = ObservedRun {
-            inactive: false,
+            inactive,
             result,
             stopped: read.stopped,
             undefined: read.undefined,
