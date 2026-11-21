@@ -3,6 +3,16 @@ id: FR-106
 title: "Read and admit state snapshots and invocations as the spine clause-execution input"
 type: FR
 relationships:
+  - target: ix://agent-ix/filament-spec-language/FR-230
+    type: depends_on
+  - target: ix://agent-ix/filament-spec-language/FR-1040
+    type: depends_on
+  - target: ix://agent-ix/filament-spec-language/FR-995
+    type: depends_on
+  - target: ix://agent-ix/filament-spec-language/FR-850
+    type: depends_on
+  - target: ix://agent-ix/filament-spec-language/FR-940
+    type: depends_on
   - target: ix://agent-ix/filament-spec-language/US-003
     type: implements
   - target: ix://agent-ix/filament-spec-language/ADR-012
@@ -393,6 +403,22 @@ reference as data, without resolving it as an object or population member.
 The same rule applies inside `Option` and `Sequence` values, retaining their
 presence and element order. No additional snapshot value form is introduced.
 
+The full reference SHALL retain the authenticated outer K2 owner universe
+as validation context and bind the original population declaration scope
+and URI, the owner's local key, and FR-230's declared type/model scope,
+canonical typed declared path and tagged selector indices. A root-type
+`UniverseId` is not a population identity; populations of the same type
+remain distinct through their original population descriptors, without
+serializing a raw universe node key in the place id. FSL SHALL use the same
+`place/v2` identity of FR-230 "Place identity" and declared-place table for
+source and bare checked routes.
+Admission SHALL NOT substitute an S3 allocation key or S4 node id for that
+identity: removing `x` while retaining `y` makes an old `x` reference
+undeclared even if `y` reuses its allocation position. Each route SHALL
+refuse distinct declared places that collide within one model scope as
+`conflicting_declaration`/`duplicate-declaration`, naming both declaration
+origins and producing no partial place table or admitted observation.
+
 > Implementation boundary (QSL-2178 STEP1): the admission requirement above
 > and AC-72/AC-73 remain unmet. Source and Bare raw snapshot, context,
 > parameter and record-sample admission refuse external Clock references as
@@ -405,6 +431,10 @@ presence and element order. No additional snapshot value form is introduced.
 > transported from another model or run. Route-neutral identity is deferred
 > to STEP2, including map-keyed Clock-reference identities, which remain
 > unsupported. This note does not relax the required admission behavior.
+
+> STEP2 targets also include AC-74/AC-75, FR-1040-AC-9 and FR-230's
+> route-neutral identity criteria. They remain unmet until implementation
+> and acceptance proof; the STEP1 boundary above remains in force.
 
 A set, bag or ordered-set value is the native spelling of FSpec FR-181's
 `set`, `bag` and `ordered-set` forms, with FSpec FR-144's "Supplied
@@ -1359,8 +1389,15 @@ completeness.
 | FR-106-AC-71 | Over FSpec TC-2054's `test/refunds` unit and a pre snapshot holding `Staff` objects `s1` (`badge` `1`) and `s2`, an invocation of `Order.note` with `parameters` `{firstApprover: s1, secondApprover: {"absent": {}}}`, one with `secondApprover` `{"present": <reference to s2>}`, and one omitting `secondApprover` are admitted, the third with `secondApprover` absent, so `NoteBy` evaluates false for the first and third and true for the second. The same invocation with `secondApprover` a bare `{"reference": ...}` refuses `invalid_runtime_input`/`wrong-value-kind` at `parameters.secondApprover`, and one omitting `firstApprover` refuses `invalid_runtime_input`/`missing-member` at `parameters.firstApprover`. | Test (TC-3040) |
 | FR-106-AC-72 | Over [TC-464](../test-cases/TC-464-snapshots-and-invocations-admit.md) step 7's dense-time `Call` fixture, a raw snapshot storing the actual per-instance place identities of `c1.x` and `c2.x` in `r: Reference<Clock>`, `maybe: Option<Reference<Clock>>` and `refs: Sequence<Reference<Clock>>` admits, retaining those identities as data, the optional presence and the sequence order. Neither place identity is an object key, and neither target is resolved as a population member. Reading the admitted fields distinguishes `c1.x` from `c2.x`; the required evaluation of the stored `self.r` under FR-1040-AC-3 and FR-1040-AC-8 remains in force. | Test (TC-464) |
 | FR-106-AC-73 | Over [TC-464](../test-cases/TC-464-snapshots-and-invocations-admit.md) step 8's model variant without `x`, storing the formerly declared `c1.x` identity in `r`, in the present value of `maybe`, or at element 0 of `refs` refuses `dangling_reference`/`absent-target-in-complete-population`, naming the snapshot, owner population `calls`, object `c1`, the affected field and nested value path, and that undeclared target identity, with no admitted observation or truth value. A target's clock-reference static type or native Clock target alone does not make it declared. | Test (TC-464) |
+| FR-106-AC-74 | On source and bare checked routes, TC-464 steps 7 and 8 use the same authenticated declarations and actual evaluated references. Raw scalar, present optional and sequence values retain equal full canonical references across routes, including their outer universe; equal local owner keys in two populations remain distinct. With `x` declared before `y`, removing `x`, retaining `y` and preserving scope, population, owner and data-field declarations refuses every stored old `x` reference under AC-73, regardless of internal allocation order; none is admitted as `y`. | Test (TC-464) |
+| FR-106-AC-75 | For each route, TC-464 step 9's declared-table/admission entry over two distinct declaration origins whose normalized scope and full declared path coincide refuses `conflicting_declaration`/`duplicate-declaration`, naming both origins, and produces no partial place table, admitted observation or truth value. Two aliases of the same authenticated declaration and canonical normalized declared path instead supply one table view and admit the otherwise valid snapshot. | Test (TC-464) |
 
 ## Dependencies
+
+- FR-230: the canonical place-identity grammar and declaration scope.
+- FR-1040: route-neutral declared-table uniqueness and ambiguity refusals.
+- FR-995, FR-850 and FR-940: source declaration provenance and the admitted
+  bare package read boundary.
 
 - FR-084 and FR-089 (population binding and identity), FR-103 (operation
   effect), FR-001 (the two labels; FSpec STD-150), FR-056 (the K2 String, UUID and Timestamp payloads and their runtime-input

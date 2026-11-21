@@ -4140,11 +4140,8 @@ fn checked_equality_term_data(
 
 /// Convert the retained FR-150 identity without looking up a display name or
 /// traversing the checked graph.
-#[derive(Default)]
-struct SourceDeclarationKeys {
-    packages: BTreeMap<String, String>,
-    checked_nodes: BTreeMap<String, String>,
-}
+type SourceDeclarationKeys =
+    fsl_semantics::model::clock_reference::normalization::SourceDeclarations;
 
 fn checked_effective_id(
     identity: &filament_exact::EffectiveId,
@@ -4171,75 +4168,14 @@ fn checked_effective_id(
 fn source_declaration_key_rewrites(
     graph: &CheckedGraph,
 ) -> Result<SourceDeclarationKeys, EmitRefusal> {
-    let mut rewrites = SourceDeclarationKeys::default();
-    for node in graph.semantic_graph().nodes() {
-        let Some(Owner::Source(owner)) = node.owner() else {
-            continue;
-        };
-        let Some(name) = node.declaration() else {
-            continue;
-        };
-        if let Some(declaration) = graph.resolve_declaration(node.key()) {
-            match rewrites.packages.entry(declaration.package.clone()) {
-                std::collections::btree_map::Entry::Vacant(entry) => {
-                    entry.insert(owner.identity().to_owned());
-                }
-                std::collections::btree_map::Entry::Occupied(entry)
-                    if entry.get() == owner.identity() => {}
-                std::collections::btree_map::Entry::Occupied(_) => {
-                    return Err(EmitRefusal::SourceMapInvariant);
-                }
-            }
-        }
-        rewrites.checked_nodes.insert(
-            node.key().to_string(),
-            source_declaration_identity(owner, name),
-        );
-    }
-    for declaration in graph.scope().types().composites() {
-        let Some(node_key) = graph.semantic_graph().composite_node(&declaration.key()) else {
-            continue;
-        };
-        let Some(node) = graph.semantic_graph().node(node_key.clone()) else {
-            return Err(EmitRefusal::SourceMapInvariant);
-        };
-        let (Some(Owner::Source(owner)), Some(name)) = (node.owner(), node.declaration()) else {
-            continue;
-        };
-        rewrites.checked_nodes.insert(
-            node_key.to_string(),
-            source_declaration_identity(owner, name),
-        );
-    }
-    Ok(rewrites)
-}
-
-fn source_declaration_identity(
-    owner: &fsl_semantics::check::SourceOwner,
-    name: &[filament_exact::Identifier],
-) -> String {
-    format!(
-        "ix://{}/{}",
-        owner.identity(),
-        name.iter()
-            .map(|segment| segment.as_str())
-            .collect::<Vec<_>>()
-            .join("/")
-    )
+    SourceDeclarationKeys::from_graph(graph).map_err(|_| EmitRefusal::SourceMapInvariant)
 }
 
 /// The name a function body's rows carry: the checker's function name with a
 /// source model's private package spelled as the package the emitted nodes
 /// carry (FSpec FR-322), so no check-time alias reaches the bytes.
 fn emitted_function_name(name: &str, source_keys: &SourceDeclarationKeys) -> String {
-    source_keys
-        .packages
-        .iter()
-        .find_map(|(package, identity)| {
-            name.strip_prefix(&format!("ix://{package}/"))
-                .map(|declaration| format!("ix://{identity}/{declaration}"))
-        })
-        .unwrap_or_else(|| name.to_owned())
+    source_keys.text(name)
 }
 
 /// Apply the source owner's declaration-key spelling to a key retained by S3.
@@ -4248,14 +4184,13 @@ fn emitted_source_declaration_key(
     node: &str,
     source_keys: &SourceDeclarationKeys,
 ) -> Result<(String, String), EmitRefusal> {
-    let Some(identity) = source_keys.packages.get(package) else {
-        return Ok((package.to_owned(), node.to_owned()));
-    };
-    let prefix = format!("ix://{package}/");
-    let declaration = node
-        .strip_prefix(&prefix)
-        .ok_or(EmitRefusal::SourceMapInvariant)?;
-    Ok((identity.clone(), format!("ix://{identity}/{declaration}")))
+    let normalized = source_keys
+        .original_key(&filament_checked::key::DeclarationKey {
+            package: package.to_owned(),
+            node: node.to_owned(),
+        })
+        .map_err(|_| EmitRefusal::SourceMapInvariant)?;
+    Ok((normalized.package, normalized.node))
 }
 
 /// Rewrite source declaration keys in the typed literals of an emitted clock
@@ -4268,6 +4203,8 @@ fn rewrite_source_keys_in_clock_place(
     fn rewrite_term(
         term: &mut CheckedTerm,
         source_keys: &SourceDeclarationKeys,
+        declaring: Option<&str>,
+        binding: Option<&str>,
     ) -> Result<(), EmitRefusal> {
         match term {
             CheckedTerm::Literal {
@@ -4276,35 +4213,12 @@ fn rewrite_source_keys_in_clock_place(
                 ..
             } => {
                 if let Some(text) = value.as_str() {
-                    let mut rewritten = text.to_owned();
-                    if let Some(source_node) = source_keys.checked_nodes.get(text) {
-                        rewritten = source_node.clone();
-                    } else {
-                        for (checked_node, source_node) in &source_keys.checked_nodes {
-                            if rewritten.contains(checked_node) {
-                                rewritten = rewritten.replace(checked_node, source_node);
-                            }
-                        }
-                        for (package, identity) in &source_keys.packages {
-                            let prefix = format!("ix://{package}/");
-                            if let Some(declaration) = rewritten.strip_prefix(&prefix) {
-                                rewritten = format!("ix://{identity}/{declaration}");
-                                break;
-                            }
-                        }
-                        if !rewritten.starts_with("ix://") {
-                            for source_type in source_keys.checked_nodes.values() {
-                                let Some((_, type_name)) = source_type.rsplit_once('/') else {
-                                    continue;
-                                };
-                                let prefix = format!("{type_name}/");
-                                if let Some(member) = rewritten.strip_prefix(&prefix) {
-                                    rewritten = format!("{source_type}/{member}");
-                                    break;
-                                }
-                            }
-                        }
-                    }
+                    let rewritten = match (binding, declaring) {
+                        (Some("member_identity"), Some(declaring)) => source_keys
+                            .member(declaring, text)
+                            .map_err(|_| EmitRefusal::SourceMapInvariant)?,
+                        _ => source_keys.text(text),
+                    };
                     if rewritten != text {
                         *value = CheckedJson::from_serializable(&rewritten)
                             .map_err(|_| EmitRefusal::SourceMapInvariant)?;
@@ -4312,18 +4226,36 @@ fn rewrite_source_keys_in_clock_place(
                 }
             }
             CheckedTerm::Aggregate { members } => {
+                let row_declaring = members.iter().find_map(|member| match member {
+                    CheckedTerm::Binding { name, value, .. }
+                        if name.as_ref() == "declaring_type" =>
+                    {
+                        match value.as_ref() {
+                            CheckedTerm::Literal {
+                                value_kind: LiteralKind::Text,
+                                value,
+                                ..
+                            } => value.as_str().map(str::to_owned),
+                            _ => None,
+                        }
+                    }
+                    _ => None,
+                });
+                let declaring = row_declaring.as_deref().or(declaring);
                 for member in members {
-                    rewrite_term(member, source_keys)?;
+                    rewrite_term(member, source_keys, declaring, binding)?;
                 }
             }
-            CheckedTerm::Binding { value, .. } => rewrite_term(value, source_keys)?,
+            CheckedTerm::Binding { name, value, .. } => {
+                rewrite_term(value, source_keys, declaring, Some(name.as_ref()))?;
+            }
             _ => {}
         }
         Ok(())
     }
 
     if node.semantic_form.as_ref() == "clock_place" {
-        rewrite_term(&mut node.body, source_keys)?;
+        rewrite_term(&mut node.body, source_keys, None, None)?;
     }
     Ok(())
 }

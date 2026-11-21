@@ -909,6 +909,81 @@ fn clock_reference_world(
     clock_reference_world_with_profiles(document, "", unit)
 }
 
+/// Two populations of the same declared type can list the same local key;
+/// population attribution must survive admission before any ref is evaluated.
+#[trace("TC-3084", "FR-1040-AC-9", "TC-464", "FR-106-AC-74")]
+#[test]
+fn same_type_populations_retain_each_listed_owner_before_clock_evaluation() {
+    let mut document: Json = serde_json::from_slice(&clocked_document(true, &[])).expect("JSON");
+    let mut archive = document["populations"][0].clone();
+    archive["identity"] = json!(ident("archive"));
+    archive["displayName"] = json!(ident("archive"));
+    document["populations"]
+        .as_array_mut()
+        .expect("populations")
+        .push(archive);
+    let mut world = world_holding(
+        serde_json::to_vec(&document).expect("JSON"),
+        "",
+        "dimension Time; unit ms : Time = rational(1, 1); time M dense unit ms;",
+        json!({}),
+    );
+    let (single, _) = fsl_semantics::model::observation::admit_current_snapshot(
+        world.package.graph().model_inputs(),
+        world.package.graph().scope().types(),
+        &world.packages,
+        ModelNormalizationLimits::default(),
+        &world.snapshots,
+        &world.initial,
+        ObservationLimits::default(),
+    )
+    .expect("the one-population control admits before the repeated owner is added");
+    assert_eq!(
+        single
+            .population_members(&ident("calls"))
+            .expect("calls")
+            .len(),
+        1
+    );
+    let mut snapshot: Json =
+        serde_json::from_slice(world.snapshots.get(&world.initial).expect("snapshot"))
+            .expect("JSON");
+    let mut archive = snapshot["populations"][0].clone();
+    archive["population"] = json!(ident("archive"));
+    snapshot["populations"]
+        .as_array_mut()
+        .expect("populations")
+        .push(archive);
+    world.snapshots.insert(
+        world.initial.clone(),
+        serde_json::to_vec(&snapshot).expect("JSON"),
+    );
+    let (environment, _) = fsl_semantics::model::observation::admit_current_snapshot(
+        world.package.graph().model_inputs(),
+        world.package.graph().scope().types(),
+        &world.packages,
+        ModelNormalizationLimits::default(),
+        &world.snapshots,
+        &world.initial,
+        ObservationLimits::default(),
+    )
+    .expect("both explicitly attributed population occurrences admit");
+    let calls = environment
+        .population_members(&ident("calls"))
+        .expect("calls");
+    let archive = environment
+        .population_members(&ident("archive"))
+        .expect("archive");
+    assert_eq!(calls.len(), 1);
+    assert_eq!(archive.len(), 1);
+    assert_eq!(calls[0].object().as_str(), "c");
+    assert_eq!(archive[0].object().as_str(), "c");
+    assert_eq!(
+        calls[0], archive[0],
+        "the existing K2 reference is not population attribution"
+    );
+}
+
 fn clock_reference_world_with_profiles(
     mut document: Json,
     profiles: &str,

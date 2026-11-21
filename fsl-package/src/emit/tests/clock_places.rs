@@ -67,6 +67,34 @@ fn emitted_source_place_member_type_matches_its_target_node_identity() {
             &fsl_semantics::check::test_support::ZeroRewardEvaluator,
         )
         .unwrap_or_else(|refusals| panic!("the source checks: {refusals:?}"));
+    let normalization =
+        fsl_semantics::model::clock_reference::normalization::SourceDeclarations::from_graph(
+            &graph,
+        )
+        .expect("checked declaration provenance");
+    let source_clock = graph
+        .timed_models()
+        .first()
+        .expect("source timed model")
+        .clocks()
+        .first()
+        .expect("nested clock");
+    let source_rows: Vec<_> = source_clock
+        .resolved_path()
+        .iter()
+        .map(|row| {
+            (
+                normalization.text(&row.declaring_type),
+                normalization
+                    .member(&row.declaring_type, &row.member_identity)
+                    .expect("member resolved in its declaring row"),
+                normalization.text(&row.member_type),
+            )
+        })
+        .collect();
+    let source_template = normalization
+        .clock_template(source_clock)
+        .expect("actual source path retains original declaration scopes");
     let emission = emit_checked(&CheckedPackage::link(graph)).expect("the source emits");
     let wire = wire(&emission);
     let order = nodes(&wire)
@@ -109,6 +137,15 @@ fn emitted_source_place_member_type_matches_its_target_node_identity() {
     let checked_target_identity = format!("{package_name}:[{path},]:{ordinal}");
     assert_eq!(checked_target_identity, "pkg:[\"W\",]:0");
     let target_identity = format!("ix://{source_owner}/W");
+    assert_eq!(source_rows.last().expect("W.c row").0, target_identity);
+    assert_eq!(
+        source_rows.last().expect("W.c row").1,
+        format!("{target_identity}/c")
+    );
+    assert_eq!(
+        source_rows.last().expect("W.c row").2,
+        "ix://filament/native/Clock"
+    );
 
     let place = nodes(&wire)
         .iter()
@@ -147,6 +184,141 @@ fn emitted_source_place_member_type_matches_its_target_node_identity() {
     );
     assert!(!target_identity.contains("resolved:"));
     assert!(!target_identity.contains("Composite("));
+    let Read::Verified {
+        admitted,
+        timed_models,
+        ..
+    } = super::read_back(&emission)
+    else {
+        panic!("the actual emitted source declarations admit");
+    };
+    let bare = crate::BarePackage::new(&admitted);
+    let declarations = bare
+        .clock_declarations()
+        .expect("sealed declaration context");
+    let [timed] = timed_models.as_slice() else {
+        panic!("one admitted timed model");
+    };
+    let [place] = timed.clock_places.as_slice() else {
+        panic!("one admitted nested clock path");
+    };
+    assert_eq!(
+        declarations
+            .clock_template(place)
+            .expect("admitted path normalizes"),
+        source_template,
+        "source and bare typed paths retain exactly the same declaration scopes",
+    );
+    let original = admitted
+        .resolved_graph()
+        .nodes
+        .iter()
+        .find(|node| {
+            node.declaration.as_ref().is_some_and(|declaration| {
+                declaration
+                    .qualified_name
+                    .iter()
+                    .map(|part| part.as_ref())
+                    .eq(["W"])
+            })
+        })
+        .expect("the admitted original W declaration");
+    let key = bare
+        .node_key(&original.node_id)
+        .expect("actual admitted key");
+    let Some(fsl_semantics::model::clock_reference::identity::DeclarationScope::Source {
+        authority,
+        identity,
+        declaration,
+    }) = declarations.scope(&key)
+    else {
+        panic!("the bare route retains SourceOwner rather than model scope");
+    };
+    assert_eq!(identity, source_owner);
+    assert_eq!(declaration, &target_identity);
+    assert_eq!(
+        authority,
+        order["owner"]["authority"]
+            .as_str()
+            .expect("source authority")
+    );
+}
+
+/// The actual checked and read-back declarations preserve optional records,
+/// positional bounds, tuple positions and union tags in the same full path.
+#[trace("FR-230-AC-49", "TC-3084")]
+#[test]
+fn source_and_bare_clock_templates_preserve_optional_indexed_tuple_and_case_paths() {
+    use fsl_semantics::model::clock_reference::identity::{
+        CarrierLayer, CollectionKind, PathEntry,
+    };
+    use fsl_semantics::model::clock_reference::normalization::SourceDeclarations;
+
+    let source = "language \"ix:native\" edition \"1-draft\";\n\
+        profile T = \"filament.temporal.complete/v1\";\n\
+        dimension Time; unit ms : Time = rational(1, 1);\n\
+        record W { c: Clock; }\n\
+        tuple Pair(W, Clock);\n\
+        union U { armed(Clock), idle }\n\
+        object Order { maybe: Option<W>; q: Sequence<Option<W>>[0, 2]; pair: Pair; choice: U; }\n\
+        time Order dense unit ms;\n";
+    let packages = fsl_semantics::model::intake::package_input(std::iter::empty::<&[u8]>())
+        .expect("source-only input");
+    let graph = assemble_with_models(source.as_bytes(), &packages)
+        .expect("source declarations assemble")
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &fsl_semantics::check::test_support::ZeroRewardEvaluator,
+        )
+        .unwrap_or_else(|refusals| panic!("source declarations check: {refusals:?}"));
+    let declarations = SourceDeclarations::from_graph(&graph).expect("actual source provenance");
+    let [timed] = graph.timed_models() else {
+        panic!("one source timed model");
+    };
+    let mut source_templates = timed
+        .clocks()
+        .iter()
+        .map(|clock| {
+            declarations
+                .clock_template(clock)
+                .expect("source clock normalizes")
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(source_templates.len(), 5);
+    assert!(source_templates.iter().any(|template| matches!(template.path.as_slice(), [PathEntry::Field { carrier, .. }, PathEntry::Option, PathEntry::Field { .. }] if carrier.layers == [CarrierLayer::Option])));
+    assert!(source_templates.iter().any(|template| matches!(template.path.as_slice(), [PathEntry::Field { .. }, PathEntry::Collection { shape, .. }, PathEntry::Option, PathEntry::Field { .. }] if shape.kind == CollectionKind::Sequence && shape.minimum.as_str() == "0" && shape.maximum.as_ref().map(|bound| bound.as_str()) == Some("2"))));
+    assert!(source_templates.iter().any(|template| matches!(template.path.as_slice(), [PathEntry::Field { .. }, PathEntry::Tuple { position, .. }, PathEntry::Field { .. }] if position.as_str() == "0")));
+    assert!(source_templates.iter().any(|template| matches!(template.path.as_slice(), [PathEntry::Field { .. }, PathEntry::Tuple { position, .. }] if position.as_str() == "1")));
+    assert!(source_templates.iter().any(|template| matches!(template.path.as_slice(), [PathEntry::Field { .. }, PathEntry::Case { name, .. }] if name == "armed")));
+
+    let emission = emit_checked(&CheckedPackage::link(graph)).expect("source emits");
+    let Read::Verified {
+        admitted,
+        timed_models,
+        ..
+    } = super::read_back(&emission)
+    else {
+        panic!("actual emitted package admits");
+    };
+    let declarations = crate::BarePackage::new(&admitted)
+        .clock_declarations()
+        .expect("admitted declaration provenance");
+    let [timed] = timed_models.as_slice() else {
+        panic!("one admitted timed model");
+    };
+    let mut bare_templates = timed
+        .clock_places
+        .iter()
+        .map(|place| {
+            declarations
+                .clock_template(place)
+                .expect("bare clock normalizes")
+        })
+        .collect::<Vec<_>>();
+    source_templates.sort();
+    bare_templates.sort();
+    assert_eq!(bare_templates, source_templates);
 }
 
 /// The unit selecting [`clocked_document`] under a dense time source, with

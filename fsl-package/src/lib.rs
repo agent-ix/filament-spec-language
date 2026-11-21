@@ -34,6 +34,10 @@ pub use model_input_form::UnreadModelForm;
 #[cfg(feature = "std")]
 mod bare;
 #[cfg(feature = "std")]
+mod clock_authority;
+#[cfg(feature = "std")]
+pub use clock_authority::ClockDeclarations;
+#[cfg(feature = "std")]
 mod bare_slot;
 #[cfg(feature = "std")]
 mod bare_state_graph;

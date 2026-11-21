@@ -199,6 +199,7 @@ pub fn evaluate_selected_protocol_slot(
     };
     let AdmittedSupply {
         mut frame,
+        reference_origins,
         unavailable,
         binder_slots,
     } = admit_slot_supply(&host, &sources, slot.frame_len(), supply)?;
@@ -221,6 +222,7 @@ pub fn evaluate_selected_protocol_slot(
         meter,
         &[],
     )
+    .with_reference_origins(reference_origins)
     .run_protocol_frame(
         ReaderNode::root(&projection),
         frame,
@@ -438,6 +440,7 @@ fn evaluate_state_clause(
         current,
         pre,
         bindings,
+        reference_origins,
         trail,
         receiver_path,
     } = super::bind_clause(clause.observation(), &names, binds_result, observations)?;
@@ -450,6 +453,7 @@ fn evaluate_state_clause(
             .collect();
     let (evaluation, trail) =
         Machine::with_world(World::Bytes(&world), current, pre, Some(&reads), meter, &[])
+            .with_reference_origins(reference_origins)
             .with_trail(trail)
             .run_traced(
                 ReaderNode::root(clause.projection()),
