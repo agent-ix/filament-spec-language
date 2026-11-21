@@ -20,7 +20,7 @@ use sha2::{Digest as _, Sha256};
 
 use super::binding::AuthenticatedBinding;
 use super::call::{fault, refusal};
-use super::request::{EvidencePosition, EvidenceRef, EvidenceRequest, EvidenceSubject};
+use super::request::{ClockScale, EvidencePosition, EvidenceRef, EvidenceRequest, EvidenceSubject};
 use super::trigger::SemanticTriggerIdentity;
 use crate::temporal::finite_window::{ClockCover, TimestampedTrace, Valuation};
 use crate::temporal::position::TemporalPosition;
@@ -36,7 +36,7 @@ pub(super) use activation::{ActivationCapture, ActivationInstance};
 struct TraceDefinition<'a> {
     package_identity: &'a str,
     canonical_package_bytes: &'a [u8],
-    time_unit_scale: Option<&'a filament_exact::Rational>,
+    time_unit_scale: &'a ClockScale,
     declaration: &'a CheckedNodeId,
     signal: &'a CheckedNodeId,
     occurrence: u64,
@@ -76,7 +76,7 @@ pub(super) fn admit_trace(
         canonical_package_bytes: subject
             .canonical_package_bytes
             .ok_or_else(|| fault("observation-admission-has-canonical-package-bytes"))?,
-        time_unit_scale: subject.time_unit_scale.as_ref(),
+        time_unit_scale: &subject.time_unit_scale,
         declaration: subject.declaration,
         signal: subject.signal,
         occurrence,
@@ -847,21 +847,16 @@ fn clock_unit(clock: &ClockConfiguration) -> &str {
     super::package::clock_time_unit(clock).unwrap_or("position")
 }
 
-fn nanos_per_tick(
-    scale: Option<&filament_exact::Rational>,
-) -> Result<filament_exact::Rational, CallFailure> {
+fn nanos_per_tick(scale: &ClockScale) -> Result<filament_exact::Rational, CallFailure> {
     use filament_exact::{Integer, Rational};
-    let Some(scale) = scale else {
+    let scale = match scale {
+        ClockScale::Unreadable => return Err(fault("declared-time-unit-factor-is-readable")),
+        ClockScale::PerSecond(scale) => scale,
         // FR-944: a clock whose unit names no declared time unit counts steps
         // (an event position, a fixed-sample count, or a timestamped clock
         // with no `duration` window, FR-965): `s` = 1.
-        return Ok(Rational::from_integer(Integer::from(1_i64)));
+        ClockScale::Count => return Ok(Rational::from_integer(Integer::from(1_i64))),
     };
-    // A zero factor marks a unit the package declares but this route cannot
-    // read; it is never a factor, so the call refuses rather than guess.
-    if scale.is_zero() {
-        return Err(fault("declared-time-unit-factor-is-readable"));
-    }
     Ok(scale.mul(&Rational::from_integer(Integer::from(1_000_000_000_i64))))
 }
 
@@ -1130,7 +1125,11 @@ mod tests {
         let definition = TraceDefinition {
             package_identity: "recipe",
             canonical_package_bytes: b"{}",
-            time_unit_scale: (!event_positions).then_some(scale),
+            time_unit_scale: &if event_positions {
+                ClockScale::Count
+            } else {
+                ClockScale::PerSecond(scale.clone())
+            },
             declaration: &declaration,
             signal: &declaration,
             occurrence: 0,
@@ -1387,15 +1386,43 @@ mod tests {
     fn an_undeclared_unit_counts_steps_and_an_unreadable_declared_unit_is_refused() {
         use filament_exact::Rational;
         // FR-944: no declared time unit, `s` = 1; a declared factor is exact.
-        let one = nanos_per_tick(None).expect("a count");
+        let one = nanos_per_tick(&ClockScale::Count).expect("a count");
         assert_eq!(one, Rational::from_integer(1_i64.into()));
         let ms = Rational::new(1_i64.into(), 1000_i64.into()).expect("ms");
-        let scaled = nanos_per_tick(Some(&ms)).expect("a declared unit");
+        let scaled = nanos_per_tick(&ClockScale::PerSecond(ms)).expect("a declared unit");
         assert_eq!(scaled, Rational::from_integer(1_000_000_i64.into()));
-        // A declared unit this route cannot read carries a zero factor, never s = 1.
-        let zero = Rational::from_integer(0_i64.into());
-        let failure = nanos_per_tick(Some(&zero)).expect_err("refused");
+        // A declared unit this route cannot read is refused, never s = 1.
+        let failure = nanos_per_tick(&ClockScale::Unreadable).expect_err("refused");
         assert!(format!("{failure:?}").contains("declared-time-unit-factor-is-readable"));
+    }
+
+    #[test]
+    #[ix_trace_rs::trace("TC-3036", "FR-944-AC-13")]
+    fn a_declared_ms_fixed_sample_period_is_exact_nanoseconds_or_refused() {
+        use filament_exact::Rational;
+        let ms = Rational::new(1_i64.into(), 1000_i64.into()).expect("ms");
+        let factor = nanos_per_tick(&ClockScale::PerSecond(ms)).expect("a declared unit");
+        let clock = |numerator: &str, denominator: &str| ClockConfiguration::FixedSample {
+            epoch: ClockExactNumber::Integer {
+                decimal: "0".into(),
+            },
+            period: ClockExactNumber::Rational {
+                numerator: numerator.into(),
+                denominator: denominator.into(),
+            },
+            unit: "ms".into(),
+        };
+        let observed = position("p", 0, Valuation::True);
+        // Period 1/10 ms is 100000 ns.
+        match anchor_of(&clock("1", "10"), 0, 0, &factor, &observed).expect("exact") {
+            Anchor::FixedSample { period_nanos, .. } => assert_eq!(period_nanos, 100_000),
+            other => panic!("fixed-sample anchor, got {other:?}"),
+        }
+        // Period 1/3 ms is not an integer number of ns.
+        let failure = anchor_of(&clock("1", "3"), 0, 0, &factor, &observed).expect_err("refused");
+        let text = format!("{failure:?}");
+        assert!(text.contains("invalid-value"), "{text}");
+        assert!(text.contains("clock_number"), "{text}");
     }
 
     #[test]

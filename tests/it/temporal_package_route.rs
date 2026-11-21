@@ -454,6 +454,12 @@ fn emit(
 
 /// The package of recipe R of `kind`, compiled as the handoff writer does.
 pub(super) fn recipe(kind: &str) -> Built {
+    recipe_naming(kind, None)
+}
+
+/// The package of recipe R of `kind` whose clocks all name the unit `unit`,
+/// when given.
+pub(super) fn recipe_naming(kind: &str, unit: Option<&str>) -> Built {
     let emit_request = handoff_request(kind, Corpus::None).emit;
     let read = |path: &Path| std::fs::read(path).expect("a recipe file");
     let source = read(&emit_request.source);
@@ -482,6 +488,10 @@ pub(super) fn recipe(kind: &str) -> Built {
         .temporal_selections
         .into_iter()
         .map(|selection| (selection.clause, selection.clock))
+        .collect();
+    let clocks: Vec<_> = clocks
+        .into_iter()
+        .map(|(clause, clock)| (clause, with_unit(clock, unit)))
         .collect();
     emit(unit, &clocks, packages)
 }
@@ -1527,5 +1537,23 @@ fn clause_name_rows_carry_the_whole_declaration_region() {
             format!("{refused:?}").contains("/temporal_clause_names/0/declaration_region"),
             "{refused:?}"
         );
+    }
+}
+
+/// `clock` naming `unit` as its time unit, when one is given.
+fn with_unit(clock: ClockConfiguration, unit: Option<&str>) -> ClockConfiguration {
+    let Some(unit) = unit else {
+        return clock;
+    };
+    match clock {
+        ClockConfiguration::FixedSample { epoch, period, .. } => ClockConfiguration::FixedSample {
+            epoch,
+            period,
+            unit: unit.into(),
+        },
+        ClockConfiguration::TimestampedEvent { .. } => ClockConfiguration::TimestampedEvent {
+            timestamp_unit: unit.into(),
+        },
+        other => other,
     }
 }

@@ -203,12 +203,18 @@ impl Env {
             // bytes the owner unit fixtures use.
             canonical_package_bytes: Some(b"{}"),
             time_unit_scale: match &self.binding.parameters {
-                ClockConfiguration::EventPosition { .. } => None,
+                ClockConfiguration::EventPosition { .. } => {
+                    fsl_eval::temporal::evidence::ClockScale::Count
+                }
                 ClockConfiguration::FixedSample { .. } => {
-                    Some(filament_exact::Rational::from_integer(1_i64.into()))
+                    fsl_eval::temporal::evidence::ClockScale::PerSecond(
+                        filament_exact::Rational::from_integer(1_i64.into()),
+                    )
                 }
                 ClockConfiguration::TimestampedEvent { .. } | ClockConfiguration::Timed { .. } => {
-                    Some(filament_exact::Rational::new(1_i64.into(), 1000_i64.into()).expect("ms"))
+                    fsl_eval::temporal::evidence::ClockScale::PerSecond(
+                        filament_exact::Rational::new(1_i64.into(), 1000_i64.into()).expect("ms"),
+                    )
                 }
             },
             signal: &self.declaration,

@@ -52,9 +52,10 @@ pub use package::{
     PackageRows,
 };
 pub use request::{
-    ActivationRow, ActivationState, CompletenessRecord, EvidenceIncomplete, EvidencePosition,
-    EvidenceRef, EvidenceRequest, EvidenceResult, EvidenceSubject, Indeterminate, NonValue,
-    NonValueKind, Relation, ResultSubject, Settlement, SubjectOccurrence, SupportRef, Truth,
+    ActivationRow, ActivationState, ClockScale, CompletenessRecord, EvidenceIncomplete,
+    EvidencePosition, EvidenceRef, EvidenceRequest, EvidenceResult, EvidenceSubject, Indeterminate,
+    NonValue, NonValueKind, Relation, ResultSubject, Settlement, SubjectOccurrence, SupportRef,
+    Truth,
 };
 pub use trigger::{
     CaptureFact, CapturedValue, EmptyIdentity, Evicted, ExecutionOrigin, Payload, Receipt,
