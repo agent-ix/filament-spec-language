@@ -375,7 +375,7 @@ fn run_bare() -> Value {
 
 /// The request remains release-backed even when its checked release cannot
 /// occur; its proof uses the source closure rather than fixed-work regions.
-#[trace("TC-371", "FR-418-AC-14")]
+#[trace("FSpec-TC-371", "FSpec-FR-418-AC-14")]
 #[test]
 fn an_unreachable_checked_release_proves_with_the_source_certificate() {
     let declarations = format!(

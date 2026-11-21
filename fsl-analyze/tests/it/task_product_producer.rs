@@ -79,7 +79,7 @@ fn clockful_unreachable_release() -> World {
 
 /// The original clock-place encoding and every source guard part survive
 /// transport; the independent checker accepts only the genuine source proof.
-#[trace("TC-371", "FR-418-AC-14")]
+#[trace("FSpec-TC-371", "FSpec-FR-418-AC-14")]
 #[test]
 fn clockful_no_release_transport_preserves_context_and_rejects_tampering() {
     use fsl_analyze::zone_check::read_back_unchanged_with_source;
@@ -215,7 +215,7 @@ fn clockful_no_release_transport_preserves_context_and_rejects_tampering() {
 
 /// A declared but unreachable release uses the same genuine source closure
 /// as a release-free source, including the engine's admission witness.
-#[trace("TC-371", "FR-418-AC-14")]
+#[trace("FSpec-TC-371", "FSpec-FR-418-AC-14")]
 #[test]
 fn the_no_reachable_release_producer_certificate_is_accepted_from_its_json() {
     for world in [no_release(), unreachable_release()] {
@@ -249,7 +249,7 @@ fn the_no_reachable_release_producer_certificate_is_accepted_from_its_json() {
 
 /// Release absence alone is insufficient: the source must admit a genuine
 /// time-divergent behaviour for the emitted certificate's witness.
-#[trace("TC-371", "FR-418-AC-14")]
+#[trace("FSpec-TC-371", "FSpec-FR-418-AC-14")]
 #[test]
 fn a_no_release_source_without_admitted_behaviour_builds_no_certificate() {
     let world = world(&document(&["x"], &[]), TIMED, &format!(
@@ -266,7 +266,7 @@ fn a_no_release_source_without_admitted_behaviour_builds_no_certificate() {
 
 /// Mutating the emitted member cannot turn the source closure into a
 /// different proof; the independent reader rejects the changed bytes.
-#[trace("TC-371", "FR-418-AC-14")]
+#[trace("FSpec-TC-371", "FSpec-FR-418-AC-14")]
 #[test]
 fn a_tampered_no_reachable_release_producer_certificate_is_rejected() {
     let world = unreachable_release();
@@ -289,7 +289,7 @@ fn a_tampered_no_reachable_release_producer_certificate_is_rejected() {
 }
 
 /// Source limits and cancellation remain typed; neither produces a certificate.
-#[trace("TC-371", "FR-418-AC-20")]
+#[trace("FSpec-TC-371")]
 #[test]
 fn the_no_release_producer_preserves_source_limits_and_cancellation() {
     let world = unreachable_release();
