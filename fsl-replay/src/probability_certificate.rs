@@ -37,6 +37,9 @@ pub use document::*;
 pub use source::*;
 mod witness;
 pub use witness::*;
+mod timed_axes;
+use timed_axes::timed_clock_count;
+pub use timed_axes::{timed_edge_axes, TimedAxis};
 
 /// A complete canonical product-state key, encoded by the checker.
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
@@ -1825,12 +1828,74 @@ fn certificate_values(
     Ok(CertificateValues::Complete(values))
 }
 
-/// Independently enumerate the maximal checker-side components whose action
-/// support is closed and does not advance the checked deadline clock.
+/// The nonprogressive end components of a checker graph: the members of each
+/// and the axis along which it makes no progress (see [`TimedAxis`]).
+///
+/// A component found on one axis that lies inside a larger one found on
+/// another is dropped; two that overlap without nesting are refused, because
+/// one value for the shared states would not be decided by either.
+fn nonprogressive_end_components_by_axis(
+    graph: &CheckerGraph,
+    cancel: &Cancel,
+    costs: Option<&BTreeMap<ProbabilityProductKey, Vec<Vec<Rational>>>>,
+) -> Result<Vec<(TimedAxis, Vec<ProbabilityProductKey>)>, ExactProbabilityGraphError> {
+    let clocks = graph
+        .states
+        .keys()
+        .filter_map(timed_clock_count)
+        .max()
+        .unwrap_or(0);
+    let mut axes = vec![TimedAxis::Still, TimedAxis::Deadline];
+    axes.extend((0..clocks).map(TimedAxis::Clock));
+    let mut found: Vec<(TimedAxis, Vec<ProbabilityProductKey>)> = Vec::new();
+    for axis in axes {
+        for members in components_on_axis(graph, cancel, costs, axis)? {
+            found.push((axis, members));
+        }
+    }
+    found.sort_by(|left, right| right.1.len().cmp(&left.1.len()).then(left.0.cmp(&right.0)));
+    let mut kept: Vec<(TimedAxis, Vec<ProbabilityProductKey>)> = Vec::new();
+    for (axis, members) in found {
+        poll_cancel(cancel)?;
+        let set = members.iter().collect::<BTreeSet<_>>();
+        let mut nested = false;
+        for (_, other) in &kept {
+            let overlap = other.iter().filter(|key| set.contains(key)).count();
+            if overlap == 0 {
+                continue;
+            }
+            if overlap == members.len() {
+                nested = true;
+                break;
+            }
+            return Err(ExactProbabilityGraphError::UnsupportedClaimForm);
+        }
+        if !nested {
+            kept.push((axis, members));
+        }
+    }
+    kept.sort_by(|left, right| left.1.first().cmp(&right.1.first()));
+    Ok(kept)
+}
+
 fn nonprogressive_end_components(
     graph: &CheckerGraph,
     cancel: &Cancel,
     costs: Option<&BTreeMap<ProbabilityProductKey, Vec<Vec<Rational>>>>,
+) -> Result<Vec<Vec<ProbabilityProductKey>>, ExactProbabilityGraphError> {
+    Ok(nonprogressive_end_components_by_axis(graph, cancel, costs)?
+        .into_iter()
+        .map(|(_, members)| members)
+        .collect())
+}
+
+/// Independently enumerate the maximal checker-side components whose action
+/// support is closed and does not advance the checked deadline clock.
+fn components_on_axis(
+    graph: &CheckerGraph,
+    cancel: &Cancel,
+    costs: Option<&BTreeMap<ProbabilityProductKey, Vec<Vec<Rational>>>>,
+    axis: TimedAxis,
 ) -> Result<Vec<Vec<ProbabilityProductKey>>, ExactProbabilityGraphError> {
     let keys = graph.states.keys().cloned().collect::<Vec<_>>();
     let indices = keys
@@ -1865,6 +1930,7 @@ fn nonprogressive_end_components(
                         &candidate,
                         &indices,
                         &zero,
+                        axis,
                     )? {
                         has_internal_action = true;
                         break;
@@ -1907,6 +1973,7 @@ fn nonprogressive_end_components(
                     &candidate,
                     &indices,
                     &zero,
+                    axis,
                 )? {
                     continue;
                 }
@@ -1937,6 +2004,7 @@ fn internal_nonprogressive_choice(
     candidate: &BTreeSet<usize>,
     indices: &BTreeMap<ProbabilityProductKey, usize>,
     zero: &Rational,
+    axis: TimedAxis,
 ) -> Result<bool, ExactProbabilityGraphError> {
     let mut has_support = false;
     let clocks = timed_clock_count(source);
@@ -1950,7 +2018,7 @@ fn internal_nonprogressive_choice(
         let Some(target) = indices.get(&edge.target) else {
             return Err(ExactProbabilityGraphError::MissingSuccessor);
         };
-        if !candidate.contains(target) || timed_key_progresses(source, &edge.target) {
+        if !candidate.contains(target) || !timed_edge_axes(source, &edge.target).contains(&axis) {
             return Ok(false);
         }
         if costs
@@ -1961,56 +2029,6 @@ fn internal_nonprogressive_choice(
         }
     }
     Ok(has_support && !(!has_deadline && clocks == Some(0) && positive_cost))
-}
-
-/// Whether a checker-key edge advances time beyond the current region.
-fn timed_key_progresses(from: &ProbabilityProductKey, to: &ProbabilityProductKey) -> bool {
-    fn timed_model(key: &ProbabilityProductKey) -> Option<Value> {
-        let root: Value = serde_json::from_slice(key.as_bytes()).ok()?;
-        Some(root.get(4)?.get(1)?.clone())
-    }
-    let (Some(from_model), Some(to_model)) = (timed_model(from), timed_model(to)) else {
-        return false;
-    };
-    if let (Some(from_deadline), Some(to_deadline)) = (
-        from_model.get(5).and_then(Value::as_array),
-        to_model.get(5).and_then(Value::as_array),
-    ) {
-        if from_deadline.first().and_then(Value::as_str) == Some("deadline")
-            && to_deadline.first().and_then(Value::as_str) == Some("deadline")
-        {
-            return from_deadline.get(2) != to_deadline.get(2);
-        }
-    }
-    let (Some(from_clocks), Some(to_clocks)) = (
-        from_model.get(4).and_then(Value::as_array),
-        to_model.get(4).and_then(Value::as_array),
-    ) else {
-        return false;
-    };
-    to_clocks.iter().any(|to_clock| {
-        let Some(identity) = to_clock.get(0) else {
-            return true;
-        };
-        let Some(from_clock) = from_clocks
-            .iter()
-            .find(|from_clock| from_clock.get(0) == Some(identity))
-        else {
-            return false;
-        };
-        let Some(from_value) = from_clock.get(1).and_then(Value::as_str) else {
-            return true;
-        };
-        let Some(to_value) = to_clock.get(1).and_then(Value::as_str) else {
-            return true;
-        };
-        to_value.parse::<u64>().unwrap_or(0) > from_value.parse::<u64>().unwrap_or(0)
-    })
-}
-
-fn timed_clock_count(key: &ProbabilityProductKey) -> Option<usize> {
-    let root: Value = serde_json::from_slice(key.as_bytes()).ok()?;
-    root.get(4)?.get(1)?.get(4)?.as_array().map(Vec::len)
 }
 
 fn timed_has_deadline(key: &ProbabilityProductKey) -> bool {
@@ -2367,8 +2385,8 @@ mod tests {
             })
             .expect("digital timed keys are valid")
         };
-        assert!(!timed_key_progresses(&key(0), &key(0)));
-        assert!(timed_key_progresses(&key(0), &key(1)));
+        assert!(timed_edge_axes(&key(0), &key(0)).contains(&TimedAxis::Still));
+        assert!(!timed_edge_axes(&key(0), &key(1)).contains(&TimedAxis::Still));
 
         let no_clock = digital_probability_product_key(DigitalProductKeyInput {
             binding: None,

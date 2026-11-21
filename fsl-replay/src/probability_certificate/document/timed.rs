@@ -264,14 +264,15 @@ fn check_mean_time_values(
             .unwrap_or_else(|| graph.initial.clone());
         return Ok(rejected(ProbabilityCertificateRule::RankMissing, at));
     }
-    let components = super::super::nonprogressive_end_components(graph, cancel, Some(costs))?;
+    let components =
+        super::super::nonprogressive_end_components_by_axis(graph, cancel, Some(costs))?;
     let mut component_of = BTreeMap::new();
-    for (component, members) in components.iter().enumerate() {
+    for (component, (_, members)) in components.iter().enumerate() {
         for key in members {
             component_of.insert(key.clone(), component);
         }
     }
-    for members in &components {
+    for (axis, members) in &components {
         poll(cancel)?;
         let member_set = members.iter().cloned().collect::<BTreeSet<_>>();
         let mut exits = Vec::new();
@@ -376,6 +377,7 @@ fn check_mean_time_values(
             &ranks,
             cancel,
             meter,
+            *axis,
         )? {
             return Ok(rejected(
                 ProbabilityCertificateRule::RankBroken,
@@ -543,6 +545,7 @@ fn mean_time_component_policy_valid(
     ranks: &BTreeMap<ProbabilityProductKey, u64>,
     cancel: &Cancel,
     meter: &mut filament_exact::Meter,
+    axis: crate::TimedAxis,
 ) -> Result<bool, ProbabilityDocumentError> {
     let keys = graph.states.keys().cloned().collect::<Vec<_>>();
     let indices = keys
@@ -596,6 +599,7 @@ fn mean_time_component_policy_valid(
                         &candidate,
                         &indices,
                         &zero,
+                        axis,
                     )? {
                         continue;
                     }
@@ -652,6 +656,7 @@ fn mean_time_component_policy_valid(
                         &candidate,
                         &indices,
                         &zero,
+                        axis,
                     )? && choice.iter().any(|edge| {
                         edge.probability > zero
                             && distance

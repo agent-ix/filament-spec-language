@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! FR-197: exact backward induction for the bounded acyclic product.
 
-use std::collections::{BTreeSet, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 use filament_exact::{Integer, Rational};
 use num_bigint::BigInt;
@@ -15,6 +15,7 @@ use super::unbounded::{
 use super::{
     ExactProbLimits, MonitorVerdict, ProbEdge, ProbProduct, ProbStateId, ProductAction, ProductKind,
 };
+use fsl_replay::TimedAxis;
 use fsl_semantics::check::Bound;
 
 /// The scheduler objective for a bounded claim over every scheduler.
@@ -259,26 +260,81 @@ fn collapse_zero_time_components(
         UnboundedError::MissingAction => FhError::MissingAction,
         _ => FhError::InvalidProbability,
     })?;
-    let zero_choices = graph
-        .choices
-        .iter()
-        .map(|choices| {
-            choices
-                .iter()
-                .filter(|choice| choice.edges.iter().all(|edge| edge.elapsed.is_zero()))
-                .cloned()
-                .collect()
-        })
-        .collect();
-    let zero_graph = Graph {
-        product,
-        choices: zero_choices,
+    let mut edge_axes: BTreeMap<(usize, usize), Vec<TimedAxis>> = BTreeMap::new();
+    for edge in &product.edges {
+        let keys = product
+            .states
+            .get(edge.from.index())
+            .and_then(|state| state.certificate_state.as_ref())
+            .zip(
+                product
+                    .states
+                    .get(edge.to.index())
+                    .and_then(|state| state.certificate_state.as_ref()),
+            );
+        let axes = match keys {
+            Some((from, to)) => fsl_replay::timed_edge_axes(from, to),
+            None if edge.elapsed.is_zero() => vec![TimedAxis::Still],
+            None => Vec::new(),
+        };
+        edge_axes.insert((edge.from.index(), edge.to.index()), axes);
+    }
+    let on_axis = |axis: TimedAxis| {
+        let choices = graph
+            .choices
+            .iter()
+            .map(|choices| {
+                choices
+                    .iter()
+                    .filter(|choice| {
+                        choice.edges.iter().all(|edge| {
+                            edge_axes
+                                .get(&(edge.from.index(), edge.to.index()))
+                                .is_some_and(|axes| axes.contains(&axis))
+                        })
+                    })
+                    .cloned()
+                    .collect()
+            })
+            .collect();
+        Graph { product, choices }
     };
-    let components = maximal_end_components_from(
-        &zero_graph,
-        (0..product.states.len()).collect::<BTreeSet<_>>(),
-    )
-    .map_err(|_| FhError::InvalidState)?;
+    let zero_graph = on_axis(TimedAxis::Still);
+    let mut axes = BTreeSet::from([TimedAxis::Still]);
+    axes.extend(edge_axes.values().flatten().copied());
+    let mut found: Vec<Vec<usize>> = Vec::new();
+    for axis in axes {
+        let restricted = on_axis(axis);
+        found.extend(
+            maximal_end_components_from(
+                &restricted,
+                (0..product.states.len()).collect::<BTreeSet<_>>(),
+            )
+            .map_err(|_| FhError::InvalidState)?,
+        );
+    }
+    // A component inside a larger one found on another axis is subsumed; two
+    // that overlap without nesting have no single value for the shared
+    // states, so the claim is not decided here.
+    found.sort_by(|left, right| right.len().cmp(&left.len()));
+    let mut components: Vec<Vec<usize>> = Vec::new();
+    for members in found {
+        let mut nested = false;
+        for other in &components {
+            let overlap = members.iter().filter(|state| other.contains(state)).count();
+            if overlap == members.len() {
+                nested = true;
+                break;
+            }
+            if overlap > 0 {
+                return Err(FhError::Cycle);
+            }
+        }
+        if !nested {
+            components.push(members);
+        }
+    }
+    components.sort_by_key(|component| component.iter().min().copied().unwrap_or(usize::MAX));
     if components.is_empty() {
         if !has_cycle(&zero_graph)? {
             return Ok(None);
@@ -483,8 +539,7 @@ impl ZeroTimeSolver<'_> {
             let groups = action_groups(self.product, ProbStateId(*state))?;
             for (choice_index, edges) in groups.iter().enumerate() {
                 let internal = edges.iter().all(|edge| {
-                    edge.probability.is_zero()
-                        || (edge.elapsed.is_zero() && member_set.contains(&edge.to.index()))
+                    edge.probability.is_zero() || member_set.contains(&edge.to.index())
                 });
                 if internal {
                     continue;
@@ -606,8 +661,7 @@ fn expand_zero_time_component_policy(
                 .iter()
                 .filter(|edges| {
                     edges.iter().all(|edge| {
-                        edge.probability.is_zero()
-                            || (edge.elapsed.is_zero() && members.contains(&edge.to.index()))
+                        edge.probability.is_zero() || members.contains(&edge.to.index())
                     })
                 })
                 .flat_map(|edges| {
@@ -640,17 +694,17 @@ fn expand_zero_time_component_policy(
         let selected = groups
             .iter()
             .position(|edges| {
-                edges.iter().all(|edge| {
-                    edge.probability.is_zero()
-                        || (edge.elapsed.is_zero() && members.contains(&edge.to.index()))
-                }) && edges.iter().any(|edge| {
-                    !edge.probability.is_zero()
-                        && distance
-                            .get(edge.to.index())
-                            .copied()
-                            .flatten()
-                            .is_some_and(|next| next < current)
-                })
+                edges
+                    .iter()
+                    .all(|edge| edge.probability.is_zero() || members.contains(&edge.to.index()))
+                    && edges.iter().any(|edge| {
+                        !edge.probability.is_zero()
+                            && distance
+                                .get(edge.to.index())
+                                .copied()
+                                .flatten()
+                                .is_some_and(|next| next < current)
+                    })
             })
             .ok_or(FhError::InvalidState)?;
         *policy.get_mut(*state).ok_or(FhError::InvalidState)? = Some(selected);

@@ -490,6 +490,7 @@ pub use probability_certificate::{
     check_long_run_probability_certificate_with_identity, replay_probabilistic_witness_observing,
     LongRunProbabilityPhase, ProbabilityWitnessSemanticPhase,
 };
+pub use probability_certificate::{timed_edge_axes, TimedAxis};
 pub use product_action::{
     FreeDelayActionRow, FreeDelayRow, FreeDelaysRace, FreeRacer, GivenRacer, NotMixedRace,
     ProductAction, ProductActionError, ProductActionRefusal, Schedule,
