@@ -350,6 +350,33 @@ pub(super) struct Built {
 }
 
 impl Built {
+    /// The retained recursive dependency artifacts in selected-identity order.
+    pub(super) fn dependency_artifacts(
+        &self,
+    ) -> Vec<(&str, &Emission, &filament_contract_model::CheckedPackageV2)> {
+        let mut held = BTreeMap::new();
+        let mut pending = vec![self.unit.package()];
+        while let Some(package) = pending.pop() {
+            for (identity, dependency) in package.dependencies() {
+                if held.insert(identity, dependency.as_ref()).is_none() {
+                    pending.push(dependency.as_ref());
+                }
+            }
+        }
+        held.into_iter()
+            .map(|(identity, dependency)| {
+                (
+                    identity.as_str(),
+                    dependency.remembered_emission().expect("retained emission"),
+                    self.unit
+                        .admitted_libraries()
+                        .package(identity)
+                        .expect("retained library admission"),
+                )
+            })
+            .collect()
+    }
+
     /// This unit's in-process package with the emission of `other`.
     pub(super) fn with_emission_of(self, other: Built) -> Built {
         Built {
@@ -1432,6 +1459,15 @@ fn each_clause_pairs_with_its_own_clock_row_over_the_bytes_only_route() {
 #[trace("FSpec-TC-2015", "FSpec-FR-322-AC-461")]
 #[test]
 fn clause_name_rows_carry_the_whole_declaration_region() {
+    let native_refusal = |error: fsl_package::ImportViewRefusal| match error {
+        fsl_package::ImportViewRefusal::Read { refusal, .. } => match *refusal {
+            fsl_foundation::diagnostic::StageFailure::Refused(
+                fsl_package::V2ReadRefusal::Envelope { refusal, .. },
+            ) => refusal,
+            other => panic!("expected an envelope refusal, got {other:?}"),
+        },
+        other => panic!("expected the package reader's refusal, got {other:?}"),
+    };
     for kind in KINDS {
         let source_path = handoff_request(kind, Corpus::None).emit.source;
         let source = std::fs::read_to_string(&source_path).expect("the recipe source");
@@ -1460,9 +1496,18 @@ fn clause_name_rows_carry_the_whole_declaration_region() {
         let Err(refused) = removed.try_read(&removed.emission) else {
             panic!("a row without declaration_region is refused");
         };
-        assert!(
-            format!("{refused:?}").contains("declaration_region"),
-            "{refused:?}"
+        let refusal = native_refusal(refused);
+        assert_eq!(
+            refusal.code,
+            filament_contract_model::CheckedPackageRefusalCode::MalformedWire
+        );
+        assert_eq!(
+            refusal
+                .loci
+                .first()
+                .and_then(|location| location.path.as_ref())
+                .map(|path| path.as_str()),
+            Some("/temporal_clause_names/0")
         );
 
         let shrunk = edited(recipe(kind), |wire| {
@@ -1473,9 +1518,22 @@ fn clause_name_rows_carry_the_whole_declaration_region() {
         let Err(refused) = shrunk.try_read(&shrunk.emission) else {
             panic!("a region without the name token is refused");
         };
-        assert!(
-            format!("{refused:?}").contains("/temporal_clause_names/0/declaration_region"),
-            "{refused:?}"
+        let refusal = native_refusal(refused);
+        assert_eq!(
+            refusal.code,
+            filament_contract_model::CheckedPackageRefusalCode::InvalidPackage
+        );
+        assert_eq!(
+            refusal.cause,
+            Some(filament_contract_model::CheckedPackageRefusalCause::InvalidValue)
+        );
+        assert_eq!(
+            refusal
+                .loci
+                .first()
+                .and_then(|location| location.path.as_ref())
+                .map(|path| path.as_str()),
+            Some("/temporal_clause_names/0/declaration_region")
         );
     }
 }

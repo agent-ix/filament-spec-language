@@ -47,6 +47,7 @@ enum Opening<'t> {
     /// `let`: the bound value is outside the scope, the body inside.
     Let {
         name: &'t str,
+        binder: Option<&'t CheckedNodeId>,
         value: &'t CheckedTerm,
         body: &'t CheckedTerm,
     },
@@ -82,13 +83,19 @@ pub(crate) fn is_ieee_operand(name: &str) -> bool {
 #[ix_trace_rs::string_edge]
 fn opening<'t>(identity: Option<&str>, arguments: &'t [CheckedTerm]) -> Opening<'t> {
     match (identity, arguments) {
-        (Some("filament.op.control.let"), [CheckedTerm::Binding { name, value, .. }, body]) => {
-            Opening::Let {
-                name: name.as_ref(),
+        (
+            Some("filament.op.control.let"),
+            [CheckedTerm::Binding {
+                name,
+                binder,
                 value,
-                body,
-            }
-        }
+            }, body],
+        ) => Opening::Let {
+            name: name.as_ref(),
+            binder: binder.as_ref(),
+            value,
+            body,
+        },
         (
             Some(
                 "filament.op.collection.map"
@@ -218,7 +225,17 @@ impl<'w> Walk<'_, 'w> {
                     arguments,
                     ..
                 }) => match opening(operation.identity(), arguments) {
-                    Opening::Let { name, value, body } => {
+                    Opening::Let {
+                        name,
+                        binder,
+                        value,
+                        body,
+                    } => {
+                        if let Some(binder) = binder {
+                            // The binder link declares a parameter; it does
+                            // not read that parameter in the outer scope.
+                            covered.insert(binder.clone());
+                        }
                         let inner = self.scoped(&shadow, name);
                         reading.push((Reading::Term(body), inner));
                         reading.push((Reading::Term(value), shadow));
@@ -496,27 +513,29 @@ mod tests {
         node
     }
 
-    fn let_of(name: &str, value: Value, body: Value) -> Value {
+    fn let_of(name: &str, binder: &str, value: Value, body: Value) -> Value {
         json!({
             "term": "application",
             "operator": "let",
             "operation": {"identity": "filament.op.control.let", "laws": [], "leaves": [], "member": null, "mode": null},
-            "arguments": [{"term": "binding", "name": name, "value": value}, body],
+            "arguments": [{"term": "binding", "name": name, "binder": id(binder), "value": value}, body],
             "result_type": id("type"),
         })
     }
 
     /// The nodes of an IEEE ordering `-x < -y` over captures `x` and `y`: two
-    /// nested `#ieee_operand` lets, one binder per level, read by `lt`.
+    /// nested `#ieee_operand` lets, one explicit binder link per level, read by
+    /// `lt`. Their dependency edges are metadata, not free reads in the outer
+    /// scope.
     fn ordering_nodes(root_form: &str) -> Vec<Value> {
-        let inner = let_of("#ieee_operand", reference("y"), reference("lt"));
-        let outer = let_of("#ieee_operand", reference("x"), inner);
+        let inner = let_of("#ieee_operand", "operand1", reference("y"), reference("lt"));
+        let outer = let_of("#ieee_operand", "operand0", reference("x"), inner);
         vec![
             node(
                 "ordering",
                 "expression",
                 root_form,
-                &["x", "y", "lt"],
+                &["x", "y", "lt", "operand0", "operand1"],
                 outer,
             ),
             node(

@@ -833,20 +833,79 @@ fn from_package_returns_only_the_ambiguous_name_mismatch() {
 #[trace("FR-532-AC-9", "TC-1332")]
 #[test]
 fn the_evaluator_reads_the_clause_only_through_the_facts() {
-    let directory =
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("fsl-eval/src/temporal/evidence");
-    for entry in std::fs::read_dir(&directory).expect("the evidence sources") {
-        let path = entry.expect("entry").path();
-        let text = std::fs::read_to_string(&path).expect("source");
-        for forbidden in ["SourceIdentity", "CheckedTemporalClause"] {
-            let code: String = text
+    fn violations(directory: &std::path::Path) -> Vec<(std::path::PathBuf, &'static str)> {
+        let mut pending = vec![directory.to_owned()];
+        let mut sources = Vec::new();
+        while let Some(directory) = pending.pop() {
+            let mut entries: Vec<_> = std::fs::read_dir(&directory)
+                .unwrap_or_else(|error| panic!("{}: {error}", directory.display()))
+                .map(|entry| {
+                    entry.unwrap_or_else(|error| panic!("{}: {error}", directory.display()))
+                })
+                .collect();
+            entries.sort_by_key(std::fs::DirEntry::file_name);
+            for entry in entries {
+                let path = entry.path();
+                let kind = entry
+                    .file_type()
+                    .unwrap_or_else(|error| panic!("{}: {error}", path.display()));
+                if kind.is_dir() {
+                    pending.push(path);
+                } else if kind.is_file() {
+                    sources.push(path);
+                } else {
+                    panic!("unexpected source entry kind: {}", path.display());
+                }
+            }
+        }
+        sources.sort();
+        assert!(!sources.is_empty(), "{}: no sources", directory.display());
+        let mut found = Vec::new();
+        for path in sources {
+            let text = std::fs::read_to_string(&path)
+                .unwrap_or_else(|error| panic!("{}: {error}", path.display()));
+            let code = text
                 .lines()
                 .filter(|line| !line.trim_start().starts_with("//"))
                 .collect::<Vec<_>>()
                 .join("\n");
-            assert!(!code.contains(forbidden), "{}: {forbidden}", path.display());
+            for forbidden in ["SourceIdentity", "CheckedTemporalClause"] {
+                if code.contains(forbidden) {
+                    found.push((path.clone(), forbidden));
+                }
+            }
         }
+        found
     }
+
+    // Module subdirectories and every regular file retain the same forbidden
+    // type checks; neither directory nor extension filtering may hide a read.
+    let fixture = tempfile::tempdir().expect("source-layout fixture");
+    let nested = fixture.path().join("nested");
+    std::fs::create_dir(&nested).expect("nested module directory");
+    let nested_source = nested.join("mod.rs");
+    std::fs::write(
+        &nested_source,
+        "pub struct SourceIdentity;\npub struct CheckedTemporalClause;\n",
+    )
+    .expect("nested forbidden-type source");
+    std::fs::write(fixture.path().join("mod.rs"), "mod nested;\n").expect("root source");
+    let other_source = fixture.path().join("other.inc");
+    std::fs::write(&other_source, "pub struct SourceIdentity;\n")
+        .expect("a source without an rs extension");
+    assert_eq!(
+        violations(fixture.path()),
+        vec![
+            (nested_source.clone(), "SourceIdentity"),
+            (nested_source, "CheckedTemporalClause"),
+            (other_source, "SourceIdentity"),
+        ]
+    );
+
+    let directory =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("fsl-eval/src/temporal/evidence");
+    let forbidden = violations(&directory);
+    assert!(forbidden.is_empty(), "{forbidden:?}");
     let ledger = read_source("fsl-eval/src/temporal/ledger.rs");
     let binding = ledger
         .split("pub struct LedgerBinding")
@@ -1843,13 +1902,39 @@ fn the_writer_refuses_native_join_limits_that_cannot_pay_for_the_identity_join()
         built.emission.package().bytes(),
         "the budget oracle and writer must use exactly the same producer package",
     );
+    let dependencies = built.dependency_artifacts();
+    assert!(!dependencies.is_empty(), "the recipe imports a library");
+    // The closed dependency artifacts precede the root on the writer's one
+    // native-join ledger, in selected-identity order.
+    let materialize_dependencies = |budget: &mut filament_contract_model::NativeJoinBudget| {
+        let mut files = Vec::new();
+        for (index, (_, emission, package)) in dependencies.iter().enumerate() {
+            let identities = emission
+                .identity_rows(package, budget)
+                .expect("the allowance pays for dependency identities");
+            files.push((
+                format!("dependencies/{index}/identities.json"),
+                identities.to_bytes(package).expect("dependency identities"),
+            ));
+            let equality = emission
+                .equality_witness(package, budget)
+                .expect("the allowance pays for dependency equality");
+            files.push((
+                format!("dependencies/{index}/equality.json"),
+                equality.to_bytes(package).expect("dependency equality"),
+            ));
+        }
+        files
+    };
     let mut measure = filament_contract_model::NativeJoinBudget::new(1 << 30, 1 << 30);
-    built
+    let dependency_files = materialize_dependencies(&mut measure);
+    let dependency_need = measure.consumed();
+    let identities = built
         .emission
         .identity_rows(read.admitted(), &mut measure)
         .expect("measure the same final emission join the writer performs");
     let need = measure.consumed();
-    assert!(need.work > 0 && need.storage > 0);
+    assert!(need.work > dependency_need.work && need.storage > dependency_need.storage);
     for (limits, code) in [
         (
             fsl_package::NativeJoinLimits::new(need.work - 1, need.storage),
@@ -1860,6 +1945,17 @@ fn the_writer_refuses_native_join_limits_that_cannot_pay_for_the_identity_join()
             Code::ExhaustedStorage,
         ),
     ] {
+        let mut oracle = limits.budget();
+        let _ = materialize_dependencies(&mut oracle);
+        let IdentityFileRefusal::Rows(expected) = built
+            .emission
+            .identity_rows(read.admitted(), &mut oracle)
+            .expect_err("one-short root-identity allowance refuses its final copy")
+        else {
+            panic!("the root-identity denial retains its compact row cause");
+        };
+        assert_eq!(expected.denied(), oracle.first_unpaid());
+        assert_eq!(expected.locus(), oracle.first_unpaid_locus());
         let mut asked = request("event_position", Corpus::None);
         asked.emit.package_name = package_name.clone();
         asked.native_join = limits;
@@ -1876,6 +1972,7 @@ fn the_writer_refuses_native_join_limits_that_cannot_pay_for_the_identity_join()
                         denial.native
                     )
                 };
+                assert_eq!(*native, expected, "resource, amount, locus and full bound");
                 assert_eq!(
                     native.code(),
                     if code == Code::ExhaustedWork {
@@ -1937,6 +2034,7 @@ fn the_writer_refuses_native_join_limits_that_cannot_pay_for_the_identity_join()
         ),
     ] {
         let mut oracle = filament_contract_model::NativeJoinBudget::new(work, storage);
+        let _ = materialize_dependencies(&mut oracle);
         built
             .emission
             .identity_rows(read.admitted(), &mut oracle)
@@ -1976,13 +2074,25 @@ fn the_writer_refuses_native_join_limits_that_cannot_pay_for_the_identity_join()
     exact.native_join =
         fsl_package::NativeJoinLimits::new(complete_need.work, complete_need.storage);
     write(&exact, &target).expect("exact complete work and storage write the directory");
-    assert!(target.join("identities.json").exists());
+    assert_eq!(
+        std::fs::read(target.join("identities.json")).expect("written identity file"),
+        identities
+            .to_bytes(read.admitted())
+            .expect("measured identity file")
+    );
     assert_eq!(
         std::fs::read(target.join("equality.json")).expect("written equality file"),
         equality
             .to_bytes(read.admitted())
             .expect("measured equality file")
     );
+    for (path, bytes) in dependency_files {
+        assert_eq!(
+            std::fs::read(target.join(&path)).expect("written dependency sidecar"),
+            bytes,
+            "{path}"
+        );
+    }
 }
 
 /// Original opaque ceilings and cumulative attempted totals survive every
