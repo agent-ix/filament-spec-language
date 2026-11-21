@@ -837,9 +837,11 @@ fn reset_loop_is_nonprogressive_without_a_deadline_clock() {
 }
 
 /// FR-923: a workload resolves a state by its weights, so an operation it weighs
-/// at zero cannot be dropped from the checker's product. The checker refuses the
-/// product (`Unsupported`), so the item settles disposed `unsupported` with no
-/// terminal verdict and no document: neither `proved` nor a rejected value.
+/// at zero cannot be dropped from the checker's product. The engine's own
+/// product faults on a zero-weight race (`workload-weights-sum`), so no
+/// document exists for the checker to refuse and the item settles `failed`,
+/// never `proved`. The checker's `Unsupported` refusal of such a state
+/// (`admit_workload`) is therefore not reachable through this pipeline.
 #[trace("TC-2492")]
 #[test]
 fn a_workload_that_gives_an_enabled_operation_no_weight_is_not_proved() {
@@ -856,11 +858,17 @@ fn a_workload_that_gives_an_enabled_operation_no_weight_is_not_proved() {
         claim,
     );
     let record = settle(&world, "ZeroWeight");
-    assert!(record.terminal().is_none(), "{record:#?}");
     assert!(
-        format!("{:?}", record.settlement).contains("Unsupported"),
+        matches!(
+            record.terminal().map(|terminal| terminal.value()),
+            Some(TerminalValue::Failed)
+        ),
         "{record:#?}"
     );
+    assert!(record
+        .terminal()
+        .and_then(|terminal| terminal.exact_certificate_document())
+        .is_none());
 }
 
 /// The exact value of a `proved` record, when it is one.
