@@ -148,14 +148,17 @@ impl SourceDeclarations {
     /// resolution row against actual declaration metadata. Distinct scopes
     /// sharing a rendering are refused rather than selected by map order.
     pub fn row_scope(&self, text: &str) -> Result<Option<DeclarationScope>, InternalFault> {
-        if let Ok(node) = text.parse::<NodeKey>() {
-            if let Some(scope) = self
-                .node_scopes
-                .get(&node)
-                .or_else(|| self.model_scopes.get(&node))
-            {
-                return Ok(Some(scope.clone()));
+        let mut joined = None;
+        for (node, scope) in self.node_scopes.iter().chain(&self.model_scopes) {
+            if node.to_string() == text {
+                if joined.as_ref().is_some_and(|previous| previous != scope) {
+                    return Err(fault("clock-checked-type-handle-has-one-scope"));
+                }
+                joined = Some(scope.clone());
             }
+        }
+        if joined.is_some() {
+            return Ok(joined);
         }
         let mut original = None;
         for (key, scope) in &self.declarations {
