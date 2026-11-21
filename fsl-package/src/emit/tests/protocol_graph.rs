@@ -1874,6 +1874,7 @@ fn a_fifo_key_stable_key_is_written() {
         ("WithBounded", "m.b"),
         ("WithQuantity", "m.q"),
         ("WithDecimal", "m"),
+        ("WithDecimal", "m.d"),
         ("WithRational", "m"),
         ("WithText", "m"),
         ("WithRational", "m.r"),
