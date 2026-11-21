@@ -63,7 +63,14 @@ pub enum TransitionId { Operation(ModelTransition), Stutter } // the terminal st
 pub struct WeightedStep { pub transition: TransitionId, pub post: ModelSimState, pub probability: Rational, pub rewards: Vec<(Identifier, Value)> }
 pub struct UndecidedSuccessor { pub state: StateKey } // a contract conjunction was undecided at the state
 pub enum Unsteppable { NotMarkov(NotMarkov), UndecidedSuccessor(UndecidedSuccessor) }
-pub struct NotMarkov { pub state: StateKey, pub transition: ScheduledIdentity, pub random: Vec<Value>, pub post_states: u32 } // state: the canonical state key (the RFC 8785 byte string of the state)
+pub struct NotMarkov {
+    pub state: StateKey, // the canonical state key (the RFC 8785 byte string of the state)
+    pub transition: ScheduledIdentity,
+    pub drawn_transition: ModelTransition, // the existing complete identity, including random arguments in declared order
+    pub random: Vec<Value>,
+    pub post_states: u64, // the actual number of distinct model post-states, checked without saturation
+    pub post_state_examples: Vec<StateKey>, // the first min(post_states, 2) actual distinct keys in deterministic owner order
+}
 
 impl ModelSystem {
     pub fn actions(&self, state: &ModelSimState)
