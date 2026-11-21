@@ -2,7 +2,6 @@
 //! Canonical, caller-metered source-policy states for step-counting plans.
 
 use std::cell::RefCell;
-use std::mem::size_of;
 
 use filament_exact::{
     CancelCause, Charge, ChargePoint, Incomplete, Integer, Meter, NodeKey, NodePathIter, Origin,
@@ -10,7 +9,9 @@ use filament_exact::{
 use fsl_foundation::node_wire::{project_node_key, NodeIdentitySink};
 use fsl_foundation::IdentityLimits;
 use fsl_semantics::check::{Activation, CheckedTemporalClause, FormulaNodeId, TemporalProfile};
-use quire_canonical::{Error, Limits, Node, NodeRef, Reservation, ReservationDenied, Sink, Writer};
+use quire_canonical::{Error, Limits, Node, NodeRef, Sink, Writer};
+
+use crate::policy_budget::{Budget, Output, Provision};
 
 use super::{
     closure_shape, invariant_atom, BoundedKind, BoundedState, SafetyState, AUTOMATON_STATE_KEY_V1,
@@ -50,6 +51,23 @@ pub struct PolicyContext<'a> {
     pub instance: &'a str,
 }
 
+/// Stable category of a policy representation refusal.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum PolicyStateCode {
+    /// Original scalar accounting denial.
+    Accounting,
+    /// Original cancellation.
+    Cancelled,
+    /// Malformed, unreachable or foreign state.
+    Invalid,
+    /// Existing model-instance refusal.
+    Instances,
+    /// Existing identity byte ceiling.
+    IdentityLimit,
+    /// Actual allocation or encoding error.
+    Encoding,
+}
+
 /// A policy representation operation stopped before admitting a result.
 #[derive(Debug, thiserror::Error)]
 pub enum PolicyStateError {
@@ -62,86 +80,31 @@ pub enum PolicyStateError {
     /// Malformed, noncanonical, unreachable or foreign policy state.
     #[error("invalid canonical policy state")]
     Invalid,
-    /// Identity byte bound or actual allocation/encoding failure.
+    /// Existing model-instance admission refusal.
+    #[error(transparent)]
+    Instances(#[from] crate::simulation::NotSimulated),
+    /// Existing per-identity encoding byte ceiling.
+    #[error("policy identity byte limit {value}")]
+    IdentityLimit {
+        /// The existing bound in force.
+        value: u64,
+    },
+    /// Actual allocation/encoding failure.
     #[error("policy encoding: {0}")]
     Encoding(#[from] Error),
 }
 
-struct Budget<'a> {
-    meter: RefCell<&'a mut Meter>,
-    stopped: RefCell<Option<PolicyStateError>>,
-}
-impl Budget<'_> {
-    fn pay(&self, charge: Charge) -> Result<(), PolicyStateError> {
-        let mut meter = self.meter.borrow_mut();
-        if let Some(cause) = meter.cancel().and_then(filament_exact::Cancel::cause) {
-            return Err(PolicyStateError::Cancelled(cause));
+impl PolicyStateError {
+    /// The stable category, independent of diagnostic wording.
+    pub const fn code(&self) -> PolicyStateCode {
+        match self {
+            Self::Accounting(_) => PolicyStateCode::Accounting,
+            Self::Cancelled(_) => PolicyStateCode::Cancelled,
+            Self::Invalid => PolicyStateCode::Invalid,
+            Self::Instances(_) => PolicyStateCode::Instances,
+            Self::IdentityLimit { .. } => PolicyStateCode::IdentityLimit,
+            Self::Encoding(_) => PolicyStateCode::Encoding,
         }
-        meter.charge(charge).map_err(PolicyStateError::Accounting)
-    }
-    fn work(&self, units: usize) -> Result<(), PolicyStateError> {
-        self.pay(Charge::new(ChargePoint::ModelCandidate).work(Integer::from(units)))
-    }
-    fn reserve(&self, bytes: usize) -> Result<(), PolicyStateError> {
-        self.pay(
-            Charge::new(ChargePoint::ModelCandidate)
-                .work(Integer::zero())
-                .results(u64::try_from(bytes).map_err(|_| PolicyStateError::Invalid)?),
-        )
-    }
-    fn growth<T>(&self, values: &mut Vec<T>, extra: usize) -> Result<(), PolicyStateError> {
-        let needed = values
-            .len()
-            .checked_add(extra)
-            .ok_or(PolicyStateError::Invalid)?;
-        if needed > values.capacity() {
-            self.reserve(
-                needed
-                    .checked_mul(size_of::<T>())
-                    .ok_or(PolicyStateError::Invalid)?,
-            )?;
-            values
-                .try_reserve_exact(needed - values.len())
-                .map_err(|_| Error::Allocation {
-                    requested: needed.saturating_mul(size_of::<T>()),
-                })?;
-        }
-        Ok(())
-    }
-    fn copy(&self, output: &mut Vec<u8>, bytes: &[u8]) -> Result<(), PolicyStateError> {
-        self.work(bytes.len())?;
-        self.growth(output, bytes.len())?;
-        output.extend_from_slice(bytes);
-        Ok(())
-    }
-    fn bridge(&self, error: PolicyStateError) -> Error {
-        if self.stopped.borrow().is_none() {
-            *self.stopped.borrow_mut() = Some(error);
-        }
-        Error::ReservationDenied { requested: 0 }
-    }
-    fn event(&self, units: usize) -> Result<(), Error> {
-        self.work(units).map_err(|error| self.bridge(error))
-    }
-}
-struct Provision<'a, 'm>(&'a Budget<'m>);
-impl Reservation for Provision<'_, '_> {
-    fn reserve(&mut self, bytes: usize) -> Result<(), ReservationDenied> {
-        self.0.reserve(bytes).map_err(|error| {
-            self.0.bridge(error);
-            ReservationDenied
-        })
-    }
-}
-struct Output<'a, 'm> {
-    budget: &'a Budget<'m>,
-    bytes: Vec<u8>,
-}
-impl Sink for Output<'_, '_> {
-    fn write_bytes(&mut self, bytes: &[u8]) -> Result<(), Error> {
-        self.budget
-            .copy(&mut self.bytes, bytes)
-            .map_err(|error| self.budget.bridge(error))
     }
 }
 
@@ -344,7 +307,10 @@ fn key(
     if let Some(error) = budget.stopped.borrow_mut().take() {
         return Err(error);
     }
-    encoded?;
+    encoded.map_err(|error| match error {
+        Error::Limit(limit) => PolicyStateError::IdentityLimit { value: limit.bound },
+        other => PolicyStateError::Encoding(other),
+    })?;
     Ok(output.bytes)
 }
 
@@ -514,7 +480,12 @@ impl StepPolicy {
             if let Some(error) = budget.stopped.borrow_mut().take() {
                 return Err(error);
             }
-            let document = document.map_err(|_| PolicyStateError::Invalid)?;
+            let document = document.map_err(|error| match error {
+                quire_canonical::ReadError::Limit(limit) => {
+                    PolicyStateError::IdentityLimit { value: limit.bound }
+                }
+                _ => PolicyStateError::Invalid,
+            })?;
             let Node::Array(mut members) = document.root().node() else {
                 return Err(PolicyStateError::Invalid);
             };

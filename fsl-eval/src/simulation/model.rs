@@ -72,7 +72,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use filament_checked::key::DeclarationKey;
 use filament_exact::{
-    EffectiveId, Incomplete, Integer, IntegerInterval, NodeKey, ObjectReference, Refusal,
+    EffectiveId, Incomplete, Integer, IntegerInterval, Meter, NodeKey, ObjectReference, Refusal,
     ScalarLimits, Undefined, ValueType,
 };
 use filament_semantic_value::catalog::{CatalogCode, InternalFault};
@@ -2444,6 +2444,98 @@ impl<'a> ModelSystem<'a> {
                     })
             })
             .collect())
+    }
+
+    /// List policy instances in the existing deterministic order, charging
+    /// caller-owned traversal, ordering and full new capacities before growth.
+    /// The ordinary unmetered instance API remains unchanged.
+    ///
+    /// # Errors
+    /// The original instance admission, scalar accounting, cancellation or
+    /// allocation/encoding refusal; no partial instance list is returned.
+    pub fn instances_with_meter(
+        &self,
+        over: &ValueType,
+        meter: &mut Meter,
+    ) -> Result<Vec<ModelInstance>, crate::automaton::PolicyStateError> {
+        use crate::automaton::PolicyStateError;
+        use crate::policy_budget::{declaration_bytes, Budget};
+        let budget = Budget {
+            meter: std::cell::RefCell::new(meter),
+            stopped: std::cell::RefCell::new(None),
+        };
+        let ValueType::Reference(parameter) = over else {
+            return Ok(Vec::new());
+        };
+        let mut admitting = Vec::new();
+        for population in &self.populations {
+            budget.work(1)?;
+            if self.overlaps(population, parameter.clone()) {
+                let identity = declaration_bytes(&population.key, &budget)?;
+                budget.growth(&mut admitting, 1)?;
+                admitting.push((identity, &population.key));
+            }
+        }
+        let mut unbounded = Vec::new();
+        for (_, population) in &admitting {
+            budget.work(1)?;
+            if !self.universes.contains_key(*population) {
+                let node = fsl_semantics::model::key::population_node_key(population)
+                    .map_err(|_| PolicyStateError::Invalid)?;
+                budget.growth(&mut unbounded, 1)?;
+                unbounded.push((node, ValueType::Population(None)));
+            }
+        }
+        let mut roots = Vec::new();
+        budget.growth(&mut roots, unbounded.len())?;
+        roots.extend(unbounded.iter().map(|(node, root)| (node.clone(), root)));
+        crate::simulation::not_simulated::check_requires_bound(&roots, self.types, u64::MAX)?;
+        // Insertion sort keeps the byte-comparison schedule caller-controlled:
+        // every inspected pair is admitted before comparison and movement.
+        for position in 1..admitting.len() {
+            let mut at = position;
+            while at > 0 {
+                let (left, right) = (&admitting[at - 1].0, &admitting[at].0);
+                let mut order = std::cmp::Ordering::Equal;
+                for (left, right) in left.iter().zip(right) {
+                    budget.work(1)?;
+                    order = left.cmp(right);
+                    if order != std::cmp::Ordering::Equal {
+                        break;
+                    }
+                }
+                if order == std::cmp::Ordering::Equal {
+                    budget.work(1)?;
+                    order = left.len().cmp(&right.len());
+                }
+                if order != std::cmp::Ordering::Greater {
+                    break;
+                }
+                budget.work(1)?;
+                admitting.swap(at - 1, at);
+                at -= 1;
+            }
+        }
+        let copy = |text: &str| -> Result<String, PolicyStateError> {
+            let mut bytes = Vec::new();
+            budget.copy(&mut bytes, text.as_bytes())?;
+            String::from_utf8(bytes).map_err(|_| PolicyStateError::Invalid)
+        };
+        let mut instances = Vec::new();
+        for (_, population) in admitting {
+            budget.work(1)?;
+            for key in self.universes.get(population).into_iter().flatten() {
+                budget.work(1)?;
+                let population = DeclarationKey {
+                    package: copy(&population.package)?,
+                    node: copy(&population.node)?,
+                };
+                let key = copy(key)?;
+                budget.growth(&mut instances, 1)?;
+                instances.push(ModelInstance { population, key });
+            }
+        }
+        Ok(instances)
     }
 
     /// Whether `population` overlaps the object type `parameter` (FR-125

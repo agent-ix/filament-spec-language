@@ -3019,8 +3019,8 @@ object Counter {
   number: Int[0,4];
   operation right() modifies self.number { pre Start { self.number = 0 }; post Next { self.number = 1 }; }
   operation left() modifies self.number { pre Start { self.number = 0 }; post Next { self.number = 2 }; }
-  operation join() modifies self.number { pre Branch { self.number = 1 or self.number = 2 }; post Next { self.number = 3 }; }
-  operation finish() modifies self.number { pre Joined { self.number = 3 }; post Next { self.number = 4 }; }
+  operation combine() modifies self.number { pre Branch { self.number = 1 or self.number = 2 }; post Next { self.number = 3 }; }
+  operation settle() modifies self.number { pre Joined { self.number = 3 }; post Next { self.number = 4 }; }
 }
 population counters: Counter;
 "#;
@@ -3043,6 +3043,24 @@ fn positive_source_policies_preserve_witnesses_and_canonical_native_order() {
         ("always[0,5] holds(c.number <= 4)", "right"),
     ] {
         let world = positive_policy_world(formula);
+        let types = world.package.graph().scope().types();
+        let counter = types
+            .object_types()
+            .find(|object| object.name() == "M::Counter")
+            .unwrap();
+        let field = types
+            .attributes(counter.key())
+            .unwrap()
+            .iter()
+            .find(|field| field.field().name() == "number")
+            .unwrap();
+        let ValueType::Int(bounds) = field.field().value_type() else {
+            panic!("actual admitted native interval");
+        };
+        assert_eq!(
+            (bounds.lower().to_string(), bounds.upper().to_string()),
+            ("0".to_owned(), "4".to_owned())
+        );
         let system = world_system(&world);
         let node = &world.package.graph().temporal_clauses()[0];
         let mut retained = None;
@@ -3080,7 +3098,7 @@ fn positive_source_policies_preserve_witnesses_and_canonical_native_order() {
                 .iter()
                 .map(|step| rules.operation_name(step).unwrap())
                 .collect();
-            assert_eq!(names, [expected, "join", "finish"]);
+            assert_eq!(names, [expected, "combine", "settle"]);
             let numbers: Vec<_> = plan
                 .states
                 .iter()
@@ -3183,6 +3201,47 @@ fn positive_source_policies_refuse_broken_safety_and_forged_certificates() {
     }
 }
 
+/// A valid but incorrect recorded monitor cannot pass independent initial
+/// reconstruction, even when its own canonical context and framing are valid.
+#[test]
+#[trace("FR-1012", "FSpec-FR-803")]
+fn positive_source_policy_certificate_rejects_a_substituted_monitor() {
+    use fsl_analyze::plan_source::SourcePlan;
+    let world = positive_policy_world("eventually[0,3] holds(c.number = 2)");
+    let system = world_system(&world);
+    let mut rules = SourcePlan::new(
+        &world.package,
+        &world.package.graph().syntheses()[0],
+        &system,
+        vec![&world.package.graph().temporal_clauses()[0]],
+        UNLIMITED,
+    )
+    .unwrap();
+    let fault = PlanFault::ForgePolicyStates {
+        entry: 0,
+        source: 1,
+    };
+    let result = search(
+        &system,
+        &mut rules,
+        PlanSearchRequest {
+            lengths: PlanLengths::new(0, 3).unwrap(),
+            limits: PlanSearchLimits::default(),
+            cancel: &Cancel::new(),
+            fault: Some(&fault),
+        },
+    )
+    .unwrap();
+    assert!(!result.certified);
+    assert_eq!(
+        result.certificate.unwrap().outcome,
+        CertificateOutcome::Rejected {
+            rule: CertificateRule::Initial,
+            entry: 0
+        }
+    );
+}
+
 /// Positive source policies retain their original cumulative work/storage
 /// denial and request/deadline cancellation, without another per-policy meter.
 #[test]
@@ -3223,6 +3282,7 @@ fn positive_source_policy_accounting_and_cancellation_keep_the_original_session(
         );
     }
     for cause in [CancelCause::Requested, CancelCause::Deadline] {
+        let system = world_system(&world);
         let mut rules = SourcePlan::new(
             &world.package,
             &world.package.graph().syntheses()[0],
@@ -3244,6 +3304,103 @@ fn positive_source_policy_accounting_and_cancellation_keep_the_original_session(
         assert_eq!(
             rules.policy_accepts(0, &bytes, &initial),
             Err(RuleStop::Cancelled(cause))
+        );
+    }
+}
+
+/// The budgeted model-owned instance collector preserves ordinary ordering,
+/// two-instance source bindings and empty-population policy vacuity.
+#[test]
+#[trace("FR-1011", "FR-1012", "FSpec-FR-803")]
+fn positive_source_policy_instances_preserve_order_vacuity_and_original_denials() {
+    use filament_exact::{CancelCause, LimitKind, Meter, ScalarLimits};
+    use fsl_analyze::plan_source::SourcePlan;
+    use fsl_eval::automaton::PolicyStateError;
+    for start in [
+        vec![
+            ("z", json!({"number":{"integer":"0"}})),
+            ("a", json!({"number":{"integer":"0"}})),
+        ],
+        vec![],
+    ] {
+        let world = native_plan_world(POLICY_DIAMOND_MODEL,"type Lengths = Int[0,1]; temporal Policy using t over (c: M::Counter) clock \"model-steps\" on origin { always holds(c.number >= 0) } synthesis Reach using t grammar M::Counter domain Lengths satisfies { true };",&start);
+        let keys: Vec<_> = start.iter().map(|(key, _)| *key).collect();
+        let system = ModelSystem::new(world.subject(&keys, UNLIMITED).simulation).unwrap();
+        let node = &world.package.graph().temporal_clauses()[0];
+        let over = &node.clause().over().1;
+        let expected = system.instances(over).unwrap();
+        let actual = system
+            .instances_with_meter(over, &mut Meter::new(UNLIMITED))
+            .unwrap();
+        assert_eq!(actual, expected);
+        if !start.is_empty() {
+            assert_eq!(
+                actual
+                    .iter()
+                    .map(|instance| instance.key.as_str())
+                    .collect::<Vec<_>>(),
+                ["z", "a"]
+            );
+            let error = system
+                .instances_with_meter(
+                    over,
+                    &mut Meter::new(ScalarLimits {
+                        result_units: 0,
+                        ..UNLIMITED
+                    }),
+                )
+                .unwrap_err();
+            assert!(
+                matches!(error,PolicyStateError::Accounting(denial) if denial.limit_kind == LimitKind::ResultUnits && denial.limit == 0)
+            );
+        }
+        let mut rules = SourcePlan::new(
+            &world.package,
+            &world.package.graph().syntheses()[0],
+            &system,
+            vec![node],
+            UNLIMITED,
+        )
+        .unwrap();
+        let state = system.initial().remove(0);
+        let MonitorStep::Continue(bytes) = rules.policy_start(0, &state).unwrap() else {
+            panic!("all instances safe or vacuous")
+        };
+        assert!(rules.policy_accepts(0, &bytes, &state).unwrap());
+        for cause in [CancelCause::Requested, CancelCause::Deadline] {
+            let cancel = Cancel::new();
+            cancel.cancel(cause);
+            let error = system
+                .instances_with_meter(over, &mut Meter::new(UNLIMITED).with_cancel(cancel))
+                .unwrap_err();
+            assert!(matches!(error,PolicyStateError::Cancelled(actual) if actual == cause));
+        }
+    }
+}
+
+/// Positive unsupported forms remain explicit; staged monitor support does
+/// not silently discard captures or general liveness.
+#[test]
+#[trace("FR-1012")]
+fn positive_source_policy_stage_boundary_keeps_required_future_forms_explicit() {
+    use fsl_analyze::plan_source::{PlanSourceError, SourcePlan};
+    for formula in [
+        "eventually holds(c.number = 2)",
+        "capture n: Int[0,4] = c.number; always holds(c.number >= n)",
+        "eventually[1,3] holds(c.number = 2)",
+    ] {
+        let world = positive_policy_world(formula);
+        let system = world_system(&world);
+        let result = SourcePlan::new(
+            &world.package,
+            &world.package.graph().syntheses()[0],
+            &system,
+            vec![&world.package.graph().temporal_clauses()[0]],
+            UNLIMITED,
+        );
+        assert!(
+            matches!(result, Err(PlanSourceError::UnsupportedForm { .. })),
+            "{formula}"
         );
     }
 }

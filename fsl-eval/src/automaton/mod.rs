@@ -84,7 +84,7 @@ pub use key_state::{
 pub use letter::{Atom, Guard, Letter, MAX_ATOMS};
 pub use monitor::{Monitor, SafetyAutomaton};
 pub use numbering::{Interned, Numbering};
-pub use policy::{PolicyContext, PolicyState, PolicyStateError, StepPolicy};
+pub use policy::{PolicyContext, PolicyState, PolicyStateCode, PolicyStateError, StepPolicy};
 pub use qualified_bounded::{QualifiedBoundedError, QualifiedBoundedMonitor};
 pub use state::StateId;
 pub use timed_claim::{

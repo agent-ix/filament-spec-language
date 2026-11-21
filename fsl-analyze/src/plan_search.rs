@@ -352,6 +352,11 @@ pub enum RuleStop {
         /// The bound in force.
         value: u64,
     },
+    /// The existing per-identity encoding byte bound stopped a rule key.
+    IdentityLimit {
+        /// The bound in force.
+        value: u64,
+    },
     /// The run was cancelled.
     Cancelled(CancelCause),
 }
@@ -418,6 +423,14 @@ pub trait PlanRules {
 
     /// The number of policy clauses, in the request's `policy` order.
     fn policy_count(&self) -> usize;
+
+    /// Allocate the ordered policy vector before retaining any monitor.
+    ///
+    /// # Errors
+    /// [`RuleStop`] before denied storage growth.
+    fn policy_states(&mut self) -> Result<Vec<Vec<u8>>, RuleStop> {
+        Ok(Vec::with_capacity(self.policy_count()))
+    }
 
     /// Retain an independent copy of policy-state vectors on the caller's ledger.
     ///
@@ -589,6 +602,13 @@ pub enum PlanFault {
         /// The entry whose state is replaced.
         entry: usize,
         /// The entry whose state is copied.
+        source: usize,
+    },
+    /// Substitute another reached monitor vector before certificate checking.
+    ForgePolicyStates {
+        /// Certificate entry receiving the substitution.
+        entry: usize,
+        /// Certificate entry supplying valid but potentially different states.
         source: usize,
     },
     /// Replace a recorded prefix total before independent certificate checking.
@@ -908,6 +928,13 @@ pub(crate) fn stop_cause(stop: RuleStop) -> PlanStopCause {
             value,
             setting: format!("accounting.{counter}"),
         },
+        RuleStop::IdentityLimit { value } => PlanStopCause::LimitReached {
+            limit: "input_bytes",
+            value,
+            setting: fsl_foundation::setting::Setting::IdentityInputBytes
+                .as_str()
+                .to_owned(),
+        },
         RuleStop::Cancelled(cause) => PlanStopCause::Cancelled(cause),
     }
 }
@@ -1015,7 +1042,7 @@ impl<R: PlanRules> Search<'_, '_, R> {
             // is admissible and the space is empty.
             return Ok(());
         }
-        let mut monitors = Vec::with_capacity(self.rules.policy_count());
+        let mut monitors = self.rules.policy_states()?;
         for policy in 0..self.rules.policy_count() {
             self.charge(PlanLimit::MaxWork)?;
             match self.rules.policy_start(policy, &start)? {
@@ -1254,7 +1281,7 @@ impl<R: PlanRules> Search<'_, '_, R> {
         if !self.admissible(&state)? {
             return Ok(());
         }
-        let mut monitors = Vec::with_capacity(self.nodes[parent].monitors.len());
+        let mut monitors = self.rules.policy_states()?;
         let mut rejected = false;
         for policy in 0..self.rules.policy_count() {
             self.charge(PlanLimit::MaxWork)?;
@@ -1552,6 +1579,11 @@ impl<R: PlanRules> Search<'_, '_, R> {
             Some(PlanFault::ParentCycle { entry }) => written.parent_cycle(*entry),
             Some(PlanFault::ForgeAccumulated { entry, value }) => {
                 written.forge_accumulated(*entry, value.clone())
+            }
+            Some(PlanFault::ForgePolicyStates { entry, source }) => {
+                if let Err(stop) = written.forge_policy_states(*entry, *source, &mut *self.rules) {
+                    return self.stopped(stop_cause(stop));
+                }
             }
             Some(PlanFault::ForgeInitialValue { value }) => {
                 written.forge_initial_value(value.clone())

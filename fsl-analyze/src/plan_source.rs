@@ -178,9 +178,9 @@ impl<'a> SourcePlan<'a> {
         let positive_policies =
             !matches!(synthesis.domain(), ValueType::Int(domain) if domain.upper().is_zero());
         if positive_policies
-            && policies
-                .iter()
-                .any(|node| StepPolicy::new(node.clause()).is_none())
+            && policies.iter().any(|node| {
+                node.clause().clock() != "model-steps" || StepPolicy::new(node.clause()).is_none()
+            })
         {
             return Err(PlanSourceError::UnsupportedForm {
                 form: "positive-length source policy outside capture-free origin safety and bounded F/G[0,k]"
@@ -645,6 +645,7 @@ impl<'a> SourcePlan<'a> {
             PolicyStateError::Accounting(incomplete) => {
                 self.evaluation_stop(incomplete.limit_kind.as_str(), incomplete.limit)
             }
+            PolicyStateError::IdentityLimit { value } => RuleStop::IdentityLimit { value },
             PolicyStateError::Cancelled(cause) => RuleStop::Cancelled(cause),
             other => {
                 self.fault.get_or_insert_with(|| other.to_string());
@@ -706,13 +707,10 @@ impl<'a> SourcePlan<'a> {
     ) -> Result<MonitorStep, RuleStop> {
         let policy = self.compiled_policy(index)?;
         let node = self.policies[index];
-        let instances = match self.system.instances(&node.clause().over().1) {
-            Ok(instances) => instances,
-            Err(error) => {
-                self.fault.get_or_insert_with(|| error.to_string());
-                return Ok(MonitorStep::Reject);
-            }
-        };
+        let instances = self
+            .system
+            .instances_with_meter(&node.clause().over().1, &mut self.system.evaluation_meter())
+            .map_err(|error| self.policy_stop(error))?;
         let identity = node.identity();
         let parameter = node.over();
         let mut contexts = Vec::new();
@@ -1121,6 +1119,16 @@ impl PlanRules for SourcePlan<'_> {
 
     fn native_operations(&self) -> Option<std::sync::Arc<[(filament_exact::EffectiveId, String)]>> {
         Some(self.native_operations.clone())
+    }
+
+    fn policy_states(&mut self) -> Result<Vec<Vec<u8>>, RuleStop> {
+        let mut states = Vec::new();
+        if self.positive_policies {
+            self.policy_capacity(&mut states, self.policies.len())?;
+        } else {
+            states.reserve_exact(self.policies.len());
+        }
+        Ok(states)
     }
 
     fn copy_policy_states(&mut self, monitors: &[Vec<u8>]) -> Result<Vec<Vec<u8>>, RuleStop> {

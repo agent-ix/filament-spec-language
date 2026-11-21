@@ -129,6 +129,24 @@ impl Certificate {
         }
     }
 
+    /// Substitute valid reached bytes without relying on a malformed codec.
+    pub(crate) fn forge_policy_states<R: PlanRules>(
+        &mut self,
+        entry: usize,
+        source: usize,
+        rules: &mut R,
+    ) -> Result<(), super::RuleStop> {
+        if let Some(source) = self.entries.get(source) {
+            let monitors = rules.copy_policy_states(&source.monitors)?;
+            let key_monitors = rules.copy_policy_states(&monitors)?;
+            if let Some(entry) = self.entries.get_mut(entry) {
+                entry.key.monitors = key_monitors;
+                entry.monitors = monitors;
+            }
+        }
+        Ok(())
+    }
+
     /// Replace only the recorded total, leaving the native path unchanged.
     pub(crate) fn forge_accumulated(&mut self, entry: usize, value: Rational) {
         if let Some(entry) = self.entries.get_mut(entry) {
@@ -317,7 +335,7 @@ pub(crate) fn check<R: PlanRules>(
     let Some(start_admissible) = invariants_hold(system, &start)? else {
         return reject(CertificateRule::Initial, 0);
     };
-    let mut monitors = Vec::new();
+    let mut monitors = rules.policy_states().map_err(super::stop_cause)?;
     let mut start_rejected = !start_admissible;
     if start_admissible {
         for policy in 0..rules.policy_count() {
@@ -492,7 +510,7 @@ pub(crate) fn check<R: PlanRules>(
                 Some(false) => continue,
                 None => return reject(CertificateRule::Closure, index),
             }
-            let mut next_monitors = Vec::with_capacity(entry.monitors.len());
+            let mut next_monitors = rules.policy_states().map_err(super::stop_cause)?;
             let mut rejected = false;
             for (policy, monitor) in entry.monitors.iter().enumerate() {
                 match rules
