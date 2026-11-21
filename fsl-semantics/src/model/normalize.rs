@@ -3967,77 +3967,7 @@ fn resolve_redefinitions(
         };
 
         if !reachable {
-            // `model-complete.md:298-300`: one `RedefinitionTarget` refusal
-            // per *owner* redefining this unreachable target (H1 + L2
-            // findings, PR #228 round 2 review), not one refusal spanning
-            // every owner in this target group -- grouping by target alone
-            // conflated distinct owners' own redefiners under the rank-only
-            // dedup elsewhere in this module
-            // (`phase4_refusal_candidates.dedup_by`), dropping some owners'
-            // refusals outright and misattributing others' redefiners to the
-            // wrong owner. Grouping by `(owner, target)` here keeps each
-            // owner's own claim distinct regardless of which type names it,
-            // and regardless of which other owners also redefine this same
-            // target.
-            //
-            // `normalize.redefinition-check` exposes this refusal
-            // (`value-accounting.md:455`), so `record_phase4_refusal` below
-            // ranks it by the least of each owner's own redefining members'
-            // own keys — `:455`'s own "ascending by the member's own key"
-            // order (there is no separate redefinition-record key under
-            // FSpec's inline shape). Collected into `accounting.refusals`
-            // rather than returned here (see the module docs), so every
-            // remaining type and target group is still resolved and every
-            // later phase-4 charge amount is still computed correctly.
-            //
-            // This exact member can also be reached, and fail the identical
-            // check for the identical reason, at more than one `type_key`
-            // whenever a descendant of an owner here also inherits it (both
-            // compute the same owner and redefiners, so they rank
-            // identically) -- naming the owner rather than `type_key` keeps
-            // the reported refusal the same regardless of which of those
-            // tied candidates this pass happens to keep.
-            //
-            // FSL #184: the spec's own name for this refusal is
-            // `invalid_model_binding`/`redefinition-target` ("target is not
-            // a member inherited by its owning type"), not
-            // `dangling_reference`/`RedefinitionUnreachable` -- the target
-            // key does resolve to a real declaration somewhere in the
-            // domain package (it is simply not one of the owner's own
-            // effective members), so it is not a dangling reference.
-            let mut owners: Vec<DeclarationKey> =
-                edges.iter().map(|edge| edge.owner.clone()).collect();
-            owners.sort();
-            owners.dedup();
-            for owner in owners {
-                let mut redefiners: Vec<DeclarationKey> = edges
-                    .iter()
-                    .filter(|edge| edge.owner == owner)
-                    .map(|edge| edge.redefining.clone())
-                    .collect();
-                redefiners.sort();
-                let least = redefiners[0].clone();
-                let redefiner_names: Vec<&str> =
-                    redefiners.iter().map(|key| key.node.as_str()).collect();
-                record_phase4_refusal(
-                    accounting,
-                    Phase4Rank::RedefinitionCheck(least),
-                    ModelRefusal {
-                        code: Code::InvalidModelBinding,
-                        cause: ModelRefusalCause::RedefinitionTarget {
-                            redefiners: redefiners.clone(),
-                            target: target_key.clone(),
-                        },
-                        detail: format!(
-                            "{} redefine{} {}, which is not a member {} inherits",
-                            redefiner_names.join(", "),
-                            if redefiners.len() == 1 { "s" } else { "" },
-                            target_key.node,
-                            owner.node
-                        ),
-                    },
-                );
-            }
+            record_unreachable_redefinition_target(&target_key, &edges, accounting);
             continue 'targets;
         }
 
@@ -4061,14 +3991,18 @@ fn resolve_redefinitions(
     }
 
     // Reachable operation members keep both facts for every declared edge;
-    // only the winning redefiner stays visible. Unreachable targets retain
-    // the existing operation contention check without deriving a fact.
+    // only the winning redefiner stays visible. Every unreachable operation
+    // target refuses under the same per-owner rule as an unreachable field.
     for TargetGroup {
         target: target_key,
         edges,
         reachable,
     } in operation_groups
     {
+        if !reachable {
+            record_unreachable_redefinition_target(&target_key, &edges, accounting);
+            continue;
+        }
         let winner_index = if edges.len() < 2 {
             Some(0)
         } else {
@@ -4086,9 +4020,6 @@ fn resolve_redefinitions(
                 }
             }
         };
-        if !reachable {
-            continue;
-        }
         for (index, edge) in edges.iter().enumerate() {
             let inputs = vec![edge.redefining.clone(), edge.target.clone()];
             pending.push(PendingFact {
@@ -4131,6 +4062,47 @@ fn resolve_redefinitions(
             inputs: fact.inputs,
             parent: None,
         });
+    }
+}
+
+/// Record each original owner's unreachable redefinition claim once. Ranking
+/// by its least redefining member preserves the package-wide charge order and
+/// deduplicates the identical claim reached again through a descendant.
+fn record_unreachable_redefinition_target(
+    target_key: &DeclarationKey,
+    edges: &[RedefinitionEdge],
+    accounting: &mut Phase4Accounting<'_, '_>,
+) {
+    let mut owners: Vec<DeclarationKey> = edges.iter().map(|edge| edge.owner.clone()).collect();
+    owners.sort();
+    owners.dedup();
+    for owner in owners {
+        let mut redefiners: Vec<DeclarationKey> = edges
+            .iter()
+            .filter(|edge| edge.owner == owner)
+            .map(|edge| edge.redefining.clone())
+            .collect();
+        redefiners.sort();
+        let least = redefiners[0].clone();
+        let redefiner_names: Vec<&str> = redefiners.iter().map(|key| key.node.as_str()).collect();
+        record_phase4_refusal(
+            accounting,
+            Phase4Rank::RedefinitionCheck(least),
+            ModelRefusal {
+                code: Code::InvalidModelBinding,
+                cause: ModelRefusalCause::RedefinitionTarget {
+                    redefiners: redefiners.clone(),
+                    target: target_key.clone(),
+                },
+                detail: format!(
+                    "{} redefine{} {}, which is not a member {} inherits",
+                    redefiner_names.join(", "),
+                    if redefiners.len() == 1 { "s" } else { "" },
+                    target_key.node,
+                    owner.node
+                ),
+            },
+        );
     }
 }
 

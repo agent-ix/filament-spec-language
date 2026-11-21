@@ -7,7 +7,10 @@ use filament_semantic_value::checking::{CheckMode, CheckingLimits};
 use fsl_semantics::check::PackageDeclarations;
 use fsl_semantics::model::accounting::ModelNormalizationLimits;
 use fsl_semantics::model::domain_package::DomainPackageRecord;
-use fsl_semantics::model::intake::{PackageInput, admit, admit_unit, package_input, read_records};
+use fsl_semantics::model::intake::{
+    PackageInput, UnitIntakeCause, admit, admit_unit, package_input, read_records,
+};
+use fsl_semantics::model::normalize::ModelRefusalCause;
 use ix_trace_rs::trace;
 
 /// Two object types, `Child` specializing `Base` with one subsetting field,
@@ -250,10 +253,39 @@ fn a_redefinition_naming_a_type_that_is_not_a_supertype_refuses_the_target() {
         )
         .replace("redefines Base::bump", "redefines Other::bump");
     let packages = compile(&model).expect("the model unit compiles");
-    assert!(
-        check_causes(&packages).contains(&"redefinition-target"),
-        "{:?}",
-        check_causes(&packages)
+    let parsed = fsl_cst::parse(
+        fsl_foundation::SourceIdentity::new("test", "inheritance-unit"),
+        "unit.native",
+        UNIT.as_bytes(),
+        fsl_cst::Limits::default(),
+    )
+    .expect("the selecting unit parses");
+    let built = fsl_forms::build_unit(&parsed).expect("the selecting unit builds");
+    let Err(refusal) = admit_unit(
+        &built.selections().models,
+        &packages,
+        ModelNormalizationLimits::default(),
+    ) else {
+        panic!("an unrelated operation cannot be a redefinition target");
+    };
+    let UnitIntakeCause::Refused(found) = refusal.cause else {
+        panic!("the refusal is semantic: {refusal:?}");
+    };
+    assert_eq!(found.len(), 1, "{found:?}");
+    assert_eq!(
+        found[0].code,
+        fsl_foundation::diagnostic::Code::InvalidModelBinding
+    );
+    let ModelRefusalCause::RedefinitionTarget { redefiners, target } = &found[0].cause else {
+        panic!("the unreachable target retains its typed cause: {found:?}");
+    };
+    assert_eq!(target.node, "ix://example/shop/Other/bump");
+    assert_eq!(
+        redefiners
+            .iter()
+            .map(|key| key.node.as_str())
+            .collect::<Vec<_>>(),
+        ["ix://example/shop/Child/bump"]
     );
 }
 
@@ -374,9 +406,23 @@ fn machine_and_process_inheritance_keeps_the_declared_supertype() {
     assert_eq!(process.supertypes.len(), 1);
     assert_eq!(process.supertypes[0].node, "ix://example/shop/BaseProcess");
     assert!(process.identity_fields_declared);
-    assert!(
-        process.identity_fields.is_empty(),
-        "the subtype inherits its process key"
+    assert_eq!(process.identity_fields.len(), 1);
+    assert_eq!(
+        process.identity_fields[0].node, "ix://example/shop/BaseProcess/id",
+        "the retained subtype key is the inherited original field"
+    );
+    let wire: serde_json::Value =
+        serde_json::from_slice(&packages["example/shop"]).expect("the compiled document is JSON");
+    let child = wire["types"]
+        .as_array()
+        .expect("the document has types")
+        .iter()
+        .find(|node| node["identity"] == "ix://example/shop/ChildProcess")
+        .expect("the child process is emitted");
+    assert_eq!(
+        child["identityFields"],
+        serde_json::json!([]),
+        "the source-derived document explicitly inherits its process key"
     );
     assert_eq!(check_causes(&packages), Vec::<&str>::new());
 }
