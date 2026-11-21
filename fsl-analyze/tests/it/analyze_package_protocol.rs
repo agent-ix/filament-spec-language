@@ -359,6 +359,237 @@ fn package_workflow_roles_empty_universe_and_binding_refusal() {
     assert!(item.get("exploration").is_none(), "{item}");
 }
 
+/// A recorded actor must belong to the live role instances at that prefix,
+/// even when its transition came from a real branch of an admitted system.
+#[trace("TC-2958", "FR-940-AC-6", "FR-208-AC-2", "FR-850")]
+#[test]
+fn package_workflow_roles_replay_refuses_forged_actors() {
+    use fsl_analyze::model_check::{check_protocol, ProtocolCheckRequest};
+    use fsl_eval::model_subject::RoleBinding;
+    use fsl_eval::simulation::model::ExpansionLimits;
+    use fsl_eval::simulation::protocol::{ProtocolTransition, StepKind};
+    use fsl_foundation::diagnostic::Code;
+    use fsl_replay::{
+        replay_protocol_trace, replay_protocol_trace_from_package, HandoffSupply, ModelCheckItem,
+        ModelCheckLimits, ModelCheckOutcome, ModelTraceRefusal, ModelTraceSettlement,
+        ProtocolTraceSubject, ReplayLimits, ReplayRefusal,
+    };
+
+    let controls = repeat_attempt("Work", "worked", "true").replace("by Machining", "by Worker");
+    let ws = Workspace::new("package-workflow-forged-actor");
+    let path = workflow_roles_request(&ws, 1, "workflow", false, &controls, "false");
+    let graph = workflow_role_graph(&ws, &path);
+    let directory = ws.path(crate::analyze_cli_support::HANDOFF);
+    let compiled =
+        fsl_command::checked_handoff::compile(&directory).expect("the workflow compiles");
+    let mut documents = crate::fill::Documents::new();
+    documents.packages = compiled.packages().clone();
+    let initial = documents.start("s0", &[("c", 0), ("d", 0)]);
+    let mut subject =
+        crate::fill::subject(compiled.checked(), &documents, vec![initial], "Flow", "c");
+    subject.model.simulation.universes = crate::fill::universe(&["c", "d"]);
+    subject.roles = vec![RoleBinding {
+        role: "Planning".to_owned(),
+        model: crate::fill::PACKAGE.to_owned(),
+    }];
+    let trace_subject = ProtocolTraceSubject {
+        model: fsl_replay::ModelTraceSubject {
+            timed: None,
+            initial: subject.model.simulation.initial.clone(),
+            universes: subject.model.simulation.universes.clone(),
+            expansion: ExpansionLimits {
+                max_candidates: 1_000_000,
+            },
+        },
+        protocol: subject.protocol.clone(),
+        over: subject.over.clone(),
+        roles: subject.roles.clone(),
+        capacities: Vec::new(),
+        memory: subject.memory.clone(),
+        max_store_buffer: None,
+        max_messages: None,
+        max_live_instances: None,
+    };
+    let outcome = check_protocol(
+        ProtocolCheckRequest {
+            subject,
+            temporal_clock_selections: &[],
+            item: ModelCheckItem::DeadlockFreedom,
+            max_depth: None,
+            max_store_buffer: None,
+            max_messages: None,
+            max_live_instances: None,
+            limits: ModelCheckLimits::default(),
+            ignore_memory_constraints: false,
+        },
+        &filament_exact::Cancel::new(),
+    )
+    .expect("the real deadlock checks");
+    let ModelCheckOutcome::Violated { counterexample, .. } = outcome else {
+        panic!("Work followed by a false finish must deadlock");
+    };
+    let valid = *counterexample;
+    let at = valid
+        .prefix
+        .iter()
+        .position(|step| step.transition.kind() == StepKind::Attempt)
+        .expect("the witness executes Work");
+    assert_eq!(at, 1, "the real witness spawns once before Work");
+    let work = &valid.prefix[at].transition;
+    let actor = work.actor().expect("Work has a spawned actor");
+    assert_eq!(
+        valid.prefix[0]
+            .transition
+            .role_instance()
+            .expect("spawned worker")
+            .1,
+        &actor.object
+    );
+    let without_actor = |transition: &ProtocolTransition| {
+        let bytes = quire_canonical::to_vec(transition, quire_canonical::Limits::new(u64::MAX))
+            .expect("transition encodes");
+        let mut value: Value = serde_json::from_slice(&bytes).expect("transition JSON");
+        value
+            .as_object_mut()
+            .expect("transition members")
+            .remove("actor");
+        value
+    };
+    let other = graph
+        .iter()
+        .flat_map(|state| &state.steps)
+        .map(|(step, _)| step)
+        .find(|step| {
+            step.kind() == StepKind::Attempt
+                && step
+                    .actor()
+                    .is_some_and(|other| other.role == actor.role && other.object != actor.object)
+                && without_actor(step) == without_actor(work)
+        })
+        .expect("the other real spawned worker can take the same Work")
+        .clone();
+
+    // The public transition is immutable. A second checked fixture provides
+    // a genuine Work with another role; no actor or graph is fabricated.
+    let renamed_ws = Workspace::new("package-workflow-other-role");
+    let renamed_path =
+        workflow_roles_request(&renamed_ws, 1, "workflow", false, &controls, "false");
+    let unit = std::fs::read_to_string(renamed_ws.path("program.fsl")).expect("role source");
+    renamed_ws.write(
+        "program.fsl",
+        unit.replace("Worker", "UnknownWorker").as_bytes(),
+    );
+    let renamed = workflow_role_graph(&renamed_ws, &renamed_path);
+    let unknown = renamed
+        .iter()
+        .flat_map(|state| &state.steps)
+        .map(|(step, _)| step)
+        .find(|step| {
+            step.kind() == StepKind::Attempt
+                && step.actor().is_some_and(|other| {
+                    other.role == "UnknownWorker" && other.object == actor.object
+                })
+                && without_actor(step) == without_actor(work)
+        })
+        .expect("the admitted other role takes the same Work")
+        .clone();
+    assert_ne!(other.actor(), work.actor());
+    assert_ne!(unknown.actor(), work.actor());
+    for replacement in [&other, &unknown] {
+        assert_eq!(without_actor(replacement), without_actor(work));
+        assert_ne!(replacement, work);
+    }
+    let unit = std::fs::read(ws.path("program.fsl")).expect("source bytes");
+    let model = std::fs::read(ws.path("model.json")).expect("model bytes");
+    let wire = crate::model_settle::request(
+        compiled.checked(),
+        &[],
+        &model,
+        documents.snapshots.iter(),
+        &unit,
+    );
+    let (node, occurrence) = crate::model_settle::protocol_anchor(compiled.checked(), "Flow");
+    let envelope =
+        |payload| crate::model_settle::envelope_at(payload, node.clone(), occurrence.clone());
+    let letters = crate::counter::Letters { atom: |_| None };
+    let legitimate = replay_protocol_trace(
+        wire.clone(),
+        &trace_subject,
+        &envelope(valid.clone()),
+        &letters,
+        ReplayLimits::default(),
+    )
+    .expect("the real source witness replays");
+    assert!(matches!(
+        legitimate.settlement,
+        ModelTraceSettlement::Reproduced { .. }
+    ));
+    let forged: Vec<_> = [other, unknown]
+        .into_iter()
+        .map(|replacement| {
+            let mut payload = valid.clone();
+            payload.prefix[at].transition = replacement;
+            payload
+        })
+        .collect();
+    let refuse = |result: Result<_, ReplayRefusal>| {
+        let Err(ReplayRefusal::ModelTrace(refusal)) = result else {
+            panic!("a forged actor must refuse");
+        };
+        assert!(
+            matches!(&*refusal, ModelTraceRefusal::ProtocolNotEnabled { step, .. } if *step == at),
+            "{refusal:?}"
+        );
+        assert_eq!(
+            (refusal.code(), refusal.cause()),
+            (Code::InvalidRuntimeInput, "invalid-value")
+        );
+        *refusal
+    };
+    let source_refusals: Vec<_> = forged
+        .iter()
+        .map(|payload| {
+            refuse(replay_protocol_trace(
+                wire.clone(),
+                &trace_subject,
+                &envelope(payload.clone()),
+                &letters,
+                ReplayLimits::default(),
+            ))
+        })
+        .collect();
+    let identities = std::fs::read(directory.join("identities.json")).expect("identities");
+    let equality = std::fs::read(directory.join("equality.json")).expect("equality");
+    std::fs::remove_file(ws.path("program.fsl")).expect("remove source before package replay");
+    let mut package_wire = wire;
+    package_wire.byte_provision.clear();
+    assert!(!ws.path("program.fsl").exists());
+    assert!(package_wire.byte_provision.is_empty());
+    let replay_package = |payload| {
+        replay_protocol_trace_from_package(
+            package_wire.clone(),
+            HandoffSupply {
+                dependencies: &[],
+                identities: &identities,
+                equality: Some(&equality),
+            },
+            &trace_subject,
+            &envelope(payload),
+            &letters,
+            ReplayLimits::default(),
+        )
+    };
+    assert!(matches!(
+        replay_package(valid)
+            .expect("the source-absent package witness replays")
+            .settlement,
+        ModelTraceSettlement::Reproduced { .. }
+    ));
+    for (payload, source_refusal) in forged.into_iter().zip(source_refusals) {
+        assert_eq!(refuse(replay_package(payload)), source_refusal);
+    }
+}
+
 /// Other declared lifetimes remain an explicit package capability boundary.
 #[trace("TC-2958", "FR-940-AC-6", "FR-531", "FR-208")]
 #[test]
