@@ -651,3 +651,261 @@ scope:
     0 has unreachable activation with numerator and denominator 0, while index 1 activates
     immediately with numerator `3/4`, den'
 ```
+
+## Disposition pass 2
+
+Final normal repair round; same independent Codex reviewer. Frozen source `10564ea0ef37a7f47113ad44e3ec13ff3cac4c43`, actual merge-base `645bef0e0e810a5c551b7894ee98d7c6288b7467`. Earlier findings and dispositions above are retained verbatim. Existing closed outcomes remain: CR001/003–018 fixed, CR002 rejected on bounded admission evidence; GA001/003/004 fixed, generic GA002 deferred per architecture/QSL2158 commentd59dedf8. This round does not waive any new defect.
+
+**Latest verdict: FAIL, not mergeable.** CR019/020 fixed by inspected source; new medium CR021 and high CR022 remain still-open. Final focused command fails compilation101 with zero tests. Refer remaining CR021 to architecture: do not start an automatic third repair round.
+
+## New findings (disposition pass 2)
+
+| ID | Severity | Summary | Refs |
+| --- | --- | --- | --- |
+| FND-021 | medium | The new model inverse bypasses caller work/cancellation accounting while validating restored named rows. For one object with F distinct fields, restore.rs725–733 linearly searches the F-field declaration vector for every input row (F(F+1)/2 name comparisons) without charging or polling those comparisons; the explicit parse/restore charges grow only with encoded input and visited values. Universe membership similarly scans U keys per object at710–713. At781–784 the new inverse also calls StateModel::observation without budget/cancel; observe_state deep-clones field Values and extents and validates their full closure (observation/initial.rs143–207). Thus sufficiently wide admitted objects or universes perform validation beyond the supplied work ceiling, and cancellation cannot interrupt the scans/closure phase. Admit the actual scans/retained clone work and poll under the caller scope, or use an owner validation seam that already does so; do not invent a default budget. | fsl-eval/src/simulation/model/restore.rs:730; fsl-eval/src/simulation/model/restore.rs:783; fsl-semantics/src/model/observation/initial.rs:171 |
+
+| FND-022 | high | Final10564 focused command fails with two E0499 at restore.rs656/657: self.push mutably borrows self while its tuple arguments invoke self.reference twice. The owning crate cannot compile; zero tests execute and commands2–15 are held. Decode the source and target into separate locals before self.push. Raw /private/tmp/qsl-3285-1056-1.log. | fsl-eval/src/simulation/model/restore.rs:656 |
+
+### Round 2 dispositions
+
+These rows append to the same artifact's existing Dispositions history. Each finding is judged by its latest row.
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-019 | fixed | Every named key is seeded through the owner inverse; detached terminal, undecided and pending controls are independently checked. Unknown universe/control/draw rows reject Malformed at values. |
+| FND-020 | fixed | ExactProbLimits is explicitly imported; unused MeasureError and ModelSimState imports removed. Final compilation acceptance is still pending. |
+| FND-021 | still-open | New resource boundary defect; final normal round exhausted, requires architecture decision. |
+| FND-022 | still-open | New compile E0499 at restore.rs656/657; zero tests execute, requires architecture decision. |
+
+FND-019 after_excerpt:
+
+```rust
+    if let Some(named) = named {
+        for key in named {
+            if seen.contains(key) {
+                continue;
+            }
+            let (model, control, accumulator, resolution) =
+                restore_named(system, plan, binding, key, limits, cancel, meter, storage)?;
+            let truths = if control.is_decided() {
+                Vec::new()
+            } else {
+                read(&model)?
+```
+
+FND-020 after_excerpt:
+
+```rust
+use serde::{Deserialize, Serialize};
+
+use super::*;
+use crate::ExactProbLimits;
+
+```
+
+### Round 2 implementation and evidence
+
+Inspected the full831-line inverse and every changed provenance/anchor consumer, control decoder, reservation bridge, pending-row validator and regression. Model restoration validates declared populations, member types, field values, references, universes, extents and object closure; rejects nonempty unsupported auxiliary maps; re-encodes through the existing owner and requires byte equality. Structural errors map to existing Malformed member(values); retained caller denials and cancellation map through the actual admission scope. The resource defect CR021 qualifies the claim that all validation is bounded. No default arithmetic meter was introduced.
+
+RestoredFromKey has no anchor or incoming effect; actual successors keep absent anchor and record genuine new effects. Required-anchor consumers refuse absence; sampler position checks before cache lookup. Declared pre-state construction remains separate. Existing initial/witness parity comparisons still compare against actual admitted anchored initials. Named pending rows rebuild enabled actions and positive draws, match owner pending bytes and require multiple actual posts; no invented history, external pending parser or wire format.
+
+The new profile test exercises genuinely detached terminal, undecided and pending rows, retains an actual PostState selection, and rejects forged universe, horizon/control and draw. The owner unit exercises actual noninitial restoration, successor transition/probability/key equality, absent provenance after real effects, sampler/anchor refusal, typed integer-range error, storage denial and precancellation. These are real assertions, not proof that the final batch has run. No new source/test stub or unsupported speculative API was found.
+
+Parent reports final exact10564 first30-profile command COMPILE101/ZERO tests, two E0499 at restore.rs656/657: self.push holds mutable self while self.reference(source) and self.reference(target) also borrow self. Commands2–15 held/not run. Raw /private/tmp/qsl-3285-1056-1.log. No44-test acceptance. Owner-only400617 exact restoration test passed1/0/0/272filtered, log /private/tmp/qsl-3285-4006-inverse.log. Later buffer-admission/import/main-merge changes mean that owner result is not final profile acceptance. Old1bef first29-profile command COMPILE101/ZERO tests and commands2–14 held; never green. No local cargo, tests, clippy, deny, broad baseline or sweep was run.
+
+Read-only git diff --check passes. Actual final PR scope is645bef...HEAD; unrelated main merges are excluded. Main certificate/hyper/refinement/protocol APIs are preserved; authorized FSpecd6d066 and IR20a4dfbf/core-data424 pins remain. Accepted normative SR507 is unchanged and not re-reviewed. No applicable AssuranceProfile.
+
+### Round 2 examined scope
+
+```yaml
+scope:
+- id: FR-1042-AC-12
+  path: spec/functional/FR-1042-certify-value-bounds-with-lower-and-upper-certificates.md
+  role: context_only
+  excerpt: For a bounded fraction mean over an initial terminal state with a false fraction predicate and window
+    2, the base's only continuation is terminal stutter and its value is 0. An `upper` minimum document with every
+    value 0 and no policy rows, and a `lower` maximum document with every value 0, the rederived remaining-horizon
+    ranks and no policy rows, are accepted. The checker retains the existing stutter action at each undecided key;
+    no fabricated operation identity or new wire form is required.
+- id: FR-1042-AC-13
+  path: spec/functional/FR-1042-certify-value-bounds-with-lower-and-upper-certificates.md
+  role: examined
+  excerpt: At an intermediate state with two enabled post-state choices `a` and `b`, their successors reach event
+    success with probability `1/4` and `3/4`, respectively. With correct successor values and ranks, a minimum `upper`
+    initial bound `1/2` with no hint is accepted selecting `a`, and a maximum `lower` bound `1/2` with no hint is
+    accepted selecting `b`. Initial bounds `1/8` for the upper and `7/8` for the lower reject `InequalityFails`
+    there because no action satisfies. Post-state selection needs no fabricated TransitionIdentity row.
+- id: FR-1042-AC-14
+  path: spec/functional/FR-1042-certify-value-bounds-with-lower-and-upper-certificates.md
+  role: examined
+  excerpt: In AC-3, minimum `upper` `s` `1/4` with hint `go` rejects `InequalityFails` although `wait` satisfies,
+    and the same document without that hint accepts selecting `wait`. A nonexistent hint rejects `InequalityFails`
+    even when an enabled action satisfies. Maximum `lower` `s` 1 with hint `wait` rejects `RankBroken`; removing
+    the hint does not accept it, since no action satisfies both inequality and progress. When several actions satisfy
+    every condition, an omitted hint selects the first in canonical full-product-action order.
+- id: FR-1043-AC-1
+  path: spec/functional/FR-1043-certify-finite-horizon-measure-verdicts.md
+  role: examined
+  excerpt: '`Retry`''s undelivered state `u` has `try`, delivering with `1/2` and otherwise staying; delivered is
+    terminal. Under its workload, `quantile 0.5 of (steps from holds(true) until holds(delivered) within 4) <= 2`
+    settles `proved`, `ExactValue{3/4}`, with a `conditional` `ratio` certificate whose numerator (payoff `satisfied`,
+    `comparison` `"le"`, `threshold` 2) has values `3/4`, `1/2`, 0, 0 at `u` with active amounts 0, 1, 2 and above
+    the bound and ranks 4, 3, 2, 1, and whose denominator (payoff `activated`) is 1 there; `fsl-probability-check`
+    accepts it, and rejects it `RankBroken` with the ran'
+- id: FR-1043-AC-2
+  path: spec/functional/FR-1043-certify-finite-horizon-measure-verdicts.md
+  role: examined
+  excerpt: With `try` split into `fast` (`1/2`) and `slow` (`1/4`), under every scheduler `quantile 0.4 of (…) <=
+    2` settles `proved` with an `exact` `shifted` document (`level` `2/5`) whose values are `3/80`, `−3/20`, `−2/5`,
+    `−2/5`; `quantile 0.5 of (…) <= 2` settles `refuted` (minimum shifted value `−1/16`, `Pr(M <= 2) = 7/16` under
+    `slow`); the level-0.4 document with `3/80` replaced by `fast`'s `9/40` is rejected `InequalityFails` at the
+    initial key.
+- id: FR-1043-AC-3
+  path: spec/functional/FR-1043-certify-finite-horizon-measure-verdicts.md
+  role: examined
+  excerpt: 'Over AC-2''s model under every scheduler, `quantile 0.6 of (…) >= 2` (claim `Pr(M < 2 | act) < 3/5`)
+    settles `proved`: the `shifted` document (`comparison` `"lt"`) has maximum initial value `−1/10` (through `fast`)
+    and `−3/5` at every other undecided state; `quantile 0.5 of (…) >= 2` settles `refuted`, its maximum 0 attained
+    by `fast` with an activated state reachable.'
+- id: FR-1043-AC-4
+  path: spec/functional/FR-1043-certify-finite-horizon-measure-verdicts.md
+  role: examined
+  excerpt: '`P95` over FR-185-AC-1''s `Service` under `Steady` at `5 ms` (FR-741-AC-2, FR-203-AC-1) settles `proved`,
+    `ExactValue{24233/25000}`, with a `conditional` `ratio` certificate whose parts are documents of this profile
+    (`kind` `"accumulate"`, `reward` the checked `duration`, `threshold` 5 in its unit) and whose denominator is
+    1 at the initial key; `fsl-probability-check` accepts it from the emitted package and rejects it with one numerator
+    value altered. At `2 ms` the item settles `refuted` with FR-202-AC-1''s one-path set.'
+- id: FR-1043-AC-5
+  path: spec/functional/FR-1043-certify-finite-horizon-measure-verdicts.md
+  role: examined
+  excerpt: Under `Retry`'s workload, `mean of fraction holds(delivered) over [0, 2] >= rational(2,5)` settles `proved`,
+    `ExactValue{5/12}`, with a `fraction` document; at `rational(1,2)` it settles `refuted` with FSpec FR-413 subsystem
+    evidence containing an independently accepted `exact` `fraction` certificate of `5/12 < 1/2`, checked for refutation
+    rather than the proof threshold. The comparison event `probability >= 0.7 [M <= 2]` over AC-1's measure settles
+    `proved`, `ExactValue{3/4}`, with an `event` document.
+- id: FR-1043-AC-6
+  path: spec/functional/FR-1043-certify-finite-horizon-measure-verdicts.md
+  role: examined
+  excerpt: FR-201-AC-51's finite-horizon quantile item over the cyclic `link` model under every scheduler (`Pr(M
+    <= 3) = 13/27` for `steps from holds(true) until holds(m.delivered) within 4`), written at level 0.4, settles
+    `proved` with shifted initial value `11/135` and a document `fsl-probability-check` accepts in a separate process;
+    written at level 0.5 it settles `refuted`.
+- id: FR-1043-AC-7
+  path: spec/functional/FR-1043-certify-finite-horizon-measure-verdicts.md
+  role: examined
+  excerpt: AC-1's numerator with `window`, `threshold`, `comparison`, `reward`, `unit`, `level` or `payoff` changed
+    refuses objective mismatch; a key whose accumulator amount or phase is altered is not an alias and fails coverage;
+    a `shifted` value below `−level` is rejected `Malformed` at `values`. Pre-cancellation and exhaustion of each
+    caller limit during expansion, payoff evaluation or exact sums settle `incomplete` with the actual limit and
+    no truth value.
+- id: FR-1043-AC-8
+  path: spec/functional/FR-1043-certify-finite-horizon-measure-verdicts.md
+  role: examined
+  excerpt: With AC-1's `try` split into `fast` (`1/2`) and `slow` (`1/4`), `mean of fraction holds(delivered) over
+    [0, 2]` has minimum `11/48` and maximum `5/12`. Under every scheduler, `>= 1/2` is refuted by an accepted exact
+    minimum or FR-1042 `upper` on the minimum with initial bound `1/4` and policy `slow`; `<= 1/3` is refuted by
+    an accepted exact maximum or `lower` on the maximum with initial bound `2/5` and policy `fast`. Both reuse subsystem
+    evidence and are independently accepted by FR-202's checked-subject mean-certificate replay entry.
+- id: FR-1043-AC-9
+  path: spec/functional/FR-1043-certify-finite-horizon-measure-verdicts.md
+  role: examined
+  excerpt: AC-5's exact workload mean `5/12` at `>= 5/12` and `<= 5/12`, a valid workload `upper` bound `1/2` at
+    `>= 1/2`, and a valid `lower` bound `2/5` at `<= 2/5` each reject `ThresholdMissed` at the initial key and settle
+    `inconclusive`, `CertificateRejected`. In AC-8, a valid `lower` minimum document with initial bound `1/5` at
+    `>= 1/2` and a valid `upper` maximum document with bound `1/2` at `<= 1/3` each reject `Malformed` at `kind`
+    with the same settlement. Identity/base mismatch retains its typed refusal; an invalid value rejects `InequalityFails`
+    with `CertificateRejected`; a disagreeing witne
+- id: FR-1043-AC-10
+  path: spec/functional/FR-1043-certify-finite-horizon-measure-verdicts.md
+  role: examined
+  excerpt: FR-203-AC-10's no-activation quantile under a resolved workload and under every scheduler, with and without
+    an admitted fairness set, settles certified `Exhaustive` with an independently accepted conditional `vacuous`
+    certificate, no `ExactValue`, shifted-value proof or numeric entry. Offering an all-zero `exact` `shifted` document
+    under every scheduler, or a workload `ratio` with denominator 0, for that no-activation claim rejects `InequalityFails`
+    at the initial complete product key and settles `inconclusive`, `CertificateRejected{rule, at}`, without numeric
+    acceptance or `ExactValue`. A var
+- id: FR-1043-AC-11
+  path: spec/functional/FR-1043-certify-finite-horizon-measure-verdicts.md
+  role: examined
+  excerpt: '`Coin` initially has bound object `c` with `c.v = 0`; its only operation `drop(b)` draws `b` uniformly
+    from `{0,1}`, deleting `c` when `b = 0`, and declares reward `R = 0` for both supported draws. Under its resolved
+    workload, `mean of fraction holds(c.v = 0) over [0,0] weighted by R >= 1/2` reaches undefined `division-by-zero`
+    on the actual `drop(0)` step of probability `1/2`: the final tentative weighted sums are `(0,0)`, and the `FractionValue`
+    location is position 1 with the actual post-state lacking `c`, pre-step undecided control `remaining = 1` and
+    pre-step sums `(0,0)`. Native replay r'
+- id: FR-202-AC-27
+  path: spec/functional/FR-202-replay-a-probabilistic-witness.md
+  role: examined
+  excerpt: Through the checked-subject mean-certificate replay entry, FR-1043-AC-5's workload mean `5/12` refutes
+    `>= 1/2` using subsystem evidence containing the independently accepted `exact` `fraction` certificate; the
+    same document checks in its refutation role despite missing the proof threshold. An unchecked document, an unreplayed
+    engine value or a path set yields no accepted mean-refutation evidence.
+- id: FR-202-AC-28
+  path: spec/functional/FR-202-replay-a-probabilistic-witness.md
+  role: examined
+  excerpt: FR-1043-AC-8's minimum `11/48` with an accepted `upper` bound `1/4` refutes every-scheduler `>= 1/2`;
+    its maximum `5/12` with an accepted `lower` bound `2/5` refutes every-scheduler `<= 1/3`. A valid `lower` minimum
+    document with initial bound `1/5` at `>= 1/2`, and a valid `upper` maximum document with initial bound `1/2`
+    at `<= 1/3`, each reject `Malformed` at `kind` and settle `inconclusive`, `CertificateRejected`; their conditions
+    hold but their refutation roles are wrong.
+- id: FR-202-AC-29
+  path: spec/functional/FR-202-replay-a-probabilistic-witness.md
+  role: examined
+  excerpt: AC-27's exact `5/12` at `>= 5/12` or `<= 5/12`, and a valid workload `upper` bound `1/2` at `>= 1/2`,
+    each reject `ThresholdMissed` at the initial key and settle `inconclusive`, `CertificateRejected`. Changing
+    identity or base payoff/optimization retains the typed refusal; invalid certificate values settle `inconclusive`,
+    `CertificateRejected{InequalityFails, at}`; a disagreeing witness policy settles `inconclusive`, `ReplayParity`;
+    cancellation or a caller limit preserves its typed incomplete result without accepted evidence.
+- id: FR-202-AC-30
+  path: spec/functional/FR-202-replay-a-probabilistic-witness.md
+  role: examined
+  excerpt: 'A mean minimum refutation with a slack `upper < θ` for which both the optimizer''s attaining action
+    and a different canonical-first action satisfy every FR-1042 condition emits a witness matching the independently
+    checked policy: with no hint it uses the canonical-first satisfying full-product action; with a representable
+    valid hint it uses that hinted action. Both replay as refuted. An old optimizer witness disagreeing with the
+    checked selection settles `inconclusive`, `ReplayParity`; implicit stutter or post-state selection uses the
+    same rule without a fabricated policy identity.'
+- id: FR-203-AC-10
+  path: spec/functional/FR-203-bound-an-exact-run-and-settle-its-verdict.md
+  role: examined
+  excerpt: 'The untimed claim `quantile 0.5 of (steps from holds(false) until holds(true) within 4) <= 2`, checked
+    separately under a resolved workload and under every scheduler (with and without an admitted fairness set) has
+    no activating state in the complete reachable product. Native checking independently accepts its `Conditional`
+    `Vacuous` certificate and settlement returns `proved`, `closed-scope`, `Certified`, `Exhaustive`, category success,
+    carrying that certificate with empty `values` and `conditional` exactly `{"mode": "vacuous"}`. The emitted result
+    passes FR-331''s contract with basis `{"type":'
+- id: FR-203-AC-11
+  path: spec/functional/FR-203-bound-an-exact-run-and-settle-its-verdict.md
+  role: examined
+  excerpt: Changing AC-10's activation predicate to `holds(true)` makes the offered vacuous certificate reject `InequalityFails`
+    and settle `inconclusive`, `CertificateRejected`, without vacuity acceptance. Offering an otherwise well-shaped
+    `exact`, `ratio` or `optimum` certificate on `exhaustive`, or generic `evidence` with or without its permitted
+    vacuous certificate, refuses the FR-331 result contract. An `exact-value` basis missing its value, using scalar
+    zero or denominator zero refuses; AC-1's ordinary exact result with a valid `Rational` value remains admitted.
+    An engine-only assertion, partial ex
+- id: FR-203-AC-12
+  path: spec/functional/FR-203-bound-an-exact-run-and-settle-its-verdict.md
+  role: examined
+  excerpt: '`Retry` has `Msg.delivered`, terminal when delivered, and the resolved `Steady` workload whose `fast`
+    step delivers with probability `1/2` and whose `slow` weight is 0. With request initial states ordered as index
+    0 `{delivered: true}` and index 1 `{delivered: false}`, the same admitted binding `m`, and `quantile 0.5 of
+    (steps from holds(not m.delivered) until holds(m.delivered) within 4) <= 2`, the independent conditional certificate
+    check accounts for both pairs: index 0 has unreachable activation with numerator and denominator 0, while index
+    1 activates immediately with numerator `3/4`, den'
+- id: FR-1043
+  path: spec/functional/FR-1043-certify-finite-horizon-measure-verdicts.md
+  role: examined
+  excerpt: |-
+    Expansion, payoff evaluation, unit conversion and exact
+      sums SHALL run under the caller's byte, state, edge, work, storage,
+      representation and arithmetic limits and cancellation; a stop SHALL
+      settle `incomplete` with its limit and no truth value.
+- id: FR-120
+  path: spec/functional/FR-120-simulate-a-checked-package-s-state-family.md
+  role: context_only
+  excerpt: |-
+    A model state is one complete, closed population state: for each universe
+    population, its objects, each with its key, its most-specific type and a
+    value for each declared field, where every reference value names an object
+    of the state. It also carries its anchor, which its key omits.
+```

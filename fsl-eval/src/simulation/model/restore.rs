@@ -650,13 +650,9 @@ impl Restore<'_, '_, '_> {
                     };
                     let mut instances = Vec::new();
                     for instance in self.array(member(extent, "instances")?)? {
-                        self.push(
-                            &mut instances,
-                            (
-                                self.reference(member(instance, "source")?)?,
-                                self.reference(member(instance, "target")?)?,
-                            ),
-                        )?;
+                        let source = self.reference(member(instance, "source")?)?;
+                        let target = self.reference(member(instance, "target")?)?;
+                        self.push(&mut instances, (source, target))?;
                     }
                     self.push(
                         &mut extents,
