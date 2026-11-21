@@ -4,14 +4,12 @@
 use filament_mltl::request::{ObservationInputs, RequestInput, TemporalInput};
 use filament_mltl::{OwnerReadError, OwnerReadErrorCode};
 use filament_observation::authority::{availability, clock, closure, completeness, progress};
-use ix_trace_rs::trace;
 use tl_mltl::wire::{trace, OwnerLimits};
 use tl_mltl::{TraceDocument, TraceSchemaVersion};
 use tl_syntax::{FormulaDocument, PropositionId, PropositionMapDocument};
 
 /// Provenance: QSL-2324 dependency compatibility; no observation authority is constructed.
 #[test]
-#[trace("FR-931-AC-5")]
 fn temporal_owner_types_share_one_dependency_cohort() {
     let _: for<'a> fn(RequestInput<'a>) -> &'a FormulaDocument = |input| input.formula;
     let _: for<'a> fn(RequestInput<'a>) -> &'a PropositionMapDocument =
@@ -43,7 +41,6 @@ fn temporal_owner_types_share_one_dependency_cohort() {
 
 /// Provenance: QSL-2324 dependency compatibility; exercise the public error conversion.
 #[test]
-#[trace("FR-931-AC-5")]
 fn tl_reader_refusals_cross_the_filament_error_boundary() {
     let document = TraceDocument {
         schema_version: TraceSchemaVersion::V1,
