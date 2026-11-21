@@ -4682,7 +4682,11 @@ fn a_temporal_violation_carries_its_decisive_information() {
         forall
             .counterexample
             .as_ref()
-            .map(|counterexample| counterexample.trace_position.index()),
+            .map(|counterexample| match counterexample {
+                crate::ClauseRunCounterexample::Observed(observed) =>
+                    observed.trace_position.index(),
+                crate::ClauseRunCounterexample::Model(model) => model.trace_position.index(),
+            }),
         Some(2)
     );
 

@@ -2385,6 +2385,19 @@ pub fn read_native_run_result_bounded(
         }
         if let Some(value) = &document.disposition.temporal {
             let record = temporal::decode(value)?;
+            let counterexample = match &record {
+                TemporalRecord::Violated { counterexample, .. } => Some(counterexample),
+                TemporalRecord::Undefined { counterexample, .. } => counterexample.as_ref(),
+                _ => None,
+            };
+            if counterexample.is_some_and(|counterexample| {
+                counterexample.is_model() != document.limits.is_some()
+            }) {
+                return Err(NativeRunReadError::Invalid {
+                    member: "disposition.temporal.counterexample.trace",
+                    reason: "counterexample arm must match the model limits context",
+                });
+            }
             temporal::validate_temporal(
                 &document.disposition,
                 &record,

@@ -3362,7 +3362,7 @@ fn with_counterexample(
 /// The first `Steps` interval of the clause's operators, in operator order.
 /// A time-bounded operator's interval names ticks, not trace positions, and
 /// FR-364's observed arm carries none.
-fn step_interval(
+pub(super) fn step_interval(
     clause: &fsl_semantics::check::CheckedTemporalClause,
 ) -> Option<fsl_foundation::bound::TemporalInterval> {
     clause
