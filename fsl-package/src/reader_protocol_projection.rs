@@ -750,6 +750,8 @@ fn is_equality_identity(identity: &str) -> bool {
             | "filament.op.rational.ne"
             | "filament.op.decimal.eq"
             | "filament.op.decimal.ne"
+            | "filament.op.enum.eq"
+            | "filament.op.enum.ne"
             | "filament.op.quantity.eq"
             | "filament.op.quantity.ne"
             | "filament.op.reference.eq"
