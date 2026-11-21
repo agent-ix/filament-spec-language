@@ -1084,6 +1084,8 @@ fn two_mapped_package_relationships_use_independent_producer_declarations() {
     ]);
     selection["limits"]["max_relationships"] = json!("2");
     selection["limits"]["max_required_relationships"] = json!("2");
+    selection["scope"]["closure_identity"] = json!("closure");
+    selection["scope"]["closure_digest"] = json!("22".repeat(32));
     let mut shipment = instance("o1", "s1");
     shipment["identity"] = json!("01");
     let mut payment = instance("o1", "p1");
@@ -1100,20 +1102,24 @@ fn two_mapped_package_relationships_use_independent_producer_declarations() {
     );
     let document: Value =
         serde_json::from_slice(&output.stdout).expect("two mapped candidates reach the resolver");
-    assert_eq!(document["outcome"]["kind"], "incomplete", "{document}");
+    assert_eq!(output.status.code(), Some(0), "{document}");
+    assert_eq!(document["outcome"]["kind"], "completed", "{document}");
     assert_eq!(
-        document["outcome"]["reasons"][0]["code"], "missing-closure",
-        "{document}"
+        document["outcome"]["value"]["reference"]["object_identity"], "p1",
+        "both mapped declarations satisfy their independent required slots: {document}"
     );
 
     let missing_relationships = |rows| {
         let output = run_selected("paymentAttempts", "o1", rows, Some(selection.clone()));
         let document: Value =
             serde_json::from_slice(&output.stdout).expect("missing relationship result document");
+        assert_eq!(output.status.code(), Some(22), "{document}");
         assert_eq!(document["outcome"]["kind"], "incomplete", "{document}");
         let reasons = document["outcome"]["reasons"]
             .as_array()
             .expect("typed incomplete reasons");
+        assert_eq!(reasons.len(), 1, "{document}");
+        assert_eq!(reasons[0]["code"], "missing-relationship", "{document}");
         reasons
             .iter()
             .filter(|reason| reason["code"] == "missing-relationship")
