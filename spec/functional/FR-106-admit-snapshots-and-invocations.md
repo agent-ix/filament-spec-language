@@ -401,6 +401,18 @@ reference as data, without resolving it as an object or population member.
 The same rule applies inside `Option` and `Sequence` values, retaining their
 presence and element order. No additional snapshot value form is introduced.
 
+The full reference SHALL bind the authenticated outer population/owner
+universe, the owner's local key, and FR-230's declared type/model scope,
+canonical declared path and tagged selector indices. FSL SHALL use the same
+`place/v2` identity of FR-230 "Place identity" and declared-place table for
+source and bare checked routes.
+Admission SHALL NOT substitute an S3 allocation key or S4 node id for that
+identity: removing `x` while retaining `y` makes an old `x` reference
+undeclared even if `y` reuses its allocation position. Each route SHALL
+refuse distinct declared places that collide within one model scope as
+`conflicting_declaration`/`duplicate-declaration`, naming both declaration
+origins and producing no partial place table or admitted observation.
+
 > Implementation boundary (QSL-2178 STEP1): the admission requirement above
 > and AC-72/AC-73 remain unmet. Source and Bare raw snapshot, context,
 > parameter and record-sample admission refuse external Clock references as

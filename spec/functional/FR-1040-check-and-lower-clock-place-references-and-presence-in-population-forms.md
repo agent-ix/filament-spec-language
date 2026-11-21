@@ -53,6 +53,24 @@ population holds, so there is no absent owner to test.
 
 ## Behavior
 
+- **Route-neutral declared identity.** For the source and bare checked
+  routes, FSL SHALL use FR-230 "Place identity" as the authority for
+  `place/v2`, its declared scope, canonical path and tagged selector indices.
+  Authenticated declaration provenance SHALL resolve ownership; an ambiguous
+  short-name match SHALL refuse as `ambiguous_declaration`/`ambiguous-name`,
+  naming the competing origins, rather than select the first candidate.
+- **Unique within a declared model scope.** While building its place table,
+  each route SHALL refuse two distinct declared places with equal normalized
+  identity within one declared model scope as
+  `conflicting_declaration`/`duplicate-declaration`, naming both declaration
+  origins and producing no partial table or checked package. Repeated import
+  aliases of the same authenticated declaration and effective path are one
+  view, not distinct places. Independently selected documents, inherited or
+  redefined members and union expansions SHALL undergo the same provenance
+  resolution and collision check; equal bare paths across different scopes
+  or populations alone are not collisions. Map-key identity remains outside
+  this change: map reference forms retain their typed refusal.
+  FSL SHALL NOT coerce map keys to positional integer indices.
 - **Places with an id.** S3 SHALL check `ref(p)`, for `p` a place
   expression whose path names a clock place of its owner's type with no
   `Map` level, as a `PlaceReference` node over the owner, the place and one
@@ -168,6 +186,7 @@ form either lowers or refuses with one of the typed causes above.
 | FR-1040-AC-6 | Negative: `sum(c in M::calls: c.x)` and `only(c in M::calls: c.x)` refuse `invalid_timed_model`/`clock-read-outside-constraint` at `c.x`; `sum(c in M::calls: ref(c.x))` and `sum(c in M::calls: M::calls)` refuse `ill_typed`/`type-mismatch` at the summand; `ref(c.m[k].x)` in `pick`'s precondition, `k` its `Text` parameter, over a `Map` value refuses `ill_typed`/`type-mismatch` at the `ref`; `ref(c.x) < ref(c.y)` refuses `ill_typed`/`operator-ineligible`; and a call `late(c.x)` to a function `late(t: Clock): Boolean` in a `count` condition refuses `invalid_timed_model`/`clock-read-outside-constraint` at the call; and in a refinement row, `sum(c in M::calls: c.x) >= 0` refuses `unsupported_construct`/`expression-form` at `c.x` (FR-430). | Test (TC-3084) |
 | FR-1040-AC-7 | A pure function `same(a: Reference<Clock>, b: Reference<Clock>): Boolean { a = b }` has a function node whose parameters are typed by the `scalar_type`/`clock_reference` node, and a refinement row or clause calling it lowers its call to that node; with the function's body made ill-typed, the unit refuses once at the function body and not at the call. | Test (TC-3084) |
 | FR-1040-AC-8 | Over a domain package `acme/rpc` whose object type `Call` has clock fields `x` and `y` and a field `r` typed `ix://acme/rpc/ClockRef`, a type definition of `kind` `reference` with `target` `ix://filament/native/Clock`, intake gives `r` the type `Reference<Clock>` as a data member, and the postcondition `self.r = ref(self.x)` of an operation `point` whose frame names only `r` checks with no `clock-write` refusal and lowers the write to a `filament.op.clock_reference.ref` application typed by the `scalar_type`/`clock_reference` node, which also types the field; after `point` the state's `r` holds the place id of `self.x`, and two states that differ only in clock values have one state key. The same field typed `ix://filament/native/Clock` is a clock field and the same postcondition refuses `invalid_timed_model`/`clock-write`. An FSL model unit declaring `object Call { x: Clock; r: Reference<Clock>; }` under `domain "acme/rpc"` compiles to a document holding the type definition `ix://acme/rpc/Reference_Call_r` of `kind` `reference` with `target` `ix://filament/native/Clock` and the field `r` typed by it. | Test (TC-3084) |
+| FR-1040-AC-9 | TC-3084 step 7's source and bare checked routes produce equal full `place/v2` references for the same authenticated declarations through record aliases, nested tuples and union cases, preserving all path tags and selector indices; two populations with the same owner local key remain distinct. Each route refuses distinct declaration origins with one normalized identity in the same model scope as `conflicting_declaration`/`duplicate-declaration`, naming both origins and publishing no partial table; importing the same authenticated declaration through two aliases succeeds as one view. Admitted independently selected documents and union expansions have distinct identities when their authenticated scopes or full path prefixes differ; the inherited-member control retains the original Base template, and the redefinition controls refuse before clock lowering as TC-3084 states. | Test (TC-3084) |
 
 ## Dependencies
 
