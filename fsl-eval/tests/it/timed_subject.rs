@@ -898,17 +898,6 @@ fn a_timed_post_state_key_changes_with_its_clock_value_alone() {
     assert_eq!(posts[1].clocks().values(), [exact(3, 1)]);
 }
 
-fn clock_reference_world(
-    document: Json,
-    unit: &str,
-) -> (
-    World,
-    filament_exact::ObjectReference,
-    filament_exact::ObjectReference,
-) {
-    clock_reference_world_with_profiles(document, "", unit)
-}
-
 /// The current shared closure cannot store two population occurrences with
 /// the same native object identity. Admission names that boundary explicitly;
 /// one population and two populations with distinct owner keys still admit.
@@ -1278,15 +1267,7 @@ fn raw_reference_origins_share_deep_prefixes_across_a_wide_sequence() {
         .is_none());
 }
 
-fn clock_reference_world_with_profiles(
-    mut document: Json,
-    profiles: &str,
-    unit: &str,
-) -> (
-    World,
-    filament_exact::ObjectReference,
-    filament_exact::ObjectReference,
-) {
+fn clock_reference_domain_world(mut document: Json, unit: &str) -> World {
     let mut reference = wire_type(
         &ident("ClockRef"),
         "unused",
@@ -1312,39 +1293,10 @@ fn clock_reference_world_with_profiles(
     let unit = format!("{unit}\npost PointPresent using v on M::Call::point {{ present(self.r) }}");
     let mut world = world_holding(
         serde_json::to_vec(&document).expect("JSON"),
-        profiles,
+        "",
         &unit,
         json!({}),
     );
-    let graph = world.package.graph();
-    let model = fsl_semantics::model::state::StateModel::new(
-        graph.model_inputs(),
-        graph.scope().types(),
-        &world.packages,
-        ModelNormalizationLimits::default(),
-    )
-    .expect("model");
-    let owner = model
-        .object_reference(
-            &DeclarationKey {
-                package: PACKAGE.to_owned(),
-                node: ident("Call"),
-            },
-            "c",
-        )
-        .expect("owner");
-    let timed = graph.timed_model("M").expect("timed model");
-    let place = |name: &str| {
-        timed
-            .clocks()
-            .iter()
-            .zip(timed.place_nodes())
-            .find(|(clock, _)| clock.name() == name)
-            .expect("place")
-            .1
-    };
-    let x = fsl_semantics::model::clock_reference::encode(&owner, place("x"), &[]).expect("x id");
-    let y = fsl_semantics::model::clock_reference::encode(&owner, place("y"), &[]).expect("y id");
     let mut snapshot: Json =
         serde_json::from_slice(world.snapshots.get(&world.initial).expect("snapshot"))
             .expect("JSON");
@@ -1353,7 +1305,7 @@ fn clock_reference_world_with_profiles(
         world.initial.clone(),
         serde_json::to_vec(&snapshot).expect("JSON"),
     );
-    (world, x, y)
+    world
 }
 
 fn unbounded_clock_reference_document() -> Json {
@@ -1375,115 +1327,107 @@ fn unbounded_clock_reference_document() -> Json {
     document
 }
 
-/// A ClockRef member needs a selector bound even though its own type is
-/// scalar. A timed profile's actual bound supplies that finite data domain;
-/// two subjects over the same model retain their own selector bounds.
-#[trace("TC-3084", "FR-1040-AC-8")]
+/// Clock-reference data domains need explicit population-qualified owner
+/// candidates on every enumeration route. Both public constructors refuse
+/// that current boundary, for bounded and unbounded declared clock slots.
+#[trace("TC-3084")]
 #[test]
-fn clock_reference_domains_require_a_selector_bound() {
-    use filament_exact::Value;
-    let document = unbounded_clock_reference_document();
-    let (world, x, y) = clock_reference_world(document, &only(&["point"], ""));
-    let held = system(&world);
-    let Err(NotSimulated::RequiresBound(required)) = check_model_bounds(&held, BOUND_POSITIONS)
-    else {
-        panic!("the unbounded selector domain requires a bound before frames");
-    };
-    assert!(
-        required.domains.is_none(),
-        "a scalar clock reference is not a collection domain"
-    );
-    let [site] = required.clock_references.as_slice() else {
-        panic!("one clock-reference member and slot");
-    };
-    let model = world.package.graph().timed_model("M").expect("model");
-    let q = model
-        .clocks()
-        .iter()
-        .zip(model.place_nodes())
-        .find(|(clock, _)| clock.name() == "q.[slot]")
-        .expect("q template")
-        .1;
-    assert_eq!(&site.clock, q);
-    assert_eq!(site.slot, [1]);
-    assert!(
-        matches!(&site.member, fsl_foundation::bound::DomainKey::Node { path, .. } if path == &[0, 4, 0]),
-        "{site:?}"
-    );
-    let rendered = NotSimulated::RequiresBound(required.clone()).to_string();
-    assert!(rendered.contains(&site.member.to_string()));
-    assert!(rendered.contains(&q.to_string()));
-    let small = TimedSystem::with_max_clocks(&held, "M", std::num::NonZeroU64::new(2).expect("2"))
-        .expect("profile bound");
-    let large = TimedSystem::with_max_clocks(&held, "M", std::num::NonZeroU64::new(3).expect("3"))
-        .expect("profile bound");
-    let r = DeclarationKey {
-        package: PACKAGE.to_owned(),
-        node: ident("Call/r"),
-    };
-    let calls = DeclarationKey {
-        package: PACKAGE.to_owned(),
-        node: ident("calls"),
-    };
-    for (timed, maximum) in [(&small, 2_u64), (&large, 3), (&small, 2)] {
-        let initial = timed.initial();
-        let first = initial.first().expect("zero-slot initial state");
-        let steps = timed
-            .guarded_steps(first.discrete())
-            .expect("bounded frame expansion");
-        let mut actual = steps
-            .iter()
-            .filter(|step| step.operation().contains("Call/point"))
-            .map(|step| {
-                let Value::Reference(reference) =
-                    &step.post().state().populations[&calls]["c"].fields[&r]
-                else {
-                    panic!("data reference");
-                };
-                reference.clone()
-            })
-            .collect::<Vec<_>>();
-        let mut expected = vec![x.clone(), y.clone()];
-        let owner = timed
-            .places()
-            .iter()
-            .find(|place| place.slots().is_empty())
-            .expect("real owner")
-            .object();
-        expected.extend((0..maximum).map(|slot| {
-            fsl_semantics::model::clock_reference::encode(
-                owner,
-                q,
-                &[Value::Integer(Integer::from(slot))],
-            )
-            .expect("declared q id")
-        }));
-        actual.sort();
-        expected.sort();
+fn clock_reference_enumeration_refuses_both_model_routes() {
+    fn refusal<'a>(world: &'a World, input: fsl_eval::simulation::model::ModelCheckInput<'a>) {
+        let result = ModelSystem::new(ModelSimulationRequest {
+            emit: fsl_package::EmitLimits::fixture(),
+            input,
+            packages: &world.packages,
+            normalization: ModelNormalizationLimits::default(),
+            snapshots: &world.snapshots,
+            initial: vec![world.initial.clone()],
+            universes: vec![PopulationUniverse {
+                population: DeclarationKey {
+                    package: PACKAGE.to_owned(),
+                    node: ident("calls"),
+                },
+                keys: vec!["c".to_owned()],
+            }],
+            observation: ObservationLimits::default(),
+            expansion: ExpansionLimits {
+                max_candidates: 100,
+            },
+            meter: METER,
+        });
+        let Err(fsl_semantics::model::observation::AdmissionFailure::Refused(record)) = result
+        else {
+            panic!("Clock-reference enumeration has an explicit typed boundary");
+        };
+        assert_eq!(record.catalog.code(), "unknown_required_feature");
+        assert_eq!(record.catalog.cause(), "unsupported-feature");
         assert_eq!(
-            actual, expected,
-            "the actual profile supplies every potential slot and no others"
+            record.fields.get("reason").map(String::as_str),
+            Some("clock-reference-enumeration")
         );
+        assert_eq!(record.fields.get("member"), Some(&ident("Call/r")));
     }
-    // Expanding a bounded timed subject does not mutate generic classification.
-    assert!(matches!(
-        check_model_bounds(&held, BOUND_POSITIONS),
-        Err(NotSimulated::RequiresBound(_))
-    ));
+    for document in [
+        serde_json::from_slice(&clocked_document(true, &["y"])).expect("JSON"),
+        unbounded_clock_reference_document(),
+    ] {
+        let world = clock_reference_domain_world(document, &only(&["point"], ""));
+        refusal(
+            &world,
+            fsl_eval::simulation::model::ModelCheckInput::source(&world.package),
+        );
+        let read = fsl_package::read_evaluation_package(
+            &world.package,
+            fsl_semantics::library::LibraryName::new("clock-domain-boundary").expect("name"),
+            &world.packages,
+            fsl_package::V2ReadLimits::fixture(),
+            fsl_package::EmitLimits::fixture(),
+        )
+        .expect("the actual emitted package is admitted");
+        let emission =
+            fsl_package::emit_checked(&world.package, fsl_package::EmitLimits::fixture())
+                .expect("emits");
+        let rows = emission
+            .identity_rows(
+                read.admitted(),
+                &mut fsl_package::V2ReadLimits::fixture().native_join_budget(),
+            )
+            .expect("actual identity rows");
+        let equality = emission
+            .equality_witness(
+                read.admitted(),
+                &mut fsl_package::V2ReadLimits::fixture().native_join_budget(),
+            )
+            .expect("actual equality witness");
+        let bare = fsl_package::BarePackage::new(read.admitted())
+            .with_supply(
+                fsl_package::BareSupply {
+                    identities: &rows,
+                    equality: Some(&equality),
+                },
+                &mut fsl_package::V2ReadLimits::fixture().native_join_budget(),
+            )
+            .expect("the admitted supply joins");
+        let input = fsl_eval::simulation::model::PackageModelInput::of_timed_trace(
+            &bare,
+            &world.packages,
+            ModelNormalizationLimits::default(),
+        )
+        .expect("actual bare model input");
+        refusal(&world, input.input());
+    }
 }
 
-/// Protocol preflight retains every ordinary binder domain and the data
-/// member's actual clock selector site in one typed requires-bound outcome.
-#[trace("TC-3084", "FR-1040-AC-8", "FR-215-AC-4")]
+/// Ordinary protocol preflight retains every binder domain and the
+/// classifier's resource precedence beside native clock-place simulation.
+#[trace("FR-215-AC-4")]
 #[test]
-fn protocol_preflight_retains_generic_domains_and_clock_selector_sites() {
+fn protocol_preflight_retains_generic_domains_beside_native_clock_places() {
     use fsl_eval::simulation::protocol::{check_protocol_bounds, Capacities};
     use fsl_foundation::bound::{DomainKey, DomainKind};
-    let (world, _, _) = clock_reference_world_with_profiles(
-        unbounded_clock_reference_document(),
+    let world = world_with(
         "profile p = \"filament.protocol.finite-global/v1\";\n",
         &only(
-            &["point"],
+            &[],
             r#"
 record Count { a: Integer; b: Integer; }
 protocol Gate using p over (input: M::Call) on origin {
@@ -1505,7 +1449,7 @@ protocol Gate using p over (input: M::Call) on origin {
         &world.package,
         BOUND_POSITIONS,
     ) else {
-        panic!("ordinary and clock domains both require bounds");
+        panic!("both ordinary binder positions require bounds");
     };
     let binder = graph
         .protocol_node_keys("Gate")
@@ -1537,13 +1481,9 @@ protocol Gate using p over (input: M::Call) on origin {
             ),
         ]
     );
-    let Err(NotSimulated::RequiresBound(model_only)) = check_model_bounds(&model, BOUND_POSITIONS)
-    else {
-        panic!("the model alone names its clock selector site");
-    };
-    assert!(model_only.domains.is_none());
-    assert_eq!(required.clock_references, model_only.clock_references);
-    assert_eq!(required.clock_references.len(), 1);
+    check_model_bounds(&model, BOUND_POSITIONS)
+        .expect("native clocks need no Clock-reference data domain");
+    assert!(required.clock_references.is_empty());
     assert!(required.capacities.is_empty());
     assert!(
         matches!(
@@ -1553,62 +1493,6 @@ protocol Gate using p over (input: M::Call) on origin {
             )),
         ),
         "the generic classifier's resource failure stays immediate"
-    );
-}
-
-/// Point writes only the data reference, keeps both clock valuations, and
-/// stores its place id in the discrete state key.
-#[trace("TC-3084", "FR-1040-AC-8")]
-#[test]
-fn pointing_a_clock_reference_writes_data_without_resetting_a_clock() {
-    use filament_exact::Value;
-    let document: Json = serde_json::from_slice(&clocked_document(true, &["y"])).expect("JSON");
-    let (world, x, _) = clock_reference_world(
-        document,
-        &rpc_unit(
-            3,
-            "post Point using v on M::Call::point { present(self.r) and value(self.r) = ref(self.x) }",
-        ),
-    );
-    let system = system(&world);
-    let timed = TimedSystem::new(&system, "M").expect("timed system");
-    let [initial] = &timed.initial()[..] else {
-        panic!("one initial state")
-    };
-    let mut behaviour = TimedBehaviour::new(initial.clone());
-    let point = transition(&timed, &behaviour, "point");
-    behaviour
-        .advance(&timed, &exact(2, 1), &point)
-        .expect("point after a delay");
-    let post = behaviour.last().state();
-    let r = DeclarationKey {
-        package: PACKAGE.to_owned(),
-        node: ident("Call/r"),
-    };
-    let calls = DeclarationKey {
-        package: PACKAGE.to_owned(),
-        node: ident("calls"),
-    };
-    let Value::Reference(stored) = &post.discrete().state().populations[&calls]["c"].fields[&r]
-    else {
-        panic!("point stores a reference")
-    };
-    assert_eq!(stored.universe(), x.universe());
-    assert_eq!(stored.object_type(), x.object_type());
-    assert_eq!(stored.object(), x.object());
-    assert_eq!(
-        post.clocks().values(),
-        [exact(2, 1), exact(2, 1)],
-        "point resets neither clock"
-    );
-    let delayed = timed
-        .delay(post, &exact(1, 1))
-        .expect("decided")
-        .expect("a delay");
-    assert_ne!(delayed.clocks().values(), post.clocks().values());
-    assert_eq!(
-        system.state_key(post.discrete()).expect("key"),
-        system.state_key(delayed.discrete()).expect("delayed key")
     );
 }
 

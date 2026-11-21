@@ -258,9 +258,9 @@ fn source_and_bare_clock_templates_preserve_optional_indexed_tuple_and_case_path
         profile T = \"filament.temporal.complete/v1\";\n\
         dimension Time; unit ms : Time = rational(1, 1);\n\
         record W { c: Clock; }\n\
-        tuple Pair(W, Clock);\n\
+        type AW = W; tuple Pair(AW, Clock);\n\
         union U { armed(Clock), idle }\n\
-        object Order { maybe: Option<W>; q: Sequence<Option<W>>[0, 2]; pair: Pair; u: U; }\n\
+        object Order { maybe: Option<Clock>; q: Sequence<Option<Clock>>[0, 2]; pair: Pair; u: U; }\n\
         time Order dense unit ms;\n";
     let packages = fsl_semantics::model::intake::package_input(std::iter::empty::<&[u8]>())
         .expect("source-only input");
@@ -286,8 +286,8 @@ fn source_and_bare_clock_templates_preserve_optional_indexed_tuple_and_case_path
         })
         .collect::<Vec<_>>();
     assert_eq!(source_templates.len(), 5);
-    assert!(source_templates.iter().any(|template| matches!(template.path.as_slice(), [PathEntry::Field { carrier, .. }, PathEntry::Option, PathEntry::Field { .. }] if carrier.layers == [CarrierLayer::Option])));
-    assert!(source_templates.iter().any(|template| matches!(template.path.as_slice(), [PathEntry::Field { .. }, PathEntry::Collection { shape, .. }, PathEntry::Option, PathEntry::Field { .. }] if shape.kind == CollectionKind::Sequence && shape.minimum.as_str() == "0" && shape.maximum.as_ref().map(|bound| bound.as_str()) == Some("2"))));
+    assert!(source_templates.iter().any(|template| matches!(template.path.as_slice(), [PathEntry::Field { carrier, .. }, PathEntry::Option] if carrier.layers == [CarrierLayer::Option])));
+    assert!(source_templates.iter().any(|template| matches!(template.path.as_slice(), [PathEntry::Field { .. }, PathEntry::Collection { shape, .. }, PathEntry::Option] if shape.kind == CollectionKind::Sequence && shape.minimum.as_str() == "0" && shape.maximum.as_ref().map(|bound| bound.as_str()) == Some("2"))));
     assert!(source_templates.iter().any(|template| matches!(template.path.as_slice(), [PathEntry::Field { .. }, PathEntry::Tuple { position, .. }, PathEntry::Field { .. }] if position.as_str() == "0")));
     assert!(source_templates.iter().any(|template| matches!(template.path.as_slice(), [PathEntry::Field { .. }, PathEntry::Tuple { position, .. }] if position.as_str() == "1")));
     assert!(source_templates.iter().any(|template| matches!(template.path.as_slice(), [PathEntry::Field { .. }, PathEntry::Case { name, .. }] if name == "armed")));
