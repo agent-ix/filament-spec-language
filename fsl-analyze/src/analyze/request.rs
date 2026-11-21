@@ -691,6 +691,65 @@ pub(crate) fn simulation<'a>(
     }
 }
 
+enum ProbabilityWork<'a> {
+    Exact(Box<crate::exact_probabilistic::ProductRequest<'a>>),
+    Statistical(Box<crate::statistical::StatisticalRequest<'a>>),
+}
+
+fn probability_work<'a>(
+    analysis: &'a super::RunInput<'a>,
+    binding: &'a super::SubjectBinding<'a>,
+    occurrence: &OccurrenceKey,
+    form: &ProbabilisticItem,
+    limits: &super::AnalyzeLimits,
+) -> Option<ProbabilityWork<'a>> {
+    let mut simulation = simulation(&analysis.model, binding, limits);
+    simulation.expansion.max_candidates = 1_000_000;
+    let claim = analysis
+        .package
+        .graph()
+        .probabilistic_model()
+        .claims()
+        .iter()
+        .find(|claim| claim.occurrence() == Some(occurrence));
+    match (claim, form.evidence, form.limits) {
+        (Some(claim), EvidenceKind::Exact, ProbabilisticLimits::Exact(exact)) => Some(
+            ProbabilityWork::Exact(Box::new(crate::exact_probabilistic::ProductRequest {
+                subject: fsl_eval::model_subject::ModelSubject {
+                    simulation,
+                    proof_bounds: Vec::new(),
+                },
+                claim,
+                limits: exact,
+            })),
+        ),
+        (Some(claim), EvidenceKind::Statistical, ProbabilisticLimits::Statistical(statistical)) => {
+            match (form.method, form.seed, &form.sampler) {
+                (Some(method), Some(seed), Some(sampler)) => Some(ProbabilityWork::Statistical(
+                    Box::new(crate::statistical::StatisticalRequest {
+                        subject: fsl_eval::model_subject::ModelSubject {
+                            simulation,
+                            proof_bounds: Vec::new(),
+                        },
+                        claim,
+                        method,
+                        seed,
+                        sampler: sampler.clone(),
+                        limits: statistical,
+                        max_witnesses: form
+                            .max_witnesses
+                            .unwrap_or(crate::statistical::DEFAULT_MAX_WITNESSES),
+                        symmetry: form.symmetry.clone(),
+                        timed_sampling: form.timed_sampling.unwrap_or_default(),
+                    }),
+                )),
+                _ => None,
+            }
+        }
+        _ => None,
+    }
+}
+
 fn checked_v2_package(
     shared: Option<crate::provider::Shared<'_>>,
 ) -> Option<Box<filament_contract_model::CheckedPackageV2>> {
@@ -1185,55 +1244,14 @@ fn work<'a>(
         Some(ItemForm::Probabilistic(form))
             if item.kind == Capability::ProbabilisticSatisfaction =>
         {
-            let mut simulation = simulation(input, binding, limits);
-            simulation.expansion.max_candidates = 1_000_000;
-            let claim = package
-                .graph()
-                .probabilistic_model()
-                .claims()
-                .iter()
-                .find(|claim| claim.occurrence() == Some(&item.claim));
-            match (claim, form.evidence, form.limits) {
-                (Some(claim), EvidenceKind::Exact, ProbabilisticLimits::Exact(exact)) => {
-                    super::exact_probabilistic_item(
-                        item.request_index,
-                        crate::exact_probabilistic::ProductRequest {
-                            subject: fsl_eval::model_subject::ModelSubject {
-                                simulation,
-                                proof_bounds: Vec::new(),
-                            },
-                            claim,
-                            limits: exact,
-                        },
-                    )
+            match probability_work(analysis, binding, &item.claim, form, limits) {
+                Some(ProbabilityWork::Exact(request)) => {
+                    super::exact_probabilistic_item(item.request_index, *request)
                 }
-                (
-                    Some(claim),
-                    EvidenceKind::Statistical,
-                    ProbabilisticLimits::Statistical(statistical),
-                ) => match (form.method, form.seed, &form.sampler) {
-                    (Some(method), Some(seed), Some(sampler)) => super::statistical_item(
-                        item.request_index,
-                        crate::statistical::StatisticalRequest {
-                            subject: fsl_eval::model_subject::ModelSubject {
-                                simulation,
-                                proof_bounds: Vec::new(),
-                            },
-                            claim,
-                            method,
-                            seed,
-                            sampler: sampler.clone(),
-                            limits: statistical,
-                            max_witnesses: form
-                                .max_witnesses
-                                .unwrap_or(crate::statistical::DEFAULT_MAX_WITNESSES),
-                            symmetry: form.symmetry.clone(),
-                            timed_sampling: form.timed_sampling.unwrap_or_default(),
-                        },
-                    ),
-                    _ => absent(),
-                },
-                _ => absent(),
+                Some(ProbabilityWork::Statistical(request)) => {
+                    super::statistical_item(item.request_index, *request)
+                }
+                None => absent(),
             }
         }
         None if item.kind == Capability::ValueValidity => {
@@ -1581,6 +1599,129 @@ mod tests {
 
     use super::SourceProvision;
     use fsl_foundation::source::provenance::RawSourceRef;
+
+    /// Observe the real requests consumed by the probability adapter before
+    /// engine execution; this covers only the finite local default.
+    #[trace("FR-741-AC-6", "FR-255-AC-23")]
+    #[test]
+    fn both_probability_requests_use_the_finite_local_candidate_default() {
+        use fsl_replay::spine::{check, parse, select, DependencyInput, ParseRequest, SpineLimits};
+
+        let model = include_bytes!(
+            "../../../tools/fsl-probability-check/tests/fixtures/link.semantic-ir.json"
+        );
+        let packages = fsl_semantics::model::intake::package_input([model.as_slice()])
+            .expect("the Link model admits");
+        let text = format!(
+            "{}\nprobabilistic Delivered using ev on M over (m: M::Msg) under Even on origin \
+             with alpha 0.01, beta 0.01, indifference 0.05 \
+             {{ probability >= 0.9 [ eventually[0,2] holds(m.delivered) ] }}",
+            include_str!("../../../tools/fsl-probability-check/tests/fixtures/link.native")
+                .replace(
+                    "profile inf = \"filament.temporal.infinite-trace/v1\";",
+                    "profile inf = \"filament.temporal.infinite-trace/v1\";\n\
+                 profile ev = \"filament.temporal.event-position.false-extension/v1\";"
+                )
+        );
+        let source = fsl_foundation::SourceIdentity::new("test", "probability-default");
+        let cancel = filament_exact::Cancel::new();
+        let spine = SpineLimits::default();
+        let parsed = parse(
+            &ParseRequest {
+                source: &source,
+                path: "probability-default.native",
+                bytes: text.as_bytes(),
+            },
+            spine.source,
+            &cancel,
+        )
+        .expect("the Link claim parses")
+        .into_value();
+        let models = select(&parsed, &packages, spine.model, &cancel)
+            .expect("the Link model is selected")
+            .into_value();
+        let checked = check(
+            &parsed,
+            "probability-default".to_owned(),
+            &models,
+            &DependencyInput::default(),
+            spine,
+            &cancel,
+        )
+        .expect("the Link claim checks")
+        .into_value();
+        let analysis = super::super::RunInput::source(checked.package());
+        let snapshot = include_bytes!(
+            "../../../tools/fsl-probability-check/tests/fixtures/link.snapshot.json"
+        );
+        let reference = fsl_semantics::model::observation::document_reference(snapshot)
+            .expect("the Link snapshot names itself");
+        let snapshots = std::collections::BTreeMap::from([(reference, snapshot.to_vec())]);
+        let binding = super::super::document::SubjectSelection::default_over(&snapshots)
+            .binding(&packages, &snapshots);
+        let limits = super::super::AnalyzeLimits::unbounded();
+        let preflight = super::simulation(&analysis.model, &binding, &limits);
+        assert_eq!(preflight.expansion.max_candidates, u64::MAX);
+        fsl_eval::simulation::model::ModelSystem::new(preflight)
+            .expect("the real native Link subject admits");
+        let claim = analysis
+            .package
+            .graph()
+            .probabilistic_model()
+            .claims()
+            .first()
+            .expect("the checked Delivered claim");
+        let occurrence = claim
+            .occurrence()
+            .expect("the authored claim has an occurrence");
+        for evidence in [
+            fsl_route::EvidenceKind::Exact,
+            fsl_route::EvidenceKind::Statistical,
+        ] {
+            let form = super::ProbabilisticItem {
+                evidence,
+                limits: match evidence {
+                    fsl_route::EvidenceKind::Exact => {
+                        super::ProbabilisticLimits::Exact(Default::default())
+                    }
+                    fsl_route::EvidenceKind::Statistical => {
+                        super::ProbabilisticLimits::Statistical(Default::default())
+                    }
+                },
+                method: Some(fsl_replay::statistical::StatisticalMethod::Okamoto),
+                seed: Some(7),
+                sampler: Some(
+                    fsl_foundation::selection::DefinitionRef::new(
+                        "agent-ix",
+                        "filament.simulation.sampler/v1",
+                    )
+                    .expect("the native sampler identity"),
+                ),
+                max_witnesses: None,
+                workers: std::num::NonZeroU32::new(4),
+                symmetry: Vec::new(),
+                timed_sampling: None,
+            };
+            let work = super::probability_work(&analysis, &binding, occurrence, &form, &limits)
+                .expect("the probability adapter constructs engine work");
+            let simulation = match (evidence, work) {
+                (fsl_route::EvidenceKind::Exact, super::ProbabilityWork::Exact(request)) => {
+                    assert_eq!(request.claim.occurrence(), Some(occurrence));
+                    request.subject.simulation
+                }
+                (
+                    fsl_route::EvidenceKind::Statistical,
+                    super::ProbabilityWork::Statistical(request),
+                ) => {
+                    assert_eq!(request.claim.occurrence(), Some(occurrence));
+                    request.subject.simulation
+                }
+                _ => panic!("the adapter must construct the requested evidence kind"),
+            };
+            assert_eq!(simulation.expansion.max_candidates, 1_000_000);
+            assert_eq!(simulation.meter, limits.accounting);
+        }
+    }
 
     #[trace("TC-2804", "FR-992-AC-1")]
     #[test]
