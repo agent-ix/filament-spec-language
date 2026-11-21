@@ -157,7 +157,7 @@ fn a_state_constraint_reduces_and_holds_reduced() {
         .collect::<Vec<_>>();
     let request = fsl_replay::ProductClosureRequest {
         package: &secure.package,
-        clause: &secure.clause,
+        clause: fsl_replay::ProductClosureClause::Hyper(&secure.clause),
         subjects: &subjects,
         meter: crate::counter::UNLIMITED,
     };

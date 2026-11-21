@@ -628,6 +628,7 @@ impl<'a> ModelSystem<'a> {
     ) -> Result<Walk<'s, 'a>, ExpansionStop> {
         match self.remembered_observation(observed) {
             Some(observation) => Ok(Walk {
+                result_policy: super::walk::ResultPolicy::FirstResult,
                 key_policy: None,
                 cancel: None,
                 system: self,

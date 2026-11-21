@@ -365,6 +365,31 @@ pub struct StepEffect {
     pub written: Vec<WrittenSlots>,
 }
 
+/// A labelled model transition whose result participates in canonical edge order.
+/// Distinct results remain distinct when they reach the same model state.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ModelRelationTransition {
+    /// The operation, receiver and arguments.
+    pub transition: ModelTransition,
+    /// The observed result in the existing typed canonical value spelling.
+    pub result: Option<String>,
+}
+
+impl quire_canonical::Encode for ModelRelationTransition {
+    fn encode_into<S: quire_canonical::Sink + ?Sized>(
+        &self,
+        writer: &mut quire_canonical::Writer<'_, S>,
+    ) -> Result<(), quire_canonical::Error> {
+        writer.begin_array()?;
+        quire_canonical::Encode::encode_into(&self.transition, writer)?;
+        writer.bool(self.result.is_some())?;
+        if let Some(result) = &self.result {
+            writer.string(result)?;
+        }
+        writer.end_array()
+    }
+}
+
 /// A clock collection a step wrote whole, and where each of its post-state
 /// slots comes from.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -1443,6 +1468,34 @@ impl<'a> ModelSystem<'a> {
         transition: &ModelTransition,
     ) -> Result<Vec<u8>, crate::simulation::EncodingRefusal> {
         crate::simulation::key::canonical_bytes(transition, identity_limits())
+    }
+
+    /// Expand an HP-1 subject with every satisfying operation result retained.
+    /// Results participate in edge identity even when the operation, arguments
+    /// and post-state coincide. Ordinary [`TransitionSystem::successors`] keeps
+    /// its first-result state-reachability semantics.
+    ///
+    /// # Errors
+    /// Stops on candidate or evaluation exhaustion or cancellation. A stopped
+    /// expansion returns no partial successor set.
+    pub fn relation_successors(
+        &self,
+        state: &ModelSimState,
+        cancel: &filament_exact::Cancel,
+    ) -> Result<Expansion<ModelRelationTransition, ModelSimState, ModelFinding>, ExpansionStop>
+    {
+        let expanded = walk::expand_relation_state(self, state, cancel)?;
+        Ok(Expansion {
+            successors: expanded
+                .successors
+                .into_iter()
+                .map(|(transition, state)| {
+                    let result = state.reached_by().and_then(|effect| effect.result.clone());
+                    (ModelRelationTransition { transition, result }, state)
+                })
+                .collect(),
+            findings: expanded.findings,
+        })
     }
 
     /// FR-187's canonical order key of a scheduled identity: the canonical

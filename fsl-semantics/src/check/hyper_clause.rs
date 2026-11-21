@@ -769,6 +769,8 @@ pub struct CheckedModelRelation {
     /// The selected model alias for each execution, aligned with
     /// `executions`.
     execution_aliases: Vec<String>,
+    /// The used model aliases in this source unit's declaration order.
+    aliases: Vec<String>,
     /// The source body, retained for diagnostics and source maps.
     body: Expression,
     /// The body expression's source spans for S4 source-map entries.
@@ -795,6 +797,7 @@ impl DebugWith for CheckedModelRelation {
             span,
             executions,
             execution_aliases,
+            aliases,
             body,
             body_spans,
             typed_body,
@@ -810,6 +813,7 @@ impl DebugWith for CheckedModelRelation {
             .field("span", &span)
             .field("executions", &executions)
             .field("execution_aliases", &execution_aliases)
+            .field("aliases", &aliases)
             .field("body", &body)
             .field("body_spans", &body_spans)
             .field("typed_body", &typed_body)
@@ -893,6 +897,11 @@ impl CheckedModelRelation {
     /// The selected model alias for each execution, in source order.
     pub fn execution_aliases(&self) -> &[String] {
         &self.execution_aliases
+    }
+
+    /// The distinct used model aliases, in model declaration order.
+    pub fn aliases(&self) -> &[String] {
+        &self.aliases
     }
 
     /// The relation's body, every read of which was typed under the value
@@ -3971,11 +3980,19 @@ fn check_relation(
         &typed_body,
         body_parameters.len(),
     );
+    let aliases = scope
+        .model_spellings()
+        .declared_aliases(declarations.clause_source.borrow().as_ref())
+        .iter()
+        .filter(|alias| execution_aliases.contains(alias))
+        .cloned()
+        .collect();
     Ok(CheckedModelRelation {
         name: form.name.name.clone(),
         span: form.span,
         executions,
         execution_aliases,
+        aliases,
         body: form.body.expression.clone(),
         body_spans: form.body.spans.clone(),
         typed_body,

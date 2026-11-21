@@ -118,6 +118,7 @@ impl Row {
 /// What an expansion reads: the system, the expanded state, its observation
 /// and its objects in ascending (population, key) order.
 pub(super) struct Walk<'s, 'a> {
+    pub(super) result_policy: ResultPolicy,
     pub(super) key_policy: Option<&'s dyn super::key_budget::KeyPolicy>,
     pub(super) cancel: Option<filament_exact::Cancel>,
     pub(super) system: &'s ModelSystem<'a>,
@@ -133,6 +134,14 @@ pub(super) struct Walk<'s, 'a> {
     /// which a postcondition's `present(self.v)` reads (FR-230 "Presence is
     /// derived", FSpec FR-322 `CW-05`); `None` outside a timed expansion.
     pub(super) post_presence: Option<PostPresence<'s>>,
+}
+
+/// Whether an expansion retains the first satisfying result or every result.
+#[derive(Clone, Copy, Default)]
+pub(super) enum ResultPolicy {
+    #[default]
+    FirstResult,
+    AllResults,
 }
 
 /// The presence of each guarded clock place a timed model's post-state
@@ -307,6 +316,7 @@ pub(super) fn walk_of<'s, 'a>(
         .observation(&state.state, state_document())
         .map_err(|_| stop(BROKEN))?;
     Ok(Walk {
+        result_policy: ResultPolicy::FirstResult,
         cancel: None,
         key_policy: None,
         system,
@@ -341,6 +351,26 @@ pub(super) fn expand_state(
         None,
         ExpansionSelection::default(),
         None,
+        None,
+    )
+}
+
+/// Expand the existing model relation while retaining every satisfying result.
+pub(super) fn expand_relation_state(
+    system: &ModelSystem<'_>,
+    state: &ModelSimState,
+    cancel: &filament_exact::Cancel,
+) -> Result<ModelExpansion, ExpansionStop> {
+    expand(
+        system,
+        state,
+        None,
+        None,
+        ExpansionSelection {
+            result_policy: ResultPolicy::AllResults,
+            ..ExpansionSelection::default()
+        },
+        Some(cancel),
         None,
     )
 }
@@ -441,6 +471,7 @@ pub(super) fn expand_enabled_with_key_policy<'s>(
 
 #[derive(Default)]
 struct ExpansionSelection<'s> {
+    result_policy: ResultPolicy,
     clock_selectors: Option<&'s super::domain::ClockSelectorMaxima>,
     post_presence: Option<PostPresence<'s>>,
     omitted_clause: Option<&'s filament_exact::NodeKey>,
@@ -470,6 +501,7 @@ fn expand<'s>(
         "FR-120: a system the requires-bound check refuses is never expanded"
     );
     let mut walk = walk_of(system, state, enforcement)?;
+    walk.result_policy = selection.result_policy;
     walk.cancel = cancel.cloned();
     walk.key_policy = key_policy;
     walk.post_presence = selection.post_presence;

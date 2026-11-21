@@ -1812,7 +1812,7 @@ impl Run<'_, '_, '_> {
                         .as_ref()
                         .map(|value| text_of(value, self.walk.system.typing()))
                         .transpose()?;
-                    successors.push(Applied {
+                    let successor = |candidate, effect, result| Applied {
                         transition: self.transition.clone(),
                         state: self.walk.state.reached(
                             candidate,
@@ -1822,8 +1822,16 @@ impl Run<'_, '_, '_> {
                         receiver: self.row.reference.clone(),
                         arguments: self.args.iter().map(|(_, value)| value.clone()).collect(),
                         result,
-                    });
-                    return Ok(());
+                    };
+                    match self.walk.result_policy {
+                        super::walk::ResultPolicy::FirstResult => {
+                            successors.push(successor(candidate, effect, result));
+                            return Ok(());
+                        }
+                        super::walk::ResultPolicy::AllResults => {
+                            successors.push(successor(candidate.clone(), effect.clone(), result));
+                        }
+                    }
                 }
                 Conjunction::False(_) => {}
                 Conjunction::Undecided(undecided) => {
