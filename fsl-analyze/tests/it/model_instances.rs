@@ -1197,15 +1197,16 @@ fn a_key_holding_no_object_of_the_type_reads_absent_key() {
     ));
     let activation =
         "on each (y: M::Dog) when (present(lookup<M::Dog>(M::animals, y) absent empty))";
-    assert!(matches!(
-        parity(
-            activation,
-            "always holds(x.age >= 0)",
-            &[true_.clone(), false_.clone(), false_.clone()],
-            true
-        ),
-        ModelCheckOutcome::Holds { .. }
-    ));
+    let guarded = parity(
+        activation,
+        "always holds(x.age >= 0)",
+        &[true_.clone(), false_.clone(), false_.clone()],
+        true,
+    );
+    assert!(
+        matches!(&guarded, ModelCheckOutcome::Holds { .. }),
+        "{guarded:?}"
+    );
     let undefined_guard = parity(
         "on each (y: M::Dog) when (y.age >= 0)",
         "always holds(true)",
