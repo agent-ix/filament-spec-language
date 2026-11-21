@@ -15,6 +15,8 @@ relationships:
     type: depends_on
   - target: ix://agent-ix/filament-spec-language/FR-069
     type: depends_on
+  - target: ix://agent-ix/filament-spec-language/FR-120
+    type: depends_on
   - target: ix://agent-ix/filament-spec-language/FR-127
     type: depends_on
   - target: ix://agent-ix/filament-spec-language/FR-201
@@ -32,7 +34,10 @@ relationships:
 
 ## Description
 
-EN-5's cost SHALL be bounded only by `ExactProbLimits`, ADR-014 B-5 budgets
+EN-5's cost SHALL be bounded only by `ExactProbLimits`,
+[FR-120](FR-120-simulate-a-checked-package-s-state-family.md)'s cumulative
+candidate and clause work allowance, its local expansion ceiling and the
+existing cancellation and clause-meter limits, ADR-014 B-5 budgets
 that the request sets, each with a published default (ADR-028 LM-1 to
 LM-3). Reaching one SHALL stop the run and name the budget, its value and
 the request setting that raises it. FSL SHALL settle every item routed to
@@ -109,6 +114,28 @@ pub struct ExactEntry { pub initial: u32, pub binding: Option<Binding>, pub inst
   `Incomplete(LimitReached{limit, value, setting})` naming the budget, its
   value and its setting otherwise, unless partial evidence already settles the
   item (FR-202).
+
+### Product admission before materialization
+
+- EN-5 SHALL check the remaining `exact_prob.max_transitions` capacity
+  before constructing outgoing planned edges for an undecided product
+  node. With no capacity remaining it SHALL stop with the existing
+  `MaxTransitions` limit before invoking successor construction for that
+  node.
+- While constructing successors, EN-5 SHALL admit each next edge against
+  the remaining transition capacity before materializing that planned
+  edge, and each new product-state key against
+  `exact_prob.max_states` before constructing or retaining its planned
+  target representation. Only the work needed to establish the target key
+  and whether it already exists may precede state admission. A target whose key
+  already exists consumes no new state slot. The builder SHALL NOT
+  construct the complete planned-edge or target vector before applying
+  these ceilings. Candidate work needed to discover a key SHALL remain
+  bounded by the cumulative work allowance and cancellation, even when
+  an outer state or transition slot remains.
+- A denied state or edge admission SHALL retain the existing typed limit,
+  configured bound and `exact_prob.` setting in incomplete settlement;
+  it SHALL NOT produce a truth value or broaden engine admission.
 
 ### Settlement
 
@@ -250,6 +277,8 @@ pub struct ExactEntry { pub initial: u32, pub binding: Option<Binding>, pub inst
 | FR-203-AC-10 | The untimed claim `quantile 0.5 of (steps from holds(false) until holds(true) within 4) <= 2`, checked separately under a resolved workload and under every scheduler (with and without an admitted fairness set) has no activating state in the complete reachable product. Native checking independently accepts its `Conditional` `Vacuous` certificate and settlement returns `proved`, `closed-scope`, `Certified`, `Exhaustive`, category success, carrying that certificate with empty `values` and `conditional` exactly `{"mode": "vacuous"}`. The emitted result passes FR-331's contract with basis `{"type": "exhaustive"}` and no numeric value, numeric entries, bounds, counterpart or generic `evidence`; it contains neither `ExactValue` nor a fabricated 0 or `0/0`. | Test |
 | FR-203-AC-11 | Changing AC-10's activation predicate to `holds(true)` makes the offered vacuous certificate reject `InequalityFails` and settle `inconclusive`, `CertificateRejected`, without vacuity acceptance. Offering an otherwise well-shaped `exact`, `ratio` or `optimum` certificate on `exhaustive`, or generic `evidence` with or without its permitted vacuous certificate, refuses the FR-331 result contract. An `exact-value` basis missing its value, using scalar zero or denominator zero refuses; AC-1's ordinary exact result with a valid `Rational` value remains admitted. An engine-only assertion, partial exploration, cancellation before or during checking, or a caller limit reached before checking completes produces no accepted vacuity evidence or proved record; cancellation and limits retain their typed incomplete causes. | Test |
 | FR-203-AC-12 | `Retry` has `Msg.delivered`, terminal when delivered, and the resolved `Steady` workload whose `fast` step delivers with probability `1/2` and whose `slow` weight is 0. With request initial states ordered as index 0 `{delivered: true}` and index 1 `{delivered: false}`, the same admitted binding `m`, and `quantile 0.5 of (steps from holds(not m.delivered) until holds(m.delivered) within 4) <= 2`, the independent conditional certificate check accounts for both pairs: index 0 has unreachable activation with numerator and denominator 0, while index 1 activates immediately with numerator `3/4`, denominator 1 and ratio `3/4`. Settlement is certified `proved`, `ExactValue{3/4}`, with exactly one numeric entry for index 1 and the least favourable activating pair correctly naming index 1; index 0 is omitted without evaluating or emitting `0/0` or a scalar placeholder. Adding an entry for index 0, omitting index 1, duplicating its entry, or substituting index 0 for it settles `failed`, diagnostic `runtime_invariant`/`established-invariant-broken`, instead of proof. Both pairs remain accounted for by checked acceptance and the existing certificate values and binding derivation, without a new external coverage field. | Test |
+| FR-203-AC-13 | In a model-subject build, two expansions, two claim reads, and an expansion followed by a claim read each fit the caller's `accounting.work_units = B` individually but exceed B cumulatively. Each run stops at its first unpaid cumulative charge and settles `Incomplete(LimitReached{work_units, B, accounting.work_units})` with no truth. A separate run has a fresh allowance. A local candidate denial continues to settle `Incomplete(LimitReached{max_candidates, C, expansion.max_candidates})` at its configured C; cancellation retains `Incomplete(Cancelled{source})`. | Test |
+| FR-203-AC-14 | On a nonterminal product node with zero remaining transition capacity, an instrumented successor provider observes no successor-construction call before `MaxTransitions` incomplete settlement. With one edge slot remaining and multiple possible edges, only that slot is admitted before the next planned edge is denied; the full planned-edge vector is never materialized. At a full state ceiling an existing target key reuses its slot, while the first new key stops `MaxStates` before its planned target representation is constructed or retained, after only the work needed to establish the key. Stops name the configured bounds and `exact_prob.max_transitions` or `exact_prob.max_states`; work needed to discover candidates remains subject to FR-120's shared allowance. | Test |
 
 ## Dependencies
 
