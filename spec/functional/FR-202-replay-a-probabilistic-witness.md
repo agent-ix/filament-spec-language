@@ -28,7 +28,8 @@ EN-5 SHALL refute a claim with a `ProbabilisticCounterexample` (ADR-028
 WS-1 to WS-4): the initial state and binding, the bound, the witness
 scheduler over every scheduler, and evidence that is either a prefix-free
 set of finite paths whose exact probabilities sum past the bound, or a
-`Lower` or `Upper` certificate on the chain the witness induces.
+certificate checked for its refutation role, including the finite-horizon
+mean certificates below.
 `fsl_replay::replay_probabilistic_witness`, a layer-6 facade entry beside
 `replay_model_trace`, SHALL re-execute that evidence through `ModelSystem`
 and settle the item `refuted` only when it agrees (WS-5).
@@ -114,6 +115,36 @@ race gives that post-key and elapsed amount.
   under a `>= θ` bound or `Pr(E)` under `<= θ`, with value past the bound,
   or an `Upper` certificate on `Pr(E)` below `θ`. Long-run and
   expected-reward refutations SHALL use certificate evidence.
+- For `mean of F op c` (expectation of a bounded fraction), EN-5 SHALL
+  emit FSpec FR-413 subsystem certificate evidence, with an `exact`
+  [FR-1043](FR-1043-certify-finite-horizon-measure-verdicts.md) document or
+  the refuting bound document of
+  [FR-1042](FR-1042-certify-value-bounds-with-lower-and-upper-certificates.md),
+  whose `base` is the same complete finite-horizon-measure objective a
+  proof of that claim would use, with payoff `fraction`. The checker SHALL
+  check its identity, objective/base, complete product, payoff, extremum
+  and certificate conditions independently under those requirements.
+  Under a workload, an exact initial value `v < c` refutes `>= c`, and
+  `v > c` refutes `<= c`; an accepted `upper < c` or `lower > c`,
+  respectively, also suffices. Under every scheduler, `>= c` SHALL be
+  refuted only by an exact minimum below `c` or an `upper` certificate on
+  that minimum below `c`; `<= c` SHALL be refuted only by an exact maximum
+  above `c` or a `lower` certificate on that maximum above `c`. The bound
+  document SHALL retain FR-1042's required policy for that extremum, with
+  the counterexample's scheduler agreeing with that policy; an exact
+  document's witness SHALL attain its deciding extremum.
+- When checking that mean certificate as refutation evidence, the checker
+  SHALL apply the strict refutation comparison above after the certificate
+  conditions, rather than FR-1042's proof claim-side kind and inclusive
+  threshold check. Missing the original claim's proof threshold SHALL NOT
+  reject an otherwise valid refuting document. A value or bound equal to
+  `c` SHALL NOT refute. Replay SHALL settle `refuted` only with the opaque
+  accepted evidence returned by that independent check for the same
+  identity, base and deciding extremum. A numerical engine verdict, a
+  document not checked for this role, or a path set SHALL NOT establish a
+  mean refutation: a fraction expectation is not a violating probability
+  mass. The existing replay refusal, parity, bounded-resource and
+  cancellation rules continue to apply.
 - For a quantile claim, replay SHALL classify each path as violating or
   not activated, sum their exact probabilities into `V` and `N`, and apply
   FSpec FR-413's two-mass rule: `quantile q of M <= c` refutes when
@@ -475,6 +506,10 @@ timed enumerator.
 | FR-202-AC-24 | The checked-subject undefined entry reproduces FR-202-AC-5's `Coin` evidence (`drop` with `b = 0`, `where` position 1, `absent-key`) for `probability >= T [ always[0,3] holds(c.v = 0) ]` at `T` 0.5 and 0.01 alike, with no emitted package; for `probability >= 0.5 [ always[0,3] holds(c.v = 1) ]`, whose monitor rejects at position 0, a forged undefined path to position 1 settles `ReplayParity` without a token. | Test (TC-3153) |
 | FR-202-AC-25 | `Coin` with a further operation `keep` that never deletes, under every scheduler: AC-24's claim is refuted by the undefined path `drop` with `b = 0` and the scheduler entry `drop` at the initial key, although a scheduler that always takes `keep` keeps `c.v` defined; the same path with the entry `keep` at that key refuses `invalid_runtime_input`/`invalid-value`. | Test (TC-3153) |
 | FR-202-AC-26 | Under the infinite-trace profile `probability >= 0.5 [ eventually holds(c.v = 1) ]` over `Coin` is reproduced by the checked-subject undefined entry with the path `drop` with `b = 0`, `where` position 1 and a pre-read key whose monitor and accumulator are null. Under `Even` the path `drop` with `b = 1` (which returns to the initial complete key) then `drop` with `b = 0`, probability `1/4`, `where` position 2, also replays; under every scheduler over the `keep` variant that path settles `ReplayParity`, because its key repeats. Pre-cancellation, cancellation at the final poll and exhaustion of each expansion, work or storage limit return `incomplete` with no token. | Test (TC-3153) |
+
+| FR-202-AC-27 | FR-1043-AC-5's workload mean `5/12` refutes `>= 1/2` using subsystem evidence containing the independently accepted `exact` `fraction` certificate; the same document checks in its refutation role despite missing the proof threshold. An unchecked document, an unreplayed engine value or a path set yields no accepted mean-refutation evidence. | Test |
+| FR-202-AC-28 | FR-1043-AC-8's minimum `11/48` with an accepted `upper` bound `1/4` refutes every-scheduler `>= 1/2`; its maximum `5/12` with an accepted `lower` bound `2/5` refutes every-scheduler `<= 1/3`. A lower bound on the minimum or an upper bound on the maximum yields no accepted refutation, even when its number is on the strict wrong side. | Test |
+| FR-202-AC-29 | AC-27's exact `5/12` at `>= 5/12` or `<= 5/12`, and a valid workload `upper` bound `1/2` at `>= 1/2`, yield no accepted refutation. Changing identity, base payoff or optimization, certificate values, or the witness's policy prevents acceptance under the applicable identity, objective or certificate check; cancellation or a caller limit preserves its typed incomplete result without accepted evidence. | Test |
 
 ## Dependencies
 

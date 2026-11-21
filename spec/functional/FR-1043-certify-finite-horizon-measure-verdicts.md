@@ -11,6 +11,10 @@ relationships:
     type: depends_on
   - target: ix://agent-ix/filament-spec-language/FR-197
     type: depends_on
+  - target: ix://agent-ix/filament-spec-language/FR-1042
+    type: references
+  - target: ix://agent-ix/filament-spec-language/FR-202
+    type: references
   - target: ix://agent-ix/filament-spec-language/FR-877
     type: references
   - target: ix://agent-ix/filament-specification/FR-412
@@ -58,6 +62,9 @@ accumulated amount in its key, checks each part's equations and the ratio
 ## Behavior
 
 ### Forms and documents
+
+The table states proof evidence and proof threshold conditions. Mean
+refutation evidence SHALL follow the distinct role below.
 
 | Claim form | Evidence |
 | --- | --- |
@@ -144,7 +151,7 @@ accumulated amount in its key, checks each part's equations and the ratio
   order, identity, reward and unit identity and conversion SHALL follow
   FR-201's reward profiles. Identity mismatch SHALL refuse before
   enumeration. A wrong value SHALL be rejected `InequalityFails`, a missed
-  threshold or ratio `ThresholdMissed`, and a tight-action search that
+  proof threshold or ratio `ThresholdMissed`, and a tight-action search that
   reaches an activated state `InequalityFails`, each at FR-201's locus.
 - The product has at most `(h + 1)` positions times the reachable model
   states times the accumulator amounts, which are finite because reward
@@ -155,10 +162,39 @@ accumulated amount in its key, checks each part's equations and the ratio
   settle `incomplete` with its limit and no truth value.
 - An accepted proof SHALL settle `proved`, `ExactValue` (the ratio for a
   workload quantile, the probability or mean otherwise), certified; a
-  refutation SHALL keep FR-202's quantile two-mass or path-set evidence;
-  an undefined reward or predicate SHALL settle by FR-202's `Undefined` evidence. EN-5 SHALL
+  quantile or comparison-event refutation SHALL keep FR-202's two-mass or
+  path-set evidence. A mean refutation SHALL carry FSpec FR-413 subsystem
+  evidence checked under the mean-refutation role below; an undefined
+  reward or predicate SHALL settle by FR-202's `Undefined` evidence. EN-5 SHALL
   write the values and ranks it computed by FR-197's backward induction,
   which are exactly these.
+
+### Mean-refutation role
+
+- For `mean of F op c`, EN-5 SHALL emit an `exact` document with payoff
+  `fraction`, or a refuting `lower` or `upper` document under
+  [FR-1042](FR-1042-certify-value-bounds-with-lower-and-upper-certificates.md)
+  with the same complete objective as `base` that a proof would use. The
+  checker SHALL independently check the document's identity, objective or
+  base, product, payoff and certificate conditions, including the required
+  policy for a bound, before testing refutation. Under a workload, `exact`
+  value `v < c` or `upper < c` refutes `>= c`; `v > c` or `lower > c`
+  refutes `<= c`. Under every scheduler, the deciding extremum SHALL remain
+  the minimum for `>= c` and the maximum for `<= c`: `exact` minimum or
+  `upper` on that minimum must be strictly below `c`, and `exact` maximum
+  or `lower` on that maximum must be strictly above `c`.
+- The checker SHALL check these documents in their refutation role,
+  applying the strict comparison to the independently checked initial
+  value or bound, rather than requiring the proof claim-side kind or
+  threshold of FR-1042. It SHALL NOT reject a valid refuting document
+  because it misses the original claim's proof threshold. Equality SHALL
+  NOT refute either non-strict mean claim. The counterexample SHALL reuse
+  FSpec FR-413's subsystem evidence and
+  [FR-202](FR-202-replay-a-probabilistic-witness.md)'s scheduler and replay
+  acceptance rules, with opaque accepted evidence for the same identity,
+  base and deciding extremum required before settlement. A path set or
+  probability-mass comparison SHALL NOT certify this expectation. The
+  caller limits and cancellation obligations above apply to this check.
 
 ## Acceptance Criteria
 
@@ -168,9 +204,12 @@ accumulated amount in its key, checks each part's equations and the ratio
 | FR-1043-AC-2 | With `try` split into `fast` (`1/2`) and `slow` (`1/4`), under every scheduler `quantile 0.4 of (…) <= 2` settles `proved` with an `exact` `shifted` document (`level` `2/5`) whose values are `3/80`, `−3/20`, `−2/5`, `−2/5`; `quantile 0.5 of (…) <= 2` settles `refuted` (minimum shifted value `−1/16`, `Pr(M <= 2) = 7/16` under `slow`); the level-0.4 document with `3/80` replaced by `fast`'s `9/40` is rejected `InequalityFails` at the initial key. | Test (TC-3152) |
 | FR-1043-AC-3 | Over AC-2's model under every scheduler, `quantile 0.6 of (…) >= 2` (claim `Pr(M < 2 \| act) < 3/5`) settles `proved`: the `shifted` document (`comparison` `"lt"`) has maximum initial value `−1/10` (through `fast`) and `−3/5` at every other undecided state; `quantile 0.5 of (…) >= 2` settles `refuted`, its maximum 0 attained by `fast` with an activated state reachable. | Test (TC-3152) |
 | FR-1043-AC-4 | `P95` over FR-185-AC-1's `Service` under `Steady` at `5 ms` (FR-741-AC-2, FR-203-AC-1) settles `proved`, `ExactValue{24233/25000}`, with a `conditional` `ratio` certificate whose parts are documents of this profile (`kind` `"accumulate"`, `reward` the checked `duration`, `threshold` 5 in its unit) and whose denominator is 1 at the initial key; `fsl-probability-check` accepts it from the emitted package and rejects it with one numerator value altered. At `2 ms` the item settles `refuted` with FR-202-AC-1's one-path set. | Test (TC-2066) |
-| FR-1043-AC-5 | Under `Retry`'s workload, `mean of fraction holds(delivered) over [0, 2] >= rational(2,5)` settles `proved`, `ExactValue{5/12}`, with a `fraction` document; at `rational(1,2)` it settles `refuted`. The comparison event `probability >= 0.7 [M <= 2]` over AC-1's measure settles `proved`, `ExactValue{3/4}`, with an `event` document. | Test (TC-3152) |
+| FR-1043-AC-5 | Under `Retry`'s workload, `mean of fraction holds(delivered) over [0, 2] >= rational(2,5)` settles `proved`, `ExactValue{5/12}`, with a `fraction` document; at `rational(1,2)` it settles `refuted` with FSpec FR-413 subsystem evidence containing an independently accepted `exact` `fraction` certificate of `5/12 < 1/2`, checked for refutation rather than the proof threshold. The comparison event `probability >= 0.7 [M <= 2]` over AC-1's measure settles `proved`, `ExactValue{3/4}`, with an `event` document. | Test (TC-3152) |
 | FR-1043-AC-6 | FR-201-AC-51's finite-horizon quantile item over the cyclic `link` model under every scheduler (`Pr(M <= 3) = 13/27` for `steps from holds(true) until holds(m.delivered) within 4`), written at level 0.4, settles `proved` with shifted initial value `11/135` and a document `fsl-probability-check` accepts in a separate process; written at level 0.5 it settles `refuted`. | Test (TC-2065) |
 | FR-1043-AC-7 | AC-1's numerator with `window`, `threshold`, `comparison`, `reward`, `unit`, `level` or `payoff` changed refuses objective mismatch; a key whose accumulator amount or phase is altered is not an alias and fails coverage; a `shifted` value below `−level` is rejected `Malformed` at `values`. Pre-cancellation and exhaustion of each caller limit during expansion, payoff evaluation or exact sums settle `incomplete` with the actual limit and no truth value. | Test (TC-3152) |
+
+| FR-1043-AC-8 | With AC-1's `try` split into `fast` (`1/2`) and `slow` (`1/4`), `mean of fraction holds(delivered) over [0, 2]` has minimum `11/48` and maximum `5/12`. Under every scheduler, `>= 1/2` is refuted by an accepted exact minimum or FR-1042 `upper` on the minimum with initial bound `1/4` and policy `slow`; `<= 1/3` is refuted by an accepted exact maximum or `lower` on the maximum with initial bound `2/5` and policy `fast`. Both reuse subsystem evidence and are independently accepted by FR-202 replay. | Test |
+| FR-1043-AC-9 | AC-5's exact workload mean `5/12` at `>= 5/12` and `<= 5/12` does not refute. A valid workload `upper` bound `1/2` at `>= 1/2`, or `lower` bound `2/5` at `<= 2/5`, does not refute. In AC-8 a lower bound on the minimum or an upper bound on the maximum cannot refute, even when strictly past the threshold; a changed identity, base, extremum, invalid value or disagreeing witness policy is not accepted. A raw engine verdict or unchecked certificate cannot settle the item `refuted`. | Test |
 
 ## Dependencies
 
