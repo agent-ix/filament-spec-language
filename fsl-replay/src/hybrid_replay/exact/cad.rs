@@ -35,6 +35,19 @@ impl Polynomial {
         }
     }
 
+    pub(super) fn constant_sign(&self) -> Option<Ordering> {
+        if self.0.keys().any(|powers| !powers.is_empty()) {
+            return None;
+        }
+        Some(self.0.values().next().map_or(Ordering::Equal, |value| {
+            if value.numerator().is_negative() {
+                Ordering::Less
+            } else {
+                Ordering::Greater
+            }
+        }))
+    }
+
     pub(super) fn variable(coordinate: usize) -> Self {
         let mut powers = vec![0; coordinate + 1];
         powers[coordinate] = 1;

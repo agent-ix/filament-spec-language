@@ -196,6 +196,9 @@ impl Decision {
                     equal: holds(Ordering::Equal),
                     greater: holds(Ordering::Greater),
                 });
+                if difference.denominator.constant_sign() == Some(Ordering::Greater) {
+                    return Ok(positive);
+                }
                 let negative = Rc::new(Self::Sign {
                     polynomial: difference.numerator,
                     less: holds(Ordering::Greater),
