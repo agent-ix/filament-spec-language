@@ -4125,6 +4125,7 @@ fn qsl_2750_trace(
 #[trace("FR-643-AC-13", "FR-194-AC-17")]
 fn qsl_2750_missing_window_matches_batch_and_checkpoint() {
     let world = qsl_2750_world();
+    qsl_2750_uncovered_reordering(&world);
     let cancel = Cancel::new();
     let atom = qsl_2750_atom(&world);
     for absent in [false, true] {
@@ -4339,4 +4340,117 @@ fn qsl_2750_missing_marker_refusals_preserve_session_state() {
         assert_eq!(session.checkpoint().unwrap().as_bytes(), before.as_bytes());
         session.step(sample(&text), &cancel).unwrap();
     }
+}
+
+/// Provisional reports must leave the uncovered arrival order and values
+/// available for a later event, even across a checkpoint.
+fn qsl_2750_uncovered_reordering(world: &World) {
+    let cancel = Cancel::new();
+    let atom = qsl_2750_atom(world);
+    let mut session = MonitorSession::open(
+        world.unit.package(),
+        qsl_2750_open(world),
+        &limits(100),
+        &cancel,
+    )
+    .unwrap();
+    let initial = ProgressAssertion {
+        watermark: 0,
+        completeness: ProgressCompleteness::Incomplete,
+        scope: ProgressClosure::Open,
+        execution: ProgressClosure::Open,
+    };
+    let mut observed = Vec::new();
+    let mut missing = Vec::new();
+    let mut inputs = Vec::new();
+    for (index, (stamp, value)) in [(2_u64, 6), (1, 1), (3, 7)].into_iter().enumerate() {
+        let text = qsl_2750_response(value);
+        let entries = if index == 0 {
+            vec![spine::TimestampedMissingValuation { position: 0, atom }]
+        } else {
+            Vec::new()
+        };
+        let step = session
+            .step(
+                MonitorObservation {
+                    position: MonitorPosition::Sample(&text),
+                    stamp: Some(MonitorStamp::Tick(stamp)),
+                    order_key: None,
+                    missing: &entries,
+                },
+                &cancel,
+            )
+            .unwrap();
+        observed.push(TimestampedObservation {
+            document: spine::sample_position(&text),
+            stamp,
+            order_key: None,
+        });
+        missing.extend(entries);
+        inputs.push((stamp, text));
+        let batch = batch_over(
+            world,
+            "MissingQuantile",
+            &qsl_2750_trace(observed.clone(), missing.clone(), initial),
+        );
+        assert_eq!(
+            members(step.statuses[0].1.record().report()),
+            members(&batch),
+            "uncovered step {index}"
+        );
+        let checkpoint = session.checkpoint().unwrap();
+        let saved: serde_json::Value = serde_json::from_slice(checkpoint.as_bytes()).unwrap();
+        assert!(
+            saved["ledger"].is_null(),
+            "a provisional report asserts no watermark"
+        );
+        assert!(saved["assertion"].is_null());
+        let clause: serde_json::Value =
+            serde_json::from_str(saved["clauses"][0]["state"].as_str().unwrap()).unwrap();
+        assert!(
+            clause["evaluated"].is_null(),
+            "the uncovered canonical prefix is not frozen"
+        );
+        let positions = clause["positions"].as_array().unwrap();
+        assert_eq!(positions.len(), inputs.len());
+        for (position, (stamp, text)) in positions.iter().zip(&inputs) {
+            assert_eq!(position["stamp"], *stamp, "arrival order stays mutable");
+            assert_eq!(
+                position["identity"], *text,
+                "a later window can still read the sample"
+            );
+        }
+        session = MonitorSession::resume(
+            world.unit.package(),
+            &checkpoint,
+            qsl_2750_open(world),
+            &limits(100),
+            &cancel,
+        )
+        .unwrap();
+        assert_eq!(
+            session.checkpoint().unwrap().as_bytes(),
+            checkpoint.as_bytes(),
+            "resume preserves the uncovered state"
+        );
+    }
+    let covered = ProgressAssertion {
+        watermark: 300000,
+        completeness: ProgressCompleteness::Complete { through: 300000 },
+        scope: ProgressClosure::Closed,
+        execution: ProgressClosure::Closed,
+    };
+    let step = session.assert_progress(covered, &cancel).unwrap();
+    let batch = batch_over(
+        world,
+        "MissingQuantile",
+        &qsl_2750_trace(observed, missing, covered),
+    );
+    assert_eq!(
+        members(step.statuses[0].1.record().report()),
+        members(&batch),
+        "the real assertion canonicalizes all original evidence"
+    );
+    let finished = session.finish(&cancel).unwrap();
+    assert_eq!(members(finished.records[0].report()), members(&batch));
 }
