@@ -3155,7 +3155,7 @@ pub enum BehaviourReading {
     /// of each position's state.
     Untimed(crate::temporal::TemporalTrace),
     /// The time-stamped positions a claim under the timed profile reads.
-    Timed(crate::temporal::TimedTrace),
+    Timed(Box<crate::temporal::TimedTrace>),
 }
 
 impl TimedBehaviour {
@@ -3184,7 +3184,7 @@ impl TimedBehaviour {
         }
         let timed = self.timed_trace(system, true)?;
         if profile == fsl_semantics::check::TemporalProfile::Timed {
-            return Ok(BehaviourReading::Timed(timed));
+            return Ok(BehaviourReading::Timed(Box::new(timed)));
         }
         Ok(BehaviourReading::Untimed(
             crate::temporal::TemporalTrace::Lasso {

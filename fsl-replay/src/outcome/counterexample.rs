@@ -610,7 +610,10 @@ pub fn read_task_temporal_document(
                 TaskProductTransition::Source(source_transition(transition, &transition_pointer)?)
             }
             "task-transition" => {
-                TaskProductTransition::Task(task_transition(transition, &transition_pointer)?)
+                TaskProductTransition::Task(Box::new(task_transition(
+                    transition,
+                    &transition_pointer,
+                )?))
             }
             "terminal-stutter" => TaskProductTransition::TerminalStutter,
             _ => {
@@ -2384,7 +2387,7 @@ mod tests {
         let task_counterexample = TemporalCounterexample {
             initial_state: 0,
             prefix: vec![ModelStep {
-                transition: TaskProductTransition::Task(missed_job.clone()),
+                transition: TaskProductTransition::Task(Box::new(missed_job.clone())),
                 post_state: key(1),
                 delay: Some(rational(1, 1)),
             }],
@@ -2403,7 +2406,7 @@ mod tests {
             initial_state: 0,
             prefix: vec![
                 ModelStep {
-                    transition: TaskProductTransition::Task(activation),
+                    transition: TaskProductTransition::Task(Box::new(activation)),
                     post_state: key(0),
                     delay: Some(rational(0, 1)),
                 },

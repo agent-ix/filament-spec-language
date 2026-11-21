@@ -230,6 +230,10 @@ impl ReferenceBindings {
     /// Add the literals from a separately checked hyper clause. Hyper clauses
     /// are checked apart from the package's base graph, so their bindings must
     /// be admitted against each component's subject here.
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "each clause form binds its own distinct set of checked parts"
+    )]
     pub(super) fn with_hyper_clause(
         &self,
         graph: &CheckedGraph,
@@ -300,6 +304,10 @@ impl ReferenceBindings {
     /// Add the literals from a separately checked temporal clause. Analyze
     /// claims are checked apart from the package's base graph, so resolve the
     /// clause's own checked expressions against this subject at admission.
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "each clause form binds its own distinct set of checked parts"
+    )]
     pub(super) fn with_temporal_clause(
         &self,
         graph: &CheckedGraph,
