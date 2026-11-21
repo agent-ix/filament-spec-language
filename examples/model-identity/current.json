@@ -1,0 +1,16 @@
+{
+  "format": "filament.state.snapshot/v1",
+  "identity": {"authority": "agent-ix", "identity": "example:identity:current"},
+  "observation": "current",
+  "anchor": {"kind": "handler", "name": "validate"},
+  "model": {"identity": "example/identity"},
+  "populations": [{
+    "population": "ix://example/identity/leaves",
+    "complete": true,
+    "objects": [{
+      "key": "leaf-1",
+      "type": "ix://example/identity/Leaf",
+      "fields": {"inherited": {"integer": "3"}, "field": {"integer": "7"}}
+    }]
+  }]
+}
