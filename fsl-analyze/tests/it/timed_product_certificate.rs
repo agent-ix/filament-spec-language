@@ -907,6 +907,7 @@ fn the_checker_refuses_a_workload_that_weighs_an_enabled_operation_at_zero() {
     );
     let mut doc = document(&settle(&world, "Every"));
     doc["objective"]["optimization"] = json!("workload");
+    eprintln!("DOCKEYS {}", doc.as_object().unwrap().iter().map(|(k, v)| format!("{k}={}", v.to_string().chars().take(160).collect::<String>())).collect::<Vec<_>>().join("\n"));
     let result = check(&world, "Weighted", &doc);
     assert!(
         matches!(result, Err(ProbabilityDocumentError::Unsupported)),
