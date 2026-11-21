@@ -377,7 +377,7 @@ fn compile(
         .into_value();
     let checked = spine::check(
         &parsed,
-        "qualification".to_owned(),
+        source.0.path.clone(),
         &models,
         &DependencyInput::default(),
         limits.spine,
