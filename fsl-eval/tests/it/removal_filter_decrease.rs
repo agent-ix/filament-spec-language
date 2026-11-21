@@ -243,7 +243,13 @@ fn a_one_occurrence_removal_or_tail_decreases_a_cardinality_measure() {
         ("OrderedSet", "orderedSet"),
     ] {
         assert_eq!(
-            evaluate(&walk(kind, literal, "", "contains(s, e)", "removeOne(s, e)")),
+            evaluate(&walk(
+                kind,
+                literal,
+                "",
+                "contains(s, e)",
+                "removeOne(s, e)"
+            )),
             Integer::from(1_i64),
             "{kind} removeOne"
         );
@@ -256,7 +262,12 @@ fn a_one_occurrence_removal_or_tail_decreases_a_cardinality_measure() {
     }
     // `dropFirst(s)` under each fact form that proves `size(s) >= 1`.
     for (kind, literal) in [("Sequence", "sequence"), ("OrderedSet", "orderedSet")] {
-        for guard in ["size(s) > 0", "size(s) >= 1", "1 <= size(s)", "contains(s, e)"] {
+        for guard in [
+            "size(s) > 0",
+            "size(s) >= 1",
+            "1 <= size(s)",
+            "contains(s, e)",
+        ] {
             assert_eq!(
                 evaluate(&walk(kind, literal, "", guard, "dropFirst(s)")),
                 Integer::from(if guard == "contains(s, e)" { 1_i64 } else { 3 }),
@@ -305,8 +316,18 @@ fn a_one_occurrence_removal_or_tail_decreases_a_cardinality_measure() {
         // The same collection.
         ("Sequence", "sequence", "size(s) > 0", "s"),
         // A collection that can grow.
-        ("Sequence", "sequence", "size(s) > 0", "append(dropFirst(s), e)"),
-        ("Sequence", "sequence", "size(s) > 0", "append(s, e)"),
+        (
+            "Sequence",
+            "sequence",
+            "size(s) > 0",
+            "dropFirst(sequence[e, e, e, e, e])",
+        ),
+        (
+            "Sequence",
+            "sequence",
+            "size(s) > 0",
+            "sequence[e, e, e, e, e]",
+        ),
     ] {
         assert_eq!(
             refused(&walk(kind, literal, "", guard, argument)),
