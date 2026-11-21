@@ -589,22 +589,20 @@ fn prove<'a>(
             }
             Err(SymbolicStop::Refused(_) | SymbolicStop::Fault(_)) => return fault(),
         };
-        let built =
-            match crate::zone_check::task_product_certificate(&automaton, &graph, claim.clone()) {
-                Ok(built) => built,
-                Err(
-                    TaskCertificateRefusal::Missed
-                    | TaskCertificateRefusal::NoDivergence
-                    | TaskCertificateRefusal::NoMember,
-                ) => {
-                    return TaskProof {
-                        verdict: ProofVerdict::Uncertified,
-                        certificate: None,
-                    }
+        match crate::zone_check::task_product_certificate(&automaton, &graph, claim.clone()) {
+            Ok(built) => built,
+            Err(
+                TaskCertificateRefusal::Missed
+                | TaskCertificateRefusal::NoDivergence
+                | TaskCertificateRefusal::NoMember,
+            ) => {
+                return TaskProof {
+                    verdict: ProofVerdict::Uncertified,
+                    certificate: None,
                 }
-                Err(TaskCertificateRefusal::Shape) => return fault(),
-            };
-        built
+            }
+            Err(TaskCertificateRefusal::Shape) => return fault(),
+        }
     };
     let Ok(identity) = fsl_replay::certificate_identity_wire(claim, model) else {
         return fault();
