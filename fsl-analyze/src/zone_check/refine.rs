@@ -75,7 +75,7 @@ use super::search::{
     not_simulated, widen, Arrival, Halt, Inserted, Judged, Run, Searched, ZoneCheckLimit,
     ZoneCheckLimits, ZoneCheckRefusal, ZoneStats, ZoneStop, ZoneUndecided,
 };
-use super::{Bound, Dbm};
+use super::Dbm;
 
 mod live;
 
@@ -352,7 +352,6 @@ fn check_refinement_with_time_source<S>(
         death_sets: Vec::new(),
         pending_cut: None,
         pending_death: None,
-        diverged: false,
     };
     let ended = product.search(&mut run).and_then(|ended| match ended {
         Ended::Outcome(outcome) => Ok(outcome),
@@ -406,22 +405,12 @@ fn check_refinement_with_time_source<S>(
             Some(TimedLivenessHalf::Refused(
                 ZoneCheckRefusal::TimedAbstractLivenessTickSource,
             ))
-        } else if product.diverged {
-            // The liveness product keeps one abstract clock valuation per
-            // position; candidates that live and die per zone need one each
-            // (a later slice), so only the safety half is reported.
-            Some(TimedLivenessHalf::Refused(
-                ZoneCheckRefusal::HiddenCandidateLiveness,
-            ))
         } else {
-            // Rows that disagree on the abstract clock behaviour are a
-            // typed refusal of the liveness half alone: the decided safety
-            // half is still reported.
+            // Alive candidates whose rows apply different clock updates at one
+            // step are a typed refusal of the liveness half alone: the decided
+            // safety half is still reported.
             match liveness(&mut product, &mut run) {
                 Ok(outcome) => Some(TimedLivenessHalf::Checked(outcome)),
-                Err(TimedRefinementRefusal::Zone(
-                    refusal @ ZoneCheckRefusal::HiddenCandidateLiveness,
-                )) => Some(TimedLivenessHalf::Refused(refusal)),
                 Err(TimedRefinementRefusal::Zone(
                     refusal @ ZoneCheckRefusal::HiddenCandidateClockBlocks,
                 )) => Some(TimedLivenessHalf::Refused(refusal)),
@@ -513,9 +502,6 @@ struct Product<'p, 'a> {
     pending_cut: Option<Vec<PlaceConstraint>>,
     /// The dying candidates the next stored arrival takes.
     pending_death: Option<Vec<usize>>,
-    /// Whether some position was pruned to fewer alive candidates, so the
-    /// liveness half would need one clock valuation per candidate.
-    diverged: bool,
 }
 
 /// The position index of a `locked` entry node: the post-state of a step,
@@ -1100,7 +1086,6 @@ impl Product<'_, '_> {
         if alive.is_empty() || alive.len() == position.abstract_states.len() {
             return Ok(q);
         }
-        self.diverged = true;
         let mut pruned = position;
         pruned.abstract_states = alive;
         self.intern(pruned, run)
@@ -1470,7 +1455,6 @@ impl Product<'_, '_> {
                 let leads = if position.abstract_states.len() == post.abstract_states.len() {
                     target
                 } else {
-                    self.diverged = true;
                     self.intern(position, run)?
                 };
                 pieces.push(StepPiece {
@@ -1598,7 +1582,6 @@ impl Product<'_, '_> {
                 .map(|&at| position.abstract_states[at].clone())
                 .collect();
             let leads = self.intern(survivors, run)?;
-            self.diverged = true;
             self.pending_cut = Some(piece.cut);
             self.pending_death = Some(dying);
             self.store(
