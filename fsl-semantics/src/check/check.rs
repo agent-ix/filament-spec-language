@@ -1900,23 +1900,67 @@ impl Scope {
         self
     }
 
+    /// The classes of dimension nodes the unit's equivalences make.
+    pub fn dimension_classes(&self) -> &super::assemble::EquivalenceClasses {
+        &self.dimension_classes
+    }
+
+    /// Whether `source` and `target` are declared non-affine units of two
+    /// distinct dimension nodes of one equivalence class (FR-093 "Dimension
+    /// equivalence"): the conversions the kernel's same-dimension relation
+    /// refuses and an equivalence admits.
+    fn across_class(
+        &self,
+        source: &filament_semantic_value::quantity::QuantityUnit,
+        target: &filament_semantic_value::quantity::QuantityUnit,
+    ) -> Option<(
+        &filament_semantic_value::unit::Unit,
+        &filament_semantic_value::unit::Unit,
+    )> {
+        use filament_semantic_value::quantity::QuantityUnit;
+        let (QuantityUnit::Declared(source), QuantityUnit::Declared(target)) = (source, target)
+        else {
+            return None;
+        };
+        let (from, to) = (source.dimension_node(), target.dimension_node());
+        let related = from != to
+            && !source.is_affine()
+            && !target.is_affine()
+            && self.dimension_classes.class(from).0 == self.dimension_classes.class(to).0;
+        related.then_some((&**source, &**target))
+    }
+
     /// Whether a quantity of `source` converts to `target`: the kernel's
-    /// same-dimension relation, or two declared units whose dimension nodes
-    /// share an equivalence class (FR-093 "Dimension equivalence").
+    /// same-dimension relation, or an equivalence class relates the two
+    /// units' dimensions ([`Self::across_class`]).
     pub(crate) fn units_convert(
         &self,
         source: &filament_semantic_value::quantity::QuantityUnit,
         target: &filament_semantic_value::quantity::QuantityUnit,
     ) -> bool {
-        use filament_semantic_value::quantity::QuantityUnit;
-        source.converts_to(target)
-            || match (source, target) {
-                (QuantityUnit::Declared(source), QuantityUnit::Declared(target)) => {
-                    self.dimension_classes.class(source.dimension_node()).0
-                        == self.dimension_classes.class(target.dimension_node()).0
-                }
-                (QuantityUnit::Compound(_), _) | (_, QuantityUnit::Compound(_)) => false,
-            }
+        source.converts_to(target) || self.across_class(source, target).is_some()
+    }
+
+    /// `magnitude` of `source` converted exactly to `target` across an
+    /// equivalence class (FR-093 "Dimension equivalence"): through the class
+    /// root, `magnitude` times `source`'s canonical scale times its
+    /// dimension's root size over the target's, over `target`'s canonical
+    /// scale. `None` when the pair is not across a class, which the kernel
+    /// converts.
+    pub fn class_convert(
+        &self,
+        magnitude: &filament_exact::Rational,
+        source: &filament_semantic_value::quantity::QuantityUnit,
+        target: &filament_semantic_value::quantity::QuantityUnit,
+    ) -> Option<filament_exact::Rational> {
+        let (from, to) = self.across_class(source, target)?;
+        let (_, from_size) = self.dimension_classes.class(from.dimension_node());
+        let (_, to_size) = self.dimension_classes.class(to.dimension_node());
+        magnitude
+            .mul(from.canonical().scale())
+            .mul(&from_size)
+            .div(&to_size)?
+            .div(to.canonical().scale())
     }
 
     /// The unit `name`, written in the source unit `source`, names as a
@@ -6090,7 +6134,15 @@ impl<'a> Typer<'a> {
                     .units
                     .get(source_unit.clone())
                     .zip(self.units.get(target_unit.clone()))
-                    .is_some_and(|(source, target)| self.scope.units_convert(source, target));
+                    .is_some_and(|(from, to)| {
+                        // A class-only conversion is admitted between plain
+                        // quantities; the kernel converts every other pair.
+                        from.converts_to(to)
+                            || (matches!(
+                                (&operand.value_type, target),
+                                (ValueType::Quantity(_), ValueType::Quantity(_))
+                            ) && self.scope.units_convert(from, to))
+                    });
                 if !compatible {
                     return Err(mismatch(location));
                 }

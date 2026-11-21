@@ -8,7 +8,8 @@
 //! scope. The machine reads declarations only through this type.
 
 use filament_checked::node::RecordField;
-use filament_exact::{EffectiveId, NodeKey};
+use filament_exact::{EffectiveId, NodeKey, Rational};
+use filament_semantic_value::quantity::QuantityUnit;
 use filament_semantic_value::declaration::{CompositeShape, TypeEnvironment};
 use filament_semantic_value::enumeration::EnumMemberIndex;
 use fsl_package::BareWorld;
@@ -64,6 +65,22 @@ impl<'a> World<'a> {
         match self {
             Self::Checked { scope, .. } => scope.enum_member_index(),
             Self::Bytes(world) => world.enum_members(),
+        }
+    }
+
+    /// `magnitude` of `source` converted across a dimension equivalence class
+    /// to `target` (FR-093 "Dimension equivalence"); `None` when the pair is
+    /// no class conversion, or for a package read from its bytes alone,
+    /// which holds no equivalences.
+    pub(crate) fn class_convert(
+        self,
+        magnitude: &Rational,
+        source: &QuantityUnit,
+        target: &QuantityUnit,
+    ) -> Option<Rational> {
+        match self {
+            Self::Checked { scope, .. } => scope.class_convert(magnitude, source, target),
+            Self::Bytes(_) => None,
         }
     }
 
