@@ -4,7 +4,7 @@
 use fsl_foundation::diagnostic::LimitKind;
 use fsl_foundation::source::provenance::SourceRegion;
 use fsl_foundation::source::{
-    BLANK_LABEL_TAG, EMPTY_PATH_TAG, SourceLabel, SourceReadCause, SourceReadRefusal,
+    SourceLabel, SourceReadCause, SourceReadRefusal, BLANK_LABEL_TAG, EMPTY_PATH_TAG,
 };
 use fsl_foundation::{Phase, Source, SourceIdentity, SyntaxLimit};
 
@@ -60,6 +60,8 @@ pub enum CompleteCause {
     /// `invalid_model_binding`: a model-unit declaration is malformed under
     /// FR-154.
     MalformedDeclaration,
+    /// `invalid_model_binding`: a model-unit reference names the wrong kind.
+    WrongExport,
     /// `missing_declaration`: a model-unit reference names no declaration.
     MissingDeclaration,
     /// `invalid_model_binding`: one model identity is selected twice with
@@ -127,6 +129,7 @@ impl CompleteCause {
             Self::MissingSelection => "missing-selection",
             Self::AmbiguousName => "ambiguous-name",
             Self::MalformedDeclaration => "malformed-declaration",
+            Self::WrongExport => "wrong-export",
             Self::MissingDeclaration => "missing-name",
             Self::ConflictingAuthority => "conflicting-authority",
             Self::DuplicateMember => "duplicate-member",
@@ -187,7 +190,9 @@ impl CompleteCause {
             Self::WrongModelSelection | Self::ConflictingBinding => {
                 code == CompleteCode::InvalidModelBinding
             }
-            Self::MalformedDeclaration => code == CompleteCode::InvalidModelBinding,
+            Self::MalformedDeclaration | Self::WrongExport => {
+                code == CompleteCode::InvalidModelBinding
+            }
             Self::MissingDeclaration => code == CompleteCode::MissingDeclaration,
             Self::CallerCancelled => code == CompleteCode::Cancelled,
             Self::CorrespondenceLoss => code == CompleteCode::InvalidProjectionCorrespondence,
@@ -421,7 +426,7 @@ pub fn resource_exhausted(
 
 #[cfg(test)]
 mod tests {
-    use super::{CompleteCause, CompleteCode, HostCause, resource_exhausted};
+    use super::{resource_exhausted, CompleteCause, CompleteCode, HostCause};
     use fsl_foundation::diagnostic::LimitKind;
     use fsl_foundation::{Phase, Source, SourceIdentity, Span, SyntaxLimit};
 
