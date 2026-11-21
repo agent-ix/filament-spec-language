@@ -1624,7 +1624,8 @@ impl<'v> RawItems<'v> {
 pub(crate) struct ModelView {
     pub(crate) view: EffectiveView,
     pub(crate) clock_places: std::sync::Arc<super::clock_reference::DeclaredClockPlaces>,
-    pub(crate) clock_declarations: super::clock_reference::normalization::ClockDeclarationTable,
+    pub(crate) clock_declarations:
+        Option<super::clock_reference::normalization::ClockDeclarationTable>,
     by_effective_id: BTreeMap<EffectiveId, DeclarationKey>,
     /// Whether the view is the unit's own source package (FR-569), whose
     /// declarations a snapshot names without an `ix://` scheme.
@@ -1815,13 +1816,17 @@ pub(crate) fn model_views<'a>(
         }
         views.push(ModelView::source(normalize_view(source, limits)?));
     }
-    let clock_places = std::sync::Arc::new(super::clock_reference::DeclaredClockPlaces::new(
-        model_selections.clock_models,
-    ));
+    let clock_places = std::sync::Arc::new(match model_selections.clock_declarations {
+        Some(table) => super::clock_reference::DeclaredClockPlaces::with_declaration_table(
+            model_selections.clock_models,
+            table,
+        ),
+        None => super::clock_reference::DeclaredClockPlaces::new(model_selections.clock_models),
+    });
     for view in &mut views {
         view.clock_places = clock_places.clone();
         if let Some(table) = model_selections.clock_declarations {
-            view.clock_declarations = table.clone();
+            view.clock_declarations = Some(table.clone());
         }
     }
     Ok(views)
@@ -1993,7 +1998,11 @@ fn read_error_refusal(
 /// FR-106 check 1.2's refusal: `stage_limit_exceeded`/`input-bytes-exceeded`
 /// naming `observation.input_bytes`, its bound and the length reached.
 fn input_bytes_exceeded(bound: u64, actual: u128) -> AdmissionFailure {
-    limit_refusal(&LimitExceeded::new(
+    refuse(input_bytes_record(bound, actual))
+}
+
+fn input_bytes_record(bound: u64, actual: u128) -> AdmissionRecord {
+    limit_record(&LimitExceeded::new(
         Setting::ObservationInputBytes,
         bound,
         actual,
@@ -2019,11 +2028,15 @@ fn caller_budget_record(denial: &BudgetDenial, cause: &'static str) -> Admission
 /// cause and its `kind`, `bound`, `actual` and `setting` fields (FR-255
 /// Behavior 1).
 fn limit_refusal(limit: &LimitExceeded) -> AdmissionFailure {
+    refuse(limit_record(limit))
+}
+
+fn limit_record(limit: &LimitExceeded) -> AdmissionRecord {
     let mut record = admission_record(Code::StageLimitExceeded, limit.kind().catalog_cause());
     if let Some(fields) = limit.catalog_fields() {
         record.fields.extend(fields);
     }
-    refuse(record)
+    record
 }
 
 /// FR-261 Behavior 4: the object and value counts of one document, charged
@@ -2077,10 +2090,12 @@ const INSUFFICIENT_NEXT_CHARGE: &str = "insufficient-next-charge";
 /// FR-259 B6: reading or encoding the document could not reserve
 /// `requested` bytes of memory.
 fn allocation_failed(requested: usize) -> AdmissionFailure {
-    refuse(
-        admission_record(Code::ResourceExhausted, ALLOCATION_FAILED.cause())
-            .with("requested", requested.to_string()),
-    )
+    refuse(allocation_failed_record(requested))
+}
+
+fn allocation_failed_record(requested: usize) -> AdmissionRecord {
+    admission_record(Code::ResourceExhausted, ALLOCATION_FAILED.cause())
+        .with("requested", requested.to_string())
 }
 
 // ---------------------------------------------------------------------------
@@ -3389,10 +3404,18 @@ fn admit_invocation_documents(
     // reference result against the post snapshot's; either one naming a key
     // absent from its complete population refuses `dangling_reference`
     // (check 8's closure rule, SR-771 FND-001).
-    let mut parameter_references =
-        document::References::over(views, types, &pre_snapshot.populations)?;
-    let mut result_references =
-        document::References::over(views, types, &post_snapshot.populations)?;
+    let mut parameter_references = document::References::over(
+        views,
+        types,
+        &pre_snapshot.populations,
+        pre_snapshot.canonical_limits,
+    )?;
+    let mut result_references = document::References::over(
+        views,
+        types,
+        &post_snapshot.populations,
+        post_snapshot.canonical_limits,
+    )?;
     document::check_untyped_parameters(
         views,
         context_name,
@@ -3758,8 +3781,12 @@ fn admit_pre_call(
     let (parameters, value_origins) = if context.as_context {
         (Vec::new(), AdmittedValueOrigins::default())
     } else {
-        let mut references =
-            document::References::over(context.views, context.types, &snapshot.populations)?;
+        let mut references = document::References::over(
+            context.views,
+            context.types,
+            &snapshot.populations,
+            snapshot.canonical_limits,
+        )?;
         document::check_untyped_parameters(
             context.views,
             context.context_name,
