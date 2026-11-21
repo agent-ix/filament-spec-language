@@ -1930,11 +1930,18 @@ pub(super) fn run_temporal(run: &CompiledRun<'_>, request: &TemporalRun<'_>) -> 
         };
     }
 
-    // QSL-2138: only the closed finite route below reads window aggregates.
+    // FR-194: the closed finite event-position route and the timestamped
+    // finite-window route read window aggregates; a timed or lasso sample
+    // trace still refuses one.
     if sampled
         && !tape.is_some_and(|tape| tape.open_aggregates)
         && !(matches!(trace, TraceInput::Finite(_))
             && clause.profile() == TemporalProfile::EventPositionFalseExtension)
+        && !(matches!(trace, TraceInput::Timestamped { .. })
+            && clause.profile() == TemporalProfile::TimestampedEventFiniteWindow
+            // The FR-820 carried clause state holds its samples by value and
+            // reads no window of stamps, so it keeps the typed refusal.
+            && tape.is_none())
         && clause
             .formula()
             .nodes()

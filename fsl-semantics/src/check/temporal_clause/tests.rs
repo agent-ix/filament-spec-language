@@ -805,6 +805,12 @@ fn aggregate_atoms_are_checked_and_admitted() {
         "Int[0,9]",
         "fraction holds(c > 1) over past[0,3] >= 1/2",
     ));
+    // `rational(n, d)` is the same literal written out (FR-194).
+    package_admits(&source(
+        &[EVENT],
+        "Int[0,9]",
+        "fraction holds(c > 1) over past[0,3] >= rational(1, 2)",
+    ));
     let rational_count = source(&[EVENT], "Int[0,9]", "count over past[0,3] >= 1/2");
     let refusals = assemble(&rational_count)
         .check(

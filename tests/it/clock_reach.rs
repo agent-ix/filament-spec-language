@@ -129,7 +129,6 @@ fn responses() -> Value {
 
 #[test]
 #[trace("TC-2387", "FR-194-AC-13")]
-#[ignore = "QSL-2138: refused invalid_runtime_input/unsupported-window-aggregate at Admit; evaluation of a window aggregate over a timestamped sample trace is not implemented"]
 fn a_quantile_aggregate_reaches_a_verdict_through_run() {
     let directory = tempfile::tempdir().unwrap();
     let clocks = json!({"plant-ms": {"kind": "timestamped_event", "timestamp_unit": "ms"}});
@@ -188,13 +187,12 @@ fn model_subject_aggregate_refusal() -> fsl_semantics::check::TemporalCause {
     cause
 }
 
-/// FR-194-AC-1, AC-2 over source: each window aggregate kind, parsed from
+/// FR-194-AC-1 over source: each window aggregate kind, parsed from
 /// source under the timestamped-event profile, runs through `command::run`
 /// over AC-1's 20 latencies to the verdict its window values give. At the
 /// last tick the window holds 20 responses: 18 of 1 ms, then 6 ms and 7 ms.
 #[test]
-#[trace("TC-629", "FR-194-AC-1", "FR-194-AC-2")]
-#[ignore = "QSL-2138: refused invalid_runtime_input/unsupported-window-aggregate at Admit; evaluation of a window aggregate over a timestamped sample trace is not implemented"]
+#[trace("TC-629", "FR-194-AC-1")]
 fn every_window_aggregate_kind_reaches_a_verdict_from_source() {
     let directory = tempfile::tempdir().unwrap();
     let clocks = json!({"plant-ms": {"kind": "timestamped_event", "timestamp_unit": "ms"}});
@@ -232,14 +230,19 @@ fn every_window_aggregate_kind_reaches_a_verdict_from_source() {
             "violated",
         ),
         (
-            "fraction holds(r.latency <= 1 ms) over past[0 ms, 300 s] >= rational(9, 10)",
+            "fraction holds(r.latency <= 1 ms) over past[0 ms, 300 s] >= 9/10",
             0,
             "holds",
         ),
         (
-            "fraction holds(r.latency <= 1 ms) over past[0 ms, 300 s] >= rational(19, 20)",
+            "fraction holds(r.latency <= 1 ms) over past[0 ms, 300 s] >= 19/20",
             10,
             "violated",
+        ),
+        (
+            "fraction holds(r.latency <= 1 ms) over past[0 ms, 300 s] >= rational(9, 10)",
+            0,
+            "holds",
         ),
         (
             "quantile 0.9 of r.latency over past[0 ms, 300 s] <= 5 ms",
@@ -248,6 +251,16 @@ fn every_window_aggregate_kind_reaches_a_verdict_from_source() {
         ),
         (
             "quantile 0.95 of r.latency over past[0 ms, 300 s] <= 5 ms",
+            10,
+            "violated",
+        ),
+        (
+            "quantile 0.9 of r.latency over past[0 ms, 300 s] <= 0.005 s",
+            0,
+            "holds",
+        ),
+        (
+            "quantile 0.95 of r.latency over past[0 ms, 300 s] <= 0.005 s",
             10,
             "violated",
         ),

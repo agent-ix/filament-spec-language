@@ -40,6 +40,10 @@ const UNIT: &str = "language \"ix:native\" edition \"1-draft\";\n\
     profile f = \"filament.temporal.fixed-sample.false-extension/v1\";\n\
     record Reading { level: Int[0, 9]; }\n\
     record Run { level: Int[0, 9]; stopped: Boolean; }\n\
+    dimension Time;\n\
+    unit s : Time = rational(1, 1);\n\
+    unit ms : Time = rational(1, 1000) * s;\n\
+    temporal Counted using w over (r: Reading) clock \"plant-ms\" on origin { always[0,5] (count over past[0 ms, 3 ms] min_count 0 <= 9) }\n\
     temporal E using e over (r: Reading) clock \"events\" on origin { eventually[0,2] holds(r.level = 2) }\n\
     temporal T using w over (r: Reading) clock \"plant-ms\" on origin { eventually[0,5] holds(r.level > 0) }\n\
     temporal Reaches using i over (r: Reading) clock \"steps\" on origin { eventually holds(r.level = 2) }\n\
@@ -3513,4 +3517,41 @@ fn the_covered_positions_bound_counts_each_fingerprinted_sample() {
         }
     }
     assert_eq!(members(&carried.report), members(&batch));
+}
+
+/// QSL-2138: the FR-820 carried clause state of a timestamped trace holds its
+/// samples by value and reads no window of stamps, so a window aggregate
+/// there is refused typed (`unsupported-window-aggregate`), never an internal
+/// fault.
+#[test]
+#[trace("TC-629", "FR-194-AC-1")]
+fn a_carried_timestamped_state_refuses_a_window_aggregate_typed() {
+    let world = world();
+    let cancel = Cancel::new();
+    let mut state = ClauseState::open(
+        world.unit.package(),
+        clause_node(&world, "Counted"),
+        &clause_open(
+            &world,
+            ClauseTraceKind::Timestamped,
+            Some(stamped_binding()),
+            ProgressLowerBoundary::AuthoritativeOrigin,
+        ),
+    )
+    .expect("opens");
+    let observed = text(1);
+    state
+        .advance(admitted(&world, "Counted", &observed, 0), &cancel)
+        .expect("advances");
+    let advance = state
+        .assert_progress(&progress(0), &cancel)
+        .expect("watermark 0");
+    assert!(
+        matches!(
+            advance.report.disposition,
+            spine::ClauseDisposition::TraceRefused(_)
+        ),
+        "{:?}",
+        advance.report.disposition
+    );
 }

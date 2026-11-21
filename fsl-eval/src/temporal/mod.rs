@@ -43,6 +43,7 @@ mod input;
 mod ledger;
 mod letters;
 mod observed;
+mod observed_aggregate;
 mod observed_window;
 mod outcome;
 mod plan;
