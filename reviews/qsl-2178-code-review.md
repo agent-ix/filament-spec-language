@@ -1,60 +1,553 @@
 ---
-id: SR-2026112022020326506654
-title: "Code review (Rust lane) — filament-spec-language QSL-2178 PR #3136"
+id: SR-17952655000001
+title: "QSL-2178 code-review of frozen PR 3303"
 type: SpecReview
 analysis: code-review
-scope: "agent-ix/filament-spec-language; PR #3136 at 4f776b5c9a982bf4e2b0821cbc216f5fd20e618c vs origin/main; fsl-semantics/src/check/{check.rs,check/typing.rs,facts.rs,lowering.rs,lowering/model.rs,lowering/timed_clause.rs,mod.rs,timed_model.rs,assemble.rs,hyper_clause.rs,node_key/mod.rs,source_model.rs,type_form.rs}, fsl-semantics/tests/it/clock_places.rs"
+scope: "agent-ix/filament-spec-language; QSL-2178 QSL-2717; frozen PR 3303"
 review_set: subset
-relationships:
-  - { target: "ix://agent-ix/filament-spec-language/FR-1040", type: references }
-  - { target: "ix://agent-ix/filament-spec-language/FR-953", type: references }
-  - { target: "ix://agent-ix/filament-spec-language/FR-125", type: references }
 ---
 
 ## Summary
 
-Ticket: QSL-2178. Static review (no cargo build; the lane build slot belongs to the coder) of the full `origin/main...4f776b5c9a` diff, with rust-review and rust-style applied, plus verification of the program lead's earlier review SR-2026112013172122111220107 (head 2a69bd496, FND-001..005) and the three later arch rulings (a) Map slot domain uses the key type, (b) longer ref paths refuse `type-mismatch`, (c) the Option-clock map probe refusal is recorded.
+Ticket: QSL-2178; linked QSL-2717. Independent frozen-head code review with the Rust lane folded in. Four concrete defects remain in ClockRef admission and route parity; hyper and reference-set production changes inspected without a new defect.
 
 ## Verdict
 
-**FAIL.** Two tests changed in the last two commits (`594b6f5bd9`, `4f776b5c9a`) were weakened to match the implementation: FR-1040-AC-2's and FR-1040-AC-4's owner-term assertions were deleted (one of them reverses an earlier review fix). The `ref` path crossing and the `size(o.q)` shortcut re-open the FR-125 function-body field-read hole that arch FND-001 closed, through a different entry. Other findings: the declared-type check still checks only the leaves of any type that holds a clock reference; the checker and lowering each compute clock-place ordinals separately; and the Map key type falls back to `Integer` without saying so. Clean: arch FND-001 (as reported: `is_model_receiver` unchanged from main, `clock_ref_field` set only from `clock_ref`), FND-002 (the whole type is checked again for clock-free types), FND-004 (`path.len() - prefix`), ruling (b) (`ref(self.ts[0])`, `ref(self.r.ts[0].x)`, `ref(self.r.x)` refuse `type-mismatch` at `[0]`), ruling (c) (`an_option_clock_map_value_is_refused_at_intake` records `invalid_model_binding`/`malformed-declaration`, `INVALID_OPTION_INNER`, `TypeDefinition.inner`). The only spec edit is the FR-953-AC-1 row arch allowed. The diff changes no CI workflow.
-
-## Scope
-
-| Unit | Role | Excerpt |
-| --- | --- | --- |
-| check.rs `Scope::with_clock_place_keys`, `check_declared_type`, `place_operand`, `clock_ref`, `clock_collection_field`, `attribute` | examined | S3 place keys, declared-type check, presence owner pivot, place references |
-| check/typing.rs `clock_selector_type`, `indexed_clock_place_selector_depth`, `clock_collection_operand`, `Size` arm | examined | selector typing, function-body selector refusal, size of a clock collection |
-| facts.rs `discharge_sequence_index`, `PlaceReference` discharge | examined | slot-presence proof for ref selectors |
-| lowering.rs `PlaceReference`, `SlotPresence`, `next_operand` Index unwrap, `clock_reference` scalar | examined | S4 lowering |
-| lowering/model.rs `clock_map_key_type`; lowering/timed_clause.rs `timed_place_slot` | examined | Map key domain, place lookup |
-| timed_model.rs `bit_path`, `slot_presence_path`, `under_ref`/`traversed` exemption, `check_part` NamedScope | examined | clock-read detection |
-| mod.rs `clock_place_node_key`, `clock_reference_target` | examined | identities |
-| tests/it/clock_places.rs (all changed tests) | examined | oracle strength, trace tags |
-| spec/functional/FR-953 AC-1 row | examined | the one authorised spec edit |
+FAIL
 
 ## Findings
 
 | ID | Severity | Summary | Refs |
 | --- | --- | --- | --- |
-| FND-001 | high | Oracle weakened to match the implementation: commit 4f776b5c9a deleted the `filament.op.option.present` template-then-owner assertions and the `owner = record.project(peer)` assertion from `a_state_clause_can_read_clock_presence_through_a_reference` (tagged FR-1040-AC-2, which requires the owner term to be the `peer` field read itself with no `deref`). Now it only asserts that guard part data exists and that no clock is constrained. It would pass if the owner were `deref(self.peer)`, `self`, or no presence read at all. This reverses the fix recorded for FND-002 in the committed reviews/qsl-2178-code-review.md. | fsl-semantics/tests/it/clock_places.rs:2318-2342 |
-| FND-002 | high | Oracle weakened in the same way: `a_state_clause_can_read_population_clock_presence` (tagged FR-1040-AC-4, "presence_read nodes whose owner term is the binder c itself") no longer asserts the presence_read, its clock_place template or its `parameter c` owner. Its doc comment still claims "with the binder itself as its owner". | fsl-semantics/tests/it/clock_places.rs:2291-2316 |
-| FND-003 | high | The FR-125 function-body field-read rule is bypassed through `ref`. `clock_ref` reads every intermediate field with `attribute(..., clock_ref_field = true)`, which forces `field_reads = true` whatever the family or clause. So `function g using v(o: Reference<Config::Call>): Reference<Clock> pure { ref(o.peer.x) }` checks and lowers a bare data read of `o.peer` through a Reference in a value-family body. That is the TC-1031 N16 / FR-125-AC-17 class that arch FND-001 closed for `o.code`. `clock_collection_operand` likewise admits `size(o.q)` in a function body as a synthetic field read. No test covers either in a function body. | fsl-semantics/src/check/check.rs:5094-5124; fsl-semantics/src/check/check.rs:5186-5193; fsl-semantics/src/check/check.rs:5400; fsl-semantics/src/check/check/typing.rs:1151-1169 |
-| FND-004 | medium | `clock_collection_field`'s doc says the synthetic `Field` "never becomes a package value read". As the `size(self.q)` / `size(c.q)` operand, though, it is lowered by the generic `NodeKind::Field` arm into `filament.op.record.project` over a `Reference<Call>` operand (no deref), with the member declaration resolved through `composite_type_node` of a `clock_place` key. No test asserts the term emitted for `size` of a clock collection, so a malformed package term would go unnoticed. | fsl-semantics/src/check/check.rs:5240-5299; fsl-semantics/src/check/lowering.rs:5160-5172 |
-| FND-005 | medium | Residual of arch FND-002: `check_declared_type` skips the whole-type `try_check_type` whenever the type contains `Reference<Clock>` anywhere, and checks only the leaves. So `Set<Map<Text, Reference<Clock>>>`, `Map<Map<Text, Integer>, Reference<Clock>>`, or a Map keyed by a record holding a Map are admitted: the leaf checks never see the forbidden container composition (`contains_map`). There is also no regression test for the `Set<Map<Text, Float64>>` refusal that FND-002 restored. | fsl-semantics/src/check/check.rs:2713-2723; fsl-semantics/src/check/check.rs:3645-3712 |
-| FND-006 | medium | Two sources of truth for clock-place identity. `with_clock_place_keys` predicts each `clock_place` NodeKey ordinal by counting time sources, models and places. Lowering mints the real nodes through `insert`, in its own loop order, and keeps them in `timed_places`. `PlaceReference` lowering emits the checker's predicted key, not a `timed_places` lookup. A model timed by two sources has its keys overwritten (the last write wins). No test with two or more places pins which `clock_place` a ref names: `timer_sequence_and_map` has `x`, `ts.x` and `m.x`, but the tests assert only `semantic_form() == "clock_place"`. So a ref to `ts[0].x` that lowered against `x` would pass. | fsl-semantics/src/check/check.rs:1655-1693; fsl-semantics/src/check/lowering.rs:5261-5278; fsl-semantics/src/check/lowering/timed_clause.rs:782-795 |
-| FND-007 | medium | Ruling (a) is only partly met. `SlotPresence` lowering falls back to `ValueType::Integer` without saying so when `clock_map_key_type` returns `None`, which it does for any key other than Text/String/Integer/Uuid/Timestamp/Resolved (for example an enum or `Int[a,b]` key). A Map clock collection with such a key then gets a `Set<Integer>` domain and an `Integer` binder, which is wrong output, not a refusal. Also, `timed_place_slot` matches `place.owner != owner` exactly while the checker admits by `conforms`, so a conforming subtype owner becomes an `UnresolvedDraft` internal fault. | fsl-semantics/src/check/lowering.rs:6776-6792; fsl-semantics/src/check/lowering/model.rs:787-797; fsl-semantics/src/check/lowering/timed_clause.rs:831-846 |
-| FND-008 | medium | The `under_ref` exemption added in 4f776b5c9a covers the whole `Ref` subtree, selector index expressions included, not just the place path. A clock read inside a ref selector, such as `ref(c.q[if c.x >= 1 ms then 0 else 1])`, now skips `clocks.foreign` and is no longer refused `clock-read-outside-constraint`. The exemption should stop at selector operands. No test covers this. | fsl-semantics/src/check/timed_model.rs:2349-2362; fsl-semantics/src/check/timed_model.rs:2545-2551 |
-| FND-009 | low | `clock_place_node_key` calls `.expect("the fixed clock-place structural path is valid")`, but `NodeKey::new` also fails with `EmptyPackage` on an empty package name, which is input the caller controls. Sibling constructors (`derived_node_key`, `structural_node_key`) return `Result`. This breaks the rust-style rule against panicking on caller input. | fsl-semantics/src/check/mod.rs:348-358 |
-| FND-010 | low | `a_reference_to_clock_is_refused_in_every_type_position` asserts that every position is accepted and lowers to `clock_reference`. The test name states the opposite of its oracle. | fsl-semantics/tests/it/clock_places.rs:3358-3400 |
-| FND-011 | low | Formatting churn: the diff re-sorts imports in 2024 `style_edition` order (`{BTreeMap, ..., hash_map}`, `{Class, classify}`) in an edition-2021 crate, and `rustfmt --edition 2021 --check` reports differences in all 11 touched .rs files. origin/main is itself not rustfmt-clean, so confidence that the `cargo fmt --all -- --check` lane is newly broken is low. | fsl-semantics/src/check/lowering.rs:36; fsl-semantics/src/check/check.rs:5968 |
+| FND-001 | high | Clock-reference values still make their owner population required: parameter_populations treats every Reference leaf as an object reference, the object-field completeness traversal collects every raw reference, and read_context_populations does likewise. A valid place owned by an admitted object in an incomplete population therefore refuses incomplete-scope, contrary to the new explicit ClockRef completeness exemption. Preserve static type when computing required populations. | fsl-semantics/src/model/observation/document.rs:3830-3851,3919-3936 |
+| FND-002 | high | A valid ClockRef in a read context is admitted by References::resolve but then check_context_closure searches its place/v1 identity in keys_by_population as an object key. With a complete owner population it always refuses dangling_reference. Exclude only already authenticated typed clock-place references from context closure, preserving ordinary dangling checks. | fsl-semantics/src/model/observation/document.rs:3718-3727,3790-3821 |
+| FND-003 | high | BarePackage observation admission still passes plain model selections to StateModel/admit_current_snapshot, so ModelSelections has an empty clock_models slice. DeclaredClockPlaces is empty and valid stored ClockRefs refuse instead of matching the source route, which now uses graph.model_inputs with checked templates. The strict readback test never constructs or executes a BarePackage. Supply authenticated bytes-derived declared places and add actual source/Bare admission and evaluation parity evidence. | fsl-package/src/bare/observation.rs:76-82,134-144,194-203 |
+| FND-004 | medium | DeclaredClockPlaces::new retains Map clock templates but drops the map flag, and contains accepts any matching numeric selector below its maximum. A forged place/v1 ID for a Map<Text, Clock> slot can therefore be admitted as ClockRef data, although Map places have no place ID. Domain::with_clock_places correctly skips these same map templates. Reject Map templates in admission and candidate closure as well. | fsl-semantics/src/model/clock_reference.rs:35-50,83-89 |
 
-## Prior review (SR-2026112013172122111220107, head 2a69bd496) verified at 4f776b5c9a
+## Coverage
 
-| Arch FND | outcome | reason |
-| --- | --- | --- |
-| FND-001 | fixed | `is_model_receiver` is unchanged from main and `attribute`'s new `clock_ref_field` flag is true only in `clock_ref`, so a bare `o.code` in a function body refuses again. A residual path through `ref` and `size` is filed as FND-003 above. |
-| FND-002 | fixed | `check_declared_type` again calls `try_check_type` on the whole type for clock-free types (check.rs:3650). The residual for clock-bearing types is filed as FND-005 above. |
-| FND-003 | still-open | No test of `ref(c.q[i])` under `i < size(c.q)` with `pick(i: Int[0, 1], k: Text)`. The population case uses `size(c.q) >= 1 implies ref(c.q[0])`, and the unguarded case asserts `any` Presence refusal with no location at `i` (clock_places.rs:3553-3567). |
-| FND-004 | fixed | `place_operand` returns `path.len().saturating_sub(prefix)` with the owner `prefixes[prefix]` (check.rs:4842-4857), which is the remaining path length. |
-| FND-005 | still-open | AC-3 and AC-6 are tagged on tests that exercise none of their cases, AC-1 lacks the postcondition write and lowering assertions, and AC-7 lacks the parameter-type and ill-typed-body cases. See the gap-analysis artifact. |
+All 45 changed files inspected against base f1c43209be6b2344addb1048c353120a70249369 and frozen head 04c0d0b46a2c494965f2bc7c65042dac44f95954. Manifest and lock agree on IR 1cbd86a48f02e4623e558a3d3b23c066c7f280bf; no other pin delta or CI weakening. Separate producer-forward aliases do not pollute final reverse/canonical maps; substitutions compose in reverse application order. All ten reference-set fields sort before compaction; sequences/repeated operands remain ordered, and the three-clause source test has distinct IDs. Hyper source_unit is only on hyper claim-name rows and reached Local slots sort by byte name. Clock domains are indexed mixed-radix with actual owner/type/template identities and explicit per-subject maxima; ordinary untimed routes require selector authority and preserve generic errors. No new asynchronous tasks or unsafe code. Existing eager timed place slot_vectors allocation remains an inherited limitation, not a newly introduced algorithm. No new reproduction was executed. The three frozen-head logs each selected/passed exactly 1, 0 ignored: /tmp/qsl-third-rebase-clock-package.log, /tmp/qsl-third-rebase-protocol-clock-bound.log, /tmp/qsl-third-rebase-clock-refine-boundary.log. Earlier focused evidence and red control were inspected via supplied handoff; no aggregate gate authorized. Final analyze log includes the existing large-linker unwind warning; it is not suppressed. All build evidence is coder supplied. Source-only runtime plus strict readback does not establish Bare execution parity.
+
+## Examined Scope
+
+```yaml
+scope:
+  - id: FR-106
+    path: spec/functional/FR-106-admit-snapshots-and-invocations.md
+    role: examined
+    excerpt: |-
+      A statically `Reference<Clock>`-typed value
+      does not name a population member and adds no required population through
+      its target; its declared-place validation is independent of population
+      completeness.
+  - id: FR-106
+    path: spec/functional/FR-106-admit-snapshots-and-invocations.md
+    role: examined
+    excerpt: |-
+      `Reference<Clock>` target is checked against declared clock places
+             under the same rule as an object field.
+  - id: FR-531
+    path: spec/functional/FR-531-evaluate-from-a-checked-package-read-from-its-bytes-alone.md
+    role: examined
+    excerpt: >-
+      The bare route SHALL give the same result, the same refusal and the same
+      charge
+        log as the in-process route for one package and one request.
+  - id: FR-1040
+    path: spec/functional/FR-1040-check-and-lower-clock-place-references-and-presence-in-population-forms.md
+    role: examined
+    excerpt: |-
+      `ref` of a place under a `Map` value refuses `ill_typed`/`type-mismatch`
+          at the `ref` (FR-230 "Place identity");
+  - id: FR-1040-AC-3
+    path: spec/functional/FR-1040-check-and-lower-clock-place-references-and-presence-in-population-forms.md
+    role: examined
+    excerpt: "In a refinement row over `calls = {c1, c2}`, `only(c in M::calls where
+      c.n = 2: ref(c.x))` and `count(c in M::calls where ref(c.x) = self.r)`
+      check, lower with the binder `c` itself (typed `Reference<Call>`) as owner
+      term, and evaluate as FSpec FR-829-AC-2 states; the same `count` in a
+      state invariant (FR-391) checks and lowers."
+  - id: FR-1040-AC-8
+    path: spec/functional/FR-1040-check-and-lower-clock-place-references-and-presence-in-population-forms.md
+    role: examined
+    excerpt: Over a domain package `acme/rpc` whose object type `Call` has clock
+      fields `x` and `y` and a field `r` typed `ix://acme/rpc/ClockRef`, a type
+      definition of `kind` `reference` with `target`
+      `ix://filament/native/Clock`, intake gives `r` the type `Reference<Clock>`
+      as a data member, and the postcondition `self.r = ref(self.x)` of an
+      operation `point` whose frame names only `r` checks with no `clock-write`
+      refusal and lowers the write to a `filament.op.clock_reference.ref`
+      application typed by the `scalar_type`/`clock_reference` node, which also
+      types the field; after `point` the state's `r` hold
+  - id: FR-106-AC-72
+    path: spec/functional/FR-106-admit-snapshots-and-invocations.md
+    role: examined
+    excerpt: "Over [TC-464](../test-cases/TC-464-snapshots-and-invocations-admit.md)
+      step 7's dense-time `Call` fixture, a raw snapshot storing the actual
+      per-instance place identities of `c1.x` and `c2.x` in `r:
+      Reference<Clock>`, `maybe: Option<Reference<Clock>>` and `refs:
+      Sequence<Reference<Clock>>` admits, retaining those identities as data,
+      the optional presence and the sequence order. Neither place identity is an
+      object key, and neither target is resolved as a population member. Reading
+      the admitted fields distinguishes `c1.x` from `c2.x`; the required
+      evaluation of the stored `self.r` under FR-1040-"
+  - id: FR-106-AC-73
+    path: spec/functional/FR-106-admit-snapshots-and-invocations.md
+    role: examined
+    excerpt: Over [TC-464](../test-cases/TC-464-snapshots-and-invocations-admit.md)
+      step 8's model variant without `x`, storing the formerly declared `c1.x`
+      identity in `r`, in the present value of `maybe`, or at element 0 of
+      `refs` refuses
+      `dangling_reference`/`absent-target-in-complete-population`, naming the
+      snapshot, owner population `calls`, object `c1`, the affected field and
+      nested value path, and that undeclared target identity, with no admitted
+      observation or truth value. A target's clock-reference static type or
+      native Clock target alone does not make it declared.
+  - id: Cargo.lock
+    path: Cargo.lock
+    role: examined
+    excerpt: source =
+      "git+https://github.com/agent-ix/filament-contract-ir?rev=1cbd86a48f02e4623e558a3d3b23c066c7f280bf#1cbd86a48f02e4623e558a3d3b23c066c7f280bf"
+  - id: Cargo.toml
+    path: Cargo.toml
+    role: examined
+    excerpt: filament-contract-model = { git =
+      "https://github.com/agent-ix/filament-contract-ir", rev =
+      "1cbd86a48f02e4623e558a3d3b23c066c7f280bf" }
+  - id: fsl-analyze/src/analyze/timed_item.rs
+    path: fsl-analyze/src/analyze/timed_item.rs
+    role: examined
+    excerpt: |2-
+                      domains: Some(domains),
+                      clock_references: Vec::new(),
+  - id: fsl-analyze/src/zone_check/refine.rs
+    path: fsl-analyze/src/zone_check/refine.rs
+    role: examined
+    excerpt: >-
+      fn timed_subject_refusal(refusal: TimedSubjectRefusal) ->
+      TimedRefinementRefusal {
+          match refusal {
+              // Keep the existing requires-bound/resource refusal envelope when
+              // the profile-aware constructor performs the preflight.
+              TimedSubj
+  - id: fsl-analyze/tests/it/model_check.rs
+    path: fsl-analyze/tests/it/model_check.rs
+    role: examined
+    excerpt: |2-
+                  .as_ref()
+                  .expect("generic unbounded domains")
+  - id: fsl-analyze/tests/it/model_instances.rs
+    path: fsl-analyze/tests/it/model_instances.rs
+    role: examined
+    excerpt: |2-
+              .as_ref()
+              .expect("generic unbounded domains")
+              .as_ref()
+              .expect("generic unbounded domains")
+              .as_ref()
+              .expect("generic unbounded domains")
+  - id: fsl-analyze/tests/it/protocol_compensation.rs
+    path: fsl-analyze/tests/it/protocol_compensation.rs
+    role: examined
+    excerpt: |2-
+                  .as_ref()
+                  .expect("generic unbounded domains")
+              .as_ref()
+              .expect("generic unbounded domains")
+  - id: fsl-analyze/tests/it/protocol_system.rs
+    path: fsl-analyze/tests/it/protocol_system.rs
+    role: examined
+    excerpt: |2-
+          let named: Vec<_> = bound
+              .domains
+              .as_ref()
+              .expect("generic unbounded domains")
+              .iter()
+              .map(|(key, _)| key.clone())
+              .collect();
+          let named: Vec<_> = bound
+              .domains
+              .as_ref()
+              .exp
+  - id: fsl-analyze/tests/it/timed_refinement.rs
+    path: fsl-analyze/tests/it/timed_refinement.rs
+    role: examined
+    excerpt: |-
+      /// The default timed profile supplies the selector bound for concrete
+      /// ClockRef data before refinement's independent hidden-field refusal.
+      #[trace("TC-3084", "FR-1040-AC-8")]
+      #[test]
+      fn clock_reference_selectors_use_the_timed_profile_before_refinement_gate
+  - id: fsl-analyze/tests/it/zone_mitl.rs
+    path: fsl-analyze/tests/it/zone_mitl.rs
+    role: examined
+    excerpt: |2-
+          assert!(
+              !roots
+                  .domains
+                  .as_ref()
+                  .expect("generic unbounded domains")
+                  .is_empty(),
+              "{roots:?}"
+          );
+  - id: fsl-eval/src/simulation/mod.rs
+    path: fsl-eval/src/simulation/mod.rs
+    role: examined
+    excerpt: pub use not_simulated::{ClockReferenceDomain, NotSimulated,
+      RequiresBound, Root, BOUND_POSITIONS};
+  - id: fsl-eval/src/simulation/model.rs
+    path: fsl-eval/src/simulation/model.rs
+    role: examined
+    excerpt: >2-
+          ) -> Option<domain::Domain> {
+              self.field_domain_with_clock_selectors(type_key, field, references, None)
+          }
+
+          fn field_domain_with_clock_selectors(
+              &self,
+              type_key: &DeclarationKey,
+              field: &StateField,
+              reference
+  - id: fsl-eval/src/simulation/model/application.rs
+    path: fsl-eval/src/simulation/model/application.rs
+    role: examined
+    excerpt: >2-
+                      // Protocol attempts have no timed-profile selector authority.
+                      // check_protocol_bounds runs the model's requires-bound
+                      // preflight before an attempt can expand frames.
+                      clock_selectors: None,
+  - id: fsl-eval/src/simulation/model/domain.rs
+    path: fsl-eval/src/simulation/model/domain.rs
+    role: examined
+    excerpt: |-
+      /// Selector maxima authenticated by a timed subject's live-clock bound.
+      pub(super) type ClockSelectorMaxima = BTreeMap<NodeKey, Vec<u64>>;
+
+      #[derive(Clone, Copy, Default)]
+      pub(super) struct ClockDomains<'a> {
+          pub(super) models: &'a [fsl_semantics::check::
+  - id: fsl-eval/src/simulation/model/frames.rs
+    path: fsl-eval/src/simulation/model/frames.rs
+    role: examined
+    excerpt: >2-
+          FieldChange, ModelFinding, ModelSimState, ModelSystem, StepEffect,
+      WrittenSlots, BROKEN,
+          EXHAUSTED,
+                      None => walk.value_domain(value_type, &references),
+                      let domain = self.walk.value_domain(result_type, &self.walk.referenc
+  - id: fsl-eval/src/simulation/model/input.rs
+    path: fsl-eval/src/simulation/model/input.rs
+    role: examined
+    excerpt: "            .with_clock_places(self.timed_models)"
+  - id: fsl-eval/src/simulation/model/timed.rs
+    path: fsl-eval/src/simulation/model/timed.rs
+    role: examined
+    excerpt: >-
+      use super::walk::{expand_enabled_with_clock_selectors, stop};
+
+      /// The potential selector maxima under the timed subject's live-clock
+      bound.
+
+      /// This is the same per-element layout used for concrete clock
+      placements.
+
+      pub(super) fn clock_selector_maxima(
+          tim
+  - id: fsl-eval/src/simulation/model/walk.rs
+    path: fsl-eval/src/simulation/model/walk.rs
+    role: examined
+    excerpt: "    /// Selector maxima from this timed subject's authenticated clock
+      bound.
+
+      \    pub(super) clock_selectors: Option<&'s
+      super::domain::ClockSelectorMaxima>,
+
+      \    pub(super) fn value_domain(
+
+      \        &self,
+
+      \        value_type: &filament_exact::ValueType,
+
+      \        "
+  - id: fsl-eval/src/simulation/not_simulated.rs
+    path: fsl-eval/src/simulation/not_simulated.rs
+    role: examined
+    excerpt: >-
+      /// A generated data member whose clock-reference domain needs a selector
+      bound.
+
+      #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
+
+      pub struct ClockReferenceDomain {
+          /// The actual field or parameter type position.
+          pub member: fsl_foundation::boun
+  - id: fsl-eval/src/simulation/protocol.rs
+    path: fsl-eval/src/simulation/protocol.rs
+    role: examined
+    excerpt: >2-
+                  domains: Some(domains),
+                  clock_references: Vec::new(),
+          let ordinary = match check_requires_bound(&roots(&domains), model.types(), position_limit) {
+              Ok(()) => None,
+              Err(NotSimulated::RequiresBound(bound)) => bound.doma
+  - id: fsl-eval/src/value/expression/evaluate.rs
+    path: fsl-eval/src/value/expression/evaluate.rs
+    role: examined
+    excerpt: >2-
+          FieldValue, ObjectReference, OptionValue, Quantity, UnionValue, Value,
+      ValueType,
+          if !fsl_semantics::model::clock_reference::is_clock_type(&clock_type) {
+              return Err(invariant("place-reference-result-type-expected"));
+          fsl_semantics::model::c
+  - id: fsl-eval/tests/it/finite_simulation.rs
+    path: fsl-eval/tests/it/finite_simulation.rs
+    role: examined
+    excerpt: |2-
+              assert_eq!(
+                  requires_bound
+                      .domains
+                      .as_ref()
+                      .expect("generic unbounded domains")
+                      .len(),
+                  1
+              );
+                  .as_ref()
+                  .expect("generic unbounded
+  - id: fsl-eval/tests/it/model_simulation.rs
+    path: fsl-eval/tests/it/model_simulation.rs
+    role: examined
+    excerpt: |2-
+                  .as_ref()
+                  .expect("generic unbounded domains")
+  - id: fsl-eval/tests/it/refinement_row_clock_places.rs
+    path: fsl-eval/tests/it/refinement_row_clock_places.rs
+    role: examined
+    excerpt: >2-
+          format!(
+              "{:?}",
+              evaluate_row(&package, &checked.packages, row, receiver, &state())
+          )
+      }
+
+
+      /// Evaluate a row against supplied state, keeping the checked package
+      fixed
+
+      /// while a reference field is updated.
+
+      fn evaluate_row(
+          package: 
+  - id: fsl-eval/tests/it/timed_subject.rs
+    path: fsl-eval/tests/it/timed_subject.rs
+    role: examined
+    excerpt: |-
+      fn clock_reference_world(
+          document: Json,
+          unit: &str,
+      ) -> (
+          World,
+          filament_exact::ObjectReference,
+          filament_exact::ObjectReference,
+      ) {
+          clock_reference_world_with_profiles(document, "", unit)
+      }
+
+      fn clock_reference_world_with_profiles(
+  - id: fsl-package/src/emit.rs
+    path: fsl-package/src/emit.rs
+    role: examined
+    excerpt: |2-
+              BodyTerm::Application(application) => {
+                  let mut arguments = application
+                      .collect::<Result<Vec<_>, _>>()?;
+                  if application.operator == Operator::ProtocolControl {
+                      if let Some(Member::ProfileOperator
+  - id: fsl-package/src/emit/reference_sets.rs
+    path: fsl-package/src/emit/reference_sets.rs
+    role: examined
+    excerpt: |-
+      // SPDX-License-Identifier: AGPL-3.0-or-later
+      //! FR-464 reference sets are ordered by structural checked node identity.
+
+      use filament_contract_model::CheckedTerm;
+
+      use super::{encoding, EmitRefusal};
+
+      /// Order only the reference sets of the protocol layout. 
+  - id: fsl-package/src/emit/tests.rs
+    path: fsl-package/src/emit/tests.rs
+    role: examined
+    excerpt: mod reference_sets;
+  - id: fsl-package/src/emit/tests/clock_places.rs
+    path: fsl-package/src/emit/tests/clock_places.rs
+    role: examined
+    excerpt: >-
+      /// Canonical reference fields and their data reads/writes retain the one
+
+      /// clock_reference scalar, including ordinary presence and sequence
+      wrappers.
+
+      #[trace("TC-3084", "FR-1040-AC-8", "FSpec-FR-154-AC-53")]
+
+      #[test]
+
+      fn clock_reference_fields_emit_and_read_b
+  - id: fsl-package/src/emit/tests/hyper_clause.rs
+    path: fsl-package/src/emit/tests/hyper_clause.rs
+    role: examined
+    excerpt: >-
+      
+      /// FR-322-AC-511 "Hyper clause source unit": a hyper clause's
+      `claim_names`
+
+      /// row names the clause's own source unit, the one its
+      `declaration_region`
+
+      /// is under; every other row names none, and the hyper clause's
+
+      /// `temporal_bindings` rows carry none.
+  - id: fsl-package/src/emit/tests/protocol_requirements/fixture_w.rs
+    path: fsl-package/src/emit/tests/protocol_requirements/fixture_w.rs
+    role: examined
+    excerpt: >2-
+          let rows = crate::emit::temporal_binding_rows(&graph, &none, &none,
+      &[], &[], &[])
+              crate::emit::temporal_binding_rows(&graph, &none, &none, &[], &[], &selections),
+  - id: fsl-package/src/emit/tests/reference_sets.rs
+    path: fsl-package/src/emit/tests/reference_sets.rs
+    role: examined
+    excerpt: |-
+      // SPDX-License-Identifier: AGPL-3.0-or-later
+      //! Protocol sets through source checking and the actual package emitter.
+
+      use super::*;
+
+      #[trace("FSpec-FR-464-AC-3")]
+      #[test]
+      fn attempt_contract_sets_are_structural_across_source_permutations() {
+          let declara
+  - id: fsl-semantics/src/check/lowering/hyper.rs
+    path: fsl-semantics/src/check/lowering/hyper.rs
+    role: examined
+    excerpt: "use filament_checked::node::NodeKind;
+
+      \        // The atom slots the formula reaches: one `<p>@<t>` parameter
+      node
+
+      \        // per name, at levels `0..n` in ascending byte order of the name
+
+      \        // (FSpec FR-402 \"Wrapper slot scope\"). A binder a leaf of the
+
+      \ "
+  - id: fsl-semantics/src/check/mod.rs
+    path: fsl-semantics/src/check/mod.rs
+    role: examined
+    excerpt: "        .with_clock_places(&self.timed_models)"
+  - id: fsl-semantics/src/model/clock_reference.rs
+    path: fsl-semantics/src/model/clock_reference.rs
+    role: examined
+    excerpt: |-
+      // SPDX-License-Identifier: AGPL-3.0-or-later
+      //! The place-id codec shared by clock-reference evaluation and admission.
+
+      use filament_exact::{NodeKey, ObjectId, ObjectReference, Value};
+
+      /// Whether the target type is the native clock reference's exact target
+  - id: fsl-semantics/src/model/intake.rs
+    path: fsl-semantics/src/model/intake.rs
+    role: examined
+    excerpt: "        if type_value.get(\"scalar\").is_some() {
+
+      \            return Err(ctx.malformed_in(\"scalar\", \"a native-target
+      value type declares no scalar\"));
+
+      \        }
+
+      \        if let Some(constraint) =
+      ctx.array_field(\"constraints\")?.first() {
+
+      \            return Err(
+
+      \ "
+  - id: fsl-semantics/src/model/intake/model_unit.rs
+    path: fsl-semantics/src/model/intake/model_unit.rs
+    role: examined
+    excerpt: "                if type_name == \"Reference\" &&
+      tokens.get(index).is_some_and(|t| t.text == \"<\") {
+
+      \                    let target = tokens.get(index + 1)?.text.clone();
+
+      \                    if target == \"Clock\" && tokens.get(index + 2)?.text
+      == \">\" {
+
+      \           "
+  - id: fsl-semantics/src/model/mod.rs
+    path: fsl-semantics/src/model/mod.rs
+    role: examined
+    excerpt: pub mod clock_reference;
+  - id: fsl-semantics/src/model/observation.rs
+    path: fsl-semantics/src/model/observation.rs
+    role: examined
+    excerpt: >2-
+          pub(crate) clock_places:
+      std::sync::Arc<super::clock_reference::DeclaredClockPlaces>,
+                  clock_places: std::sync::Arc::default(),
+          clock_models: &'a [crate::check::TimedModel],
+                  clock_models: &[],
+          /// Supply the checked graph's d
+  - id: fsl-semantics/src/model/observation/document.rs
+    path: fsl-semantics/src/model/observation/document.rs
+    role: examined
+    excerpt: |2-
+          /// Validated data references to declared clock places, never objects.
+          clock_references: Vec<(String, ObjectReference)>,
+                  clock_references: Vec::new(),
+              if crate::model::clock_reference::is_clock_type(&declared) {
+                  let dang
+  - id: fsl-semantics/src/model/observation/document/tests/collection_elements.rs
+    path: fsl-semantics/src/model/observation/document/tests/collection_elements.rs
+    role: examined
+    excerpt: "        clock_references: Vec::new(),"
+  - id: fsl-semantics/src/model/observation/initial.rs
+    path: fsl-semantics/src/model/observation/initial.rs
+    role: examined
+    excerpt: >2
+          let references =
+              crate::model::clock_reference::references_in(objects.iter().flat_map(|(_, slots)| {
+                  slots.iter().filter_map(|(_, slot)| match slot {
+                      FieldValue::Present(value) => Some(value),
+                      _ => None,
+  - id: fsl-semantics/tests/it/clock_places.rs
+    path: fsl-semantics/tests/it/clock_places.rs
+    role: examined
+    excerpt: |-
+      /// scalar.
+      /// TC-3084's clock model with a canonical reference definition and a data
+      /// field writable independently of the clock it names.
+      fn clock_reference_document(target: &str) -> Vec<u8> {
+          let mut document: Value =
+              serde_json::from_slice(&
+  - id: spec/functional/FR-106-admit-snapshots-and-invocations.md
+    path: spec/functional/FR-106-admit-snapshots-and-invocations.md
+    role: examined
+    excerpt: |-
+      A stored clock-place reference uses the same `reference` value form above:
+      `population` names the owner's population and `key` carries the instance's
+      clock-place identity, rather than an object key. When its static declared
+      type is `Reference<Clock>` (the `sca
+  - id: spec/test-cases/TC-464-snapshots-and-invocations-admit.md
+    path: spec/test-cases/TC-464-snapshots-and-invocations-admit.md
+    role: examined
+    excerpt: "Scope: FR-106-AC-1, FR-106-AC-2, FR-106-AC-6, FR-106-AC-8,
+      FR-106-AC-9,
+
+      FR-106-AC-72, FR-106-AC-73.
+
+      7. Compile the dense-time `Call` model of FR-1040 with clock fields `x`
+
+      \   and `y`, data fields `r: Reference<Clock>`,
+
+      \   `maybe: Option<Reference<Clock>>`,
+
+      \   "
+```

@@ -1334,35 +1334,10 @@ impl<'a> References<'a> {
         declared: filament_exact::EffectiveId,
     ) -> Result<ObjectReference, AdmissionRecord> {
         if crate::model::clock_reference::is_clock_type(&declared) {
-            let dangling = || {
-                admission_record(
-                    Code::DanglingReference,
-                    "absent-target-in-complete-population",
-                )
-                .with("population", reference.population.clone())
-                .with("object", reference.key.clone())
-            };
-            let place = crate::model::clock_reference::ClockPlaceId::decode(&reference.key)
-                .map_err(|_| dangling())?;
-            let owner = self
-                .admitted
-                .get(&(reference.population.as_str(), place.owner.as_str()))
-                .ok_or_else(dangling)?;
-            let target = ObjectReference::new(
-                owner.universe().clone(),
-                declared,
-                filament_exact::ObjectId::new(reference.key.clone()).map_err(|_| dangling())?,
+            return Err(
+                admission_record(Code::UnknownRequiredFeature, "unsupported-feature")
+                    .with("reason", "missing-route-neutral-place-identity"),
             );
-            if !self
-                .views
-                .iter()
-                .any(|view| view.clock_places.contains(&target, owner, self.types))
-            {
-                return Err(dangling());
-            }
-            self.clock_references
-                .push((reference.population.clone(), target.clone()));
-            return Ok(target);
         }
         let wire = (reference.population.as_str(), reference.key.as_str());
         if let Some(target) = self.admitted.get(&wire) {

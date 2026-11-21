@@ -61,7 +61,7 @@ impl BarePackage<'_> {
             ))
         };
         if self.needs_clock_reference_authority() {
-            return unsupported("clock-reference-authority");
+            return unsupported("missing-route-neutral-place-identity");
         }
         if let Err(failure) = self.witness() {
             return match failure {
@@ -128,7 +128,7 @@ impl BarePackage<'_> {
             )))
         };
         if self.needs_clock_reference_authority() {
-            return Err(unsupported("clock-reference-authority"));
+            return Err(unsupported("missing-route-neutral-place-identity"));
         }
         if let Err(failure) = self.witness() {
             let reason = match failure {
@@ -185,7 +185,7 @@ impl BarePackage<'_> {
             ))
         };
         if self.needs_clock_reference_authority() {
-            return unsupported("clock-reference-authority");
+            return unsupported("missing-route-neutral-place-identity");
         }
         if let Err(failure) = self.witness() {
             return match failure {
