@@ -968,16 +968,23 @@ fn delay_weighting_from_source_is_not_yet_implemented_not_a_method_error() {
 fn bounded_delay_fraction_from_source_clips_the_first_leaving_step() {
     let claim = "probabilistic Weighted using t on M over (m: M::Msg) under Even on origin \
          with alpha 0.4, beta 0.4, indifference 0.05 \
-         { mean of (fraction holds(m.attempts = 0) over [0, rational(1, 2) ms] weighted by delay) >= 0.5 }";
+         { mean of (fraction holds(m.attempts = 0) over [0, rational(1, 2) ms] weighted by delay) >= 0.5 }\n\
+         probabilistic WeightedEvent using t on M over (m: M::Msg) under Even on origin \
+         with alpha 0.4, beta 0.4, indifference 0.05 \
+         { probability >= 0.5 [ fraction holds(m.attempts = 0) over [0, rational(1, 2) ms] weighted by delay >= rational(1, 2) ] }";
     let document = run_timed(
         "bounded-delay-fraction",
         claim,
         json!([{"claim": "Weighted", "probabilistic": {
-            "evidence": "statistical", "method": {"type": "okamoto"}, "seed": "7"}}]),
+            "evidence": "statistical", "method": {"type": "okamoto"}, "seed": "7"}},
+            {"claim": "WeightedEvent", "probabilistic": {
+            "evidence": "statistical", "method": {"type": "sprt"}, "seed": "7"}}]),
     );
-    let item = &document["items"][0];
-    assert_eq!(label(item), "measured", "{document}");
-    assert_eq!(item["verdict"]["decision"], "accepted", "{item}");
+    for index in 0..2 {
+        let item = &document["items"][index];
+        assert_eq!(label(item), "measured", "{document}");
+        assert_eq!(item["verdict"]["decision"], "accepted", "{item}");
+    }
 }
 
 /// FR-741 "Request": an item with no `probabilistic` member at all reaches a
