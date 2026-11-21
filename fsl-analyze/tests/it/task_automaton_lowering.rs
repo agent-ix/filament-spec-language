@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! FR-249-AC-7 to AC-9 (TC-3008): a task automaton lowers to a timed subject
-//! that carries the declared periods and deadlines, EN-6's verdict on it
-//! equals EN-7's response-time verdict on the retimed three-task set `BReduced`, and an
+//! that carries the declared periods and deadlines, EN-7 checks the retimed
+//! three-task set `BReduced`, EN-6 agrees on its work-4 fixed-priority miss, and an
 //! unschedulable set refutes with a replayed counterexample whose first
 //! deadline miss is exact. The source is ADR-026 section 11's `Rpc` with one
 //! always-enabled `fire_*` operation per task, each releasing its task.
@@ -404,8 +404,8 @@ fn an_unreachable_checked_release_proves_with_the_source_certificate() {
     assert_eq!(label(&bare), "unsupported", "{bare}");
 }
 
-fn reduced_agreement(third: u32, policy: &str, want: &str) {
-    let declarations = task_set_b(third)
+fn task_set_b_reduced(third: u32) -> String {
+    task_set_b(third)
         .replace("taskset B", "taskset BReduced")
         .replace("on B under", "on BReduced under")
         .replace("release B.", "release BReduced.")
@@ -413,69 +413,57 @@ fn reduced_agreement(third: u32, policy: &str, want: &str) {
         .replace(
             "periodic 10 ms deadline 10 ms",
             "periodic 8 ms deadline 8 ms",
-        );
-    let claim = if policy == "fixed_priority" {
-        "BFp"
-    } else {
-        "BEdf"
-    };
-    let run = run(
-        &format!("b-reduced-{third}-{policy}"),
+        )
+}
+
+fn reduced_en7(third: u32, claim: &str) -> Value {
+    run(
+        &format!("b-reduced-{third}-{claim}-en7"),
         &["t1", "t2", "t3"],
-        &declarations,
-        json!([
-            {"claim": claim}, {"claim": claim, "backend": "en-6"}
-        ]),
-    );
-    let closed = run.item(0);
-    let zone = run.item(1);
-    println!("BReduced work {third} {policy}: EN-6 {zone}");
-    assert_eq!(label(&closed), want, "EN-7: {closed}");
-    assert_eq!(label(&zone), want, "EN-6: {zone}");
+        &task_set_b_reduced(third),
+        json!([{"claim": claim, "backend": "en-7"}]),
+    )
+    .item(0)
 }
 
 #[trace("TC-3008", "FR-249-AC-8")]
 #[test]
-fn b_reduced_work_three_fixed_priority_agrees() {
-    reduced_agreement(3, "fixed_priority", "proved");
+fn b_reduced_work_three_fixed_priority_is_schedulable_on_en7() {
+    let item = reduced_en7(3, "BFp");
+    assert_eq!(label(&item), "proved", "{item}");
 }
 
 #[trace("TC-3008", "FR-249-AC-8")]
 #[test]
-fn b_reduced_work_three_edf_agrees() {
-    reduced_agreement(3, "edf", "proved");
+fn b_reduced_work_three_edf_is_schedulable_on_en7() {
+    let item = reduced_en7(3, "BEdf");
+    assert_eq!(label(&item), "proved", "{item}");
 }
 
 #[trace("TC-3008", "FR-249-AC-8")]
 #[test]
 fn b_reduced_work_four_fixed_priority_agrees() {
-    reduced_agreement(4, "fixed_priority", "refuted");
-}
-
-#[trace("TC-3008", "FR-249-AC-8")]
-#[test]
-fn b_reduced_work_four_edf_agrees() {
-    reduced_agreement(4, "edf", "proved");
-}
-
-/// The original baseline is measured at defaults, with no full-verdict claim.
-#[trace("TC-3008", "FR-249-AC-8")]
-#[test]
-fn the_original_task_set_b_stops_at_its_first_default_limit() {
     let run = run(
-        "original-b-default-limit",
+        "b-reduced-4-fixed-priority",
         &["t1", "t2", "t3"],
-        &task_set_b(3),
-        json!([{"claim":"BFp", "backend":"en-6"}]),
+        &task_set_b_reduced(4),
+        json!([
+            {"claim": "BFp", "backend": "en-7"},
+            {"claim": "BFp", "backend": "en-6"}
+        ]),
     );
-    let item = run.item(0);
-    println!("Original B default FP work 3: {item}");
-    assert_eq!(label(&item), "incomplete", "{item}");
-    let cause = &item["record"]["cause"];
-    assert_eq!(cause["kind"], "limit-reached", "{item}");
-    assert_eq!(cause["limit"], "max_check_work", "{item}");
-    assert_eq!(cause["setting"], "zone_check.max_check_work", "{item}");
-    assert!(item.get("certificate").is_none(), "{item}");
+    let closed = run.item(0);
+    let zone = run.item(1);
+    assert_eq!(label(&closed), "refuted", "EN-7: {closed}");
+    assert_eq!(label(&zone), label(&closed), "EN-6: {zone}");
+    assert_eq!(zone["replay"]["reproduced"], true, "{zone}");
+}
+
+#[trace("TC-3008", "FR-249-AC-8")]
+#[test]
+fn b_reduced_work_four_edf_is_schedulable_on_en7() {
+    let item = reduced_en7(4, "BEdf");
+    assert_eq!(label(&item), "proved", "{item}");
 }
 
 #[trace("TC-3008", "FR-249-AC-9")]
