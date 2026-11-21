@@ -44,6 +44,8 @@ const UNIT: &str = "language \"ix:native\" edition \"1-draft\";\n\
     unit s : Time = rational(1, 1);\n\
     unit ms : Time = rational(1, 1000) * s;\n\
     temporal Counted using w over (r: Reading) clock \"plant-ms\" on origin { always[0,5] (count over past[0 ms, 3 ms] min_count 0 <= 9) }\n\
+    temporal Twos using w over (r: Reading) clock \"plant-ms\" on origin { always[0,5] (count where holds(r.level = 2) over past[0 ms, 3 ms] min_count 0 <= 1) }\n\
+    temporal Median using w over (r: Reading) clock \"plant-ms\" on origin { always[0,5] (quantile 0.5 of r.level over past[0 ms, 3 ms] <= 1) }\n\
     temporal E using e over (r: Reading) clock \"events\" on origin { eventually[0,2] holds(r.level = 2) }\n\
     temporal T using w over (r: Reading) clock \"plant-ms\" on origin { eventually[0,5] holds(r.level > 0) }\n\
     temporal Reaches using i over (r: Reading) clock \"steps\" on origin { eventually holds(r.level = 2) }\n\
@@ -3518,40 +3520,85 @@ fn the_covered_positions_bound_counts_each_fingerprinted_sample() {
     }
     assert_eq!(members(&carried.report), members(&batch));
 }
-
-/// QSL-2138: the FR-820 carried clause state of a timestamped trace holds its
-/// samples by value and reads no window of stamps, so a window aggregate
-/// there is refused typed (`unsupported-window-aggregate`), never an internal
-/// fault.
+/// QSL-2138, FR-820, FR-194 "Evaluation": the carried clause state of a
+/// closed timestamped trace reads a window aggregate (a filtered count and a
+/// quantile) over the same window contents as the one-shot run, so after every
+/// position, and after a `from_bytes` restore, its report is the batch report.
 #[test]
-#[trace("TC-629", "FR-194-AC-1")]
-fn a_carried_timestamped_state_refuses_a_window_aggregate_typed() {
+#[trace("TC-629", "FR-194-AC-1", "FR-820-AC-1")]
+fn a_carried_timestamped_state_reads_a_window_aggregate_as_the_one_shot_run() {
     let world = world();
     let cancel = Cancel::new();
-    let mut state = ClauseState::open(
-        world.unit.package(),
-        clause_node(&world, "Counted"),
-        &clause_open(
-            &world,
-            ClauseTraceKind::Timestamped,
-            Some(stamped_binding()),
-            ProgressLowerBoundary::AuthoritativeOrigin,
-        ),
-    )
-    .expect("opens");
-    let observed = text(1);
-    state
-        .advance(admitted(&world, "Counted", &observed, 0), &cancel)
-        .expect("advances");
-    let advance = state
-        .assert_progress(&progress(0), &cancel)
-        .expect("watermark 0");
-    assert!(
-        matches!(
-            advance.report.disposition,
-            spine::ClauseDisposition::TraceRefused(_)
-        ),
-        "{:?}",
-        advance.report.disposition
-    );
+    for (name, levels) in [
+        ("Twos", [2, 0, 2, 2, 1, 1, 0, 2]),
+        ("Median", [0, 1, 3, 3, 2, 0, 0, 1]),
+    ] {
+        let mut seen_violation = false;
+        for restore_after in [None, Some(3_usize)] {
+            let open = clause_open(
+                &world,
+                ClauseTraceKind::Timestamped,
+                Some(stamped_binding()),
+                ProgressLowerBoundary::AuthoritativeOrigin,
+            );
+            let mut state =
+                ClauseState::open(world.unit.package(), clause_node(&world, name), &open)
+                    .expect("opens");
+            let mut observations: Vec<TimestampedObservation> = Vec::new();
+            for (index, level) in levels.iter().enumerate() {
+                if restore_after == Some(index) {
+                    let bytes = state.to_bytes().expect("writes");
+                    state = ClauseState::from_bytes(
+                        world.unit.package(),
+                        clause_node(&world, name),
+                        &open,
+                        &bytes,
+                        &cancel,
+                    )
+                    .expect("reads back");
+                }
+                let stamp = index as u64;
+                let observed = text(*level);
+                state
+                    .advance(admitted(&world, name, &observed, stamp), &cancel)
+                    .expect("advances");
+                observations.push(TimestampedObservation {
+                    document: spine::sample_position(&observed),
+                    stamp,
+                    order_key: None,
+                });
+                let advance = state
+                    .assert_progress(&progress(stamp), &cancel)
+                    .expect("progress");
+                let trace = TraceInput::Timestamped {
+                    observations: observations.clone(),
+                    progress: progress(stamp),
+                    window: Box::new(TimestampedWindow {
+                        binding: Some(stamped_binding()),
+                        authoritative_origin: true,
+                        cover: None,
+                        missing_valuations: Vec::new(),
+                        late: spine::LateInputs::default(),
+                    }),
+                };
+                let batch = batch_over(&world, name, &trace);
+                assert!(
+                    !matches!(
+                        advance.report.disposition,
+                        spine::ClauseDisposition::TraceRefused(_)
+                            | spine::ClauseDisposition::EvaluateFault(_)
+                    ),
+                    "{name} {restore_after:?} at {index}: {:?}",
+                    advance.report.disposition
+                );
+                assert_eq!(
+                    members(&advance.report),
+                    members(&batch),
+                    "{name} restored after {restore_after:?} at {index}"
+                );
+                seen_violation |= format!("{:?}", batch.disposition).contains("Violated");
+            }
+        }
+        assert!(seen_violation, "{name}: the trace violates the clause");
+    }
 }

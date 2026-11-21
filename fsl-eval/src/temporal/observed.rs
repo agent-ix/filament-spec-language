@@ -184,12 +184,7 @@ pub fn evaluate_observed_timed(
             len: u64::try_from(stamps.len()).unwrap_or(u64::MAX),
         },
     };
-    let mut letters = ObservedLetters::over(
-        package,
-        clause,
-        positions,
-        shape,
-    );
+    let mut letters = ObservedLetters::over(package, clause, positions, shape);
     let represented = stamps.len();
     let trace = match (loop_start.clone(), through) {
         (Some((start, delay)), None) => super::TimedTrace::lasso(stamps, start, delay),
@@ -201,21 +196,18 @@ pub fn evaluate_observed_timed(
         (None, None) => super::TimedTrace::new(stamps),
     };
     let result = trace.and_then(|trace| {
-        let activation_positions: Vec<usize> = match (
-            clause.clause().activation(),
-            loop_start.as_ref(),
-        ) {
-            (fsl_semantics::check::Activation::Origin, _) => vec![0],
-            (fsl_semantics::check::Activation::Each { .. }, Some((start, _))) => {
-                (0..usize::try_from(*start).unwrap_or(usize::MAX))
+        let activation_positions: Vec<usize> =
+            match (clause.clause().activation(), loop_start.as_ref()) {
+                (fsl_semantics::check::Activation::Origin, _) => vec![0],
+                (fsl_semantics::check::Activation::Each { .. }, Some((start, _))) => (0
+                    ..usize::try_from(*start).unwrap_or(usize::MAX))
                     .chain(
                         (0..represented.saturating_sub(usize::try_from(*start).unwrap_or(0)))
                             .map(|offset| represented.saturating_add(offset)),
                     )
-                    .collect()
-            }
-            (fsl_semantics::check::Activation::Each { .. }, None) => (0..represented).collect(),
-        };
+                    .collect(),
+                (fsl_semantics::check::Activation::Each { .. }, None) => (0..represented).collect(),
+            };
         let guarded = matches!(
             clause.clause().activation(),
             fsl_semantics::check::Activation::Each { guarded: true }
@@ -580,8 +572,7 @@ fn evaluate_window_over(
         ObservedPositions::Tape(_) => {
             crate::temporal::facts::ClauseFacts::of_checked_letters(clause.clause())
         }
-        ObservedPositions::Objects { .. }
-        | ObservedPositions::ObjectTape { .. } => {
+        ObservedPositions::Objects { .. } | ObservedPositions::ObjectTape { .. } => {
             crate::temporal::facts::ClauseFacts::of_checked(clause.clause())
         }
         ObservedPositions::Samples(_) => {
@@ -688,6 +679,29 @@ impl CarriedWindow {
             active: None,
             windows: None,
         };
+        // FR-194 "Evaluation": a window aggregate reads the stamps of the
+        // admitted trace, so a carried run reads the contents the one-shot
+        // run reads.
+        if clause.clause().profile()
+            == fsl_semantics::check::TemporalProfile::TimestampedEventFiniteWindow
+            && clause
+                .clause()
+                .formula()
+                .nodes()
+                .iter()
+                .any(|node| matches!(node, FormulaNode::Aggregate { .. }))
+        {
+            match trace.timed_window_trace() {
+                Ok(windows) => letters.windows = Some(windows),
+                Err(refusal) => {
+                    return ObservedWindowRun {
+                        result: Err(TemporalRefusal::Window(refusal)),
+                        stopped: None,
+                        undefined: None,
+                    };
+                }
+            }
+        }
         let result = state.evaluate(
             &facts,
             silent,
@@ -1037,6 +1051,13 @@ impl TemporalLetters for ObservedLetters<'_> {
             && self.clause.aggregate_conditions(atom).is_some()
             && !self.is_silent(position)
         {
+            // FR-501 "Verdicts": an aggregate is an atom, so a valuation
+            // absent from the admitted observation is `MissingValuation`.
+            let absent = u64::try_from(atom.index())
+                .is_ok_and(|atom| self.absent.contains(&(position.index(), atom)));
+            if absent {
+                return Ok(Valuation::Missing);
+            }
             return self.read_aggregate(atom, position, meter, visit);
         }
         self.valuation(atom, position, meter)
@@ -1137,12 +1158,18 @@ impl ObservedLetters<'_> {
         meter: &mut Meter,
         visit: &mut dyn FnMut(&mut Meter) -> Result<(), LetterStop>,
     ) -> Result<Valuation, LetterStop> {
-        let stop = |code: &'static str| {
-            LetterStop::Fault(InternalFault::new("temporal.observed", code))
-        };
-        let (ObservedPositions::Samples(samples), Some(windows)) =
-            (self.positions, self.windows.as_ref())
-        else {
+        let stop =
+            |code: &'static str| LetterStop::Fault(InternalFault::new("temporal.observed", code));
+        let (Some(windows), Some(samples)) = (
+            self.windows.as_ref(),
+            match self.positions {
+                ObservedPositions::Samples(samples) => {
+                    Some(observed_aggregate::Held::Listed(samples))
+                }
+                ObservedPositions::Tape(tape) => Some(observed_aggregate::Held::Tape(tape)),
+                ObservedPositions::Objects { .. } | ObservedPositions::ObjectTape { .. } => None,
+            },
+        ) else {
             return Err(stop("aggregate-reads-samples-with-a-stamped-trace"));
         };
         let expressions = self
