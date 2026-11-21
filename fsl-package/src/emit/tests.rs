@@ -3393,7 +3393,7 @@ fn reference_equalities_require_the_admitted_witness_for_projection() {
 
     for (comparison, expected) in [
         ("=", EqualityOperator::Equal),
-        ("<>", EqualityOperator::NotEqual),
+        ("!=", EqualityOperator::NotEqual),
     ] {
         let unit = spine_model_without(&[FIELD_ACCESS, CONFORMING_EQUALITY])
             + &format!(

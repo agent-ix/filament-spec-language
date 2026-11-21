@@ -178,11 +178,11 @@ fn package_receive_fifo_preserves_key_partition_and_head_blocking() {
         let distinct = matches!(name, "ne-distinct-reference" | "eq-distinct-reference");
         let mut second = receive_fifo_send("Second", "sentTwo", second_key);
         if distinct {
-            second = second.replace("sentTwo.target = k", "sentTwo.target <> k");
+            second = second.replace("sentTwo.target = k", "sentTwo.target != k");
         }
         let receive = match name {
-            "ne-same-reference" => "got.ok and not (got.target <> k)",
-            "ne-distinct-reference" => "got.ok and got.target <> k",
+            "ne-same-reference" => "got.ok and not (got.target != k)",
+            "ne-distinct-reference" => "got.ok and got.target != k",
             "eq-distinct-reference" => "got.ok and got.target = k",
             _ => "got.ok",
         };
