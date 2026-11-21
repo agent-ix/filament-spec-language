@@ -148,6 +148,11 @@ fn admitted_source(source: &str, slot: ValueType) -> Result<Value, AdmissionReco
         completeness: BTreeMap::new(),
         unresolved: Vec::new(),
         clock_references: Vec::new(),
+        population_nodes: BTreeMap::new(),
+        origins: Vec::new(),
+        unavailable_origins: Vec::new(),
+        parameter_origins: BTreeMap::new(),
+        result_origins: ReferenceOrigins::default(),
         record_keys: None,
         variant_keys: None,
     };

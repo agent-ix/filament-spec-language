@@ -2006,6 +2006,22 @@ pub(super) fn bind_clause<'a>(
             }])
             .with_locus(fsl_semantics::model::object_environment::ReferenceOriginLocus::Receiver);
     }
+    let mut remaining = parameters.get(1..).unwrap_or(&[]).iter();
+    let mut index = 1;
+    if binds_result {
+        remaining.next();
+        reference_origins[index] = observations.value_origins.result.clone();
+        index += 1;
+    }
+    for name in remaining {
+        reference_origins[index] = observations
+            .value_origins
+            .parameters
+            .get(name)
+            .cloned()
+            .unwrap_or_default();
+        index += 1;
+    }
     let pre = observations
         .pre
         .as_ref()
