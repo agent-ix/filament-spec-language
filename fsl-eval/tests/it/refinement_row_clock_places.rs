@@ -275,25 +275,29 @@ fn clock_reference_fixture_variant(
         rows.to_owned()
     };
     let selected = if remove_x { "y" } else { "x" };
-    let body = format!("profile p = \"filament.protocol.finite-global/v1\";\n\
-        {}\n\
+    let body = format!("{}\n\
         protocol ClockPlaces using p over (call: C::Call) on each (opened: Boolean) when (opened) {{\n\
           capture chosen: Reference<Clock> = ref(call.{selected});\n\
           role Observer on C::Call;\n\
           run sequence Main {{ check Ready using v {{ true }}; }}\n\
           finish End as (outcome: Boolean) {{ true }};\n\
         }}", clock_refinement(&rows));
-    ring_queue::check_models(&queue, ("C", CLOCKS, &calls), true, &body).unwrap_or_else(
-        |refusals| {
-            panic!(
-                "reference-field rows check: {:?}",
-                refusals
-                    .iter()
-                    .map(|found| &found.refusal)
-                    .collect::<Vec<_>>()
-            )
-        },
+    ring_queue::check_models_with_profiles(
+        &queue,
+        ("C", CLOCKS, &calls),
+        true,
+        "profile p = \"filament.protocol.finite-global/v1\";\n",
+        &body,
     )
+    .unwrap_or_else(|refusals| {
+        panic!(
+            "reference-field rows check: {:?}",
+            refusals
+                .iter()
+                .map(|found| &found.refusal)
+                .collect::<Vec<_>>()
+        )
+    })
 }
 
 /// A stored clock reference is ordinary data: the population count reads the
