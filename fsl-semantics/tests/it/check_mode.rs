@@ -294,8 +294,9 @@ fn a_count_range_in_a_state_clause_refuses_under_both_modes() {
         );
     }
     kernel_drops(
-        "function f using v(q: Sequence<Integer>[0, 1]): Int[0, 0] pure { \
-         count<Int[0, 0]>(m in q: m >= 0) }",
+        "type Zero = Int[0, 0];\n\
+         function f using v(q: Sequence<Integer>[0, 1]): Zero pure { \
+         count<Zero>(m in q: m >= 0) }",
         |found| matches!(found, Obligation::Range { .. }),
     );
 }
