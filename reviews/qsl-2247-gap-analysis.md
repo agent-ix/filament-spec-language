@@ -76,3 +76,32 @@ Round 1 — head c410fe3190700371f7a5dc2c5da261e90c7ea938, matrix recomputed wit
 | ------- | -------- | ------- | ---- |
 | FND-007 | medium | FR-1030-AC-1 and FR-1020-AC-1 are now `tagged-by-ignored-test`: their only binder, `a_step_for_step_refinement_transfers_previous_and_interval_clauses_proved`, is `#[ignore]`d because no core checker certifies TP-3 past/interval forms. Arch ruling A keeps certifying them in scope on QSL-2247, which stays open. Both ACs are unmet on this PR; the expected disposition is `deferred: QSL-2247 remaining scope (ruling A)`, and the ticket must not be closed. | tests/it/plan_export_surface.rs:1634-1641 |
 | FND-008 | medium | The negative oracles are too weak to catch the regressions they guard. PrevSafe and SoonTwo (plan_export_surface.rs:1703) and StuckTwo (1858) assert only `cause.result != "proved"`, not the typed outcome ruling A requires (`failed` for the uncertifiable TP-3 premise, `unsupported` from `ClosureStutterLoop`). No test feeds `check_components_over_stutter_closure` a component certificate that is valid over the plain graph but not over the closure (e.g. `Trivial` at a non-terminal state). Reverting code-review FND-002's checker to plain-graph checking would still pass every test, because EventuallyTwo stays `certified` either way. | tests/it/plan_export_surface.rs:1696-1704, 1830-1859; fsl-replay/src/certificate/closure.rs:322-341 |
+
+## Dispositions (round 2)
+
+Round 2: final head d4aeb3439e7b741b0ba8ce1828f385e667d32ae2 on bd669ebc46820921e04413e124f51605798c5b6c. Measured c410 runtime: 201 pass, 7 fail, 1 ignored. The root admit failure is addressed in source (code-review FND-019). Three analyze failures (the CX1 and timed oldHolds cases) are old-parent ones that the restack absorbs. Three others (lasso_replay authored-letter and liveness undefined-letter, both CanInc `Unproved(Nonzero)`, and TSO `false_liveness_cut_store`) have neither a measured baseline nor any source path through this PR's changes, which apply only when `stutter_closure` is true or a loop is all closure stutters. They stay unqualified, not green. The d4aeb focused batch is pending.
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-002 | fixed | The fixture declares `profile ev` and `BoundedTwo using ev`. The refusal test asserts stage `select`, `type-mismatch` at `/refinement_transfer/clauses/0` naming `event-position` (plan_export_surface.rs:2063-2074). Runtime pending. |
+| FND-004 | fixed | Each missing case now has a test. `an_unimplied_clause_fairness_is_not_preserving` asserts `reason: fairness` with `fairness.implied` false. `an_any_arm_refinement_is_not_step_for_step` uses the new `ThirdAnyRefinesSpec` and asserts row `Third::Counter::inc` with arm `any`. Command unit tests on `step_for_step_value` write `time: dense` before any row is read, with a row closure that panics if read (transfer.rs:986-1018). Runtime pending, including whether the added fixture refinement checks. |
+| FND-007 | deferred | QSL-2247 remaining scope under arch ruling A. Certifying TP-3 past/interval forms is open work; FR-1030-AC-1 and FR-1020-AC-1 stay bound only by the `#[ignore]`d test, which is open work, not completion. QSL-2247 must stay open. |
+| FND-008 | fixed | PrevSafe and SoonTwo assert exact `failed` in both `cause.result` and `slots[1].value` (plan_export_surface.rs:1711-1712), and StuckTwo exact `unsupported` (1927-1928). `a_certificate_valid_only_over_the_plain_graph_is_rejected_over_the_stutter_closure` (fsl-analyze/tests/it/liveness.rs:413) takes a certificate that `certified()` asserts the plain checker accepts and requires `check_components_over_stutter_closure` to return `Rejected`. Reverting code-review FND-002's closure edge would make this test fail. |
+
+## New findings (disposition pass 2)
+
+| ID      | Severity | Summary | Refs |
+| ------- | -------- | ------- | ---- |
+| FND-009 | low | Trace overreach: `an_unimplied_clause_fairness_is_not_preserving` is tagged `FR-1030-AC-4` ("the liveness clause … over the abstract stutter closure … transfers through CasRefinesCounter proved"). It asserts none of that; it covers FSpec FR-820 rule 2 only, and its FSpec-FR-820-AC-4 tag is the correct one. | tests/it/plan_export_surface.rs:1858-1862 |
+
+## Dispositions (round 3)
+
+Round 3: head 9ae17da354abebc355818a6fd9ffd55c2d422da6. Scope is GA009 only. Runtime pending.
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-009 | fixed | `#[trace("TC-2920", "FR-1030-AC-4")]` is removed from `an_unimplied_clause_fairness_is_not_preserving`, which keeps `FSpec-FR-820-AC-4` (plan_export_surface.rs:1859-1861). FR-1030-AC-4 is still bound by the three closure tests (plan_export_surface.rs:1831, 1910, 1935). |
+
+## Dispositions (round 4)
+
+Round 4: head e859e681ce37b0b9192771411909073b0055aa9e. The commit touches only fsl-command/src/command.rs and export.rs (CR018). Nothing open in this artifact; no new findings.

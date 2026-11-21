@@ -42,3 +42,15 @@ Round 1 — head c410fe3190700371f7a5dc2c5da261e90c7ea938.
 | FND | outcome | reason |
 | --- | --- | --- |
 | FND-001 | fixed | FR-1030-AC-5 now requires `premise-unproved` naming slot 1 with `result` `refuted` and the slot's own record showing `refuted`. A refuted result needs a replayed terminal-stutter counterexample, which pins the witness the ruling names. |
+
+## Dispositions (round 2)
+
+Round 2: head d4aeb3439e7b741b0ba8ce1828f385e667d32ae2. No finding is open (FND-001 was fixed in round 1). The new FR-1030 Behavior bullet (FR-1030:133-141) states the current typed outcomes (`failed` for an uncertifiable TP-3 premise, `unsupported` `ClosureStutterLoop`) and cites the rulings. It is consistent with FR-1030-AC-5 and does not narrow AC-1, which stays open under ruling A. No new findings.
+
+## Dispositions (round 3)
+
+Round 3: head 9ae17da354abebc355818a6fd9ffd55c2d422da6. The mechanical commit touches no spec file. Nothing open; no new findings.
+
+## Dispositions (round 4)
+
+Round 4: head e859e681ce37b0b9192771411909073b0055aa9e. The commit touches only fsl-command/src/command.rs and export.rs (CR018). Nothing open in this artifact; no new findings.

@@ -89,3 +89,43 @@ Round 1 — fix commit c410fe3190700371f7a5dc2c5da261e90c7ea938 on eec1d1c35d, b
 | FND-015 | high | Duplication (P0, missed by the review pass). `fairness_implies` in fsl-command re-implements FSpec FR-380 "Fairness implication", which `fsl_replay::planner::declaration::strength_implies` already implements and `EnvSupplies::implies` and `compose.rs` reuse (strong implies weak or strong; equal granularity or `whole` from `each`). A fix to either copy silently misses the other. Expose and reuse `strength_implies`. | fsl-command/src/command/transfer.rs:777-788; fsl-replay/src/planner/declaration.rs:306-322 |
 | FND-016 | low | A test comment states the defect the fix removed. "The closure checker never sees the stutter closure, so the premise is never certified" sits directly above `assert_eq!(…["certification"], "certified")`, so it contradicts the assertion. | tests/it/plan_export_surface.rs:1835-1837 |
 | FND-017 | low | The export-route conflict names only `export`: `transfer_conflict(&["export"])`. FR-1031 row 1 requires naming every selection member present, so `export` + `call` + `refinement_transfer` omits `call`. | fsl-command/src/command/export.rs:140-143 |
+
+## Dispositions (round 2)
+
+Round 2: final head d4aeb3439e7b741b0ba8ce1828f385e667d32ae2, three commits on merged main bd669ebc46820921e04413e124f51605798c5b6c. `git range-diff` maps ed3f278e4e..dcc4e6769f onto bd669ebc46..d4aeb3439e as `=` for all three commits, so there were no integration edits. Outcomes rest on source evidence. Runtime for d4aeb is pending.
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-011 | accepted-no-change | Arch CR011 ruling (QSL-2247 comments 383735f6/a0a8e5ac, lead steering): accepted for this PR. A loop made only of closure stutters settles typed `unsupported` (`ClosureStutterLoop`), which is sound and incomplete. FR-1030 Behavior (FR-1030:133-141) now states the current result and cause name and cites the rulings. An empty loop no longer counts as one (liveness.rs:2705-2709). Closure-only lasso witness and replay remain open scope on QSL-2247. |
+| FND-014 | still-open | The import churn is reverted (command.rs:25-32, plan_export_surface.rs:9-11) and the fix-1 hunks are formatted. Fix 2 adds one more unformatted line: fsl-replay/src/lib.rs:165 is 149 columns (`check_protocol_closure, … ProductStateRef,`), and rustfmt rewraps it under either style edition. |
+| FND-015 | fixed | `strength_implies` is now `pub` and re-exported (planner/declaration.rs:311, planner.rs:49-51). The command keeps only the operation match and calls it, so there is no second copy of the kind/granularity rule. |
+| FND-016 | fixed | The comment now matches the `certified` assertion (plan_export_surface.rs:1851). |
+| FND-017 | fixed | The export conflict names `export` plus every member of `TRANSFER_EXCLUSIVE` present in the body (export.rs:142-149). |
+
+## New findings (disposition pass 2)
+
+| ID      | Severity | Summary | Refs |
+| ------- | -------- | ------- | ---- |
+| FND-018 | high | Duplication (P0): FR-1031 row 1's exclusive member set is now stated twice in one file. `TRANSFER_EXCLUSIVE` (command.rs:4016-4026, 9 names) feeds the export route; a separate `(name, is_present)` array (command.rs:4034-4043, 8 names) feeds `refuse_transfer_selection_conflict`. They already differ: `export_evidence` is in the first only. A member added to one list silently misses the other route. Derive one list from the other. | fsl-command/src/command.rs:4016-4043 |
+| FND-019 | medium | Recorded from c410 runtime evidence: the round-1 admission fix (FND-005) did not hold. `ModelSystem::new` admits over every selected model, so a Third snapshot given as `abstract.initial` passed and the transfer settled exit 22 instead of 20 (plan_export_surface.rs:2043). It is already addressed in d4aeb: `ModelSystem::over_model(request, <subject model identity>)` (transfer.rs:561), main's existing FR-106 entry, runs before any analyze call. | fsl-command/src/command/transfer.rs:529-586 |
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-019 | fixed | Each subject is admitted by main's shared `ModelSystem::over_model` over the refinement's own model selection (transfer.rs:531-545, 561). That refuses a universe of another model's population at stage `admit` before any engine runs. No copied validator. Runtime confirmation of `/refinement_transfer/abstract/initial/0` is pending. |
+
+## Dispositions (round 3)
+
+Round 3: head 9ae17da354abebc355818a6fd9ffd55c2d422da6, one arch-authorized mechanical commit on d4aeb3439e; base bd669ebc46820921e04413e124f51605798c5b6c. Scope is CR018 and CR014 only. Runtime for 9ae17da is pending.
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-014 | fixed | The `pub use certificate::closure::{…}` list is rewrapped; every line is now at most 96 columns (fsl-replay/src/lib.rs:163-168). rustfmt would still refill it to three lines, but the repository has no rustfmt config and main's own lib.rs reports 10 rustfmt diffs, so no fmt gate exists to fail. |
+| FND-018 | still-open | The duplicate `(name, is_present)` array is gone, and both routes now iterate `TRANSFER_EXCLUSIVE`, which includes `export_evidence`. The member set is still written twice: in the const (command.rs:4016-4026, 9 names) and in `transfer_member_present`'s match arms (command.rs:4044-4058, 8 names plus `_ => false`). The wildcard makes a miss silent. Smallest failure: add a new typed selection member to `TRANSFER_EXCLUSIVE` without a match arm, and `refinement_transfer` plus that member is refused on the export route but runs without refusal on the typed route. That is the divergence FND-018 named. Fix: one table, `[(&str, fn(&wire::Request) -> bool); N]`, with `export_evidence`'s `|_| false` on its own documented row; the export route reads `.0`; no wildcard. |
+
+## Dispositions (round 4)
+
+Round 4: head e859e681ce37b0b9192771411909073b0055aa9e, one commit on 9ae17da354; base bd669ebc46820921e04413e124f51605798c5b6c. Scope is CR018 only. Runtime for e859 is queued; d4aeb measured 66 pass, 0 fail, 1 authorized TP-3 ignore.
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-018 | fixed | `TRANSFER_EXCLUSIVE` is now one table, `[(&str, fn(&wire::Request) -> bool); 9]`, holding each name with its typed presence; `export_evidence` is an explicit documented `|_| false` row (command.rs:4014-4028). The typed route filters by the row predicate (command.rs:4036-4039). The export route reads the row names against the body keys (export.rs:142-150). `transfer_member_present`, its string match and the wildcard are removed, and no other name list remains (grep: the table's only users are command.rs:4036 and export.rs:144). A new member now means one row. Not compile-checked by the coder; the e859 batch will compile it. |

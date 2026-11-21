@@ -49,3 +49,15 @@ Round 1 — head c410fe3190700371f7a5dc2c5da261e90c7ea938. Arch ruling A (draco:
 | FND-001 | fixed | FR-1020-AC-1 now names `always (holds(c.value = 1) implies once[1,1] holds(c.value = 0))` and cites the 2026-11-20 ruling and FR-1030-AC-5. The external FSpec FR-380-AC-9 and TC-1042 correction is reported merged in FSpec PR 782 (lead steering; not measured by this reviewer, and no pin bump). |
 | FND-002 | rejected | Arch ruling A holds that the FR-127 / ADR-018 V-1 and RU-6 certificate requirement stands. A refused check settles under FR-127's existing `failed` row and there is no checker-absent `Proved`, so no new row is required. The unmet FR-1030-AC-1 is tracked as gap FND-007. |
 | FND-003 | fixed | FR-1030 Inputs and FR-1031 row 1 now list `tl_lowering`, `model_based_test`, `verification_plan` and `package` beside the original members, matching `refuse_transfer_selection_conflict`. |
+
+## Dispositions (round 2)
+
+Round 2: head d4aeb3439e7b741b0ba8ce1828f385e667d32ae2. No finding is open. The FR-1030 Behavior bullet added in fix 2 agrees with FR-127 and ADR-018 V-1/RU-6 (no checker-absent `proved`) and with the CR011 ruling. FR-1030-AC-1 stays the unmet target rather than being rewritten to fit the code. No new findings.
+
+## Dispositions (round 3)
+
+Round 3: head 9ae17da354abebc355818a6fd9ffd55c2d422da6. The mechanical commit touches no spec file. Nothing open; no new findings.
+
+## Dispositions (round 4)
+
+Round 4: head e859e681ce37b0b9192771411909073b0055aa9e. The commit touches only fsl-command/src/command.rs and export.rs (CR018). Nothing open in this artifact; no new findings.
