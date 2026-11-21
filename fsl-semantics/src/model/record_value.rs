@@ -5,7 +5,7 @@
     reason = "cold refusal path; ModelRefusalCause carries DeclarationKeys inline for typed model-admission failures"
 )]
 
-use crate::model::intake::read_record_value_type;
+use crate::model::intake::{read_record_value_type, OperationNames};
 use crate::model::normalize::ModelRefusal;
 
 use super::meaning_dispatch::MeaningBindingContext;
@@ -18,6 +18,7 @@ pub(super) fn bind(context: &mut MeaningBindingContext<'_, '_>) -> Result<(), Mo
         context.at,
         context.meanings_by_node,
         context.records,
+        OperationNames::OwnerRefuses,
         context.pending,
     )
 }

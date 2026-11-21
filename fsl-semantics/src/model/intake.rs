@@ -2946,6 +2946,16 @@ fn read_type_identity(
     Ok(("", declaration_key(package, identity)))
 }
 
+/// Whether an owner's operation names are validated at intake.
+#[derive(Clone, Copy, Eq, PartialEq)]
+pub(super) enum OperationNames {
+    /// Operation and parameter names are validated while the owner is read.
+    Validated,
+    /// The owner admits no operations; normalization refuses each operation
+    /// with the owner refusal, which precedes any name refusal.
+    OwnerRefuses,
+}
+
 /// The name an operation's contract clauses give its result; no parameter
 /// takes it.
 const RESULT_PARAMETER: &str = "result";
@@ -2993,17 +3003,20 @@ fn read_operation_parameter(
     owner_identity: &str,
     param: &Value,
     at: &str,
+    names: OperationNames,
 ) -> Result<OperationParameterRecord, ModelRefusal> {
     let ctx = NodeCtx::new(param, at);
     let node = ctx.str_field("identity")?;
-    if member_identity_name(owner_identity, node).is_none() {
+    let Some(tail) = member_identity_name(owner_identity, node) else {
         return Err(ctx.malformed_in(
             "identity",
             format!("{node:?} is not {owner_identity}/<name>"),
         ));
-    }
-    let tail = member_identity_name(owner_identity, node).unwrap_or_default();
-    if let Some(name) = ctx.opt_str_field("name") {
+    };
+    let declared_name = ctx
+        .opt_str_field("name")
+        .filter(|_| names == OperationNames::Validated);
+    if let Some(name) = declared_name {
         if name != tail {
             return Err(ctx.malformed_in(
                 "name",
@@ -3166,6 +3179,7 @@ pub(super) fn read_operation_member(
     operation: &Value,
     at: &str,
     receiver: OperationReceiver,
+    names: OperationNames,
     pending: &mut Vec<PendingFrame>,
 ) -> Result<OperationMemberRecord, ModelRefusal> {
     let ctx = NodeCtx::new(operation, at);
@@ -3182,7 +3196,13 @@ pub(super) fn read_operation_member(
         .iter()
         .enumerate()
         .map(|(position, param)| {
-            read_operation_parameter(package, node, param, &format!("{params_at}[{position}]"))
+            read_operation_parameter(
+                package,
+                node,
+                param,
+                &format!("{params_at}[{position}]"),
+                names,
+            )
         })
         .collect::<Result<Vec<_>, _>>()?;
     let result = match operation.get("returns") {
@@ -3426,6 +3446,7 @@ pub(super) fn read_persistence_interface(
             operation,
             &operation_at,
             OperationReceiver::NoObject,
+            OperationNames::Validated,
             pending,
         )?));
     }
@@ -4039,6 +4060,7 @@ pub(super) fn read_object_type(
             operation,
             &format!("{operations_at}[{position}]"),
             receiver,
+            OperationNames::Validated,
             pending,
         )?));
     }
@@ -4086,6 +4108,7 @@ pub(super) fn read_record_value_type(
     at: &str,
     type_meanings: &HashMap<&str, &str>,
     records: &mut Vec<DomainPackageRecord>,
+    names: OperationNames,
     pending: &mut Vec<PendingFrame>,
 ) -> Result<(), ModelRefusal> {
     let ctx = NodeCtx::new(type_value, at);
@@ -4136,6 +4159,9 @@ pub(super) fn read_record_value_type(
     }
     let operations_at = format!("{at}.operations");
     let operations = ctx.array_field("operations")?;
+    if names == OperationNames::Validated {
+        refuse_repeated_operation_name(package, operations, &operations_at)?;
+    }
     for (position, operation) in operations.iter().enumerate() {
         records.push(DomainPackageRecord::OperationMember(read_operation_member(
             package,
@@ -4143,6 +4169,7 @@ pub(super) fn read_record_value_type(
             operation,
             &format!("{operations_at}[{position}]"),
             OperationReceiver::NoObject,
+            names,
             pending,
         )?));
     }
@@ -6899,7 +6926,8 @@ pub(crate) fn refusal_node(refusal: &ModelRefusal) -> Option<&str> {
         | ModelRefusalCause::UnpreservedModelMeaning { node, .. }
         | ModelRefusalCause::IntakeMissingDeclaration { node, .. }
         | ModelRefusalCause::UnsupportedDeclarationForm { node, .. } => Some(node),
-        ModelRefusalCause::ConflictingBinding { key, .. } => Some(&key.node),
+        ModelRefusalCause::ConflictingBinding { key, .. }
+        | ModelRefusalCause::AmbiguousName { key, .. } => Some(&key.node),
         _ => None,
     }
 }
@@ -8256,6 +8284,7 @@ mod tests {
                 &operation,
                 "$.types[0].operations[0]",
                 OperationReceiver::Object,
+                OperationNames::Validated,
                 &mut pending,
             )
             .expect_err("a malformed frame member refuses");
@@ -9836,6 +9865,7 @@ mod tests {
                 ("ix://acme/orders/Placed", meaning::PERSISTENCE_INTERFACE),
             ]),
             &mut records,
+            OperationNames::OwnerRefuses,
             &mut Vec::new(),
         )
         .map(|()| records)
