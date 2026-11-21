@@ -362,12 +362,13 @@ AC below stays as written and open on QSL-2739.
   composition term's slots or component packages. A request with no `items`
   is settled whole as unsupported at the request stage, category
   `unsupported`, `unsupported_construct`/`not-yet-implemented` naming the
-  `composition` rule, exit 21, with no item. An item whose name stays unresolved after
-  ordinary claim, declaration and model-alias resolution, which includes a
-  composition's name, is settled the same way naming the `unnamed-claim`
-  family, never as `unknown-claim`, because the package carries no name row
-  for a composition. A name an ordinary row carries resolves as usual, a
-  non-claim declaration name is refused as `declaration`, and a derived item
+  `composition` rule, exit 21, with no item. The package carries a composition's
+  declaration name row, so an item naming it is settled the same way naming
+  the `declaration` family. An item whose name stays unresolved after ordinary
+  claim, declaration and model-alias resolution is settled as the
+  `unnamed-claim` family, never as `unknown-claim`. A name an ordinary row
+  carries resolves as usual, a non-claim declaration name is refused as
+  `declaration`, and a derived item
   whose model name does not match settles `model-alias`. These typed results
   are public; the source/package parity of AC-10 stays open and is deferred to the
   package-consumer API lane, which owns the package form.

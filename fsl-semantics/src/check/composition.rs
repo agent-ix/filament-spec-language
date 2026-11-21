@@ -45,7 +45,7 @@ use super::guarantee::{
 use super::lowering::SemanticNode;
 use super::node_key::{
     ClauseEntry, ComponentEntry, CompositionRule, CompositionTerm, EnvironmentEntry, NodeRef,
-    PremiseEntry, SuppliesEntry, SupplyEntry,
+    PremiseEntry, SourceOwner, SuppliesEntry, SupplyEntry,
 };
 use super::CheckedGraph;
 
@@ -304,6 +304,7 @@ pub struct CompositionCycle {
 #[derive(Clone, Debug, PartialEq)]
 pub struct CheckedComposition {
     name: String,
+    owner: SourceOwner,
     key: NodeKey,
     package: String,
     rule: CompositionRule,
@@ -683,7 +684,12 @@ impl CheckedComposition {
             name: declaration_origin(&self.name),
         });
         (
-            SemanticNode::component_composition(self.key.clone(), self.term()),
+            SemanticNode::component_composition(
+                self.key.clone(),
+                &self.name,
+                self.owner.clone(),
+                self.term(),
+            ),
             location,
         )
     }
@@ -691,44 +697,71 @@ impl CheckedComposition {
     /// The term the composition node's body is (FSpec FR-491 "Checked-package
     /// node"), its arrays in canonical order.
     pub fn term(&self) -> CompositionTerm {
+        self.term_and_member_spans().0
+    }
+
+    /// Exact authored spans in the canonical body-array concatenation order
+    /// used by generated occurrence ordinals (FSpec FR-491).
+    pub(super) fn canonical_member_spans(&self) -> Vec<Span> {
+        self.term_and_member_spans().1
+    }
+
+    fn term_and_member_spans(&self) -> (CompositionTerm, Vec<Span>) {
         let clause = |reference: &ClauseRef| {
             ClauseEntry::new(reference.component.clone(), reference.node.clone())
         };
         let premise = |premise: &CompositionPremise| {
             PremiseEntry::new(clause(&premise.guarantee), clause(&premise.on))
         };
-        CompositionTerm::new(
-            self.rule,
-            self.components
-                .iter()
-                .map(|component| {
+        let mut components: Vec<_> = self
+            .components
+            .iter()
+            .map(|component| {
+                (
                     ComponentEntry::new(
                         component.name.clone(),
                         component.subject.package.clone(),
                         component.subject_node.clone(),
-                    )
-                })
-                .collect(),
-            self.guarantees
-                .iter()
-                .map(|member| clause(&member.reference))
-                .collect(),
-            self.relies.iter().map(premise).collect(),
-            self.liveness_dependencies.iter().map(premise).collect(),
-            self.supplies
-                .iter()
-                .map(|supply| {
+                    ),
+                    component.source,
+                )
+            })
+            .collect();
+        let mut guarantees: Vec<_> = self
+            .guarantees
+            .iter()
+            .map(|member| (clause(&member.reference), member.source))
+            .collect();
+        let mut relies: Vec<_> = self
+            .relies
+            .iter()
+            .map(|member| (premise(member), member.source))
+            .collect();
+        let mut liveness_dependencies: Vec<_> = self
+            .liveness_dependencies
+            .iter()
+            .map(|member| (premise(member), member.source))
+            .collect();
+        let mut supplies: Vec<_> = self
+            .supplies
+            .iter()
+            .map(|supply| {
+                (
                     SupplyEntry::new(
                         kind_spelling(supply.kind).to_owned(),
                         granularity_spelling(supply.granularity).to_owned(),
                         supply.context.clone(),
                         supply.operation.as_str().to_owned(),
-                    )
-                })
-                .collect(),
-            self.environment
-                .iter()
-                .map(|member| {
+                    ),
+                    supply.source,
+                )
+            })
+            .collect();
+        let mut environment: Vec<_> = self
+            .environment
+            .iter()
+            .map(|member| {
+                (
                     EnvironmentEntry::new(
                         member.name.as_str().to_owned(),
                         member.supplier.clone(),
@@ -748,10 +781,38 @@ impl CheckedComposition {
                                 SuppliesEntry::Assumption(NodeRef::Admitted(node.clone()))
                             }
                         },
-                    )
+                    ),
+                    member.source,
+                )
+            })
+            .collect();
+        components.sort_by(|(left, _), (right, _)| left.name().cmp(right.name()));
+        guarantees.sort_by(|(left, _), (right, _)| left.sort_key().cmp(&right.sort_key()));
+        relies.sort_by(|(left, _), (right, _)| left.sort_key().cmp(&right.sort_key()));
+        liveness_dependencies
+            .sort_by(|(left, _), (right, _)| left.sort_key().cmp(&right.sort_key()));
+        supplies.sort_by(|(left, _), (right, _)| left.sort_key().cmp(&right.sort_key()));
+        environment.sort_by(|(left, _), (right, _)| left.name().cmp(right.name()));
+        let mut spans = Vec::new();
+        fn entries<T>(pairs: Vec<(T, Span)>, spans: &mut Vec<Span>) -> Vec<T> {
+            pairs
+                .into_iter()
+                .map(|(entry, span)| {
+                    spans.push(span);
+                    entry
                 })
-                .collect(),
-        )
+                .collect()
+        }
+        let term = CompositionTerm::from_wire(
+            self.rule,
+            entries(components, &mut spans),
+            entries(guarantees, &mut spans),
+            entries(relies, &mut spans),
+            entries(liveness_dependencies, &mut spans),
+            entries(supplies, &mut spans),
+            entries(environment, &mut spans),
+        );
+        (term, spans)
     }
 }
 
@@ -1184,14 +1245,7 @@ impl CheckedGraph {
 
     /// The structural key of the node of the composition named `name`.
     pub(super) fn composition_node_key(&self, name: &str) -> Option<NodeKey> {
-        super::derived_node_key(
-            self.package_name(),
-            super::node_key::NodeTag::Correspondence,
-            "component_composition",
-            vec![filament_exact::PathSegment::Text(name.to_owned())],
-            0,
-        )
-        .ok()
+        super::declared_node_key(self.package_name().to_owned(), vec![name.to_owned()], 0).ok()
     }
 
     fn check_composition(
@@ -1428,6 +1482,11 @@ impl CheckedGraph {
             .sort_by(|left, right| left.reference.cmp(&right.reference));
         let cycles = members.cycles();
         CheckedComposition {
+            owner: SourceOwner::from(
+                self.source_owners
+                    .get(&declaration_origin(&name))
+                    .unwrap_or(&self.source),
+            ),
             name,
             key,
             package: self.package_name().to_owned(),

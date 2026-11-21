@@ -1798,12 +1798,13 @@ impl BodyNames {
 /// it at.
 type Recorded<'g> = Vec<(CheckedOccurrence, RecordedLocation<'g>)>;
 
-/// Parameters retain their own source regions; expression sites use the
-/// expression-location converter. An unlocated parameter never takes its
-/// enclosing body's region.
+/// Parameters and composition members retain their own source regions;
+/// expression sites use the expression-location converter. An unlocated
+/// member never takes its enclosing declaration's region.
 enum RecordedLocation<'g> {
     Expression(&'g Location),
     Parameter(Option<SourceRegion>),
+    Captured(SourceRegion),
 }
 
 /// One checked node, read for the wire.
@@ -1911,8 +1912,9 @@ impl<'g> Candidate<'g> {
 
     /// FR-322's declaration rule, as IR applies it: `declaration` is absent
     /// on an `expression`, `relation`, `state`, `temporal` or
-    /// `correspondence` node and on a `value`/`enum_value` node, and on every
-    /// other node present exactly when it has a `declaration` occurrence.
+    /// `correspondence` node other than `component_composition`, and on a
+    /// `value`/`enum_value` node; on eligible nodes it is present exactly
+    /// when the node has a `declaration` occurrence.
     fn declaration_matches_occurrences(&self) -> bool {
         // The `EnumValue` arm is not distinguished by any fixture today:
         // occurrence-recording never attaches a `Declaration`-role
@@ -1931,11 +1933,12 @@ impl<'g> Candidate<'g> {
                 | CheckedNodeTag::Relation
                 | CheckedNodeTag::State
                 | CheckedNodeTag::Temporal
-                | CheckedNodeTag::Correspondence
-        ) || matches!(
-            CheckedNodeKind::decode(self.tag, self.node.semantic_form()),
-            Some(CheckedNodeKind::Value(ValueForm::EnumValue))
-        );
+        ) || (self.tag == CheckedNodeTag::Correspondence
+            && self.node.semantic_form() != "component_composition")
+            || matches!(
+                CheckedNodeKind::decode(self.tag, self.node.semantic_form()),
+                Some(CheckedNodeKind::Value(ValueForm::EnumValue))
+            );
         let declared = !forced_absent
             && self
                 .occurrences
@@ -1974,7 +1977,7 @@ impl<'g> Candidate<'g> {
                     ExpressionOwner::Body { index, .. } => Some(*index),
                     _ => None,
                 },
-                RecordedLocation::Parameter(_) => None,
+                RecordedLocation::Parameter(_) | RecordedLocation::Captured(_) => None,
             });
         let mode = function_modes(index, &self.key)
             .ok_or_else(|| encoding("a function node has no recorded check mode"))?;
@@ -4850,6 +4853,7 @@ fn source_map(
             let region = match location {
                 RecordedLocation::Expression(location) => regions(location),
                 RecordedLocation::Parameter(region) => region.clone(),
+                RecordedLocation::Captured(region) => Some(region.clone()),
             }
             .filter(|region| region.start() < region.end())
             .ok_or_else(|| EmitRefusal::UnlocatedOccurrence {
@@ -6840,16 +6844,31 @@ fn candidates_of<'g>(
             add(node, generated)?;
         }
     }
-    // FSpec FR-490: a guarantee node has one
-    // `declaration` occurrence, at its declaration.
+    // FSpec FR-490/491: these nodes have one declaration occurrence.
+    // Composition members additionally retain their own authored regions,
+    // numbered in canonical body-array order.
     for (node, location) in declared_forms {
-        let declared = vec![(
+        let mut declared = vec![(
             CheckedOccurrence {
                 role: CheckedOccurrenceRole::Declaration,
                 ordinal: 0,
             },
             RecordedLocation::Expression(location),
         )];
+        if node.semantic_form() == "component_composition" {
+            let regions = graph
+                .composition_member_regions(&node.key())
+                .ok_or(EmitRefusal::SourceMapInvariant)?;
+            declared.extend((0_u64..).zip(regions).map(|(ordinal, region)| {
+                (
+                    CheckedOccurrence {
+                        role: CheckedOccurrenceRole::Generated,
+                        ordinal,
+                    },
+                    RecordedLocation::Captured(region),
+                )
+            }));
+        }
         let candidate = Candidate::of(ids, foreign, &local, node, declared)?;
         let at = candidates.partition_point(|existing| existing.key < candidate.key);
         candidates.insert(at, candidate);
@@ -8925,11 +8944,13 @@ fn validate_temporal_clock(
 }
 
 /// Whether `node` is claim-bearing (FSpec FR-322 "Claim declaration names"):
-/// a `state`/`state_clause`, `relation`/`refinement` or `claim` node.
+/// a `state`/`state_clause`, `relation`/`refinement`,
+/// `correspondence`/`component_composition` or `claim` node.
 fn claim_bearing(node: &CheckedSemanticNodeV2) -> bool {
     let (tag, form) = (node.node_tag.as_ref(), node.semantic_form.as_ref());
     (tag == CheckedNodeTag::State.as_wire() && form == "state_clause")
         || (tag == CheckedNodeTag::Relation.as_wire() && form == "refinement")
+        || (tag == CheckedNodeTag::Correspondence.as_wire() && form == "component_composition")
         || tag == CheckedNodeTag::Claim.as_wire()
 }
 
@@ -9019,12 +9040,31 @@ fn claim_name_rows(
                    name: &str,
                    span: fsl_foundation::Span|
      -> Result<(), EmitRefusal> {
-        let declaration_region = declaration_region(source_map, &declaration, &occurrence, span)?;
+        let named_node = nodes.iter().find(|node| node.node_id == declaration);
+        let declaration_region = if named_node.is_some_and(|node| {
+            node.node_tag.as_ref() == CheckedNodeTag::Correspondence.as_wire()
+                && node.semantic_form.as_ref() == "component_composition"
+        }) {
+            // The declaration occurrence already carries the complete region
+            // mapped to its actual source, including an embedding's offset.
+            source_map
+                .iter()
+                .find(|entry| {
+                    entry.node_id == declaration
+                        && entry.role == occurrence.role
+                        && entry.ordinal == occurrence.ordinal
+                })
+                .and_then(|entry| match entry.regions.as_slice() {
+                    [region] => Some(region.clone()),
+                    _ => None,
+                })
+                .ok_or(EmitRefusal::SourceMapInvariant)?
+        } else {
+            declaration_region(source_map, &declaration, &occurrence, span)?
+        };
         // FSpec FR-322 "Hyper clause source unit": a `hyperproperty` row names
         // the locked source unit that declares the clause; no other row does.
-        let source_unit = nodes
-            .iter()
-            .find(|node| node.node_id == declaration)
+        let source_unit = named_node
             .filter(|node| {
                 CheckedNodeTag::from_wire(&node.node_tag)
                     .and_then(|tag| CheckedNodeKind::decode(tag, &node.semantic_form))
@@ -9044,6 +9084,23 @@ fn claim_name_rows(
         Ok(())
     };
     let mut named: Vec<(CheckedNodeId, CheckedOccurrence)> = Vec::with_capacity(sites.len());
+    for composition in graph.compositions() {
+        let declaration = producer_node_ids
+            .get(composition.node())
+            .cloned()
+            .ok_or(EmitRefusal::SourceMapInvariant)?;
+        let occurrence = CheckedOccurrence {
+            role: CheckedOccurrenceRole::Declaration,
+            ordinal: 0,
+        };
+        named.push((declaration.clone(), occurrence.clone()));
+        row(
+            declaration,
+            occurrence,
+            composition.name(),
+            composition.spans().declaration,
+        )?;
+    }
     for synthesis in graph.synthesis_claims() {
         let declaration = producer_node_ids
             .get(synthesis.node())

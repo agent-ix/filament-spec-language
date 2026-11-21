@@ -655,6 +655,562 @@ fn a_composition_over_dependency_components_is_emitted_and_admitted() {
     .expect("IR admits the composition against its component packages");
 }
 
+/// Composition metadata and member coordinates survive strict admission of
+/// actual source, including canonical sorting of every member array.
+#[trace(
+    "FR-530-AC-1",
+    "FSpec-FR-322-AC-514",
+    "FSpec-FR-491-AC-7",
+    "FSpec-FR-491-AC-8"
+)]
+#[test]
+fn composition_declaration_and_canonical_members_keep_their_authored_regions() {
+    let world = World::new();
+    // FR-491 orders clauses by NodeRef, whose admitted identity is an
+    // opaque NodeKey, not the temporal declaration's source name. Obtain
+    // each real target from its checked dependency, and independently bind
+    // it to the position that dependency's emitted graph actually holds.
+    let mut expected_guarantees: Vec<_> = [
+        ("Producer", &world.producer, "Sends"),
+        ("Producer", &world.producer, "Counted"),
+        ("Consumer", &world.consumer, "Done"),
+        ("Consumer", &world.consumer, "Bounded"),
+    ]
+    .into_iter()
+    .map(|(component, dependency, name)| {
+        let target = dependency
+            .package
+            .graph()
+            .temporal_clauses()
+            .iter()
+            .find(|clause| clause.clause().name() == name)
+            .expect("the named source clause in its own checked dependency")
+            .identity();
+        let emission = emit_checked(&dependency.package).expect("the genuine dependency emits");
+        let graph = WireGraph::new(emission.wire_nodes.iter().map(|node| &node.node_id))
+            .expect("the dependency's document graph");
+        let position = graph
+            .keys()
+            .iter()
+            .position(|key| *key == target)
+            .expect("the emitted graph holds the exact source target");
+        (
+            component,
+            dependency.identity.as_str(),
+            name,
+            target,
+            u64::try_from(position).expect("dependency position"),
+        )
+    })
+    .collect();
+    expected_guarantees.sort_by(|left, right| (left.0, &left.3).cmp(&(right.0, &right.3)));
+    let canonical_guarantees: Vec<_> = expected_guarantees
+        .iter()
+        .map(|(component, _, name, _, _)| format!("guarantee {component}::{name};"))
+        .collect();
+    let authored_guarantees = canonical_guarantees
+        .iter()
+        .rev()
+        .map(String::as_str)
+        .collect::<Vec<_>>()
+        .join(" ");
+    let declaration = format!(
+        "compose Sys rule interface {{ \
+        component Producer from P using M; \
+        component Consumer from Q using M; \
+        {authored_guarantees} \
+        rely Producer::Sends on Consumer::Bounded; \
+        rely Consumer::Done on Producer::Counted; \
+        depends Producer::Sends on Consumer::Done; \
+        depends Consumer::Done on Producer::Sends; \
+        supplies fair weak each M::Producer::send; \
+        supplies fair strong each M::Producer::send; \
+        environment Zulu by \"scheduler\" fair weak each M::Producer::send; \
+        environment Alpha by \"scheduler\" fair weak each M::Producer::send; }}"
+    );
+    let source = unit(&declaration);
+    let package = world
+        .compile(&declaration)
+        .expect("the source checks");
+    let emission = emit_checked(&package).expect("the composition emits");
+    assert!(emission.omitted().is_empty());
+    let document = serde_json::to_vec(&fixture::document()).expect("model document");
+    let models = fsl_semantics::model::intake::package_input([document.as_slice()])
+        .expect("the actual model package");
+    let read = crate::checked_v2::read_evaluation_emission(
+        &package,
+        &emission,
+        library(),
+        &models,
+        crate::checked_v2::V2ReadLimits::fixture(),
+        crate::EmitLimits::fixture(),
+        crate::checked_v2::SourceWitnessSupplier::new(&emission),
+    )
+    .expect("the pinned strict reader admits the source emission and its dependencies");
+    let admitted = read.admitted();
+    let named = admitted
+        .claim_name_for_path(&["Sys"])
+        .expect("Sys is named");
+    assert_eq!(named.name.as_ref(), "Sys");
+    assert_eq!(named.qualified_name, [Box::<str>::from("Sys")]);
+    assert_eq!(named.occurrence.role, CheckedOccurrenceRole::Declaration);
+    assert_eq!(named.occurrence.ordinal, 0);
+    assert_eq!(
+        admitted
+            .claim_names()
+            .expect("claim names")
+            .iter()
+            .filter(|row| row.declaration == named.declaration)
+            .count(),
+        1,
+        "the declaration has exactly one naming row"
+    );
+    let key = admitted
+        .structural_key(&named.declaration)
+        .expect("declared key");
+    let key_json = serde_json::to_value(key).expect("structural identity");
+    assert_eq!(key_json["path"], serde_json::json!(["Sys"]));
+    let written = raw_wire(&emission);
+    let nodes = written["semantic_graph"]["nodes"]
+        .as_array()
+        .expect("nodes");
+    let position = nodes
+        .iter()
+        .position(|node| node["semantic_form"] == "component_composition")
+        .expect("the composition is emitted");
+    let node = &nodes[position];
+    assert_eq!(
+        node["declaration"]["qualified_name"],
+        serde_json::json!(["Sys"])
+    );
+    assert_eq!(
+        node["owner"],
+        serde_json::json!({
+            "kind": "source", "authority": "agent-ix", "identity": "test:composition"
+        })
+    );
+    let entries: Vec<_> = admitted
+        .source_map()
+        .iter()
+        .filter(|entry| &entry.node_id == key)
+        .collect();
+    let declaration_entries: Vec<_> = entries
+        .iter()
+        .filter(|entry| entry.role == CheckedOccurrenceRole::Declaration)
+        .collect();
+    let [declaration_entry] = declaration_entries.as_slice() else {
+        panic!("exactly one declaration source entry: {declaration_entries:?}");
+    };
+    assert_eq!(declaration_entry.ordinal, 0);
+    assert_eq!(
+        declaration_entry.regions,
+        [named.declaration_region.clone()]
+    );
+    let whole = &named.declaration_region;
+    assert_eq!(whole.source.authority.as_ref(), "agent-ix");
+    assert_eq!(whole.source.identity.as_ref(), "test:composition");
+    let start = source
+        .find(declaration.as_str())
+        .expect("whole declaration in source");
+    assert_eq!(whole.start, u64::try_from(start).expect("source offset"));
+    assert_eq!(
+        whole.end,
+        u64::try_from(start + declaration.len()).expect("source end")
+    );
+
+    // This independent table fixes both canonical group offsets and the
+    // authored text each generated coordinate must retain after sorting.
+    let guarantee_members: Vec<_> = canonical_guarantees.iter().map(String::as_str).collect();
+    let groups: [(&str, &[&str]); 6] = [
+        (
+            "components",
+            &[
+                "component Consumer from Q using M;",
+                "component Producer from P using M;",
+            ],
+        ),
+        ("guarantees", &guarantee_members),
+        (
+            "relies",
+            &[
+                "rely Consumer::Done on Producer::Counted;",
+                "rely Producer::Sends on Consumer::Bounded;",
+            ],
+        ),
+        (
+            "liveness_dependencies",
+            &[
+                "depends Consumer::Done on Producer::Sends;",
+                "depends Producer::Sends on Consumer::Done;",
+            ],
+        ),
+        (
+            "supplies",
+            &[
+                "supplies fair strong each M::Producer::send;",
+                "supplies fair weak each M::Producer::send;",
+            ],
+        ),
+        (
+            "environment",
+            &[
+                "environment Alpha by \"scheduler\" fair weak each M::Producer::send;",
+                "environment Zulu by \"scheduler\" fair weak each M::Producer::send;",
+            ],
+        ),
+    ];
+    let mut ordinal = 0_u64;
+    for (group, members) in groups {
+        assert_eq!(
+            node["body"][group].as_array().expect("body array").len(),
+            members.len(),
+            "{group}"
+        );
+        let starts: Vec<_> = members
+            .iter()
+            .map(|member| source.find(member).expect("authored member"))
+            .collect();
+        assert!(
+            starts.windows(2).all(|pair| pair[0] > pair[1]),
+            "{group} reverses authored order"
+        );
+        for (member, start) in members.iter().zip(starts) {
+            let matching: Vec<_> = entries
+                .iter()
+                .filter(|entry| {
+                    entry.role == CheckedOccurrenceRole::Generated && entry.ordinal == ordinal
+                })
+                .collect();
+            let [entry] = matching.as_slice() else {
+                panic!("one Generated/{ordinal}: {matching:?}");
+            };
+            let [region] = entry.regions.as_slice() else {
+                panic!("one authored region: {entry:?}");
+            };
+            assert_eq!(region.source, whole.source, "{group}/{ordinal}");
+            assert_eq!(
+                region.start,
+                u64::try_from(start).expect("member start"),
+                "{member}"
+            );
+            assert_eq!(
+                region.end,
+                u64::try_from(start + member.len()).expect("member end"),
+                "{member}"
+            );
+            assert!(whole.start < region.start && region.end < whole.end);
+            ordinal += 1;
+        }
+    }
+    assert_eq!(
+        entries.len(),
+        usize::try_from(ordinal).expect("member count") + 1
+    );
+    assert_eq!(
+        node["occurrences"].as_array().expect("occurrences").len(),
+        entries.len()
+    );
+    let Some(CheckedTerm::ComponentComposition {
+        components,
+        guarantees,
+        relies,
+        liveness_dependencies,
+        supplies,
+        environment,
+        ..
+    }) = admitted.term(&named.declaration)
+    else {
+        panic!("strict readback retains the typed composition");
+    };
+    assert_eq!(
+        (
+            components.len(),
+            guarantees.len(),
+            relies.len(),
+            liveness_dependencies.len(),
+            supplies.len(),
+            environment.len()
+        ),
+        (2, 4, 2, 2, 2, 2)
+    );
+    for (at, (guarantee, (component, identity, name, _, expected_position))) in
+        guarantees.iter().zip(&expected_guarantees).enumerate()
+    {
+        assert_eq!(guarantee.component.as_ref(), *component);
+        let owner = admitted
+            .direct_dependencies()
+            .find(|owner| owner.name() == *identity)
+            .expect("the authenticated component owner");
+        // Compare the complete raw reference with the independently found
+        // dependency document position. Every foreign operand slot must
+        // name the same owner's exact document index before expansion.
+        let mut raw_target: CheckedNodeId =
+            serde_json::from_value(node["body"]["guarantees"][at]["clause"].clone())
+                .expect("the emitted raw clause reference");
+        assert_eq!(raw_target.package.as_ref(), *identity);
+        let mut slots = 0;
+        for segment in &mut raw_target.path {
+            if let filament_contract_model::CheckedNodePathSegment::Operand(slot) = segment {
+                let operand: CheckedOperandEntry = serde_json::from_value(
+                    written["semantic_graph"]["operand_rows"][position]
+                        [usize::try_from(*slot).expect("operand slot")]
+                    .clone(),
+                )
+                .expect("the raw holder's operand entry");
+                let CheckedOperandEntry::Dependency(operand) = operand else {
+                    panic!("the foreign clause operand must name its dependency");
+                };
+                assert_eq!(operand.package.as_ref(), *identity);
+                assert!(owner
+                    .structural_key_at(
+                        usize::try_from(operand.node).expect("foreign operand position")
+                    )
+                    .is_some());
+                *segment = filament_contract_model::CheckedNodePathSegment::Index(operand.node);
+                slots += 1;
+            }
+        }
+        assert!(slots > 0, "the raw clause retains foreign operand slots");
+        let expected_position = usize::try_from(*expected_position).expect("dependency position");
+        let clause_held_id = owner
+            .document_held_id(expected_position)
+            .expect("the independently selected dependency document node");
+        assert_eq!(
+            &raw_target, clause_held_id,
+            "{component}::{name} keeps its exact dependency document target"
+        );
+        let clause_structural_key = owner
+            .structural_key_at(expected_position)
+            .expect("the foreign clause exists in its own graph");
+        assert!(owner.term(clause_held_id).is_some());
+        let clause_dependency_held_id = admitted
+            .resolve_node_held(position, &guarantee.clause)
+            .expect("resolve the composition's foreign operand slots");
+        assert_eq!(clause_dependency_held_id.package.as_ref(), *identity);
+        assert_eq!(
+            owner.structural_key(&clause_dependency_held_id),
+            Some(clause_structural_key),
+            "the expanded reference resolves in its authenticated owner"
+        );
+        let names: Vec<_> = owner
+            .temporal_clause_names()
+            .expect("authenticated temporal names")
+            .iter()
+            .filter(|row| row.name.as_ref() == *name)
+            .collect();
+        let [named_clause] = names.as_slice() else {
+            panic!("one actual declaration of {identity}::{name}");
+        };
+        assert_eq!(
+            owner.structural_key(&named_clause.declaration),
+            Some(clause_structural_key),
+            "the foreign position resolves to this owner's named clause"
+        );
+    }
+    let owners: BTreeSet<_> = admitted
+        .direct_dependencies()
+        .map(|owner| owner.name())
+        .collect();
+    assert_eq!(owners, BTreeSet::from(["test/consumer", "test/producer"]));
+    let operand_owners: BTreeSet<_> = written["semantic_graph"]["operand_rows"][position]
+        .as_array()
+        .expect("operand row")
+        .iter()
+        .filter_map(|operand| operand["package"].as_str())
+        .collect();
+    assert_eq!(
+        operand_owners, owners,
+        "foreign operands retain both authenticated owners"
+    );
+
+    let mut evidence = emission.evidence.clone();
+    for (identity, document) in &models {
+        evidence
+            .insert_domain_package_document(identity.as_str(), document.as_slice())
+            .expect("the same authentic model evidence");
+    }
+    for dependency in admitted.direct_dependencies() {
+        evidence
+            .insert_dependency_package(dependency.name(), dependency.clone())
+            .expect("the actual admitted dependency");
+    }
+    let mut reordered = written.clone();
+    reordered["source_map"]
+        .as_array_mut()
+        .expect("source map")
+        .reverse();
+    let bytes = serde_json::to_vec(&reordered).expect("reordered artifact");
+    let Read::Verified {
+        admitted: reordered,
+        ..
+    } = crate::checked_v2::read_v2(
+        &bytes,
+        library(),
+        crate::checked_v2::V2ReadLimits::fixture(),
+        &evidence,
+    )
+    else {
+        panic!("source-map entry order does not change composition admission");
+    };
+    assert_eq!(reordered.claim_name_for_path(&["Sys"]), Some(named));
+    assert_eq!(
+        reordered.term(&named.declaration),
+        admitted.term(&named.declaration)
+    );
+    for entry in entries {
+        let matching: Vec<_> = reordered
+            .source_map()
+            .iter()
+            .filter(|other| {
+                other.node_id == entry.node_id
+                    && other.role == entry.role
+                    && other.ordinal == entry.ordinal
+            })
+            .collect();
+        assert_eq!(
+            matching,
+            [entry],
+            "member attribution survives source-map reordering"
+        );
+    }
+}
+
+/// Empty body arrays consume no member ordinals. A nonempty region outside
+/// the declaration is a composition defect; an empty region is refused by
+/// the preceding generic source-map validation.
+#[trace("FR-530-AC-1", "FSpec-FR-491-AC-7", "FSpec-FR-491-AC-8")]
+#[test]
+fn composition_empty_arrays_and_region_refusal_precedence_are_preserved() {
+    let world = World::new();
+    let declaration = world.declare(
+        "interface",
+        "environment Sched by \"scheduler\" fair weak each M::Producer::send; ",
+    );
+    let package = world
+        .compile(&declaration)
+        .expect("the source checks");
+    let emission = emit_checked(&package).expect("the source emits");
+    let document = serde_json::to_vec(&fixture::document()).expect("model document");
+    let models = fsl_semantics::model::intake::package_input([document.as_slice()])
+        .expect("the actual model package");
+    let read = crate::checked_v2::read_evaluation_emission(
+        &package,
+        &emission,
+        library(),
+        &models,
+        crate::checked_v2::V2ReadLimits::fixture(),
+        crate::EmitLimits::fixture(),
+        crate::checked_v2::SourceWitnessSupplier::new(&emission),
+    )
+    .expect("the authentic sparse composition admits before mutation");
+    let admitted = read.admitted();
+    let named = admitted
+        .claim_name_for_path(&["Sys"])
+        .expect("Sys is named");
+    let source = unit(&declaration);
+    let generated: Vec<_> = admitted
+        .source_map()
+        .iter()
+        .filter(|entry| {
+            entry.node_id == named.declaration && entry.role == CheckedOccurrenceRole::Generated
+        })
+        .collect();
+    assert_eq!(
+        generated.len(),
+        3,
+        "only two components and one environment member"
+    );
+    for (ordinal, member) in (0_u64..).zip([
+        "component Consumer from Q using M;",
+        "component Producer from P using M;",
+        "environment Sched by \"scheduler\" fair weak each M::Producer::send;",
+    ]) {
+        let entry = generated
+            .iter()
+            .find(|entry| entry.ordinal == ordinal)
+            .expect("no gaps for empty intermediate arrays");
+        let [region] = entry.regions.as_slice() else {
+            panic!("one member region");
+        };
+        let start = source.find(member).expect("authored member");
+        assert_eq!(region.start, u64::try_from(start).expect("member start"));
+        assert_eq!(
+            region.end,
+            u64::try_from(start + member.len()).expect("member end")
+        );
+    }
+    let mut evidence = emission.evidence.clone();
+    for (identity, document) in &models {
+        evidence
+            .insert_domain_package_document(identity.as_str(), document.as_slice())
+            .expect("the same authentic model evidence");
+    }
+    for dependency in admitted.direct_dependencies() {
+        evidence
+            .insert_dependency_package(dependency.name(), dependency.clone())
+            .expect("the actual admitted dependency");
+    }
+    let original = raw_wire(&emission);
+    let position = original["source_map"]
+        .as_array()
+        .expect("source map")
+        .iter()
+        .position(|entry| {
+            entry["role"] == "generated"
+                && entry["ordinal"] == 2
+                && entry["node_id"]
+                    == serde_json::to_value(&named.declaration).expect("declaration key")
+        })
+        .expect("the environment member coordinate");
+    for (empty, expected_code, expected_path) in [
+        (
+            false,
+            filament_contract_model::CheckedPackageRefusalCode::InvalidPackage,
+            format!("/source_map/{position}"),
+        ),
+        (
+            true,
+            filament_contract_model::CheckedPackageRefusalCode::InvalidSourceMap,
+            format!("/source_map/{position}/regions/0"),
+        ),
+    ] {
+        let mut changed = original.clone();
+        // The whole declaration is a valid generic region, but cannot stand
+        // in for an authored member strictly inside it.
+        changed["source_map"][position]["regions"][0] =
+            serde_json::to_value(&named.declaration_region).expect("whole declaration region");
+        if empty {
+            changed["source_map"][position]["regions"][0]["end"] =
+                changed["source_map"][position]["regions"][0]["start"].clone();
+        }
+        let bytes = serde_json::to_vec(&changed).expect("mutated artifact");
+        let result = crate::checked_v2::read_v2(
+            &bytes,
+            library(),
+            crate::checked_v2::V2ReadLimits::fixture(),
+            &evidence,
+        );
+        let Read::Refused(crate::checked_v2::V2ReadRefusal::Envelope { refusal, .. }) = result
+        else {
+            panic!("the malformed coordinate refuses: {result:?}");
+        };
+        assert_eq!(refusal.code, expected_code, "empty={empty}");
+        if !empty {
+            assert_eq!(
+                refusal.cause,
+                Some(filament_contract_model::CheckedPackageRefusalCause::InvalidValue)
+            );
+        }
+        assert!(
+            refusal.loci.iter().any(|locus| locus
+                .path
+                .as_ref()
+                .is_some_and(|path| path.as_str() == expected_path)),
+            "empty={empty}: {refusal:?}"
+        );
+    }
+}
+
 /// FR-491-AC-6: the composition's bytes read without the component packages
 /// supplied are refused, not admitted on the strength of a position alone.
 #[trace("FR-530-AC-1", "FSpec-TC-985", "FSpec-FR-491-AC-6")]

@@ -4395,6 +4395,13 @@ impl PackageDeclarations {
                             source.clone(),
                         );
                     }
+                    fsl_forms::DeclarationForm::Composition(composition) => {
+                        source_owners.insert(composition.name.name.clone(), source.clone());
+                        source_owners.insert(
+                            super::composition::declaration_origin(&composition.name.name),
+                            source.clone(),
+                        );
+                    }
                     _ => {
                         if let Some(name) = form.declared_name() {
                             source_owners.insert(name.to_owned(), source.clone());
@@ -6227,7 +6234,7 @@ impl PackageDeclarations {
         declared_type_spans.extend(unit.compositions.iter().map(|composition| {
             (
                 super::composition::declaration_origin(&composition.name.name),
-                composition.name.span,
+                composition.span,
             )
         }));
         package.compositions = unit.compositions;
