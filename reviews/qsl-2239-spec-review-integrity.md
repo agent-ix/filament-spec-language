@@ -34,3 +34,7 @@ Round 2 (this artifact's first disposition), at frozen head `db0f80895f16a0cc6c0
 | FND | Outcome | Reason |
 | --- | --- | --- |
 | FND-001 | fixed | 307050eff1: FR-362 item 8 drops the alias case from the `NotEmitted` list and states, citing the ruling, that a clause whose alias binds no object parameter is emitted (FR-631-AC-4 ruling, as FR-488 states). `quire validate` passes on FR-362 |
+
+## Round 3 note
+
+Round 3 (head `aed94771b48007ac1269258193ded2e7bef90b8b`) changes no spec. FND-001 stays fixed.
