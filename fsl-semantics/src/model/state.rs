@@ -327,6 +327,18 @@ pub struct StateModel {
 }
 
 impl StateModel {
+    /// Compare complete native type identities under the caller's work budget.
+    ///
+    /// # Errors
+    /// Returns the first work denial unchanged, before the denied comparison.
+    pub fn reference_identity_equal_with_work<E>(
+        left: &EffectiveId,
+        right: &EffectiveId,
+        work: &mut impl FnMut(u64) -> Result<(), E>,
+    ) -> Result<bool, E> {
+        crate::model::key::effective_equal_with_work(left, right, work)
+    }
+
     /// Whether a selected domain package declares an operation member.
     pub fn declares_operations(&self) -> bool {
         self.views.iter().any(|view| {
