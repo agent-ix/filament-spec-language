@@ -212,7 +212,13 @@ fn check(
         world.package.graph().probabilistic_model().claims(),
         &identity,
         &serde_json::to_vec(document).expect("serializes"),
-        limits(),
+        // The two-clock region product of FR-924-AC-6 has 217 states, more
+        // than the 128 the shared document limits admit.
+        fsl_replay::ProbabilityDocumentLimits {
+            states: 4096,
+            edges: 65_536,
+            ..limits()
+        },
         &Cancel::new(),
     )
 }
@@ -591,7 +597,6 @@ fn zeno_values_are_rejected() {
 /// FR-924-AC-3: a retry cycle holds delays and is not collapsed.
 #[trace("TC-2493", "FR-924-AC-3")]
 #[trace("FSpec-TC-1820", "FSpec-FR-753-AC-3")]
-#[ignore = "QSL-2156: expected elapsed time over the digital route is not checked yet; the checker requires the region route"]
 #[test]
 fn delay_cycles_are_not_collapsed() {
     let world = retx(
@@ -630,7 +635,6 @@ fn zero_time_cycle_without_end_component_is_certified() {
 /// FR-924-AC-5: a time-locked initial state is terminal.
 #[trace("TC-2493", "FR-924-AC-5")]
 #[trace("FSpec-TC-1820", "FSpec-FR-753-AC-6")]
-#[ignore = "QSL-2156: the timed deadline checker does not accept a workload scheduler yet"]
 #[test]
 fn time_locked_state_is_certified_terminal() {
     let world = retx(
@@ -816,7 +820,6 @@ fn a_wrong_clock_cap_is_malformed() {
 /// value 0 is rejected.
 #[trace("TC-2493", "FR-924-AC-6")]
 #[trace("FSpec-TC-1820", "FSpec-FR-753-AC-7")]
-#[ignore = "QSL-2156: the region product of a reset loop holds a positive-time cycle; bounded backward induction rejects it and the claim settles as not yet implemented"]
 #[test]
 fn reset_loop_zeno_values_are_rejected() {
     let world = retx_over(
@@ -832,10 +835,89 @@ fn reset_loop_zeno_values_are_rejected() {
     assert_eq!(proved_value(&record), ratio(99, 100));
     let doc = document(&record);
     assert_eq!(doc["objective"]["timed"]["route"], "region");
-    assert!(accepted(&world, "Deadline", &doc));
+    assert!(
+        accepted(&world, "Deadline", &doc),
+        "{:?}",
+        check(&world, "Deadline", &doc)
+    );
     let tampered = settle_tampered(&world, "Deadline", set_interior_values(ratio(0, 1)));
     assert_eq!(
         rejected_item_rule(&tampered),
         CertificateRule::InequalityFails
     );
+}
+
+/// FR-924-AC-6 with no deadline clock in the key (the expected-elapsed route):
+/// the reset loop is not progressive because `x` is never reset, crossed or
+/// capped in it, so the value is still the best exit, 10/9, and a value read
+/// off the Zeno loop is rejected.
+#[trace("TC-2493", "FR-924-AC-6")]
+#[test]
+fn reset_loop_is_nonprogressive_without_a_deadline_clock() {
+    let world = retx_over(
+        &["x", "y"],
+        &[("send", &["late", "x"]), ("again", &["y"])],
+        GUARD,
+        true,
+        "pre Again using v on M::Call::again { not self.late and self.y < 1 ms }\n\
+         post Reset using v on M::Call::again { self.y = 0 ms }\n",
+        "probabilistic MeanLow using inf on M over (c: M::Call) under every scheduler on origin \
+         { expected elapsed until holds(c.late) >= 1 ms }\n",
+    );
+    let record = settle(&world, "MeanLow");
+    assert_eq!(proved_value(&record), ratio(10, 9));
+    assert_eq!(document(&record)["objective"]["timed"]["route"], "region");
+    assert!(accepted(&world, "MeanLow", &document(&record)));
+    let tampered = settle_tampered(&world, "MeanLow", |certificate| {
+        for entry in &mut certificate.values {
+            entry.value = ratio(0, 1);
+        }
+    });
+    assert!(proved_value_of(&tampered).is_none());
+}
+
+/// FR-923: a workload resolves a state by its weights, so an operation it weighs
+/// at zero cannot be dropped from the checker's product. The engine's own
+/// product faults on a zero-weight race (`workload-weights-sum`), so no
+/// document exists for the checker to refuse and the item settles `failed`,
+/// never `proved`. The checker's `Unsupported` refusal of such a state
+/// (`admit_workload`) is therefore not reachable through this pipeline.
+#[trace("TC-2492")]
+#[test]
+fn a_workload_that_gives_an_enabled_operation_no_weight_is_not_proved() {
+    let claim = "probabilistic ZeroWeight using ev on M over (c: M::Call) under One on origin \
+         { probability >= 0.01 [ eventually[0 ms, 5 ms] holds(c.retried) ] }\n";
+    let world = retx_with(
+        &[("send", &["late", "x"]), ("tick", &["retried"])],
+        GUARD,
+        true,
+        "delay M::Call::send ~ discrete { 2 ms: 1 };\n\
+         pre Tick using v on M::Call::tick { not self.late and not self.retried and self.x >= 2 ms }\n\
+         post Ticked using v on M::Call::tick { self.retried = true }\n\
+         workload One on M { weight Call::send = 1; weight Call::tick = 0; }\n",
+        claim,
+    );
+    let record = settle(&world, "ZeroWeight");
+    assert!(
+        matches!(
+            record.terminal().map(|terminal| terminal.value()),
+            Some(TerminalValue::Failed)
+        ),
+        "{record:#?}"
+    );
+    assert!(record
+        .terminal()
+        .and_then(|terminal| terminal.exact_certificate_document())
+        .is_none());
+}
+
+/// The exact value of a `proved` record, when it is one.
+fn proved_value_of(record: &AnalyzeRecord) -> Option<Rational> {
+    match record.terminal()?.value() {
+        TerminalValue::Proved {
+            basis: ProofBasis::ExactValue { value, .. },
+            ..
+        } => Some(value.value().clone()),
+        _ => None,
+    }
 }
