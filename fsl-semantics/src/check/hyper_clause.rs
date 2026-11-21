@@ -1521,6 +1521,17 @@ fn check_finite(
         .into_failure());
     }
     let Some(value_type) = candidates.first() else {
+        // An object type is declared, but it is no record.
+        if scope
+            .object_type_named(source.as_ref(), &form.domain.population.name)
+            .is_some()
+        {
+            return Err(Found::Hyper(HyperCause::FiniteRecordWrongKind {
+                name: form.domain.population.name.clone(),
+                span: form.domain.population.span,
+            })
+            .into_failure());
+        }
         return Err(Found::Hyper(HyperCause::FiniteRecordMissing {
             name: form.domain.population.name.clone(),
             span: form.domain.population.span,

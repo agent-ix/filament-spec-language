@@ -2057,55 +2057,87 @@ fn a_finite_trace_set_hyperproperty_checks() {
 }
 
 /// FR-898-AC-2 (TC-2534): each defect of a finite clause refuses with its
-/// own named cause at its own span, never `FiniteDomain`.
+/// own named cause at its own span, never `FiniteDomain`. The cause kinds are
+/// `invalid-value` (a zero bound), `missing-name`, `wrong-export` (a tuple and
+/// an object type are no record) and `ambiguous-name` (a repeated variable).
 #[trace("TC-2534", "FR-898-AC-2")]
 #[test]
 fn a_finite_trace_set_defect_refuses_with_its_named_cause() {
-    let cases = [
+    let tuple = FINITE_DET
+        .replace("hyper Det", "tuple NotRecord(Int[0, 3]);\nhyper Det")
+        .replace("in Obs", "in NotRecord");
+    let object = FINITE_DET.replace("in Obs", "in V::ConfigVersion");
+    let cases: [(String, Vec<&str>, Code, &str, fn(&str) -> Span); 5] = [
         (
             FINITE_DET.replace("bounded 3", "bounded 0"),
+            Vec::new(),
             Code::InvalidPackage,
-            "0",
+            "invalid-value",
+            |text: &str| after(text, "bounded ", "0"),
         ),
         (
             FINITE_DET.replace("in Obs", "in Nowhere"),
+            Vec::new(),
             Code::MissingDeclaration,
-            "Nowhere",
+            "missing-name",
+            |text: &str| after(text, "over t in ", "Nowhere"),
         ),
         (
-            FINITE_DET
-                .replace("hyper Det", "tuple NotRecord(Int[0, 3]);\nhyper Det")
-                .replace("in Obs", "in NotRecord"),
+            tuple,
+            Vec::new(),
             Code::InvalidModelBinding,
-            "NotRecord",
+            "wrong-export",
+            |text: &str| after(text, "over t in ", "NotRecord"),
+        ),
+        (
+            object,
+            vec!["V"],
+            Code::InvalidModelBinding,
+            "wrong-export",
+            |text: &str| after(text, "over t in ", "V::ConfigVersion"),
         ),
         (
             FINITE_DET.replace("forall trace b", "forall trace a"),
+            Vec::new(),
             Code::AmbiguousDeclaration,
-            "trace a",
-        ),
-        (
-            FINITE_DET.replace("b.res)", "c.res)"),
-            Code::MissingDeclaration,
-            "c.res",
-        ),
-        (
-            FINITE_DET.replace("(a.inp = b.inp) implies (a.res = b.res)", "a.res"),
-            Code::IllTyped,
-            "a.res",
+            "ambiguous-name",
+            |text: &str| {
+                let start = text.rfind("trace a").expect("the repeated variable") + "trace ".len();
+                Span {
+                    start,
+                    end: start + 1,
+                }
+            },
         ),
     ];
-    for (declaration, code, at) in cases {
-        let (text, outcome) = check_under(&[], EVENT, &declaration);
+    for (declaration, aliases, code, tag, span) in cases {
+        let (text, outcome) = check_under(&aliases, EVENT, &declaration);
         let Err(StageFailure::Refused(refusal)) = outcome else {
             panic!("{declaration}: a refusal, not {outcome:?}");
         };
+        let CheckCause::Hyper(cause) = &refusal.cause else {
+            panic!("{declaration}: a hyper cause, not {:?}", refusal.cause);
+        };
         assert!(
-            !matches!(&refusal.cause, CheckCause::Hyper(cause) if matches!(**cause, HyperCause::FiniteDomain { .. })),
+            !matches!(**cause, HyperCause::FiniteDomain { .. }),
             "{declaration}: {refusal:?}"
         );
+        assert_eq!(cause.code(), code, "{declaration}");
+        assert_eq!(cause.tag(), tag, "{declaration}");
+        assert_eq!(cause.span(), Some(span(&text)), "{declaration}");
+    }
+    for (declaration, code) in [
+        (FINITE_DET.replace("b.res)", "c.res)"), Code::MissingDeclaration),
+        (
+            FINITE_DET.replace("(a.inp = b.inp) implies (a.res = b.res)", "a.res"),
+            Code::IllTyped,
+        ),
+    ] {
+        let (_, outcome) = check_under(&[], EVENT, &declaration);
+        let Err(StageFailure::Refused(refusal)) = outcome else {
+            panic!("{declaration}: a refusal, not {outcome:?}");
+        };
         assert_eq!(refusal.cause.code(), code, "{declaration}");
-        assert!(text.contains(at));
     }
     let (_, outcome) = check_under(&[], INFINITE, FINITE_DET);
     let Err(StageFailure::Refused(refusal)) = outcome else {

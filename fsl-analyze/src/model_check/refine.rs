@@ -3713,7 +3713,7 @@ mod tests {
         Err(InternalFault::new("refinement-liveness", "injected"))
     }
 
-    #[trace("FR-899-AC-6")]
+    #[trace("TC-2536")]
     #[test]
     fn a_weakly_enabled_everywhere_label_does_not_subsume_a_fair_label() {
         let enabled_everywhere = vec![FairMark {
