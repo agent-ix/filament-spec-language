@@ -129,10 +129,12 @@ package, by the rule FSpec FR-290 gives `negotiate_*`:
 - Every other item takes the family of the checked-package node its `claim`
   names, by that node's tag, `semantic_form` and occurrence role, through FSpec
   FR-290's node-to-family table.
-- A claim that names a `correspondence`/`component_composition` node whose
-  rule is not `assume-guarantee` takes the family `protocol`, as FSpec FR-290's
-  claim-form row states (FR-1044). An `assume-guarantee` node derives no
-  request item, so this rule reads no family from it.
+- A claim that names a `correspondence`/`component_composition` node takes the
+  family `protocol` when its rule is not `assume-guarantee`, and, under any
+  rule, `assume-guarantee` included, for the `fixed-point` `composition` item an
+  accepted cycle derives, as FSpec FR-290's rows state (FR-1044). The main item
+  of an `assume-guarantee` declaration is planner-local, derives no request
+  item, and so reads no family from the node.
 - A claim that names a node of no row of that table, or a node absent from the
   package, has no family. Every kind is inapplicable to it, and the refusal's
   payload has no `family` member.

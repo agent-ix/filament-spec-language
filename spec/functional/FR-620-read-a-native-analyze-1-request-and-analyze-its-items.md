@@ -54,7 +54,7 @@ use, and every analyze request a single-trace shape it does not have.
 
 The items of the document reuse the request-item members of FSpec FR-331
 (`kind`, `temporal` with its `item_kind`, `probabilistic`, `hybrid`, `check`,
-`options`, `reductions`, `correspondence`, `premises`, `assessed_root`,
+`options`, `reductions`, `correspondence`, `assessed_root`,
 `backend`), with FR-331's spellings and closure rules. So `analyze`, `prove`
 and an external provider share one item vocabulary, and the standard owns
 it once (FSpec FR-520). The document differs from an FR-331 request in what
@@ -93,7 +93,8 @@ item per resolved analysis item, or a whole-request refusal (FR-624).
   duplicate provisioned document identity, a `program` and `package` both
   absent, or a member of the wrong JSON type refuses the whole request at the
   request stage with `invalid-request`, exit 20, naming the member.
-- An item that carries `request_index`, `extent` or `candidates`, or a
+- An item that carries `request_index`, `extent`, `candidates` or
+  `premises`, or a
   `claim` written as a node key object, refuses the whole request the same
   way. FSL computes those members, so a caller can never forge an item's
   request identity.
@@ -223,7 +224,7 @@ and one initialization snapshot `start` holding counter `a` at 0.
 |----|----------|--------------|
 | FR-620-AC-1 | A `native-analyze/1` document over the Counter fixture with the one item `{"claim": "Bounded"}` is read; its outcome has one item whose `request` member is the FSpec FR-331 request item with `request_index` 0, the clause's occurrence key, kind `temporal-satisfaction`, `item_kind` `formula`, a `bounded` or `unbounded` extent as the package classifies it, and every `temporal.limits` member at EN-1's published default. | Test (TC-1580) |
 | FR-620-AC-2 | Rewriting that `request` member as a document item (removing `request_index`, `extent` and `candidates`, and writing the claim by its name) and reading it again gives an equal `request` member: the item round-trips. | Test (TC-1580) |
-| FR-620-AC-3 | An item carrying `request_index`, `extent`, `candidates`, `temporal.fairness` or an unknown member, and a request carrying an unknown member, and a request whose `deadline_ms` is 9007199254740992 (2^53), each refuse the whole request at the request stage with `invalid-request`, exit 20, naming the member, and run no item. | Test (TC-1580) |
+| FR-620-AC-3 | An item carrying `request_index`, `extent`, `candidates`, `premises`, `temporal.fairness` or an unknown member, and a request carrying an unknown member, and a request whose `deadline_ms` is 9007199254740992 (2^53), each refuse the whole request at the request stage with `invalid-request`, exit 20, naming the member, and run no item. | Test (TC-1580) |
 | FR-620-AC-4 | A document with the items `{"claim": "Bounded"}` and `{"claim": "Missing"}` settles the second item `invalid-request` with `invalid_capability`/`unknown-claim` naming `Missing`, settles the first `proved`, and exits 20. | Test (TC-1580) |
 | FR-620-AC-5 | The Counter document without `items` gives one item per checked claim in declaration order followed by the subject's derived deadlock-freedom item. | Test (TC-1580) |
 | FR-620-AC-6 | `deadline_ms` 0 settles every item `incomplete` with the deadline cause and exits 22; the same document without `deadline_ms` settles `Bounded` `proved`. | Test (TC-1580) |
