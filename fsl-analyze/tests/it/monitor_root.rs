@@ -171,7 +171,7 @@ fn monitor_body_locations_follow_entry_rekeys_and_preserve_helper_origins() {
     match read_checked_package(&stale_bytes, LIMITS, root.emission().evidence()) {
         CheckedPackageDispatchResult::Refused(refusal) => {
             assert_eq!(
-                refusal.code(),
+                refusal.code,
                 filament_contract_model::CheckedPackageRefusalCode::InvalidValue
             );
             let expected_path =
