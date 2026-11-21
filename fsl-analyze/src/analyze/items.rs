@@ -1107,7 +1107,14 @@ pub(super) fn package_parameter_type_refusal(
             let (code, cause) = view.catalog();
             detail.insert("package".to_owned(), serde_json::json!(view.package()));
             detail.insert("reason".to_owned(), serde_json::json!(view.reason().name()));
-            detail.insert("locus".to_owned(), serde_json::json!(view.locus().key()));
+            let locus = match view.locus().key() {
+                Some(key) => match fsl_foundation::node_wire::node_key_to_json(key) {
+                    Ok(value) => value,
+                    Err(_) => return Refusal::Failed(BROKEN),
+                },
+                None => serde_json::json!({"type": "package"}),
+            };
+            detail.insert("locus".to_owned(), locus);
             Refusal::UnsupportedWithDetail(CatalogCode::new(code, cause), detail)
         }
         Err(failure) => {
