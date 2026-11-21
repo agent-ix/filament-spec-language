@@ -554,8 +554,10 @@ node key.
 
 - Every `PackageHyperHolds.span`, and the corresponding rebuilt formula
   `Holds` span, SHALL be the span of the selected `claim_names` row's
-  `declaration_region` on both routes. It is declaration-level diagnostic
-  metadata, derived from no expression `source_map` region.
+  `declaration_region` over both package views, `AdmittedPackageRead` and
+  `BarePackage`. It is declaration-level diagnostic metadata, derived from
+  no expression `source_map` region. S3's source-checked clause retains its
+  expression diagnostic spans; only the comparison below canonicalizes them.
 - `CheckedHyperClause::of_package_form(&PackageHyperForm, types)` SHALL
   return the clause the engines read, with `occurrence()` the form's key,
   `condition(atom)` returning `None` for every atom (no source-checked body),
