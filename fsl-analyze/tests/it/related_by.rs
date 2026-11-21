@@ -42,6 +42,12 @@ fn id(suffix: &str) -> String {
 /// `fill`'s model with the relationship `owns`, `Cell` to `Cell`.
 fn related_document() -> Vec<u8> {
     let mut doc: Json = serde_json::from_slice(&document()).expect("the fill model is JSON");
+    add_owns_relationship(&mut doc);
+    doc.to_string().into_bytes()
+}
+
+/// Add the `Cell`-to-`Cell` relationship used by protocol correlation fixtures.
+pub(crate) fn add_owns_relationship(doc: &mut Json) {
     let cell = doc["types"]
         .as_array_mut()
         .expect("types")
@@ -57,7 +63,6 @@ fn related_document() -> Vec<u8> {
         "sourceEnd": {"type": id("Cell"), "role": "owner", "multiplicity": many},
         "targetEnd": {"type": id("Cell"), "role": "owned", "multiplicity": many}
     }]);
-    doc.to_string().into_bytes()
 }
 
 /// The related model with an operation that returns one finite `Cell` value.

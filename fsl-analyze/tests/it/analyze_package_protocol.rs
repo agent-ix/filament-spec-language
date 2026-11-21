@@ -410,21 +410,7 @@ fn package_channel_send_related_premises_refuse_before_execution() {
         let mut model: Value =
             serde_json::from_slice(&std::fs::read(ws.path("model.json")).expect("model document"))
                 .expect("model JSON");
-        let cell = model["types"]
-            .as_array_mut()
-            .expect("model types")
-            .iter_mut()
-            .find(|node| node["identity"] == "ix://test/fill/Cell")
-            .expect("the Cell declaration");
-        let many = json!({"lower": 0, "upper": 2, "ordered": false, "unique": true});
-        cell["relationships"] = json!([{
-            "identity": "ix://test/fill/relationship/owns", "category": "structural",
-            "composite": false, "direction": "source-to-target",
-            "origin": {"source": {"sourceIdentity": "ix://test/fill/spec", "path": "model.fspec",
-                "startLine": 1, "startColumn": 1}},
-            "sourceEnd": {"type": "ix://test/fill/Cell", "role": "owner", "multiplicity": many},
-            "targetEnd": {"type": "ix://test/fill/Cell", "role": "owned", "multiplicity": many}
-        }]);
+        crate::related_by::add_owns_relationship(&mut model);
         std::fs::write(ws.path("model.json"), model.to_string()).expect("write the related model");
         let mut snapshot: Value = serde_json::from_slice(
             &std::fs::read(ws.path("snapshot-0.json")).expect("the initial snapshot"),
