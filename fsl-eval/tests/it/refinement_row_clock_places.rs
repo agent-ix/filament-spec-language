@@ -1,13 +1,15 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-//! FR-1040-AC-3 (TC-3084): the population forms over `ref(c.x)` in a
-//! refinement row evaluate as FSpec FR-829-AC-2 states, over the timed
-//! `Call` of `tests/support/ring_queue.rs` with `calls = {c1, c2}`.
+//! Stored Clock references remain data; minting a place requires explicit
+//! population provenance, which the legacy refinement-row entry lacks.
 
 use std::collections::BTreeMap;
 
-use filament_eval::FamilyOutcome;
+use filament_eval::{Evaluation, FamilyOutcome, FamilyResult};
 use filament_exact::{Integer, Meter, ObjectId, ObjectReference, Outcome, ScalarLimits, Value};
-use fsl_eval::value::evaluate_refinement_row;
+use fsl_eval::value::{
+    evaluate_refinement_row, CheckedPackageEvaluation, ProtocolReferenceOccurrence, ProtocolSlot,
+    ProtocolSlotEvaluation, ProtocolSuppliedValue, ProtocolSupply, SuppliedValue,
+};
 use fsl_package::CheckedPackage;
 use fsl_semantics::model::accounting::ModelNormalizationLimits;
 use fsl_semantics::model::observation::{declared_type_universe_for, DocumentRef};
@@ -52,9 +54,8 @@ fn state() -> ModelState {
     }
 }
 
-/// The row `index` of the `Queue` mapping evaluated with `self` the call
-/// `receiver`, rendered.
-fn evaluate(row: usize, receiver: &str) -> String {
+/// The row `index` evaluated with an unseeded `self` receiver.
+fn evaluate(row: usize, receiver: &str) -> Evaluation {
     let checked = check_clock_refinement(&clock_refinement(
         "used = count(c in C::calls where ref(c.x) = ref(self.x));\n\
          busy = only(c in C::calls where c.n = 2: ref(c.x)) = ref(self.x);",
@@ -69,21 +70,18 @@ fn evaluate(row: usize, receiver: &str) -> String {
         )
     });
     let package = CheckedPackage::link(checked.graph);
-    format!(
-        "{:?}",
-        evaluate_row(&package, &checked.packages, row, receiver, &state())
-    )
+    evaluate_row_outcome(&package, &checked.packages, row, receiver, &state())
 }
 
 /// Evaluate a row against supplied state, keeping the checked package fixed
 /// while a reference field is updated.
-fn evaluate_row(
+fn evaluate_row_outcome(
     package: &CheckedPackage,
     packages: &fsl_semantics::model::intake::PackageInput,
     row: usize,
     receiver: &str,
     state: &ModelState,
-) -> Value {
+) -> Evaluation {
     let graph = package.graph();
     let (effective, universe) = declared_type_universe_for(
         graph.model_inputs(),
@@ -118,41 +116,64 @@ fn evaluate_row(
         panic!("the queue and the cell rows");
     };
     let mut meter = Meter::new(UNLIMITED);
-    let evaluation = evaluate_refinement_row(
+    evaluate_refinement_row(
         package,
         &queue.fields[row].expression,
         &observed,
         vec![Value::Reference(receiver)],
         &mut meter,
     )
-    .expect("the row evaluates");
+    .expect("the row returns its typed outcome")
+}
+
+fn evaluate_row(
+    package: &CheckedPackage,
+    packages: &fsl_semantics::model::intake::PackageInput,
+    row: usize,
+    receiver: &str,
+    state: &ModelState,
+) -> Value {
+    let evaluation = evaluate_row_outcome(package, packages, row, receiver, state);
     match evaluation.outcome {
         FamilyOutcome::Evaluated(Outcome::Completed(value)) => value,
         other => panic!("row {row} completes: {other:?}"),
     }
 }
 
-/// FR-1040-AC-3 (FSpec FR-829-AC-2): over `calls = {c1, c2}`, `only(c in
-/// M::calls where c.n = 2: ref(c.x))` is the place id of `c2.x`, so it equals
-/// `ref(self.x)` for `c2` and not for `c1`; `count(c in M::calls where
-/// ref(c.x) = ref(self.x))` is `1` for either receiver, as each call holds
-/// one place `x`.
-#[trace("TC-3084", "FR-1040-AC-3")]
+/// The legacy row entry's bare receiver has no authenticated population.
+#[trace("TC-3084")]
 #[test]
-fn the_refinement_row_place_forms_evaluate_to_the_place_ids() {
-    let (true_, false_, one) = (
-        format!("{:?}", Value::Boolean(true)),
-        format!("{:?}", Value::Boolean(false)),
-        format!("{:?}", Value::Integer(Integer::from(1_i64))),
-    );
-    assert_eq!(evaluate(BUSY, "c2"), true_);
-    assert_eq!(evaluate(BUSY, "c1"), false_);
-    assert_eq!(evaluate(USED, "c1"), one);
-    assert_eq!(evaluate(USED, "c2"), one);
+fn unseeded_refinement_receivers_cannot_mint_clock_references() {
+    for receiver in ["c1", "c2"] {
+        for row in [USED, BUSY] {
+            let evaluation = evaluate(row, receiver);
+            let FamilyOutcome::FamilyEvaluated(FamilyResult::Refused(cause)) = evaluation.outcome
+            else {
+                panic!(
+                    "unseeded Clock producer must refuse: {:?}",
+                    evaluation.outcome
+                )
+            };
+            assert_eq!(
+                cause.catalog_code(),
+                filament_semantic_value::catalog::CatalogCode::new(
+                    "unknown_required_feature",
+                    "unsupported-feature"
+                )
+            );
+            assert_eq!(
+                cause.catalog_fields(),
+                Some(BTreeMap::from([(
+                    "reason",
+                    "clock-owner-population-authority".to_owned()
+                )]))
+            );
+        }
+    }
 }
 
-/// The TC-3084 clock fixture with a stored reference and a row that returns
-/// an actual evaluated place id for snapshot admission tests.
+/// The TC-3084 clock fixture with stored reference data and a protocol capture
+/// whose supplied owner retains the authenticated population.
 fn clock_reference_fixture(wrappers: bool) -> crate::ring_queue::Checked {
     clock_reference_fixture_variant(wrappers, false, false)
 }
@@ -229,7 +250,9 @@ fn clock_reference_fixture_variant(
     }
     if map {
         let map_identity = ring_queue::node(CLOCKS, "ClockMap");
-        fields.push(ring_queue::single(CLOCKS, "Call", "mo", &map_identity));
+        let mut mo = ring_queue::single(CLOCKS, "Call", "mo", &map_identity);
+        mo["presence"] = json!("optional");
+        fields.push(mo);
         let mut declaration = ring_queue::declaration(
             CLOCKS,
             "ClockMap",
@@ -251,26 +274,31 @@ fn clock_reference_fixture_variant(
     } else {
         rows.to_owned()
     };
-    ring_queue::check_models(
-        &queue,
-        ("C", CLOCKS, &calls),
-        true,
-        &clock_refinement(&rows),
+    let selected = if remove_x { "y" } else { "x" };
+    let body = format!("profile p = \"filament.protocol.finite-global/v1\";\n\
+        {}\n\
+        protocol ClockPlaces using p over (call: C::Call) on each (opened: Boolean) when (opened) {{\n\
+          capture chosen: Reference<Clock> = ref(call.{selected});\n\
+          role Observer on C::Call;\n\
+          run sequence Main {{ check Ready using v {{ true }}; }}\n\
+          finish End as (outcome: Boolean) {{ true }};\n\
+        }}", clock_refinement(&rows));
+    ring_queue::check_models(&queue, ("C", CLOCKS, &calls), true, &body).unwrap_or_else(
+        |refusals| {
+            panic!(
+                "reference-field rows check: {:?}",
+                refusals
+                    .iter()
+                    .map(|found| &found.refusal)
+                    .collect::<Vec<_>>()
+            )
+        },
     )
-    .unwrap_or_else(|refusals| {
-        panic!(
-            "reference-field rows check: {:?}",
-            refusals
-                .iter()
-                .map(|found| &found.refusal)
-                .collect::<Vec<_>>()
-        )
-    })
 }
 
 /// A stored clock reference is ordinary data: the population count reads the
 /// stored place id, and changing that field changes which place is selected.
-#[trace("TC-3084", "FR-1040-AC-3", "FR-1040-AC-8")]
+#[trace("TC-3084", "FR-1040-AC-3")]
 #[test]
 fn a_refinement_count_reads_the_stored_clock_reference() {
     let checked = clock_reference_fixture(false);
@@ -322,40 +350,153 @@ fn a_refinement_count_reads_the_stored_clock_reference() {
     }
 }
 
-/// Run the actual `chosen = ref(self.x)` row with its owner binder alone.
+/// The model fixture's independently specified canonical v2 text. Arrays and
+/// strings have identical compact serde and RFC 8785 JSON encodings.
+fn place_text(owner: &str, path: serde_json::Value, indices: serde_json::Value) -> String {
+    use serde_json::json;
+    let mut text = "place/v2".to_owned();
+    for component in [
+        json!(["model", CLOCKS, crate::ring_queue::node(CLOCKS, "calls")]),
+        json!(owner),
+        json!(["model", CLOCKS, crate::ring_queue::node(CLOCKS, "Call")]),
+        path,
+        indices,
+    ] {
+        text.push('/');
+        for byte in serde_json::to_vec(&component).expect("canonical component") {
+            use std::fmt::Write;
+            write!(&mut text, "{byte:02x}").expect("string write");
+        }
+    }
+    text
+}
+
+fn declared_place_text(owner: &str, field: &str) -> String {
+    use serde_json::json;
+    place_text(
+        owner,
+        json!([[
+            "field",
+            ["model", CLOCKS, crate::ring_queue::node(CLOCKS, "Call")],
+            crate::ring_queue::node(CLOCKS, &format!("Call/{field}")),
+            ["clock"]
+        ]]),
+        json!([]),
+    )
+}
+
+/// Evaluate the existing protocol slot with provenance validated against the
+/// actual admitted population. No K2 type/universe lookup chooses a population.
 fn generated_place(
     package: &CheckedPackage,
     packages: &fsl_semantics::model::intake::PackageInput,
     owner: &str,
 ) -> ObjectReference {
-    let graph = package.graph();
-    let (effective, universe) = declared_type_universe_for(
-        graph.model_inputs(),
+    use filament_semantic_value::admission::ObservationAdmission;
+    use fsl_semantics::model::observation::ObservationLimits;
+    use serde_json::{json, Value as Json};
+    let document: Json = serde_json::from_slice(&packages[CLOCKS]).expect("actual model document");
+    let fields = document["types"]
+        .as_array()
+        .expect("types")
+        .iter()
+        .find(|ty| ty["identity"] == crate::ring_queue::node(CLOCKS, "Call"))
+        .expect("Call")["fields"]
+        .as_array()
+        .expect("fields");
+    let selected = if fields.iter().any(|field| field["name"] == "x") {
+        "x"
+    } else {
+        "y"
+    };
+    let identity = DocumentRef {
+        authority: "test".to_owned(),
+        identity: "clock-producer".to_owned(),
+    };
+    let objects: Vec<_> = [("c1", "1"), ("c2", "2")].into_iter().map(|(owner, n)| {
+        let mut data = json!({"n":{"integer":n},"d":{"integer":"0"},"r":{"reference":{"population":crate::ring_queue::node(CLOCKS,"calls"),"key":declared_place_text(owner,selected)}}});
+        for field in fields {
+            match field["name"].as_str().expect("field name") {
+                "maybe" | "peer" => { data[field["name"].as_str().expect("name")] = json!({"absent":{}}); }
+                "refs" => data["refs"] = json!({"sequence":[]}),
+                "mo" => data["mo"] = json!({"absent":{}}),
+                _ => {}
+            }
+        }
+        json!({"key":owner,"type":crate::ring_queue::node(CLOCKS,"Call"),"fields":data})
+    }).collect();
+    let snapshot = json!({"format":"filament.state.snapshot/v1","identity":{"authority":identity.authority,"identity":identity.identity},"observation":"current","model":{"identity":CLOCKS},"populations":[{"population":crate::ring_queue::node(CLOCKS,"calls"),"complete":true,"objects":objects}]});
+    let snapshots = BTreeMap::from([(
+        identity.clone(),
+        serde_json::to_vec(&snapshot).expect("snapshot"),
+    )]);
+    let view = package.evaluation_view();
+    let admission = view.admit_protocol_observation(
+        &fsl_semantics::model::domain_package::DomainPackageRef {
+            identity: CLOCKS.to_owned(),
+        },
         packages,
         ModelNormalizationLimits::default(),
-        &key(CLOCKS, "Call"),
-    )
-    .expect("universe")
-    .expect("Call");
-    let owner = ObjectReference::new(universe, effective, ObjectId::new(owner).expect("id"));
-    let [refinement] = graph.refinements() else {
-        panic!("one refinement")
+        &snapshots,
+        &identity,
+        ObservationLimits::default(),
+    );
+    let ObservationAdmission::Admitted(admitted) = &admission else {
+        panic!("actual producer snapshot admits: {admission:?}")
     };
-    let [queue, _] = refinement.objects() else {
-        panic!("Queue and Cell")
+    let environment = admitted.environment();
+    let reference = environment
+        .population_members(&crate::ring_queue::node(CLOCKS, "calls"))
+        .expect("calls")
+        .iter()
+        .find(|reference| reference.object().as_str() == owner)
+        .expect("actual admitted owner")
+        .clone();
+    let keys = package
+        .graph()
+        .protocol_node_keys("ClockPlaces")
+        .expect("protocol keys");
+    let binder = keys
+        .binders
+        .iter()
+        .find(|binder| binder.name == "call")
+        .expect("call binder");
+    let supply = ProtocolSupply {
+        binders: vec![(
+            binder.node.clone(),
+            ProtocolSuppliedValue {
+                value: SuppliedValue::Value(Value::Reference(reference)),
+                references: vec![ProtocolReferenceOccurrence {
+                    path: Vec::new(),
+                    population: environment
+                        .population_node(&crate::ring_queue::node(CLOCKS, "calls"))
+                        .expect("authenticated P")
+                        .clone(),
+                }],
+            },
+        )],
+        observation: Some(&admission),
     };
-    let mut meter = Meter::new(UNLIMITED);
-    let evaluation = evaluate_refinement_row(
-        package,
-        &queue.fields[2].expression,
-        &fsl_semantics::model::object_environment::ObjectEnvironment::default(),
-        vec![Value::Reference(owner)],
-        &mut meter,
-    )
-    .expect("place row evaluates");
+    let slot = ProtocolSlot {
+        node: keys.clause.clone().expect("protocol root"),
+        member: "captures".to_owned(),
+        index: Some(0),
+    };
+    let ProtocolSlotEvaluation::Evaluated(evaluation, _) = package
+        .evaluate_protocol_slot(&slot, &supply, &mut Meter::new(UNLIMITED))
+        .expect("seeded capture evaluates")
+    else {
+        panic!("capture available")
+    };
     match evaluation.outcome {
-        FamilyOutcome::Evaluated(Outcome::Completed(Value::Reference(reference))) => reference,
-        other => panic!("place row returns a reference: {other:?}"),
+        FamilyOutcome::Evaluated(Outcome::Completed(Value::Reference(reference))) => {
+            assert_eq!(
+                reference.object().as_str(),
+                declared_place_text(owner, selected)
+            );
+            reference
+        }
+        other => panic!("seeded capture returns a reference: {other:?}"),
     }
 }
 
@@ -383,9 +524,8 @@ fn clock_snapshot(reference: &ObjectReference) -> (DocumentRef, Vec<u8>) {
 
 /// Only a declared place instance is admitted as clock-reference data;
 /// its owner is not resolved as an object of type Clock.
-#[trace("TC-464", "FR-106-AC-72", "TC-3084", "FR-1040-AC-8")]
+#[trace("TC-464", "FR-106-AC-72", "TC-3084")]
 #[test]
-#[ignore = "QSL-2178 STEP2: route-neutral external Clock place identity required"]
 fn clock_reference_snapshot_accepts_a_declared_place() {
     use serde_json::{json, Value as Json};
     let checked = clock_reference_fixture(true);
@@ -485,7 +625,6 @@ fn clock_reference_snapshot_accepts_a_declared_place() {
 /// dangling object reference, both retain the dangling-reference boundary.
 #[trace("TC-464", "FR-106-AC-73")]
 #[test]
-#[ignore = "QSL-2178 STEP2: route-neutral external Clock place identity required"]
 fn clock_reference_snapshot_refuses_an_undeclared_place() {
     use serde_json::{json, Value as Json};
     let old = clock_reference_fixture(true);
@@ -574,17 +713,15 @@ fn clock_reference_snapshot_refuses_an_undeclared_place() {
             path,
             kernel: None,
         };
-        assert_eq!(
-            *record, expected,
-            "exact pending STEP2 undeclared-place refusal"
-        );
+        assert_eq!(*record, expected, "exact undeclared-place refusal");
     }
 }
 
-/// Bare observations cannot authenticate the source codec's template key.
-#[trace("FR-531-AC-1", "FR-1040-AC-8")]
+/// Model-owned raw references authenticate through the actual declarations;
+/// samples without a model catalog cannot resolve the same transported value.
+#[trace("FR-531-AC-1", "FR-106-AC-72", "FR-230-AC-45")]
 #[test]
-fn clock_reference_external_observations_are_explicitly_unsupported() {
+fn model_owned_clock_observations_admit_and_unbound_targets_refuse() {
     use filament_semantic_value::admission::ObservationAdmission;
     use fsl_semantics::model::observation::{AdmissionFailure, ObservationLimits};
     use serde_json::{json, Value as Json};
@@ -598,24 +735,41 @@ fn clock_reference_external_observations_are_explicitly_unsupported() {
         fsl_package::EmitLimits::fixture(),
     )
     .expect("actual emitted bytes admit");
-    let bare = fsl_package::BarePackage::new(read.admitted());
+    let mut budget = fsl_package::V2ReadLimits::fixture().native_join_budget();
+    let rows = read
+        .emission()
+        .identity_rows(read.admitted(), &mut budget)
+        .expect("identity rows");
+    let equality = read
+        .emission()
+        .equality_witness(read.admitted(), &mut budget)
+        .expect("equality rows");
+    let bare = fsl_package::BarePackage::new(read.admitted())
+        .with_supply(
+            fsl_package::BareSupply {
+                identities: &rows,
+                equality: Some(&equality),
+            },
+            &mut budget,
+        )
+        .expect("actual Bare supply");
     let reference = generated_place(&package, &checked.packages, "c1");
     let (identity, bytes) = clock_snapshot(&reference);
     let snapshots = BTreeMap::from([(identity.clone(), bytes)]);
     let model = fsl_semantics::model::domain_package::DomainPackageRef {
         identity: CLOCKS.to_owned(),
     };
-    let assert_unsupported = |record: &filament_semantic_value::admission::AdmissionRecord| {
+    let assert_unbound = |record: &filament_semantic_value::admission::AdmissionRecord| {
         assert_eq!(
             record.catalog,
             filament_semantic_value::catalog::CatalogCode::new(
-                "unknown_required_feature",
-                "unsupported-feature"
+                "dangling_reference",
+                "absent-target-in-complete-population"
             )
         );
         assert_eq!(
-            record.fields.get("reason").map(String::as_str),
-            Some("missing-route-neutral-place-identity")
+            record.fields.get("population").map(String::as_str),
+            Some(crate::ring_queue::node(CLOCKS, "calls").as_str())
         );
     };
     let source_model = StateModel::new(
@@ -625,14 +779,14 @@ fn clock_reference_external_observations_are_explicitly_unsupported() {
         ModelNormalizationLimits::default(),
     )
     .expect("source model");
-    let Err(AdmissionFailure::Refused(record)) =
-        source_model.admit_initial(&snapshots, &identity, ObservationLimits::default())
-    else {
-        panic!("source raw snapshot must refuse external Clock identity")
-    };
-    assert_unsupported(&record);
+    let (admitted_state, _) = source_model
+        .admit_initial(&snapshots, &identity, ObservationLimits::default())
+        .expect("authenticated Model-owned reference admits");
+    assert!(
+        matches!(&admitted_state.populations[&key(CLOCKS,"calls")]["c1"].fields[&key(CLOCKS,"Call/r")], Value::Reference(stored) if stored == &reference)
+    );
     for complete in [true, false] {
-        for target in [reference.object().as_str(), "not-a-place-id"] {
+        for target in ["not-a-place-id", "place/v2/not-canonical"] {
             let mut snapshot: Json =
                 serde_json::from_slice(snapshots.get(&identity).expect("snapshot"))
                     .expect("snapshot JSON");
@@ -647,9 +801,34 @@ fn clock_reference_external_observations_are_explicitly_unsupported() {
                 &identity,
                 ObservationLimits::default(),
             ) else {
-                panic!("external Clock value must refuse before completeness/ID decoding")
+                panic!("malformed v2 Clock value must refuse before completeness")
             };
-            assert_unsupported(&record);
+            use filament_semantic_value::admission::{AdmissionRecord, PathStep};
+            assert_eq!(
+                *record,
+                AdmissionRecord {
+                    catalog: filament_semantic_value::catalog::CatalogCode::new(
+                        "invalid_runtime_input",
+                        "invalid-value"
+                    ),
+                    fields: BTreeMap::from([
+                        ("document", identity.identity.clone()),
+                        ("population", crate::ring_queue::node(CLOCKS, "calls")),
+                        ("object", "c1".to_owned()),
+                        ("field", "r".to_owned()),
+                        ("path", "/populations/0/objects/0/fields/r".to_owned()),
+                    ]),
+                    path: vec![
+                        PathStep::Field("populations".to_owned()),
+                        PathStep::Index(0),
+                        PathStep::Field("objects".to_owned()),
+                        PathStep::Index(0),
+                        PathStep::Field("fields".to_owned()),
+                        PathStep::Field("r".to_owned())
+                    ],
+                    kernel: None,
+                }
+            );
         }
     }
     let raw = json!({"reference":{"population":crate::ring_queue::node(CLOCKS,"calls"),"key":reference.object().as_str()}});
@@ -703,7 +882,7 @@ fn clock_reference_external_observations_are_explicitly_unsupported() {
             &serde_json::to_vec(&json!({"r":value})).expect("sample"),
         )
         .expect_err("record Clock reference is external");
-        assert_unsupported(&record);
+        assert_unbound(&record);
     }
 
     let document = crate::tc235_business_meaning_runtime::lifecycle_document_with(
@@ -788,20 +967,26 @@ fn clock_reference_external_observations_are_explicitly_unsupported() {
                 Some("ghost")
             );
         } else {
-            assert_unsupported(&record);
+            assert_unbound(&record);
         }
     }
-    let Err(AdmissionFailure::Refused(record)) = bare.admit_call_snapshot(
-        &checked.packages,
-        ModelNormalizationLimits::default(),
-        &snapshots,
-        &identity,
-        ObservationLimits::default(),
-    ) else {
-        panic!("Bare call snapshot must name missing authority")
-    };
-    assert_unsupported(&record);
-    let ObservationAdmission::Refused(record) = bare.admit_protocol_observation(
+    let (environment, _) = bare
+        .admit_call_snapshot(
+            &checked.packages,
+            ModelNormalizationLimits::default(),
+            &snapshots,
+            &identity,
+            ObservationLimits::default(),
+        )
+        .expect("Bare authenticates the actual Model-owned Clock reference");
+    assert_eq!(
+        environment
+            .population_members(&crate::ring_queue::node(CLOCKS, "calls"))
+            .expect("calls")
+            .len(),
+        1
+    );
+    let ObservationAdmission::Admitted(admitted) = bare.admit_protocol_observation(
         &model,
         &checked.packages,
         ModelNormalizationLimits::default(),
@@ -809,19 +994,33 @@ fn clock_reference_external_observations_are_explicitly_unsupported() {
         &identity,
         ObservationLimits::default(),
     ) else {
-        panic!("Bare protocol snapshot must name missing authority")
+        panic!("Bare protocol snapshot must authenticate Model-owned Clock data")
     };
-    assert_unsupported(&record);
-    let ObservationAdmission::Refused(record) = bare.admit_protocol_state(
+    assert_eq!(
+        admitted
+            .environment()
+            .population_members(&crate::ring_queue::node(CLOCKS, "calls"))
+            .expect("calls")
+            .len(),
+        1
+    );
+    let ObservationAdmission::Admitted(admitted) = bare.admit_protocol_state(
         &model,
         &checked.packages,
         ModelNormalizationLimits::default(),
-        &state(),
+        &admitted_state,
         identity,
     ) else {
-        panic!("Bare simulated state must name missing authority")
+        panic!("Bare observation of actually admitted state preserves Clock data")
     };
-    assert_unsupported(&record);
+    assert_eq!(
+        admitted
+            .environment()
+            .population_members(&crate::ring_queue::node(CLOCKS, "calls"))
+            .expect("calls")
+            .len(),
+        1
+    );
 
     let mut ordinary_calls: Json =
         serde_json::from_slice(&crate::ring_queue::clock_calls()).expect("ordinary model");
@@ -918,7 +1117,7 @@ fn clock_reference_external_observations_are_explicitly_unsupported() {
 }
 
 /// A map layout never authorizes a numerically forged clock-place identity.
-#[trace("TC-3084", "FR-1040-AC-8", "FR-230-AC-62")]
+#[trace("TC-3084", "FR-230-AC-62")]
 #[test]
 fn clock_reference_admission_refuses_map_place_forgery() {
     use fsl_semantics::model::clock_reference::{self, DeclaredClockPlaces};
@@ -936,40 +1135,87 @@ fn clock_reference_admission_refuses_map_place_forgery() {
     let owner = model
         .object_reference(&key(CLOCKS, "Call"), "c1")
         .expect("actual owner");
-    let template = graph
+    let map_clock = graph
         .timed_models()
         .iter()
-        .flat_map(|model| model.clocks().iter().zip(model.place_nodes()))
-        .find(|(clock, _)| clock.slots().any(|shape| shape.map))
-        .expect("actual map template")
-        .1;
-    let forged = clock_reference::encode(&owner, template, &[Value::Integer(Integer::from(0_i64))])
-        .expect("syntactically encoded forged numeric slot");
+        .flat_map(|model| model.clocks().iter())
+        .find(|clock| clock.slots().any(|shape| shape.map))
+        .expect("actual map declaration");
+    assert_eq!(map_clock.field(), &key(CLOCKS, "Call/mo"));
+    let valid = generated_place(&package, &checked.packages, "c1");
+    let declared = DeclaredClockPlaces::with_declaration_table(
+        graph.timed_models(),
+        graph.clock_declaration_table(),
+    );
     assert!(
-        !DeclaredClockPlaces::new(graph.timed_models()).contains(
-            &forged,
-            &owner,
-            graph.scope().types()
-        ),
+        declared.contains(&valid, &owner, graph.scope().types()),
+        "actual table validates the evaluated declared x place"
+    );
+    use serde_json::json;
+    let scope = json!(["model", CLOCKS, crate::ring_queue::node(CLOCKS, "Call")]);
+    let text = place_text(
+        "c1",
+        json!([
+            [
+                "field",
+                scope,
+                crate::ring_queue::node(CLOCKS, "Call/mo"),
+                ["option", ["collection", "sequence", "0", "2", ["clock"]]]
+            ],
+            ["option"],
+            ["collection", "sequence", "0", "2", ["clock"]]
+        ]),
+        json!([["slot", "2", "0"]]),
+    );
+    let identity =
+        clock_reference::identity::PlaceIdentity::decode(&text, quire_canonical::Limits::new(4096))
+            .expect("well-formed v2 numeric forgery, not a legacy codec ID");
+    let forged =
+        clock_reference::encode_identity(&owner, &identity, quire_canonical::Limits::new(4096))
+            .expect("hostile v2 value in the actual owner's universe");
+    assert!(
+        !declared.contains(&forged, &owner, graph.scope().types()),
         "a map template never authenticates a numeric place ID"
     );
-    let (identity, bytes) = clock_snapshot(&forged);
+    let (identity, bytes) = clock_snapshot(&valid);
+    let mut snapshot: serde_json::Value = serde_json::from_slice(&bytes).expect("snapshot");
+    snapshot["populations"][0]["objects"][0]["fields"]["mo"] = json!({"absent":{}});
+    snapshot["populations"][0]["objects"][0]["fields"]["r"] = json!({"reference":{"population":crate::ring_queue::node(CLOCKS,"calls"),"key":forged.object().as_str()}});
     let Err(AdmissionFailure::Refused(record)) = model.admit_initial(
-        &BTreeMap::from([(identity.clone(), bytes)]),
+        &BTreeMap::from([(
+            identity.clone(),
+            serde_json::to_vec(&snapshot).expect("snapshot"),
+        )]),
         &identity,
         ObservationLimits::default(),
     ) else {
         panic!("raw map-place value must refuse")
     };
+    use filament_semantic_value::admission::{AdmissionRecord, PathStep};
     assert_eq!(
-        record.catalog,
-        filament_semantic_value::catalog::CatalogCode::new(
-            "unknown_required_feature",
-            "unsupported-feature"
-        )
-    );
-    assert_eq!(
-        record.fields.get("reason").map(String::as_str),
-        Some("missing-route-neutral-place-identity")
+        *record,
+        AdmissionRecord {
+            catalog: filament_semantic_value::catalog::CatalogCode::new(
+                "dangling_reference",
+                "absent-target-in-complete-population"
+            ),
+            fields: BTreeMap::from([
+                ("document", identity.identity.clone()),
+                ("population", crate::ring_queue::node(CLOCKS, "calls")),
+                ("object", "c1".to_owned()),
+                ("field", "r".to_owned()),
+                ("target", forged.object().as_str().to_owned()),
+                ("path", "/populations/0/objects/0/fields/r".to_owned()),
+            ]),
+            path: vec![
+                PathStep::Field("populations".to_owned()),
+                PathStep::Index(0),
+                PathStep::Field("objects".to_owned()),
+                PathStep::Index(0),
+                PathStep::Field("fields".to_owned()),
+                PathStep::Field("r".to_owned())
+            ],
+            kernel: None,
+        }
     );
 }
