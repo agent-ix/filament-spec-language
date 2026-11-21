@@ -139,6 +139,27 @@ fn composition_views_keep_member_regions_and_owner_bound_targets() {
             }
             (CompositionMemberValue::Supply(left), CompositionMemberValue::Supply(right)) => {
                 assert_eq!(left, right);
+                let mut budget =
+                    filament_contract_model::NativeJoinBudget::new(1_000_000, 1_000_000);
+                let target = source_view
+                    .supply_context_with_budget(left, &mut budget)
+                    .expect("the scheduling context has an authenticated component owner");
+                let byte_target = byte_view
+                    .supply_context_with_budget(right, &mut budget)
+                    .expect("the byte context has the same authenticated owner");
+                assert_eq!(target.owner().name(), byte_target.owner().name());
+                assert_eq!(
+                    target.owner().structural_key(target.node()),
+                    byte_target.owner().structural_key(byte_target.node())
+                );
+                assert!(target.owner().term(target.node()).is_some());
+                let copied = left.clone();
+                assert_eq!(
+                    source_view
+                        .supply_context_with_budget(&copied, &mut budget)
+                        .err(),
+                    Some(CompositionViewRefusal::UnknownTarget)
+                );
                 continue;
             }
             (
@@ -246,6 +267,45 @@ fn composition_view_projection_preserves_the_cumulative_native_budget() {
     assert!(declaration_charge.work > 0 && declaration_charge.storage > 0);
     assert_eq!(view.name(), projected.name());
     assert_eq!(view.source(), projected.source());
+    let mut exact_declaration =
+        NativeJoinBudget::new(declaration_charge.work, declaration_charge.storage);
+    assert_eq!(
+        read.composition_with_budget(&claim.declaration, &mut exact_declaration)
+            .expect("exact declaration allowance includes structural-key materialization")
+            .source(),
+        view.source()
+    );
+    assert_eq!(exact_declaration.consumed(), declaration_charge);
+    for (work, storage, kind) in [
+        (
+            declaration_charge.work - 1,
+            1_000_000,
+            NativeJoinChargeKind::Work,
+        ),
+        (
+            1_000_000,
+            declaration_charge.storage - 1,
+            NativeJoinChargeKind::Storage,
+        ),
+    ] {
+        let mut short = NativeJoinBudget::new(work, storage);
+        let Some(CompositionViewRefusal::Native(error)) = read
+            .composition_with_budget(&claim.declaration, &mut short)
+            .err()
+        else {
+            panic!("declaration materialization preserves native denial");
+        };
+        assert_eq!(error.denied(), short.first_unpaid());
+        assert_eq!(error.denied().expect("unpaid").kind, kind);
+        assert_eq!(error.locus(), short.first_unpaid_locus());
+        assert_eq!(
+            error.configured_bound(),
+            Some(match kind {
+                NativeJoinChargeKind::Work => work,
+                NativeJoinChargeKind::Storage => storage,
+            })
+        );
+    }
     let members = projected
         .members_with_budget(&mut budget)
         .collect::<Result<Vec<_>, _>>()
