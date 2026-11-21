@@ -925,7 +925,7 @@ fn same_type_populations_retain_each_listed_owner_before_clock_evaluation() {
     let mut world = world_holding(
         serde_json::to_vec(&document).expect("JSON"),
         "",
-        &only(&[], ""),
+        "dimension Time; unit ms : Time = rational(1, 1); time M dense unit ms;",
         json!({}),
     );
     let (single, _) = fsl_semantics::model::observation::admit_current_snapshot(
