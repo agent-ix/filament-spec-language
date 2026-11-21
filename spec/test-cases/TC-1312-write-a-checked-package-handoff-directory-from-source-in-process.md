@@ -11,14 +11,14 @@ relationships:
 ## Description
 
 Verify the checked-package handoff writer on the ported IT-001 recipe **R**.
-Scope: FR-517-AC-1 to FR-517-AC-24.
+Scope: FR-517-AC-1 to FR-517-AC-24 and FR-517-AC-27/AC-28.
 
 ## Test Procedure
 
 | Row | AC | Input | Expected |
 | --- | --- | --- | --- |
 | 1 | 1 | `write(R, new dir)` with `corpus = None`, then with `Standard` | the paths of the Outputs table, `inventory.json` included, no `mutations/` first; `checked-package.json` equals `emit_checked_v2::emit` of the same request |
-| 2 | 2 | read `checked-package.json` with `read_checked_package` and evidence from `models/` and `sources/`; `Selection::check` | admitted; `Ok(())`; sidecar values, compensation rows included, equal the in-process unit |
+| 2 | 2 | read `checked-package.json` with `read_checked_package` and evidence from `models/` and the admitted dependency artifact closure; `Selection::check` | admitted; `Ok(())`; sidecar values, compensation rows included, equal the in-process unit |
 | 3 | 3 | count and list the nodes and `temporal_bindings` of each package of **R** | event position: one `protocol_clause`; two compensation nodes with different keys paired with the one `Main::Applied` effect; two clauses; four rows in ascending `NodeRef` order; fixed sample and timestamped event: one clause and one row each; kinds `EventPosition`, `FixedSample`, `TimestampedEvent` |
 | 4 | 4 | read the `Wide` values of **R** | the two extrema present; bounds as declared |
 | 5 | 5 | two writes into two new directories | byte-identical trees |
@@ -41,8 +41,10 @@ Scope: FR-517-AC-1 to FR-517-AC-24.
 | 22 | 22 | a unit whose equality rows name a node the package does not hold; the written file | `Error::Unnameable`, nothing written; the file holds no source text, digest or unlisted member |
 | 23 | 23 | compile a unit with a selected source record and nested opaque member types; write and read `identities.json`, then compare its source-record rows to the same final emission | the required `/2` source-record rows retain original opaque keys, final node/type references, names and order and join through native IR; the file rewrites byte-identically |
 | 24 | 24 | `compile` over a written directory of **R** and of a unit with execution points; then with `checked-package.json` replaced by another admitted package, with the sidecar `unit` set to `sources/../x`, with `models/0.json` replaced by a symbolic link to a file outside the directory, and with `selection.json` removed | a package that emits the file's bytes and passes `Selection::check`, the sidecar naming package name, unit and points; `ReadBackDiffers`, `Label`, `Label` and `Read`, no package |
+| 27 | 27 | Write an import-free unit, then a root importing `test/z` which imports `test/a`; write again with reversed library provision order | required empty manifest first; then the FR-517 manifest vector, two indexed artifact/witness triples, strict admission with each own supply, byte-identical trees across provision order |
+| 28 | 28 | Write a root importing `test/left` and `test/right`, each importing `test/shared`; then supply conflicting shared content | three sorted unique manifest rows, the shared triple once, each dependency admitted before its importer; conflict refuses and leaves no directory |
 
-Tag the test `#[trace("FR-517-AC-1", ..., "FR-517-AC-24", "TC-1312")]`; row 3 and 4 also carry FR-042-AC-10.
+Tag the test `#[trace("FR-517-AC-1", ..., "FR-517-AC-24", "FR-517-AC-27", "FR-517-AC-28", "TC-1312")]`; row 3 and 4 also carry FR-042-AC-10.
 
 ## Expected Results
 

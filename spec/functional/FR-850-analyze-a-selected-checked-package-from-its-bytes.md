@@ -36,8 +36,9 @@ of a `program` source (FSpec FR-520). The selection names the FR-517 handoff
 directory that holds the package. When it does, FSL SHALL admit the
 directory's `checked-package.json` with the strict checked-package reader,
 attach the identity rows of its `identities.json` and, when present, the
-equality rows of its `equality.json`, build from those files
-alone the analysis input the engines take, and analyze
+equality rows of its `equality.json`, admit the dependency artifact closure
+of `dependencies.json` with each package's own witness files, and build from
+those files alone the analysis input the engines take, and analyze
 the request's items over it. No source is compiled, and the items, records,
 counterexamples, replays and exit code SHALL equal those of the same request
 over the source the package was compiled from.
@@ -48,13 +49,15 @@ A caller who already holds a checked package, such as a lane that receives a
 handoff directory or a CI step that compiled once and analyzes many times,
 has the package and may not have the source. Recompiling a provisioned
 source and comparing bytes would make the source mandatory, and would make
-the package selection a second spelling of the program selection. The v2
-package already carries everything analysis reads: the package identity,
+the package selection a second spelling of the program selection. The root v2
+package carries its own analysis facts: the package identity,
 the formula graph, the total source map, each named declaration's
 `declaration.qualified_name`, the `temporal_clause_names` rows, the profile
 and clock rows, the dependency selections and the identities of the domain
 packages it was compiled against (FSpec FR-322). So the package is the
-analysis input, and the source is never consulted. This follows the rule
+analysis input together with the admitted dependency artifacts and their own
+witnesses from the handoff; dependency selections name those packages but do
+not embed their bytes. The source is never consulted. This follows the rule
 FR-531 states for evaluation from a package read from its bytes alone.
 
 ### Decision: the selection names the handoff directory, whose identity file supplies the witness
@@ -68,8 +71,8 @@ carry no such rows and admits them only from the handoff's `identities.json`
 selection of the package file alone therefore cannot build the projection,
 and the package forms of the source-checked evaluators (FR-940) could not
 run. The selection names the directory FR-517 writes instead, so the
-analysis reads the package and its witness files from the one artifact that
-was written together, and the rows still come only from the handoff files:
+analysis reads the root and dependency packages and their own witness files
+from the one handoff that was written together, and the rows still come only from the handoff files:
 nothing is derived from the package bytes, a display name or source text. A
 caller obtains the directory from a `native-compile/1` request's `handoff`
 member (FR-665).
@@ -98,15 +101,19 @@ is that one item's spelling, as with `unknown-claim`.
 
 - The request's `package` member `{directory}`: the path of an FR-517
   handoff directory, resolved against the request document's directory. The
-  analysis reads from it `checked-package.json`, `identities.json` and, when
-  present, `equality.json`, and no other file; each file read is counted
-  toward `dependent_bytes` (FR-026).
-- The request's `models`: the domain package documents the package records
-  in its model selections, each matched to its recorded selection by
-  identity.
+  analysis reads from it `checked-package.json`, `identities.json`, when
+  present `equality.json`, the required `dependencies.json`, and the package
+  and witness triple of each manifest row (FR-517 "The dependency artifact
+  closure"). It reads no source, selection sidecar or other handoff file.
+  Each file read is counted toward aggregate `dependent_bytes` (FR-026).
+- The request's `models`: the domain package documents the root or any
+  dependency artifact records in its model selections, each matched to its
+  recorded selection by identity. A document selected only by a dependency
+  is not an extraneous root model.
 - The request's `libraries`: absent or empty. A checked package already
-  holds its dependency selections; a library selection beside `package` has
-  no source to compile and refuses as below.
+  holds its dependency selections and obtains the selected admitted artifacts
+  from its handoff manifest. A request-level `libraries` entry supplies
+  library SOURCE, not a dependency artifact; it remains refused as below.
 - Every other FR-620 request member (`documents`, `memory`, `subject`,
   `items`, `limits`, `deadline_ms`) with FR-620's meaning.
 
@@ -117,6 +124,96 @@ FR-621's `analyze` outcome document. Its `request` echo carries the
 member is the same as the source route gives.
 
 ## Behavior
+
+### Dependency artifact admission
+
+The directory loader shared by `native-analyze/1`, `native-run/1` directory
+selections ([FR-1039](FR-1039-run-every-native-run-member-over-a-selected-checked-package.md))
+and their bytes-only counterexample replays SHALL consume FR-517's dependency
+manifest and artifact closure. This changes no `{file}` or `{file, equality}`
+request shape and adds no request-level dependency member. A bare-file selection
+with no supplied dependency evidence SHALL keep its existing strict-reader
+`MissingImport` refusal; it SHALL NOT search neighboring handoff files, sources
+or artifact directories to repair the missing supply. The directory loader
+SHALL NOT read library source, recompile a provision, or construct source `CheckedPackage` or `CheckedGraph` typestate
+from artifact bytes (FR-940).
+
+- The loader SHALL require `dependencies.json`, even when the root selects
+  no library. It SHALL parse the closed `filament.checked-handoff.dependencies/1`
+  format of FR-517 before admitting any item. Rows SHALL have unique identities
+  in the specified order and their exact indexed directory. No additional
+  path, edge, source, digest or version member is admitted.
+- The loader SHALL admit each library through the existing strict checked-package
+  reader with its selected domain documents and already admitted direct library
+  dependencies. It SHALL perform admission bottom-up, with independent ready
+  libraries visited in manifest order, then admit the root with the retained
+  dependency evidence. The manifest order need not be topological. Package
+  locks alone determine import edges. The reader SHALL validate each supplied
+  package against its selected identity and the existing cross-package and
+  diamond rules before `CheckedPackageEvidence::insert_dependency_package`
+  makes it available to an importing package. No missing import is fabricated.
+- For each dependency, the loader SHALL require both witness files, including
+  an empty `equality.json` when the dependency has no equality application.
+  It SHALL read its `identities.json` and `equality.json` against THAT admitted
+  dependency, using `ReadIdentityRows::read` and `ReadEqualityRows::read`, and
+  attach the resulting supply only to that dependency's package view. It SHALL
+  NOT join a dependency's witness against the root, reuse the root's supply for
+  it, or derive a missing witness from package bytes. The root's equality-file
+  absence rule in "Admission" is unchanged.
+- After the root is admitted, the manifest's identities SHALL equal the unique
+  recursive closure reachable through its admitted dependency selections,
+  excluding the root. A diamond shares one admitted package and its supply;
+  two different packages claimed under the same library identity SHALL refuse
+  the request. An extra unreachable artifact is not an alternative supply.
+- The loader SHALL retain the admitted closure, original artifact bytes and
+  each package's witness supply through run, analysis and counterexample replay.
+  Evaluation of a dependency-owned function or premise SHALL use that owner's
+  admitted package and witnesses. Replay SHALL consume the same retained
+  closure without reopening source; a replay read still applies the existing
+  `replay.input_bytes` bound to all package artifact bytes it consumes, and
+  replay refusals keep FR-940's item-local `replay_refused` behavior.
+
+Every manifest and artifact path SHALL be resolved beneath the selected handoff
+using FR-517's confined-file rules. The loader SHALL reject absolute paths,
+noncanonical indexed paths, `.` or `..` components, backslashes, symbolic links
+at any component and non-regular artifact files before reading their content.
+It SHALL NOT traverse an unlisted dependency directory to discover artifacts.
+
+The following failures SHALL refuse the whole request before any item or engine
+runs, with category refusal, exit `20`, `items` empty and `last_stage` `null`:
+
+| Failure | Code / cause | Retained location |
+| --- | --- | --- |
+| Missing manifest or selected dependency package/witness file | `invalid_package` / `missing-file` | exact relative file path |
+| Non-JSON manifest, missing/unknown/repeated member or wrong member kind | `invalid_package` / `malformed-file` | `dependencies.json` and first defective JSON pointer |
+| Another manifest `format` | `invalid_package` / `unknown-format` | `dependencies.json`, `/format`, and the supplied string |
+| Repeated identity, wrong order, noncanonical/unsafe path or unreachable manifest row | `invalid_package` / `invalid-value` | `dependencies.json` and first defective row/member pointer; an unsafe actual file names its relative path |
+| A library selection not supplied by the manifest | `missing_import` / `missing-selection` | importing package's relative file path and the reader's dependency-selection pointer and identity |
+| Conflicting admitted content under one identity or a foreign artifact supplied for a selected identity | `invalid_package` / `conflicting-definition` | relative artifact file path, selected identity and the reader's original locus when present |
+| Cyclic dependency selections | `invalid_package` / `definition-cycle` | identities on the cycle and the first back-edge's dependency-selection pointer, visiting root edges and each package's edges in their recorded order |
+| Refused dependency package or foreign/unjoined dependency witness | the strict reader's code/cause, or the identity/equality mapping in "Admission" | dependency-relative file path plus original reader/witness refusal and locus; no root-relative substitution |
+
+The loader SHALL use one invocation-wide intake budget: every root, manifest,
+dependency package and witness file read counts once by its full size toward
+`dependent_bytes`, in addition to request-selected model and runtime documents.
+It SHALL count every such selected file once toward FR-026's shared
+64-selected-file ceiling, including the manifest and required dependency witness
+files; a diamond's shared triple is counted once. It SHALL check a prospective
+file count before opening the next file and cap each read by the remaining byte
+allowance. These intake stops retain FR-026's `resource_exhausted`, category
+`incomplete`, exit `22`, configured bound and option hint, rather than being
+translated into a malformed-artifact refusal.
+
+All strict package reads and native joins for the root and closure SHALL consume
+one finite remaining work allowance for the invocation, without resetting it per
+dependency. Native identity joins SHALL share the `NativeJoinBudget` and logical
+storage allowance of `i2.work_units` and `i2.native_join_storage` (FR-531,
+FR-255). Strict-reader work is charged once by its existing read schedule and
+native-join work once by its join schedule; this rule adds no duplicate charge
+for an operation already accounted by that schedule. A denied charge retains
+its original setting, bound, attempted count and typed refusal. No item runs
+on a partially admitted closure. The writer's one `native_join` budget likewise
+serves the complete write, not one fresh budget per dependency.
 
 ### Admission
 
@@ -210,12 +307,14 @@ member is the same as the source route gives.
   SHALL refuse the whole request `invalid-request` at the request stage,
   exit 20, naming the second member. These members configure a compile, and
   the package was already compiled.
-- Each domain package identity the package's model selections record SHALL
-  be supplied by exactly one `models` entry whose identity equals it. A
-  recorded identity with no entry refuses the request
+- Each domain package identity the root or any retained dependency's model
+  selections record SHALL be supplied by exactly one `models` entry whose
+  identity equals it. Each package SHALL bind that document against its own
+  recorded selection. A recorded identity with no entry refuses the request
   `missing_import`/`missing-selection` naming that identity; an entry whose
-  identity the package does not record, or whose document identity matches
-  but whose content the package's recorded selection does not admit, refuses
+  identity no package in the admitted closure records, or whose document
+  identity matches but whose content a selecting package's recorded selection
+  does not admit, refuses
   `invalid_package`/`conflicting-definition` naming the entry; each refusal
   is at the request stage, exit 20, before any engine runs.
 
@@ -224,7 +323,9 @@ member is the same as the source route gives.
 - FSL SHALL build the analysis input from the admitted package value as
   FR-940 states: a `BarePackage` (FR-531) over the read `CheckedPackageV2`,
   with the supplied domain packages bound to its model selections and the
-  handoff's identity and equality rows attached ("Admission"), read by the
+  handoff's own identity/equality rows attached, retaining each dependency's
+  admitted package and its separate supply ("Dependency artifact admission"
+  and "Admission"), read by the
   engines through the sealed `AnalysisView`. It is never a `CheckedPackage`:
   FR-087 R-10 keeps checked typestate to S3 and S4. The source route reads
   each fact of FR-531's table through the same view, as the
@@ -301,6 +402,11 @@ The Counter fixture is FR-620's.
 | FR-850-AC-9 | Over the handoff directory of the untimed Counter unit that imports its model as `M`, the `package` request with the items `{"claim": "Bounded"}` and `{"claim": "test/counter", "temporal": {"item_kind": "deadlock-freedom"}}` settles both with the records the source request with the same items gives; the same `package` request with the second item's `claim` `M` settles `Bounded` with the same record and settles that item `invalid-request` with `invalid_capability`/`model-alias`, naming `M` and `test/counter`, with no `not-yet-implemented` diagnostic and no item `unsupported`, while the source request with `M` settles it as with `test/counter`; the handoff directory of the same untimed unit importing its model as `N` holds a `checked-package.json` byte-equal to the `M` unit's. | Test (TC-2987) |
 | FR-850-AC-10 | AC-1's Counter package holds the integer `=` application of the `Inc` postcondition (`self.value - pre(self.value) = 1`) in `checked_term_data.equality_decisions`. With `equality.json` removed from its handoff directory, the request with the item `{"claim": "Bounded"}` refuses the whole request at the request stage, `invalid_package`, cause `missing-file`, naming `equality.json`, exit 20, `items` empty and no engine run. With `equality.json` present, the same request settles `Bounded` `proved` with the record the source request gives. The handoff directory of the Counter unit whose `Inc` postcondition is written `self.value > pre(self.value)` holds no equality application (`checked_term_data` absent or `equality_decisions` empty); with its `equality.json` removed, the same request settles `Bounded` with the record the source request over that unit gives, exit 0. | Test (TC-3025) |
 | FR-850-AC-11 | FR-1033-AC-1's `SB` unit is compiled by a `native-compile/1` request carrying the `handoff` member into its handoff directory, and FR-1033-AC-2's racing variant into its own. A `package` request over each directory, with `models` the `test/litmus` domain package document the package selects (FR-850 "Inputs") and the same `subject.protocol`, `memory` `[{"parallel": "SB::Both", "model": "tso"}]` and items as the source request, gives item records equal to the source route's: `NoBothZero` `refuted` with the same counterexample (both pending stores), replay target and `replay.reproduced` `true`, and over the variant the item `{"claim": "SB::Both", "temporal": {"item_kind": "race-freedom"}}` `refuted` with the same `Race` counterexample naming both writes, each echoing the same `temporal.subject` and effective model; with no `memory`, `NoBothZero` settles `proved` on both routes. No package-route record is `unsupported` and no request refuses for carrying `memory`. | Test (TC-3050) |
+| FR-850-AC-12 | A compiled root calls `test/z::answer`, which calls `test/a::answer` returning Integer `42`. Running the root function from source and from its FR-517 directory returns `42` on both routes. Its Counter temporal claim `always holds(c.value <= z::answer() - 40)` is analyzed with the same models/documents/items on both routes and gives equal item records, counterexamples and reproduced replays except the request selection. Deleting all unit/library source files and the handoff's `sources/` before the package run and analyze/replay changes neither result. Removing `dependencies.json` refuses `invalid_package`/`missing-file` even for an import-free unit; no compile fallback occurs. | Test |
+| FR-850-AC-13 | FR-517-AC-28's diamond is admitted once per unique library and settles the source route's result. A missing transitive artifact refuses before an item runs; a manifest entry for a foreign or conflicting library refuses `conflicting-definition`; an unreachable row, a duplicate identity, reversed rows, an unknown row member, a nonindexed path, `../escape`, an absolute path and a selected symlink/non-regular file each refuse by the dependency admission table at their own file or pointer. A lock cycle refuses `definition-cycle`; none reaches source or an engine. | Test |
+| FR-850-AC-14 | For AC-12's transitive handoff, removal of either dependency's `identities.json` or `equality.json` refuses `missing-file` naming that indexed file even when the equality lists would be empty. Swapping non-empty witness files between distinct admitted libraries refuses their original identity/equality join error at the foreign file, before any item runs; no dependency receives the root's witness. The unchanged handoff completes. | Test |
+| FR-850-AC-15 | For AC-12's handoff, compute `B` as the bytes of exactly the root, manifest, unique dependency package/witness files and selected model/runtime files read. At `dependent_bytes = B` intake completes; at `B - 1` it settles `incomplete`, `resource_exhausted`, exit `22`, naming `dependent_bytes` and its configured bound. A handoff whose manifest expands the selected-file total from 64 to 65 stops at the same phase naming the shared file limit before opening file 65. A diamond charges its shared triple once. For strict-read/native-join work and storage, an allowance equal to the completed closure pass succeeds and one below its next charge refuses under the original `i2.work_units` or `i2.native_join_storage` setting without restarting an allowance at a dependency boundary. | Test |
+| FR-850-AC-16 | A library in AC-12's closure selects domain document `test/library-domain`, which the root does not select, and the request supplies both that document and the root's domain documents. Admission binds each document to the selecting package and completes without an extraneous-model refusal. Removing the library-only document refuses `missing_import`/`missing-selection` naming its identity; replacing it by content the library selection refuses preserves that reader refusal at the dependency package. No witness from the root is substituted. | Test |
 
 ## Dependencies
 
