@@ -118,7 +118,7 @@ impl<T, S, F> SampleExpansion<T, S, F> for Expanded<T, S, F> {
     }
 }
 
-impl<T: Clone, S: Clone, F> SampleExpansion<T, S, F> for std::rc::Rc<Expanded<T, S, F>> {
+impl<T: Clone, S: Clone, F> SampleExpansion<T, S, F> for std::sync::Arc<Expanded<T, S, F>> {
     fn view(&self) -> &Expanded<T, S, F> {
         self
     }

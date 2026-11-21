@@ -60,6 +60,9 @@ fn a_possible_claim_refutes_a_closed_cyclic_trap_under_its_deadline() {
     assert_eq!(label(&item), "refuted", "{item}");
     assert_eq!(item["counterexample"]["arm"], "trap", "{item}");
     assert_eq!(item["axes"]["settlement"], "closed-scope", "{item}");
+    assert_eq!(item["exploration"]["states"], "4", "{item}");
+    assert_eq!(item["exploration"]["transitions"], "7", "{item}");
+    assert_eq!(item["record"]["witness_samples"], 64, "{item}");
     assert_eq!(item["replay"]["reproduced"], true, "{item}");
     assert_eq!(run.exit, 10);
 }

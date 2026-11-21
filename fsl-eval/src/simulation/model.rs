@@ -3291,7 +3291,7 @@ pub struct WalkMemo {
 type MemoAt = (Vec<u8>, String);
 
 type ModelExpansion = Expansion<ModelTransition, ModelSimState, ModelFinding>;
-type OrderedModelExpansion = std::rc::Rc<Expanded<ModelTransition, ModelSimState, ModelFinding>>;
+type OrderedModelExpansion = std::sync::Arc<Expanded<ModelTransition, ModelSimState, ModelFinding>>;
 
 impl WalkMemo {
     /// An empty memo.
@@ -3339,7 +3339,7 @@ impl WalkMemo {
             work = work.with_cancel(cancel.clone());
         }
         if let Err(incomplete) = work.charge(Charge::new(ChargePoint::GraphEdge)) {
-            return Ok(std::rc::Rc::new(Expanded::Stopped(walk::exhausted(
+            return Ok(std::sync::Arc::new(Expanded::Stopped(walk::exhausted(
                 crate::simulation::ExpansionLimit::EvaluationMeter(incomplete.limit_kind),
             ))));
         }
@@ -3358,7 +3358,7 @@ impl WalkMemo {
             findings,
         } = &expanded
         else {
-            return Ok(std::rc::Rc::new(expanded));
+            return Ok(std::sync::Arc::new(expanded));
         };
         // Refusals, undefined evaluations and incomplete readings are never
         // stable memo values. A violated invariant is a state-and-anchor fact.
@@ -3366,7 +3366,7 @@ impl WalkMemo {
             .iter()
             .any(|finding| !matches!(finding, ModelFinding::InvariantViolated { .. }))
         {
-            return Ok(std::rc::Rc::new(expanded));
+            return Ok(std::sync::Arc::new(expanded));
         }
         let mut units = length_amount(key.as_bytes().len())
             .saturating_add(length_amount(anchor.len()))
@@ -3400,7 +3400,7 @@ impl WalkMemo {
         let admitted = meter
             .charge(Charge::new(ChargePoint::GraphResultRetain).results(units))
             .is_ok();
-        let expanded = std::rc::Rc::new(expanded);
+        let expanded = std::sync::Arc::new(expanded);
         if admitted {
             let mut ordered = self.ordered.borrow_mut();
             if let Some(anchors) = ordered.get_mut(key) {
