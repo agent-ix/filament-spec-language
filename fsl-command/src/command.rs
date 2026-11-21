@@ -4793,17 +4793,17 @@ fn execute_prepared(prepared: PreparedRun, settle: &settle::Settle<'_>) -> Resul
 /// FR-100, FR-650: the spine call a request's `call` names, its arguments in
 /// the run value form, before any snapshot is read.
 fn read_call(call: &wire::Call, request: &wire::Request) -> Result<fsl_replay::spine::Call> {
-    // FR-650: a `value` is a JSON integer in the signed 64-bit range or a JSON
-    // object; the run reads it against its parameter's declared type.
+    // Canonical run values are objects; the typed reader closes their
+    // member sets against each parameter after the program is checked.
     let wire_arguments = call
         .arguments
         .iter()
         .enumerate()
         .map(|(index, argument)| {
-            if !(argument.value.is_object() || argument.value.as_i64().is_some()) {
+            if !argument.value.is_object() {
                 return Err(RunCause::ClauseRequest {
                     member: format!("/call/arguments/{index}/value"),
-                    reason: "expected a JSON integer in the signed 64-bit range or an object"
+                    reason: "expected a typed canonical value object"
                         .to_owned(),
                 });
             }
@@ -4820,6 +4820,7 @@ fn read_call(call: &wire::Call, request: &wire::Request) -> Result<fsl_replay::s
         request.limits.supplied.unwrap_or_default(),
     );
     spine_call.wire_arguments = wire_arguments;
+    spine_call.canonical_values = true;
     spine_call.live_occurrences = call.evaluation.live_occurrences();
     Ok(spine_call)
 }

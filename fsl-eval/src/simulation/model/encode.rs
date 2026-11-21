@@ -1180,6 +1180,21 @@ pub fn typed_value_json(
     canonical_json(&typed_value_enc(value, types, variants))
 }
 
+/// A run value's canonical form, using the admitted source enum bindings
+/// alongside the checked composite declarations.
+pub fn run_value_json(
+    value: &Value,
+    types: &TypeEnvironment,
+    enums: &[EnumBinding],
+) -> Option<serde_json::Value> {
+    canonical_json(&value_enc(value, Typing::with_variants(types, &[]).with_enums(enums)))
+}
+
+/// The canonical declaration name of an admitted run type's structural key.
+pub fn run_declaration_name(key: &NodeKey) -> Option<String> {
+    DeclarationRecord::of_node(key)?.text(Limits::new(u64::MAX)).ok()
+}
+
 /// `value` through the one canonical writer, read back as JSON.
 ///
 /// `None` when the value is unencodable.

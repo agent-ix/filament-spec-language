@@ -51,6 +51,114 @@ fn remaining() -> (Case, std::path::PathBuf) {
     )
 }
 
+/// The command admits canonical values through the declared kernel type and
+/// writes canonical results, preserving exact values and normalizing sets
+/// and rational fractions.
+#[test]
+#[trace("FSpec-FR-550-AC-1", "FR-650-AC-1")]
+fn canonical_run_values_preserve_exact_values_and_normalize_admitted_inputs() {
+    let case = Case::new();
+    case.write("identity.fsl", br#"language "ix:native" edition "1-draft";
+profile v = "filament.value.complete/v1";
+function Number using v(x: Integer): Integer pure { x }
+function Flag using v(x: Boolean): Boolean pure { x }
+function Fraction using v(x: Rational[-10, 10; 1, 20]): Rational[-10, 10; 1, 20] pure { x }
+function Words using v(x: Text[0, 40; unicode-scalars]): Text[0, 40; unicode-scalars] pure { x }
+function List using v(x: Sequence<Integer>[0, 3]): Sequence<Integer>[0, 3] pure { x }
+function Members using v(x: Set<Integer>[0, 3]): Set<Integer>[0, 3] pure { x }
+function Constant using v(): Integer pure { 5 }
+"#);
+    let integer = |value: &str| json!({"type":"integer", "value":value});
+    let inputs = [
+        ("Number", integer("12345678901234567890123"), integer("12345678901234567890123")),
+        ("Number", integer("-5"), integer("-5")),
+        ("Number", integer("0"), integer("0")),
+        ("Flag", json!({"type":"boolean","value":true}), json!({"type":"boolean","value":true})),
+        ("Fraction", json!({"type":"rational","numerator":"4","denominator":"6"}), json!({"type":"rational","numerator":"2","denominator":"3"})),
+        ("Words", json!({"type":"text","value":"hello"}), json!({"type":"text","value":"hello"})),
+        ("List", json!({"type":"sequence","elements":[]}), json!({"type":"sequence","elements":[]})),
+        ("List", json!({"type":"sequence","elements":[integer("3"),integer("1"),integer("2")]}), json!({"type":"sequence","elements":[integer("3"),integer("1"),integer("2")]})),
+        ("Members", json!({"type":"set","elements":[integer("3"),integer("1")]}), json!({"type":"set","elements":[integer("1"),integer("3")]})),
+    ];
+    for (function, input, expected) in inputs {
+        let path = case.json("run.json", &request("identity.fsl", function, &[("x", input)]));
+        let outcome = plain(&path);
+        let document = outcome.expect("execute", "success", 0);
+        assert_eq!(document["result"]["value"], expected, "{function}: {document}");
+    }
+    let path = case.json("constant.json", &request("identity.fsl", "Constant", &[]));
+    assert_eq!(plain(&path).expect("execute", "success", 0)["result"]["value"], integer("5"));
+}
+
+/// Legacy shapes and malformed canonical inputs refuse at the command boundary.
+#[test]
+#[trace("FSpec-FR-550-AC-1", "FR-650-AC-7")]
+fn canonical_run_values_refuse_legacy_and_malformed_inputs() {
+    for value in [json!({"integer":"7"}), json!(7), json!({"type":"integer","value":"07"}), json!({"type":"integer","value":"7","extra":true})] {
+        let (_case, path) = packing("IsPacked", &[("n", value)]);
+        let outcome = plain(&path);
+        assert_eq!(outcome.exit, 20, "{}", outcome.document);
+    }
+    let (_case, path) = packing("IsPacked", &[("n", json!({"type":"integer","value":"11"}))]);
+    assert_eq!(plain(&path).exit, 20);
+}
+
+/// Run the owner-maintained corpus in place; the source checkout is never
+/// copied into this repository and its refusal snapshots are not the oracle.
+#[test]
+#[ignore = "external acceptance lane: FSL_RUN_INPUTS_FIXTURES names the authoritative examples/run-inputs directory"]
+#[trace("FSpec-FR-550-AC-1", "FR-650-AC-1")]
+fn canonical_run_acceptance_values_from_authoritative_examples() {
+    let directory = std::path::PathBuf::from(std::env::var_os("FSL_RUN_INPUTS_FIXTURES").expect("the acceptance lane supplies its read-only fixture directory"));
+    let integer = |value: &str| json!({"type":"integer", "value":value});
+    for (case, expected) in [
+        ("call-two-arguments", integer("5")),
+        ("call-arguments-reordered", integer("5")),
+        ("call-big-integer", integer("99999999999999999999999")),
+        ("call-negative-integer", integer("-5")),
+        ("call-zero-integer", integer("0")),
+        ("call-boolean", json!({"type":"boolean","value":true})),
+        ("call-sequence-at-bound", json!({"type":"sequence","elements":[integer("1"),integer("2"),integer("3")]})),
+        ("call-sequence-empty", json!({"type":"sequence","elements":[]})),
+        ("call-digit-at-max", integer("9")),
+        ("call-digit-at-min", integer("0")),
+        ("call-tagged-integer", integer("5")),
+        ("call-tagged-rational", json!({"type":"rational","numerator":"2","denominator":"3"})),
+        ("call-tagged-text", json!({"type":"text","value":"hi"})),
+        ("call-tagged-set-order", json!({"type":"set","elements":[integer("1"),integer("3")]})),
+        ("option-engine-interpreter", integer("5")),
+        ("option-request-bytes-large", integer("5")),
+    ] {
+        let outcome = plain(&directory.join("requests").join(format!("{case}.json")));
+        let document = outcome.expect("execute", "success", 0);
+        assert_eq!(document["result"]["value"], expected, "{case}: {document}");
+    }
+}
+
+/// The public command entry uses the existing plan coordinator and retains
+/// distinct passed, refuted and blocked outcomes.
+#[test]
+#[ignore = "external acceptance lane: FSL_RUN_INPUTS_FIXTURES names the authoritative examples/run-inputs directory"]
+#[trace("FSpec-FR-824-AC-1", "FSpec-FR-824-AC-6", "FR-1038-AC-1")]
+fn canonical_run_acceptance_plans_retain_dispositions_and_severity() {
+    let directory = std::path::PathBuf::from(std::env::var_os("FSL_RUN_INPUTS_FIXTURES").expect("the acceptance lane supplies its read-only fixture directory"));
+    for (case, status, exit) in [("plan-passes", "passed", 0), ("plan-fails", "failed", 10), ("plan-blocks", "failed", 22), ("plan-null-members-as-absent", "passed", 0)] {
+        let outcome = plain(&directory.join("requests").join(format!("{case}.json")));
+        let document = &outcome.document;
+        assert_eq!(outcome.exit, exit, "{case}: {document}");
+        assert_eq!(document["status"], status, "{case}: {document}");
+        let dispositions = document["dispositions"].as_object().expect("one named disposition per plan step");
+        assert_eq!(dispositions.len(), 2, "{case}: {document}");
+        if case == "plan-fails" || case == "plan-blocks" {
+            assert_eq!(document["failed_steps"], json!(["low"]), "{document}");
+            assert_eq!(dispositions["low"]["status"], "refuted", "{document}");
+        }
+        if case == "plan-blocks" {
+            assert!(dispositions.values().any(|step| step["status"] == "blocked" && step["result"].is_null()), "{document}");
+        }
+    }
+}
+
 /// FR-100, FR-286-AC-5: a completed call writes one `execute` outcome with
 /// `result` `completed` and its value, exit 0.
 #[test]

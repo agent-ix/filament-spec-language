@@ -4887,6 +4887,7 @@ mod tests {
             let call = Call {
                 clocks: Default::default(),
                 wire_arguments: Vec::new(),
+                canonical_values: false,
                 snapshot: None,
                 function: "seven".to_owned(),
                 arguments: Vec::new(),
@@ -4931,6 +4932,7 @@ mod tests {
         let call = Call {
             clocks: Default::default(),
             wire_arguments: Vec::new(),
+                canonical_values: false,
             snapshot: None,
             function: "seven".to_owned(),
             arguments: Vec::new(),
@@ -5298,6 +5300,7 @@ mod tests {
             &Call {
                 clocks: Default::default(),
                 wire_arguments: Vec::new(),
+                canonical_values: false,
                 snapshot: None,
                 function: function.to_owned(),
                 arguments: Vec::new(),

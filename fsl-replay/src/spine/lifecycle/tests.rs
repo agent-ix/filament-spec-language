@@ -3348,6 +3348,7 @@ fn a_cancel_tripped_mid_run_is_cancelled_with_its_cause_never_a_fault() {
             &crate::spine::Call {
                 clocks: Default::default(),
                 wire_arguments: Vec::new(),
+        canonical_values: false,
                 snapshot: None,
                 function: "seven".to_owned(),
                 arguments: Vec::new(),

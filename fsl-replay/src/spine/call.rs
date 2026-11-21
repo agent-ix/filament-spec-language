@@ -125,6 +125,9 @@ pub struct Call {
     /// The call's arguments as a request wrote them (FR-650); they bind with
     /// [`Self::arguments`], one per parameter.
     pub wire_arguments: Vec<WireArgument>,
+    /// Read request arguments and write completed values in FR-181's
+    /// canonical form. The public command boundary always selects this form.
+    pub canonical_values: bool,
     /// FR-650 "Arguments": the one current snapshot whose object world a
     /// Reference or Population argument resolves against; `None` for a call
     /// with an empty object world.
@@ -161,6 +164,7 @@ impl Call {
             function,
             arguments,
             wire_arguments: Vec::new(),
+            canonical_values: false,
             snapshot: None,
             accounting,
             supplied,
@@ -1094,12 +1098,12 @@ pub(crate) fn run_compiled(
     sources.extend(checked.libraries().iter().cloned());
     let outcome = match &evaluation.outcome {
         FamilyOutcome::Evaluated(Outcome::Completed(value))
-            if !matches!(
+            if call.canonical_values || !matches!(
                 value,
                 Value::Boolean(_) | Value::Integer(_) | Value::Reference(_)
             ) =>
         {
-            match forms.write(value) {
+            match if call.canonical_values { forms.write_canonical(value) } else { forms.write(value) } {
                 Ok(form) => CallOutcome::Completed(CallValue::Written(form)),
                 Err(super::run_value::WriteStop::NoForm) => {
                     return Err(Box::new(RunRefusal::UnsupportedResult {
@@ -1367,7 +1371,9 @@ pub(crate) fn admit_wire_arguments(
         if !forms.has_form(value_type) {
             return Err(Box::new(RunRefusal::UnsupportedParameter { position }));
         }
-        let read = match &wire.value {
+        let read = if call.canonical_values {
+            forms.read_canonical(&wire.value, value_type)
+        } else { match &wire.value {
             serde_json::Value::Number(number) => match number.as_i64() {
                 Some(number) => forms.bare_integer(number, value_type),
                 None => Err(ReadStop::Defect(ArgumentDefect {
@@ -1377,7 +1383,7 @@ pub(crate) fn admit_wire_arguments(
                 })),
             },
             form => forms.read(form, value_type),
-        };
+        }};
         let value = read.map_err(|stop| {
             Box::new(match stop {
                 ReadStop::Defect(defect) => RunRefusal::Argument { position, defect },
