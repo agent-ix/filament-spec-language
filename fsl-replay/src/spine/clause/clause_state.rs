@@ -1363,11 +1363,18 @@ impl<'a> ClauseState<'a> {
         let evaluated = (|| {
             self.order_covered(meter)?;
             let report = {
+                // Reading an uncovered prefix asserts no progress. In
+                // particular, the default open assertion must not regress a
+                // carried watermark or compare a partial re-delivery with
+                // its covered fingerprints. Explicit progress checks both.
+                let ledger = self.ledger.take();
                 let trace = self.trace_of(
                     self.seen.len(),
                     assertion.unwrap_or_else(Self::open_assertion),
                 )?;
-                self.run(&trace, self.seen.len(), false, cancel)
+                let mut report = self.run(&trace, self.seen.len(), false, cancel);
+                report.ledger = ledger;
+                report
             };
             cancelled(cancel)?;
             if let ClauseDisposition::ProgressContradiction(refusal) = report.disposition {

@@ -4018,9 +4018,10 @@ fn a_changed_absence_at_a_covered_index_is_a_completeness_contradiction() {
         open.ledger = Some(held.clone());
         let mut state = ClauseState::open(world.unit.package(), clause_node(&world, "Twos"), &open)
             .expect("opens");
-        state
+        let advance = state
             .advance(admitted(&world, "Twos", &text(1), 0), &cancel)
             .expect("advances");
+        assert_eq!(advance.report.ledger.as_ref(), Some(&held));
         if restored {
             let bytes = state.to_bytes().expect("writes");
             state = ClauseState::from_bytes(
@@ -4031,6 +4032,7 @@ fn a_changed_absence_at_a_covered_index_is_a_completeness_contradiction() {
                 &cancel,
             )
             .expect("reads back");
+            assert_eq!(state.report().ledger.as_ref(), Some(&held));
         }
         for index in 1..4_u64 {
             // The covered index 1 arrives without its absence.
