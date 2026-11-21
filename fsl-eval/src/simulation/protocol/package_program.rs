@@ -203,19 +203,6 @@ fn member<'t>(
     })
 }
 
-fn require_uncorrelated(
-    node: &fsl_package::CheckedNodeId,
-    body: &fsl_package::CheckedTerm,
-) -> Result<(), PackageProgramRefusal> {
-    let Some(fsl_package::CheckedTerm::Aggregate { members }) = member(body, "related") else {
-        return Err(PackageProgramRefusal::MissingIdentity(node.clone()));
-    };
-    if !members.is_empty() {
-        return Err(PackageProgramRefusal::Correlation { node: node.clone() });
-    }
-    Ok(())
-}
-
 fn channels(
     input: &ModelCheckInput<'_>,
     form: &ProtocolExecutionView<'_>,
@@ -637,14 +624,6 @@ impl<'a> PackageProtocolProgram<'a> {
                     &control.node.node_id,
                     protocol_view::Port::Enter,
                 )?;
-                let matched = form
-                    .controls
-                    .iter()
-                    .find(|candidate| &candidate.node.node_id == event_node)
-                    .ok_or(PackageProgramRefusal::UnknownControl)?;
-                if matched.operation == ControlOperation::Attempt {
-                    require_uncorrelated(&matched.node.node_id, &matched.node.body)?;
-                }
                 let (_, then) = edge_to(
                     protocol_view::EdgeKind::AwaitSuccess,
                     event_node,
@@ -681,7 +660,18 @@ impl<'a> PackageProtocolProgram<'a> {
             let name = control.path.last().cloned().unwrap_or_default();
             let channel = match &control.body {
                 ControlBody::Send { channel, .. } | ControlBody::Receive { channel, .. } => {
-                    require_uncorrelated(&control.node.node_id, &control.node.body)?;
+                    let Some(fsl_package::CheckedTerm::Aggregate { members }) =
+                        member(&control.node.body, "related")
+                    else {
+                        return Err(PackageProgramRefusal::MissingIdentity(
+                            control.node.node_id.clone(),
+                        ));
+                    };
+                    if !members.is_empty() {
+                        return Err(PackageProgramRefusal::Correlation {
+                            node: control.node.node_id.clone(),
+                        });
+                    }
                     Some((*channel).clone())
                 }
                 _ => None,

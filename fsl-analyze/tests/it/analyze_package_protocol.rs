@@ -419,7 +419,15 @@ fn await_event_request(
                 timeout {timeout}"
         );
     let ordering = format!("ordering unordered delivery {delivery} capacity 4 overflow block");
-    channel_request(ws, finite_channel_model(), &ordering, &controls, "closing")
+    let path = channel_request(ws, finite_channel_model(), &ordering, &controls, "closing");
+    let mut document: Value =
+        serde_json::from_slice(&std::fs::read(&path).expect("the Await request"))
+            .expect("the request is JSON");
+    document["request"]["clocks"] = json!({
+        "line-clock": {"kind": "event_position", "sequence_authority": "protocol-events"}
+    });
+    std::fs::write(&path, document.to_string()).expect("configure the Await clock");
+    path
 }
 
 /// The complete await body explores both the receive and timeout continuations.
@@ -551,107 +559,166 @@ fn package_await_false_match_keeps_timeout_enabled() {
     assert_eq!(item["exploration"]["transitions"], "3", "{item}");
 }
 
-/// A supported event kind keeps its own step when it is an await's match.
-#[trace("TC-2958", "FR-940-AC-6", "FR-206-AC-5", "FR-383-AC-7")]
+/// Source checking and strict package admission reject ineligible Await matches.
+#[trace("TC-2958", "FR-218-AC-35", "FR-383-AC-7")]
 #[test]
-fn package_await_matched_send_and_attempt_preserve_their_steps() {
-    let attempt = crate::fill::attempt("Matched", "touch", "", "attempted", "attempted")
+fn package_await_ineligible_matches_refuse_in_both_routes() {
+    use filament_contract_model::{
+        CheckedPackageRefusalCause, CheckedPackageRefusalCode, CheckedProtocolRefusalDetail,
+    };
+    let attempt = crate::fill::attempt("Template", "touch", "", "attempted", "attempted")
         .replace(" by w ", " by Machining ");
-    for (kind, event) in [
-        (
-            "send",
-            channel_send("Matched", "matched", "matched.n = handed.n"),
-        ),
-        ("attempt", attempt),
-    ] {
-        let ws = Workspace::new(&format!("package-await-matched-{kind}"));
-        let then = format!(
-            "sequence InTime {{ {} }}",
-            receive_fifo_receive("Never", "Handed", "late", "false")
-        );
-        let path = await_event_request(
+    for kind in ["send", "attempt"] {
+        let ws = Workspace::new(&format!("package-await-ineligible-{kind}"));
+        let then = format!("sequence InTime {{ {attempt} }}");
+        let path = await_request(
             &ws,
             "exactly-once-premise",
-            &event,
+            "seen.n = handed.n",
             &then,
             "sequence TooSlow {}",
         );
-        let item = channel_send_parity(&ws, &path, "refuted");
-        let prefix = item["counterexample"]["prefix"]
-            .as_array()
-            .expect("the matched event's deadlock prefix");
-        let matched = prefix
-            .iter()
-            .find(|step| step["transition"]["node"] == "Main/Wait/Matched")
-            .expect("the matched event leads to the blocked success arm");
-        assert_eq!(matched["transition"]["step"], kind, "{item}");
-        assert!(
-            prefix
-                .iter()
-                .all(|step| step["transition"]["step"] != "timeout"),
-            "timeout takes the healthy continuation: {item}"
-        );
-        let blocked = item["counterexample"]["blocked"]
-            .as_array()
-            .expect("the blocked success continuation");
-        assert_eq!(blocked.len(), 1, "{item}");
-        assert_eq!(
-            blocked[0]["rest"]["node"], "Main/Wait/InTime/Never",
-            "{item}"
-        );
-        assert_eq!(blocked[0]["cause"]["type"], "constraint", "{item}");
-    }
-}
-
-/// A matched attempt's unported correlation is named before package execution.
-#[trace("TC-2958", "FR-940", "FR-731-AC-1")]
-#[test]
-fn package_await_correlated_matched_attempt_refuses_before_execution() {
-    let event = crate::fill::attempt("Correlated", "touch", "", "attempted", "attempted")
-        .replace(" by w ", " by Machining ")
-        .replace("{ attempted }", "related by Owns (k, k) { attempted }");
-    for (related, expected) in [(false, "proved"), (true, "refuted")] {
-        let ws = Workspace::new(&format!("package-await-attempt-related-{related}"));
-        let then = format!(
-            "sequence InTime {{ {} }}",
-            receive_fifo_receive("Never", "Handed", "late", "false")
-        );
-        let path = await_event_request(
-            &ws,
-            "exactly-once-premise",
-            &event,
-            &then,
-            "sequence TooSlow {}",
-        );
-        channel_related_premise(&ws, related);
         let source = analyze(&path);
         assert!(
             source.item(0).get("record").is_some(),
             "{}",
             source.document()
         );
-        assert_eq!(label(&source.item(0)), expected, "{}", source.document());
-        let (package_path, _) = package_request(&ws, &path);
-        std::fs::remove_file(ws.path("program.fsl"))
-            .expect("remove source before package correlation refusal");
-        let package = analyze(&package_path);
-        let item = package.item(0);
-        assert_eq!(package.exit, 21, "{}", package.document());
-        assert_eq!(item["category"], "unsupported", "{}", package.document());
-        let diagnostic = &item["record"]["diagnostic"];
-        assert_eq!(diagnostic["code"], "unsupported_construct", "{item}");
-        assert_eq!(diagnostic["cause"], "not-yet-implemented", "{item}");
-        assert_eq!(diagnostic["detail"]["fact"], "correlation", "{item}");
-        assert_eq!(
-            diagnostic["detail"]["node"]["path"]
+        assert_eq!(label(&source.item(0)), "proved", "{}", source.document());
+        let (package_path, bytes) = package_request(&ws, &path);
+        let baseline = analyze(&package_path);
+        assert_eq!(baseline.item(0), source.item(0), "{}", baseline.document());
+        assert_eq!(baseline.exit, source.exit);
+        let mut wire: Value = serde_json::from_slice(&bytes).expect("the emitted package");
+        let graph = fsl_semantics::check::wire_id::WireGraph::of_package_value(&wire)
+            .expect("the emitted identities");
+        let nodes = wire["semantic_graph"]["nodes"]
+            .as_array_mut()
+            .expect("nodes");
+        let position = |name: &str| {
+            nodes
+                .iter()
+                .position(|node| {
+                    node["semantic_form"] == "control"
+                        && node["declaration"]["qualified_name"]
+                            .as_array()
+                            .and_then(|path| path.last())
+                            == Some(&json!(name))
+                })
+                .unwrap_or_else(|| panic!("the {name} control"))
+        };
+        let inspected = position("Inspected");
+        let template = position("Template");
+        if kind == "send" {
+            let control = &mut nodes[inspected];
+            control["body"]["operation"]["member"]["operator"] = json!("send");
+            let arguments = control["body"]["arguments"]
+                .as_array_mut()
+                .expect("arguments");
+            let of = arguments
+                .iter()
+                .position(|arg| arg["name"] == "of")
+                .expect("the receive's send reference");
+            let send = arguments.remove(of)["value"]["target"].clone();
+            control["dependencies"]
+                .as_array_mut()
+                .expect("dependencies")
+                .retain(|target| target != &send);
+        } else {
+            // Change only untrusted wire. Keep the declared event identity,
+            // sidecars and every other node exactly as emitted.
+            let mut body = nodes[template]["body"].clone();
+            let mut dependencies = nodes[template]["dependencies"]
                 .as_array()
-                .expect("the refused admitted node's path")
-                .last(),
-            Some(&json!("Correlated")),
-            "{item}"
+                .expect("template dependencies")
+                .clone();
+            for name in ["binder", "related", "constraint"] {
+                let original = nodes[inspected]["body"]["arguments"]
+                    .as_array()
+                    .expect("receive arguments")
+                    .iter()
+                    .find(|arg| arg["name"] == name)
+                    .expect("the receive member")
+                    .clone();
+                let member = body["arguments"]
+                    .as_array_mut()
+                    .expect("attempt arguments")
+                    .iter_mut()
+                    .find(|arg| arg["name"] == name)
+                    .expect("the attempt member");
+                if let Some(target) = member["value"].get("target") {
+                    dependencies.retain(|dependency| dependency != target);
+                }
+                if let Some(target) = original["value"].get("target") {
+                    dependencies.push(target.clone());
+                }
+                *member = original;
+            }
+            nodes[inspected]["body"] = body;
+            nodes[inspected]["dependencies"] = json!(dependencies);
+        }
+        nodes[inspected]["dependencies"]
+            .as_array_mut()
+            .expect("dependencies")
+            .sort_by_key(|target| graph.key_of_value(target).expect("an emitted identity"));
+        let event = if kind == "send" {
+            channel_send("Inspected", "seen", "seen.n = handed.n")
+        } else {
+            crate::fill::attempt("Inspected", "touch", "", "attempted", "attempted")
+                .replace(" by w ", " by Machining ")
+        };
+        let invalid_path = await_event_request(
+            &ws,
+            "exactly-once-premise",
+            &event,
+            "sequence InTime {}",
+            "sequence TooSlow {}",
         );
-        assert!(item.get("exploration").is_none(), "{item}");
-        assert!(item.get("counterexample").is_none(), "{item}");
+        let invalid_source = analyze(&invalid_path).document();
+        assert_eq!(
+            invalid_source["diagnostics"][0]["code"], "unsupported_construct",
+            "{invalid_source}"
+        );
+        assert_eq!(
+            invalid_source["diagnostics"][0]["cause"], "declaration-form",
+            "{invalid_source}"
+        );
+        assert_eq!(invalid_source["items"], json!([]), "{invalid_source}");
+        std::fs::write(
+            ws.path("handoff/checked-package.json"),
+            serde_json::to_vec(&wire).expect("the edited untrusted wire"),
+        )
+        .expect("replace the package input");
+        std::fs::remove_file(ws.path("program.fsl")).expect("source is absent");
+        let refusal = fsl_command::checked_handoff::verify(&ws.path("handoff"))
+            .expect_err("the strict reader rejects the ineligible event");
+        let fsl_command::checked_handoff::Error::ReaderRefused(refusal) = refusal else {
+            panic!("the strict protocol reader must decide: {refusal:?}");
+        };
+        assert_eq!(
+            refusal.code,
+            CheckedPackageRefusalCode::UnsupportedConstruct
+        );
+        assert_eq!(
+            refusal.cause,
+            Some(CheckedPackageRefusalCause::DeclarationForm)
+        );
+        assert!(
+            matches!(refusal.protocol_detail.as_deref(),
+                Some(CheckedProtocolRefusalDetail::AwaitedEvent { form, .. })
+                    if form.as_ref() == kind),
+            "{refusal:?}"
+        );
+        let invalid_package = analyze(&package_path).document();
+        assert_eq!(
+            invalid_package["diagnostics"][0]["code"], invalid_source["diagnostics"][0]["code"],
+            "{invalid_package}"
+        );
+        assert_eq!(
+            invalid_package["diagnostics"][0]["cause"], invalid_source["diagnostics"][0]["cause"],
+            "{invalid_package}"
+        );
+        assert_eq!(invalid_package["items"], json!([]), "{invalid_package}");
     }
 }
 
