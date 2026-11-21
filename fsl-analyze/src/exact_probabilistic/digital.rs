@@ -1201,7 +1201,7 @@ impl<'c> Builder<'_, '_, 'c> {
                 monitor,
                 accumulator: None,
                 pending: None,
-                elapsed: None,
+                elapsed: measure,
                 kind: if boundary_region {
                     RegionKeyKind::BoundaryRegion
                 } else {

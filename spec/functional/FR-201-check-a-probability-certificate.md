@@ -613,7 +613,8 @@ ordinal, action-key transport, qualitative-set field or formula AST is added.
   with `Q_y(s, a) = y(s)` in exact rationals, and search the product graph
   from the initial state using tight actions only; it SHALL accept when no
   activated state is reachable, and otherwise reject, naming the first
-  reachable activated state in canonical order.
+  activated state reached breadth-first from the initial state, each layer in
+  canonical order.
 - A checker run stopped by a budget SHALL return `Stopped` naming it.
 
 ### Conditional certificates

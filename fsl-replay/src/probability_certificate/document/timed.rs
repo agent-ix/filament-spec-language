@@ -128,13 +128,16 @@ pub(super) fn check(
             &timed,
             claim,
             binding.as_ref(),
-            predicate,
+            &Watch::Deadline(predicate),
+            time_bound(claim, objective.scale)?,
             objective.scale,
             scale,
             limits,
             cancel,
             &mut meter,
             &mut storage,
+            &mut BTreeMap::new(),
+            &mut BTreeSet::new(),
         )?,
     };
     if target_keys(&graph) != document.targets {
@@ -1748,16 +1751,18 @@ fn enumerate_region_deadline(
     timed: &TimedSystem<'_, '_>,
     claim: &CheckedProbabilisticClaim,
     binding: Option<&filament_exact::ObjectReference>,
-    predicate: &fsl_semantics::check::CheckedPredicate,
+    watch: &Watch<'_>,
+    deadline: u64,
     key_scale: u64,
     scale: u64,
     limits: ProbabilityDocumentLimits,
     cancel: &Cancel,
     meter: &mut filament_exact::Meter,
     storage: &mut u64,
+    terminals: &mut BTreeMap<ProbabilityProductKey, (Rational, bool)>,
+    activated: &mut BTreeSet<ProbabilityProductKey>,
 ) -> Result<CheckerGraph, ProbabilityDocumentError> {
     let (base_scale, subdivisions) = region_scale_parts(timed, claim, scale)?;
-    let deadline = time_bound(claim, key_scale)?;
     let mut caps = Vec::with_capacity(timed.places().len());
     for place in timed.places() {
         let mut largest = 0_u64;
@@ -1781,18 +1786,18 @@ fn enumerate_region_deadline(
         return Err(ProbabilityDocumentError::Unsupported);
     }
     let state = initial.pop().ok_or(ProbabilityDocumentError::Unsupported)?;
-    let phase = phase_at(
+    let (phase, elapsed) = watch.observe(
         system,
-        predicate,
         binding,
         state.discrete(),
+        watch.start(),
         0,
         deadline,
         cancel,
     )?;
     let first = RegionState {
         timed: state,
-        elapsed: 0,
+        elapsed,
         phase,
         tail: DigitalTail::Running,
     };
@@ -1855,14 +1860,34 @@ fn enumerate_region_deadline(
                 )?;
                 continue;
             }
-            Phase::Pending => {}
-            _ => return Err(ProbabilityDocumentError::Unsupported),
+            Phase::Complete | Phase::Censored => {
+                activated.insert(key.clone());
+                if let Some(reward) = watch.reward(current.phase, current.elapsed) {
+                    terminals.insert(key.clone(), reward);
+                }
+                insert_checker_state(
+                    key,
+                    CheckerState {
+                        terminal: Some(false),
+                        choices: Vec::new(),
+                    },
+                    &mut states,
+                    storage,
+                    limits,
+                )?;
+                continue;
+            }
+            Phase::Pending | Phase::Inactive | Phase::Active => {
+                if current.phase == Phase::Active {
+                    activated.insert(key.clone());
+                }
+            }
         }
         let mut choices = Vec::new();
         if let Some((delayed_key, delayed)) = next_region_delay(
             system,
             timed,
-            predicate,
+            watch,
             binding,
             &current,
             &caps,
@@ -1917,18 +1942,18 @@ fn enumerate_region_deadline(
                 let clocks = quantized_clocks(timed_post, &caps, key_scale)?;
                 let post =
                     TimedState::new(timed_post.discrete().clone(), ClockValuation::new(clocks));
-                let phase = phase_at(
+                let (phase, elapsed) = watch.observe(
                     system,
-                    predicate,
                     binding,
                     post.discrete(),
+                    current.phase,
                     current.elapsed,
                     deadline,
                     cancel,
                 )?;
                 let reached_state = RegionState {
                     timed: post,
-                    elapsed: current.elapsed,
+                    elapsed,
                     phase,
                     tail: DigitalTail::Running,
                 };
@@ -1973,6 +1998,9 @@ fn enumerate_region_deadline(
                 actual: edges,
             });
         }
+        if choices.is_empty() && current.phase == Phase::Active {
+            return Err(ProbabilityDocumentError::Unsupported);
+        }
         insert_checker_state(
             key,
             CheckerState {
@@ -2004,7 +2032,7 @@ fn region_scale_parts(
             },
             ..
         }
-    );
+    ) || elapsed::query(claim).is_some();
     let subdivisions = u64::try_from(timed.places().len())
         .ok()
         .and_then(|clocks| clocks.checked_add(if deadline { 1 } else { 0 }))
@@ -2170,11 +2198,20 @@ fn region_key(
         let value = time_units(value, full_scale).ok_or(ProbabilityDocumentError::Unsupported)?;
         clocks.push((identity, value, *cap));
     }
+    // FR-920: an elapsed measure's `["measure",null,phase]`; its clock is
+    // `null` before activation.
+    let measure = match state.phase {
+        Phase::Inactive => Some(("inactive", None)),
+        Phase::Active => Some(("active", Some(state.elapsed))),
+        Phase::Complete => Some(("complete", Some(state.elapsed))),
+        Phase::Censored => Some(("censored", Some(state.elapsed))),
+        _ => None,
+    };
     let monitor = match state.phase {
         Phase::Pending => "pending",
         Phase::Accepted => "accept",
         Phase::Rejected => "reject",
-        _ => return Err(ProbabilityDocumentError::Unsupported),
+        _ => "",
     };
     let mut keyed_clocks = clocks
         .into_iter()
@@ -2199,7 +2236,9 @@ fn region_key(
                 .filter(|fraction| *fraction > 0)
         })
         .collect::<BTreeSet<_>>();
-    if state.elapsed < deadline.saturating_add(subdivisions) {
+    if state.elapsed < deadline.saturating_add(subdivisions)
+        && state.phase != Phase::Inactive
+    {
         let fraction = state.elapsed % subdivisions;
         if fraction > 0 {
             fractions.insert(fraction);
@@ -2236,12 +2275,23 @@ fn region_key(
             ])
         })
         .collect::<Vec<_>>();
-    let deadline_key = json!([
-        "deadline",
-        (deadline / subdivisions).to_string(),
-        (state.elapsed / subdivisions).to_string(),
-        fraction_rank(state.elapsed, deadline.saturating_add(subdivisions))
-    ]);
+    let deadline_key = match measure {
+        Some((_, value)) => json!([
+            "elapsed",
+            (deadline / subdivisions).to_string(),
+            value.map(|value| (value / subdivisions).to_string()),
+            value.map_or_else(
+                || "0".to_owned(),
+                |value| fraction_rank(value, deadline.saturating_add(subdivisions))
+            )
+        ]),
+        None => json!([
+            "deadline",
+            (deadline / subdivisions).to_string(),
+            (state.elapsed / subdivisions).to_string(),
+            fraction_rank(state.elapsed, deadline.saturating_add(subdivisions))
+        ]),
+    };
     let model = json!([
         "filament.simulation.state-key/v1",
         [
@@ -2260,7 +2310,10 @@ fn region_key(
         null,
         null,
         model,
-        ["deadline", "eventually", monitor],
+        match measure {
+            Some((name, _)) => json!(["measure", null, name]),
+            None => json!(["deadline", "eventually", monitor]),
+        },
         null,
         null
     ]);
@@ -2783,7 +2836,7 @@ fn digital_state_after_delay(
 fn next_region_delay(
     system: &ModelSystem<'_>,
     timed: &TimedSystem<'_, '_>,
-    predicate: &fsl_semantics::check::CheckedPredicate,
+    watch: &Watch<'_>,
     binding: Option<&filament_exact::ObjectReference>,
     current: &RegionState,
     caps: &[u64],
@@ -2805,6 +2858,15 @@ fn next_region_delay(
         deadline,
     )?;
     let delta = rational_units(1, scale)?;
+    let limit = caps
+        .iter()
+        .max()
+        .copied()
+        .unwrap_or(0)
+        .saturating_add(1)
+        .saturating_mul(subdivisions)
+        .saturating_add(2);
+    let mut steps = 0_u64;
     let mut state = current.clone();
     while state.elapsed <= deadline {
         if let Some(cause) = cancel.tripped() {
@@ -2822,11 +2884,11 @@ fn next_region_delay(
             .min(deadline.saturating_add(1));
         let clocks = quantized_clocks(&delayed, caps, scale)?;
         let delayed = TimedState::new(delayed.discrete().clone(), ClockValuation::new(clocks));
-        let phase = phase_at(
+        let (phase, elapsed) = watch.observe(
             system,
-            predicate,
             binding,
             delayed.discrete(),
+            state.phase,
             elapsed,
             deadline,
             cancel,
@@ -2850,6 +2912,12 @@ fn next_region_delay(
         )?;
         if key != current_key {
             return Ok(Some((key, reached)));
+        }
+        // An inactive measure does not advance, so once every clock is past its
+        // cap no further region is reachable by waiting.
+        steps += 1;
+        if reached.phase == Phase::Inactive && steps > limit {
+            return Ok(None);
         }
         state = reached;
     }
