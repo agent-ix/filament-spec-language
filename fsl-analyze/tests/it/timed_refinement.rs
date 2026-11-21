@@ -6,9 +6,9 @@
 use filament_exact::{Cancel, Integer, Rational};
 use fsl_analyze::zone_check::{
     check_free_delay_refinement, check_timed_model, check_timed_refinement, TimedLivenessHalf,
-    TimedLivenessOutcome, TimedRefinementRefusal, TimedRefinementRequest, TimedRefinementStop,
-    TimedRefinementUndecided, TimedSafetyOutcome, ZoneCheckItem, ZoneCheckLimit, ZoneCheckLimits,
-    ZoneCheckOutcome, ZoneCheckRefusal, ZoneCheckRequest, ZoneStop, ZoneUndecided,
+    TimedLivenessOutcome, TimedRefinementRequest, TimedRefinementStop, TimedRefinementUndecided,
+    TimedSafetyOutcome, ZoneCheckItem, ZoneCheckLimit, ZoneCheckLimits, ZoneCheckOutcome,
+    ZoneCheckRequest, ZoneStop, ZoneUndecided,
 };
 use fsl_eval::simulation::model::{ModelSystem, TimedSystem};
 use fsl_eval::simulation::Limits;
@@ -448,18 +448,13 @@ fn the_liveness_half_of_a_timed_abstract_hidden_field_is_decided() {
         "{:?}",
         outcome.safety
     );
-    // The dense component holds several concrete-fair loops, so a fair
-    // candidate run on one loop does not answer for it: undecided, as in
-    // `timed_hidden_free_initial_valuation_with_a_multi_loop_component_is_undecided`.
-    // FR-899-AC-9's per-component check is QSL-2243 remaining item (iv).
+    // FR-899-AC-9's per-component check: every concrete-fair loop of the
+    // dense component takes `send`, so each has a fair candidate run.
     assert!(
         matches!(
             outcome.liveness,
             Some(TimedLivenessHalf::Checked(
-                TimedLivenessOutcome::Undecided {
-                    cause: TimedRefinementUndecided::Zone(ZoneUndecided::LassoNotConcretized),
-                    ..
-                }
+                TimedLivenessOutcome::Holds { .. }
             ))
         ),
         "{:?}",
