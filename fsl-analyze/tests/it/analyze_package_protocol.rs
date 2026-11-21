@@ -2226,16 +2226,7 @@ fn package_parallel_send_preserves_weak_model_reads() {
                     &format!("observed_payload.n <= {binder}.v")
                 ),
             );
-            let mut model: Value =
-                serde_json::from_slice(&crate::fill::document()).expect("Fill model");
-            // Keep the writer operations while using the admitted bounded payload type.
-            let payload = model["types"]
-                .as_array_mut()
-                .expect("model types")
-                .iter_mut()
-                .find(|node| node["identity"] == "ix://test/fill/Attempt")
-                .expect("the payload record");
-            payload["fields"][0]["typeRef"] = json!("ix://test/fill/Level");
+            let model = finite_channel_model();
             let path = channel_request(
                 &ws,
                 model,
