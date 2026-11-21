@@ -440,6 +440,7 @@ fn dispatch_table_candidate_and_each_callable_consumer_fault_at_its_own_site() {
                 ),
                 node: node.root(),
                 owners: Vec::new(),
+                reference_origins: Vec::new(),
             })))
         }
     );
@@ -512,6 +513,7 @@ fn resolved_dispatch_and_callable_consumers_keep_the_matching_valid_prefixes() {
             ),
             node: node.root(),
             owners: Vec::new(),
+            reference_origins: Vec::new(),
         })))
         .unwrap_or_else(|_| panic!("linked guard body"));
     finish_tasks(&mut machine).unwrap_or_else(|_| panic!("guard result"));
@@ -1864,6 +1866,7 @@ fn stack_extraction_and_frame_producers_report_their_own_invariants() {
             ),
             node: root.root(),
             owners: Vec::new(),
+            reference_origins: Vec::new(),
         })))
     });
     probe!("evaluation-branch-node-expected", m, [], {
