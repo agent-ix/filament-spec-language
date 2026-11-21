@@ -11,6 +11,10 @@
 //! "yes" for an item the rule does not admit settles it V-8 `unsupported`, as
 //! ADR-021 RV-6 does. Copy-swap is not selected, so it has no place here: the
 //! compiler applies it when the clause has the symmetry.
+//!
+//! The closed finite-execution route does not execute selected reductions.
+//! Its preserving selections settle `unsupported` before admission or expansion;
+//! executing those selections remains an FR-174 eligibility gap.
 
 use filament_semantic_value::fairness::FairnessGranularity;
 use fsl_foundation::ReductionKind;
@@ -72,8 +76,10 @@ fn preserves(reduction: ReductionKind, row: Row, clause: &CheckedHyperClause) ->
 /// selects a reduction EN-1 does not admit for `clause`: the first selected
 /// reduction, in the order symmetry, partial-order, constraint, whose row
 /// reads "no"; failing that, the first selected reduction when the item is
-/// not an HP-2 item, which is the only one the engine executes. `None` when
-/// the request selects none, or the clause is not one this engine decides.
+/// not an infinite-trace HP-2 item, the product on which the engine executes
+/// reductions. A finite HP-2 selection is explicitly unsupported, rather than
+/// ignored by closed enumeration. `None` when the request selects none, or
+/// the clause is not one this engine decides.
 pub(super) fn refusal(
     reductions: &Reductions,
     clause: &CheckedHyperClause,
@@ -90,7 +96,7 @@ pub(super) fn refusal(
             form: clause.form().cloned()?,
         });
     }
-    if matches!(row, Row::Universal) {
+    if matches!(row, Row::Universal) && !super::uses_closed_executions(clause) {
         return None;
     }
     selected

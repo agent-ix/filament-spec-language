@@ -345,6 +345,12 @@ pub fn check_hyper(
     run.decide(&instances)
 }
 
+/// Whether the clause is decided by enumerating closed finite executions,
+/// rather than by the lockstep product that executes selected reductions.
+fn uses_closed_executions(clause: &CheckedHyperClause) -> bool {
+    clause.profile() == fsl_semantics::check::TemporalProfile::EventPositionFalseExtension
+}
+
 /// FR-174 "Key symmetry" and "State constraint": admit the selected symmetry
 /// declarations over the clause's one subject, check the initial states'
 /// closure under them, and resolve the selected constraint. `Err` is the
@@ -811,9 +817,9 @@ impl<'a> Run<'_, 'a> {
                 stats: totals.stats(),
             });
         }
-        if self.request.clause.profile()
-            == fsl_semantics::check::TemporalProfile::EventPositionFalseExtension
-        {
+        if uses_closed_executions(self.request.clause) {
+            // Selected reductions have already settled before admission:
+            // closed enumeration does not execute product reductions.
             return self.decide_closed(instances, totals);
         }
         if let Some(outcome) = self.precheck(&totals)? {

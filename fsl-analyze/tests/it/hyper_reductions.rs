@@ -12,7 +12,7 @@ use fsl_replay::{
     RunStats, SymmetryBrokenCause, SymmetryRefusal,
 };
 use fsl_route::reductions::{Reductions, SymmetryDeclaration};
-use fsl_semantics::check::HyperForm;
+use fsl_semantics::check::{HyperForm, TemporalProfile};
 use ix_trace_rs::trace;
 
 use crate::hyper::refuted;
@@ -154,6 +154,69 @@ fn a_state_constraint_reduces_and_holds_reduced() {
             ]
         ),
         "{reductions:?}"
+    );
+}
+
+/// Finite HP-2 still enumerates closed executions when no reduction is
+/// selected. Selected product reductions are explicitly unsupported until
+/// the finite route executes them; preservation refusals retain precedence.
+#[trace("TC-3011", "FR-174-AC-7", "FR-173-AC-6")]
+#[test]
+fn a_finite_hp2_selection_is_explicitly_unsupported_before_expansion() {
+    let world = World::with_snapshots(
+        SECURE_CONSTRAINED,
+        uniform_snapshots(&["v", "w"]),
+        &["v", "w"],
+        "hyper Bounded using ep over behaviours (v: V::Vault) \
+         forall trace a of V forall trace b of V \
+         { always [0, 2] holds(v.l @ a <= 1 and v.l @ b <= 1) }",
+    );
+    assert_eq!(world.clause.form(), Some(&HyperForm::Universal));
+    assert_eq!(
+        world.clause.profile(),
+        TemporalProfile::EventPositionFalseExtension
+    );
+    let ordinary = world
+        .run_selecting(Reductions::default())
+        .expect("the finite clause runs");
+    let HyperOutcome::HoldsClosed { stats } = ordinary else {
+        panic!("expected ordinary closed enumeration, got {ordinary:?}");
+    };
+    assert!(stats.product_states > 0, "{stats:?}");
+
+    // Zero is true initially but cuts a reachable step setting l to 1.
+    // Returning HoldsClosed here would silently bypass that selection.
+    for (selection, reduction) in [
+        (
+            with_constraint(Reductions::default(), "Zero"),
+            ReductionKind::StateConstraint,
+        ),
+        (symmetry(), ReductionKind::Symmetry),
+        (with_constraint(symmetry(), "Zero"), ReductionKind::Symmetry),
+    ] {
+        assert_eq!(
+            world
+                .run_selecting(selection)
+                .expect("the selection settles"),
+            HyperOutcome::Reduction {
+                cause: HyperReductionCause::Unsupported { reduction },
+                stats: RunStats::default(),
+            }
+        );
+    }
+    let mut nonpreserving = with_constraint(symmetry(), "Zero");
+    nonpreserving.partial_order = true;
+    assert_eq!(
+        world
+            .run_selecting(nonpreserving)
+            .expect("the preservation row settles"),
+        HyperOutcome::Reduction {
+            cause: HyperReductionCause::NotPreserving {
+                reduction: ReductionKind::PartialOrder,
+                form: HyperForm::Universal,
+            },
+            stats: RunStats::default(),
+        }
     );
 }
 
