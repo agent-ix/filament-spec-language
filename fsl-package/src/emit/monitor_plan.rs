@@ -347,16 +347,7 @@ pub fn emit_monitor_plan_over(
     let diagnose = || -> Result<(), String> {
         let document: serde_json::Value = serde_json::from_slice(retained.package().bytes())
             .map_err(|error| error.to_string())?;
-        let row: filament_contract_model::CheckedBodySemanticLocation =
-            serde_json::from_value(document["checked_term_data"]["body_locations"][2].clone())
-                .map_err(|error| error.to_string())?;
-        let graph: CheckedSemanticGraphV2 =
-            serde_json::from_value(document["semantic_graph"].clone())
-                .map_err(|error| error.to_string())?;
-        let nodes = super::document_nodes(graph).map_err(|error| format!("{error:?}"))?;
-        let sources: Vec<CheckedSourceMapEntry> =
-            serde_json::from_value(document["source_map"].clone())
-                .map_err(|error| error.to_string())?;
+        let row = &document["checked_term_data"]["body_locations"][2];
         let bounded = |text: String| text.chars().take(2048).collect::<String>();
         eprintln!(
             "monitor-base-probe wire.name={}",
@@ -364,36 +355,115 @@ pub fn emit_monitor_plan_over(
         );
         eprintln!(
             "monitor-base-probe row2.application={}",
-            bounded(format!("{:?}", row.application))
+            bounded(row["application"].to_string())
         );
         eprintln!(
             "monitor-base-probe row2.origin={}",
-            bounded(format!("{:?}", row.location.origin))
+            bounded(row["location"]["origin"].to_string())
         );
+        fn resolve(
+            value: &mut serde_json::Value,
+            operands: &[serde_json::Value],
+        ) -> Result<(), String> {
+            if let Some(slot) = value
+                .as_object()
+                .filter(|map| map.len() == 1)
+                .and_then(|map| map.get("operand"))
+                .and_then(serde_json::Value::as_u64)
+            {
+                let entry = usize::try_from(slot)
+                    .ok()
+                    .and_then(|slot| operands.get(slot))
+                    .ok_or_else(|| "operand slot absent".to_owned())?;
+                *value = if entry.is_number() {
+                    serde_json::json!({"node": entry})
+                } else {
+                    entry.clone()
+                };
+                return Ok(());
+            }
+            match value {
+                serde_json::Value::Object(map) => {
+                    for child in map.values_mut() {
+                        resolve(child, operands)?;
+                    }
+                }
+                serde_json::Value::Array(items) => {
+                    for child in items {
+                        resolve(child, operands)?;
+                    }
+                }
+                _ => {}
+            }
+            Ok(())
+        }
+        fn references(value: &serde_json::Value, application: &serde_json::Value) -> bool {
+            if value["term"] == "reference" && value["target"] == *application {
+                return true;
+            }
+            match value {
+                serde_json::Value::Object(map) => {
+                    map.values().any(|child| references(child, application))
+                }
+                serde_json::Value::Array(items) => {
+                    items.iter().any(|child| references(child, application))
+                }
+                _ => false,
+            }
+        }
+        let graph = &document["semantic_graph"];
+        let mut nodes = graph["nodes"].as_array().ok_or("nodes absent")?.clone();
+        let operand_rows = graph["operand_rows"]
+            .as_array()
+            .ok_or("operand rows absent")?;
+        if nodes.len() != operand_rows.len() {
+            return Err("operand row count differs".to_owned());
+        }
+        for (node, operands) in nodes.iter_mut().zip(operand_rows) {
+            resolve(
+                node,
+                operands.as_array().ok_or("operand row is not an array")?,
+            )?;
+        }
         let matched: Vec<_> = nodes
             .iter()
-            .filter(|node| node.node_id == row.application)
+            .filter(|node| node["node_id"] == row["application"])
             .collect();
         eprintln!("monitor-base-probe exact_node_count={}", matched.len());
         if let Some(node) = matched.first() {
             eprintln!(
-                "monitor-base-probe node.kind={:?}/{:?} body={}",
-                node.node_tag,
-                node.semantic_form,
-                bounded(format!("{:?}", node.body))
+                "monitor-base-probe node.kind={}/{} body={}",
+                node["node_tag"],
+                node["semantic_form"],
+                bounded(node["body"].to_string())
             );
         }
+        let parents: Vec<_> = nodes
+            .iter()
+            .enumerate()
+            .filter(|(_, node)| references(&node["body"], &row["application"]))
+            .collect();
+        eprintln!("monitor-base-probe parent_count={}", parents.len());
+        for (position, parent) in parents.iter().take(8) {
+            eprintln!(
+                "monitor-base-probe parent.position={position} kind={}/{}",
+                parent["node_tag"], parent["semantic_form"]
+            );
+        }
+        let sources = document["source_map"]
+            .as_array()
+            .ok_or("source map absent")?;
         let matched_sources = sources
             .iter()
             .filter(|entry| {
-                entry.node_id == row.application
-                    && entry.role == row.occurrence.role
-                    && entry.ordinal == row.occurrence.ordinal
+                entry["node_id"] == row["application"]
+                    && entry["role"] == row["occurrence"]["role"]
+                    && entry["ordinal"] == row["occurrence"]["ordinal"]
             })
             .count();
         eprintln!(
-            "monitor-base-probe source_occurrence={:?}/{} matches={matched_sources}",
-            row.occurrence.role, row.occurrence.ordinal
+            "monitor-base-probe source_occurrence={} matches={matched_sources}",
+            bounded(row["occurrence"].to_string())
         );
         Ok(())
     };
