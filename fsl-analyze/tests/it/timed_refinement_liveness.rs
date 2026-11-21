@@ -1004,3 +1004,170 @@ fn the_item_keeps_the_safety_record_unless_safety_is_proved() {
         })
     );
 }
+
+/// A timed abstract `A` (clock `y`, reset by `poll`) refined by `M` (clock
+/// `x`, reset by `poll`), requiring weak fairness of `A::send`, whose abstract
+/// clock guard is `abstract_guard`. `M`'s `send` waits for `x >= 1`, which
+/// `y >= 1` follows, so safety holds. With `hidden`, `A` also has a hidden
+/// Boolean `h` (false in the one admitted initial state) that `send` needs
+/// false.
+fn guarded_poll(abstract_guard: &str, hidden: bool) -> Refining {
+    let mut abstract_document: serde_json::Value = serde_json::from_slice(&document(
+        &["y"],
+        &[("send", &["inflight"]), ("poll", &["y"])],
+    ))
+    .expect("abstract package JSON");
+    if hidden {
+        abstract_document["types"][1]["fields"]
+            .as_array_mut()
+            .expect("abstract object fields")
+            .push(crate::timed_world::wire_field(
+                "h",
+                "ix://filament/native/Boolean",
+            ));
+    }
+    let abstract_document =
+        renamed_package(&abstract_document.to_string().into_bytes(), "test/abstract");
+    let concrete = document(&["x"], &[("send", &["inflight"]), ("poll", &["x"])]);
+    let hidden_guard = if hidden { " and not self.h" } else { "" };
+    let contracts = format!(
+        "pre ASendable using v on A::Call::send {{ not self.inflight{hidden_guard} and {abstract_guard} }}\n\
+         post ASend using v on A::Call::send {{ self.inflight }}\n\
+         pre APoll using v on A::Call::poll {{ not self.inflight }}\n\
+         post APolled using v on A::Call::poll {{ self.y = 0 ms }}\n\
+         pre MSend using v on M::Call::send {{ not self.inflight and self.x >= 1 ms }}\n\
+         post MSent using v on M::Call::send {{ self.inflight }}\n\
+         pre MPoll using v on M::Call::poll {{ not self.inflight }}\n\
+         post MPolled using v on M::Call::poll {{ self.x = 0 ms }}\n"
+    );
+    let body = refinement("self.inflight").replace(
+        "step M::Call::send -> A::Call::send(self);",
+        "step M::Call::send -> A::Call::send(self);\n\
+         step M::Call::poll -> A::Call::poll(self);\n\
+         ensure fair weak A::Call::send;",
+    );
+    let world = refining(
+        &abstract_document,
+        &concrete,
+        &format!("{DENSE}time A dense unit ms;\n{contracts}{body}"),
+    )
+    .unwrap_or_else(|refusals| panic!("{refusals:?}"));
+    if hidden {
+        world.with_abstract_hidden_initials(&abstract_document, &[false])
+    } else {
+        world
+    }
+}
+
+/// FR-899 "Timed subjects", FR-430 "Strong fairness over time": the abstract
+/// guard `y >= 1` of the weak class `send` is false just after each `poll`
+/// resets `y`, so the class is not enabled at every instant of any loop and
+/// its weak fairness holds; untimed enabledness would have refuted it.
+#[trace("TC-2536", "FR-899")]
+#[test]
+fn an_abstract_guard_that_disables_a_weak_class_at_some_instants_holds() {
+    let outcome = check(&guarded_poll("self.y >= 1 ms", false));
+    assert!(
+        matches!(outcome.safety, TimedSafetyOutcome::Holds { .. }),
+        "{:?}",
+        outcome.safety
+    );
+    assert!(
+        matches!(
+            outcome.liveness,
+            Some(TimedLivenessHalf::Checked(
+                TimedLivenessOutcome::Holds { .. }
+            ))
+        ),
+        "{:?}",
+        outcome.liveness
+    );
+}
+
+/// The mirror: with the guard `y >= 0` true at every instant, the `poll` loop
+/// never takes the enabled class: refuted, and replay reproduces it with its
+/// own reading of the abstract clocks.
+#[trace("TC-2536", "FR-899")]
+#[test]
+fn an_abstract_guard_true_at_every_instant_refutes_and_replays() {
+    let world = guarded_poll("self.y >= 0 ms", false);
+    let counterexample = violation(check(&world));
+    assert!(matches!(
+        counterexample.refinement,
+        Some(RefinementFailure::AbstractUnfair { .. })
+    ));
+    assert!(matches!(
+        replay(&world, &counterexample),
+        RefinementTraceSettlement::Reproduced {
+            failure: RefinementFailure::AbstractUnfair { .. },
+            ..
+        }
+    ));
+}
+
+/// Replay reads the abstract guard over the loop's instants too: the same
+/// lasso against the world whose guard is `y >= 1` (false just after `poll`)
+/// is not reproduced.
+#[trace("TC-2536", "FR-899")]
+#[test]
+fn replay_does_not_reproduce_a_lasso_the_abstract_guard_disables() {
+    let counterexample = violation(check(&guarded_poll("self.y >= 0 ms", false)));
+    let guarded = guarded_poll("self.y >= 1 ms", false);
+    assert!(
+        !matches!(
+            replay_attempt(&guarded, &counterexample),
+            Ok(RefinementTraceSettlement::Reproduced { .. })
+        ),
+        "the guard disables the class at the loop's start"
+    );
+}
+
+/// FR-899 "Timed subjects" with a hidden abstract field: the class is read
+/// per candidate from its guarded steps, so a candidate whose guard is true
+/// at every instant makes the poll loop hidden-unfair, replayed.
+#[trace("TC-2536", "FR-899")]
+#[test]
+fn a_timed_hidden_candidate_guard_true_at_every_instant_is_hidden_unfair() {
+    let world = guarded_poll("self.y >= 0 ms", true);
+    let counterexample = violation(check(&world));
+    assert!(matches!(
+        counterexample.refinement,
+        Some(RefinementFailure::HiddenUnfair { .. })
+    ));
+    assert!(matches!(
+        replay(&world, &counterexample),
+        RefinementTraceSettlement::Reproduced {
+            failure: RefinementFailure::HiddenUnfair { .. },
+            ..
+        }
+    ));
+}
+
+/// The hidden mirror: a guard false at some instants of every loop is not a
+/// refutation (the half is decided, not refused), though the exact check of
+/// every concrete-fair loop (FR-899-AC-9) is not yet built, so it is not
+/// settled `Holds`.
+#[trace("TC-2536", "FR-899")]
+#[test]
+fn a_timed_hidden_candidate_guard_that_disables_the_class_is_not_refuted() {
+    let outcome = check(&guarded_poll("self.y >= 1 ms", true));
+    assert!(
+        matches!(outcome.safety, TimedSafetyOutcome::Holds { .. }),
+        "{:?}",
+        outcome.safety
+    );
+    assert!(
+        matches!(
+            outcome.liveness,
+            Some(TimedLivenessHalf::Checked(
+                TimedLivenessOutcome::Holds { .. }
+                    | TimedLivenessOutcome::Undecided {
+                        cause: TimedRefinementUndecided::Zone(ZoneUndecided::LassoNotConcretized),
+                        ..
+                    }
+            ))
+        ),
+        "{:?}",
+        outcome.liveness
+    );
+}
