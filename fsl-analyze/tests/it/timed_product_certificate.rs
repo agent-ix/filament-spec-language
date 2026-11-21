@@ -879,41 +879,31 @@ fn reset_loop_is_nonprogressive_without_a_deadline_clock() {
 /// FR-923: a workload resolves a state by its weights, so an operation it
 /// weighs at zero cannot be dropped from the checker's product. The engine
 /// emits no workload document for a timed deadline (and faults on a zero-weight
-/// race), so the document is the `every scheduler` one of the same model with
-/// its identity and optimization relabelled for the workload claim; the checker must refuse the product
-/// as `Unsupported` rather than check one without `tick`.
+/// race), so the document is the `every scheduler` one of the same model and
+/// claim name with its optimization relabelled `workload`; the checker, given
+/// the claim under the workload, must refuse the product as `Unsupported`
+/// rather than check one without `tick`.
 #[trace("TC-2492")]
 #[test]
 fn the_checker_refuses_a_workload_that_weighs_an_enabled_operation_at_zero() {
-    let claim = |name: &str, scheduler: &str| {
-        format!(
-            "probabilistic {name} using ev on M over (c: M::Call) {scheduler} on origin \
-             {{ probability <= 0.99 [ eventually[0 ms, 5 ms] holds(c.retried and c.late) ] }}\n"
+    let world = |scheduler: &str| {
+        retx_with(
+            &[("send", &["late", "x"]), ("tick", &["retried"])],
+            GUARD,
+            true,
+            "delay M::Call::send ~ discrete { 2 ms: 1 };\n\
+             pre Tick using v on M::Call::tick { not self.late and not self.retried and self.x >= 2 ms }\n\
+             post Ticked using v on M::Call::tick { self.retried = true }\n\
+             workload Both on M { weight Call::send = 1; weight Call::tick = 0; }\n",
+            &format!(
+                "probabilistic W using ev on M over (c: M::Call) {scheduler} on origin \
+                 {{ probability <= 0.99 [ eventually[0 ms, 5 ms] holds(c.retried and c.late) ] }}\n"
+            ),
         )
     };
-    let world = retx_with(
-        &[("send", &["late", "x"]), ("tick", &["retried"])],
-        GUARD,
-        true,
-        "delay M::Call::send ~ discrete { 2 ms: 1 };\n\
-         pre Tick using v on M::Call::tick { not self.late and not self.retried and self.x >= 2 ms }\n\
-         post Ticked using v on M::Call::tick { self.retried = true }\n\
-         workload Both on M { weight Call::send = 1; weight Call::tick = 0; }\n",
-        &format!(
-            "{}{}",
-            claim("Every", "under every scheduler"),
-            claim("Weighted", "under Both")
-        ),
-    );
-    let mut doc = document(&settle(&world, "Every"));
+    let mut doc = document(&settle(&world("under every scheduler"), "W"));
     doc["objective"]["optimization"] = json!("workload");
-    doc["identity"] = serde_json::from_str(
-        &doc["identity"]
-            .to_string()
-            .replace("\"Every\"", "\"Weighted\""),
-    )
-    .expect("identity JSON");
-    let result = check(&world, "Weighted", &doc);
+    let result = check(&world("under Both"), "W", &doc);
     assert!(
         matches!(result, Err(ProbabilityDocumentError::Unsupported)),
         "{result:?}"
