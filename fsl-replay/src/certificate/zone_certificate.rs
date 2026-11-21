@@ -125,8 +125,8 @@ use crate::model_check::identity::node_occurrence;
 use crate::model_check::limits::ModelCheckLimit;
 use crate::proof_result::IncompleteCause;
 use crate::refinement::{
-    check_initial, check_step, open_systems, ConcreteStep, RefinementPosition, StepVerdict,
-    SubjectRefusal, Taken,
+    check_initial, check_step, open_systems, row_clock_step, ConcreteStep, RefinementPosition,
+    RowClockStep, StepVerdict, SubjectRefusal, Taken,
 };
 
 /// FR-244's certificate of a zone search's proof of the item `obligation`
@@ -1936,11 +1936,23 @@ impl<O> Checker<'_, '_, O> {
             return Ok(());
         };
         let offset = self.timed.places().len();
+        // Every candidate of the position must read the same invariant: the
+        // product holds one abstract clock valuation, so candidates that
+        // differ are not one the producer can have followed.
+        let mut agreed: Option<Vec<PlaceConstraint>> = None;
         for candidate in &position.abstract_states {
             let state = timed
                 .system()
                 .pre_state(candidate.clone(), timed.system().declared_anchor());
-            let invariants = timed.invariants(&state).or_else(undecided)?;
+            let mut invariants = timed.invariants(&state).or_else(undecided)?;
+            invariants.sort();
+            match &agreed {
+                None => agreed = Some(invariants),
+                Some(first) if *first == invariants => {}
+                Some(_) => return reject(CertificateRule::PostDiffers, at_node(0)),
+            }
+        }
+        if let Some(invariants) = agreed {
             let shifted = invariants
                 .iter()
                 .map(|constraint| {
@@ -1993,28 +2005,43 @@ impl<O> Checker<'_, '_, O> {
         let StepVerdict::Passes { post, taken } = verdict else {
             return Ok(());
         };
-        let transitions = match *taken {
-            Taken::Abstract(transitions) => transitions,
-            Taken::CandidateSteps(steps) => steps
-                .into_iter()
-                .filter_map(|step| step.transition)
-                .collect(),
+        let offset = self.timed.places().len();
+        let mut matched = None;
+        match *taken {
+            Taken::Abstract(transitions) => {
+                'candidates: for candidate in &pre.abstract_states {
+                    let state = timed
+                        .system()
+                        .pre_state(candidate.clone(), timed.system().declared_anchor());
+                    for step in timed.guarded_steps(&state).or_else(undecided)? {
+                        if transitions.contains(step.transition()) {
+                            matched = Some(step);
+                            break 'candidates;
+                        }
+                    }
+                }
+            }
+            // The edge's rows must agree on one guarded step (FR-899 "Timed
+            // subjects"); an edge whose hidden candidates differ in clock
+            // behaviour, or mix stutter with a step, is not one the product
+            // can have followed, so the certificate is rejected.
+            Taken::CandidateSteps(steps) => {
+                match row_clock_step(abstract_system, timed, &pre.abstract_states, &steps)
+                    .or_else(undecided)?
+                {
+                    RowClockStep::Stutter => {
+                        self.auxiliary_invariants(&post, zone)?;
+                        return Ok(());
+                    }
+                    RowClockStep::Agreed(step) => matched = Some(*step),
+                    RowClockStep::Disagree => {
+                        return reject(CertificateRule::PostDiffers, at_node(0));
+                    }
+                }
+            }
             Taken::Stutter | Taken::Protocol(_) | Taken::ProtocolTraces(_) => {
                 self.auxiliary_invariants(&post, zone)?;
                 return Ok(());
-            }
-        };
-        let offset = self.timed.places().len();
-        let mut matched = None;
-        'candidates: for candidate in &pre.abstract_states {
-            let state = timed
-                .system()
-                .pre_state(candidate.clone(), timed.system().declared_anchor());
-            for step in timed.guarded_steps(&state).or_else(undecided)? {
-                if transitions.contains(step.transition()) {
-                    matched = Some(step);
-                    break 'candidates;
-                }
             }
         }
         if let Some(step) = matched {

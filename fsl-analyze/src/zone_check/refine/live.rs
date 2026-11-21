@@ -830,6 +830,7 @@ impl Product<'_, '_> {
                                     })
                                     .transpose()?,
                                 post_state: row.post_state.clone(),
+                                interior: Vec::new(),
                             })
                         })
                         .collect::<Result<Vec<_>, ZoneCheckRefusal>>()?,
@@ -839,6 +840,7 @@ impl Product<'_, '_> {
                             pre_state: key.clone(),
                             transition: None,
                             post_state: key.clone(),
+                            interior: Vec::new(),
                         })
                         .collect(),
                     _ => return Err(ZoneCheckRefusal::Fault("candidate-loop-taken-shape")),

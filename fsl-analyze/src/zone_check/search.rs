@@ -584,6 +584,13 @@ pub enum ZoneCheckRefusal {
     /// position, so it cannot follow both candidates.
     #[error("the refinement checker does not decide a timed abstract side whose hidden candidates differ in clock behaviour")]
     HiddenFieldTimedAbstract,
+    /// The liveness half of a timed abstract side with a hidden abstract field
+    /// and an abstract fairness obligation: class enabledness there needs the
+    /// abstract clock guards of each hidden candidate and a split of the cells
+    /// by the guards of the fairness classes, which the checker does not yet
+    /// read.
+    #[error("the refinement checker does not decide the liveness half of a timed abstract side with a hidden field")]
+    HiddenFieldTimedAbstractLiveness,
     /// A symmetry declaration does not admit (FR-151).
     #[error(transparent)]
     Symmetry(SymmetryRefusal),

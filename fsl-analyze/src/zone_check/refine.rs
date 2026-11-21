@@ -317,6 +317,21 @@ fn check_refinement_with_time_source<S>(
         check_model_bounds(&abstract_system, BOUND_POSITIONS).map_err(not_simulated)?;
         None
     };
+    // The liveness half over a timed abstract side reads class enabledness
+    // from the untimed abstract state, with no abstract clock guard and no
+    // split of the cells by the guards of the `F_A` classes (FR-899 "Timed
+    // subjects"). That is exact only without a hidden abstract field, whose
+    // candidates each carry their own clock behaviour; with one, the half is
+    // refused rather than answered from enabledness it did not read.
+    if auxiliary_timed.is_some()
+        && refinement.abstract_operation_fairness().next().is_some()
+        && refinement
+            .objects()
+            .iter()
+            .any(|object| !object.hidden.is_empty())
+    {
+        return Err(ZoneCheckRefusal::HiddenFieldTimedAbstractLiveness.into());
+    }
     let mut run = Run::new(
         &timed,
         Judged::Refinement,
@@ -889,15 +904,35 @@ impl Product<'_, '_> {
             .positions
             .get(q)
             .ok_or(ZoneCheckRefusal::Fault("auxiliary-position"))?;
+        let constraints = Self::uniform_invariants(run, timed, position)?;
+        let shifted = auxiliary_constraints(run.timed.places().len(), &constraints);
+        run.constrain(zone, &shifted)?;
+        Ok(())
+    }
+
+    /// The abstract time invariants every candidate of `position` reads. The
+    /// product keeps one abstract clock valuation per position, so candidates
+    /// whose invariants differ cannot be followed together: that is the
+    /// narrowed refusal, never an intersection that would drop behaviour.
+    fn uniform_invariants(
+        run: &Run<'_, '_, '_>,
+        timed: &TimedSystem<'_, '_>,
+        position: &RefinementPosition,
+    ) -> Result<Vec<PlaceConstraint>, Halt> {
+        let mut agreed: Option<Vec<PlaceConstraint>> = None;
         for candidate in &position.abstract_states {
             let state = timed
                 .system()
                 .pre_state(candidate.clone(), timed.system().declared_anchor());
-            let constraints = run.timed(timed.invariants(&state))?;
-            let shifted = auxiliary_constraints(run.timed.places().len(), &constraints);
-            run.constrain(zone, &shifted)?;
+            let mut constraints = run.timed(timed.invariants(&state))?;
+            constraints.sort();
+            match &agreed {
+                None => agreed = Some(constraints),
+                Some(first) if *first == constraints => {}
+                Some(_) => return Err(ZoneCheckRefusal::HiddenFieldTimedAbstract.into()),
+            }
         }
-        Ok(())
+        Ok(agreed.unwrap_or_default())
     }
 
     /// A point in `zone` at which the mapped abstract invariant is false.
@@ -915,11 +950,9 @@ impl Product<'_, '_> {
             .get(q)
             .ok_or(ZoneCheckRefusal::Fault("auxiliary-position"))?;
         let offset = run.timed.places().len();
-        for candidate in &position.abstract_states {
-            let state = timed
-                .system()
-                .pre_state(candidate.clone(), timed.system().declared_anchor());
-            let invariants = auxiliary_constraints(offset, &run.timed(timed.invariants(&state))?);
+        {
+            let invariants =
+                auxiliary_constraints(offset, &Self::uniform_invariants(run, timed, position)?);
             let mut prefix = zone.clone();
             for constraint in &invariants {
                 for op in negations(constraint.op()) {

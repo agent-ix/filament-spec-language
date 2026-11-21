@@ -2964,7 +2964,8 @@ impl Run<'_, '_> {
                             continue;
                         };
                         let label = self.protocol_path_label(
-                            protocol_candidate,
+                            &candidate.transitions,
+                            &[],
                             std::slice::from_ref(&transition),
                             classes,
                         )?;
@@ -2978,11 +2979,11 @@ impl Run<'_, '_> {
             }
             Taken::ProtocolTraces(traces) => {
                 for candidate in source_candidates {
-                    let Some(protocol_candidate) = &candidate.protocol else {
+                    if candidate.protocol.is_none() {
                         return Err(
                             fault("a-protocol-trace-has-a-protocol-source-candidate").into()
                         );
-                    };
+                    }
                     for trace in traces
                         .iter()
                         .filter(|trace| trace.start_key == candidate.key)
@@ -2995,7 +2996,11 @@ impl Run<'_, '_> {
                             continue;
                         };
                         let label = self.protocol_path_label(
-                            protocol_candidate,
+                            &candidate.transitions,
+                            trace
+                                .candidates
+                                .split_last()
+                                .map_or(&[][..], |(_, interior)| interior),
                             &trace.transitions,
                             classes,
                         )?;
@@ -3014,23 +3019,30 @@ impl Run<'_, '_> {
         Ok(relation)
     }
 
-    /// The fairness label of one protocol path from `start` (FR-899
-    /// "Abstract protocol subjects"): a class is enabled when the protocol
-    /// has a step of it from the candidate's configuration `start`, and taken
-    /// when a step of the path applies it. Configurations inside an internal
-    /// closure are not candidates, so they carry no enabledness.
+    /// The fairness label of one protocol path (FR-899 "Abstract protocol
+    /// subjects"): a class is enabled at a configuration when the protocol
+    /// has a step of it from there, and taken when a step of the path applies
+    /// it. The configurations the path passes through are the candidate's
+    /// start (`start_enabled`, already read) and each `interior`
+    /// configuration, which FR-148 places in the candidate set; the class is
+    /// enabled somewhere when any of them enables it and everywhere when all
+    /// do.
     fn protocol_path_label(
         &mut self,
-        start: &fsl_replay::ProtocolCandidate,
+        start_enabled: &[ModelTransition],
+        interior: &[fsl_replay::ProtocolCandidate],
         path: &[fsl_eval::simulation::protocol::ProtocolTransition],
         classes: &[AbstractClass],
     ) -> Result<FairLabel, End> {
         let protocol = self
             .abstract_protocol
             .ok_or_else(|| fault("a-protocol-path-has-a-protocol-system"))?;
-        let mut count = self.transitions;
-        let enabled = self.protocol_enabled(protocol, start, &mut count)?;
-        self.transitions = count;
+        let mut enabled_sets = vec![start_enabled.to_vec()];
+        for configuration in interior {
+            let mut count = self.transitions;
+            enabled_sets.push(self.protocol_enabled(protocol, configuration, &mut count)?);
+            self.transitions = count;
+        }
         Ok(classes
             .iter()
             .map(|class| FairMark {
@@ -3038,8 +3050,8 @@ impl Run<'_, '_> {
                     step.application()
                         .is_some_and(|transition| class.covers(transition))
                 }),
-                enabled_somewhere: class.is_enabled_in(&enabled),
-                enabled_everywhere: class.is_enabled_in(&enabled),
+                enabled_somewhere: enabled_sets.iter().any(|set| class.is_enabled_in(set)),
+                enabled_everywhere: enabled_sets.iter().all(|set| class.is_enabled_in(set)),
             })
             .collect())
     }
@@ -3115,6 +3127,7 @@ impl Run<'_, '_> {
                                 })
                                 .transpose()?,
                             post_state: row.post_state.clone(),
+                            interior: Vec::new(),
                         })
                     })
                     .collect::<Result<Vec<_>, End>>()?,

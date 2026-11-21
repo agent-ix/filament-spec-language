@@ -394,7 +394,7 @@ pub use refinement::{
     open_protocol_systems, open_systems, protocol_observation_label, protocol_transition_class,
     step_history, step_view_over, AbstractClass, AbstractInitial, AbstractProtocolSystem,
     AssumptionIdentity, AssumptionOrigin, AssumptionSelectedMember, AssumptionSide,
-    AssumptionTarget, CandidateFairState, CandidateFairStep, CandidateLivenessError, ConcreteStep,
+    AssumptionTarget, CandidateFairHop, CandidateFairState, CandidateFairStep, CandidateLivenessError, ConcreteStep,
     EvalFailure, HiddenSlot, HistoryValues, LivenessHalf, MappedState, MappingFailure,
     MappingRowRef, MappingUndetermined, ObjectKey, ObservationField, ObservationLabel,
     PairedAssumptionPath, PairedAssumptionStep, ProtocolAssumptionFairness,

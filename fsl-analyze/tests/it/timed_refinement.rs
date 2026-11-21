@@ -6,8 +6,9 @@
 use filament_exact::{Cancel, Integer, Rational};
 use fsl_analyze::zone_check::{
     check_free_delay_refinement, check_timed_model, check_timed_refinement, TimedRefinementRefusal,
-    TimedRefinementRequest, TimedRefinementUndecided, TimedSafetyOutcome, ZoneCheckItem,
-    ZoneCheckLimits, ZoneCheckOutcome, ZoneCheckRefusal, ZoneCheckRequest, ZoneUndecided,
+    TimedRefinementRequest, TimedRefinementStop, TimedRefinementUndecided, TimedSafetyOutcome,
+    ZoneCheckItem, ZoneCheckLimit, ZoneCheckLimits, ZoneCheckOutcome, ZoneCheckRefusal,
+    ZoneCheckRequest, ZoneStop, ZoneUndecided,
 };
 use fsl_eval::simulation::model::{ModelSystem, TimedSystem};
 use fsl_eval::simulation::Limits;
@@ -404,11 +405,93 @@ fn a_timed_abstract_side_with_a_hidden_field_applies_the_abstract_clock_guard() 
     ));
 }
 
+/// FR-899 "Timed subjects", the narrowed refusal: with `any` the concrete
+/// send is matched by both a stutter and the abstract `send`, so the hidden
+/// candidate rows mix a step that is guarded with a stutter that is not. The
+/// product keeps one abstract clock valuation, so it refuses rather than
+/// follow either row.
+#[trace("TC-2538", "FR-900-AC-2")]
+#[test]
+fn a_hidden_candidate_that_stutters_while_another_steps_is_refused() {
+    let concrete = document(&["x"], &[("send", &["inflight"])]);
+    let abstract_model = renamed_package(
+        &document(&["y"], &[("send", &["inflight"])]),
+        "test/abstract",
+    );
+    let world = refining(
+        &abstract_model,
+        &concrete,
+        &format!(
+            "{DENSE}time A dense unit ms;\n\
+             post ASend using v on A::Call::send {{ self.inflight = false }}\n\
+             pre ASendable using v on A::Call::send {{ self.y >= 1 ms }}\n\
+             pre MSend using v on M::Call::send {{ self.x >= 0 ms }}\n\
+             post MSent using v on M::Call::send {{ self.inflight }}\n{}",
+            refinement("false")
+                .replace(" late = self.late;", "")
+                .replace("-> A::Call::send(self)", "-> any")
+        ),
+    )
+    .unwrap_or_else(|refusals| panic!("{refusals:?}"));
+    let refused = check_timed_refinement(safety_request(&world), &Cancel::new())
+        .err()
+        .expect("mixed stutter and step rows are refused");
+    assert!(
+        matches!(
+            refused,
+            TimedRefinementRefusal::Zone(ZoneCheckRefusal::HiddenFieldTimedAbstract)
+        ),
+        "{refused:?}"
+    );
+}
+
+/// FND-006: a timed abstract side with a hidden field and an abstract
+/// fairness obligation has no liveness half yet; it is refused with its own
+/// typed refusal rather than answered from untimed enabledness.
+#[trace("TC-2536", "FR-899-AC-9")]
+#[test]
+fn the_liveness_half_of_a_timed_abstract_hidden_field_is_refused() {
+    let concrete = document(&["x"], &[("send", &["inflight"])]);
+    let abstract_model = renamed_package(
+        &document(&["y"], &[("send", &["inflight"])]),
+        "test/abstract",
+    );
+    let world = refining(
+        &abstract_model,
+        &concrete,
+        &format!(
+            "{DENSE}time A dense unit ms;\n\
+             post ASend using v on A::Call::send {{ self.inflight }}\n\
+             pre ASendable using v on A::Call::send {{ self.y >= 1 ms }}\n\
+             pre MSend using v on M::Call::send {{ self.x >= 1 ms }}\n\
+             post MSent using v on M::Call::send {{ self.inflight }}\n{}",
+            refinement("self.inflight")
+                .replace(" late = self.late;", "")
+                .replace(
+                    "step M::Call::send -> A::Call::send(self);",
+                    "step M::Call::send -> A::Call::send(self);\nensure fair weak A::Call::send;"
+                )
+        ),
+    )
+    .unwrap_or_else(|refusals| panic!("{refusals:?}"));
+    let refused = check_timed_refinement(safety_request(&world), &Cancel::new())
+        .err()
+        .expect("the liveness half is refused");
+    assert!(
+        matches!(
+            refused,
+            TimedRefinementRefusal::Zone(ZoneCheckRefusal::HiddenFieldTimedAbstractLiveness)
+        ),
+        "{refused:?}"
+    );
+}
+
 /// The default timed profile supplies the selector bound for concrete
 /// ClockRef data, and a hidden abstract field no longer refuses the check.
 #[trace("TC-3084", "FR-1040-AC-8")]
 #[test]
 fn clock_reference_selectors_use_the_timed_profile_before_refinement_gates() {
+    const ZONE_BYTES: u64 = 4 << 20;
     let mut concrete: Json =
         serde_json::from_slice(&document(&["x", "q"], &[("send", &["inflight", "r"])]))
             .expect("JSON");
@@ -475,17 +558,25 @@ fn clock_reference_selectors_use_the_timed_profile_before_refinement_gates() {
     );
     let mut request = safety_request(&world);
     request.concrete = concrete_request;
-    // The hidden abstract field no longer refuses: the check runs with the
-    // timed constructor's default selector bound.
-    let outcome = check_timed_refinement(request, &Cancel::new());
+    // The hidden abstract field no longer refuses, and the timed
+    // constructor's default selector bound is applied (no `RequiresBound`
+    // refusal). The product of this fixture grows past any small zone budget,
+    // so a low explicit limit makes the run end at exactly that limit.
+    request.limits.max_zone_bytes = ZONE_BYTES;
+    let outcome = check_timed_refinement(request, &Cancel::new())
+        .expect("the hidden abstract field and the selector bound are both admitted");
     assert!(
-        !matches!(
-            outcome,
-            Err(TimedRefinementRefusal::Zone(
-                ZoneCheckRefusal::HiddenFieldTimedAbstract
-            ))
+        matches!(
+            &outcome.safety,
+            TimedSafetyOutcome::Stopped {
+                cause: TimedRefinementStop::Zone(ZoneStop::LimitReached(
+                    ZoneCheckLimit::MaxZoneBytes(ZONE_BYTES)
+                )),
+                ..
+            }
         ),
-        "a hidden abstract field under a timed abstract side is checked: {outcome:?}"
+        "the run stops at the explicit zone budget: {:?}",
+        outcome.safety
     );
 }
 
