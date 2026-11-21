@@ -315,6 +315,8 @@ pub(super) struct SymbolicEdge {
     /// index into the run's pieces; `None` with no automaton, under a tick
     /// source, and past the formula's horizon.
     pub piece: Option<usize>,
+    /// The death by time a refinement product's edge takes (candidate, branch).
+    pub death: Option<(usize, usize)>,
 }
 
 /// How a new node is reached: an edge from a stored node, with its step
@@ -324,6 +326,10 @@ pub(super) struct Arrival {
     pub(super) from: usize,
     pub(super) step: Option<(usize, usize)>,
     pub(super) piece: Option<usize>,
+    /// A refinement product's death by time: the index of the dying
+    /// candidate in the source position and of the convex branch of the
+    /// negation of its invariant; `step` is then `None`.
+    pub(super) death: Option<(usize, usize)>,
 }
 
 impl SymbolicEdge {
@@ -584,6 +590,16 @@ pub enum ZoneCheckRefusal {
     /// position, so it cannot follow both candidates.
     #[error("the refinement checker does not decide a timed abstract side whose hidden candidates differ in clock behaviour")]
     HiddenFieldTimedAbstract,
+    /// The alive hidden candidates of one product step apply different
+    /// clock carries or resets, which needs one clock block per candidate;
+    /// the product keeps one abstract clock block per position.
+    #[error("the refinement checker does not decide a timed abstract side whose alive hidden candidates apply different clock carries or resets at one step")]
+    HiddenCandidateClockBlocks,
+    /// The liveness half of a timed abstract side whose hidden candidates
+    /// disagree on clock behaviour: its product would need one clock
+    /// valuation per candidate (the safety half is decided).
+    #[error("the refinement checker does not decide the liveness half of a timed abstract side whose hidden candidates differ in clock behaviour")]
+    HiddenCandidateLiveness,
     /// The liveness half of a timed abstract side under a concrete tick
     /// source: abstract class enabledness is read over the instants between
     /// positions, which a tick source does not have.
@@ -1533,6 +1549,7 @@ impl<'r, 's, 'a> Run<'r, 's, 'a> {
                             covering: true,
                             step: arrival.step,
                             piece: arrival.piece,
+                            death: arrival.death,
                         })?;
                     }
                     return Ok(Inserted::Covered(candidate));
@@ -1561,6 +1578,7 @@ impl<'r, 's, 'a> Run<'r, 's, 'a> {
                     covering: false,
                     step: arrival.step,
                     piece: arrival.piece,
+                    death: arrival.death,
                 })?;
                 Some(self.edges.len() - 1)
             }
@@ -1721,6 +1739,7 @@ impl<'r, 's, 'a> Run<'r, 's, 'a> {
                     from: node,
                     step: Some((successor.step, successor.part)),
                     piece: None,
+                    death: None,
                 };
                 if let Some(new) =
                     self.insert(successor.state, q, successor.zone, None, Some(arrival))?
@@ -1769,6 +1788,7 @@ impl<'r, 's, 'a> Run<'r, 's, 'a> {
                     from: node,
                     step: Some((successor.step, successor.part)),
                     piece: period.is_none().then_some(piece),
+                    death: None,
                 };
                 if let Some(new) =
                     self.insert(successor.state.clone(), read, at, None, Some(arrival))?
@@ -1802,6 +1822,7 @@ impl<'r, 's, 'a> Run<'r, 's, 'a> {
                     from: node,
                     step: None,
                     piece: period.is_none().then_some(piece),
+                    death: None,
                 };
                 if let Some(new) = self.insert(state.clone(), read, at, None, Some(arrival))? {
                     created.push(new);

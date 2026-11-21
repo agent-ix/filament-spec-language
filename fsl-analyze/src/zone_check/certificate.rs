@@ -18,7 +18,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use filament_exact::Integer;
 use fsl_replay::{
     CertEdge, CertNode, CertificateItem, Components, DivergenceWitness, DivergentTarget, LuBounds,
-    NonZeno, StateGraphCertificateForm, StateGraphPart, Zone, ZoneCertificate,
+    NonZeno, SilentMove, StateGraphCertificateForm, StateGraphPart, Zone, ZoneCertificate,
 };
 use fsl_route::deadlock::{ItemObligation, ObligationKind};
 use num_bigint::BigInt;
@@ -205,6 +205,7 @@ impl Run<'_, '_, '_> {
                 to,
                 step,
                 piece,
+                death,
                 ..
             } = self.edges[edge].clone();
             let (transition, part) = match step {
@@ -217,7 +218,7 @@ impl Run<'_, '_, '_> {
                         .clone();
                     (Some(transition), Some(part))
                 }
-                None => (None, None),
+                None => (None, death.map(|(_, branch)| branch)),
             };
             let horizon = match piece {
                 Some(piece) => Some(
@@ -236,7 +237,7 @@ impl Run<'_, '_, '_> {
                 part,
                 horizon,
                 to,
-                silent: None,
+                silent: death.map(|(candidate, _)| SilentMove::Dies { candidate }),
             });
         }
         let witnessed = admitted(&edges, &steps, root, witness)
