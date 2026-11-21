@@ -43,7 +43,7 @@ struct Subject<'w> {
     refinement: &'w CheckedRefinement,
     package: &'w CheckedPackage,
     concrete: ModelSimulationRequest<'w>,
-    abstract_initial: DocumentRef,
+    abstract_initials: Vec<DocumentRef>,
 }
 
 fn cas(world: &World) -> Subject<'_> {
@@ -51,7 +51,7 @@ fn cas(world: &World) -> Subject<'_> {
         refinement: world.refinement(),
         package: world.package(),
         concrete: world.concrete_request(UNLIMITED),
-        abstract_initial: world.abstract_initial(),
+        abstract_initials: vec![world.abstract_initial()],
     }
 }
 
@@ -64,7 +64,7 @@ fn ring_with(world: &RingWorld, meter: filament_exact::ScalarLimits) -> Subject<
         refinement: world.refinement(),
         package: world.package(),
         concrete: world.concrete_request(meter),
-        abstract_initial: world.abstract_initial(),
+        abstract_initials: vec![world.abstract_initial()],
     }
 }
 
@@ -73,7 +73,7 @@ fn aux<'w>(world: &'w AuxWorld<'_>) -> Subject<'w> {
         refinement: world.refinement(),
         package: world.package(),
         concrete: world.concrete_request(AUX_UNLIMITED),
-        abstract_initial: world.abstract_initial(),
+        abstract_initials: world.abstract_initials(),
     }
 }
 
@@ -90,7 +90,7 @@ fn outcome(subject: &Subject<'_>) -> RefinementOutcome {
                 proof_bounds: Vec::new(),
             },
             abstract_package: subject.package,
-            abstract_initial: vec![subject.abstract_initial.clone()].into(),
+            abstract_initial: subject.abstract_initials.clone().into(),
             abstract_protocol_binding: None,
             max_depth: None,
             limits: ModelCheckLimits::default(),
@@ -115,7 +115,7 @@ fn replay(
         subject.refinement,
         &subject.concrete,
         subject.package,
-        vec![subject.abstract_initial.clone()],
+        subject.abstract_initials.clone(),
     )
     .expect("the subjects open");
     replay_refinement_trace(subject.refinement, &systems, payload)
@@ -136,7 +136,7 @@ fn certified<'w>(subject: &Subject<'w>) -> SimulationCertificateRequest<'w> {
         refinement: subject.refinement,
         concrete: subject.concrete.clone(),
         abstract_package: subject.package,
-        abstract_initial: vec![subject.abstract_initial.clone()].into(),
+        abstract_initial: subject.abstract_initials.clone().into(),
     }
 }
 
@@ -168,7 +168,7 @@ fn the_lost_update_counterexample_replays_with_its_mapped_values() {
         subject.refinement,
         &subject.concrete,
         subject.package,
-        vec![subject.abstract_initial.clone()],
+        subject.abstract_initials.clone(),
     )
     .expect("the subjects open");
     let keys: Vec<Vec<u8>> = mapped
@@ -765,6 +765,41 @@ fn the_first_constraint_every_candidate_cycle_violates_is_named_and_replays() {
         ),
         "replay does not reproduce the joint-prefix name"
     );
+}
+
+/// FR-899-AC-7 (TC-2536): the same three constraints from the single initial
+/// valuation `h = 0`. No candidate has `h = 1`, so `fire2` is unsatisfiable
+/// alone as well, and the first constraint every candidate cycle violates is
+/// `fire2`; the second initial valuation is what makes `fire3` the first.
+#[trace("TC-2536", "FR-899-AC-7")]
+#[test]
+fn a_single_initial_valuation_names_fire2_as_the_first_violated_constraint() {
+    let contracts = "post Fire1Step using v on Spec::M::fire1 {\n\
+          (pre(self.h) = 0 and self.h = 0 and self.v = pre(self.v)) or\n\
+          (pre(self.h) != 0 and self.h = pre(self.h) and self.v = 1)\n\
+        }\n\
+        post Fire2Step using v on Spec::M::fire2 {\n\
+          (pre(self.h) = 1 and self.h = 1 and self.v = pre(self.v)) or\n\
+          (pre(self.h) != 1 and self.h = pre(self.h) and self.v = 1)\n\
+        }\n\
+        post Fire3Step using v on Spec::M::fire3 { self.v = 1 and self.h = pre(self.h) }\n";
+    let unit = Unit::hidden_fairness_model(2, 0, &["fire1", "fire2", "fire3"], contracts);
+    let refinement = "refinement HiddenTick using inf abstract Spec concrete Impl {\n\
+         population Spec::ms from Impl::ms;\n\
+         object Spec::M from Impl::M { v = self.v; }\n\
+         step Impl::M::tick -> any;\n\
+         ensure fair weak Spec::M::fire1;\n\
+         ensure fair weak Spec::M::fire2;\n\
+         ensure fair weak Spec::M::fire3;\n}";
+    let world = unit.world(refinement);
+    let subject = aux(&world);
+    let payload = lasso(outcome(&subject));
+    let Some(RefinementFailure::HiddenUnfair { constraint }) = payload.refinement.as_ref() else {
+        panic!("a hidden-unfair lasso: {:?}", payload.refinement);
+    };
+    assert_eq!(constraint.operation().name(), "fire2");
+    let (failure, _) = reproduced(replay(&subject, &payload));
+    assert_eq!(Some(failure), payload.refinement);
 }
 
 /// The steps of `operations`, each the first successor of the state before
