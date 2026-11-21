@@ -129,7 +129,7 @@ pub(super) fn admit_slot_supply(
         }
     }
     let mut frame = vec![None; frame_len];
-    let mut reference_origins = vec![None; frame_len];
+    let mut reference_origins = vec![super::evaluate::ReferenceOrigins::default(); frame_len];
     let mut unavailable = std::collections::BTreeMap::new();
     let binder_slots = sources
         .iter()
@@ -395,7 +395,7 @@ pub(super) fn admit_slot_supply(
                     // These paths were already owned by the existing typed
                     // admission walk. Move them once after validation; every
                     // frame and Local read subsequently shares this backing.
-                    reference_origins[index] = Some(
+                    reference_origins[index] = super::evaluate::ReferenceOrigins::from_occurrences(
                         seeds
                             .into_iter()
                             .map(|(_, population, path)| {
@@ -404,8 +404,7 @@ pub(super) fn admit_slot_supply(
                                     population,
                                 }
                             })
-                            .collect::<Vec<_>>()
-                            .into(),
+                            .collect::<Vec<_>>(),
                     );
                 }
                 frame[index] = Some(value.clone());
