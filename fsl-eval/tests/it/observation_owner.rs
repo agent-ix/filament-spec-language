@@ -344,7 +344,6 @@ const FORBIDDEN_ITEMS: &[&str] = &[
     "relation_to",
     // activation: the local scope disposition rule.
     "scope_disposition",
-    "no_instance",
     "ActivationView",
     "ActivationSelection",
     // completeness: a second revision rule or view.
