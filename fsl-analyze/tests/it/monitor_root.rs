@@ -159,6 +159,7 @@ fn monitor_body_locations_follow_entry_rekeys_and_preserve_helper_origins() {
         );
         assert_eq!(after.occurrence, before.occurrence);
         assert_eq!(after.term_ordinal, before.term_ordinal);
+        assert_eq!(after.application, before.application);
     }
     assert_eq!(
         seen_entries, [true; 4],
@@ -178,7 +179,13 @@ fn monitor_body_locations_follow_entry_rekeys_and_preserve_helper_origins() {
         CheckedPackageDispatchResult::Refused(refusal) => {
             assert_eq!(
                 refusal.code,
-                filament_contract_model::CheckedPackageRefusalCode::InvalidValue
+                filament_contract_model::CheckedPackageRefusalCode::InvalidPackage,
+                "{refusal:?}"
+            );
+            assert_eq!(
+                refusal.cause,
+                Some(filament_contract_model::CheckedPackageRefusalCause::InvalidValue),
+                "{refusal:?}"
             );
             let expected_path =
                 format!("/checked_term_data/body_locations/{row_index}/location/origin/function");
@@ -188,7 +195,8 @@ fn monitor_body_locations_follow_entry_rekeys_and_preserve_helper_origins() {
                     .first()
                     .and_then(|locus| locus.path.as_ref())
                     .map(|path| path.as_str()),
-                Some(expected_path.as_str())
+                Some(expected_path.as_str()),
+                "{refusal:?}"
             );
         }
         other => panic!("the stale entry origin must be refused: {other:?}"),
