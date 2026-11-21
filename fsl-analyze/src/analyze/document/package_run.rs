@@ -1044,6 +1044,7 @@ impl<'r, 'a: 'r> ClaimReads<'r, 'a> {
         };
         form.fairness = clause.fairness().to_vec();
         form.pending_reductions.clone_from(&selection.reductions);
+        form.protocol.clone_from(&protocol);
         let item_form = (kind == Capability::TemporalSatisfaction
             || kind == Capability::GlobalConformance)
             .then(|| ItemForm::Temporal(form));
