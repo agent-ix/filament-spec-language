@@ -69,3 +69,11 @@ Integration conditions with PR3362 (do not rebase until it merges):
 | FND-004 | fixed | - |
 | FND-005 | fixed | - |
 | FND-006 | still-open | Doc-only correction, which the root can check mechanically. In fair_loops.rs, reword line 54 to say that every examined walk fails to concretise and that walks under a subsumed prefix are not tried. Reword lines 66-71 to say the search ends with every retained walk examined. No code change is needed |
+| FND-006 | fixed | - |
+| FND-007 | fixed | - |
+
+## New findings (disposition pass 2)
+
+| ID | Severity | Summary | Refs |
+| --- | --- | --- | --- |
+| FND-007 | medium | At 98c8a13f, two_loop_world admitted a quiescent initial state with no time invariant, so a concrete behaviour could idle for ever taking neither tock nor send. That idle tail genuinely violates weak idle at h=true and weak send at h=false, so the strict Holds and budget oracles failed on a fixture defect, not a product defect | fsl-analyze/tests/it/timed_refinement_liveness.rs:1225-1284, fsl-eval/src/simulation/model/timed.rs:1796, fsl-analyze/tests/it/timed_refinement_liveness.rs:526 |

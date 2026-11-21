@@ -39,3 +39,10 @@ CONDITIONAL. There are only low findings, but the tests are qualified at compile
 | --- | --- | --- |
 | FND-001 | fixed | - |
 | FND-002 | fixed | - |
+| FND-003 | fixed | - |
+
+## New findings (disposition pass 2)
+
+| ID | Severity | Summary | Refs |
+| --- | --- | --- | --- |
+| FND-003 | medium | At 98c8a13f, the two FR-899-AC-9 tests named "holds" still asserted Checked(Undecided{LassoNotConcretized}), contradicting AC-9's required Holds for free initial h and for strong fairness with the time invariant. The rebase kept the parent's stale match arms, and disposition pass 1 recorded them as flipped without reading the arms | fsl-analyze/tests/it/timed_refinement_liveness.rs:624-640, fsl-analyze/tests/it/timed_refinement_liveness.rs:681-697 |
