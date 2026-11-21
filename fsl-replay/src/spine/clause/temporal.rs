@@ -3677,6 +3677,10 @@ fn window_verdict(
     use fsl_eval::temporal::{IndeterminateReason, WindowVerdict};
     Ok(Some(match verdict {
         WindowVerdict::Holds => TemporalVerdict::Holds,
+        WindowVerdict::Inactive => TemporalVerdict::Inactive,
+        // An open or incomplete scope with no activation yet: a later
+        // observation may activate it, as the batch run reads an open prefix.
+        WindowVerdict::ActivationUnknown => TemporalVerdict::Pending,
         WindowVerdict::Violated { at } => TemporalVerdict::Violated { at: at.index() },
         WindowVerdict::Pending { at, deadline } => TemporalVerdict::PendingWindow {
             at: at.index(),

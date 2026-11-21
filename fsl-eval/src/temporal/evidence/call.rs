@@ -1934,7 +1934,9 @@ fn evaluate(
             });
             outcome.settlement = None;
         }
-        WindowVerdict::ActivationIncomplete { .. } => {
+        WindowVerdict::ActivationIncomplete { .. }
+        | WindowVerdict::Inactive
+        | WindowVerdict::ActivationUnknown => {
             return Err(fault("anchored-activation-has-no-guard"));
         }
     }

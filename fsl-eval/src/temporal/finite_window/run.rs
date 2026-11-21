@@ -158,6 +158,8 @@ pub(super) struct Prior {
     /// The union of the decision supports of the true activations, before
     /// any false or open one.
     holds: std::collections::BTreeSet<SupportPair>,
+    /// Whether any activation was summarized: a guard admitted it.
+    activated: bool,
 }
 
 impl Prior {
@@ -167,6 +169,7 @@ impl Prior {
         run: &Run<'_, L>,
         finished: &Finished,
     ) -> Result<(), InternalFault> {
+        self.activated = true;
         if self.first_false.is_some() {
             return Ok(());
         }
@@ -1380,6 +1383,32 @@ impl<L: TemporalLetters> Run<'_, L> {
                             };
                             (verdict, basis, support)
                         }
+                        None if self.anchors.guarded && !prior.activated && done.is_empty() => {
+                            // Every guard read false (FR-044 "Outputs"): no
+                            // instance exists, so the clause has no truth.
+                            // A closed, complete scope is inactive; any other
+                            // scope may still activate and is unknown.
+                            let last = self
+                                .stamps
+                                .iter()
+                                .take(self.trace.observed)
+                                .max()
+                                .copied()
+                                .unwrap_or(0);
+                            let complete = covers(
+                                self.trace.asserted.completeness,
+                                last.saturating_add(self.margin),
+                            );
+                            if scope_closed && complete {
+                                (WindowVerdict::Inactive, Basis::ClosedScope, Vec::new())
+                            } else {
+                                (
+                                    WindowVerdict::ActivationUnknown,
+                                    Basis::Unavailable,
+                                    Vec::new(),
+                                )
+                            }
+                        }
                         None => {
                             // Every summarized activation is established.
                             let established = done.iter().all(|a| a.established);
@@ -1403,6 +1432,8 @@ impl<L: TemporalLetters> Run<'_, L> {
             | WindowVerdict::WindowLimitReached(_)
             | WindowVerdict::ActivationIncomplete { .. } => Assessment::Failed,
             WindowVerdict::Holds
+            | WindowVerdict::Inactive
+            | WindowVerdict::ActivationUnknown
             | WindowVerdict::Violated { .. }
             | WindowVerdict::Pending { .. }
             | WindowVerdict::PendingNextEvent { .. }
