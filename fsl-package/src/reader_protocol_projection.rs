@@ -3894,6 +3894,12 @@ pub(crate) fn node_value_type(
     let own = index.node(id).map(|node| &node.semantic_type);
     let at = error.at.as_deref();
     let scalar_at = at.filter(|failed| *failed == id || own == Some(failed));
+    if error.code == Code::UnsupportedExactType
+        && error.form.as_deref() == Some("bounded_domain/model_population")
+    {
+        let declaration = scalar_at.ok_or(TypeError::Unsupported)?;
+        return population_node_type(index, declaration);
+    }
     let selected = |declaration: &CheckedNodeId| {
         index
             .identities
@@ -3935,6 +3941,9 @@ pub(crate) fn node_value_type(
         )?);
     }
     match error.form.as_deref().and_then(split_tag_form) {
+        Some((WireTag::CompositeType, WireForm::Reference)) if unresolved => {
+            reference_node_type(index, scalar_at.ok_or(TypeError::Unsupported)?)
+        }
         Some((WireTag::ScalarType, WireForm::Text)) if unresolved => {
             index
                 .node(scalar_at.ok_or(TypeError::Unsupported)?)
@@ -3999,6 +4008,81 @@ pub(crate) fn node_value_type(
             Err(TypeError::Unsupported)
         }
     }
+}
+
+/// A reference retains the selected model object's effective identity.
+fn reference_node_type(
+    index: &TypeReader<'_>,
+    declaration: &CheckedNodeId,
+) -> Result<ValueType, TypeError> {
+    let reference = index.node(declaration).ok_or(TypeError::Unsupported)?;
+    if !has_form(reference, WireTag::CompositeType, WireForm::Reference) {
+        return Err(TypeError::Unsupported);
+    }
+    let CheckedTerm::Aggregate { members } = &reference.body else {
+        return Err(TypeError::Unsupported);
+    };
+    let [CheckedTerm::Reference { target }] = members.as_slice() else {
+        return Err(TypeError::Unsupported);
+    };
+    index
+        .identities
+        .declaration_rows()
+        .find_map(|row| match &row.exact_identity {
+            filament_contract_model::SelectedExactIdentity::Object(identity)
+                if row.structural_node == *target =>
+            {
+                Some(ValueType::Reference(identity.clone()))
+            }
+            _ => None,
+        })
+        .ok_or(TypeError::Unsupported)
+}
+
+/// The admitted population node distinguishes no maximum from a zero maximum.
+#[ix_trace_rs::string_edge]
+fn population_node_type(
+    index: &TypeReader<'_>,
+    declaration: &CheckedNodeId,
+) -> Result<ValueType, TypeError> {
+    let population = index.node(declaration).ok_or(TypeError::Unsupported)?;
+    if population.node_tag.as_ref() != "bounded_domain"
+        || population.semantic_form.as_ref() != "model_population"
+    {
+        return Err(TypeError::Unsupported);
+    }
+    let set = index
+        .node(&population.semantic_type)
+        .filter(|node| has_form(node, WireTag::CompositeType, WireForm::Set))
+        .ok_or(TypeError::Unsupported)?;
+    let CheckedTerm::Aggregate { members } = &set.body else {
+        return Err(TypeError::Unsupported);
+    };
+    let [CheckedTerm::Reference { target }] = members.as_slice() else {
+        return Err(TypeError::Unsupported);
+    };
+    reference_node_type(index, target)?;
+    let CheckedTerm::Aggregate { members } = &population.body else {
+        return Err(TypeError::Unsupported);
+    };
+    let maximum = match members.as_slice() {
+        [] => None,
+        [CheckedTerm::Binding { name, value, .. }] if name.as_ref() == "max" => {
+            let Some(filament_contract_model::CheckedLiteralValue::Integer(maximum)) =
+                value.literal_read().map(|literal| literal.value)
+            else {
+                return Err(TypeError::Unsupported);
+            };
+            Some(
+                maximum
+                    .to_string()
+                    .parse()
+                    .map_err(|_| TypeError::Unsupported)?,
+            )
+        }
+        _ => return Err(TypeError::Unsupported),
+    };
+    Ok(ValueType::Population(maximum))
 }
 
 /// `#[string_edge]`: `form` is the admitted `tag/form` wire word an IR type
@@ -4709,6 +4793,93 @@ mod order_tests {
 
     fn key(name: &str) -> NodeKey {
         NodeKey::new("pkg", vec![PathSegment::Text(name.to_owned())], 0).expect("a key")
+    }
+
+    /// Source-emitted population parameters retain their exact optional maximum.
+    #[trace("FR-945-AC-1", "FR-650-AC-1")]
+    #[test]
+    fn admitted_population_parameter_types_preserve_absence_zero_and_maximum() {
+        use filament_semantic_value::checking::{CheckMode, CheckingLimits};
+        let model = include_bytes!("../../tests/fixtures/spine-model.semantic-ir.json");
+        let packages = fsl_semantics::model::intake::package_input([model.as_slice()]).unwrap();
+        let text = "language \"ix:native\" edition \"1-draft\";\n\
+                    profile v = \"filament.model.complete/v1\";\n\
+                    model M = \"acme/orders\";\n\
+                    function unbounded using v(p: Population<M::Widget>): Boolean pure { true }\n\
+                    function zero using v(p: Population<M::Widget>[0]): Boolean pure { true }\n\
+                    function maximum using v(p: Population<M::Widget>[18446744073709551615]): Boolean pure { true }\n\
+                    function reference using v(p: Reference<M::Widget>): Boolean pure { true }\n";
+        let parsed = fsl_cst::parse(
+            fsl_foundation::SourceIdentity::new("agent-ix", "test:population-projection"),
+            "population.native",
+            text.as_bytes(),
+            fsl_cst::Limits::default(),
+        )
+        .unwrap();
+        assert_eq!(parsed.diagnostics(), []);
+        let raw = parsed.source().reference().clone();
+        let unit = fsl_forms::build_unit(&parsed).unwrap();
+        let models = fsl_semantics::model::intake::admit_unit(
+            &unit.selections().models,
+            &packages,
+            fsl_semantics::model::accounting::ModelNormalizationLimits::default(),
+        )
+        .unwrap();
+        let graph = fsl_semantics::check::PackageDeclarations::assemble(
+            raw,
+            "pkg".to_owned(),
+            unit,
+            models,
+            Vec::new(),
+        )
+        .unwrap()
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &fsl_semantics::check::test_support::ZeroRewardEvaluator,
+        )
+        .unwrap();
+        let checked = crate::CheckedPackage::link(graph);
+        let emission =
+            crate::emit::emit_checked(&checked, crate::checked::EmitLimits::new(1 << 20)).unwrap();
+        let mut evidence = emission.evidence().clone();
+        evidence.insert_domain_package_document("acme/orders", model).unwrap();
+        let admitted = match filament_contract_model::read_checked_package(
+            emission.package().bytes(),
+            crate::checked_v2::V2ReadLimits::fixture().for_ir(),
+            &evidence,
+        ) {
+            filament_contract_model::CheckedPackageDispatchResult::AdmittedV2(package) => package,
+            other => panic!("source-emitted package must be admitted: {other:?}"),
+        };
+        let mut budget = filament_contract_model::NativeJoinBudget::new(10_000_000, 10_000_000);
+        let identities = emission.identity_rows(&admitted, &mut budget).unwrap();
+        let package = crate::BarePackage::new(&admitted)
+            .with_supply(
+                crate::BareSupply {
+                    identities: &identities,
+                    equality: None,
+                },
+                &mut budget,
+            )
+            .unwrap();
+        for (name, maximum) in [
+            ("unbounded", None),
+            ("zero", Some(0)),
+            ("maximum", Some(u64::MAX)),
+        ] {
+            let projection = package.project_function(name).unwrap().unwrap();
+            assert_eq!(
+                projection.selected_function().unwrap().parameters[0].value_type,
+                ValueType::Population(maximum),
+                "{name}"
+            );
+        }
+        let projection = package.project_function("reference").unwrap().unwrap();
+        assert!(matches!(
+            projection.selected_function().unwrap().parameters[0].value_type,
+            ValueType::Reference(_)
+        ));
     }
 
     /// Representation admission preserves opaque references and still checks
