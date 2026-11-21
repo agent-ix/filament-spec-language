@@ -171,7 +171,8 @@ mod backend_agreement {
                 Plan::RequiresBound => unreachable!(),
             };
             let parameter =
-                fsl_foundation::node_wire::node_key_to_json(&target.parameters()[0].wire());
+                fsl_foundation::node_wire::node_key_to_json(&target.parameters()[0].wire())
+                    .unwrap();
             let record = json!({
                 "record":{"request_index":item.claim.item.request_index.get(), "backend":backend.as_str(),
                     "result":result,"category":if result == "proved" {"success"} else if result == "refuted" {"violation"} else {"inconclusive"},

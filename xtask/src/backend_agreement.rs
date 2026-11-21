@@ -16,6 +16,7 @@ use serde_json::{json, Value};
 use crate::error::{Error, Result};
 use crate::Outcome;
 
+#[path = "backend_agreement/driver.rs"]
 mod driver;
 
 /// A candidate's negotiated disposition, retained independently of its record.
@@ -158,10 +159,15 @@ fn definite(candidate: &mut CandidateRecord) -> Option<Definite> {
     }
     let record = candidate.record.as_ref()?;
     let terminal = record.get("record").unwrap_or(record);
-    match (terminal.get("result")?.as_str()?, terminal.get("category")?.as_str()?) {
+    match (
+        terminal.get("result")?.as_str()?,
+        terminal.get("category")?.as_str()?,
+    ) {
         ("proved", "success") => Some(Definite::Proved),
         ("refuted", "violation") => match candidate.replay {
-            Some(Recheck::ReproducedWithEvaluatedWitness | Recheck::ReproducedWithValidatedWitness) => Some(Definite::Refuted),
+            Some(
+                Recheck::ReproducedWithEvaluatedWitness | Recheck::ReproducedWithValidatedWitness,
+            ) => Some(Definite::Refuted),
             _ => {
                 candidate.not_compared = Some("refutation not reproduced by the gate".to_owned());
                 None
@@ -175,16 +181,29 @@ fn definite(candidate: &mut CandidateRecord) -> Option<Definite> {
 }
 
 fn within_domain(proof: &CandidateRecord, refutation: &CandidateRecord) -> bool {
-    let Some(domain) = &proof.declared_domain else { return true };
-    let Some(values) = refutation.record.as_ref()
+    let Some(domain) = &proof.declared_domain else {
+        return true;
+    };
+    let Some(values) = refutation
+        .record
+        .as_ref()
         .and_then(|record| record.pointer("/counterexample/values"))
-        .and_then(Value::as_array) else { return false };
+        .and_then(Value::as_array)
+    else {
+        return false;
+    };
     domain.iter().all(|bound| {
-        let integer = values.iter().find(|value| value.get("parameter") == Some(&bound.parameter))
+        let integer = values
+            .iter()
+            .find(|value| value.get("parameter") == Some(&bound.parameter))
             .and_then(|value| value.pointer("/value/value"))
             .and_then(Value::as_str)
             .and_then(|value| value.parse::<Integer>().ok());
-        match (integer, bound.lower.parse::<Integer>(), bound.upper.parse::<Integer>()) {
+        match (
+            integer,
+            bound.lower.parse::<Integer>(),
+            bound.upper.parse::<Integer>(),
+        ) {
             (Some(value), Ok(lower), Ok(upper)) => lower <= value && value <= upper,
             _ => false,
         }
@@ -193,13 +212,19 @@ fn within_domain(proof: &CandidateRecord, refutation: &CandidateRecord) -> bool 
 
 /// Apply ADR-013 O-16 without choosing a preferred backend or repairing a verdict.
 pub fn compare(candidates: &mut [CandidateRecord]) -> Settlement {
-    let mut conflict = candidates.iter().any(|candidate| matches!(candidate.replay, Some(Recheck::Inconclusive)));
+    let mut conflict = candidates
+        .iter()
+        .any(|candidate| matches!(candidate.replay, Some(Recheck::Inconclusive)));
     let mut agreed = false;
     let definite = candidates.iter_mut().map(definite).collect::<Vec<_>>();
     for (left_index, left) in candidates.iter().enumerate() {
-        let Some(left_value) = definite[left_index] else { continue };
+        let Some(left_value) = definite[left_index] else {
+            continue;
+        };
         for (right_index, right) in candidates.iter().enumerate().skip(left_index + 1) {
-            let Some(right_value) = definite[right_index] else { continue };
+            let Some(right_value) = definite[right_index] else {
+                continue;
+            };
             let comparable = match (left_value, right_value) {
                 (Definite::Proved, Definite::Refuted) => within_domain(left, right),
                 (Definite::Refuted, Definite::Proved) => within_domain(right, left),
@@ -211,14 +236,24 @@ pub fn compare(candidates: &mut [CandidateRecord]) -> Settlement {
             }
         }
     }
-    if conflict { return Settlement::Conflict; }
+    if conflict {
+        return Settlement::Conflict;
+    }
     let failed = candidates.iter().any(|candidate| {
-        matches!(candidate.replay, Some(Recheck::Fault { .. })) || candidate.record.as_ref()
-            .is_some_and(|record| record.pointer("/record/result").or_else(|| record.get("result")) == Some(&json!("failed")))
+        (candidate.disposition == Negotiated::Supported && candidate.record.is_none())
+            || matches!(candidate.replay, Some(Recheck::Fault { .. }))
+            || candidate.record.as_ref().is_some_and(|record| {
+                record
+                    .pointer("/record/result")
+                    .or_else(|| record.get("result"))
+                    == Some(&json!("failed"))
+            })
     });
-    if failed { Settlement::ToolFailure }
-    else if agreed { Settlement::Agree }
-    else {
+    if failed {
+        Settlement::ToolFailure
+    } else if agreed {
+        Settlement::Agree
+    } else {
         for (index, candidate) in candidates.iter_mut().enumerate() {
             if definite[index].is_some() && candidate.not_compared.is_none() {
                 candidate.not_compared = Some("no comparable definite peer; a bounded proof requires a witness inside its declared domain".to_owned());
@@ -230,33 +265,57 @@ pub fn compare(candidates: &mut [CandidateRecord]) -> Settlement {
 
 /// Render a deterministic report and the FR-448 exit code.
 pub fn report(mut entries: Vec<Entry>, text: bool) -> Result<Outcome> {
-    entries.sort_by(|left, right| (&left.vector, left.request_index).cmp(&(&right.vector, right.request_index)));
+    entries.sort_by(|left, right| {
+        (&left.vector, left.request_index).cmp(&(&right.vector, right.request_index))
+    });
     let mut counts = BTreeMap::from([
-        ("agree", 0_usize), ("conflict", 0), ("not-compared", 0),
-        ("not-compiled", 0), ("tool-failure", 0),
+        ("agree", 0_usize),
+        ("conflict", 0),
+        ("not-compared", 0),
+        ("not-compiled", 0),
+        ("tool-failure", 0),
     ]);
     for entry in &entries {
         let key = match entry.settlement {
-            Settlement::Agree => "agree", Settlement::Conflict => "conflict",
-            Settlement::NotCompared => "not-compared", Settlement::NotCompiled => "not-compiled",
+            Settlement::Agree => "agree",
+            Settlement::Conflict => "conflict",
+            Settlement::NotCompared => "not-compared",
+            Settlement::NotCompiled => "not-compiled",
             Settlement::ToolFailure => "tool-failure",
         };
         *counts.entry(key).or_default() += 1;
     }
-    let code = u8::from(entries.iter().any(|entry| matches!(entry.settlement, Settlement::Conflict | Settlement::ToolFailure)));
+    let code = u8::from(entries.iter().any(|entry| {
+        matches!(
+            entry.settlement,
+            Settlement::Conflict | Settlement::ToolFailure
+        )
+    }));
     let stdout = if text {
-        entries.iter().map(|entry| format!("{} {:?}: {:?}\n", entry.vector, entry.request_index, entry.settlement)).collect()
+        entries
+            .iter()
+            .map(|entry| {
+                format!(
+                    "{} {:?}: {:?}\n",
+                    entry.vector, entry.request_index, entry.settlement
+                )
+            })
+            .collect()
     } else {
         serde_json::to_string(&json!({"entries": entries, "counts": counts}))
-            .map_err(|error| Error::QualificationRefusal(error.to_string()))? + "\n"
+            .map_err(|error| Error::QualificationRefusal(error.to_string()))?
+            + "\n"
     };
     Ok(Outcome { stdout, code })
 }
 
 /// Run the standalone gate using the explicit `FSL` driver executable.
 pub fn run(operands: &[OsString]) -> Result<Outcome> {
-    let executable = std::env::var_os("FSL").ok_or_else(|| Error::QualificationRefusal(
-        "backend-agreement: FSL must name the orchestrating driver's executable".to_owned()))?;
+    let executable = std::env::var_os("FSL").ok_or_else(|| {
+        Error::QualificationRefusal(
+            "backend-agreement: FSL must name the orchestrating driver's executable".to_owned(),
+        )
+    })?;
     let provider = driver::Driver::new(Path::new(&executable))?;
     run_with_provider(operands, &provider)
 }
