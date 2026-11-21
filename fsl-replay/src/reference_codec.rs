@@ -102,6 +102,236 @@ pub struct ReferenceCodec<'c, 'm, 'r> {
     runtime: ReferenceRuntime<'c, 'r>,
 }
 
+/// One carrier conversion borrowing the authentic codec and caller's resources.
+/// Nested carrier writers share this budget rather than creating fresh limits.
+pub struct ReferenceScope<'s, 'c, 'm, 'r> {
+    codec: &'s ReferenceCodec<'c, 'm, 'r>,
+    scope: Scope<'s>,
+    limits: quire_canonical::Limits,
+}
+
+impl ReferenceScope<'_, '_, '_, '_> {
+    pub(crate) fn at_pointer<T>(
+        &mut self,
+        pointer: &str,
+        action: impl FnOnce(&mut Self) -> Result<T, ReferenceCodecError>,
+    ) -> Result<T, ReferenceCodecError> {
+        let path = self.scope.text(pointer)?;
+        let before = std::mem::replace(&mut self.scope.path, path);
+        let result = action(self);
+        self.scope.path = before;
+        result
+    }
+
+    /// Encode both source-transition arms of a task template with one catalog.
+    /// State keys and native template identities are never changed.
+    ///
+    /// # Errors
+    /// Retains reference failures, resource denial and cancellation.
+    pub fn encode_task_template(
+        &mut self,
+        template: &crate::TaskTransitionTemplate,
+    ) -> Result<Value, ReferenceCodecError> {
+        let mut out = Map::new();
+        for (name, text) in [
+            ("type", "task-transition-template"),
+            (
+                "action",
+                crate::certificate::task_product::action_name(template.action),
+            ),
+            ("taskset", template.task_set.as_str()),
+            ("task", template.task.as_str()),
+        ] {
+            let value = Value::String(self.scope.member(name, |s| s.text(text))?);
+            self.scope.put(&mut out, name, value)?;
+        }
+        for (name, number) in [("job_rank", template.job_rank), ("slot", template.slot)] {
+            self.scope.member(name, |s| s.count(number))?;
+            self.scope.put(&mut out, name, Value::from(number))?;
+        }
+        if let Some(priority) = template.priority {
+            self.scope.member("priority", |s| s.count(priority))?;
+            self.scope
+                .put(&mut out, "priority", Value::from(priority))?;
+        }
+        let release = self.task_transition_at("release", &template.release)?;
+        self.scope.put(&mut out, "release", release)?;
+        let source = match &template.source_transition {
+            Some(source) => self.task_transition_at("source_transition", source)?,
+            None => Value::Null,
+        };
+        self.scope.put(&mut out, "source_transition", source)?;
+        Ok(Value::Object(out))
+    }
+
+    fn task_transition_at(
+        &mut self,
+        name: &str,
+        transition: &ModelTransition,
+    ) -> Result<Value, ReferenceCodecError> {
+        self.scope.member(name, |scope| {
+            let mut wire = self.codec.encode_transition_in(transition, scope)?;
+            let operation = wire
+                .get_mut("operation")
+                .ok_or_else(|| scope.fail(ReferenceFailure::MalformedWire))?;
+            let spelling = crate::outcome::task_source_operation(operation, transition.operation());
+            let text = scope.member("operation", |s| s.text(spelling))?;
+            *operation = Value::String(text);
+            Ok(wire)
+        })
+    }
+
+    /// Restore both task source arms before constructing the native template.
+    /// This checks wire identity, not task membership or enabledness.
+    ///
+    /// # Errors
+    /// Refuses malformed metadata and retains all reference/resource failures.
+    pub fn restore_task_template(
+        &mut self,
+        value: &Value,
+    ) -> Result<crate::TaskTransitionTemplate, ReferenceCodecError> {
+        let fields: &[&str] = if value.get("priority").is_some() {
+            &[
+                "type",
+                "action",
+                "taskset",
+                "task",
+                "job_rank",
+                "slot",
+                "release",
+                "source_transition",
+                "priority",
+            ]
+        } else {
+            &[
+                "type",
+                "action",
+                "taskset",
+                "task",
+                "job_rank",
+                "slot",
+                "release",
+                "source_transition",
+            ]
+        };
+        let map = self.scope.closed(value, fields)?;
+        self.scope.member("type", |s| {
+            let tag = s.string(&map["type"])?;
+            if s.equal_text(tag, "task-transition-template")? {
+                Ok(())
+            } else {
+                Err(s.fail(ReferenceFailure::MalformedWire))
+            }
+        })?;
+        let action = self.scope.member("action", |s| {
+            let text = s.string(&map["action"])?;
+            for (name, action) in crate::certificate::task_product::ACTIONS {
+                if s.equal_text(text, name)? {
+                    return Ok(action);
+                }
+            }
+            Err(s.fail(ReferenceFailure::MalformedWire))
+        })?;
+        let task_set = self.scope.member("taskset", |s| {
+            let text = s.string(&map["taskset"])?;
+            s.text(text)
+        })?;
+        let task = self.scope.member("task", |s| {
+            let text = s.string(&map["task"])?;
+            s.text(text)
+        })?;
+        let job_rank = self
+            .scope
+            .member("job_rank", |s| s.read_count(&map["job_rank"]))?;
+        let slot = self.scope.member("slot", |s| s.read_count(&map["slot"]))?;
+        let priority = map
+            .get("priority")
+            .map(|value| self.scope.member("priority", |s| s.read_count(value)))
+            .transpose()?;
+        let release = self.restore_task_at("release", &map["release"])?;
+        let source_transition = if map["source_transition"].is_null() {
+            None
+        } else {
+            Some(self.restore_task_at("source_transition", &map["source_transition"])?)
+        };
+        Ok(crate::TaskTransitionTemplate {
+            action,
+            task_set,
+            task,
+            job_rank,
+            slot,
+            release,
+            source_transition,
+            priority,
+        })
+    }
+
+    fn restore_task_at(
+        &mut self,
+        name: &str,
+        value: &Value,
+    ) -> Result<ModelTransition, ReferenceCodecError> {
+        self.scope.member(name, |scope| {
+            scope.member("operation", |s| s.string(&value["operation"]).map(drop))?;
+            self.codec.restore_transition_in(value, scope, self.limits)
+        })
+    }
+
+    /// Encode a native transition with the generic operation identity intact.
+    ///
+    /// # Errors
+    /// Retains the codec's typed identity, resource and cancellation failures.
+    pub fn encode_transition(
+        &mut self,
+        value: &ModelTransition,
+    ) -> Result<Value, ReferenceCodecError> {
+        self.codec.encode_transition_in(value, &mut self.scope)
+    }
+
+    /// Restore native canonical values before transition construction.
+    ///
+    /// # Errors
+    /// Refuses malformed identities and retains resource/cancellation failures.
+    pub fn restore_transition(
+        &mut self,
+        value: &Value,
+    ) -> Result<ModelTransition, ReferenceCodecError> {
+        self.codec
+            .restore_transition_in(value, &mut self.scope, self.limits)
+    }
+
+    /// Encode the task-source arm using its existing operation-string adapter.
+    ///
+    /// # Errors
+    /// Retains reference and caller resource/cancellation failures.
+    pub fn encode_task_transition(
+        &mut self,
+        value: &ModelTransition,
+    ) -> Result<Value, ReferenceCodecError> {
+        let mut wire = self.encode_transition(value)?;
+        let operation = wire
+            .get_mut("operation")
+            .ok_or_else(|| self.scope.fail(ReferenceFailure::MalformedWire))?;
+        let spelling = crate::outcome::task_source_operation(operation, value.operation());
+        let text = self.scope.member("operation", |s| s.text(spelling))?;
+        *operation = Value::String(text);
+        Ok(wire)
+    }
+
+    /// Restore a task-source arm; its operation must be a string.
+    ///
+    /// # Errors
+    /// Refuses other operation arms and retains all reference refusals.
+    pub fn restore_task_transition(
+        &mut self,
+        value: &Value,
+    ) -> Result<ModelTransition, ReferenceCodecError> {
+        self.scope
+            .member("operation", |s| s.string(&value["operation"]).map(drop))?;
+        self.restore_transition(value)
+    }
+}
+
 enum ReferenceRuntime<'c, 'r> {
     Model(&'c ModelSystem<'r>),
     Call(&'c ObjectEnvironment),
@@ -115,6 +345,21 @@ struct Scope<'a> {
 }
 
 impl Scope<'_> {
+    fn count(&mut self, number: u64) -> Result<(), ReferenceCodecError> {
+        self.work(1)?;
+        if number > 9_007_199_254_740_991 {
+            return Err(self.fail(ReferenceFailure::MalformedWire));
+        }
+        Ok(())
+    }
+
+    fn read_count(&mut self, value: &Value) -> Result<u64, ReferenceCodecError> {
+        let number = value
+            .as_u64()
+            .ok_or_else(|| self.fail(ReferenceFailure::MalformedWire))?;
+        self.count(number)?;
+        Ok(number)
+    }
     fn json(&mut self, value: &Value, depth: usize) -> Result<Value, ReferenceCodecError> {
         self.work(1)?;
         if depth > self.max_depth.min(64) {
@@ -498,6 +743,25 @@ impl Scope<'_> {
 }
 
 impl<'c, 'm, 'r> ReferenceCodec<'c, 'm, 'r> {
+    /// Borrow one shared resource scope for a nested external carrier.
+    pub fn scope<'s>(
+        &'s self,
+        budget: &'s mut dyn IntegerDecimalBudget,
+        cancel: &'s Cancel,
+        max_depth: usize,
+        limits: quire_canonical::Limits,
+    ) -> ReferenceScope<'s, 'c, 'm, 'r> {
+        ReferenceScope {
+            codec: self,
+            scope: Scope {
+                budget,
+                cancel,
+                path: String::new(),
+                max_depth,
+            },
+            limits,
+        }
+    }
     fn native_reference(
         &self,
         declaration: &ReferenceDeclaration<'_>,
@@ -1005,6 +1269,15 @@ impl<'c, 'm, 'r> ReferenceCodec<'c, 'm, 'r> {
             path: String::new(),
             max_depth,
         };
+        self.restore_transition_in(value, &mut scope, limits)
+    }
+
+    fn restore_transition_in(
+        &self,
+        value: &Value,
+        scope: &mut Scope<'_>,
+        limits: quire_canonical::Limits,
+    ) -> Result<ModelTransition, ReferenceCodecError> {
         let map = scope.closed(value, &["type", "operation", "receiver", "arguments"])?;
         if map["type"].as_str() != Some("transition") {
             return Err(scope.fail(ReferenceFailure::MalformedWire));
@@ -1084,6 +1357,14 @@ impl<'c, 'm, 'r> ReferenceCodec<'c, 'm, 'r> {
             path: String::new(),
             max_depth,
         };
+        self.encode_transition_in(transition, &mut scope)
+    }
+
+    fn encode_transition_in(
+        &self,
+        transition: &ModelTransition,
+        scope: &mut Scope<'_>,
+    ) -> Result<Value, ReferenceCodecError> {
         let operation = scope.member("operation", |s| parse_text(transition.operation(), s))?;
         if !matches!(operation, Value::String(_) | Value::Object(_)) {
             return scope.member(
@@ -1590,11 +1871,12 @@ mod tests {
         assert_eq!(budget.storage_used, 0);
     }
 
-    /// Trace: FSpec-FR-181
+    /// Trace: FSpec-FR-181, FSpec-FR-418-AC-11
     #[test]
     fn call_reference_adapter_uses_checked_admission_and_environment() {
         use super::{reference_fixture, ReferenceCodec};
         use filament_contract_model::NativeJoinBudget;
+        use filament_semantic_value::model_transition::ModelTransition;
         use fsl_eval::execution::{PrepareLimits, SuppliedBackends};
         use fsl_package::ReferenceCatalog;
         use fsl_semantics::model::intake::{package_input, SelectedModels};
@@ -1697,6 +1979,137 @@ mod tests {
         assert_eq!(
             codec.restore_reference(&wire, budget, &cancel, 64).unwrap(),
             result
+        );
+        // A genuine call-admitted reference also crosses both task-template
+        // transition arms. This exercises the shared operation adapter and
+        // nested refusal pointer rather than constructing catalog evidence.
+        let native_text = serde_json::to_string(
+            &fsl_eval::simulation::model::value_json(&filament_exact::Value::Reference(
+                result.clone(),
+            ))
+            .unwrap(),
+        )
+        .unwrap();
+        let transition = ModelTransition::new(
+            r#"{"name":"keep"}"#.to_owned(),
+            Some(native_text.clone()),
+            vec![native_text],
+            quire_canonical::Limits::new(100000),
+        )
+        .unwrap();
+        let template = crate::TaskTransitionTemplate {
+            action: crate::TaskTransitionAction::Release,
+            task_set: "tasks".to_owned(),
+            task: "task".to_owned(),
+            job_rank: 0,
+            slot: 0,
+            release: transition.clone(),
+            source_transition: Some(transition),
+            priority: Some(1),
+        };
+        let mut carrier_budget = Budget::new(10_000_000, 10_000_000);
+        let mut carrier = codec.scope(
+            &mut carrier_budget,
+            &cancel,
+            64,
+            quire_canonical::Limits::new(100000),
+        );
+        let mut task_wire = carrier.encode_task_template(&template).unwrap();
+        assert_eq!(task_wire["release"]["operation"], "keep");
+        assert_eq!(task_wire["release"]["receiver"], wire);
+        assert_eq!(task_wire["source_transition"]["arguments"][0], wire);
+        let restored = carrier.restore_task_template(&task_wire).unwrap();
+        assert!(template.same_identity(&restored));
+        assert_eq!(
+            template.to_wire().unwrap_err(),
+            crate::TaskProductWireError::ReferenceContextRequired
+        );
+        assert_eq!(
+            crate::TaskTransitionTemplate::from_wire(&task_wire)
+                .unwrap_err()
+                .reason,
+            crate::TaskProductShapeReason::ReferenceContextRequired
+        );
+        task_wire["source_transition"]["arguments"][0]["identity"] = json!("FF");
+        assert!(
+            matches!(carrier.restore_task_template(&task_wire), Err(ReferenceCodecError::Refused { reason: ReferenceFailure::InvalidIdentity, pointer }) if pointer == "/source_transition/arguments/0/identity")
+        );
+        // The certificate codec transports this opaque key; this is a carrier
+        // roundtrip, not a claim that its graph proves an obligation.
+        let key = fsl_eval::simulation::StateKey::from_canonical_bytes(b"null".to_vec());
+        let certificate = crate::ZoneCertificate {
+            obligation: (),
+            scale: filament_exact::Integer::from(1_i64),
+            lu_bounds: crate::LuBounds {
+                lower: Vec::new(),
+                upper: Vec::new(),
+            },
+            nodes: vec![crate::CertNode {
+                state_key: key.clone(),
+                automaton_state: 0,
+                zone: crate::Zone::zero(1),
+                locked: false,
+                product: None,
+            }],
+            edges: vec![
+                crate::CertEdge {
+                    from: 0,
+                    to: 0,
+                    transition: Some(template.release.clone()),
+                    task_transition: None,
+                    part: None,
+                    horizon: None,
+                    silent: None,
+                },
+                crate::CertEdge {
+                    from: 0,
+                    to: 0,
+                    transition: None,
+                    task_transition: Some(template),
+                    part: None,
+                    horizon: None,
+                    silent: None,
+                },
+            ],
+            initials: vec![0],
+            components: None,
+            non_zeno: None,
+            divergence: None,
+            admitted: None,
+            state_graph: None,
+            refinement: None,
+            task_product: None,
+        };
+        let certificate_wire = certificate
+            .to_wire_with_references(json!({}), None, &mut carrier)
+            .unwrap();
+        assert_eq!(certificate_wire["edges"][0]["transition"]["receiver"], wire);
+        assert_eq!(
+            certificate_wire["edges"][1]["transition"]["release"]["receiver"],
+            wire
+        );
+        let (restored_certificate, identity) = crate::ZoneCertificate::from_wire_with_references(
+            &certificate_wire,
+            (),
+            None,
+            &mut carrier,
+        )
+        .unwrap();
+        assert_eq!(
+            restored_certificate.nodes[0].state_key.as_bytes(),
+            key.as_bytes()
+        );
+        assert_eq!(
+            restored_certificate
+                .to_wire_with_references(identity, None, &mut carrier)
+                .unwrap(),
+            certificate_wire
+        );
+        let mut malformed_certificate = certificate_wire;
+        malformed_certificate["edges"][1]["transition"]["release"]["receiver"]["identity"] =
+            json!("FF");
+        assert!(
+            matches!(crate::ZoneCertificate::from_wire_with_references(&malformed_certificate, (), None, &mut carrier), Err(crate::ZoneCertificateReferenceError::Reference(ReferenceCodecError::Refused { reason: ReferenceFailure::InvalidIdentity, pointer })) if pointer == "/edges/1/transition/release/receiver/identity")
         );
         let foreign: SelectedModels = models.clone();
         assert!(matches!(
