@@ -396,3 +396,47 @@ findings:
     unbounded forms.
 bindings: []
 ```
+## Disposition pass 1 review scope
+
+Frozen source head `a3780d3668af4477c348c37e6a9dc123a7b031f2`, own delta against current-main base `cf8d85826db560569cd8806cce07007d4b493e0c`. The initial Findings rows and initial scope above remain unchanged. This pass rechecked both original findings and all six observed runtime corrections, including source fixtures and imported diagnostic readback.
+
+The source now has one iterative `finite_domain::first_unbounded_component` traversal. Context-specific leaf policy preserves standalone synthesis behavior, planning state-relative references, finite-but-unsupported bounded Rational and existing union path spellings. Old recursive synthesis traversal and planning traversal were removed; their wrappers delegate to the shared implementation. Declaration order, map-key-before-value order, first back-edge and unknown-composite refusal remain explicit.
+
+New retention tests allow the native seven-unit Applied result and deny the extra four-unit PlanStep payload at a ten-unit bound. The independent checker uses a twenty-one-unit bound after the search's eleven units; replay separately uses a ten-unit bound. Cancellation fixtures observe real Cancel polls and trigger Requested/Deadline at the payload charge; no production meter or evaluator is mocked. Source assertions check named stops, retained consumption and absence of certification. Runtime confirmation is pending at this static checkpoint.
+
+Runtime corrections inspected: typed Boolean snapshot wrappers; schema-valid generated origin without source coordinates; context-specific S3 plan-parameter refusal category; and imported flat command details decoded from the retained canonical arena rather than the shallow-envelope placeholder. Closed source-coordinate and native byte-bearing locus forms remain shared by native and diagnostic-only readers, with existing negative mutation checks retained. No whole outcome payload reader is introduced.
+
+The true rebase inherits main's IR `96554ea506a19b16ff9863ad3d30066578bc609c` and FSpec `f6b0480cd90f5d1b5c5ea64f694895bb7b5ce2e0` pins in both manifest and lockfile, identically to the reviewed base; no private pin workaround appears in the own diff. Parent composition/refinement/API changes are base context, outside this finite PR's own delta. The original own finite production surfaces are unchanged by the rebase before the explicit fix commit.
+
+No new static finding. No reviewer runtime, build, matrix, index/ref/source edit, commit, push or merge. Final disposition verdict awaits focused pinned runtime evidence and does not replace fresh-base exact-final custody gates.
+
+Disposition round 1 continuation: frozen head `e362e5ea9caeeb740e498b3f78a06ac94e8daa86` adds only the new traversal unit test's pin-compatible `EffectiveId::new(None, OriginalDeclarationKey::new("test", "ix://test/Object"))` reference fixture. The production source, policies and dependency pins remain identical to `a3780d3`; the static conclusions above remain applicable. Focused runtime evidence is still pending.
+
+Disposition round 1 integration checkpoint: frozen head `f8b98cc5a2f7ca0994efb851d05f83d38191e656` has actual merge base `7fe342358da787b1e3c9d57dae3bbc60bc899f32`, including the merged inline producer. Comparing every own-file blob with `e362e5e`, only three differ: `plan_search.rs` tests retain the incoming inline/named-range four-outcome and out-of-range controls; `check/mod.rs` retains incoming PackageHyper exports; the unavailable-source fixture supplies a nonempty generated input identity taken from its actual parameter source before replacing the origin. All other own code, tests and original SR blobs are unchanged. No borrowed operation origin, fabricated source coordinates or admission weakening is added.
+
+At `e362e5e`, the author reported exact eight-package test-code compile PASS and 28/29 focused runtime PASS. The sole failure was the generated-origin fixture's invalid empty input list at intake; the integrated fixture now preserves a genuine input identity without source coordinates. The 24 unaffected runtime cases retain their actual PASS provenance at `e362e5e`, including both new payload-retention paths, all compatibility cases, strict imported codec and inspection tests, and three traversal regressions. The five affected semantics/root cases are pending at `f8b98cc`; no integrated result is asserted yet.
+
+## Dispositions
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | Round 1 at integrated source f8b98cc5a2f7ca0994efb851d05f83d38191e656: Both callers delegate to one iterative structural traversal with explicit ValueSynthesis/PlanParameter policies; declaration order, cycle refusal, historical paths and bounded Rational distinction are preserved. |
+
+## Disposition round 1 verdict
+
+PASS for this bounded PR review: the original finding is fixed and no new finding was identified. The original Findings row remains immutable above. This is neither whole-repository assurance nor whole-ticket acceptance.
+
+Focused evidence supplied by the lead: five affected tests at exact integrated `f8b98cc5a2f7ca0994efb851d05f83d38191e656` passed (two finite semantics integration and three root integration), zero failures/ignored. Twenty-four unaffected tests retain their actual passing provenance at `e362e5ea9caeeb740e498b3f78a06ac94e8daa86`: sixteen analyze cases including both added retention cases and seven compatibility cases, three shared-traversal unit cases, four strict replay codec cases and one inspect case. Together these cover 29 unique cases across two recorded heads; this is not a claim of 29 tests run at one head. Eight touched packages' test code compiled at `e362e5e`; final integrated exact-custody checks remain the lead's mandatory separate gate. No reviewer runtime was executed.
+
+The final integrated source inherits current main and the shared pins. Preserve latest disposition artifacts in source custody before the fresh current-main exact-final all-targets gate for foundation, semantics, eval, analyze, replay, inspect, command and root. Any subsequent source/base change requires inspecting its actual delta; no assurance or merge claim is made by this artifact.
+
+### Round 1 machine-readable disposition
+
+```yaml
+dispositions:
+- fnd: FND-001
+  outcome: fixed
+  after_excerpt: "    super::finite_domain::first_unbounded_component(\n        types,\n\
+    \        value_type,\n        super::finite_domain::DomainContext::PlanParameter,\n\
+    \    )"
+```
