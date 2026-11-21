@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! TC-1330 and FSpec TC-983 and TC-986 over hand-built declarations: an
 //! `assume-guarantee` composition of `Producer` and `Consumer` is discharged
-//! from the pool, the supplied constraints, the `discharges` records and the
-//! fixed-point slot. No source is compiled.
+//! from the pool, the supplied constraints and the `discharges` records. No
+//! source is compiled.
 
 use filament_exact::{Origin, Role};
 use fsl_foundation::source::provenance::OccurrenceKey;
@@ -109,6 +109,7 @@ fn composition_shell(slots: Vec<DerivedSlot>) -> PlannerDeclaration {
         }],
         slots,
         supplies: vec![weak_each()],
+        mismatch: None,
     }
 }
 
@@ -154,65 +155,6 @@ fn declaration() -> PlannerDeclaration {
             },
             50,
         ),
-    ])
-}
-
-/// A mutual liveness dependency under a lattice-declaring profile: slots 2
-/// and 3 are on cycle 0, which slot 4 settles.
-fn cyclic() -> PlannerDeclaration {
-    let mut first = pool_slot(
-        SlotRole::LivenessDependency,
-        &["Done", "Sends"],
-        Some(subject(PRODUCER)),
-        Some(node_in(PRODUCER, "Sends")),
-        20,
-    );
-    first.cycle = Some(0);
-    let mut second = pool_slot(
-        SlotRole::LivenessDependency,
-        &["Sends", "Done"],
-        Some(subject(CONSUMER)),
-        Some(node_in(CONSUMER, "Done")),
-        30,
-    );
-    second.cycle = Some(0);
-    let premises = [sends(), done()]
-        .iter()
-        .map(|key| PremiseKey {
-            role: SlotRole::ComponentGuarantee,
-            key: json::canonical_text(&key.to_wire().expect("a key")),
-        })
-        .collect();
-    let mut fixed_point = slot(
-        SlotRole::FixedPoint,
-        SlotKey::Item(ItemKey {
-            claim: OccurrenceKey::new(node("S"), Origin::new(Role::new("claim"), 0)),
-            kind: ClaimKind::Composition,
-            temporal: None,
-            correspondence: None,
-            premises,
-            extent: ExtentClass::Unbounded,
-        }),
-        SlotBacking::Item,
-        40,
-    );
-    fixed_point.cycle = Some(0);
-    composition_shell(vec![
-        slot(
-            SlotRole::ComponentGuarantee,
-            SlotKey::Item(sends()),
-            SlotBacking::Item,
-            0,
-        ),
-        slot(
-            SlotRole::ComponentGuarantee,
-            SlotKey::Item(done()),
-            SlotBacking::Item,
-            10,
-        ),
-        first,
-        second,
-        fixed_point,
     ])
 }
 
@@ -432,58 +374,46 @@ fn a_supplied_guarantee_that_does_not_imply_the_premise_leaves_it_undischarged()
     ));
 }
 
-// ---- FR-530-AC-5; FSpec TC-983 case 4; FR-489-AC-5 -------------------------
+// ---- FR-530-AC-9; FR-492 "Interface mismatch" --------------------------------
 
-#[trace("TC-1330", "FR-530-AC-5")]
-#[trace("FSpec-TC-983", "FSpec-FR-489-AC-5")]
-#[test]
-fn a_cycle_is_discharged_only_by_a_proved_fixed_point_result() {
-    let declaration = cyclic();
-    const FIXED_POINT: usize = 4;
-    // The cycle's guarantees are in the pool and are no assumption.
-    let pool = [sends(), done()];
-    let mut proved = request(&declaration, &pool);
-    let result = settled(&declaration, &proved);
-    assert_eq!(result.value, PlannerValue::Proved);
-    for member in [2, 3] {
-        let entry = entry_for(&result, member);
-        assert_eq!(entry.relation, Relation::FixedPoint);
-        assert!(matches!(
-            entry.source,
-            DischargeSource::FixedPoint(FIXED_POINT)
-        ));
+fn mismatch(premise: usize, reason: MismatchReason) -> InterfaceMismatch {
+    InterfaceMismatch {
+        component: "Producer".to_owned(),
+        interface: node_in(PRODUCER, "Sends"),
+        premise,
+        reason,
     }
-    assert_eq!(
-        entry_for(&result, FIXED_POINT).relation,
-        Relation::FixedPoint
-    );
-    let wire = result.to_wire().expect("wire");
-    assert_eq!(
-        wire["discharge"]["discharges"][FIXED_POINT]["relation"],
-        "fixed-point"
-    );
+}
 
-    // The same pool, the fixed-point slot `inconclusive`: the item names it.
-    let key = match &declaration.slots[FIXED_POINT].key {
-        SlotKey::Item(key) => key.clone(),
-        SlotKey::Local(_) => panic!("the fixed-point slot is item-backed"),
-    };
-    proved["slots"][FIXED_POINT]["result"]["result"] = entry_of(
-        &key,
-        FIXED_POINT,
-        json!({"result": "inconclusive", "cause": {"type": "undecided-successor"}}),
-    );
-    let result = settled(&declaration, &proved);
-    assert_eq!(result.value, PlannerValue::Inconclusive);
+/// A declaration holding a mismatch settles `refuted`, whatever the request
+/// supplies: no cause, certification or conclusion, the complete slot list,
+/// and the mismatch member.
+#[trace("TC-1330", "FR-530-AC-9")]
+#[test]
+fn a_declaration_with_a_mismatch_settles_refuted_with_every_slot() {
+    let mut declaration = declaration();
+    declaration.mismatch = Some(mismatch(LIVENESS, MismatchReason::Weaker));
+    // Every premise is supplied and proved, and the budget is tight: the
+    // declaration alone decides.
+    let mut tight = request(&declaration, &positive_pool());
+    tight["limits"] = json!({"max_work": 1});
+    let result = settled(&declaration, &tight);
+    assert_eq!(result.value, PlannerValue::Refuted);
+    assert!(result.cause.is_none() && result.certification.is_none());
+    assert!(result.conclusion.is_none());
+    assert_eq!(result.slots.len(), declaration.slots.len());
+    let wire = result.to_wire().expect("wire");
+    assert_eq!(wire["basis"], "decisive-counterexample");
+    assert_eq!(wire["mismatch"]["premise"], LIVENESS);
+    assert_eq!(wire["mismatch"]["reason"], "weaker");
+    assert_eq!(wire["mismatch"]["component"], "Producer");
+    assert!(wire.get("cause").is_none());
     assert_eq!(
-        premise(&result),
-        Some((
-            FIXED_POINT as u64,
-            PremiseOutcome::Label(ItemLabel::Inconclusive)
-        ))
+        mismatch(LIVENESS, MismatchReason::Weaker)
+            .to_wire()
+            .expect("wire")["type"],
+        "interface-mismatch"
     );
-    assert!(!discharged(&result, 2));
-    assert!(!discharged(&result, 3));
 }
 
 // ---- FR-530-AC-6; FSpec TC-983 case 5; FR-489-AC-6, 8, 9, 11 ---------------

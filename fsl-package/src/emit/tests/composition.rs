@@ -143,11 +143,7 @@ fn unit(declaration: &str) -> String {
     )
 }
 
-fn compile_with(
-    source: &str,
-    lattice: Option<&str>,
-    dependencies: &[&Dependency],
-) -> Result<CheckedPackage, Failure> {
+fn compile_with(source: &str, dependencies: &[&Dependency]) -> Result<CheckedPackage, Failure> {
     let parsed = fsl_cst::parse(
         fsl_foundation::SourceIdentity::new("agent-ix", "test:composition"),
         "program.native",
@@ -172,12 +168,8 @@ fn compile_with(
         fsl_semantics::model::accounting::ModelNormalizationLimits::default(),
     )
     .expect("an empty model selection is admitted");
-    let mut assembled =
-        PackageDeclarations::assemble(raw, "pkg".to_owned(), built, models, imports)
-            .map_err(Failure::Assembly)?;
-    if let Some(profile) = lattice {
-        assembled = assembled.with_composition_lattice(profile);
-    }
+    let assembled = PackageDeclarations::assemble(raw, "pkg".to_owned(), built, models, imports)
+        .map_err(Failure::Assembly)?;
     let graph = assembled
         .check(
             CheckMode::Linked,
@@ -212,12 +204,8 @@ impl World {
         }
     }
 
-    fn compile(&self, declaration: &str, lattice: Option<&str>) -> Result<CheckedPackage, Failure> {
-        compile_with(
-            &unit(declaration),
-            lattice,
-            &[&self.producer, &self.consumer],
-        )
+    fn compile(&self, declaration: &str) -> Result<CheckedPackage, Failure> {
+        compile_with(&unit(declaration), &[&self.producer, &self.consumer])
     }
 
     /// `compose Sys rule rule { COMPONENTS members }`.
@@ -227,13 +215,13 @@ impl World {
 
     fn checked(&self, rule: &str, members: &str) -> CheckedPackage {
         let declaration = self.declare(rule, members);
-        self.compile(&declaration, None)
+        self.compile(&declaration)
             .unwrap_or_else(|failure| panic!("{declaration}: the unit compiles: {failure:?}"))
     }
 
     /// The one composition refusal of `declaration`.
     fn refused(&self, declaration: &str) -> CompositionRefusal {
-        let Err(Failure::Check(refusals)) = self.compile(declaration, None) else {
+        let Err(Failure::Check(refusals)) = self.compile(declaration) else {
             panic!("{declaration}: a check refusal");
         };
         let [CheckRefusal {
@@ -276,10 +264,10 @@ fn a_producer_consumer_declaration_derives_its_slots_in_order() {
     let world = World::new();
     let source = unit(&world.declare("assume-guarantee", CASE_ONE_MEMBERS));
     let package = world
-        .compile(&world.declare("assume-guarantee", CASE_ONE_MEMBERS), None)
+        .compile(&world.declare("assume-guarantee", CASE_ONE_MEMBERS))
         .expect("the unit compiles");
     let composition = sole(&package);
-    assert_eq!(composition.item_refusal(), None);
+    assert!(composition.cycles().is_empty());
     assert_eq!(composition.rule(), CompositionRule::AssumeGuarantee);
     let item = composition.item();
     assert_eq!(item.placement, ItemPlacement::PlannerLocal);
@@ -377,7 +365,7 @@ fn a_declaration_that_does_not_fit_its_packages_refuses() {
         ),
     ] {
         let source = unit(declaration);
-        let Err(Failure::Syntax(diagnostics)) = world.compile(declaration, None) else {
+        let Err(Failure::Syntax(diagnostics)) = world.compile(declaration) else {
             panic!("{declaration}: a syntax refusal");
         };
         assert_eq!(diagnostics[0].code, fsl_cst::CompleteCode::InvalidSyntax);
@@ -502,67 +490,40 @@ fn a_premise_that_does_not_fit_its_kind_refuses() {
     assert_eq!(member, "rely Producer::Sends on Producer::Counted");
 }
 
-/// FR-491-AC-4 (TC-985 case 4): a mutual `depends` pair with no selected
-/// profile declaring FR-176's lattice checks and its composition item refuses
-/// `invalid_model_binding`/`malformed-declaration` naming both guarantees;
-/// under a profile declaring the lattice the pair derives one fixed-point
-/// slot.
+/// FR-491-AC-4 (TC-985 case 4): a mutual `depends` pair is a cycle of the
+/// dependency graph: the declaration checks, lists the cycle's guarantees in
+/// edge order and derives no `fixed-point` slot (FSpec FR-489 "Cycles"; the
+/// composition item settles `unsupported`).
 #[trace("FR-530-AC-1", "FSpec-TC-985", "FSpec-FR-491-AC-4")]
 #[test]
-fn a_mutual_dependency_is_a_cycle_the_item_settles() {
+fn a_mutual_dependency_is_a_cycle_that_derives_no_slot() {
     let world = World::new();
     let members = format!("{CASE_ONE_MEMBERS}depends Producer::Sends on Consumer::Done; ");
-    let without = world.checked("assume-guarantee", &members);
-    let composition = sole(&without);
-    let refusal = composition
-        .item_refusal()
-        .expect("the composition item refuses");
-    assert_eq!(refusal.code(), fsl_foundation::Code::InvalidModelBinding);
-    assert_eq!(refusal.cause(), "malformed-declaration");
-    let [cycle] = &refusal.cycles[..] else {
-        panic!("one cycle: {:?}", refusal.cycles);
+    let cyclic = world.checked("assume-guarantee", &members);
+    let composition = sole(&cyclic);
+    let [cycle] = composition.cycles() else {
+        panic!("one cycle: {:?}", composition.cycles());
     };
-    let named: Vec<String> = cycle.iter().map(ToString::to_string).collect();
+    let named: Vec<String> = cycle.guarantees.iter().map(ToString::to_string).collect();
     assert_eq!(named, ["Consumer::Done", "Producer::Sends"]);
-    assert!(!roles(&composition.slots()).contains(&SlotRole::FixedPoint));
+    assert_eq!(
+        roles(&composition.slots()),
+        [
+            SlotRole::ComponentGuarantee,
+            SlotRole::ComponentGuarantee,
+            SlotRole::ComponentGuarantee,
+            SlotRole::Rely,
+            SlotRole::LivenessDependency,
+            SlotRole::LivenessDependency,
+            SlotRole::Fairness,
+        ]
+    );
     // The declaration is not refused: the package's other facts are those of
     // the same unit without the cycle.
     let acyclic = world.checked("assume-guarantee", CASE_ONE_MEMBERS);
     assert_eq!(
-        without.graph().requirements(),
+        cyclic.graph().requirements(),
         acyclic.graph().requirements()
-    );
-
-    let declaration = world.declare("assume-guarantee", &members);
-    let with = world
-        .compile(&declaration, Some("fixed-point-lattice"))
-        .expect("the unit compiles");
-    let composition = sole(&with);
-    assert_eq!(composition.item_refusal(), None);
-    let slots = composition.slots();
-    let [.., fixed_point] = &slots[..] else {
-        panic!("slots");
-    };
-    assert_eq!(fixed_point.role, SlotRole::FixedPoint);
-    assert_eq!(fixed_point.backing, SlotBacking::Item);
-    let Some(CompositionSlotKey::FixedPoint {
-        node,
-        premises,
-        profile,
-        ..
-    }) = &fixed_point.key
-    else {
-        panic!("a fixed-point key: {:?}", fixed_point.key);
-    };
-    assert_eq!(node, composition.node());
-    assert_eq!(profile, "fixed-point-lattice");
-    assert_eq!(premises.len(), 2);
-    assert_eq!(
-        roles(&slots)
-            .iter()
-            .filter(|role| **role == SlotRole::FixedPoint)
-            .count(),
-        1
     );
 }
 
@@ -578,15 +539,21 @@ fn a_non_assume_guarantee_rule_derives_a_request_item() {
         let package = world.checked(rule, CASE_ONE_MEMBERS);
         let item = sole(&package).item();
         assert_eq!(item.placement, ItemPlacement::Request, "{rule}");
-        let keys = |slots: &[CompositionSlot]| -> Vec<_> {
-            slots
-                .iter()
-                .map(|slot| (slot.role, slot.key.clone()))
-                .collect()
-        };
-        assert_eq!(keys(&item.premises), keys(&sole(&local).slots()), "{rule}");
+        assert_eq!(
+            roles(&item.premises),
+            roles(&sole(&local).slots()),
+            "{rule}"
+        );
+        // FSpec FR-491 "Assumption binding": only `assume-guarantee` checks a
+        // guarantee under peers, so every other rule derives empty sets.
+        assert_eq!(item.assumptions, vec![Vec::<usize>::new(); 3], "{rule}");
     }
     assert_eq!(sole(&local).item().placement, ItemPlacement::PlannerLocal);
+    // `Done` (premise 1) assumes both peer guarantees, by premise index.
+    assert_eq!(
+        sole(&local).item().assumptions,
+        vec![vec![], vec![0, 2], vec![]]
+    );
 }
 
 /// FR-491-AC-6 (TC-985 case 6): the v2 byte emitter writes a composition
@@ -671,7 +638,7 @@ fn a_composition_without_its_component_packages_is_not_admitted() {
     let world = World::new();
     let declaration = world.declare("assume-guarantee", CASE_ONE_MEMBERS);
     let source = unit(&declaration);
-    let package = compile_with(&source, None, &[&world.producer, &world.consumer])
+    let package = compile_with(&source, &[&world.producer, &world.consumer])
         .expect("the local marker keeps the composition package nonempty");
     let emission = emit_checked(&package).expect("the composition emits");
     match read_back(&emission) {

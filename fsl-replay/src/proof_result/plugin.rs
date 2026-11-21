@@ -8,7 +8,8 @@
 
 use super::{
     Certification, InconclusiveCause, ProofBasis, TerminalRecord, TerminalValue,
-    PREMISE_UNPROVED_KIND, REPLAY_PARITY_KIND, REPLAY_REFUSED_KIND, TRANSFER_NOT_PRESERVING_KIND,
+    PREMISE_UNPROVED_KIND, PROVIDER_ANSWER_UNCONFIRMED_KIND, REPLAY_PARITY_KIND,
+    REPLAY_REFUSED_KIND, TRANSFER_NOT_PRESERVING_KIND,
 };
 use crate::execute::ReplayRefusal;
 use crate::hybrid::{ClaimHorizon, SolverCoverage};
@@ -34,6 +35,9 @@ pub enum FslOnlyCause {
     PremiseUnproved,
     /// `transfer-not-preserving`: only the verification planner settles it.
     TransferNotPreserving,
+    /// `provider-answer-unconfirmed`: only the producer's proof guard settles
+    /// it (FSpec FR-331 "Result entries").
+    ProviderAnswerUnconfirmed,
 }
 
 /// The plugin wire's spelling of the vacuity cause. FSpec FR-331 keeps the
@@ -53,6 +57,7 @@ impl FslOnlyCause {
             Self::KaniVacuousProof => PLUGIN_WIRE_KANI_VACUOUS_PROOF,
             Self::PremiseUnproved => PREMISE_UNPROVED_KIND,
             Self::TransferNotPreserving => TRANSFER_NOT_PRESERVING_KIND,
+            Self::ProviderAnswerUnconfirmed => PROVIDER_ANSWER_UNCONFIRMED_KIND,
         }
     }
 }
@@ -242,6 +247,7 @@ pub fn read_plugin_cause_kind(kind: &str) -> Result<(), PluginResultRefusal> {
         PLUGIN_WIRE_KANI_VACUOUS_PROOF => FslOnlyCause::KaniVacuousProof,
         PREMISE_UNPROVED_KIND => FslOnlyCause::PremiseUnproved,
         TRANSFER_NOT_PRESERVING_KIND => FslOnlyCause::TransferNotPreserving,
+        PROVIDER_ANSWER_UNCONFIRMED_KIND => FslOnlyCause::ProviderAnswerUnconfirmed,
         _ => return Ok(()),
     };
     Err(PluginResultRefusal::FslOnlyCause(claimed))
@@ -407,6 +413,9 @@ impl TerminalRecord {
             )),
             InconclusiveCause::TransferNotPreserving { .. } => Err(
                 PluginResultRefusal::FslOnlyCause(FslOnlyCause::TransferNotPreserving),
+            ),
+            InconclusiveCause::ProviderAnswerUnconfirmed { .. } => Err(
+                PluginResultRefusal::FslOnlyCause(FslOnlyCause::ProviderAnswerUnconfirmed),
             ),
             other => Ok(Self::with_backend(
                 request_index,

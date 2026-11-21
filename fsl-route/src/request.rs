@@ -321,6 +321,7 @@ pub struct RequestItem {
     correspondence: Option<Correspondence>,
     stutter_closure: bool,
     premises: Vec<ItemPremise>,
+    assumptions: Vec<Vec<usize>>,
 }
 
 impl RequestItem {
@@ -343,6 +344,14 @@ impl RequestItem {
     /// item.
     pub fn premises(&self) -> &[ItemPremise] {
         &self.premises
+    }
+
+    /// The FR-331 `assumptions` member of a `composition` item, beside
+    /// [`Self::premises`]: one array per `component-guarantee` entry, in
+    /// `premises` order, of the `premises` indices of the peer entries it
+    /// assumes; empty for every other item.
+    pub fn assumptions(&self) -> &[Vec<usize>] {
+        &self.assumptions
     }
 
     /// The FR-368 `item_kind` of a temporal item over a model subject;
@@ -662,6 +671,7 @@ impl RequestWriter {
             correspondence: None,
             stutter_closure: false,
             premises: Vec::new(),
+            assumptions: Vec::new(),
         });
         index
     }
@@ -691,6 +701,7 @@ impl RequestWriter {
             correspondence: declared.correspondence,
             stutter_closure: declared.stutter_closure,
             premises: declared.premises,
+            assumptions: declared.assumptions,
         };
         self.items.push(item.clone());
         item
@@ -715,6 +726,7 @@ impl RequestWriter {
             correspondence: None,
             stutter_closure: false,
             premises: Vec::new(),
+            assumptions: Vec::new(),
         });
         index
     }

@@ -92,10 +92,9 @@ pub use abstraction::{AbstractionNodeRefusal, AbstractionNodes};
 pub use composition::{
     CheckedComponent, CheckedComposition, ClauseRef, ComponentGuaranteeKey, ComponentSubject,
     CompositionClauseFacts, CompositionCycle, CompositionGuarantee, CompositionItem,
-    CompositionItemRefusal, CompositionName, CompositionPremise, CompositionRefusal,
-    CompositionSlot, CompositionSlotKey, CompositionSpans, CompositionSupply, ItemPlacement,
-    MalformedMember, ReadClause, ReadComponent, ReadComposition, ReadGuaranteeMember, ReadPremise,
-    ReadSupply,
+    CompositionName, CompositionPremise, CompositionRefusal, CompositionSlot, CompositionSlotKey,
+    CompositionSpans, CompositionSupply, ItemPlacement, MalformedMember, ReadClause, ReadComponent,
+    ReadComposition, ReadGuaranteeMember, ReadPremise, ReadSupply,
 };
 pub use dispatch_link::PendingLinks;
 pub use extension::{ExtensionCause, NamedDeclaration};
@@ -1050,9 +1049,6 @@ pub struct CheckedGraph {
     /// FSpec FR-491: the checked `compose` declarations, in declaration
     /// order.
     compositions: Vec<composition::CheckedComposition>,
-    /// FSpec FR-491: the profile that declares FR-176's lattice, when the
-    /// unit selects one.
-    composition_lattice: Option<String>,
     /// FR-753: S3-checked verification plans retained for S4 emission.
     verification_plans: Vec<fsl_forms::VerificationPlanForm>,
     /// FR-192: domain declaration keys resolved while S3 still has the
@@ -1235,7 +1231,6 @@ impl DebugWith for CheckedGraph {
             guarantees,
             composition_forms,
             compositions,
-            composition_lattice,
             verification_plans,
             verification_plan_domain_keys,
             temporal_subject_aliases,
@@ -1365,7 +1360,6 @@ impl DebugWith for CheckedGraph {
             .field("guarantees", &guarantees)
             .field("composition_forms", &composition_forms)
             .field("compositions", &compositions)
-            .field("composition_lattice", &composition_lattice)
             .field("verification_plans", &verification_plans)
             .field(
                 "verification_plan_domain_keys",
@@ -8543,7 +8537,6 @@ impl PackageDeclarations {
             guarantees: Vec::new(),
             composition_forms: self.compositions,
             compositions: Vec::new(),
-            composition_lattice: self.composition_lattice,
             verification_plans: self.verification_plans,
             verification_plan_domain_keys,
             temporal_subject_aliases,

@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! `planner::settle` for an `assume-guarantee` composition (FSL FR-530,
-//! FSpec FR-489 "Implication", "Cycles" and "Settlement", FR-492 "Slot
-//! outcome"): discharge each premise slot from the guarantee pool, the
-//! supplied scheduling constraints, the `discharges` records and the
-//! `fixed-point` slot, and write the premise discharge record.
+//! FSpec FR-489 "Implication" and "Settlement", FR-492 "Slot outcome" and
+//! "Interface mismatch"): discharge each premise slot from the guarantee
+//! pool, the supplied scheduling constraints and the `discharges` records,
+//! write the premise discharge record, and refute a composition whose
+//! declared interface is absent or weaker than a premise needs.
 //!
 //! The planner decides exactly one entailment, FR-489 "Implication": a
 //! supplied guarantee discharges a `rely` or `liveness-dependency` slot when
@@ -12,8 +13,8 @@
 //! by a constraint the composition supplies. It never decides that a stronger
 //! or different clause discharges a premise, and a result that is not
 //! `proved` (an `inconclusive` one included) discharges nothing. It computes
-//! no fixed point: a cycle's premises are discharged only by its
-//! `fixed-point` slot's `proved` result.
+//! no fixed point: a composition whose dependency graph holds a cycle has no
+//! planner declaration.
 
 use filament_semantic_value::fairness::{FairnessConstraint, FairnessGranularity, FairnessKind};
 use serde_json::{json, Map, Value};
@@ -42,8 +43,6 @@ pub enum Relation {
     FairnessImplication,
     /// An environment record is the premise, listed as an assumption.
     Assumption,
-    /// The cycle's `fixed-point` slot holds a `proved` FR-176 result.
-    FixedPoint,
 }
 
 impl Relation {
@@ -53,7 +52,6 @@ impl Relation {
             Self::Identity => "identity",
             Self::FairnessImplication => "fairness-implication",
             Self::Assumption => "assumption",
-            Self::FixedPoint => "fixed-point",
         }
     }
 }
@@ -61,7 +59,7 @@ impl Relation {
 /// What discharged a slot.
 #[derive(Clone, Debug)]
 pub enum DischargeSource {
-    /// The slot's own premise result (`component-guarantee`, `fixed-point`).
+    /// The slot's own premise result (`component-guarantee`).
     OwnResult,
     /// The supplied guarantee at this index of the request's pool.
     Pool(usize),
@@ -69,9 +67,6 @@ pub enum DischargeSource {
     Supplied(FairnessConstraint),
     /// The filled environment record of this name.
     Environment(String),
-    /// The `fixed-point` slot at this index, whose `proved` result the
-    /// record carries.
-    FixedPoint(usize),
 }
 
 /// One discharged slot of the premise discharge record.
@@ -108,8 +103,8 @@ pub struct DischargeRecord {
 /// The planner's work budget ran out.
 struct Exhausted;
 
-/// FSpec FR-492 `limits.max_work`: one unit per slot read, per pool entry
-/// compared and per fixed-point premise checked.
+/// FSpec FR-492 `limits.max_work`: one unit per slot read and per pool entry
+/// compared.
 struct Meter {
     spent: u64,
     max: u64,
@@ -203,7 +198,12 @@ pub(super) fn settle_composition(
         request,
         supplies,
     };
-    let max_work = request.max_work.unwrap_or(budget.max_work);
+    // A declared interface mismatch decides from the declaration alone, so the
+    // complete slot list is written whatever the budget.
+    let max_work = match declaration.mismatch {
+        Some(_) => u64::MAX,
+        None => request.max_work.unwrap_or(budget.max_work),
+    };
     let mut meter = Meter {
         spent: 0,
         max: max_work,
@@ -234,9 +234,22 @@ pub(super) fn settle_composition(
             slots,
             conclusion: None,
             discharge,
+            mismatch: None,
         });
     }
-    let (value, cause) = decide(&slots, |outcome| composition.is_cycle_member(outcome.slot));
+    if let Some(mismatch) = declaration.mismatch.clone() {
+        return Ok(PlannerResult {
+            item,
+            value: PlannerValue::Refuted,
+            cause: None,
+            certification: None,
+            slots,
+            conclusion: None,
+            discharge,
+            mismatch: Some(mismatch),
+        });
+    }
+    let (value, cause) = decide(&slots);
     let certification = (value == PlannerValue::Proved).then(|| fold_certification(&slots));
     Ok(PlannerResult {
         item,
@@ -246,19 +259,11 @@ pub(super) fn settle_composition(
         slots,
         conclusion: None,
         discharge,
+        mismatch: None,
     })
 }
 
 impl Composition<'_> {
-    /// A `rely` or `liveness-dependency` slot on an accepted cycle: it waits
-    /// on its cycle's `fixed-point` slot, which decides in its place.
-    fn is_cycle_member(&self, slot: usize) -> bool {
-        self.declaration.slots.get(slot).is_some_and(|derived| {
-            derived.cycle.is_some()
-                && matches!(derived.role, SlotRole::Rely | SlotRole::LivenessDependency)
-        })
-    }
-
     fn settle_slot(
         &self,
         index: usize,
@@ -282,20 +287,8 @@ impl Composition<'_> {
             (SlotRole::ComponentGuarantee, SlotBacking::Item, SlotFill::Result(result)) => {
                 self.own_result(index, derived, result)
             }
-            (SlotRole::FixedPoint, SlotBacking::Item, SlotFill::Result(result)) => {
-                // The planner checks no iteration itself: it reads the one
-                // FR-176 result, once per cycle guarantee it names.
-                for _ in 0..result.item.key.premises.len().max(1) {
-                    meter.charge()?;
-                }
-                self.own_result(index, derived, result)
-            }
             (SlotRole::Rely | SlotRole::LivenessDependency, _, _) => {
-                if let Some(cycle) = derived.cycle {
-                    self.cycle_member(index, derived, cycle)
-                } else {
-                    self.discharge_from_pool(index, derived, meter)?
-                }
+                self.discharge_from_pool(index, derived, meter)?
             }
             (SlotRole::Fairness, _, _) => self.discharge_from_supplies(index, derived),
             (
@@ -325,76 +318,18 @@ impl Composition<'_> {
     /// An item-backed slot settles as its own premise result does.
     fn own_result(&self, index: usize, derived: &DerivedSlot, result: &PremiseResult) -> Settled {
         let outcome = item_outcome(index, derived, result, &std::collections::BTreeSet::new());
-        let entry = (outcome.value == SlotValue::Label(ItemLabel::Proved)).then(|| {
-            let fixed_point = derived.role == SlotRole::FixedPoint;
-            DischargeEntry {
+        let entry =
+            (outcome.value == SlotValue::Label(ItemLabel::Proved)).then(|| DischargeEntry {
                 slot: index,
                 role: derived.role,
                 source: DischargeSource::OwnResult,
                 subject: subject_of(result),
-                relation: if fixed_point {
-                    Relation::FixedPoint
-                } else {
-                    Relation::Identity
-                },
+                relation: Relation::Identity,
                 certification: outcome.certification,
                 extent: outcome.extent,
                 bounds: outcome.bounds.clone(),
-            }
-        });
+            });
         Settled { outcome, entry }
-    }
-
-    /// FSpec FR-489 "Cycles": a cycle member is discharged only by its
-    /// cycle's `fixed-point` slot holding a `proved` result; until then it
-    /// waits on that slot.
-    fn cycle_member(&self, index: usize, derived: &DerivedSlot, cycle: usize) -> Settled {
-        let fixed_point = self
-            .declaration
-            .slots
-            .iter()
-            .position(|slot| slot.role == SlotRole::FixedPoint && slot.cycle == Some(cycle));
-        let proved = fixed_point.and_then(|at| match &self.request.slots[at].fill {
-            SlotFill::Result(result)
-                if ItemLabel::of(result.record.value()) == ItemLabel::Proved =>
-            {
-                Some((at, result))
-            }
-            _ => None,
-        });
-        match proved {
-            Some((at, result)) => {
-                let certification =
-                    Some(result.certification.unwrap_or(Certification::Uncertified));
-                let extent = Some(result.item.key.extent);
-                Settled {
-                    outcome: SlotOutcome {
-                        slot: index,
-                        role: derived.role,
-                        value: SlotValue::Label(ItemLabel::Proved),
-                        certification,
-                        extent,
-                        bounds: result.item.bounds.clone(),
-                        cause: None,
-                        source: derived.source.clone(),
-                    },
-                    entry: Some(DischargeEntry {
-                        slot: index,
-                        role: derived.role,
-                        source: DischargeSource::FixedPoint(at),
-                        subject: derived.premise_subject.clone(),
-                        relation: Relation::FixedPoint,
-                        certification,
-                        extent,
-                        bounds: result.item.bounds.clone(),
-                    }),
-                }
-            }
-            None => Settled {
-                outcome: undischarged(index, derived, SlotValue::Absent),
-                entry: None,
-            },
-        }
     }
 
     /// FSpec FR-489 "Implication" over the pool, the explicitly named
@@ -580,7 +515,6 @@ impl DischargeEntry {
                 json!({"supplies": fairness_value(constraint)?})
             }
             DischargeSource::Environment(name) => json!({"environment": name}),
-            DischargeSource::FixedPoint(at) => json!({"fixed_point": at}),
         };
         let mut entry = Map::new();
         entry.insert("slot".to_owned(), json!(self.slot));

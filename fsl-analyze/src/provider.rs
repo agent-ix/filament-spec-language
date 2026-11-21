@@ -23,6 +23,7 @@ use fsl_foundation::bound::{DomainKey, DomainKind, FiniteBound, ProofBound};
 use fsl_foundation::source::provenance::OccurrenceKey;
 use fsl_foundation::{BackendId, RequestIndex};
 use fsl_package::{EmitLimits, EmittedPackage};
+use fsl_replay::planner::{interface_mismatch, InterfaceMismatch};
 use fsl_replay::value_check::{Selection, ValueTarget};
 use fsl_replay::{Certification, InconclusiveCause, Value};
 use fsl_route::request::{ExtentClassification, ItemKind, RequirementItem};
@@ -334,12 +335,29 @@ pub enum ProviderTarget<'r> {
 pub struct CompositionTarget {
     claim: OccurrenceKey,
     premises: Vec<serde_json::Value>,
+    assumptions: Vec<Vec<usize>>,
 }
 
 impl CompositionTarget {
-    /// The composition at `claim` over the derived `premises`.
-    pub fn new(claim: OccurrenceKey, premises: Vec<serde_json::Value>) -> Self {
-        Self { claim, premises }
+    /// The composition at `claim` over the derived `premises` and the
+    /// derived `assumptions` beside them.
+    pub fn new(
+        claim: OccurrenceKey,
+        premises: Vec<serde_json::Value>,
+        assumptions: Vec<Vec<usize>>,
+    ) -> Self {
+        Self {
+            claim,
+            premises,
+            assumptions,
+        }
+    }
+
+    /// The derived `assumptions`: one array per `component-guarantee` entry
+    /// of the premises, in order, of the premise indices of the peer entries
+    /// it assumes.
+    pub fn assumptions(&self) -> &[Vec<usize>] {
+        &self.assumptions
     }
 
     /// The composition's claim occurrence.
@@ -537,6 +555,10 @@ fn request_item_wire(
                 "premises".to_owned(),
                 serde_json::Value::Array(composition.premises().to_vec()),
             );
+            members.insert(
+                "assumptions".to_owned(),
+                serde_json::json!(composition.assumptions()),
+            );
         }
     }
     Ok(wire)
@@ -548,6 +570,10 @@ fn request_item_wire(
 pub enum ProviderVerdict {
     /// The provider established that the claim holds for every assignment.
     Proved,
+    /// The provider refuted a `composition` item by a declared interface
+    /// mismatch (FSpec FR-331 `interface-mismatch`). FSL admits it only when
+    /// it equals the first mismatch the checked declaration gives.
+    Mismatch(InterfaceMismatch),
     /// The provider reports an assignment of the claim's parameters, in
     /// parameter order, at which the claim is violated.
     Refuted {
@@ -658,6 +684,16 @@ pub(crate) enum ProviderReport {
     Failed(ToolFailure),
     /// The provider's counterexample, confirmed by replay or not.
     Replayed(ValueReport),
+    /// A composition's interface mismatch the checked declaration gives.
+    Mismatch(InterfaceMismatch),
+}
+
+/// The counterexample a settled provider item keeps.
+pub(crate) enum ProviderCounterexample {
+    /// A replayed violating assignment.
+    Assignments(Box<ValueCounterexample>),
+    /// A composition's declared interface mismatch.
+    Mismatch(Box<InterfaceMismatch>),
 }
 
 /// The FSpec FR-331 request item of the `value-validity` item at `claim`,
@@ -1136,6 +1172,16 @@ pub(crate) fn finish(
     engine: &Engine,
 ) -> EngineReport {
     let composition = matches!(work.selection, ProviderSelection::Composition(_));
+    let declared = match &work.selection {
+        ProviderSelection::Composition(target) => work
+            .package
+            .graph()
+            .compositions()
+            .iter()
+            .find(|composition| composition.node() == target.claim().node())
+            .and_then(interface_mismatch),
+        _ => None,
+    };
     let target = match work.selection {
         ProviderSelection::Value(Ok(target)) => Some(target),
         ProviderSelection::Value(Err(Selection::NoForm))
@@ -1181,6 +1227,20 @@ pub(crate) fn finish(
                 InternalFault::new("external-provider", "limit-cause-mismatch").catalog_code(),
             )),
             ProviderVerdict::ProcessFailed { cause } => process_failure(cause),
+            // FSpec FR-331-AC-63: a well-formed `interface-mismatch` is
+            // admitted only when it equals the first mismatch the declaration
+            // gives; any other is the reader's `invalid_result`.
+            ProviderVerdict::Mismatch(claimed) if declared.as_ref() == Some(&claimed) => {
+                EngineReport::Provider(Box::new(ProviderReport::Mismatch(claimed)))
+            }
+            ProviderVerdict::Mismatch(_) => {
+                let mut detail = serde_json::Map::new();
+                detail.insert("pointer".to_owned(), "/counterexample".into());
+                EngineReport::Refused(Refusal::FailedWithDetail(
+                    CatalogCode::new("invalid_result", "invalid-value"),
+                    detail,
+                ))
+            }
             // A composition has no replay: its counterexample is not
             // replayable (FSpec FR-290 "Replay context").
             ProviderVerdict::Refuted { .. } if composition => EngineReport::Provider(Box::new(
@@ -1203,6 +1263,11 @@ fn report(
 ) -> EngineReport {
     let counterexample = match verdict {
         ProviderVerdict::Proved => return EngineReport::Provider(Box::new(ProviderReport::Proved)),
+        // An interface mismatch answers a `composition` item, whose target
+        // is never a value target.
+        ProviderVerdict::Mismatch(_) => {
+            return EngineReport::Refused(crate::value_check::invalid_input());
+        }
         ProviderVerdict::Unknown => {
             return EngineReport::Provider(Box::new(ProviderReport::Unknown));
         }
@@ -1263,7 +1328,7 @@ pub(crate) fn settle_record(
     index: RequestIndex,
     backend: BackendId,
     origin: ProviderOrigin,
-) -> (TerminalRecord, Option<ValueCounterexample>) {
+) -> (TerminalRecord, Option<ProviderCounterexample>) {
     match report {
         ProviderReport::Proved => (
             TerminalRecord::proved_by_provider(index, backend, certification(origin)),
@@ -1300,6 +1365,16 @@ pub(crate) fn settle_record(
             None,
         ),
         ProviderReport::Failed(cause) => (TerminalRecord::tool_failed(index, backend, cause), None),
-        ProviderReport::Replayed(report) => crate::value_check::settle(report, index, backend),
+        ProviderReport::Replayed(report) => {
+            let (record, found) = crate::value_check::settle(report, index, backend);
+            (
+                record,
+                found.map(|found| ProviderCounterexample::Assignments(Box::new(found))),
+            )
+        }
+        ProviderReport::Mismatch(found) => (
+            TerminalRecord::refuted_by_interface_mismatch(index, backend, &found),
+            Some(ProviderCounterexample::Mismatch(Box::new(found))),
+        ),
     }
 }
