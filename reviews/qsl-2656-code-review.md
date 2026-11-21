@@ -32,3 +32,65 @@ Ticket: QSL-2656. The PR makes `walked_operands` keep every walked operand, repe
 ## Verdict
 
 Not mergeable until FND-001 is fixed (re-record the pinned key, or delete the pin if it is judged ceremony, and list moved ids). FND-002 is a real residual of the same FR-498 defect class on non-expression walked tags; fix or record a decision on the ticket. FND-003 to FND-005 are small.
+
+## Dispositions
+
+Round 1, reviewed at frozen head a377cdea54b197ba9427768d6b1d1f627e83eafd.
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | The exact TRAIL_REACHES_KEY now records both self operands and both Boolean-type positions; the structural assert_eq! remains. The PR moved-ID inventory records this changed key. |
+| FND-002 | fixed | Temporal computation paths now retain every operand position, addressing the measured min_count 0/2 source-order collision. The record-value subclaim is rejected: literal_as returns a literal NodeRef, and record_members binds that reference, so raw literal text cannot suppress a Text field-name segment. Both source record permutation tests passed before this production fix (record-red2.log: package 1, semantics 1). No value or bounded-domain encoding was changed. |
+| FND-003 | fixed | The contradictory without-repeats claim is removed. Documentation explicitly distinguishes positional computation paths from retained compact value/hybrid/bounded-domain encodings and the decimal-range text exception. |
+| FND-004 | fixed | The regression now requires the two checked claim identities to be distinct as well as stable across declaration order. |
+| FND-005 | accepted-no-change | Lead decision: retain tests/fixtures/native-run-result-decisive.json as historical opaque native-run-result/2 reader contract data. Its expression binary/quantify IDs have the old single-Boolean path form; current writer keys differ. The moved-ID inventory lists them and native_run_result_root.rs now describes reader input rather than a current writer output. The only located fixture use reads/adversarially mutates the document; no regeneration path was found. This accepts historical IDs and does not claim that today's writer emits them. |
+
+## Disposition evidence
+
+Code-review and rust-review disposition inspection covers fix e446e9150106bd3fd2474381c05f6ebef7c7f827 and frozen head a377cdea54b197ba9427768d6b1d1f627e83eafd. Examined: walked_operands/derived_operands in lowering.rs; record lowering/literal_as; population_field_edge.rs exact key assertion; probabilistic.rs distinct/stable identities; temporal_aggregate.rs min_count permutation; golden.rs and node_keys.rs source record regressions; native_run_result_root.rs reader boundary; the unchanged historical fixture; and the refreshed GitHub PR body moved-ID inventory. No CI gate was narrowed; no unsafe, concurrency, public API or new persistence mechanism was introduced by this fix. No new finding was observed.
+
+Evidence: /tmp/qsl-3266-repeated-red.log shows the temporal identity assertion failing before the temporal change (ordinals swap). Its record failures were setup failures and are not record collision evidence. /tmp/qsl-3266-record-red2.log shows corrected source record tests passing before the production fix: package 1 passed, semantics 1 passed, exit 0. The record string is represented by a literal NodeRef (literal_as -> value_node -> reference_node); LowerFrame::Record binds that NodeRef, so it cannot compare equal to a field-name Text segment. Reader-defined scalar/value/bounded-domain spellings remain intact. The original expression mutation evidence remains applicable.
+
+No Cargo or full gates were run by this disposition reviewer under the dispatch's explicit restriction. Final frozen-head execution is pending the lead's Draco TEST-RUN evidence. This review does not claim that the historical fixture's captured IDs are emitted by the current writer.
+
+```yaml
+dispositions:
+  - fnd: FND-001
+    outcome: fixed
+    reason: "The exact TRAIL_REACHES_KEY now records both self operands and both Boolean-type positions; the structural assert_eq! remains. The PR moved-ID inventory records this changed key."
+    after_excerpt: |-
+      /// The structural key of the unbounded `reaches(self, self, trail)` node over
+      /// `Order`, retaining both operand positions (TC-1047 row 3).
+  - fnd: FND-002
+    outcome: fixed
+    reason: "Temporal computation paths now retain every operand position, addressing the measured min_count 0/2 source-order collision. The record-value subclaim is rejected: literal_as returns a literal NodeRef, and record_members binds that reference, so raw literal text cannot suppress a Text field-name segment. Both source record permutation tests passed before this production fix (record-red2.log: package 1, semantics 1). No value or bounded-domain encoding was changed."
+    after_excerpt: |-
+              keep_repeats: matches!(content.node_tag, NodeTag::Expression | NodeTag::Temporal),
+  - fnd: FND-003
+    outcome: fixed
+    reason: "The contradictory without-repeats claim is removed. Documentation explicitly distinguishes positional computation paths from retained compact value/hybrid/bounded-domain encodings and the decimal-range text exception."
+    after_excerpt: |-
+      /// repeat of its path takes the next producer ordinal. Expression and temporal
+      /// computation nodes keep every walked operand, repeats included: operand
+      /// positions distinguish their content, so dropping a repeated position would
+      /// give different computations one path and source-order ordinals. Value,
+      /// hybrid and bounded-domain nodes retain their compact first-occurrence
+      /// spelling; this computation-key rule does not revise their encodings. A
+      /// decimal range retains repeated text, so equal bounds repeat.
+  - fnd: FND-004
+    outcome: fixed
+    reason: "The regression now requires the two checked claim identities to be distinct as well as stable across declaration order."
+    after_excerpt: |-
+          assert_ne!(
+              forward[0].1, forward[1].1,
+              "the two claims retain distinct identities"
+          );
+  - fnd: FND-005
+    outcome: accepted-no-change
+    reason: "Lead decision: retain tests/fixtures/native-run-result-decisive.json as historical opaque native-run-result/2 reader contract data. Its expression binary/quantify IDs have the old single-Boolean path form; current writer keys differ. The moved-ID inventory lists them and native_run_result_root.rs now describes reader input rather than a current writer output. The only located fixture use reads/adversarially mutates the document; no regeneration path was found. This accepts historical IDs and does not claim that today's writer emits them."
+```
+
+## Round 1 verdict
+
+All existing findings have explicit outcomes; no finding remains open. Review dispositions are complete. Mergeability remains conditional on final Draco focused-test evidence for the frozen implementation and verbatim custody of these updated artifacts.
+
