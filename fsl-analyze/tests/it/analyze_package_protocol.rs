@@ -117,7 +117,7 @@ fn fenced_sb(ordering: &str) -> String {
 /// A TSO fence drains the store buffer before the load on both routes.
 #[trace("TC-2958", "FR-940-AC-6", "FR-850-AC-11", "FR-221-AC-2")]
 #[test]
-fn package_seq_cst_fences_forbid_the_tso_store_buffering_outcome() {
+fn package_fences_seq_cst_forbid_the_tso_store_buffering_outcome() {
     let ws = Workspace::new("package-protocol-tso-fences");
     let path = litmus_request(
         &ws,
@@ -134,7 +134,7 @@ fn package_seq_cst_fences_forbid_the_tso_store_buffering_outcome() {
 /// RA's SC fence rule forbids the weak outcome through the shared executor.
 #[trace("TC-2958", "FR-940-AC-6", "FR-222-AC-2")]
 #[test]
-fn package_seq_cst_fences_forbid_the_ra_store_buffering_outcome() {
+fn package_fences_seq_cst_forbid_the_ra_store_buffering_outcome() {
     let ws = Workspace::new("package-protocol-ra-sc-fences");
     let mut extra = request_extra(json!([{"claim": "NoBothZero"}]));
     extra["memory"][0]["model"] = json!("ra");
@@ -149,7 +149,7 @@ fn package_seq_cst_fences_forbid_the_ra_store_buffering_outcome() {
 /// A weaker RA fence preserves the weak outcome and bytes-only replay.
 #[trace("TC-2958", "FR-940-AC-6")]
 #[test]
-fn package_acquire_fences_preserve_the_ra_counterexample_and_replay() {
+fn package_fences_acquire_preserve_the_ra_counterexample_and_replay() {
     let ws = Workspace::new("package-protocol-ra-acquire-fences");
     let mut extra = request_extra(json!([{"claim": "NoBothZero"}]));
     extra["memory"][0]["model"] = json!("ra");
