@@ -22,6 +22,8 @@ use tl_syntax::{
 use super::{Result, RunCause};
 
 mod canonical;
+mod package_observed;
+pub(super) use package_observed::PackageRun;
 
 /// The four correspondence identities a request may name (FR-931).
 const CORRESPONDENCES: [TlTarget; 4] = [
@@ -352,7 +354,41 @@ pub(super) struct Subject<'a> {
     /// the valuation.
     pub(super) labels: Option<&'a BTreeMap<FormulaNodeId, String>>,
     /// The native valuation a cross-evaluation compares against.
-    pub(super) valuation: Option<&'a TemporalValuation>,
+    pub(super) native: Native<'a>,
+}
+
+/// The native valuation a cross-evaluation compares against, from the route
+/// that holds the clause.
+#[derive(Clone, Copy)]
+pub(super) enum Native<'a> {
+    /// No valuation: the clause alone.
+    None,
+    /// The source route's valuation run.
+    Source(&'a TemporalValuation),
+    /// The package route's valuation.
+    Package(&'a package_observed::Observed),
+}
+
+impl<'a> Native<'a> {
+    /// The traces a cross-evaluation reads and whether the enumeration that
+    /// produced them ran to its end.
+    fn traces(self) -> Option<(Vec<&'a fsl_replay::spine::ObservedValuation>, bool)> {
+        let (positions, behaviours) = match self {
+            Self::None => return None,
+            Self::Source(valuation) => {
+                (valuation.positions.as_ref(), valuation.behaviours.as_ref())
+            }
+            Self::Package(observed) => (observed.positions.as_ref(), observed.behaviours.as_ref()),
+        };
+        match (positions, behaviours) {
+            (Some(positions), _) => Some((vec![positions], true)),
+            (None, Some(behaviours)) => Some((
+                behaviours.traces.iter().collect(),
+                matches!(behaviours.end, fsl_replay::BehaviourValuationEnd::Complete),
+            )),
+            (None, None) => None,
+        }
+    }
 }
 
 impl<'a> Subject<'a> {
@@ -364,7 +400,7 @@ impl<'a> Subject<'a> {
             nodes: clause.formula().nodes(),
             root: clause.formula().root(),
             labels: None,
-            valuation: Some(valuation),
+            native: Native::Source(valuation),
         }
     }
 }
@@ -526,10 +562,14 @@ fn lowering_record(
             reason: TraceForm::reason(classified),
         });
     }
-    let labels = match (subject.labels, subject.valuation) {
+    let labels = match (subject.labels, subject.native) {
         (Some(labels), _) => labels.clone(),
-        (None, Some(valuation)) => canonical::source_labels(valuation).map_err(Failure::Fault)?,
-        (None, None) => return Err(Failure::Fault("a lowering has atom labels".to_owned())),
+        (None, Native::Source(valuation)) => {
+            canonical::source_labels(valuation).map_err(Failure::Fault)?
+        }
+        (None, Native::None | Native::Package(_)) => {
+            return Err(Failure::Fault("a lowering has atom labels".to_owned()))
+        }
     };
     let mut lowered = Lowered::default();
     let root = lowered.lower(nodes, subject.root, &labels)?;
@@ -569,17 +609,7 @@ fn lowering_record(
         );
         exit_code = 30;
     }
-    let traces: Option<(Vec<&fsl_eval::temporal::ObservedValuation>, bool)> = match subject
-        .valuation
-        .map(|valuation| (&valuation.positions, &valuation.behaviours))
-    {
-        Some((Some(positions), _)) => Some((vec![positions], true)),
-        Some((None, Some(behaviours))) => Some((
-            behaviours.traces.iter().collect(),
-            matches!(behaviours.end, fsl_replay::BehaviourValuationEnd::Complete),
-        )),
-        Some((None, None)) | None => None,
-    };
+    let traces = subject.native.traces();
     if let Some((traces, complete)) = traces {
         let cross = cross_evaluate(subject.name, &tl, &lowered, &traces, mapping, classified)?;
         if cross["agree"] != json!(true) {
@@ -1295,10 +1325,14 @@ pub(super) fn lower_package(subject: &Subject<'_>, lowering: &TlLowering) -> Res
 pub(super) fn lower_over_package(
     bare: &fsl_package::BarePackage<'_>,
     lowering: &TlLowering,
-) -> Result<TlRecord> {
+    run: &package_observed::PackageRun<'_>,
+) -> Result<PackageLowered> {
     use fsl_package::checked_views::{temporal_subject, FormulaOperation};
 
     let fault = |message: &str| RunCause::TlFault(message.to_owned());
+    // The snapshot is read and its universes checked before the clause is
+    // resolved, as the source route's request preparation orders them.
+    let initial = package_observed::initial(lowering, run)?;
     let package = bare.package();
     let row = package
         .temporal_clause_names()
@@ -1381,6 +1415,20 @@ pub(super) fn lower_over_package(
     let key = view
         .declaration_key()
         .ok_or_else(|| fault("an admitted clause node has a structural key"))?;
+    // FR-931 "Cross-evaluation": the native valuation is read before the
+    // lowering, as the source route reads it, and only a request that asks
+    // for it builds the package's model world.
+    let claim = fsl_foundation::source::provenance::OccurrenceKey::new(
+        key.clone(),
+        filament_exact::Origin::new(filament_exact::Role::new("claim"), row.occurrence),
+    );
+    let observed =
+        match package_observed::observe(bare, &claim, &key, lowering, run, initial.as_ref())? {
+            package_observed::Observation::Valued(observed) => observed,
+            package_observed::Observation::Reported(reported) => {
+                return Ok(PackageLowered::Reported(reported));
+            }
+        };
     // Printing an atom is not evaluation (FR-931 "The lowering input"): the
     // names and term structure come from the package's own nodes, and no
     // world is built.
@@ -1407,10 +1455,23 @@ pub(super) fn lower_over_package(
             nodes: &nodes,
             root: FormulaNodeId::from_arena_index(0),
             labels: Some(&labels),
-            valuation: None,
+            native: if lowering.cross.is_some() {
+                Native::Package(&observed)
+            } else {
+                Native::None
+            },
         },
         lowering,
     )
+    .map(PackageLowered::Record)
+}
+
+/// What lowering a package's clause came to.
+pub(super) enum PackageLowered {
+    /// The `tl_lowering` record.
+    Record(TlRecord),
+    /// A stop the source route reports as a clause report.
+    Reported(Box<package_observed::Reported>),
 }
 
 /// The checked interval a package operator carries.

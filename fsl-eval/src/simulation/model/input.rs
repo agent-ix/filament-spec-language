@@ -672,6 +672,45 @@ impl<'p> PackageModelInput<'p> {
             .map_err(PendingClauseForm::Build)
     }
 
+    /// [`Self::temporal_clause`] for a run that reads the clause over a trace
+    /// or a model's behaviours rather than checking it: any untimed profile
+    /// and the clause's step intervals are read, since the evaluator reads
+    /// each from the clause itself. A clause with captures is still refused,
+    /// as the package-route letters do not read them yet.
+    ///
+    /// # Errors
+    ///
+    /// [`PendingClauseForm`] as [`Self::temporal_clause`], less the profile and
+    /// interval facts.
+    pub fn temporal_run_clause(
+        &self,
+        claim: &fsl_foundation::source::provenance::OccurrenceKey,
+        position_limit: u64,
+    ) -> Result<CheckedTemporalClause, PendingClauseForm> {
+        let clause = claim.node();
+        let mut form = self
+            .package
+            .temporal_clause_run_form(claim)
+            .map_err(PendingClauseForm::Read)?;
+        if !form.captures.is_empty() {
+            let node = self
+                .package
+                .temporal_clause_node(clause)
+                .map_err(PendingClauseForm::Read)?;
+            return Err(PendingClauseForm::Read(
+                fsl_package::BareClauseRefusal::Pending {
+                    fact: "capture",
+                    node: node.clone(),
+                },
+            ));
+        }
+        if let ValueType::Reference(object) = &form.over.1 {
+            form.populations = self.model.overlapping_populations(object.clone());
+        }
+        CheckedTemporalClause::of_package_form(form, self.world.types(), position_limit)
+            .map_err(PendingClauseForm::Build)
+    }
+
     /// FR-940 "Package form of a state-graph claim": the state-graph claim
     /// declared at the `claim` occurrence `claim`, read from the package's
     /// nodes ([`BarePackage::state_graph_claim_form`]) and rebuilt as S3

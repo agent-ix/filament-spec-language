@@ -1335,6 +1335,191 @@ pub(crate) fn run_package_temporal_over(
     )
 }
 
+/// FR-330: one temporal clause a checked package carries, read over a trace of
+/// record samples through the package's own evaluator.
+pub struct PackageSampledRequest<'a> {
+    /// The package's evaluator.
+    pub evaluator: &'a dyn fsl_eval::simulation::model::ModelEvaluator,
+    /// The temporal clause's declared name.
+    pub name: &'a str,
+    /// The package form of the clause and its node's key; `None` when the
+    /// package declares no clause of that name.
+    pub clause: Option<(
+        &'a fsl_semantics::check::CheckedTemporalClause,
+        &'a filament_exact::NodeKey,
+    )>,
+    /// The package's type environment, which types each sample.
+    pub types: &'a filament_semantic_value::declaration::TypeEnvironment,
+    /// The samples, each position the canonical text of one record value; a
+    /// finite trace or a lasso with a non-empty loop.
+    pub trace: &'a TraceInput,
+    /// The evaluation meter's accounting limits.
+    pub accounting: filament_exact::ScalarLimits,
+}
+
+/// The report of a package-route run that stopped with `disposition` and used
+/// `usage`: no witness, ledger, window or counterexample.
+pub fn disposition_report(
+    disposition: ClauseDisposition,
+    usage: ClauseRunUsage,
+) -> Box<ClauseRunReport> {
+    Box::new(ClauseRunReport {
+        basis: match &disposition {
+            ClauseDisposition::Temporal(verdict) => verdict.basis(),
+            _ => SettlementBasis::Unavailable,
+        },
+        witness: None,
+        state_clause_counterexample: None,
+        frame_field_values: None,
+        consequent_source_events: if disposition.truth().is_some() {
+            ConsequentSourceEvents::Refused(ConsequentEventRefusal::Temporal)
+        } else {
+            ConsequentSourceEvents::Unavailable
+        },
+        disposition,
+        usage,
+        ledger: None,
+        finite_window: None,
+        counterexample: None,
+        decisive: None,
+        authenticated_temporal_selection: None,
+        refused_at: None,
+    })
+}
+
+/// The clause, its node's key, the represented samples and the trace's shape
+/// of `request`, or the report of the first thing that stops the run: a clause
+/// the package does not declare, a trace the package form does not read, a
+/// sample the clause's record type refuses.
+fn package_samples<'a>(
+    request: &PackageSampledRequest<'a>,
+) -> Result<
+    (
+        &'a fsl_semantics::check::CheckedTemporalClause,
+        &'a filament_exact::NodeKey,
+        Vec<Value>,
+        TemporalTrace,
+    ),
+    Box<ClauseRunReport>,
+> {
+    let early = |disposition| disposition_report(disposition, ClauseRunUsage::default());
+    let Some((clause, key)) = request.clause else {
+        return Err(early(ClauseDisposition::MissingName {
+            name: request.name.to_owned(),
+        }));
+    };
+    let (ValueType::Composite(record), Some(shape)) = (&clause.over().1, request.trace.shape())
+    else {
+        return Err(early(ClauseDisposition::EvaluateFault(
+            filament_semantic_value::catalog::InternalFault::new(
+                "temporal",
+                "package-sampled-run-reads-a-record-trace",
+            ),
+        )));
+    };
+    let mut samples: Vec<Value> = Vec::new();
+    for (index, document) in request.trace.documents().enumerate() {
+        match fsl_semantics::model::observation::admit_record_sample(
+            request.types,
+            record,
+            document.identity.as_bytes(),
+        ) {
+            Ok(sample) => samples.push(sample),
+            Err(mut record) => {
+                record.fields.insert("position", index.to_string());
+                return Err(early(ClauseDisposition::Admit(AdmissionFailure::Refused(
+                    Box::new(record),
+                ))));
+            }
+        }
+    }
+    Ok((clause, key, samples, shape))
+}
+
+/// FR-757 "Cross-evaluation" over a checked package: the valuation of every
+/// atom and activation of the clause over the record samples of a finite
+/// trace or lasso, as the source route's valuation run reads it.
+///
+/// # Errors
+///
+/// The report the source route gives for the same stop: a missing clause, a
+/// refused sample, or the fault of a valuation that reads every atom and
+/// activation.
+pub fn run_package_valuation(
+    request: &PackageSampledRequest<'_>,
+) -> Result<fsl_eval::temporal::ObservedValuation, Box<ClauseRunReport>> {
+    let (clause, key, samples, shape) = package_samples(request)?;
+    let mut meter = Meter::new(request.accounting);
+    fsl_eval::temporal::package_observed_valuation(
+        request.evaluator,
+        clause,
+        key,
+        &samples,
+        shape,
+        &mut meter,
+    )
+    .map_err(|_| {
+        disposition_report(
+            ClauseDisposition::EvaluateFault(filament_semantic_value::catalog::InternalFault::new(
+                "temporal",
+                "valuation-reads-every-atom-and-activation",
+            )),
+            ClauseRunUsage::from_meter(&meter, AdmissionUsage::default()),
+        )
+    })
+}
+
+/// FR-330: [`run_temporal`] over the record samples of a checked package's
+/// clause, for the one route the package form reads: a clause under the
+/// infinite-trace profile over a finite trace or a lasso. A refused condition
+/// reports the source route's refusal code and cause, with no source span.
+pub fn run_package_sampled(request: &PackageSampledRequest<'_>) -> Box<ClauseRunReport> {
+    let (clause, key, samples, shape) = match package_samples(request) {
+        Ok(read) => read,
+        Err(report) => return report,
+    };
+    let mut meter = Meter::new(request.accounting);
+    let observed = fsl_eval::temporal::evaluate_package_positions(
+        request.evaluator,
+        clause,
+        key,
+        &samples,
+        shape,
+        &mut meter,
+    );
+    let inactive = observed.inactive;
+    let (disposition, refused_at) = match (observed.stopped, observed.result) {
+        // A refused condition is the caller's: the source route's code and
+        // cause, located at the package node, which has no source span.
+        (Some(HoldsStop::Refused { at, evaluation }), _) => (
+            match super::super::call::convert_outcome_resolving(evaluation, |_| None, &[]) {
+                Ok(outcome) => ClauseDisposition::Evaluate(outcome),
+                Err(refusal) => refusal_disposition(*refusal),
+            },
+            Some(at.index()),
+        ),
+        (Some(HoldsStop::Failed(failure)), _) => {
+            (refusal_disposition(*convert_call_failure(failure)), None)
+        }
+        (None, Ok(_)) if inactive => (ClauseDisposition::Temporal(TemporalVerdict::Inactive), None),
+        (None, Ok(outcome)) => (ClauseDisposition::Temporal(verdict(outcome)), None),
+        (None, Err(TemporalRefusal::Fault(fault))) => {
+            (ClauseDisposition::EvaluateFault(fault), None)
+        }
+        (None, Err(refusal)) => (
+            ClauseDisposition::TemporalRefusal(trace_refusal(refusal)),
+            None,
+        ),
+    };
+    let (disposition, counterexample) =
+        with_counterexample(clause, request.trace, disposition, observed.undefined);
+    let usage = ClauseRunUsage::from_meter(&meter, AdmissionUsage::default());
+    let mut finished = disposition_report(disposition, usage);
+    finished.counterexample = counterexample;
+    finished.refused_at = refused_at;
+    finished
+}
+
 /// FR-820: FR-330's report of the sampled clause `node` over a `Finite` trace
 /// of `len` positions, from `observed`, the run a carried stream reached in
 /// place of the batch evaluation, and `usage`, the work it charged. `trace`
@@ -1371,7 +1556,7 @@ pub(crate) fn streamed_sample_report(
         TraceInput::Finite(Vec::new())
     };
     let (disposition, counterexample) =
-        with_counterexample(node, &positions, disposition, observed.undefined);
+        with_counterexample(node.clause(), &positions, disposition, observed.undefined);
     ClauseRunReport {
         basis: match &disposition {
             ClauseDisposition::Temporal(verdict) => verdict.basis(),
@@ -1413,7 +1598,7 @@ pub(crate) fn with_subject_counterexample(
         _ => false,
     };
     if needs {
-        match counterexample(node, trace, &report.disposition, first_undefined) {
+        match counterexample(node.clause(), trace, &report.disposition, first_undefined) {
             Some(built) => report.counterexample = Some(built),
             None => {
                 report.disposition = ClauseDisposition::EvaluateFault(
@@ -1890,9 +2075,12 @@ pub(super) fn run_temporal(run: &CompiledRun<'_>, request: &TemporalRun<'_>) -> 
             .chain(repeat)
             .map(|position| position.stamp.clone())
             .collect();
-        let loop_start = period
-            .as_ref()
-            .map(|period| (u64::try_from(prefix.len()).unwrap_or(u64::MAX), period.clone()));
+        let loop_start = period.as_ref().map(|period| {
+            (
+                u64::try_from(prefix.len()).unwrap_or(u64::MAX),
+                period.clone(),
+            )
+        });
         let timed = fsl_eval::temporal::evaluate_observed_timed(
             run.package,
             node,
@@ -1910,7 +2098,7 @@ pub(super) fn run_temporal(run: &CompiledRun<'_>, request: &TemporalRun<'_>) -> 
             disposition
         };
         let (disposition, counterexample) =
-            with_counterexample(node, trace, disposition, timed.undefined);
+            with_counterexample(node.clause(), trace, disposition, timed.undefined);
         let usage = ClauseRunUsage::from_meter(&meter, admitted);
         let mut finished = report(disposition, usage, authenticated_temporal_selection.clone());
         finished.counterexample = counterexample;
@@ -2089,7 +2277,7 @@ pub(super) fn run_temporal(run: &CompiledRun<'_>, request: &TemporalRun<'_>) -> 
         // A violation carries its counterexample (FR-330 Outputs) over record
         // samples as over snapshots: the samples are its steps.
         let (disposition, counterexample) =
-            with_counterexample(node, trace, window.disposition, window.undefined);
+            with_counterexample(node.clause(), trace, window.disposition, window.undefined);
         // FR-504: a progressed trace's violation reads its decisive atom
         // through the finite-trace evaluator, over the supplied trace. A
         // record sample has none.
@@ -2195,7 +2383,7 @@ pub(super) fn run_temporal(run: &CompiledRun<'_>, request: &TemporalRun<'_>) -> 
         // A violation carries its counterexample (FR-330 Outputs) over record
         // samples as over snapshots: the samples are its steps.
         let (disposition, counterexample) =
-            with_counterexample(node, trace, window.disposition, window.undefined);
+            with_counterexample(node.clause(), trace, window.disposition, window.undefined);
         let accepted = !matches!(
             disposition.category(),
             filament_semantic_value::catalog::Category::Refusal
@@ -2252,7 +2440,7 @@ pub(super) fn run_temporal(run: &CompiledRun<'_>, request: &TemporalRun<'_>) -> 
     let (disposition, counterexample, decisive) = match objects {
         Some((environments, reference)) => {
             let (disposition, counterexample) =
-                with_counterexample(node, trace, disposition, observed.undefined);
+                with_counterexample(node.clause(), trace, disposition, observed.undefined);
             with_decisive(
                 &DecisiveRun {
                     run,
@@ -2271,7 +2459,7 @@ pub(super) fn run_temporal(run: &CompiledRun<'_>, request: &TemporalRun<'_>) -> 
         }
         None => {
             let (disposition, counterexample) =
-                with_counterexample(node, trace, disposition, observed.undefined);
+                with_counterexample(node.clause(), trace, disposition, observed.undefined);
             (disposition, counterexample, None)
         }
     };
@@ -2942,7 +3130,7 @@ pub(super) fn observation_slot(trace: &TraceInput, at: usize) -> Option<usize> {
 /// `Undefined` that is a violation whose counterexample the run cannot build
 /// is an internal failure: FR-267 writes no such verdict without one.
 fn with_counterexample(
-    node: &fsl_semantics::check::TemporalClauseNode,
+    clause: &fsl_semantics::check::CheckedTemporalClause,
     trace: &TraceInput,
     disposition: ClauseDisposition,
     undefined: Option<FirstUndefined>,
@@ -2958,7 +3146,7 @@ fn with_counterexample(
         ClauseDisposition::Temporal(TemporalVerdict::Undefined { cause, .. })
             if !matches!(cause, TemporalUndefinedCause::InsufficientData { .. })
     );
-    match counterexample(node, trace, &disposition, undefined) {
+    match counterexample(clause, trace, &disposition, undefined) {
         Some(counterexample) => (disposition, Some(counterexample)),
         None if needed => (
             ClauseDisposition::EvaluateFault(filament_semantic_value::catalog::InternalFault::new(
@@ -2995,13 +3183,12 @@ fn step_interval(
 /// disposition, and for an `Undefined` result whose first undefined reading
 /// the evaluator did not record at its position.
 fn counterexample(
-    node: &fsl_semantics::check::TemporalClauseNode,
+    clause: &fsl_semantics::check::CheckedTemporalClause,
     trace: &TraceInput,
     disposition: &ClauseDisposition,
     undefined: Option<FirstUndefined>,
 ) -> Option<crate::ObservedTemporalCounterexample> {
     use crate::{ObservedTemporalCounterexample, ObservedTemporalKind, ObservedTemporalStep};
-    let clause = node.clause();
     let documents: Vec<&DocumentRef> = trace.documents().collect();
     // FR-330-AC-18: a record sample is cited by its index in the trace, a
     // snapshot by its labels.
