@@ -471,7 +471,11 @@ fn source_queries_aggregate_a_complete_population_view() {
     );
     let arguments = json!([{"parameter": "p", "value": {"population": population()}}]);
 
-    let sum = completed(&spine_call(directory.path(), "totalVersions", arguments.clone()));
+    let sum = completed(&spine_call(
+        directory.path(),
+        "totalVersions",
+        arguments.clone(),
+    ));
     assert_eq!(sum, json!({"integer": "3"}));
 
     let count = completed(&spine_call(directory.path(), "countNewer", arguments));
