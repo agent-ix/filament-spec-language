@@ -140,3 +140,32 @@ fn the_default_sc_litmus_claim_has_source_and_package_route_parity() {
     assert_eq!(label(&package.item(0)), "proved", "{}", package.document());
     assert_eq!(package.item(0)["record"], source.item(0)["record"]);
 }
+
+/// A later attempt retains the earlier attempt's result binder while its
+/// constraint reads it, on both protocol routes.
+#[trace("TC-2958", "FR-940-AC-6")]
+#[test]
+fn a_later_package_attempt_can_read_an_earlier_result_binder() {
+    let run = "sequence Main { \
+        attempt A by c on M::Core::look contracts [LooksY, Looked] as (a: Boolean) { true }; \
+        attempt B by c on M::Core::copy contracts [CopyR] as (b: Boolean) { not a }; \
+        }";
+    let body = sb_unit(run).replace(
+        crate::litmus::NO_BOTH_ZERO,
+        "temporal BinderLifetime using t0 over (k: M::Core) clock \
+         \"model-steps\" on origin { always holds(true) }\n",
+    );
+    let ws = Workspace::new("package-protocol-binder-lifetime");
+    let source_request = litmus_request(
+        &ws,
+        &body,
+        request_without_memory(json!([{"claim": "BinderLifetime"}])),
+    );
+    let source = analyze(&source_request);
+    assert_eq!(label(&source.item(0)), "proved", "{}", source.document());
+    assert_eq!(source.exit, 0, "{}", source.document());
+
+    let package = package_run(&ws, &source_request);
+    assert_eq!(package.item(0), source.item(0), "{}", package.document());
+    assert_eq!(package.exit, source.exit);
+}
