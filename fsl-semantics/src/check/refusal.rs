@@ -3050,7 +3050,7 @@ pub enum CheckCause {
         /// The requested field.
         field: String,
         /// The authored member name.
-        span: Span,
+        span: Option<Span>,
     },
     /// A synthesis domain with no finite extent.
     SynthesisUnboundedDomain {

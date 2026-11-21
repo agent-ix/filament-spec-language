@@ -406,10 +406,12 @@ impl DeclarationRegions {
             CheckCause::TerminalWithoutObjectType { span, .. }
             | CheckCause::TimedNotChecked { span, .. }
             | CheckCause::SynthesisUnboundedDomain { span, .. }
-            | CheckCause::PlanUnsupported { span, .. }
-            | CheckCause::PlanUnknownField { span, .. } => {
+            | CheckCause::PlanUnsupported { span, .. } => {
                 region(&self.source, self.embedding.as_deref(), *span)
             }
+            CheckCause::PlanUnknownField { span, .. } => span
+                .and_then(|span| region(&self.source, self.embedding.as_deref(), span))
+                .or_else(|| self.region(&refusal.location)),
             CheckCause::RefinementNotEmitted { span, .. } => {
                 region(&self.source, self.embedding.as_deref(), *span)
             }
