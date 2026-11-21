@@ -100,6 +100,69 @@ fn the_ra_litmus_claim_has_source_and_package_route_parity() {
     assert_eq!(package.exit, source.exit);
 }
 
+fn fenced_sb(ordering: &str) -> String {
+    sb_unit(
+        &sb_run("", "relaxed", "relaxed")
+            .replace(
+                "attempt Ly",
+                &format!("fence Fl ordering {ordering}; attempt Ly"),
+            )
+            .replace(
+                "attempt Lx",
+                &format!("fence Fr ordering {ordering}; attempt Lx"),
+            ),
+    )
+}
+
+/// A TSO fence drains the store buffer before the load on both routes.
+#[trace("TC-2958", "FR-940-AC-6", "FR-850-AC-11", "FR-221-AC-2")]
+#[test]
+fn package_seq_cst_fences_forbid_the_tso_store_buffering_outcome() {
+    let ws = Workspace::new("package-protocol-tso-fences");
+    let path = litmus_request(
+        &ws,
+        &fenced_sb("seq_cst"),
+        request_extra(json!([{"claim": "NoBothZero"}])),
+    );
+    let source = analyze(&path);
+    assert_eq!(label(&source.item(0)), "proved", "{}", source.document());
+    let package = package_run(&ws, &path);
+    assert_eq!(package.item(0), source.item(0), "{}", package.document());
+    assert_eq!(package.exit, source.exit);
+}
+
+/// RA's SC fence rule forbids the weak outcome through the shared executor.
+#[trace("TC-2958", "FR-940-AC-6", "FR-222-AC-2")]
+#[test]
+fn package_seq_cst_fences_forbid_the_ra_store_buffering_outcome() {
+    let ws = Workspace::new("package-protocol-ra-sc-fences");
+    let mut extra = request_extra(json!([{"claim": "NoBothZero"}]));
+    extra["memory"][0]["model"] = json!("ra");
+    let path = litmus_request(&ws, &fenced_sb("seq_cst"), extra);
+    let source = analyze(&path);
+    assert_eq!(label(&source.item(0)), "proved", "{}", source.document());
+    let package = package_run(&ws, &path);
+    assert_eq!(package.item(0), source.item(0), "{}", package.document());
+    assert_eq!(package.exit, source.exit);
+}
+
+/// A weaker RA fence preserves the weak outcome and bytes-only replay.
+#[trace("TC-2958", "FR-940-AC-6")]
+#[test]
+fn package_acquire_fences_preserve_the_ra_counterexample_and_replay() {
+    let ws = Workspace::new("package-protocol-ra-acquire-fences");
+    let mut extra = request_extra(json!([{"claim": "NoBothZero"}]));
+    extra["memory"][0]["model"] = json!("ra");
+    let path = litmus_request(&ws, &fenced_sb("acquire"), extra);
+    let source = analyze(&path);
+    assert_eq!(label(&source.item(0)), "refuted", "{}", source.document());
+    assert_eq!(source.item(0)["replay"]["reproduced"], true);
+    let package = package_run(&ws, &path);
+    assert_eq!(package.item(0), source.item(0), "{}", package.document());
+    assert_eq!(package.item(0)["replay"]["reproduced"], true);
+    assert_eq!(package.exit, source.exit);
+}
+
 /// FR-940-AC-6: the protocol's race-freedom result reads the same admitted
 /// protocol and memory-model facts on the package route.
 #[trace("TC-2958", "FR-940-AC-6", "TC-3050", "FR-850-AC-11")]

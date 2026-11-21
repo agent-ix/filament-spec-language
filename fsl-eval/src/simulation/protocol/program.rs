@@ -972,7 +972,7 @@ impl<'a> Program<'a> {
         Ok(program)
     }
 
-    /// Build the sequence/parallel/attempt program directly from the admitted
+    /// Build the sequence/parallel/attempt/fence program directly from the admitted
     /// package form. Package execution keeps expression slots out of the
     /// source `CheckedBody` fields; callers evaluate them through the package
     /// evaluator.
@@ -1008,6 +1008,7 @@ impl<'a> Program<'a> {
                 fsl_package::protocol_view::ControlOperation::Sequence => ControlStep::Sequence,
                 fsl_package::protocol_view::ControlOperation::Parallel => ControlStep::Parallel,
                 fsl_package::protocol_view::ControlOperation::Attempt => ControlStep::Attempt,
+                fsl_package::protocol_view::ControlOperation::Fence => ControlStep::Fence,
                 operation => {
                     return Err(ProtocolRefusal::Unsupported(
                         super::Unsupported::PackageControl(operation),
@@ -1120,6 +1121,19 @@ impl<'a> Program<'a> {
             );
         }
 
+        let fences = package
+            .controls
+            .values()
+            .filter(|control| {
+                control.operation == fsl_package::protocol_view::ControlOperation::Fence
+            })
+            .map(|control| {
+                control
+                    .ordering
+                    .map(|ordering| (control.id, ordering))
+                    .ok_or_else(|| ProtocolRefusal::fault("a-package-fence-has-an-ordering"))
+            })
+            .collect::<Result<BTreeMap<_, _>, _>>()?;
         let finish_node = ProtocolNodeId(next_synthetic_id);
         let finish_slot = slots.len();
         slots.push(None);
@@ -1170,7 +1184,7 @@ impl<'a> Program<'a> {
             choices: BTreeMap::new(),
             awaits: BTreeMap::new(),
             checks: BTreeMap::new(),
-            fences: BTreeMap::new(),
+            fences,
             events: BTreeMap::new(),
             messages: BTreeMap::new(),
             channels: Vec::new(),

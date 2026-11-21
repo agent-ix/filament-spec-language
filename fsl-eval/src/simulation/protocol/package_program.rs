@@ -56,7 +56,7 @@ pub struct PackageControl {
     pub binder_key: Option<NodeKey>,
     /// The admitted value type of the attempt result binder.
     pub binder_type: Option<filament_exact::ValueType>,
-    /// The attempt's explicit memory ordering.
+    /// The attempt's explicit memory ordering or the fence's ordering.
     pub ordering: Option<fsl_forms::AccessOrdering>,
     /// The state clauses selected by an attempt's `contracts` member.
     pub contracts: Vec<fsl_package::CheckedNodeId>,
@@ -342,6 +342,18 @@ impl<'a> PackageProtocolProgram<'a> {
                             .collect(),
                     )
                 }
+                ControlBody::Fence { ordering } => (
+                    Vec::new(),
+                    Vec::new(),
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    Some(*ordering),
+                    Vec::new(),
+                ),
                 _ => return Err(PackageProgramRefusal::Unsupported(control.operation)),
             };
             let constraint = if matches!(&control.body, ControlBody::Attempt { .. }) {
