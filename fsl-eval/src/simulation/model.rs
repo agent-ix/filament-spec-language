@@ -903,6 +903,19 @@ impl<'a> ModelSystem<'a> {
         }
     }
 
+    /// The effective identity of the object type the declaration `key`
+    /// names, as the checked type environment knows it.
+    pub fn type_identity(&self, key: &DeclarationKey) -> Option<EffectiveId> {
+        self.model.type_identity(key)
+    }
+
+    /// The declared fields of the object type `type_key` in its effective
+    /// attribute order, whose values an object of a state holds by each
+    /// field's own key.
+    pub fn fields_of(&self, type_key: &DeclarationKey) -> Option<&[StateField]> {
+        self.fields.get(type_key).map(Vec::as_slice)
+    }
+
     /// [`Self::new`] over the one domain package `model` names, for a unit
     /// that selects several models (ADR-020 RM-1: a refinement's abstract
     /// and concrete subjects are two models of one checked package). The
