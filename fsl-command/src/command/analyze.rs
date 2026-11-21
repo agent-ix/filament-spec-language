@@ -350,6 +350,8 @@ fn run_package(
         settle_package_run(run, negotiate, cancel)
     })
     .map_err(|failure| match failure {
+        PackageRunError::Input(refusal) => package_input_refusal(refusal, package.package().name()),
+        PackageRunError::ClauseBuild { node, refusal } => package_clause_refusal(node, refusal),
         PackageRunError::Pending(pending) => RunCause::AnalyzeNotYetImplemented {
             member: "package",
             detail: pending.detail(),
@@ -370,6 +372,257 @@ fn run_package(
         requirements: None,
         sources: crate::Sources::default(),
     })
+}
+
+/// Retain the original admission, limit or invariant class of an input that
+/// could not rebuild from the admitted package.
+fn package_input_refusal(
+    refusal: fsl_eval::simulation::model::PendingPackageForm,
+    package: &str,
+) -> RunCause {
+    use fsl_eval::simulation::model::PendingPackageForm;
+    match refusal {
+        PendingPackageForm::Model(failure) => RunCause::AnalyzeRefused(Box::new(
+            fsl_analyze::analyze::AnalyzeRefusal::Binding(failure),
+        )),
+        PendingPackageForm::World(failure) | PendingPackageForm::Reward(failure) => {
+            let message = format!("the package input could not rebuild: {failure:?}");
+            let (code, cause) = match failure.into_view(package) {
+                Ok(view) => {
+                    let (code, cause) = view.catalog();
+                    (
+                        fsl_foundation::Code::from_code(code)
+                            .unwrap_or(fsl_foundation::Code::RuntimeInvariant),
+                        cause,
+                    )
+                }
+                Err(fsl_package::SlotSelectionFailure::Fault(fault)) => {
+                    let catalog = fault.catalog_code();
+                    (fsl_foundation::Code::RuntimeInvariant, catalog.cause())
+                }
+                Err(
+                    fsl_package::SlotSelectionFailure::MissingNode(_)
+                    | fsl_package::SlotSelectionFailure::MalformedNode(_)
+                    | fsl_package::SlotSelectionFailure::MissingMember { .. },
+                ) => (
+                    fsl_foundation::Code::RuntimeInvariant,
+                    "established-invariant-broken",
+                ),
+            };
+            RunCause::AnalyzePackage {
+                code,
+                cause: Some(cause.to_owned()),
+                pointer: None,
+                message,
+            }
+        }
+        PendingPackageForm::Operations(failure) => {
+            let catalog = failure
+                .errors
+                .first()
+                .map(|error| error.cause.catalog_code());
+            RunCause::AnalyzePackage {
+                code: catalog
+                    .and_then(|catalog| fsl_foundation::Code::from_code(catalog.code()))
+                    .unwrap_or(fsl_foundation::Code::RuntimeInvariant),
+                cause: catalog.map(|catalog| catalog.cause().to_owned()),
+                pointer: None,
+                message: format!("the package operations could not rebuild: {failure:?}"),
+            }
+        }
+        PendingPackageForm::Form { form, node } => RunCause::AnalyzeNotYetImplemented {
+            member: "package",
+            detail: format!(
+                ": the {} form at {node:?} has no package form yet",
+                form.name()
+            ),
+            locus: None,
+        },
+        refusal @ (PendingPackageForm::ProbabilisticNodes(_)
+        | PendingPackageForm::Probabilistic(_)
+        | PendingPackageForm::SourceModel(_)) => RunCause::AnalyzePackage {
+            code: fsl_foundation::Code::RuntimeInvariant,
+            cause: Some("established-invariant-broken".to_owned()),
+            pointer: None,
+            message: refusal.to_string(),
+        },
+    }
+}
+
+/// A selected clause is distinct from an absent claim name, including when
+/// its checked form reaches a stage limit.
+fn package_clause_refusal(
+    node: fsl_package::CheckedNodeId,
+    refusal: fsl_semantics::check::PackageClauseRefusal,
+) -> RunCause {
+    use fsl_semantics::check::PackageClauseRefusal;
+    let message = format!("the selected package clause at {node:?} could not rebuild: {refusal:?}");
+    let (code, cause) = match refusal {
+        PackageClauseRefusal::Profile(_) => {
+            return RunCause::AnalyzeNotYetImplemented {
+                member: "package",
+                detail: format!(": {message}"),
+                locus: None,
+            }
+        }
+        PackageClauseRefusal::Horizon(limit)
+        | PackageClauseRefusal::Domains(fsl_semantics::family::ClassifyFailure::Limit(limit)) => (
+            fsl_foundation::Code::StageLimitExceeded,
+            limit.kind().catalog_cause(),
+        ),
+        PackageClauseRefusal::Domains(fsl_semantics::family::ClassifyFailure::Fault(fault)) => (
+            fsl_foundation::Code::RuntimeInvariant,
+            fault.catalog_code().cause(),
+        ),
+        PackageClauseRefusal::Arena
+        | PackageClauseRefusal::Shape
+        | PackageClauseRefusal::ClockBinding => (
+            fsl_foundation::Code::RuntimeInvariant,
+            "established-invariant-broken",
+        ),
+    };
+    RunCause::AnalyzePackage {
+        code,
+        cause: Some(cause.to_owned()),
+        pointer: None,
+        message,
+    }
+}
+
+#[cfg(test)]
+mod package_intake_tests {
+    use super::*;
+    use filament_semantic_value::catalog::{CatalogCode, InternalFault};
+    use fsl_eval::simulation::model::PendingPackageForm;
+    use fsl_foundation::diagnostic::LimitExceeded;
+    use fsl_foundation::setting::Setting;
+    use fsl_foundation::Span;
+    use fsl_semantics::check::{
+        AssemblyCause, AssemblyError, AssemblyRefusal, PackageClauseRefusal,
+    };
+    use fsl_semantics::model::observation::{AdmissionFailure, AdmissionRecord};
+    use ix_trace_rs::trace;
+
+    /// Input admission retains its own class rather than becoming an unnamed fault.
+    #[trace("FR-850-AC-3", "FR-940-AC-6")]
+    #[test]
+    fn package_input_failures_preserve_the_typed_form() {
+        let slot = || {
+            fsl_package::BareSelectionFailure::Slot(fsl_package::SlotSelectionFailure::Fault(
+                InternalFault::new("test", "world-invariant"),
+            ))
+        };
+        let record = || AdmissionRecord {
+            catalog: CatalogCode::new("invalid_runtime_input", "wrong-model"),
+            fields: Default::default(),
+            path: Vec::new(),
+            kernel: None,
+        };
+        let failures = [
+            (PendingPackageForm::World(slot()), "runtime_invariant"),
+            (
+                PendingPackageForm::Model(AdmissionFailure::Refused(Box::new(record()))),
+                "invalid_runtime_input",
+            ),
+            (
+                PendingPackageForm::Operations(AssemblyRefusal {
+                    errors: vec![AssemblyError {
+                        cause: AssemblyCause::TypeLimit(LimitExceeded::new(Setting::S3Nodes, 7, 8)),
+                        span: Span { start: 0, end: 0 },
+                    }],
+                }),
+                "stage_limit_exceeded",
+            ),
+            (
+                PendingPackageForm::ProbabilisticNodes(fsl_package::ProbabilisticReadFault(
+                    "node-invariant",
+                )),
+                "runtime_invariant",
+            ),
+            (
+                PendingPackageForm::Probabilistic(
+                    fsl_semantics::check::PackageProbabilisticRefusal::UnknownOperation(
+                        "step".to_owned(),
+                    ),
+                ),
+                "runtime_invariant",
+            ),
+            (PendingPackageForm::Reward(slot()), "runtime_invariant"),
+        ];
+        for (failure, code) in failures {
+            let cause = package_input_refusal(failure, "test");
+            assert_eq!(cause.code().as_str(), code, "{cause:?}");
+            assert!(!matches!(
+                cause,
+                RunCause::AnalyzeFault | RunCause::AnalyzeNotYetImplemented { .. }
+            ));
+        }
+        let cause = package_input_refusal(
+            PendingPackageForm::Model(AdmissionFailure::Incomplete(Box::new(AdmissionRecord {
+                catalog: CatalogCode::new("incomplete_population", "missing-evidence"),
+                ..record()
+            }))),
+            "test",
+        );
+        assert_eq!(cause.code().as_str(), "incomplete_population");
+    }
+
+    /// A real builder domain limit retains its configured bound and limit class.
+    #[trace("FR-850-AC-3", "FR-940-AC-6")]
+    #[test]
+    fn a_known_package_clause_retains_its_build_refusal() {
+        let form = fsl_semantics::check::PackageClauseForm {
+            name: "C".to_owned(),
+            span: Span { start: 0, end: 0 },
+            profile: fsl_semantics::check::TemporalProfile::InfiniteTrace,
+            package_name: "test".to_owned(),
+            over: ("x".to_owned(), filament_exact::ValueType::Boolean),
+            clock: "events".to_owned(),
+            activation: fsl_semantics::check::Activation::Origin,
+            trigger: None,
+            captures: Vec::new(),
+            populations: Vec::new(),
+            formula: vec![fsl_semantics::check::PackageFormulaNode::Constant(true)],
+        };
+        let types = filament_semantic_value::declaration::TypeEnvironment::default();
+        assert!(
+            fsl_semantics::check::CheckedTemporalClause::of_package_form(form.clone(), &types, 1)
+                .is_ok()
+        );
+        let refusal = fsl_semantics::check::CheckedTemporalClause::of_package_form(form, &types, 0)
+            .expect_err("a real domain traversal exceeds its configured bound");
+        let PackageClauseRefusal::Domains(fsl_semantics::family::ClassifyFailure::Limit(limit)) =
+            &refusal
+        else {
+            panic!("the domain limit remains typed: {refusal:?}");
+        };
+        assert_eq!(limit.configured_bound(), 0);
+        assert_eq!(limit.actual(), 1);
+        let node = fsl_package::checked_node_id_of(
+            &filament_exact::NodeKey::new("test", vec![], 0).expect("node"),
+        );
+        for (refusal, bound) in [
+            (
+                PackageClauseRefusal::Horizon(LimitExceeded::new(Setting::S3WorkUnits, 7, 8)),
+                7,
+            ),
+            (refusal, 0),
+        ] {
+            let cause = package_clause_refusal(node.clone(), refusal);
+            assert_eq!(cause.code().as_str(), "stage_limit_exceeded");
+            let RunCause::AnalyzePackage { message, cause, .. } = cause else {
+                panic!("typed limit");
+            };
+            assert!(
+                message.contains(&format!("configured_bound: {bound}")),
+                "{message}"
+            );
+            assert!(matches!(
+                cause.as_deref(),
+                Some("work-budget-exceeded" | "node-count-exceeded")
+            ));
+        }
+    }
 }
 
 /// The request's inputs and the intake that read them, which still charges
@@ -766,6 +1019,9 @@ fn admit_package<'d>(
     }
     if request.integer_division.is_some() {
         return Err(invalid("integer_division", "a package is already compiled"));
+    }
+    if !request.clocks.is_empty() {
+        return Err(invalid("clocks", "a package already records its clocks"));
     }
     let mut intake = intake_with_bytes(
         directory,

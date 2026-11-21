@@ -40,6 +40,39 @@ fn first_diagnostic(run: &Run) -> Value {
     run.document()["diagnostics"][0].clone()
 }
 
+/// A package's recorded clocks cannot be restated at analyze request intake.
+#[trace("TC-2410", "FR-850-AC-3")]
+#[test]
+fn a_package_analyze_refuses_request_clocks_before_file_intake() {
+    let ws = Workspace::new("package-request-clocks");
+    let unavailable = json!({
+        "package": {"directory": "absent-handoff"},
+        "clocks": {"Bounded": {"kind": "event_position", "sequence_authority": "events"}}
+    });
+    let run = analyze_members(&ws, "clocks.json", &unavailable);
+    let diagnostic = first_diagnostic(&run);
+    assert_eq!(run.exit, 20, "{diagnostic}");
+    assert_eq!(diagnostic["code"], "invalid_request");
+    assert_eq!(run.document()["stage"], "request");
+    assert!(diagnostic.to_string().contains("clocks"), "{diagnostic}");
+
+    let mut empty = unavailable;
+    empty["clocks"] = json!({});
+    let run = analyze_members(&ws, "empty-clocks.json", &empty);
+    assert_eq!(first_diagnostic(&run)["code"], "invalid_package");
+    assert!(first_diagnostic(&run).to_string().contains("missing-file"));
+
+    let body = bounded();
+    let source = counter_request(&ws, &body, json!([{"claim": "Bounded"}]));
+    let mut source: Value =
+        serde_json::from_slice(&std::fs::read(&source).expect("source request"))
+            .expect("request JSON");
+    source["request"]["clocks"] =
+        json!({"Bounded": {"kind": "event_position", "sequence_authority": "model-steps"}});
+    let source = analyze(&ws.write("source-clocks.json", source.to_string().as_bytes()));
+    assert_eq!(source.exit, 0, "{}", source.document());
+}
+
 /// FR-850-AC-2: the package route refutes `AtMostTwo` with the source
 /// route's counterexample and replay.
 #[trace("TC-2410", "FR-850-AC-2")]
