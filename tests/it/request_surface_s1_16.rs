@@ -11,6 +11,10 @@ use ix_trace_rs::trace;
 use serde_json::{json, Value};
 use std::path::Path;
 
+const PLAN_HEADER: &str = "language \"ix:native\" edition \"1-draft\";\n\
+     profile v = \"filament.temporal.infinite-trace/v1\";\n\
+     model Config = \"example/config-version\";\n";
+
 const MODEL_HEADER: &str = "language \"ix:native\" edition \"1-draft\";\n\
      profile v = \"filament.model.complete/v1\";\n\
      model Config = \"example/config-version\";\n";
@@ -236,7 +240,7 @@ fn a_passing_run_records_tested_and_never_proved() {
 fn the_planner_returns_optimal_and_infeasible_with_certificates() {
     let unit = |lengths: &str| {
         format!(
-            "{MODEL_HEADER}type Lengths = {lengths};\n\
+            "{PLAN_HEADER}type Lengths = {lengths};\n\
              synthesis Reach using v grammar Config::ConfigVersion domain Lengths \
              minimize Reach.length satisfies {{ Reach.length >= 1 }};\n"
         )
@@ -873,7 +877,7 @@ fn the_planner_minimizes_a_per_step_cost_sum() {
 #[trace("FSpec-TC-1603", "FSpec-FR-650-AC-3")]
 fn the_planner_reports_infeasible_and_incomplete() {
     let unit = format!(
-        "{MODEL_HEADER}type Lengths = Int[0, 0];\n\
+        "{PLAN_HEADER}type Lengths = Int[0, 0];\n\
          synthesis Reach using v grammar Config::ConfigVersion domain Lengths \
          satisfies {{ Reach.length >= 1 }};\n"
     );

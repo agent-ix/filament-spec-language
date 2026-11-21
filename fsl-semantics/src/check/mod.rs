@@ -3211,6 +3211,9 @@ impl PackageDeclarations {
             &scope,
             &signatures,
             &plan_populations,
+            &self.source,
+            &self.source_owners,
+            &self.package_name,
         )?;
         let mut seen_operations = std::collections::BTreeSet::new();
         for operation in &scope.dispatch_operations {

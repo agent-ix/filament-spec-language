@@ -180,6 +180,8 @@ pub(crate) fn declare(
     named: &NamedScope,
     form: &fsl_forms::SynthesisForm,
     grammar: &EffectiveId,
+    source: &fsl_foundation::source::provenance::RawSourceRef,
+    package_name: &str,
     location: &Location,
 ) -> Result<CheckedPlan, CheckRefusal> {
     let types = scope.types();
@@ -307,8 +309,14 @@ pub(crate) fn declare(
         Some(alias) => format!("{alias}::Op"),
         None => "Op".to_owned(),
     };
-    let operation_enum = operation_enum(&enum_name, synthesis, cases.into_iter().collect())
-        .ok_or_else(|| unsupported(location))?;
+    let operation_enum = operation_enum(
+        &enum_name,
+        synthesis,
+        cases.into_iter().collect(),
+        source,
+        package_name,
+    )
+    .ok_or_else(|| unsupported(location))?;
 
     let arguments = key(&[synthesis, "arguments"]).ok_or_else(|| unsupported(location))?;
     composites.push(CompositeDeclaration::new(
@@ -401,8 +409,14 @@ pub(crate) fn declare(
 
 /// The unordered enum `name` over `cases`, admitted under a synthetic owner
 /// no package declaration shares.
-fn operation_enum(name: &str, synthesis: &str, cases: Vec<String>) -> Option<EnumBinding> {
-    let subject = OwnerSubject::new("agent-ix", PLAN_PACKAGE, PLAN_PACKAGE);
+fn operation_enum(
+    name: &str,
+    synthesis: &str,
+    cases: Vec<String>,
+    source: &fsl_foundation::source::provenance::RawSourceRef,
+    package_name: &str,
+) -> Option<EnumBinding> {
+    let subject = OwnerSubject::new(source.authority(), source.identity(), package_name);
     let owners = OwnerSelection::new([NodeOwner::Definition(subject.clone())]);
     let preimage = EnumDeclarationPreimage::new(
         NodeOwner::Definition(subject),

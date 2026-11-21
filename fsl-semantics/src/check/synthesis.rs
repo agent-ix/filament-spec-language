@@ -139,6 +139,12 @@ pub(crate) fn check_forms(
     scope: &Scope,
     signatures: &Signatures,
     named: &NamedScope,
+    source: &fsl_foundation::source::provenance::RawSourceRef,
+    source_owners: &std::collections::BTreeMap<
+        String,
+        fsl_foundation::source::provenance::RawSourceRef,
+    >,
+    package_name: &str,
 ) -> Result<Vec<CheckedSynthesis>, Vec<CheckRefusal>> {
     let mut checked = Vec::with_capacity(forms.len());
     for (index, form) in forms.iter().enumerate() {
@@ -174,8 +180,16 @@ pub(crate) fn check_forms(
                     )]);
                 }
                 Some(
-                    super::plan_value::declare(scope, named, form, object, &location)
-                        .map_err(|refusal| vec![refusal])?,
+                    super::plan_value::declare(
+                        scope,
+                        named,
+                        form,
+                        object,
+                        source_owners.get(&form.name.name).unwrap_or(source),
+                        package_name,
+                        &location,
+                    )
+                    .map_err(|refusal| vec![refusal])?,
                 )
             }
             _ => None,
