@@ -10,7 +10,7 @@ relationships:
 
 ## Description
 
-Verify each refusal of an extension definition supplied through the request. Scope: FR-660-AC-2, FR-660-AC-3, FR-660-AC-4, FR-660-AC-5.
+Verify each refusal of an extension definition supplied through the request. Scope: FR-660-AC-2, FR-660-AC-3, FR-660-AC-4, FR-660-AC-5, FR-660-AC-7.
 
 ## Test Procedure
 
@@ -18,6 +18,7 @@ Verify each refusal of an extension definition supplied through the request. Sco
 2. Supply a document missing `typed_node_schema`, one whose production keyword is `function`, and two mutually dependent entries both selected.
 3. Supply `extensions: null`, an entry with member `version`, an entry missing `file`, an entry with a blank `identity`, and two entries with one identity, with every program and model file absent.
 4. Make the entry's file push the dependent files one byte over `dependent_bytes`, then raise the ceiling.
+5. Compile FR-660-AC-7's `postage_marker` unit with one entry whose `capabilities` is `["original:unknown-capability"]` and whose `definition.json` holds `{}`, then with the id replaced by an inventory capability.
 
 Tag the tests `#[trace("TC-1741", "<AC id>")]`.
 
@@ -27,3 +28,4 @@ Tag the tests `#[trace("TC-1741", "<AC id>")]`.
 - Step 2: `invalid_package` with `missing-member`, `conflicting-definition` and `definition-cycle` respectively, naming the definitions, stage `compile`, exit 20.
 - Step 3: `invalid-request` at stage `request` naming the member for the first four, `invalid_package`/`conflicting-definition` naming both indices for the last; only the request file is read.
 - Step 4: the request settles `incomplete` with `resource_exhausted` (FR-026 Outputs), exit 22, naming `dependent_bytes`; the raised request compiles.
+- Step 5: `unknown_required_feature`, rendered `cause` `unknown-feature`, category `unsupported`, exit 21, the message naming the id, no grammar schema read and no `invalid_package`; with an inventory id, no `unknown-feature` refusal.
