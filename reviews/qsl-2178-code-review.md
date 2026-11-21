@@ -551,3 +551,25 @@ scope:
 
       \   "
 ```
+
+
+## Dispositions
+
+Round 1 at 70f9b659638e36c7bd16754fe154b3fc716388ce.
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | Typed collection now distinguishes ClockRef leaves for field/context/parameter/result completeness and closure walks. Raw Clock inputs fail closed under the authorized missing-authority gate; this scoped fix does not establish the deferred external admission contract. |
+| FND-002 | fixed | Read contexts retain object references only in closure/dependency lists; ClockRef values are refused by the raw gate before interpretation. The real context/parameter regression asserts the specific Unsupported reason, and the ordinary context ghost retains dangling_reference with field peer and object ghost. |
+| FND-003 | deferred | Explicit architecture authorization accepts partial STEP1 only. Both raw source References::resolve and all three Bare observation APIs return typed Unsupported missing-route-neutral-place-identity, preventing the reproduced v1 ordinal alias. Actual supported Clock observation/evaluation parity is NOT fixed or claimed. QSL-2178 remains OPEN for the separately owned STEP2 route-neutral v2 contract and source/Bare parity; typed same-run Rust observations remain trusted under the required documented preconditions. |
+| FND-004 | fixed | The common declared-place authority omits every Map-containing template. An active exact regression checks contains=false for a syntactically forged numeric slot on a real checked Map<Text, Clock> template and owner, independently of the raw Unsupported gate. |
+
+## Round 1 Verification
+
+Frozen disposition head: 70f9b659638e36c7bd16754fe154b3fc716388ce. Round: 1.
+
+Explicit architecture ruling supplied by root authorizes STEP1 only: every raw transported Clock-reference observation on source and Bare routes refuses unknown_required_feature/unsupported-feature with reason missing-route-neutral-place-identity before interpreting v1 IDs. Only typed StateModel::observation/protocol_observation accept trusted states produced or already admitted in the same model run, with documented caller preconditions. No hostile Rust caller authentication, new provenance API, reader/pin/channel or v2 codec is authorized. QSL-2178 remains OPEN for source/Bare external route-neutral authority and map-keyed place IDs. AC72/73 remain unchanged and unmet.
+
+Coder evidence inspected, no reviewer build: eight exact active tests each selected/passed 1 with 0 ignored (external-unsupported, map-forgery, internal-row, stored-row, ordinary-bare, timed-point, selector-bound, protocol-bound), logs /tmp/qsl-third-fix1-<name>.log. AC72/73 exacts each selected 1 and ignored 1, passed 0: /tmp/qsl-third-fix1-ac72-pending.log and /tmp/qsl-third-fix1-ac73-pending.log. Existing x-removed/y-retained red log demonstrates the old ordinal alias; it is not counted green. The stored-row exact now reaches trusted protocol_observation with actual generated c1/c2 references. Optional bootstrap starts absent; checked point and PointPresent restore the required successor reference set, exact reference values/profile 2/3 isolation/no resets/state-key assertions remain, and the actual optional member leaf is [0,4,0]. Protocol dependency edges exclude native Clock references only after observe_state validates them; ordinary missing-holder faults remain. IR manifest and lock unchanged at 1cbd86a48f02e4623e558a3d3b23c066c7f280bf. All fix commits and the full changed code/test/spec delta were inspected.
+
+Scoped mergeability: ready under the explicit partial STEP1 authorization; no still-open finding in this round and no new finding. Original FAIL verdict/findings remain historical and immutable. Supported external Clock admission and full source/Bare parity remain deferred, not PASS.

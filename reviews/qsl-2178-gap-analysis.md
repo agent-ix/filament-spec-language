@@ -115,3 +115,24 @@ scope:
       `Point` the same node key `{package, path: [\"Point\"], ordinal: 0}` each
       time: the source reference is no part of a node key."
 ```
+
+
+## Dispositions
+
+Round 1 at 70f9b659638e36c7bd16754fe154b3fc716388ce.
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | deferred | AC72 pending test now contains actual distinct c1/c2 place identities, exact [c2.x,c1.x] order, present and absent optional repetitions and stored-row evaluation assertions. It remains explicitly ignored for QSL-2178 STEP2; its original success oracle is retained and AC72 is UNMET. Architecture authorization defers external source/Bare route-neutral admission, so this is not a fixed acceptance criterion. |
+| FND-002 | deferred | AC73 pending test now compiles real x+y then x-removed/y-retained models and compares the complete dangling-reference record for the actual old c1.x in r/maybe/refs. The old acceptance alias was reproduced in the red log. The exact dangling oracle is retained but the test remains explicitly ignored for QSL-2178 STEP2 and AC73 is UNMET under the authorized partial scope. |
+| FND-003 | accepted-no-change | Root explicitly accepts the inherited repository assurance backlog for this scoped three-producer pin-window PR only. No broad assurance cleanup was authorized. The original 1135 untagged/81 ignored-only baseline and incomplete full reverse audit remain recorded; global gap verdict stays FAIL. The two newly pending AC72/73 ignored tests are additional known unmet evidence, not silently included in or confused with that baseline. No global matrix rerun or global PASS is claimed. |
+
+## Round 1 Verification
+
+Frozen disposition head: 70f9b659638e36c7bd16754fe154b3fc716388ce. Round: 1.
+
+Explicit architecture ruling supplied by root authorizes STEP1 only: every raw transported Clock-reference observation on source and Bare routes refuses unknown_required_feature/unsupported-feature with reason missing-route-neutral-place-identity before interpreting v1 IDs. Only typed StateModel::observation/protocol_observation accept trusted states produced or already admitted in the same model run, with documented caller preconditions. No hostile Rust caller authentication, new provenance API, reader/pin/channel or v2 codec is authorized. QSL-2178 remains OPEN for source/Bare external route-neutral authority and map-keyed place IDs. AC72/73 remain unchanged and unmet.
+
+Coder evidence inspected, no reviewer build: eight exact active tests each selected/passed 1 with 0 ignored (external-unsupported, map-forgery, internal-row, stored-row, ordinary-bare, timed-point, selector-bound, protocol-bound), logs /tmp/qsl-third-fix1-<name>.log. AC72/73 exacts each selected 1 and ignored 1, passed 0: /tmp/qsl-third-fix1-ac72-pending.log and /tmp/qsl-third-fix1-ac73-pending.log. Existing x-removed/y-retained red log demonstrates the old ordinal alias; it is not counted green. The stored-row exact now reaches trusted protocol_observation with actual generated c1/c2 references. Optional bootstrap starts absent; checked point and PointPresent restore the required successor reference set, exact reference values/profile 2/3 isolation/no resets/state-key assertions remain, and the actual optional member leaf is [0,4,0]. Protocol dependency edges exclude native Clock references only after observe_state validates them; ordinary missing-holder faults remain. IR manifest and lock unchanged at 1cbd86a48f02e4623e558a3d3b23c066c7f280bf. All fix commits and the full changed code/test/spec delta were inspected.
+
+Global gap verdict: FAIL. Scoped mergeability: ready only under explicit partial STEP1 authorization and the recorded accepted/deferred outcomes; AC72/73 remain unmet, QSL-2178 stays OPEN, and no full assurance acceptance is claimed.

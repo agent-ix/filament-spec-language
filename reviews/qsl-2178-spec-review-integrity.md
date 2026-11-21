@@ -78,3 +78,8 @@ scope:
       Assert the full refusal record at
          that field's nested path.
 ```
+
+
+## Round 1 Changed-note Check
+
+Frozen head: 70f9b659638e36c7bd16754fe154b3fc716388ce. Examined only the new FR-106 STEP1 implementation-boundary note and StateModel::observation/protocol_observation precondition rustdocs against the explicit architecture ruling. The note states AC72/73 are unmet, both raw routes refuse external identities before interpretation, trusted Rust callers supply same-run states, and route-neutral/map-keyed identities remain STEP2. The mandatory admission requirement and AC success/refusal oracles are unchanged. No false admission or parity PASS is introduced. This focused changed-note check found no new base/integrity/EARS defect; the original scoped spec PASS remains, and does not imply implementation acceptance. No fresh formal review or additional lens was run. Coder's FR-106 Quire validation log reports exit 0, 1/1 grammar-clean, zero findings.
