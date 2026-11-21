@@ -512,7 +512,10 @@ fn second_copies(files: &[(String, String)]) -> Vec<(String, String)> {
         }
         for item in comparing {
             if item != TRACKED_EXCEPTION {
-                found.push((name.clone(), format!("{item} compares two completeness assertions")));
+                found.push((
+                    name.clone(),
+                    format!("{item} compares two completeness assertions"),
+                ));
             }
         }
     }
@@ -540,7 +543,10 @@ fn fsl_eval_defines_no_second_copy_of_the_four_owners_rule_sets() {
     assert!(second_copies(&exception).is_empty());
     // fsl-eval's own sources, shipped code and tests alike.
     let mut paths = Vec::new();
-    sources(&Path::new(env!("CARGO_MANIFEST_DIR")).join("src"), &mut paths);
+    sources(
+        &Path::new(env!("CARGO_MANIFEST_DIR")).join("src"),
+        &mut paths,
+    );
     let files: Vec<(String, String)> = paths
         .iter()
         .map(|path| {
@@ -551,7 +557,10 @@ fn fsl_eval_defines_no_second_copy_of_the_four_owners_rule_sets() {
         })
         .collect();
     let found = second_copies(&files);
-    assert!(found.is_empty(), "second copies of an owner rule: {found:?}");
+    assert!(
+        found.is_empty(),
+        "second copies of an owner rule: {found:?}"
+    );
     assert!(
         files
             .iter()

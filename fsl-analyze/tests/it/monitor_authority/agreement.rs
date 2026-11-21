@@ -473,8 +473,12 @@ fn ledger_revision(asserted: ProgressCompleteness, positions: &[ObservedPosition
 
 /// FR-502-AC-2's cases: the owner code each contradiction carries, or `None`
 /// where the revision is accepted.
-fn revision_cases() -> Vec<(&'static str, ProgressCompleteness, Vec<ObservedPosition>, &'static str)>
-{
+fn revision_cases() -> Vec<(
+    &'static str,
+    ProgressCompleteness,
+    Vec<ObservedPosition>,
+    &'static str,
+)> {
     let held = vec![position("a", 0), position("b", 50), position("c", 100)];
     let mut uncovered = held.clone();
     uncovered.push(position("d", 80));
@@ -571,7 +575,11 @@ fn an_injected_disagreement_fails_naming_the_case_and_both_answers() {
         })
     );
     let prior = held(&[("a", 0), ("b", 50), ("c", 100)]);
-    let refused = owner_revision(&prior, &prior, ProgressCompleteness::Complete { through: 60 });
+    let refused = owner_revision(
+        &prior,
+        &prior,
+        ProgressCompleteness::Complete { through: 60 },
+    );
     assert_eq!(
         agree("Complete through 60", "accepted", &refused),
         Err(Disagreement {
