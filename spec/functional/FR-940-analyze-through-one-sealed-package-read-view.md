@@ -710,7 +710,7 @@ to `P/value/members/K`, a duplicate or unknown alias to that entry's
 report the first offending entry; only after those checks SHALL a missing
 alias point to `P/value/members/LEN`, where `LEN` is the supplied entry
 count. This is the optional fifth member of the current four-binding
-FR-351 body, not a migration to the separate seven-field FR-477 form.
+filament-contract-ir FR-351 body.
 The FSL package form SHALL
 consume the admitted witness as its alias and certificate order. Source
 certificate order SHALL remain unchanged. Implementing this member
