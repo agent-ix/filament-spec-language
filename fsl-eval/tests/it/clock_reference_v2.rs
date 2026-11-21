@@ -106,11 +106,11 @@ fn fixture(remove_x: bool) -> Checked {
            run sequence Main {{ check Ready using v {{ true }}; }}\n\
            finish End as (outcome: Boolean) {{ true }};\n\
          }}\n\
-         invariant Stored using v on C::Call at current {{ self.r = ref(self.{selected}) }}\n\
-         function stored using v(c: Reference<C::Call>): Reference<Clock> pure {{ c.r }}\n\
-         function maybe_stored using v(c: Reference<C::Call>): Reference<Clock> pure {{ value(c.maybe) }}\n\
-         function has_maybe using v(c: Reference<C::Call>): Boolean pure {{ present(c.maybe) }}\n\
-         function stored_refs using v(c: Reference<C::Call>): Sequence<Reference<Clock>>[0, 3] pure {{ c.refs }}",
+         invariant Stored using m on C::Call at current {{ self.r = ref(self.{selected}) }}\n\
+         function stored using m(c: Reference<C::Call>): Reference<Clock> pure {{ c.r }}\n\
+         function maybe_stored using m(c: Reference<C::Call>): Reference<Clock> pure {{ value(c.maybe) }}\n\
+         function has_maybe using m(c: Reference<C::Call>): Boolean pure {{ present(c.maybe) }}\n\
+         function stored_refs using m(c: Reference<C::Call>): Sequence<Reference<Clock>>[0, 3] pure {{ c.refs }}",
         clock_refinement(&format!(
             "used = count(c in C::calls where ref(c.{selected}) = self.r);\n\
              busy = only(c in C::calls where c.n = 2: ref(c.{selected})) = self.r;\n\
