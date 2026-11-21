@@ -2640,7 +2640,7 @@ fn replay_timed_refutation(
             let Ok(choice) = canonical_action(system, product, &step.action, &key_of) else {
                 return not_yet();
             };
-            let (action, transition, draw, post) = match &step.action {
+            let (action, transition, draw, post, resume) = match &step.action {
                 ProductAction::Identity(identity)
                 | ProductAction::WorkloadResolve { identity, .. } => {
                     let wanted = timed_key_discrete(&post_key);
@@ -2668,17 +2668,25 @@ fn replay_timed_refutation(
                         });
                     match found {
                         Some((transition, random, post)) => {
-                            (Some(identity.clone()), Some(transition), Some(random), post)
+                            let resume = post.clone();
+                            (
+                                Some(identity.clone()),
+                                Some(transition),
+                                Some(random),
+                                post,
+                                resume,
+                            )
                         }
                         None => {
                             // A clock-guarded operation is not enabled at the bare
                             // model state; take its step from the timed state the
                             // previous key names.
-                            let Some((transition, post)) = timed_step_for(
+                            let Some((transition, post, resume)) = timed_step_for(
                                 system,
                                 claim,
                                 &state,
                                 &previous_key,
+                                identity,
                                 &step.elapsed,
                                 wanted.as_ref(),
                             ) else {
@@ -2689,11 +2697,12 @@ fn replay_timed_refutation(
                                 Some(transition),
                                 step.draw.clone(),
                                 post,
+                                resume,
                             )
                         }
                     }
                 }
-                _ => (None, None, None, state.clone()),
+                _ => (None, None, None, state.clone(), state.clone()),
             };
             let next_key = post_key.clone();
             steps.push(ProbabilityWitnessStep {
@@ -2705,7 +2714,7 @@ fn replay_timed_refutation(
                 post_key,
                 elapsed: step.elapsed,
             });
-            state = post;
+            state = resume;
             previous_key = next_key;
         }
         paths.push(ProbabilityWitnessPath { steps });

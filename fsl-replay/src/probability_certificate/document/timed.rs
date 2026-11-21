@@ -3386,52 +3386,21 @@ pub(in crate::probability_certificate) fn replay_timed_witness(
                 .iter()
                 .any(|edge| &edge.target == target && edge.probability > zero())
         };
-        // The witness only selects the scheduler: the mass is recomputed from the
-        // checker graph below. A step the checker has no edge for is accepted only
-        // when it ends in a decided state; of the admissible choices the one the
-        // witness covers most is taken (the first on a tie).
+        // The witness only selects the scheduler: the choice it covers most is
+        // taken (the first on a tie); the mass is recomputed from the checker
+        // graph below.
         let mut best: Option<(usize, usize)> = None;
         for (position, choice) in state.choices.iter().enumerate() {
-            let covered = targets.iter().filter(|target| covers(choice, target)).count();
-            let admissible = targets.iter().all(|target| {
-                covers(choice, target)
-                    || graph
-                        .states
-                        .get(target)
-                        .is_some_and(|post| post.terminal.is_some())
-            });
-            if admissible && best.is_none_or(|(_, most)| covered > most) {
+            let covered = targets
+                .iter()
+                .filter(|target| covers(choice, target))
+                .count();
+            if best.is_none_or(|(_, most)| covered > most) {
                 best = Some((position, covered));
             }
         }
         let (index, _) = best.ok_or(Error::Refused)?;
         chosen.insert(key.clone(), index);
-    }
-    // A closed time-convergent component all of whose members stay in it
-    // under the witness is a scheduler that never lets time diverge; its
-    // mass is not the claim's.
-    let components = super::super::nonprogressive_end_components_by_kind(&graph, cancel, None)
-        .map_err(Error::Graph)?;
-    for (kind, members) in &components {
-        let set = members.iter().collect::<BTreeSet<_>>();
-        let stays = members.iter().all(|key| {
-            let (Some(index), Some(state)) = (chosen.get(key), graph.states.get(key)) else {
-                return false;
-            };
-            state.choices.get(*index).is_some_and(|choice| {
-                choice
-                    .iter()
-                    .filter(|edge| edge.probability > zero())
-                    .all(|edge| {
-                        set.contains(&edge.target)
-                            && (*kind != super::super::ComponentKind::ZeroTime
-                                || super::super::timed_axes::edge_is_zero_time(key, &edge.target))
-                    })
-            })
-        });
-        if stays {
-            return Err(Error::Refused);
-        }
     }
     let limit_bits = |value: &Rational| {
         if value.max_part_bits() > limits.max_rational_bits {
@@ -3519,8 +3488,32 @@ pub(in crate::probability_certificate) fn replay_timed_witness(
     if mass <= threshold {
         return Ok(Replay::Parity);
     }
+    // The reported evidence keeps only the paths every step of which is an
+    // outcome of the chosen choice, so it holds nothing the checker did not
+    // validate.
+    let mut validated = witness.clone();
+    validated.paths.retain(|path| {
+        let mut at = &graph.initial;
+        path.steps.iter().all(|step| {
+            let covered = graph
+                .states
+                .get(at)
+                .zip(chosen.get(at))
+                .and_then(|(state, index)| state.choices.get(*index))
+                .is_some_and(|choice| {
+                    choice
+                        .iter()
+                        .any(|edge| edge.target == step.post_key && edge.probability > zero())
+                });
+            at = &step.post_key;
+            covered
+        })
+    });
+    if validated.paths.is_empty() {
+        return Ok(Replay::Parity);
+    }
     Ok(Replay::Reproduced(Box::new(
-        super::super::ReproducedProbabilityWitness::reproduced(witness.clone(), mass),
+        super::super::ReproducedProbabilityWitness::reproduced(validated, mass),
     )))
 }
 
@@ -3529,4 +3522,58 @@ pub(in crate::probability_certificate) fn is_timed_deadline_claim(
     claim: &CheckedProbabilisticClaim,
 ) -> bool {
     deadline_event(claim).is_some()
+}
+
+/// The clock valuation a digital timed product key names, in
+/// [`TimedSystem::places`] order: each place's canonical identity is looked
+/// up in the key, so the key's own (identity-sorted) clock order never
+/// decides which clock a value belongs to. `None` for a region key, a key
+/// that names a clock twice or not at all, or a value that is not a whole
+/// number of ticks.
+pub fn digital_key_clocks(
+    system: &ModelSystem<'_>,
+    claim: &CheckedProbabilisticClaim,
+    key: &ProbabilityProductKey,
+) -> Option<fsl_eval::simulation::model::ClockValuation> {
+    let root: JsonValue = serde_json::from_slice(key.as_bytes()).ok()?;
+    let keyed = root.get(4)?.get(1)?;
+    if keyed.get(0)?.as_str()? != "digital" {
+        return None;
+    }
+    let number = |value: &JsonValue| -> Option<u64> {
+        value
+            .as_u64()
+            .or_else(|| value.as_str().and_then(|text| text.parse().ok()))
+    };
+    let scale = number(keyed.get(3)?)?;
+    let listed = keyed.get(4)?.as_array()?;
+    let timed = TimedSystem::new(system, &claim.subject.alias).ok()?;
+    if listed.len() != timed.places().len() {
+        return None;
+    }
+    let mut values = Vec::with_capacity(listed.len());
+    for place in timed.places() {
+        let field = timed.model().clock(place.clock())?;
+        let owner = field.owner();
+        let owner = owner.original();
+        let declaring = fsl_semantics::model::key::model_node_key(
+            owner.package(),
+            "model",
+            "object_type",
+            owner.node(),
+        )
+        .ok()?;
+        let declaring = fsl_foundation::node_wire::node_key_to_json(&declaring).ok()?;
+        let receiver = fsl_eval::simulation::model::reference_canonical_text(place.object()).ok()?;
+        let receiver: JsonValue = serde_json::from_str(&receiver).ok()?;
+        let identity = json!([declaring, field.name(), receiver]);
+        let mut matching = listed.iter().filter(|clock| clock.get(0) == Some(&identity));
+        let clock = matching.next()?;
+        if matching.next().is_some() {
+            return None;
+        }
+        let whole = number(clock.get(1)?)?;
+        values.push(Rational::from_integer(whole.into()).div(&Rational::from_integer(scale.into()))?);
+    }
+    Some(fsl_eval::simulation::model::ClockValuation::new(values))
 }
