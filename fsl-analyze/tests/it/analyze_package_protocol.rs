@@ -208,14 +208,28 @@ fn package_repeat_post_test_false_guard_executes_once() {
 fn package_repeat_blocked_attempt_preserves_replay_refusal() {
     for (scenario, guard, constraint) in [
         ("blocked", "true", "false"),
-        ("undefined", "6 mod 0 = 0", "true"),
+        ("undefined", "zero / zero = zero", "true"),
     ] {
+        let visible = if scenario == "undefined" { "zero" } else { "" };
         let controls = format!(
-            "repeat Again by Machining visible () while {{ {guard} }} {}",
+            "repeat Again by Machining visible ({visible}) while {{ {guard} }} {}",
             repeat_attempt("Remachined", "again", constraint)
         );
+        let request = |ws: &Workspace| {
+            let path = repeat_request(ws, &controls, "closing");
+            if scenario == "undefined" {
+                let unit = std::fs::read_to_string(ws.path("program.fsl"))
+                    .expect("the undefined-guard unit");
+                let unit = unit.replace(
+                    "run sequence Main {",
+                    "capture zero: Decimal[0, 0; 0, 0; exact] = decimal(0, 0); run sequence Main {",
+                );
+                ws.write("program.fsl", unit.as_bytes());
+            }
+            path
+        };
         let ws = Workspace::new(&format!("package-repeat-{scenario}"));
-        let item = repeat_parity(&ws, &repeat_request(&ws, &controls, "closing"));
+        let item = repeat_parity(&ws, &request(&ws));
         assert_eq!(label(&item), "refuted", "{item}");
         if scenario == "blocked" {
             assert_eq!(
@@ -243,7 +257,7 @@ fn package_repeat_blocked_attempt_preserves_replay_refusal() {
         assert_eq!(item["replay"]["reproduced"], true, "{item}");
 
         let bounded = Workspace::new(&format!("package-repeat-replay-bound-{scenario}"));
-        let path = repeat_request(&bounded, &controls, "closing");
+        let path = request(&bounded);
         let (package_path, bytes) = package_request(&bounded, &path);
         let limit = u64::try_from(bytes.len() / 2).expect("package byte bound");
         let source = crate::analyze_cli_support::analyze_under_replay_bytes(&path, limit);
