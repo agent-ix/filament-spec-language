@@ -877,6 +877,9 @@ impl ItemDetail {
 /// Why analyze could not admit a shared subject binding.
 #[derive(Debug, thiserror::Error)]
 pub enum AnalyzeRefusal {
+    /// FR-1046 canonical receipt admission refused the selected document.
+    #[error(transparent)]
+    EffectDecision(document::effect_decision::ReceiptRefusal),
     /// FR-120 did not admit the subject binding.
     #[error("the analyze subject binding did not admit: {0:?}")]
     Binding(AdmissionFailure),
@@ -1015,6 +1018,10 @@ impl AnalyzeRefusal {
 
     fn refusal_document(&self) -> OutcomeDocument {
         match self {
+            Self::EffectDecision(refusal) => {
+                OutcomeDocument::new(Operation::Analyze, None, Category::Refusal)
+                    .with_diagnostics(vec![refusal.diagnostic()])
+            }
             Self::Binding(failure) => {
                 refusal_document(Operation::Analyze, failure, failure.to_string())
                     .with_last_stage(Some(OutcomeStage::S4))

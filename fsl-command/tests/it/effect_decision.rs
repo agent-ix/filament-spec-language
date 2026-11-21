@@ -1,0 +1,392 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+//! FR-1046 receipts through the public native-analyze command intake.
+
+use filament_exact::Cancel;
+use fsl_command::command::RunLimits;
+use fsl_foundation::canonical_json;
+use ix_trace_rs::trace;
+use serde_json::{json, Value};
+
+use crate::cli_contract::{analyze, analyze_under, Case, Outcome};
+
+const SOURCE: &str = include_str!("../../../examples/protocol-recommendation/workflow.native");
+const MODEL: &[u8] = include_bytes!("../fixtures/cli-contract/counter.semantic-ir.json");
+const SNAPSHOT: &[u8] = include_bytes!("../../../examples/protocol-recommendation/start.json");
+
+struct Fixture {
+    case: Case,
+    request: Value,
+    baseline: Outcome,
+    receipt: Value,
+}
+
+impl Fixture {
+    fn new() -> Self {
+        let case = Case::new();
+        case.write("workflow.native", SOURCE.as_bytes());
+        case.write("counter.json", MODEL);
+        case.write("start.json", SNAPSHOT);
+        let mut request: Value = serde_json::from_str(include_str!(
+            "../../../examples/protocol-recommendation/analyze.json"
+        ))
+        .unwrap();
+        request["request"]["models"][0]["source"]["file"] = json!("counter.json");
+        let baseline = analyze(&case.json("analyze.json", &request));
+        assert_eq!(baseline.exit, 10, "genuine baseline: {}", baseline.document);
+        let item = &baseline.document["items"][0];
+        assert_eq!(item["replay"]["reproduced"], true, "{item}");
+        let decision = item["counterexample"]["prefix"][0]["transition"]["recommendation"].clone();
+        assert_eq!(decision["type"], "protocol-recommendation", "{item}");
+        let receipt = json!({"contract_version": "filament.effect-decision/v1", "decision": decision,
+            "authority_grant": {}, "idempotency_key": "caller-key", "effect_request": {},
+            "transport_receipt": {}, "lineage": {}});
+        Self {
+            case,
+            request,
+            baseline,
+            receipt,
+        }
+    }
+
+    fn select(&mut self, identity: &str, receipt: &Value) {
+        self.select_bytes(identity, &canonical_json::encode(receipt).unwrap());
+    }
+
+    fn select_bytes(&mut self, identity: &str, bytes: &[u8]) {
+        let file = format!("{identity}.json");
+        self.case.write(&file, bytes);
+        let reference = json!({"authority": "receipt-authority", "identity": identity});
+        self.request["request"]["documents"]
+            .as_array_mut()
+            .unwrap()
+            .push(json!({"file": file, "identity": reference}));
+        let item = &mut self.request["request"]["items"][0];
+        if item.get("effect_decisions").is_none() {
+            item["effect_decisions"] = json!([]);
+        }
+        item["effect_decisions"]
+            .as_array_mut()
+            .unwrap()
+            .push(reference);
+    }
+
+    fn run(&self) -> Outcome {
+        analyze(&self.case.json("selected.json", &self.request))
+    }
+
+    fn valid(&mut self) {
+        self.select("first", &self.receipt.clone());
+        let bound = self.run();
+        assert_eq!(bound.exit, 10, "{}", bound.document);
+        assert_eq!(
+            bound.document, self.baseline.document,
+            "binding must not change formal output"
+        );
+        let schema: Value = serde_json::from_str(fsl_replay::outcome::OUTCOME_SCHEMA_1).unwrap();
+        assert!(
+            jsonschema::validator_for(&schema)
+                .unwrap()
+                .is_valid(&bound.document),
+            "{}",
+            bound.document
+        );
+    }
+}
+
+fn refused(outcome: &Outcome, cause: &str, reason: &str, pointer: &str) {
+    assert_eq!(outcome.exit, 20, "{}", outcome.document);
+    let diagnostic = &outcome.document["diagnostics"][0];
+    assert_eq!(
+        diagnostic["code"], "invalid_runtime_input",
+        "{}",
+        outcome.document
+    );
+    assert_eq!(diagnostic["cause"], cause, "{diagnostic}");
+    let message = diagnostic["message"].as_str().unwrap();
+    assert!(
+        message.starts_with(&format!("effect-decision {reason}")),
+        "{diagnostic}"
+    );
+    assert!(
+        message.contains("/items/0/effect_decisions/"),
+        "{diagnostic}"
+    );
+    assert!(message.contains("receipt-authority"), "{diagnostic}");
+    assert!(message.contains(pointer), "{diagnostic}");
+    assert_eq!(diagnostic["details"], Value::Null);
+    assert_eq!(diagnostic["locus"], Value::Null);
+}
+
+#[test]
+#[trace("FR-1046-AC-1", "FR-1046-AC-8", "FR-1046-AC-12")]
+fn receipt_binding_preserves_actual_source_outcome_and_model_truth() {
+    let mut fixture = Fixture::new();
+    fixture.receipt["effect_observation"] = json!({"claimed": "external success"});
+    fixture.receipt["authority_grant"] = json!({"caller": "descriptive only"});
+    fixture.valid();
+}
+
+#[test]
+#[trace("FR-1046-AC-3")]
+fn every_canonical_decision_component_is_matched() {
+    let mut fixture = Fixture::new();
+    fixture.valid();
+    for (member, replacement) in [
+        ("type", json!("other")),
+        ("node", json!("other")),
+        ("role", json!("other")),
+        ("instance", json!("1")),
+        ("actor", json!({"type": "reference", "identity": "other"})),
+        ("operation", json!("other")),
+        ("receiver", json!({"type": "boolean", "value": false})),
+        ("arguments", json!([{"type": "boolean", "value": true}])),
+    ] {
+        let mut receipt = fixture.receipt.clone();
+        receipt["decision"][member] = replacement;
+        fixture
+            .case
+            .write("first.json", &canonical_json::encode(&receipt).unwrap());
+        let outcome = fixture.run();
+        refused(&outcome, "invalid-value", "wrong-decision", "/decision");
+        assert!(outcome.document["items"][0].get("counterexample").is_none());
+        assert!(outcome.document["items"][0].get("certificate").is_none());
+    }
+}
+
+#[test]
+#[trace("FR-1046-AC-5", "FR-1046-AC-6", "FR-1046-AC-10")]
+fn retries_reconcile_but_changed_effect_request_refuses_later_selector() {
+    let mut fixture = Fixture::new();
+    fixture.valid();
+    fixture.select("same", &fixture.receipt.clone());
+    let mut retry = fixture.receipt.clone();
+    retry["transport_receipt"] = json!({"attempt": "second"});
+    retry["lineage"] = json!({"previous": "caller-history"});
+    fixture.select("retry", &retry);
+    assert_eq!(fixture.run().document, fixture.baseline.document);
+    retry["effect_request"] = json!({"different": true});
+    fixture.select("conflict", &retry);
+    let outcome = fixture.run();
+    refused(
+        &outcome,
+        "invalid-value",
+        "request-key-contradiction",
+        "/effect_request",
+    );
+    let message = outcome.document["diagnostics"][0]["message"]
+        .as_str()
+        .unwrap();
+    assert!(
+        message.contains("/3") && message.contains("first") && message.contains("conflict"),
+        "{message}"
+    );
+    // The first selector's match failure must precede the later contradiction.
+    let mut wrong = fixture.receipt.clone();
+    wrong["decision"]["node"] = json!("not-emitted");
+    fixture
+        .case
+        .write("first.json", &canonical_json::encode(&wrong).unwrap());
+    refused(
+        &fixture.run(),
+        "invalid-value",
+        "wrong-decision",
+        "/decision",
+    );
+}
+
+#[test]
+#[trace("FR-1046-AC-7", "FR-1046-AC-10")]
+fn malformed_receipt_causes_and_pointers_are_preserved_before_matching() {
+    let mut fixture = Fixture::new();
+    fixture.valid();
+    let mut cases = vec![(b"{".to_vec(), "malformed-json", "\"\"")];
+    let mut missing = fixture.receipt.clone();
+    missing.as_object_mut().unwrap().remove("lineage");
+    cases.push((
+        canonical_json::encode(&missing).unwrap(),
+        "missing-member",
+        "/lineage",
+    ));
+    let mut unknown = fixture.receipt.clone();
+    unknown["identity"] = json!({});
+    cases.push((
+        canonical_json::encode(&unknown).unwrap(),
+        "unknown-member",
+        "/identity",
+    ));
+    let mut wrong = fixture.receipt.clone();
+    wrong["effect_request"] = json!(false);
+    cases.push((
+        canonical_json::encode(&wrong).unwrap(),
+        "wrong-value-kind",
+        "/effect_request",
+    ));
+    let mut version = fixture.receipt.clone();
+    version["contract_version"] = json!("filament.effect-decision/v2");
+    cases.push((
+        canonical_json::encode(&version).unwrap(),
+        "invalid-value",
+        "/contract_version",
+    ));
+    let bytes = canonical_json::encode(&fixture.receipt).unwrap();
+    let mut noncanonical = bytes.clone();
+    noncanonical.push(b'\n');
+    cases.push((noncanonical, "invalid-value", "\"\""));
+    let text = String::from_utf8(bytes)
+        .unwrap()
+        .replace("\"lineage\":{}", "\"lineage\":{},\"lineage\":{}");
+    cases.push((text.into_bytes(), "duplicate-member", "/lineage"));
+    for (bytes, cause, pointer) in cases {
+        fixture.case.write("first.json", &bytes);
+        let outcome = fixture.run();
+        refused(&outcome, cause, "malformed-receipt", pointer);
+        assert_eq!(
+            outcome.document["items"],
+            json!([]),
+            "canonical admission is whole-request refusal"
+        );
+    }
+}
+
+#[test]
+#[trace("FR-1046-AC-8")]
+fn selector_shapes_and_unresolved_documents_refuse_at_request_pointer() {
+    let mut fixture = Fixture::new();
+    fixture.request["request"]["items"][0]["effect_decisions"] = json!([]);
+    assert_eq!(fixture.run().document, fixture.baseline.document);
+    for value in [
+        Value::Null,
+        json!({}),
+        json!([{"authority": "x"}]),
+        json!([{"authority": "x", "identity": "y", "extra": true}]),
+        json!([{"authority": "x", "identity": "y"}]),
+    ] {
+        fixture.request["request"]["items"][0]["effect_decisions"] = value;
+        let outcome = fixture.run();
+        assert_eq!(outcome.exit, 20, "{}", outcome.document);
+        assert!(
+            outcome
+                .bytes
+                .windows(b"effect_decisions".len())
+                .any(|window| window == b"effect_decisions"),
+            "{}",
+            outcome.document
+        );
+    }
+    fixture.request["request"]["items"][0]
+        .as_object_mut()
+        .unwrap()
+        .remove("effect_decisions");
+    fixture.request["request"]["effect_decisions"] = json!([]);
+    assert_eq!(fixture.run().exit, 20);
+}
+
+#[test]
+#[trace("FR-1046-AC-9")]
+fn receipt_bytes_use_the_exact_aggregate_dependent_allowance() {
+    let mut fixture = Fixture::new();
+    fixture.valid();
+    let path = fixture.case.json("selected.json", &fixture.request);
+    let bytes = SOURCE.len()
+        + MODEL.len()
+        + SNAPSHOT.len()
+        + canonical_json::encode(&fixture.receipt).unwrap().len();
+    let limits = RunLimits {
+        dependent_bytes: bytes,
+        ..RunLimits::default()
+    };
+    let run = |limits| analyze_under(&path, limits, &Default::default(), &Cancel::new());
+    assert_eq!(run(limits).document, fixture.baseline.document);
+    let denied = run(RunLimits {
+        dependent_bytes: bytes - 1,
+        ..limits
+    });
+    assert_eq!(denied.exit, 22, "{}", denied.document);
+    assert!(
+        denied.document.to_string().contains("dependent_bytes"),
+        "{}",
+        denied.document
+    );
+}
+
+#[test]
+#[trace("FR-1046-AC-4", "FR-1046-AC-10")]
+fn equal_actual_recommendations_in_other_items_do_not_change_local_matching() {
+    let mut fixture = Fixture::new();
+    fixture.valid();
+    let mut second = fixture.request["request"]["items"][0].clone();
+    fixture.request["request"]["items"][0]
+        .as_object_mut()
+        .unwrap()
+        .remove("effect_decisions");
+    fixture.request["request"]["items"]
+        .as_array_mut()
+        .unwrap()
+        .push(second.clone());
+    let both = fixture.run();
+    assert_eq!(both.exit, 10, "{}", both.document);
+    assert_eq!(both.document["items"].as_array().unwrap().len(), 2);
+    assert_eq!(
+        both.document["items"][0]["counterexample"],
+        both.document["items"][1]["counterexample"]
+    );
+    let mut wrong = fixture.receipt.clone();
+    wrong["decision"]["node"] = json!("not-in-item");
+    fixture
+        .case
+        .write("first.json", &canonical_json::encode(&wrong).unwrap());
+    let refused = fixture.run();
+    assert_eq!(refused.exit, 20, "{}", refused.document);
+    assert_eq!(
+        refused.document["items"][0],
+        fixture.baseline.document["items"][0]
+    );
+    assert!(refused.document["items"][1].get("counterexample").is_none());
+    second["claim"] = json!("unknown");
+}
+
+#[test]
+#[trace("FR-1046-AC-11")]
+fn a_bounded_item_without_trace_keeps_its_engine_outcome() {
+    let mut fixture = Fixture::new();
+    fixture.request["request"]["items"][0]["temporal"]["limits"] = json!({"max_states": 1});
+    let baseline = fixture.run();
+    assert_ne!(
+        baseline.exit, 10,
+        "bounded fixture must not produce a complete counterexample: {}",
+        baseline.document
+    );
+    assert!(baseline.document["items"][0]
+        .get("counterexample")
+        .is_none());
+    let mut wrong = fixture.receipt.clone();
+    wrong["decision"]["node"] = json!("not-explored");
+    fixture.select("unexplored", &wrong);
+    assert_eq!(fixture.run().document, baseline.document);
+}
+
+#[test]
+#[trace("FR-1046-AC-2")]
+fn checked_package_receipts_match_the_same_actual_recommendation() {
+    let mut fixture = Fixture::new();
+    let compile = json!({"format": "native-compile/1", "request": {
+        "program": fixture.request["request"]["program"], "models": fixture.request["request"]["models"],
+        "handoff": {"directory": "handoff", "package_name": "receipt-proof", "native_join": {
+            "work_units": 1_u64 << 40, "storage": 1_u64 << 24}}}});
+    fsl_command::command::compile(&fixture.case.json("compile.json", &compile))
+        .expect("public checked handoff");
+    fixture.request["request"]
+        .as_object_mut()
+        .unwrap()
+        .remove("program");
+    fixture.request["request"]["package"] = json!({"directory": "handoff"});
+    let baseline = fixture.run();
+    assert_eq!(
+        baseline.exit, 10,
+        "independent Package baseline without receipts: {}",
+        baseline.document
+    );
+    fixture.select("package", &fixture.receipt.clone());
+    let bound = fixture.run();
+    assert_eq!(bound.document, baseline.document, "{}", bound.document);
+}
