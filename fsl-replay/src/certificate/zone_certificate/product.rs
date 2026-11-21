@@ -561,6 +561,8 @@ impl<O> Checker<'_, '_, O> {
                                 }),
                                 cell: Some(self.cell_zone(step.post(), &cell)?),
                                 read: Some(read.clone()),
+                                expect: None,
+                                cut: None,
                             });
                         }
                     }
@@ -595,6 +597,8 @@ impl<O> Checker<'_, '_, O> {
                     }),
                     cell: Some(self.cell_zone(state, &cell)?),
                     read: None,
+                    expect: None,
+                    cut: None,
                 });
             }
         }
@@ -622,6 +626,8 @@ impl<O> Checker<'_, '_, O> {
                         }),
                         cell: Some(self.cell_zone(state, &own)?),
                         read: None,
+                        expect: None,
+                        cut: None,
                     });
                 }
             }
@@ -654,6 +660,8 @@ impl<O> Checker<'_, '_, O> {
                         }),
                         cell: Some(self.cell_zone(state, &own)?),
                         read: Some(read),
+                        expect: None,
+                        cut: None,
                     });
                 }
             }
