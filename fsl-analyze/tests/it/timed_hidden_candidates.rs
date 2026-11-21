@@ -614,7 +614,7 @@ fn timed_hidden_an_initial_state_with_no_candidate_alive_at_zero_is_refuted() {
             "{DENSE}time A dense unit ms;\n\
              post ASend using v on A::Call::send {{ self.inflight }}\n\
              pre ASendable using v on A::Call::send {{ self.y >= 0 ms }}\n\
-             time invariant Late when {{ self.inflight }} {{ self.y < 0 ms }}\n\
+             time invariant Late when {{ self.inflight and self.h }} {{ self.y < 0 ms }}\n\
              pre MSend using v on M::Call::send {{ self.x >= 0 ms }}\n\
              post MSent using v on M::Call::send {{ self.inflight }}\n{}",
             refinement("self.inflight").replace(" late = self.late;", "")
@@ -626,7 +626,7 @@ fn timed_hidden_an_initial_state_with_no_candidate_alive_at_zero_is_refuted() {
         &abstract_document,
         &[
             ([false; 3], Some(false)),
-            ([true, false, false], Some(false)),
+            ([true, false, false], Some(true)),
         ],
     );
     assert_time_invariant(safety_with_limits(&world));
