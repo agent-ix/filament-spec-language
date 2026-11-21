@@ -305,6 +305,31 @@ fn a_deadline_from_another_thread_stops_two_hundred_thousand_declarations_at_the
         use std::fmt::Write;
         writeln!(text, "enum E{index} {{ A, B }}").expect("String writes are infallible");
     }
+    assert_deadline_stops_at_the_next_charge(&text);
+}
+
+#[test]
+#[trace("FR-276-AC-2")]
+fn a_deadline_during_record_lowering_stops_the_later_enums_too() {
+    let mut text = "language \"ix:native\" edition \"1-draft\";\n\
+        profile v = \"filament.value.complete/v1\";\n"
+        .to_owned();
+    for index in 0..5_000 {
+        use std::fmt::Write;
+        writeln!(text, "record R{index} {{ datum: Integer; }}")
+            .expect("String writes are infallible");
+    }
+    for index in 0..5_000 {
+        use std::fmt::Write;
+        writeln!(text, "enum E{index} {{ A, B }}").expect("String writes are infallible");
+    }
+    assert_deadline_stops_at_the_next_charge(&text);
+}
+
+/// Check `text` with a deadline recorded from another thread as the observer
+/// sees its 1,000th charge: the check returns the deadline, no package, and
+/// makes at most one further charge.
+fn assert_deadline_stops_at_the_next_charge(text: &str) {
     let source_bytes = u64::try_from(text.len()).expect("input length");
     let mut limits = SpineLimits::default();
     for (setting, bound) in [
@@ -317,7 +342,7 @@ fn a_deadline_from_another_thread_stops_two_hundred_thousand_declarations_at_the
     ] {
         assert!(limits.set_bound(setting, bound));
     }
-    let parsed = parse(&text, limits, &Cancel::new()).expect("the declared input provision fits");
+    let parsed = parse(text, limits, &Cancel::new()).expect("the declared input provision fits");
     let (trigger_tx, trigger_rx) = mpsc::sync_channel::<()>(0);
     let trigger_owner = Arc::new(trigger_tx);
     let trigger = Arc::downgrade(&trigger_owner);
