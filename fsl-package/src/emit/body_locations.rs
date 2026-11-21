@@ -333,7 +333,7 @@ mod tests {
         assert_eq!(paths.delta(ancestor, empty), Some((1, vec![])));
     }
 
-    #[ix_trace_rs::trace("FR-531-AC-39", "FSpec-FR-322-AC-510")]
+    #[ix_trace_rs::trace("FR-531-AC-39", "FSpec-FR-322-AC-510", "FSpec-FR-322-AC-513")]
     #[test]
     fn compact_composite_bodies_keep_each_shared_application_reach() {
         let (_, checked) = super::super::tests::package_from_text(
@@ -385,7 +385,7 @@ mod tests {
             assert!(row["location"].get("down").is_some());
         }
     }
-    #[ix_trace_rs::trace("FR-531-AC-39", "FSpec-FR-322-AC-510")]
+    #[ix_trace_rs::trace("FR-531-AC-39", "FSpec-FR-322-AC-510", "FSpec-FR-322-AC-513")]
     #[test]
     fn compact_tuple_body_walks_two_distinct_record_parents() {
         let (_, checked) = super::super::tests::package_from_text(
