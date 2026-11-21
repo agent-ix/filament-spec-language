@@ -21,6 +21,8 @@ relationships:
     type: depends_on
   - target: ix://agent-ix/filament-spec-language/FR-531
     type: references
+  - target: ix://agent-ix/filament-spec-language/FR-071
+    type: references
   - target: ix://agent-ix/filament-specification/FR-322
     type: depends_on
   - target: ix://agent-ix/filament-specification/FR-520
@@ -41,7 +43,8 @@ of `dependencies.json` with each package's own witness files, and build from
 those files alone the analysis input the engines take, and analyze
 the request's items over it. No source is compiled, and the items, records,
 counterexamples, replays and exit code SHALL equal those of the same request
-over the source the package was compiled from.
+over the source the package was compiled from, subject only to the named
+route-specific encoded replay-byte-budget exception below.
 
 ### Decision: build the analysis input from the package bytes, never recompile
 
@@ -169,9 +172,19 @@ from artifact bytes (FR-940).
   each package's witness supply through run, analysis and counterexample replay.
   Evaluation of a dependency-owned function or premise SHALL use that owner's
   admitted package and witnesses. Replay SHALL consume the same retained
-  closure without reopening source; a replay read still applies the existing
-  `replay.input_bytes` bound to all package artifact bytes it consumes, and
-  replay refusals keep FR-940's item-local `replay_refused` behavior.
+  closure without reopening source. Its existing `replay.input_bytes` bound
+  SHALL apply to the unchanged reader-measured encoded request size of
+  [FR-071-AC-7](FR-071-implement-typed-replay-request.md), plus the bytes of
+  each unique external dependency checked-package artifact the replay consumes,
+  counted once by selected library identity. The encoded request measurement
+  already includes the root package bytes and its target, profile, stage,
+  source and byte-provision metadata/payload charges; none is removed or
+  replaced by the dependency charge. The root SHALL NOT be added a second
+  time. A dependency artifact outside the encoded request adds its package
+  bytes only once, not once per import path or call. This is the same single
+  replay input-byte bound, not an artifact-only limit. The existing decoder
+  phase/refusal ordering is unchanged. Replay refusals keep FR-940's item-local
+  `replay_refused` behavior.
 
 Every manifest and artifact path SHALL be resolved beneath the selected handoff
 using FR-517's confined-file rules. The loader SHALL reject absolute paths,
@@ -373,8 +386,27 @@ serves the complete write, not one fresh budget per dependency.
 - For a package `P` compiled from a request's program, models and libraries,
   the outcome of the request with `package` selecting `P`'s bytes SHALL equal
   the outcome of the request over the source, member for member, except for
-  the `request` echo's selection member, when every item that names a model
+  the `request` echo's selection member and the named replay-byte-budget
+  exception below, when every item that names a model
   names it by its package identity ("Building the analysis input").
+- **Named exception: route-specific encoded replay byte budgets.** The source
+  and directory routes retain FR-071's actual encoded replay-request
+  measurements. The source route legitimately carries dependency-source
+  references and source byte provisions that the directory route does not;
+  the directory route SHALL NOT recover source to make those measurements
+  equal, and the source route SHALL NOT discard its existing input charges or
+  change to a different replay path to make them equal. Boundary comparisons
+  use each route's own baseline `P_r` and the same consumed external artifact
+  charge `D`, with `R_r = P_r + D` (AC-15). The effective configured
+  `replay.input_bytes` value and the numeric byte-budget refusal values
+  (`bound`, `actual` and their diagnostic renderings) MAY therefore differ
+  across these route-specific boundary runs. This is the only additional
+  record exception: item settlement, code, cause, setting, unaffected siblings,
+  witness and replay content otherwise agree. No diagnostic payload is
+  normalized, stripped or suppressed. Each full refusal is asserted with its
+  own exact numbers. At unlimited or each route's exact successful bound,
+  the successful semantic records retain the normal source/package parity;
+  only the effective replay-byte-budget value, where echoed, is excepted.
 - The equality holds over every member of a clause's record, its `span`
   included, with no member normalized. A package clause's span SHALL be read
   from the `declaration_region` of its `temporal_clause_names` or
@@ -405,7 +437,7 @@ The Counter fixture is FR-620's.
 | FR-850-AC-12 | A compiled root calls `test/z::answer`, which calls `test/a::answer` returning Integer `42`. Running the root function from source and from its FR-517 directory returns `42` on both routes. Its Counter temporal claim `always holds(c.value <= z::answer() - 40)` is analyzed with the same models/documents/items on both routes and gives equal item records, counterexamples and reproduced replays except the request selection. Deleting all unit/library source files and the handoff's `sources/` before the package run and analyze/replay changes neither result. Removing `dependencies.json` refuses `invalid_package`/`missing-file` even for an import-free unit; no compile fallback occurs. | Test |
 | FR-850-AC-13 | FR-517-AC-28's diamond is admitted once per unique library and settles the source route's result. A missing transitive artifact refuses before an item runs; a manifest entry for a foreign or conflicting library refuses `conflicting-definition`; an unreachable row, a duplicate identity, reversed rows, an unknown row member, a nonindexed path, `../escape`, an absolute path and a selected symlink/non-regular file each refuse by the dependency admission table at their own file or pointer. A lock cycle refuses `definition-cycle`. The malformed-manifest and omitted-selection mutations in the supplemental AC-13 table give exactly its code, cause and location; none reaches source or an engine. | Test |
 | FR-850-AC-14 | For AC-12's transitive handoff, removal of either dependency's `identities.json` or `equality.json` refuses `missing-file` naming that indexed file even when the equality lists would be empty. Swapping non-empty witness files between distinct admitted libraries refuses their original identity/equality join error at the foreign file, before any item runs; no dependency receives the root's witness. The unchanged handoff completes. | Test |
-| FR-850-AC-15 | For AC-12's handoff, compute `B` as the bytes of exactly the root, manifest, unique dependency package/witness files and selected model/runtime files read. At `dependent_bytes = B` intake completes; at `B - 1` it settles `incomplete`, `resource_exhausted`, exit `22`, naming `dependent_bytes` and its configured bound. A handoff whose manifest expands the selected-file total from 64 to 65 stops at the same phase naming the shared file limit before opening file 65. A diamond charges its shared triple once. For strict-read/native-join work and storage, an allowance equal to the completed closure pass succeeds and one below its next charge refuses under the original `i2.work_units` or `i2.native_join_storage` setting without restarting an allowance at a dependency boundary. The transitive replay in supplemental AC-15 tests `replay.input_bytes` at a root-only bound and the exact consumed-artifact total, with item-local refusal and unaffected siblings. | Test |
+| FR-850-AC-15 | For AC-12's handoff, compute `B` as the bytes of exactly the root, manifest, unique dependency package/witness files and selected model/runtime files read. At `dependent_bytes = B` intake completes; at `B - 1` it settles `incomplete`, `resource_exhausted`, exit `22`, naming `dependent_bytes` and its configured bound. A handoff whose manifest expands the selected-file total from 64 to 65 stops at the same phase naming the shared file limit before opening file 65. A diamond charges its shared triple once. For strict-read/native-join work and storage, an allowance equal to the completed closure pass succeeds and one below its next charge refuses under the original `i2.work_units` or `i2.native_join_storage` setting without restarting an allowance at a dependency boundary. The transitive replay in supplemental AC-15 tests the existing encoded-request `replay.input_bytes` baseline separately for each route, then that baseline plus the same unique consumed external dependency package bytes, with exact attempted totals, item-local refusal and unaffected siblings. | Test |
 | FR-850-AC-16 | A library in AC-12's closure selects domain document `test/library-domain`, which the root does not select, and the request supplies both that document and the root's domain documents. Admission binds each document to the selecting package and completes without an extraneous-model refusal. Removing the library-only document refuses `missing_import`/`missing-selection` naming its identity; replacing it by content the library selection refuses preserves that reader refusal at the dependency package. No witness from the root is substituted. | Test |
 
 ### FR-850-AC-13
@@ -443,30 +475,50 @@ The omitted selection is not repaired by discovering the unlisted
 Use AC-12's `test/z` → `test/a` transitive call in the Counter claim, alongside
 Counter's independent `Bounded` claim (`always holds(c.value <= 3)`). Keep all
 intake, I2 and exploration bounds large enough for initial admission and search.
-Let `P` be the exact byte length of the root `checked-package.json`; let `R`
-be the exact total package artifact bytes consumed by the successful replay:
-the root plus the `test/z` and `test/a` checked-package bytes, each unique
-package counted once for that replay. Thus `R > P` and the transitive function
-actually consumes both dependencies, rather than importing unused libraries.
 The directory request retains AC-12's witness supply with no source available;
-run its source control before deleting source files.
+run its source control before deleting source files. Each route keeps its
+existing replay-request construction and decoder phase order.
 
-Run source and directory requests with the same two items and with
-`replay.input_bytes = P`, so the root alone fits but the consumed closure does
-not. The library-dependent item settles `inconclusive` with cause
-`replay_refused`, carrying the original `stage_limit_exceeded` /
-`input-bytes-exceeded` refusal naming setting `replay.input_bytes`, bound `P`
-and its attempted byte count. It never settles `refuted` with an unverified
-counterexample, `failed`, or a whole-request admission refusal. `Bounded`
-still settles `proved` with its unlimited-run record. The outcome retains both
-items, with category and exit determined by FR-621; source and package item
-records agree, and their outcomes differ only in the request selection echo.
+For route `r` (`source` or `directory`), measure `P_r` as FR-071-AC-7's actual
+reader-measured encoded size of the replay request before adding external
+dependency artifacts. This includes the root checked-package bytes and every
+member already counted by that measurement: target, profiles, stage/source
+metadata and byte-provision labels and raw payloads, when present. `P_r` is
+not the root file length or a caller-declared size. In this fixture the source
+request carries dependency-source references and source provisions, so
+`P_source > P_directory`; those legitimate source charges remain intact.
+The unmodified request fits all earlier replay phases at its own `P_r`, so a
+failure below cannot be attributed to an already-oversized encoded envelope.
 
-At `replay.input_bytes = R`, the same library-dependent item settles
+Let `D` be the byte lengths of the unique external checked-package artifacts
+for `test/z` and `test/a` that the replay actually consumes, summed once per
+selected library identity. The same artifacts give the same `D` on both
+routes. The already-counted root is excluded, as are unconsumed artifacts;
+neither a second import path nor a repeated function call adds another copy.
+The total charged replay input is exactly `R_r = P_r + D`, with `D > 0`.
+No existing metadata or source-provision charge is subtracted from `P_r`.
+
+Run each route's same two-item request with `replay.input_bytes = P_r`.
+The encoded request itself fits; adding the consumed external closure gives
+attempted size exactly `R_r`, over bound `P_r`. The library-dependent item
+settles `inconclusive` with cause `replay_refused`, carrying the original
+`stage_limit_exceeded` / `input-bytes-exceeded` refusal, setting
+`replay.input_bytes`, bound `P_r` and actual `R_r`. It never settles `refuted`
+with an unverified counterexample, `failed`, or a whole-request admission
+refusal. `Bounded` still settles `proved` with its unlimited-run record, and
+the outcome retains both items with category and exit determined by FR-621.
+Assert the complete per-route refusal with its exact `P_r` and `R_r`, including
+their diagnostic renderings, under the one named exception in "Equality with
+the source route"; no other member is normalized or removed to compare routes.
+
+At `replay.input_bytes = R_r`, each route's library-dependent item settles
 `refuted` with the original counterexample and `replay.reproduced` `true`, and
-`Bounded` remains unchanged. A replay implementation that charges only the
-root bytes would incorrectly pass at `P`, so the negative case can detect an
-omitted dependency charge.
+`Bounded` remains unchanged. Unlimited and exact-success semantic records agree
+across routes, with only the effective replay-byte-budget echo excepted.
+A reader that adds no dependency bytes incorrectly succeeds at `P_r`; a reader
+that adds the root twice incorrectly refuses at `R_r`. These cases therefore
+distinguish omitted dependency charges, preserved encoded-request charges and
+a duplicate root charge without moving an existing decode phase.
 
 ## Dependencies
 
