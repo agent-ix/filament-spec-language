@@ -204,7 +204,7 @@ fn selected_model_enum_values_match_source_and_bare_evaluation() {
                 if let Some(previous) = first.get(name) {
                     assert_eq!(previous, member, "alias-independent opaque identity");
                 }
-                first.insert(name, *member);
+                first.insert(name, member.clone());
             }
             assert_eq!(
                 source_meter.admitted_charges(),
