@@ -100,7 +100,6 @@ fn plan(unit: &str, synthesis: Value) -> (u8, Value) {
 #[trace("TC-2860", "FR-1010-AC-1")]
 #[trace("FSpec-TC-1955", "FSpec-FR-805-AC-1")]
 #[trace("FSpec-TC-1950", "FSpec-FR-800-AC-1")]
-#[ignore = "QSL-1978: the plan outcome document is not implemented yet"]
 fn an_optimal_plan_writes_the_plan_outcome_document() {
     let (exit, value) = plan(&plan_unit("Int[0, 3]", "", "Reach.length >= 1"), json!({}));
     let outcome = &value["synthesis"];
@@ -135,7 +134,6 @@ fn an_optimal_plan_writes_the_plan_outcome_document() {
 #[trace("FSpec-TC-1955", "FSpec-FR-805-AC-2")]
 #[trace("FSpec-TC-1955", "FSpec-FR-805-AC-4")]
 #[trace("FSpec-TC-1956", "FSpec-FR-806-AC-5")]
-#[ignore = "QSL-1978: plan outcome exits and the strict plan request reader are not implemented yet"]
 fn an_infeasible_plan_exits_ten_and_a_malformed_request_refuses() {
     let unit = plan_unit("Int[0, 0]", "", "Reach.length >= 1");
     let (exit, value) = plan(&unit, json!({}));
@@ -154,7 +152,6 @@ fn an_infeasible_plan_exits_ten_and_a_malformed_request_refuses() {
 #[trace("TC-2861", "FR-1011-AC-1")]
 #[trace("FSpec-TC-1951", "FSpec-FR-801-AC-1")]
 #[trace("FSpec-TC-1951", "FSpec-FR-801-AC-6")]
-#[ignore = "QSL-1978: plan_search limits are not implemented yet"]
 fn the_plan_search_stops_at_its_named_limits() {
     let unit = plan_unit("Int[0, 3]", "", "Reach.length >= 3");
     for (member, setting) in [
@@ -175,7 +172,6 @@ fn the_plan_search_stops_at_its_named_limits() {
 #[test]
 #[trace("FSpec-TC-2003", "FSpec-FR-801-AC-7")]
 #[trace("TC-2861", "FR-1011-AC-3")]
-#[ignore = "QSL-1978: plan_search limit defaults and their refusals are not implemented yet"]
 fn plan_search_limits_have_published_defaults_and_refuse_invalid_values() {
     let unit = plan_unit("Int[0, 3]", "", "Reach.length >= 1");
     let defaults = json!({
@@ -220,7 +216,6 @@ fn plan_search_limits_have_published_defaults_and_refuse_invalid_values() {
 #[test]
 #[trace("TC-2861", "FR-1011-AC-2")]
 #[trace("FSpec-TC-1951", "FSpec-FR-801-AC-2")]
-#[ignore = "QSL-1978: the plan search does not charge the evaluation meter yet"]
 fn an_exhausted_evaluation_meter_names_its_accounting_setting() {
     let (_, value) = plan(
         &plan_unit("Int[0, 3]", "", "Reach.length >= 3"),
@@ -238,7 +233,6 @@ fn an_exhausted_evaluation_meter_names_its_accounting_setting() {
 #[test]
 #[trace("TC-2862", "FR-1012-AC-1")]
 #[trace("FSpec-TC-1953", "FSpec-FR-803-AC-2")]
-#[ignore = "QSL-1978: non-safety plan policies are not implemented yet"]
 fn a_non_safety_policy_is_evaluated_on_each_completed_plan() {
     let (exit, value) = plan(
         &plan_unit("Int[0, 3]", "", "Reach.length >= 1"),
@@ -263,7 +257,6 @@ fn a_non_safety_policy_is_evaluated_on_each_completed_plan() {
 #[test]
 #[trace("TC-2862", "FR-1012-AC-2")]
 #[trace("FSpec-TC-1954", "FSpec-FR-804-AC-4")]
-#[ignore = "QSL-1978: deterministic plan outcomes are not implemented yet"]
 fn equal_plan_requests_give_byte_identical_outcomes() {
     let unit = plan_unit("Int[0, 3]", "", "Reach.length >= 2");
     let (_, first) = plan(&unit, json!({}));
@@ -304,7 +297,6 @@ fn a_decimal_step_cost_is_exact_and_certified() {
 #[test]
 #[trace("TC-2863", "FR-1013-AC-1")]
 #[trace("FSpec-TC-1956", "FSpec-FR-806-AC-2")]
-#[ignore = "QSL-1978: plan declaration refusals at S3 are not implemented yet"]
 fn plan_declarations_refuse_at_check() {
     let (exit, value) = plan(&plan_unit("Int[-1, 3]", "", "Reach.length >= 1"), json!({}));
     assert_eq!(exit, 20, "{value}");
@@ -1373,7 +1365,6 @@ fn probabilistic_plans_compute_exact_probabilities() {
 #[trace("FSpec-TC-1956", "FSpec-FR-806-AC-3")]
 #[trace("FSpec-TC-2038", "FSpec-FR-823-AC-4")]
 #[trace("FSpec-TC-1956", "FSpec-FR-806-AC-4")]
-#[ignore = "QSL-1978: plan request admission refusals are not implemented yet"]
 fn plan_requests_refuse_at_admission() {
     let unit = format!(
         "{}type Digit = Int[0, 9];\n\

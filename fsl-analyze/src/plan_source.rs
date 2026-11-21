@@ -22,7 +22,10 @@ use filament_semantic_value::declaration::CompositeShape;
 use filament_semantic_value::model_transition::ModelTransition;
 use fsl_eval::simulation::model::{ModelSimState, ModelSystem};
 use fsl_package::CheckedPackage;
-use fsl_semantics::check::{CheckedBody, CheckedPlan, CheckedSynthesis, PlanOperation};
+use fsl_eval::simulation::model::{read_clause, ClauseReading};
+use fsl_semantics::check::{
+    CheckedBody, CheckedPlan, CheckedSynthesis, PlanOperation, TemporalClauseNode,
+};
 use fsl_semantics::model::state::StateObject;
 
 use crate::plan_search::{
@@ -99,6 +102,13 @@ pub struct SourcePlan<'a> {
     merges: bool,
     goal_reads_final_attributes: bool,
     objective_reads_final_attributes: bool,
+    /// The temporal clauses the plan must satisfy, in the request's order
+    /// (FSpec FR-803).
+    policies: Vec<&'a TemporalClauseNode>,
+    /// The states of each policy monitor's prefix, by monitor id: a policy
+    /// monitor's canonical state is the id of the prefix it has read.
+    traces: Vec<Vec<ModelSimState>>,
+    trace_ids: BTreeMap<(usize, Vec<Vec<u8>>), usize>,
     fault: Option<String>,
 }
 
@@ -112,6 +122,7 @@ impl<'a> SourcePlan<'a> {
         package: &'a CheckedPackage,
         synthesis: &'a CheckedSynthesis,
         system: &'a ModelSystem<'a>,
+        policies: Vec<&'a TemporalClauseNode>,
         limits: ScalarLimits,
     ) -> Result<Self, PlanSourceError> {
         let plan = synthesis
@@ -168,6 +179,9 @@ impl<'a> SourcePlan<'a> {
             merges,
             goal_reads_final_attributes,
             objective_reads_final_attributes,
+            policies,
+            traces: Vec::new(),
+            trace_ids: BTreeMap::new(),
             fault: None,
         })
     }
@@ -394,6 +408,53 @@ impl<'a> SourcePlan<'a> {
         }
     }
 
+    /// The states a policy monitor has read.
+    fn prefix(&self, monitor: &[u8]) -> Vec<ModelSimState> {
+        <[u8; 8]>::try_from(monitor)
+            .ok()
+            .and_then(|id| self.traces.get(usize::try_from(u64::from_le_bytes(id)).ok()?))
+            .cloned()
+            .unwrap_or_default()
+    }
+
+    /// Policy `policy` after reading `state` following `prefix`: rejected
+    /// when every continuation violates the clause (FSpec FR-803), else the
+    /// id of the prefix it has now read.
+    fn advance(
+        &mut self,
+        policy: usize,
+        mut prefix: Vec<ModelSimState>,
+        state: &ModelSimState,
+    ) -> MonitorStep {
+        prefix.push(state.clone());
+        let Some(&node) = self.policies.get(policy) else {
+            return MonitorStep::Reject;
+        };
+        match read_clause(self.system, node, &prefix, false) {
+            Ok(ClauseReading::Violated) => return MonitorStep::Reject,
+            Ok(_) => {}
+            Err(error) => {
+                self.fault.get_or_insert_with(|| error.to_string());
+                return MonitorStep::Reject;
+            }
+        }
+        let keys = prefix
+            .iter()
+            .map(|read| self.system.state_key(read).map(|(key, _)| key))
+            .collect::<Result<Vec<_>, _>>();
+        let Ok(keys) = keys else {
+            self.fault
+                .get_or_insert_with(|| "a policy prefix has no state key".to_owned());
+            return MonitorStep::Reject;
+        };
+        let next = self.traces.len();
+        let id = *self.trace_ids.entry((policy, keys)).or_insert(next);
+        if id == next {
+            self.traces.push(prefix);
+        }
+        MonitorStep::Continue(u64::try_from(id).unwrap_or(u64::MAX).to_le_bytes().to_vec())
+    }
+
     /// The exact value of an objective evaluation.
     fn exact(value: &Value) -> Option<Rational> {
         match value {
@@ -512,33 +573,44 @@ impl PlanRules for SourcePlan<'_> {
     }
 
     fn policy_count(&self) -> usize {
-        0
+        self.policies.len()
     }
 
     fn policy_start(
         &mut self,
-        _policy: usize,
-        _state: &ModelSimState,
+        policy: usize,
+        state: &ModelSimState,
     ) -> Result<MonitorStep, RuleStop> {
-        Ok(MonitorStep::Continue(Vec::new()))
+        Ok(self.advance(policy, Vec::new(), state))
     }
 
     fn policy_advance(
         &mut self,
-        _policy: usize,
-        _monitor: &[u8],
-        _state: &ModelSimState,
+        policy: usize,
+        monitor: &[u8],
+        state: &ModelSimState,
     ) -> Result<MonitorStep, RuleStop> {
-        Ok(MonitorStep::Continue(Vec::new()))
+        let prefix = self.prefix(monitor);
+        Ok(self.advance(policy, prefix, state))
     }
 
     fn policy_accepts(
         &mut self,
-        _policy: usize,
-        _monitor: &[u8],
+        policy: usize,
+        monitor: &[u8],
         _last: &ModelSimState,
     ) -> Result<bool, RuleStop> {
-        Ok(true)
+        let states = self.prefix(monitor);
+        let Some(&node) = self.policies.get(policy) else {
+            return Ok(false);
+        };
+        Ok(match read_clause(self.system, node, &states, true) {
+            Ok(reading) => reading != ClauseReading::Violated,
+            Err(error) => {
+                self.fault.get_or_insert_with(|| error.to_string());
+                false
+            }
+        })
     }
 
     fn goal(&mut self, plan: &PlanView<'_>) -> Result<bool, RuleStop> {

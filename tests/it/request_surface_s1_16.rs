@@ -233,7 +233,6 @@ fn a_passing_run_records_tested_and_never_proved() {
 #[test]
 #[trace("TC-2860", "FR-1010-AC-3")]
 #[trace("FSpec-TC-1955", "FSpec-FR-805-AC-6")]
-#[ignore = "QSL-1978: planner and optimizer not implemented yet"]
 fn the_planner_returns_optimal_and_infeasible_with_certificates() {
     let unit = |lengths: &str| {
         format!(
@@ -755,22 +754,30 @@ fn pick_finds_validates_exhausts_and_optimizes() {
     assert_eq!(maximal["synthesis"]["optimal"], true, "{maximal}");
 }
 
-/// FR-1037: a plan synthesis selected through the `synthesis` member is
-/// refused as not yet routed to the planner; the value enumerator never
-/// reports a verdict for it.
+/// FR-1037: a plan synthesis selected through the `synthesis` member runs
+/// the plan search and writes its `filament.plan-outcome/v1` document; the
+/// value enumerator never reports a verdict for it.
 #[test]
 #[trace("TC-3017", "FR-1037-AC-1")]
-fn a_plan_synthesis_is_refused_not_enumerated() {
+fn a_plan_synthesis_runs_the_plan_search_not_the_enumerator() {
     let unit = format!(
         "{MODEL_HEADER}type Lengths = Int[0, 3];\n\
          synthesis Reach using v grammar Config::ConfigVersion domain Lengths \
-         satisfies {{ true }};\n"
+         satisfies {{ Reach.length >= 1 }};\n"
     );
-    let (exit, value) = run(&unit, true, ("synthesis", json!({"declaration": "Reach"})));
-    assert_eq!(exit, 21, "{value}");
-    assert_eq!(value["code"], "unsupported_construct", "{value}");
-    assert_eq!(value["cause"], "not-yet-implemented", "{value}");
-    assert!(value["synthesis"].get("status").is_none(), "{value}");
+    let (exit, value) = run(
+        &unit,
+        true,
+        (
+            "synthesis",
+            json!({"declaration": "Reach", "initial": "spine-snapshot.json"}),
+        ),
+    );
+    let outcome = &value["synthesis"];
+    assert_eq!(outcome["format"], "filament.plan-outcome/v1", "{value}");
+    assert_eq!(outcome["status"], "optimal", "{value}");
+    assert_eq!(exit, 0, "{value}");
+    assert!(outcome.get("candidates").is_none(), "{value}");
 }
 
 /// FSpec FR-194-AC-10: a search stopped by its work limit is `incomplete`
@@ -818,7 +825,6 @@ fn reach(objective: &str, policy: Value) -> Value {
 #[test]
 #[trace("TC-2105", "FR-755-AC-3")]
 #[trace("FSpec-TC-1603", "FSpec-FR-650-AC-4")]
-#[ignore = "QSL-1978: planner policy clauses not implemented yet"]
 fn the_planner_keeps_plans_within_policy() {
     let value = reach("", json!(["NotOne"]));
     let result = &value["synthesis"];
@@ -863,7 +869,6 @@ fn the_planner_minimizes_a_per_step_cost_sum() {
 /// run stopped by its work limit is `incomplete` naming it.
 #[test]
 #[trace("FSpec-TC-1603", "FSpec-FR-650-AC-3")]
-#[ignore = "QSL-1978: planner infeasibility and work limits not implemented yet"]
 fn the_planner_reports_infeasible_and_incomplete() {
     let unit = format!(
         "{MODEL_HEADER}type Lengths = Int[0, 0];\n\
@@ -901,7 +906,6 @@ fn the_planner_reports_infeasible_and_incomplete() {
 #[test]
 #[trace("TC-2105", "FR-755-AC-4")]
 #[trace("FSpec-TC-1603", "FSpec-FR-650-AC-7")]
-#[ignore = "QSL-1978: the closed synthesis member list is not implemented yet"]
 fn a_test_seam_named_on_the_wire_is_an_unknown_member() {
     let unit = format!(
         "{MODEL_HEADER}type Lengths = Int[0, 3];\n\

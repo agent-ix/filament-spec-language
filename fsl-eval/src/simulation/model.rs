@@ -39,6 +39,7 @@ pub use operation_coverage::{
 };
 mod model_based_test;
 pub use model_based_test::{
+    ClauseReading, read_clause,
     ModelBasedCaseProvenance, ModelBasedCounterexample, ModelBasedCoverage,
     ModelBasedPartitionCoverage, ModelBasedProvenance, ModelBasedRunLimits,
     ModelBasedSizeBoundedRoot, ModelBasedTestCause, ModelBasedTestChecks, ModelBasedTestCounts,

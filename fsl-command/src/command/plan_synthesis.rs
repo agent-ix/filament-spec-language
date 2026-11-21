@@ -188,7 +188,7 @@ pub(super) fn run(
         expansion: ExpansionLimits {
             max_candidates: u64::MAX,
         },
-        meter: limits,
+        meter: accounting,
         emit: fsl_package::EmitLimits::new(u64::MAX),
     })
     .map_err(|failure| {
@@ -199,7 +199,30 @@ pub(super) fn run(
         )
     })?;
 
-    let mut rules = SourcePlan::new(package, checked, &system, limits)
+    let mut policies = Vec::with_capacity(request.policy.len());
+    for (position, name) in request.policy.iter().enumerate() {
+        let node = package
+            .graph()
+            .temporal_clauses()
+            .iter()
+            .find(|node| node.clause().name() == name)
+            .ok_or_else(|| RunCause::SynthesisRequest {
+                path: format!("{NATIVE_RUN_POINTER}/policy/{position}"),
+                code: Code::MissingDeclaration,
+                cause: "missing-name",
+                reason: format!("no temporal clause is named `{name}`"),
+            })?;
+        if node.clause().over().1 != *checked.grammar() {
+            return Err(RunCause::SynthesisRequest {
+                path: format!("{NATIVE_RUN_POINTER}/policy/{position}"),
+                code: Code::IllTyped,
+                cause: "type-mismatch",
+                reason: format!("the clause `{name}` is not over the grammar type of the plan"),
+            });
+        }
+        policies.push(node);
+    }
+    let mut rules = SourcePlan::new(package, checked, &system, policies, limits)
         .map_err(|error| refusal("/request/synthesis/declaration", "invalid-value", error.to_string()))?;
     let cancel = Cancel::new();
     let deadline = request.deadline_ms.map(|milliseconds| {
