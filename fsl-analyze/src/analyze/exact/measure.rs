@@ -368,6 +368,11 @@ pub(super) fn run(
 }
 fn scalar_failure(error: fsl_eval::probabilistic::MeasureError) -> ProbabilityDocumentError {
     match error {
+        fsl_eval::probabilistic::MeasureError::Undefined(cause) => {
+            ProbabilityDocumentError::Build(Box::new(ExactProbBuildIssue::Predicate(
+                fsl_eval::simulation::model::ClauseOutcome::KernelUndefined(*cause),
+            )))
+        }
         fsl_eval::probabilistic::MeasureError::Accounting(error) => {
             ProbabilityDocumentError::Accounting(error)
         }

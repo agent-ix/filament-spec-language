@@ -18,6 +18,11 @@ fn limits_of(system: &ModelSystem<'_>, limits: &ExactProbLimits) -> ProbabilityD
 }
 fn measure_error(error: MeasureError) -> ProbabilityWitnessError {
     bounded::document_error(match error {
+        MeasureError::Undefined(cause) => {
+            ProbabilityDocumentError::Build(Box::new(crate::ExactProbBuildIssue::Predicate(
+                fsl_eval::simulation::model::ClauseOutcome::KernelUndefined(*cause),
+            )))
+        }
         MeasureError::Accounting(error) => ProbabilityDocumentError::Accounting(error),
         MeasureError::Broken(_) => ProbabilityDocumentError::Malformed,
     })

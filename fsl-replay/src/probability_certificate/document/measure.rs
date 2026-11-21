@@ -116,6 +116,11 @@ pub(in crate::probability_certificate) fn ordered(
 
 fn scalar_error(error: MeasureError) -> ProbabilityDocumentError {
     match error {
+        MeasureError::Undefined(cause) => {
+            ProbabilityDocumentError::Build(Box::new(crate::ExactProbBuildIssue::Predicate(
+                fsl_eval::simulation::model::ClauseOutcome::KernelUndefined(*cause),
+            )))
+        }
         MeasureError::Accounting(error) => ProbabilityDocumentError::Accounting(error),
         MeasureError::Broken(_) => ProbabilityDocumentError::Malformed,
     }

@@ -259,6 +259,11 @@ fn plan_refusal(
             claim: claim.cloned(),
             member,
         },
+        PlanFault::Measure(fsl_eval::probabilistic::MeasureError::Undefined(cause)) => {
+            ProductRefusal::PredicateRefused(
+                fsl_eval::simulation::model::ClauseOutcome::KernelUndefined(*cause),
+            )
+        }
         PlanFault::Measure(fsl_eval::probabilistic::MeasureError::Accounting(error)) => {
             ProductRefusal::PredicateRefused(
                 fsl_eval::simulation::model::ClauseOutcome::Incomplete(*error),

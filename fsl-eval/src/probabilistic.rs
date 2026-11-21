@@ -165,6 +165,9 @@ pub enum Accumulator {
 /// A malformed measure control or reward supplied to its semantic owner.
 #[derive(Debug, thiserror::Error)]
 pub enum MeasureError {
+    /// A scalar operation of the claim has no value, with the kernel cause.
+    #[error("undefined measure value: {0:?}")]
+    Undefined(Box<filament_exact::Undefined>),
     /// The checked control, predicates or reward does not match the plan.
     #[error("invalid measure control: {0}")]
     Broken(&'static str),
@@ -429,6 +432,17 @@ impl MeasurePlan<'_> {
                     }
                     _ => return Err(MeasureError::Broken("a-fraction-holds-its-sums")),
                 };
+                if remaining == 0 {
+                    if let Accumulator::WeightedFraction {
+                        true_sum,
+                        total_sum,
+                    } = &accumulator
+                    {
+                        if total_sum.is_zero() {
+                            arithmetic(RationalArithmetic::Divide(true_sum, total_sum), meter)?;
+                        }
+                    }
+                }
                 Ok((
                     Some(MonitorState::Fraction { remaining }),
                     Some(accumulator),
@@ -542,9 +556,8 @@ fn completed<T>(outcome: Outcome<T>) -> Result<T, MeasureError> {
     match outcome {
         Outcome::Completed(value) => Ok(value),
         Outcome::Incomplete(error) => Err(MeasureError::Accounting(Box::new(error))),
-        Outcome::Undefined(_) | Outcome::Refused(_) => {
-            Err(MeasureError::Broken("measure-arithmetic-defined"))
-        }
+        Outcome::Undefined(cause) => Err(MeasureError::Undefined(Box::new(cause))),
+        Outcome::Refused(_) => Err(MeasureError::Broken("measure-arithmetic-defined")),
     }
 }
 
