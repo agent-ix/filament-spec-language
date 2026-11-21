@@ -25,25 +25,31 @@ pub(super) const CONSTRUCT: &str = "temporal/temporal_clause";
 /// An operator's interval: `None` for an unbounded operator, otherwise the
 /// inclusive lower bound and the inclusive upper bound when there is one.
 #[derive(Clone, Copy, PartialEq)]
-pub(super) struct Iv(Option<(u64, Option<u64>)>);
+pub(super) struct Iv {
+    bounds: Option<(u64, Option<u64>)>,
+    node: Option<usize>,
+}
 
 impl Iv {
     /// No interval.
     pub(super) const fn none() -> Self {
-        Self(None)
+        Self {
+            bounds: None,
+            node: None,
+        }
     }
     /// The inclusive lower bound and the inclusive upper bound, if any.
     fn bounds(self) -> (u64, Option<u64>) {
-        self.0.unwrap_or_default()
+        self.bounds.unwrap_or_default()
     }
     fn lower(self) -> u64 {
-        self.0.map_or(0, |(lower, _)| lower)
+        self.bounds.map_or(0, |(lower, _)| lower)
     }
     fn upper(self) -> Option<u64> {
-        self.0.and_then(|(_, upper)| upper)
+        self.bounds.and_then(|(_, upper)| upper)
     }
     pub(super) fn is_some(self) -> bool {
-        self.0.is_some()
+        self.bounds.is_some()
     }
 }
 
@@ -140,7 +146,7 @@ fn at_node(graph: &Graph<'_>, id: &filament_contract_model::CheckedNodeId) -> Lo
     })
 }
 
-fn interval(graph: &Graph<'_>, node: &FormulaNodeUse<'_>) -> Lower<Iv> {
+fn interval(graph: &Graph<'_>, node: &FormulaNodeUse<'_>, at: usize) -> Lower<Iv> {
     let bound = |text: String| {
         text.parse::<u64>()
             .map_err(|_| refusal("temporal/interval", "an interval bound beyond 64 bits"))
@@ -156,17 +162,17 @@ fn interval(graph: &Graph<'_>, node: &FormulaNodeUse<'_>) -> Lower<Iv> {
             Ok(if (lower, upper) == (0, None) {
                 Iv::none()
             } else {
-                Iv(Some((lower, upper)))
+                Iv {
+                    bounds: Some((lower, upper)),
+                    node: Some(at),
+                }
             })
         }
-        Some(CheckedOperationInterval::Timed { .. }) => {
-            let at = at_node(graph, node.node)?;
-            defer_at(
-                at,
-                &graph.construct(at),
-                "a timed interval this build does not lower",
-            )
-        }
+        Some(CheckedOperationInterval::Timed { .. }) => defer_at(
+            at,
+            &graph.construct(at),
+            "a timed interval this build does not lower",
+        ),
     }
 }
 
@@ -252,7 +258,7 @@ fn build(
         })
         .map(|window| Tf::Timed(Box::new(window)));
     }
-    let iv = interval(graph, node)?;
+    let iv = interval(graph, node, here)?;
     if direction == Some(OperatorDirection::Future) {
         if scope.past {
             return defer_at(

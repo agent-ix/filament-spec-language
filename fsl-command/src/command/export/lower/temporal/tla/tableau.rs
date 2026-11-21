@@ -2,7 +2,7 @@
 //! A finite tableau for the negated clause. Invalid guesses reject the
 //! monitor run without disabling any transition of the subject.
 
-use super::{conjuncts, fairness, Cond, Ctx, Extra, Iv, Tf};
+use super::{conjuncts, fairness, Cond, Ctx, Extra, Iv, Tf, Var};
 use crate::command::export::lower::{
     bullets, defer_at, define, mangle, Definition, Kind, Lower, E,
 };
@@ -16,6 +16,7 @@ const MAX_NODES: usize = 16;
 enum Node {
     Constant(bool),
     Atom { index: usize, positive: bool },
+    ResponseViolation(usize),
     And(usize, usize),
     Or(usize, usize),
     Next(usize),
@@ -26,13 +27,103 @@ enum Node {
 #[derive(Clone, Copy, Debug)]
 enum Refused {
     History,
-    Limit,
+    Limit(Option<usize>),
+}
+
+/// A deadline that can be checked when its upper bound has elapsed.
+#[derive(Clone, Copy)]
+struct Response {
+    lower: u64,
+    upper: u64,
+    trigger: usize,
+    ready: usize,
+    node: Option<usize>,
+}
+
+impl Response {
+    fn of(tf: &Tf) -> Option<Self> {
+        let Tf::Always(iv, inner) = tf else {
+            return None;
+        };
+        if iv.is_some() {
+            return None;
+        }
+        let Tf::Implies(trigger, response) = &**inner else {
+            return None;
+        };
+        let (Tf::Atom(trigger), Tf::Eventually(window, ready)) = (&**trigger, &**response) else {
+            return None;
+        };
+        let Tf::Atom(ready) = &**ready else {
+            return None;
+        };
+        Some(Self {
+            lower: window.lower(),
+            upper: window.upper()?,
+            trigger: *trigger,
+            ready: *ready,
+            node: window.node,
+        })
+    }
+
+    /// Read the trigger at distance `upper` and the responses from distance
+    /// `upper - lower` through the current position. The saturating step
+    /// counter makes that history eligible only after the first deadline.
+    fn monitor(&self, ctx: &Ctx<'_>, ordinal: usize) -> Lower<(Vec<Var>, String)> {
+        let names = &ctx.names;
+        let key = ctx.key();
+        let ids = &names.ids;
+        let upper = self.upper;
+        let age = names.counter(ordinal);
+        let mut variables = vec![Var {
+            ty: format!("[{ids} -> 0..{upper}]"),
+            init: Some(ctx.per_key("0")),
+            update: Some(ctx.per_key(&format!(
+                "IF {age}[{key}] < {upper} THEN {age}[{key}] + 1 ELSE {upper}"
+            ))),
+            name: age.clone(),
+        }];
+        let history = |ordinal, length, atom| -> Lower<Var> {
+            let name = names.variable('r', ordinal);
+            let cur = ctx.atom(atom, false)?;
+            Ok(Var {
+                ty: format!("[{ids} -> [1..{length} -> BOOLEAN]]"),
+                init: Some(ctx.per_key(&format!("[i \\in 1..{length} |-> FALSE]"))),
+                update: Some(ctx.per_key(&format!(
+                    "[i \\in 1..{length} |-> IF i = 1 THEN (IF {}({key}) THEN {cur} ELSE FALSE) ELSE {name}[{key}][i - 1]]",
+                    names.ok
+                ))),
+                name,
+            })
+        };
+        let trigger = if upper == 0 {
+            ctx.atom(self.trigger, false)?
+        } else {
+            let past = history(ordinal as u64 * 2, upper, self.trigger)?;
+            let trigger = format!("{}[{key}][{upper}]", past.name);
+            variables.push(past);
+            trigger
+        };
+        let ready = ctx.atom(self.ready, false)?;
+        let mut test = format!("{age}[{key}] = {upper} /\\ {trigger} /\\ ~({ready})");
+        let length = upper - self.lower;
+        if length > 0 {
+            let past = history(ordinal as u64 * 2 + 1, length, self.ready)?;
+            test.push_str(&format!(
+                " /\\ (\\A i \\in 1..{length} : ~{}[{key}][i])",
+                past.name
+            ));
+            variables.push(past);
+        }
+        Ok((variables, test))
+    }
 }
 
 #[derive(Default)]
 struct Closure {
     nodes: Vec<Node>,
     positions: BTreeMap<Node, usize>,
+    responses: Vec<Response>,
 }
 
 impl Closure {
@@ -42,11 +133,37 @@ impl Closure {
         }
         let at = self.nodes.len();
         if at >= MAX_NODES {
-            return Err(Refused::Limit);
+            return Err(Refused::Limit(None));
         }
         self.nodes.push(node);
         self.positions.insert(node, at);
         Ok(at)
+    }
+
+    fn counterexample(&mut self, tf: &Tf) -> Result<usize, Refused> {
+        if let Tf::And(left, right) = tf {
+            let left = self.counterexample(left)?;
+            let right = self.counterexample(right)?;
+            return self.add(Node::Or(left, right));
+        }
+        let Some(response) = Response::of(tf) else {
+            return self.formula(tf, false);
+        };
+        self.response_counterexample(response)
+            .map_err(|_| Refused::Limit(response.node))
+    }
+
+    fn response_counterexample(&mut self, response: Response) -> Result<usize, Refused> {
+        if response.upper >= MAX_NODES as u64 {
+            return Err(Refused::Limit(None));
+        }
+        let violation = self.add(Node::ResponseViolation(self.responses.len()))?;
+        self.responses.push(response);
+        // A failed response can be reported at its deadline. At the origin,
+        // eventually observing that failure is equivalent to negating the
+        // obligation that every trigger receives a response in its window.
+        let any = self.add(Node::Constant(true))?;
+        self.add(Node::Until(any, violation))
     }
 
     fn formula(&mut self, tf: &Tf, positive: bool) -> Result<usize, Refused> {
@@ -111,7 +228,7 @@ impl Closure {
             return self.add(Node::Constant(!until));
         }
         if lower >= MAX_NODES as u64 || upper.is_some_and(|upper| upper >= MAX_NODES as u64) {
-            return Err(Refused::Limit);
+            return Err(Refused::Limit(interval.node));
         }
         let mut root = if let Some(upper) = upper {
             let mut step = right;
@@ -153,7 +270,7 @@ impl Closure {
             .collect()
     }
 
-    fn equations(&self, ctx: &Ctx<'_>) -> Lower<Vec<String>> {
+    fn equations(&self, ctx: &Ctx<'_>, violations: &[String]) -> Lower<Vec<String>> {
         self.nodes
             .iter()
             .enumerate()
@@ -168,6 +285,7 @@ impl Closure {
                         index,
                         positive: false,
                     } => format!("~({})", ctx.atom(index, false)?),
+                    Node::ResponseViolation(index) => violations[index].clone(),
                     Node::And(left, right) => format!("q[{left}] /\\ q[{right}]"),
                     Node::Or(left, right) => format!("q[{left}] \\/ q[{right}]"),
                     Node::Next(inner) => format!("r[{inner}]"),
@@ -198,6 +316,10 @@ fn mixed_fragment(ctx: &Ctx<'_>, formula: &Tf) -> bool {
     let mut recurrence = None;
     let mut responses = Vec::new();
     for leaf in leaves {
+        if let Some(response) = Response::of(leaf) {
+            responses.extend([response.trigger, response.ready]);
+            continue;
+        }
         match leaf {
             Tf::Eventually(outer, inner) if !outer.is_some() => {
                 let Tf::Always(inner, operand) = &**inner else {
@@ -210,31 +332,17 @@ fn mixed_fragment(ctx: &Ctx<'_>, formula: &Tf) -> bool {
                     return false;
                 }
             }
-            Tf::Always(outer, inner) if !outer.is_some() => match &**inner {
-                Tf::Eventually(inner, operand) if !inner.is_some() => {
-                    let Tf::Atom(index) = &**operand else {
-                        return false;
-                    };
-                    if recurrence.replace(*index).is_some() {
-                        return false;
-                    }
+            Tf::Always(outer, inner) if !outer.is_some() => {
+                let Tf::Eventually(inner, operand) = &**inner else {
+                    return false;
+                };
+                let Tf::Atom(index) = &**operand else {
+                    return false;
+                };
+                if inner.is_some() || recurrence.replace(*index).is_some() {
+                    return false;
                 }
-                Tf::Implies(trigger, response) => {
-                    let (Tf::Atom(trigger), Tf::Eventually(window, operand)) =
-                        (&**trigger, &**response)
-                    else {
-                        return false;
-                    };
-                    let Tf::Atom(response) = &**operand else {
-                        return false;
-                    };
-                    if window.upper().is_none() {
-                        return false;
-                    }
-                    responses.extend([*trigger, *response]);
-                }
-                _ => return false,
-            },
+            }
             _ => return false,
         }
     }
@@ -281,21 +389,20 @@ pub(super) fn emit(
         );
     }
     let mut closure = Closure::default();
-    let root = match closure.formula(formula, false) {
+    let root = match closure.counterexample(formula) {
         Ok(root) => root,
         Err(reason) => {
-            return defer_at(
-                anchor,
-                "temporal/nondeterministic-monitor",
-                match reason {
-                    Refused::History => {
-                        "a nondeterministic tableau with a history or timed operand"
-                    }
-                    Refused::Limit => {
-                        "a nondeterministic tableau above the finite formula-closure limit"
-                    }
-                },
-            );
+            let (node, detail) = match reason {
+                Refused::History => (
+                    anchor,
+                    "a nondeterministic tableau with a history or timed operand",
+                ),
+                Refused::Limit(node) => (
+                    node.unwrap_or(anchor),
+                    "a nondeterministic tableau above the finite formula-closure limit",
+                ),
+            };
+            return defer_at(node, "temporal/nondeterministic-monitor", detail);
         }
     };
     let key = ctx.key();
@@ -323,24 +430,15 @@ pub(super) fn emit(
         &row_type,
         format!("{row_type} == [0..{} -> BOOLEAN]", closure.nodes.len() - 1),
     );
-    let equations = closure
-        .equations(ctx)?
-        .into_iter()
-        .map(|row| format!("    /\\ {row}"))
-        .collect::<Vec<_>>()
-        .join("\n");
-    let ok = &names.ok;
-    emit(
-        out,
-        &equation,
-        format!("{equation}({key}, q, r) ==\n  IF {ok}({key})\n  THEN\n{equations}\n  ELSE FALSE"),
-    );
-
-    let mut variables = vec![monitor.clone(), live.clone(), phase.clone()];
+    let mut variables = vec![
+        (monitor.clone(), clause.position),
+        (live.clone(), clause.position),
+        (phase.clone(), clause.position),
+    ];
     let mut types = vec![
         format!("{monitor} \\in {choices}"),
         format!("{live} \\in [{ids} -> BOOLEAN]"),
-        format!("{phase} \\in BOOLEAN"),
+        format!("{phase} \\in [{ids} -> BOOLEAN]"),
     ];
     let mut initial = vec![
         "Init".to_owned(),
@@ -350,7 +448,7 @@ pub(super) fn emit(
             "{live} = {}",
             ctx.per_key(&format!("{monitor}[{key}][{root}]"))
         ),
-        format!("{phase} = FALSE"),
+        format!("{phase} = {}", ctx.per_key("FALSE")),
     ];
     let mut update = vec![
         format!("{monitor}' \\in {choices}"),
@@ -362,10 +460,37 @@ pub(super) fn emit(
                 "{live}[{key}] /\\ {equation}({key}, {monitor}[{key}], {monitor}'[{key}])"
             ))
         ),
-        // A real step always changes the product, so weak fairness forces
-        // terminal positions even while one accepting row stays constant.
-        format!("{phase}' = ~{phase}"),
+        // Over any nonempty identity universe this makes each real step
+        // change the product. With no identity the theorem is vacuous.
+        format!("{phase}' = {}", ctx.per_key(&format!("~{phase}[{key}]"))),
     ];
+    let mut violations = Vec::new();
+    for (ordinal, response) in closure.responses.iter().enumerate() {
+        let (registers, violation) = response.monitor(ctx, ordinal)?;
+        violations.push(violation);
+        for var in registers {
+            types.push(format!("{} \\in {}", var.name, var.ty));
+            if let Some(init) = var.init {
+                initial.push(format!("{} = {init}", var.name));
+            }
+            if let Some(next) = var.update {
+                update.push(format!("{}' = {next}", var.name));
+            }
+            variables.push((var.name, response.node.unwrap_or(clause.position)));
+        }
+    }
+    let equations = closure
+        .equations(ctx, &violations)?
+        .into_iter()
+        .map(|row| format!("    /\\ {row}"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let ok = &names.ok;
+    emit(
+        out,
+        &equation,
+        format!("{equation}({key}, q, r) ==\n  IF {ok}({key})\n  THEN\n{equations}\n  ELSE FALSE"),
+    );
     let eventualities = closure.eventualities();
     let accept = if eventualities.is_empty() {
         format!("{live}[{key}]")
@@ -381,7 +506,7 @@ pub(super) fn emit(
             &check_turn,
             format!("{check_turn}(i, q) == CASE {}", arms.join(" [] ")),
         );
-        variables.push(turn.clone());
+        variables.push((turn.clone(), clause.position));
         types.push(format!("{turn} \\in [{ids} -> 1..{last}]"));
         initial.push(format!("{turn} = {}", ctx.per_key("1")));
         update.push(format!("{turn}' = {}", ctx.per_key(&format!(
@@ -397,10 +522,11 @@ pub(super) fn emit(
     let spec = &names.spec;
     let accept_name = &names.accept;
     let theorem = &names.theorem;
+    let variable_names: Vec<_> = variables.iter().map(|(name, _)| name.as_str()).collect();
     emit(
         out,
         vars,
-        format!("{vars} == <<vars, {}>>", variables.join(", ")),
+        format!("{vars} == <<vars, {}>>", variable_names.join(", ")),
     );
     emit(out, type_ok, format!("{type_ok} ==\n{}", bullets(&types)));
     initial.push(type_ok.clone());
@@ -432,9 +558,9 @@ pub(super) fn emit(
         format!("THEOREM {theorem} == {spec} => {statement}"),
     );
     extra
-        .aux_names
-        .extend(variables.iter().map(|name| (name.clone(), clause.position)));
-    extra.variables.extend(variables);
+        .variables
+        .extend(variables.iter().map(|(name, _)| name.clone()));
+    extra.aux_names.extend(variables);
     extra.conditional.push(Cond {
         obligation: clause.name.clone(),
         kind: "nondeterministic-monitor",
@@ -463,8 +589,20 @@ mod tests {
     ) -> bool {
         let mut closure = Closure::default();
         let root = closure
-            .formula(formula, false)
+            .counterexample(formula)
             .expect("small future formula");
+        // Extend the finite prefix until every position in the loop has
+        // the same history on each repetition.
+        let history = closure.responses.iter().map(|r| r.upper).max().unwrap_or(0) as usize;
+        let cycle = &word[repeat_at..];
+        let mut positions = word.to_vec();
+        let repeat_at = if history == 0 {
+            repeat_at
+        } else {
+            positions.extend((0..history + cycle.len()).map(|i| cycle[i % cycle.len()]));
+            word.len() + history
+        };
+        let word = positions.as_slice();
         let follows = |current, following, at, node| {
             let held = |index| bit(current, index);
             let next = |index| bit(following, index);
@@ -477,6 +615,19 @@ mod tests {
         };
         let mut rows = Vec::new();
         for (position, atoms) in word.iter().enumerate() {
+            let violations: Vec<_> = closure
+                .responses
+                .iter()
+                .map(|r| {
+                    let lower = r.lower as usize;
+                    let upper = r.upper as usize;
+                    position >= upper
+                        && word[position - upper][r.trigger]
+                        && word[position - upper + lower..=position]
+                            .iter()
+                            .all(|row| !row[r.ready])
+                })
+                .collect();
             for guess in 0..(1 << closure.nodes.len()) {
                 let held = |index| bit(guess, index);
                 let is_local = closure.nodes.iter().enumerate().all(|(at, node)| {
@@ -484,6 +635,7 @@ mod tests {
                         == match *node {
                             Node::Constant(value) => value,
                             Node::Atom { index, positive } => atoms[index] == positive,
+                            Node::ResponseViolation(index) => violations[index],
                             Node::And(left, right) => held(left) && held(right),
                             Node::Or(left, right) => held(left) || held(right),
                             Node::Next(_) | Node::Until(..) | Node::Release(..) => held(at),
@@ -561,7 +713,11 @@ mod tests {
     fn tableau_distinguishes_the_following_position_at_a_deadline() {
         let a = Box::new(Tf::Atom(0));
         let b = Box::new(Tf::Atom(1));
-        let response = Tf::Eventually(Iv(Some((1, Some(1)))), b);
+        let interval = Iv {
+            bounds: Some((1, Some(1))),
+            node: None,
+        };
+        let response = Tf::Eventually(interval, b);
         let formula = Tf::Always(Iv::none(), Box::new(Tf::Implies(a, Box::new(response))));
         assert!(!accepts_negation(
             &formula,
@@ -578,6 +734,40 @@ mod tests {
             &[[true, false], [false, false], [false, true]],
             2
         ));
+        assert!(accepts_negation(
+            &formula,
+            &[[false, false], [true, false]],
+            1
+        ));
+    }
+
+    #[test]
+    #[trace("FSpec-TC-1972", "FSpec-FR-813-AC-6")]
+    fn tableau_reads_both_window_ends_after_the_first_deadline() {
+        let trigger = Box::new(Tf::Atom(0));
+        let ready = Box::new(Tf::Atom(1));
+        let interval = Iv {
+            bounds: Some((1, Some(2))),
+            node: None,
+        };
+        let response = Tf::Eventually(interval, ready);
+        let formula = Tf::Always(
+            Iv::none(),
+            Box::new(Tf::Implies(trigger, Box::new(response))),
+        );
+        for word in [
+            [[true, false], [false, true], [false, false]],
+            [[true, false], [false, false], [false, true]],
+            [[false, true], [false, false], [false, false]],
+        ] {
+            assert!(!accepts_negation(&formula, &word, 2));
+        }
+        for word in [
+            [[true, true], [false, false], [false, false], [false, false]],
+            [[true, false], [false, false], [false, false], [false, true]],
+        ] {
+            assert!(accepts_negation(&formula, &word, 3));
+        }
     }
 
     #[test]
@@ -586,7 +776,11 @@ mod tests {
         let g = |inner| Tf::Always(Iv::none(), Box::new(inner));
         let f = |inner| Tf::Eventually(Iv::none(), Box::new(inner));
         let and = |a, b| Tf::And(Box::new(a), Box::new(b));
-        let response = Tf::Eventually(Iv(Some((1, Some(1)))), Box::new(Tf::Atom(3)));
+        let interval = Iv {
+            bounds: Some((1, Some(1))),
+            node: None,
+        };
+        let response = Tf::Eventually(interval, Box::new(Tf::Atom(3)));
         let response = g(Tf::Implies(Box::new(Tf::Atom(2)), Box::new(response)));
         let formula = and(and(f(g(Tf::Atom(0))), g(f(Tf::Atom(1)))), response);
         assert!(!accepts_negation(
