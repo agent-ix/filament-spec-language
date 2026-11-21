@@ -373,6 +373,9 @@ struct CaseArms<'r> {
     builder: CaseBuilder<'r>,
     /// The next arm to resolve.
     next: usize,
+    /// The binders the arms before `next` declare, so a binder's position
+    /// among the case's binder name tokens is a running offset.
+    binders_before: usize,
     /// The arm whose body is being typed.
     open: Option<OpenArm>,
     /// The result type the arm bodies inferred so far.
@@ -3540,6 +3543,7 @@ impl<'a> Typer<'a> {
                 Box::new(CaseArms {
                     builder: CaseBuilder::new(union, scrutinee),
                     next: 0,
+                    binders_before: 0,
                     open: None,
                     result: None,
                 })
@@ -3580,18 +3584,16 @@ impl<'a> Typer<'a> {
     {
         while let Some(arm) = frame.case.arms.get(arms.next) {
             let at = frame.location.child(1 + arms.next);
+            let first_binder = arms.binders_before;
             arms.next += 1;
+            arms.binders_before += arm.binders.len();
             let ArmHead::Resolved(member) = arms.builder.head(&arm.member.name, arm.binders.len())
             else {
                 continue;
             };
             let mut binders = Vec::with_capacity(arm.binders.len());
             for (binder, value_type) in arm.binders.iter().zip(arms.builder.payload(member)) {
-                let ordinal = frame.case.arms[..arms.next - 1]
-                    .iter()
-                    .map(|arm| arm.binders.len())
-                    .sum::<usize>()
-                    + binders.len();
+                let ordinal = first_binder + binders.len();
                 binders.push(self.bind_declared(
                     &binder.name,
                     value_type.clone(),

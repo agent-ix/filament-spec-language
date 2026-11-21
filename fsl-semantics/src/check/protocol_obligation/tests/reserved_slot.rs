@@ -186,3 +186,29 @@ fn a_case_binder_in_the_reserved_slot_form_is_refused_at_the_identifier() {
                   { case u { A(x): x; B(y, rcv_sa): y + rcv_sa; } }";
     assert_eq!(only_reserved(source), found("rcv_sa", "rcv", "rcv_sa"));
 }
+
+/// FR-488-AC-29: a `reduce` accumulator and element binder in the reserved
+/// form each refuse at their own identifier.
+#[trace("TC-3082", "FR-488-AC-29")]
+#[test]
+fn a_reduce_binder_in_the_reserved_slot_form_is_refused_at_the_identifier() {
+    let accumulator = "type I = Integer;\nfunction g(xs: Sequence<I>): I pure \
+                       { reduce<I>(op_sa, x in xs: op_sa) }";
+    assert_eq!(only_reserved(accumulator), found("op_sa", "op", "op_sa"));
+    let element = "type I = Integer;\nfunction g(xs: Sequence<I>): I pure \
+                   { reduce<I>(acc, rcv_sx in xs: acc) }";
+    assert_eq!(only_reserved(element), found("rcv_sx", "rcv", "rcv_sx"));
+}
+
+/// FR-488-AC-29: a collection `count` and `sum` binder in the reserved form
+/// refuse at the identifier.
+#[trace("TC-3082", "FR-488-AC-29")]
+#[test]
+fn a_count_and_sum_binder_in_the_reserved_slot_form_is_refused_at_the_identifier() {
+    let count = "type I = Integer;\nfunction g(xs: Sequence<I>): I pure \
+                 { count<I>(op_sa in xs: true) }";
+    assert_eq!(only_reserved(count), found("op_sa", "op", "op_sa"));
+    let sum = "type I = Integer;\nfunction g(xs: Sequence<I>): I pure \
+               { sum<I>(rcv_sx in xs: rcv_sx) }";
+    assert_eq!(only_reserved(sum), found("rcv_sx", "rcv", "rcv_sx"));
+}
