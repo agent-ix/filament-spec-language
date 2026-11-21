@@ -59,7 +59,10 @@
 //! `HoldsReduced`, which no certificate covers (RV-1). Every counterexample
 //! is concretised before it leaves (`concretise`, FR-161): its stem and, for
 //! a lasso, its loop, repeated until the concrete state returns to the
-//! concrete entry. A state constraint on a liveness clause is refused
+//! concrete entry. A state constraint on a liveness clause (FR-158) cuts the
+//! product at its boundary states, which are stored and read but never
+//! expanded or stutter-extended; a run that finds no violation and stored one
+//! settles `ConstraintReached`. A protocol subject refuses it
 //! ([`ModelCheckRefusal::ReducedLiveness`]).
 //!
 //! A protocol subject under `sc` or `tso` (FR-212, FR-228) is one more
@@ -103,6 +106,7 @@ use fsl_eval::simulation::protocol::{
     protocol_constraints, FairnessOrigin, MemoryModel, ProtocolFairness, ProtocolSystem,
     ProtocolTransition,
 };
+use fsl_eval::simulation::ConstraintValue;
 use fsl_eval::simulation::StateKey;
 use fsl_eval::simulation::{
     Bounded, Cut, EncodingRefusal, Expansion, ExpansionLimit, ExpansionStop, Footprint, Limit,
@@ -205,9 +209,6 @@ pub(super) fn check(
             Admitted::Settled(outcome) => return Ok(outcome),
         }
     };
-    if request.reductions.constraint.is_some() {
-        return Err(ModelCheckRefusal::ReducedLiveness);
-    }
     // The instances are the keys of the universes of the populations that
     // admit the clause's `over` type (FR-125 Instancing); under symmetry one
     // per orbit, run under its stabiliser (FR-151 "Instances").
@@ -250,6 +251,7 @@ pub(super) fn check(
             memory_bound: None,
             message_bound: None,
             instance_bound: None,
+            constraint: request.reductions.constraint.as_deref(),
             root_cancelled,
             no_initial,
             certify: Certify {
@@ -372,6 +374,7 @@ pub(super) fn check_protocol<M: MemoryModel>(
                 value,
             }),
             instance_bound: options.instance_bound,
+            constraint: None,
             root_cancelled,
             no_initial: simulation.initial.is_empty(),
             certify: Certify {
@@ -417,6 +420,8 @@ struct Bound<'r, S: LiveSubject> {
     /// The live-instance bound a protocol liveness run explored under.
     instance_bound: Option<InstanceBound>,
     /// The cancellation that stopped the clause identity's resolution.
+    /// The request's state constraint (FR-158); `None` for a protocol subject.
+    constraint: Option<&'r str>,
     root_cancelled: Option<CancelCause>,
     no_initial: bool,
     certify: Certify<'r>,
@@ -481,6 +486,8 @@ fn decide_bindings<S: LiveSubject>(
         message_bound: bound.message_bound,
         instance_bound: bound.instance_bound,
         request,
+        constraint: bound.constraint,
+        dead_constrained: RefCell::new(BTreeSet::new()),
         cancel,
         meter: RefCell::new(Meter::new(meter)),
         transitions_left: Cell::new(max_transitions),
@@ -502,6 +509,13 @@ trait LiveSubject: SubjectSystem<TransitionId: Ord> + Sized {
         state: &Self::State,
         enforce: bool,
     ) -> Result<Bounded<Tr<Self>, Self::State>, ExpansionStop>;
+
+    /// How the state constraint `name` reads at `state` (FR-158).
+    fn constraint_value(
+        &self,
+        state: &Self::State,
+        name: &str,
+    ) -> Result<ConstraintValue, ExpansionStop>;
 
     /// The subject's symmetry, which lifts a reduced path (FR-161).
     fn permuter(&self) -> Option<PermuterOf<'_, Self>>;
@@ -555,6 +569,14 @@ fn retained<'l, S: LiveSubject>(
 }
 
 impl<'a> LiveSubject for ModelSystem<'a> {
+    fn constraint_value(
+        &self,
+        state: &ModelSimState,
+        name: &str,
+    ) -> Result<ConstraintValue, ExpansionStop> {
+        ModelSystem::constraint_value(self, state, name)
+    }
+
     fn expand_live(
         &self,
         state: &ModelSimState,
@@ -601,7 +623,7 @@ impl<'a> LiveSubject for ModelSystem<'a> {
             Some(atoms),
             std::slice::from_ref(&binding.instance),
             run.fairness,
-            None,
+            run.constraint,
         )?;
         let ample = LassoAmple { product, por: &por };
         retained(run, product, &binding.group, Some(&ample), limits)
@@ -616,6 +638,14 @@ impl<'a> LiveSubject for ModelSystem<'a> {
 }
 
 impl<M: MemoryModel> LiveSubject for ProtocolSystem<'_, M> {
+    fn constraint_value(
+        &self,
+        state: &Self::State,
+        name: &str,
+    ) -> Result<ConstraintValue, ExpansionStop> {
+        self.model().constraint_value(state.model(), name)
+    }
+
     fn expand_live(
         &self,
         state: &Self::State,
@@ -856,6 +886,11 @@ enum Finding<T> {
     MessagesBoundLimited,
     /// The live-instance bound left an enabled activation unexpanded.
     InstanceBoundLimited,
+    /// The state constraint is false at the state: a boundary state, stored
+    /// and read but never expanded or stutter-extended (FR-158).
+    ConstraintBoundary,
+    /// The state constraint has no value at the state (ADR-021 SC-2).
+    ConstraintUndefined(UndefinedCause),
 }
 
 /// Why a product's exploration ended before its frontier emptied.
@@ -907,6 +942,8 @@ struct LassoSystem<'r, S: LiveSubject> {
     /// Whether each expansion holds its steps to their footprints
     /// (FR-155 "Read enforcement"), as a partial-order run does.
     enforce: bool,
+    /// The request's state constraint (FR-158).
+    constraint: Option<&'r str>,
     /// The depth of the first-phase finding the exploration has met: a
     /// state that would sit there or deeper ranks after it, so none is
     /// created (FR-126 ends the first phase at its finding).
@@ -1147,6 +1184,28 @@ impl<S: LiveSubject> TransitionSystem for LassoSystem<'_, S> {
             }
             Property::After(at) => Before::At(*at),
         };
+        if let Some(name) = self.constraint {
+            match self.system.constraint_value(&state.model, name) {
+                Ok(ConstraintValue::Holds) => {}
+                // FR-158: stored and read, never expanded, stutter-extended
+                // or a deadlock.
+                Ok(ConstraintValue::Boundary) => {
+                    return Ok(Expansion {
+                        successors: Vec::new(),
+                        findings: vec![Finding::ConstraintBoundary],
+                    });
+                }
+                // ADR-021 SC-2: the item refutes at this state.
+                Ok(ConstraintValue::Undefined { cause, .. }) => {
+                    self.found_at(state.depth);
+                    return Ok(Expansion {
+                        successors: Vec::new(),
+                        findings: vec![Finding::ConstraintUndefined(cause)],
+                    });
+                }
+                Err(stop) => return Err(self.record(Halt::Expansion(stop))),
+            }
+        }
         let (expansion, cut) = self.expand(&state.model)?;
         let mut findings: Vec<Self::Finding> = expansion
             .findings
@@ -1507,6 +1566,10 @@ struct Run<'r, S: LiveSubject> {
     bindings: &'r [Binding],
     memory_bound: Option<MemoryBound>,
     message_bound: Option<MemoryBound>,
+    /// The request's state constraint (FR-158).
+    constraint: Option<&'r str>,
+    /// The model states the constraint cut in the model-only passes.
+    dead_constrained: RefCell<BTreeSet<StateKey>>,
     instance_bound: Option<InstanceBound>,
     request: RunRequest,
     cancel: &'r Cancel,
@@ -1560,10 +1623,14 @@ impl<'r, S: LiveSubject> Run<'r, S> {
                 let canonical = live.as_ref().is_some_and(|(depth, _)| {
                     run.graph.states().iter().all(|state| {
                         state.state.depth >= *depth
-                            || state
-                                .findings
-                                .iter()
-                                .any(|finding| matches!(finding, Finding::Enabled(_)))
+                            || state.findings.iter().any(|finding| {
+                                matches!(
+                                    finding,
+                                    Finding::Enabled(_)
+                                        | Finding::ConstraintBoundary
+                                        | Finding::ConstraintUndefined(_)
+                                )
+                            })
                     })
                 });
                 match live {
@@ -1666,6 +1733,14 @@ impl<'r, S: LiveSubject> Run<'r, S> {
             .filter(|state| state.findings.contains(&Finding::MessagesBoundLimited))
             .map(|state| self.state_key(&state.state.model))
             .collect::<Result<_, _>>()?;
+        let mut constrained = self.dead_constrained.borrow().clone();
+        for run in &explored {
+            for state in run.graph.states() {
+                if state.findings.contains(&Finding::ConstraintBoundary) {
+                    constrained.insert(self.state_key(&state.state.model)?);
+                }
+            }
+        }
         let mut stats = totals.stats();
         stats.message_bound_limited = widen(message_limited.len());
         if let Some(counterexample) = shortest {
@@ -1694,6 +1769,16 @@ impl<'r, S: LiveSubject> Run<'r, S> {
         }
         if ignored_fairness_lasso {
             return Ok(ModelCheckOutcome::RefutedIgnoringConstraints { stats });
+        }
+        // FR-158: a run that found no violation and stored a boundary state
+        // settles `ConstraintReached`, never a proof.
+        if !constrained.is_empty() {
+            return Ok(ModelCheckOutcome::Reduction {
+                cause: ReductionCause::ConstraintReached {
+                    boundary_states: widen(constrained.len()),
+                },
+                stats,
+            });
         }
         if let (Some(bound), false) = (self.instance_bound, totals.instance_limited.is_empty()) {
             return Ok(ModelCheckOutcome::Undecided {
@@ -1792,6 +1877,7 @@ impl<'r, S: LiveSubject> Run<'r, S> {
             meter: self.request.meter,
             cancel: self.cancel,
             max_depth: [self.request.max_depth, cap].into_iter().flatten().min(),
+            constraint: self.constraint,
             enforce: self.request.partial_order,
             found: Cell::new(None),
             halt: RefCell::new(None),
@@ -1942,6 +2028,21 @@ impl<'r, S: LiveSubject> Run<'r, S> {
                 ));
             }
             for finding in &state.findings {
+                if let (Finding::ConstraintUndefined(cause), Some(name)) =
+                    (finding, self.constraint)
+                {
+                    let site = self.site(
+                        &state.state,
+                        UndefinedLocus::Constraint(name.to_owned()),
+                        None,
+                    )?;
+                    return violated(CounterexampleKind::UndefinedEvaluation(
+                        UndefinedEvaluation {
+                            site,
+                            cause: cause.clone(),
+                        },
+                    ));
+                }
                 let Finding::Contract(contract) = finding else {
                     continue;
                 };
@@ -2094,11 +2195,41 @@ impl<'r, S: LiveSubject> Run<'r, S> {
                     return Ok(phase);
                 }
             };
-            let (expansion, cut) = match run.product.expand(&model) {
-                Ok(expanded) => expanded,
-                Err(_) => {
-                    stop(&mut phase)?;
-                    return Ok(phase);
+            let mut constraint_undefined = None;
+            if let Some(name) = self.constraint {
+                match self.system.constraint_value(&model, name) {
+                    Ok(ConstraintValue::Holds) => {}
+                    Ok(ConstraintValue::Boundary) => {
+                        self.dead_constrained
+                            .borrow_mut()
+                            .insert(self.state_key(&model)?);
+                        continue;
+                    }
+                    Ok(ConstraintValue::Undefined { cause, .. }) => {
+                        constraint_undefined = Some((name, cause));
+                    }
+                    Err(halt) => {
+                        run.product.record(Halt::Expansion(halt));
+                        stop(&mut phase)?;
+                        return Ok(phase);
+                    }
+                }
+            }
+            let (expansion, cut) = if constraint_undefined.is_some() {
+                (
+                    Expansion {
+                        successors: Vec::new(),
+                        findings: Vec::new(),
+                    },
+                    Cut::default(),
+                )
+            } else {
+                match run.product.expand(&model) {
+                    Ok(expanded) => expanded,
+                    Err(_) => {
+                        stop(&mut phase)?;
+                        return Ok(phase);
+                    }
                 }
             };
             if cut.memory {
@@ -2108,6 +2239,8 @@ impl<'r, S: LiveSubject> Run<'r, S> {
             }
             let kind = if let Reading::Undefined { locus, cause } = reading {
                 Some((locus, None, cause))
+            } else if let Some((name, cause)) = constraint_undefined {
+                Some((UndefinedLocus::Constraint(name.to_owned()), None, cause))
             } else {
                 undefined_finding(&expansion.findings)
             };

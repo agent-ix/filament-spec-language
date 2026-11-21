@@ -24,7 +24,6 @@ use std::collections::BTreeMap;
 
 #[test]
 #[trace("FR-120", "FR-262")]
-#[ignore = "QSL-2704: public recursive-state journey stack overflow; preserve strict independent key oracle"]
 fn deep_record_state_keys_preserve_each_link_and_the_absent_terminal() {
     std::thread::Builder::new().stack_size(512 * 1024).spawn(|| {
         let integer = "ix://filament/native/Integer";

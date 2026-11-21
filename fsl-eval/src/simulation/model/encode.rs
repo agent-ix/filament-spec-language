@@ -6,8 +6,9 @@
 //! A value, key or identity is built as an owned [`Enc`] tree and written
 //! through `quire-canonical`'s event writer, or by [`Canonicalizer`] straight
 //! to the same RFC 8785 bytes. The tree's depth follows the nesting of the
-//! declared value types, which a checked package bounds, so building and
-//! writing it recurse once per declared nesting level and never per element.
+//! declared value types, so a recursive record makes it as deep as the value
+//! it holds: building, writing and dropping it use heap work lists, and
+//! [`Canonicalizer`] recurses once per nesting level.
 
 use std::collections::{BTreeMap, HashMap};
 use std::sync::{Arc, Mutex, RwLock};
@@ -58,61 +59,151 @@ pub(crate) enum Enc {
     Unencodable(&'static str),
 }
 
+/// One step of the iterative writer of an [`Enc`] tree: a value still to
+/// write, or the event that follows the values pushed above it.
+enum Step<'a> {
+    Value(&'a Enc),
+    BeginArray,
+    EndArray,
+    BeginObject,
+    EndObject,
+    Name(&'a str),
+    Text(&'static str),
+}
+
 impl Encode for Enc {
+    /// Writes the tree with an explicit step stack, so the depth of a
+    /// recursive record (FR-262 Behavior 1, 3 and 4) costs heap and never
+    /// thread stack. A map's keys are encoded to order the entries, and
+    /// those encodings nest only through map-valued keys.
     fn encode_into<S: Sink + ?Sized>(&self, writer: &mut Writer<'_, S>) -> Result<(), Error> {
-        match self {
-            Self::Null => writer.null(),
-            Self::Bool(value) => writer.bool(*value),
-            Self::Str(value) => writer.string(value),
-            Self::Array(items) => {
-                writer.begin_array()?;
-                for item in items {
-                    item.encode_into(writer)?;
+        let mut steps = vec![Step::Value(self)];
+        while let Some(step) = steps.pop() {
+            let value = match step {
+                Step::Value(value) => value,
+                Step::BeginArray => {
+                    writer.begin_array()?;
+                    continue;
                 }
-                writer.end_array()
-            }
-            Self::Node(key) => BorrowedIdentity::Node(key).encode_into(writer),
-            Self::Effective(id) => BorrowedIdentity::Effective(id).encode_into(writer),
-            Self::Shared(shared) => shared.value.encode_into(writer),
-            Self::Declaration(key) => BorrowedIdentity::Declaration(key).encode_into(writer),
-            Self::Object(members) => {
-                writer.begin_object()?;
-                for (name, value) in members {
-                    writer.name(name)?;
-                    value.encode_into(writer)?;
+                Step::EndArray => {
+                    writer.end_array()?;
+                    continue;
                 }
-                writer.end_object()
-            }
-            Self::Map(entries) => {
-                // A key with no encoding sorts first, so writing it refuses
-                // before any other entry is written.
-                let limits = Limits::new(u64::MAX);
-                let mut keyed: Vec<(Vec<u8>, &Enc, &Enc)> = entries
-                    .iter()
-                    .map(|(key, value)| {
-                        let bytes = quire_canonical::to_vec(key, limits).unwrap_or_default();
-                        (bytes, key, value)
-                    })
-                    .collect();
-                keyed.sort_by(|left, right| left.0.cmp(&right.0));
-                writer.begin_object()?;
-                writer.name("entries")?;
-                writer.begin_array()?;
-                for (_, key, value) in keyed {
+                Step::BeginObject => {
                     writer.begin_object()?;
-                    writer.name("key")?;
-                    key.encode_into(writer)?;
-                    writer.name("value")?;
-                    value.encode_into(writer)?;
-                    writer.end_object()?;
+                    continue;
                 }
-                writer.end_array()?;
-                writer.name("type")?;
-                writer.string("map")?;
-                writer.end_object()
+                Step::EndObject => {
+                    writer.end_object()?;
+                    continue;
+                }
+                Step::Name(name) => {
+                    writer.name(name)?;
+                    continue;
+                }
+                Step::Text(text) => {
+                    writer.string(text)?;
+                    continue;
+                }
+            };
+            // The events of one value, in writing order; pushed reversed.
+            let mut events: Vec<Step<'_>> = Vec::new();
+            match value {
+                Self::Null => writer.null()?,
+                Self::Bool(value) => writer.bool(*value)?,
+                Self::Str(value) => writer.string(value)?,
+                Self::Array(items) => {
+                    events.push(Step::BeginArray);
+                    events.extend(items.iter().map(Step::Value));
+                    events.push(Step::EndArray);
+                }
+                Self::Node(key) => BorrowedIdentity::Node(key).encode_into(writer)?,
+                Self::Effective(id) => BorrowedIdentity::Effective(id).encode_into(writer)?,
+                Self::Shared(shared) => events.push(Step::Value(&shared.value)),
+                Self::Declaration(key) => BorrowedIdentity::Declaration(key).encode_into(writer)?,
+                Self::Object(members) => {
+                    events.push(Step::BeginObject);
+                    for (name, value) in members {
+                        events.push(Step::Name(name));
+                        events.push(Step::Value(value));
+                    }
+                    events.push(Step::EndObject);
+                }
+                Self::Map(entries) => {
+                    // A key with no encoding sorts first, so writing it
+                    // refuses before any other entry is written.
+                    let limits = Limits::new(u64::MAX);
+                    let mut keyed: Vec<(Vec<u8>, &Enc, &Enc)> = entries
+                        .iter()
+                        .map(|(key, value)| {
+                            let bytes = quire_canonical::to_vec(key, limits).unwrap_or_default();
+                            (bytes, key, value)
+                        })
+                        .collect();
+                    keyed.sort_by(|left, right| left.0.cmp(&right.0));
+                    events.push(Step::BeginObject);
+                    events.push(Step::Name("entries"));
+                    events.push(Step::BeginArray);
+                    for (_, key, value) in keyed {
+                        events.push(Step::BeginObject);
+                        events.push(Step::Name("key"));
+                        events.push(Step::Value(key));
+                        events.push(Step::Name("value"));
+                        events.push(Step::Value(value));
+                        events.push(Step::EndObject);
+                    }
+                    events.push(Step::EndArray);
+                    events.push(Step::Name("type"));
+                    events.push(Step::Text("map"));
+                    events.push(Step::EndObject);
+                }
+                Self::Unencodable(what) => return Err(unencodable(what)),
             }
-            Self::Unencodable(what) => Err(unencodable(what)),
+            steps.extend(events.into_iter().rev());
         }
+        Ok(())
+    }
+}
+
+impl Drop for Enc {
+    /// Dismantles a deep tree with a work list: the derived drop recurses
+    /// once per nesting level and overflows the stack on a recursive record.
+    fn drop(&mut self) {
+        let mut pending: Vec<Enc> = Vec::new();
+        take_children(self, &mut pending);
+        while let Some(mut next) = pending.pop() {
+            take_children(&mut next, &mut pending);
+        }
+    }
+}
+
+/// Move the children of `value` onto `pending`, leaving it shallow.
+fn take_children(value: &mut Enc, pending: &mut Vec<Enc>) {
+    match value {
+        Enc::Array(items) => pending.extend(std::mem::take(items)),
+        Enc::Object(members) => {
+            pending.extend(std::mem::take(members).into_iter().map(|(_, value)| value));
+        }
+        Enc::Map(entries) => {
+            for (key, value) in std::mem::take(entries) {
+                pending.push(key);
+                pending.push(value);
+            }
+        }
+        Enc::Shared(shared) => {
+            // A shared value another handle keeps is dismantled by its last
+            // handle.
+            if let Some(shared) = Arc::get_mut(shared) {
+                pending.push(std::mem::replace(&mut shared.value, Enc::Null));
+            }
+        }
+        Enc::Null
+        | Enc::Bool(_)
+        | Enc::Str(_)
+        | Enc::Node(_)
+        | Enc::Effective(_)
+        | Enc::Declaration(_)
+        | Enc::Unencodable(_) => {}
     }
 }
 
