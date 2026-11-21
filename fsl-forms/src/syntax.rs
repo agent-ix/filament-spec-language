@@ -5280,6 +5280,9 @@ pub struct SynthesisObjectiveForm {
     pub direction: SynthesisDirectionForm,
     /// The objective expression and all of its source spans.
     pub expression: ExpressionForm,
+    /// The expression's tokens from first to last joined by one space,
+    /// comments and whitespace dropped (FSpec FR-322 objective `text`).
+    pub text: String,
     /// The span from the direction word through the expression.
     pub span: Span,
 }

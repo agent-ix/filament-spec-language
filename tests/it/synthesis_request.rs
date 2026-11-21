@@ -224,6 +224,44 @@ fn a_plan_synthesis_node_names_the_object_type_and_the_lengths() {
     );
 }
 
+/// FR-1036-AC-2: the candidate reference resolves to the `value`/`parameter`
+/// node of the declaration's own name, typed by the domain for a value
+/// synthesis and by the `ConfigVersion` node for a plan synthesis.
+#[test]
+#[trace("TC-3016", "FR-1036-AC-2")]
+#[ignore = "QSL-2235: candidate reference does not resolve to the typed parameter node; needs FR-1036-AC-2 ruling"]
+fn the_candidate_reference_resolves_to_its_typed_parameter_node() {
+    let directory = tempfile::tempdir().unwrap();
+    spine::write(directory.path(), Case::Healthy).unwrap();
+    let document = std::fs::read(directory.path().join("spine-model.semantic-ir.json")).unwrap();
+    let packages = fsl_semantics::model::intake::package_input([document.as_slice()])
+        .expect("the spine model admits");
+    let plan = format!(
+        "{MODEL_HEADER}type Lengths = Int[0, 3];\n\
+         synthesis Reach using v grammar Config::ConfigVersion domain Lengths \
+         satisfies {{ Reach = Reach }};\n"
+    );
+    for (unit, packages, typed_by) in [
+        (pick("Pick * Pick = 49", ""), Default::default(), "domain"),
+        (plan, packages, "grammar"),
+    ] {
+        let wire = package(&unit, &packages);
+        let node = synthesis_nodes(&wire)[0];
+        let nodes = wire["semantic_graph"]["nodes"].as_array().unwrap();
+        let candidate = nodes
+            .iter()
+            .find(|candidate| candidate["node_id"] == binding(node, "candidate")["value"]["target"])
+            .unwrap_or_else(|| panic!("the candidate resolves: {node}"));
+        assert_eq!(candidate["node_tag"], "value", "{candidate}");
+        assert_eq!(candidate["semantic_form"], "parameter", "{candidate}");
+        assert_eq!(
+            candidate["semantic_type"],
+            binding(node, typed_by)["value"]["target"],
+            "the candidate is typed by the {typed_by} node: {candidate}"
+        );
+    }
+}
+
 // ---- FR-1037: the run request's `synthesis` member ----------------------
 
 fn source(file: &str) -> Value {
@@ -481,6 +519,14 @@ fn a_synthesis_beside_another_run_member_refuses() {
     let (exit, value) = run_with(
         &pick("Pick * Pick = 49", ""),
         json!({"synthesis": {"declaration": "Pick"}, "tl_lowering": {}}),
+    );
+    assert_eq!(exit, 20, "{value}");
+    assert_eq!(value["code"], "invalid-request", "{value}");
+    names(&value, "mutually exclusive");
+    assert!(value["synthesis"].get("status").is_none(), "{value}");
+    let (exit, value) = run_with(
+        &pick("Pick * Pick = 49", ""),
+        json!({"synthesis": {"declaration": "Pick"}, "verification_plan": {"plan": "Release"}}),
     );
     assert_eq!(exit, 20, "{value}");
     assert_eq!(value["code"], "invalid-request", "{value}");

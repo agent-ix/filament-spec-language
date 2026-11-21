@@ -64,6 +64,14 @@ request's `synthesis` member (FR-1037, FSpec FR-823).
   value checker as a `value-validity` item over that value; it SHALL record
   the visited count, and report `no-candidate` only after visiting every
   value of `D`.
+- The check SHALL be independent of the search's own evaluation. For a
+  request that has a source, the candidate is re-evaluated on the other
+  route: the source route's search is checked by the emitted package's strict
+  read, evaluated with its own meter. For a request over a checked package
+  there is no other route, so the check is a second strict read of the node,
+  evaluated with its own meter, and it is a re-read and re-evaluation check
+  only. A checker disagreement is `rejected` and a limit stopping the checker
+  leaves the candidate `unchecked`.
 - A `synthesis` whose grammar is a state model object type SHALL run as
   FR-755's planner.
 

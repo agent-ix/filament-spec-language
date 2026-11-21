@@ -434,9 +434,11 @@ fn unchecked(
 /// Run the bounded search in cost order through `searcher`, check the reported
 /// candidate through `checker`, and finish FSpec FR-823's outcome document and
 /// exit code. Both the source and the package route end here, so one request
-/// has one outcome whichever route read it. `checker` is a different
-/// evaluation of the declaration than `searcher`, so a candidate is `validated`
-/// only when two evaluations agree on it.
+/// has one outcome whichever route read it. On the source route `checker` is
+/// the emitted package's strict read; on the package route there is no other
+/// route, so it is a second strict read of the node with its own meter, a
+/// re-read and re-evaluation check. A candidate is `validated` only when the
+/// two evaluations agree on it.
 pub(super) fn run_value_synthesis(
     run: ValueRun<'_>,
     searcher: &mut impl CandidateEvaluator,
@@ -630,6 +632,9 @@ fn completed(
 
 struct Selection {
     declaration: Option<String>,
+    /// The first plan-only member (`initial`, `policy`, `dwell_grid`) the
+    /// member names, refused once the selected declaration is known.
+    plan_member: Option<String>,
     limits: SearchLimits,
     accounting: super::wire::Accounting,
     deadline_ms: Option<u64>,
@@ -779,6 +784,7 @@ pub(super) fn run_bytes(
     if matches!(checked.grammar(), ValueType::Reference(_)) {
         return Err(plan_not_routed());
     }
+    refuse_plan_member(&selection)?;
     let ValueType::Int(domain) = checked.domain() else {
         return Err(refused(
             "/request/synthesis/declaration",
@@ -947,6 +953,7 @@ fn run_package_synthesis(
     if fsl_package::is_plan_synthesis(&admitted.package, &claim.declaration) {
         return Err(plan_not_routed());
     }
+    refuse_plan_member(selection)?;
     let (world, projected) = read_value_synthesis(&bare, &claim.declaration)?;
     let (check_world, check_projected) = read_value_synthesis(&bare, &claim.declaration)?;
     let package_name = admitted.package.name().to_owned();
@@ -1056,16 +1063,33 @@ impl CandidateEvaluator for PackageEvaluator<'_> {
     }
 }
 
+/// The members only a plan synthesis reads (FSpec FR-823's member table).
+const PLAN_MEMBERS: [&str; 3] = ["initial", "policy", "dwell_grid"];
+/// The members a value synthesis reads.
+const VALUE_MEMBERS: [&str; 4] = ["declaration", "limits", "accounting", "deadline_ms"];
+
+/// A value synthesis refuses the plan-only members at their pointers.
+fn refuse_plan_member(selection: &Selection) -> super::Result<()> {
+    match &selection.plan_member {
+        Some(key) => Err(unknown_member(&format!("/request/synthesis/{key}"))),
+        None => Ok(()),
+    }
+}
+
 fn read_selection(member: Value) -> super::Result<Selection> {
     let Some(object) = member.as_object() else {
         return Err(wrong_kind("/request/synthesis", "an object"));
     };
     if let Some(key) = object
         .keys()
-        .find(|key| !["declaration", "limits", "accounting", "deadline_ms"].contains(&key.as_str()))
+        .find(|key| !PLAN_MEMBERS.contains(&key.as_str()) && !VALUE_MEMBERS.contains(&key.as_str()))
     {
         return Err(unknown_member(&format!("/request/synthesis/{key}")));
     }
+    let plan_member = object
+        .keys()
+        .find(|key| PLAN_MEMBERS.contains(&key.as_str()))
+        .cloned();
     let declaration = match object.get("declaration") {
         None => None,
         Some(Value::String(name)) if !name.is_empty() => Some(name.clone()),
@@ -1123,6 +1147,7 @@ fn read_selection(member: Value) -> super::Result<Selection> {
     };
     Ok(Selection {
         declaration,
+        plan_member,
         limits,
         accounting,
         deadline_ms,
@@ -1312,10 +1337,11 @@ fn exclusive_member(request: &super::wire::Request) -> super::Result<()> {
         || request.clause.is_some()
         || request.items.is_some()
         || request.tl_lowering.is_some()
+        || request.verification_plan.is_some()
     {
         return Err(refused(
             "/request/synthesis",
-            "is mutually exclusive with call, clause, items and tl_lowering",
+            "is mutually exclusive with call, clause, items, tl_lowering and verification_plan",
         ));
     }
     Ok(())
@@ -1688,7 +1714,7 @@ mod tests {
     /// FSpec FR-823: a checker that disagrees with the search rejects the
     /// candidate with both evaluations in the record, exit 30.
     #[test]
-    #[trace("FSpec-TC-2038", "FSpec-FR-823-AC-1")]
+    #[trace("FSpec-TC-2038", "FSpec-FR-823-AC-5")]
     fn a_checker_that_disagrees_rejects_the_candidate() {
         let mut searcher = pick(|c| c >= 3, |c| c, None);
         let mut checker = pick(|c| c >= 4, |c| c, None);

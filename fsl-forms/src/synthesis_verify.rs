@@ -196,6 +196,11 @@ fn objective(
         (None, []) => Ok(None),
         (Some((direction, direction_span)), [expression_node]) => {
             let (expression, spans) = expression(cst, expression_node)?;
+            let text = significant_tokens(cst, expression_node)
+                .into_iter()
+                .map(|token| self::text(token, expression_node))
+                .collect::<Result<Vec<_>, _>>()?
+                .join(" ");
             let span = Span {
                 start: direction_span.start,
                 end: expression_node.span().end,
@@ -203,6 +208,7 @@ fn objective(
             Ok(Some(SynthesisObjectiveForm {
                 direction,
                 expression: ExpressionForm { expression, spans },
+                text,
                 span,
             }))
         }

@@ -60,7 +60,7 @@ impl Lowering<'_> {
                     fsl_forms::SynthesisDirectionForm::Minimize => "minimize",
                     fsl_forms::SynthesisDirectionForm::Maximize => "maximize",
                 };
-                let text = objective_text(form, objective);
+                let text = objective.text.clone();
                 BindingValue::Group(GroupTerm::new(vec![
                     GroupMember::Binding(Binding::new(
                         "direction",
@@ -129,26 +129,4 @@ pub(crate) fn synthesis_objective_location(index: usize, name: &str) -> Location
 
 fn synthesis_site(index: usize, name: &str) -> String {
     format!("synthesis {index} {name}")
-}
-
-fn objective_text(
-    form: &fsl_forms::SynthesisForm,
-    objective: &fsl_forms::SynthesisObjectiveForm,
-) -> String {
-    let Some(span) = objective
-        .expression
-        .spans
-        .span(objective.expression.spans.root())
-    else {
-        return String::new();
-    };
-    let start = span.start.checked_sub(form.span.start);
-    let end = span.end.checked_sub(form.span.start);
-    let Some(text) = start
-        .zip(end)
-        .and_then(|(start, end)| form.source.get(start..end))
-    else {
-        return String::new();
-    };
-    text.split_whitespace().collect::<Vec<_>>().join(" ")
 }

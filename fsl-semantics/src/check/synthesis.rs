@@ -107,16 +107,10 @@ impl CheckedSynthesis {
         &self.slot_names
     }
 
-    /// Objective expression's source spelling, when authored.
+    /// The objective's normalized text: its tokens joined by one space,
+    /// comments dropped, as the emitted node's `text` binding carries it.
     pub fn objective_source(&self) -> Option<&str> {
-        let objective = self.form.objective.as_ref()?;
-        let expression_span = objective
-            .expression
-            .spans
-            .span(objective.expression.spans.root())?;
-        let start = expression_span.start.checked_sub(self.form.span.start)?;
-        let end = expression_span.end.checked_sub(self.form.span.start)?;
-        self.form.source.get(start..end)
+        Some(self.form.objective.as_ref()?.text.as_str())
     }
 
     /// Objective direction, when the declaration has an objective.
