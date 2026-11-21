@@ -559,6 +559,7 @@ count_members! {
     read_max_candidates => "temporal.limits.max_candidates",
     read_max_clocks => "temporal.limits.max_clocks",
     read_max_task_product_work => "temporal.limits.max_task_product_work",
+    read_max_check_work => "temporal.limits.max_check_work",
     read_max_store_buffer => "temporal.limits.max_store_buffer",
     read_max_messages => "temporal.limits.max_messages",
     read_max_live_instances => "temporal.limits.max_live_instances",
@@ -635,6 +636,10 @@ pub struct TemporalLimitsSelection {
     /// `max_task_product_work` (FSpec FR-415).
     #[serde(default, deserialize_with = "read_max_task_product_work")]
     pub max_task_product_work: Option<NonZeroU64>,
+    /// `max_check_work`, FSpec FR-418's checker work limit (setting
+    /// `zone_check.max_check_work`, FR-461).
+    #[serde(default, deserialize_with = "read_max_check_work")]
+    pub max_check_work: Option<NonZeroU64>,
     /// `max_store_buffer` (FSpec FR-439).
     #[serde(default, deserialize_with = "read_max_store_buffer")]
     pub max_store_buffer: Option<NonZeroU64>,
@@ -975,7 +980,10 @@ impl ItemSelection {
                         .is_some_and(|kind| kind != Capability::Schedulability.to_wire())
                         && temporal
                             .limits
-                            .is_some_and(|limits| limits.max_task_product_work.is_some()))
+                            .is_some_and(|limits| {
+                                limits.max_task_product_work.is_some()
+                                    || limits.max_check_work.is_some()
+                            }))
             })
     }
 }
@@ -1755,6 +1763,7 @@ fn resolve_call_item(
             required: true,
             max_cases: None,
             max_task_product_work: None,
+            max_check_work: None,
             trace: None,
             traces: None,
             recording: None,
@@ -2231,6 +2240,7 @@ fn resolve_one(
             max_task_product_work: temporal
                 .limits
                 .and_then(|limits| limits.max_task_product_work),
+            max_check_work: temporal.limits.and_then(|limits| limits.max_check_work),
             trace: selection.trace.as_ref().map(DocumentSelection::reference),
             traces: selection.traces.as_ref().map(DocumentSelection::reference),
             recording: selection
@@ -2408,6 +2418,7 @@ fn resolve_derived(
         required: selection.required.unwrap_or(true),
         max_cases: None,
         max_task_product_work: None,
+        max_check_work: None,
         trace: None,
         traces: None,
         recording: None,
@@ -2496,6 +2507,11 @@ fn resolve_schedule_claim(
                     .as_ref()
                     .and_then(|temporal| temporal.limits)
                     .and_then(|limits| limits.max_task_product_work),
+                max_check_work: selection
+                    .temporal
+                    .as_ref()
+                    .and_then(|temporal| temporal.limits)
+                    .and_then(|limits| limits.max_check_work),
                 trace: None,
                 traces: None,
                 recording: None,
@@ -2677,6 +2693,7 @@ fn resolve_protocol_freedom(
                 required: selection.required.unwrap_or(true),
                 max_cases: None,
                 max_task_product_work: None,
+                max_check_work: None,
                 trace: None,
                 traces: selection.traces.as_ref().map(DocumentSelection::reference),
                 recording: None,
@@ -3205,6 +3222,7 @@ fn derived_claim(
                 required: true,
                 max_cases: None,
                 max_task_product_work: None,
+                max_check_work: None,
                 trace: None,
                 traces: None,
                 recording: None,
@@ -3473,11 +3491,15 @@ impl ClaimItem {
             );
             item.insert("temporal".to_owned(), Value::Object(member));
         } else if self.kind == Capability::Schedulability {
+            let mut limits = Map::new();
             if let Some(max_work) = self.options.max_task_product_work {
-                item.insert(
-                    "temporal".to_owned(),
-                    json!({"limits": {"max_task_product_work": max_work.get()}}),
-                );
+                limits.insert("max_task_product_work".to_owned(), json!(max_work.get()));
+            }
+            if let Some(max_work) = self.options.max_check_work {
+                limits.insert("max_check_work".to_owned(), json!(max_work.get()));
+            }
+            if !limits.is_empty() {
+                item.insert("temporal".to_owned(), json!({"limits": limits}));
             }
         }
         if let Some(ItemForm::Probabilistic(probabilistic)) = &self.form {
@@ -4485,21 +4507,6 @@ fn item_document(written: Value, members: ItemMembers) -> Value {
     let task_search_identity = identity.clone();
     if let Some(certificate) = certificate {
         item.insert("certificate".to_owned(), certificate);
-    } else if let (Some((wire, accepted)), Some(_)) = (
-        detail.as_ref().and_then(|detail| detail.task_certificate.clone()),
-        identity.clone(),
-    ) {
-        // FSpec FR-418: the task-product certificate the symbolic pass wrote
-        // and the checker read, spelled whole, beside the checker's verdict.
-        let mut certificate = wire;
-        if let Some(members) = certificate.as_object_mut() {
-            members.insert(
-                "checker".to_owned(),
-                fsl_replay::CertificateChecker::Zone.as_str().into(),
-            );
-            members.insert("accepted".to_owned(), accepted.into());
-        }
-        item.insert("certificate".to_owned(), certificate);
     } else if let (Some(recorded), Some(identity)) = (
         detail
             .as_ref()
@@ -4524,6 +4531,16 @@ fn item_document(written: Value, members: ItemMembers) -> Value {
             if let Some(document) = certificate_document {
                 if let Some(certificate) = certificate.as_object_mut() {
                     certificate.insert("document".to_owned(), document);
+                }
+            }
+            // FSpec FR-418: a proved task-product item carries the certificate's
+            // `task_product` part beside FR-621's `{identity, checker, accepted}`.
+            if let Some(part) = detail
+                .as_ref()
+                .and_then(|detail| detail.task_certificate.clone())
+            {
+                if let Some(certificate) = certificate.as_object_mut() {
+                    certificate.insert("task_product".to_owned(), part);
                 }
             }
             item.insert("certificate".to_owned(), certificate);
