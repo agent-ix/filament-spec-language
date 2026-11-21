@@ -428,7 +428,8 @@ fn reachable_operands(graph: &CheckedGraph, key: &NodeKey) -> HashSet<NodeKey> {
 
 /// The application a position names: of the applications lowered at its
 /// location and not `taken` by an enclosing position at the same location,
-/// the one no other of them takes as an operand. An attribute read lowers a
+/// the parent's next direct operand, or the one no other candidate takes as
+/// an operand when no parent operand names the visit. An attribute read lowers a
 /// `deref` and the `project` over it at one position; an implicit coercion
 /// and its operand are two positions at one location.
 fn term_application<'c>(
@@ -444,7 +445,7 @@ fn term_application<'c>(
         }
     }
     // One application at the position is the position's own; only several
-    // need ordering by reach, which walks their operands.
+    // need the parent operand context or ordering by reach.
     if let [only] = keys[..] {
         return Ok(Some(only));
     }
