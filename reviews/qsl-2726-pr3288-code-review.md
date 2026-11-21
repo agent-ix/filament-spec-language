@@ -215,3 +215,13 @@ scope:
     trace subject the clause''s clock name is a role that the request''s `clocks`
     member'
 ```
+
+## Dispositions
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | Round 1 at 9b91fdd454bf140f1ff40e3cdbe9f34815885d51: package_call_disposition retains the complete CallAdmissionFailure in ClauseDisposition::PackageAdmission. Stage/category mappings preserve prior behavior; native serialization copies only the original code, cause and fields and leaves the optional wire locus absent. |
+
+## Disposition round 1 verification
+
+Current scoped verdict: PASS for the reviewed fix; no unresolved findings and no new findings. Inspected only 777e1c..9b91fdd and the necessary classification/serialization consumers. The new regression exercises Package, Node and Member loci for both Refused and Incomplete, checks equality of the retained typed failure, stage, code/cause/fields, absent wire locus and reader acceptance. Its execution is pending in the lead-owned shared build lane; this reviewer ran no Cargo or gates. The lead reports the prior frozen 777e five selections passed 5/0 and observed-undefined wire regression passed 1/0. Final focused TEST-RUN remains with the lead. Original review text and finding are unchanged.

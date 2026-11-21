@@ -215,3 +215,7 @@ scope:
     trace subject the clause''s clock name is a role that the request''s `clocks`
     member'
 ```
+
+## Disposition round 1 verification
+
+No gap findings required disposition. Fix-only inspection at 9b91fdd454bf140f1ff40e3cdbe9f34815885d51 found no additional gap in typed-locus retention or the new focused regression. The original scoped matrix limitations and partial-delivery boundaries remain; no matrix rerun or global assurance PASS is claimed. No Cargo or gates ran in this reviewer.
