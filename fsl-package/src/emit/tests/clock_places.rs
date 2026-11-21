@@ -408,8 +408,20 @@ fn a_clock_place_reads_back() {
 #[trace("TC-3084", "FR-1040-AC-8", "FSpec-FR-154-AC-53")]
 #[test]
 fn clock_reference_fields_emit_and_read_back_as_data() {
-    use filament_contract_model::{CheckedCollectionKind, CheckedMemberType};
+    let (package, document) = clock_reference_field_package();
+    let emission = emit_checked(&package).expect("emits");
+    let wire = wire(&emission);
+    for row in emission.equality_producer_identity_rows() {
+        assert!(nodes(&wire)
+            .iter()
+            .any(|node| node["node_id"]
+                == serde_json::to_value(row.checked_node()).expect("node id")));
+        assert_eq!(row.source_map_entry().node_id, *row.checked_node());
+    }
+    clock_reference_field_readback(document, emission, &wire);
+}
 
+fn clock_reference_field_package() -> (CheckedPackage, Vec<u8>) {
     let mut document: Value = serde_json::from_slice(&clocked_document_with(false)).expect("JSON");
     let identity = "ix://example/config-version/ClockRef";
     document["types"].as_array_mut().expect("types").push(json!({
@@ -461,8 +473,35 @@ fn clock_reference_fields_emit_and_read_back_as_data() {
             &fsl_semantics::check::test_support::ZeroRewardEvaluator,
         )
         .unwrap_or_else(|refusals| panic!("data fields check: {refusals:?}"));
-    let emission = emit_checked(&CheckedPackage::link(graph)).expect("emits");
-    let wire = wire(&emission);
+    (CheckedPackage::link(graph), document)
+}
+
+/// A timed substitution authorizes only its exact original producer key.
+#[trace("TC-3084", "FR-1040-AC-8")]
+#[test]
+fn a_rekeyed_clock_equality_still_requires_its_exact_producer_identity() {
+    let (package, _) = clock_reference_field_package();
+    let emission = emit_checked(&package).expect("timed equality emits after rekeying");
+    let rows = emission.equality_producer_identity_rows();
+    assert!(!rows.is_empty(), "the source records equality producers");
+    let mut ids: HashMap<_, _> = rows
+        .iter()
+        .map(|row| (row.application().clone(), row.checked_node().clone()))
+        .collect();
+    let source_map: Vec<_> = rows
+        .iter()
+        .map(|row| row.source_map_entry().clone())
+        .collect();
+    assert!(equality_producer_emission_rows(package.graph(), &ids, &source_map).is_ok());
+    ids.remove(rows[0].application());
+    assert!(matches!(
+        equality_producer_emission_rows(package.graph(), &ids, &source_map),
+        Err(EmitRefusal::MissingEqualityIdentityContext { .. })
+    ));
+}
+
+fn clock_reference_field_readback(document: Vec<u8>, emission: Emission, wire: &Value) {
+    use filament_contract_model::{CheckedCollectionKind, CheckedMemberType};
     let scalars: Vec<_> = nodes(&wire)
         .iter()
         .filter(|node| {

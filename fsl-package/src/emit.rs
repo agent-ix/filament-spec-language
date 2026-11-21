@@ -4434,6 +4434,7 @@ fn checked_dispatch_tables(
 fn checked_term_data(
     graph: &CheckedGraph,
     emitted_node_ids: &HashMap<NodeKey, CheckedNodeId>,
+    equality_node_ids: &HashMap<NodeKey, CheckedNodeId>,
     selected_model_members: &[(
         NodeKey,
         NodeKey,
@@ -4447,7 +4448,7 @@ fn checked_term_data(
 ) -> Result<Option<filament_contract_model::CheckedTermDataV2>, EmitRefusal> {
     let mut term_data = checked_equality_term_data(
         graph,
-        emitted_node_ids,
+        equality_node_ids,
         selected_model_members,
         equality_rows,
     )?
@@ -6013,7 +6014,9 @@ fn rekey_timed_model_nodes(
     nodes: &mut [CheckedSemanticNodeV2],
     source_map: &mut [CheckedSourceMapEntry],
     term_data: &mut Option<filament_contract_model::CheckedTermDataV2>,
-) -> Result<(), EmitRefusal> {
+) -> Result<Vec<(NodeKey, NodeKey)>, EmitRefusal> {
+    let mut substitutions = Vec::new();
+    let mut keys = ids.key_reader();
     let timed_count = nodes
         .iter()
         .filter(|node| {
@@ -6033,7 +6036,7 @@ fn rekey_timed_model_nodes(
             }
         }
         if changes.is_empty() {
-            return Ok(());
+            return Ok(substitutions);
         }
         // FR-322 "Operand index segments": a node whose own path holds a
         // rekeyed node as an operand is rekeyed with it, so every operand
@@ -6051,6 +6054,12 @@ fn rekey_timed_model_nodes(
             }
         }
         for (old, new) in changes {
+            substitutions.push((
+                keys.key(&old)
+                    .map_err(|_| EmitRefusal::SourceMapInvariant)?,
+                keys.key(&new)
+                    .map_err(|_| EmitRefusal::SourceMapInvariant)?,
+            ));
             for node in nodes.iter_mut() {
                 node.replace_node_id(&old, &new);
             }
@@ -6067,6 +6076,24 @@ fn rekey_timed_model_nodes(
     Err(EmitRefusal::TimedModelWriterInvariant(
         "timed-node identity propagation did not converge",
     ))
+}
+
+/// Resolve original producer keys only through the timed substitutions the
+/// writer actually applied. The shared index keeps its one key per final node
+/// so consumers that reverse it never choose between identity aliases.
+fn equality_node_ids_after_timed_rekey(
+    emitted: &HashMap<NodeKey, CheckedNodeId>,
+    substitutions: &[(NodeKey, NodeKey)],
+) -> Result<HashMap<NodeKey, CheckedNodeId>, EmitRefusal> {
+    let mut producer_ids = emitted.clone();
+    for (old, new) in substitutions.iter().rev() {
+        let final_id = producer_ids
+            .get(new)
+            .cloned()
+            .ok_or(EmitRefusal::SourceMapInvariant)?;
+        producer_ids.insert(old.clone(), final_id);
+    }
+    Ok(producer_ids)
 }
 
 /// `id` with each direct operand equal to `old` replaced by `new`, or `None`
@@ -7040,6 +7067,7 @@ fn emit_package_inner(
     }
     let mut emitted_refinements = Vec::new();
     let mut step_rows = Vec::new();
+    let mut timed_substitutions = Vec::new();
     for refinement in graph.refinements() {
         if !refinement.v2_emittable() {
             return Err(EmitRefusal::RefinementNotEmitted);
@@ -7324,14 +7352,24 @@ fn emit_package_inner(
                 nodes.push(node);
             }
         }
-        rekey_timed_model_nodes(ids, &mut nodes, &mut source_map, &mut None)?;
+        timed_substitutions.extend(rekey_timed_model_nodes(
+            ids,
+            &mut nodes,
+            &mut source_map,
+            &mut None,
+        )?);
         // FSpec FR-322 "Aggregate order": the lists are written in declared
         // order, which reads the nodes' regions and structure alone, and
         // the nodes whose lists moved are rekeyed.
         if timed_order::order_timed_aggregates(&mut nodes, &source_map)
             .map_err(EmitRefusal::TimedOrder)?
         {
-            rekey_timed_model_nodes(ids, &mut nodes, &mut source_map, &mut None)?;
+            timed_substitutions.extend(rekey_timed_model_nodes(
+                ids,
+                &mut nodes,
+                &mut source_map,
+                &mut None,
+            )?);
         }
         #[cfg(test)]
         TIMED_GRAPH.with(|held| *held.borrow_mut() = Some((nodes.clone(), source_map.clone())));
@@ -7455,21 +7493,24 @@ fn emit_package_inner(
         temporal_selections,
     )?;
     let claim_names = claim_name_rows(graph, ids, &emitted_node_ids, &nodes, &source_map)?;
+    let equality_node_ids =
+        equality_node_ids_after_timed_rekey(&emitted_node_ids, &timed_substitutions)?;
     let equality_producer_identity_rows = equality_producer_emission_rows_excluding(
         graph,
-        &emitted_node_ids,
+        &equality_node_ids,
         &source_map,
         &omitted_keys,
     )?;
     let equality_fact_witness_rows = equality_fact_witness_rows(
         graph,
-        &emitted_node_ids,
+        &equality_node_ids,
         &nodes,
         &equality_producer_identity_rows,
     )?;
     let checked_term_data = checked_term_data(
         graph,
         &emitted_node_ids,
+        &equality_node_ids,
         &selected_model_enum_member_rows,
         &equality_producer_identity_rows,
         &nodes,
