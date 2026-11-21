@@ -1170,8 +1170,8 @@ fn model_distributions_observing(
         }
         let steps = result.map_err(&mut expansion)?.map_err(|stop| {
             failure(match stop {
-                fsl_eval::simulation::model::Unsteppable::NotMarkov(_) => {
-                    crate::ExactProbBuildIssue::NotMarkov
+                fsl_eval::simulation::model::Unsteppable::NotMarkov(cause) => {
+                    crate::ExactProbBuildIssue::NotMarkov(Box::new(cause))
                 }
                 fsl_eval::simulation::model::Unsteppable::UndecidedSuccessor(_) => {
                     crate::ExactProbBuildIssue::UndecidedSuccessor
@@ -1209,8 +1209,8 @@ fn model_distributions_with_budget(
             .map_err(|error| admission.expansion_refusal(error))?
             .map_err(|stop| {
                 ProbabilityDocumentError::Build(Box::new(match stop {
-                    fsl_eval::simulation::model::Unsteppable::NotMarkov(_) => {
-                        crate::ExactProbBuildIssue::NotMarkov
+                    fsl_eval::simulation::model::Unsteppable::NotMarkov(cause) => {
+                        crate::ExactProbBuildIssue::NotMarkov(Box::new(cause))
                     }
                     fsl_eval::simulation::model::Unsteppable::UndecidedSuccessor(_) => {
                         crate::ExactProbBuildIssue::UndecidedSuccessor

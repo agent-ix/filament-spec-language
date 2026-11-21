@@ -34,7 +34,7 @@ pub enum ExactProbBuildIssue {
         upper: Rational,
     },
     /// The workload does not define a Markov chain.
-    NotMarkov,
+    NotMarkov(Box<fsl_eval::simulation::model::NotMarkov>),
     /// A product successor's contract was undecided.
     UndecidedSuccessor,
     /// State expansion failed or reached a subject-owned limit.
@@ -115,8 +115,8 @@ pub fn settle_exact_prob_build_issue(
             }),
             diagnostic: None,
         },
-        ExactProbBuildIssue::NotMarkov => ExactProbBuildRecord {
-            value: TerminalValue::Unsupported(UnavailabilityCause::NotMarkov),
+        ExactProbBuildIssue::NotMarkov(cause) => ExactProbBuildRecord {
+            value: TerminalValue::Unsupported(UnavailabilityCause::NotMarkov(cause.clone())),
             diagnostic: None,
         },
         ExactProbBuildIssue::UndecidedSuccessor => ExactProbBuildRecord {
@@ -177,6 +177,36 @@ mod tests {
     use fsl_eval::simulation::model::ExpansionLimits;
     use ix_trace_rs::trace;
 
+    fn not_markov() -> fsl_eval::simulation::model::NotMarkov {
+        let transition = fsl_eval::simulation::model::ScheduledIdentity {
+            operation: r#""tick""#.to_owned(),
+            receiver: filament_exact::ObjectReference::new(
+                crate::fixture_universe(1),
+                crate::fixture_effective(2),
+                filament_exact::ObjectId::new("n").expect("a key"),
+            ),
+            arguments: Vec::new(),
+        };
+        let drawn_transition = filament_semantic_value::model_transition::ModelTransition::new(
+            transition.operation.clone(),
+            Some(
+                fsl_eval::simulation::model::reference_canonical_text(&transition.receiver)
+                    .expect("a receiver"),
+            ),
+            Vec::new(),
+            quire_canonical::Limits::new(u64::MAX),
+        )
+        .expect("a transition");
+        fsl_eval::simulation::model::NotMarkov {
+            state: fsl_eval::simulation::StateKey::from_canonical_bytes(b"\"healthy\"".to_vec()),
+            transition,
+            drawn_transition,
+            random: Vec::new(),
+            post_states: 0,
+            post_state_examples: Vec::new(),
+        }
+    }
+
     #[trace("TC-638", "FR-203-AC-6", "FR-203-AC-7")]
     #[test]
     fn build_stops_and_refusals_have_the_fr203_terminal_map() {
@@ -209,8 +239,8 @@ mod tests {
                 None,
             ),
             (
-                ExactProbBuildIssue::NotMarkov,
-                TerminalValue::Unsupported(UnavailabilityCause::NotMarkov),
+                ExactProbBuildIssue::NotMarkov(Box::new(not_markov())),
+                TerminalValue::Unsupported(UnavailabilityCause::NotMarkov(Box::new(not_markov()))),
                 None,
             ),
             (

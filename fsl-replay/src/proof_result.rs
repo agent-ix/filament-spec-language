@@ -631,7 +631,7 @@ pub enum UnavailabilityCause {
     UnsupportedSmtFragment,
     /// FR-192: a drawn step of an EN-4 run broke the Markov condition
     /// (ADR-024 PM-3). Wire cause `not-markov`.
-    NotMarkov,
+    NotMarkov(Box<fsl_eval::simulation::model::NotMarkov>),
     /// FR-192: a choice's scaled weight total exceeds `2^256`, so no draw is
     /// accepted (FSpec FR-181-AC-14). Wire cause `total-above-draw-range`,
     /// `total` a decimal string.
@@ -773,7 +773,7 @@ impl UnavailabilityCause {
             | Self::StatisticalRequest(_) => NegotiationOutcome::UnsupportedRequestedCapability
                 .code()
                 .cause(),
-            Self::NotMarkov => "not-markov",
+            Self::NotMarkov(_) => "not-markov",
             Self::TotalAboveDrawRange { .. } => "total-above-draw-range",
             Self::NotStochastic { .. } => "not-stochastic",
             Self::TimeLockedSample { .. } => "time-locked-sample",
@@ -801,7 +801,7 @@ impl UnavailabilityCause {
             Self::SolverAbsent
             | Self::BackendAbsent
             | Self::Disposition
-            | Self::NotMarkov
+            | Self::NotMarkov(_)
             | Self::TotalAboveDrawRange { .. }
             | Self::NotStochastic { .. }
             | Self::TimeLockedSample { .. }
@@ -2194,6 +2194,19 @@ impl TerminalRecord {
         backend: BackendId,
         value: TerminalValue,
     ) -> Self {
+        let invalid_not_markov = matches!(
+            &value,
+            TerminalValue::Unsupported(UnavailabilityCause::NotMarkov(cause))
+                if cause.post_states == 1
+                    || u64::try_from(cause.post_state_examples.len()).ok()
+                        != Some(cause.post_states.min(2))
+                    || cause.post_state_examples.windows(2).any(|pair| pair[0] >= pair[1])
+        );
+        let value = if invalid_not_markov {
+            TerminalValue::Failed
+        } else {
+            value
+        };
         // An `unsupported` record settled by disposition carries the FR-272
         // diagnostic (FR-286); a caller that builds one without a
         // diagnostic gets the generic capability diagnostic, never a record
@@ -2207,7 +2220,14 @@ impl TerminalRecord {
             backend: Some(backend),
             value,
             replay: None,
-            diagnostic: disposed.then(|| NegotiationOutcome::UnsupportedRequestedCapability.code()),
+            diagnostic: if invalid_not_markov {
+                Some(CatalogCode::new(
+                    "runtime_invariant",
+                    "established-invariant-broken",
+                ))
+            } else {
+                disposed.then(|| NegotiationOutcome::UnsupportedRequestedCapability.code())
+            },
             disposition_detail: disposed.then(serde_json::Map::new),
             diagnostic_detail: None,
             disposed,

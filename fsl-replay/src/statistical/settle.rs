@@ -91,8 +91,9 @@ impl StatisticalRecord {
     /// This record as the FR-331 terminal record of the item at
     /// `request_index`, produced by `backend`, with its diagnostic.
     pub fn into_terminal(self, request_index: RequestIndex, backend: BackendId) -> TerminalRecord {
-        TerminalRecord::with_backend(request_index, backend, self.value)
-            .with_diagnostic(self.diagnostic)
+        let record = TerminalRecord::with_backend(request_index, backend, self.value);
+        let diagnostic = self.diagnostic.or(record.diagnostic());
+        record.with_diagnostic(diagnostic)
     }
 }
 
@@ -191,7 +192,9 @@ pub fn settle_statistical(
         },
         StatisticalOutcome::Unsupported { cause, .. } => {
             StatisticalRecord::of(TerminalValue::Unsupported(match cause {
-                StatisticalUnsupported::NotMarkov(_) => UnavailabilityCause::NotMarkov,
+                StatisticalUnsupported::NotMarkov(cause) => {
+                    UnavailabilityCause::NotMarkov(cause.clone())
+                }
                 StatisticalUnsupported::TotalAboveDrawRange { total } => {
                     UnavailabilityCause::TotalAboveDrawRange {
                         total: total.clone(),
@@ -636,7 +639,7 @@ mod tests {
         });
         assert_eq!(
             not_markov.value,
-            TerminalValue::Unsupported(UnavailabilityCause::NotMarkov)
+            TerminalValue::Unsupported(UnavailabilityCause::NotMarkov(Box::new(not_markov())))
         );
         assert_eq!(not_markov.category(), Category::Unsupported);
         assert!(wire(not_markov).get("basis").is_none());

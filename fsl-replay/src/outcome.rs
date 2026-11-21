@@ -543,6 +543,15 @@ pub struct ItemCause {
     /// The typed transition identity named by `not-stochastic`.
     #[serde(skip_serializing_if = "Option::is_none")]
     identity: Option<TimedTransitionWire>,
+    /// The complete drawn identity of a `not-markov` refusal.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    transition: Option<TaskSourceTransitionWire>,
+    /// The actual count of a `not-markov` draw's model post-states.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    post_state_count: Option<u64>,
+    /// The first two actual distinct model posts, or none for count zero.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    post_states: Option<Vec<TimedStateWire>>,
     /// A clause run's FR-501 indeterminate reason, in the result report's
     /// own spelling; it supplies the cause's `kind`.
     #[serde(flatten)]
@@ -841,6 +850,9 @@ impl ItemCause {
             recompiled: None,
             state: None,
             identity: None,
+            transition: None,
+            post_state_count: None,
+            post_states: None,
             reason: None,
         }
     }
@@ -1318,6 +1330,13 @@ impl OutcomeItem {
                     ..ItemCause::kind(cause.as_str())
                 };
                 match cause {
+                    UnavailabilityCause::NotMarkov(cause) => {
+                        item.state = Some((&cause.state).into());
+                        item.transition = Some((&cause.drawn_transition).into());
+                        item.post_state_count = Some(cause.post_states);
+                        item.post_states =
+                            Some(cause.post_state_examples.iter().map(Into::into).collect());
+                    }
                     UnavailabilityCause::StatisticalRequest(refusal) => {
                         item.refusal = Some(refusal.as_str());
                     }
@@ -1365,7 +1384,6 @@ impl OutcomeItem {
                     | UnavailabilityCause::UnsupportedReduction { .. }
                     | UnavailabilityCause::UnsupportedHyperForm { .. }
                     | UnavailabilityCause::UnsupportedSmtFragment
-                    | UnavailabilityCause::NotMarkov
                     | UnavailabilityCause::ConfidenceBeyondPrecision
                     | UnavailabilityCause::PunctualInterval { .. } => {}
                     UnavailabilityCause::NotStochastic { state, identity } => {
