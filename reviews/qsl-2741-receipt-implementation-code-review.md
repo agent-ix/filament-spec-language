@@ -3,7 +3,7 @@ id: SR-202611210022442313144108546
 title: "QSL-2741 receipt binding code and Rust review"
 type: SpecReview
 analysis: code-review
-scope: "agent-ix/filament-spec-language; PR3365; QSL-2741; fsl-analyze/src/analyze.rs, analyze/clause_item.rs, analyze/document.rs, analyze/document/effect_decision.rs, analyze/state_graph_item.rs, plan.rs, provider.rs; fsl-command/src/command/analyze.rs; fsl-command/tests/it/effect_decision.rs, main.rs; fsl-eval/src/simulation/protocol/identity.rs"
+scope: "agent-ix/filament-spec-language; PR3365; QSL-2741; fsl-analyze/src/analyze.rs, analyze/clause_item.rs, analyze/document.rs, analyze/document/effect_decision.rs, analyze/state_graph_item.rs, plan.rs, provider.rs; fsl-command/src/command/analyze.rs; fsl-command/tests/it/effect_decision.rs, main.rs; fsl-eval/src/simulation/protocol/identity.rs; disposition2 resource callbacks and factories: fsl-analyze/src/analyze/items.rs, model_check/state_graph.rs, protocol_analysis/finite_replay.rs, tests/it/model_settle.rs, protocol_system.rs, state_graph_settle.rs; fsl-replay/src/outcome.rs, proof_result.rs"
 review_set: subset
 relationships:
   - {target: "ix://agent-ix/filament-spec-language/FR-1046", type: references}
@@ -17,7 +17,7 @@ One independent code-review/Rust pass over frozen source `f6d7f7fe289b8819a7cdf0
 
 ## Verdict
 
-**CONDITIONAL after disposition round 1** — original FND-001/002/003 are fixed; the new typed resource/classifier failure mapping defect FND-004 remains open and blocks merge. The original review snapshot and finding texts are preserved below. The same coder has one remaining semantic fix round; no second initial review or broad requalification is requested.
+**PASS for the reviewed receipt-binding change after final disposition round 2** — all scoped Code/Rust findings FND-001 through FND-004 now have fixed latest outcomes. The final frozen candidate is `19d75436a8067688a5e5c3c4eed83a889cade09f` and the actual final focused run passes 34 cases with zero failed or ignored. Original findings, the round-one still-open record and failed qualification history are preserved below. This is not a global assurance PASS or whole-ticket/CLI completion claim.
 
 ## Findings
 
@@ -270,6 +270,7 @@ Round 1 at `a119dbf556daf4df3c24c8cf8be80b1f650d05d8`, production source qualifi
 | FND-002 | fixed | The depth-capped UniqueValue walk was removed; opaque receipts use the existing iterative quire-canonical arena through canonical comparison, integer checking, key normalization and selected/unselected intake. The separate newly introduced resource mapping defect is FND-004. |
 | FND-003 | fixed | The unchanged full Package positive passed once explicitly at the qualified production head and then passed in its normal unignored selection at the ignore-only child a119dbf556daf4df3c24c8cf8be80b1f650d05d8. |
 | FND-004 | still-open | Known arena allocation failures are currently mapped to invalid receipt data; classifier errors can re-enter the recursive ordinary-document decoder. |
+| FND-004 | fixed | Round 2 verifies explicit reader/encoder allocation mapping, Result classification, command and all replay callers, plus item-local native allocation capture and requested-byte preservation. The exact final c5 run passes all 34 cases at 19d75436a8067688a5e5c3c4eed83a889cade09f; no configured bound/setting or malformed-data remap is invented. |
 
 ## New findings (disposition pass 1)
 
@@ -590,5 +591,367 @@ The arena reader now removes the original depth cap, but its known `ReadError::A
     "head_delta": "44702 -> a119 is only deletion of the ignore attribute; full positive assertions unchanged, verified with git.",
     "publication": "ROOT CENTRAL ONLY; these private pending comments are not yet posted/read back."
   }
+}
+```
+
+## Final disposition round 2 verification
+
+Final frozen head `19d75436a8067688a5e5c3c4eed83a889cade09f`, base `2f01e55faee9c79ee5b59b99ce85e22011f8e3b2`. This is the second and final disposition of the original review; it adds no new initial review or matrix audit. FND-004 is fixed, and no additional scoped defect was identified in this fix assessment.
+
+- Reader and all three encoder adapters explicitly preserve `Allocation { requested }`. The existing FR-259 `resource_exhausted/allocation-failed` record carries requested bytes, not a configured bound or setting. Whole-document pre-canonical canonical-byte denial remains an input encoding refusal (including 1e5 expanding to 100000); component/key denials after canonicality are existing internal invariants. Other unexpected infrastructure errors do not become malformed receipt data.
+- `is_receipt` and retained `receipt_document` return Result. Command and all three replay-document construction call sites propagate classifier errors without ordinary recursive parsing. Fixed-depth metadata identity extraction keeps opaque objects out of Serde; selected/unselected depth and ordinary observation controls remain live.
+- Actual allocation Admission evidence is captured locally per item before semantic replay settlement drops fields. Model, protocol, zone/direct graph and finite-protocol routes preserve requested bytes through the existing allocation resource factory. The state-graph pipeline returns immediately after the failing real replay callback, so it neither replays another instance nor publishes a partial success.
+- The factory uses existing `IncompleteCause::ResourceExhausted` and ALLOCATION_FAILED diagnostic/detail. No new TerminalValue wire variant or global O-17 category mapping was introduced. Non-allocation semantic replay refusal behavior remains on the existing paths; the real model/protocol/state-graph controls pass.
+- Actual final c5 command is green: AnalyzeLib 3P/0F/0I (196 filtered), AnalyzeIT 6P/0F/0I (2787 filtered), CommandLib 1P/0F/0I (98 filtered), CommandIT 24P/0F/0I (186 filtered). Root confirmed rc0 at the final immutable head; this reviewer read the full local raw log. Typed boundary tests do not claim forced host OOM. Native callback tests obtain actual counterexamples/instances, preserve requested values, and assert real callback count one.
+- C4 remains retained as failed evidence: AnalyzeLib3P; AnalyzeIT5P/1F at derived_request.rs184 because the model fixture lacked the real Bounded clause; Command binaries did not run. The only 3904164-to-final delta is the legal fixture line `case(&crate::derived_request::counter_body(""), &[0])`, replacing CONTRACT. Assertions, production code and refusal oracles were not weakened. The final c5 run qualifies this corrected fixture; the earlier 16c0 checkpoint was not substituted for final qualification.
+- The final 24 command cases retain complete ordinary Source/Package receipt parity, full canonical matching/retries, real lasso/stem controls, depth-160 intake, malformed/expanding-number refusal, exact byte allowance, independent-item/no-trace behavior, and all seven prior recommendation controls. Nothing is ignored. Package AC-2 stays fixed; no receipt-free control replaces its full positive.
+- Direct formatting on the sixteen production-fix Rust files and final changed model fixture, plus diff checks, exit0. The raw log retains the existing sample_fingerprint dead-code warning; no new Clippy or broad compiler gate was run by the reviewer. No source, Cargo, tracker, relay or remote runtime mutation occurred.
+
+The global gap exceptions remain scoped and the global gap artifact remains FAIL. The broader public CLI proof for QSL-2741 is still unprovided. Root owns central publication/readbacks, trailing metadata, final integration checks, merge and ticket state; this verdict does not mark the whole ticket Done.
+
+## Round 2 disposition data
+
+```json
+{
+  "round": 2,
+  "final": true,
+  "head": "19d75436a8067688a5e5c3c4eed83a889cade09f",
+  "base": "2f01e55faee9c79ee5b59b99ce85e22011f8e3b2",
+  "scope": [
+    {
+      "id": "FR-1046-AC-1",
+      "path": "spec/functional/FR-1046-bind-effect-decision-receipts-to-protocol-recommendations.md",
+      "role": "examined",
+      "excerpt": "A real protocol analysis emits one typed recommendation before another role's model write. An FR-329 canonical document whose `decision` is that emitted object, supplied through `{file, identity}` and selected by `items[0].effect_decisions`, binds and returns the unchanged normal item: its native trace, replay, formal result and outcome member set equal the same run without the receipt."
+    },
+    {
+      "id": "FR-1046-AC-2",
+      "path": "spec/functional/FR-1046-bind-effect-decision-receipts-to-protocol-recommendations.md",
+      "role": "examined",
+      "excerpt": "Source and checked package intake for the same admitted protocol and canonical receipt perform equal recommendation validation and return their normal outcomes without a new output member. The receipt file has no added `identity`, `format` or FSL envelope member; neither its provision identity nor its bytes become an observation or proof premise."
+    },
+    {
+      "id": "FR-1046-AC-3",
+      "path": "spec/functional/FR-1046-bind-effect-decision-receipts-to-protocol-recommendations.md",
+      "role": "examined",
+      "excerpt": "Changing only the emitted recommendation's type tag, node, role, instance, replicated actor, operation identity, typed receiver, one typed argument or argument order in `decision` refuses `invalid_runtime_input` / `invalid-value`, exit 20. The existing message begins `effect-decision wrong-decision` and names the selector, document and `/decision`, while `details` and `locus` are null; equal display names do not make distinct declaration identities match."
+    },
+    {
+      "id": "FR-1046-AC-4",
+      "path": "spec/functional/FR-1046-bind-effect-decision-receipts-to-protocol-recommendations.md",
+      "role": "examined",
+      "excerpt": "A receipt whose decision matches a recommendation of item 0, but is selected only by item 1 and has no equal actual recommendation in item 1, refuses for item 1. If item 1 independently emits exactly one equal actual recommendation, the receipt binds there even when item 0 also emits an equal record. A native trace containing two indistinguishable occurrences within the selected item refuses `invalid_runtime_input` / `invalid-value` with message prefix `effect-decision ambiguous-decision`; no occurrence is chosen by discovery order and no item-origin field or decision id is generated."
+    },
+    {
+      "id": "FR-1046-AC-5",
+      "path": "spec/functional/FR-1046-bind-effect-decision-receipts-to-protocol-recommendations.md",
+      "role": "examined",
+      "excerpt": "Selecting the same canonical receipt twice, including under two provision identities, returns the same normal outcome as one selection and performs no additional protocol step or external effect. Two different transport receipts with the same request key and canonical effect request validate against that same recommendation without an additional result entry or FSL-owned history."
+    },
+    {
+      "id": "FR-1046-AC-6",
+      "path": "spec/functional/FR-1046-bind-effect-decision-receipts-to-protocol-recommendations.md",
+      "role": "examined",
+      "excerpt": "Two selected receipts with the same FR-329 request key and different canonical effect requests refuse `invalid_runtime_input` / `invalid-value` at the later document's `/effect_request`. The existing message begins `effect-decision request-key-contradiction` and names both provision identities; no successful receipt-binding output or replacement request is published."
+    },
+    {
+      "id": "FR-1046-AC-7",
+      "path": "spec/functional/FR-1046-bind-effect-decision-receipts-to-protocol-recommendations.md",
+      "role": "examined",
+      "excerpt": "Invalid JSON, a missing required property, duplicate member, unknown outer member and mistyped property refuse `invalid_runtime_input` with `malformed-json`, `missing-member`, `duplicate-member`, `unknown-member` and `wrong-value-kind`, respectively. A wrong contract version, out-of-domain value and non-canonical encoding use `invalid-value`. Each message begins `effect-decision malformed-receipt`; no data is repaired or converted into another canonical document version. The catalog selection comes from typed variants, not message parsing."
+    },
+    {
+      "id": "FR-1046-AC-8",
+      "path": "spec/functional/FR-1046-bind-effect-decision-receipts-to-protocol-recommendations.md",
+      "role": "examined",
+      "excerpt": "A non-array item member, malformed or unresolved document selector, and a top-level `effect_decisions` member each refuse `invalid-request`, exit 20, at their request pointer. Absent and empty item selectors retain the old request identity and outcome. No selected receipt is forwarded into the admitted FR-331 request item, and all outcomes validate against the unchanged published schema."
+    },
+    {
+      "id": "FR-1046-AC-9",
+      "path": "spec/functional/FR-1046-bind-effect-decision-receipts-to-protocol-recommendations.md",
+      "role": "examined",
+      "excerpt": "With the request below its independent request-byte ceiling, the real selected program, model and canonical receipt files are admitted at their exact aggregate dependent-byte allowance. One byte less gives the existing `resource_exhausted` incomplete outcome and original dependent-byte ceiling before receipt consumption; the receipt bytes are neither omitted nor read through an uncharged path."
+    },
+    {
+      "id": "FR-1046-AC-10",
+      "path": "spec/functional/FR-1046-bind-effect-decision-receipts-to-protocol-recommendations.md",
+      "role": "examined",
+      "excerpt": "A malformed selected receipt paired with a wrong decision fails canonical admission first. After canonical admission, a wrong decision on the first selector precedes a later key contradiction; a valid first selector followed by a conflicting request reports that later contradiction. Other request items keep their original settled records."
+    },
+    {
+      "id": "FR-1046-AC-11",
+      "path": "spec/functional/FR-1046-bind-effect-decision-receipts-to-protocol-recommendations.md",
+      "role": "examined",
+      "excerpt": "A bounded incomplete or unsupported protocol item with no binding-eligible trace retains its own cause and stage and reports no accepted receipts; it does not report a successful binding or a nonexistent-decision fact about an unexplored continuation."
+    },
+    {
+      "id": "FR-1046-AC-12",
+      "path": "spec/functional/FR-1046-bind-effect-decision-receipts-to-protocol-recommendations.md",
+      "role": "examined",
+      "excerpt": "Adding a transport receipt, grant, effect request, lineage or optional effect observation changes neither model fields nor compensation registrations, queues or formal truth. The binding path calls no adapter, starts no process and opens no network connection; receipt admission makes no claim that the supplied grant authorizes the action or the business effect occurred."
+    },
+    {
+      "id": "FR-277",
+      "path": "spec/functional/FR-277-bound-every-lifecycle-operation-by-caller-limits.md",
+      "role": "examined",
+      "excerpt": "Nesting depth is not a limit. Node, byte and work limits bound every stage,\nand no stage recurses on the native stack (ADR-030 D-1)."
+    },
+    {
+      "id": "Lasso",
+      "path": "fsl-replay/src/model_check/counterexample.rs",
+      "role": "examined",
+      "excerpt": "The steps of the lasso are [`TemporalCounterexample::prefix`]: the stem,\n/// then the loop. The loop re-enters at the position `entry`, so its steps\n/// are the prefix's steps from `entry` on and the last post-state of the\n/// prefix is the state at position `entry`."
+    },
+    {
+      "id": "FR-329",
+      "path": "filament-specification:spec/objects/interfaces/FR-329-effect-decision-receipt.md",
+      "role": "context_only",
+      "excerpt": "A document whose `contract_version` is not that identifier, missing required\nproperties, duplicate keys, out-of-domain values and non-canonical encodings\nrefuse before consumption."
+    },
+    {
+      "id": "ProtocolTransition::recommendation_document",
+      "path": "fsl-eval/src/simulation/protocol/identity.rs",
+      "role": "examined",
+      "excerpt": "Uses the same projection as the trace writer."
+    },
+    {
+      "id": "SubjectBinding::replay_documents",
+      "path": "fsl-analyze/src/analyze.rs",
+      "role": "examined",
+      "excerpt": "Formal replay premises exclude descriptive effect-decision receipts."
+    },
+    {
+      "id": "FR-001-AC-7",
+      "path": "spec/functional/FR-001-read-exact-source.md",
+      "role": "examined",
+      "excerpt": "Package declarations holding one record `Point` with field `x: Int[0, 9]`, checked under the source reference of bytes `b` admitted as authority `a`, identity `u`, under the reference of bytes `b'` admitted as `a`, `u`, under the reference of `b` admitted as authority `c`, identity `u`, and under the reference of `b` admitted as authority `a`, identity `v`, give `Point` the same node key `{package, path: [\"Point\"], ordinal: 0}` each time: the source reference is no part of a node key.",
+      "excerpt_part": "1/1"
+    },
+    {
+      "id": "FR-056-AC-60",
+      "path": "spec/functional/FR-056-admit-domain-package-model-declarations.md",
+      "role": "examined",
+      "excerpt": "Over a model whose `Gauge` has a Float64 field `a` and an operation `flip()` with frame `modifies a` and `post F { self.a = -pre(self.a) }`, the explicit-state checker returns no `RequiresBound`. From initial `a` `3ff0000000000000` (1.0) it reaches exactly the states 1.0 and `bff0000000000000` (-1.0), with one candidate per application. From initial `a` `0000000000000000` (+0) it reaches exactly +0 and `8000000000000000` (-0), two states with distinct keys, and each application has two candidates, because both zeros are `numericEqual` to the solved value (FR-120-AC-34). A",
+      "excerpt_part": "1/2"
+    },
+    {
+      "id": "FR-056-AC-60",
+      "path": "spec/functional/FR-056-admit-domain-package-model-declarations.md",
+      "role": "examined",
+      "excerpt": "simulation run applying `flip()` twice from 1.0 ends at 1.0 with no flag.",
+      "excerpt_part": "2/2"
+    },
+    {
+      "id": "FR-259",
+      "path": "spec/functional/FR-259-encode-identities-and-read-json-through-quire-canonical-at-any-depth.md",
+      "role": "examined",
+      "excerpt": "When `quire-canonical` cannot reserve memory for\n   a read or an encoding, FSL SHALL refuse with\n   `resource_exhausted`/`allocation-failed`, carrying `requested`, the size\n   in bytes of the reservation that failed. It is not a limit: it names no\n   bound and no setting. FSL SHALL NOT report it as a limit outcome, a\n   malformed value or malformed input."
+    }
+  ],
+  "findings": [
+    {
+      "fnd": "FND-001",
+      "severity": "high",
+      "confidence": "high",
+      "method": "code-review",
+      "check": "code-bug",
+      "artifact_id": "FR-1046-AC-4",
+      "related_ids": [
+        "FR-1046"
+      ],
+      "path": "fsl-analyze/src/analyze/document/effect_decision.rs",
+      "lines": "366-386",
+      "excerpt": "A receipt whose decision matches a recommendation of item 0, but is selected only by item 1 and has no equal actual recommendation in item 1, refuses for item 1. If item 1 independently emits exactly one equal actual recommendation, the receipt binds there even when item 0 also emits an equal record. A native trace containing two indistinguishable occurrences within the selected item refuses `invalid_runtime_input` / `invalid-value` with message prefix `effect-decision ambiguous-decision`; no occurrence is chosen by discovery order and no item-origin field or decision id is generated.",
+      "finding": "Occurrence counting ignores the native lasso cycle: one matching recommendation in a non-terminal repeated cycle is counted once and accepted instead of refusing ambiguous-decision."
+    },
+    {
+      "fnd": "FND-002",
+      "severity": "high",
+      "confidence": "high",
+      "method": "code-review",
+      "check": "code-bug",
+      "artifact_id": "FR-277",
+      "related_ids": [
+        "ADR-030",
+        "FR-1046-AC-7",
+        "FR-1046-AC-9"
+      ],
+      "path": "fsl-analyze/src/analyze/document/effect_decision.rs",
+      "lines": "212-229,505-579",
+      "excerpt": "Nesting depth is not a limit. Node, byte and work limits bound every stage,\nand no stage recurses on the native stack (ADR-030 D-1).",
+      "finding": "The new recursive Serde receipt decoder imposes the pinned default depth cap of 128 on otherwise valid opaque receipt objects, returning invalid-value instead of admitting a below-budget canonical document; command intake also reparses receipts into recursive Value."
+    },
+    {
+      "fnd": "FND-003",
+      "severity": "medium",
+      "confidence": "high",
+      "method": "code-review",
+      "check": "test-intent",
+      "artifact_id": "FR-1046-AC-2",
+      "related_ids": [
+        "FR-620"
+      ],
+      "path": "fsl-command/tests/it/effect_decision.rs",
+      "lines": "564-619",
+      "excerpt": "Source and checked package intake for the same admitted protocol and canonical receipt perform equal recommendation validation and return their normal outcomes without a new output member. The receipt file has no added `identity`, `format` or FSL envelope member; neither its provision identity nor its bytes become an observation or proof premise.",
+      "finding": "The newly registered, unignored Package positive test is known to fail before receipt binding and would add a default-suite failure if the bounded Source slice is merged unchanged."
+    },
+    {
+      "fnd": "FND-004",
+      "severity": "medium",
+      "confidence": "high",
+      "method": "code-review",
+      "check": "code-bug",
+      "artifact_id": "FR-259",
+      "related_ids": [
+        "FR-1046-AC-7",
+        "FR-624",
+        "FR-277"
+      ],
+      "path": "fsl-analyze/src/analyze/document/effect_decision.rs",
+      "lines": "19-31,208-220,261-296",
+      "excerpt": "When `quire-canonical` cannot reserve memory for\n   a read or an encoding, FSL SHALL refuse with\n   `resource_exhausted`/`allocation-failed`, carrying `requested`, the size\n   in bytes of the reservation that failed. It is not a limit: it names no\n   bound and no setting. FSL SHALL NOT report it as a limit outcome, a\n   malformed value or malformed input.",
+      "finding": "The arena integration collapses known reader and encoder allocation failures into malformed receipt data and reduces classifier failures to false, so valid receipts can be blamed for resource faults or re-enter recursive parsing."
+    }
+  ],
+  "new_findings": [],
+  "dispositions": [
+    {
+      "fnd": "FND-001",
+      "outcome": "fixed",
+      "reason": "Native non-terminal cycle recommendations contribute ambiguity while stem-only records remain unique; authentic max=None cycle and stem-only controls passed on 44702d380422543a6cc7d13b3cfdceb11dad0499.",
+      "after_excerpt": "if counterexample\n                        .lasso\n                        .as_ref()\n                        .is_some_and(|lasso| !lasso.terminal_stutter && position >= lasso.entry)\n                    {\n                        // The prefix holds one traversal of this native cycle.\n                        // Its recommendation event occurs on every traversal.\n                        *count = 2;",
+      "artifact_id": "FR-1046-AC-4",
+      "related_ids": [
+        "FR-1046"
+      ],
+      "path": "fsl-analyze/src/analyze/document/effect_decision.rs",
+      "lines": "366-386",
+      "excerpt": "A receipt whose decision matches a recommendation of item 0, but is selected only by item 1 and has no equal actual recommendation in item 1, refuses for item 1. If item 1 independently emits exactly one equal actual recommendation, the receipt binds there even when item 0 also emits an equal record. A native trace containing two indistinguishable occurrences within the selected item refuses `invalid_runtime_input` / `invalid-value` with message prefix `effect-decision ambiguous-decision`; no occurrence is chosen by discovery order and no item-origin field or decision id is generated."
+    },
+    {
+      "fnd": "FND-002",
+      "outcome": "fixed",
+      "reason": "The depth-capped UniqueValue walk was removed; opaque receipts use the existing iterative quire-canonical arena through canonical comparison, integer checking, key normalization and selected/unselected intake. The separate newly introduced resource mapping defect is FND-004.",
+      "after_excerpt": "let document = quire_canonical::read(bytes, bound).map_err(|error| match error {",
+      "artifact_id": "FR-277",
+      "related_ids": [
+        "ADR-030",
+        "FR-1046-AC-7",
+        "FR-1046-AC-9"
+      ],
+      "path": "fsl-analyze/src/analyze/document/effect_decision.rs",
+      "lines": "212-229,505-579",
+      "excerpt": "Nesting depth is not a limit. Node, byte and work limits bound every stage,\nand no stage recurses on the native stack (ADR-030 D-1)."
+    },
+    {
+      "fnd": "FND-003",
+      "outcome": "fixed",
+      "reason": "The unchanged full Package positive passed once explicitly at the qualified production head and then passed in its normal unignored selection at the ignore-only child a119dbf556daf4df3c24c8cf8be80b1f650d05d8.",
+      "after_excerpt": "#[test]\n#[trace(\"FR-1046-AC-2\")]\nfn checked_package_receipts_match_the_same_actual_recommendation() {",
+      "artifact_id": "FR-1046-AC-2",
+      "related_ids": [
+        "FR-620"
+      ],
+      "path": "fsl-command/tests/it/effect_decision.rs",
+      "lines": "564-619",
+      "excerpt": "Source and checked package intake for the same admitted protocol and canonical receipt perform equal recommendation validation and return their normal outcomes without a new output member. The receipt file has no added `identity`, `format` or FSL envelope member; neither its provision identity nor its bytes become an observation or proof premise."
+    },
+    {
+      "fnd": "FND-004",
+      "outcome": "fixed",
+      "reason": "Round 2 verifies explicit reader/encoder allocation mapping, Result classification, command and all replay callers, plus item-local native allocation capture and requested-byte preservation. The exact final c5 run passes all 34 cases at 19d75436a8067688a5e5c3c4eed83a889cade09f; no configured bound/setting or malformed-data remap is invented.",
+      "artifact_id": "FR-259",
+      "related_ids": [
+        "FR-1046-AC-7",
+        "FR-624",
+        "FR-277"
+      ],
+      "path": "fsl-analyze/src/analyze/document/effect_decision.rs",
+      "lines": "19-31,208-220,261-296",
+      "excerpt": "When `quire-canonical` cannot reserve memory for\n   a read or an encoding, FSL SHALL refuse with\n   `resource_exhausted`/`allocation-failed`, carrying `requested`, the size\n   in bytes of the reservation that failed. It is not a limit: it names no\n   bound and no setting. FSL SHALL NOT report it as a limit outcome, a\n   malformed value or malformed input.",
+      "after_excerpt": "Self::Allocation { requested } => super::AnalyzeDocumentError::Refused(\n                super::super::AnalyzeRefusal::Document(allocation_failure(requested)),\n            ),"
+    }
+  ],
+  "new_dispositions": [
+    {
+      "fnd": "FND-004",
+      "outcome": "fixed",
+      "reason": "Round 2 verifies explicit reader/encoder allocation mapping, Result classification, command and all replay callers, plus item-local native allocation capture and requested-byte preservation. The exact final c5 run passes all 34 cases at 19d75436a8067688a5e5c3c4eed83a889cade09f; no configured bound/setting or malformed-data remap is invented.",
+      "artifact_id": "FR-259",
+      "related_ids": [
+        "FR-1046-AC-7",
+        "FR-624",
+        "FR-277"
+      ],
+      "path": "fsl-analyze/src/analyze/document/effect_decision.rs",
+      "lines": "19-31,208-220,261-296",
+      "excerpt": "When `quire-canonical` cannot reserve memory for\n   a read or an encoding, FSL SHALL refuse with\n   `resource_exhausted`/`allocation-failed`, carrying `requested`, the size\n   in bytes of the reservation that failed. It is not a limit: it names no\n   bound and no setting. FSL SHALL NOT report it as a limit outcome, a\n   malformed value or malformed input.",
+      "after_excerpt": "Self::Allocation { requested } => super::AnalyzeDocumentError::Refused(\n                super::super::AnalyzeRefusal::Document(allocation_failure(requested)),\n            ),"
+    }
+  ],
+  "evidence": {
+    "head": "19d75436a8067688a5e5c3c4eed83a889cade09f",
+    "production_assessed_head": "390416401105f8c279a665684cf0848007ec3333",
+    "base": "2f01e55faee9c79ee5b59b99ce85e22011f8e3b2",
+    "tag": "qsl2741-r2-full-focused-c5",
+    "rc": 0,
+    "raw": "/private/tmp/qsl2741-r2-full-focused-c5.log",
+    "binaries": [
+      {
+        "binary": "fsl-analyze lib",
+        "passed": 3,
+        "failed": 0,
+        "ignored": 0,
+        "filtered": 196,
+        "seconds": 0
+      },
+      {
+        "binary": "fsl-analyze it",
+        "passed": 6,
+        "failed": 0,
+        "ignored": 0,
+        "filtered": 2787,
+        "seconds": 0.23
+      },
+      {
+        "binary": "fsl-command lib",
+        "passed": 1,
+        "failed": 0,
+        "ignored": 0,
+        "filtered": 98,
+        "seconds": 0.12
+      },
+      {
+        "binary": "fsl-command it",
+        "passed": 24,
+        "failed": 0,
+        "ignored": 0,
+        "filtered": 186,
+        "seconds": 3.12
+      }
+    ],
+    "total_passed": 34,
+    "total_failed": 0,
+    "total_ignored": 0,
+    "retained_c4": {
+      "head": "390416401105f8c279a665684cf0848007ec3333",
+      "raw": "/private/tmp/qsl2741-r2-full-focused-c4.log",
+      "analyze_lib": "3P/0F/0I",
+      "analyze_it": "5P/1F/0I",
+      "command": "NOT RUN",
+      "cause": "model fixture lacked the actual Bounded clause; derived_request.rs184 index0 with zero clauses"
+    },
+    "final_delta": "Only one model-settle fixture line changed from CONTRACT to derived_request::counter_body(\"\"); production code unchanged. Git diff verified.",
+    "earlier_checkpoint": "16c0 boundary/public passes were not used to qualify later final production changes.",
+    "runtime_provenance": "Root confirmed rc0/frozenhead; reviewer independently read full local c5 and retained c4 raw logs. No reviewer Cargo or remote runtime command.",
+    "publication": "Root central pending comment publication/readback only."
+  },
+  "previous_round_publication": {
+    "code": "ddd3b478-1107-425a-8b14-47e01e8d854c",
+    "gap": "5258f08c-c3c0-491e-9351-85d231596837",
+    "root_verified": true
+  },
+  "limits": "Same original review, second and final disposition. No full review, matrix sweep, Cargo, source edit, tracker or relay. Public CLI proof unprovided; no whole QSL2741 Done."
 }
 ```
