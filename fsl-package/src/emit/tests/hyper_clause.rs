@@ -150,7 +150,7 @@ fn a_finite_trace_set_hyperproperty_emits_its_finite_domain() {
     assert_eq!(domain["body"]["members"][0]["name"], "bound");
     assert_eq!(domain["body"]["members"][0]["value"]["value"], "3");
     assert_eq!(
-        node_via(&wire, &domain["semantic_type"])["semantic_form"],
+        node_with(&wire, &domain["semantic_type"])["semantic_form"],
         "record"
     );
     for member in ["subjects", "parameters", "match", "align_skip"] {
