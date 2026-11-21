@@ -2043,6 +2043,18 @@ fn run_configured(
             // FR-862: a `native-replay/1` request replays its FR-336 request.
             replay::run_bytes(directory, path.to_str(), bytes, limits.dependent_bytes).map(Some)
         } else {
+            // FR-1045 closes the relationship selection. Check duplicate
+            // names before special request readers (notably export's unique
+            // JSON admission) normalize the raw request and lose the later
+            // member's JSON Pointer.
+            if let Some(member) =
+                relationships::duplicate_selection_member(bytes).map_err(RunCause::Json)?
+            {
+                return Err(RunCause::ClauseRequest {
+                    member,
+                    reason: "member is repeated".to_owned(),
+                });
+            }
             if let Some(result) = export::run_bytes(directory, bytes, limits, overrides)? {
                 return Ok(Some(result));
             }

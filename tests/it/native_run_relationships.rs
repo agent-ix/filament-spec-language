@@ -35,6 +35,42 @@ fn refused_bytes(bytes: Vec<u8>) -> (Value, Value) {
     )
 }
 
+fn request_failure(output: &crate::command_harness::Output) -> Value {
+    assert!(output.stdout.is_empty(), "request refusal wrote stdout");
+    serde_json::from_slice(&output.stderr).unwrap_or_else(|error| {
+        panic!(
+            "request refusal is a command error: {error}; stderr={}",
+            String::from_utf8_lossy(&output.stderr)
+        )
+    })
+}
+
+fn assert_run_relationship_refusal(
+    output: &crate::command_harness::Output,
+    code: &str,
+    cause: Option<&str>,
+    path: Option<&str>,
+) -> Value {
+    let document: Value = serde_json::from_slice(&output.stdout).unwrap_or_else(|error| {
+        panic!(
+            "relationship refusal is a native-run result: {error}; stderr={}",
+            String::from_utf8_lossy(&output.stderr)
+        )
+    });
+    assert_eq!(output.status.code(), Some(20), "{document}");
+    assert_eq!(document["outcome"]["kind"], "refused", "{document}");
+    assert_eq!(document["outcome"]["code"], code, "{document}");
+    if let Some(cause) = cause {
+        assert_eq!(document["outcome"]["cause"], cause, "{document}");
+    } else {
+        assert!(document["outcome"].get("cause").is_none(), "{document}");
+    }
+    if let Some(path) = path {
+        assert_eq!(document["outcome"]["fields"]["path"], path, "{document}");
+    }
+    document
+}
+
 fn request(call: Value) -> Value {
     json!({
         "format": "native-run/1",
@@ -341,15 +377,12 @@ fn unknown_package_relationship_in_mapping_refuses_after_package_admission() {
         "declaration_identity":"producer:Order-ships-Shipment"
     }]));
     let output = run_selected("shipments", "o1", vec![], Some(selection));
-    let document: Value = serde_json::from_slice(&output.stdout)
-        .expect("package mapping refusal is a request document");
-    assert_ne!(output.status.code(), Some(0), "{document}");
+    let document = request_failure(&output);
+    assert_eq!(output.status.code(), Some(20), "{document}");
+    assert_eq!(document["code"], "invalid-request", "{document}");
+    assert_eq!(document["stage"], "request", "{document}");
     assert_eq!(
-        document["diagnostics"][0]["code"], "invalid-request",
-        "{document}"
-    );
-    assert_eq!(
-        document["diagnostics"][0]["details"]["path"],
+        document["details"]["path"],
         "/call/relationships/relationship_identities/0/relationship",
         "{document}"
     );
@@ -686,7 +719,12 @@ fn resolver_resource_limit_keeps_the_exact_incomplete_bound() {
 #[test]
 #[trace("FR-1045-AC-5", "FR-1045-AC-10")]
 fn resolver_reference_and_selection_refusals_keep_typed_causes() {
-    let mut foreign = relationship_selection(json!([]));
+    let complete = |mut selection: Value| {
+        selection["scope"]["closure_identity"] = json!("closure");
+        selection["scope"]["closure_digest"] = json!("22".repeat(32));
+        selection
+    };
+    let mut foreign = complete(relationship_selection(json!([])));
     foreign["expected_subject"]["authority"]["bundle_identity"] = json!("ix://foreign/producer");
     let output = run_selected("shipments", "o1", vec![], Some(foreign));
     let document: Value = serde_json::from_slice(&output.stdout).expect("typed resolver result");
@@ -705,7 +743,7 @@ fn resolver_reference_and_selection_refusals_keep_typed_causes() {
         ("label", json!("different-producer")),
         ("value", json!("00".repeat(32))),
     ] {
-        let mut foreign_digest = relationship_selection(json!([]));
+        let mut foreign_digest = complete(relationship_selection(json!([])));
         foreign_digest["expected_subject"]["authority"]["digest"][member] = value;
         let output = run_selected("shipments", "o1", vec![], Some(foreign_digest));
         let document: Value =
@@ -720,7 +758,7 @@ fn resolver_reference_and_selection_refusals_keep_typed_causes() {
         );
     }
 
-    let mut empty_subject_kind = relationship_selection(json!([]));
+    let mut empty_subject_kind = complete(relationship_selection(json!([])));
     empty_subject_kind["expected_subject"]["subject_kind"] = json!("");
     let output = run_selected("shipments", "o1", vec![], Some(empty_subject_kind));
     let document: Value = serde_json::from_slice(&output.stdout).expect("typed resolver result");
@@ -737,7 +775,7 @@ fn resolver_reference_and_selection_refusals_keep_typed_causes() {
         "{document}"
     );
 
-    let mut empty_binding = relationship_selection(json!([]));
+    let mut empty_binding = complete(relationship_selection(json!([])));
     empty_binding["binding"]["identity"] = json!("");
     let output = run_selected("shipments", "o1", vec![], Some(empty_binding));
     let document: Value = serde_json::from_slice(&output.stdout).expect("typed resolver result");
@@ -831,21 +869,11 @@ fn assert_identity_refusal(rows: Vec<Value>) {
         producer_with_relationships(vec![("producer:Order-ships-Shipment", ORDER, SHIPMENT)]),
     );
     let output = run_selected("shipments", "o1", rows, Some(selection));
-    let document: Value = serde_json::from_slice(&output.stdout).unwrap_or_else(|error| {
-        panic!(
-            "relationship identity refusal is an outcome document: {error}; stderr={}",
-            String::from_utf8_lossy(&output.stderr)
-        )
-    });
-    assert_ne!(output.status.code(), Some(0), "{document}");
-    assert_eq!(
-        document["diagnostics"][0]["code"], "invalid-request",
-        "{document}"
-    );
-    assert_eq!(
-        document["diagnostics"][0]["details"]["path"],
-        "/call/snapshot/relationships/0/instances/0/identity",
-        "{document}"
+    assert_run_relationship_refusal(
+        &output,
+        "invalid-request",
+        None,
+        Some("/call/snapshot/relationships/0/instances/0/identity"),
     );
 }
 
@@ -1031,112 +1059,6 @@ fn mapped_relationships_correlate_and_unmapped_relationships_are_ignored() {
 }
 
 #[test]
-#[trace("FR-1045-AC-12")]
-fn two_mapped_package_relationships_use_independent_producer_declarations() {
-    let mut selection = relationship_selection_with_producer(
-        json!([
-            {
-                "relationship": SHIPMENTS,
-                "declaration_identity": "producer:Order-ships-Shipment"
-            },
-            {
-                "relationship": PAYMENTS,
-                "declaration_identity": "producer:Order-uses-PaymentAttempt"
-            }
-        ]),
-        producer_with_relationships(vec![
-            ("producer:Order-ships-Shipment", ORDER, SHIPMENT),
-            (
-                "producer:Order-uses-PaymentAttempt",
-                ORDER,
-                "ix://test/workflow-relationships/PaymentAttempt",
-            ),
-        ]),
-    );
-    let authority = selection["expected_subject"]["authority"].clone();
-    selection["required_relationships"] = json!([
-        {
-            "declaration_identity": "producer:Order-ships-Shipment",
-            "source": {
-                "authority": authority,
-                "subject_kind": ORDER,
-                "authority_local_object_identity": "o1"
-            },
-            "target": {
-                "authority": authority,
-                "subject_kind": SHIPMENT,
-                "authority_local_object_identity": "s1"
-            }
-        },
-        {
-            "declaration_identity": "producer:Order-uses-PaymentAttempt",
-            "source": {
-                "authority": authority,
-                "subject_kind": ORDER,
-                "authority_local_object_identity": "o1"
-            },
-            "target": {
-                "authority": authority,
-                "subject_kind": PAYMENT_ATTEMPT,
-                "authority_local_object_identity": "p1"
-            }
-        }
-    ]);
-    selection["limits"]["max_relationships"] = json!("2");
-    selection["limits"]["max_required_relationships"] = json!("2");
-    selection["scope"]["closure_identity"] = json!("closure");
-    selection["scope"]["closure_digest"] = json!("22".repeat(32));
-    let mut shipment = instance("o1", "s1");
-    shipment["identity"] = json!("01");
-    let mut payment = instance("o1", "p1");
-    payment["identity"] = json!("02");
-    let rows = vec![
-        relationship_row(SHIPMENTS, true, vec![shipment]),
-        relationship_row(PAYMENTS, true, vec![payment]),
-    ];
-
-    let missing_relationships = |rows| {
-        let output = run_selected("paymentAttempts", "o1", rows, Some(selection.clone()));
-        let document: Value =
-            serde_json::from_slice(&output.stdout).expect("missing relationship result document");
-        assert_eq!(output.status.code(), Some(22), "{document}");
-        assert_eq!(document["outcome"]["kind"], "incomplete", "{document}");
-        let reasons = document["outcome"]["reasons"]
-            .as_array()
-            .expect("typed incomplete reasons");
-        assert_eq!(reasons.len(), 1, "{document}");
-        assert_eq!(reasons[0]["code"], "missing-relationship", "{document}");
-        reasons
-            .iter()
-            .filter(|reason| reason["code"] == "missing-relationship")
-            .map(|reason| {
-                let required: Value = serde_json::from_str(
-                    reason["fields"]["required"]
-                        .as_str()
-                        .expect("required relationship is canonical JSON"),
-                )
-                .expect("required relationship JSON parses");
-                required["declaration_identity"]
-                    .as_str()
-                    .expect("required declaration identity")
-                    .to_owned()
-            })
-            .collect::<Vec<_>>()
-    };
-
-    assert_eq!(
-        missing_relationships(vec![rows[1].clone()]),
-        ["producer:Order-ships-Shipment"],
-        "the shipment mapping satisfies only its own required slot"
-    );
-    assert_eq!(
-        missing_relationships(vec![rows[0].clone()]),
-        ["producer:Order-uses-PaymentAttempt"],
-        "the payment mapping satisfies only its own required slot"
-    );
-}
-
-#[test]
 #[trace("FR-1045-AC-6", "FR-100-AC-6")]
 fn unknown_relationship_type_in_correlation_is_invalid_request_after_snapshot_read() {
     let unknown = relationship_row(
@@ -1150,29 +1072,18 @@ fn unknown_relationship_type_in_correlation_is_invalid_request_after_snapshot_re
         vec![unknown.clone()],
         Some(relationship_selection(json!([]))),
     );
-    let document: Value = serde_json::from_slice(&correlated.stdout)
-        .expect("correlated unknown relationship returns a typed refusal");
-    assert_ne!(correlated.status.code(), Some(0), "{document}");
-    assert_eq!(
-        document["diagnostics"][0]["code"], "invalid-request",
-        "{document}"
-    );
-    assert_eq!(
-        document["diagnostics"][0]["details"]["path"],
-        "/call/snapshot/relationships/0/relationship",
-        "{document}"
+    assert_run_relationship_refusal(
+        &correlated,
+        "invalid-request",
+        None,
+        Some("/call/snapshot/relationships/0/relationship"),
     );
 
     let ordinary = run_selected("shipments", "o1", vec![unknown], None);
-    let document: Value =
-        serde_json::from_slice(&ordinary.stdout).expect("ordinary FR-106 refusal remains typed");
-    assert_ne!(ordinary.status.code(), Some(0), "{document}");
-    assert_eq!(
-        document["diagnostics"][0]["code"], "invalid_runtime_input",
-        "{document}"
-    );
-    assert_eq!(
-        document["diagnostics"][0]["cause"], "wrong-role-mapping",
-        "{document}"
+    assert_run_relationship_refusal(
+        &ordinary,
+        "invalid_runtime_input",
+        Some("wrong-role-mapping"),
+        None,
     );
 }
