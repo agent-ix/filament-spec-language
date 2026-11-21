@@ -4820,3 +4820,151 @@ fn qsl_2750_batch_over(world: &World, name: &str, trace: &TraceInput) -> ClauseR
         cancel: &cancel,
     })
 }
+
+/// A `Progressed` trace of record samples at `levels` under `assertion`.
+fn progressed_under(levels: &[i64], assertion: ProgressAssertion) -> TraceInput {
+    TraceInput::Progressed {
+        trace: levels
+            .iter()
+            .map(|level| spine::sample_position(&text(*level)))
+            .collect(),
+        progress: assertion,
+        lower_boundary: ProgressLowerBoundary::AuthoritativeOrigin,
+        binding: events_binding(),
+    }
+}
+
+/// An assertion at `watermark`, `Incomplete` or `Complete` through it.
+fn asserted(watermark: u64, complete: bool) -> ProgressAssertion {
+    ProgressAssertion {
+        completeness: if complete {
+            ProgressCompleteness::Complete { through: watermark }
+        } else {
+            ProgressCompleteness::Incomplete
+        },
+        ..progress(watermark)
+    }
+}
+
+/// What one request answers: refused `Completeness` (`None`), or the ledger
+/// it returns.
+type Answer = Option<spine::ProgressLedger>;
+
+/// The batch run's answer for `levels` under `assertion` over `held`.
+fn batch_answer(
+    world: &World,
+    held: Option<&spine::ProgressLedger>,
+    levels: &[i64],
+    assertion: ProgressAssertion,
+) -> Answer {
+    let report = batch_from(world, "Past", &progressed_under(levels, assertion), held);
+    if format!("{:?}", report.disposition).contains("Completeness") {
+        assert_eq!(report.ledger.as_ref(), held, "a refusal returns the ledger");
+        return None;
+    }
+    report.ledger
+}
+
+/// The carried state's answer, opened on `held`, optionally read back from
+/// its bytes after its first position.
+fn carried_answer(
+    world: &World,
+    held: &spine::ProgressLedger,
+    levels: &[i64],
+    assertion: ProgressAssertion,
+    restored: bool,
+) -> Answer {
+    let cancel = Cancel::new();
+    let mut state = progressed_state(
+        world,
+        Some(held.clone()),
+        fsl_eval::temporal::DEFAULT_COVERED_POSITIONS,
+    );
+    state
+        .advance(admitted(world, "Past", &text(levels[0]), 0), &cancel)
+        .expect("advances");
+    let mut state = reopen(world, held, state, restored);
+    for (index, level) in levels.iter().enumerate().skip(1) {
+        state
+            .advance(
+                admitted(world, "Past", &text(*level), index as u64),
+                &cancel,
+            )
+            .expect("advances");
+    }
+    match state.assert_progress(&assertion, &cancel) {
+        Ok(advance) => advance.report.ledger.clone(),
+        Err(spine::ClauseRefusal::Contradiction(contradiction)) => {
+            assert_eq!(
+                contradiction.contradiction.dimension,
+                ContradictedDimension::Completeness
+            );
+            None
+        }
+        Err(other) => panic!("a contradiction or an answer, got {other:?}"),
+    }
+}
+
+/// FR-944-AC-4 and AC-16 (TC-2624), FR-820: batch evaluation and carried
+/// evaluation, the carried state read back by `from_bytes` between requests
+/// or not, give equal answers and equal ledgers on the cases a trace of
+/// record samples can express: an identical redelivery, a changed sample at
+/// a covered index after `Complete` and after `Incomplete`, and a covered
+/// position one request omits and a later one supplies again. (A new
+/// position at stamp 0 after `Incomplete`, a fingerprint present against
+/// absent and a re-stamped index are not expressible by a trace here; they
+/// are ledger tests.)
+#[test]
+#[trace("TC-2624", "FR-944-AC-4", "FR-944-AC-16", "FR-820-AC-1")]
+fn carried_and_batch_evaluation_answer_the_completeness_cases_alike() {
+    let world = world();
+    for retained_complete in [true, false] {
+        let held = batch_answer(&world, None, &[1, 2], asserted(1, retained_complete))
+            .expect("the first request is accepted");
+        let cases: [(&str, &[i64], ProgressAssertion); 4] = [
+            ("the same samples", &[1, 2], asserted(1, retained_complete)),
+            (
+                "a changed sample",
+                &[1, 5, 3],
+                asserted(2, retained_complete),
+            ),
+            (
+                "the same samples and one more",
+                &[1, 2, 3],
+                asserted(2, true),
+            ),
+            (
+                "a covered position omitted",
+                &[1],
+                asserted(1, retained_complete),
+            ),
+        ];
+        for (case, levels, assertion) in cases {
+            let batch = batch_answer(&world, Some(&held), levels, assertion);
+            for restored in [false, true] {
+                let carried = carried_answer(&world, &held, levels, assertion, restored);
+                assert_eq!(
+                    carried, batch,
+                    "{case}, retained complete {retained_complete}, restored {restored}"
+                );
+            }
+            assert_eq!(
+                batch.is_none(),
+                case == "a changed sample",
+                "{case}, retained complete {retained_complete}"
+            );
+        }
+        // The omitted position is supplied again by a later request.
+        let omitted = batch_answer(&world, Some(&held), &[1], asserted(1, retained_complete))
+            .expect("omitting a covered position is accepted");
+        let again = batch_answer(&world, Some(&omitted), &[1, 2, 3], asserted(2, true));
+        assert!(again.is_some(), "re-supplied after the omission");
+        for restored in [false, true] {
+            assert_eq!(
+                carried_answer(&world, &omitted, &[1, 2, 3], asserted(2, true), restored),
+                again,
+                "re-supplied, retained complete {retained_complete}, restored {restored}"
+            );
+        }
+    }
+}

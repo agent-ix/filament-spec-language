@@ -5,20 +5,14 @@
 //! and a disagreement is a failure naming the case and both answers, never an
 //! answer one side is preferred for.
 
-use filament_observation::authority::{
-    completeness, partial, AuthoritySelection, Context, History, Limits, SubjectSelection,
-    TemporalBoundary,
+use filament_observation::authority::completeness::{
+    check_revision, FactStatus, HeldFact, ListedContradiction, ListedFact, RetainedHolding, State,
 };
-use filament_observation::{
-    admit, AdmissionOutcome, AdmissionRequest, AdmittedRecord, Anchor, ClockRange, Digest,
-    Identity, Member, ObservationBinding, PackageSelection, ProducerConfiguration,
-    QualifiedObservation, QualifiedSubject, ResourceLimits, Revision, ScopeKind, ScopeSelection,
-    StaticProducerBundle, SubjectIdentity, SubjectKind, ValueState, Visibility,
-    NATIVE_LINKED_PACKAGE_FORMAT, PRODUCER_INTERFACE_VERSION,
-};
+use filament_observation::authority::{partial, Limits};
+use filament_observation::Identity;
 use fsl_eval::temporal::{
-    ClockCover, Containment, LedgerBinding, ObservedPosition, ProgressAssertion, ProgressClosure,
-    ProgressCompleteness, ProgressLedger,
+    ClockCover, Containment, ContradictedDimension, LedgerBinding, LedgerRefusal, ObservedPosition,
+    ProgressAssertion, ProgressClosure, ProgressCompleteness, ProgressLedger, ProgressValue,
 };
 use ix_trace_rs::trace;
 
@@ -187,235 +181,21 @@ fn the_evaluator_orders_uncertain_intervals_as_the_owner_partial_module_does() {
 
 // --- Completeness: accepting or refusing a revision (FR-861-AC-2).
 
-/// An admitted owner history of readings, each `(label, nanosecond anchor)`,
-/// with the owner selections its completeness documents are derived under.
-struct Held {
-    qualified: Box<QualifiedObservation>,
-    authority: AuthoritySelection,
-    subject: SubjectSelection,
-    members: Vec<(Identity, Identity)>,
-}
+/// The retained covered set as the owner's `check_revision` reads it, by
+/// identity alone, written here independently of the ledger's own mapping.
+struct Holding(Vec<ObservedPosition>);
 
-fn held(readings: &[(&str, i128)]) -> Held {
-    let limits = Limits::owner_max();
-    let mut candidate = StaticProducerBundle {
-        bundle_identity: Some("bundle:agreement".to_owned()),
-        bundle_revision: Some(Revision::producer("1")),
-        interface_version: Some(PRODUCER_INTERFACE_VERSION.to_owned()),
-        configuration: Some(ProducerConfiguration {
-            configuration_identity: "configuration:agreement".to_owned(),
-            digest: StaticProducerBundle::default()
-                .canonical_digest_selection()
-                .expect("a default digest"),
-        }),
-        ..StaticProducerBundle::default()
-    };
-    candidate.digest = Some(candidate.canonical_digest_selection().expect("a digest"));
-    let producer = candidate.admit().expect("a static producer");
-    let subject = QualifiedSubject::new(
-        &producer,
-        SubjectKind::new(b"type:agreement".to_vec()).expect("a kind"),
-        SubjectIdentity::new(b"object:agreement".to_vec()).expect("an identity"),
-    );
-    let source = id("source:agreement");
-    let records: Vec<AdmittedRecord> = readings
-        .iter()
-        .map(|(label, at)| AdmittedRecord {
-            identity: id("unassigned"),
-            binding_identity: id("binding:agreement"),
-            source_identity: source.clone(),
-            schema_identity: id("schema:agreement"),
-            subject: subject.clone(),
-            signal_identity: id("signal:agreement"),
-            trigger_identity: id("trigger:agreement"),
-            unit: id("unit:reading"),
-            value: ValueState::Present {
-                value_type: id("type:reading"),
-                canonical_value: format!("\"{label}\""),
-            },
-            visibility: Visibility::External,
-            anchor: Anchor::TimestampNanos(*at),
-            event_time_nanos: *at,
-            ingestion_time_nanos: Some(at + 1),
-            causal_relationship_identity: None,
-            clock_identity: id("clock:agreement"),
-            clock_revision: id("1"),
-            clock_uncertainty_nanos: 0,
-        })
-        .collect();
-    let mut request = AdmissionRequest {
-        package: PackageSelection {
-            format: NATIVE_LINKED_PACKAGE_FORMAT.to_owned(),
-            identity: id("package:agreement"),
-            revision: id("1"),
-            digest: Digest::new([1; 32]),
-        },
-        producer,
-        binding: ObservationBinding {
-            identity: id("binding:agreement"),
-            source_identity: source.clone(),
-            schema_identity: id("schema:agreement"),
-            signal_identity: id("signal:agreement"),
-            trigger_identity: id("trigger:agreement"),
-            unit: id("unit:reading"),
-            subject_kind: subject.kind().clone(),
-            required: true,
-        },
-        expected_subject: subject.clone(),
-        relationships: vec![],
-        required_relationships: vec![],
-        scope: ScopeSelection {
-            population_identity: id("unassigned"),
-            membership_rule_identity: id("unassigned"),
-            membership_digest: Digest::new([0; 32]),
-            membership_document: vec![],
-            required_member_identities: vec![],
-            observation_sources: vec![source.clone()],
-            completeness_dependencies: vec![id("completeness:agreement")],
-            progress_dependencies: vec![id("progress:agreement")],
-            clock_identity: id("clock:agreement"),
-            clock_revision: id("1"),
-            membership_complete: true,
-            closure_identity: Some(id("closure:agreement")),
-            closure_digest: Some(Digest::new([2; 32])),
-            kind: ScopeKind::Window {
-                window_identity: id("window:agreement"),
-            },
-            range: ClockRange::Timestamp {
-                start_nanos: 0,
-                end_nanos: 1000,
-            },
-            members: vec![],
-        },
-        records,
-        limits: ResourceLimits {
-            max_records: readings.len(),
-            max_members: readings.len(),
-            max_relationships: 0,
-            max_required_relationships: 0,
-        },
-    };
-    let mut members = Vec::new();
-    for (index, (label, at)) in readings.iter().enumerate() {
-        let record = filament_observation::authority::observation::record_identity(
-            &request.records[index],
-            limits,
-        )
-        .expect("a record identity");
-        request.records[index].identity = record.clone();
-        let object = id(&format!("member:{label}"));
-        request.scope.members.push(Member {
-            object_identity: object.clone(),
-            record_identity: record.clone(),
-            anchor: Anchor::TimestampNanos(*at),
-        });
-        members.push((object, record));
-    }
-    members.sort();
-    request.scope.required_member_identities =
-        members.iter().map(|(object, _)| object.clone()).collect();
-    filament_observation::authority::population::assign_request_identities(&mut request, limits)
-        .expect("population identities");
-    let qualified = match admit(request) {
-        AdmissionOutcome::Available { observation } => observation,
-        other => panic!("the observation owner refused the fixture: {other:?}"),
-    };
-    let subject = SubjectSelection {
-        scope_identity: id("window:agreement"),
-        population_identity: qualified.scope().population_identity.clone(),
-    };
-    Held {
-        qualified,
-        authority: AuthoritySelection {
-            definition_identity: id("definition:agreement-completeness"),
-            definition_revision: id("1"),
-            definition_digest: Digest::new([3; 32]),
-        },
-        subject,
-        members,
-    }
-}
+impl RetainedHolding for Holding {
+    type Key = str;
 
-impl Held {
-    fn context<'a>(
-        &'a self,
-        revision: u64,
-        predecessor: Option<&'a filament_observation::authority::Document>,
-    ) -> Context<'a> {
-        Context::new(
-            History::batch(&self.qualified),
-            &self.authority,
-            &self.subject,
-            revision,
-            predecessor,
-        )
-    }
-
-    /// FR-944's mapping of an assertion: every admitted member, `Available`
-    /// under `Complete` and `Incomplete` naming no observation otherwise, on a
-    /// boundary at `upper` nanoseconds.
-    fn selection(&self, complete: bool, upper: i128) -> completeness::Selection {
-        completeness::Selection::new(
-            id(&format!("through:{upper}")),
-            TemporalBoundary::TimestampedEvent {
-                lower_nanos: upper,
-                upper_inclusive_nanos: upper,
-                carrier_end_exclusive_nanos: upper + 1,
-                watermark_nanos: upper,
-            },
-            self.members
-                .iter()
-                .map(|(object, record)| {
-                    completeness::Fact::new(
-                        object.clone(),
-                        complete.then(|| record.clone()),
-                        if complete {
-                            completeness::FactStatus::Available
-                        } else {
-                            completeness::FactStatus::Incomplete
-                        },
-                    )
-                })
-                .collect(),
-        )
-    }
-}
-
-/// What the owner's revision rule answers: `accepted`, or the contradiction's
-/// stable code.
-fn owner_revision(
-    prior_history: &Held,
-    successor_history: &Held,
-    asserted: ProgressCompleteness,
-) -> String {
-    let limits = Limits::owner_max();
-    let prior_selection = prior_history.selection(true, 100);
-    let prior_context = prior_history.context(1, None);
-    let document =
-        completeness::derive(prior_context, &prior_selection, limits).expect("a prior document");
-    let prior = completeness::read(document.bytes(), prior_context, &prior_selection, limits)
-        .expect("a prior view");
-    let selection = match asserted {
-        ProgressCompleteness::Complete { through } => {
-            successor_history.selection(true, i128::from(through))
-        }
-        ProgressCompleteness::Incomplete => successor_history.selection(false, 100),
-    };
-    match completeness::revise(
-        &prior,
-        successor_history.context(2, Some(&document)),
-        &selection,
-        limits,
-    ) {
-        Ok(_) => "accepted".to_owned(),
-        Err(error) => match error.cause() {
-            completeness::RevisionCause::Contradiction(contradiction) => {
-                contradiction.code().to_owned()
-            }
-            completeness::RevisionCause::Authority(cause) => {
-                format!("owner refusal {cause:?}")
-            }
-        },
+    fn held(&self, key: &str) -> Option<HeldFact<'_>> {
+        self.0
+            .iter()
+            .find(|position| position.identity == key)
+            .map(|position| HeldFact {
+                status: FactStatus::Available,
+                observation_identity: position.fingerprint.as_deref(),
+            })
     }
 }
 
@@ -451,35 +231,109 @@ fn assertion(completeness: ProgressCompleteness) -> ProgressAssertion {
     }
 }
 
-/// What the evaluator's ledger answers for `asserted` over `positions` after
-/// `Complete { through: 100 }` over the positions `a`, `b` and `c`: `accepted`
-/// or `contradiction`.
-fn ledger_revision(asserted: ProgressCompleteness, positions: &[ObservedPosition]) -> String {
+fn retained_positions() -> Vec<ObservedPosition> {
+    vec![position("a", 0), position("b", 50), position("c", 100)]
+}
+
+/// What the owner's `check_revision` answers for `asserted` over `positions`
+/// after `Complete { through: 100 }` over the retained positions, as FR-944
+/// "Completeness" maps the arguments: `accepted`, or the typed cause with
+/// the value FR-502's contradiction carries for it.
+fn owner_answer(asserted: ProgressCompleteness, positions: &[ObservedPosition]) -> String {
+    let (successor_upper, successor_state) = match asserted {
+        ProgressCompleteness::Complete { through } => (Some(i128::from(through)), State::Complete),
+        ProgressCompleteness::Incomplete => (Some(100), State::Incomplete),
+    };
+    let listed: Vec<ListedFact<'_, str>> = positions
+        .iter()
+        .map(|position| ListedFact {
+            key: position.identity.as_str(),
+            status: FactStatus::Available,
+            observation_identity: position.fingerprint.as_deref(),
+            placed: i128::from(position.stamp),
+        })
+        .collect();
+    match check_revision(
+        Some(100),
+        State::Complete,
+        &Holding(retained_positions()),
+        successor_upper,
+        successor_state,
+        &listed,
+    ) {
+        Ok(()) => "accepted".to_owned(),
+        Err(ListedContradiction::BoundaryRegressed { .. }) => {
+            format!("BoundaryRegressed: Completeness({asserted:?})")
+        }
+        Err(ListedContradiction::CompleteRegressed { .. }) => {
+            format!("CompleteRegressed: Completeness({asserted:?})")
+        }
+        Err(ListedContradiction::UncoveredMember { listed }) => {
+            format!("UncoveredMember: Position({:?})", positions[listed])
+        }
+        Err(ListedContradiction::MemberObservationChanged { listed, .. }) => format!(
+            "MemberObservationChanged: Position({:?})",
+            ObservedPosition {
+                fingerprint: None,
+                ..positions[listed].clone()
+            }
+        ),
+    }
+}
+
+/// What the evaluator's ledger answers for the same request, the typed cause
+/// read from the contradiction it reports.
+fn ledger_answer(asserted: ProgressCompleteness, positions: &[ObservedPosition]) -> String {
     let binding = ledger_binding();
-    let held = [position("a", 0), position("b", 50), position("c", 100)];
     let ledger = ProgressLedger::new()
         .admit(
             &binding,
             assertion(ProgressCompleteness::Complete { through: 100 }),
-            &held,
+            &retained_positions(),
             1000,
         )
         .expect("the retained assertion");
-    match ledger.admit(&binding, assertion(asserted), positions, 1000) {
-        Ok(_) => "accepted".to_owned(),
-        Err(_) => "contradiction".to_owned(),
+    let Err(refusal) = ledger.admit(&binding, assertion(asserted), positions, 1000) else {
+        return "accepted".to_owned();
+    };
+    let LedgerRefusal::Contradiction(contradiction) = refusal else {
+        panic!("a contradiction: {refusal:?}");
+    };
+    assert_eq!(contradiction.dimension, ContradictedDimension::Completeness);
+    assert_eq!(
+        contradiction.retained,
+        ProgressValue::Completeness(ProgressCompleteness::Complete { through: 100 })
+    );
+    match contradiction.asserted {
+        ProgressValue::Completeness(value @ ProgressCompleteness::Complete { .. }) => {
+            format!("BoundaryRegressed: Completeness({value:?})")
+        }
+        ProgressValue::Completeness(value @ ProgressCompleteness::Incomplete) => {
+            format!("CompleteRegressed: Completeness({value:?})")
+        }
+        ProgressValue::Position(position) => {
+            let held = retained_positions()
+                .iter()
+                .any(|held| held.identity == position.identity);
+            let cause = if held {
+                "MemberObservationChanged"
+            } else {
+                "UncoveredMember"
+            };
+            format!("{cause}: Position({position:?})", position = *position)
+        }
+        other => panic!("a completeness or position value: {other:?}"),
     }
 }
 
-/// FR-502-AC-2's cases: the owner code each contradiction carries, or `None`
-/// where the revision is accepted.
+/// FR-502-AC-2's cases with the answer FR-944 states for each.
 fn revision_cases() -> Vec<(
     &'static str,
     ProgressCompleteness,
     Vec<ObservedPosition>,
-    &'static str,
+    String,
 )> {
-    let held = vec![position("a", 0), position("b", 50), position("c", 100)];
+    let held = retained_positions();
     let mut uncovered = held.clone();
     uncovered.push(position("d", 80));
     vec![
@@ -487,69 +341,51 @@ fn revision_cases() -> Vec<(
             "Complete through 100",
             ProgressCompleteness::Complete { through: 100 },
             held.clone(),
-            "accepted",
+            "accepted".to_owned(),
         ),
         (
             "Complete through 140",
             ProgressCompleteness::Complete { through: 140 },
             held.clone(),
-            "accepted",
+            "accepted".to_owned(),
         ),
         (
             "Complete through 60",
             ProgressCompleteness::Complete { through: 60 },
             held.clone(),
-            "QOBS-REV-BOUNDARY-REGRESSED",
+            "BoundaryRegressed: Completeness(Complete { through: 60 })".to_owned(),
         ),
         (
             "Incomplete",
             ProgressCompleteness::Incomplete,
             held,
-            "QOBS-REV-COMPLETE-REGRESSED",
+            "CompleteRegressed: Completeness(Incomplete)".to_owned(),
         ),
         (
             "an uncovered position stamped 80",
             ProgressCompleteness::Complete { through: 100 },
             uncovered,
-            "QOBS-REV-UNCOVERED-MEMBER",
+            format!("UncoveredMember: Position({:?})", position("d", 80)),
         ),
     ]
 }
 
 #[test]
 #[trace("TC-2442", "FR-861-AC-2")]
-fn the_evaluator_accepts_and_refuses_a_completeness_revision_as_the_owner_does() {
-    let prior = held(&[("a", 0), ("b", 50), ("c", 100)]);
-    let with_uncovered = held(&[("a", 0), ("b", 50), ("c", 100), ("d", 80)]);
+fn the_ledger_answers_a_completeness_revision_as_the_owners_check_does() {
     let mut results = Vec::new();
     for (case, asserted, positions, expected) in revision_cases() {
-        let successor = if positions.len() == 4 {
-            &with_uncovered
-        } else {
-            &prior
-        };
-        let owner = owner_revision(&prior, successor, asserted);
-        let evaluator = ledger_revision(asserted, &positions);
-        // The two sides answer in their own vocabulary, so each is first read
-        // against the answer FR-944 states for the case, then against the
-        // other: an accept is an accept, a contradiction the owner's refusal.
+        let owner = owner_answer(asserted, &positions);
+        let evaluator = ledger_answer(asserted, &positions);
         results.push(agree(
-            &format!("{case}: the owner against FR-944's rule"),
+            &format!("{case}: the owner against FR-944's mapping"),
             &owner,
-            expected,
+            &expected,
         ));
         results.push(agree(
             &format!("{case}: the evaluator and the owner"),
-            if evaluator == "accepted" {
-                "accepted"
-            } else {
-                "refused"
-            },
-            if owner == "accepted" {
-                "accepted"
-            } else {
-                "refused"
-            },
+            &evaluator,
+            &owner,
         ));
     }
     expect_agreement(results);
@@ -574,18 +410,16 @@ fn an_injected_disagreement_fails_naming_the_case_and_both_answers() {
             owner: owner.to_string(),
         })
     );
-    let prior = held(&[("a", 0), ("b", 50), ("c", 100)]);
-    let refused = owner_revision(
-        &prior,
-        &prior,
+    let refused = owner_answer(
         ProgressCompleteness::Complete { through: 60 },
+        &retained_positions(),
     );
     assert_eq!(
         agree("Complete through 60", "accepted", &refused),
         Err(Disagreement {
             case: "Complete through 60".to_owned(),
             evaluator: "accepted".to_owned(),
-            owner: "QOBS-REV-BOUNDARY-REGRESSED".to_owned(),
+            owner: "BoundaryRegressed: Completeness(Complete { through: 60 })".to_owned(),
         })
     );
     assert!(std::panic::catch_unwind(|| {

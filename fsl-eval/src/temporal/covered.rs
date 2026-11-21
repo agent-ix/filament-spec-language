@@ -148,6 +148,25 @@ impl CoveredList {
         None
     }
 
+    /// The held position with `identity`, at whatever stamp it was covered
+    /// (the least stamp when more than one is held): FR-502's "membership
+    /// uses the identity only".
+    pub fn get_by_identity(&self, identity: &str) -> Option<&ObservedPosition> {
+        let mut link = self.root.as_ref();
+        let mut found = None;
+        while let Some(held) = link {
+            link = match identity.cmp(held.position.identity.as_str()) {
+                std::cmp::Ordering::Less => held.left.as_ref(),
+                std::cmp::Ordering::Greater => held.right.as_ref(),
+                std::cmp::Ordering::Equal => {
+                    found = Some(&held.position);
+                    held.left.as_ref()
+                }
+            };
+        }
+        found
+    }
+
     /// Add `position`; returns whether its key was not held already. Every other
     /// view of the set is unchanged.
     pub fn insert(&mut self, position: ObservedPosition) -> bool {
