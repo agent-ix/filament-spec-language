@@ -16,7 +16,12 @@ enum Family {
 }
 
 fn source(family: Family, count: usize) -> String {
-    let mut text = format!("{HEADER}function d using v(x: Integer): Integer pure {{ ");
+    let name = if matches!(family, Family::Sum) {
+        "d"
+    } else {
+        "e"
+    };
+    let mut text = format!("{HEADER}function {name} using v(x: Integer): Integer pure {{ ");
     match family {
         Family::Sum => {
             text.push_str(&"x + ".repeat(count));
@@ -102,7 +107,31 @@ fn qualify(family: Family, count: usize, require_default_denial: bool) {
         edges += children.len();
         match node.kind() {
             NodeKind::Arithmetic(Arithmetic::Add, ..) => terms.push(node),
-            NodeKind::Let { .. } => bindings += 1,
+            NodeKind::Let {
+                slot,
+                value,
+                body: inner,
+                ..
+            } => {
+                bindings += 1;
+                assert_eq!(*slot, bindings, "each binding owns its next local slot");
+                let value = node.at(*value);
+                let NodeKind::Arithmetic(Arithmetic::Add, left, right) = value.kind() else {
+                    panic!("let value must increment")
+                };
+                assert!(
+                    matches!(node.at(*left).kind(), NodeKind::Local(previous) if *previous + 1 == *slot)
+                );
+                assert!(
+                    matches!(node.at(*right).kind(), NodeKind::Literal(literal) if literal.0 == filament_exact::Value::Integer(1.into()))
+                );
+                if bindings == count {
+                    assert!(
+                        matches!(node.at(*inner).kind(), NodeKind::Local(last) if last == slot),
+                        "final body reads the last binder"
+                    );
+                }
+            }
             NodeKind::Local(_) => locals += 1,
             NodeKind::Literal(_) => {}
             _ => panic!("{family:?}: unexpected checked node kind"),
@@ -191,7 +220,14 @@ fn qualify(family: Family, count: usize, require_default_denial: bool) {
         name,
         index,
     } = &rows[0].location.origin;
-    assert_eq!(name.as_ref(), "d");
+    assert_eq!(
+        name.as_ref(),
+        if matches!(family, Family::Sum) {
+            "d"
+        } else {
+            "e"
+        }
+    );
     assert_eq!(*index, 0);
     let mut cursor = admitted.body_locations(function, limits.locations).unwrap();
     let mut expected = Vec::with_capacity(count);

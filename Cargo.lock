@@ -706,6 +706,7 @@ dependencies = [
  "filament-contract-model",
  "filament-eval",
  "filament-exact",
+ "filament-observation",
  "filament-semantic-value",
  "filament-specification-qualification",
  "fsl-analyze",
