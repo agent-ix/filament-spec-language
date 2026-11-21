@@ -3472,6 +3472,7 @@ fn replay_stage(refusal: &ReplayRefusal) -> Option<OutcomeStage> {
         | ReplayRefusal::LimitAboveReader(_)
         | ReplayRefusal::SourceCount(_)
         | ReplayRefusal::PackageSources(_)
+        | ReplayRefusal::PackageRead(_)
         | ReplayRefusal::DependencySources { .. }
         | ReplayRefusal::DependencySelections(_)
         | ReplayRefusal::DependencyInput(_)

@@ -44,6 +44,7 @@ fn recording_result(
     recording_identity: Option<&fsl_semantics::model::observation::DocumentRef>,
     recording: &[u8],
     population: Option<serde_json::Value>,
+    replay_limits: ReplayLimits,
     cancel: &Cancel,
 ) -> crate::analyze::EngineReport {
     use base64::Engine as _;
@@ -130,6 +131,7 @@ fn recording_result(
             .collect(),
         ));
     };
+    let mut refused_replay: Option<fsl_replay::BoundExceeded> = None;
     let replayed = if assessment.global.label == "refuted" {
         match (subject, assessment.trace_position) {
             (Some(subject), Some(trace_position)) => match replay_counterexample(
@@ -138,7 +140,7 @@ fn recording_result(
                     recording: recording.to_vec(),
                     trace_position,
                 },
-                ReplayLimits::default(),
+                replay_limits,
                 cancel,
             ) {
                 Ok(ConformanceReplay::Reproduced) => true,
@@ -149,6 +151,10 @@ fn recording_result(
                             "established-invariant-broken",
                         ),
                     ));
+                }
+                Err(refusal) if refusal.bound.is_some() => {
+                    refused_replay = refusal.bound;
+                    false
                 }
                 Err(refusal) => {
                     return crate::analyze::EngineReport::Refused(
@@ -168,6 +174,18 @@ fn recording_result(
     let mut output = recording_output(assessment.clone(), recording_identity);
     output.replay = replayed.then_some(fsl_replay::ConformanceReplayOutput { reproduced: true });
     let terminal = match assessment.global.label.as_str() {
+        _ if refused_replay.is_some() => TerminalRecord::inconclusive(
+            index,
+            fsl_foundation::BackendId::new(super::manifest::BACKEND_ID),
+            InconclusiveCause::from_replay_refusal(&fsl_replay::ReplayRefusal::Request(
+                fsl_replay::ReplayRequestRefusal::BoundExceeded(refused_replay.unwrap_or(
+                    fsl_replay::BoundExceeded {
+                        bound: replay_limits.input_bytes,
+                        actual: 0,
+                    },
+                )),
+            )),
+        ),
         "proved" => TerminalRecord::of_protocol_analysis(
             index,
             fsl_foundation::BackendId::new(super::manifest::BACKEND_ID),
@@ -202,7 +220,7 @@ fn recording_result(
     crate::analyze::EngineReport::GlobalConformance(Box::new(ConformanceReport {
         terminal,
         output,
-        counterexample: (assessment.global.label == "refuted").then(|| {
+        counterexample: (assessment.global.label == "refuted" && refused_replay.is_none()).then(|| {
             serde_json::json!({
                 "kind": "recording",
                 "recording": base64::engine::general_purpose::STANDARD.encode(recording),
@@ -220,6 +238,7 @@ pub(crate) fn global_recording_item<'a>(
     recording_identity: Option<fsl_semantics::model::observation::DocumentRef>,
     recording: Option<&'a [u8]>,
     population: Option<serde_json::Value>,
+    replay_limits: ReplayLimits,
 ) -> crate::analyze::AnalyzeItem<'a> {
     crate::analyze::AnalyzeItem::new(
         index,
@@ -235,6 +254,7 @@ pub(crate) fn global_recording_item<'a>(
                 recording_identity.as_ref(),
                 recording,
                 population,
+                replay_limits,
                 cancel,
             ),
             None => crate::analyze::EngineReport::Refused(crate::analyze::Refusal::Declined(
@@ -359,6 +379,7 @@ pub(crate) fn global_behavior_item<'a>(
                 replay_subject,
                 certificate_subject,
                 scan_subject,
+                limits.replay,
                 cancel,
             )
         },
@@ -792,6 +813,7 @@ fn every_behavior_result(
     replay_subject: fsl_eval::model_subject::ProtocolSubject<'_>,
     certificate_subject: fsl_eval::model_subject::ProtocolSubject<'_>,
     scan_subject: fsl_eval::model_subject::ProtocolSubject<'_>,
+    replay_limits: ReplayLimits,
     cancel: &Cancel,
 ) -> crate::analyze::EngineReport {
     let wire_simulation = subject.model.simulation.clone();
@@ -840,7 +862,6 @@ fn every_behavior_result(
         },
         None => outcome,
     };
-    let replay_limits = ReplayLimits::default();
     let replay = |counterexample: &TemporalCounterexample<ProtocolTransition>| {
         let payload = ConformanceCounterexample::Protocol(Box::new(counterexample.clone()));
         match replay_counterexample(&replay_subject, &payload, replay_limits, cancel) {
@@ -852,6 +873,14 @@ fn every_behavior_result(
                 hints: Vec::new(),
                 terminals: Default::default(),
             }),
+            Err(refusal) if refusal.bound.is_some() => Err(fsl_replay::ReplayRefusal::Request(
+                fsl_replay::ReplayRequestRefusal::BoundExceeded(
+                    refusal.bound.unwrap_or(fsl_replay::BoundExceeded {
+                        bound: replay_limits.input_bytes,
+                        actual: 0,
+                    }),
+                ),
+            )),
             _ => {
                 let refusal = counterexample
                     .prefix
@@ -922,6 +951,7 @@ pub struct ConformanceReplayRefusal {
     cause: String,
     position: Option<usize>,
     detail: String,
+    bound: Option<fsl_replay::BoundExceeded>,
 }
 
 impl ConformanceReplayRefusal {
@@ -931,6 +961,7 @@ impl ConformanceReplayRefusal {
             cause: "invalid-value".to_owned(),
             position,
             detail: detail.into(),
+            bound: None,
         }
     }
 
@@ -942,6 +973,7 @@ impl ConformanceReplayRefusal {
             cause: "unsupported-feature".to_owned(),
             position: None,
             detail: "the recording assessment reads source checked forms".to_owned(),
+            bound: None,
         }
     }
 
@@ -951,6 +983,7 @@ impl ConformanceReplayRefusal {
             cause: refusal.cause().to_owned(),
             position: refusal.position(),
             detail: refusal.to_string(),
+            bound: None,
         }
     }
 
@@ -988,7 +1021,10 @@ pub fn replay_counterexample(
         ConformanceCounterexample::Protocol(counterexample) => {
             let bytes = counterexample.measured_bytes();
             fsl_replay::BoundExceeded::check(bytes, limits)
-                .map_err(|error| ConformanceReplayRefusal::invalid(error.to_string(), None))?;
+                .map_err(|error| ConformanceReplayRefusal {
+                bound: Some(error),
+                ..ConformanceReplayRefusal::invalid(error.to_string(), None)
+            })?;
             match SubjectMemory::of(&subject.memory, None, None) {
                 SubjectMemory::Sc => {
                     let model =

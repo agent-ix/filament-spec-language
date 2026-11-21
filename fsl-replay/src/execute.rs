@@ -136,6 +136,17 @@ pub enum MalformedOperationReason {
     OnlyInherited,
 }
 
+/// Why the replay's read of the run's package bytes refused (FR-940).
+#[derive(Clone, Copy, Debug, Eq, PartialEq, thiserror::Error)]
+pub enum PackageReadRefusal {
+    /// The bytes are not a readable package document.
+    #[error("invalid_package: the bytes are not a readable package document")]
+    Malformed,
+    /// The read could not allocate the bytes it retains.
+    #[error("resource_exhausted: the read could not allocate the package bytes")]
+    Allocation,
+}
+
 /// Why [`replay`] settled no verdict. Each variant is one ADR-013 O-26
 /// refusal, with its typed cause; none carries a partial result.
 #[derive(Debug, thiserror::Error)]
@@ -181,6 +192,11 @@ pub enum ReplayRefusal {
     /// owner, or names a document from the byte provision.
     #[error("invalid_package/invalid-value at /package/lock/sources: {0}")]
     PackageSources(&'static str),
+    /// FR-940: a replay's read of the run's package bytes refused: the
+    /// bytes are no readable package (`invalid_package`) or the read could
+    /// not allocate (`resource_exhausted`).
+    #[error("the package bytes cannot be read: {0}")]
+    PackageRead(PackageReadRefusal),
     /// FR-098: one dependency entry's source list is empty, repeats an owner,
     /// or names a definition document.
     #[error("invalid_package/invalid-value at /dependencies/{index}/sources: {reason}")]
@@ -640,6 +656,8 @@ impl ReplayRefusal {
             Self::LimitAboveReader(_) => Code::InvalidRequest,
             Self::SourceCount(_) => Code::InvalidRequest,
             Self::PackageSources(_) => Code::InvalidPackage,
+            Self::PackageRead(PackageReadRefusal::Malformed) => Code::InvalidPackage,
+            Self::PackageRead(PackageReadRefusal::Allocation) => Code::ResourceExhausted,
             Self::DependencySources { .. } => Code::InvalidPackage,
             Self::InvalidPackageName(_) => Code::InvalidRequest,
             Self::Recompile { refusal, .. } => refusal.code(),
@@ -719,6 +737,7 @@ impl ReplayRefusal {
             Self::DomainPackages(refusal) => Some(refusal.cause.as_str()),
             Self::DependencySelections(_) => Some("invalid-value"),
             Self::PackageSources(_) => Some("invalid-value"),
+            Self::PackageRead(_) => None,
             Self::DependencySources { .. } => Some("invalid-value"),
             Self::DependencyInput(refusal) => refusal.cause(),
             Self::UnknownFunction { .. }

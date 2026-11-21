@@ -250,7 +250,7 @@ impl<'a> PackageInvariantSubject<'a> {
             .map_err(|_| fault("invariant-name"))?;
         let name = QualifiedName::new(vec![identifier]).map_err(|_| fault("invariant-name"))?;
         let package =
-            super::clause_item::read_package(self.package_bytes, &self.limits, "package-bytes")?;
+            super::clause_item::read_package(self.package_bytes, &self.limits)?;
         let (wire, envelope) = super::clause_item::request_and_envelope(
             super::clause_item::WireParts {
                 package,
