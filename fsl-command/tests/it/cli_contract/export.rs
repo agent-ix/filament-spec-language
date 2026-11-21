@@ -75,6 +75,127 @@ fn an_assembled_export_exits_0() {
     assert_eq!(document["result"]["kind"], "exported", "{document}");
 }
 
+/// A genuine assembled package reaches evidence admission, which reports
+/// the build's pending capability without claiming package or proof verification.
+#[test]
+#[trace("FR-1022")]
+fn an_assembled_package_reaches_pending_evidence_admission() {
+    use fsl_command::command::{export_with_limits_and_overrides, ExportSelection, RunLimits};
+
+    let (case, path) = braking(COUNTER.as_bytes(), member());
+    let ordinary = plain(&path);
+    let exported = ordinary.expect("export", "success", 0);
+    let package = &exported["result"]["export"]["package"];
+    assert!(package.is_object(), "{exported}");
+    let mut input: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    input["request"].as_object_mut().unwrap().remove("export");
+    input["request"]["export_evidence"] = json!({
+        "package": package, "obligation": "Bounded", "tool": "lean",
+        "artifact": "not-read-until-settlement-is-implemented.lean"
+    });
+    let path = case.json("evidence.json", &input);
+    let result = export_with_limits_and_overrides(
+        &path,
+        ExportSelection::Evidence,
+        RunLimits::default(),
+        &RequestOverrides::default(),
+    )
+    .unwrap();
+    assert_eq!(result.exit_code, 21);
+    let document =
+        serde_json::to_value(result.outcome.expect("evidence lifecycle outcome")).unwrap();
+    super::assert_outcome_schema(&document);
+    assert_eq!(document["category"], "unsupported", "{document}");
+    assert!(document["result"].is_null(), "{document}");
+    assert!(document["last_stage"].is_null(), "{document}");
+    assert_eq!(
+        document["diagnostics"][0]["code"],
+        "unimplemented_capability"
+    );
+    assert_eq!(document["diagnostics"][0]["cause"], "unimplemented-meaning");
+    assert_eq!(
+        document["diagnostics"][0]["details"]["capability"],
+        "export_evidence"
+    );
+    let schema = super::compiled(fsl_replay::outcome::OUTCOME_SCHEMA_1);
+    let mut unknown = document.clone();
+    unknown["diagnostics"][0]["details"]["unrecognized"] = json!(true);
+    assert!(
+        !schema.is_valid(&unknown),
+        "diagnostic details must remain closed"
+    );
+    let mut wrong_kind = document.clone();
+    wrong_kind["diagnostics"][0]["details"]["capability"] = json!(7);
+    assert!(!schema.is_valid(&wrong_kind), "capability is a string");
+    assert!(
+        !document.to_string().contains("tool-unavailable"),
+        "{document}"
+    );
+
+    let generic = fsl_command::command::run(&path, &crate::negotiation::Fr290).unwrap();
+    assert_eq!(generic.exit_code, 21);
+    assert_eq!(
+        serde_json::to_value(generic.outcome.unwrap()).unwrap(),
+        document
+    );
+}
+
+/// Explicit selection retains FSL's dependent bounds, output ownership and stage limits.
+#[test]
+#[trace("FR-1015", "FR-026", "FR-810", "TC-104")]
+fn explicit_export_selection_preserves_bounds_and_output_overrides() {
+    use fsl_command::command::{export_with_limits_and_overrides, ExportSelection, RunLimits};
+
+    let (case, path) = braking(COUNTER.as_bytes(), member());
+    let target = case.path("selected.tla");
+    let overrides = RequestOverrides {
+        output: Some(&target),
+        ..RequestOverrides::default()
+    };
+    let limited = export_with_limits_and_overrides(
+        &path,
+        ExportSelection::Ordinary,
+        RunLimits {
+            dependent_bytes: 1,
+            ..RunLimits::default()
+        },
+        &overrides,
+    )
+    .unwrap_err();
+    assert_eq!(limited.category().exit_code(), 22);
+    assert!(!target.exists());
+
+    let mut spine = SpineLimits::default();
+    spine.export.output_bytes = Some(1);
+    let exhausted = export_with_limits_and_overrides(
+        &path,
+        ExportSelection::Ordinary,
+        RunLimits::default(),
+        &RequestOverrides {
+            limits: Some(&spine),
+            ..overrides
+        },
+    )
+    .unwrap();
+    assert_eq!(exhausted.exit_code, 22);
+    assert!(!target.exists());
+
+    let result = export_with_limits_and_overrides(
+        &path,
+        ExportSelection::Ordinary,
+        RunLimits::default(),
+        &overrides,
+    )
+    .unwrap();
+    assert_eq!(result.exit_code, 0);
+    let document = serde_json::to_value(result.outcome.unwrap()).unwrap();
+    assert_eq!(document["result"]["kind"], "exported");
+    let text = document["result"]["export"]["target_text"]
+        .as_str()
+        .unwrap();
+    assert_eq!(std::fs::read(target).unwrap(), text.as_bytes());
+}
+
 /// `--output <file>`: the override writes the target, and a second run over
 /// the existing path refuses `invalid-request`, exit 20, `last_stage` null,
 /// leaving the bytes unchanged.

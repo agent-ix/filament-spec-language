@@ -5,6 +5,7 @@
 use super::super::{Result, RunCause};
 use fsl_analyze::analyze::document::{DocumentSelection, ProtocolSelection};
 use fsl_foundation::Setting;
+use serde::Deserialize;
 use serde_json::{Map, Value};
 
 /// The members of an `export` request (FSpec FR-817).
@@ -224,7 +225,7 @@ pub(super) fn read(member: &Value, given: &fsl_replay::spine::ExportLimits) -> R
             .iter()
             .enumerate()
             .map(|(index, value)| {
-                serde_json::from_value(value.clone()).map_err(|error| {
+                DocumentSelection::deserialize(value).map_err(|error| {
                     refuse(
                         &format!("/universes/{index}"),
                         "invalid-value",
@@ -289,7 +290,7 @@ fn protocol_inputs(object: &Map<String, Value>) -> Result<Vec<ProtocolSelection>
                 });
             }
             let selection: ProtocolSelection =
-                serde_json::from_value(entry.clone()).map_err(|error| {
+                ProtocolSelection::deserialize(entry).map_err(|error| {
                     refuse(
                         &path,
                         "invalid-value",

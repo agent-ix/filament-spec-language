@@ -1826,6 +1826,42 @@ pub fn run_with_limits_and_overrides(
     )
 }
 
+/// The request member an explicit export invocation requires.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ExportSelection {
+    /// Generate target text from the request's `export` member.
+    Ordinary,
+    /// Admit the request's `export_evidence` member.
+    Evidence,
+}
+
+impl ExportSelection {
+    fn member(self) -> &'static str {
+        match self {
+            Self::Ordinary => "export",
+            Self::Evidence => "export_evidence",
+        }
+    }
+}
+
+/// Read an authored export request exactly once under the caller's byte
+/// ceilings, require its explicit selection, and execute those admitted
+/// bytes. Relative dependent paths use the request operand's parent.
+///
+/// Raw duplicate names and a non-closed envelope refuse before selection or
+/// dependent file reads. Every admitted selection returns a lifecycle
+/// outcome. Evidence settlement remains an unsupported capability.
+pub fn export_with_limits_and_overrides(
+    path: &Path,
+    selection: ExportSelection,
+    limits: RunLimits,
+    overrides: &RequestOverrides<'_>,
+) -> std::result::Result<RunResult, Box<RunError>> {
+    with_request_limits(path, limits.request_bytes, |directory, bytes| {
+        export::run_selected_bytes(directory, bytes, selection, limits, overrides)
+    })
+}
+
 /// FSL's run-side provider entry (FR-961): run the call the native-run/1
 /// request at `path` names as FR-100 does and, when the call carries
 /// `requirements` (FR-960), settle its requirement items against
@@ -1926,11 +1962,11 @@ fn run_configured(
             // FR-862: a `native-replay/1` request replays its FR-336 request.
             replay::run_bytes(directory, path.to_str(), bytes, limits.dependent_bytes).map(Some)
         } else {
-            plan::check_member(bytes)?;
-            if let Some(result) = plan::run_bytes(directory, bytes, limits, &settle)? {
+            if let Some(result) = export::run_bytes(directory, bytes, limits, overrides)? {
                 return Ok(Some(result));
             }
-            if let Some(result) = export::run_bytes(directory, bytes, limits, overrides)? {
+            plan::check_member(bytes)?;
+            if let Some(result) = plan::run_bytes(directory, bytes, limits, &settle)? {
                 return Ok(Some(result));
             }
             if let Some(result) = version_argv(bytes)? {
@@ -4035,13 +4071,11 @@ fn prepare_run_bytes_with_sources(
     prepared
 }
 
-type RequestPredicate = fn(&wire::Request) -> bool;
+type SelectionPresence = fn(&wire::Request) -> bool;
 
 /// The request members FR-1031's first row names beside `export`, in the
 /// order a refusal lists them, each with its presence in a typed request.
-/// `export_evidence` is read from the raw request body only, so it is never
-/// present in a typed request.
-const TRANSFER_EXCLUSIVE: [(&str, RequestPredicate); 9] = [
+const TRANSFER_EXCLUSIVE: [(&str, SelectionPresence); 9] = [
     ("package", |request| request.package.is_some()),
     ("call", |request| request.call.is_some()),
     ("clause", |request| request.clause.is_some()),
@@ -4054,7 +4088,9 @@ const TRANSFER_EXCLUSIVE: [(&str, RequestPredicate); 9] = [
         request.verification_plan.is_some()
     }),
     ("synthesis", |request| request.synthesis.is_some()),
-    ("export_evidence", |_| false),
+    ("export_evidence", |request| {
+        request.export_evidence.is_some()
+    }),
 ];
 
 /// FR-1031's first row: `refinement_transfer` beside any other selection
