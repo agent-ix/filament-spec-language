@@ -3133,8 +3133,13 @@ fn run_window(
             WindowRun::stopped(refusal_disposition(*convert_call_failure(failure)))
         }
         (None, Ok(evaluation)) => {
+            let regions = std::cell::RefCell::new(BTreeMap::new());
+            let named_region = std::cell::RefCell::new(None);
             let names = |atom: fsl_semantics::check::FormulaNodeId| {
-                atom_name(run.package, run.sources, node, atom)
+                let rendered = source_render::atom_name(run.package, run.sources, node, atom)?;
+                regions.borrow_mut().insert(atom, rendered.region.clone());
+                *named_region.borrow_mut() = Some(rendered.region);
+                Ok::<_, Box<RunRefusal>>(rendered.name)
             };
             let fsl_eval::temporal::WindowEvaluation {
                 verdict,
@@ -3156,11 +3161,13 @@ fn run_window(
                 }
                 Err(refusal) => return WindowRun::stopped(refusal_disposition(*refusal)),
             };
-            let report = match finite_window_report(run, node, (basis, support, premises, identity))
-            {
-                Ok(report) => report,
-                Err(refusal) => return WindowRun::stopped(refusal_disposition(*refusal)),
-            };
+            let mut report =
+                match finite_window_report(run, node, (basis, support, premises, identity)) {
+                    Ok(report) => report,
+                    Err(refusal) => return WindowRun::stopped(refusal_disposition(*refusal)),
+                };
+            report.atom_regions.extend(regions.into_inner());
+            report.named_atom_region = named_region.into_inner();
             WindowRun {
                 disposition: ClauseDisposition::Temporal(verdict),
                 visits,
@@ -3648,9 +3655,14 @@ fn finite_window_report(
         fsl_eval::temporal::ResultIdentity,
     ),
 ) -> Result<FiniteWindowReport, Box<RunRefusal>> {
-    finite_window_report_named(parts, evidence_key(run, node)?, &|atom| {
-        atom_name(run.package, run.sources, node, atom)
-    })
+    let regions = std::cell::RefCell::new(BTreeMap::new());
+    let mut report = finite_window_report_named(parts, evidence_key(run, node)?, &|atom| {
+        let rendered = source_render::atom_name(run.package, run.sources, node, atom)?;
+        regions.borrow_mut().insert(atom, rendered.region);
+        Ok::<_, Box<RunRefusal>>(rendered.name)
+    })?;
+    report.atom_regions = regions.into_inner();
+    Ok(report)
 }
 
 fn finite_window_report_named<E>(
@@ -3665,6 +3677,8 @@ fn finite_window_report_named<E>(
 ) -> Result<FiniteWindowReport, E> {
     use fsl_eval::temporal::{Assessment, Basis, ClockCover, LowerBoundary};
     Ok(FiniteWindowReport {
+        atom_regions: BTreeMap::new(),
+        named_atom_region: None,
         basis: match basis {
             Basis::ClosedScope => SettlementBasis::ClosedScope,
             Basis::DecisiveWitness => SettlementBasis::DecisiveWitness,
@@ -3745,6 +3759,49 @@ pub(super) fn atom_name(
     node: &fsl_semantics::check::TemporalClauseNode,
     atom: fsl_semantics::check::FormulaNodeId,
 ) -> Result<String, Box<RunRefusal>> {
+    source_render::atom_name(package, sources, node, atom).map(|rendered| rendered.name)
+}
+
+/// Caller text or canonical shared text beside its actual selected source region.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RenderedClauseAtom {
+    /// The monitor atom name under FR-283.
+    pub name: String,
+    /// The unique expression or actual coarser claim declaration region.
+    pub region: fsl_foundation::source::provenance::SourceRegion,
+}
+
+/// Render an atom and retain the exact region selected by FR-283's rules.
+///
+/// # Errors
+/// Returns the same source and selection refusals as [`name_clause_atom`].
+pub fn render_clause_atom(
+    package: &fsl_package::CheckedPackage,
+    sources: &[Source],
+    name: &str,
+    atom: usize,
+) -> Result<RenderedClauseAtom, Box<RunRefusal>> {
+    let node = package
+        .graph()
+        .temporal_clauses()
+        .iter()
+        .find(|node| node.clause().name() == name)
+        .ok_or_else(|| {
+            Box::new(RunRefusal::Fault(
+                filament_semantic_value::catalog::InternalFault::new(
+                    "monitor",
+                    "named-atom-clause-is-declared",
+                ),
+            ))
+        })?;
+    let atom = node.clause().formula().node_id(atom).ok_or_else(|| {
+        Box::new(RunRefusal::Fault(
+            filament_semantic_value::catalog::InternalFault::new(
+                "monitor",
+                "named-atom-is-a-formula-node",
+            ),
+        ))
+    })?;
     source_render::atom_name(package, sources, node, atom)
 }
 
@@ -3915,6 +3972,13 @@ pub struct FiniteWindowReport {
     pub basis: SettlementBasis,
     /// The decision support, as `(position, atom)` pairs.
     pub support: Vec<FiniteWindowSupport>,
+    /// Actual source regions of the named checked atoms, keyed by producer formula id.
+    pub atom_regions: BTreeMap<
+        fsl_semantics::check::FormulaNodeId,
+        fsl_foundation::source::provenance::SourceRegion,
+    >,
+    /// Region of the atom named by an indeterminate verdict, when one is named.
+    pub named_atom_region: Option<fsl_foundation::source::provenance::SourceRegion>,
     /// The premises.
     pub premises: FiniteWindowPremises,
     /// The result identity: a content identity over the inputs.

@@ -3590,13 +3590,10 @@ fn package_remainder_caller_sources_share_intake_limits_at_the_boundary() {
         .err()
         .expect("65 files stops intake");
     assert_eq!(refusal.category().exit_code(), 22, "{refusal}");
-    assert!(
-        refusal.value().unwrap()["message"]
-            .as_str()
-            .unwrap()
-            .contains("64"),
-        "{refusal}"
-    );
+    let native = refusal.value().unwrap();
+    assert_eq!(native["details"]["maximum"], 64, "{native}");
+    assert_eq!(native["details"]["remaining"], 61, "{native}");
+    assert_eq!(native["details"]["requested"], 62, "{native}");
     request["request"]["sources"] = json!([]);
     std::fs::write(&path, serde_json::to_vec(&request).unwrap()).unwrap();
     prepare_run(&path, RunLimits::default()).expect("the next invocation has fresh budgets");

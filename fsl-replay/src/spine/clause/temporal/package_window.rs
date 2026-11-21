@@ -167,6 +167,13 @@ impl<'a, 'p> Context<'a, 'p> {
 
     /// Compare caller text only after reading every actual candidate region.
     pub fn atom_name(&self, atom: FormulaNodeId) -> Result<String, PackageSelectionNotRead> {
+        self.render_atom(atom).map(|rendered| rendered.name)
+    }
+
+    fn render_atom(
+        &self,
+        atom: FormulaNodeId,
+    ) -> Result<super::RenderedClauseAtom, PackageSelectionNotRead> {
         let candidates = self
             .package
             .temporal_atom_sources(&self.claim, atom.index())
@@ -185,7 +192,12 @@ impl<'a, 'p> Context<'a, 'p> {
             self.source_text(&self.declaration)?;
         }
         if !differing {
-            return Ok(text);
+            let region = if candidates.len() == 1 {
+                candidates[0].region.clone()
+            } else {
+                self.declaration.clone()
+            };
+            return Ok(super::RenderedClauseAtom { name: text, region });
         }
         let term = self
             .package
@@ -196,8 +208,12 @@ impl<'a, 'p> Context<'a, 'p> {
             &self.package.declared_composites(),
         )
         .map_err(|_| self.attribution(atom.index(), OccurrenceSourceRefusal::UnknownNode))?;
-        crate::canonical_atom::package_label(&term, &rows)
-            .map_err(|_| self.attribution(atom.index(), OccurrenceSourceRefusal::UnknownNode))
+        let name = crate::canonical_atom::package_label(&term, &rows)
+            .map_err(|_| self.attribution(atom.index(), OccurrenceSourceRefusal::UnknownNode))?;
+        Ok(super::RenderedClauseAtom {
+            name,
+            region: self.declaration.clone(),
+        })
     }
 
     pub fn classes(&self) -> Result<Vec<usize>, PackageSelectionNotRead> {
@@ -334,24 +350,28 @@ impl<'a, 'p> Context<'a, 'p> {
         };
         let mut requested: Vec<FormulaNodeId> =
             evaluation.support.iter().map(|pair| pair.atom).collect();
+        let mut named_atom = None;
         if let fsl_eval::temporal::WindowVerdict::Indeterminate { reason, .. } = &evaluation.verdict
         {
             match reason {
                 fsl_eval::temporal::IndeterminateReason::MissingValuation { atom, .. }
                 | fsl_eval::temporal::IndeterminateReason::ConflictingValuation { atom, .. } => {
+                    named_atom = Some(*atom);
                     requested.push(*atom)
                 }
                 _ => {}
             }
         }
         let mut labels = BTreeMap::new();
+        let mut regions = BTreeMap::new();
         for atom in requested {
             if labels.contains_key(&atom) {
                 continue;
             }
-            match self.atom_name(atom) {
-                Ok(label) => {
-                    labels.insert(atom, label);
+            match self.render_atom(atom) {
+                Ok(rendered) => {
+                    regions.insert(atom, rendered.region);
+                    labels.insert(atom, rendered.name);
                 }
                 Err(mut failure) => {
                     if let PackageSelectionNotRead::Attribution(attribution) = &mut failure {
@@ -386,7 +406,7 @@ impl<'a, 'p> Context<'a, 'p> {
         };
         let key = fsl_foundation::node_wire::node_key_to_text(self.key)
             .map_err(|_| self.attribution(0, OccurrenceSourceRefusal::UnknownNode))?;
-        let report = super::finite_window_report_named(
+        let mut report = super::finite_window_report_named(
             (
                 evaluation.basis,
                 evaluation.support,
@@ -401,6 +421,8 @@ impl<'a, 'p> Context<'a, 'p> {
             ),
             &names,
         )?;
+        report.named_atom_region = named_atom.and_then(|atom| regions.get(&atom).cloned());
+        report.atom_regions = regions;
         Ok(WindowRun {
             disposition: ClauseDisposition::Temporal(verdict),
             visits: evaluation.visits,

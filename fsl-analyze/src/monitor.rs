@@ -14,7 +14,7 @@ use fsl_foundation::source::Source;
 use fsl_foundation::{Setting, SourceIdentity};
 use fsl_package::{CheckedPackage, TemporalClockSelection};
 use fsl_replay::spine::{
-    authenticate_emission, authenticate_package_trace, name_clause_atom, run_package_temporal,
+    authenticate_emission, authenticate_package_trace, run_package_temporal,
     run_package_trace_subject, AuthenticationFailure, ClauseDisposition, ClauseRunReport,
     ClauseRunStage, OverObject, PackageAuthentication, PackageTemporalRequest,
     PackageTraceSubjectRequest, PackagesStage, ProgressRefusal, RunRefusal, SpineLimits,
@@ -157,6 +157,7 @@ pub struct MonitorRecord {
     /// The source text of the atom a `InsufficientData` or `Indeterminate`
     /// record names.
     atom: Option<String>,
+    atom_locus: Option<fsl_foundation::source::provenance::SourceRegion>,
     report: Arc<ClauseRunReport>,
     /// FR-643 "Usage": a stepping session's own work for the clause; `None`
     /// for a batch record, whose usage is its report's.
@@ -250,8 +251,12 @@ impl MonitorRecord {
         self.atom.as_deref()
     }
 
-    /// The counterexample of a `Violated` or `Undefined` record
-    /// (FSpec FR-364), with `trace_position` equal to the record's position.
+    /// The actual expression or coarser declaration region selected for `atom()`.
+    pub fn atom_locus(&self) -> Option<&fsl_foundation::source::provenance::SourceRegion> {
+        self.atom_locus.as_ref()
+    }
+
+    /// The actual observed or model counterexample of a violation or undefined record.
     pub fn counterexample(&self) -> Option<&fsl_replay::ClauseRunCounterexample> {
         self.report.counterexample.as_ref()
     }
@@ -852,12 +857,14 @@ pub(crate) fn record_of(
 ) -> Result<MonitorRecord, Failure> {
     let report: Arc<ClauseRunReport> = report.into();
     let verdict = verdict_of(clause, &report.disposition)?;
-    let atom = named_atom(package, sources, clause, &report.disposition)?;
+    let named = named_atom(package, sources, clause, &report)?;
+    let (atom, atom_locus) = named.map_or((None, None), |(name, region)| (Some(name), region));
     Ok(MonitorRecord {
         clause: clause.to_owned(),
         verdict,
         category: report.category(),
         atom,
+        atom_locus,
         report,
         usage: None,
     })
@@ -869,9 +876,15 @@ fn named_atom(
     package: &CheckedPackage,
     sources: &[Source],
     clause: &str,
-    disposition: &ClauseDisposition,
-) -> Result<Option<String>, Failure> {
-    let ClauseDisposition::Temporal(verdict) = disposition else {
+    report: &ClauseRunReport,
+) -> Result<
+    Option<(
+        String,
+        Option<fsl_foundation::source::provenance::SourceRegion>,
+    )>,
+    Failure,
+> {
+    let ClauseDisposition::Temporal(verdict) = &report.disposition else {
         return Ok(None);
     };
     match verdict {
@@ -880,12 +893,18 @@ fn named_atom(
                 TemporalIndeterminateReason::MissingValuation { atom, .. }
                 | TemporalIndeterminateReason::ConflictingValuation { atom, .. },
             ..
-        } => Ok(Some(atom.clone())),
+        } => Ok(Some((
+            atom.clone(),
+            report
+                .finite_window
+                .as_ref()
+                .and_then(|window| window.named_atom_region.clone()),
+        ))),
         TemporalVerdict::Undefined {
             cause: TemporalUndefinedCause::InsufficientData { atom, .. },
             ..
-        } => match name_clause_atom(package, sources, clause, *atom) {
-            Ok(name) => Ok(Some(name)),
+        } => match fsl_replay::spine::render_clause_atom(package, sources, clause, *atom) {
+            Ok(rendered) => Ok(Some((rendered.name, Some(rendered.region)))),
             Err(refusal) => Err(match *refusal {
                 RunRefusal::SourceNotSupplied { reference, .. } => {
                     StageFailure::Refused(MonitorRefusal::SourceNotSupplied {

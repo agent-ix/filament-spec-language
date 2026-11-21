@@ -18,7 +18,7 @@ pub(super) fn atom_name(
     sources: &[Source],
     node: &TemporalClauseNode,
     atom: FormulaNodeId,
-) -> Result<String, Box<RunRefusal>> {
+) -> Result<super::RenderedClauseAtom, Box<RunRefusal>> {
     if !matches!(
         node.clause().formula().nodes().get(atom.index()),
         Some(FormulaNode::Holds { .. } | FormulaNode::Aggregate { .. })
@@ -30,6 +30,12 @@ pub(super) fn atom_name(
         .occurrence(node.identity(), node.claim())
         .and_then(|location| graph.region(location))
         .ok_or_else(|| fault("clause-declaration-has-a-region"))?;
+    let declaration = SourceRegion::new(
+        declaration.source().clone(),
+        u64::try_from(node.clause().span().start).map_err(|_| fault("clause-span-fits"))?,
+        u64::try_from(node.clause().span().end).map_err(|_| fault("clause-span-fits"))?,
+    )
+    .map_err(|_| fault("clause-declaration-has-a-region"))?;
     let key = node
         .formula_node_key(atom)
         .ok_or_else(|| fault("named-atom-has-a-producer-key"))?;
@@ -75,20 +81,33 @@ pub(super) fn atom_name(
         read(&declaration)?;
     }
     if !differing {
-        return Ok(text);
+        let region = if candidates.len() == 1 {
+            candidates[0].clone()
+        } else {
+            declaration
+        };
+        return Ok(super::RenderedClauseAtom { name: text, region });
     }
     let valuation = super::super::TemporalValuation::from_node(node, graph, None, None);
     if matches!(
         node.clause().formula().nodes().get(atom.index()),
         Some(FormulaNode::Holds { .. })
     ) {
-        return crate::canonical_atom::source_labels(&valuation)
+        let name = crate::canonical_atom::source_labels(&valuation)
             .ok()
             .and_then(|mut labels| labels.remove(&atom))
-            .ok_or_else(|| fault("checked-holds-has-a-canonical-label"));
+            .ok_or_else(|| fault("checked-holds-has-a-canonical-label"))?;
+        return Ok(super::RenderedClauseAtom {
+            name,
+            region: declaration,
+        });
     }
-    aggregate_label(node, atom, &valuation)
-        .map_err(|_| fault("checked-aggregate-has-a-canonical-label"))
+    let name = aggregate_label(node, atom, &valuation)
+        .map_err(|_| fault("checked-aggregate-has-a-canonical-label"))?;
+    Ok(super::RenderedClauseAtom {
+        name,
+        region: declaration,
+    })
 }
 
 fn aggregate_label(
