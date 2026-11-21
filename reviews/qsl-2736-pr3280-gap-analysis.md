@@ -1,5 +1,5 @@
 ---
-id: SR-202611210022442313144108505
+id: SR-20261121081505112344911
 title: "QSL-2736 inverted delivery interval gap-analysis"
 type: SpecReview
 analysis: gap-analysis
