@@ -156,3 +156,13 @@ Scoped Quire validation exits 0: 1/1 document grammar-clean; 6/12 property-extra
   ]
 }
 ```
+
+## Dispositions
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | Round 1 at 017cc78b315be268d3b32b232f96a27d366ffe68: AC-4 now requires no equal actual record in selected item 1 for refusal and explicitly accepts exactly one independently equal item-local record. Normative candidate selection states the same rule. No origin field or decision id is introduced. |
+
+Round 1 after_excerpt (FR-1046-AC-4, verbatim): A receipt whose decision matches a recommendation of item 0, but is selected only by item 1 and has no equal actual recommendation in item 1, refuses for item 1. If item 1 independently emits exactly one equal actual recommendation, the receipt binds there even when item 0 also emits an equal record.
+
+Round 1 scoped verdict: PASS; the recorded ambiguity is fixed. Original findings and original review verdict remain historical and unchanged. No new findings in this bounded disposition pass; future implementation/public proof remains outstanding.
