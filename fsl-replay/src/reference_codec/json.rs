@@ -177,6 +177,7 @@ impl Admission<'_> {
                     ReadError::Malformed { .. }
                     | ReadError::NumberOutOfRange { .. }
                     | ReadError::DuplicateName { .. } => ModelKeyError::Unsupported(MALFORMED),
+                    _ => ModelKeyError::Unsupported(MALFORMED),
                 },
             )?;
         self.build_json(Input::Parsed(document.root()), usize::MAX)

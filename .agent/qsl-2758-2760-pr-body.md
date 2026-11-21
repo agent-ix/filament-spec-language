@@ -10,10 +10,12 @@ The normalization owner uses a `Mutex` because catalogs and codecs retain immuta
 
 Validation: 27 focused named tests pass, including the authoritative staged values, the four selected-backend plan outcomes at exits 0/10/22/0, an unknown-backend refusal, genuine source/package reference roundtrips and budget-owner regressions, and seventeen affected migrations. No full gate has been run. The focused receipts retain original failures as well as passes.
 
-The reused-claim settlement regression still returns `UnknownRequirementClaim` after the one authorized rerun against the upstream pin wave; arch owns that held-identity defect under QSL-2744, with no assertion weakened. FR-651's specified `items` object remains the accepted envelope; the examples owner is correcting its staged array case and adding the explicit backend selector to its plan cases.
+The held-identity repair from PR #3403 is inherited at `be3ad51571bb5e7b9c0e86588cfa32611053ed3d`; its owner reported the reused-claim regression passing. That test and assertion remain unchanged and were not rerun here. FR-651's specified `items` object remains the accepted envelope; the examples owner is correcting its staged array case and adding the explicit backend selector to its plan cases.
 
 Dependencies: PR #3354 landed as `fd0794de74a9f98f9b22ba3d557eb638ca4340cd`; this branch integrates the QSL-2726 reference dependency and actual #3393 pin base `21edb2ead1c8b69768beedaab003e077ce4ed042`. Reusable owner/codec/writer helpers were separately handed to the existing reference lane on `codex/qsl-2758-shared-reference-helpers`; the lead owns their landing and final branch cleanup so already-landed helper commits are excluded.
 
 Remaining old-codec entrypoints for the owner's follow-up are direct spine calls that retain `Call::canonical_values = false`, FR-312 function-claim selections through `spine::run_clause` (including `items.function`), and the separately specified FR-106 snapshot/invocation native grammar. None supplies a fallback for command call arguments.
 
 The authoritative filament-examples checkout is read-only and has not been copied or modified. Its single `call-zero-arguments` legacy expected-value example needs an owner update to the tagged canonical result after landing.
+
+Review fix round 1 restores the old unscoped certificate roundtrip while leaving scoped reference APIs available for their owning migration. Canonical run output uses the existing stack-backed JSON reader and an explicit conversion stack, honors the caller depth limit (`usize::MAX` means no policy limit), and charges canonical input conversion before staging allocations on the same supplied run.

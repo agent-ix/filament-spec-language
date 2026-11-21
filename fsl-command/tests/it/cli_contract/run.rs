@@ -360,6 +360,26 @@ fn canonical_run_package_reference_roundtrip_uses_retained_snapshot_owners() {
 #[test]
 #[trace("FR-650")]
 fn review_fix_deep_completed_values_use_actual_depth_policy() {
+    fn deep_result(path: &std::path::Path) -> Value {
+        let result = fsl_command::command::run_with_limits_and_overrides(
+            path,
+            RunLimits::default(),
+            &RequestOverrides::default(),
+            &crate::negotiation::Fr290,
+        )
+        .expect("deep call completes");
+        assert_eq!(result.exit_code, 0);
+        let bytes = result.outcome.expect("call outcome").to_bytes().unwrap();
+        // This regression deliberately exceeds serde's default test-reader cap.
+        let mut reader = serde_json::Deserializer::from_slice(&bytes);
+        reader.disable_recursion_limit();
+        let document: Value = serde::Deserialize::deserialize(&mut reader).unwrap();
+        reader.end().unwrap();
+        assert_eq!(document["operation"], "execute");
+        assert_eq!(document["category"], "success");
+        document
+    }
+
     fn source(reference: bool) -> String {
         let profile = if reference { "model" } else { "value" };
         let mut source = format!("language \"ix:native\" edition \"1-draft\";\nprofile v = \"filament.{profile}.complete/v1\";\n");
@@ -404,8 +424,7 @@ fn review_fix_deep_completed_values_use_actual_depth_policy() {
     }
     let case = Case::new();
     case.write("deep.native", source(false).as_bytes());
-    let plain_result = plain(&case.json("deep.json", &request("deep.native", "Deep", &[])));
-    let document = plain_result.expect("execute", "success", 0);
+    let document = deep_result(&case.json("deep.json", &request("deep.native", "Deep", &[])));
     let mut leaf = &document["result"]["value"];
     for _ in 0..100 {
         assert_eq!(leaf["type"], "record");
@@ -424,8 +443,7 @@ fn review_fix_deep_completed_values_use_actual_depth_policy() {
     case.write("world.native", source(true).as_bytes());
     job["request"].as_object_mut().unwrap().remove("items");
     job["request"]["call"] = json!({"function":"Deep","snapshot":"current.json","arguments":[{"parameter":"x","value":input}]});
-    let deep_reference = plain(&case.json("deep-reference.json", &job));
-    let document = deep_reference.expect("execute", "success", 0);
+    let document = deep_result(&case.json("deep-reference.json", &job));
     let mut leaf = &document["result"]["value"];
     for _ in 0..100 {
         assert_eq!(leaf["type"], "record");
