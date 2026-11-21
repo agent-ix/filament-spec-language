@@ -2305,6 +2305,8 @@ struct Located<'f> {
     form: &'f ExpressionForm,
     /// The span of each node, by id.
     spans: Vec<Span>,
+    /// The binder name spans each node declares, by id.
+    binders: Vec<Vec<Span>>,
     /// The clock a node reads directly, `self.x`.
     clock: Vec<Option<ClockId>>,
     /// The `Option<Clock>` place a node `self.v` names (FR-230 "Presence
@@ -2347,6 +2349,7 @@ impl<'f> Located<'f> {
         parameters: Vec<ClockParameter>,
     ) -> Option<Self> {
         let spans = form.spans.of_nodes(&form.expression)?;
+        let binders = form.spans.binders_of_nodes(&form.expression)?;
         let mut clock = vec![None; form.expression.len()];
         let mut parameter = vec![None; form.expression.len()];
         let mut option = vec![None; form.expression.len()];
@@ -2590,6 +2593,7 @@ impl<'f> Located<'f> {
         Some(Self {
             form,
             spans,
+            binders,
             clock,
             option,
             bits: clocks
@@ -2651,6 +2655,16 @@ impl<'f> Located<'f> {
 
     fn root(&self) -> ExprId {
         self.form.expression.root_id()
+    }
+
+    /// The span of the first binder name token node `id` declares, or the
+    /// node's own span when the tree records none.
+    fn binder_span(&self, id: ExprId) -> Span {
+        self.binders
+            .get(id.index())
+            .and_then(|binders| binders.first())
+            .copied()
+            .unwrap_or_else(|| self.span(id))
     }
 
     fn span(&self, id: ExprId) -> Span {

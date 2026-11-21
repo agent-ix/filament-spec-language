@@ -5136,7 +5136,7 @@ fn a_value_type_bound_to_clock_by_target_types_a_clock_place() {
 /// FR-488-AC-29 (TC-3082 step 3): a clock guard's quantifier binder in the
 /// reserved slot form, `forall(slot_sx_sy in self.ts: ...)` over a
 /// `Sequence<Timer>` field, refuses `ambiguous_declaration`/`ambiguous-name`
-/// naming the identifier and the tag `slot`, within the guard's quantifier.
+/// naming the identifier and the tag `slot`, at the binder identifier.
 #[trace("TC-3082", "FR-488-AC-29")]
 #[test]
 fn a_clock_guard_binder_in_the_reserved_slot_form_is_refused() {
@@ -5171,8 +5171,8 @@ fn a_clock_guard_binder_in_the_reserved_slot_form_is_refused() {
         crate::timed_model::TEMPORAL,
         &body,
     );
-    let span = cause.span.expect("the guard's own span");
-    assert_eq!(&text[span.start..span.end], guard);
+    let span = cause.span.expect("the binder's own span");
+    assert_eq!(&text[span.start..span.end], "slot_sx_sy");
     let refusal = refusals
         .iter()
         .find(|refusal| {

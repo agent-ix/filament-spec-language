@@ -85,7 +85,7 @@ fn a_function_parameter_in_the_reserved_slot_form_is_refused_at_the_identifier()
 }
 
 /// FR-488-AC-29: a quantifier binder in the reserved form refuses, naming
-/// the identifier and the tag `slot`, at the form that declares it.
+/// the identifier and the tag `slot`, at the binder identifier itself.
 #[trace("TC-3082", "FR-488-AC-29")]
 #[test]
 fn a_quantifier_binder_in_the_reserved_slot_form_is_refused() {
@@ -99,8 +99,11 @@ fn a_quantifier_binder_in_the_reserved_slot_form_is_refused() {
         (found.name.as_str(), found.tag.as_str()),
         ("slot_sx_sy", "slot")
     );
-    let region = found.region.as_deref().expect("a region");
-    assert!(region.contains("slot_sx_sy"), "{region}");
+    assert_eq!(
+        found.region.as_deref(),
+        Some("slot_sx_sy"),
+        "the region is the binder identifier"
+    );
 }
 
 /// FR-488-AC-29: each protocol binder, `over` input, activation parameter,
@@ -141,4 +144,71 @@ fn a_near_miss_of_the_reserved_slot_form_is_admitted() {
         assert!(reserved.is_empty(), "{name}: {reserved:?}");
         assert!(refusals.is_empty(), "{name}: {refusals:?}");
     }
+}
+
+/// The one reserved-name refusal of `source`, as its name, tag and region
+/// text.
+fn only_reserved(source: &str) -> Found {
+    let (mut reserved, refusals) = reserved(source);
+    assert_eq!(reserved.len(), 1, "{source}: {reserved:?} in {refusals:?}");
+    reserved.remove(0)
+}
+
+/// FR-488-AC-29: a `let` binder in the reserved form refuses at the
+/// identifier after `let`, not at the whole `let` form.
+#[trace("TC-3082", "FR-488-AC-29")]
+#[test]
+fn a_let_binder_in_the_reserved_slot_form_is_refused_at_the_identifier() {
+    let source = "function g(x: Integer): Integer pure { let op_sa = x in op_sa }";
+    assert_eq!(only_reserved(source), found("op_sa", "op", "op_sa"));
+}
+
+/// FR-488-AC-29: a `fold` accumulator and a `fold` element binder in the
+/// reserved form each refuse at their own identifier.
+#[trace("TC-3082", "FR-488-AC-29")]
+#[test]
+fn a_fold_binder_in_the_reserved_slot_form_is_refused_at_the_identifier() {
+    let accumulator = "type I = Integer;\nfunction g(xs: Sequence<I>): I pure \
+                       { fold<I>(op_sa, x in xs: op_sa + x, identity: 0) }";
+    assert_eq!(only_reserved(accumulator), found("op_sa", "op", "op_sa"));
+    let element = "type I = Integer;\nfunction g(xs: Sequence<I>): I pure \
+                   { fold<I>(acc, rcv_sx in xs: acc + rcv_sx, identity: 0) }";
+    assert_eq!(only_reserved(element), found("rcv_sx", "rcv", "rcv_sx"));
+}
+
+/// FR-488-AC-29: a case-arm binder in the reserved form refuses at the
+/// identifier, whichever arm and position declares it.
+#[trace("TC-3082", "FR-488-AC-29")]
+#[test]
+fn a_case_binder_in_the_reserved_slot_form_is_refused_at_the_identifier() {
+    let source = "union U { A(Integer), B(Integer, Integer) } \
+                  function g(u: U): Integer pure \
+                  { case u { A(x): x; B(y, rcv_sa): y + rcv_sa; } }";
+    assert_eq!(only_reserved(source), found("rcv_sa", "rcv", "rcv_sa"));
+}
+
+/// FR-488-AC-29: a `reduce` accumulator and element binder in the reserved
+/// form each refuse at their own identifier.
+#[trace("TC-3082", "FR-488-AC-29")]
+#[test]
+fn a_reduce_binder_in_the_reserved_slot_form_is_refused_at_the_identifier() {
+    let accumulator = "type I = Integer;\nfunction g(xs: Sequence<I>): I pure \
+                       { reduce<I>(op_sa, x in xs: op_sa) }";
+    assert_eq!(only_reserved(accumulator), found("op_sa", "op", "op_sa"));
+    let element = "type I = Integer;\nfunction g(xs: Sequence<I>): I pure \
+                   { reduce<I>(acc, rcv_sx in xs: acc) }";
+    assert_eq!(only_reserved(element), found("rcv_sx", "rcv", "rcv_sx"));
+}
+
+/// FR-488-AC-29: a collection `count` and `sum` binder in the reserved form
+/// refuse at the identifier.
+#[trace("TC-3082", "FR-488-AC-29")]
+#[test]
+fn a_count_and_sum_binder_in_the_reserved_slot_form_is_refused_at_the_identifier() {
+    let count = "type I = Integer;\nfunction g(xs: Sequence<I>): I pure \
+                 { count<I>(op_sa in xs: true) }";
+    assert_eq!(only_reserved(count), found("op_sa", "op", "op_sa"));
+    let sum = "type I = Integer;\nfunction g(xs: Sequence<I>): I pure \
+               { sum<I>(rcv_sx in xs: rcv_sx) }";
+    assert_eq!(only_reserved(sum), found("rcv_sx", "rcv", "rcv_sx"));
 }

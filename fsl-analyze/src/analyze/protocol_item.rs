@@ -246,14 +246,7 @@ pub(super) fn protocol_clause_item<'a>(
                 }
                 let over = over_instance(&binding, &(population, key));
                 let subject = |max_candidates| {
-                    subject_of(
-                        &input,
-                        &binding,
-                        &limits,
-                        max_candidates,
-                        &protocol,
-                        &over,
-                    )
+                    subject_of(&input, &binding, &limits, max_candidates, &protocol, &over)
                 };
                 let refused = |refusal: &SubjectRefusal| {
                     EngineReport::Refused(match refusal {
@@ -430,7 +423,7 @@ fn replay_protocol(
         trace,
         &envelope,
         letters,
-        &[],
+        &super::clause_item::clock_selections(inputs.package, inputs.provision),
         inputs.limits.replay,
     )
 }
