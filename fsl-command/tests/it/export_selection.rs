@@ -112,6 +112,95 @@ fn a_regular_export_reaches_its_typed_obligation_record() {
     assert!(output.to_string().contains("Capacity"), "{output}");
 }
 
+/// Deep selected values, conversion inputs and the root-owned control all
+/// return typed refusals from a real child process under the byte ceiling.
+#[test]
+#[trace("FR-026-AC-3", "TC-104")]
+fn deeply_nested_export_inputs_refuse_without_aborting() {
+    use std::process::{Command, Stdio};
+    const INPUT: &str = "FSL_DEEP_EXPORT_CHILD_INPUT";
+    const OUTPUT: &str = "FSL_DEEP_EXPORT_CHILD_OUTPUT";
+    if let Some(input) = std::env::var_os(INPUT) {
+        let result = run(
+            Path::new(&input),
+            ExportSelection::Ordinary,
+            RunLimits::default(),
+        );
+        std::fs::write(std::env::var_os(OUTPUT).unwrap(), result.to_string()).unwrap();
+        return;
+    }
+    let directory = tempfile::tempdir().unwrap();
+    let deep = format!("{}0{}", "[".repeat(16_000), "]".repeat(16_000));
+    let export = r#"{"profile":"filament.output.tla2/v1","obligations":["Low"]}"#;
+    let selected =
+        format!(r#"{{"profile":"filament.output.tla2/v1","obligations":["Low"],"z":{deep}}}"#);
+    let cases = [
+        (format!(r#""export":{selected}"#), "/request/export/z"),
+        (format!(r#""z":{selected}"#), "requires export"),
+        (
+            format!(r#""export":{export},"package":{{"z":{deep}}}"#),
+            "/request/package/source_package",
+        ),
+        (format!(r#""export":{export},"z":{deep}"#), "unknown field"),
+        (
+            format!(
+                r#""export":{{"profile":"filament.output.tla2/v1","obligations":["Low"],"protocols":[{{"protocol":"P","roles":{{"R":{{"type":"T","selection":{deep}}}}}}}]}}"#
+            ),
+            "/request/export/protocols/0",
+        ),
+        (
+            format!(
+                r#""export":{{"profile":"filament.output.tla2/v1","obligations":["Low"],"universes":[{{"authority":"a","identity":{deep}}}]}}"#
+            ),
+            "/request/export/universes/0",
+        ),
+    ];
+    for (index, (members, expected)) in cases.into_iter().enumerate() {
+        let bytes = format!(r#"{{"format":"native-run/1","request":{{"models":[],{members}}}}}"#);
+        assert!(bytes.len() < RunLimits::default().request_bytes);
+        let input = directory.path().join(format!("deep-{index}.json"));
+        let output = directory.path().join(format!("result-{index}.json"));
+        std::fs::write(&input, bytes).unwrap();
+        let child = Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "export_selection::deeply_nested_export_inputs_refuse_without_aborting",
+                "--test-threads=1",
+            ])
+            .env(INPUT, input)
+            .env(OUTPUT, &output)
+            .stdin(Stdio::null())
+            .output()
+            .unwrap();
+        assert!(
+            child.status.success(),
+            "case {index} must return a typed refusal, not abort: {child:?}"
+        );
+        let result: Value = serde_json::from_slice(&std::fs::read(output).unwrap()).unwrap();
+        assert_eq!(result["exit"], 20, "case {index}: {result}");
+        assert_eq!(result["document"]["category"], "refusal", "{result}");
+        assert!(result["document"]["result"].is_null(), "{result}");
+        assert!(!result["document"]["diagnostics"]
+            .as_array()
+            .unwrap()
+            .is_empty());
+        assert!(
+            result.to_string().contains(expected),
+            "case {index}: {result}"
+        );
+        if index == 0 {
+            assert_eq!(
+                result["document"]["diagnostics"][0]["code"],
+                "invalid_runtime_input"
+            );
+            assert_eq!(
+                result["document"]["diagnostics"][0]["cause"],
+                "unknown-member"
+            );
+        }
+    }
+}
+
 /// An explicit streamed operand receives the same bounded, required-selection intake.
 #[cfg(unix)]
 #[test]

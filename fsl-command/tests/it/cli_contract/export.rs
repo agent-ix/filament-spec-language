@@ -113,6 +113,20 @@ fn an_assembled_package_reaches_pending_evidence_admission() {
         "unimplemented_capability"
     );
     assert_eq!(document["diagnostics"][0]["cause"], "unimplemented-meaning");
+    assert_eq!(
+        document["diagnostics"][0]["details"]["capability"],
+        "export_evidence"
+    );
+    let schema = super::compiled(fsl_replay::outcome::OUTCOME_SCHEMA_1);
+    let mut unknown = document.clone();
+    unknown["diagnostics"][0]["details"]["unrecognized"] = json!(true);
+    assert!(
+        !schema.is_valid(&unknown),
+        "diagnostic details must remain closed"
+    );
+    let mut wrong_kind = document.clone();
+    wrong_kind["diagnostics"][0]["details"]["capability"] = json!(7);
+    assert!(!schema.is_valid(&wrong_kind), "capability is a string");
     assert!(
         !document.to_string().contains("tool-unavailable"),
         "{document}"

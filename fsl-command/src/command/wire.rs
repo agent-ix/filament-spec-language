@@ -23,7 +23,7 @@ impl RequestKind for CompileRequest {
         fsl_foundation::wire_format::WireFormat::CompileRequest;
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, serde::Serialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct Envelope<'a> {
     pub format: String,
