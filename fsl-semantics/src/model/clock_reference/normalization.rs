@@ -63,8 +63,14 @@ pub enum ClockDeclarationResolutionError {
     #[error(transparent)]
     Ambiguous(#[from] ClockDeclarationAmbiguity),
     /// An admitted path no longer agrees with its declaration metadata.
-    #[error(transparent)]
-    Fault(#[from] InternalFault),
+    #[error("clock declaration invariant: {0:?}")]
+    Fault(InternalFault),
+}
+
+impl From<InternalFault> for ClockDeclarationResolutionError {
+    fn from(fault: InternalFault) -> Self {
+        Self::Fault(fault)
+    }
 }
 
 /// Validated static clock declarations, independent of runtime populations.
