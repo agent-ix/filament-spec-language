@@ -563,6 +563,34 @@ fn an_actual_en5_proof_is_checked_in_a_fresh_process_using_its_source() {
     );
 }
 
+/// A certificate document read out of an analyze result, resolved back to the
+/// structural identity the checker reads: the result writes the document-held
+/// form (FSpec FR-322), each operand an index into the package's
+/// `semantic_graph.nodes`, and its `identity.model` the owning model. The
+/// package is the one `source` emits.
+fn structural_certificate(document: &Value, source: &str) -> Value {
+    let (checked, packages) = compile_source(source);
+    let package = checked.package();
+    let identity =
+        fsl_semantics::library::LibraryName::new(package.graph().package_name()).unwrap();
+    let read = fsl_package::read_evaluation_package(
+        package,
+        identity,
+        &packages,
+        fsl_package::V2ReadLimits::bounded(spine::I2_NATIVE_JOIN_STORAGE_DEFAULT),
+        SpineLimits::default().package.emit(),
+    )
+    .unwrap_or_else(|_| panic!("the fixture package reads back"));
+    let graph = fsl_semantics::check::wire_id::WireGraph::of_package_bytes(
+        read.emission().package().bytes(),
+    )
+    .unwrap();
+    let mut structural = graph.structural_value(document).unwrap();
+    assert!(structural["identity"]["model"].is_string(), "{document}");
+    structural["identity"]["model"] = Value::Null;
+    structural
+}
+
 #[trace("TC-764", "FR-282-AC-1", "FR-201-AC-11")]
 #[test]
 fn certificate_checks_independently() {
@@ -597,8 +625,11 @@ fn certificate_checks_independently() {
     let outcome = serde_json::to_value(analyzed.value).expect("the analyze document is JSON");
     let item = &outcome["items"][0];
     assert_eq!(item["record"]["result"], "proved", "{item}");
-    let certificate = &item["certificate"]["document"];
-    assert!(certificate.is_object(), "{item}");
+    assert!(item["certificate"]["document"].is_object(), "{item}");
+    let certificate = &structural_certificate(
+        &item["certificate"]["document"],
+        &format!("{SOURCE}{CLAIM}"),
+    );
 
     let mut checker_request = proof_request(CLAIM);
     let certificate_text = serde_json::to_string(certificate).unwrap();

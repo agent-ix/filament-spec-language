@@ -25,6 +25,7 @@ use fsl_replay::{InconclusiveCause, OutcomeAxes, TerminalRecord, TerminalValue};
 use fsl_route::request::{ExtentClassification, ItemKind};
 use fsl_route::routing::Disposition;
 use fsl_route::{CandidateOutcome, EvidenceKind, ItemEvidence, Registry};
+use fsl_semantics::check::wire_id::WireGraph;
 use fsl_semantics::check::Capability;
 use fsl_semantics::model::observation::{DocumentProvision, DocumentRef};
 use serde::Deserialize;
@@ -1677,6 +1678,7 @@ pub fn resolve_items(
 }
 
 mod composition_item;
+mod held_identity;
 mod package_run;
 
 pub use composition_item::CompositionClaim;
@@ -3801,6 +3803,11 @@ pub fn settle_run(
         &routes,
         &simulated,
         engines,
+        &|| {
+            crate::provider::admitted_bytes(package, binding.packages, limits.emit)
+                .ok()
+                .and_then(|bytes| WireGraph::of_package_bytes(bytes.bytes()).ok())
+        },
     )
 }
 
@@ -4177,6 +4184,7 @@ fn write_run(
     routes: &BTreeMap<RequestIndex, super::ItemRoute>,
     simulated: &[(Value, Category)],
     engines: &Engines,
+    package_graph: &dyn Fn() -> Option<WireGraph>,
 ) -> Result<SettledRun, AnalyzeDocumentError> {
     let mut records: Vec<TerminalRecord> = outcome.records;
     records.extend(settled.values().map(|(_, record)| record.clone()));
@@ -4187,6 +4195,7 @@ fn write_run(
     let written: Vec<Value> = document["items"].as_array().cloned().unwrap_or_default();
     let mut items = Vec::with_capacity(records.len());
     let mut gaps = Vec::new();
+    let mut package_graph = LazyGraph::new(package_graph);
     for (record, mut written) in records.iter().zip(written) {
         let index = record.request_index();
         if let Some(bytes) = record.exact_certificate_document() {
@@ -4246,7 +4255,7 @@ fn write_run(
                     })
             })
             .flatten();
-        items.push(item_document(
+        let mut item = item_document(
             written,
             ItemMembers {
                 claim_name,
@@ -4261,7 +4270,9 @@ fn write_run(
                     .map(|backend| backend.as_str().to_owned()),
                 disposed,
             },
-        ));
+        );
+        hold_certificate_identities(&mut item, &mut package_graph)?;
+        items.push(item);
     }
     items.extend(simulated.iter().map(|(written, _)| written.clone()));
     items.sort_by_key(|item| item["request_index"].as_u64().unwrap_or(u64::MAX));
@@ -4341,6 +4352,48 @@ fn spell_states(value: &mut Value) {
         Value::Array(entries) => entries.iter_mut().for_each(spell_states),
         Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) => {}
     }
+}
+
+/// The package graph an item's certificate is written against, built on
+/// first use: a run with no certificate never reads it.
+struct LazyGraph<'a> {
+    build: &'a dyn Fn() -> Option<WireGraph>,
+    graph: Option<Option<WireGraph>>,
+}
+
+impl<'a> LazyGraph<'a> {
+    fn new(build: &'a dyn Fn() -> Option<WireGraph>) -> Self {
+        Self { build, graph: None }
+    }
+
+    fn get(&mut self) -> Option<&WireGraph> {
+        self.graph.get_or_insert_with(self.build).as_ref()
+    }
+}
+
+/// FSpec FR-322, FR-412: write `item`'s certificate identities in the
+/// document-held form, through [`held_identity::hold`]. The request echo's
+/// claim locus and a verdict's rejection locus name nodes the same way.
+fn hold_certificate_identities(
+    item: &mut Value,
+    graph: &mut LazyGraph<'_>,
+) -> Result<(), AnalyzeDocumentError> {
+    let model = item
+        .pointer("/certificate/identity/model")
+        .and_then(Value::as_str)
+        .map(str::to_owned);
+    for member in ["certificate", "counterpart", "request", "verdict"] {
+        let Some(certificate) = item.get_mut(member) else {
+            continue;
+        };
+        if !held_identity::needs_hold(certificate) {
+            continue;
+        }
+        let graph = graph.get().ok_or(AnalyzeDocumentError::Fault)?;
+        held_identity::hold(certificate, graph, model.as_deref())
+            .map_err(|_| AnalyzeDocumentError::Fault)?;
+    }
+    Ok(())
 }
 
 /// What the run knows of an item it resolved, beside its terminal record.
