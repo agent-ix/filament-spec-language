@@ -173,8 +173,7 @@ struct Clause<'a, ShowState> {
     show_state: ShowState,
     monitors: Vec<Monitor>,
     statements: Vec<String>,
-    accepts: Vec<(String, String, usize)>,
-    ordinal: usize,
+    accept: Option<(String, String, usize)>,
 }
 
 impl<ShowState: Fn(&Tf, bool) -> Lower<String>> Clause<'_, ShowState> {
@@ -202,24 +201,12 @@ impl<ShowState: Fn(&Tf, bool) -> Lower<String>> Clause<'_, ShowState> {
     }
 
     fn monitor(&mut self, window: &Window) -> Lower<()> {
-        let idx = self.ordinal;
-        self.ordinal += 1;
         let node = window.at;
         let key = &self.clause.binder;
         let current = (self.show_state)(&window.predicate, false)?;
         let next = (self.show_state)(&window.predicate, true)?;
-        let base = mangle("m_", &self.clause.name);
+        let name = mangle("m_", &self.clause.name);
         let accept = mangle("accept_", &self.clause.name);
-        let accept = if idx == 0 {
-            accept
-        } else {
-            format!("{accept}_{idx}")
-        };
-        let name = if idx == 0 {
-            base
-        } else {
-            format!("{base}_{idx}")
-        };
         let at = |time: &str, predicate: &str| {
             let within = window.inside(time);
             let expired = window.expired(time);
@@ -248,27 +235,20 @@ impl<ShowState: Fn(&Tf, bool) -> Lower<String>> Clause<'_, ShowState> {
                 format!("[]<>{accept}({key})"),
             ),
         };
-        self.accepts.push((accept, base, node));
+        self.accept = Some((accept, base, node));
         self.statements.push(statement);
         Ok(())
     }
 
     fn repeated_monitor(&mut self, window: &Window) -> Lower<()> {
-        let idx = self.ordinal;
-        self.ordinal += 1;
         let node = window.at;
         let key = &self.clause.binder;
         let current = (self.show_state)(&window.predicate, false)?;
         let next = (self.show_state)(&window.predicate, true)?;
         let base = mangle("m_", &self.clause.name);
-        let starts = format!("{base}_s{idx}");
-        let reject = format!("{base}_r{idx}");
+        let starts = format!("{base}_s0");
+        let reject = format!("{base}_r0");
         let accept = mangle("accept_", &self.clause.name);
-        let accept = if idx == 0 {
-            accept
-        } else {
-            format!("{accept}_{idx}")
-        };
         let origin = window.inside("0");
         let duration = "now' - s";
         let inside = window.inside(duration);
@@ -302,9 +282,8 @@ impl<ShowState: Fn(&Tf, bool) -> Lower<String>> Clause<'_, ShowState> {
             init: initial_reject,
             next: format!("{reject}[{key}] \\/ ({fail})"),
         });
-        self.accepts
-            .push((accept.clone(), format!("~{reject}[{key}]"), node));
         self.statements.push(format!("[]{accept}({key})"));
+        self.accept = Some((accept, format!("~{reject}[{key}]"), node));
         // Time divergence ensures every fixed start has a last occurrence.
         // For an upper-unbounded eventuality, each such start still needs
         // a witness that removes it from the open set.
@@ -329,8 +308,7 @@ pub(in crate::command::export::lower) fn tla_clause(
         show_state,
         monitors: Vec::new(),
         statements: Vec::new(),
-        accepts: Vec::new(),
-        ordinal: 0,
+        accept: None,
     };
     lowering.part(&clause.tf, false)?;
     let mut variables = Vec::new();
@@ -374,7 +352,7 @@ pub(in crate::command::export::lower) fn tla_clause(
         }
         spec
     };
-    for (name, body, node) in lowering.accepts {
+    if let Some((name, body, node)) = lowering.accept {
         out.push(define(
             node,
             Some(name.clone()),
@@ -382,7 +360,7 @@ pub(in crate::command::export::lower) fn tla_clause(
             obligation,
         ));
     }
-    let mut requirements = vec![format!("[](tick \\/ {ok}({key}))")];
+    let mut requirements = vec![format!("[]({ok}({key}))")];
     requirements.extend(lowering.statements);
     let theorem = mangle("Th_", &clause.name);
     out.push(define(

@@ -456,7 +456,9 @@ pub(super) fn read(
 /// Locate unsupported operators while their checked node IDs are still
 /// available. In particular, an unbounded root `until` has no nested
 /// future operator to supply the generic monitor refusal location.
+/// The dense TLA+ renderer emits one window monitor per clause.
 fn check_dense_tla_operators(graph: &Graph<'_>, uses: &[FormulaNodeUse<'_>]) -> Lower<()> {
+    let mut has_window = false;
     for usage in uses {
         let supported = matches!(
             usage.kind(),
@@ -482,6 +484,20 @@ fn check_dense_tla_operators(graph: &Graph<'_>, uses: &[FormulaNodeUse<'_>]) -> 
                 &graph.construct(at),
                 "an operator outside the dense TLA+ lowering",
             );
+        }
+        if matches!(
+            &usage.interval,
+            Some(CheckedOperationInterval::Timed { .. })
+        ) {
+            if has_window {
+                let at = at_node(graph, usage.node)?;
+                return defer_at(
+                    at,
+                    &graph.construct(at),
+                    "more than one timed window in a dense TLA+ clause",
+                );
+            }
+            has_window = true;
         }
     }
     Ok(())
