@@ -38,3 +38,12 @@ Gates run by this reviewer: `rustfmt --check --edition 2021` on both changed fil
 Not run, per the brief (no local cargo): `cargo clippy`, `cargo test`, `cargo deny`. The delegated focused run `cargo test --locked -p fsl-analyze --test it monitor_root::monitor_body_locations_follow_entry_rekeys_and_preserve_helper_origins -- --exact` is PENDING with draco:QSL:code. This review predicts it fails to compile because of FND-001. No runtime pass is claimed.
 
 Diff contains no CI or workflow, Cargo.toml, lockfile, budget, limit or pin change. No vendoring, copied fixture or ceremony was found. Out of scope and not counted: IR-1321 (quadratic body/protocol location validation) and existing repository-wide matrix diagnostics.
+
+## Dispositions
+
+Disposition round 1 was checked against fixed head 8297b136461fa2636fa84d57923721a4bbc4b8c9, fix commit 8297b13646. That commit touches only `fsl-analyze/tests/it/monitor_root.rs`; the producer is unchanged since 88a324b6. `rustfmt --check` on both changed files exited 0. No new findings.
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | monitor_root.rs:180-189 now asserts code `CheckedPackageRefusalCode::InvalidPackage` and cause `Some(CheckedPackageRefusalCause::InvalidValue)`, each with `"{refusal:?}"`. Both names exist at contract-model 7b76c8b (shared.rs and the lib.rs re-export). The path assertion also prints `{refusal:?}`. Compilation and runtime are PENDING the delegated exact test. |
+| FND-002 | fixed | monitor_root.rs:162 asserts `after.application == before.application` for every zipped body row. |

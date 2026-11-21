@@ -45,3 +45,11 @@ Stubs and coverage inflation: none in the diff, apart from FND-001's non-compili
 Semantic review: performed for this diff only, as the brief explicitly requested.
 
 Not run, per the brief: cargo build and test. The delegated focused test is PENDING; no runtime pass is claimed. Out of scope and not counted: IR-1321, and the existing repository-wide untagged rows and symbol-id-collision diagnostics.
+
+## Dispositions
+
+Disposition round 1 was checked against fixed head 8297b136461fa2636fa84d57923721a4bbc4b8c9, fix commit 8297b13646, which is test-only. No new gaps were found.
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | The FR-251-AC-9 / FSpec-FR-322-AC-309 binder now names only existing reader variants (code InvalidPackage, cause Some(InvalidValue)), so it no longer rests on a non-compiling assertion. Executable evidence is PENDING the delegated exact test. |
