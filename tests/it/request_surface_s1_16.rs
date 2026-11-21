@@ -3755,7 +3755,7 @@ fn package_remainder_window_shared_atoms_match_source_and_require_caller_bytes()
             caller["file"] = json!("caller.native");
             caller["document"] = json!("DifferentDocument");
             caller["formal_revision"] = json!(9);
-            let request = json!({"format":"native-run/1", "request": {"models":models,
+            let request = json!({"format":"native-run/1", "request": {"models":[],
             "package":{"directory":"handoff"}, "sources":[caller], "clause":clause}});
             package_window_adapter_controls(&package, directory.path(), &unit, label);
             let actual = write_request(directory.path(), &request);
