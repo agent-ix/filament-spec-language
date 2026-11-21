@@ -294,7 +294,7 @@ the item's outcome entry, using the closed serialized composition defined in
 [Producer replay context](../../docs/producer-replay-context.md): `request`,
 `source_bytes`, `documents`, `family`, `payload`, `envelope`, `subject`, and
 `certificate`. An external-process consumer SHALL be able to recover the
-complete original request descriptor and family inputs from this JSON without
+complete original request data and family inputs from this JSON without
 linking the producer's Rust types. The producer SHALL retain the admitted inputs
 needed to reconstruct that item's replay independently: the complete raw
 checked package and selected dependencies, source bytes, domain-package
@@ -306,7 +306,7 @@ not be inferred from a claim name or from `replay.reproduced`.
 
 The retained request members SHALL use FR-071's existing owned types and
 FSpec FR-336's mapping where that mapping applies. A reference SHALL be
-recoverable through the owning admission/provision handle; a bare identity
+recoverable through the serialized byte provision and native admission; a bare identity
 or native object reference SHALL NOT substitute for supplied bytes or
 claim canonical-reference authority. FSpec FR-336's canonical-reference
 conversion remains a separate dependency. A temporal model/protocol replay
@@ -325,10 +325,16 @@ limits, including every accounting-counter entry in `stage_limits`; retained
 producer accounting SHALL NOT override them. Missing reconstruction inputs,
 an admission refusal, a replay refusal or an internal fault SHALL remain
 explicit and SHALL NOT alter the producer's native terminal record,
-certificate status, category or exit code. A family with no complete existing
-request/payload encoding SHALL report reconstruction unavailable rather than
-emit a guessed descriptor or source variant. Canonical references remain
-conditional on their owning conversion.
+certificate status, category or exit code. FR-621 SHALL own the composition
+codec and native reader/builder for model-temporal, protocol-temporal and hybrid
+inputs, including original typed envelopes, protocol transition readback and
+hybrid counterexample/certificate admission. The common request member mappings
+and actual family source SHALL reconstruct the native request without extending
+FR-336's closed source mapping or supplying a fake witness. The native
+`native-replay-context/1` command input SHALL accept explicit consumer replay
+byte/accounting limits and dispatch to the existing native family entry under
+those effective limits. Canonical references remain conditional on their owning
+conversion.
 
 ## Acceptance Criteria
 
@@ -356,7 +362,7 @@ The Counter fixture is FR-620's.
 
 | FR-621-AC-16 | An external process reading the item's serialized replay_context can recover its complete original request, package/source/document bytes, initial states, universes, target, obligation and family witness envelope. Missing bytes, an inconsistent envelope, or an unavailable canonical reference refuses reconstruction before consumer accounting is applied and does not turn the original refutation into a proof. | Test |
 | FR-621-AC-17 | With different producer and consumer accounting bounds, the reader first authenticates the original request/envelope under the immutable proving context, then independent replay uses the consumer's effective bound for every accounting counter, including a counter present in the producer's stage limits. The original request and envelope remain unchanged and supplied-value ceilings remain distinct. | Test |
-| FR-621-AC-18 | Independent hybrid replay receives the producer's actual counterexample and the certificate its replay arm requires. Missing context or a refused/faulted recheck remains explicit; the producer's terminal record, refusal, certificate status, category and exit code are preserved. | Test |
+| FR-621-AC-18 | Through the native serialized-context command, independent hybrid replay admits the original package and dependency bytes, resolves the actual checked claim/model, restores the producer's typed counterexample and required certificate and runs native replay under explicit consumer limits. Protocol temporal input restores the actual ProtocolTransition payload and full subject instead of entering the model/task reader. A missing input, identity mismatch or refused/faulted recheck remains explicit; the producer's terminal record, refusal, certificate status, category and exit code are preserved. | Test |
 
 ## Dependencies
 

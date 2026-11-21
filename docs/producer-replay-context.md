@@ -18,21 +18,24 @@ Rust driver. This is the contract draft for QSL-2108, based on source head
 
 | Member | Form and ownership |
 | --- | --- |
-| `request` | The complete original FSpec FR-336 replay request descriptor, using FR-862's existing mapping. Its `package` fragment retains the original raw package JSON bytes. This object is immutable producer context. |
+| `request` | Closed FR-621 descriptor containing exactly `package`, `profile_selections`, `dependencies`, `replay_target`, `obligation_identity`, `backend`, `state_environment`, `accounting_limits`, `stage_limits`, `supplied_limits`, `object_environment`, `declared_domains`, `byte_provision`. Each uses the existing FR-336 member's mapping; original raw package JSON is preserved. Source data is supplied by `payload` and, where applicable, `envelope.source`. This composition is immutable original request data, not a standalone FR-336 request object. |
 | `source_bytes` | Array of closed `{bytes_path, bytes}` rows. `bytes_path` is exactly the token referenced by a `request.byte_provision` row. `bytes` is an array of JSON integers in 0–255, preserving every original byte. Tokens are unique and resolved only against this array, never as filesystem paths. |
-| `documents` | Array of original domain-package, snapshot, initial-state, universe and observation documents, each represented as a JSON integer byte array. Identity comes from native document admission. |
-| `family` | The actual existing family spelling of the item's resolved claim, already reported by item resolution; it selects that family's reader, not a new `ReplaySource` arm. |
+| `documents` | Array of closed `{kind, selection, bytes}` records. `kind` is `domain-package`, `snapshot`, `universe`, `observation`, or `dependency-package`; `selection` is the selected library identity for a dependency package, otherwise null. `bytes` is the complete original integer byte array. The record carries an owning admission role, not authority: document/package identity and selected-library agreement are checked natively. |
+| `family` | FR-621 dispatch discriminator: `model-temporal`, `protocol-temporal`, or `hybrid`, checked against the resolved native claim family. It selects an existing family replay entry, not a new `ReplaySource` arm or a replacement terminal-result kind. |
 | `payload` | Complete original counterexample in the existing family's wire form. When an envelope exists, its `family_payload` must equal this payload. |
 | `envelope` | For a witness-envelope family: the original `WitnessEnvelope::to_packet()` members in the mapping below. `null` only for an existing native family form that uses no witness envelope. |
 | `subject` | The selected family subject inputs in the mapping below; `null` only when that family requires none. |
 | `certificate` | The complete original family certificate form when required by the selected replay arm; otherwise `null`. Its prior check status stays in the existing item certificate record. |
 
 Raw package JSON must be embedded using retained raw JSON, rather than parsing
-and re-emitting a different byte representation. `source_bytes` gives FR-621 an
-in-document resolver for the existing `fsl_command::replay_request::read`
-`provide(path, pointer)` callback. `documents` is passed to that same reader's
-existing document provision argument. This defines ownership of bytes without
-adding members to the closed FR-336 request. The descriptor's complete admitted
+and re-emitting a different byte representation. The FR-621 native reader owns
+the composition codec. It reads the common member mappings and resolves every
+`byte_provision.bytes_path` only from `source_bytes`, with the same source-label
+semantics as the existing reader's provision callback. It supplies `documents`
+to native admission. It constructs `ReplayRequestWire` directly from these
+admitted members plus the actual family source and certificate; it never sends
+an invented source kind or fake transcript to the closed FR-336 reader.
+The descriptor's complete admitted
 dependency selections and their source provision must be present; an identity
 without its required recoverable input is insufficient.
 
@@ -67,8 +70,7 @@ semantics rather than claiming serde support already exists.
 | --- | --- |
 | Model temporal | Actual FR-364 payload produced by `temporal_wire`; read with `read_temporal_counterexample<ModelTransition>`. The transcript in `request.source` is retained as transcript, never substituted for the typed payload. Subject has exactly `initial`, `universes`, `expansion`, `timed`, `temporal_selections`. |
 | Protocol temporal | Actual payload from `protocol_temporal_wire`, including its complete protocol transition alphabet and subject. The FR-621 reader must restore `TemporalCounterexample<ProtocolTransition>`; today's generic temporal reader does not support this alphabet. Subject has exactly `model`, `protocol`, `over`, `roles`, `capacities`, `memory`, `max_store_buffer`, `max_messages`, `max_live_instances`, `temporal_selections`. |
-| Hybrid | Preserve existing `ReplaySource::Hybrid` and its native counterexample form, the actual checked claim inputs and required certificate. No temporal witness envelope is fabricated. FR-621 carries the actual hybrid counterexample in its existing family form and restores it into the existing typed source after reading the descriptor. |
-| Observed temporal, model graph, protocol analysis or value inputs | Use the existing native family/source form only when the resolved item actually has that form; do not coerce model/protocol temporal into observed-temporal or use the value-only plugin builder as a converter. An unimplemented family transport is explicitly unavailable. |
+| Hybrid | `payload` is exactly `HybridCounterexample::to_wire(model, locate)`: `{type: "hybrid-counterexample", kind, trace}` including formula or undefined-evaluation kind. `envelope` is null. The FR-621 reader restores `ReplaySource::Hybrid` through the existing hybrid counterexample reader over the admitted graph/model and restores the actual certificate. Its subject mapping is specified below. |
 
 Model subject members correspond to `ModelTraceSubject`: `initial` contains the
 selected document references in request order; `universes` contains each selected
@@ -103,17 +105,48 @@ Clock-selection rows retain the actual `TemporalClockSelection` members:
 `source`, `declaration_span`, `clock`, `definition`, `trace`; existing package
 source/span/clock/artifact mappings apply and explicit absent trace is `null`.
 
-`ReplayRequestWire` has certificate and document payloads beyond FR-862's closed
-descriptor, and the descriptor reader currently accepts only its existing source
-forms. FR-621's sibling `certificate`, `documents` and family envelope compose
-those missing inputs after descriptor decoding. The future family reader restores
-existing native source types; it does not extend FR-336's `source` union.
-If a native family has no current FR-336 source encoding, its complete descriptor
-cannot be offered until that authoritative encoding exists. In particular,
-today's FR-862 reader alone provides no hybrid descriptor codec. A fake witness
-or placeholder input is forbidden: report context unavailable for that family.
-The family payload/certificate composition is defined here; the missing
-descriptor codec remains an explicit implementation dependency for review.
+For hybrid, `subject` is a closed object with `claim`, `model`, `proof_bounds`,
+`budget`, `options`, `deadline_ms`. `claim` is the original checked occurrence/
+locus emitted with the provider item; `model` is that claim's admitted model
+identity, not an independently chosen model. `proof_bounds` retains the
+item's actual substituted bounds. `budget` retains the resolved original
+`SolverBudget`, `options` the original string map and `deadline_ms` the original
+optional deadline. These come from `HybridSolveRequest` and `HybridItem`, not
+from the returned verdict. The complete model's modes, variables, initial
+conditions, flows, guards, reset terms and checked claim are recovered from
+the admitted package graph; they are not copied into a second model schema.
+The actual trace includes its original start, jumps, optional before states,
+delta, loop and end. Its state times and enclosures use the existing hybrid
+rational/interval mapping. No initial state is guessed from the final state.
+`budget` is `{max_solver_time, max_solver_steps}` with the resolved original
+positive counts or explicit null when native ownership left a ceiling unset;
+the existing `SolverBudget` admitted count rules apply. `deadline_ms` is a
+canonical unsigned decimal string or null. These proving/solver settings do
+not set the consumer's replay meter.
+
+The hybrid reader must admit actual domain documents and recursively selected
+dependency package bytes, then resolve the original claim and its model. Use
+`HybridProcessPackageContext`'s genuine package evidence/admission ownership
+or the equivalent native package reader, never a trusted-name shortcut.
+`read_plugin_hybrid_counterexample_over` reads the existing counterexample
+entry shape `{counterexample: payload}` over that graph, checked claim and
+emitted wire graph, preserving undefined-evaluation loci.
+`hybrid_replay::admit` validates the trace. When required, `read_certificate`
+uses `Expect::Witness(&trace)`; then the native hybrid replay arm runs its static
+and exact checks with the consumer meter. The original certificate form and
+status are not replaced by the independent check's status.
+
+FR-621 owns new serialization and native reader/build work for both the complete
+packet and the protocol transition alphabet. The existing generic temporal
+reader's model/task restriction is not permission to coerce protocol transitions.
+The reader must implement the inverse of `protocol_temporal_wire`, reconstruct
+the admitted `ProtocolTraceSubject`, and dispatch through
+`replay_protocol_trace_with_temporal_selections`. Model dispatch uses the
+corresponding model replay entry and complete model subject. Hybrid dispatch
+constructs the existing `ReplaySource::Hybrid` directly and uses native replay.
+None requires changing FR-336's old source union. Other families are outside
+this bounded transport until separately specified; native terminal outcomes
+remain preserved for every item.
 
 ## Acquisition and member mapping
 
@@ -124,9 +157,9 @@ narrows them to a `CheckedPackage`. The consumer owns the independent request.
 | --- | --- | --- |
 | `package: ReplayPackage` | Acquisition's `EmittedUnit.package().bytes()` or package route's retained `package_bytes`; `ReplayPackage::read/admit` owns syntax/admission. | Required complete raw package; raw fragment in `request.package`. |
 | `profile_selections` | Actual admitted package/request selections; family settlement. | Required array, legitimately empty only when native run selected none. |
-| `dependencies` | Checked dependency selections, `CheckedUnit.library_source` and `shared_library_packages`; dependency acquisition. | Required per selected dependency, with recoverable actual library/source bytes; no identity-only authority. |
+| `dependencies` | Checked dependency selections, `CheckedUnit.library_source` and `shared_library_packages`; dependency acquisition. | Required per selected dependency, with actual recursive library package bytes in dependency-package document records and source bytes in source_bytes; no identity-only authority. |
 | `replay_target` | Resolved `ReplayShape.target`, occurrence/node and actual family selection; item resolver. | Existing native target and over/argument/occurrence bindings where applicable. |
-| `source` | Actual family counterexample and envelope; `ItemCounterexample` and family settlement. | Existing descriptor source plus complete family payload; never a guessed conversion. |
+| `source` | Actual family counterexample and envelope; `ItemCounterexample` and family settlement. | Envelope's actual source and complete typed payload, or actual hybrid payload; assembled directly into existing native source types. |
 | `certificate` | Actual `HybridReport.certificate.form`; hybrid settlement. | Sibling `certificate`, required for native arm that needs it; otherwise null. |
 | `obligation_identity` | Checked family obligation and subject identity at settlement. | Required immutable identity; never guessed ordinal or claim-name identity. |
 | `backend` | Originating terminal record / `ItemCounterexample.backend`. | Required original identity string; no execution authority. |
@@ -137,7 +170,7 @@ narrows them to a `CheckedPackage`. The consumer owns the independent request.
 | `object_environment` | Actual selected snapshot and `SubjectBinding.snapshots`. | Native option plus original snapshot bytes, when family uses one. Canonical conversion depends on QSL-2726. |
 | `declared_domains` | Actual substituted proving domains and resolved proof bounds. | Required native array; empty only when the actual family contract has none. |
 | `byte_provision` | Actual program/library `FormalSource` bytes through `SourceProvision.entries()`. | Every source label plus exact source bytes via `source_bytes` resolver. |
-| `documents` | `SubjectBinding.packages/snapshots` and original selected universe/observation documents. | Sibling byte arrays, with selected references/key sets in subject. |
+| `documents` | `SubjectBinding.packages/snapshots`, selected universe/observation documents and actual recursively selected emitted dependency packages. | Sibling typed document records retain original bytes; selected references/key sets remain in subject. |
 
 The plugin context at `proof_result/plugin_replay.rs:87` demonstrates retention
 of emitted packages, dependency locks and actual source bytes. Its `request`
@@ -149,6 +182,28 @@ at `analyze/clause_item.rs:581`; model and protocol subject types are at
 work, not evidence that these APIs already serialize the complete context.
 
 ## Authentication and independent accounting
+
+The native command reader/dispatcher accepts a closed input object
+`{format: "native-replay-context/1", context: C, effective_limits: L}` through
+the existing replay command entry. `C` is exactly the eight-member object above.
+`L` is closed `{replay_input_bytes, accounting_limits, stage_limits}`:
+`replay_input_bytes` is the explicit consumer replay byte ceiling,
+`accounting_limits` uses the native accounting-counter mapping, and
+`stage_limits` contains only consumer accounting-setting entries. Count values
+are canonical unsigned decimal strings. Unknown members, missing limits or
+non-accounting stage entries refuse before dispatch. No implicit
+`ReplayLimits::default()` substitutes for this explicit ceiling. Native byte
+admission and reconstruction allocations are bounded by consumer limits even
+while inspecting the original proving context.
+
+The reader reconstructs the original `ReplayRequestWire` members directly:
+the common thirteen descriptor members, source from the actual family's
+envelope/payload, certificate from the sibling member and documents/source
+provision from the admitted records. For model/protocol the actual envelope
+source is reconstructed separately from its typed family payload. Hybrid uses
+`ReplaySource::Hybrid`; it never creates a witness or a new FR-336 kind.
+The original request is then admitted through native package/request and family
+identity checks. No serialization trait is assumed on `ReplayRequestWire`.
 
 The reader first admits the complete original bytes and authenticates the
 original descriptor against the original envelope: checked package/obligation,
@@ -165,6 +220,13 @@ ceilings retain their separate meanings. The native family execution boundary
 must distinguish authenticated proving context from effective execution
 accounting; equality checks must not accidentally compare execution overlays
 against an immutable original `run_limits`.
+The new native dispatcher passes both the authenticated original and a separate
+execution budget to the selected family entry; its implementation must separate
+original-context identity/parity validation from the independent meter. It may
+not alter the envelope or bypass a mismatch by fabricating a second original.
+Output remains a `filament-outcome/1` replay outcome with the native result,
+refusal or fault and category/exit behavior; successful input parsing alone
+does not mean the counterexample was reproduced.
 
 `replay.reproduced` is history, never independent recheck evidence. Missing
 context, refusal, replay disagreement, unsupported transport and internal fault
