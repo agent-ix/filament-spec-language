@@ -1347,11 +1347,13 @@ fn an_admitted_complete_population_distinguishes_dangling_protocol_seeds() {
             graph.scope().types(),
             &observation,
             &[seed("parcel-present")],
+            None,
         );
         let missing = admit_protocol_reference_seeds(
             graph.scope().types(),
             &observation,
             &[seed("parcel-missing")],
+            None,
         );
         if complete {
             assert!(
@@ -1451,6 +1453,7 @@ fn selected_model_protocol_seeds_require_complete_present_targets() {
                 graph.scope().types(),
                 &observation,
                 &[(reference, node.clone(), Vec::new())],
+                None,
             );
             match (complete, object, result) {
                 (true, "parcel-present", Ok(())) => {}

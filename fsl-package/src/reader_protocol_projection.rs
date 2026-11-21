@@ -897,6 +897,8 @@ fn is_equality_identity(identity: &str) -> bool {
             | "filament.op.quantity.ne"
             | "filament.op.reference.eq"
             | "filament.op.reference.ne"
+            | "filament.op.clock_reference.eq"
+            | "filament.op.clock_reference.ne"
             | "filament.op.structural.eq"
             | "filament.op.structural.ne"
     )
@@ -2803,6 +2805,35 @@ impl<'wire> ReaderBuilder<'_, 'wire> {
                     return Err(fault("reader-pre-read-has-one-operand").into());
                 };
                 Ok((NodeKind::Pre(*operand), children))
+            }
+            Some("filament.op.clock_reference.ref") => {
+                let [CheckedTerm::Reference { target: place }, _, ..] = arguments else {
+                    return Err(fault("reader-clock-reference-has-place-and-owner").into());
+                };
+                if self.index.admitted.node_kind(place)
+                    != Some(filament_contract_model::CheckedNodeKind::TimedModel(
+                        filament_contract_model::TimedModelForm::Place,
+                    ))
+                {
+                    return Err(fault("reader-clock-reference-target-is-admitted-place").into());
+                }
+                // The first argument is the admitted declaration, not an
+                // evaluated value. Retain its actual run key for the shared
+                // authority lookup; owner and selectors keep operand order.
+                let place = self.index.key(place)?;
+                let children =
+                    self.project_arguments(id, Some(&arguments[1..]), context, locals)?;
+                let Some((&reference, slots)) = children.split_first() else {
+                    return Err(fault("reader-clock-reference-has-owner").into());
+                };
+                Ok((
+                    NodeKind::PlaceReference {
+                        reference,
+                        place,
+                        slots: slots.to_vec(),
+                    },
+                    children,
+                ))
             }
             Some("filament.op.option.present") => {
                 let children = self.project_arguments(id, Some(arguments), context, locals)?;

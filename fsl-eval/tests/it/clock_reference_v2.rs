@@ -102,6 +102,7 @@ fn fixture(remove_x: bool) -> Checked {
            capture used: Integer = count(c in C::calls where ref(c.{selected}) = call.r);\n\
            capture busy: Boolean = only(c in C::calls where c.n = 2: ref(c.{selected})) = call.r;\n\
            capture retained_y: Reference<Clock> = ref(call.y);\n\
+           capture echoed: Reference<Clock> = chosen;\n\
            role Observer on C::Call;\n\
            run sequence Main {{ check Ready using v {{ true }}; }}\n\
            finish End as (outcome: Boolean) {{ true }};\n\
@@ -336,6 +337,183 @@ fn assert_producer_clause(
         assert_value(
             &completed(evaluation.evaluation),
             &Value::Boolean(name != "c1" || first_matches),
+        );
+    }
+}
+
+fn assert_supplied_clock_data(
+    evaluator: &impl CheckedPackageEvaluation,
+    observation: &ObservationAdmission<fsl_package::AdmittedProtocolObservation<'_>>,
+    slot: &ProtocolSlot,
+    binder: &filament_exact::NodeKey,
+    reference: &ObjectReference,
+    complete: bool,
+) {
+    use filament_eval::{CallAdmissionFailure, CallAdmissionLocus, CallFailure};
+    let ObservationAdmission::Admitted(admitted) = observation else {
+        panic!("the current observation admits before binder completeness: {observation:?}")
+    };
+    let population = admitted
+        .environment()
+        .population_node(&node(CLOCKS, "calls"))
+        .expect("actual supplied owner population")
+        .clone();
+    let supply = |reference: ObjectReference| ProtocolSupply {
+        binders: vec![(
+            binder.clone(),
+            ProtocolSuppliedValue {
+                value: SuppliedValue::Value(Value::Reference(reference)),
+                references: vec![ProtocolReferenceOccurrence {
+                    path: Vec::new(),
+                    population: population.clone(),
+                }],
+            },
+        )],
+        observation: Some(observation),
+    };
+    let forged = ObjectReference::new(
+        reference.universe().clone(),
+        reference.object_type().clone(),
+        filament_exact::ObjectId::new(expected_place("c1", "undeclared")).expect("negative key"),
+    );
+    if complete {
+        let ProtocolSlotEvaluation::Evaluated(evaluation, _) = evaluator
+            .evaluate_protocol_slot(slot, &supply(reference.clone()), &mut Meter::new(LIMITS))
+            .expect("Clock DATA supply")
+        else {
+            panic!("supplied Clock DATA is available");
+        };
+        assert_value(&completed(evaluation), &Value::Reference(reference.clone()));
+    }
+    let failure = evaluator
+        .evaluate_protocol_slot(slot, &supply(forged), &mut Meter::new(LIMITS))
+        .expect_err("an undeclared Clock target is never accepted");
+    let CallFailure::Admission(failure) = failure else {
+        panic!("typed admission refusal");
+    };
+    let record = match (*failure, complete) {
+        (CallAdmissionFailure::Refused(record), true) => {
+            assert_eq!(
+                record.record.catalog,
+                CatalogCode::new("dangling_reference", "absent-target-in-complete-population")
+            );
+            record
+        }
+        (CallAdmissionFailure::Incomplete(record), false) => {
+            assert_eq!(
+                record.record.catalog,
+                CatalogCode::new("incomplete_population", "incomplete-scope")
+            );
+            record
+        }
+        (other, _) => {
+            panic!("owner population completeness precedes Clock target presence: {other:?}")
+        }
+    };
+    assert!(record.record.path.is_empty());
+    if complete {
+        assert_eq!(record.locus, CallAdmissionLocus::Binder(binder.clone()));
+    } else {
+        assert_eq!(record.locus, CallAdmissionLocus::Population(population));
+    }
+}
+
+/// Clock DATA retains explicit P without being tested as a Call object;
+/// complete-population admission still precedes declared-place membership.
+#[trace("FR-390-AC-23", "TC-464")]
+#[test]
+fn supplied_clock_data_validates_owner_population_on_source_and_bare() {
+    let checked = fixture(false);
+    let package = CheckedPackage::link(checked.graph);
+    let snapshots = snapshot(&expected_place("c1", "x"), &expected_place("c2", "x"), true);
+    let Value::Reference(reference) = capture(&package, &checked.packages, &snapshots, 0, "c1")
+    else {
+        panic!("actual seeded producer");
+    };
+    let read = fsl_package::read_evaluation_package(
+        &package,
+        fsl_semantics::library::LibraryName::new(package.graph().package_name()).expect("name"),
+        &checked.packages,
+        V2ReadLimits::fixture(),
+        EmitLimits::fixture(),
+    )
+    .expect("actual package read");
+    let rows = read
+        .emission()
+        .identity_rows(
+            read.admitted(),
+            &mut V2ReadLimits::fixture().native_join_budget(),
+        )
+        .expect("rows");
+    let equality = read
+        .emission()
+        .equality_witness(
+            read.admitted(),
+            &mut V2ReadLimits::fixture().native_join_budget(),
+        )
+        .expect("equality");
+    let bare = BarePackage::new(read.admitted())
+        .with_supply(
+            BareSupply {
+                identities: &rows,
+                equality: Some(&equality),
+            },
+            &mut V2ReadLimits::fixture().native_join_budget(),
+        )
+        .expect("Bare");
+    let keys = package.graph().protocol_node_keys("Places").expect("keys");
+    let binder = &keys
+        .binders
+        .iter()
+        .find(|binder| binder.name == "chosen")
+        .expect("Clock DATA binder")
+        .node;
+    let slot = ProtocolSlot {
+        node: keys.clause.clone().expect("protocol"),
+        member: "captures".to_owned(),
+        index: Some(4),
+    };
+    let model = fsl_semantics::model::domain_package::DomainPackageRef {
+        identity: CLOCKS.to_owned(),
+    };
+    for complete in [true, false] {
+        let mut document: Json =
+            serde_json::from_slice(snapshots.get(&identity()).expect("snapshot")).expect("JSON");
+        document["populations"][0]["complete"] = json!(complete);
+        let snapshots =
+            BTreeMap::from([(identity(), serde_json::to_vec(&document).expect("snapshot"))]);
+        let view = package.evaluation_view();
+        let source_observation = view.admit_protocol_observation(
+            &model,
+            &checked.packages,
+            ModelNormalizationLimits::default(),
+            &snapshots,
+            &identity(),
+            ObservationLimits::default(),
+        );
+        assert_supplied_clock_data(
+            &package,
+            &source_observation,
+            &slot,
+            binder,
+            &reference,
+            complete,
+        );
+        let bare_observation = bare.admit_protocol_observation(
+            &model,
+            &checked.packages,
+            ModelNormalizationLimits::default(),
+            &snapshots,
+            &identity(),
+            ObservationLimits::default(),
+        );
+        assert_supplied_clock_data(
+            &bare,
+            &bare_observation,
+            &slot,
+            binder,
+            &reference,
+            complete,
         );
     }
 }

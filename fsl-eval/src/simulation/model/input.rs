@@ -1241,8 +1241,12 @@ pub trait ModelEvaluator: sealed::Sealed + Sync {
     ) -> Result<Evaluation, InternalFault>;
 
     /// FR-940: evaluate a package protocol slot from its admitted node
-    /// descriptor and supplied package binders. This is separate from the
-    /// source `CheckedBody` path so package execution never synthesizes one.
+    /// descriptor and internally generated package binders. This trusted
+    /// model-engine entry retains unavailable population origins as absent;
+    /// it does not mint authority for them. External FR-390 supplies use
+    /// `CheckedPackageEvaluation` and its complete-provenance admission.
+    /// This is separate from the source `CheckedBody` path so package
+    /// execution never synthesizes one.
     fn evaluate_package_protocol_slot(
         &self,
         _slot: &ProtocolSlot,

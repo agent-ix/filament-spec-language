@@ -147,6 +147,15 @@ impl SlotHost for BareHost<'_, '_> {
         self.world.types()
     }
 
+    fn clock_declarations(
+        &self,
+    ) -> Result<
+        fsl_semantics::model::clock_reference::normalization::ClockDeclarationTable,
+        CallFailure,
+    > {
+        clock_declarations(self.package)
+    }
+
     fn binder_level(&self, key: &NodeKey) -> usize {
         self.levels.get(key).copied().unwrap_or(usize::MAX)
     }

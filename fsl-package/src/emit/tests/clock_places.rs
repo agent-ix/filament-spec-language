@@ -286,6 +286,8 @@ fn source_and_bare_clock_templates_preserve_optional_indexed_tuple_and_case_path
          time Order dense unit ms;\n";
     let source_packages = fsl_semantics::model::intake::package_input(std::iter::empty::<&[u8]>())
         .expect("actual source-only input");
+    // QSL-2768 separately owns convergence of two time-source declarations.
+    // Each route/path oracle here uses its own complete admitted package.
     let cases = [
         (clocked_unit(""), packages),
         (source_only.to_owned(), source_packages),
@@ -315,13 +317,13 @@ fn source_and_bare_clock_templates_preserve_optional_indexed_tuple_and_case_path
 
         let source_table = graph.clock_declaration_table().clone();
         let emission = emit_checked(&CheckedPackage::link(graph)).expect("source emits");
-        let Read::Verified {
-            admitted,
-            timed_models,
-            ..
-        } = super::read_back(&emission)
-        else {
-            panic!("actual emitted package admits");
+        let (admitted, timed_models) = match super::read_back(&emission) {
+            Read::Verified {
+                admitted,
+                timed_models,
+                ..
+            } => (admitted, timed_models),
+            refusal => panic!("actual emitted package admits: {refusal:?}"),
         };
         let declarations = crate::BarePackage::new(&admitted)
             .clock_declarations()

@@ -562,6 +562,19 @@ impl SourceDeclarations {
         Ok(())
     }
 
+    /// Resolve an actual catalog key only through retained declaration
+    /// provenance. An unknown key is not promoted to a Model descriptor.
+    pub fn catalog_scope(&self, declaration: &DeclarationKey) -> Option<&DeclarationScope> {
+        self.declarations.get(declaration).or_else(|| {
+            self.model_scopes.values().find(|scope| {
+                matches!(scope,
+                    DeclarationScope::Model { identity, declaration: original }
+                        if identity == &declaration.package && original == &declaration.node
+                )
+            })
+        })
+    }
+
     /// Choose the original scope from actual declaration provenance, never
     /// from the source or bare route through which the declaration is read.
     pub fn scope(&self, declaration: &DeclarationKey) -> Result<DeclarationScope, InternalFault> {

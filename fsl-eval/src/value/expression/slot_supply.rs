@@ -16,6 +16,15 @@ impl SlotHost for CheckedHost<'_, '_, '_> {
         self.package.graph().scope().types()
     }
 
+    fn clock_declarations(
+        &self,
+    ) -> Result<
+        fsl_semantics::model::clock_reference::normalization::ClockDeclarationTable,
+        CallFailure,
+    > {
+        Ok(self.package.graph().clock_declaration_table().clone())
+    }
+
     fn binder_level(&self, key: &NodeKey) -> usize {
         let graph = self.package.graph();
         graph
@@ -60,6 +69,13 @@ pub(super) struct SourceView<'s> {
 /// the checked package, or a package read from its bytes alone (FR-533).
 pub(super) trait SlotHost {
     fn types(&self) -> &filament_semantic_value::declaration::TypeEnvironment;
+    /// The checked/admitted table used to authenticate Clock DATA inputs.
+    fn clock_declarations(
+        &self,
+    ) -> Result<
+        fsl_semantics::model::clock_reference::normalization::ClockDeclarationTable,
+        CallFailure,
+    >;
     /// The level of the protocol binder `key`, `usize::MAX` for a node that
     /// is none.
     fn binder_level(&self, key: &NodeKey) -> usize;
@@ -297,6 +313,14 @@ fn admit_slot_supply_with(
                             CallAdmissionLocus::Binder(key.clone()),
                         ));
                     };
+                    if fsl_semantics::model::clock_reference::is_clock_type(reference.object_type())
+                    {
+                        // Clock references are DATA. Their supplied P selects
+                        // an owner context, not a population of Clock objects.
+                        // The shared seed admission below validates the full
+                        // canonical identity and the actual owner membership.
+                        continue;
+                    }
                     if declaration.package != reference.object_type().original().package() {
                         return Err(protocol_slot::resolve::refused(
                             "invalid_model_binding",
@@ -400,11 +424,23 @@ fn admit_slot_supply_with(
                         }
                         seeds.push((reference, metadata.population.clone(), path));
                     }
+                    let clock_declarations = seeds
+                        .iter()
+                        .any(|(reference, _, _)| {
+                            fsl_semantics::model::clock_reference::is_clock_type(
+                                reference.object_type(),
+                            )
+                        })
+                        .then(|| host.clock_declarations())
+                        .transpose()?;
                     if let Err(failure) =
                         fsl_semantics::model::observation::admit_protocol_reference_seeds(
                             host.types(),
                             observation.observation(),
                             &seeds,
+                            clock_declarations
+                                .as_ref()
+                                .map(|table| (table, fsl_foundation::IdentityLimits::default())),
                         )
                     {
                         return Err(protocol_reference_failure(observation, key, failure));
