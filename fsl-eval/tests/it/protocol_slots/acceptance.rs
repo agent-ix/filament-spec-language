@@ -5320,8 +5320,8 @@ fn assert_guard_true_on_both_routes(source: &str, expected: &str) {
 fn reader_backed_activation_guard_keeps_a_bounded_rational_literal_fraction() {
     let source = guard_source(
         "",
-        "",
-        "opened.ready and rational(0, 1) < rational(1, 2) and rational(1, 2) < rational(1, 1)",
+        "function between using v(x: Rational[0, 20; 1, 2], lo: Rational[0, 20; 1, 2], hi: Rational[0, 20; 1, 2]): Boolean pure { lo < x and x < hi }",
+        "opened.ready and between(rational(1, 2), rational(0, 1), rational(1, 1))",
     );
     assert_guard_true_on_both_routes(&source, "0 < rational(1, 2) < 1");
 }

@@ -4324,17 +4324,33 @@ fn literal_value(
     })
 }
 
-/// The `Rational[..]` type of a literal whose type node is a bounded
-/// `rational_range`, which the exact-type projection leaves unsupported.
+/// The `Rational[..]` type of a literal declared with a bounded
+/// `rational_range`. The exact-type projection of that declaration fails at its
+/// semantic type, the bare `scalar_type/rational`; the bounds are read from
+/// the declaration itself, never from that scalar.
 fn bounded_rational_literal_type(
     error: &filament_contract_model::ExactTypeProjectionError,
     type_id: &CheckedNodeId,
     index: &WireIndex<'_>,
 ) -> Option<ValueType> {
-    (error.code == filament_contract_model::ExactTypeProjectionErrorCode::UnsupportedExactType
-        && error.form.as_deref() == Some("bounded_domain/rational_range"))
-    .then(|| rational_range_type(index.node(type_id)?).ok())
-    .flatten()
+    if error.code != filament_contract_model::ExactTypeProjectionErrorCode::UnsupportedExactType
+        || error.form.as_deref() != Some("scalar_type/rational")
+    {
+        return None;
+    }
+    let range = index.node(type_id)?;
+    if range.node_tag.as_ref() != "bounded_domain"
+        || range.semantic_form.as_ref() != "rational_range"
+        || error.at.as_deref() != Some(&range.semantic_type)
+        || !has_form(
+            index.node(&range.semantic_type)?,
+            WireTag::ScalarType,
+            WireForm::Rational,
+        )
+    {
+        return None;
+    }
+    rational_range_type(range).ok()
 }
 
 fn project_literal_type(type_id: &CheckedNodeId, index: &WireIndex<'_>) -> Option<ValueType> {
