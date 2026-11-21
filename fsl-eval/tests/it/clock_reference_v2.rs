@@ -102,6 +102,7 @@ fn fixture(remove_x: bool) -> Checked {
            capture chosen: Reference<Clock> = ref(call.{selected});\n\
            capture used: Integer = count(c in C::calls where ref(c.{selected}) = call.r);\n\
            capture busy: Boolean = only(c in C::calls where c.n = 2: ref(c.{selected})) = call.r;\n\
+           capture retained_y: Reference<Clock> = ref(call.y);\n\
            role Observer on C::Call;\n\
            run sequence Main {{ check Ready using v {{ true }}; }}\n\
            finish End as (outcome: Boolean) {{ true }};\n\
@@ -534,6 +535,9 @@ fn removing_x_never_rebinds_its_actual_reference_to_y_at_the_reused_ordinal() {
     let Value::Reference(old_x) = capture(&package, &checked.packages, &seed, 0, "c1") else {
         panic!("actual old x reference")
     };
+    let Value::Reference(old_y) = capture(&package, &checked.packages, &seed, 3, "c1") else {
+        panic!("actual retained y reference before removing x")
+    };
     let old_ordinal = package
         .graph()
         .timed_model("C")
@@ -607,6 +611,10 @@ fn removing_x_never_rebinds_its_actual_reference_to_y_at_the_reused_ordinal() {
     assert_ne!(
         old_x, y,
         "full actual references cannot alias at a reused ordinal"
+    );
+    assert_eq!(
+        old_y, y,
+        "the surviving original declaration retains its full identity"
     );
     bare.admit_call_snapshot(
         &changed.packages,
