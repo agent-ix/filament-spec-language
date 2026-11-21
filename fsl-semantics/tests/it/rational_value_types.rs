@@ -427,6 +427,32 @@ fn a_rational_product_refuses_when_its_derived_range_does_not_fit() {
     );
 }
 
+/// Dividing a positive bounded rational by one preserves its normalized
+/// numerator and denominator bounds; neither upper bound can be narrowed.
+#[trace("FSpec-FR-146-AC-9", "FSpec-FR-149-AC-1")]
+#[test]
+fn positive_rational_division_by_one_keeps_its_derived_bounds() {
+    let declarations = "profile law = \"filament.value.integer-division.euclidean/v1\";\n\
+        type R = Rational[1, 9; 1, 9];\n\
+        function divide using v(a: R): R pure { a / rational(1, 1) }";
+    assert_eq!(source_refusals(declarations), Ok(()));
+
+    for result in ["Rational[1, 8; 1, 9]", "Rational[1, 9; 1, 8]"] {
+        let declarations = format!(
+            "profile law = \"filament.value.integer-division.euclidean/v1\";\n\
+             function divide using v(a: Rational[1, 9; 1, 9]): {result} pure {{ a / rational(1, 1) }}"
+        );
+        assert_eq!(
+            source_refusals(&declarations),
+            Err(vec![(
+                Code::UndefinedExpression,
+                Some("unproved-range".to_owned()),
+            )]),
+            "the normalized quotient does not fit {result}"
+        );
+    }
+}
+
 /// FR-505-AC-9 (TC-1300 row 20): a source `Rational[..]` whose numerator
 /// bounds are inverted or whose denominator may be zero, as a function
 /// parameter type and as the carrier of `Quantity<m, ..>`, refuses
