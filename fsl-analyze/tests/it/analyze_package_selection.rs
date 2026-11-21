@@ -55,6 +55,13 @@ fn a_package_analyze_refuses_request_clocks_before_file_intake() {
     assert_eq!(diagnostic["code"], "invalid_request");
     assert_eq!(run.document()["last_stage"], Value::Null);
     assert!(diagnostic.to_string().contains("clocks"), "{diagnostic}");
+    let error = fsl_command::command::analyze(
+        &ws.path("clocks.json"),
+        &crate::analyze_cli_support::Fr290,
+        &filament_exact::Cancel::new(),
+    )
+    .expect_err("clock restatement refuses at request intake");
+    assert_eq!(error.value().expect("request refusal")["stage"], "request");
 
     let mut empty = unavailable;
     empty["clocks"] = json!({});
@@ -62,13 +69,13 @@ fn a_package_analyze_refuses_request_clocks_before_file_intake() {
     assert_eq!(first_diagnostic(&run)["code"], "invalid_package");
     assert!(first_diagnostic(&run).to_string().contains("missing-file"));
 
-    let body = bounded();
+    let body = format!("profile ep = \"filament.temporal.event-position.false-extension/v1\";\nrecord ClockReading {{ ready: Boolean; }}\ntemporal Clocked using ep over (r: ClockReading) clock \"events\" on origin {{ always[0,1] holds(r.ready) }}\n{}", bounded());
     let source = counter_request(&ws, &body, json!([{"claim": "Bounded"}]));
     let mut source: Value =
         serde_json::from_slice(&std::fs::read(&source).expect("source request"))
             .expect("request JSON");
     source["request"]["clocks"] =
-        json!({"Bounded": {"kind": "event_position", "sequence_authority": "model-steps"}});
+        json!({"Clocked": {"kind": "event_position", "sequence_authority": "events"}});
     let source = analyze(&ws.write("source-clocks.json", source.to_string().as_bytes()));
     assert_eq!(source.exit, 0, "{}", source.document());
 }

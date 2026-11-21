@@ -598,8 +598,13 @@ mod package_intake_tests {
         };
         assert_eq!(limit.configured_bound(), 0);
         assert_eq!(limit.actual(), 1);
-        let node = fsl_package::checked_node_id_of(
-            &filament_exact::NodeKey::new("test", vec![], 0).expect("node"),
+        let node = fsl_semantics::check::wire_id::structural_id(
+            &filament_exact::NodeKey::new(
+                "test",
+                vec![filament_exact::PathSegment::Text("C".to_owned())],
+                0,
+            )
+            .expect("node"),
         );
         for (refusal, bound) in [
             (
@@ -617,6 +622,7 @@ mod package_intake_tests {
             };
             let cause = package_clause_refusal(node.clone(), refusal);
             assert_eq!(cause.code().as_str(), "stage_limit_exceeded");
+            assert_eq!(cause.category().exit_code(), 22);
             let RunCause::AnalyzePackage { message, cause, .. } = cause else {
                 panic!("typed limit");
             };

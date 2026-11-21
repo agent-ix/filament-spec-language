@@ -1115,7 +1115,7 @@ impl<'r, 'a: 'r> ClaimReads<'r, 'a> {
         )
         .map_err(|refusal| match refusal {
             ClauseItemRefusal::Build(refusal) => PackageRunError::ClauseBuild {
-                node: fsl_package::checked_node_id_of(claim.node()),
+                node: fsl_semantics::check::wire_id::structural_id(claim.node()),
                 refusal,
             },
             ClauseItemRefusal::Pending { fact, node } => {
