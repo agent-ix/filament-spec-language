@@ -116,6 +116,18 @@ pub struct ProbabilisticCounterexample {
     pub subsystem: Option<Box<ProbabilitySubsystemCertificate>>,
 }
 
+impl ReproducedProbabilityWitness {
+    /// The reproduction of a path-set refutation whose mass the checker
+    /// recomputed itself.
+    pub(super) fn reproduced(evidence: ProbabilisticCounterexample, mass: Rational) -> Self {
+        Self {
+            evidence,
+            mass,
+            undefined: None,
+        }
+    }
+}
+
 /// A refutation reproduced by the qualified core. No caller can construct it.
 ///
 /// ```compile_fail,E0451
@@ -276,6 +288,9 @@ fn replay_probabilistic_witness_impl(
     )?;
     if witness.subsystem.is_some() {
         return measure::replay_subsystem(system, claim, witness, limits, cancel);
+    }
+    if super::document::is_timed_deadline_claim(claim) {
+        return super::document::replay_timed_witness(system, claim, witness, limits, cancel);
     }
     if claim.bounded_measure() {
         return measure::replay(system, claim, witness, limits, cancel);

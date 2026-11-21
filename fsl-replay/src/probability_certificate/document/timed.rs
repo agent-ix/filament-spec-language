@@ -2998,3 +2998,220 @@ fn certificate_scale(
     base.checked_mul(subdivisions)
         .ok_or(ProbabilityDocumentError::Unsupported)
 }
+
+/// FR-923: replay a path-set refutation of a timed deadline claim.
+///
+/// The checker enumerates the digital or region product itself, exactly as it
+/// does to check a certificate, and reads the witness as paths of product-state
+/// keys from the initial state to a decided state. The witness's own action
+/// spellings and post-states are not trusted: a step is valid when the key it
+/// reaches is an outcome of one choice of the state it leaves, and one state
+/// never takes two different choices (a memoryless scheduler). The mass of the
+/// paths is then a lower bound of the probability the claim's bound forbids,
+/// under a scheduler that no state of the witness makes time-convergent.
+///
+/// # Errors
+/// [`ProbabilityWitnessError`] when the claim is not a timed deadline claim,
+/// the product cannot be enumerated within the limits, or the witness names a
+/// state, step or choice the checker's product does not have.
+pub(in crate::probability_certificate) fn replay_timed_witness(
+    system: &ModelSystem<'_>,
+    claim: &CheckedProbabilisticClaim,
+    witness: &super::super::ProbabilisticCounterexample,
+    limits: &crate::ExactProbLimits,
+    cancel: &Cancel,
+) -> Result<super::super::ProbabilityWitnessReplay, super::super::ProbabilityWitnessError> {
+    use super::super::{ProbabilityWitnessError as Error, ProbabilityWitnessReplay as Replay};
+    let unsupported = || Error::Graph(ExactProbabilityGraphError::UnsupportedClaimForm);
+    let from_document = |error: ProbabilityDocumentError| match error {
+        ProbabilityDocumentError::Limit { limit, bound, .. } => Error::Limit {
+            limit: limit.model_limit(),
+            value: bound,
+        },
+        ProbabilityDocumentError::Cancelled(cause) => {
+            Error::Graph(ExactProbabilityGraphError::Cancelled(cause))
+        }
+        ProbabilityDocumentError::Graph(error) => Error::Graph(error),
+        _ => unsupported(),
+    };
+    let Some((bound, predicate)) = deadline_event(claim) else {
+        return Err(unsupported());
+    };
+    if !claim.fairness.is_empty() {
+        return Err(unsupported());
+    }
+    let timed = TimedSystem::new(system, &claim.subject.alias).map_err(|_| unsupported())?;
+    let route = if region_route(&timed, claim) {
+        TimedProbabilityRoute::Region
+    } else {
+        TimedProbabilityRoute::Digital
+    };
+    let scale = certificate_scale(system, &timed, claim, route).map_err(from_document)?;
+    let binding = claim_binding(system, claim)
+        .map_err(|_| unsupported())?
+        .map(|binding| binding.reference);
+    let document_limits = ProbabilityDocumentLimits::for_exact(limits, system.meter_limits());
+    let mut meter = filament_exact::Meter::new(document_limits.accounting).with_cancel(cancel.clone());
+    let mut storage = 0;
+    let graph = match route {
+        TimedProbabilityRoute::Digital => enumerate_digital_deadline(
+            system,
+            &timed,
+            claim,
+            binding.as_ref(),
+            predicate,
+            scale,
+            document_limits,
+            cancel,
+            &mut meter,
+            &mut storage,
+        ),
+        TimedProbabilityRoute::Region => enumerate_region_deadline(
+            system,
+            &timed,
+            claim,
+            binding.as_ref(),
+            predicate,
+            scale,
+            scale,
+            document_limits,
+            cancel,
+            &mut meter,
+            &mut storage,
+        ),
+    }
+    .map_err(from_document)?;
+    // A workload resolves a choice by its weights, not by a scheduler: only a
+    // product that leaves it no choice is a single chain the paths can lower
+    // bound.
+    if matches!(
+        claim.scheduler,
+        fsl_semantics::check::ProbScheduler::Workload(_)
+    ) && graph.states.values().any(|state| state.choices.len() > 1)
+    {
+        return Err(unsupported());
+    }
+    if witness.initial_key != graph.initial {
+        return Err(Error::Refused);
+    }
+    let failing = matches!(bound, Bound::AtLeast(_));
+    let mut used: BTreeMap<ProbabilityProductKey, BTreeSet<ProbabilityProductKey>> =
+        BTreeMap::new();
+    let mut sequences = BTreeSet::new();
+    for path in &witness.paths {
+        poll(cancel).map_err(from_document)?;
+        let mut at = graph.initial.clone();
+        let mut sequence = Vec::with_capacity(path.steps.len());
+        for step in &path.steps {
+            let state = graph.states.get(&at).ok_or(Error::Refused)?;
+            if state.terminal.is_some() {
+                return Err(Error::Refused);
+            }
+            used.entry(at.clone())
+                .or_default()
+                .insert(step.post_key.clone());
+            sequence.push(step.post_key.clone());
+            at = step.post_key.clone();
+        }
+        let end = graph.states.get(&at).ok_or(Error::Refused)?;
+        if sequence.is_empty() || end.terminal != Some(!failing) {
+            return Ok(Replay::Parity);
+        }
+        if !sequences.insert(sequence) {
+            return Ok(Replay::Parity);
+        }
+    }
+    // One choice per state: the first the checker lists that has every
+    // outcome the witness uses.
+    let mut chosen: BTreeMap<ProbabilityProductKey, usize> = BTreeMap::new();
+    for (key, targets) in &used {
+        let state = graph.states.get(key).ok_or(Error::Refused)?;
+        let index = state
+            .choices
+            .iter()
+            .position(|choice| {
+                targets.iter().all(|target| {
+                    choice
+                        .iter()
+                        .any(|edge| &edge.target == target && edge.probability > zero())
+                })
+            })
+            .ok_or(Error::Refused)?;
+        chosen.insert(key.clone(), index);
+    }
+    // A closed time-convergent component all of whose members stay in it
+    // under the witness is a scheduler that never lets time diverge; its
+    // mass is not the claim's.
+    let components = super::super::nonprogressive_end_components_by_axis(&graph, cancel, None)
+        .map_err(Error::Graph)?;
+    for (axis, members) in &components {
+        let set = members.iter().collect::<BTreeSet<_>>();
+        let stays = members.iter().all(|key| {
+            let (Some(index), Some(state)) = (chosen.get(key), graph.states.get(key)) else {
+                return false;
+            };
+            state.choices.get(*index).is_some_and(|choice| {
+                choice
+                    .iter()
+                    .filter(|edge| edge.probability > zero())
+                    .all(|edge| {
+                        set.contains(&edge.target)
+                            && crate::timed_edge_axes(key, &edge.target).contains(axis)
+                    })
+            })
+        });
+        if stays {
+            return Err(Error::Refused);
+        }
+    }
+    let limit_bits = |value: &Rational| {
+        if value.max_part_bits() > limits.max_rational_bits {
+            Err(Error::Limit {
+                limit: crate::ModelCheckLimit::ExactProbMaxRationalBits,
+                value: limits.max_rational_bits,
+            })
+        } else {
+            Ok(())
+        }
+    };
+    let mut mass = zero();
+    for path in &witness.paths {
+        poll(cancel).map_err(from_document)?;
+        let mut at = &graph.initial;
+        let mut probability = one();
+        for step in &path.steps {
+            let state = graph.states.get(at).ok_or(Error::Refused)?;
+            let index = *chosen.get(at).ok_or(Error::Refused)?;
+            let choice = state.choices.get(index).ok_or(Error::Refused)?;
+            let step_mass = choice
+                .iter()
+                .filter(|edge| edge.target == step.post_key)
+                .fold(zero(), |sum, edge| sum.add(&edge.probability));
+            if step_mass <= zero() {
+                return Err(Error::Refused);
+            }
+            probability = probability.mul(&step_mass);
+            limit_bits(&probability)?;
+            at = &step.post_key;
+        }
+        mass = mass.add(&probability);
+        limit_bits(&mass)?;
+    }
+    let threshold = match &bound {
+        Bound::AtMost(threshold) => threshold.clone(),
+        Bound::AtLeast(threshold) => one().sub(threshold),
+    };
+    if mass <= threshold {
+        return Ok(Replay::Parity);
+    }
+    Ok(Replay::Reproduced(Box::new(
+        super::super::ReproducedProbabilityWitness::reproduced(witness.clone(), mass),
+    )))
+}
+
+/// Whether `claim` is the timed deadline form this module enumerates.
+pub(in crate::probability_certificate) fn is_timed_deadline_claim(
+    claim: &CheckedProbabilisticClaim,
+) -> bool {
+    deadline_event(claim).is_some()
+}
