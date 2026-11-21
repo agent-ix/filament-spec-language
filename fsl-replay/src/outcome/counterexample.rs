@@ -840,7 +840,7 @@ trait Spelling: SubjectTransition {
 
 impl Spelling for ModelTransition {
     fn transition(&self) -> Result<Json, CounterexampleWireError> {
-        model_transition(self)
+        task_source_transition_wire(self)
     }
 
     fn send_record(&self) -> Result<Option<Json>, CounterexampleWireError> {

@@ -346,8 +346,7 @@ fn source_model_later_violation_keeps_taken_transitions_and_state_keys() {
         );
         assert_eq!(
             step["transition"]["operation"],
-            json!({"package":PACKAGE,
-            "node":"ix://example/config-version/ConfigVersion/attemptUpdate"})
+            json!("ix://example/config-version/ConfigVersion/attemptUpdate")
         );
         assert_native_binding(&step["transition"]["receiver"]);
         assert_eq!(step["transition"]["arguments"], json!([]));
@@ -377,7 +376,7 @@ fn source_model_later_violation_keeps_taken_transitions_and_state_keys() {
 #[test]
 #[trace("TC-1160", "FR-267-AC-31", "FR-267-AC-32")]
 fn source_model_witness_reference_mutations_name_the_offending_member() {
-    let fixture = Fixture::new("holds(c.versionNumber <= 1)", "on origin", true);
+    let fixture = Fixture::new("always holds(c.versionNumber <= 1)", "on origin", true);
     let document = fixture.result();
     for reference in [
         "/disposition/temporal/counterexample/over_binding",
@@ -440,7 +439,7 @@ fn source_model_undefined_can_omit_its_counterexample() {
 #[trace("TC-1160", "FR-267-AC-30", "FR-267-AC-32")]
 fn source_model_witness_checks_references_inside_sequence_arguments() {
     let fixture = Fixture::with_options(
-        "holds(c.versionNumber <= 1)",
+        "always holds(c.versionNumber <= 1)",
         "on origin",
         true,
         false,
