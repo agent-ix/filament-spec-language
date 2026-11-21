@@ -17,6 +17,7 @@ impl Forms<'_> {
                 ReadStop::Defect(defect)
             }
             fault @ ReadStop::Fault(_) => fault,
+            refusal @ ReadStop::Refusal(_) => refusal,
         })
     }
 
@@ -197,6 +198,51 @@ impl Forms<'_> {
         value
     }
 
+    fn canonical_reference(
+        &self,
+        object: &Map<String, Json>,
+        _declared: &ValueType,
+        path: &mut Path,
+    ) -> Result<Json, ReadStop> {
+        closed(
+            object,
+            &["type", "universe", "object_type", "identity"],
+            path,
+        )?;
+        let world = self.world.ok_or_else(no_snapshot)?;
+        let restore = world
+            .restore_reference
+            .ok_or(ReadStop::Fault("canonical-call-has-reference-adapter"))?;
+        let reference = restore(&Json::Object(object.clone())).map_err(|mut error| {
+            if let ReadStop::Refusal(ref mut refusal) = error {
+                if let super::super::RunRefusal::Reference(ref mut reference) = **refusal {
+                    let pointer = match reference.as_mut() {
+                        crate::reference_codec::ReferenceCodecError::IdentityCopy {
+                            pointer,
+                            ..
+                        }
+                        | crate::reference_codec::ReferenceCodecError::Universe {
+                            pointer, ..
+                        }
+                        | crate::reference_codec::ReferenceCodecError::Native { pointer, .. }
+                        | crate::reference_codec::ReferenceCodecError::Transition {
+                            pointer, ..
+                        }
+                        | crate::reference_codec::ReferenceCodecError::Refused {
+                            pointer, ..
+                        }
+                        | crate::reference_codec::ReferenceCodecError::Key { pointer, .. } => {
+                            pointer
+                        }
+                    };
+                    *pointer = format!("{}{pointer}", path.pointer());
+                }
+            }
+            error
+        })?;
+        Ok(reference_form(&reference))
+    }
+
     fn canonical_elements(
         &self,
         form: &Json,
@@ -343,7 +389,7 @@ impl Forms<'_> {
     }
 
     pub(crate) fn write_canonical(&self, value: &Value) -> Result<Json, WriteStop> {
-        if let Value::Population(population) = value {
+        let native = if let Value::Population(population) = value {
             let world = self
                 .world
                 .ok_or(WriteStop::Fault("population-result-has-object-world"))?;
@@ -372,10 +418,24 @@ impl Forms<'_> {
                 })
                 .collect::<Result<Vec<_>, _>>()?;
             elements.sort_by_key(order_key);
-            return Ok(json!({"type": "set", "elements": elements}));
+            json!({"type": "set", "elements": elements})
+        } else {
+            fsl_eval::simulation::model::run_value_json(
+                value,
+                self.types,
+                self.enums,
+                self.variants,
+            )
+            .ok_or(WriteStop::NoForm)?
+        };
+        match self.world.and_then(|world| world.encode_value) {
+            Some(encode) => encode(&native).map_err(|stop| match stop {
+                ReadStop::Refusal(refusal) => WriteStop::Refusal(refusal),
+                ReadStop::Fault(invariant) => WriteStop::Fault(invariant),
+                ReadStop::Defect(_) => WriteStop::Fault("canonical-writer-produced-admitted-value"),
+            }),
+            None => Ok(native),
         }
-        fsl_eval::simulation::model::run_value_json(value, self.types, self.enums, self.variants)
-            .ok_or(WriteStop::NoForm)
     }
 }
 

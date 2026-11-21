@@ -3537,6 +3537,8 @@ fn run_function(
                 let world = super::run_value::World {
                     objects: &environment,
                     universe_of: &universe_of,
+                    restore_reference: None,
+                    encode_value: None,
                 };
                 let forms = super::run_value::Forms::new(
                     package.graph().scope().types(),

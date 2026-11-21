@@ -23,6 +23,10 @@ use fsl_semantics::model::object_environment::ObjectEnvironment;
 use serde_json::{json, Map, Value as Json};
 
 mod canonical;
+mod references;
+pub(crate) use references::{
+    reference_cancel_cause, reference_error_code, reference_error_pointer, ReferenceAdmission,
+};
 
 /// One argument defect: the catalog code and cause FR-650's table names, and
 /// the JSON pointer of the defect inside the argument's `value`.
@@ -44,16 +48,20 @@ pub(crate) enum ReadStop {
     Defect(ArgumentDefect),
     /// An established invariant of the checked package is broken.
     Fault(&'static str),
+    /// An owning admission or resource refusal from reference conversion.
+    Refusal(Box<super::RunRefusal>),
 }
 
 /// Why a write stopped.
-#[derive(Debug, Eq, PartialEq)]
+#[derive(Debug)]
 pub(crate) enum WriteStop {
     /// The value has no run value form, or nests deeper than the form's
     /// bound.
     NoForm,
     /// An established invariant of the checked package is broken.
     Fault(&'static str),
+    /// An owning reference conversion refusal.
+    Refusal(Box<super::RunRefusal>),
 }
 
 /// The declarations of one checked package a value form names.
@@ -75,6 +83,8 @@ pub(crate) struct World<'a> {
     pub objects: &'a ObjectEnvironment,
     /// The universe of the objects of a declared object type.
     pub universe_of: &'a dyn Fn(&EffectiveId) -> Option<UniverseId>,
+    pub restore_reference: Option<&'a dyn Fn(&Json) -> Result<ObjectReference, ReadStop>>,
+    pub encode_value: Option<&'a dyn Fn(&Json) -> Result<Json, ReadStop>>,
 }
 
 impl<'a> Forms<'a> {

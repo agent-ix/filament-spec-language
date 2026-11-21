@@ -3389,6 +3389,19 @@ impl OutcomeDocument {
             }
             RunRefusal::Cancelled(cause) => Self::cancelled(operation, *cause),
             RunRefusal::Fault(fault) => Self::faulted(operation, fault),
+            RunRefusal::Reference(error) => {
+                if let Some(cause) = refusal.cancel_cause() {
+                    return Self::cancelled(operation, cause);
+                }
+                Self::new(operation, Some(OutcomeStage::S6a), refusal.category()).with_diagnostics(
+                    vec![OutcomeDiagnostic::new(
+                        None,
+                        refusal.code().as_str(),
+                        None,
+                        error.to_string(),
+                    )],
+                )
+            }
             // FR-277: a supplied-phase stop is phase-marked, not a
             // catalog record. Its category is the document's; the shared
             // result contract has no field for the phase context yet, so

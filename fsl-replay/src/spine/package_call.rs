@@ -189,6 +189,8 @@ fn run_package_resolving(
     let object_world = call.snapshot.as_ref().map(|_| super::run_value::World {
         objects,
         universe_of: &universe_of,
+        restore_reference: None,
+        encode_value: None,
     });
     let forms =
         Forms::new(world.types(), &[]).in_world(package.package().name(), object_world.as_ref());
@@ -227,6 +229,7 @@ fn run_package_resolving(
                 Err(WriteStop::Fault(invariant)) => Err(Box::new(RunRefusal::Fault(
                     InternalFault::new("call", invariant),
                 ))),
+                Err(WriteStop::Refusal(refusal)) => Err(refusal),
             }
         }
         _ => convert_outcome_resolving(

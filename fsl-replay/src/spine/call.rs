@@ -344,6 +344,9 @@ impl CallOutcome {
 /// naming no supplied source).
 #[derive(Debug, thiserror::Error)]
 pub enum RunRefusal {
+    /// An original shared reference admission, resource or cancellation result.
+    #[error(transparent)]
+    Reference(Box<crate::reference_codec::ReferenceCodecError>),
     /// The spine compile refused, at its own stage and cause code.
     #[error("{0}")]
     Compile(Box<CompileRefusal>),
@@ -487,7 +490,11 @@ impl RunRefusal {
     /// `last_stage` is null whichever stage it stopped), so this is `None`
     /// for [`Self::Cancelled`].
     pub fn stage(&self) -> Option<&'static str> {
+        if self.cancel_cause().is_some() {
+            return None;
+        }
         Some(match self {
+            Self::Reference(_) => "call",
             Self::Compile(refusal) => refusal.stage().as_str(),
             Self::MissingDeclaration { .. }
             | Self::UnsupportedResult { .. }
@@ -515,6 +522,7 @@ impl RunRefusal {
     /// the call, or a supplied-value phase.
     pub fn cancel_cause(&self) -> Option<CancelCause> {
         match self {
+            Self::Reference(error) => super::run_value::reference_cancel_cause(error),
             Self::Cancelled(cause) => Some(*cause),
             Self::Supplied(stop) => match stop.cause {
                 filament_semantic_value::supplied_stop::SuppliedCause::Cancelled(cause) => {
@@ -550,6 +558,7 @@ impl RunRefusal {
     /// `runtime_invariant`.
     pub fn code(&self) -> Code {
         match self {
+            Self::Reference(error) => super::run_value::reference_error_code(error),
             Self::Compile(refusal) => refusal.code(),
             Self::MissingDeclaration { .. } => Code::MissingDeclaration,
             Self::UnsupportedResult { .. } | Self::UnsupportedParameter { .. } => {
@@ -594,6 +603,9 @@ impl RunRefusal {
             _ => None,
         };
         match self {
+            Self::Reference(error) => {
+                object(json!({"path": super::run_value::reference_error_pointer(error)}))
+            }
             Self::MissingDeclaration { function } | Self::UnsupportedResult { function } => {
                 object(json!({"function": function}))
             }
@@ -1044,9 +1056,72 @@ pub(crate) fn run_compiled(
         )
         .ok()
     };
+    let mut reference_joins = filament_contract_model::NativeJoinBudget::unlimited();
+    let reference_catalog = if call.canonical_values && call.snapshot.is_some() {
+        Some(
+            fsl_package::ReferenceCatalog::from_checked_call(
+                package,
+                models.selected_models(),
+                &mut reference_joins,
+            )
+            .map_err(|_| {
+                Box::new(RunRefusal::Fault(InternalFault::new(
+                    "call",
+                    "checked-reference-catalog",
+                )))
+            })?,
+        )
+    } else {
+        None
+    };
+    let references = reference_catalog
+        .as_ref()
+        .map(|catalog| {
+            crate::reference_codec::ReferenceCodec::for_checked_call(
+                catalog,
+                package,
+                models.selected_models(),
+                objects,
+            )
+        })
+        .transpose()
+        .map_err(|error| Box::new(RunRefusal::Reference(Box::new(error))))?;
+    let reference_admission =
+        std::cell::RefCell::new(super::run_value::ReferenceAdmission::default());
+    let restore_reference = |value: &serde_json::Value| {
+        references
+            .as_ref()
+            .ok_or(ReadStop::Fault("call-has-reference-catalog"))?
+            .restore_reference(
+                value,
+                &mut *reference_admission.borrow_mut(),
+                cancel,
+                usize::MAX,
+            )
+            .map_err(|error| ReadStop::Refusal(Box::new(RunRefusal::Reference(Box::new(error)))))
+    };
+    let encode_value = |value: &serde_json::Value| {
+        references
+            .as_ref()
+            .ok_or(ReadStop::Fault("call-has-reference-catalog"))?
+            .encode_value(
+                value,
+                &mut *reference_admission.borrow_mut(),
+                cancel,
+                usize::MAX,
+            )
+            .map_err(|error| ReadStop::Refusal(Box::new(RunRefusal::Reference(Box::new(error)))))
+    };
     let world = call.snapshot.as_ref().map(|_| super::run_value::World {
         objects,
         universe_of: &universe_of,
+        restore_reference: references.as_ref().map(|_| {
+            &restore_reference
+                as &dyn Fn(&serde_json::Value) -> Result<filament_exact::ObjectReference, ReadStop>
+        }),
+        encode_value: references.as_ref().map(|_| {
+            &encode_value as &dyn Fn(&serde_json::Value) -> Result<serde_json::Value, ReadStop>
+        }),
     });
     let forms = Forms::new(
         package.graph().scope().types(),
@@ -1121,6 +1196,7 @@ pub(crate) fn run_compiled(
                         "call", invariant,
                     ))));
                 }
+                Err(super::run_value::WriteStop::Refusal(refusal)) => return Err(refusal),
             }
         }
         _ => convert_outcome(evaluation, package.graph(), &sources)?,
@@ -1398,6 +1474,7 @@ pub(crate) fn admit_wire_arguments(
                 ReadStop::Fault(invariant) => {
                     RunRefusal::Fault(InternalFault::new("call", invariant))
                 }
+                ReadStop::Refusal(refusal) => return refusal,
             })
         })?;
         supplied.push(CallArgument {
