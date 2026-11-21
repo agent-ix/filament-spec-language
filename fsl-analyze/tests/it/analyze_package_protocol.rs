@@ -286,14 +286,7 @@ fn package_workflow_roles_runs_the_complete_body_and_tears_down() {
 
 /// The bound changes real reachable actors; owned attempts retain their actor
 /// identity in both graphs, and a blocked continuation replays without source.
-#[trace(
-    "TC-2958",
-    "FR-940-AC-6",
-    "FR-208-AC-1",
-    "FR-208-AC-2",
-    "FR-211-AC-4",
-    "FR-850"
-)]
+#[trace("TC-2958", "FR-940-AC-6", "FR-208", "FR-208-AC-2", "FR-206", "FR-850")]
 #[test]
 fn package_workflow_roles_bounds_instances_and_executes_owned_attempts() {
     use fsl_eval::simulation::protocol::StepKind;
@@ -336,7 +329,13 @@ fn package_workflow_roles_empty_universe_and_binding_refusal() {
         .iter()
         .flat_map(|state| &state.steps)
         .all(|(step, _)| step.actor().is_none()));
-    channel_send_parity(&ws, &path, "refuted");
+    let item = channel_send_parity(&ws, &path, "refuted");
+    let blocked = item["counterexample"]["blocked"]
+        .as_array()
+        .expect("blocked worker receive");
+    assert_eq!(blocked.len(), 1, "{item}");
+    assert_eq!(blocked[0]["cause"]["type"], "no-role-instance", "{item}");
+    assert_eq!(blocked[0]["cause"]["role"], "Worker", "{item}");
 
     let ws = Workspace::new("package-workflow-role-invalid-binding");
     let path = workflow_roles_request(&ws, 2, "workflow", false, "", "closing");
