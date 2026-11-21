@@ -47,3 +47,11 @@ assessed.
 AC coverage is partial, as the PR declares. Fix the tags (FND-001), and either
 test AC-10 or drop it from the Done list (FND-002). Route FND-003 to the spec
 lane.
+
+## Dispositions
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | AC-4 removed from the completeness test, AC-3 removed from the activation test, the producer test retagged AC-9, the bare bytes test retagged AC-10 |
+| FND-002 | fixed | The two-route test asserts equal `package_identity`, equal `Some` `canonical_package_bytes` and equal `time_unit_scale` for every clause on top of equal results. The owner authority is SHA-256 of the bytes plus a binding identity built from the package identity and nodes decoded from those same bytes, so these equalities imply equal authorities |
+| FND-003 | fixed | A position with no arrival now carries its event time as ingestion (owner.rs:194-200), per FR-944-AC-8; the test asserts `Some(3_000_000)` |
