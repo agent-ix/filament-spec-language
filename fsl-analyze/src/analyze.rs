@@ -757,6 +757,32 @@ pub struct AnalyzeOutcome {
     /// EN-7's closed-form outcome, with its evidence, for each item it
     /// settled (FR-247, FR-633).
     pub closed_form: std::collections::BTreeMap<RequestIndex, fsl_replay::ClosedFormOutcome>,
+    /// The package graphs a result document writes its node ids against.
+    pub graphs: DocumentGraphs,
+}
+
+/// The node graphs of the packages a run analyzed, which index the node ids of
+/// its result document (FSpec FR-322 "Operand index segments"): the request's
+/// own package and, for each item over a dependency, that dependency.
+#[derive(Clone, Default)]
+pub struct DocumentGraphs {
+    /// The graph of the request's own admitted package; `None` when the
+    /// package did not emit.
+    pub own: Option<fsl_semantics::check::wire_id::WireGraph>,
+    /// The graph of the admitted dependency package an item is analyzed
+    /// over, by request index.
+    pub components:
+        std::collections::BTreeMap<RequestIndex, fsl_semantics::check::wire_id::WireGraph>,
+}
+
+impl std::fmt::Debug for DocumentGraphs {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("DocumentGraphs")
+            .field("own", &self.own.is_some())
+            .field("components", &self.components.keys().collect::<Vec<_>>())
+            .finish()
+    }
 }
 
 /// What an item's engine reported beside its terminal record (FR-621).

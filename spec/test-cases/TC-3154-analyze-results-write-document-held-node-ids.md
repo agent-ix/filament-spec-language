@@ -1,0 +1,28 @@
+---
+id: TC-3154
+title: "Analyze results write document-held node ids"
+type: TC
+relationships:
+  - target: ix://agent-ix/filament-spec-language/FR-621
+    type: verifies
+---
+# TC-3154: Analyze results write document-held node ids
+
+## Description
+
+Analyze results write document-held node ids.
+
+Scope: FR-621-AC-16, FR-621-AC-17.
+
+## Test Procedure
+
+Analyze the probability fixtures `Eventually` and `TooLikely` with exact evidence and validate the written items against the pinned backend-provider schema. Test: `fsl-analyze/tests/it/probability_from_source.rs` `measured_and_proved_items_validate_against_the_backend_provider_schema` and `a_refuted_item_names_its_claim_in_the_document_held_form`. Check the proved item's certificate in a fresh process. Test: `tools/fsl-probability-check/tests/it/roundtrip.rs` `certificate_checks_independently`. Analyze a composition with a component-guarantee premise and scan every item for a node id object whose path holds a node id. Test: `fsl-analyze/tests/it/analyze_composition_cli.rs` `a_shared_premise_is_written_once`. Analyze a package under an emit limit it exceeds. Test: `fsl-analyze/tests/it/protocol_composition.rs` `a_package_over_the_emit_limit_is_refused_not_re_spelled`.
+
+Tag the tests `#[trace("TC-3154", "FR-621-AC-16")]` and `#[trace("TC-3154", "FR-621-AC-17")]`.
+
+## Expected Results
+
+- The proved item's identity and document, and both claim loci, validate; the refuted `counterexample` validates as a `CounterexampleEntry`.
+- The checker accepts the document as written.
+- A premise item names its dependency in `package`; no result holds a nested node id object; an own-package item has no `package` member.
+- The over-limit package is refused with `resource-exhausted`.

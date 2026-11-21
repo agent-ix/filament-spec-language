@@ -25,7 +25,6 @@ use fsl_replay::{InconclusiveCause, OutcomeAxes, TerminalRecord, TerminalValue};
 use fsl_route::request::{ExtentClassification, ItemKind};
 use fsl_route::routing::Disposition;
 use fsl_route::{CandidateOutcome, EvidenceKind, ItemEvidence, Registry};
-use fsl_semantics::check::wire_id::WireGraph;
 use fsl_semantics::check::Capability;
 use fsl_semantics::model::observation::{DocumentProvision, DocumentRef};
 use serde::Deserialize;
@@ -1682,6 +1681,7 @@ mod held_identity;
 mod package_run;
 
 pub use composition_item::CompositionClaim;
+pub use held_identity::HeldIdentityError;
 
 pub use package_run::{
     settle_package_run, PackageRun, PackageRunError, PendingFamily, PendingPackageFamily,
@@ -3653,6 +3653,9 @@ pub enum AnalyzeDocumentError {
     /// An internal fault stopped the run.
     #[error("the analyze run faulted")]
     Fault,
+    /// A result node id could not be written in the document-held form.
+    #[error(transparent)]
+    Identity(#[from] HeldIdentityError),
 }
 
 /// Negotiate `run`'s items with `negotiate`, analyze them under `cancel`
@@ -3796,6 +3799,7 @@ pub fn settle_run(
             counterexamples: outcome.counterexamples,
             details: outcome.details,
             protocol_conformance: outcome.protocol_conformance,
+            graphs: outcome.graphs,
         },
         &settled,
         &echoes,
@@ -3803,11 +3807,6 @@ pub fn settle_run(
         &routes,
         &simulated,
         engines,
-        &|| {
-            crate::provider::admitted_bytes(package, binding.packages, limits.emit)
-                .ok()
-                .and_then(|bytes| WireGraph::of_package_bytes(bytes.bytes()).ok())
-        },
     )
 }
 
@@ -4031,6 +4030,9 @@ fn negotiate_items(
                 identity,
                 required: item.options.required,
                 scoped: has_activation_scope(item.kind),
+                dependency: owner
+                    .as_ref()
+                    .map(|package| package.graph().package_name().to_owned()),
             },
         );
         if let Some(record) = before {
@@ -4170,6 +4172,7 @@ struct SettledParts {
     counterexamples: Vec<super::ItemCounterexample>,
     details: Vec<super::ItemDetail>,
     protocol_conformance: BTreeMap<RequestIndex, fsl_replay::ProtocolConformanceOutput>,
+    graphs: super::DocumentGraphs,
 }
 
 /// The FR-621 document of a run: the engines' records beside the items
@@ -4184,7 +4187,6 @@ fn write_run(
     routes: &BTreeMap<RequestIndex, super::ItemRoute>,
     simulated: &[(Value, Category)],
     engines: &Engines,
-    package_graph: &dyn Fn() -> Option<WireGraph>,
 ) -> Result<SettledRun, AnalyzeDocumentError> {
     let mut records: Vec<TerminalRecord> = outcome.records;
     records.extend(settled.values().map(|(_, record)| record.clone()));
@@ -4195,7 +4197,6 @@ fn write_run(
     let written: Vec<Value> = document["items"].as_array().cloned().unwrap_or_default();
     let mut items = Vec::with_capacity(records.len());
     let mut gaps = Vec::new();
-    let mut package_graph = LazyGraph::new(package_graph);
     for (record, mut written) in records.iter().zip(written) {
         let index = record.request_index();
         if let Some(bytes) = record.exact_certificate_document() {
@@ -4271,7 +4272,7 @@ fn write_run(
                 disposed,
             },
         );
-        hold_certificate_identities(&mut item, &mut package_graph)?;
+        hold_item(&mut item, &outcome.graphs, index, echo)?;
         items.push(item);
     }
     items.extend(simulated.iter().map(|(written, _)| written.clone()));
@@ -4354,45 +4355,34 @@ fn spell_states(value: &mut Value) {
     }
 }
 
-/// The package graph an item's certificate is written against, built on
-/// first use: a run with no certificate never reads it.
-struct LazyGraph<'a> {
-    build: &'a dyn Fn() -> Option<WireGraph>,
-    graph: Option<Option<WireGraph>>,
-}
-
-impl<'a> LazyGraph<'a> {
-    fn new(build: &'a dyn Fn() -> Option<WireGraph>) -> Self {
-        Self { build, graph: None }
-    }
-
-    fn get(&mut self) -> Option<&WireGraph> {
-        self.graph.get_or_insert_with(self.build).as_ref()
-    }
-}
-
-/// FSpec FR-322, FR-412: write `item`'s certificate identities in the
-/// document-held form, through [`held_identity::hold`]. The request echo's
-/// claim locus and a verdict's rejection locus name nodes the same way.
-fn hold_certificate_identities(
+/// FSpec FR-322, FR-412, FSL FR-621: write every node id of `item` in the
+/// document-held form of the package graph the item is analyzed over,
+/// through [`held_identity::hold`]. An item over a dependency of the request
+/// (a composition's component-guarantee premise) names that dependency in
+/// its `package` member and indexes the dependency's graph.
+fn hold_item(
     item: &mut Value,
-    graph: &mut LazyGraph<'_>,
+    graphs: &super::DocumentGraphs,
+    index: RequestIndex,
+    echo: Option<&Echo>,
 ) -> Result<(), AnalyzeDocumentError> {
-    let model = item
-        .pointer("/certificate/identity/model")
-        .and_then(Value::as_str)
-        .map(str::to_owned);
-    for member in ["certificate", "counterpart", "request", "verdict"] {
-        let Some(certificate) = item.get_mut(member) else {
-            continue;
-        };
-        if !held_identity::needs_hold(certificate) {
-            continue;
-        }
-        let graph = graph.get().ok_or(AnalyzeDocumentError::Fault)?;
-        held_identity::hold(certificate, graph, model.as_deref())
-            .map_err(|_| AnalyzeDocumentError::Fault)?;
+    let dependency = echo.and_then(|echo| echo.dependency.as_deref());
+    if let (Some(identity), Value::Object(members)) = (dependency, &mut *item) {
+        members.insert("package".to_owned(), identity.into());
     }
+    if !held_identity::needs_hold(item) {
+        return Ok(());
+    }
+    let graph = match dependency {
+        Some(_) => graphs.components.get(&index),
+        None => graphs.own.as_ref(),
+    }
+    .ok_or(held_identity::HeldIdentityError::NoGraph)?;
+    let model = echo
+        .and_then(|echo| echo.identity.as_ref())
+        .and_then(|identity| identity["model"].as_str())
+        .map(str::to_owned);
+    *item = held_identity::hold(item, graph, model.as_deref())?;
     Ok(())
 }
 
@@ -4412,6 +4402,10 @@ struct Echo {
     required: bool,
     /// Whether the item has an activation scope (FR-622).
     scoped: bool,
+    /// The identity of the dependency package the item is analyzed over
+    /// (a composition's component-guarantee premise); `None` for an item
+    /// over the request's own package.
+    dependency: Option<String>,
 }
 
 /// The FR-621 members [`item_document`] adds to an FR-286 item.

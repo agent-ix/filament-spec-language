@@ -503,9 +503,29 @@ fn undefined_receive_unit() -> String {
 /// The in-process `finite-replay` item over the Kernel-checked `body` and
 /// the trace document `trace`: the settled outcome items.
 fn kernel_replay_items(body: &str, identity: &str, trace: &Value) -> Vec<Value> {
+    kernel_replay_run(
+        body,
+        identity,
+        trace,
+        fsl_analyze::analyze::AnalyzeLimits::unbounded(),
+    )
+    .expect("a settled run")
+    .items
+}
+
+/// [`kernel_replay_items`]'s run under `limits`, as the library settles it.
+fn kernel_replay_run(
+    body: &str,
+    identity: &str,
+    trace: &Value,
+    limits: fsl_analyze::analyze::AnalyzeLimits,
+) -> Result<
+    fsl_analyze::analyze::document::SettledRun,
+    fsl_analyze::analyze::document::AnalyzeDocumentError,
+> {
     use fsl_analyze::analyze::document::{settle_run, AnalyzeRun, ResolvedClaim, ResolvedItem};
     use fsl_analyze::analyze::{
-        AnalyzeLimits, ClaimItem, Engines, ItemOptions, SourceProvision, SubjectBinding,
+        ClaimItem, Engines, ItemOptions, SourceProvision, SubjectBinding,
     };
     use fsl_foundation::source::provenance::OccurrenceKey;
     use fsl_foundation::RequestIndex;
@@ -562,7 +582,7 @@ fn kernel_replay_items(body: &str, identity: &str, trace: &Value) -> Vec<Value> 
     };
     let subject =
         fsl_analyze::analyze::document::SubjectSelection::default_over(&documents.snapshots);
-    let settled = settle_run(
+    settle_run(
         AnalyzeRun {
             package: &package,
             binding: SubjectBinding {
@@ -583,13 +603,35 @@ fn kernel_replay_items(body: &str, identity: &str, trace: &Value) -> Vec<Value> 
                 unrouted: false,
             }))],
             engines: &engines,
-            limits: AnalyzeLimits::unbounded(),
+            limits,
         },
         &crate::analyze_cli_support::Fr290,
         &filament_exact::Cancel::new(),
     )
-    .expect("a settled run");
-    settled.items
+}
+
+/// FR-621-AC-17: a package whose emission exceeds the run's emit limit is
+/// refused with the strict reader's typed `resource_exhausted` package
+/// refusal before any item runs; the result is never re-spelled from a package
+/// that did not read, and no fault replaces the refusal.
+#[trace("TC-3154", "FR-621-AC-17")]
+#[test]
+fn a_package_over_the_emit_limit_is_refused_not_re_spelled() {
+    use fsl_analyze::analyze::document::AnalyzeDocumentError;
+    let limits = fsl_analyze::analyze::AnalyzeLimits {
+        emit: fsl_package::EmitLimits::new(1),
+        ..fsl_analyze::analyze::AnalyzeLimits::unbounded()
+    };
+    let trace = json!({"states": []});
+    let Err(AnalyzeDocumentError::Refused(fsl_analyze::analyze::AnalyzeRefusal::Package(refusal))) =
+        kernel_replay_run(&order_protocol(true), "emit-limit", &trace, limits)
+    else {
+        panic!("an over-limit package is a typed package refusal");
+    };
+    assert!(
+        format!("{:?}", refusal.code).contains("ResourceExhausted"),
+        "{refusal:?}"
+    );
 }
 
 /// FR-941-AC-5: a protocol expression undefined at a replayed state refutes

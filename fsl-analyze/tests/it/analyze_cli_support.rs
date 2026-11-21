@@ -22,12 +22,14 @@ pub(crate) struct Run {
 impl Run {
     /// The machine-mode outcome document.
     pub(crate) fn document(&self) -> Value {
-        serde_json::from_slice(&self.stdout).unwrap_or_else(|error| {
+        let document: Value = serde_json::from_slice(&self.stdout).unwrap_or_else(|error| {
             panic!(
                 "the outcome is one JSON document ({error}); exit {}",
                 self.exit
             )
-        })
+        });
+        assert_no_nested_node_ids(&document);
+        document
     }
 
     /// The outcome item at `index`.
@@ -385,5 +387,26 @@ pub(crate) fn analyze_under_replay_bytes(request: &Path, replay_input_bytes: u64
                 .to_bytes()
                 .expect("the outcome document serializes"),
         },
+    }
+}
+
+/// FSpec FR-322 "A path never holds a node_id object": no object in `document`
+/// is a node id whose path holds another node id.
+pub(crate) fn assert_no_nested_node_ids(document: &Value) {
+    let mut pending = vec![document];
+    while let Some(current) = pending.pop() {
+        let nested = current
+            .get("path")
+            .and_then(Value::as_array)
+            .is_some_and(|path| path.iter().any(|segment| segment.get("package").is_some()));
+        assert!(
+            !nested,
+            "a result holds a nested node id {current} in {document}"
+        );
+        match current {
+            Value::Object(object) => pending.extend(object.values()),
+            Value::Array(items) => pending.extend(items.iter()),
+            _ => {}
+        }
     }
 }

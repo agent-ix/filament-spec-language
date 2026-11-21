@@ -14,7 +14,9 @@ use fsl_eval::simulation::model::ModelSystem;
 use fsl_foundation::RequestIndex;
 use fsl_replay::{replay_probabilistic_witness, ExactProbLimits, ModelCheckLimits};
 
-use crate::analyze_cli_support::{analyze, label, request_over, Workspace};
+use crate::analyze_cli_support::{
+    analyze, assert_no_nested_node_ids, label, request_over, Workspace,
+};
 
 const LINK_UNIT: &str =
     include_str!("../../../tools/fsl-probability-check/tests/fixtures/link.native");
@@ -1014,6 +1016,7 @@ fn assert_valid(compiled: &jsonschema::JSONSchema, instance: &Value, what: &str)
 /// `CertificateIdentity` and `ProbabilityCertificate`: each node id is written
 /// in the document-held index form with the owning model named.
 #[trace("TC-2066", "FR-741-AC-1", "FR-741-AC-2")]
+#[trace("TC-3154", "FR-621-AC-16")]
 #[test]
 fn measured_and_proved_items_validate_against_the_backend_provider_schema() {
     let measured = run(
@@ -1077,7 +1080,7 @@ fn measured_and_proved_items_validate_against_the_backend_provider_schema() {
 
 /// FR-322, FR-331: a real `refuted` item's claim locus is a schema-valid
 /// `Locus` whose node id holds index segments, never a nested node id.
-#[trace("TC-2066", "FR-741-AC-3")]
+#[trace("TC-3154", "FR-621-AC-16")]
 #[test]
 fn a_refuted_item_names_its_claim_in_the_document_held_form() {
     let refuted = run(
@@ -1092,6 +1095,12 @@ fn a_refuted_item_names_its_claim_in_the_document_held_form() {
         &item["request"]["claim"],
         "the refuted item's claim locus",
     );
+    assert_valid(
+        &provider_definition("CounterexampleEntry"),
+        &item["counterexample"],
+        "the refuted item's counterexample",
+    );
+    assert_no_nested_node_ids(&refuted);
     let path = item["request"]["claim"]["node"]["path"]
         .as_array()
         .expect("a node path");
