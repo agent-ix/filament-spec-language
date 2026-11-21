@@ -403,6 +403,7 @@ fn no_cycle_observations(
         receiver_pre: None,
         receiver_post: None,
         parameters: Vec::new(),
+        value_origins: Default::default(),
         result: None,
         created: Vec::new(),
         deleted: Vec::new(),

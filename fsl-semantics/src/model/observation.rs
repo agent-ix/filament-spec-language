@@ -44,7 +44,7 @@ use crate::model::intake::{
     normalize_model_with_provenance, NormalizedModel, NormalizedModelProvenance, UnitIntakeCause,
 };
 use crate::model::normalize::{normalize, EffectiveView, NormalizeOutcome};
-use crate::model::object_environment::ObjectEnvironment;
+use crate::model::object_environment::{ObjectEnvironment, ReferenceOrigins};
 use crate::model::operation::{OperationDeclaration, OperationLookup, OperationTable};
 use filament_checked::key::DeclarationKey;
 use filament_semantic_value::declaration::TypeEnvironment;
@@ -651,6 +651,15 @@ impl SelfKind {
     }
 }
 
+/// The actual sparse origins of the invocation's admitted values.
+#[derive(Clone, Debug, Default)]
+pub struct AdmittedValueOrigins {
+    /// Parameter origins under their original admitted declaration names.
+    pub parameters: BTreeMap<String, ReferenceOrigins>,
+    /// Result origins, selected against the post snapshot.
+    pub result: ReferenceOrigins,
+}
+
 /// FR-106 Outputs: one typed observation set admitted for S6a.
 #[derive(Clone, Debug)]
 pub struct AdmittedObservations {
@@ -693,6 +702,8 @@ pub struct AdmittedObservations {
     /// The parameter values of an invocation or a pre-call observation, in
     /// declared order (empty for an invariant).
     pub parameters: Vec<(String, Value)>,
+    /// Explicit parameter/result attribution retained beside their values.
+    pub value_origins: AdmittedValueOrigins,
     /// The invocation's result value, or `None` for an operation with no
     /// result (empty for an invariant).
     pub result: Option<Value>,
@@ -3053,6 +3064,7 @@ fn admit_invariant(
         receiver_pre: None,
         receiver_post: None,
         parameters: Vec::new(),
+        value_origins: AdmittedValueOrigins::default(),
         result: None,
         created: Vec::new(),
         deleted: Vec::new(),
@@ -3154,6 +3166,7 @@ struct InvocationAdmission {
     /// The operation the invocation names, resolved by check 5.
     operation: OperationDeclaration,
     parameters: Vec<(String, Value)>,
+    value_origins: AdmittedValueOrigins,
     result: Option<Value>,
 }
 
@@ -3449,9 +3462,9 @@ fn admit_invocation_documents(
     // absent from its complete population refuses `dangling_reference`
     // (check 8's closure rule, SR-771 FND-001).
     let mut parameter_references =
-        document::References::over(views, types, &pre_snapshot.populations);
+        document::References::over(views, types, &pre_snapshot.populations)?;
     let mut result_references =
-        document::References::over(views, types, &post_snapshot.populations);
+        document::References::over(views, types, &post_snapshot.populations)?;
     document::check_untyped_parameters(
         views,
         context_name,
@@ -3485,6 +3498,10 @@ fn admit_invocation_documents(
         receiver_post,
         operation,
         parameters,
+        value_origins: AdmittedValueOrigins {
+            parameters: parameter_references.parameter_origins,
+            result: result_references.result_origins,
+        },
         result,
     })
 }
@@ -3809,18 +3826,25 @@ fn admit_pre_call(
     // Check 10: parameters, resolved against the pre snapshot. A pre-call
     // observation carries no result, and a state machine's invariant binds
     // no parameter.
-    let parameters = if context.as_context {
-        Vec::new()
+    let (parameters, value_origins) = if context.as_context {
+        (Vec::new(), AdmittedValueOrigins::default())
     } else {
         let mut references =
-            document::References::over(context.views, context.types, &snapshot.populations);
+            document::References::over(context.views, context.types, &snapshot.populations)?;
         document::check_untyped_parameters(
             context.views,
             context.context_name,
             operation.name(),
             input.parameters,
         )?;
-        document::admit_parameters(&mut references, &operation, input.parameters)?
+        let parameters = document::admit_parameters(&mut references, &operation, input.parameters)?;
+        (
+            parameters,
+            AdmittedValueOrigins {
+                parameters: references.parameter_origins,
+                result: ReferenceOrigins::default(),
+            },
+        )
     };
 
     let usage = input.invocation_usage.merged_with(input.pre.usage);
@@ -3852,6 +3876,7 @@ fn admit_pre_call(
         receiver_pre,
         receiver_post: None,
         parameters,
+        value_origins,
         result: None,
         created: Vec::new(),
         deleted: Vec::new(),
@@ -3954,6 +3979,7 @@ fn admit_operation(
             receiver_pre: None,
             receiver_post: admitted.receiver_post,
             parameters: Vec::new(),
+            value_origins: AdmittedValueOrigins::default(),
             result: None,
             created: Vec::new(),
             deleted: Vec::new(),
@@ -3972,6 +3998,7 @@ fn admit_operation(
         receiver_pre: admitted.receiver_pre,
         receiver_post: admitted.receiver_post,
         parameters: admitted.parameters,
+        value_origins: admitted.value_origins,
         result: admitted.result,
         created,
         deleted,
