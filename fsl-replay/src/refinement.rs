@@ -6,6 +6,7 @@
 //! product, the step check and replay all call these, so a verdict and its
 //! replay never disagree about what the abstract model saw.
 
+mod clock_enabled;
 mod clock_rows;
 mod failure;
 mod history;
@@ -18,6 +19,7 @@ mod step;
 mod step_view;
 mod subject;
 
+pub use clock_enabled::{loop_segments, SegmentEnabled};
 pub use clock_rows::{row_clock_step, InvariantReading, RowClockStep};
 pub use failure::{
     AssumptionIdentity, AssumptionOrigin, AssumptionSelectedMember, AssumptionSide,

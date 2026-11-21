@@ -48,10 +48,10 @@ use crate::model_check::replay::{
 };
 use crate::refinement::{
     abstract_classes, candidate_lasso_has_fair_run, check_initial, check_protocol_initial,
-    check_protocol_state_relations, check_protocol_step, check_step, initial_history, map_state,
-    row_clock_step, step_history, stop_verdict, AssumptionSide, AssumptionTarget, CandidateFairHop,
-    CandidateFairState, CandidateFairStep, ConcreteStep, InvariantReading,
-    ProtocolAssumptionReason, ProtocolAssumptionWitness, ProtocolRelationError,
+    check_protocol_state_relations, check_protocol_step, check_step, initial_history,
+    loop_segments, map_state, row_clock_step, step_history, stop_verdict, AssumptionSide,
+    AssumptionTarget, CandidateFairHop, CandidateFairState, CandidateFairStep, ConcreteStep,
+    InvariantReading, ProtocolAssumptionReason, ProtocolAssumptionWitness, ProtocolRelationError,
     ProtocolStateRelation, RefinementFailure, RefinementPosition, RefinementSystems, RowClockStep,
     StepVerdict, Taken,
 };
@@ -1517,12 +1517,22 @@ fn replay_lasso(
     };
     let loop_trail = &loop_trail[..loop_taken.len()];
     let abstract_fairness: Vec<_> = refinement.abstract_operation_fairness().cloned().collect();
+    // A timed abstract subject enables its classes over the instants of the
+    // loop, not at its positions alone (FR-899 "Timed subjects").
+    let segments =
+        match timed_loop_segments(refinement, systems, payload, &lasso, loop_trail, loop_taken)? {
+            TimedLoop::Untimed => None,
+            TimedLoop::Segments(segments) => Some(segments),
+            TimedLoop::Unreadable => {
+                return Ok(RefinementTraceSettlement::Inconclusive(no_value_cause()));
+            }
+        };
     let violated = if matches!(
         payload.refinement.as_ref(),
         Some(RefinementFailure::HiddenUnfair { .. })
     ) {
         let mut identities = BTreeSet::<ModelTransition>::new();
-        let (positions, candidate_rows) =
+        let (mut positions, mut candidate_rows) =
             if let Some(protocol) = systems.abstract_protocol.as_ref() {
                 match protocol_hidden_graph(protocol, loop_trail, loop_taken)? {
                     ProtocolHiddenGraph::Built(positions, rows) => (positions, rows),
@@ -1580,6 +1590,45 @@ fn replay_lasso(
                     .collect::<Result<Vec<_>, ReplayRefusal>>()?;
                 (positions, rows)
             };
+        if let Some(segments) = &segments {
+            // Each delay is its segments, the candidates staying put between
+            // them; the step's rows leave the last.
+            let mut timed_positions = Vec::new();
+            let mut timed_rows = Vec::new();
+            for (index, step_segments) in segments.iter().enumerate() {
+                let keys: Vec<Vec<u8>> = positions[index]
+                    .iter()
+                    .map(|(key, _)| key.clone())
+                    .collect();
+                for (at, segment) in step_segments.iter().enumerate() {
+                    timed_positions.push(
+                        keys.iter()
+                            .map(|key| {
+                                (
+                                    key.clone(),
+                                    segment
+                                        .iter()
+                                        .filter(|(candidate, _)| candidate == key)
+                                        .map(|(_, transition)| transition.clone())
+                                        .collect::<Vec<_>>(),
+                                )
+                            })
+                            .collect::<Vec<_>>(),
+                    );
+                    if at + 1 < step_segments.len() {
+                        timed_rows.push(
+                            keys.iter()
+                                .map(|key| (key.clone(), None, key.clone(), Vec::new()))
+                                .collect::<Vec<_>>(),
+                        );
+                    } else {
+                        timed_rows.push(candidate_rows[index].clone());
+                    }
+                }
+            }
+            positions = timed_positions;
+            candidate_rows = timed_rows;
+        }
         for candidates in &positions {
             for (_, enabled) in candidates {
                 identities.extend(enabled.iter().cloned());
@@ -1716,7 +1765,8 @@ fn replay_lasso(
         let mut enabled = Vec::with_capacity(loop_trail.len());
         for position in loop_trail {
             match abstract_enabled(systems, position)? {
-                Enabledness::Enabled(here) => enabled.push(here),
+                Enabledness::Enabled(here) if segments.is_none() => enabled.push(here),
+                Enabledness::Enabled(_) => {}
                 Enabledness::Undecided => {
                     return Ok(RefinementTraceSettlement::Inconclusive(no_value_cause()));
                 }
@@ -1724,6 +1774,18 @@ fn replay_lasso(
                     return Ok(RefinementTraceSettlement::Stopped(reached));
                 }
             }
+        }
+        if let Some(segments) = &segments {
+            enabled = segments
+                .iter()
+                .flatten()
+                .map(|segment| {
+                    segment
+                        .iter()
+                        .map(|(_, transition)| transition.clone())
+                        .collect()
+                })
+                .collect();
         }
         let mut identities: Vec<ModelTransition> = enabled.iter().flatten().cloned().collect();
         for taken in loop_taken {
@@ -1792,6 +1854,67 @@ fn replay_lasso(
         (_, true, _) => RefinementTraceSettlement::Inconclusive(disagreement(Category::Violation)),
         (_, false, _) => RefinementTraceSettlement::Inconclusive(disagreement(Category::Success)),
     })
+}
+
+/// How a timed abstract subject reads over a lasso's loop.
+enum TimedLoop {
+    /// The abstract subject is untimed: enabledness is read at positions.
+    Untimed,
+    /// For each loop step, the segments of its delay with what each enables.
+    Segments(Vec<Vec<crate::refinement::SegmentEnabled>>),
+    /// One abstract clock valuation cannot follow the loop.
+    Unreadable,
+}
+
+/// The segments of `loop_taken`'s delays over a timed abstract subject
+/// (FR-899 "Timed subjects"), replay's own reading of its enabledness over
+/// the instants of the loop.
+fn timed_loop_segments(
+    refinement: &CheckedRefinement,
+    systems: &RefinementSystems<'_>,
+    payload: &TemporalCounterexample,
+    lasso: &Lasso,
+    loop_trail: &[RefinementPosition],
+    loop_taken: &[Taken],
+) -> Result<TimedLoop, ReplayRefusal> {
+    if systems
+        .abstract_system
+        .input()
+        .timed_model(refinement.abstract_model())
+        .is_none()
+    {
+        return Ok(TimedLoop::Untimed);
+    }
+    let timed = TimedSystem::new(&systems.abstract_system, refinement.abstract_model())
+        .map_err(|refusal| refused(ModelTraceRefusal::TimedSubject(refusal)))?;
+    // A terminal stutter waits forever; a loop of steps waits each delay.
+    let delays: Vec<Option<filament_exact::Rational>> = if lasso.terminal_stutter {
+        vec![None; loop_taken.len()]
+    } else {
+        let mut delays = Vec::with_capacity(loop_taken.len());
+        for step in payload.prefix.iter().skip(lasso.entry) {
+            let Some(delay) = step.delay.clone() else {
+                return Ok(TimedLoop::Unreadable);
+            };
+            delays.push(Some(delay));
+        }
+        delays
+    };
+    let candidates: Vec<&[ModelState]> = loop_trail
+        .iter()
+        .map(|position| position.abstract_states.as_slice())
+        .collect();
+    match loop_segments(
+        &systems.abstract_system,
+        &timed,
+        &candidates,
+        loop_taken,
+        &delays,
+    ) {
+        Ok(Some(segments)) => Ok(TimedLoop::Segments(segments)),
+        Ok(None) => Ok(TimedLoop::Unreadable),
+        Err(label) => Err(fault(label)),
+    }
 }
 
 /// Replay FR-148's fairness-independent observable divergence check over the
