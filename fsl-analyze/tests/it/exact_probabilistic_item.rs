@@ -1265,19 +1265,21 @@ fn external_always_probability_certificate_remains_unsupported() {
     };
     let bytes = fsl_replay::write_probability_certificate(&document, limits, &Cancel::new())
         .expect("well-formed externally offered certificate");
-    assert!(matches!(
-        fsl_replay::check_probability_certificate_document(
-            &system,
-            world.package.graph().probabilistic_model().claims(),
-            &identity,
-            &bytes,
-            limits,
-            &Cancel::new()
+    let checked = fsl_replay::check_probability_certificate_document(
+        &system,
+        world.package.graph().probabilistic_model().claims(),
+        &identity,
+        &bytes,
+        limits,
+        &Cancel::new(),
+    );
+    assert!(
+        matches!(
+            checked,
+            Err(fsl_replay::ProbabilityDocumentError::Unsupported)
         ),
-        Err(fsl_replay::ProbabilityDocumentError::Graph(
-            ExactProbabilityGraphError::UnsupportedClaimForm
-        ))
-    ));
+        "defined always must refuse admission: {checked:?}"
+    );
 }
 
 #[trace("FR-202")]
