@@ -22,6 +22,7 @@ mod probabilistic_package_locus;
 mod protocol_refusal_names;
 mod protocol_recommendation;
 mod protocol_refusal_text;
+mod quantity_scaling;
 mod reaches_optional_reference;
 mod request_overrides;
 mod revision_validation;
