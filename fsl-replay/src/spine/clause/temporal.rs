@@ -39,9 +39,11 @@ use super::{
 use crate::proof_result::SettlementBasis;
 
 mod package_selection;
+mod package_window;
 pub use package_selection::{
     run_package_snapshots, PackageSelectionNotRead, PackageSnapshotRequest,
 };
+pub use package_window::PackageAtomAttributionFailure;
 
 /// FR-330 Inputs: the observations a temporal clause is run over, each a
 /// snapshot named by its labels (FR-106).
@@ -1190,8 +1192,11 @@ fn authenticate_bare_timed(
     name: &str,
     trace: &TraceInput,
 ) -> Result<Option<crate::spine::AuthenticatedTemporalSelection>, Box<ClauseDisposition>> {
-    let TraceInput::Timed { binding, .. } = trace else {
-        return Ok(None);
+    let (binding, derive) = match trace {
+        TraceInput::Timed { binding, .. } => (binding.as_ref(), binding.is_none()),
+        TraceInput::Progressed { binding, .. } => (Some(binding), false),
+        TraceInput::Timestamped { window, .. } => (window.binding.as_ref(), false),
+        _ => return Ok(None),
     };
     let row = package
         .temporal_clause_names()
@@ -1216,7 +1221,7 @@ fn authenticate_bare_timed(
             parameters: clock.clock.clone(),
         });
     authenticate_binding(
-        binding.as_ref().or(derived.as_ref()),
+        binding.or_else(|| derive.then_some(derived.as_ref()).flatten()),
         &subject,
         row.occurrence,
         package,
@@ -1442,6 +1447,14 @@ pub(crate) fn run_package_temporal_over(
 /// FR-330: one temporal clause a checked package carries, read over a trace of
 /// record samples through the package's own evaluator.
 pub struct PackageSampledRequest<'a> {
+    /// The owning admitted package and its retained dependency views.
+    pub package: &'a fsl_package::BarePackage<'a>,
+    /// Caller-admitted sources, without file intake or compilation.
+    pub sources: &'a [fsl_foundation::Source],
+    /// The caller's progress ledger, if the trace asserts progress.
+    pub ledger: Option<&'a ProgressLedger>,
+    /// The existing covered-position limit for the whole ledger admission.
+    pub progress_capacity: u64,
     /// The package's evaluator.
     pub evaluator: &'a dyn fsl_eval::simulation::model::ModelEvaluator,
     /// The temporal clause's declared name.
@@ -1506,6 +1519,21 @@ fn package_samples<'a>(
     ),
     Box<ClauseRunReport>,
 > {
+    package_samples_from(request, request.trace)
+}
+
+fn package_samples_from<'a>(
+    request: &PackageSampledRequest<'a>,
+    sampled_from: &TraceInput,
+) -> Result<
+    (
+        &'a fsl_semantics::check::CheckedTemporalClause,
+        &'a filament_exact::NodeKey,
+        Vec<Value>,
+        TemporalTrace,
+    ),
+    Box<ClauseRunReport>,
+> {
     let early = |disposition| disposition_report(disposition, ClauseRunUsage::default());
     let Some((clause, key)) = request.clause else {
         return Err(early(ClauseDisposition::MissingName {
@@ -1522,7 +1550,7 @@ fn package_samples<'a>(
         )));
     };
     let mut samples: Vec<Value> = Vec::new();
-    for (index, document) in request.trace.documents().enumerate() {
+    for (index, document) in sampled_from.documents().enumerate() {
         match fsl_semantics::model::observation::admit_record_sample(
             request.types,
             record,
@@ -1614,57 +1642,129 @@ fn package_disposition(
 /// clause, for the one route the package form reads: a clause under the
 /// infinite-trace profile over a finite trace or a lasso. A refused condition
 /// reports the source route's refusal code and cause, with no source span.
-pub fn run_package_sampled(request: &PackageSampledRequest<'_>) -> Box<ClauseRunReport> {
-    run_sampled(request, None)
+pub fn run_package_sampled(
+    request: &PackageSampledRequest<'_>,
+) -> Result<Box<ClauseRunReport>, PackageSelectionNotRead> {
+    run_sampled(request, Some(request.package.package()))
 }
 
 /// Run record samples with timed clock authentication from their admitted package.
 pub fn run_package_sampled_authenticated(
     request: &PackageSampledRequest<'_>,
     package: &filament_contract_model::CheckedPackageV2,
-) -> Box<ClauseRunReport> {
+) -> Result<Box<ClauseRunReport>, PackageSelectionNotRead> {
     run_sampled(request, Some(package))
 }
 
 fn run_sampled(
     request: &PackageSampledRequest<'_>,
     package: Option<&filament_contract_model::CheckedPackageV2>,
-) -> Box<ClauseRunReport> {
-    if let Some((clause, _)) = request.clause {
-        let site = super::trace_refusal::PackageClauseSite { clause };
-        if !super::trace_refusal::profile_reads(clause.profile()).contains(&request.trace.kind()) {
-            return disposition_report(
-                ClauseDisposition::TraceRefused(Box::new(site.kind_mismatch(request.trace.kind()))),
-                ClauseRunUsage::default(),
-            );
-        }
-        if let Some(refusal) = empty_trace_refusal(&site, request.trace) {
-            return disposition_report(
-                ClauseDisposition::TraceRefused(Box::new(refusal)),
-                ClauseRunUsage::default(),
-            );
-        }
+) -> Result<Box<ClauseRunReport>, PackageSelectionNotRead> {
+    let early = |disposition| Ok(disposition_report(disposition, ClauseRunUsage::default()));
+    let Some((clause, key)) = request.clause else {
+        return early(ClauseDisposition::MissingName {
+            name: request.name.to_owned(),
+        });
+    };
+    let site = super::trace_refusal::PackageClauseSite { clause };
+    if !super::trace_refusal::profile_reads(clause.profile()).contains(&request.trace.kind()) {
+        return early(ClauseDisposition::TraceRefused(Box::new(
+            site.kind_mismatch(request.trace.kind()),
+        )));
     }
     let authenticated = match package
         .map(|package| authenticate_bare_timed(package, request.name, request.trace))
         .transpose()
     {
         Ok(value) => value.flatten(),
-        Err(disposition) => return disposition_report(*disposition, ClauseRunUsage::default()),
+        Err(disposition) => return early(*disposition),
     };
-    let (clause, key, samples, shape) = match package_samples(request) {
-        Ok(read) => read,
-        Err(report) => return report,
+    let renamed = match indexed_samples(request.trace) {
+        Ok(trace) => trace,
+        Err(fault) => return early(ClauseDisposition::EvaluateFault(fault)),
     };
+    let listed = renamed.as_ref().unwrap_or(request.trace);
+    let screened = match package_window::screen(clause, listed) {
+        Ok(screened) => screened,
+        Err(disposition) => return early(disposition),
+    };
+    let trace = screened.as_ref().map_or(listed, |screened| &screened.trace);
+    if request.ledger.is_some() && !trace.carries_progress() {
+        return early(ClauseDisposition::TraceRefused(Box::new(
+            site.ledger_without_progress(),
+        )));
+    }
+    if let Some(refusal) = empty_trace_refusal(&site, trace) {
+        return early(ClauseDisposition::TraceRefused(Box::new(refusal)));
+    }
     let mut meter = Meter::new(request.accounting);
+    let progressed = match package_window::progressed(clause, trace, &mut meter) {
+        Ok(trace) => trace,
+        Err(disposition) => return early(disposition),
+    };
+    let kept;
+    let sampled_from = match (request.trace, screened.as_ref()) {
+        (TraceInput::Timestamped { observations, .. }, Some(screened)) => {
+            let TraceInput::Timestamped {
+                progress, window, ..
+            } = &screened.trace
+            else {
+                return Err(PackageSelectionNotRead::Selection {
+                    member: "clause.selection.trace",
+                    reason: "screening retains the timestamped trace kind".to_owned(),
+                });
+            };
+            kept = TraceInput::Timestamped {
+                observations: screened
+                    .kept
+                    .iter()
+                    .filter_map(|position| observations.get(*position).cloned())
+                    .collect(),
+                progress: *progress,
+                window: window.clone(),
+            };
+            &kept
+        }
+        _ => request.trace,
+    };
+    let (_, _, samples, _) = match package_samples_from(request, sampled_from) {
+        Ok(read) => read,
+        Err(report) => return Ok(report),
+    };
+    let Some(shape) = trace.shape() else {
+        return early(refused("invalid-value", BTreeMap::new()));
+    };
     let positions = fsl_eval::temporal::PackagePositions::Samples(&samples);
+    let context = package_window::Context::new(
+        request.package,
+        request.evaluator,
+        clause,
+        key,
+        request.name,
+        request.sources,
+    )?;
+    if trace.carries_progress() {
+        let mut finished = package_window::run(
+            &context,
+            positions,
+            trace,
+            screened.as_ref(),
+            progressed.as_ref(),
+            request.ledger,
+            request.progress_capacity,
+            AdmissionUsage::default(),
+            &mut meter,
+        )?;
+        finished.authenticated_temporal_selection = authenticated;
+        return Ok(Box::new(finished));
+    }
     let observed = if let TraceInput::Timed {
         prefix,
         repeat,
         period,
         through,
         ..
-    } = request.trace
+    } = trace
     {
         fsl_eval::temporal::evaluate_package_timed(
             request.evaluator,
@@ -1698,16 +1798,20 @@ fn run_sampled(
         )
     };
     let inactive = observed.inactive;
-    let (disposition, refused_at) =
-        package_disposition(observed.stopped, observed.result, inactive);
+    let (disposition, refused_at) = match observed.stopped {
+        Some(HoldsStop::Refused { at, evaluation }) => {
+            (context.refused(evaluation)?, Some(at.index()))
+        }
+        stopped => package_disposition(stopped, observed.result, inactive),
+    };
     let (disposition, counterexample) =
-        with_counterexample(clause, request.trace, disposition, observed.undefined);
+        with_counterexample(clause, trace, disposition, observed.undefined);
     let usage = ClauseRunUsage::from_meter(&meter, AdmissionUsage::default());
     let mut finished = disposition_report(disposition, usage);
     finished.counterexample = counterexample.map(Into::into);
     finished.refused_at = refused_at;
     finished.authenticated_temporal_selection = authenticated;
-    finished
+    Ok(finished)
 }
 
 /// FR-820: FR-330's report of the sampled clause `node` over a `Finite` trace
@@ -2740,7 +2844,7 @@ fn run_finite_window(
     meter: &mut Meter,
 ) -> WindowRun {
     let classes = atom_classes(run, node);
-    run_finite_window_core(
+    let result: Result<WindowRun, std::convert::Infallible> = run_finite_window_core(
         node.clause(),
         &node.identity(),
         (input, screened),
@@ -2749,13 +2853,25 @@ fn run_finite_window(
         trace_positions,
         meter,
         |trace, absent, meter| {
-            run_window(run, node, trace, (absent, None), observing, carried, meter)
+            Ok(run_window(
+                run,
+                node,
+                trace,
+                (absent, None),
+                observing,
+                carried,
+                meter,
+            ))
         },
-    )
+    );
+    match result {
+        Ok(window) => window,
+        Err(never) => match never {},
+    }
 }
 
 /// Shared canonical trace admission and late-data reporting for both routes.
-fn run_finite_window_core(
+fn run_finite_window_core<E>(
     clause: &fsl_semantics::check::CheckedTemporalClause,
     key: &filament_exact::NodeKey,
     (input, screened): (&Timestamped<'_>, Option<&super::late_data::Screened>),
@@ -2763,16 +2879,16 @@ fn run_finite_window_core(
     admission: Option<&std::cell::RefCell<CarriedAdmission>>,
     trace_positions: &mut usize,
     meter: &mut Meter,
-    evaluate: impl FnOnce(&TimestampedTrace, &[(u64, u64)], &mut Meter) -> WindowRun,
-) -> WindowRun {
+    evaluate: impl FnOnce(&TimestampedTrace, &[(u64, u64)], &mut Meter) -> Result<WindowRun, E>,
+) -> Result<WindowRun, E> {
     use fsl_eval::temporal::{
         LowerBoundary, TimestampedObservation as WindowObservation, Watermark, WindowClock,
         WindowProgress,
     };
     let fault = |invariant: &'static str| {
-        WindowRun::stopped(ClauseDisposition::EvaluateFault(
+        Ok(WindowRun::stopped(ClauseDisposition::EvaluateFault(
             filament_semantic_value::catalog::InternalFault::new("temporal", invariant),
-        ))
+        )))
     };
     let clock = WindowClock {
         name: clause.clock().to_owned(),
@@ -2917,7 +3033,7 @@ fn run_finite_window_core(
             .collect()
     };
     let absent = same_atom(canonical(&input.window.missing_valuations));
-    let mut window = evaluate(&trace, &absent, meter);
+    let mut window = evaluate(&trace, &absent, meter)?;
     if let (Some(screened), Some(report)) = (screened, window.report.as_mut()) {
         let reach = match fsl_eval::temporal::window_reach(
             &fsl_eval::temporal::evidence::ClauseFacts::of_checked(clause),
@@ -2947,7 +3063,7 @@ fn run_finite_window_core(
         report.admitted_late.clone_from(&screened.admitted);
         report.unmatched_admissions.clone_from(&screened.unmatched);
     }
-    window
+    Ok(window)
 }
 
 /// FR-501, FR-504: evaluate `clause` over the admitted `trace` and report its
@@ -3550,7 +3666,7 @@ fn finite_window_report(
     })
 }
 
-fn finite_window_report_named(
+fn finite_window_report_named<E>(
     (basis, support, premises, identity): (
         fsl_eval::temporal::Basis,
         Vec<fsl_eval::temporal::SupportPair>,
@@ -3558,8 +3674,8 @@ fn finite_window_report_named(
         fsl_eval::temporal::ResultIdentity,
     ),
     key: super::correction::EvidenceKey,
-    names: &dyn Fn(fsl_semantics::check::FormulaNodeId) -> Result<String, Box<RunRefusal>>,
-) -> Result<FiniteWindowReport, Box<RunRefusal>> {
+    names: &dyn Fn(fsl_semantics::check::FormulaNodeId) -> Result<String, E>,
+) -> Result<FiniteWindowReport, E> {
     use fsl_eval::temporal::{Assessment, Basis, ClockCover, LowerBoundary};
     Ok(FiniteWindowReport {
         basis: match basis {
@@ -3577,7 +3693,7 @@ fn finite_window_report_named(
                     atom: names(pair.atom)?,
                 })
             })
-            .collect::<Result<_, Box<RunRefusal>>>()?,
+            .collect::<Result<_, E>>()?,
         premises: FiniteWindowPremises {
             scope: premises.scope.into(),
             execution: premises.execution.into(),
@@ -3708,11 +3824,11 @@ pub fn name_clause_atom(
 
 /// The spine's own form of the finite-window evaluator's verdict
 /// (FR-100-AC-8).
-fn window_verdict(
+fn window_verdict<E>(
     verdict: fsl_eval::temporal::WindowVerdict,
-    names: &dyn Fn(fsl_semantics::check::FormulaNodeId) -> Result<String, Box<RunRefusal>>,
+    names: &dyn Fn(fsl_semantics::check::FormulaNodeId) -> Result<String, E>,
     guard: Option<filament_semantic_value::location::ExpressionLocation>,
-) -> Result<Option<TemporalVerdict>, Box<RunRefusal>> {
+) -> Result<Option<TemporalVerdict>, E> {
     use fsl_eval::temporal::{IndeterminateReason, WindowVerdict};
     Ok(Some(match verdict {
         WindowVerdict::Holds => TemporalVerdict::Holds,

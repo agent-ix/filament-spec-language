@@ -404,6 +404,7 @@ fn execute_clause(
     bare: &fsl_package::BarePackage<'_>,
     packages: &fsl_semantics::model::intake::PackageInput,
     model_limits: fsl_semantics::model::accounting::ModelNormalizationLimits,
+    sources: &[fsl_foundation::Source],
     work: ClauseWork,
 ) -> Result<RunResult> {
     let not_read = |reason: String| invalid("clause.selection", reason);
@@ -435,24 +436,18 @@ fn execute_clause(
                     filament_semantic_value::checking::CheckingLimits::default().nodes(),
                 )
                 .map_err(|refusal| not_read(refusal.to_string()))?;
-            if work.over.is_none()
-                && !matches!(
-                    clause.profile(),
-                    fsl_semantics::check::TemporalProfile::InfiniteTrace
-                        | fsl_semantics::check::TemporalProfile::Timed
-                )
-            {
-                return Err(not_read(
-                    "only an infinite-trace or timed clause runs over these record samples"
-                        .to_owned(),
-                ));
-            }
             Ok((clause, key))
         })
         .transpose()?;
     let report = match &work.over {
         None => *fsl_replay::spine::run_package_sampled_authenticated(
             &fsl_replay::spine::PackageSampledRequest {
+                package: bare,
+                sources,
+                ledger: work.ledger.as_ref(),
+                progress_capacity: fsl_replay::spine::SpineLimits::default()
+                    .progress
+                    .covered_positions,
                 evaluator: bare,
                 name: &work.name,
                 clause: found.as_ref().map(|(clause, key)| (clause, key)),
@@ -461,10 +456,15 @@ fn execute_clause(
                 accounting: work.accounting,
             },
             bare.package(),
-        ),
+        )
+        .map_err(selection_not_read)?,
         Some(over) => {
             let input = model.input();
             fsl_replay::spine::run_package_snapshots(&fsl_replay::spine::PackageSnapshotRequest {
+                sources,
+                progress_capacity: fsl_replay::spine::SpineLimits::default()
+                    .progress
+                    .covered_positions,
                 package: bare,
                 input: &input,
                 name: &work.name,
@@ -478,10 +478,31 @@ fn execute_clause(
                 over,
                 ledger: work.ledger.as_ref(),
             })
-            .map_err(|refusal| invalid(refusal.member, refusal.reason))?
+            .map_err(selection_not_read)?
         }
     };
     output::clause_report(report, &work.selection)
+}
+
+fn selection_not_read(refusal: fsl_replay::spine::PackageSelectionNotRead) -> RunCause {
+    use fsl_replay::spine::PackageSelectionNotRead;
+    match refusal {
+        PackageSelectionNotRead::Selection { member, reason } => invalid(member, reason),
+        PackageSelectionNotRead::Run(refusal) => RunCause::SpineRun(refusal),
+        PackageSelectionNotRead::Attribution(failure) => match failure.reason {
+            fsl_package::occurrence_source::OccurrenceSourceRefusal::UnknownNode
+            | fsl_package::occurrence_source::OccurrenceSourceRefusal::UnknownOccurrence
+            | fsl_package::occurrence_source::OccurrenceSourceRefusal::UnknownRegion => {
+                invalid("clause.selection", failure.reason.to_string())
+            }
+            _ => RunCause::AnalyzePackage {
+                code: fsl_foundation::Code::InvalidPackage,
+                cause: Some("invalid-value".to_owned()),
+                pointer: Some(failure.pointer),
+                message: format!("package source attribution: {}", failure.reason),
+            },
+        },
+    }
 }
 
 /// FR-1039: prepare a `tl_lowering` request over a selected package. Its
@@ -896,7 +917,7 @@ pub(super) fn execute(prepared: PreparedPackageRun) -> Result<RunResult> {
     let call = match work {
         Work::Call(call) => *call,
         Work::Clause(work) => {
-            let mut result = execute_clause(&bare, &packages, model_limits, *work)?;
+            let mut result = execute_clause(&bare, &packages, model_limits, &sources, *work)?;
             result.sources = crate::Sources::from_sources(models.into_iter().chain(sources));
             return Ok(result);
         }
@@ -905,6 +926,7 @@ pub(super) fn execute(prepared: PreparedPackageRun) -> Result<RunResult> {
                 &bare,
                 &lowering,
                 &super::tl::PackageRun {
+                    sources: &sources,
                     packages: &packages,
                     model_limits,
                     snapshot: snapshot.as_deref(),

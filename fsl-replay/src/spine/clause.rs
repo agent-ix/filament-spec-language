@@ -67,10 +67,10 @@ pub use temporal::{
     run_package_snapshots, run_package_temporal, run_package_temporal_bounded,
     run_package_valuation, sample_position, AdmittedLate, FiniteWindowAssessment,
     FiniteWindowPremises, FiniteWindowReport, FiniteWindowSupport, LateEntry, LateInputs,
-    OverObject, PackageSampledRequest, PackageSelectionNotRead, PackageSnapshotRequest,
-    PackageTemporalRequest, ProgressRefusal, TemporalAuthentication, TimedObservation,
-    TimestampedCover, TimestampedMissingValuation, TimestampedObservation, TimestampedOrderKey,
-    TimestampedWindow, TraceBinding, TraceInput, DEFAULT_MODEL_MAX_CANDIDATES,
+    OverObject, PackageAtomAttributionFailure, PackageSampledRequest, PackageSelectionNotRead,
+    PackageSnapshotRequest, PackageTemporalRequest, ProgressRefusal, TemporalAuthentication,
+    TimedObservation, TimestampedCover, TimestampedMissingValuation, TimestampedObservation,
+    TimestampedOrderKey, TimestampedWindow, TraceBinding, TraceInput, DEFAULT_MODEL_MAX_CANDIDATES,
 };
 pub(crate) use temporal::{trace_refusal, verdict};
 pub use trace_refusal::profile_reads;

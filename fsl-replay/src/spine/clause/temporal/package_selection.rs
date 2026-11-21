@@ -34,17 +34,28 @@ use super::{refused, resolve_over_in, with_counterexample, OverObject, TraceInpu
 use crate::model_check::replay::{evaluate_model_trace, ModelTraceEnd, ModelTraceRun};
 
 /// A run the package route reads no verdict for, and why.
-#[derive(Clone, Debug)]
-pub struct PackageSelectionNotRead {
-    /// The request member that selects what is not read.
-    pub member: &'static str,
-    /// What the run lacks.
-    pub reason: String,
+#[derive(Debug)]
+pub enum PackageSelectionNotRead {
+    /// A selection the package adapter cannot read.
+    Selection {
+        /// The request member.
+        member: &'static str,
+        /// The owning reader's reason.
+        reason: String,
+    },
+    /// The original run refusal, retaining its call stage and source identity.
+    Run(Box<super::RunRefusal>),
+    /// Attribution is unavailable beside the original evaluated result.
+    Attribution(Box<super::package_window::PackageAtomAttributionFailure>),
 }
 
 /// FR-330: one temporal clause a checked package carries, run over snapshots
 /// of its model world.
 pub struct PackageSnapshotRequest<'a, 'p> {
+    /// Caller-admitted sources used only to render regions and atom labels.
+    pub sources: &'a [fsl_foundation::Source],
+    /// The existing covered-position limit for this whole run's ledger.
+    pub progress_capacity: u64,
     /// The package whose nodes carry the clause.
     pub package: &'a fsl_package::BarePackage<'p>,
     /// The package's model-check input, which holds its evaluator, its types
@@ -134,6 +145,8 @@ pub fn run_package_snapshots(
         trace,
         over,
         ledger,
+        sources,
+        progress_capacity,
     } = *request;
     let early = |disposition| Ok(report(disposition, ClauseRunUsage::default()));
     let Some((clause, key)) = clause else {
@@ -149,18 +162,15 @@ pub fn run_package_snapshots(
             site.kind_mismatch(trace.kind()),
         )));
     }
-    if matches!(
-        trace,
-        TraceInput::Progressed { .. } | TraceInput::Timestamped { .. }
-    ) {
-        return Err(PackageSelectionNotRead {
-            member: "clause.selection.trace",
-            reason: format!(
-                "a {} trace is not run over a selected checked package yet",
-                trace.kind()
-            ),
-        });
-    }
+    let authenticated = match super::authenticate_bare_timed(package.package(), name, trace) {
+        Ok(selection) => selection,
+        Err(disposition) => return early(*disposition),
+    };
+    let screened = match super::package_window::screen(clause, trace) {
+        Ok(screened) => screened,
+        Err(disposition) => return early(disposition),
+    };
+    let trace = screened.as_ref().map_or(trace, |screened| &screened.trace);
     // A ledger retains progress; a trace that asserts none has nothing to
     // retain (FR-502 Behavior).
     if ledger.is_some() && !trace.carries_progress() {
@@ -168,10 +178,6 @@ pub fn run_package_snapshots(
             site.ledger_without_progress(),
         )));
     }
-    let authenticated = match super::authenticate_bare_timed(package.package(), name, trace) {
-        Ok(selection) => selection,
-        Err(disposition) => return early(*disposition),
-    };
     let (_, over_type) = clause.over();
     let ValueType::Reference(type_identity) = over_type else {
         return early(refused(
@@ -192,6 +198,11 @@ pub fn run_package_snapshots(
         return early(ClauseDisposition::TraceRefused(Box::new(refusal)));
     }
 
+    let mut meter = Meter::new(accounting);
+    let progressed = match super::package_window::progressed(clause, trace, &mut meter) {
+        Ok(progressed) => progressed,
+        Err(disposition) => return early(disposition),
+    };
     let named = named_populations(package, clause, key);
     let mut admitted = AdmissionUsage::default();
     let mut environments = Vec::new();
@@ -243,11 +254,27 @@ pub fn run_package_snapshots(
             ));
         }
     };
-    let mut meter = Meter::new(accounting);
     let positions = PackagePositions::Objects {
         environments: &environments,
         over: &resolved,
     };
+    let context =
+        super::package_window::Context::new(package, input.evaluator, clause, key, name, sources)?;
+    if trace.carries_progress() {
+        let mut finished = super::package_window::run(
+            &context,
+            positions,
+            trace,
+            screened.as_ref(),
+            progressed.as_ref(),
+            ledger,
+            progress_capacity,
+            admitted,
+            &mut meter,
+        )?;
+        finished.authenticated_temporal_selection = authenticated;
+        return Ok(finished);
+    }
     let observed = if let TraceInput::Timed {
         prefix,
         repeat,
@@ -292,8 +319,12 @@ pub fn run_package_snapshots(
     // search found; the package reads a search that found none, and a search
     // that stopped, as the source route does.
     let decisive = observed.decisive;
-    let (disposition, refused_at) =
-        super::package_disposition(observed.stopped, observed.result, inactive);
+    let (disposition, refused_at) = match observed.stopped {
+        Some(fsl_eval::temporal::HoldsStop::Refused { at, evaluation }) => {
+            (context.refused(evaluation)?, Some(at.index()))
+        }
+        stopped => super::package_disposition(stopped, observed.result, inactive),
+    };
     let violated = matches!(
         disposition,
         ClauseDisposition::Temporal(TemporalVerdict::Violated { .. })
@@ -379,7 +410,7 @@ fn run_model(
         max_candidates,
     } = trace
     else {
-        return Err(PackageSelectionNotRead {
+        return Err(PackageSelectionNotRead::Selection {
             member: "clause.selection.trace",
             reason: "a model trace is required".to_owned(),
         });
@@ -554,7 +585,7 @@ fn decisive_fault(invariant: &'static str) -> Box<ClauseDisposition> {
 /// Re-evaluate the selected false atom with the witness channel, then follow
 /// the actual short-circuit decisions through its admitted expression.
 #[allow(clippy::too_many_arguments)]
-fn decisive_over(
+pub(super) fn decisive_over(
     package: &fsl_package::BarePackage<'_>,
     clause: &CheckedTemporalClause,
     key: &NodeKey,
