@@ -956,6 +956,30 @@ impl<M: MemoryModel> ProtocolSystem<'_, M> {
             .0;
         let clauses = self.program.related.get(&node)?;
         let instance = state.instances.get(&thread.instance)?;
+        if let Some(message) = self.program.messages.get(&node) {
+            let running = instance.threads.get(thread)?;
+            if running.disposition != Disposition::Running || running.rest != Rest::Node(node) {
+                return None;
+            }
+            if !instance.pending_sends.contains_key(&(thread.clone(), node))
+                && !self
+                    .admits(
+                        Reader {
+                            instance,
+                            path: thread,
+                            node,
+                        },
+                        message.record.constraint,
+                        message.record.slot,
+                        transition.binder_record()?,
+                        &state.model,
+                        &mut Vec::new(),
+                    )
+                    .ok()?
+            {
+                return None;
+            }
+        }
         let mut frame = self.frame(instance, thread, node);
         if let (Some(slot), Some(record)) = (
             self.program.binder_of.get(&node).copied(),
