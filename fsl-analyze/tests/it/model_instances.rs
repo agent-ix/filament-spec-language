@@ -536,6 +536,8 @@ fn an_unbounded_admitting_population_requires_a_bound_and_no_key_is_no_instance(
     };
     let roots: Vec<_> = bound
         .domains
+        .as_ref()
+        .expect("generic unbounded domains")
         .iter()
         .map(|(key, kind)| (key.clone(), kind))
         .collect();
@@ -620,6 +622,8 @@ fn a_state_graph_claim_is_instanced_like_a_clause() {
     };
     let roots: Vec<_> = bound
         .domains
+        .as_ref()
+        .expect("generic unbounded domains")
         .iter()
         .map(|(key, kind)| (key.clone(), kind))
         .collect();
@@ -649,6 +653,8 @@ fn the_closure_checker_requires_a_bound_for_an_unbounded_admitting_population() 
         panic!("expected RequiresBound, got {refusal:?}");
     };
     let roots: Vec<_> = domains
+        .as_ref()
+        .expect("generic unbounded domains")
         .iter()
         .map(|(key, kind)| (key.clone(), kind))
         .collect();

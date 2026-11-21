@@ -26,6 +26,63 @@ fn emitted(declarations: &str) -> (CheckedPackage, Emission, Value) {
     (package, emission, wire)
 }
 
+/// The identities/5 source-tuple channel retains original handles and every
+/// positional entry, and missing nullable members are not silently defaulted.
+#[trace("FR-531-AC-8", "FR-531-AC-12", "FR-092-AC-22")]
+#[test]
+fn source_tuple_identity_carrier_round_trips_and_requires_every_position_member() {
+    use crate::{BarePackage, BareSupply, IdentityFileRefusal, ReadIdentityRows};
+    use filament_contract_model::NativeJoinBudget;
+    let (_, emission, wire) = emitted(TUPLES);
+    let admitted = admit_bytes(&emission, &wire);
+    let budget = || NativeJoinBudget::new(10_000_000, 10_000_000);
+    let rows = emission
+        .identity_rows(&admitted, &mut budget())
+        .expect("original tuples");
+    assert_eq!(rows.source_tuples(), emission.selected_source_tuple_rows());
+    let bytes = rows.to_bytes(&admitted).unwrap();
+    let reread =
+        ReadIdentityRows::read(&bytes, &admitted, &mut budget()).expect("authentic tuple channel");
+    assert_eq!(reread, rows);
+    let world = BarePackage::new(&admitted)
+        .with_supply(
+            BareSupply {
+                identities: &reread,
+                equality: None,
+            },
+            &mut budget(),
+        )
+        .unwrap()
+        .world()
+        .unwrap();
+    assert_eq!(world.types().composites().count(), 2);
+    let value: Value = serde_json::from_slice(&bytes).unwrap();
+    for member in [
+        "ordinal",
+        "type_node",
+        "value_type",
+        "member_type",
+        "collections",
+    ] {
+        let mut missing = value.clone();
+        missing["source_tuples"][0]["positions"][0]
+            .as_object_mut()
+            .unwrap()
+            .remove(member);
+        assert!(
+            matches!(
+                ReadIdentityRows::read(
+                    &serde_json::to_vec(&missing).unwrap(),
+                    &admitted,
+                    &mut budget()
+                ),
+                Err(IdentityFileRefusal::Malformed { .. })
+            ),
+            "{member} is required even when nullable"
+        );
+    }
+}
+
 fn declaration<'p>(package: &'p CheckedPackage, name: &str) -> &'p CompositeDeclaration {
     package
         .graph()

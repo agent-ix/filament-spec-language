@@ -56,6 +56,1299 @@ fn package_run(ws: &Workspace, request_path: &std::path::Path) -> Run {
     analyze(&package_request(ws, request_path).0)
 }
 
+fn repeat_attempt(name: &str, binder: &str, constraint: &str) -> String {
+    crate::fill::attempt(name, "touch", "", binder, constraint).replace(" by w ", " by Machining ")
+}
+
+fn workflow_roles_request(
+    ws: &Workspace,
+    maximum: u64,
+    lifetime: &str,
+    empty_universe: bool,
+    controls: &str,
+    finish: &str,
+) -> std::path::PathBuf {
+    let path = channel_request(
+        ws,
+        finite_channel_model(),
+        if empty_universe {
+            "ordering unordered delivery exactly-once-premise capacity 2 overflow reject"
+        } else {
+            "ordering unordered delivery unknown capacity 2 overflow reject"
+        },
+        controls,
+        finish,
+    );
+    let (object, population) = if empty_universe {
+        ("Idle", "idles")
+    } else {
+        ("Cell", "cells")
+    };
+    let unit = std::fs::read_to_string(ws.path("program.fsl")).expect("the role unit");
+    let unit = unit
+        .replace(
+            "role Machining on M::Cell;",
+            &format!(
+                "role Worker each M::{object} from {population} max {maximum} lifetime {lifetime};"
+            ),
+        )
+        .replace("to Machining", "to Worker");
+    ws.write("program.fsl", unit.as_bytes());
+    let mut request: Value =
+        serde_json::from_slice(&std::fs::read(&path).expect("request")).expect("JSON");
+    request["request"]["items"][0]["temporal"]["subject"]["protocol"]["roles"]
+        .as_object_mut()
+        .expect("role bindings")
+        .remove("Machining");
+    ws.write("analyze.json", request.to_string().as_bytes());
+    ws.write(
+        "snapshot-0.json",
+        &channel_snapshots(&[("c", 0), ("d", 0)])[0],
+    );
+    path
+}
+
+/// Explore both routes from the same external snapshot and universe. Only the
+/// source input uses the checked graph; the other input has admitted supply.
+fn workflow_role_graph(ws: &Workspace, path: &std::path::Path) -> Vec<crate::fill::Reached> {
+    use fsl_eval::model_subject::{ProtocolSubject, RoleBinding};
+    use fsl_eval::simulation::model::{ModelSystem, PackageModelInput};
+    use fsl_eval::simulation::protocol::{ProtocolSystem, ResolvedMemory, Sc};
+    use fsl_package::{AnalysisView, BarePackage, BareSupply, EmitLimits, V2ReadLimits};
+    use fsl_semantics::model::accounting::ModelNormalizationLimits;
+
+    let _ = package_request(ws, path);
+    let compiled =
+        fsl_command::checked_handoff::compile(&ws.path(crate::analyze_cli_support::HANDOFF))
+            .expect("the role fixture compiles");
+    let mut documents = crate::fill::Documents::new();
+    documents.packages = compiled.packages().clone();
+    let start = documents.start("s0", &[("c", 0), ("d", 0)]);
+    let source = ProtocolSubject {
+        model: crate::fill::model_subject(compiled.checked(), &documents, vec![start], &["c", "d"]),
+        protocol: "Flow".to_owned(),
+        over: crate::fill::instance("c"),
+        roles: vec![RoleBinding {
+            role: "Planning".to_owned(),
+            model: crate::fill::PACKAGE.to_owned(),
+        }],
+        capacities: Vec::new(),
+        memory: crate::fill::source_memory(compiled.checked(), "Flow"),
+    };
+    let emission =
+        fsl_package::emit_checked(compiled.checked(), EmitLimits::fixture()).expect("emission");
+    let admitted = compiled.admitted();
+    let identities = emission
+        .identity_rows(admitted, &mut V2ReadLimits::fixture().native_join_budget())
+        .expect("identities");
+    let equality = emission
+        .equality_witness(admitted, &mut V2ReadLimits::fixture().native_join_budget())
+        .expect("equality");
+    let bare = BarePackage::new(admitted)
+        .with_supply(
+            BareSupply {
+                identities: &identities,
+                equality: Some(&equality),
+            },
+            &mut V2ReadLimits::fixture().native_join_budget(),
+        )
+        .expect("supply");
+    let input = PackageModelInput::of(
+        &bare,
+        &documents.packages,
+        ModelNormalizationLimits::default(),
+    )
+    .expect("package model");
+    let mut model = crate::fill::model_subject(
+        compiled.checked(),
+        &documents,
+        source.model.simulation.initial.clone(),
+        &["c", "d"],
+    );
+    model.simulation.input = input.input();
+    assert!(model.simulation.source_package().is_none());
+    let package = ProtocolSubject {
+        model,
+        protocol: source.protocol.clone(),
+        over: source.over.clone(),
+        roles: source.roles.clone(),
+        capacities: Vec::new(),
+        memory: ResolvedMemory::resolve_package(
+            &bare
+                .protocol_execution_named("Flow")
+                .expect("protocol selection")
+                .expect("Flow"),
+            &[],
+        )
+        .expect("package memory"),
+    };
+    let source_system = ProtocolSystem::new(
+        ModelSystem::new(source.model.simulation.clone()).expect("source model"),
+        &source,
+        Sc,
+    )
+    .expect("source roles");
+    let package_system = ProtocolSystem::new_package(
+        ModelSystem::new(package.model.simulation.clone()).expect("package model"),
+        &package,
+        Sc,
+    )
+    .expect("package roles");
+    let workers = std::num::NonZeroUsize::new(1).expect("one worker");
+    let source = source_system
+        .reachable(workers)
+        .expect("source graph")
+        .states;
+    let package = package_system
+        .reachable(workers)
+        .expect("package graph")
+        .states;
+    let canonical = |states: &[crate::fill::Reached]| {
+        let mut rows: Vec<_> = states
+            .iter()
+            .map(|state| {
+                let mut steps: Vec<_> = state
+                    .steps
+                    .iter()
+                    .map(|(step, next)| {
+                        (
+                            quire_canonical::to_vec(step, quire_canonical::Limits::new(u64::MAX))
+                                .expect("transition identity"),
+                            states[*next].key.as_bytes().to_vec(),
+                        )
+                    })
+                    .collect();
+                steps.sort();
+                (state.key.as_bytes().to_vec(), steps)
+            })
+            .collect();
+        rows.sort();
+        rows
+    };
+    assert_eq!(canonical(&package), canonical(&source));
+    source
+}
+
+fn live_workflow_roles(state: &crate::fill::Reached) -> usize {
+    let key: Value = serde_json::from_slice(state.key.as_bytes()).expect("state key JSON");
+    key["roles"]["entries"]
+        .as_array()
+        .expect("role map")
+        .iter()
+        .filter(|entry| entry["key"]["role"] == "Worker")
+        .flat_map(|entry| entry["value"]["entries"].as_array().expect("instance map"))
+        .filter(|entry| entry["value"]["value"] == "live")
+        .count()
+}
+
+fn workflow_role_parity(ws: &Workspace, path: &std::path::Path, expected: &str) -> Value {
+    // Graph comparison already wrote this authentic handoff and its request.
+    let package_path = ws.path("analyze-package.json");
+    assert!(
+        package_path.is_file(),
+        "the graph prepared the package request"
+    );
+    channel_send_parity_using(ws, path, expected, || package_path)
+}
+
+/// The complete replicated-role example has an empty run and an unused channel;
+/// its two spawn orders meet at the same state, and finish tears down both actors.
+#[trace(
+    "TC-2958",
+    "FR-940-AC-6",
+    "FR-531",
+    "FR-208-AC-2",
+    "FR-208-AC-3",
+    "FR-850"
+)]
+#[test]
+fn package_workflow_roles_runs_the_complete_body_and_tears_down() {
+    use fsl_eval::simulation::protocol::StepKind;
+    let ws = Workspace::new("package-workflow-role-body");
+    let path = workflow_roles_request(&ws, 2, "workflow", false, "", "closing");
+    let graph = workflow_role_graph(&ws, &path);
+    assert_eq!(graph.iter().map(live_workflow_roles).max(), Some(2));
+    let both = graph
+        .iter()
+        .position(|state| live_workflow_roles(state) == 2)
+        .expect("both workers live");
+    assert_eq!(
+        graph
+            .iter()
+            .flat_map(|state| &state.steps)
+            .filter(|(step, next)| step.kind() == StepKind::Spawn && *next == both)
+            .count(),
+        2,
+        "the two spawn orders converge"
+    );
+    let finished: Vec<_> = graph
+        .iter()
+        .flat_map(|state| &state.steps)
+        .filter(|(step, _)| step.kind() == StepKind::Finish)
+        .collect();
+    assert!(!finished.is_empty());
+    for (_, next) in finished {
+        assert_eq!(live_workflow_roles(&graph[*next]), 0);
+        assert!(graph[*next].steps.is_empty());
+    }
+    workflow_role_parity(&ws, &path, "proved");
+}
+
+/// The bound changes real reachable actors; owned attempts retain their actor
+/// identity in both graphs, and a blocked continuation replays without source.
+#[trace("TC-2958", "FR-940-AC-6", "FR-208", "FR-208-AC-2", "FR-206", "FR-850")]
+#[test]
+fn package_workflow_roles_bounds_instances_and_executes_owned_attempts() {
+    use fsl_eval::simulation::protocol::StepKind;
+    let controls = repeat_attempt("Work", "worked", "true").replace("by Machining", "by Worker");
+    for maximum in [1, 2] {
+        let ws = Workspace::new(&format!("package-workflow-role-bound-{maximum}"));
+        let path = workflow_roles_request(&ws, maximum, "workflow", false, &controls, "false");
+        let graph = workflow_role_graph(&ws, &path);
+        assert_eq!(
+            graph.iter().map(live_workflow_roles).max(),
+            Some(usize::try_from(maximum).expect("small bound"))
+        );
+        let actors: std::collections::BTreeSet<_> = graph
+            .iter()
+            .flat_map(|state| &state.steps)
+            .filter(|(step, _)| step.kind() == StepKind::Attempt)
+            .map(|(step, _)| {
+                let actor = step.actor().expect("a replicated attempt has an actor");
+                assert_eq!(actor.role, "Worker");
+                actor.object.clone()
+            })
+            .collect();
+        assert_eq!(actors.len(), 2, "either cell can execute Work");
+        workflow_role_parity(&ws, &path, "refuted");
+    }
+}
+
+/// An empty selected universe cannot manufacture an actor, and malformed caller
+/// role bindings retain the source route's typed refusal before exploration.
+#[trace("TC-2958", "FR-940-AC-6", "FR-208-AC-5", "FR-531", "FR-850")]
+#[test]
+fn package_workflow_roles_empty_universe_and_binding_refusal() {
+    let ws = Workspace::new("package-workflow-role-empty");
+    let controls = channel_send("Released", "order", "order.n = k.v")
+        + "receive Heard via Release of Released as (heard: M::Attempt) { true };";
+    let path = workflow_roles_request(&ws, 2, "workflow", true, &controls, "closing");
+    let graph = workflow_role_graph(&ws, &path);
+    assert!(graph.iter().all(|state| live_workflow_roles(state) == 0));
+    assert!(graph
+        .iter()
+        .flat_map(|state| &state.steps)
+        .all(|(step, _)| step.actor().is_none()));
+    let item = workflow_role_parity(&ws, &path, "refuted");
+    let blocked = item["counterexample"]["blocked"]
+        .as_array()
+        .expect("blocked worker receive");
+    assert_eq!(blocked.len(), 1, "{item}");
+    assert_eq!(blocked[0]["cause"]["type"], "no-role-instance", "{item}");
+    assert_eq!(blocked[0]["cause"]["role"], "Worker", "{item}");
+
+    let ws = Workspace::new("package-workflow-role-invalid-binding");
+    let path = workflow_roles_request(&ws, 2, "workflow", false, "", "closing");
+    let mut request: Value =
+        serde_json::from_slice(&std::fs::read(&path).expect("request")).expect("JSON");
+    let roles = request["request"]["items"][0]["temporal"]["subject"]["protocol"]["roles"]
+        .as_object_mut()
+        .expect("bindings");
+    let binding = roles.remove("Planning").expect("static role binding");
+    roles.insert("Unexpected".to_owned(), binding);
+    ws.write("analyze.json", request.to_string().as_bytes());
+    let item = repeat_parity(&ws, &path);
+    assert_eq!(
+        item["record"]["diagnostic"]["code"], "invalid_runtime_input",
+        "{item}"
+    );
+    assert_eq!(
+        item["record"]["diagnostic"]["cause"], "wrong-role-mapping",
+        "{item}"
+    );
+    assert!(item.get("exploration").is_none(), "{item}");
+}
+
+/// A recorded actor must belong to the live role instances at that prefix,
+/// even when its transition came from a real branch of an admitted system.
+#[trace("TC-2958", "FR-940-AC-6", "FR-208-AC-2", "FR-850")]
+#[test]
+fn package_workflow_roles_replay_refuses_forged_actors() {
+    use fsl_analyze::model_check::{check_protocol, ProtocolCheckRequest};
+    use fsl_eval::model_subject::RoleBinding;
+    use fsl_eval::simulation::model::ExpansionLimits;
+    use fsl_eval::simulation::protocol::{ProtocolTransition, StepKind};
+    use fsl_foundation::diagnostic::Code;
+    use fsl_replay::{
+        replay_protocol_trace, replay_protocol_trace_from_package, HandoffSupply, ModelCheckItem,
+        ModelCheckLimits, ModelCheckOutcome, ModelTraceRefusal, ModelTraceSettlement,
+        ProtocolTraceSubject, ReplayLimits, ReplayRefusal,
+    };
+
+    let controls = repeat_attempt("Work", "worked", "true").replace("by Machining", "by Worker");
+    let ws = Workspace::new("package-workflow-forged-actor");
+    let path = workflow_roles_request(&ws, 1, "workflow", false, &controls, "false");
+    let graph = workflow_role_graph(&ws, &path);
+    let directory = ws.path(crate::analyze_cli_support::HANDOFF);
+    let compiled =
+        fsl_command::checked_handoff::compile(&directory).expect("the workflow compiles");
+    let mut documents = crate::fill::Documents::new();
+    documents.packages = compiled.packages().clone();
+    let initial = documents.start("s0", &[("c", 0), ("d", 0)]);
+    let mut subject =
+        crate::fill::subject(compiled.checked(), &documents, vec![initial], "Flow", "c");
+    subject.model.simulation.universes = crate::fill::universe(&["c", "d"]);
+    subject.roles = vec![RoleBinding {
+        role: "Planning".to_owned(),
+        model: crate::fill::PACKAGE.to_owned(),
+    }];
+    let trace_subject = ProtocolTraceSubject {
+        model: fsl_replay::ModelTraceSubject {
+            timed: None,
+            initial: subject.model.simulation.initial.clone(),
+            universes: subject.model.simulation.universes.clone(),
+            expansion: ExpansionLimits {
+                max_candidates: 1_000_000,
+            },
+        },
+        protocol: subject.protocol.clone(),
+        over: subject.over.clone(),
+        roles: subject.roles.clone(),
+        capacities: Vec::new(),
+        memory: subject.memory.clone(),
+        max_store_buffer: None,
+        max_messages: None,
+        max_live_instances: None,
+    };
+    let outcome = check_protocol(
+        ProtocolCheckRequest {
+            subject,
+            temporal_clock_selections: &[],
+            item: ModelCheckItem::DeadlockFreedom,
+            max_depth: None,
+            max_store_buffer: None,
+            max_messages: None,
+            max_live_instances: None,
+            limits: ModelCheckLimits::default(),
+            ignore_memory_constraints: false,
+        },
+        &filament_exact::Cancel::new(),
+    )
+    .expect("the real deadlock checks");
+    let ModelCheckOutcome::Violated { counterexample, .. } = outcome else {
+        panic!("Work followed by a false finish must deadlock");
+    };
+    let valid = *counterexample;
+    let at = valid
+        .prefix
+        .iter()
+        .position(|step| step.transition.kind() == StepKind::Attempt)
+        .expect("the witness executes Work");
+    assert_eq!(at, 1, "the real witness spawns once before Work");
+    let work = &valid.prefix[at].transition;
+    let actor = work.actor().expect("Work has a spawned actor");
+    assert_eq!(
+        valid.prefix[0]
+            .transition
+            .role_instance()
+            .expect("spawned worker")
+            .1,
+        &actor.object
+    );
+    let without_actor = |transition: &ProtocolTransition| {
+        let bytes = quire_canonical::to_vec(transition, quire_canonical::Limits::new(u64::MAX))
+            .expect("transition encodes");
+        let mut value: Value = serde_json::from_slice(&bytes).expect("transition JSON");
+        value
+            .as_object_mut()
+            .expect("transition members")
+            .remove("actor");
+        value
+    };
+    let other = graph
+        .iter()
+        .flat_map(|state| &state.steps)
+        .map(|(step, _)| step)
+        .find(|step| {
+            step.kind() == StepKind::Attempt
+                && step
+                    .actor()
+                    .is_some_and(|other| other.role == actor.role && other.object != actor.object)
+                && without_actor(step) == without_actor(work)
+        })
+        .expect("the other real spawned worker can take the same Work")
+        .clone();
+
+    // The public transition is immutable. A second checked fixture provides
+    // a genuine Work with another role; no actor or graph is fabricated.
+    let renamed_ws = Workspace::new("package-workflow-other-role");
+    let renamed_path =
+        workflow_roles_request(&renamed_ws, 1, "workflow", false, &controls, "false");
+    let unit = std::fs::read_to_string(renamed_ws.path("program.fsl")).expect("role source");
+    renamed_ws.write(
+        "program.fsl",
+        unit.replace("Worker", "UnknownWorker").as_bytes(),
+    );
+    let renamed = workflow_role_graph(&renamed_ws, &renamed_path);
+    let unknown = renamed
+        .iter()
+        .flat_map(|state| &state.steps)
+        .map(|(step, _)| step)
+        .find(|step| {
+            step.kind() == StepKind::Attempt
+                && step.actor().is_some_and(|other| {
+                    other.role == "UnknownWorker" && other.object == actor.object
+                })
+                && without_actor(step) == without_actor(work)
+        })
+        .expect("the admitted other role takes the same Work")
+        .clone();
+    assert_ne!(other.actor(), work.actor());
+    assert_ne!(unknown.actor(), work.actor());
+    for replacement in [&other, &unknown] {
+        assert_eq!(without_actor(replacement), without_actor(work));
+        assert_ne!(replacement, work);
+    }
+    let unit = std::fs::read(ws.path("program.fsl")).expect("source bytes");
+    let model = std::fs::read(ws.path("model.json")).expect("model bytes");
+    let wire = crate::model_settle::request(
+        compiled.checked(),
+        &[],
+        &model,
+        documents.snapshots.iter(),
+        &unit,
+    );
+    let (node, occurrence) = crate::model_settle::protocol_anchor(compiled.checked(), "Flow");
+    let envelope =
+        |payload| crate::model_settle::envelope_at(payload, node.clone(), occurrence.clone());
+    let letters = crate::counter::Letters { atom: |_| None };
+    let legitimate = replay_protocol_trace(
+        wire.clone(),
+        &trace_subject,
+        &envelope(valid.clone()),
+        &letters,
+        ReplayLimits::default(),
+    )
+    .expect("the real source witness replays");
+    assert!(matches!(
+        legitimate.settlement,
+        ModelTraceSettlement::Reproduced { .. }
+    ));
+    let forged: Vec<_> = [other, unknown]
+        .into_iter()
+        .map(|replacement| {
+            let mut payload = valid.clone();
+            payload.prefix[at].transition = replacement;
+            payload
+        })
+        .collect();
+    let refuse = |result: Result<_, ReplayRefusal>| {
+        let Err(ReplayRefusal::ModelTrace(refusal)) = result else {
+            panic!("a forged actor must refuse");
+        };
+        assert!(
+            matches!(&*refusal, ModelTraceRefusal::ProtocolNotEnabled { step, .. } if *step == at),
+            "{refusal:?}"
+        );
+        assert_eq!(
+            (refusal.code(), refusal.cause()),
+            (Code::InvalidRuntimeInput, "invalid-value")
+        );
+        *refusal
+    };
+    let source_refusals: Vec<_> = forged
+        .iter()
+        .map(|payload| {
+            refuse(replay_protocol_trace(
+                wire.clone(),
+                &trace_subject,
+                &envelope(payload.clone()),
+                &letters,
+                ReplayLimits::default(),
+            ))
+        })
+        .collect();
+    let identities = std::fs::read(directory.join("identities.json")).expect("identities");
+    let equality = std::fs::read(directory.join("equality.json")).expect("equality");
+    std::fs::remove_file(ws.path("program.fsl")).expect("remove source before package replay");
+    let mut package_wire = wire;
+    package_wire.byte_provision.clear();
+    assert!(!ws.path("program.fsl").exists());
+    assert!(package_wire.byte_provision.is_empty());
+    let replay_package = |payload| {
+        replay_protocol_trace_from_package(
+            package_wire.clone(),
+            HandoffSupply {
+                dependencies: &[],
+                identities: &identities,
+                equality: Some(&equality),
+            },
+            &trace_subject,
+            &envelope(payload),
+            &letters,
+            ReplayLimits::default(),
+        )
+    };
+    assert!(matches!(
+        replay_package(valid)
+            .expect("the source-absent package witness replays")
+            .settlement,
+        ModelTraceSettlement::Reproduced { .. }
+    ));
+    for (payload, source_refusal) in forged.into_iter().zip(source_refusals) {
+        assert_eq!(refuse(replay_package(payload)), source_refusal);
+    }
+}
+
+/// Other declared lifetimes remain an explicit package capability boundary.
+#[trace("TC-2958", "FR-940-AC-6", "FR-531", "FR-208")]
+#[test]
+fn package_workflow_roles_other_lifetimes_remain_named_refusals() {
+    for lifetime in ["scope", "until(true)"] {
+        let ws = Workspace::new(&format!("package-workflow-role-lifetime-{lifetime}"));
+        let controls =
+            repeat_attempt("Work", "worked", "true").replace("by Machining", "by Worker");
+        let path = workflow_roles_request(&ws, 2, lifetime, false, &controls, "closing");
+        let source = analyze(&path);
+        assert!(
+            source.item(0).get("record").is_some(),
+            "{}",
+            source.document()
+        );
+        assert!(
+            matches!(label(&source.item(0)), "proved" | "refuted"),
+            "{}",
+            source.document()
+        );
+        let (path, _) = package_request(&ws, &path);
+        std::fs::remove_file(ws.path("program.fsl")).expect("remove source");
+        let package = analyze(&path);
+        let item = package.item(0);
+        let diagnostic = &item["record"]["diagnostic"];
+        assert_eq!(diagnostic["code"], "unsupported_construct", "{item}");
+        assert_eq!(diagnostic["cause"], "not-yet-implemented", "{item}");
+        assert_eq!(
+            diagnostic["detail"]["fact"], "replicated-role-lifetime",
+            "{item}"
+        );
+        assert_eq!(
+            diagnostic["detail"]["lifetime"],
+            lifetime.split('(').next().expect("lifetime name"),
+            "{item}"
+        );
+        assert!(item.get("exploration").is_none(), "{item}");
+    }
+}
+
+fn repeat_request(ws: &Workspace, controls: &str, finish: &str) -> std::path::PathBuf {
+    channel_request(
+        ws,
+        finite_channel_model(),
+        "ordering unordered delivery exactly-once-premise capacity 4 overflow block",
+        controls,
+        finish,
+    )
+}
+
+fn decimal_capture_request(ws: &Workspace, controls: &str, finish: &str) -> std::path::PathBuf {
+    channel_capture_request(
+        ws,
+        controls,
+        finish,
+        "capture zero: Decimal[0, 0; 0, 0; exact] = decimal(0, 0);",
+    )
+}
+
+fn channel_capture_request(
+    ws: &Workspace,
+    controls: &str,
+    finish: &str,
+    capture: &str,
+) -> std::path::PathBuf {
+    let path = repeat_request(ws, controls, finish);
+    let unit = std::fs::read_to_string(ws.path("program.fsl")).expect("the Decimal capture unit");
+    let unit = unit.replace(
+        "role Planning on M::Cell;",
+        &format!("{capture} role Planning on M::Cell;"),
+    );
+    ws.write("program.fsl", unit.as_bytes());
+    path
+}
+
+fn repeat_parity(ws: &Workspace, path: &std::path::Path) -> Value {
+    let source = analyze(path);
+    let source_document = source.document();
+    assert!(source.item(0).get("record").is_some(), "{source_document}");
+    assert!(
+        matches!(source_document["last_stage"].as_str(), Some("S6c" | "S8")),
+        "{source_document}"
+    );
+    let (package_path, _) = package_request(ws, path);
+    std::fs::remove_file(ws.path("program.fsl")).expect("remove repeat source before package run");
+    let package = analyze(&package_path);
+    let package_document = package.document();
+    for member in ["items", "aggregate", "last_stage", "category"] {
+        assert_eq!(
+            package_document[member], source_document[member],
+            "{member}: {package_document}"
+        );
+    }
+    assert_eq!(package.exit, source.exit, "{package_document}");
+    source.item(0)
+}
+
+/// A received payload remains live across the repeat's entry and back edge.
+#[trace(
+    "TC-2958",
+    "FR-940-AC-6",
+    "FR-206-AC-5",
+    "FR-383-AC-6",
+    "FR-218",
+    "FR-531",
+    "FR-390",
+    "FR-850"
+)]
+#[test]
+fn package_repeat_reads_the_earlier_receive_on_entry_and_revisit() {
+    for (name, guard, expected) in [
+        ("false", "seen.n != 0", "refuted"),
+        ("true", "seen.n = 0", "proved"),
+    ] {
+        let ws = Workspace::new(&format!("package-repeat-received-{name}"));
+        let controls = channel_send("Handed", "handed", "handed.n = k.v")
+            + "receive Inspected via Release of Handed as (seen: M::Attempt) { seen.n = 0 };"
+            + &format!(
+                "repeat Again by Machining visible (seen.n) while {{ {guard} }} {}",
+                repeat_attempt("Remachined", "again", "true")
+            );
+        let path = channel_request(
+            &ws,
+            finite_channel_model(),
+            "ordering unordered delivery at-least-once capacity 4 overflow block",
+            &controls,
+            "false",
+        );
+        let item = repeat_parity(&ws, &path);
+        assert_eq!(label(&item), expected, "{item}");
+        if name == "false" {
+            let prefix = item["counterexample"]["prefix"]
+                .as_array()
+                .expect("false finish prefix");
+            let steps: Vec<_> = prefix
+                .iter()
+                .map(|step| step["transition"]["step"].as_str().expect("step kind"))
+                .collect();
+            assert_eq!(steps, ["send", "receive"], "{item}");
+            assert_eq!(item["replay"]["reproduced"], true, "{item}");
+        }
+    }
+}
+
+/// A Decimal capture's exact type projects independently of Repeat execution.
+#[trace("TC-2958", "FR-531", "FR-390", "FR-940-AC-6")]
+#[test]
+fn package_decimal_capture_empty_run_preserves_source_result() {
+    let ws = Workspace::new("package-decimal-capture-empty-run");
+    let item = repeat_parity(&ws, &decimal_capture_request(&ws, "", "closing"));
+    assert_eq!(label(&item), "proved", "{item}");
+}
+
+/// An enclosing optional Decimal keeps its original unsupported type projection.
+#[trace("TC-2958", "FR-531", "FR-390", "FR-940-AC-6")]
+#[test]
+fn package_decimal_capture_nested_type_preserves_projection_refusal() {
+    let ws = Workspace::new("package-decimal-capture-nested-type");
+    let path = channel_capture_request(
+        &ws,
+        "",
+        "closing",
+        "capture nested: Option<Decimal[0, 0; 0, 0; exact]> = absent;",
+    );
+    let source = analyze(&path);
+    assert!(
+        source.item(0).get("record").is_some(),
+        "{}",
+        source.document()
+    );
+    assert_eq!(label(&source.item(0)), "proved", "{}", source.document());
+    let (package_path, _) = package_request(&ws, &path);
+    std::fs::remove_file(ws.path("program.fsl")).expect("remove source before type refusal");
+    let package = analyze(&package_path);
+    let item = package.item(0);
+    assert_eq!(package.exit, 21, "{}", package.document());
+    let diagnostic = &item["record"]["diagnostic"];
+    assert_eq!(diagnostic["code"], "unknown_required_feature", "{item}");
+    assert_eq!(diagnostic["cause"], "unsupported-feature", "{item}");
+    assert_eq!(diagnostic["detail"]["fact"], "parameter-type", "{item}");
+    assert_eq!(
+        diagnostic["detail"]["reason"], "missing-type-representation",
+        "{item}"
+    );
+    assert!(!diagnostic["detail"]["node"].is_null(), "{item}");
+    assert!(!diagnostic["detail"]["locus"].is_null(), "{item}");
+    assert!(item.get("exploration").is_none(), "{item}");
+    assert!(item.get("counterexample").is_none(), "{item}");
+}
+
+/// A bounded repeat executes its body at most max times and then its authored exhaustion.
+#[trace("TC-2958", "FR-940-AC-6", "FR-206-AC-5", "FR-383-AC-6")]
+#[test]
+fn package_repeat_maximum_enters_the_stepful_exhausted_continuation() {
+    for maximum in [0, 2] {
+        let ws = Workspace::new(&format!("package-repeat-maximum-{maximum}"));
+        let controls = format!(
+            "repeat Again by Machining visible () max {maximum} while {{ true }} {} exhausted {}",
+            repeat_attempt("Remachined", "again", "true"),
+            repeat_attempt("Exhausted", "out", "true")
+        );
+        let item = repeat_parity(&ws, &repeat_request(&ws, &controls, "false"));
+        assert_eq!(label(&item), "refuted", "{item}");
+        let prefix = item["counterexample"]["prefix"]
+            .as_array()
+            .expect("exhausted finish prefix");
+        let nodes: Vec<_> = prefix
+            .iter()
+            .map(|step| step["transition"]["node"].as_str().expect("step node"))
+            .collect();
+        let mut expected = vec!["Main/Again/Remachined"; maximum];
+        expected.push("Main/Again/Exhausted");
+        assert_eq!(nodes, expected, "{item}");
+        assert_eq!(item["replay"]["reproduced"], true, "{item}");
+    }
+}
+
+/// A body-bound guard has the native post-test mode and executes once when false.
+#[trace("TC-2958", "FR-940-AC-6", "FR-880-AC-8", "FR-882-AC-6")]
+#[test]
+fn package_repeat_post_test_false_guard_executes_once() {
+    let ws = Workspace::new("package-repeat-post-test");
+    let controls = format!(
+        "repeat Again by Machining visible (again) while {{ again }} {}",
+        crate::fill::attempt(
+            "Remachined",
+            "flag",
+            "FlagPre, FlagPost",
+            "again",
+            "not again"
+        )
+        .replace(" by w ", " by Machining ")
+    );
+    let path = repeat_request(&ws, &controls, "false");
+    let unit = std::fs::read_to_string(ws.path("program.fsl")).expect("the post-test unit");
+    ws.write(
+        "program.fsl",
+        format!("{unit}\n{}", crate::fill::contracts("false")).as_bytes(),
+    );
+    let item = repeat_parity(&ws, &path);
+    assert_eq!(label(&item), "refuted", "{item}");
+    let prefix = item["counterexample"]["prefix"]
+        .as_array()
+        .expect("post-test finish prefix");
+    assert_eq!(prefix.len(), 1, "{item}");
+    assert_eq!(prefix[0]["transition"]["step"], "attempt", "{item}");
+    assert_eq!(
+        prefix[0]["transition"]["node"], "Main/Again/Remachined",
+        "{item}"
+    );
+    assert_eq!(item["replay"]["reproduced"], true, "{item}");
+}
+
+/// A blocked repeat body preserves its real deadlock and bounded replay refusal.
+#[trace("TC-2958", "FR-940-AC-6", "FR-940-AC-22", "FR-206-AC-5")]
+#[test]
+fn package_repeat_blocked_attempt_preserves_replay_refusal() {
+    for (scenario, guard, constraint) in [
+        ("blocked", "true", "false"),
+        ("undefined", "zero / zero = zero", "true"),
+    ] {
+        let controls = format!(
+            "repeat Again by Machining visible () while {{ {guard} }} {}",
+            repeat_attempt("Remachined", "again", constraint)
+        );
+        let request = |ws: &Workspace| {
+            if scenario == "undefined" {
+                decimal_capture_request(ws, &controls, "closing")
+            } else {
+                repeat_request(ws, &controls, "closing")
+            }
+        };
+        let ws = Workspace::new(&format!("package-repeat-{scenario}"));
+        let item = repeat_parity(&ws, &request(&ws));
+        assert_eq!(label(&item), "refuted", "{item}");
+        if scenario == "blocked" {
+            assert_eq!(
+                item["counterexample"]["blocked"][0]["rest"]["node"], "Main/Again/Remachined",
+                "{item}"
+            );
+            assert_eq!(
+                item["counterexample"]["blocked"][0]["cause"]["type"], "constraint",
+                "{item}"
+            );
+        } else {
+            assert_eq!(
+                item["record"]["cause"]["kind"], "undefined-evaluation",
+                "{item}"
+            );
+            assert_eq!(
+                item["counterexample"]["kind"]["type"], "undefined-evaluation",
+                "{item}"
+            );
+            assert_eq!(
+                item["counterexample"]["kind"]["cause"], "division-by-zero",
+                "{item}"
+            );
+        }
+        assert_eq!(item["replay"]["reproduced"], true, "{item}");
+
+        let bounded = Workspace::new(&format!("package-repeat-replay-bound-{scenario}"));
+        let path = request(&bounded);
+        let (package_path, bytes) = package_request(&bounded, &path);
+        let limit = u64::try_from(bytes.len() / 2).expect("package byte bound");
+        let source = crate::analyze_cli_support::analyze_under_replay_bytes(&path, limit);
+        assert!(
+            source.item(0).get("record").is_some(),
+            "{}",
+            source.document()
+        );
+        let source_item = source.item(0);
+        let cause = &source_item["record"]["cause"];
+        assert_eq!(cause["kind"], "replay-refused", "{cause}");
+        assert_eq!(cause["code"], "stage_limit_exceeded", "{cause}");
+        assert_eq!(cause["cause"], "input-bytes-exceeded", "{cause}");
+        std::fs::remove_file(bounded.path("program.fsl"))
+            .expect("remove source before bounded replay");
+        let package = crate::analyze_cli_support::analyze_under_replay_bytes(&package_path, limit);
+        assert_eq!(package.item(0), source.item(0), "{}", package.document());
+        assert_eq!(package.exit, source.exit);
+    }
+}
+
+/// Proof-bearing repeats never execute as if their authored proof were absent.
+#[trace("TC-2958", "FR-940-AC-6", "FR-730")]
+#[test]
+fn package_repeat_proof_refuses_before_execution() {
+    let ws = Workspace::new("package-repeat-proof");
+    let controls = format!(
+        "repeat Again by Machining visible () invariant {{ true }} variant {{ 1 }} while {{ false }} {}",
+        repeat_attempt("Remachined", "again", "true")
+    );
+    let path = repeat_request(&ws, &controls, "closing");
+    let source = analyze(&path);
+    assert!(
+        source.item(0).get("record").is_some(),
+        "{}",
+        source.document()
+    );
+    assert_eq!(label(&source.item(0)), "proved", "{}", source.document());
+    let (package_path, _) = package_request(&ws, &path);
+    std::fs::remove_file(ws.path("program.fsl")).expect("remove source before proof refusal");
+    let package = analyze(&package_path);
+    let item = package.item(0);
+    assert_eq!(package.exit, 21, "{}", package.document());
+    assert_eq!(
+        item["record"]["diagnostic"]["code"], "unsupported_construct",
+        "{item}"
+    );
+    assert_eq!(
+        item["record"]["diagnostic"]["cause"], "not-yet-implemented",
+        "{item}"
+    );
+    assert_eq!(
+        item["record"]["diagnostic"]["detail"]["fact"], "repeat-proof",
+        "{item}"
+    );
+    assert_eq!(
+        item["record"]["diagnostic"]["detail"]["node"]["path"]
+            .as_array()
+            .expect("repeat node path")
+            .last(),
+        Some(&json!("Again")),
+        "{item}"
+    );
+    assert!(item.get("exploration").is_none(), "{item}");
+}
+
+fn await_request(
+    ws: &Workspace,
+    delivery: &str,
+    matched: &str,
+    then: &str,
+    timeout: &str,
+) -> std::path::PathBuf {
+    await_event_request(
+        ws,
+        delivery,
+        &receive_fifo_receive("Inspected", "Handed", "seen", matched),
+        then,
+        timeout,
+    )
+}
+
+fn await_event_request(
+    ws: &Workspace,
+    delivery: &str,
+    event: &str,
+    then: &str,
+    timeout: &str,
+) -> std::path::PathBuf {
+    let controls = await_controls(event, then, timeout);
+    let ordering = format!("ordering unordered delivery {delivery} capacity 4 overflow block");
+    let path = channel_request_with_profiles(
+        ws,
+        finite_channel_model(),
+        &ordering,
+        &controls,
+        "closing",
+        concat!(
+            "profile pp = \"filament.protocol.finite-global/v1\";\n",
+            "profile t0 = \"filament.temporal.event-position.false-extension/v1\";\n"
+        ),
+    );
+    let mut document: Value =
+        serde_json::from_slice(&std::fs::read(&path).expect("the Await request"))
+            .expect("the request is JSON");
+    document["request"]["clocks"] = json!({"line-clock": {
+        "kind": "event_position", "sequence_authority": "caller-events"
+    }});
+    std::fs::write(&path, document.to_string()).expect("retain the supplied Await clock");
+    path
+}
+
+fn await_controls(event: &str, then: &str, timeout: &str) -> String {
+    channel_send("Handed", "handed", "handed.n = k.v")
+        + &format!(
+            "await Wait after Handed using t0 clock \"line-clock\" within [0, 120]
+                match {event}
+                then {then}
+                timeout {timeout}"
+        )
+}
+
+/// The complete await body explores both the receive and timeout continuations.
+#[trace("TC-2958", "FR-940-AC-6", "FR-206-AC-5", "FR-383-AC-7")]
+#[test]
+fn package_await_runs_the_complete_matched_receive_body() {
+    for delivery in ["exactly-once-premise", "at-least-once"] {
+        let ws = Workspace::new(&format!("package-await-complete-{delivery}"));
+        let path = await_request(
+            &ws,
+            delivery,
+            "seen.n = handed.n",
+            "sequence InTime {}",
+            "sequence TooSlow {}",
+        );
+        let item = channel_send_parity(&ws, &path, "proved");
+        if delivery == "exactly-once-premise" {
+            // The two continuations reach different finish states: timeout
+            // retains the queued entry, while the match consumes it.
+            assert_eq!(item["exploration"]["states"], "5", "{item}");
+            assert_eq!(item["exploration"]["transitions"], "5", "{item}");
+        } else {
+            let transitions = item["exploration"]["transitions"]
+                .as_str()
+                .expect("the explored transition count")
+                .parse::<u64>()
+                .expect("a natural count");
+            assert!(transitions > 5, "duplicate delivery is explored: {item}");
+        }
+    }
+}
+
+/// A blocked timeout continuation retains its counterexample and replay refusals.
+#[trace(
+    "TC-2958",
+    "FR-940-AC-6",
+    "FR-940-AC-22",
+    "FR-206-AC-5",
+    "FR-517-AC-33"
+)]
+#[test]
+fn package_await_timeout_deadlock_preserves_replay_and_refusal() {
+    let timeout = format!(
+        "sequence TooSlow {{ {} }}",
+        receive_fifo_receive("Never", "Handed", "late", "false")
+    );
+    let request = |ws: &Workspace| {
+        await_request(
+            ws,
+            "exactly-once-premise",
+            "seen.n = handed.n",
+            "sequence InTime {}",
+            &timeout,
+        )
+    };
+    let ws = Workspace::new("package-await-timeout-deadlock");
+    let path = request(&ws);
+    let item = channel_send_parity(&ws, &path, "refuted");
+    let prefix = item["counterexample"]["prefix"]
+        .as_array()
+        .expect("the timeout deadlock prefix");
+    let timed_out = prefix
+        .iter()
+        .find(|step| step["transition"]["step"] == "timeout")
+        .expect("the timeout continuation was taken");
+    assert_eq!(timed_out["transition"]["node"], "Main/Wait", "{item}");
+    assert!(
+        prefix
+            .iter()
+            .all(|step| step["transition"]["step"] != "receive"),
+        "the matched receive leads to the healthy continuation: {item}"
+    );
+    let blocked = item["counterexample"]["blocked"]
+        .as_array()
+        .expect("the blocked timeout receive");
+    assert_eq!(blocked.len(), 1, "{item}");
+    assert_eq!(
+        blocked[0]["rest"]["node"], "Main/Wait/TooSlow/Never",
+        "{item}"
+    );
+    assert_eq!(blocked[0]["cause"]["type"], "constraint", "{item}");
+
+    let bounded_ws = Workspace::new("package-await-replay-bound");
+    let bounded_path = request(&bounded_ws);
+    let (package_path, bytes) = package_request(&bounded_ws, &bounded_path);
+    let below = u64::try_from(bytes.len() / 2).expect("the package length");
+    let source_limited =
+        crate::analyze_cli_support::analyze_under_replay_bytes(&bounded_path, below);
+    assert!(
+        source_limited.item(0).get("record").is_some(),
+        "{}",
+        source_limited.document()
+    );
+    assert_eq!(
+        label(&source_limited.item(0)),
+        "inconclusive",
+        "{}",
+        source_limited.document()
+    );
+    let cause = &source_limited.item(0)["record"]["cause"];
+    assert_eq!(cause["kind"], "replay-refused", "{cause}");
+    assert_eq!(cause["code"], "stage_limit_exceeded", "{cause}");
+    assert_eq!(cause["cause"], "input-bytes-exceeded", "{cause}");
+    std::fs::remove_file(bounded_ws.path("program.fsl"))
+        .expect("remove source before package replay refusal");
+    let package_limited =
+        crate::analyze_cli_support::analyze_under_replay_bytes(&package_path, below);
+    assert_eq!(
+        package_limited.item(0),
+        source_limited.item(0),
+        "{}",
+        package_limited.document()
+    );
+    assert_eq!(package_limited.exit, source_limited.exit);
+}
+
+/// A false match keeps timeout enabled and never enters the blocked success arm.
+#[trace("TC-2958", "FR-940-AC-6", "FR-206-AC-5", "FR-211-AC-5")]
+#[test]
+fn package_await_false_match_keeps_timeout_enabled() {
+    let ws = Workspace::new("package-await-false-match");
+    let then = format!(
+        "sequence InTime {{ {} }}",
+        receive_fifo_receive("Never", "Handed", "early", "false")
+    );
+    let path = await_request(
+        &ws,
+        "exactly-once-premise",
+        "not (seen.n = handed.n)",
+        &then,
+        "sequence TooSlow {}",
+    );
+    let item = channel_send_parity(&ws, &path, "proved");
+    assert_eq!(item["exploration"]["states"], "4", "{item}");
+    assert_eq!(item["exploration"]["transitions"], "3", "{item}");
+}
+
+/// Source checking and strict package admission reject ineligible Await matches.
+#[trace("TC-2958", "FR-218-AC-35", "FR-383-AC-7", "FR-850")]
+#[test]
+fn package_await_ineligible_matches_refuse_in_both_routes() {
+    use filament_contract_model::{
+        CheckedPackageRefusalCause, CheckedPackageRefusalCode, CheckedProtocolRefusalDetail,
+    };
+    let attempt = crate::fill::attempt("Template", "touch", "", "attempted", "true")
+        .replace(" by w ", " by Machining ");
+    for kind in ["send", "attempt"] {
+        let ws = Workspace::new(&format!("package-await-ineligible-{kind}"));
+        let then = format!("sequence InTime {{ {attempt} }}");
+        let path = await_request(
+            &ws,
+            "exactly-once-premise",
+            "seen.n = handed.n",
+            &then,
+            "sequence TooSlow {}",
+        );
+        let source = analyze(&path);
+        assert!(
+            source.item(0).get("record").is_some(),
+            "{}",
+            source.document()
+        );
+        assert_eq!(label(&source.item(0)), "proved", "{}", source.document());
+        let (package_path, bytes) = package_request(&ws, &path);
+        let baseline = analyze(&package_path);
+        assert_eq!(baseline.item(0), source.item(0), "{}", baseline.document());
+        assert_eq!(baseline.exit, source.exit);
+        let mut wire: Value = serde_json::from_slice(&bytes).expect("the emitted package");
+        let original = wire.clone();
+        fsl_semantics::check::wire_id::resolve_operand_slots(&mut wire)
+            .expect("resolve node-held IDs through their actual operand rows");
+        let mut roundtrip = wire.clone();
+        fsl_semantics::check::wire_id::write_operand_rows(&mut roundtrip);
+        assert_eq!(
+            roundtrip, original,
+            "the official conversion preserves every unedited wire fact"
+        );
+        let graph = fsl_semantics::check::wire_id::WireGraph::of_package_value(&wire)
+            .expect("the emitted identities");
+        let nodes = wire["semantic_graph"]["nodes"]
+            .as_array_mut()
+            .expect("nodes");
+        let position = |name: &str| {
+            nodes
+                .iter()
+                .position(|node| {
+                    node["semantic_form"] == "control"
+                        && node["declaration"]["qualified_name"]
+                            .as_array()
+                            .and_then(|path| path.last())
+                            == Some(&json!(name))
+                })
+                .unwrap_or_else(|| panic!("the {name} control"))
+        };
+        let inspected = position("Inspected");
+        let template = position("Template");
+        if kind == "send" {
+            let control = &mut nodes[inspected];
+            control["body"]["operation"]["member"]["operator"] = json!("send");
+            let arguments = control["body"]["arguments"]
+                .as_array_mut()
+                .expect("arguments");
+            let of = arguments
+                .iter()
+                .position(|arg| arg["name"] == "of")
+                .expect("the receive's send reference");
+            let send = arguments.remove(of)["value"]["target"].clone();
+            control["dependencies"]
+                .as_array_mut()
+                .expect("dependencies")
+                .retain(|target| target != &send);
+        } else {
+            // Change only untrusted wire. Keep the declared event identity,
+            // sidecars and every other node exactly as emitted.
+            let mut body = nodes[template]["body"].clone();
+            let mut dependencies = nodes[template]["dependencies"]
+                .as_array()
+                .expect("template dependencies")
+                .clone();
+            for name in ["binder", "related", "constraint"] {
+                let original = nodes[inspected]["body"]["arguments"]
+                    .as_array()
+                    .expect("receive arguments")
+                    .iter()
+                    .find(|arg| arg["name"] == name)
+                    .expect("the receive member")
+                    .clone();
+                let member = body["arguments"]
+                    .as_array_mut()
+                    .expect("attempt arguments")
+                    .iter_mut()
+                    .find(|arg| arg["name"] == name)
+                    .expect("the attempt member");
+                if let Some(target) = member["value"].get("target") {
+                    dependencies.retain(|dependency| dependency != target);
+                }
+                if let Some(target) = original["value"].get("target") {
+                    dependencies.push(target.clone());
+                }
+                *member = original;
+            }
+            nodes[inspected]["body"] = body;
+            nodes[inspected]["dependencies"] = json!(dependencies);
+        }
+        nodes[inspected]["dependencies"]
+            .as_array_mut()
+            .expect("dependencies")
+            .sort_by_key(|target| graph.key_of_value(target).expect("an emitted identity"));
+        fsl_semantics::check::wire_id::write_operand_rows(&mut wire);
+        let event = if kind == "send" {
+            channel_send("Inspected", "seen", "seen.n = handed.n")
+        } else {
+            crate::fill::attempt("Inspected", "touch", "", "attempted", "true")
+                .replace(" by w ", " by Machining ")
+        };
+        let invalid_path = await_event_request(
+            &ws,
+            "exactly-once-premise",
+            &event,
+            "sequence InTime {}",
+            "sequence TooSlow {}",
+        );
+        let invalid_source = analyze(&invalid_path).document();
+        assert_eq!(
+            invalid_source["diagnostics"][0]["code"], "unsupported_construct",
+            "{invalid_source}"
+        );
+        assert_eq!(
+            invalid_source["diagnostics"][0]["cause"], "declaration-form",
+            "{invalid_source}"
+        );
+        assert_eq!(invalid_source["items"], json!([]), "{invalid_source}");
+        std::fs::write(
+            ws.path("handoff/checked-package.json"),
+            serde_json::to_vec(&wire).expect("the edited untrusted wire"),
+        )
+        .expect("replace the package input");
+        std::fs::remove_file(ws.path("program.fsl")).expect("source is absent");
+        let refusal = fsl_command::checked_handoff::verify(&ws.path("handoff"))
+            .expect_err("the strict reader rejects the ineligible event");
+        let fsl_command::checked_handoff::Error::ReaderRefused(refusal) = refusal else {
+            panic!("the strict protocol reader must decide: {refusal:?}");
+        };
+        assert_eq!(
+            refusal.code,
+            CheckedPackageRefusalCode::UnsupportedConstruct
+        );
+        assert_eq!(
+            refusal.cause,
+            Some(CheckedPackageRefusalCause::DeclarationForm)
+        );
+        assert!(
+            matches!(refusal.protocol_detail.as_deref(),
+                Some(CheckedProtocolRefusalDetail::AwaitedEvent { form, .. })
+                    if form.as_ref() == kind),
+            "{refusal:?}"
+        );
+        let native_path = refusal
+            .loci
+            .first()
+            .and_then(|locus| locus.path.as_ref())
+            .expect("the native refusal names its Await control")
+            .as_str();
+        let package_run = analyze(&package_path);
+        assert_eq!(package_run.exit, 20);
+        let invalid_package = package_run.document();
+        // Source checking and the native reader retain their semantic refusal.
+        // FR-850's artifact boundary classifies rejected package bytes while
+        // preserving that reader's cause and original pointer.
+        assert_eq!(invalid_package["category"], "refusal", "{invalid_package}");
+        assert_eq!(
+            invalid_package["diagnostics"][0]["code"], "invalid_package",
+            "{invalid_package}"
+        );
+        assert_eq!(
+            invalid_package["diagnostics"][0]["cause"], "declaration-form",
+            "{invalid_package}"
+        );
+        assert_eq!(
+            invalid_package["diagnostics"][0]["details"]["path"], native_path,
+            "{invalid_package}"
+        );
+        assert_eq!(invalid_package["items"], json!([]), "{invalid_package}");
+        assert_eq!(invalid_package["registry"], json!([]), "{invalid_package}");
+    }
+}
+
 fn receive_fifo_request(
     ws: &Workspace,
     key: &str,
@@ -406,7 +1699,18 @@ fn channel_request(
     controls: &str,
     finish: &str,
 ) -> std::path::PathBuf {
-    let body = format!(
+    channel_request_with_profiles(
+        ws,
+        model,
+        ordering,
+        controls,
+        finish,
+        crate::fill::PROTOCOL_PROFILE,
+    )
+}
+
+fn channel_body(ordering: &str, controls: &str, finish: &str) -> String {
+    format!(
         "protocol Flow using pp over (k: M::Cell) on origin {{
             role Planning on M::Cell;
             role Machining on M::Cell;
@@ -415,8 +1719,18 @@ fn channel_request(
             run sequence Main {{ {controls} }}
             finish Over as (closing: Boolean) {{ {finish} }};
         }}"
-    );
-    let unit = crate::fill::unit_text_with(crate::fill::PROTOCOL_PROFILE, &body);
+    )
+}
+
+fn channel_request_with_profiles(
+    ws: &Workspace,
+    model: Value,
+    ordering: &str,
+    controls: &str,
+    finish: &str,
+    profiles: &str,
+) -> std::path::PathBuf {
+    let unit = crate::fill::unit_text_with(profiles, &channel_body(ordering, controls, finish));
     let model = serde_json::to_vec(&model).expect("the channel model serializes");
     let snapshots = channel_snapshots(&[("c", 0)]);
     crate::analyze_cli_support::request_over(
@@ -458,6 +1772,15 @@ fn channel_send(name: &str, binder: &str, constraint: &str) -> String {
 }
 
 fn channel_send_parity(ws: &Workspace, path: &std::path::Path, expected: &str) -> Value {
+    channel_send_parity_using(ws, path, expected, || package_request(ws, path).0)
+}
+
+fn channel_send_parity_using(
+    ws: &Workspace,
+    path: &std::path::Path,
+    expected: &str,
+    package_request_path: impl FnOnce() -> std::path::PathBuf,
+) -> Value {
     let source = analyze(path);
     assert!(
         source.item(0).get("record").is_some(),
@@ -465,7 +1788,7 @@ fn channel_send_parity(ws: &Workspace, path: &std::path::Path, expected: &str) -
         source.document()
     );
     assert_eq!(label(&source.item(0)), expected, "{}", source.document());
-    let (package_path, _) = package_request(ws, path);
+    let package_path = package_request_path();
     std::fs::remove_file(ws.path("program.fsl"))
         .expect("remove source before package analysis and replay");
     let package = analyze(&package_path);

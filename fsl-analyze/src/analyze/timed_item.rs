@@ -419,8 +419,9 @@ mod tests {
         };
         let requires = subject_refusal(&TimedSubjectRefusal::NotSimulated(
             NotSimulated::RequiresBound(fsl_eval::simulation::RequiresBound {
-                domains,
+                domains: Some(domains),
                 capacities: Vec::new(),
+                clock_references: Vec::new(),
             }),
         ));
         assert!(matches!(requires, Refusal::RequiresBound));

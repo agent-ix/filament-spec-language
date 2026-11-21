@@ -24,6 +24,7 @@ pub mod import_graph;
 pub mod pin_check;
 pub mod published_fspec;
 pub mod qualification;
+pub use qualification::backend_agreement;
 pub mod qualify;
 pub mod refinement;
 pub mod route_lint;

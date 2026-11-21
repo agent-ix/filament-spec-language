@@ -3,6 +3,8 @@ id: FR-501
 title: "Evaluate a temporal clause under the timestamped-event finite-window profile at S6a, with definite verdicts on a closed complete window"
 type: FR
 relationships:
+  - target: ix://agent-ix/filament-spec-language/FR-931
+    type: references
   - target: ix://agent-ix/filament-spec-language/US-033
     type: implements
   - target: ix://agent-ix/filament-spec-language/ADR-014
@@ -164,10 +166,35 @@ as separate fields that no one field determines:
   ceiling SHALL give a distinct identity, with the earlier result neither reused
   nor rewritten (FR-043-AC-13).
 
-In each decision-support `(position, atom)` pair, the source and checked-package
-routes SHALL name `atom` by the source text of the whole atom from the
-caller-supplied `sources` element whose reference equals the atom's region's
-source, preserving FR-283's source-span and missing-source refusal contract.
+In each decision-support `(position, atom)` pair, both the source and
+checked-package routes SHALL apply FR-283's atom rendering rule. The explicit
+`Claim` occurrence and its declaration region select all candidate
+`Expression` regions of the formula node in that declaration and source:
+
+- One valid candidate SHALL give the exact whole caller text and that exact
+  region as locus.
+- Several candidates with byte-identical whole caller texts SHALL give that
+  text and the selected claim declaration's actual region as a coarser locus,
+  never an arbitrary candidate's region.
+- Several candidates with differing caller texts SHALL give the checked
+  node's canonical printed form: FR-931's existing TL-lowering atom printer
+  for `holds` leaves, and FR-283's canonical window-aggregate assembly for
+  aggregate leaves. Both use the selected claim declaration's actual region
+  as locus.
+
+The report layer SHALL obtain caller text from `sources` by native source
+reference and reuse those canonical component printers; occurrence-source helpers supply
+regions and identity, never text. Both routes SHALL preserve FR-283's
+`SourceNotSupplied` refusal for a missing or wrong reference, short bytes or
+split UTF-8 span at each text region read or actual selected locus. A handoff
+provides no fallback text and rendering compiles no source. The differing-text
+case SHALL retain the original verdict or refusal, basis and support positions
+without an attribution refusal or new row. Source rank, order-based use
+pairing, label-string deduplication and synthetic loci SHALL NOT select a use.
+FR-931's TL atom IDs still follow first formula occurrence and checked atom
+identity, not label equality; unique caller text remains exact. Exact per-use
+loci for a repeated shared node remain QSL-2726 work requiring admitted
+use-to-occurrence facts in a later dependency update.
 
 The shared semantic catalog's `Category` holds `Pending` and `Indeterminate`, so
 the FSL entry reads the label and the exit of these two outcomes from the catalog
@@ -471,6 +498,9 @@ as its own ticket, referenced from QSL-1493; it is not part of this repository.
 | FR-501-AC-28 | Observations with interval stamps `[3, 5]` and `[4, 6)` and no order keys refuse `holds(p) until[0,5] holds(q)` `invalid_runtime_input`/`invalid-value` at the later position, while `eventually[0,5] holds(q)` evaluates; an interval stamp `[6, 5]` and one `[5, 5)` each refuse `invalid_runtime_input`/`invalid-value` at the observation; an interval stamp `[0, 1]` under `Bounded { uncertainty: 5 }` is read as `[0, 1]`. | Test (TC-1546) |
 | FR-501-AC-29 | With `AllowedLateness { lateness: 2 }` and `eventually[0,5] holds(p)` `on origin` over observations stamped 0 (arrival 0), 4 (arrival 6, `p` true) and 3 (arrival 6, `p` true): `W` 6 gives `Pending` and `W` 7 gives `Completed(true)`; the observation stamped 3 is in the `late` list with arrival 6 and anchor 0 and is not read. With only the stamp-3 observation true, `W` 7 gives `Completed(false)` and the same `late` entry. With `FixedInstant { cutoff: 5 }` the stamp-3 observation is `late` and an observation stamped 6 with arrival 6 is `on-time`. | Test (TC-1547) |
 | FR-501-AC-30 | AC-29's request with no late-data cutoff reads all three observations and its result writes no `late` member; adding the cutoff changes the result identity; with `HistoryCutoff` and the cutoff together, `once[0,4] holds(p)` reports `MissingHistory` for the activation that reaches before the trace and no observation is `late` because of it. | Test (TC-1547) |
+
+| FR-501-AC-31 | TC-1295 rows 45–47, run over both source and checked-package routes with equal caller sources, preserve the false verdict, `closed-scope` basis and position-1 decision support while rendering a unique atom as exact `holds( p.ok )` with its expression locus, byte-identical shared atoms as that text with the actual claim declaration locus, and differing shared spellings as exact FR-931 canonical `holds(p.ok)` with that declaration locus. Neither shared case chooses a candidate by rank or invents a per-use locus; valid differing text adds no attribution refusal. | Test |
+| FR-501-AC-32 | TC-1295's timestamped aggregate controls apply FR-283's unique, identical and differing-text rules to named aggregates and decision-support names on both routes, including normalized duration bounds and default min_count. Differing spellings use canonical aggregate assembly and the actual declaration locus, without attribution refusal or a new outcome row; the original evaluator result, basis, support positions and insufficient-data counts are unchanged. | Test |
 
 ## Dependencies
 

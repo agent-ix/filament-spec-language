@@ -127,6 +127,8 @@ pub(super) struct Walk<'s, 'a> {
     /// The footprints each step's clauses are held to, when the expansion
     /// enforces them.
     pub(super) enforcement: Option<&'s Enforcement<'s>>,
+    /// Selector maxima from this timed subject's authenticated clock bound.
+    pub(super) clock_selectors: Option<&'s super::domain::ClockSelectorMaxima>,
     /// The presence of each guarded clock place at a candidate post-state,
     /// which a postcondition's `present(self.v)` reads (FR-230 "Presence is
     /// derived", FSpec FR-322 `CW-05`); `None` outside a timed expansion.
@@ -139,6 +141,29 @@ pub(super) struct Walk<'s, 'a> {
 pub(super) type PostPresence<'s> = &'s dyn Fn(&ModelState) -> PlacePresences;
 
 impl Walk<'_, '_> {
+    pub(super) fn value_domain(
+        &self,
+        value_type: &filament_exact::ValueType,
+        objects: &[ObjectReference],
+    ) -> Option<super::domain::Domain> {
+        self.system
+            .value_domain_with_clock_selectors(value_type, objects, self.clock_selectors)
+    }
+
+    pub(super) fn field_domain(
+        &self,
+        type_key: &DeclarationKey,
+        field: &fsl_semantics::model::state::StateField,
+        objects: &[ObjectReference],
+    ) -> Option<super::domain::Domain> {
+        self.system.field_domain_with_clock_selectors(
+            type_key,
+            field,
+            objects,
+            self.clock_selectors,
+        )
+    }
+
     pub(super) fn meter(&self) -> filament_exact::Meter {
         let meter = filament_exact::Meter::new(self.system.meter);
         match &self.cancel {
@@ -289,6 +314,7 @@ pub(super) fn walk_of<'s, 'a>(
         observation,
         rows: rows_of(system, &state.state)?,
         enforcement,
+        clock_selectors: None,
         post_presence: None,
     })
 }
@@ -350,6 +376,15 @@ pub(super) fn expand_enabled<'s>(
     state: &'s ModelSimState,
     post_presence: Option<PostPresence<'s>>,
 ) -> Result<(ModelExpansion, Vec<frames::EnabledVector>), ExpansionStop> {
+    expand_enabled_with_clock_selectors(system, state, post_presence, None)
+}
+
+pub(super) fn expand_enabled_with_clock_selectors<'s>(
+    system: &'s ModelSystem<'_>,
+    state: &'s ModelSimState,
+    post_presence: Option<PostPresence<'s>>,
+    clock_selectors: Option<&'s super::domain::ClockSelectorMaxima>,
+) -> Result<(ModelExpansion, Vec<frames::EnabledVector>), ExpansionStop> {
     let mut enabled = Vec::new();
     let expansion = expand(
         system,
@@ -357,6 +392,7 @@ pub(super) fn expand_enabled<'s>(
         None,
         Some(&mut enabled),
         ExpansionSelection {
+            clock_selectors,
             post_presence,
             ..ExpansionSelection::default()
         },
@@ -405,6 +441,7 @@ pub(super) fn expand_enabled_with_key_policy<'s>(
 
 #[derive(Default)]
 struct ExpansionSelection<'s> {
+    clock_selectors: Option<&'s super::domain::ClockSelectorMaxima>,
     post_presence: Option<PostPresence<'s>>,
     omitted_clause: Option<&'s filament_exact::NodeKey>,
 }
@@ -421,13 +458,22 @@ fn expand<'s>(
     // FR-120: every expansion entry point runs the bound check first, so an
     // expansion never meets a granted field with no finite domain.
     debug_assert!(
-        system.bounded(),
+        match selection.clock_selectors {
+            Some(selectors) => super::check_model_bounds_with_clock_selectors(
+                system,
+                crate::simulation::BOUND_POSITIONS,
+                Some(selectors)
+            )
+            .is_ok(),
+            None => system.bounded(),
+        },
         "FR-120: a system the requires-bound check refuses is never expanded"
     );
     let mut walk = walk_of(system, state, enforcement)?;
     walk.cancel = cancel.cloned();
     walk.key_policy = key_policy;
     walk.post_presence = selection.post_presence;
+    walk.clock_selectors = selection.clock_selectors;
     let mut budget = system.budget();
     budget.cancel = cancel.cloned();
 

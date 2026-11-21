@@ -158,6 +158,488 @@ fn original_effective_identity_reaches_native_requests() {
     );
 }
 
+const SYSTEMS_MODEL: &str = r#"language "ix:native" edition "1-draft";
+domain "test/plant";
+object Sys { }
+object Pump { }
+object Tank { }
+interface Flow { rate: Integer; }
+part SysPump: Pump [1, 1] in Sys;
+part SysTank: Tank [1, 1] in Sys;
+port PumpOut: Flow [1, 1] out on SysPump;
+port TankIn: Flow [1, 1] in on SysTank;
+connection Pipe SysPump.PumpOut -> SysTank.TankIn;
+"#;
+
+const SYSTEMS_PROTOCOL: &str = r#"language "ix:native" edition "1-draft";
+profile p = "filament.protocol.finite-global/v1";
+model N = "test/plant";
+protocol Pipeline using p over (input: N::Sys) on origin {
+  role Outlet on N::PumpOut;
+  role Inlet on N::TankIn;
+  relationship Link = N::Pipe;
+  channel Feed from Outlet to Inlet via Link carries N::Flow
+    ordering unordered delivery exactly-once-premise capacity 2 overflow reject;
+  run sequence Main { }
+  finish Closed as (closed: Boolean) { true };
+}
+"#;
+
+fn systems_request(directory: &Path, model: &str, protocol: &str) -> PathBuf {
+    compile_request(
+        directory,
+        &[("plant.fsl", model), ("pipeline.fsl", protocol)],
+        "pipeline.fsl",
+        json!([{"format": "native-model-unit/1", "source": source("plant.fsl")}]),
+        &[],
+    )
+}
+
+#[test]
+#[trace("TC-3013", "FR-710-AC-11", "FR-897-AC-1")]
+fn systems_source_compiles_to_the_same_checked_package_as_its_document() {
+    for (model, direction) in [
+        (SYSTEMS_MODEL.to_owned(), "source-to-target"),
+        (
+            SYSTEMS_MODEL
+                .replace(" -> ", " <-> ")
+                .replace(" out on", " inout on")
+                .replace(" in on", " inout on"),
+            "bidirectional",
+        ),
+    ] {
+        let directory = tempfile::tempdir().unwrap();
+        let path = systems_request(directory.path(), &model, SYSTEMS_PROTOCOL);
+        let from_source =
+            command::compile_outcome(&path).expect("source model and protocol compile");
+        let model_source = fsl_cst::diagnostic::read_source(
+            SourceIdentity::new("agent-ix", "test:plant.fsl"),
+            "plant.fsl",
+            model.as_bytes(),
+            fsl_cst::Limits::default().source_bytes,
+        )
+        .unwrap();
+        let packages = package_input_from_sources([("test/plant", &model_source)]).unwrap();
+        let document = &packages["test/plant"];
+        let wire: Value = serde_json::from_slice(document).unwrap();
+        let node = |name: &str| {
+            wire["types"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|node| node["identity"] == format!("ix://test/plant/{name}"))
+                .unwrap()
+        };
+        let one = json!({"lower":1,"upper":1,"ordered":false,"unique":true});
+        for (part, kind) in [("SysPump", "Pump"), ("SysTank", "Tank")] {
+            assert_eq!(node(part)["owner"], "ix://test/plant/Sys");
+            assert_eq!(
+                node(part)["declaredType"],
+                format!("ix://test/plant/{kind}")
+            );
+            assert_eq!(node(part)["multiplicity"], one);
+        }
+        for (port, part, directed) in [("PumpOut", "SysPump", "out"), ("TankIn", "SysTank", "in")] {
+            assert_eq!(node(port)["owner"], format!("ix://test/plant/{part}"));
+            assert_eq!(node(port)["interfaceType"], "ix://test/plant/Flow");
+            assert_eq!(
+                node(port)["direction"],
+                if direction == "bidirectional" {
+                    "inout"
+                } else {
+                    directed
+                }
+            );
+            assert_eq!(node(port)["multiplicity"], one);
+            assert_eq!(
+                node(port)["origin"]["source"]["sourceIdentity"],
+                "ix://agent-ix/test:plant.fsl"
+            );
+        }
+        assert_eq!(node("Pipe")["flowDirection"], direction);
+        for (end, port) in [("sourceEnd", "PumpOut"), ("targetEnd", "TankIn")] {
+            assert_eq!(node("Pipe")[end]["type"], format!("ix://test/plant/{port}"));
+            assert_eq!(node("Pipe")[end]["multiplicity"], one);
+        }
+        // Read the source-produced document through real intake, not just its JSON shape.
+        let (_, admitted) = fsl_semantics::model::intake::admit(
+            "test/plant",
+            &packages,
+            fsl_foundation::IntakeLimits::default(),
+        )
+        .unwrap();
+        let records = fsl_semantics::model::intake::read_records("test/plant", &admitted).unwrap();
+        assert_eq!(
+            records
+                .iter()
+                .filter(|r| matches!(
+                    r,
+                    fsl_semantics::model::domain_package::DomainPackageRecord::Component(_)
+                ))
+                .count(),
+            2
+        );
+        assert_eq!(
+            records
+                .iter()
+                .filter(|r| matches!(
+                    r,
+                    fsl_semantics::model::domain_package::DomainPackageRecord::Endpoint(_)
+                ))
+                .count(),
+            2
+        );
+        std::fs::write(directory.path().join("plant.json"), document).unwrap();
+        let path = compile_request(
+            directory.path(),
+            &[],
+            "pipeline.fsl",
+            json!([{"format":"semantic-ir/2.0.0", "source":source("plant.json")}]),
+            &[],
+        );
+        let from_document =
+            command::compile_outcome(&path).expect("Semantic IR model and protocol compile");
+        assert_eq!(from_source.package_bytes(), from_document.package_bytes());
+        let checked: Value = serde_json::from_slice(from_source.package_bytes()).unwrap();
+        let nodes = checked["semantic_graph"]["nodes"].as_array().unwrap();
+        let channel = nodes
+            .iter()
+            .find(|node| node["semantic_form"] == "channel")
+            .expect("channel emitted");
+        let connection = channel["body"]["arguments"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|argument| argument["name"] == "connection")
+            .expect("via emitted");
+        let target = &connection["value"]["target"];
+        assert!(!target.is_null(), "{connection}");
+        assert_eq!(target["package"], "test/plant");
+        assert_eq!(
+            target["path"],
+            json!(["relation", "relationship", "ix://test/plant/Pipe"])
+        );
+        assert!(nodes.iter().any(|node| &node["node_id"] == target));
+        assert!(channel["dependencies"].as_array().unwrap().contains(target));
+        let clause = nodes
+            .iter()
+            .find(|node| node["semantic_form"] == "protocol_clause")
+            .expect("protocol emitted");
+        let relationships = clause["body"]["arguments"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|argument| argument["name"] == "relationships")
+            .unwrap();
+        assert!(relationships["value"]["members"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|term| &term["target"] == target));
+        let mut ports = Vec::new();
+        for role in nodes.iter().filter(|node| node["semantic_form"] == "role") {
+            let member = role["body"]["arguments"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|argument| argument["name"] == "model_member")
+                .expect("Port role retains member");
+            let fields = member["value"]["members"].as_array().unwrap();
+            let field = |name: &str| {
+                &fields.iter().find(|field| field["name"] == name).unwrap()["value"]["value"]
+            };
+            assert_eq!(field("package"), "test/plant");
+            ports.push(field("node").as_str().unwrap());
+        }
+        ports.sort_unstable();
+        assert_eq!(ports, ["ix://test/plant/PumpOut", "ix://test/plant/TankIn"]);
+    }
+}
+
+#[test]
+#[trace("TC-3013", "FR-710-AC-12")]
+fn systems_source_rejects_each_invalid_endpoint_before_writing_a_document() {
+    use fsl_cst::diagnostic::{CompleteCause, CompleteCode};
+    for (original, changed, offending, code, cause, retained) in [
+        (
+            "SysPump.PumpOut",
+            "Absent.PumpOut",
+            "Absent",
+            CompleteCode::MissingDeclaration,
+            CompleteCause::MissingDeclaration,
+            vec!["ix://test/plant/Absent"],
+        ),
+        (
+            "SysTank.TankIn",
+            "Absent.TankIn",
+            "Absent",
+            CompleteCode::MissingDeclaration,
+            CompleteCause::MissingDeclaration,
+            vec!["ix://test/plant/Absent"],
+        ),
+        (
+            "SysPump.PumpOut",
+            "SysPump.Absent",
+            "Absent",
+            CompleteCode::MissingDeclaration,
+            CompleteCause::MissingDeclaration,
+            vec!["ix://test/plant/Absent"],
+        ),
+        (
+            "SysTank.TankIn",
+            "SysTank.Absent",
+            "Absent",
+            CompleteCode::MissingDeclaration,
+            CompleteCause::MissingDeclaration,
+            vec!["ix://test/plant/Absent"],
+        ),
+        (
+            "SysPump.PumpOut",
+            "Sys.PumpOut",
+            "Sys",
+            CompleteCode::InvalidModelBinding,
+            CompleteCause::WrongExport,
+            vec!["part", "object", "ix://test/plant/Sys"],
+        ),
+        (
+            "SysTank.TankIn",
+            "Sys.TankIn",
+            "Sys",
+            CompleteCode::InvalidModelBinding,
+            CompleteCause::WrongExport,
+            vec!["part", "object", "ix://test/plant/Sys"],
+        ),
+        (
+            "SysPump.PumpOut",
+            "SysPump.SysTank",
+            "SysTank",
+            CompleteCode::InvalidModelBinding,
+            CompleteCause::WrongExport,
+            vec!["port", "part", "ix://test/plant/SysTank"],
+        ),
+        (
+            "SysTank.TankIn",
+            "SysTank.SysPump",
+            "SysPump",
+            CompleteCode::InvalidModelBinding,
+            CompleteCause::WrongExport,
+            vec!["port", "part", "ix://test/plant/SysPump"],
+        ),
+        (
+            "SysPump.PumpOut",
+            "SysTank.PumpOut",
+            "SysTank",
+            CompleteCode::InvalidModelBinding,
+            CompleteCause::MalformedDeclaration,
+            vec![
+                "ix://test/plant/PumpOut",
+                "ix://test/plant/SysPump",
+                "ix://test/plant/SysTank",
+            ],
+        ),
+        (
+            "SysTank.TankIn",
+            "SysPump.TankIn",
+            "SysPump",
+            CompleteCode::InvalidModelBinding,
+            CompleteCause::MalformedDeclaration,
+            vec![
+                "ix://test/plant/TankIn",
+                "ix://test/plant/SysPump",
+                "ix://test/plant/SysTank",
+            ],
+        ),
+    ] {
+        let model = SYSTEMS_MODEL.replace(original, changed);
+        let parsed = fsl_cst::parse(
+            SourceIdentity::new("agent-ix", "test:plant.fsl"),
+            "plant.fsl",
+            model.as_bytes(),
+            fsl_cst::Limits::default(),
+        )
+        .unwrap();
+        let errors = fsl_semantics::model::intake::compile_model_unit_with_causes(
+            &parsed,
+            ModelNormalizationLimits::default(),
+        )
+        .expect_err("invalid endpoint produces no document");
+        let [error] = errors.as_slice() else {
+            panic!("{errors:?}")
+        };
+        assert_eq!(error.code, code, "{changed}: {error:?}");
+        assert_eq!(error.cause, cause, "{changed}: {error:?}");
+        let start = model.find("connection Pipe ").unwrap()
+            + "connection Pipe ".len()
+            + model[model.find("connection Pipe ").unwrap() + "connection Pipe ".len()..]
+                .find(changed)
+                .unwrap()
+            + changed.find(offending).unwrap();
+        assert_eq!(
+            error.byte_span(),
+            Some(fsl_foundation::Span {
+                start,
+                end: start + offending.len()
+            })
+        );
+        assert_eq!(
+            error.source,
+            SourceIdentity::new("agent-ix", "test:plant.fsl")
+        );
+        assert_eq!(error.path, "plant.fsl");
+        for detail in retained {
+            assert!(error.message.contains(detail), "{detail}: {error:?}");
+        }
+    }
+    for (declaration, kind) in [
+        ("population Aux: Pump;", "population"),
+        ("dimension Aux;", "dimension"),
+        (
+            "dimension Length; unit Aux: Length = rational(1, 1);",
+            "unit",
+        ),
+    ] {
+        for (original, changed, required) in [
+            ("SysPump.PumpOut", "Aux.PumpOut", "part"),
+            ("SysTank.TankIn", "Aux.TankIn", "part"),
+            ("SysPump.PumpOut", "SysPump.Aux", "port"),
+            ("SysTank.TankIn", "SysTank.Aux", "port"),
+        ] {
+            let model = SYSTEMS_MODEL
+                .replace(
+                    "connection Pipe",
+                    &format!("{declaration}\nconnection Pipe"),
+                )
+                .replace(original, changed);
+            let parsed = fsl_cst::parse(
+                SourceIdentity::new("agent-ix", "test:plant.fsl"),
+                "plant.fsl",
+                model.as_bytes(),
+                fsl_cst::Limits::default(),
+            )
+            .unwrap();
+            let errors = fsl_semantics::model::intake::compile_model_unit_with_causes(
+                &parsed,
+                ModelNormalizationLimits::default(),
+            )
+            .expect_err("a declared non-system name has the wrong kind");
+            let [error] = errors.as_slice() else {
+                panic!("{errors:?}")
+            };
+            assert_eq!(error.code, CompleteCode::InvalidModelBinding, "{error:?}");
+            assert_eq!(error.cause, CompleteCause::WrongExport, "{error:?}");
+            assert!(
+                error
+                    .message
+                    .contains(&format!("requires {required}, found {kind}")),
+                "{error:?}"
+            );
+            let start = model.rfind("Aux").unwrap();
+            assert_eq!(
+                error.byte_span(),
+                Some(fsl_foundation::Span {
+                    start,
+                    end: start + 3
+                })
+            );
+        }
+    }
+}
+
+#[test]
+#[trace("TC-3013", "FR-897-AC-3", "FR-897-AC-5")]
+fn systems_source_refuses_reversed_channel_and_non_port_roles() {
+    let mut variants = vec![(
+        SYSTEMS_PROTOCOL.replace("from Outlet to Inlet", "from Inlet to Outlet"),
+        "Link".to_owned(),
+    )];
+    for role in ["PumpOut", "TankIn"] {
+        for member in ["SysPump", "Pipe"] {
+            variants.push((
+                SYSTEMS_PROTOCOL.replace(&format!("on N::{role};"), &format!("on N::{member};")),
+                format!("N::{member}"),
+            ));
+        }
+    }
+    let directory = tempfile::tempdir().unwrap();
+    for (protocol, located) in variants {
+        let path = systems_request(directory.path(), SYSTEMS_MODEL, &protocol);
+        let error = command::compile_outcome(&path)
+            .err()
+            .expect("invalid channel binding refuses");
+        let artifact = error.artifact_value().unwrap();
+        assert_eq!(artifact["code"], "invalid_model_binding", "{artifact}");
+        assert_eq!(artifact["cause"], "malformed-declaration", "{artifact}");
+        let start = if located == "Link" {
+            protocol.find("via Link").unwrap() + 4
+        } else {
+            protocol.find(&located).unwrap()
+        };
+        assert_eq!(
+            artifact["details"]["span"]["start"]["byte"], start,
+            "{artifact}"
+        );
+        assert_eq!(
+            artifact["details"]["span"]["end"]["byte"],
+            start + located.len(),
+            "{artifact}"
+        );
+        assert_eq!(
+            artifact["details"]["source"]["identity"],
+            "test:pipeline.fsl"
+        );
+    }
+}
+
+#[test]
+#[trace("TC-3013", "FR-086-AC-2")]
+fn systems_source_preserves_independent_connection_admission_causes() {
+    let directory = tempfile::tempdir().unwrap();
+    for (model, code, cause) in [
+        (
+            SYSTEMS_MODEL.replace("out on SysPump", "in on SysPump"),
+            "invalid_model_binding",
+            "port-direction",
+        ),
+        (
+            SYSTEMS_MODEL
+                .replace(
+                    "interface Flow { rate: Integer; }",
+                    "interface Flow { rate: Integer; }\ninterface Other { marker: Boolean; }",
+                )
+                .replace("TankIn: Flow", "TankIn: Other"),
+            "ill_typed",
+            "type-mismatch",
+        ),
+        (
+            SYSTEMS_MODEL.replace("PumpOut: Flow [1, 1]", "PumpOut: Flow [2, 2]"),
+            "ill_typed",
+            "multiplicity-narrowing",
+        ),
+    ] {
+        let path = systems_request(directory.path(), &model, SYSTEMS_PROTOCOL);
+        let error = command::compile_outcome(&path)
+            .err()
+            .expect("connection admission refuses");
+        let artifact = error.artifact_value().unwrap();
+        assert_eq!(artifact["code"], code, "{artifact}");
+        assert_eq!(artifact["cause"], cause, "{artifact}");
+        assert!(
+            artifact.to_string().contains("ix://test/plant/Pipe"),
+            "{artifact}"
+        );
+        let start = SYSTEMS_PROTOCOL.find("N::Pipe").unwrap();
+        assert_eq!(
+            artifact["details"]["span"]["start"]["byte"], start,
+            "{artifact}"
+        );
+        assert_eq!(
+            artifact["details"]["span"]["end"]["byte"],
+            start + "N::Pipe".len(),
+            "{artifact}"
+        );
+    }
+}
+
 /// A program selecting `identity` as `M`, with one invariant over `M::Order`.
 fn program(identity: &str) -> String {
     format!(

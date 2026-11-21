@@ -15,6 +15,9 @@ use serde::{Deserialize, Serialize};
 use super::{Error, SELECTION_FORMAT};
 use crate::emit_checked_v2::{ClockSelection, Compiled, Inputs, Request};
 
+#[cfg(test)]
+mod await_tests;
+
 /// The authority of every profile definition FSL selects.
 const PROFILE_AUTHORITY: &str = "agent-ix";
 
@@ -152,6 +155,23 @@ struct CompensationRow {
     binding: Option<BindingRow>,
 }
 
+/// An Await's own declaration and the clock selected by its acquisition.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct AwaitRow {
+    node: CheckedNodeId,
+    name: String,
+    occurrence: u64,
+    #[serde(deserialize_with = "required_binding")]
+    binding: Option<BindingRow>,
+}
+
+fn required_binding<'de, D: serde::Deserializer<'de>>(
+    input: D,
+) -> Result<Option<BindingRow>, D::Error> {
+    Option::<BindingRow>::deserialize(input)
+}
+
 /// One quantifier of a hyper clause and the `TemporalBinding` row its trace
 /// is expected to have (FR-488 "Clause names and clock bindings").
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -180,6 +200,8 @@ pub struct Selection {
     package: PackageRows,
     clauses: Vec<ClauseRow>,
     compensations: Vec<CompensationRow>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    awaits: Vec<AwaitRow>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     hypers: Vec<HyperRow>,
 }
@@ -329,6 +351,18 @@ impl Selection {
         if !is_selection_format(&selection.format) {
             return Err(SelectionReadError::Format(selection.format));
         }
+        for (index, row) in selection.awaits.iter().enumerate() {
+            if selection.awaits[..index]
+                .iter()
+                .any(|previous| previous.node == row.node && previous.occurrence == row.occurrence)
+            {
+                return Err(SelectionReadError::Malformed(
+                    <serde_json::Error as serde::de::Error>::custom(
+                        "duplicate Await declaration occurrence",
+                    ),
+                ));
+            }
+        }
         Ok(selection)
     }
 
@@ -351,6 +385,9 @@ impl Selection {
         command_source_file: Option<&str>,
     ) -> Result<Self, Error> {
         let graph = compiled.checked.package().graph();
+        // The native command keeps its already produced emission. Validate the
+        // named reconstruction selectors without emitting that package again.
+        crate::emit_checked_v2::clock_selections(&compiled.checked, &request.temporal_selections)?;
         let wire = fsl_semantics::check::wire_id::WireGraph::of_package_bytes(bytes)
             .map_err(|what| Error::Unnameable { what })?;
         let id = |key: &filament_exact::NodeKey, what: &str| {
@@ -439,6 +476,50 @@ impl Selection {
                 compensation_rows.push(CompensationRow {
                     node: id(key, "compensation id")?,
                     name: text(&template.name),
+                    binding,
+                });
+            }
+        }
+        let mut await_rows = Vec::new();
+        for protocol in graph.protocols() {
+            for awaited in &protocol.awaits {
+                let key = graph
+                    .protocol_node_keys(&protocol.name)
+                    .and_then(|keys| keys.nodes.get(&awaited.node))
+                    .ok_or_else(|| Error::Unnameable {
+                        what: format!("Await node of {}::{}", protocol.name, awaited.name),
+                    })?;
+                let mut occurrences = graph.occurrences().filter_map(|(node, origin, _)| {
+                    (node == *key && origin.role().as_str() == "declaration")
+                        .then_some(origin.ordinal())
+                });
+                let occurrence = occurrences.next().ok_or_else(|| Error::Unnameable {
+                    what: format!(
+                        "Await declaration occurrence of {}::{}",
+                        protocol.name, awaited.name
+                    ),
+                })?;
+                if occurrences.next().is_some() {
+                    return Err(Error::Unnameable {
+                        what: format!(
+                            "ambiguous Await declaration occurrence of {}::{}",
+                            protocol.name, awaited.name
+                        ),
+                    });
+                }
+                let name = format!("await {}::{}", protocol.name, awaited.name);
+                let binding = request
+                    .temporal_selections
+                    .iter()
+                    .find(|selection| selection.clause == name)
+                    .map(|selection| BindingRow {
+                        clock_name: awaited.clock.clone(),
+                        clock: selection.clock.clone(),
+                    });
+                await_rows.push(AwaitRow {
+                    node: id(key, "Await node id")?,
+                    name,
+                    occurrence,
                     binding,
                 });
             }
@@ -578,7 +659,7 @@ impl Selection {
                 identity,
             });
         }
-        let libraries = compiled
+        let mut libraries: Vec<_> = compiled
             .libraries
             .iter()
             .map(|library| LibraryRow {
@@ -586,6 +667,7 @@ impl Selection {
                 file: format!("sources/{}", library.source.identity),
             })
             .collect();
+        libraries.sort_by(|left, right| left.identity.cmp(&right.identity));
         Ok(Self {
             format: text(SELECTION_FORMAT),
             package: PackageRows {
@@ -606,6 +688,7 @@ impl Selection {
             },
             clauses: rows,
             compensations: compensation_rows,
+            awaits: await_rows,
             hypers: hyper_rows,
         })
     }
@@ -653,6 +736,7 @@ impl Selection {
                     .iter()
                     .map(|row| (&row.name, &row.binding)),
             )
+            .chain(self.awaits.iter().map(|row| (&row.name, &row.binding)))
             .chain(self.hypers.iter().filter_map(|row| {
                 // Traces whose clocks differ are the model's: the compile
                 // derives them again, so no clause-name selection is read.
@@ -698,6 +782,9 @@ impl Selection {
         for row in &self.compensations {
             check_binding(&row.node, &row.name, row.binding.as_ref(), package)?;
         }
+        for row in &self.awaits {
+            check_await(row, package)?;
+        }
         for row in &self.hypers {
             check_hyper(row, package)?;
         }
@@ -707,6 +794,7 @@ impl Selection {
             .iter()
             .map(|row| &row.binding)
             .chain(self.compensations.iter().map(|row| &row.binding))
+            .chain(self.awaits.iter().map(|row| &row.binding))
             .filter(|binding| binding.is_some())
             .count()
             + self
@@ -792,6 +880,54 @@ fn has_binding(members: &[CheckedTerm], name: &str) -> bool {
         matches!(member, CheckedTerm::Binding { name: bound, .. }
             if matches!(bound.kind(), filament_contract_model::CheckedBindingNameKind::Other(other) if other == name))
     })
+}
+
+fn check_await(row: &AwaitRow, package: &CheckedPackageV2) -> Result<(), SelectionRefusal> {
+    let refused = |axis| SelectionRefusal {
+        axis,
+        clause: Some(row.name.clone()),
+    };
+    let node = package
+        .resolved_graph()
+        .nodes
+        .iter()
+        .find(|node| node.node_id == row.node)
+        .ok_or_else(|| refused(SelectionAxis::ClauseNode))?;
+    let is_await = fsl_package::protocol_view::control_operation(node)
+        .is_ok_and(|operation| operation == fsl_package::protocol_view::ControlOperation::Await);
+    let name = node.declaration.as_ref().and_then(|declaration| {
+        let path = &declaration.qualified_name;
+        (path.len() >= 3 && path[1].as_ref() == "run")
+            .then(|| format!("await {}::{}", path[0], path[path.len() - 1]))
+    });
+    if package.node_kind(&row.node) != Some(CheckedNodeKind::Protocol(ProtocolForm::Control))
+        || !is_await
+        || name.as_deref() != Some(&row.name)
+    {
+        return Err(refused(SelectionAxis::ClauseNode));
+    }
+    if !node.occurrences.iter().any(|occurrence| {
+        occurrence.role == filament_contract_model::CheckedOccurrenceRole::Declaration
+            && occurrence.ordinal == row.occurrence
+    }) {
+        return Err(refused(SelectionAxis::ClauseBinding));
+    }
+    let mut actual = package
+        .temporal_bindings()
+        .unwrap_or_default()
+        .iter()
+        .filter(|binding| binding.declaration == row.node);
+    let binding = actual.next();
+    if actual.next().is_some()
+        || binding.is_some_and(|binding| {
+            binding.occurrence != row.occurrence
+                || binding.source_unit.is_some()
+                || binding.trace.is_some()
+        })
+    {
+        return Err(refused(SelectionAxis::ClauseBinding));
+    }
+    compare_binding(&row.name, row.binding.as_ref(), binding)
 }
 
 fn check_clause(row: &ClauseRow, package: &CheckedPackageV2) -> Result<(), SelectionRefusal> {

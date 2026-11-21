@@ -91,6 +91,7 @@ pub fn content(
     protocol: &ProtocolDeclarationForm,
     alias_names: &BTreeMap<String, AliasKind>,
     scope: &Scope,
+    models: &[crate::check::lowering::AdmittedModel],
 ) -> Vec<CheckRefusal> {
     let uncovered = protocol
         .declarations
@@ -128,12 +129,30 @@ pub fn content(
             && types.named_types(&role.context.name).is_empty()
             && types.model_port(&role.context.name).is_none()
         {
+            let declared = role
+                .context
+                .name
+                .split_once("::")
+                .and_then(|(alias, member)| {
+                    scope
+                        .declared_model(models, &protocol.name.name, alias)?
+                        .export(member)
+                })
+                .is_some();
             refusals.push((
                 role.context.span,
-                refusal(ProtocolAnchorCause::MissingRoleType {
-                    role: role.name.name.clone(),
-                    context: role.context.name.clone(),
-                    span: role.context.span,
+                refusal(if declared {
+                    ProtocolAnchorCause::RoleModel {
+                        role: role.name.name.clone(),
+                        context: role.context.name.clone(),
+                        span: role.context.span,
+                    }
+                } else {
+                    ProtocolAnchorCause::MissingRoleType {
+                        role: role.name.name.clone(),
+                        context: role.context.name.clone(),
+                        span: role.context.span,
+                    }
                 }),
             ));
         }

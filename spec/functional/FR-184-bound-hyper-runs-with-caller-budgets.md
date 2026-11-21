@@ -67,6 +67,18 @@ pub enum ModelCheckLimit {
 - When an `X` would exceed `max_witness_set`, the engine SHALL stop the run.
 - The engine SHALL count against `max_relation_tuples` the tuples an HP-1
   run has evaluated (FR-179).
+- FR-163's independent HP-1 certificate checker SHALL enforce the same
+  request's `max_relation_tuples` with a fresh counter for each certificate
+  check. The engine's search and each independent check are separate
+  passes, each entitled to that configured number of tuple evaluations;
+  the limit is not an aggregate allowance shared between the passes.
+  A checker stop SHALL carry the same limit, value, one-past-budget count
+  and setting `model_check.max_relation_tuples` as an engine stop.
+  The checker SHALL identify its first unpaid tuple, the next canonical
+  tuple whose body evaluation would exceed that allowance, using FR-163's
+  complete typed `HyperTransitionTuple` in the checker result. The tuple
+  is a stop locus, not a counterexample or a new wire cause member; the
+  settled record keeps the existing `LimitReached` cause shape.
 - When the next tuple would pass `max_relation_tuples`, the engine SHALL
   stop the run.
 - The engine SHALL count each budget with checked arithmetic.
@@ -93,6 +105,7 @@ pub enum ModelCheckLimit {
 | FR-184-AC-1 | A request that sets neither member runs with `max_witness_set` 65,536 and `max_relation_tuples` 16,777,216, and its terminal record reports those values, marked as published defaults, for every run: a proved run, a refuted run and a stopped run alike. | Test (TC-609) |
 | FR-184-AC-2 | ADR-023 §8.2's leaky `Opaque` with `max_witness_set` 0 stops `Stopped(ResourceExhausted, MaxWitnessSet)` with value 0, count 1 and no counterexample; with `max_witness_set` 1 it completes with FR-177-AC-1's outcome. | Test (TC-609) |
 | FR-184-AC-3 | FR-179-AC-1's `Det` with `max_relation_tuples` 63 stops `Stopped(ResourceExhausted, MaxRelationTuples)` with value 63 and count 64; with 64 it completes `Holds`. | Test (TC-609) |
+| FR-184-AC-4 | FR-179-AC-1's engine run with `max_relation_tuples` 64 evaluates its 64 tuples and the resulting certificate's independent check under the same setting evaluates its own 64 tuples and accepts. Rechecking it starts from zero and accepts again. Checking that certificate under 63 stops with value 63 and count 64 before the 64th body evaluation and identifies the complete labelled tuple 64 as the first unpaid tuple; the record names `model_check.max_relation_tuples`, retains the existing limit-cause shape and carries no counterexample. | Test |
 
 ## Dependencies
 

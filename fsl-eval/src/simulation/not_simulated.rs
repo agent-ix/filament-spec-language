@@ -18,15 +18,43 @@ use crate::simulation::protocol::UnboundCapacity;
 /// limit, so they agree on what is bounded.
 pub const BOUND_POSITIONS: u64 = 1 << 20;
 
+/// A generated data member whose clock-reference domain needs a selector bound.
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub struct ClockReferenceDomain {
+    /// The actual field or parameter type position.
+    pub member: fsl_foundation::bound::DomainKey,
+    /// The checked clock-place template.
+    pub clock: NodeKey,
+    /// The unbounded collection step in the template's declared place path.
+    pub slot: Vec<u32>,
+}
+
 /// Every unbounded domain a `requires-bound` request named, by key, with its
 /// kind (ADR-014 §4).
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RequiresBound {
-    /// The request's unbounded domains.
-    pub domains: UnboundedDomains,
+    /// The request's generic unbounded type domains, if any. When absent,
+    /// `clock_references` is nonempty and identifies the required bounds.
+    pub domains: Option<UnboundedDomains>,
     /// FSpec FR-785: the capacity names a protocol subject's binding leaves
     /// unbound, reported with the domains; empty for any other subject.
     pub capacities: Vec<UnboundCapacity>,
+    /// Clock-reference members and the declared selector domains they need.
+    pub clock_references: Vec<ClockReferenceDomain>,
+}
+
+impl std::fmt::Display for RequiresBound {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("the request has an unbounded domain and requires a proof bound")?;
+        for site in &self.clock_references {
+            write!(
+                formatter,
+                "; member {} references clock {} slot {:?}",
+                site.member, site.clock, site.slot
+            )?;
+        }
+        Ok(())
+    }
 }
 
 /// Why `explore_request` or `sample_request` returned before exploring or
@@ -35,7 +63,7 @@ pub struct RequiresBound {
 pub enum NotSimulated {
     /// The request's extent is unbounded (ADR-014 §4). No `TransitionSystem`
     /// method was called.
-    #[error("the request has an unbounded domain and requires a proof bound")]
+    #[error("{0}")]
     RequiresBound(RequiresBound),
     /// FSpec FR-785: a protocol subject's capacity binding leaves these
     /// capacity names unbound, so the item requires a bound before any
@@ -178,8 +206,9 @@ pub(crate) fn check_requires_bound<R: Root>(
     match classify_extent_at(&rooted, types, position_limit) {
         Ok(ClaimExtent::Bounded) => Ok(()),
         Ok(ClaimExtent::Unbounded(domains)) => Err(NotSimulated::RequiresBound(RequiresBound {
-            domains,
+            domains: Some(domains),
             capacities: Vec::new(),
+            clock_references: Vec::new(),
         })),
         Err(failure) => Err(NotSimulated::Extent(failure)),
     }
