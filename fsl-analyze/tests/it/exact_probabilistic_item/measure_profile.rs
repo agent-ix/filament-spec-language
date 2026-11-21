@@ -2486,7 +2486,7 @@ fn terminal_initial_undecided_fraction_synthesizes_stutter_without_a_hint() {
         .unwrap()
         .evidence();
     let root: Value = serde_json::from_slice(witness.initial_key.as_bytes()).unwrap();
-    assert_eq!(root[5], json!(["fraction", "3"]));
+    assert_eq!(root[5], json!(["fraction", "3", "collecting"]));
     let mut upper = mean_bound(witness, false, true);
     upper.as_object_mut().unwrap().remove("policy");
     assert!(upper["values"]
@@ -2529,4 +2529,193 @@ fn terminal_initial_undecided_fraction_synthesizes_stutter_without_a_hint() {
         ),
         "valid local Lowermax0 equality: {rejected:?}"
     );
+}
+
+#[trace("TC-3152", "FR-1043-AC-9", "FR-202-AC-28")]
+#[test]
+fn a_partial_lower_expands_only_named_states_and_their_immediate_successors() {
+    let world = World::new(&retry(&claim(
+        "Q",
+        "every scheduler",
+        "mean of fraction holds(m.delivered) over [0,2] <= rational(1,4)",
+    )));
+    let baseline = settle(&world, "Q", ModelCheckLimits::default());
+    assert_eq!(
+        baseline.terminal().unwrap().value(),
+        &TerminalValue::Refuted
+    );
+    let mut offered = baseline
+        .probabilistic_counterexample
+        .as_ref()
+        .unwrap()
+        .evidence()
+        .clone();
+    let full: Value =
+        serde_json::from_slice(offered.subsystem.as_ref().unwrap().as_bytes()).unwrap();
+    let mut document = mean_bound(&offered, true, true);
+    let root = URL_SAFE_NO_PAD.encode(offered.initial_key.as_bytes());
+    document["values"].as_array_mut().unwrap().retain(|row| {
+        row["state"] == root || row["value"] == json!({"numerator":"2","denominator":"3"})
+    });
+    document["values"]
+        .as_array_mut()
+        .unwrap()
+        .iter_mut()
+        .find(|row| row["state"] == root)
+        .unwrap()["value"] = json!({"numerator":"1","denominator":"3"});
+    let named = document["values"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|row| row["state"].clone())
+        .collect::<Vec<_>>();
+    document["ranking"]
+        .as_array_mut()
+        .unwrap()
+        .retain(|row| named.contains(&row["state"]));
+    document.as_object_mut().unwrap().remove("policy");
+    let cap = named.len() + 1;
+    assert!(
+        full["values"].as_array().unwrap().len() > cap,
+        "the complete graph must exceed the partial frontier"
+    );
+    offered.scheduler.clear();
+    offered.subsystem = Some(Box::new(
+        fsl_replay::ProbabilitySubsystemCertificate::from_bytes(
+            &serde_json::to_vec(&document).unwrap(),
+            document_limits(),
+            &Cancel::new(),
+        )
+        .unwrap(),
+    ));
+    let mut limits = fsl_analyze::exact_probabilistic::ExactProbLimits::default();
+    limits.model.limits.max_states = cap;
+    let system = ModelSystem::new(world.subject().simulation).unwrap();
+    let accepted = fsl_replay::replay_probabilistic_witness(
+        &world.package,
+        &system,
+        &offered.item,
+        &offered,
+        &limits,
+        &Cancel::new(),
+    );
+    assert!(
+        matches!(
+            accepted,
+            Ok(fsl_replay::ProbabilityWitnessReplay::Reproduced(_))
+        ),
+        "named plus immediate frontier fits cap{cap}: {accepted:?}"
+    );
+}
+
+#[trace("TC-3152", "FR-1043-AC-7", "FR-203-AC-11")]
+#[test]
+fn measure_and_vacuity_limits_settle_incomplete_without_certification() {
+    let world = World::new(&retry(
+        &(claim(
+            "Mean",
+            "every scheduler",
+            "mean of fraction holds(m.delivered) over [0,2] >= 0",
+        ) + &claim(
+            "Vacuous",
+            "Steady",
+            "quantile 0.9 of (steps from holds(false) until holds(m.delivered) within 4) <= 2",
+        )),
+    ));
+    let engines = Engines::fsl().unwrap();
+    for (name, rational) in [("Mean", true), ("Mean", false), ("Vacuous", false)] {
+        let mut request = world.request(name, ModelCheckLimits::default());
+        let (limit, value) = if rational {
+            request.limits.max_rational_bits = 3;
+            (ModelCheckLimit::ExactProbMaxRationalBits, 3)
+        } else {
+            request.limits.model.limits.max_states = 1;
+            (ModelCheckLimit::ExactProbMaxStates, 1)
+        };
+        let record = analyze_items(
+            &engines,
+            vec![exact_probabilistic_item(RequestIndex::new(0), request)],
+            &Cancel::new(),
+        )
+        .remove(0);
+        let terminal = record
+            .terminal()
+            .unwrap_or_else(|| panic!("{name}: {:?}", record.settlement));
+        assert_eq!(
+            terminal.value(),
+            &TerminalValue::Incomplete(IncompleteCause::LimitReached { limit, value }),
+            "{name}: {:?}",
+            record.settlement
+        );
+        assert!(terminal.exact_certificate_document().is_none());
+        assert!(
+            record.exact_probabilistic.is_none() && record.probabilistic_counterexample.is_none()
+        );
+    }
+}
+
+#[trace("FR-1043-AC-10", "FR-203-AC-11")]
+#[test]
+fn vacuity_cancellation_at_the_checker_boundary_retains_its_typed_cause() {
+    let world = World::new(&retry(&claim(
+        "Q",
+        "Steady",
+        "quantile 0.9 of (steps from holds(false) until holds(m.delivered) within 4) <= 2",
+    )));
+    let engines = Engines::fsl().unwrap();
+    let run = |cancel: &Cancel| {
+        analyze_items(
+            &engines,
+            vec![exact_probabilistic_item(
+                RequestIndex::new(0),
+                world.request("Q", ModelCheckLimits::default()),
+            )],
+            cancel,
+        )
+        .remove(0)
+    };
+    let live = Cancel::new();
+    let _counting = live.count_charges();
+    let control = run(&live);
+    assert!(matches!(
+        control.terminal().unwrap().value(),
+        TerminalValue::Proved {
+            basis: ProofBasis::Exhaustive,
+            certification: Certification::Certified
+        }
+    ));
+    let last_poll = live.charges();
+    assert!(last_poll > 1);
+    for cutoff in [1, last_poll] {
+        let slot = Arc::new(OnceLock::<Cancel>::new());
+        let weak = Arc::downgrade(&slot);
+        let polls = Arc::new(AtomicU32::new(0));
+        let seen = Arc::clone(&polls);
+        let cancel = Cancel::observing(move || {
+            if seen.fetch_add(1, Ordering::Relaxed) + 1 == cutoff {
+                weak.upgrade()
+                    .unwrap()
+                    .get()
+                    .unwrap()
+                    .cancel(CancelCause::Deadline);
+            }
+        });
+        slot.set(cancel.clone()).unwrap();
+        let stopped = run(&cancel);
+        let terminal = stopped
+            .terminal()
+            .unwrap_or_else(|| panic!("{:?}", stopped.settlement));
+        assert_eq!(
+            terminal.value(),
+            &TerminalValue::Incomplete(IncompleteCause::Cancelled {
+                source: CancelCause::Deadline
+            }),
+            "cutoff{cutoff}: {:?}",
+            stopped.settlement
+        );
+        assert!(terminal.exact_certificate_document().is_none());
+        assert!(
+            stopped.exact_probabilistic.is_none() && stopped.probabilistic_counterexample.is_none()
+        );
+    }
 }
