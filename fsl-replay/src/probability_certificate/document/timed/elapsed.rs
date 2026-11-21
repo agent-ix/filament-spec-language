@@ -130,6 +130,7 @@ pub(super) fn check(
         enumerate_digital_deadline(
             system,
             timed,
+            claim,
             binding.as_ref(),
             &watch,
             window,
