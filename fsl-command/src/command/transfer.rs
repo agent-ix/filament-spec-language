@@ -19,7 +19,8 @@ use fsl_replay::planner::{
 use fsl_replay::spine::CheckedUnit;
 use fsl_replay::{Certification, ItemLabel};
 use fsl_semantics::check::{
-    CheckedGraph, CheckedRefinement, StepClass, StepTarget, TemporalClauseNode, TemporalProfile,
+    AbstractSide, CheckedGraph, CheckedRefinement, StepClass, StepTarget, TemporalClauseNode,
+    TemporalProfile,
 };
 use fsl_semantics::model::intake::PackageInput;
 use fsl_semantics::model::observation::{
@@ -407,11 +408,20 @@ impl Transfer<'_> {
                 }
             })
             .collect::<Result<Vec<_>>>()?;
+        // A protocol abstract subject is spelled `<alias>::<protocol>`, which
+        // no model alias is, so the premise is never settled as an ordinary
+        // model subject.
+        let abstract_declared = match refinement.abstract_side() {
+            AbstractSide::Model => refinement.abstract_model().to_owned(),
+            AbstractSide::Protocol { clause, .. } => {
+                format!("{}::{clause}", refinement.abstract_model())
+            }
+        };
         for (side, selected, declared) in [
             (
                 "abstract",
                 &member.abstract_subject.model,
-                refinement.abstract_model(),
+                abstract_declared.as_str(),
             ),
             (
                 "concrete",
