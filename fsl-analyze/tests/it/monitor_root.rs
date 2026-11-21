@@ -98,7 +98,34 @@ fn monitor_body_locations_follow_entry_rekeys_and_preserve_helper_origins() {
         true,
         "on origin",
     );
-    let root = root_of(&unit, "C", &target()).expect("the authentic monitor emits");
+    let domain = Domain::config_version();
+    let packages =
+        fsl_semantics::model::intake::package_input([domain.document.as_slice()]).unwrap();
+    let source = SourceIdentity::new("agent-ix", "monitor-root");
+    let name = LibraryName::new("fixture").unwrap();
+    let limits = SpineLimits::default();
+    let limits = SpineLimits {
+        // IR-1321 quadratically rescans body locations. This fixture's
+        // explicit 1,000,000,000-work bound must be removed when the fixed
+        // reader is pinned; production defaults stay unchanged.
+        imports: limits.imports.with_work(LIMITS.work),
+        ..limits
+    };
+    let root = emit_plan_root(
+        &PlanRootRequest {
+            source: &source,
+            path: "monitor.native",
+            bytes: unit.as_bytes(),
+            packages: &packages,
+            package_name: &name,
+            limits,
+            clause: "C",
+            target: &target(),
+            settings: &TimingObligationSettings::default(),
+        },
+        &Cancel::new(),
+    )
+    .expect("the authentic monitor emits");
     let package = admitted(&root);
     let plan = package.monitor_plans().next().expect("one authentic plan");
     let entries = [
