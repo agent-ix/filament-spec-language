@@ -1180,6 +1180,52 @@ pub fn typed_value_json(
     canonical_json(&typed_value_enc(value, types, variants))
 }
 
+/// A run value's canonical form, using the admitted source enum bindings
+/// alongside the checked composite declarations.
+pub fn run_value_json(
+    value: &Value,
+    types: &TypeEnvironment,
+    enums: &[EnumBinding],
+    variants: &[VariantTypeDeclaration],
+) -> Option<serde_json::Value> {
+    canonical_json(&value_enc(
+        value,
+        Typing::with_variants(types, variants).with_enums(enums),
+    ))
+}
+
+/// Write a borrowed run value through the shared typed projection, admitting
+/// every visit, identity copy, decimal conversion and buffer reservation
+/// before work. No retained encoding tree is constructed first.
+///
+/// # Errors
+/// The original caller work/storage/cancellation refusal, a physical
+/// allocation failure, or an unencodable admitted value.
+pub fn run_value_bytes(
+    value: &Value,
+    types: &TypeEnvironment,
+    enums: &[EnumBinding],
+    variants: &[VariantTypeDeclaration],
+    identity: fsl_foundation::IdentityLimits,
+    budget: &mut dyn super::ModelKeyBudget,
+    cancel: &filament_exact::Cancel,
+) -> Result<Vec<u8>, super::ModelKeyError> {
+    bounded::value_bytes(
+        value,
+        Typing::with_variants(types, variants).with_enums(enums),
+        identity,
+        budget,
+        cancel,
+    )
+}
+
+/// The canonical declaration name of an admitted run type's structural key.
+pub fn run_declaration_name(key: &NodeKey) -> Option<String> {
+    DeclarationRecord::of_node(key)?
+        .text(Limits::new(u64::MAX))
+        .ok()
+}
+
 /// `value` through the one canonical writer, read back as JSON.
 ///
 /// `None` when the value is unencodable.

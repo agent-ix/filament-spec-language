@@ -1023,6 +1023,25 @@ pub(crate) fn node_bytes(
     scope.canonical(|writer| node.encode_into(writer))
 }
 
+pub(crate) fn value_bytes(
+    value: &Value,
+    typing: Typing<'_>,
+    identity: IdentityLimits,
+    budget: &mut dyn ModelKeyBudget,
+    cancel: &Cancel,
+) -> Result<Vec<u8>, ModelKeyError> {
+    let scope = Scope {
+        budget: RefCell::new(budget),
+        cancel,
+        identity,
+        refused: RefCell::new(None),
+    };
+    let mut sink = Bounded::new(&scope);
+    projection::project_value(&mut sink, value, typing, None, false)?;
+    scope.poll()?;
+    sink.finish_bytes()
+}
+
 pub(crate) fn model_bytes(
     model: &StateModel,
     state: &ModelState,
