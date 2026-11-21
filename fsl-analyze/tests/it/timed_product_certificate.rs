@@ -880,7 +880,7 @@ fn reset_loop_is_nonprogressive_without_a_deadline_clock() {
 /// weighs at zero cannot be dropped from the checker's product. The engine
 /// emits no workload document for a timed deadline (and faults on a zero-weight
 /// race), so the document is the `every scheduler` one of the same model with
-/// its optimization relabelled `workload`; the checker must refuse the product
+/// its identity and optimization relabelled for the workload claim; the checker must refuse the product
 /// as `Unsupported` rather than check one without `tick`.
 #[trace("TC-2492")]
 #[test]
@@ -907,7 +907,12 @@ fn the_checker_refuses_a_workload_that_weighs_an_enabled_operation_at_zero() {
     );
     let mut doc = document(&settle(&world, "Every"));
     doc["objective"]["optimization"] = json!("workload");
-    eprintln!("DOCKEYS {}", doc.as_object().unwrap().iter().map(|(k, v)| format!("{k}={}", v.to_string().chars().take(160).collect::<String>())).collect::<Vec<_>>().join("\n"));
+    doc["identity"] = serde_json::from_str(
+        &doc["identity"]
+            .to_string()
+            .replace("\"Every\"", "\"Weighted\""),
+    )
+    .expect("identity JSON");
     let result = check(&world, "Weighted", &doc);
     assert!(
         matches!(result, Err(ProbabilityDocumentError::Unsupported)),
