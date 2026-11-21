@@ -26,7 +26,8 @@ use super::task_symbolic::{SymbolicGraph, SymbolicIdentity};
 /// Builds a no-reachable-release certificate from the engine's closed source
 /// graph and its own time-divergence admission witness. A declared release is
 /// allowed only when none of its source steps is reachable. `None` means a
-/// release is reachable or the source admits no time-divergent behaviour.
+/// release is reachable or the source search did not establish an admitted
+/// closed graph.
 ///
 /// # Errors
 ///

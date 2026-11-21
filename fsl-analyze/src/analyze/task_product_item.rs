@@ -3,7 +3,9 @@
 //!
 //! A claim first runs the concrete event search, which alone can refute and is
 //! bounded by `max_task_product_work`. When it neither refutes nor is
-//! cancelled, the symbolic pass (FR-418) runs: the engine's own zone
+//! cancelled, the source closure is tried first: when no checked task release
+//! is reachable, its ordinary zone proof supplies the no-release certificate.
+//! Otherwise the symbolic pass (FR-418) runs: the engine's own zone
 //! exploration writes the task-product certificate, the certificate is spelled
 //! as JSON and read back, and `check_zone_certificate` runs on what was read.
 //! `proved` is settled only for an accepted certificate. Anything else (an
@@ -44,7 +46,7 @@ pub struct TaskProof {
 pub enum ProofVerdict {
     /// FR-418's checker returned this verdict for the certificate.
     Checked(fsl_replay::ZoneCertificateVerdict),
-    /// The set is outside `closed-finite-product/v1`, or a miss or an
+    /// Neither closure method certifies the set, or a miss or an
     /// overflow is reachable: no certificate states a proof.
     Uncertified,
     /// A limit or a cancel stopped the pass.
@@ -513,10 +515,11 @@ fn clock_values(
     clocks
 }
 
-/// The symbolic pass, then FR-418's checker, for a search that closed.
+/// Source closure or the symbolic task pass, then FR-418's checker.
 ///
-/// The engine explores its own refined-region quotient and writes the
-/// certificate; the certificate is then spelled as FR-418 JSON, read back,
+/// The engine closes its source graph without a reachable release, or explores
+/// its own refined-region task quotient, and writes the certificate. The
+/// certificate is then spelled as FR-418 JSON, read back,
 /// and the checker runs on what it read, so `proved` rests on the bytes
 /// emitted and never on the producer's in-memory value.
 fn prove<'a>(
