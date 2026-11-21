@@ -101,6 +101,11 @@ fn inherited_source_member_keeps_original_and_changes_effective_owner() {
         .iter()
         .map(|r| r.key())
         .collect();
+    let expected = ["Base", "Base/field", "Child"].map(|name| DeclarationKey {
+        package: "example/identity".to_owned(),
+        node: format!("ix://example/identity/{name}"),
+    });
+    assert_eq!(originals, expected.iter().collect());
     let referenced: BTreeSet<_> = view
         .declarations()
         .iter()
