@@ -3711,7 +3711,7 @@ fn package_remainder_window_shared_atoms_match_source_and_require_caller_bytes()
             assert_eq!(expected.0, 10, "source {body}: {}", expected.1);
             assert_eq!(
                 expected.1["support"],
-                json!([{"position":1,"atom":label}]),
+                Value::Array(vec![json!({"position":1,"atom":label}); candidates]),
                 "{}",
                 expected.1
             );
@@ -3761,7 +3761,7 @@ fn package_remainder_window_shared_atoms_match_source_and_require_caller_bytes()
             caller["formal_revision"] = json!(9);
             let request = json!({"format":"native-run/1", "request": {"models":[],
             "package":{"directory":"handoff"}, "sources":[caller], "clause":clause}});
-            package_window_adapter_controls(&package, directory.path(), &unit, label);
+            package_window_adapter_controls(&package, directory.path(), &unit, label, candidates);
             let actual = write_request(directory.path(), &request);
             assert_eq!(actual, expected, "package {body}");
             fsl_replay::spine::read_native_run_result(&serde_json::to_vec(&actual.1).unwrap())
@@ -3798,6 +3798,7 @@ fn package_window_adapter_controls(
     directory: &Path,
     unit: &str,
     label: &str,
+    support_count: usize,
 ) {
     use fsl_foundation::source::provenance::{OccurrenceKey, RawSourceRef, SourceRegion};
     use fsl_foundation::{Source, SourceIdentity};
@@ -3901,12 +3902,17 @@ fn package_window_adapter_controls(
         projection.source_at_location(&bare, location).is_err(),
         "global sharing does not identify the selected claim's occurrence"
     );
-    let scoped = projection
-        .source_at_location_within(&bare, location, &declaration)
-        .unwrap()
-        .unwrap();
-    assert_eq!(scoped.source(), declaration.source());
-    assert!(scoped.start() >= declaration.start() && scoped.end() <= declaration.end());
+    let scoped = projection.source_at_location_within(&bare, location, &declaration);
+    if support_count == 1 {
+        let scoped = scoped.unwrap().unwrap();
+        assert_eq!(scoped.source(), declaration.source());
+        assert!(scoped.start() >= declaration.start() && scoped.end() <= declaration.end());
+    } else {
+        assert!(matches!(
+            scoped,
+            Err(fsl_package::occurrence_source::OccurrenceSourceRefusal::AmbiguousRegion)
+        ));
+    }
     let positions = [true, false, true]
         .map(|ok| replay::sample_position(&json!({"ok":{"boolean":ok}}).to_string()));
     let progress = replay::ProgressAssertion {
@@ -3990,10 +3996,13 @@ fn package_window_adapter_controls(
     let window = full.finite_window.as_ref().unwrap();
     assert_eq!(
         window.support,
-        vec![replay::FiniteWindowSupport {
-            position: 1,
-            atom: label.to_owned()
-        }]
+        vec![
+            replay::FiniteWindowSupport {
+                position: 1,
+                atom: label.to_owned()
+            };
+            support_count
+        ]
     );
     assert!(!window.atom_regions.is_empty());
     for actual in window.atom_regions.values() {
