@@ -2118,3 +2118,136 @@ fn a_live_mean_bound_checker_limit_or_cancellation_cannot_produce_a_token() {
         "{stopped:?}"
     );
 }
+
+#[trace("FR-1043-AC-11", "FR-202-AC-26")]
+#[test]
+fn zero_weight_fraction_replays_its_tentative_value_before_an_outside_window_predicate() {
+    for scheduler in ["Even", "every scheduler"] {
+        let source = format!("probabilistic Q using ev on M over (c:M::Coin) under {scheduler} on origin {{ mean of fraction holds(c.v = 0) over [0,0] weighted by duration >= rational(1,2) }}");
+        let mut model = prob_world::coin(&source);
+        model.body += "\nreward duration on Coin::drop = 0;\n";
+        let world = World::new(&model);
+        let record = settle(&world, "Q", ModelCheckLimits::default());
+        assert_eq!(
+            record.terminal().unwrap().value(),
+            &TerminalValue::Refuted,
+            "{:?}",
+            record.settlement
+        );
+        let token = record.probabilistic_counterexample.as_ref().unwrap();
+        let undefined = token
+            .undefined()
+            .expect("the value's own undefined evidence");
+        assert_eq!(undefined.evaluation.site.position, 1);
+        assert_eq!(
+            undefined.evaluation.site.locus,
+            fsl_replay::UndefinedLocus::FractionValue
+        );
+        assert_eq!(undefined.path.paths[0].steps.len(), 1);
+        assert_eq!(token.mass(), &ratio(1, 2));
+        let context: Value = serde_json::from_slice(undefined.product_state.as_bytes()).unwrap();
+        assert_eq!(context[5], json!(["fraction", "1", "collecting"]));
+        assert_eq!(context[6][0], "weighted-fraction");
+        assert_eq!(context[6][3], json!({"numerator":"0","denominator":"1"}));
+        assert_eq!(context[6][4], json!({"numerator":"0","denominator":"1"}));
+        let wire = token.wire.as_ref().unwrap();
+        assert_eq!(wire["evidence"]["undefined"]["cause"], "division-by-zero");
+        let system = ModelSystem::new(world.subject().simulation).unwrap();
+        let post = &undefined.path.paths[0].steps[0].post;
+        let readings = system
+            .state_predicates_with_cancel(
+                post,
+                &[(
+                    match &world.claim("Q").form {
+                        fsl_semantics::check::ProbForm::MeanOfFraction { fraction, .. } => {
+                            &fraction.predicate
+                        }
+                        _ => unreachable!(),
+                    },
+                    undefined.path.binding.as_ref(),
+                )],
+                &Cancel::new(),
+            )
+            .unwrap();
+        assert!(
+            matches!(
+                readings.as_slice(),
+                [fsl_eval::simulation::model::PredicateReading::Undefined { .. }]
+            ),
+            "the actual outside-window object must really be absent: {readings:?}"
+        );
+        let replay = |offered: &fsl_replay::ProbabilityUndefinedWitness| {
+            fsl_replay::replay_probabilistic_undefined(
+                &world.package,
+                &system,
+                &offered.path.item,
+                offered,
+                &fsl_analyze::exact_probabilistic::ExactProbLimits::default(),
+                &Cancel::new(),
+            )
+        };
+        let baseline = replay(undefined);
+        assert!(
+            matches!(
+                baseline,
+                Ok(fsl_replay::ProbabilityWitnessReplay::Reproduced(_))
+            ),
+            "{baseline:?}"
+        );
+        let mut wrong = undefined.clone();
+        wrong.evaluation.site.locus =
+            fsl_replay::UndefinedLocus::ClaimPredicate(fsl_replay::ClaimPredicate::Target);
+        let rejected = replay(&wrong);
+        assert!(
+            matches!(rejected, Ok(fsl_replay::ProbabilityWitnessReplay::Parity)),
+            "{rejected:?}"
+        );
+        let mut wrong = undefined.clone();
+        wrong.evaluation.site.position = 0;
+        let rejected = replay(&wrong);
+        assert!(
+            matches!(rejected, Ok(fsl_replay::ProbabilityWitnessReplay::Parity)),
+            "{rejected:?}"
+        );
+        for forged in [
+            {
+                let mut key = context.clone();
+                key[5] = json!(["fraction", "0", "complete"]);
+                key
+            },
+            {
+                let mut key = context.clone();
+                key[6][3] = json!({"numerator":"1","denominator":"1"});
+                key
+            },
+        ] {
+            let mut wrong = undefined.clone();
+            wrong.product_state =
+                ProbabilityProductKey::from_canonical_bytes(serde_json::to_vec(&forged).unwrap());
+            let rejected = replay(&wrong);
+            assert!(
+                matches!(rejected, Ok(fsl_replay::ProbabilityWitnessReplay::Parity)),
+                "{rejected:?}"
+            );
+        }
+        let mut wrong = undefined.clone();
+        wrong.evaluation.cause = fsl_eval::temporal::UndefinedCause::Family(
+            filament_semantic_value::catalog::UndefinedRecord {
+                reason: filament_semantic_value::catalog::UndefinedReason::AbsentKey,
+                fields: std::collections::BTreeMap::new(),
+            },
+        );
+        let rejected = replay(&wrong);
+        assert!(
+            matches!(rejected, Ok(fsl_replay::ProbabilityWitnessReplay::Parity)),
+            "{rejected:?}"
+        );
+        let mut positive = model;
+        positive.body = positive.body.replace(
+            "reward duration on Coin::drop = 0",
+            "reward duration on Coin::drop = 1",
+        );
+        let positive = World::new(&positive);
+        proof(&positive, "Q", ratio(1, 1));
+    }
+}

@@ -489,6 +489,8 @@ impl ProbProduct {
 /// The predicate of a claim an undefined reading names.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum UndefinedRead {
+    /// The tentative value of a completed weighted fraction.
+    FractionValue,
     /// A `holds` atom of the claim's event.
     Atom(FormulaNodeId),
     /// A state predicate of the claim's measure or unbounded form.

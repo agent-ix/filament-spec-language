@@ -290,3 +290,69 @@ refutation, vacuity precedence), FR-203 (certified conditional vacuity), and
 FR-1042, FR-201 and TC-3151 (policy hints, profile exceptions, ratio vacuity
 precedence). This verdict makes no claim about the implementation or the
 tests, or about whether the PR can merge.
+
+### Round 6 scope addition (FR-1043 FractionValue undefined observation)
+
+This round is a narrow normative addition authorized by architecture; it is
+not a reopened review loop. It covers pure-spec commit
+`faa136f99d063852b939c04fb16772e356913c32`, which changes only FR-1043: two
+Behavior bullets under "Product and payoff" (lines 150-172) and
+FR-1043-AC-11. The working doc is byte-identical to the commit, and no later
+commit touches `spec/`. `quire validate --scope .` on FR-1043 exits 0 with no
+output, `git diff --check` is clean, and `quire properties` extracts
+FR-1043-AC-11 once.
+
+No new findings.
+
+Round-6 checks:
+
+- **Architecture ruling.** The final departing step's contribution is
+  tentative, and the quotient is evaluated before any outside-window
+  predicate. A zero total gives the existing `division-by-zero` cause at the
+  fraction expression. The location is position `h + 1` with the actual
+  resolved post-state, while the control and accumulator stay at their
+  undecided pre-step values and the contribution is not committed. Nothing
+  is fabricated: no predicate read, no decided control, no broken-invariant
+  failure, and no wire extension.
+- **Consistency with FR-202.**
+  - The checked-subject undefined entry (lines 434-472) requires the control
+    to be undecided before the read; the pre-step control here is undecided
+    with `remaining = 1`.
+  - That entry requires the first undefined evaluation to be at `where`
+    (locus, position, complete pre-read key) with an equal cause, or settles
+    `ReplayParity`; FR-1043's replay bullet uses the same comparison and the
+    same `ReplayParity` outcome.
+  - Limits and cancellation stay `incomplete`.
+  - The pattern of position 1 with a pre-read key matches FR-202-AC-24 and
+    AC-26 on `Coin`.
+- **Consistency with FSpec FR-413** (origin/main `247a3941`, lines 158-164
+  and 190-197). `where` carries the `locus` (the occurrence of the claim
+  expression with no value), the `position`, and a `product_state.key` that
+  is "the complete … product key of the state before the read (the pre-read
+  monitor and accumulator, which an undefined value does not advance)". This
+  matches the post-state model content combined with the pre-step control
+  and accumulator. `division-by-zero` is an existing catalogued cause (FSpec
+  native-diagnostics line 261). No new locus or evidence kind is needed.
+- **Arithmetic in AC-11.** The window `[0,0]` gives `h = 0`, and the control
+  starts at `remaining = 1`. Position 0 has `c.v = 0`, so the predicate
+  holds. The departing `drop(0)` has weight `R = 0`, so the tentative sums
+  are `(0,0)` and the total of 0 is undefined. The path has probability
+  `1/2` and its post-state lacks `c`, so reading `c.v` outside the window
+  would give `absent-key`; the ordering therefore decides the cause, and
+  that is the genuine adverse case. `drop(1)` is also undefined with weight
+  0, which is consistent and does not affect the evidence. Under FR-202-AC-24
+  an undefined read refutes regardless of the threshold. The forged
+  variants (position 0, a decided control, a changed accumulator, the
+  `absent-key` cause) each disagree on the location or cause, so they give
+  `ReplayParity`. The `weighted by R` syntax matches FR-190 and FR-392. The
+  ordinary positive-weight reward case is not required, as directed.
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| (none) | - | Round 6: no new findings; FND-001 to FND-013 remain closed and need no new row. |
+
+**Round-6 verdict: PASS.** The FR-1043 FractionValue undefined-observation
+addition is accepted on BASE, and FND-001 to FND-013 remain closed. This
+verdict covers normative spec acceptance only. It makes no claim about the
+implementation, which is still in progress, or about whether the PR can
+merge.

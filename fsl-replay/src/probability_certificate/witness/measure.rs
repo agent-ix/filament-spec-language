@@ -551,6 +551,49 @@ pub(super) fn replay(
     )))
 }
 
+#[allow(clippy::too_many_arguments)]
+fn finish_undefined(
+    witness: &ProbabilityUndefinedWitness,
+    evaluation: crate::UndefinedEvaluation,
+    position: usize,
+    pre_key: ProbabilityProductKey,
+    scheduler: &BTreeMap<&ProbabilityProductKey, &ProductAction>,
+    used: &BTreeSet<ProbabilityProductKey>,
+    mass: Rational,
+    seen: &mut BTreeSet<ProbabilityProductKey>,
+    storage: &mut u64,
+    limits: &ExactProbLimits,
+    cancel: &Cancel,
+) -> Result<ProbabilityWitnessReplay, ProbabilityWitnessError> {
+    let evidence = &witness.path;
+    let [path] = evidence.paths.as_slice() else {
+        return Err(ProbabilityWitnessError::Refused);
+    };
+    let offered = if position == 0 {
+        &evidence.initial_key
+    } else {
+        &path.steps[position - 1].post_key
+    };
+    if position != path.steps.len()
+        || evaluation != witness.evaluation
+        || pre_key != witness.product_state
+        || offered != &pre_key
+        || scheduler.keys().any(|key| !used.contains(*key))
+    {
+        return Ok(ProbabilityWitnessReplay::Parity);
+    }
+    bounded::admit_state(&pre_key, seen, storage, limits)?;
+    check_bits(&mass, limits.max_rational_bits)?;
+    poll_cancel(cancel)?;
+    Ok(ProbabilityWitnessReplay::Reproduced(Box::new(
+        ReproducedProbabilityWitness {
+            evidence: evidence.clone(),
+            mass,
+            undefined: Some(Box::new(witness.clone())),
+        },
+    )))
+}
+
 pub(super) fn replay_undefined(
     system: &ModelSystem<'_>,
     claim: &CheckedProbabilisticClaim,
@@ -648,9 +691,6 @@ pub(super) fn replay_undefined(
     let mut edges = 0;
     for position in 0..=path.steps.len() {
         bounded::visit(&mut meter, cancel)?;
-        if position > 0 && !selected.control.reads_post(Some(control)) {
-            return Ok(ProbabilityWitnessReplay::Parity);
-        }
         if position > 0 && control.is_decided() {
             return Ok(ProbabilityWitnessReplay::Parity);
         }
@@ -669,6 +709,44 @@ pub(super) fn replay_undefined(
         let (_, state_key) = system
             .state_key(&state)
             .map_err(|_| ExactProbabilityGraphError::ExpansionRefused)?;
+        if position > 0 && !selected.control.reads_post(Some(control)) {
+            match selected.control.step(
+                Some(control),
+                Some(&sums),
+                &previous_truths,
+                &[],
+                &rewards,
+                &mut meter,
+            ) {
+                Err(MeasureError::Undefined(cause)) => {
+                    let evaluation = crate::UndefinedEvaluation {
+                        site: crate::UndefinedSite {
+                            position: u64::try_from(position).unwrap_or(u64::MAX),
+                            state_key,
+                            locus: crate::UndefinedLocus::FractionValue,
+                            transition: None,
+                            time: None,
+                        },
+                        cause: fsl_eval::temporal::UndefinedCause::Kernel(*cause),
+                    };
+                    return finish_undefined(
+                        witness,
+                        evaluation,
+                        position,
+                        pre_key,
+                        &scheduler,
+                        &used,
+                        mass,
+                        &mut seen,
+                        &mut storage,
+                        limits,
+                        cancel,
+                    );
+                }
+                Err(error) => return Err(measure_error(error)),
+                Ok(_) => return Ok(ProbabilityWitnessReplay::Parity),
+            }
+        }
         let inputs = selected
             .predicates
             .iter()
@@ -705,29 +783,19 @@ pub(super) fn replay_undefined(
                         },
                         cause,
                     };
-                    let offered = if position == 0 {
-                        &evidence.initial_key
-                    } else {
-                        &path.steps[position - 1].post_key
-                    };
-                    if position != path.steps.len()
-                        || evaluation != witness.evaluation
-                        || pre_key != witness.product_state
-                        || offered != &pre_key
-                        || scheduler.keys().any(|key| !used.contains(*key))
-                    {
-                        return Ok(ProbabilityWitnessReplay::Parity);
-                    }
-                    bounded::admit_state(&pre_key, &mut seen, &mut storage, limits)?;
-                    check_bits(&mass, limits.max_rational_bits)?;
-                    poll_cancel(cancel)?;
-                    return Ok(ProbabilityWitnessReplay::Reproduced(Box::new(
-                        ReproducedProbabilityWitness {
-                            evidence: evidence.clone(),
-                            mass,
-                            undefined: Some(Box::new(witness.clone())),
-                        },
-                    )));
+                    return finish_undefined(
+                        witness,
+                        evaluation,
+                        position,
+                        pre_key,
+                        &scheduler,
+                        &used,
+                        mass,
+                        &mut seen,
+                        &mut storage,
+                        limits,
+                        cancel,
+                    );
                 }
             }
         }

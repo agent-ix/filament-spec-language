@@ -847,14 +847,39 @@ impl Builder<'_, '_, '_, '_> {
             }
         };
         let source = &self.nodes[at];
-        let (monitor, accumulator) = self.plan.step(
+        let advanced = self.plan.step(
             source.key.monitor,
             source.key.accumulator.as_ref(),
             &source.truths,
             &truths,
             rewards,
             &mut self.measure_meter,
-        )?;
+        );
+        let (monitor, accumulator) = match advanced {
+            Ok(next) => next,
+            Err(PlanFault::Measure(fsl_eval::probabilistic::MeasureError::Undefined(cause))) => {
+                let cause = UndefinedCause::Kernel(*cause);
+                if self.key_policy.is_some() {
+                    return Err(Halt::UndefinedReading(cause));
+                }
+                let key = self.key_of(
+                    post,
+                    binding,
+                    source.key.monitor,
+                    source.key.accumulator.clone(),
+                    None,
+                )?;
+                let hit = Hit {
+                    read: UndefinedRead::FractionValue,
+                    cause,
+                    state_key: StateKey::from_canonical_bytes(key.model.clone()),
+                    model: key.model.clone(),
+                };
+                let resolved = step.is_none().then(|| key.clone());
+                return Err(self.undefined(Some(at), step, resolved, source.initial, key, hit));
+            }
+            Err(error) => return Err(error.into()),
+        };
         let key = self.key_of(post, binding, monitor, accumulator, None)?;
         Ok(Target {
             key,

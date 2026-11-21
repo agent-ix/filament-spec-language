@@ -493,6 +493,7 @@ fn materialize_inner(
         state = post;
     }
     let locus = match path.read {
+        UndefinedRead::FractionValue => fsl_replay::UndefinedLocus::FractionValue,
         UndefinedRead::Atom(atom) => fsl_replay::UndefinedLocus::Atom(atom),
         UndefinedRead::Predicate(role) => fsl_replay::UndefinedLocus::ClaimPredicate(match role {
             PredicateRole::From => fsl_replay::ClaimPredicate::From,
