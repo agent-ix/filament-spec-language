@@ -28,6 +28,12 @@ use fsl_eval::temporal::TemporalOutcome;
 /// The largest integer RFC 8785 serializes exactly (FSpec's `Count` bound).
 const MAX_COUNT: u64 = 9_007_199_254_740_991;
 
+fn optional_counterexample<'de, D: serde::Deserializer<'de>>(
+    decoder: D,
+) -> Result<Option<CounterexampleRead>, D::Error> {
+    fsl_foundation::serde_object::from_object(decoder).map(Some)
+}
+
 /// The incomplete limit a window aggregate reports (FR-194).
 pub(crate) const MAX_WINDOW_VALUES: &str = "max_window_values";
 
@@ -754,10 +760,7 @@ pub enum TemporalRecord {
         /// The first undefined position.
         position: u64,
         /// The observed-arm evidence, absent for a reconstructed model trace.
-        #[serde(
-            default,
-            deserialize_with = "fsl_foundation::serde_object::from_object_opt"
-        )]
+        #[serde(default, deserialize_with = "optional_counterexample")]
         counterexample: Option<CounterexampleRead>,
     },
     /// A window aggregate held fewer values than its `min_count`.
