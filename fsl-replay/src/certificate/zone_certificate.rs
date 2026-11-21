@@ -2692,52 +2692,70 @@ impl<O> Checker<'_, '_, O> {
                 }
                 _ => self.successors_of(node, &state, q, &listed.zone)?,
             };
+            // An edge covers the first successor it matches that no earlier
+            // edge covers, else the first it matches: several successors of one
+            // step and guard part (the pieces of a split zone) may all be
+            // covered by one target.
+            let mut claimed = vec![false; successors.len()];
             for index in self.leaving[node].clone() {
                 let edge = &certificate.edges[index];
                 let target = &certificate.nodes[edge.to];
-                for (position, successor) in successors.iter().enumerate() {
-                    let own = successor.step.as_ref().map(GuardedStep::transition);
-                    let identity_matches = match (own, edge.transition.as_ref()) {
-                        (Some(own), Some(listed)) if self.release_ops.is_some() => {
-                            super::task_product::same_source_transition(own, listed)
-                        }
-                        (own, listed) => own == listed,
-                    };
-                    let same = identity_matches
-                        && successor.part == edge.part
-                        && successor.horizon == edge.horizon
-                        && successor.state_key == target.state_key
-                        && successor.silent == edge.silent
-                        && successor.mark == target.product
-                        && successor.zone.alu_covered_by(&target.zone, &self.cover)?
-                        && match &successor.cell {
-                            Some(cell) => cell.includes(&target.zone)?,
-                            None => true,
-                        };
-                    let leads = match &successor.expect {
-                        Some(expected) if same => {
-                            target.automaton_state < usize::MAX
-                                && self.position_is(target.automaton_state, &expected.position)?
-                        }
-                        _ => true,
-                    };
-                    if same && leads && self.binds(target.automaton_state, successor.q) {
-                        self.covers[index] = Some(position);
-                        let expected = successor.expect.as_ref().map(|expected| &expected.position);
-                        if let Some(step) = &successor.step {
-                            self.refine_edge(node, index, step, expected)?;
-                        } else if matches!(successor.silent, Some(SilentMove::Dies { .. })) {
-                            self.refine_death(node, index, expected)?;
-                        }
-                        if self.states[edge.to].is_none() {
-                            let post = successor
-                                .step
-                                .as_ref()
-                                .map_or_else(|| state.clone(), |step| step.post().clone());
-                            self.states[edge.to] = Some(post);
-                            queue.push(edge.to);
-                        }
+                let mut matched = false;
+                for pass in 0..2 {
+                    if matched {
                         break;
+                    }
+                    for (position, successor) in successors.iter().enumerate() {
+                        if pass == 0 && claimed[position] {
+                            continue;
+                        }
+                        let own = successor.step.as_ref().map(GuardedStep::transition);
+                        let identity_matches = match (own, edge.transition.as_ref()) {
+                            (Some(own), Some(listed)) if self.release_ops.is_some() => {
+                                super::task_product::same_source_transition(own, listed)
+                            }
+                            (own, listed) => own == listed,
+                        };
+                        let same = identity_matches
+                            && successor.part == edge.part
+                            && successor.horizon == edge.horizon
+                            && successor.state_key == target.state_key
+                            && successor.silent == edge.silent
+                            && successor.mark == target.product
+                            && successor.zone.alu_covered_by(&target.zone, &self.cover)?
+                            && match &successor.cell {
+                                Some(cell) => cell.includes(&target.zone)?,
+                                None => true,
+                            };
+                        let leads = match &successor.expect {
+                            Some(expected) if same => {
+                                target.automaton_state < usize::MAX
+                                    && self
+                                        .position_is(target.automaton_state, &expected.position)?
+                            }
+                            _ => true,
+                        };
+                        if same && leads && self.binds(target.automaton_state, successor.q) {
+                            self.covers[index] = Some(position);
+                            let expected =
+                                successor.expect.as_ref().map(|expected| &expected.position);
+                            if let Some(step) = &successor.step {
+                                self.refine_edge(node, index, step, expected)?;
+                            } else if matches!(successor.silent, Some(SilentMove::Dies { .. })) {
+                                self.refine_death(node, index, expected)?;
+                            }
+                            if self.states[edge.to].is_none() {
+                                let post = successor
+                                    .step
+                                    .as_ref()
+                                    .map_or_else(|| state.clone(), |step| step.post().clone());
+                                self.states[edge.to] = Some(post);
+                                queue.push(edge.to);
+                            }
+                            claimed[position] = true;
+                            matched = true;
+                            break;
+                        }
                     }
                 }
             }
