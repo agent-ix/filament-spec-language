@@ -386,14 +386,14 @@ pub(super) fn run_bytes(
                         })
                         .transpose()?;
                     let selection = fsl_replay::spine::ProgramBatchSelection::ValueInvariants(
-                        fsl_replay::spine::ValueInvariantsBatchRequest {
+                        Box::new(fsl_replay::spine::ValueInvariantsBatchRequest {
                             snapshots: request.snapshots,
                             invocations: request.invocations,
                             snapshot: reference,
                             invocation,
                             observation_limits: request.observation_limits,
                             accounting: request.accounting,
-                        },
+                        }),
                     );
                     ItemExecution::Batch {
                         selection: Some(Box::new(selection)),
@@ -437,7 +437,7 @@ pub(super) fn run_bytes(
                     });
                     ItemExecution::Batch {
                         selection: Some(Box::new(fsl_replay::spine::ProgramBatchSelection::Call {
-                            call: input.call,
+                            call: Box::new(input.call),
                             include_requirements: requirements.is_some(),
                         })),
                         call_output,

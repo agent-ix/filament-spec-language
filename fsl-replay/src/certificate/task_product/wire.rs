@@ -192,7 +192,7 @@ fn typed_value(value: &Value, pointer: &str, depth: usize) -> Result<(), TaskPro
             .bytes()
             .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte));
         let sized = if even {
-            spelling.len() % 2 == 0
+            spelling.len().is_multiple_of(2)
         } else {
             spelling.len() == width
         };

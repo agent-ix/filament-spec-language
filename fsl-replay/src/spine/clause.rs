@@ -2064,13 +2064,13 @@ pub enum ProgramBatchSelection {
     /// FR-100's value call.
     Call {
         /// The call to execute.
-        call: super::Call,
+        call: Box<super::Call>,
         /// Whether FR-395 call requirement members must be returned for
         /// settlement by the command layer.
         include_requirements: bool,
     },
     /// FR-652's no-clause value-invariant selection.
-    ValueInvariants(ValueInvariantsBatchRequest),
+    ValueInvariants(Box<ValueInvariantsBatchRequest>),
 }
 
 /// FR-652 inputs needed to admit and evaluate one value-invariant selection
@@ -2327,7 +2327,7 @@ fn run_program_batch_with_compile(
             }
             ProgramBatchSelection::ValueInvariants(request) => {
                 ProgramBatchItemResult::ValueInvariants(run_compiled_value_invariants(
-                    &compiled, request,
+                    &compiled, *request,
                 ))
             }
         })

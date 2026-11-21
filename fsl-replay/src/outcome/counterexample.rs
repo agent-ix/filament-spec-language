@@ -804,149 +804,6 @@ pub fn read_task_temporal_counterexample(
     read_task_temporal_document(document).map(|read| read.counterexample)
 }
 
-fn json_pointer<'a>(document: &'a Json, pointer: &str) -> Option<&'a Json> {
-    let mut value = document;
-    for member in pointer.strip_prefix('/')?.split('/') {
-        let member = member.replace("~1", "/").replace("~0", "~");
-        value = match value {
-            Json::Object(object) => object.get(&member)?,
-            Json::Array(array) => array.get(member.parse::<usize>().ok()?)?,
-            _ => return None,
-        };
-    }
-    Some(value)
-}
-
-fn first_wire_shape_difference(
-    supplied: &Json,
-    expected: &Json,
-    pointer: &str,
-) -> Option<(&'static str, String)> {
-    match (supplied, expected) {
-        (Json::Object(supplied), Json::Object(expected)) => {
-            for member in expected.keys() {
-                if !supplied.contains_key(member) {
-                    return Some(("missing-member", format!("{pointer}/{member}")));
-                }
-            }
-            for member in supplied.keys() {
-                if !expected.contains_key(member) {
-                    let cause = if member == "budget_delta" {
-                        "budget-delta-presence"
-                    } else {
-                        "unknown-member"
-                    };
-                    return Some((cause, format!("{pointer}/{member}")));
-                }
-            }
-            for (member, expected_value) in expected {
-                let child = format!("{pointer}/{member}");
-                if let Some(difference) =
-                    first_wire_shape_difference(&supplied[member], expected_value, &child)
-                {
-                    return Some(difference);
-                }
-            }
-            None
-        }
-        (Json::Array(supplied), Json::Array(expected)) => {
-            if supplied.len() != expected.len() {
-                let index = supplied.len().min(expected.len());
-                let cause = if supplied.len() < expected.len() {
-                    "missing-member"
-                } else {
-                    "unknown-member"
-                };
-                return Some((cause, format!("{pointer}/{index}")));
-            }
-            supplied
-                .iter()
-                .zip(expected)
-                .enumerate()
-                .find_map(|(index, (supplied, expected))| {
-                    first_wire_shape_difference(supplied, expected, &format!("{pointer}/{index}"))
-                })
-        }
-        _ => None,
-    }
-}
-
-fn first_wire_difference(
-    supplied: &Json,
-    expected: &Json,
-    pointer: &str,
-) -> Option<(&'static str, String)> {
-    match (supplied, expected) {
-        (Json::Object(supplied), Json::Object(expected)) => {
-            // FR-364 checks object shape before transition alphabets or values.
-            for member in expected.keys() {
-                if !supplied.contains_key(member) {
-                    return Some(("missing-member", format!("{pointer}/{member}")));
-                }
-            }
-            for member in supplied.keys() {
-                if !expected.contains_key(member) {
-                    let cause = if member == "budget_delta" {
-                        "budget-delta-presence"
-                    } else {
-                        "unknown-member"
-                    };
-                    return Some((cause, format!("{pointer}/{member}")));
-                }
-            }
-            for (member, expected_value) in expected {
-                let supplied_value = &supplied[member];
-                let child = format!("{pointer}/{member}");
-                if let Some(difference) =
-                    first_wire_difference(supplied_value, expected_value, &child)
-                {
-                    return Some(difference);
-                }
-            }
-            None
-        }
-        (Json::Array(supplied), Json::Array(expected)) => {
-            if supplied.len() < expected.len() {
-                return Some(("missing-member", format!("{pointer}/{}", supplied.len())));
-            }
-            if supplied.len() > expected.len() {
-                return Some(("unknown-member", format!("{pointer}/{}", expected.len())));
-            }
-            supplied
-                .iter()
-                .zip(expected)
-                .enumerate()
-                .find_map(|(index, (supplied, expected))| {
-                    first_wire_difference(supplied, expected, &format!("{pointer}/{index}"))
-                })
-        }
-        (supplied, expected) if supplied == expected => None,
-        (supplied, expected) => {
-            let cause = if wire_kind(supplied) != wire_kind(expected) {
-                "wrong-value-kind"
-            } else if pointer.ends_with("/transition/type") {
-                "trace-alphabet"
-            } else if pointer.ends_with("/transition/action") {
-                "unknown-variant"
-            } else {
-                "invalid-value"
-            };
-            Some((cause, pointer.to_owned()))
-        }
-    }
-}
-
-fn wire_kind(value: &Json) -> &'static str {
-    match value {
-        Json::Null => "null",
-        Json::Bool(_) => "boolean",
-        Json::Number(_) => "number",
-        Json::String(_) => "string",
-        Json::Array(_) => "array",
-        Json::Object(_) => "object",
-    }
-}
-
 fn rational(value: &Rational) -> Json {
     json!({
         "numerator": value.numerator().to_string(),
@@ -1621,11 +1478,11 @@ fn valid_queue_growth_envelope(witness: &Json) -> bool {
         || object
             .get("clock_order")
             .and_then(Json::as_array)
-            .map_or(true, Vec::is_empty)
+            .is_none_or(Vec::is_empty)
         || object
             .get("cycle")
             .and_then(Json::as_array)
-            .map_or(true, Vec::is_empty)
+            .is_none_or(Vec::is_empty)
         || object
             .get("identity_map")
             .and_then(Json::as_array)
