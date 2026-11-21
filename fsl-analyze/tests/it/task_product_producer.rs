@@ -96,7 +96,7 @@ fn a_tampered_no_reachable_release_producer_certificate_is_rejected() {
         .expect("search")
         .expect("certificate");
     let mut wire = built.to_wire(json!({})).expect("wire");
-    wire["task_product"]["time_progress"]["live_job_cap"] = json!(1);
+    wire["task_product"]["queue_bounds"][0]["work_upper"]["numerator"] = json!("3");
     let (read, _) = ZoneCertificate::from_wire(&wire, built.obligation).expect("shape reads");
     assert_eq!(
         rejected(verdict(
