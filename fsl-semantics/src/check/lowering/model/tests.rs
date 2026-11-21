@@ -2199,30 +2199,35 @@ fn a_union_payload_is_a_clock_only_when_its_resolved_type_is_clock() {
     ]);
     let package = |name: &str| Some(ValueTypeRef::Package(key(name)));
     let one = [int(0, 9)];
-    let form = |payload: Option<ValueTypeRef>, positions: &[ValueType]| {
-        union_payload_form(payload.as_ref(), positions, &records)
-    };
-    assert_eq!(form(None, &[]), Some(UnionPayloadForm::None));
+    macro_rules! form {
+        ($payload:expr, $positions:expr) => {
+            union_payload_form($payload.as_ref(), $positions, &records)
+        };
+    }
     assert_eq!(
-        form(Some(ValueTypeRef::Clock), &[]),
+        form!(None::<ValueTypeRef>, &[]),
+        Some(UnionPayloadForm::None)
+    );
+    assert_eq!(
+        form!(Some(ValueTypeRef::Clock), &[]),
         Some(UnionPayloadForm::Clock)
     );
     assert_eq!(
-        form(package("Stopwatch"), &[]),
+        form!(package("Stopwatch"), &[]),
         Some(UnionPayloadForm::Clock)
     );
     assert_eq!(
-        form(package("Ticks"), &[]),
+        form!(package("Ticks"), &[]),
         None,
         "a sequence over Clock is not a Clock"
     );
     assert_eq!(
-        form(package("TickMap"), &[]),
+        form!(package("TickMap"), &[]),
         None,
         "a map over Clock is not a Clock"
     );
     assert_eq!(
-        form(
+        form!(
             Some(ValueTypeRef::Native(
                 crate::model::domain_package::NativeValueType::String
             )),
@@ -2230,9 +2235,13 @@ fn a_union_payload_is_a_clock_only_when_its_resolved_type_is_clock() {
         ),
         Some(UnionPayloadForm::Data(&one[0]))
     );
-    assert_eq!(form(None, &one), None, "a data position needs a payload");
     assert_eq!(
-        form(Some(ValueTypeRef::Clock), &[int(0, 1), int(0, 2)]),
+        form!(None::<ValueTypeRef>, &one),
+        None,
+        "a data position needs a payload"
+    );
+    assert_eq!(
+        form!(Some(ValueTypeRef::Clock), &[int(0, 1), int(0, 2)]),
         None,
         "several data positions have no payload form"
     );
