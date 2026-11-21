@@ -658,3 +658,55 @@ fn a_hidden_field_timed_abstract_refinement_returns_a_replayable_certificate() {
         ZoneCertificateVerdict::Rejected(_)
     ));
 }
+
+/// Two refinement positions whose mapped abstract steps differ in clock
+/// behaviour: `send` (position 0) has the guard `y >= 1` and no reset, `enter`
+/// (position 1) has the guard `y >= 2` and resets `y`.
+fn two_positions_world() -> Refining {
+    let abstract_model = renamed_package(
+        &document(&["y"], &[("send", &["inflight"]), ("enter", &["late", "y"])]),
+        "test/treq3",
+    );
+    let concrete = document(&["x"], &[("send", &["inflight"]), ("enter", &["late"])]);
+    refining(
+        &abstract_model,
+        &concrete,
+        &format!(
+            "{DENSE}time A dense unit ms;\n\
+             pre ASendable using v on A::Call::send {{ not self.inflight and self.y >= 1 ms }}\n\
+             post ASend using v on A::Call::send {{ self.inflight }}\n\
+             pre AEnterable using v on A::Call::enter {{ self.inflight and not self.late and self.y >= 2 ms }}\n\
+             post AEntered using v on A::Call::enter {{ self.late and self.y = 0 ms }}\n\
+             pre MSend using v on M::Call::send {{ not self.inflight and self.x >= 2 ms }}\n\
+             post MSent using v on M::Call::send {{ self.inflight }}\n\
+             pre MEnter using v on M::Call::enter {{ self.inflight and not self.late and self.x >= 3 ms }}\n\
+             post MEntered using v on M::Call::enter {{ self.late }}\n{}",
+            refinement("self.inflight").replace(
+                "step M::Call::send -> A::Call::send(self);",
+                "step M::Call::send -> A::Call::send(self);\n\
+                 step M::Call::enter -> A::Call::enter(self);"
+            )
+        ),
+    )
+    .unwrap_or_else(|refusals| panic!("{refusals:?}"))
+}
+
+/// FR-245 "Refinement form": the checker judges each node at its own
+/// refinement position. The second position's mapped `enter` resets the
+/// abstract clock, which the first position's `send` does not, so a checker
+/// that read every node at position 0 would compute a larger successor zone
+/// for the `enter` edge and reject the engine's own certificate.
+#[trace("TC-700", "FR-245")]
+#[test]
+fn the_checker_reads_each_refinement_node_at_its_own_position() {
+    let world = two_positions_world();
+    let certificate = certified(&world);
+    assert!(
+        certificate.refinement.as_ref().expect("a refinement part").positions.len() >= 3,
+        "the product has a position per concrete state"
+    );
+    assert_eq!(
+        verdict(&world, &certificate),
+        ZoneCertificateVerdict::Accepted
+    );
+}
