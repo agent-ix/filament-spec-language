@@ -352,7 +352,12 @@ pub(super) struct Program<'a> {
 /// ST-13).
 pub(super) struct Capture<'a> {
     pub(super) name: String,
-    pub(super) initializer: &'a CheckedBody,
+    pub(super) initializer: CaptureInitializer<'a>,
+}
+
+pub(super) enum CaptureInitializer<'a> {
+    Source(&'a CheckedBody),
+    Package(crate::value::ProtocolSlot),
 }
 
 /// A control's place in the `run` tree: its preorder position, the last
@@ -588,7 +593,7 @@ impl<'a> Program<'a> {
             .filter(|capture| capture.owner == CaptureOwner::Protocol)
             .map(|capture| Capture {
                 name: capture.name.clone(),
-                initializer: &capture.initializer,
+                initializer: CaptureInitializer::Source(&capture.initializer),
             })
             .collect();
         let capture_slots = captures
@@ -1081,6 +1086,21 @@ impl<'a> Program<'a> {
         let mut slots = vec![None];
         let mut package_binders = vec![Some(package.over.clone())];
         let mut binder_types = vec![package.over_type.clone()];
+        let mut capture_slots = Vec::new();
+        let captures = package
+            .captures
+            .iter()
+            .map(|capture| {
+                capture_slots.push(slots.len());
+                slots.push(None);
+                package_binders.push(Some(capture.binder.clone()));
+                binder_types.push(capture.value_type.clone());
+                Capture {
+                    name: capture.name.clone(),
+                    initializer: CaptureInitializer::Package(capture.initializer.clone()),
+                }
+            })
+            .collect();
         let mut binder_of = BTreeMap::new();
         for control in package.controls.values().filter(|control| {
             control.operation == fsl_package::protocol_view::ControlOperation::Attempt
@@ -1209,8 +1229,8 @@ impl<'a> Program<'a> {
             activation: None,
             activation_slot: None,
             trigger_read: false,
-            captures: Vec::new(),
-            capture_slots: Vec::new(),
+            captures,
+            capture_slots,
         };
         program.spans = program.spans()?;
         program.loop_of = program.enclosing_loops()?;

@@ -136,12 +136,39 @@ fn package_terminal_preserves_finished_instances() {
     }
 }
 
+/// Origin captures initialize in order from the admitted observation and feed terminal predicates.
+#[trace("TC-2958", "FR-940-AC-6", "FR-211-AC-2", "FR-383-AC-5")]
+#[test]
+fn package_terminal_reads_origin_captures_in_authored_order() {
+    for (name, predicate, expected) in [("true", "saved", "proved"), ("false", "later", "refuted")]
+    {
+        let ws = Workspace::new(&format!("package-terminal-captures-{name}"));
+        let members = format!("capture saved: Boolean = k.v = 0; capture later: Boolean = not saved; terminal when {{ {predicate} }};");
+        let path = terminal_request(&ws, &members, true);
+        let source = analyze(&path);
+        assert_eq!(label(&source.item(0)), expected, "{}", source.document());
+        let (package_path, _) = package_request(&ws, &path);
+        std::fs::remove_file(ws.path("program.fsl"))
+            .expect("remove source before package analysis");
+        let package = analyze(&package_path);
+        assert_eq!(package.item(0), source.item(0), "{}", package.document());
+        assert_eq!(package.exit, source.exit);
+        if expected == "refuted" {
+            assert_eq!(package.item(0)["replay"]["reproduced"], true);
+        }
+    }
+}
+
 /// Refusing replay retains the same typed cause for a terminal deadlock on both routes.
 #[trace("TC-2958", "FR-940-AC-22", "FR-211-AC-2")]
 #[test]
 fn package_terminal_preserves_replay_refusal_code_and_cause() {
     let ws = Workspace::new("package-terminal-replay-bound");
-    let path = terminal_request(&ws, "terminal when { k.v = 1 };", true);
+    let path = terminal_request(
+        &ws,
+        "capture saved: Boolean = k.v = 1; terminal when { saved };",
+        true,
+    );
     let (package_path, bytes) = package_request(&ws, &path);
     let below = u64::try_from(bytes.len() / 2).expect("the package length");
     let source = crate::analyze_cli_support::analyze_under_replay_bytes(&path, below);
