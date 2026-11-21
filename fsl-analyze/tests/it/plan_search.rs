@@ -3012,3 +3012,238 @@ fn lambda_objective_classification_preserves_whole_plan_terms_and_default_length
         assert_eq!(proof.outcome, CertificateOutcome::Accepted);
     }
 }
+
+const POLICY_DIAMOND_MODEL: &str = r#"language "ix:native" edition "1-draft";
+domain "test/native-plan";
+object Counter {
+  number: Int[0,4];
+  operation right() modifies self.number { pre Start { self.number = 0 }; post Next { self.number = 1 }; }
+  operation left() modifies self.number { pre Start { self.number = 0 }; post Next { self.number = 2 }; }
+  operation join() modifies self.number { pre Branch { self.number = 1 or self.number = 2 }; post Next { self.number = 3 }; }
+  operation finish() modifies self.number { pre Joined { self.number = 3 }; post Next { self.number = 4 }; }
+}
+population counters: Counter;
+"#;
+
+fn positive_policy_world(formula: &str) -> World {
+    native_plan_world(POLICY_DIAMOND_MODEL, &format!(
+        "type Lengths = Int[0,3];\ntemporal Policy using t over (c: M::Counter) clock \"model-steps\" on origin {{ {formula} }}\nsynthesis Reach using t grammar M::Counter domain Lengths satisfies {{ forall(c in Reach.final.counters: c.number = 4) }};\n"
+    ), &[("c", json!({"number":{"integer":"0"}}))])
+}
+
+/// Different past witnesses survive a native diamond; equal obligations merge
+/// and retain the earlier declared branch. Replay/checking reconstruct both.
+#[test]
+#[trace("FR-1012", "FR-1011", "FSpec-FR-803-AC-3")]
+fn positive_source_policies_preserve_witnesses_and_canonical_native_order() {
+    use fsl_analyze::plan_source::SourcePlan;
+    for (formula, expected) in [
+        ("eventually[0,3] holds(c.number = 2)", "left"),
+        ("always holds(c.number >= 0)", "right"),
+        ("always[0,5] holds(c.number <= 4)", "right"),
+    ] {
+        let world = positive_policy_world(formula);
+        let system = world_system(&world);
+        let node = &world.package.graph().temporal_clauses()[0];
+        let mut retained = None;
+        for _ in 0..2 {
+            let mut rules = SourcePlan::new(
+                &world.package,
+                &world.package.graph().syntheses()[0],
+                &system,
+                vec![node],
+                UNLIMITED,
+            )
+            .unwrap();
+            let result = search(
+                &system,
+                &mut rules,
+                PlanSearchRequest {
+                    lengths: PlanLengths::new(0, 3).unwrap(),
+                    limits: PlanSearchLimits::default(),
+                    cancel: &Cancel::new(),
+                    fault: None,
+                },
+            )
+            .unwrap();
+            assert!(rules.fault().is_none(), "{:?}", rules.fault());
+            assert_eq!(result.status, PlanStatus::Optimal);
+            assert!(result.certified);
+            assert_eq!(result.objective, Some(integer(3)));
+            assert_eq!(
+                result.certificate.as_ref().unwrap().outcome,
+                CertificateOutcome::Accepted
+            );
+            let plan = result.plan.as_ref().unwrap();
+            let names: Vec<_> = plan
+                .steps
+                .iter()
+                .map(|step| rules.operation_name(step).unwrap())
+                .collect();
+            assert_eq!(names, [expected, "join", "finish"]);
+            let numbers: Vec<_> = plan
+                .states
+                .iter()
+                .map(|state| world.domain.integer(state, "c", "number"))
+                .collect();
+            assert_eq!(numbers, [0, if expected == "left" { 2 } else { 1 }, 3, 4]);
+            assert_eq!(
+                fsl_eval::simulation::model::read_clause(
+                    &system,
+                    node,
+                    &plan.states,
+                    true,
+                    &mut filament_exact::Meter::new(UNLIMITED)
+                )
+                .unwrap(),
+                fsl_eval::simulation::model::ClauseReading::Holds
+            );
+            let evidence = (numbers, result.explored, result.certificate);
+            if let Some(previous) = &retained {
+                assert_eq!(&evidence, previous);
+            } else {
+                retained = Some(evidence);
+            }
+        }
+    }
+}
+
+/// Safety rejects before goal evaluation and gives a checked infeasibility
+/// certificate; state substitution and missing successors cannot certify.
+#[test]
+#[trace("FR-1012", "FSpec-FR-803-AC-5")]
+fn positive_source_policies_refuse_broken_safety_and_forged_certificates() {
+    use fsl_analyze::plan_source::SourcePlan;
+    let world = positive_policy_world("always holds(c.number != 4)");
+    let system = world_system(&world);
+    let mut rules = SourcePlan::new(
+        &world.package,
+        &world.package.graph().syntheses()[0],
+        &system,
+        vec![&world.package.graph().temporal_clauses()[0]],
+        UNLIMITED,
+    )
+    .unwrap();
+    let result = search(
+        &system,
+        &mut rules,
+        PlanSearchRequest {
+            lengths: PlanLengths::new(0, 3).unwrap(),
+            limits: PlanSearchLimits::default(),
+            cancel: &Cancel::new(),
+            fault: None,
+        },
+    )
+    .unwrap();
+    assert_eq!(result.status, PlanStatus::Infeasible);
+    assert!(result.plan.is_none());
+    assert_eq!(
+        result.certificate.unwrap().outcome,
+        CertificateOutcome::Accepted
+    );
+    let world = positive_policy_world("always holds(c.number >= 0)");
+    let system = world_system(&world);
+    for fault in [
+        PlanFault::DropSuccessor {
+            entry: 0,
+            successor: 0,
+        },
+        PlanFault::ForgeEntryState {
+            entry: 1,
+            source: 0,
+        },
+    ] {
+        let mut rules = SourcePlan::new(
+            &world.package,
+            &world.package.graph().syntheses()[0],
+            &system,
+            vec![&world.package.graph().temporal_clauses()[0]],
+            UNLIMITED,
+        )
+        .unwrap();
+        let result = search(
+            &system,
+            &mut rules,
+            PlanSearchRequest {
+                lengths: PlanLengths::new(0, 3).unwrap(),
+                limits: PlanSearchLimits::default(),
+                cancel: &Cancel::new(),
+                fault: Some(&fault),
+            },
+        )
+        .unwrap();
+        assert!(!result.certified, "{fault:?}");
+        assert!(
+            matches!(
+                result.certificate.unwrap().outcome,
+                CertificateOutcome::Rejected { .. }
+            ),
+            "{fault:?}"
+        );
+    }
+}
+
+/// Positive source policies retain their original cumulative work/storage
+/// denial and request/deadline cancellation, without another per-policy meter.
+#[test]
+#[trace("FR-1011-AC-2", "FR-1012")]
+fn positive_source_policy_accounting_and_cancellation_keep_the_original_session() {
+    use filament_exact::{CancelCause, ScalarLimits};
+    use fsl_analyze::plan_source::SourcePlan;
+    let world = positive_policy_world("always holds(c.number >= 0)");
+    let system = world_system(&world);
+    let node = &world.package.graph().temporal_clauses()[0];
+    let initial = system.initial().remove(0);
+    for (counter, limits) in [
+        (
+            "work_units",
+            ScalarLimits {
+                work_units: 0,
+                ..UNLIMITED
+            },
+        ),
+        (
+            "result_units",
+            ScalarLimits {
+                result_units: 0,
+                ..UNLIMITED
+            },
+        ),
+    ] {
+        let mut rules = SourcePlan::new(
+            &world.package,
+            &world.package.graph().syntheses()[0],
+            &system,
+            vec![node, node],
+            limits,
+        )
+        .unwrap();
+        assert!(
+            matches!(rules.policy_start(0,&initial),Err(RuleStop::Accounting {counter:actual,value:0}) if actual == counter)
+        );
+    }
+    for cause in [CancelCause::Requested, CancelCause::Deadline] {
+        let mut rules = SourcePlan::new(
+            &world.package,
+            &world.package.graph().syntheses()[0],
+            &system,
+            vec![node],
+            UNLIMITED,
+        )
+        .unwrap();
+        let MonitorStep::Continue(bytes) = rules.policy_start(0, &initial).unwrap() else {
+            panic!("safe initial state")
+        };
+        let cancel = Cancel::new();
+        system.cancel_plan_with(&cancel);
+        cancel.cancel(cause);
+        assert_eq!(
+            rules.policy_advance(0, &bytes, &initial),
+            Err(RuleStop::Cancelled(cause))
+        );
+        assert_eq!(
+            rules.policy_accepts(0, &bytes, &initial),
+            Err(RuleStop::Cancelled(cause))
+        );
+    }
+}

@@ -3502,3 +3502,20 @@ synthesis Reach using v grammar Config::ConfigVersion domain Lengths satisfies {
         assert!(value.get("synthesis").is_none(), "{value}");
     }
 }
+
+/// The real host request enables a canonical bounded policy at positive
+/// lengths, reports actual replayed states and repeats its result bytes.
+#[test]
+#[trace("FR-1010", "FR-1012", "FSpec-FR-803")]
+fn positive_bounded_source_policy_runs_through_the_host_request() {
+    let unit = plan_unit("Int[1,1]", "", "Reach.length = 1").replace(
+        "eventually holds(c.versionNumber = 3)",
+        "always[0,4] holds(c.versionNumber >= 0)",
+    );
+    let first = plan(&unit, json!({"policy":["SomeTime"]}));
+    let second = plan(&unit, json!({"policy":["SomeTime"]}));
+    assert_eq!(first, second);
+    assert_eq!(first.0, 0, "{}", first.1);
+    assert_eq!(first.1["synthesis"]["status"], "optimal", "{}", first.1);
+    assert!(!first.1["synthesis"]["plan"].is_null(), "{}", first.1);
+}

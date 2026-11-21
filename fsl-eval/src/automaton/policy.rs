@@ -390,9 +390,11 @@ impl StepPolicy {
         holds: bool,
         meter: &mut Meter,
     ) -> Result<PolicyState, PolicyStateError> {
-        meter
-            .charge(Charge::new(ChargePoint::TemporalVisit))
-            .map_err(PolicyStateError::Accounting)?;
+        Budget {
+            meter: RefCell::new(meter),
+            stopped: RefCell::new(None),
+        }
+        .pay(Charge::new(ChargePoint::TemporalVisit))?;
         Ok(match (self.kind, before) {
             (Kind::Safety, None) => PolicyState::Safety(SafetyState::read(None, holds)),
             (Kind::Safety, Some(PolicyState::Safety(before))) => {
@@ -430,14 +432,23 @@ impl StepPolicy {
         final_holds: bool,
         meter: &mut Meter,
     ) -> Result<bool, PolicyStateError> {
-        meter
-            .charge(Charge::new(ChargePoint::TemporalVisit))
-            .map_err(PolicyStateError::Accounting)?;
+        Budget {
+            meter: RefCell::new(meter),
+            stopped: RefCell::new(None),
+        }
+        .pay(Charge::new(ChargePoint::TemporalVisit))?;
         Ok(match value {
             PolicyState::Safety(SafetyState::Carried)
             | PolicyState::Bounded(BoundedState::Accept) => true,
             PolicyState::Safety(SafetyState::Rejected)
             | PolicyState::Bounded(BoundedState::Reject | BoundedState::Idle) => false,
+            PolicyState::Bounded(BoundedState::Open { remaining: 0 }) => matches!(
+                self.kind,
+                Kind::Bounded {
+                    kind: BoundedKind::Always,
+                    ..
+                }
+            ),
             PolicyState::Bounded(BoundedState::Open { .. }) => final_holds,
         })
     }
@@ -508,7 +519,7 @@ impl StepPolicy {
                 return Err(PolicyStateError::Invalid);
             };
             let body = members.nth(2).ok_or(PolicyStateError::Invalid)?;
-            let value = self.read_state(body)?;
+            let value = self.read_state(body, &budget)?;
             let expected = key(context, value, self.kind, &budget)?;
             if expected.len() != octets.len() {
                 return Err(PolicyStateError::Invalid);
@@ -527,7 +538,12 @@ impl StepPolicy {
         }
         Ok(states)
     }
-    fn read_state(&self, body: NodeRef<'_>) -> Result<PolicyState, PolicyStateError> {
+    fn read_state(
+        &self,
+        body: NodeRef<'_>,
+        budget: &Budget<'_>,
+    ) -> Result<PolicyState, PolicyStateError> {
+        budget.work(1)?;
         let Node::Array(mut items) = body.node() else {
             return Err(PolicyStateError::Invalid);
         };
@@ -555,6 +571,7 @@ impl StepPolicy {
                 let Some(Node::String(distance)) = clock.nth(1).map(|value| value.node()) else {
                     return Err(PolicyStateError::Invalid);
                 };
+                budget.work(distance.len())?;
                 let remaining = distance
                     .parse::<u64>()
                     .map_err(|_| PolicyStateError::Invalid)?;
