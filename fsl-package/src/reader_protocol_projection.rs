@@ -18,9 +18,8 @@ use filament_checked::node::{
     NodeKind, OrderedKind, RecordField, RecordSlot, Visit,
 };
 use filament_contract_model::{
-    CheckedBodyLocation, CheckedBodyLocationOrigin, CheckedBodySemanticLocation, CheckedNodeId,
-    CheckedPackageV2, CheckedProtocolLocation, CheckedProtocolSemanticLocation,
-    CheckedSemanticNodeV2, CheckedTerm, OperationModeKind,
+    CheckedBodyLocationOrigin, CheckedNodeId, CheckedPackageV2, CheckedProtocolLocation,
+    CheckedProtocolSemanticLocation, CheckedSemanticNodeV2, CheckedTerm, OperationModeKind,
 };
 use filament_exact::{
     admit_text, ArithmeticOperator, Meter, NodeKey, OrderingOperator, ScalarLimits, TextPayload,
@@ -153,26 +152,39 @@ impl ReaderProtocolProjection {
     /// function, in (occurrence, `term_ordinal`) order. A node the wire
     /// carries no row for keeps no location, and the evaluator faults rather
     /// than invent one (FR-390).
-    fn locate_function_bodies(&mut self, admitted: &CheckedPackageV2) {
+    fn locate_function_bodies(&mut self, admitted: &CheckedPackageV2) -> Result<(), InternalFault> {
         let Some(data) = admitted.checked_term_data() else {
-            return;
+            return Ok(());
         };
-        let mut rows: BTreeMap<
-            &CheckedNodeId,
-            BTreeMap<&CheckedNodeId, Vec<&CheckedBodySemanticLocation>>,
-        > = BTreeMap::new();
-        for row in &data.body_locations {
-            let CheckedBodyLocationOrigin::FunctionBody { function, .. } = &row.location.origin;
-            rows.entry(function)
-                .or_default()
-                .entry(&row.application)
-                .or_default()
-                .push(row);
+        let has_rows: BTreeSet<CheckedNodeId> = data
+            .body_locations
+            .iter()
+            .map(|row| {
+                let CheckedBodyLocationOrigin::FunctionBody { function, .. } = &row.location.origin;
+                function.clone()
+            })
+            .collect();
+        let mut rows: BTreeMap<CheckedNodeId, BTreeMap<CheckedNodeId, Vec<Location>>> =
+            BTreeMap::new();
+        for function in &has_rows {
+            let work_limit = body_location_allowance(admitted, function)
+                .ok_or_else(|| fault("body-location-reconstruction-size-fits"))?;
+            let mut cursor = admitted
+                .body_locations(function, work_limit)
+                .map_err(|_| fault("admitted-body-locations-reconstruct"))?;
+            while let Some(view) = cursor
+                .next_location()
+                .map_err(|_| fault("admitted-body-locations-reconstruct"))?
+            {
+                let location = body_location(&view.row.location.origin, view.path)
+                    .ok_or_else(|| fault("body-location-coordinates-fit"))?;
+                rows.entry(function.clone())
+                    .or_default()
+                    .entry(view.row.application.clone())
+                    .or_default()
+                    .push(location);
+            }
         }
-        for group in rows.values_mut().flat_map(BTreeMap::values_mut) {
-            group.sort_by_key(|row| (&row.occurrence, row.term_ordinal));
-        }
-        let has_rows: BTreeSet<CheckedNodeId> = rows.keys().map(|node| (*node).clone()).collect();
         let mut located = Vec::new();
         for function in &self.functions {
             let Some(applications) = rows.get(&function.node) else {
@@ -190,8 +202,8 @@ impl ReaderProtocolProjection {
                         .and_then(|group| group.get(*visit));
                     *visit += 1;
                     if node.term.as_ref() == Some(application) {
-                        if let Some(location) = row.and_then(|row| body_location(&row.location)) {
-                            located.push((position, location));
+                        if let Some(location) = row {
+                            located.push((position, location.clone()));
                         }
                     }
                 }
@@ -233,6 +245,7 @@ impl ReaderProtocolProjection {
                 }
             }
         }
+        Ok(())
     }
 
     fn locate_from(&mut self, root: usize, owner: Origin) {
@@ -1027,7 +1040,7 @@ impl<'wire> WireIndex<'wire> {
             frame_slots: builder.root_slots,
             locals: local_keys,
         };
-        projection.locate_function_bodies(self.admitted);
+        projection.locate_function_bodies(self.admitted)?;
         Ok(projection)
     }
 
@@ -1068,7 +1081,7 @@ impl<'wire> WireIndex<'wire> {
             frame_slots,
             locals: BTreeMap::new(),
         };
-        projection.locate_function_bodies(self.admitted);
+        projection.locate_function_bodies(self.admitted)?;
         Ok(projection)
     }
 }
@@ -1516,7 +1529,9 @@ impl<'wire> BareWalker<'wire> {
             level_offset,
         })?;
         projection.locate_under(owner);
-        projection.locate_function_bodies(self.index.admitted);
+        projection
+            .locate_function_bodies(self.index.admitted)
+            .map_err(WalkFailure::Fault)?;
         Ok(projection)
     }
 
@@ -3887,15 +3902,111 @@ fn location(admitted: &CheckedProtocolLocation) -> Option<Location> {
     Some(Location::at(origin, &path))
 }
 
+/// This projection predates a caller-owned work meter. Bound reconstruction
+/// from the admitted DAG instead: count lending-cursor tasks with memoized
+/// subtree costs, retaining multiplicity at shared references. No full paths
+/// are rebuilt to establish the allowance. Overflow or a cycle is a fault.
+fn body_location_allowance(admitted: &CheckedPackageV2, function: &CheckedNodeId) -> Option<u64> {
+    let nodes: BTreeMap<_, _> = admitted
+        .resolved_graph()
+        .nodes
+        .iter()
+        .map(|node| (&node.node_id, node))
+        .collect();
+    let function = nodes.get(function)?;
+    let CheckedTerm::Aggregate { members } = &function.body else {
+        return None;
+    };
+    let start = members.iter().find_map(|term| match term {
+        CheckedTerm::Binding { name, value, .. }
+            if name.kind() == filament_contract_model::CheckedBindingNameKind::Body =>
+        {
+            Some(value.as_ref())
+        }
+        _ => None,
+    })?;
+    let mut pending = Vec::new();
+    if let CheckedTerm::Reference { target } = start {
+        if target.package == admitted.name() {
+            pending.push((target, false));
+        }
+    }
+    let root = pending.first().map(|(id, _)| *id);
+    let mut costs: BTreeMap<&CheckedNodeId, Option<u64>> = BTreeMap::new();
+    while let Some((id, finish)) = pending.pop() {
+        if !finish && costs.contains_key(id) {
+            costs.get(id).copied().flatten()?;
+            continue;
+        }
+        let node = nodes.get(id)?;
+        let mut terms = vec![&node.body];
+        let mut own = 1_u64; // One Node task, then every inline Term task.
+        let mut children = Vec::new();
+        while let Some(term) = terms.pop() {
+            own = own.checked_add(1)?;
+            match term {
+                CheckedTerm::Reference { target } => {
+                    if let Some(child) = nodes.get(target) {
+                        if has_tag(child, WireTag::Expression)
+                            || has_form(child, WireTag::Value, WireForm::RecordValue)
+                            || has_form(child, WireTag::Value, WireForm::TupleValue)
+                        {
+                            children.push(target);
+                        }
+                    }
+                }
+                CheckedTerm::Application { arguments, .. } => terms.extend(arguments),
+                CheckedTerm::Aggregate { members } => terms.extend(members),
+                CheckedTerm::Binding { value, .. } => terms.push(value),
+                _ => {}
+            }
+        }
+        if finish {
+            let total = children.into_iter().try_fold(own, |total, child| {
+                total.checked_add(costs.get(child).copied().flatten()?)
+            })?;
+            costs.insert(id, Some(total));
+        } else {
+            costs.insert(id, None);
+            pending.push((id, true));
+            pending.extend(children.into_iter().rev().map(|child| (child, false)));
+        }
+    }
+    let tasks = root.map_or(Some(0), |root| costs.get(root).copied().flatten())?;
+    let rows = &admitted.checked_term_data()?.body_locations;
+    let mut encoded = 0_u64;
+    for row in rows {
+        encoded = encoded.checked_add(row.location.up)?;
+        encoded = encoded.checked_add(u64::try_from(row.location.down.len()).ok()?)?;
+        for ordinal in &row.location.down {
+            if let filament_contract_model::CheckedKeyOrdinal::BeyondSafe(text) = ordinal {
+                encoded = encoded.checked_add(u64::try_from(text.len()).ok()?)?;
+            }
+        }
+    }
+    // Each task pays at most three traversal/push charges. Doubling pending
+    // capacity costs less than two tasks per task; six leaves slack for the
+    // first allocation. Three encoded units cover deltas and doubled path
+    // capacity. Setup pays nodes, all rows twice, and matching rows once.
+    tasks
+        .checked_mul(6)?
+        .checked_add(u64::try_from(nodes.len()).ok()?)?
+        .checked_add(u64::try_from(rows.len()).ok()?.checked_mul(3)?)?
+        .checked_add(encoded.checked_mul(3)?)?
+        .checked_add(16)
+}
+
 /// The checker's location of a function-body term, as its row captured it.
-fn body_location(admitted: &CheckedBodyLocation) -> Option<Location> {
-    let CheckedBodyLocationOrigin::FunctionBody { name, index, .. } = &admitted.origin;
+fn body_location(
+    origin: &CheckedBodyLocationOrigin,
+    path: &[filament_contract_model::CheckedKeyOrdinal],
+) -> Option<Location> {
+    let CheckedBodyLocationOrigin::FunctionBody { name, index, .. } = origin;
     let origin = Origin::Body {
         function: name.to_string(),
         index: usize::try_from(*index).ok()?,
     };
-    let path = admitted
-        .path
+    let path = path
         .iter()
         .map(|ordinal| match ordinal {
             filament_contract_model::CheckedKeyOrdinal::Safe(value) => usize::try_from(*value).ok(),

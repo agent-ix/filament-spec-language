@@ -88,7 +88,6 @@ fn admitted(root: &PlanRoot) -> Box<CheckedPackageV2> {
 /// while a declared helper keeps its original origin and checker coordinates.
 #[trace("FR-251-AC-9", "FSpec-FR-322-AC-309")]
 #[test]
-#[ignore = "QSL-1463: pinned contract-ir reader skips record/tuple value children in the body walk (contract-ir #1110) and rescans quadratically (IR-1321)."]
 fn monitor_body_locations_follow_entry_rekeys_and_preserve_helper_origins() {
     use filament_contract_model::{CheckedBodyLocationOrigin, CheckedTermDataV2};
     use fsl_analyze::monitor_entries::names;
@@ -105,13 +104,6 @@ fn monitor_body_locations_follow_entry_rekeys_and_preserve_helper_origins() {
     let source = SourceIdentity::new("agent-ix", "monitor-root");
     let name = LibraryName::new("fixture").unwrap();
     let limits = SpineLimits::default();
-    let limits = SpineLimits {
-        // IR-1321 quadratically rescans body locations. This fixture's
-        // explicit 1,000,000,000-work bound must be removed when the fixed
-        // reader is pinned; production defaults stay unchanged.
-        imports: limits.imports.with_work(LIMITS.work),
-        ..limits
-    };
     let root = emit_plan_root(
         &PlanRootRequest {
             source: &source,
