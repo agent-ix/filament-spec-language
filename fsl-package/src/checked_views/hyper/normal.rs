@@ -346,6 +346,27 @@ fn expression(
                             ],
                             budget,
                         )?,
+                        Some(filament_contract_model::CheckedOperationMember::TypeArgument {
+                            declaration,
+                            alias,
+                        }) if identity == "filament.op.numeric.convert" => {
+                            let alias = match alias {
+                                Some(alias) => encode(
+                                    b"alias",
+                                    &[
+                                        budget.copy(alias.package.as_bytes())?,
+                                        budget.copy(alias.node.as_bytes())?,
+                                    ],
+                                    budget,
+                                )?,
+                                None => Vec::new(),
+                            };
+                            encode(
+                                b"type-argument",
+                                &[inputs.key(declaration, claim, budget)?, alias],
+                                budget,
+                            )?
+                        }
                         _ => return Err(pending(root, "hyper-normal-form-member")),
                     };
                     budget.charge(
