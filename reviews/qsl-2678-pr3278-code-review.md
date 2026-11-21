@@ -268,3 +268,35 @@ The final formatting pass spans 246 Rust files, including 191 outside the lint e
   "bindings": []
 }
 ```
+
+## Landing range review
+
+**REJECT / FAIL for candidate 1553ec3ba713b2c55f9e1b2ed3dabf0fce6d20b1.** Compared original reviewed base 01572e0da58c6e3ef0e4e12768dc38d45da93208 through own docs head d2c558cb70f20bbf1bec57ed1a98cdb34639dd1d, against new base f3aa681d7e through remote c1f0fd9faaebbed1fce887fddd5854a11839beee and local 1553ec3ba713b2c55f9e1b2ed3dabf0fce6d20b1. Runtime 23/23 passed for original source head 195707cf790ee26e50285ccff81e8723ae1bf320, per lead; it is not execution evidence for this rebased candidate. Arch requires one focused 23-test rerun after an approved new head.
+
+Range-diff confirms commits 1–30 equivalent; the review-artifact and unique-ID commits also equivalent. Formatting commit differs around concurrently changed main paths fsl-analyze/src/analyze/exact.rs, fsl-replay/src/lib.rs, fsl-replay/src/outcome.rs, fsl-replay/src/outcome/counterexample.rs and fsl-replay/src/probability_certificate/witness.rs. Local 1553 adds only one lib.rs correction over remote c1: removes duplicate omitted_witnesses and restores probabilistic_undefined_wire/replay_probabilistic_undefined root exports. The lib.rs outcome/probability_certificate export name sets now match new main. However outcome.rs still drops main's probabilistic_undefined_wire counterexample re-export. Therefore this is not an acceptable final conflict resolution; preserve all new-main exports when rebuilding the branch under sole custody.
+
+### New landing finding
+
+| ID | Severity | Summary | Refs |
+| --- | --- | --- | --- |
+| FND-002 | high | Rebase drops outcome's probabilistic_undefined_wire re-export while lib.rs imports it, making the candidate uncompilable | fsl-replay/src/outcome.rs:29; fsl-replay/src/lib.rs:406 |
+
+Concrete evidence: new main exports probabilistic_undefined_wire from counterexample in outcome.rs; local 1553's pub use counterexample block omits it. Counterexample remains private (mod counterexample), and root lib.rs's pub use outcome imports probabilistic_undefined_wire. No symbol in outcome supplies that binding. Static source evidence suffices to reject; no Cargo was run. The defect is specifically the lost export, independently of the foreign writer's identity. The new public wire/undefined implementation remains present in counterexample.rs, so dropping the forwarding export is not an intentional removal.
+
+Evidence: landing-range-diff-1553.txt and exact export-set comparison (lib.rs outcome: no missing/added names; lib.rs probability_certificate: no missing/added names; outcome.rs counterexample: missing probabilistic_undefined_wire only). No fresh matrix/full review/baseline/bench/doctor run, no source edits, pushes or relay. Original review findings/verdict above describe the original frozen head; this landing finding prevents adoption of 1553.
+
+## Dispositions
+
+| FND | Outcome | Reason |
+| --- | --- | --- |
+| FND-002 | fixed | Owned rebase restores both probabilistic_undefined_wire export layers; rejected foreign candidates are excluded. |
+
+## Approved landing range
+
+**ADOPT / PASS for code at fd0d6491e228494f3c03cc80a3d48b163e789bec, based on bd669ebc46820921e04413e124f51605798c5b6c.** This supersedes the rejection of the discarded c1/1553 candidates; the original FND-002 text remains historical evidence. The code lead rebuilt the reviewed series under sole custody. First30 semantic/lint commits and both review commits are range-diff equivalent (=) to old base 01572e0da58c6e3ef0e4e12768dc38d45da93208 through d2c558cb70f20bbf1bec57ed1a98cdb34639dd1d. Only formatting commit31 differs, plus final formatter-only commit34.
+
+The four conflicted files are fsl-replay/src/lib.rs, fsl-replay/src/outcome.rs, fsl-analyze/src/zone_check.rs and fsl-semantics/src/check/lowering.rs. Comparing all public/restricted-use export name multisets against latest main shows no missing or added names. Both probabilistic_undefined_wire forwarding layers are present once; replay_probabilistic_undefined, ProbabilityUndefinedWitness, check_free_delay_refinement and FiniteHyperClauseInput remain. No reviewed semantic hunk is lost and no unrelated behavior was added by conflict resolution.
+
+Final db713e9c7e43af23c806880bffe734e32ab3f7c1..fd0d6491e228494f3c03cc80a3d48b163e789bec changes exactly20 newly merged main paths by formatter line wrapping, import/module ordering, commas and equivalent expression braces. Whitespace-insensitive diff inspected; advisory lexical token multisets (excluding whitespace/comments/braces/commas) have zero differences for all20. git diff --check newbase..finalhead passes. The coder reports final cargo fmt --all -- --check exit0 in qsl-3278-own-rebase-fmt-check.log. Reviewer ran no Cargo/tests.
+
+Source approved for arch-mandated focused23 rerun now, using qsl-3278-final-head-test-manifest.md. Original195707's23 passing tests remain historical; all23 must pass at this final approved source head before merge. No fresh full review, matrix, benchmarks, baseline tests or doctor runs were performed. Gap-review's bounded assurance limitations remain unchanged.

@@ -270,3 +270,11 @@ Optional semantic-review fan-out was not run; ordinary code/test-intent reasonin
   "bindings": []
 }
 ```
+
+## Landing range disposition
+
+Candidate 1553ec3ba713b2c55f9e1b2ed3dabf0fce6d20b1 is rejected by the code-review landing-range finding FND-002 in SR-20261121081457250828430. Original coverage limitations remain unchanged. No new matrix was run. Arch requires the focused 23-test rerun on the approved new head.
+
+## Approved landing range
+
+No new scoped gaps identified at fd0d6491e228494f3c03cc80a3d48b163e789bec. Code-review FND-002 fixed by the owned rebase; final20-file formatter delta inspected. Source approved for required23 focused rerun; merge waits on those actual results. Existing bounded gap-review limitations remain.
