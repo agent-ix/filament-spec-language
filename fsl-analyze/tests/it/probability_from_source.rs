@@ -698,7 +698,6 @@ fn run_unit(name: &str, source: &str) -> Value {
 /// diagnostic about them, and its every-scheduler item reaches a verdict.
 #[ix_trace_rs::trace("TC-2488", "FR-876-AC-1")]
 #[test]
-#[ignore = "QSL-2159: every-scheduler claims over a unit without random lines settling from source not implemented yet"]
 fn every_scheduler_without_random_compiles() {
     let source = without_random();
     assert!(!source.contains("random "), "{source}");
@@ -714,7 +713,6 @@ fn every_scheduler_without_random_compiles() {
 #[ix_trace_rs::trace("TC-2488", "FR-876-AC-2")]
 #[ix_trace_rs::trace("FSpec-TC-1766", "FSpec-FR-724-AC-1")]
 #[test]
-#[ignore = "QSL-2159: refuting an every-scheduler claim over a unit without random lines not implemented yet"]
 fn every_scheduler_without_random_is_refuted() {
     let document = run_unit("every-no-random-refuted", &without_random());
     let item = &document["items"][0];

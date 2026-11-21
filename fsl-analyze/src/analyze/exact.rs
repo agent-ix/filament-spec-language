@@ -1864,21 +1864,52 @@ fn replay_refutation(
             crate::exact_probabilistic::WitnessError::InvalidState
         })
     };
-    let produced = if let Some(stopped) = stopped.as_deref() {
-        crate::exact_probabilistic::produce_witness_stopping(
-            product,
-            policy,
-            scope,
-            initial,
-            &accepting,
-            Some(stopped),
-            &past,
-            limits,
-            &mut control,
-        )
-    } else {
-        produce_witness(product, policy, scope, initial, &accepting, &past, limits)
+    let mut produce = |policy: &[Option<usize>]| {
+        if let Some(stopped) = stopped.as_deref() {
+            crate::exact_probabilistic::produce_witness_stopping(
+                product,
+                policy,
+                scope,
+                initial,
+                &accepting,
+                Some(stopped),
+                &past,
+                limits,
+                &mut control,
+            )
+        } else {
+            produce_witness(product, policy, scope, initial, &accepting, &past, limits)
+        }
     };
+    let mut produced = produce(policy);
+    if matches!(produced, Ok(None)) && stopped.is_none() {
+        // Actions tied at the optimal value need not reach a failure: a
+        // minimizing scheduler may loop where it is free to lose. Whatever
+        // scheduler's failure paths outweigh `past` refutes the bound, so
+        // retry with the one that reaches a failure most.
+        match decide_reachability(product, &accepting, UnboundedObjective::Max, limits) {
+            Ok(result) => produced = produce(&result.policy),
+            Err(UnboundedError::MaxPolicyIterations) => {
+                return settled(
+                    &ExactProbBuildIssue::Limit {
+                        limit: ModelCheckLimit::ExactProbMaxPolicyIterations,
+                        value: limits.max_policy_iterations,
+                    },
+                    subject,
+                );
+            }
+            Err(UnboundedError::MaxRationalBits) => {
+                return settled(
+                    &ExactProbBuildIssue::Limit {
+                        limit: ModelCheckLimit::ExactProbMaxRationalBits,
+                        value: limits.max_rational_bits,
+                    },
+                    subject,
+                );
+            }
+            Err(_) => return broken(),
+        }
+    }
     if cancel.poll() {
         if let Some(cause) = cancel.tripped() {
             return settled(&ExactProbBuildIssue::Cancelled(cause), subject);
