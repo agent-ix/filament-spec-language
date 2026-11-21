@@ -2296,18 +2296,21 @@ pub(super) fn reexecute(
 /// enabled, and one whose replayed result differs from the recorded one
 /// (ADR-027 PX-2's send record; a model step records no result).
 struct StepRules<T> {
+    same_identity: fn(&T, &T) -> bool,
     not_enabled: fn(usize, &T) -> ModelTraceRefusal,
     result: fn(usize, &T, &T) -> Option<ModelTraceRefusal>,
 }
 
 /// The rules of a model step.
 const MODEL_STEPS: StepRules<ModelTransition> = StepRules {
+    same_identity: crate::certificate::task_product::same_source_transition,
     not_enabled: model_not_enabled,
     result: |_, _, _| None,
 };
 
 /// The rules of a protocol step.
 const PROTOCOL_STEPS: StepRules<ProtocolTransition> = StepRules {
+    same_identity: |left, right| left == right,
     not_enabled: protocol_not_enabled,
     result: protocol_result,
 };
@@ -2405,7 +2408,7 @@ fn replay_prefix_stopped_with_mismatch_explanation<S: SubjectSystem>(
         let mut reached = None;
         let mut state_keys = Vec::new();
         for (transition, next) in expansion.successors {
-            if transition != step.transition {
+            if !(rules.same_identity)(&transition, &step.transition) {
                 continue;
             }
             enabled = true;

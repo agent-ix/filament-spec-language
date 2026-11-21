@@ -9,8 +9,8 @@ use fsl_eval::simulation::model::{
 use fsl_eval::simulation::{StateKey, TransitionSystem};
 use fsl_foundation::SourceIdentity;
 use fsl_replay::spine::{
-    read_native_run_result, run_clause, write_clause_run_result, ClauseRunRequest,
-    ClauseRunSelection, NativeRunResult, OverObject, TemporalRecord, TraceInput,
+    read_native_run_result, run_clause, write_clause_run_result, write_clause_run_result_for,
+    ClauseRunRequest, ClauseRunSelection, NativeRunResult, OverObject, TemporalRecord, TraceInput,
 };
 use fsl_replay::ModelStep;
 use fsl_semantics::model::accounting::ModelNormalizationLimits;
@@ -50,6 +50,39 @@ struct Fixture {
     request: ClauseRunRequest,
     steps: Vec<ModelStep>,
     state_keys: Vec<StateKey>,
+}
+
+fn model_system<'a>(
+    package: &'a fsl_package::CheckedPackage,
+    request: &'a ClauseRunRequest,
+    missing_b: bool,
+) -> ModelSystem<'a> {
+    let initial = request.snapshots.keys().next().unwrap().clone();
+    ModelSystem::new(ModelSimulationRequest {
+        input: ModelCheckInput::source(package),
+        packages: &request.packages,
+        normalization: ModelNormalizationLimits::default(),
+        snapshots: &request.snapshots,
+        initial: vec![initial],
+        universes: vec![PopulationUniverse {
+            population: DeclarationKey {
+                package: PACKAGE.to_owned(),
+                node: POPULATION.to_owned(),
+            },
+            keys: if missing_b {
+                vec!["a".to_owned(), "b".to_owned()]
+            } else {
+                vec!["a".to_owned()]
+            },
+        }],
+        observation: request.observation_limits,
+        expansion: ExpansionLimits {
+            max_candidates: 1_000_000,
+        },
+        meter: request.accounting,
+        emit: fsl_package::EmitLimits::fixture(),
+    })
+    .expect("the independent model simulator admits the source package")
 }
 
 impl Fixture {
@@ -143,32 +176,7 @@ impl Fixture {
                 &request.dependencies,
             )
             .expect("the source model and temporal clause check");
-            let initial = request.snapshots.keys().next().unwrap().clone();
-            let system = ModelSystem::new(ModelSimulationRequest {
-                input: ModelCheckInput::source(checked.package()),
-                packages: &request.packages,
-                normalization: ModelNormalizationLimits::default(),
-                snapshots: &request.snapshots,
-                initial: vec![initial],
-                universes: vec![PopulationUniverse {
-                    population: DeclarationKey {
-                        package: PACKAGE.to_owned(),
-                        node: POPULATION.to_owned(),
-                    },
-                    keys: if missing_b {
-                        vec!["a".to_owned(), "b".to_owned()]
-                    } else {
-                        vec!["a".to_owned()]
-                    },
-                }],
-                observation: request.observation_limits,
-                expansion: ExpansionLimits {
-                    max_candidates: 1_000_000,
-                },
-                meter: request.accounting,
-                emit: fsl_package::EmitLimits::fixture(),
-            })
-            .expect("the independent model simulator admits the source package");
+            let system = model_system(checked.package(), &request, missing_b);
             let mut state = system.initial().pop().expect("one authored initial state");
             let mut keys = vec![system.state_key(&state).unwrap().1];
             let mut steps = Vec::new();
@@ -224,11 +232,122 @@ impl Fixture {
     }
 
     fn result(&self) -> Value {
-        let report = run_clause(self.model_request()).expect("the source request reports");
-        let bytes = write_clause_run_result(&report).expect("the actual model report writes");
+        let request = self.model_request();
+        let selection = request.selection.clone();
+        let report = run_clause(request).expect("the source request reports");
+        if matches!(
+            report.counterexample,
+            Some(fsl_replay::ClauseRunCounterexample::Model(_))
+        ) {
+            assert!(matches!(
+                write_clause_run_result(&report),
+                Err(fsl_replay::spine::NativeRunResultError::ModelSelectionRequired)
+            ));
+            let mut wrong = selection.clone();
+            if let ClauseRunSelection::Temporal { trace, .. } = &mut wrong {
+                *trace = TraceInput::Finite(Vec::new());
+            }
+            assert!(matches!(
+                write_clause_run_result_for(&report, Some(&wrong)),
+                Err(fsl_replay::spine::NativeRunResultError::ModelSelectionRequired)
+            ));
+        }
+        let bytes = write_clause_run_result_for(&report, Some(&selection))
+            .expect("the actual model report writes");
         read_native_run_result(&bytes).expect("the produced document strictly reads");
         serde_json::from_slice(&bytes).unwrap()
     }
+}
+
+fn replay_read_witness(
+    fixture: &Fixture,
+    document: &Value,
+) -> Result<fsl_replay::ModelTraceEnd, fsl_replay::ReplayRefusal> {
+    let request = fixture.model_request();
+    let text = std::fs::read(fixture.directory.path().join("unit.native")).unwrap();
+    let checked = crate::support::front_end::checked(
+        SourceIdentity::new("test", "unit.native"),
+        "unit.native",
+        &text,
+        &request.packages,
+        &request.dependencies,
+    )
+    .unwrap();
+    let system = model_system(checked.package(), &request, false);
+    let node = checked
+        .package()
+        .graph()
+        .temporal_clauses()
+        .iter()
+        .find(|node| node.clause().name() == "Low")
+        .unwrap();
+    let letters = system.clause_letters(node).unwrap();
+    let read = read_native_run_result(&serde_json::to_vec(document).unwrap()).unwrap();
+    let NativeRunResult::Clause(record) = read else {
+        panic!("a clause record")
+    };
+    let Some(TemporalRecord::Violated {
+        counterexample: carried,
+        ..
+    }) = record.temporal()
+    else {
+        panic!("a violated model record")
+    };
+    let instance = fsl_eval::model_subject::ModelInstance {
+        population: DeclarationKey {
+            package: PACKAGE.to_owned(),
+            node: POPULATION.to_owned(),
+        },
+        key: "a".to_owned(),
+    };
+    assert_eq!(
+        letters.instance_reference(&instance).as_ref(),
+        Some(&carried.model_over_binding().unwrap().typed())
+    );
+    let prefix = carried
+        .model_prefix()
+        .map(|step| {
+            let fsl_replay::spine::ModelTransitionRead::Transition(transition) = &step.transition
+            else {
+                panic!("the prefix takes real operations")
+            };
+            ModelStep {
+                transition: transition.clone(),
+                post_state: StateKey::from_canonical_bytes(
+                    URL_SAFE_NO_PAD.decode(step.post_state.key()).unwrap(),
+                ),
+                delay: None,
+            }
+        })
+        .collect::<Vec<_>>();
+    let loop_steps = carried.model_loop().collect::<Vec<_>>();
+    assert_eq!(loop_steps.len(), 1);
+    assert!(matches!(
+        loop_steps[0].transition,
+        fsl_replay::spine::ModelTransitionRead::TerminalStutter
+    ));
+    let payload = fsl_replay::TemporalCounterexample {
+        initial_state: usize::try_from(carried.model_initial_state().unwrap()).unwrap(),
+        lasso: Some(fsl_replay::Lasso {
+            entry: prefix.len(),
+            terminal_stutter: true,
+            terminal_stutter_delay: None,
+        }),
+        prefix,
+        over_binding: Some(instance),
+        fairness: Vec::new(),
+        kind: fsl_replay::CounterexampleKind::Formula,
+        blocked: Vec::new(),
+        refinement: None,
+        final_delay: None,
+    };
+    fsl_replay::evaluate_model_trace(
+        &system,
+        &payload,
+        node.clause(),
+        &letters,
+        request.accounting,
+    )
 }
 
 fn counterexample(document: &Value) -> &Value {
@@ -370,6 +489,26 @@ fn source_model_later_violation_keeps_taken_transitions_and_state_keys() {
     assert!(counterexample.is_model());
     assert_eq!(counterexample.trace_position(), 2);
     assert_eq!(counterexample.model_prefix().count(), 3);
+    let replay = replay_read_witness(&fixture, &document)
+        .expect("decoded native steps replay over the authenticated source model");
+    let fsl_replay::ModelTraceEnd::Evaluated(replay) = replay else {
+        panic!("the actual replay completes")
+    };
+    assert!(
+        matches!(replay.outcome, Ok(fsl_eval::temporal::TemporalOutcome::Violated { at }) if at.index() == 2)
+    );
+    let mut stale = document.clone();
+    stale["disposition"]["temporal"]["counterexample"]["prefix"][0]["post_state"]["key"] =
+        json!(URL_SAFE_NO_PAD.encode(b"{}"));
+    assert!(
+        matches!(replay_read_witness(&fixture, &stale), Err(fsl_replay::ReplayRefusal::ModelTrace(ref error)) if matches!(**error, fsl_replay::ModelTraceRefusal::PostState { step: 0, .. }))
+    );
+    stale = document.clone();
+    stale["disposition"]["temporal"]["counterexample"]["prefix"][0]["transition"]["operation"] =
+        json!("ix://example/config-version/ConfigVersion/missing");
+    assert!(
+        matches!(replay_read_witness(&fixture, &stale), Err(fsl_replay::ReplayRefusal::ModelTrace(ref error)) if matches!(**error, fsl_replay::ModelTraceRefusal::NotEnabled { step: 0, .. }))
+    );
 }
 
 /// Closed native reference members are checked on documents produced by a real source run.

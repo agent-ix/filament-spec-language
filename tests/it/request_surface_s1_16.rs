@@ -3403,7 +3403,15 @@ fn package_remainder_caller_source_carrier_refuses_before_file_io() {
         assert_eq!(code, 20, "{value}");
         assert_eq!(value["stage"], "request", "{value}");
         assert_eq!(value["code"], "invalid-identifier", "{value}");
-        assert_eq!(value["details"]["code"], "invalid_identifier", "{value}");
+        assert_eq!(
+            value["details"]["code"],
+            if field == "formal_revision" {
+                "invalid_source_revision"
+            } else {
+                "invalid_identifier"
+            },
+            "{value}"
+        );
         assert!(
             value
                 .to_string()

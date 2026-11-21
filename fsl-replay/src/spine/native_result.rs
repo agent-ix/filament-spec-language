@@ -54,6 +54,9 @@ pub enum NativeRunResultError {
     /// position (FR-330 Outputs), or one of the other refutation kind.
     #[error("a temporal violation needs its observed counterexample at its position")]
     Counterexample,
+    /// A carried model witness needs the actual request's expansion ceiling.
+    #[error("a model counterexample requires its actual model selection")]
+    ModelSelectionRequired,
     /// A temporal report's basis is not its verdict's FR-266 Temporal row.
     #[error("temporal basis disagrees with its verdict")]
     TemporalBasis,
@@ -3588,6 +3591,8 @@ pub fn temporal_disposition_json(
 }
 
 /// Serialize one FR-109 report as RFC 8785 `native-run-result/2` bytes.
+/// A carried model witness requires [`write_clause_run_result_for`] with its
+/// actual model selection; this entry refuses rather than guessing its limits.
 pub fn write_clause_run_result(report: &ClauseRunReport) -> Result<Vec<u8>, NativeRunResultError> {
     write_clause_run_result_for(report, None)
 }
@@ -3609,6 +3614,18 @@ pub fn write_clause_run_result_for_with_extraction(
     selection: Option<&super::ClauseRunSelection>,
     extraction: Option<serde_json::Value>,
 ) -> Result<Vec<u8>, NativeRunResultError> {
+    if matches!(
+        report.counterexample,
+        Some(crate::ClauseRunCounterexample::Model(_))
+    ) && !matches!(
+        selection,
+        Some(super::ClauseRunSelection::Temporal {
+            trace: super::TraceInput::Model { .. },
+            ..
+        })
+    ) {
+        return Err(NativeRunResultError::ModelSelectionRequired);
+    }
     if report.basis.is_decisive() != report.witness.is_some() {
         return Err(NativeRunResultError::BasisWitness);
     }
