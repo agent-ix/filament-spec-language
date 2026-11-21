@@ -65,6 +65,11 @@ pub(super) fn invariant_observations(
         pre: None,
         post: None,
         self_object: walk.rows[row].reference.clone(),
+        self_population: walk
+            .observation
+            .environment
+            .population_node(&walk.rows[row].population.node)
+            .cloned(),
         invocation: None,
         self_kind: SelfKind::Object,
         receiver_pre: None,

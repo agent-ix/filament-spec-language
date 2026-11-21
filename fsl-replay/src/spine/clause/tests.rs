@@ -397,6 +397,7 @@ fn no_cycle_observations(
         pre: None,
         post: None,
         self_object,
+        self_population: None,
         invocation: None,
         self_kind: fsl_semantics::model::observation::SelfKind::Object,
         receiver_pre: None,
@@ -3824,8 +3825,11 @@ fn s4_emits_exactly_the_fr_105_state_nodes() {
     let [context, operation, frame_ref] = members.as_slice() else {
         panic!("operation_anchor has exactly 3 bindings, got {members:?}");
     };
-    let fsl_semantics::check::MemberTerm::Binding(fsl_semantics::check::Binding { name, value, .. }) =
-        operation
+    let fsl_semantics::check::MemberTerm::Binding(fsl_semantics::check::Binding {
+        name,
+        value,
+        ..
+    }) = operation
     else {
         panic!("operation_anchor's second member is a binding");
     };
