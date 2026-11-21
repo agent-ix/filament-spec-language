@@ -3,7 +3,7 @@ id: SR-202611210022442313144108526
 title: Gap analysis of PR 3308 export admission
 type: SpecReview
 analysis: gap-analysis
-scope: agent-ix/filament-spec-language; QSL-2667, QSL-2669, QSL-2670; fsl-command/src/command.rs, fsl-command/src/command/export.rs, fsl-command/src/command/export/evidence.rs, fsl-command/src/command/output.rs, fsl-command/src/command/wire.rs, fsl-command/tests/it/cli_contract/export.rs, fsl-command/tests/it/export_selection.rs, fsl-command/tests/it/main.rs, tests/it/plan_export_surface.rs
+scope: agent-ix/filament-spec-language; QSL-2667, QSL-2669, QSL-2670; fsl-command/src/command.rs, fsl-command/src/command/export.rs, fsl-command/src/command/export/evidence.rs, fsl-command/src/command/output.rs, fsl-command/src/command/wire.rs, fsl-command/tests/it/cli_contract/export.rs, fsl-command/tests/it/export_selection.rs, fsl-command/tests/it/main.rs, tests/it/plan_export_surface.rs; disposition scope — fsl-command/src/command/export/request.rs, fsl-replay/schemas/filament-outcome-1.schema.json, spec/functional/FR-286-serialize-every-outcome-as-one-json-outcome-document.md
 review_set: subset
 relationships:
   - target: ix://agent-ix/filament-spec-language/FR-026
@@ -18,7 +18,7 @@ Frozen head: e615a0c4dad723a686254400f9a69bb8245c3fd2; base: 7bb12494. Primary t
 
 ## Verdict
 
-**FAIL — not mergeable in the authorized partial scope.** Focused admission coverage misses a reproduced process abort and the catalog payload defect. Engine-backed repository assurance remains unavailable; this is not a full-repository PASS.
+**CONDITIONAL repository assurance; mergeable for the authorized partial implementation scope after disposition round 1.** Both scoped findings are fixed. The prior engine-extraction limitation remains; no repository-wide gap PASS is asserted.
 
 ## Findings
 
@@ -112,3 +112,18 @@ scope:
     role: examined
     excerpt: A driver failure before any operation runs shall be one `OutcomeDocument::new(operation, None, category)` with one diagnostic.
 ```
+
+## Disposition round 1
+
+Frozen fix head: 3a4874b4b4c2b80cc7cf3c01b7c4e53df549c44f. Inspected fix cc9ec333fc and the merge of main 7d9dd0ee; the merge adds only PackageAdmissionRefusal pattern/fixture compatibility changes in export.rs. Original Findings rows are unchanged.
+
+Inspected tmp/export-fix1-unit.log: 14 passed, 0 failed, 91 filtered. Inspected tmp/export-fix1-integration.log: 18 passed, 0 failed, 157 filtered, including six deep-input subprocess cases. Scoped Clippy --lib --test it --no-deps finished successfully. Broader --lib --tests Clippy stops on the unchanged main/#3302 handoff.rs:593 result_large_err baseline; no suppression was added. Fix-file scoped rustfmt and git diff --check pass (reviewer verified exit 0). A broader formatting sweep including tests/it/main.rs detects the inherited dependency_handoff module ordering already present verbatim in main 7d9dd0ee; the PR only adds export_selection in its correct position. The empty coder formatting log alone is not treated as proof of broader baseline cleanliness. Focused FR-286 quire validation exits 0, with only unchanged module discovery and pre-existing EARS warnings at line 331. No new test build, aggregate gate, workspace tests or expensive matrix/coverage rerun was performed by the reviewer.
+
+Genuine FR-1022 AC1–3 and QSL-2667 AC3 remain UNMET by authorized deferral. The two original evidence acceptance tests remain ignored with unchanged assertions. Driver process and argv-conflict cases remain separately owned. Prior matrix/coverage extraction was unavailable; no engine-backed repository assurance PASS is claimed. No new code or test defect was found in this disposition pass.
+
+## Dispositions
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | The new traced FR-026-AC-3 subprocess test exercises selected-member rejection, retained-root control, package handling, raw compile conversion, protocols and universes at depth 16,000, checking child survival and typed refusal. |
+| FND-002 | fixed | Pending-evidence integration and unit tests assert exact details.capability export_evidence. Integration rejects unknown details and numeric capability. Ordinary TLA/Lean refusal tests assert exact capability, matching refusal, valid schema and unknown-details rejection. |
