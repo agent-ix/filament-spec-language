@@ -1221,11 +1221,13 @@ fn a_timed_abstract_side_under_a_tick_source_refuses_its_liveness_half() {
 /// `idle`. A loop of `tock` has the `h = true` candidate fair for both
 /// constraints, and a loop of `poll` has none, so one fair loop hides the
 /// other: a check of a single chosen loop of the component settles by
-/// whichever it picks.
+/// whichever it picks. `idle` modifies `h` and constrains it by no
+/// postcondition, so after a `tock` the candidates are both `h` values and
+/// the next concrete step of either kind still matches one.
 fn two_loop_world(with_poll: bool) -> Refining {
     let mut abstract_document: serde_json::Value = serde_json::from_slice(&document(
         &[],
-        &[("send", &["inflight"]), ("idle", &["inflight"])],
+        &[("send", &["inflight"]), ("idle", &["inflight", "h"])],
     ))
     .expect("abstract package JSON");
     abstract_document["types"][1]["fields"]
