@@ -1098,3 +1098,35 @@ All QSL2158-DIAG searches in production trees are empty. The three diagnostic-on
 Historical actual evidence: e778 compile-only seven packages --tests EXIT0/13.09s, then module30 selected1passed29failed0ignored2578filtered/0.25s/exit101, commands2–17held. Fixture correction add87 reached19passed11failed0ignored2578filtered/1.17s/exit101, raw /tmp/qsl-3285-add8-module.log. Diagnostic877 seven-package compile passed, exactP95 failed0pass1fail0ignore2607filtered/0.23s/exit101; raw /tmp/qsl-3285-877d-p95.log shows denominator SECOND graph expansion used7999759,next256,bound8000000,actual8000015. These are diagnosis/failure history, not corrected790ffd acceptance.
 
 Final790ffd seven-package --tests compile is requested but delayed in shared TEST-RUN backlog; final compile and focused46tests/17commands have no supplied results yet. Overall CONDITIONAL; no mergeable/acceptance claim. No local cargo, tests, broad baseline, clippy, Kani, sweeps or devcompile.
+
+## Targeted runtime test-failure round 1 verification
+
+Frozen source `22884bbd1f29bdd249e5ec1f3293e24cc77b9282`; actual base `1ed4808a5abe4c093c32267a2d59716123bf1000`; same independent Codex reviewer.
+
+**Latest targeted source verdict: PASS. Overall CONDITIONAL pending exact22884 compile and focused46 runtime.**
+
+Targeted test-failure round1of2 only: the private residual payload callback, its ownership/accounting and the genuine residual fixture expansion, plus necessary integration import preservation. No full additional review or unrelated main audit.
+
+The private FnMut callback is invoked only for PostState in WitnessWork::Action/Step; all existing identity, terminal-stutter, scalar/draw/reward/probability and slot charges remain. The nonmeasure caller still explicitly refuses PostState as BrokenInvariant. The measure callback visits/polls each owned product state through existing witness_charge(0), compares full ProbKey identity, requires a matching nonpending resolved target and an existing qualified canonical certificate key, and charges fixed ProbKey size plus canonical key length before the residual action is cloned. No reencoding, new codec/public API, reset, budget raise, search/replay/settlement change.
+
+Actual ownership was traced: measure builder creates PostState edge-target keys with certificate_state=None; canonical certificate keys are subsequently installed only in product.states. Cloning the edge action therefore does not clone a second certificate-key Vec. The callback borrows the matched state's qualified canonical key as a conservative size bound for the actual edge target's model/binding/control/accumulator payload, plus fixed ProbKey storage. Native action/step/path retention calls remain before ownership changes. No ungrounded duplicate-certificate allocation finding is asserted.
+
+The residual fixture variant now removes the delivered terminal and not-delivered preconditions after replacing the postcondition with true, enabling both actual post states at later positions. This expands transitions so genuine positive accumulated pending rows exist. Initial state, claims, window, random support, operation bodies and all meaningful positive/adverse checks remain; the original terminal-stutter variant is unchanged. Actual PostState, canonical tie, no-satisfying positive residual, bad/nonexistent hint and no-fallback assertions remain. No test weakened, deleted or ignored.
+
+All temporary QSL2158_DIAG/force_capture code is absent from the two production files. The initial terminal/search hypothesis was disproved by the probe and no such logic change was applied. The actual correction is35 changed formatted production lines, plus7added/1removed fixture lines.
+
+Integration preservation checked: five owned correction/test/review SHA256s match premerge afd038 exactly; all76 range pairs are unchanged. Sole manual frames.rs import resolution retains main ModelSystem and removes obsolete ModelSimState, preserving reached() provenance. Actual base is main1ed4808. Authorized IR1cbd86a48f02e4623e558a3d3b23c066c7f280bf, FSpecd6d066 and core-data424 pins are retained. No unrelated main audit. Source remains clean/frozen and read-only diff --check passes.
+
+No new defect found within the authorized target. Prior finding history/outcomes remain preserved, including CR002 rejected, CR021 accepted prepaid interval, CR023 fixed and generic GA002 architecture-deferred. Accepted BASE SR507 unchanged; no new full gap/matrix/global analysis or finding id.
+
+Actual790ffd full46 completed44pass2fail0ignore: module28/30, commands2–17 each1pass. Failures were policy-hint fixture missing a genuine positive residual row and native residual Quantile Failed/runtime_invariant. Raw /home/peter/.cache/handoff/3285-cmd-1-790ffd.log read. Probe4533 compiled seven-package --tests EXIT0/24.30s, exact residual test0pass1fail0ignore2612filtered/0.10s; full81-line /home/peter/.cache/handoff/3285-probe-4533e1.log read: Event ThresholdMissed then witness produced/replay REPRODUCED, positive draw/forged-post checks passed; subsequent Quantile ThresholdMissed had no produced marker and source traces its controlled PostState payload refusal. This is old diagnosis, not22884 acceptance.
+
+Exact integrated22884 seven-package --tests compile and same46tests/17commands are queued through parent/architecture; no supplied new-head results yet. Overall CONDITIONAL, no acceptance/merge clearance. No local cargo, tests, baseline, clippy, Kani, sweeps, external models or extra agents.
+
+## Final exact-head runtime qualification
+
+**Latest overall verdict: PASS — READY for merge at source22884bbd1f29bdd249e5ec1f3293e24cc77b9282.**
+
+Architecture supplied actual acceptance on exact22884bbd1f29bdd249e5ec1f3293e24cc77b9282: seven-package --tests compile exit0; all17 focused commands complete,46 selected/46passed/0failed/0ignored. Module command1 passed30/30; commands2–17 each passed1/1. Remote logs dracoscratch3285-22884bbd.../cmd-N.log. This meets the pending runtime condition; architecture explicitly accepts the result and directs exact-head merge.
+
+Evidence-only qualification of the already reviewed immutable source; no new source inspection, review round, method, finding or disposition change. All prior histories remain preserved. Earlier source PASS plus actual compile/focused acceptance now clears the merge condition. Generic GA002 remains architecture-deferred; this is scoped PR acceptance, not a claim that all QSL2158 work is complete. Source freeze unchanged; parent owns artifact-only custody and exact-head admin merge.
