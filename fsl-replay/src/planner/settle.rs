@@ -422,18 +422,29 @@ fn supplied_names(request: &SettlementRequest) -> BTreeSet<&str> {
 /// `trusted` when any deciding premise is `trusted`, else `uncertified` when
 /// any is, else `certified` (FSpec FR-354).
 pub(super) fn fold_certification(slots: &[SlotOutcome]) -> Certification {
-    let proved = |wanted| {
-        slots.iter().any(|slot| {
-            slot.value == SlotValue::Label(ItemLabel::Proved) && slot.certification == Some(wanted)
+    fold_certifications(
+        slots
+            .iter()
+            .filter(|slot| slot.value == SlotValue::Label(ItemLabel::Proved))
+            .filter_map(|slot| slot.certification),
+    )
+}
+
+/// [`fold_certification`] over the certifications of the proved premises.
+pub(super) fn fold_certifications(
+    certifications: impl IntoIterator<Item = Certification>,
+) -> Certification {
+    certifications
+        .into_iter()
+        .fold(Certification::Certified, |current, next| {
+            match (current, next) {
+                (Certification::Trusted, _) | (_, Certification::Trusted) => Certification::Trusted,
+                (Certification::Uncertified, _) | (_, Certification::Uncertified) => {
+                    Certification::Uncertified
+                }
+                _ => Certification::Certified,
+            }
         })
-    };
-    if proved(Certification::Trusted) {
-        Certification::Trusted
-    } else if proved(Certification::Uncertified) {
-        Certification::Uncertified
-    } else {
-        Certification::Certified
-    }
 }
 
 fn slot_outcome(

@@ -158,6 +158,18 @@ fn position_counting_operator_names_previous_and_finite_intervals() {
 
     let (_, fragment) = checked(&[INFINITE], "always holds(c.level <= 2)");
     assert_eq!(fragment.position_counting_operator(), None);
+
+    for formula in [
+        "always (holds(c.level = 2) implies once holds(c.level = 1))",
+        "always (holds(c.level = 2) implies historically holds(c.level <= 2))",
+    ] {
+        let (_, unbounded) = checked(&[INFINITE], formula);
+        assert_eq!(
+            unbounded.position_counting_operator(),
+            None,
+            "an unbounded past operator is stuttering-invariant: {formula}"
+        );
+    }
 }
 
 /// The cause the clause refuses with.

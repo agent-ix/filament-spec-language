@@ -341,7 +341,8 @@ pub use model_check::replay::{
     ProtocolTraceRun, ProtocolTraceSubject, StrongFairnessHint, TimedReplay,
 };
 pub use model_check::settle::{
-    settle_model_check, settle_protocol_check, CertificateChecker, Execution, ModelCheckRecord,
+    settle_model_check, settle_model_check_over_stutter_closure, settle_protocol_check,
+    CertificateChecker, Execution, ModelCheckRecord,
     RecordWarning, ResultLabel, Truth, EXPLICIT_STATE, K_INDUCTION,
 };
 pub use model_check::smt_query::{

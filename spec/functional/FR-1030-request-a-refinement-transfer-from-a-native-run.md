@@ -81,7 +81,9 @@ closed-envelope rules (unknown and duplicate members refuse):
 The request's `models`, `libraries` and `program` are FR-100's.
 `refinement_transfer` is a selection member: a request carries exactly one
 of `call`, `clause` (FR-312), `items` (FR-651), `synthesis` (FR-1010),
-`export` (FR-1015), `export_evidence` (FR-1022) and `refinement_transfer`.
+`export` (FR-1015), `export_evidence` (FR-1022), `tl_lowering` (FR-931),
+`model_based_test`, `verification_plan` (FR-1038), a selected
+`package` and `refinement_transfer`.
 
 ## Outputs
 
@@ -137,7 +139,7 @@ The run outcome's `refinement_transfer` member:
 | FR-1030-AC-2 | The same clauses through `CasRefinesCounter` write `step_for_step.holds` `false` with `row` naming `Impl::Counter::beginA`, `stutter`, and each transfer `inconclusive`, `unsettled`, `transfer-not-preserving{reason: fragment}` naming `once[1,1]` and `eventually[0,2]`; `always holds(c.value <= 2)` in the same request transfers `proved`; exit `22`. | Test (TC-2920) |
 | FR-1030-AC-3 | With `premises.refinement` and `premises.claims.PrevSafe` supplied as complete proved FSpec FR-492 premise results marked `certified`, FSL settles neither premise again and the transfer is `proved`, `uncertified`; with the supplied claim premise `refuted`, the transfer settles `inconclusive`, `premise-unproved` naming slot 1 and `refuted`. | Test (TC-2920) |
 | FR-1030-AC-4 | FSpec FR-380-AC-8's liveness clause, with no `premises`, is settled over the abstract stutter closure and transfers through `CasRefinesCounter` `proved`. | Test (TC-2920) |
-| FR-1030-AC-5 | A transfer premise reads its model with the same semantics as any model-subject claim, so the terminal state repeats under stutter extension: the clause `PrevStutter`, `always (holds(c.value = 2) implies once[1,1] holds(c.value = 1))`, is not proved at the repeated terminal state 2 (the state one step back is 2), and its transfer through the step-for-step `ThirdRefinesSpec` settles `inconclusive`, `premise-unproved` naming slot 1; exit `22`. | Test (TC-2920) |
+| FR-1030-AC-5 | A transfer premise reads its model with the same semantics as any model-subject claim, so the terminal state repeats under stutter extension: the clause `PrevStutter`, `always (holds(c.value = 2) implies once[1,1] holds(c.value = 1))`, is not proved at the repeated terminal state 2 (the state one step back is 2), and its transfer through the step-for-step `ThirdRefinesSpec` settles `inconclusive`, `premise-unproved` naming slot 1 with `result` `refuted`, the slot's own record showing `refuted`; exit `22`. | Test (TC-2920) |
 
 ## Rationale
 

@@ -19,14 +19,13 @@ use fsl_foundation::{BackendId, RequestIndex};
 use filament_exact::Cancel;
 
 use crate::certificate::closure::{
-    check_closure, check_components, check_protocol_closure, check_protocol_components,
-    CertificateRejection, CertificateRequest, ClosureRefusal, ProtocolCertificateRequest,
-    TemporalCertificateCheck,
+    check_closure, check_components, check_components_over_stutter_closure, check_protocol_closure,
+    check_protocol_components, CertificateRejection, CertificateRequest, ClosureRefusal,
+    ProtocolCertificateRequest, TemporalCertificateCheck,
 };
 use crate::certificate::scc::ProofCertificate;
 use crate::execute::ReplayRefusal;
 use crate::model_check::counterexample::TemporalCounterexample;
-use crate::model_check::item::ItemRefusal;
 use crate::model_check::limits::{ModelCheckLimit, ModelCheckLimits, ReachedLimit};
 use crate::model_check::outcome::{MemoryCause, ModelCheckOutcome, ReductionCause, RunStats};
 use crate::model_check::replay::{
@@ -40,7 +39,6 @@ use crate::proof_result::{
     WeakAccessFailure as OutcomeWeakAccessFailure,
 };
 use filament_semantic_value::model_transition::ModelTransition;
-use fsl_eval::automaton::TranslationRefusal;
 use fsl_eval::model_subject::ProtocolSubject;
 use fsl_eval::simulation::model::ModelSystem;
 use fsl_eval::simulation::protocol::{
@@ -276,6 +274,32 @@ pub fn settle_model_check(
             }
             ProofCertificate::Component(components) => {
                 check_components(certificate, components, limits, cancel)
+            }
+        },
+        replay,
+    )
+}
+
+/// [`settle_model_check`] for an outcome of EN-1's run over the item's
+/// stutter closure (FSpec FR-380): a liveness proof's component certificate is
+/// checked over the same closure the run explored, so a `certified` proof is
+/// one the core checked for the claimed property.
+pub fn settle_model_check_over_stutter_closure(
+    outcome: &ModelCheckOutcome,
+    limits: &ModelCheckLimits,
+    certificate: &CertificateRequest<'_>,
+    cancel: &Cancel,
+    replay: impl FnOnce(&TemporalCounterexample) -> Result<ModelTraceReplayResult, ReplayRefusal>,
+) -> ModelCheckRecord {
+    settle(
+        outcome,
+        limits,
+        |proof| match proof {
+            ProofCertificate::Closure(closure) => {
+                check_closure(certificate, closure, limits, cancel)
+            }
+            ProofCertificate::Component(components) => {
+                check_components_over_stutter_closure(certificate, components, limits, cancel)
             }
         },
         replay,
@@ -768,8 +792,7 @@ impl Row {
     /// the certificate, `CertificateRejected{rule, at}` when it rejects it,
     /// an `Incomplete` row naming the limit when a limit or cancellation
     /// stops it; a refused check settles `NoInstance` or `NoInitialState`,
-    /// an uncertified proof when the item has no canonical translation, and
-    /// `failed` otherwise.
+    /// and `failed` otherwise.
     pub(super) fn of_check(
         check: Result<TemporalCertificateCheck, ClosureRefusal>,
         accepted: impl FnOnce() -> Self,
@@ -799,15 +822,6 @@ impl Row {
             Ok(TemporalCertificateCheck::InstanceBoundReached { bound, states }) => {
                 Self::inconclusive(InconclusiveCause::InstanceBoundReached { bound, states })
             }
-            // A form with no core certificate checker settles `proved`,
-            // `Uncertified` (ADR-018 RU-6); it is never inconclusive.
-            Err(ClosureRefusal::Item(ItemRefusal::Translation(
-                TranslationRefusal::NotTranslated(_),
-            ))) => Self::proof(
-                ProofBasis::Exhaustive,
-                Certification::Uncertified,
-                SettlementBasis::ClosedScope,
-            ),
             Err(ClosureRefusal::NoInstance) => Self::inconclusive(InconclusiveCause::NoInstance),
             Err(ClosureRefusal::NoInitialState) => {
                 Self::inconclusive(InconclusiveCause::NoInitialState)

@@ -184,7 +184,7 @@ impl From<SpineStage> for OutcomeStage {
 /// from clause runs"), written only on an item whose category is that
 /// category, which only a clause run gives
 /// ([`OutcomeItem::from_clause_run`]).
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ItemLabel {
     /// The claim was proved.

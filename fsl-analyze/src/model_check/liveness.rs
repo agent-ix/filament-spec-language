@@ -160,6 +160,12 @@ pub enum LivenessRefusal {
         /// The operation's resolved name.
         name: String,
     },
+    /// The only violating loop is the abstract stutter closure's own
+    /// self-loop at a state with enabled operations. A lasso has no model
+    /// step to repeat there and no terminal state to stutter at, so
+    /// replay cannot confirm it.
+    #[error("a violating loop of closure stutters alone has no replayable lasso")]
+    ClosureStutterLoop,
 }
 
 /// Decide a TP-4 clause (FR-126 first and second phase).
@@ -2696,6 +2702,15 @@ impl<'r, S: LiveSubject> Run<'r, S> {
                 .filter(|edge| edge.transition == ProductTransition::TerminalStutter)
                 .count();
             let terminal_stutter = terminal_stutters > 0;
+            if edges
+                .iter()
+                .all(|edge| edge.transition == ProductTransition::StutterClosure)
+            {
+                return Err(LiftStop::from(ModelCheckRefusal::from(
+                    LivenessRefusal::ClosureStutterLoop,
+                ))
+                .into());
+            }
             if terminal_stutter && terminal_stutters != edges.len() {
                 return Err(
                     LiftStop::from(fault("a-loop-is-all-stutter-or-all-model-steps")).into(),

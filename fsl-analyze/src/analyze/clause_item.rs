@@ -18,6 +18,7 @@
 
 use filament_exact::Identifier;
 use filament_semantic_value::catalog::InternalFault;
+use filament_semantic_value::fairness::PropertyForm;
 use fsl_eval::simulation::Limits;
 use fsl_eval::simulation::model::{
     ExpansionLimits, ModelCheckInput, ModelSimulationRequest, ModelSystem,
@@ -31,7 +32,6 @@ use fsl_replay::{
     StateEnvironment, TemporalCounterexample, Witness, WitnessEnvelope, WitnessPacket,
 };
 use fsl_route::Mode;
-use filament_semantic_value::fairness::PropertyForm;
 use fsl_semantics::check::{Capability, TemporalClauseNode};
 
 use super::items::{BROKEN, CLAUSE_FAMILY, ModelItem, admission, settle_model_item};

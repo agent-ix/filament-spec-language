@@ -844,49 +844,43 @@ impl CheckedTemporalClause {
         &self.operators
     }
 
-    /// The first previous or interval operator in formula order, as the
-    /// source spells its operator and bounds. `None` means every temporal
-    /// operator preserves the positions of an infinite trace.
+    /// The first operator that counts trace positions, in formula order, as
+    /// the source spells its operator and bounds: `previous` and every
+    /// interval that is not the whole future (`[0,*]`). `None` means every
+    /// temporal operator preserves the positions of an infinite trace, so an
+    /// unbounded `once` or `historically` is not named.
     pub fn position_counting_operator(&self) -> Option<String> {
         use fsl_foundation::bound::TemporalUpper;
 
         self.operators.iter().find_map(|operator| {
-            let previous = matches!(
-                operator.operator,
-                TemporalOperator::Once | TemporalOperator::Historically
-            );
             let interval = match &operator.interval {
-                Some(CheckedInterval::Steps(interval)) => Some(format!(
-                    "[{},{}]",
-                    interval.lower(),
-                    match interval.upper() {
-                        TemporalUpper::Finite(upper) => upper.to_string(),
-                        TemporalUpper::Open => "*".to_owned(),
+                Some(CheckedInterval::Steps(interval)) => {
+                    match (interval.lower(), interval.upper()) {
+                        (0, TemporalUpper::Open) => None,
+                        (lower, TemporalUpper::Finite(upper)) => {
+                            Some(format!("[{lower},{upper}]"))
+                        }
+                        (lower, TemporalUpper::Open) => Some(format!("[{lower},*]")),
                     }
-                )),
+                }
                 Some(CheckedInterval::Timed(_)) => Some("[time]".to_owned()),
                 None => None,
+            }?;
+            let name = match operator.operator {
+                TemporalOperator::Eventually => "eventually",
+                TemporalOperator::Always => "always",
+                TemporalOperator::Once => "once",
+                TemporalOperator::Historically => "historically",
+                TemporalOperator::Until => "until",
+                TemporalOperator::Release => "release",
+                TemporalOperator::Since => "since",
+                TemporalOperator::Triggered => "triggered",
+                TemporalOperator::Not
+                | TemporalOperator::And
+                | TemporalOperator::Or
+                | TemporalOperator::Implies => "",
             };
-            (previous || interval.is_some()).then(|| {
-                let name = match operator.operator {
-                    TemporalOperator::Eventually => "eventually",
-                    TemporalOperator::Always => "always",
-                    TemporalOperator::Once => "once",
-                    TemporalOperator::Historically => "historically",
-                    TemporalOperator::Until => "until",
-                    TemporalOperator::Release => "release",
-                    TemporalOperator::Since => "since",
-                    TemporalOperator::Triggered => "triggered",
-                    TemporalOperator::Not
-                    | TemporalOperator::And
-                    | TemporalOperator::Or
-                    | TemporalOperator::Implies => "",
-                };
-                match interval {
-                    Some(interval) => format!("{name}{interval}"),
-                    None => name.to_owned(),
-                }
-            })
+            Some(format!("{name}{interval}"))
         })
     }
 

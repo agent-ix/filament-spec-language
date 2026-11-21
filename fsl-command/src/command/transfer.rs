@@ -1,32 +1,35 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! FR-1030: the native-run refinement-transfer route.
 
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 
+use filament_exact::ValueType;
 use filament_semantic_value::fairness::{FairnessConstraint, PropertyForm};
 use fsl_analyze::analyze::document::{
     analyze_document, resolve_items, AnalyzeDocumentError, AnalyzeRun, DocumentSelection,
-    ItemSelection,
+    ItemSelection, ResolvedItem, SubjectSelection,
 };
 use fsl_analyze::analyze::{AnalyzeLimits, SourceProvision};
-use fsl_analyze::model_check::{check_refinement, RefinementCheckRequest};
-use fsl_foundation::bound::ProofBound;
+use fsl_foundation::Code;
 use fsl_replay::planner::{
-    read_premise_item, read_result_entry, ClaimKind, EntryOrigin, ExtentClass, FairnessKey,
-    ItemKey, TemporalItemKind, TemporalKey, TransferFacts, TransferPremiseValue,
-    TransferSettlement,
+    read_premise_item, read_result_entry, EntryOrigin, ItemKey, TransferFacts,
+    TransferPremiseValue, TransferSettlement,
 };
-use fsl_replay::{
-    settle_refinement, Certification, ModelCheckLimits, SimulationCertificateRequest, TerminalValue,
+use fsl_replay::spine::CheckedUnit;
+use fsl_replay::{Certification, ItemLabel};
+use fsl_semantics::check::{
+    CheckedGraph, CheckedRefinement, StepClass, StepTarget, TemporalClauseNode, TemporalProfile,
 };
-use fsl_semantics::check::{CheckedRefinement, StepClass, StepTarget, TemporalProfile};
-use fsl_semantics::model::accounting::ModelNormalizationLimits;
-use fsl_semantics::model::observation::{document_reference, DocumentProvision, DocumentRef};
-use serde_json::{json, Value};
+use fsl_semantics::model::intake::PackageInput;
+use fsl_semantics::model::observation::{
+    document_reference, AdmissionFailure, DocumentProvision, DocumentRef, ObservationLimits,
+};
+use serde_json::{json, Map, Value};
 
 use super::{
     check_sources, intake_with_bytes, package_name, wire, FileCounts, FormalSource, NativeResult,
-    Result, RunCause, RunResult,
+    Result, RunCause, RunResult, Settle,
 };
 
 /// The request and its program source, admitted without compiling or
@@ -39,7 +42,7 @@ pub struct PreparedTransfer {
     pub(super) integer_division: Option<fsl_replay::AdmittedIntegerDivision>,
 }
 
-pub(super) fn execute(prepared: PreparedTransfer, settle: &super::Settle<'_>) -> Result<RunResult> {
+pub(super) fn execute(prepared: PreparedTransfer, settle: &Settle<'_>) -> Result<RunResult> {
     let PreparedTransfer {
         directory,
         dependent_bytes,
@@ -47,52 +50,34 @@ pub(super) fn execute(prepared: PreparedTransfer, settle: &super::Settle<'_>) ->
         source,
         integer_division,
     } = prepared;
-    let member = request
-        .refinement_transfer
-        .as_ref()
-        .ok_or_else(|| invalid("refinement_transfer", "missing transfer member"))?;
-    let mut intake = intake_with_bytes(
-        &directory,
-        FileCounts {
-            programs: request.libraries.len().saturating_add(1),
-            models: request.models.len(),
-            observations: member
-                .observations
-                .values()
-                .collect::<std::collections::BTreeSet<_>>()
-                .len(),
-            extensions: request.extensions.len(),
-        },
-        dependent_bytes,
-    )?;
     let wire::Request {
         models,
         program,
-        package: _,
-        limits: _,
-        call: _,
-        clause: _,
-        items: _,
         libraries,
         extensions,
         clocks,
-        tl_lowering: _,
-        model_based_test: _,
-        verification_plan: _,
-        synthesis: _,
-        integer_division: _,
         refinement_transfer,
+        ..
     } = request;
-    let member = refinement_transfer.expect("validated transfer member");
+    let Some(member) = refinement_transfer else {
+        return Err(invalid("refinement_transfer", "missing transfer member"));
+    };
+    let files = member.observations.values().collect::<BTreeSet<_>>();
+    let mut intake = intake_with_bytes(
+        &directory,
+        FileCounts {
+            programs: libraries.len().saturating_add(1),
+            models: models.len(),
+            observations: files.len(),
+            extensions: extensions.len(),
+        },
+        dependent_bytes,
+    )?;
     let observation_limits =
         fsl_replay::spine::ObservationLimitsWire::resolve(member.observation_limits.as_ref())
             .map_err(|error| invalid(&error.member, error.reason))?;
-    let mut observation_bytes = std::collections::BTreeMap::new();
-    for file in member
-        .observations
-        .values()
-        .collect::<std::collections::BTreeSet<_>>()
-    {
+    let mut observation_bytes = BTreeMap::new();
+    for file in files {
         let bytes = intake.file(
             file,
             usize::try_from(observation_limits.document_bytes).unwrap_or(usize::MAX),
@@ -133,68 +118,375 @@ pub(super) fn execute(prepared: PreparedTransfer, settle: &super::Settle<'_>) ->
         integer_division,
         None,
         |_, checked, _, _, packages, _libraries, _, _, _, _| {
-            let checked_package = checked.package();
-            let graph = checked_package.graph();
-            let refinement = graph
-                .refinements()
-                .iter()
-                .find(|refinement| refinement.name() == member.refinement)
-                .ok_or_else(|| {
-                    missing_name("/refinement_transfer/refinement", &member.refinement)
-                })?;
-            require_selected_model(graph, &member.abstract_subject.model, "abstract")?;
-            require_selected_model(graph, &member.concrete.model, "concrete")?;
-            if member.abstract_subject.model != refinement.abstract_model() {
-                return Err(model_mismatch(
-                    "/refinement_transfer/abstract/model",
-                    refinement.abstract_model(),
-                    &member.abstract_subject.model,
-                ));
+            Transfer {
+                member: &member,
+                checked: &checked,
+                packages: &packages,
+                settle,
+                observation_limits,
+                observation_bytes: &observation_bytes,
             }
-            if member.concrete.model != refinement.concrete_model() {
-                return Err(model_mismatch(
-                    "/refinement_transfer/concrete/model",
-                    refinement.concrete_model(),
-                    &member.concrete.model,
-                ));
-            }
-            let clauses = member
-                .clauses
-                .iter()
-                .enumerate()
-                .map(|(index, name)| {
-                    let clause = graph
-                        .temporal_clauses()
-                        .iter()
-                        .find(|node| node.clause().name() == name)
-                        .ok_or_else(|| {
-                            missing_name(&format!("/refinement_transfer/clauses/{index}"), name)
-                        })?;
-                    if clause.clause().profile() != TemporalProfile::InfiniteTrace {
-                        return Err(type_mismatch(
-                            &format!("/refinement_transfer/clauses/{index}"),
-                            "temporal",
-                            clause.clause().profile().identity(),
-                        ));
-                    }
-                    Ok(clause)
-                })
-                .collect::<Result<Vec<_>>>()?;
+            .run()
+        },
+    )
+}
 
-            let mut documents = DocumentProvision::new();
-            let mut refs = std::collections::BTreeMap::new();
-            let mut by_file = std::collections::BTreeMap::<String, DocumentRef>::new();
-            for (key, file) in &member.observations {
-                let reference = if let Some(reference) = by_file.get(file) {
-                    reference.clone()
-                } else {
-                    let bytes = observation_bytes.get(file).ok_or_else(|| {
+/// One transfer request over its compiled package.
+struct Transfer<'a> {
+    member: &'a wire::RefinementTransfer,
+    checked: &'a CheckedUnit,
+    packages: &'a PackageInput,
+    settle: &'a Settle<'a>,
+    observation_limits: ObservationLimits,
+    observation_bytes: &'a BTreeMap<String, Vec<u8>>,
+}
+
+/// The declarations FR-1031's selection rows resolve.
+struct Selected<'g> {
+    refinement: &'g CheckedRefinement,
+    clauses: Vec<&'g TemporalClauseNode>,
+}
+
+/// One subject's selection and the snapshots it reads.
+struct Subjects {
+    documents: DocumentProvision,
+    abstract_subject: SubjectSelection,
+    concrete: SubjectSelection,
+}
+
+/// An item resolved for settlement: its slot identity and request item wire.
+struct Premise {
+    resolved: ResolvedItem,
+    key: ItemKey,
+    identity: Value,
+    wire: Value,
+}
+
+impl Transfer<'_> {
+    fn run(&self) -> Result<RunResult> {
+        let package = self.checked.package();
+        let graph = package.graph();
+        let selected = self.select(graph)?;
+        let refinement = selected.refinement;
+        let subjects = self.subjects()?;
+        self.admit_snapshots(&subjects)?;
+
+        let mut registry = fsl_route::Registry::new();
+        for descriptor in self.settle.engines.registrations() {
+            registry
+                .register(descriptor.clone())
+                .map_err(|_| RunCause::AnalyzeFault)?;
+        }
+        let limits = AnalyzeLimits {
+            observation: self.observation_limits,
+            ..AnalyzeLimits::unbounded()
+        };
+        let abstract_binding = subjects
+            .abstract_subject
+            .binding(self.packages, &subjects.documents);
+        let concrete_binding = subjects
+            .concrete
+            .binding(self.packages, &subjects.documents);
+        let units = [self.checked.source().reference().clone()];
+        let resolve = |subject: &SubjectSelection,
+                       binding: &fsl_analyze::analyze::SubjectBinding<'_>,
+                       selections: &[ItemSelection]| {
+            resolve_items(
+                package,
+                subject,
+                Some(selections),
+                &registry,
+                &units,
+                binding,
+                &limits,
+            )
+            .into_iter()
+            .map(|resolved| self.premise(resolved, subject))
+            .collect::<Result<Vec<_>>>()
+        };
+
+        let refinement_selection = self.refinement_selection(refinement, &subjects)?;
+        let [refinement_premise] = <[Premise; 1]>::try_from(resolve(
+            &subjects.concrete,
+            &concrete_binding,
+            &refinement_selection,
+        )?)
+        .map_err(|_| RunCause::AnalyzeFault)?;
+        let claim_selections = self.claim_selections(&selected, &subjects)?;
+        let claim_premises = resolve(
+            &subjects.abstract_subject,
+            &abstract_binding,
+            &claim_selections,
+        )?;
+
+        let supplied_refinement = self
+            .member
+            .premises
+            .as_ref()
+            .and_then(|premises| premises.refinement.as_ref())
+            .map(|supplied| {
+                supplied_premise(
+                    supplied,
+                    &refinement_premise,
+                    "/refinement_transfer/premises/refinement",
+                )
+            })
+            .transpose()?;
+        let mut supplied_claims = Vec::new();
+        for (node, premise) in selected.clauses.iter().zip(&claim_premises) {
+            let name = node.clause().name();
+            supplied_claims.push(
+                self.member
+                    .premises
+                    .as_ref()
+                    .and_then(|premises| premises.claims.get(name))
+                    .map(|supplied| {
+                        supplied_premise(
+                            supplied,
+                            premise,
+                            &format!("/refinement_transfer/premises/claims/{name}"),
+                        )
+                    })
+                    .transpose()?,
+            );
+        }
+
+        let settled_refinement = match supplied_refinement {
+            Some(supplied) => supplied.value,
+            None => {
+                let analyzed = self.analyze(
+                    package,
+                    concrete_binding,
+                    vec![refinement_premise.resolved.clone()],
+                    limits,
+                )?;
+                analyze_record(analyzed.first().ok_or(RunCause::AnalyzeFault)?)?
+            }
+        };
+        let in_process: Vec<usize> = supplied_claims
+            .iter()
+            .enumerate()
+            .filter_map(|(index, supplied)| supplied.is_none().then_some(index))
+            .collect();
+        let analyzed = if in_process.is_empty() {
+            Vec::new()
+        } else {
+            self.analyze(
+                package,
+                abstract_binding,
+                in_process
+                    .iter()
+                    .map(|index| claim_premises[*index].resolved.clone())
+                    .collect(),
+                limits,
+            )?
+        };
+        let mut analyzed = analyzed.iter();
+
+        let dense = graph.time_sources().iter().any(|time| {
+            time.model == self.member.concrete.model
+                && matches!(time.source, fsl_semantics::check::TimeSourceKind::Dense)
+        });
+        let step_for_step = step_for_step_fact(refinement, dense);
+        let concrete_subject = json!({
+            "model": self.member.concrete.model,
+            "initial": self.member.concrete.initial,
+        });
+        let refinement_node = refinement
+            .v2_emission()
+            .map_err(|_| RunCause::AnalyzeFault)?
+            .identity;
+        let budget = fsl_replay::planner::Budget {
+            max_work: self
+                .member
+                .limits
+                .max_work
+                .unwrap_or(fsl_replay::planner::DEFAULT_MAX_WORK),
+        };
+        let mut transfers = Vec::new();
+        for ((node, premise), supplied) in selected
+            .clauses
+            .iter()
+            .zip(claim_premises)
+            .zip(supplied_claims)
+        {
+            let (claim, stutter_closure) = match supplied {
+                Some(supplied) => (supplied.value, supplied.stutter_closure),
+                None => {
+                    let record = analyzed.next().ok_or(RunCause::AnalyzeFault)?;
+                    (analyze_record(record)?, true)
+                }
+            };
+            let liveness = matches!(node.clause().property_form(), Some(PropertyForm::Liveness));
+            let unimplied = node
+                .clause()
+                .fairness()
+                .iter()
+                .find(|needed| !fairness_implies(refinement, needed))
+                .cloned();
+            let facts = TransferFacts {
+                package: package_name(self.checked.source().identity()),
+                refinement: refinement_node.clone(),
+                clause: node.identity(),
+                subject: concrete_subject.clone(),
+                refinement_identity: refinement_premise.identity.clone(),
+                abstract_claim_identity: premise.identity,
+                step_for_step: step_for_step.clone(),
+                fragment_operator: node.clause().position_counting_operator(),
+                fairness_implied: unimplied.is_none(),
+                unimplied_constraint: unimplied,
+                liveness,
+            };
+            let settlement = TransferSettlement::from_settled_facts(
+                &facts,
+                stutter_closure,
+                [
+                    (facts.refinement_identity.clone(), settled_refinement),
+                    (facts.abstract_claim_identity.clone(), claim),
+                ],
+            );
+            let result = fsl_replay::planner::settle_transfer(&settlement, budget)
+                .map_err(|_| RunCause::AnalyzeFault)?;
+            transfers.push(json!({"clause": node.clause().name(), "result": result}));
+        }
+        let exit_code = if transfers
+            .iter()
+            .all(|transfer| transfer["result"]["value"] == "proved")
+        {
+            0
+        } else {
+            22
+        };
+        let refinement_value = json!({
+            "name": refinement.name(),
+            "node": fsl_foundation::node_wire::node_key_to_json(&refinement_node)
+                .map_err(|_| RunCause::AnalyzeFault)?,
+            "step_for_step": step_for_step,
+        });
+        Ok(RunResult {
+            exit_code,
+            value: NativeResult::analyze_document(json!({
+                "format": "native-run-result/2",
+                "refinement_transfer": {
+                    "refinement": refinement_value,
+                    "transfers": transfers,
+                }
+            })),
+            outcome: None,
+            requirements: None,
+            sources: super::super::Sources::default(),
+        })
+    }
+
+    /// FR-1031's `select` rows in table order: the model aliases, the
+    /// refinement and the clause names, then the declared subjects, then each
+    /// clause's family and `over` subject.
+    fn select<'g>(&self, graph: &'g CheckedGraph) -> Result<Selected<'g>> {
+        let member = self.member;
+        require_selected_model(graph, &member.abstract_subject.model, "abstract")?;
+        require_selected_model(graph, &member.concrete.model, "concrete")?;
+        let refinement = graph
+            .refinements()
+            .iter()
+            .find(|refinement| refinement.name() == member.refinement)
+            .ok_or_else(|| missing_name("/refinement_transfer/refinement", &member.refinement))?;
+        let named = member
+            .clauses
+            .iter()
+            .enumerate()
+            .map(|(index, name)| {
+                let pointer = format!("/refinement_transfer/clauses/{index}");
+                match graph
+                    .temporal_clauses()
+                    .iter()
+                    .find(|node| node.clause().name() == name)
+                {
+                    Some(node) => Ok(Some(node)),
+                    None if declaration_kind(graph, name).is_some() => Ok(None),
+                    None => Err(missing_name(&pointer, name)),
+                }
+            })
+            .collect::<Result<Vec<_>>>()?;
+        for (side, selected, declared) in [
+            (
+                "abstract",
+                &member.abstract_subject.model,
+                refinement.abstract_model(),
+            ),
+            (
+                "concrete",
+                &member.concrete.model,
+                refinement.concrete_model(),
+            ),
+        ] {
+            if selected != declared {
+                return Err(model_mismatch(
+                    &format!("/refinement_transfer/{side}/model"),
+                    declared,
+                    selected,
+                ));
+            }
+        }
+        let mut clauses = Vec::with_capacity(named.len());
+        for (index, (name, node)) in member.clauses.iter().zip(named).enumerate() {
+            let pointer = format!("/refinement_transfer/clauses/{index}");
+            let Some(node) = node else {
+                let kind = declaration_kind(graph, name).unwrap_or("declaration");
+                return Err(type_mismatch(&pointer, kind, None));
+            };
+            let profile = node.clause().profile();
+            if profile != TemporalProfile::InfiniteTrace {
+                return Err(type_mismatch(
+                    &pointer,
+                    "temporal clause",
+                    Some(profile.identity()),
+                ));
+            }
+            clauses.push(node);
+        }
+        let abstract_package = &refinement.abstract_model_selection().identity;
+        for (index, node) in clauses.iter().enumerate() {
+            let over_abstract = matches!(
+                &node.clause().over().1,
+                ValueType::Reference(object) if object.original().package() == abstract_package
+            );
+            if !over_abstract {
+                return Err(RunCause::TransferSelection {
+                    stage: "select",
+                    member: format!("/refinement_transfer/clauses/{index}"),
+                    cause: "invalid-value",
+                    code: fsl_foundation::Code::InvalidRuntimeInput,
+                    message: format!(
+                        "clause {} is not over the abstract model {abstract_package}",
+                        node.clause().name()
+                    ),
+                    details: Map::new(),
+                });
+            }
+        }
+        Ok(Selected {
+            refinement,
+            clauses,
+        })
+    }
+
+    /// The observations' provisioned documents and both subjects.
+    fn subjects(&self) -> Result<Subjects> {
+        let member = self.member;
+        let mut documents = DocumentProvision::new();
+        let mut refs = BTreeMap::new();
+        let mut by_file = BTreeMap::<&String, DocumentRef>::new();
+        for (key, file) in &member.observations {
+            let reference = match by_file.get(file) {
+                Some(reference) => reference.clone(),
+                None => {
+                    let bytes = self.observation_bytes.get(file).ok_or_else(|| {
                         invalid(
-                            "refinement_transfer/observations",
+                            "/refinement_transfer/observations",
                             "missing observation bytes",
                         )
                     })?;
-                    let reference = document_reference(&bytes).ok_or_else(|| {
+                    let reference = document_reference(bytes).ok_or_else(|| {
                         invalid(
                             format!("/refinement_transfer/observations/{key}"),
                             "the observation has no document identity",
@@ -206,356 +498,192 @@ pub(super) fn execute(prepared: PreparedTransfer, settle: &super::Settle<'_>) ->
                             "the observation identity is provisioned more than once",
                         ));
                     }
-                    by_file.insert(file.clone(), reference.clone());
+                    by_file.insert(file, reference.clone());
                     reference
-                };
-                refs.insert(
-                    key.clone(),
-                    DocumentSelection {
-                        authority: reference.authority,
-                        identity: reference.identity,
-                    },
-                );
-            }
-            let abstract_subject = subject(&member.abstract_subject.initial, &refs, "abstract")?;
-            let concrete_subject = subject(&member.concrete.initial, &refs, "concrete")?;
-            abstract_subject
-                .check_universes(&documents)
-                .map_err(|error| {
-                    invalid("/refinement_transfer/abstract/initial", error.to_string())
-                })?;
-            concrete_subject
-                .check_universes(&documents)
-                .map_err(|error| {
-                    invalid("/refinement_transfer/concrete/initial", error.to_string())
-                })?;
-
-            let dense = graph.time_sources().iter().any(|time| {
-                time.model == member.concrete.model
-                    && matches!(time.source, fsl_semantics::check::TimeSourceKind::Dense)
-            });
-            let step_for_step = step_for_step_fact(refinement, dense);
-            let source_provision = {
-                let mut provision = SourceProvision::default();
-                for source in std::iter::once(checked.source()).chain(checked.libraries()) {
-                    provision.insert(source.reference(), source.text().as_bytes().to_vec());
                 }
-                provision
             };
-            let mut registry = fsl_route::Registry::new();
-            for descriptor in settle.engines.registrations() {
-                registry
-                    .register(descriptor.clone())
-                    .map_err(|_| RunCause::AnalyzeFault)?;
-            }
-            let refinement_occurrence = refinement
-                .requirement_occurrence()
-                .ok_or(RunCause::AnalyzeFault)?
-                .clone();
-            let mut fairness = refinement
-                .concrete_operation_fairness()
-                .chain(refinement.abstract_operation_fairness())
-                .map(|constraint| FairnessKey::of(constraint).map_err(|_| RunCause::AnalyzeFault))
-                .collect::<Result<Vec<_>>>()?;
-            fairness.sort();
-            let subject_bytes = quire_canonical::to_vec(
-                &subject_wire(&concrete_subject),
-                quire_canonical::Limits::new(u64::MAX),
-            )
-            .map_err(|_| RunCause::AnalyzeFault)?;
-            let subject_identity =
-                String::from_utf8(subject_bytes).map_err(|_| RunCause::AnalyzeFault)?;
-            let refinement_identity = ItemKey {
-                claim: refinement_occurrence,
-                kind: ClaimKind::TemporalSatisfaction,
-                temporal: Some(TemporalKey {
-                    subject: subject_identity,
-                    item_kind: TemporalItemKind::Refinement,
-                    fairness,
-                    stutter_closure: false,
-                }),
-                correspondence: None,
-                premises: Vec::new(),
-                extent: ExtentClass::Unbounded,
-            }
-            .to_wire()
-            .map_err(|_| RunCause::AnalyzeFault)?;
-            let concrete_binding = concrete_subject.binding(&packages, &documents);
-            let concrete_simulation = fsl_eval::simulation::model::ModelSimulationRequest {
-                input: fsl_eval::simulation::model::ModelCheckInput::source(checked_package),
-                packages: &packages,
-                normalization: ModelNormalizationLimits::default(),
-                snapshots: &documents,
-                initial: concrete_binding.initial.clone(),
-                universes: concrete_binding.universes.clone(),
-                observation: observation_limits,
-                expansion: fsl_eval::simulation::model::ExpansionLimits {
-                    max_candidates: u64::MAX,
+            refs.insert(
+                key.clone(),
+                DocumentSelection {
+                    authority: reference.authority,
+                    identity: reference.identity,
                 },
-                meter: fsl_replay::spine::default_accounting(u64::MAX),
-                emit: fsl_package::EmitLimits::new(fsl_replay::spine::EMIT_OUTPUT_BYTES_DEFAULT),
-            };
-            let concrete = fsl_eval::model_subject::ModelSubject {
-                simulation: concrete_simulation.clone(),
-                proof_bounds: Vec::<ProofBound>::new(),
-            };
-            let abstract_initial = abstract_subject
-                .initial_states
-                .iter()
-                .map(DocumentSelection::reference)
-                .collect::<Vec<_>>();
-            let refinement_premise = if let Some(supplied) = member
-                .premises
-                .as_ref()
-                .and_then(|premises| premises.refinement.as_ref())
-            {
-                supplied_premise(
-                    supplied,
-                    Some(&refinement_identity),
-                    Some(subject_wire(&concrete_subject)),
-                    "/refinement_transfer/premises/refinement",
-                )?
-            } else {
-                match check_refinement(
-                    RefinementCheckRequest {
-                        refinement,
-                        concrete,
-                        abstract_package: checked_package,
-                        abstract_initial: fsl_replay::AbstractInitial::Snapshots(
-                            abstract_initial.clone(),
-                        ),
-                        abstract_protocol_binding: None,
-                        max_depth: None,
-                        limits: ModelCheckLimits::default(),
-                    },
-                    settle.cancel,
-                ) {
-                    Ok(outcome) => {
-                        let certificate = SimulationCertificateRequest {
-                            refinement,
-                            concrete: concrete_simulation,
-                            abstract_package: checked_package,
-                            abstract_initial: fsl_replay::AbstractInitial::Snapshots(
-                                abstract_initial.clone(),
-                            ),
-                        };
-                        premise_value(
-                            &settle_refinement(
-                                &outcome,
-                                &ModelCheckLimits::default(),
-                                &certificate,
-                                settle.cancel,
-                                |_| {
-                                    Err(fsl_replay::ReplayRefusal::Fault(
-                                        filament_semantic_value::catalog::InternalFault::new(
-                                            "refinement-transfer",
-                                            "counterexample-replay-unavailable",
-                                        ),
-                                    ))
-                                },
-                            )
-                            .record
-                            .value,
-                        )
-                    }
-                    Err(_) => TransferPremiseValue::Other("failed"),
-                }
-            };
+            );
+        }
+        let abstract_subject = subject(&member.abstract_subject.initial, &refs, "abstract")?;
+        let concrete = subject(&member.concrete.initial, &refs, "concrete")?;
+        for subject in [&abstract_subject, &concrete] {
+            subject
+                .check_universes(&documents)
+                .map_err(RunCause::AnalyzeUniverse)?;
+        }
+        Ok(Subjects {
+            documents,
+            abstract_subject,
+            concrete,
+        })
+    }
 
-            let mut item_values = Vec::new();
-            for node in &clauses {
-                let liveness =
-                    matches!(node.clause().property_form(), Some(PropertyForm::Liveness));
-                let mut temporal = json!({
-                    "subject": subject_wire(&abstract_subject),
-                });
-                if liveness {
+    /// FR-1031's `initial` row: FR-106 admits each initial snapshot of each
+    /// subject for its model before any premise or transfer settles.
+    fn admit_snapshots(&self, subjects: &Subjects) -> Result<()> {
+        let package = self.checked.package();
+        for (side, subject) in [
+            ("abstract", &subjects.abstract_subject),
+            ("concrete", &subjects.concrete),
+        ] {
+            let binding = subject.binding(self.packages, &subjects.documents);
+            for (index, initial) in binding.initial.iter().enumerate() {
+                let request = fsl_eval::simulation::model::ModelSimulationRequest {
+                    input: fsl_eval::simulation::model::ModelCheckInput::source(package),
+                    packages: self.packages,
+                    normalization: AnalyzeLimits::unbounded().normalization,
+                    snapshots: &subjects.documents,
+                    initial: vec![initial.clone()],
+                    universes: binding.universes.clone(),
+                    observation: self.observation_limits,
+                    expansion: fsl_eval::simulation::model::ExpansionLimits {
+                        max_candidates: u64::MAX,
+                    },
+                    meter: AnalyzeLimits::unbounded().accounting,
+                    emit: AnalyzeLimits::unbounded().emit,
+                };
+                match fsl_eval::simulation::model::ModelSystem::new(request) {
+                    Ok(_) => {}
+                    Err(
+                        AdmissionFailure::Refused(record) | AdmissionFailure::Incomplete(record),
+                    ) => {
+                        let code = Code::from_code(record.catalog.code())
+                            .unwrap_or(Code::InvalidRuntimeInput);
+                        return Err(RunCause::TransferSelection {
+                            stage: "admit",
+                            member: format!("/refinement_transfer/{side}/initial/{index}"),
+                            cause: record.catalog.cause(),
+                            code,
+                            message: format!(
+                                "snapshot admission refused: {}/{}",
+                                record.catalog.code(),
+                                record.catalog.cause()
+                            ),
+                            details: Map::new(),
+                        });
+                    }
+                    Err(AdmissionFailure::Fault(_)) => return Err(RunCause::AnalyzeFault),
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// The FR-144 refinement item, over the concrete subject, with the
+    /// abstract subject's initial states.
+    fn refinement_selection(
+        &self,
+        refinement: &CheckedRefinement,
+        subjects: &Subjects,
+    ) -> Result<Vec<ItemSelection>> {
+        selections(json!([{
+            "claim": refinement.name(),
+            "kind": "refinement",
+            "temporal": {
+                "item_kind": "refinement",
+                "subject": subject_wire(&subjects.concrete),
+                "abstract_subject": {
+                    "identity": refinement.abstract_model_selection().identity,
+                    "initial_states": subjects
+                        .abstract_subject
+                        .initial_states
+                        .iter()
+                        .map(selection_wire)
+                        .collect::<Vec<_>>(),
+                },
+            },
+        }]))
+    }
+
+    /// One abstract claim item per clause, over the abstract subject; a
+    /// liveness clause is checked over its stutter closure (FR-529).
+    fn claim_selections(
+        &self,
+        selected: &Selected<'_>,
+        subjects: &Subjects,
+    ) -> Result<Vec<ItemSelection>> {
+        let items = selected
+            .clauses
+            .iter()
+            .map(|node| {
+                let mut temporal = json!({"subject": subject_wire(&subjects.abstract_subject)});
+                if matches!(node.clause().property_form(), Some(PropertyForm::Liveness)) {
                     temporal["stutter_closure"] = json!(true);
                 }
-                item_values.push(json!({
+                json!({
                     "claim": node.clause().name(),
                     "kind": "temporal-satisfaction",
                     "temporal": temporal,
-                }));
-            }
-            let selections: Vec<ItemSelection> = serde_json::from_value(Value::Array(item_values))
-                .map_err(|error| invalid("refinement_transfer/clauses", error.to_string()))?;
-            let abstract_binding = abstract_subject.binding(&packages, &documents);
-            let analyze_limits = AnalyzeLimits::unbounded();
-            let resolved = resolve_items(
-                checked_package,
-                &abstract_subject,
-                Some(&selections),
-                &registry,
-                &[checked.source().reference().clone()],
-                &abstract_binding,
-                &analyze_limits,
-            );
-            let identities = resolved
-                .iter()
-                .map(|resolved| match resolved {
-                    fsl_analyze::analyze::document::ResolvedItem::Claim(claim) => {
-                        let wire = claim
-                            .item
-                            .request_item_wire(&abstract_subject)
-                            .map_err(|_| RunCause::AnalyzeFault)?;
-                        let item = fsl_replay::planner::read_premise_item(&wire)
-                            .map_err(|_| RunCause::AnalyzeFault)?;
-                        item.key.to_wire().map_err(|_| RunCause::AnalyzeFault)
-                    }
-                    fsl_analyze::analyze::document::ResolvedItem::Settled { .. } => {
-                        Err(RunCause::AnalyzeFault)
-                    }
-                    fsl_analyze::analyze::document::ResolvedItem::Simulation(_) => {
-                        Err(RunCause::AnalyzeFault)
-                    }
                 })
-                .collect::<Result<Vec<_>>>()?;
-            let inprocess_indices: Vec<usize> = resolved
-                .iter()
-                .enumerate()
-                .filter(|(index, _)| {
-                    member
-                        .premises
-                        .as_ref()
-                        .and_then(|premises| premises.claims.get(clauses[*index].clause().name()))
-                        .is_none()
-                })
-                .map(|(index, _)| index)
-                .collect();
-            let inprocess = inprocess_indices
-                .iter()
-                .map(|index| resolved[*index].clone())
-                .collect();
-            let analyzed = analyze_document(
-                AnalyzeRun {
-                    package: checked_package,
-                    binding: abstract_binding,
-                    provision: source_provision,
-                    items: inprocess,
-                    engines: settle.engines,
-                    limits: AnalyzeLimits::unbounded(),
-                },
-                settle.negotiate,
-                settle.cancel,
-            )
-            .map_err(|error| match error {
-                AnalyzeDocumentError::Refused(refusal) => {
-                    RunCause::AnalyzeRefused(Box::new(refusal))
-                }
-                AnalyzeDocumentError::Fault => RunCause::AnalyzeFault,
-            })?;
-            let claim_records = analyzed
-                .0
-                .get("items")
-                .and_then(Value::as_array)
-                .ok_or(RunCause::AnalyzeFault)?;
-            let mut transfers = Vec::new();
-            let transfer_budget = fsl_replay::planner::Budget {
-                max_work: member
-                    .limits
-                    .max_work
-                    .unwrap_or(fsl_replay::planner::DEFAULT_MAX_WORK),
-            };
-            let mut inprocess_by_clause = std::collections::BTreeMap::new();
-            for (index, claim_record) in inprocess_indices.iter().zip(claim_records) {
-                inprocess_by_clause.insert(
-                    clauses[*index].clause().name().to_owned(),
-                    (identities[*index].clone(), analyze_record(claim_record)?),
-                );
-            }
-            for (node, identity) in clauses.iter().zip(identities) {
-                let claim_terminal = if let Some(supplied) = member
-                    .premises
-                    .as_ref()
-                    .and_then(|premises| premises.claims.get(node.clause().name()))
-                {
-                    supplied_premise(
-                        supplied,
-                        Some(&identity),
-                        Some(subject_wire(&abstract_subject)),
-                        &format!(
-                            "/refinement_transfer/premises/claims/{}",
-                            node.clause().name()
-                        ),
-                    )?
-                } else {
-                    inprocess_by_clause
-                        .remove(node.clause().name())
-                        .map(|(_, value)| value)
-                        .ok_or(RunCause::AnalyzeFault)?
-                };
-                let liveness =
-                    matches!(node.clause().property_form(), Some(PropertyForm::Liveness));
-                let fairness = node
-                    .clause()
-                    .fairness()
-                    .iter()
-                    .find(|needed| !fairness_implies(refinement, needed))
-                    .cloned();
-                let subject_wire = json!({
-                    "model": member.concrete.model,
-                    "initial": member.concrete.initial,
-                });
-                let facts = TransferFacts {
-                    package: package_name(checked.source().identity()),
-                    refinement: refinement
-                        .v2_emission()
-                        .map_err(|_| RunCause::AnalyzeFault)?
-                        .identity,
-                    clause: node.identity(),
-                    subject: subject_wire,
-                    refinement_identity: refinement_identity.clone(),
-                    abstract_claim_identity: identity.clone(),
-                    step_for_step: step_for_step.clone(),
-                    fragment_operator: node.clause().position_counting_operator(),
-                    fairness_implied: fairness.is_none(),
-                    unimplied_constraint: fairness,
-                    liveness,
-                };
-                let settlement = TransferSettlement::from_settled_facts(
-                    &facts,
-                    liveness,
-                    [
-                        (facts.refinement_identity.clone(), refinement_premise),
-                        (identity, claim_terminal),
-                    ],
-                );
-                let result = fsl_replay::planner::settle_transfer(&settlement, transfer_budget)
-                    .map_err(|_| RunCause::AnalyzeFault)?;
-                transfers.push(json!({"clause": node.clause().name(), "result": result}));
-            }
-            let exit_code = if transfers
-                .iter()
-                .all(|transfer| transfer["result"]["value"] == "proved")
-            {
-                0
-            } else {
-                22
-            };
-            let refinement_value = json!({
-                "name": refinement.name(),
-                "node": fsl_foundation::node_wire::node_key_to_json(
-                    &refinement.v2_emission().map_err(|_| RunCause::AnalyzeFault)?.identity,
-                )
-                    .map_err(|_| RunCause::AnalyzeFault)?,
-                "step_for_step": step_for_step,
-            });
-            Ok(RunResult {
-                exit_code,
-                value: NativeResult::analyze_document(json!({
-                    "format": "native-run-result/2",
-                    "refinement_transfer": {
-                        "refinement": refinement_value,
-                        "transfers": transfers,
-                    }
-                })),
-                outcome: None,
-                requirements: None,
-                sources: super::super::Sources::default(),
             })
-        },
-    )
+            .collect();
+        selections(Value::Array(items))
+    }
+
+    /// `resolved`'s slot identity and request item wire over `subject`.
+    fn premise(&self, resolved: ResolvedItem, subject: &SubjectSelection) -> Result<Premise> {
+        let ResolvedItem::Claim(claim) = &resolved else {
+            return Err(RunCause::AnalyzeFault);
+        };
+        let wire = claim
+            .item
+            .request_item_wire(subject)
+            .map_err(|_| RunCause::AnalyzeFault)?;
+        let item = read_premise_item(&wire).map_err(|_| RunCause::AnalyzeFault)?;
+        let identity = item.key.to_wire().map_err(|_| RunCause::AnalyzeFault)?;
+        Ok(Premise {
+            resolved,
+            key: item.key,
+            identity,
+            wire,
+        })
+    }
+
+    /// The item records `items` settle to, in order.
+    fn analyze(
+        &self,
+        package: &fsl_package::CheckedPackage,
+        binding: fsl_analyze::analyze::SubjectBinding<'_>,
+        items: Vec<ResolvedItem>,
+        limits: AnalyzeLimits,
+    ) -> Result<Vec<Value>> {
+        let mut provision = SourceProvision::default();
+        for source in std::iter::once(self.checked.source()).chain(self.checked.libraries()) {
+            provision.insert(source.reference(), source.text().as_bytes().to_vec());
+        }
+        let analyzed = analyze_document(
+            AnalyzeRun {
+                package,
+                binding,
+                provision,
+                items,
+                engines: self.settle.engines,
+                limits,
+            },
+            self.settle.negotiate,
+            self.settle.cancel,
+        )
+        .map_err(|error| match error {
+            AnalyzeDocumentError::Refused(refusal) => RunCause::AnalyzeRefused(Box::new(refusal)),
+            AnalyzeDocumentError::Fault => RunCause::AnalyzeFault,
+        })?;
+        analyzed
+            .0
+            .get("items")
+            .and_then(Value::as_array)
+            .cloned()
+            .ok_or(RunCause::AnalyzeFault)
+    }
+}
+
+fn selections(items: Value) -> Result<Vec<ItemSelection>> {
+    serde_json::from_value(items).map_err(|error| invalid("refinement_transfer", error.to_string()))
 }
 
 fn subject(
@@ -614,9 +742,13 @@ fn require_selected_model(
 }
 
 fn step_for_step_fact(refinement: &CheckedRefinement, dense: bool) -> Value {
-    let holds = refinement.is_step_for_step(dense);
-    if holds {
+    if refinement.is_step_for_step(dense) {
         return json!({"holds": true});
+    }
+    // FSpec FR-820: a dense concrete subject is not step-for-step before any
+    // row is read.
+    if dense {
+        return json!({"holds": false, "time": "dense"});
     }
     let row = refinement.steps().iter().find(|row| {
         !matches!(&row.class, StepClass::Operation(_))
@@ -626,10 +758,11 @@ fn step_for_step_fact(refinement: &CheckedRefinement, dense: bool) -> Value {
         return json!({"holds": false});
     };
     let operation = row.concrete_operation().map(|(ty, name)| {
+        let node = ty.original().node();
         format!(
             "{}::{}::{name}",
             refinement.concrete_model(),
-            ty.original().node()
+            node.rsplit('/').next().unwrap_or(node)
         )
     });
     let arm = match &row.target {
@@ -654,98 +787,98 @@ fn fairness_implies(refinement: &CheckedRefinement, needed: &FairnessConstraint)
     })
 }
 
-fn premise_value(value: &TerminalValue) -> TransferPremiseValue {
-    match value {
-        TerminalValue::Proved { certification, .. } => TransferPremiseValue::Proved(*certification),
-        TerminalValue::Refuted => TransferPremiseValue::Other("refuted"),
-        TerminalValue::Inconclusive(_) => TransferPremiseValue::Other("inconclusive"),
-        TerminalValue::Unsupported(_) => TransferPremiseValue::Other("unsupported"),
-        TerminalValue::Incomplete(_) => TransferPremiseValue::Other("incomplete"),
-        TerminalValue::Failed | TerminalValue::ToolFailed(_) => {
-            TransferPremiseValue::Other("failed")
-        }
-        TerminalValue::Tested => TransferPremiseValue::Other("tested"),
-        TerminalValue::Declined { .. } => TransferPremiseValue::Other("declined"),
-        TerminalValue::Measured(_) => TransferPremiseValue::Other("measured"),
-    }
-}
-
+/// The slot value an analyze item `record` settled: its result label, and
+/// for `proved` its certification.
 fn analyze_record(value: &Value) -> Result<TransferPremiseValue> {
-    let result = value
-        .get("record")
-        .and_then(Value::as_object)
-        .and_then(|record| record.get("result"))
-        .and_then(Value::as_str)
+    let label: ItemLabel = value
+        .pointer("/record/result")
+        .cloned()
+        .and_then(|result| serde_json::from_value(result).ok())
         .ok_or(RunCause::AnalyzeFault)?;
+    if label != ItemLabel::Proved {
+        return Ok(TransferPremiseValue::Other(label));
+    }
     let certification = value
         .pointer("/record/certification")
-        .and_then(Value::as_str);
-    Ok(match result {
-        "proved" => TransferPremiseValue::Proved(match certification {
-            Some("certified") => Certification::Certified,
-            Some("trusted") => Certification::Trusted,
-            _ => Certification::Uncertified,
-        }),
-        "refuted" => TransferPremiseValue::Other("refuted"),
-        "inconclusive" => TransferPremiseValue::Other("inconclusive"),
-        "unsupported" => TransferPremiseValue::Other("unsupported"),
-        "incomplete" => TransferPremiseValue::Other("incomplete"),
-        "failed" => TransferPremiseValue::Other("failed"),
-        "tested" => TransferPremiseValue::Other("tested"),
-        "declined" => TransferPremiseValue::Other("declined"),
-        "measured" => TransferPremiseValue::Other("measured"),
-        _ => return Err(RunCause::AnalyzeFault),
-    })
+        .cloned()
+        .and_then(|certification| serde_json::from_value(certification).ok())
+        .unwrap_or(Certification::Uncertified);
+    Ok(TransferPremiseValue::Proved(certification))
 }
 
-fn supplied_premise(
-    value: &Value,
-    expected_identity: Option<&Value>,
-    expected_subject: Option<Value>,
-    pointer: &str,
-) -> Result<TransferPremiseValue> {
-    let request = value
-        .get("request")
-        .ok_or_else(|| invalid(pointer, "premise result is missing its request item"))?;
-    let premise = read_premise_item(request).map_err(|error| {
-        invalid(
-            format!("{pointer}/request/{}", error.pointer),
-            error.to_string(),
+/// A supplied premise, admitted: its slot value and whether its item was
+/// checked over the stutter closure, which FSpec FR-820 reads from the
+/// supplied result.
+struct Supplied {
+    value: TransferPremiseValue,
+    stutter_closure: bool,
+}
+
+/// Admit the supplied premise result `value` for `expected`'s slot under
+/// FSpec FR-820 "Admission": its item is the slot's, over the slot's subject.
+/// The slot key does not fix `stutter_closure`, which the planner reads from
+/// the result.
+fn supplied_premise(value: &Value, expected: &Premise, pointer: &str) -> Result<Supplied> {
+    let refused = |member: String, message: &str| {
+        admission(member, "invalid_runtime_input", "invalid-value", message)
+    };
+    let request = value.get("request").ok_or_else(|| {
+        refused(
+            pointer.to_owned(),
+            "premise result is missing its request item",
         )
     })?;
-    let identity = premise
+    let item = read_premise_item(request).map_err(|fault| {
+        admission(
+            format!("{pointer}/request{}", fault.pointer),
+            fault.cause.code(),
+            fault.cause.as_str(),
+            &fault.to_string(),
+        )
+    })?;
+    let stutter_closure = item
         .key
-        .to_wire()
-        .map_err(|_| invalid(pointer, "premise item key cannot be written"))?;
-    if expected_identity.is_some_and(|expected| expected != &identity) {
-        return Err(invalid(
-            pointer,
+        .temporal
+        .as_ref()
+        .is_some_and(|temporal| temporal.stutter_closure);
+    let slot_key = |mut key: ItemKey| {
+        if let Some(temporal) = key.temporal.as_mut() {
+            temporal.stutter_closure = false;
+        }
+        key
+    };
+    if slot_key(item.key) != slot_key(expected.key.clone()) {
+        return Err(refused(
+            pointer.to_owned(),
             "premise item identity does not match its slot",
         ));
     }
-    if let Some(subject) = expected_subject {
-        let got = request
-            .pointer("/temporal/subject")
-            .ok_or_else(|| invalid(pointer, "premise item is missing its subject"))?;
-        if got != &subject {
-            return Err(invalid(
-                pointer,
-                "premise item subject does not match the selected subject",
-            ));
-        }
+    if request.pointer("/temporal/subject") != expected.wire.pointer("/temporal/subject") {
+        return Err(refused(
+            pointer.to_owned(),
+            "premise item subject does not match the selected subject",
+        ));
     }
-    let result = value
-        .get("result")
-        .ok_or_else(|| invalid(pointer, "premise result is missing its result entry"))?;
+    let result = value.get("result").ok_or_else(|| {
+        refused(
+            pointer.to_owned(),
+            "premise result is missing its result entry",
+        )
+    })?;
     let entry = read_result_entry(result, 0, EntryOrigin::FirstParty)
-        .map_err(|error| {
-            invalid(
-                format!("{pointer}/result/{}", error.pointer),
-                error.to_string(),
+        .map_err(|fault| {
+            admission(
+                format!("{pointer}/result{}", fault.pointer),
+                fault.cause.code(),
+                fault.cause.as_str(),
+                &fault.to_string(),
             )
         })?
         .read_from_bytes();
-    Ok(premise_value(entry.record.value()))
+    Ok(Supplied {
+        value: TransferPremiseValue::of(entry.record.value()),
+        stutter_closure,
+    })
 }
 
 fn invalid(member: impl Into<String>, reason: impl Into<String>) -> RunCause {
@@ -755,29 +888,80 @@ fn invalid(member: impl Into<String>, reason: impl Into<String>) -> RunCause {
     }
 }
 
+/// An `admit`-stage refusal at `member` with FR-272's or FR-106's `code`.
+fn admission(member: String, code: &str, cause: &'static str, message: &str) -> RunCause {
+    RunCause::TransferSelection {
+        stage: "admit",
+        member,
+        cause,
+        code: Code::from_code(code).unwrap_or(Code::InvalidRuntimeInput),
+        message: message.to_owned(),
+        details: Map::new(),
+    }
+}
+
+/// The kind of declaration `name` names in `graph` when it is no temporal
+/// clause, for FR-1031's family refusal.
+fn declaration_kind(graph: &CheckedGraph, name: &str) -> Option<&'static str> {
+    if graph.state_clause(name).is_some() {
+        Some("state clause")
+    } else if graph.protocol(name).is_some() {
+        Some("protocol clause")
+    } else if graph
+        .hyper_clauses()
+        .iter()
+        .any(|clause| clause.name() == name)
+        || graph
+            .finite_hyper_clauses()
+            .iter()
+            .any(|clause| clause.name() == name)
+    {
+        Some("hyper clause")
+    } else {
+        graph
+            .temporal_clauses()
+            .iter()
+            .any(|node| node.clause().name() == name)
+            .then_some("temporal clause")
+    }
+}
+
 fn missing_name(member: &str, name: &str) -> RunCause {
     RunCause::TransferSelection {
+        stage: "select",
         member: member.to_owned(),
         cause: "missing-name",
-        code: fsl_foundation::Code::MissingDeclaration,
+        code: Code::MissingDeclaration,
         message: format!("no declaration named {name}"),
+        details: Map::new(),
     }
 }
 
 fn model_mismatch(member: &str, declared: &str, given: &str) -> RunCause {
     RunCause::TransferSelection {
+        stage: "select",
         member: member.to_owned(),
         cause: "invalid-value",
-        code: fsl_foundation::Code::InvalidRuntimeInput,
+        code: Code::InvalidRuntimeInput,
         message: format!("selected model is {given}, but refinement declares {declared}"),
+        details: Map::from_iter([
+            ("declared".to_owned(), json!(declared)),
+            ("given".to_owned(), json!(given)),
+        ]),
     }
 }
 
-fn type_mismatch(member: &str, kind: &str, profile: &str) -> RunCause {
+fn type_mismatch(member: &str, kind: &str, profile: Option<&str>) -> RunCause {
+    let message = match profile {
+        Some(profile) => format!("{kind} with profile {profile} is not an infinite-trace clause"),
+        None => format!("{kind} is not an infinite-trace temporal clause"),
+    };
     RunCause::TransferSelection {
+        stage: "select",
         member: member.to_owned(),
         cause: "type-mismatch",
-        code: fsl_foundation::Code::IllTyped,
-        message: format!("{kind} declaration has profile {profile}"),
+        code: Code::IllTyped,
+        message,
+        details: Map::new(),
     }
 }

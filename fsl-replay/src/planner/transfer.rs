@@ -4,18 +4,21 @@
 
 use filament_exact::NodeKey;
 use filament_semantic_value::fairness::FairnessConstraint;
-use fsl_foundation::node_wire::{node_key_from_json, node_key_to_json};
+use fsl_foundation::node_wire::node_key_to_json;
 use serde_json::{json, Value};
 
 use super::{
-    json::{array, check_members, object, parse_strict, require, string, Cause, Fault, Parsed},
-    request::{read_premise_parts, PremiseResult, ReadLimits, RequestRefusal},
-    settle::fairness_value,
+    settle::{fairness_value, fold_certifications, label_str},
     Budget, PlannerCause, PlannerValue,
 };
+use crate::outcome::ItemLabel;
 use crate::proof_result::{
     Certification, InconclusiveCause, PremiseOutcome, TerminalValue, TransferReason,
 };
+
+/// The work one transfer spends: one unit for each of its two premise slots
+/// (FSpec FR-492 `limits.max_work` counts one unit per slot read).
+const TRANSFER_WORK: u64 = 2;
 
 /// Checked package facts against which a transfer settlement request is
 /// admitted.
@@ -50,8 +53,21 @@ pub struct TransferFacts {
 pub enum TransferPremiseValue {
     /// A proved result, retaining its in-process or byte-reader certification.
     Proved(Certification),
-    /// Any result that is not proved, rendered with its FR-331 spelling.
-    Other(&'static str),
+    /// Any result that is not proved, by its result label.
+    Other(ItemLabel),
+}
+
+impl TransferPremiseValue {
+    /// The slot value a settled premise `value` gives: `proved` keeps its
+    /// certification, every other label is the premise's unproved result.
+    pub fn of(value: &TerminalValue) -> Self {
+        match (ItemLabel::of(value), value) {
+            (ItemLabel::Proved, TerminalValue::Proved { certification, .. }) => {
+                Self::Proved(*certification)
+            }
+            (label, _) => Self::Other(label),
+        }
+    }
 }
 
 /// The two admitted premise slots and checked transfer facts.
@@ -103,137 +119,6 @@ impl TransferSettlement {
     }
 }
 
-/// Read and admit one transfer request against its checked declaration facts.
-pub fn read_transfer_settlement_request(
-    facts: &TransferFacts,
-    bytes: &[u8],
-    limits: &ReadLimits,
-) -> Result<(TransferSettlement, Budget), RequestRefusal> {
-    if u64::try_from(bytes.len()).unwrap_or(u64::MAX) > limits.input_bytes {
-        return Err(Fault::new(Cause::InputBytesExceeded, "").into());
-    }
-    let document = match parse_strict(bytes) {
-        Parsed::Document(document) => document,
-        Parsed::Malformed => return Err(Fault::new(Cause::MalformedJson, "").into()),
-        Parsed::Duplicate(pointer) => {
-            return Err(Fault::new(Cause::DuplicateMember, pointer).into());
-        }
-    };
-    let top = object(&document, "")?;
-    check_members(
-        top,
-        "",
-        &["format", "package", "item", "slots"],
-        &["limits"],
-    )?;
-    if string(require(top, "format", "")?, "/format")? != super::FORMAT {
-        return Err(Fault::invalid("/format".to_owned()).into());
-    }
-    if string(require(top, "package", "")?, "/package")? != facts.package {
-        return Err(Fault::invalid("/package".to_owned()).into());
-    }
-    let item = object(require(top, "item", "")?, "/item")?;
-    check_members(item, "/item", &["role", "node", "clause", "subject"], &[])?;
-    if string(require(item, "role", "/item")?, "/item/role")? != "transfer" {
-        return Err(Fault::invalid("/item/role".to_owned()).into());
-    }
-    let node = node_key_from_json(require(item, "node", "/item")?)
-        .map_err(|_| Fault::invalid("/item/node".to_owned()))?;
-    if node != facts.refinement {
-        return Err(Fault::invalid("/item/node".to_owned()).into());
-    }
-    let clause = node_key_from_json(require(item, "clause", "/item")?)
-        .map_err(|_| Fault::invalid("/item/clause".to_owned()))?;
-    if clause != facts.clause {
-        return Err(Fault::invalid("/item/clause".to_owned()).into());
-    }
-    if require(item, "subject", "/item")? != &facts.subject {
-        return Err(Fault::invalid("/item/subject".to_owned()).into());
-    }
-    let budget = read_budget(top)?;
-    let slots = array(require(top, "slots", "")?, "/slots")?;
-    if slots.len() != 2 {
-        return Err(Fault::invalid("/slots".to_owned()).into());
-    }
-    let identities = [&facts.refinement_identity, &facts.abstract_claim_identity];
-    let roles = ["refinement", "abstract-claim"];
-    let mut premises = Vec::with_capacity(2);
-    for index in 0..2 {
-        let pointer = format!("/slots/{index}");
-        let slot = object(&slots[index], &pointer)?;
-        check_members(slot, &pointer, &["role", "identity", "result"], &[])?;
-        if string(require(slot, "role", &pointer)?, &format!("{pointer}/role"))? != roles[index] {
-            return Err(Fault::invalid(format!("{pointer}/role")).into());
-        }
-        let identity = require(slot, "identity", &pointer)?;
-        object(identity, &format!("{pointer}/identity"))?;
-        if identity != identities[index] {
-            return Err(Fault::invalid(format!("{pointer}/identity")).into());
-        }
-        let result_pointer = format!("{pointer}/result");
-        let result = require(slot, "result", &pointer)?;
-        object(result, &result_pointer)?;
-        let (premise_item, entry) = read_premise_parts(result, &result_pointer)?;
-        let read_identity = premise_item
-            .key
-            .to_wire()
-            .map_err(|_| Fault::invalid(format!("{result_pointer}/request")))?;
-        if read_identity != *identity {
-            return Err(Fault::invalid(format!("{result_pointer}/request")).into());
-        }
-        let result = PremiseResult::from_entry(premise_item, entry);
-        premises.push((identity.clone(), premise_value(&result)?));
-    }
-    let [first, second] = premises
-        .try_into()
-        .map_err(|_| Fault::invalid("/slots".to_owned()))?;
-    Ok((
-        TransferSettlement {
-            refinement: facts.refinement.clone(),
-            clause: facts.clause.clone(),
-            subject: facts.subject.clone(),
-            step_for_step: facts.step_for_step.clone(),
-            fragment_operator: facts.fragment_operator.clone(),
-            fairness_implied: facts.fairness_implied,
-            unimplied_constraint: facts.unimplied_constraint.clone(),
-            liveness: facts.liveness,
-            stutter_closure: second
-                .0
-                .pointer("/temporal/stutter_closure")
-                .and_then(Value::as_bool)
-                .unwrap_or(false),
-            premises: [first, second],
-        },
-        budget,
-    ))
-}
-
-fn read_budget(top: &serde_json::Map<String, Value>) -> Result<Budget, Fault> {
-    let Some(value) = top.get("limits") else {
-        return Ok(Budget::default());
-    };
-    let limits = object(value, "/limits")?;
-    check_members(limits, "/limits", &["max_work"], &[])?;
-    let max_work = super::json::count(require(limits, "max_work", "/limits")?, "/limits/max_work")?;
-    Ok(Budget { max_work })
-}
-
-fn premise_value(result: &PremiseResult) -> Result<TransferPremiseValue, Fault> {
-    Ok(match result.record.value() {
-        TerminalValue::Proved { certification, .. } => TransferPremiseValue::Proved(*certification),
-        TerminalValue::Refuted => TransferPremiseValue::Other("refuted"),
-        TerminalValue::Inconclusive(_) => TransferPremiseValue::Other("inconclusive"),
-        TerminalValue::Unsupported(_) => TransferPremiseValue::Other("unsupported"),
-        TerminalValue::Incomplete(_) => TransferPremiseValue::Other("incomplete"),
-        TerminalValue::Failed | TerminalValue::ToolFailed(_) => {
-            TransferPremiseValue::Other("failed")
-        }
-        TerminalValue::Tested => TransferPremiseValue::Other("tested"),
-        TerminalValue::Declined { .. } => TransferPremiseValue::Other("declined"),
-        TerminalValue::Measured(_) => TransferPremiseValue::Other("measured"),
-    })
-}
-
 /// Settle an admitted transfer item using the FR-820 decision order.
 pub fn settle_transfer(
     request: &TransferSettlement,
@@ -245,7 +130,12 @@ pub fn settle_transfer(
         .get("holds")
         .and_then(Value::as_bool)
         .unwrap_or(false);
-    let (value, cause, certification) = if budget.max_work < 2 {
+    let fragment = if step_for_step_holds {
+        None
+    } else {
+        request.fragment_operator.clone()
+    };
+    let (value, cause, certification) = if budget.max_work < TRANSFER_WORK {
         (
             PlannerValue::Incomplete,
             Some(PlannerCause::WorkLimit {
@@ -253,10 +143,7 @@ pub fn settle_transfer(
             }),
             None,
         )
-    } else if !step_for_step_holds && request.fragment_operator.is_some() {
-        let Some(operator) = request.fragment_operator.clone() else {
-            return Err(super::KeyWireError);
-        };
+    } else if let Some(operator) = fragment {
         (
             PlannerValue::Inconclusive,
             Some(PlannerCause::Inconclusive(
@@ -305,38 +192,18 @@ pub fn settle_transfer(
             Some(PlannerCause::Inconclusive(
                 InconclusiveCause::PremiseUnproved {
                     premise: u64::try_from(slot).unwrap_or(u64::MAX),
-                    result: PremiseOutcome::Label(match result {
-                        "refuted" => crate::outcome::ItemLabel::Refuted,
-                        "inconclusive" => crate::outcome::ItemLabel::Inconclusive,
-                        "unsupported" => crate::outcome::ItemLabel::Unsupported,
-                        "incomplete" => crate::outcome::ItemLabel::Incomplete,
-                        "failed" => crate::outcome::ItemLabel::Failed,
-                        "tested" => crate::outcome::ItemLabel::Tested,
-                        "measured" => crate::outcome::ItemLabel::Measured,
-                        "declined" => crate::outcome::ItemLabel::Declined,
-                        _ => return Err(super::KeyWireError),
-                    }),
+                    result: PremiseOutcome::Label(result),
                 },
             )),
             None,
         )
     } else {
-        let certifications = request
-            .premises
-            .iter()
-            .filter_map(|(_, premise)| match premise {
+        let certification = fold_certifications(request.premises.iter().filter_map(
+            |(_, premise)| match premise {
                 TransferPremiseValue::Proved(certification) => Some(*certification),
                 TransferPremiseValue::Other(_) => None,
-            });
-        let certification = certifications.fold(Certification::Certified, |current, next| {
-            match (current, next) {
-                (Certification::Trusted, _) | (_, Certification::Trusted) => Certification::Trusted,
-                (Certification::Uncertified, _) | (_, Certification::Uncertified) => {
-                    Certification::Uncertified
-                }
-                _ => Certification::Certified,
-            }
-        });
+            },
+        ));
         (PlannerValue::Proved, None, Some(certification))
     };
 
@@ -350,7 +217,9 @@ pub fn settle_transfer(
                 TransferPremiseValue::Proved(certification) => json!({
                     "slot": slot, "value": "proved", "certification": certification.as_str()
                 }),
-                TransferPremiseValue::Other(value) => json!({"slot": slot, "value": value}),
+                TransferPremiseValue::Other(label) => {
+                    json!({"slot": slot, "value": label_str(*label)})
+                }
             }
         }).collect::<Vec<_>>(),
         "transfer": transfer,

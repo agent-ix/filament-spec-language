@@ -70,7 +70,4 @@ pub use settle::{
     settle, Budget, Conclusion, ConclusionExtent, PlannerCause, PlannerResult, PlannerValue,
     SettleRefusal, SlotOutcome, SlotValue,
 };
-pub use transfer::{
-    read_transfer_settlement_request, settle_transfer, TransferFacts, TransferPremiseValue,
-    TransferSettlement,
-};
+pub use transfer::{settle_transfer, TransferFacts, TransferPremiseValue, TransferSettlement};

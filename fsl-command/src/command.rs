@@ -845,8 +845,10 @@ pub enum RunCause {
     },
     /// FR-1031: a native-run transfer declaration failed after compilation
     /// while names, relationships, and clause families were being selected.
-    #[error("refinement transfer selection refused at {member}: {message}")]
+    #[error("refinement transfer {stage} refused at {member}: {message}")]
     TransferSelection {
+        /// The spine stage the refusal belongs to: `select` or `admit`.
+        stage: &'static str,
         /// The selected request member.
         member: String,
         /// The stable selection cause.
@@ -855,6 +857,8 @@ pub enum RunCause {
         code: Code,
         /// Why this member was refused.
         message: String,
+        /// The refusal's `details` members.
+        details: serde_json::Map<String, serde_json::Value>,
     },
     /// Typed output serialization failed.
     #[error("cannot serialize native result: {0}")]
@@ -3872,6 +3876,8 @@ fn prepare_run_bytes_with_sources(
     admitted_sources: &mut crate::Sources,
 ) -> Result<PreparedRun> {
     let request: wire::Request = request_with_overrides(bytes, overrides)?;
+    // FR-1031: the first refusal in table order is the selection conflict.
+    refuse_transfer_selection_conflict(&request)?;
     // FR-100, FR-1039: a selected checked package runs from its own records,
     // refusing every member that would restate them before any file is read.
     if let Some(package) = &request.package {
@@ -3916,28 +3922,6 @@ fn prepare_run_bytes_with_sources(
     }
     if let Some(transfer) = &request.refinement_transfer {
         validate_transfer_member(&request, transfer)?;
-        let selections = [
-            ("call", request.call.is_some()),
-            ("clause", request.clause.is_some()),
-            ("items", request.items.is_some()),
-            ("tl_lowering", request.tl_lowering.is_some()),
-            ("model_based_test", request.model_based_test.is_some()),
-            ("verification_plan", request.verification_plan.is_some()),
-            ("synthesis", request.synthesis.is_some()),
-        ];
-        let present: Vec<_> = selections
-            .into_iter()
-            .filter_map(|(name, is_present)| is_present.then_some(name))
-            .collect();
-        if !present.is_empty() {
-            return Err(RunCause::ClauseRequest {
-                member: "refinement_transfer".to_owned(),
-                reason: format!(
-                    "refinement_transfer is exclusive with {}",
-                    present.join(", ")
-                ),
-            });
-        }
         let mut intake = intake_with_bytes(
             directory,
             FileCounts {
@@ -4025,6 +4009,44 @@ fn prepare_run_bytes_with_sources(
     })();
     *admitted_sources = crate::Sources::from_sources(intake.sources.iter().cloned());
     prepared
+}
+
+/// FR-1031's first row: `refinement_transfer` beside any other selection
+/// member refuses at `request`, naming every selection member present.
+fn refuse_transfer_selection_conflict(request: &wire::Request) -> Result<()> {
+    if request.refinement_transfer.is_none() {
+        return Ok(());
+    }
+    let selections = [
+        ("package", request.package.is_some()),
+        ("call", request.call.is_some()),
+        ("clause", request.clause.is_some()),
+        ("items", request.items.is_some()),
+        ("tl_lowering", request.tl_lowering.is_some()),
+        ("model_based_test", request.model_based_test.is_some()),
+        ("verification_plan", request.verification_plan.is_some()),
+        ("synthesis", request.synthesis.is_some()),
+    ];
+    let present: Vec<_> = selections
+        .into_iter()
+        .filter_map(|(name, is_present)| is_present.then_some(name))
+        .collect();
+    if present.is_empty() {
+        return Ok(());
+    }
+    Err(transfer_conflict(&present))
+}
+
+/// The refusal of `refinement_transfer` beside the selection members
+/// `present`.
+fn transfer_conflict(present: &[&str]) -> RunCause {
+    RunCause::ClauseRequest {
+        member: "refinement_transfer".to_owned(),
+        reason: format!(
+            "refinement_transfer is exclusive with {}",
+            present.join(", ")
+        ),
+    }
 }
 
 fn validate_transfer_member(

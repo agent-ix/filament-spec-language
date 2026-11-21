@@ -137,6 +137,10 @@ pub(super) fn run_bytes(
     let Some(member) = body.remove("export") else {
         return Ok(None);
     };
+    // FR-1031: an export beside a transfer is a selection conflict.
+    if body.contains_key("refinement_transfer") {
+        return Err(super::transfer_conflict(&["export"]));
+    }
     let package_selection = body.get("package").cloned();
     let given = overrides
         .limits
