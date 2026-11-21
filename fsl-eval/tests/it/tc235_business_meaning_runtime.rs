@@ -1492,6 +1492,7 @@ fn process_observations(
         post,
         self_object,
         self_population: None,
+        value_origins: Default::default(),
         invocation: None,
         self_kind: fsl_semantics::model::observation::SelfKind::Object,
         receiver_pre: None,

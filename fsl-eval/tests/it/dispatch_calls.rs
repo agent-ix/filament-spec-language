@@ -2553,6 +2553,7 @@ fn d01_runtime_dispatches_d_and_c_receivers_and_observes_the_work_limit() {
             post: None,
             self_object: receiver,
             self_population: None,
+            value_origins: Default::default(),
             invocation: None,
             self_kind: fsl_semantics::model::observation::SelfKind::Object,
             receiver_pre: None,
