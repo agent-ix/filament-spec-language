@@ -246,3 +246,79 @@ synthesis Reach using v grammar Config::ConfigVersion domain Lengths satisfies {
         );
     }
 }
+
+/// Mixed receiver declarations use an existing sealed source union whose
+/// members retain their exact reference payload type and settled identity.
+#[test]
+#[trace("FSpec-FR-800")]
+fn mixed_operation_receivers_use_a_sealed_typed_union() {
+    use filament_exact::{Presence, ValueType};
+    use filament_semantic_value::declaration::CompositeShape;
+    let model = SHOP.replace(
+        "population orders",
+        "object Other { operation idle(): Boolean; }\npopulation orders",
+    );
+    let checked = check_model(
+        &model,
+        "Int[1,1]",
+        "",
+        "forall(s in Reach.steps: s.receiver = s.receiver and present(s.outcome_ordinal))",
+    )
+    .expect("the receiver and optional ordinal are source-readable");
+    let plan = checked.plan().unwrap();
+    let shape = plan.shape();
+    let handle = shape
+        .receiver_union
+        .as_ref()
+        .expect("distinct receiver types use a union");
+    let CompositeShape::Union(members) = plan
+        .scope()
+        .types()
+        .composite(handle.clone())
+        .unwrap()
+        .shape()
+    else {
+        panic!("receiver union");
+    };
+    assert_eq!(members.len(), 2);
+    for (member, (expected_type, expected_case)) in members.iter().zip(&shape.receiver_cases) {
+        assert_eq!(member.identifier(), expected_case.as_str());
+        assert_eq!(
+            member.positions(),
+            &[ValueType::Reference(expected_type.clone())]
+        );
+        let sealed = member
+            .member()
+            .expect("a generated receiver case is sealed");
+        assert_ne!(
+            sealed.declaration(),
+            handle,
+            "private handles are not member identities"
+        );
+    }
+    assert_eq!(
+        members[0].member().unwrap().declaration(),
+        members[1].member().unwrap().declaration()
+    );
+    let CompositeShape::Record(fields) = plan
+        .scope()
+        .types()
+        .composite(shape.step.clone())
+        .unwrap()
+        .shape()
+    else {
+        panic!("step record");
+    };
+    let receiver = fields
+        .iter()
+        .find(|field| field.name() == "receiver")
+        .unwrap();
+    assert_eq!(receiver.value_type(), &ValueType::Composite(handle.clone()));
+    assert_eq!(receiver.presence(), Presence::Required);
+    let ordinal = fields
+        .iter()
+        .find(|field| field.name() == "outcome_ordinal")
+        .unwrap();
+    assert_eq!(ordinal.value_type(), &ValueType::Integer);
+    assert_eq!(ordinal.presence(), Presence::Optional);
+}

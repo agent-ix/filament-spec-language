@@ -1596,6 +1596,26 @@ impl Scope {
         Some(scope)
     }
 
+    /// Seal one generated plan union with the actual lowered declaration id.
+    pub(crate) fn seal_plan_union(&mut self, handle: NodeKey, settled: NodeKey) -> Option<()> {
+        let CompositeShape::Union(members) = self.types.composite(handle.clone())?.shape() else {
+            return None;
+        };
+        let bindings = members
+            .iter()
+            .map(|member| {
+                filament_exact::UnionMember::from_admitted(
+                    settled.clone(),
+                    member.identifier().to_owned(),
+                )
+            })
+            .collect::<Result<Vec<_>, _>>()
+            .ok()?;
+        self.types
+            .seal_union_verified(handle, settled, bindings)
+            .ok()
+    }
+
     /// This scope with the object types the admitted models' `symmetric`
     /// populations cover (FR-150).
     pub(crate) fn with_symmetric_objects(

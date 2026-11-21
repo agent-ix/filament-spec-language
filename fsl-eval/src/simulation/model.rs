@@ -1731,6 +1731,13 @@ impl<'a> ModelSystem<'a> {
             .collect()
     }
 
+    /// Whether the current native evaluator can enumerate a numeric result
+    /// type with its active bounds. Source planning uses this capability
+    /// before search rather than treating a missing domain as no outcomes.
+    pub fn has_native_result_domain(&self, value_type: &ValueType) -> bool {
+        self.value_domain(value_type, &[]).is_some()
+    }
+
     /// The active FR-190 bounded domain for one value type. Without a
     /// `max_value_bits` request, this is the ordinary FR-120 finite domain.
     pub(in crate::simulation::model) fn value_domain(

@@ -16,7 +16,7 @@ use std::collections::BTreeMap;
 use filament_checked::node::{NodeKind, Visit};
 use filament_exact::{
     from_admitted, from_admitted_slots, CollectionKind, CollectionType, EnumMember, FieldValue,
-    Integer, Outcome, Rational, ScalarLimits, Value, ValueType,
+    Integer, Outcome, Rational, ScalarLimits, UnionValue, Value, ValueType,
 };
 use filament_semantic_value::declaration::CompositeShape;
 use filament_semantic_value::model_transition::ModelTransition;
@@ -28,7 +28,9 @@ use fsl_semantics::check::{
 };
 use fsl_semantics::model::state::StateObject;
 
-use crate::plan_search::{Direction, MonitorStep, ObjectiveKind, PlanRules, PlanView, RuleStop};
+use crate::plan_search::{
+    Direction, MonitorStep, ObjectiveKind, PlanRules, PlanStep, PlanView, RuleStop,
+};
 
 /// A numeric objective family whose planning ordering and certificate
 /// implementation is not available in this source adapter.
@@ -209,6 +211,27 @@ impl<'a> SourcePlan<'a> {
             .into_iter()
             .flatten()
             .collect();
+        for operation in &shape.operations {
+            let declaration = plan
+                .scope()
+                .operations()
+                .declared_by(operation.declaring.clone())
+                .iter()
+                .find(|declaration| declaration.name() == operation.name)
+                .ok_or_else(|| PlanSourceError::UnknownOperation(operation.name.clone()))?;
+            if let Some(result) = declaration.result() {
+                if matches!(
+                    result,
+                    ValueType::Float(_) | ValueType::Rational(_) | ValueType::Decimal(_)
+                ) && !system.has_native_result_domain(result)
+                {
+                    return Err(PlanSourceError::UnsupportedForm {
+                        form: format!("operation `{}` result type {result:?} (native result domain is not enumerable)", operation.name),
+                        location: synthesis.satisfies().root().location().clone(),
+                    });
+                }
+            }
+        }
         let native_operations = shape
             .operations
             .iter()
@@ -375,7 +398,7 @@ impl<'a> SourcePlan<'a> {
 
     fn step_value(
         &self,
-        step: &ModelTransition,
+        step: &PlanStep,
         index: usize,
         before: Value,
         after: Value,
@@ -402,16 +425,59 @@ impl<'a> SourcePlan<'a> {
             })
             .collect::<Vec<_>>();
         let arguments = from_admitted_slots(shape.arguments.clone(), slots.into_boxed_slice());
+        let receiver = if shape.receiver_type.is_some() {
+            let reference = self.receivers.get(step.receiver()?)?;
+            if !self
+                .plan
+                .scope()
+                .types()
+                .conforms(reference.object_type().clone(), operation.declaring.clone())
+            {
+                return None;
+            }
+            let value = Value::Reference(reference.clone());
+            if let Some(handle) = &shape.receiver_union {
+                let (_, case) = shape
+                    .receiver_cases
+                    .iter()
+                    .find(|(ty, _)| ty == &operation.declaring)?;
+                let CompositeShape::Union(members) =
+                    self.plan.scope().types().composite(handle.clone())?.shape()
+                else {
+                    return None;
+                };
+                let member = members
+                    .iter()
+                    .find(|member| member.identifier() == case.as_str())?
+                    .member()?
+                    .clone();
+                Some(UnionValue::from_admitted(member, vec![value]))
+            } else {
+                return None;
+            }
+        } else {
+            if step.receiver().is_some() {
+                return None;
+            }
+            None
+        };
+        let mut step_slots = vec![
+            FieldValue::Present(Value::Integer(Integer::from(i64::try_from(index).ok()?))),
+            FieldValue::Present(Value::Enum(EnumMember::new(member.variant(), rank))),
+            step.outcome_ordinal()
+                .map_or(FieldValue::Absent, |ordinal| {
+                    FieldValue::Present(Value::Integer(Integer::from(ordinal)))
+                }),
+            FieldValue::Present(arguments),
+            FieldValue::Present(before),
+            FieldValue::Present(after),
+        ];
+        if let Some(receiver) = receiver {
+            step_slots.insert(2, FieldValue::Present(receiver));
+        }
         Some(from_admitted_slots(
             shape.step.clone(),
-            vec![
-                FieldValue::Present(Value::Integer(Integer::from(i64::try_from(index).ok()?))),
-                FieldValue::Present(Value::Enum(EnumMember::new(member.variant(), rank))),
-                FieldValue::Present(arguments),
-                FieldValue::Present(before),
-                FieldValue::Present(after),
-            ]
-            .into_boxed_slice(),
+            step_slots.into_boxed_slice(),
         ))
     }
 

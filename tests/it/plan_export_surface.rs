@@ -2490,6 +2490,7 @@ object ConfigVersion {
   parent: ConfigVersion?;
   operation assign(amount: Int[0,3], accepted: Boolean): Boolean modifies self.versionNumber;
 }
+object Other { operation idle(): Boolean; }
 population config_history: ConfigVersion;
 "#;
     let directory = tempfile::tempdir().unwrap();
@@ -2515,6 +2516,8 @@ type Lengths = Int[1,1];
 synthesis Reach using v grammar Config::ConfigVersion domain Lengths satisfies {
   Reach.length = 1 and forall(s in Reach.steps:
     s.index = 0 and s.operation = Config::Op::assign
+    and s.receiver = s.receiver
+    and present(s.outcome_ordinal) and value(s.outcome_ordinal) = 0
     and present(s.arguments.amount) and value(s.arguments.amount) = 3
     and present(s.arguments.accepted) and value(s.arguments.accepted)
     and s.before.versionNumber = 1 and s.after.versionNumber = 3)
@@ -2834,4 +2837,77 @@ synthesis Reach using v grammar Config::ConfigVersion domain Lengths satisfies {
     assert_eq!(outcome["explored"]["states"], 1, "{value}");
     assert_eq!(outcome["explored"]["work"], 1, "{value}");
     assert!(outcome["plan"].is_null(), "{value}");
+}
+
+/// Native result-domain capability is checked before a search budget can
+/// produce an incomplete or infeasible verdict for a non-enumerable family.
+#[test]
+#[trace("FR-1013")]
+fn unsupported_native_result_domains_refuse_before_plan_search() {
+    // This is an authored SemanticIR source fixture, built from the real
+    // spine document. Native model-unit aliases currently cannot declare
+    // Rational/Decimal policies, so no compiler output is patched here.
+    for family in ["Float", "Rational", "Decimal"] {
+        let directory = tempfile::tempdir().unwrap();
+        crate::support::plan_model::write(directory.path());
+        let mut model: Value = serde_json::from_slice(include_bytes!(
+            "../../examples/config-version/model.semantic-ir.json"
+        ))
+        .unwrap();
+        let result_ref = if family == "Float" {
+            "ix://filament/native/Float32".to_owned()
+        } else {
+            let identity = "ix://example/config-version/Reply";
+            let origin = json!({"generated":{"generatorIdentity":identity,"generatorVersion":"1.0.0","inputIdentities":[identity]}});
+            let constraints = if family == "Rational" {
+                [("minNumerator",0), ("maxNumerator",1), ("minDenominator",1), ("maxDenominator",2)].into_iter().map(|(keyword, value)| json!({
+                    "identity":format!("{identity}/constraints/{keyword}"), "keyword":keyword,
+                    "operands":{"value":value}, "appliesTo":identity, "diagnosticCode":format!("bound.{keyword}"), "origin":origin.clone()
+                })).collect::<Vec<_>>()
+            } else {
+                Vec::new()
+            };
+            let mut declaration = json!({"identity":identity,"displayName":"Reply", "kind":{"module":"example/config-version","name":"value_type"}, "roles":[], "origin":origin, "extensions":[], "unknownPolicy":"reject", "scalar":family.to_ascii_lowercase(), "constraints":constraints});
+            if family == "Decimal" {
+                declaration["decimal"] = json!({"precision":2,"scale":1});
+            }
+            model["types"].as_array_mut().unwrap().push(declaration);
+            identity.to_owned()
+        };
+        let owner = model["types"]
+            .as_array_mut()
+            .unwrap()
+            .iter_mut()
+            .find(|node| node["identity"] == "ix://example/config-version/ConfigVersion")
+            .unwrap();
+        owner["operations"][0]["returns"]["typeRef"] = json!(result_ref);
+        std::fs::write(
+            directory
+                .path()
+                .join("numeric-result-model.semantic-ir.json"),
+            serde_json::to_vec(&model).unwrap(),
+        )
+        .unwrap();
+        let unit = r#"language "ix:native" edition "1-draft";
+profile v = "filament.temporal.infinite-trace/v1";
+model Config = "example/config-version";
+type Lengths = Int[1,1];
+synthesis Reach using v grammar Config::ConfigVersion domain Lengths satisfies { true };
+"#;
+        let (exit, value) = plan_in(
+            directory.path(),
+            unit,
+            "numeric-result-model.semantic-ir.json",
+            "planning-initial.json",
+            json!({"limits":{"max_work":1}}),
+        );
+        assert_eq!(exit, 21, "{value}");
+        assert_eq!(value["code"], "unsupported_construct", "{value}");
+        assert_eq!(value["cause"], "not-yet-implemented", "{value}");
+        names(&value, "attemptUpdate");
+        names(&value, family);
+        names(&value, "result");
+        assert_eq!(value["details"]["path"], "unit.native", "{value}");
+        assert!(value.get("synthesis").is_none(), "{value}");
+    }
 }

@@ -3220,6 +3220,8 @@ impl PackageDeclarations {
             &self.source,
             &self.source_owners,
             &self.package_name,
+            &self.models,
+            &dispatch_tables,
         )?;
         let mut seen_operations = std::collections::BTreeSet::new();
         for operation in &scope.dispatch_operations {

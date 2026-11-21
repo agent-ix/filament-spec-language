@@ -154,6 +154,8 @@ pub(crate) fn check_forms(
         fsl_foundation::source::provenance::RawSourceRef,
     >,
     package_name: &str,
+    models: &[super::lowering::AdmittedModel],
+    dispatch_tables: &[super::DispatchTable],
 ) -> Result<Vec<CheckedSynthesis>, Vec<CheckRefusal>> {
     let mut checked = Vec::with_capacity(forms.len());
     for (index, form) in forms.iter().enumerate() {
@@ -178,7 +180,7 @@ pub(crate) fn check_forms(
         // FSpec FR-800: a grammar that is a model object type selects plan
         // synthesis, whose candidate is the plan and whose domain is the
         // plan lengths, never negative.
-        let plan = match &grammar {
+        let mut plan = match &grammar {
             ValueType::Reference(object) => {
                 if let Some(component) = first_unbounded_component(scope.types(), &domain) {
                     return Err(vec![CheckRefusal {
@@ -212,6 +214,52 @@ pub(crate) fn check_forms(
             }
             _ => None,
         };
+        if let Some(plan) = &mut plan {
+            if let Some(handle) = plan.shape.receiver_union.clone() {
+                // Use the same source ownership, model correspondence and
+                // lowering path as final emission. FR441 binds the member to
+                // this settled structural id, never the private plan handle.
+                let owner = super::node_key::SourceOwner::from(source);
+                let owners = source_owners
+                    .iter()
+                    .map(|(name, source)| {
+                        (name.clone(), super::node_key::SourceOwner::from(source))
+                    })
+                    .collect();
+                let mut occurrences = super::family::OccurrenceMap::default();
+                let mut meter = filament_exact::Meter::new(filament_exact::ScalarLimits::default());
+                let mut sealing = super::lowering::Lowering::new_with_source_owners(
+                    &plan.scope,
+                    &owner,
+                    &owners,
+                    models,
+                    dispatch_tables,
+                    plan.scope.types().units().clone(),
+                    None,
+                    0,
+                    &mut occurrences,
+                    &mut meter,
+                    package_name,
+                );
+                let settled = sealing
+                    .type_node(&ValueType::Composite(handle.clone()), &location)
+                    .map_err(|refusal| vec![refusal])?;
+                drop(sealing);
+                plan.scope.seal_plan_union(handle, settled).ok_or_else(|| {
+                    vec![CheckRefusal {
+                        location: location.clone(),
+                        cause: CheckCause::InternalFault(Box::new(
+                            super::refusal::KeyFault::StageFault(
+                                filament_semantic_value::catalog::InternalFault::new(
+                                    "S3",
+                                    "plan-receiver-union-seal",
+                                ),
+                            ),
+                        )),
+                    }]
+                })?;
+            }
+        }
         let candidate_type = match &plan {
             Some(plan) => ValueType::Composite(plan.shape.plan.clone()),
             None => domain.clone(),

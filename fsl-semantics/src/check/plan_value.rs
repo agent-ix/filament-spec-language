@@ -9,7 +9,8 @@
 //! the grammar's object type itself, which read like the model object of the
 //! grammar when the state holds exactly one. A step record carries `index`,
 //! `operation` (a value of the model's operation enum `Alias::Op`),
-//! `arguments`, `before` and `after`.
+//! `receiver` (a generated union of typed references), `arguments`, `before`,
+//! `after` and an optional `outcome_ordinal`.
 //!
 //! Every type is declared in a copy of the unit's scope that only the plan
 //! synthesis reads, so no declaration of the checked package changes.
@@ -18,10 +19,11 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use filament_checked::key::DeclarationKey;
 use filament_exact::{
-    CollectionKind, CollectionType, EffectiveId, NodeKey, PathSegment, Presence, ValueType,
+    CollectionKind, CollectionType, EffectiveId, Identifier, NodeKey, PathSegment, Presence,
+    ValueType,
 };
 use filament_semantic_value::declaration::{
-    CompositeDeclaration, CompositeShape, FieldDeclaration,
+    CompositeDeclaration, CompositeShape, FieldDeclaration, UnionMemberDeclaration,
 };
 use filament_semantic_value::location::ExpressionLocation as Location;
 
@@ -66,10 +68,17 @@ pub struct PlanShape {
     pub plan: NodeKey,
     /// The model state record.
     pub state: NodeKey,
-    /// The step record: `index`, `operation`, `arguments`, `before`, `after`.
+    /// The step record: index, operation, receiver, optional outcome ordinal,
+    /// arguments and the adjacent states.
     pub step: NodeKey,
     /// The `arguments` record of a step.
     pub arguments: NodeKey,
+    /// Generated union of the distinct declared receiver reference types.
+    pub receiver_type: Option<ValueType>,
+    /// Generated union handle and its case-to-reference-type mapping.
+    pub receiver_union: Option<NodeKey>,
+    /// Receiver union cases in deterministic operation declaration order.
+    pub receiver_cases: Vec<(EffectiveId, String)>,
     /// The grammar's object type, whose attributes a state record carries
     /// directly.
     pub grammar: EffectiveId,
@@ -303,8 +312,11 @@ pub(crate) fn declare(
             .iter()
             .find(|operation| operation.name() == name)
             .ok_or_else(|| unsupported(location))?;
-        for (position, (parameter, value_type)) in operation.parameters().iter().enumerate() {
-            let optional = operation.parameter_is_optional(position);
+        for (parameter, value_type) in operation.parameters() {
+            // Assembly already wraps optional X in Option<X>. Shared record
+            // fields compare that normalized value/presence contract, not
+            // the native invocation's separate argument-omission flag.
+            let optional = matches!(value_type, ValueType::Option(_));
             if let Some((first_type, first_optional, first_operation)) =
                 arguments_seen.get(parameter)
             {
@@ -381,6 +393,41 @@ pub(crate) fn declare(
     let operation_enum = operation_enum(&enum_name, synthesis, cases, source, package_name)
         .ok_or_else(|| unsupported(location))?;
 
+    let mut receiver_cases = Vec::new();
+    for operation in &operations {
+        if !receiver_cases
+            .iter()
+            .any(|(ty, _)| ty == &operation.declaring)
+        {
+            receiver_cases.push((
+                operation.declaring.clone(),
+                format!("Receiver{}", receiver_cases.len()),
+            ));
+        }
+    }
+    let receiver_union = (!receiver_cases.is_empty())
+        .then(|| key(&[synthesis, "receiver"]).ok_or_else(|| unsupported(location)))
+        .transpose()?;
+    let receiver_type = if let Some(handle) = &receiver_union {
+        let members = receiver_cases
+            .iter()
+            .map(|(ty, case)| {
+                Ok(UnionMemberDeclaration::resolved(
+                    Identifier::new(case.clone()).map_err(|_| unsupported(location))?,
+                    vec![ValueType::Reference(ty.clone())],
+                ))
+            })
+            .collect::<Result<Vec<_>, CheckRefusal>>()?;
+        composites.push(CompositeDeclaration::new(
+            handle.clone(),
+            format!("{synthesis}::receiver"),
+            CompositeShape::Union(members),
+        ));
+        Some(ValueType::Composite(handle.clone()))
+    } else {
+        None
+    };
+
     let argument_fields = argument_fields(&operations);
     let arguments = key(&[synthesis, "arguments"]).ok_or_else(|| unsupported(location))?;
     composites.push(CompositeDeclaration::new(
@@ -397,32 +444,40 @@ pub(crate) fn declare(
         ),
     ));
     let step = key(&[synthesis, "step"]).ok_or_else(|| unsupported(location))?;
+    let mut step_fields = vec![
+        FieldDeclaration::new("index", ValueType::Integer, Presence::Required),
+        FieldDeclaration::new(
+            "operation",
+            ValueType::Enum(operation_enum.shape()),
+            Presence::Required,
+        ),
+        FieldDeclaration::new("outcome_ordinal", ValueType::Integer, Presence::Optional),
+        FieldDeclaration::new(
+            "arguments",
+            ValueType::Composite(arguments.clone()),
+            Presence::Required,
+        ),
+        FieldDeclaration::new(
+            "before",
+            ValueType::Composite(state.clone()),
+            Presence::Required,
+        ),
+        FieldDeclaration::new(
+            "after",
+            ValueType::Composite(state.clone()),
+            Presence::Required,
+        ),
+    ];
+    if let Some(receiver) = &receiver_type {
+        step_fields.insert(
+            2,
+            FieldDeclaration::new("receiver", receiver.clone(), Presence::Required),
+        );
+    }
     composites.push(CompositeDeclaration::new(
         step.clone(),
         "step",
-        CompositeShape::Record(vec![
-            FieldDeclaration::new("index", ValueType::Integer, Presence::Required),
-            FieldDeclaration::new(
-                "operation",
-                ValueType::Enum(operation_enum.shape()),
-                Presence::Required,
-            ),
-            FieldDeclaration::new(
-                "arguments",
-                ValueType::Composite(arguments.clone()),
-                Presence::Required,
-            ),
-            FieldDeclaration::new(
-                "before",
-                ValueType::Composite(state.clone()),
-                Presence::Required,
-            ),
-            FieldDeclaration::new(
-                "after",
-                ValueType::Composite(state.clone()),
-                Presence::Required,
-            ),
-        ]),
+        CompositeShape::Record(step_fields),
     ));
     let plan = key(&[synthesis, "plan"]).ok_or_else(|| unsupported(location))?;
     composites.push(CompositeDeclaration::new(
@@ -461,6 +516,9 @@ pub(crate) fn declare(
             state,
             step,
             arguments,
+            receiver_type,
+            receiver_union,
+            receiver_cases,
             grammar: grammar.clone(),
             inline,
             objects,

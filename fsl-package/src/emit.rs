@@ -4166,6 +4166,7 @@ fn emission_composites(
                                 || key == shape.state
                                 || key == shape.step
                                 || key == shape.arguments
+                                || shape.receiver_union.as_ref() == Some(&key)
                                 || shape.objects.values().any(|object| object == &key)
                         })
                 }),
