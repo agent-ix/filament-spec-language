@@ -27,10 +27,10 @@ use fsl_replay::spine::{
     LedgerReadError, PackageAuthentication, ProgressAssertion, ProgressClosure,
     ProgressCompleteness, ProgressContradiction, ProgressLedger, ProgressLimitReached,
     ProgressLowerBoundary, ProgressRefusal, ProgressValue, SpineLimits, TemporalVerdict,
-    TimestampedCover, TimestampedObservation, TimestampedOrderKey, TimestampedWindow, TraceBinding,
-    TraceInput,
+    TimestampedCover, TimestampedMissingValuation, TimestampedObservation, TimestampedOrderKey,
+    TimestampedWindow, TraceBinding, TraceInput,
 };
-use fsl_semantics::check::{TemporalClauseNode, TemporalProfile};
+use fsl_semantics::check::{FormulaNode, TemporalClauseNode, TemporalProfile};
 use fsl_semantics::model::intake::PackageInput;
 use fsl_semantics::model::observation::{
     admit_record_sample, document_reference, AdmissionFailure,
@@ -130,6 +130,8 @@ pub struct MonitorObservation<'a> {
     pub stamp: Option<MonitorStamp>,
     /// The order key, where the kind allows one.
     pub order_key: Option<TimestampedOrderKey>,
+    /// FR-641 atom absences at this observation's zero-based trace index.
+    pub missing: &'a [TimestampedMissingValuation],
 }
 
 /// One clause's status after a step.
@@ -580,6 +582,25 @@ impl<'a> MonitorSession<'a> {
         observation_in: &MonitorObservation<'o>,
     ) -> Result<AdmittedPosition<'o>, Failure> {
         let kind = self.request.kind;
+        for missing in observation_in.missing {
+            if kind != MonitorTraceKind::Timestamped || missing.position != self.seen {
+                return Err(observation("missing", "invalid-value"));
+            }
+            let atom = usize::try_from(missing.atom)
+                .map_err(|_| observation("missing", "invalid-value"))?;
+            for clause in &self.request.clauses {
+                if !matches!(
+                    self.node(&clause.name)?
+                        .clause()
+                        .formula()
+                        .nodes()
+                        .get(atom),
+                    Some(FormulaNode::Holds { .. } | FormulaNode::Aggregate { .. })
+                ) {
+                    return Err(observation("missing", "invalid-value"));
+                }
+            }
+        }
         let stamp = match (&observation_in.stamp, kind) {
             (Some(MonitorStamp::Tick(tick)), MonitorTraceKind::Timestamped) => *tick,
             (None, MonitorTraceKind::Timestamped) => {
@@ -665,7 +686,11 @@ impl<'a> MonitorSession<'a> {
             stamp,
             order_key: observation_in.order_key.clone(),
             value,
-            absent: Vec::new(),
+            absent: observation_in
+                .missing
+                .iter()
+                .map(|entry| entry.atom)
+                .collect(),
         })
     }
 

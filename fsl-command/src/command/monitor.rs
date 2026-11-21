@@ -24,7 +24,7 @@ use fsl_foundation::source::Source;
 use fsl_replay::spine::{
     read_cover, read_ledger, read_lower_boundary, read_progress_assertion, read_sample_text,
     read_trace_binding, write_clause_run_result, write_ledger, OverObject, ProgressLowerBoundary,
-    SpineLimits, TimestampedOrderKey,
+    SpineLimits, TimestampedMissingValuation, TimestampedOrderKey,
 };
 use serde_json::{json, Value};
 
@@ -337,6 +337,7 @@ struct Observed {
     position: Position,
     stamp: Option<u64>,
     order_key: Option<TimestampedOrderKey>,
+    missing: Vec<TimestampedMissingValuation>,
 }
 
 enum Position {
@@ -348,15 +349,35 @@ enum Position {
 fn read_record(
     line: &[u8],
     snapshots: &BTreeMap<String, Vec<u8>>,
+    kind: MonitorTraceKind,
 ) -> std::result::Result<Record, (String, String)> {
     let refuse = |member: &str, reason: &str| (member.to_owned(), reason.to_owned());
+    // Inspect raw names before Value can discard a duplicate. The shared
+    // reader charges its arena against the already supplied record bytes.
+    let bound = u64::try_from(line.len()).map_err(|error| refuse("record", &error.to_string()))?;
+    quire_canonical::read(line, bound).map_err(|error| {
+        if let quire_canonical::ReadError::DuplicateName { offset, .. } = error {
+            let member = line.get(offset..).and_then(|bytes| {
+                <String as serde::Deserialize>::deserialize(
+                    &mut serde_json::Deserializer::from_slice(bytes),
+                )
+                .ok()
+            });
+            refuse(
+                member.as_deref().unwrap_or("record"),
+                "duplicate JSON member",
+            )
+        } else {
+            refuse("record", &error.to_string())
+        }
+    })?;
     let value: Value =
         serde_json::from_slice(line).map_err(|error| refuse("record", &error.to_string()))?;
     let Value::Object(members) = value else {
         return Err(refuse("record", "a record is one JSON object"));
     };
     let allowed: &[&str] = if members.contains_key("observation") {
-        &["observation", "stamp", "order_key"]
+        &["observation", "stamp", "order_key", "missing"]
     } else {
         &["progress", "checkpoint", "end", "through"]
     };
@@ -367,6 +388,44 @@ fn read_record(
         return Err(refuse(unknown, "is not a member of this record"));
     }
     if let Some(position) = members.get("observation") {
+        let missing = match members.get("missing") {
+            None => Vec::new(),
+            Some(_) if kind != MonitorTraceKind::Timestamped => {
+                return Err(refuse(
+                    "missing",
+                    "is only allowed on timestamped observations",
+                ));
+            }
+            Some(Value::Array(entries)) => entries
+                .iter()
+                .enumerate()
+                .map(|(index, entry)| {
+                    let path = format!("missing[{index}]");
+                    let Value::Object(entry) = entry else {
+                        return Err(refuse(&path, "is {position, atom}"));
+                    };
+                    if let Some(name) = entry
+                        .keys()
+                        .find(|name| !["position", "atom"].contains(&name.as_str()))
+                    {
+                        return Err(refuse(
+                            &format!("{path}.{name}"),
+                            "unknown missing entry member",
+                        ));
+                    }
+                    let read = |name| {
+                        entry.get(name).and_then(Value::as_u64).ok_or_else(|| {
+                            refuse(&format!("{path}.{name}"), "is a non-negative u64 integer")
+                        })
+                    };
+                    Ok(TimestampedMissingValuation {
+                        position: read("position")?,
+                        atom: read("atom")?,
+                    })
+                })
+                .collect::<std::result::Result<Vec<_>, _>>()?,
+            Some(_) => return Err(refuse("missing", "is an array")),
+        };
         let position = match position {
             Value::String(key) => Position::Snapshot(
                 snapshots
@@ -420,6 +479,7 @@ fn read_record(
             position,
             stamp,
             order_key,
+            missing,
         })));
     }
     if members.len() != 1 {
@@ -745,7 +805,7 @@ fn drive(
             stream(
                 directory,
                 session,
-                &inputs.snapshots,
+                &inputs,
                 records,
                 inputs
                     .clauses
@@ -767,7 +827,7 @@ fn drive(
 fn stream(
     directory: &Path,
     mut session: MonitorSession<'_>,
-    snapshots: &BTreeMap<String, Vec<u8>>,
+    inputs: &Inputs,
     records: Box<dyn Iterator<Item = Result<Vec<u8>>> + '_>,
     names: Vec<String>,
     sink: &mut dyn FnMut(&MonitorEvent),
@@ -795,7 +855,7 @@ fn stream(
         let line = line?;
         read += 1;
         let position = observed.checked_sub(1);
-        let record = match read_record(&line, snapshots) {
+        let record = match read_record(&line, &inputs.snapshots, inputs.kind) {
             Ok(record) => record,
             Err((member, reason)) => {
                 refused += 1;
@@ -825,6 +885,7 @@ fn stream(
                         position,
                         stamp: item.stamp.map(MonitorStamp::Tick),
                         order_key: item.order_key.clone(),
+                        missing: &item.missing,
                     },
                     cancel,
                 );

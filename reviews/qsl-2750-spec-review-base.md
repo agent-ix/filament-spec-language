@@ -105,3 +105,28 @@ findings:
     all four criteria in their existing tables.
   method: spec-review/base
 ```
+
+## Dispositions
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | Round 1 at 2743818998ee8237d79cb2bfdabc3c30fe70fa81 removes exactly the blank line before AC-13 in each FR. Independent CommonMark table parsing confirms all four new criterion IDs occur inside td_open cells. Contract semantics are unchanged. |
+
+### Round 1 result
+
+PASS for the bounded contract; no open findings remain. Original findings and review verdict above are preserved. Code and runtime acceptance remain for the implementation review.
+
+```yaml
+dispositions:
+- fnd: FND-001
+  outcome: fixed
+  after_excerpt: 'er` `limit` at the second call while a first call within the limit
+    is unaffected. | Test (TC-2628) |
+
+    | FR-643-AC-13 | Feed FR-194-AC-17''s timestamped observations one at a time,
+    marking the aggregate atom absent with `{position: 18, atom: A}` on observation
+    18, then assert its closed progress complete through 300000. Each pending report
+    equals the corresponding batch prefix with the same `missing` entries; the final
+    report is `indeterminate` with `MissingValuation { position: 18, atom: A }`, never
+    `invalid-value` or a quantile over the other values. A checkpoint i'
+```

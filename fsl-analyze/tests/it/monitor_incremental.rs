@@ -108,6 +108,10 @@ fn selections(parsed: &fsl_cst::ParsedSource) -> Vec<TemporalClockSelection> {
 }
 
 fn world() -> World {
+    world_source(UNIT)
+}
+
+fn world_source(source: &str) -> World {
     let limits = SpineLimits::default();
     let cancel = Cancel::new();
     let identity = SourceIdentity::new("agent-ix", "monitor-incremental");
@@ -117,7 +121,7 @@ fn world() -> World {
         &ParseRequest {
             source: &identity,
             path: PATH,
-            bytes: UNIT.as_bytes(),
+            bytes: source.as_bytes(),
         },
         limits.source,
         &cancel,
@@ -127,8 +131,13 @@ fn world() -> World {
     let models = spine::select(&parsed, &packages, limits.model, &cancel)
         .expect("selects")
         .into_value();
-    let cst = fsl_cst::parse(identity, PATH, UNIT.as_bytes(), fsl_cst::Limits::default())
-        .expect("the unit parses");
+    let cst = fsl_cst::parse(
+        identity,
+        PATH,
+        source.as_bytes(),
+        fsl_cst::Limits::default(),
+    )
+    .expect("the unit parses");
     let selections = selections(&cst);
     let unit = spine::check_with_temporal_selections_and_execution_points(
         &parsed,
@@ -285,6 +294,7 @@ fn sample<'a>(text: &'a str) -> MonitorObservation<'a> {
         position: MonitorPosition::Sample(text),
         stamp: None,
         order_key: None,
+        missing: &[],
     }
 }
 
@@ -293,6 +303,7 @@ fn stamped<'a>(text: &'a str, stamp: u64) -> MonitorObservation<'a> {
         position: MonitorPosition::Sample(text),
         stamp: Some(MonitorStamp::Tick(stamp)),
         order_key: None,
+        missing: &[],
     }
 }
 
@@ -1422,6 +1433,7 @@ fn snapshots_fed_one_at_a_time_equal_the_batch_with_settled_clauses_frozen() {
                     position: MonitorPosition::Snapshot(snapshot),
                     stamp: None,
                     order_key: None,
+                    missing: &[],
                 },
                 &cancel,
             )
@@ -4049,4 +4061,282 @@ fn an_absent_valuation_needs_a_timestamped_state() {
         "{refused:?}"
     );
     assert_eq!(state.to_bytes().expect("writes"), before);
+}
+fn qsl_2750_world() -> World {
+    world_source(&format!(
+        "{UNIT}\nrecord Response {{ latency: Quantity<ms>; }}\n\
+        temporal MissingQuantile using w over (r: Response) clock \"plant-ms\" on origin {{\n\
+        always[0,300000] (quantile 0.95 of r.latency over past[0 ms,300 s] <= 5 ms) }}\n"
+    ))
+}
+
+fn qsl_2750_atom(world: &World) -> u64 {
+    u64::try_from(
+        clause_node(world, "MissingQuantile")
+            .clause()
+            .formula()
+            .nodes()
+            .iter()
+            .position(|node| matches!(node, fsl_semantics::check::FormulaNode::Aggregate { .. }))
+            .expect("the real checked clause contains its aggregate atom"),
+    )
+    .unwrap()
+}
+
+fn qsl_2750_open(world: &World) -> MonitorOpen<'_> {
+    MonitorOpen {
+        clauses: clauses(&["MissingQuantile"]),
+        kind: MonitorTraceKind::Timestamped,
+        lower_boundary: ProgressLowerBoundary::AuthoritativeOrigin,
+        binding: Some(stamped_binding()),
+        cover: None,
+        ledger: None,
+        packages: &world.packages,
+        sources: &world.sources,
+        temporal_selections: &world.selections,
+    }
+}
+
+fn qsl_2750_response(latency: i64) -> String {
+    serde_json::json!({"latency":{"kind":"quantity", "unit":"ms",
+        "magnitude":{"kind":"rational","numerator":latency.to_string(),"denominator":"1"}}})
+    .to_string()
+}
+
+fn qsl_2750_trace(
+    observations: Vec<TimestampedObservation>,
+    missing: Vec<spine::TimestampedMissingValuation>,
+    assertion: ProgressAssertion,
+) -> TraceInput {
+    TraceInput::Timestamped {
+        observations,
+        progress: assertion,
+        window: Box::new(TimestampedWindow {
+            binding: Some(stamped_binding()),
+            authoritative_origin: true,
+            cover: None,
+            missing_valuations: missing,
+            late: Default::default(),
+        }),
+    }
+}
+
+#[test]
+#[trace("FR-643-AC-13", "FR-194-AC-17")]
+fn qsl_2750_missing_window_matches_batch_and_checkpoint() {
+    let world = qsl_2750_world();
+    let cancel = Cancel::new();
+    let atom = qsl_2750_atom(&world);
+    for absent in [false, true] {
+        for restore in [false, true] {
+            let mut session = MonitorSession::open(
+                world.unit.package(),
+                qsl_2750_open(&world),
+                &limits(100),
+                &cancel,
+            )
+            .unwrap();
+            let mut observed = Vec::new();
+            let mut missing = Vec::new();
+            let mut assertion = ProgressAssertion {
+                watermark: 0,
+                completeness: ProgressCompleteness::Incomplete,
+                scope: ProgressClosure::Open,
+                execution: ProgressClosure::Open,
+            };
+            for index in 0_u64..20 {
+                let response = qsl_2750_response(match index {
+                    18 => 6,
+                    19 => 7,
+                    _ => 1,
+                });
+                let entries = if absent && index == 18 {
+                    vec![spine::TimestampedMissingValuation {
+                        position: index,
+                        atom,
+                    }]
+                } else {
+                    Vec::new()
+                };
+                let step = session
+                    .step(
+                        MonitorObservation {
+                            position: MonitorPosition::Sample(&response),
+                            stamp: Some(MonitorStamp::Tick(index)),
+                            order_key: None,
+                            missing: &entries,
+                        },
+                        &cancel,
+                    )
+                    .unwrap();
+                observed.push(TimestampedObservation {
+                    document: spine::sample_position(&response),
+                    stamp: index,
+                    order_key: None,
+                });
+                missing.extend(entries);
+                let batch = batch_over(
+                    &world,
+                    "MissingQuantile",
+                    &qsl_2750_trace(observed.clone(), missing.clone(), assertion),
+                );
+                assert_eq!(
+                    members(step.statuses[0].1.record().report()),
+                    members(&batch),
+                    "step {index} absent={absent} restore={restore}"
+                );
+                if restore && index == 18 {
+                    let state = session.checkpoint().unwrap();
+                    session = MonitorSession::resume(
+                        world.unit.package(),
+                        &state,
+                        qsl_2750_open(&world),
+                        &limits(100),
+                        &cancel,
+                    )
+                    .unwrap();
+                }
+                assertion = progress(index);
+                let step = session.assert_progress(assertion, &cancel).unwrap();
+                let batch = batch_over(
+                    &world,
+                    "MissingQuantile",
+                    &qsl_2750_trace(observed.clone(), missing.clone(), assertion),
+                );
+                assert_eq!(
+                    members(step.statuses[0].1.record().report()),
+                    members(&batch),
+                    "progress {index}"
+                );
+            }
+            assertion = ProgressAssertion {
+                watermark: 300000,
+                completeness: ProgressCompleteness::Complete { through: 300000 },
+                scope: ProgressClosure::Closed,
+                execution: ProgressClosure::Closed,
+            };
+            let step = session.assert_progress(assertion, &cancel).unwrap();
+            let batch = batch_over(
+                &world,
+                "MissingQuantile",
+                &qsl_2750_trace(observed, missing, assertion),
+            );
+            assert_eq!(
+                members(step.statuses[0].1.record().report()),
+                members(&batch)
+            );
+            let final_report = session.finish(&cancel).unwrap();
+            assert_eq!(members(final_report.records[0].report()), members(&batch));
+            if absent {
+                assert!(
+                    matches!(
+                        &batch.disposition,
+                        spine::ClauseDisposition::Temporal(spine::TemporalVerdict::Indeterminate {
+                            reason: spine::TemporalIndeterminateReason::MissingValuation {
+                                position: 18,
+                                ..
+                            },
+                            ..
+                        })
+                    ),
+                    "{:?}",
+                    batch.disposition
+                );
+            } else {
+                assert_eq!(
+                    final_report.records[0].category,
+                    filament_semantic_value::catalog::Category::Violation
+                );
+            }
+        }
+    }
+}
+
+#[test]
+#[trace("FR-643-AC-14")]
+fn qsl_2750_missing_marker_refusals_preserve_session_state() {
+    let world = qsl_2750_world();
+    let cancel = Cancel::new();
+    let response = qsl_2750_response(1);
+    let atom = qsl_2750_atom(&world);
+    let non_atom = u64::try_from(
+        clause_node(&world, "MissingQuantile")
+            .clause()
+            .formula()
+            .nodes()
+            .iter()
+            .position(|node| {
+                !matches!(
+                    node,
+                    fsl_semantics::check::FormulaNode::Holds { .. }
+                        | fsl_semantics::check::FormulaNode::Aggregate { .. }
+                )
+            })
+            .expect("the surrounding always node is not an atom"),
+    )
+    .unwrap();
+    let mut session = MonitorSession::open(
+        world.unit.package(),
+        qsl_2750_open(&world),
+        &limits(100),
+        &cancel,
+    )
+    .unwrap();
+    session.step(stamped(&response, 0), &cancel).unwrap();
+    let before = session.checkpoint().unwrap();
+    for marker in [
+        spine::TimestampedMissingValuation { position: 0, atom },
+        spine::TimestampedMissingValuation { position: 2, atom },
+        spine::TimestampedMissingValuation {
+            position: 1,
+            atom: non_atom,
+        },
+        spine::TimestampedMissingValuation {
+            position: 1,
+            atom: u64::MAX,
+        },
+    ] {
+        let mut observation = stamped(&response, 1);
+        observation.missing = std::slice::from_ref(&marker);
+        assert!(matches!(
+            session.step(observation, &cancel),
+            Err(StageFailure::Refused(MonitorRefusal::Observation {
+                member: "missing",
+                cause: "invalid-value"
+            }))
+        ));
+        assert_eq!(session.observations_seen(), 1);
+        assert_eq!(session.checkpoint().unwrap().as_bytes(), before.as_bytes());
+    }
+    session.step(stamped(&response, 1), &cancel).unwrap();
+    assert_eq!(session.observations_seen(), 2);
+    let ordinary = self::world();
+    for (kind, name, binding) in [
+        (MonitorTraceKind::Finite, "Never", None),
+        (
+            MonitorTraceKind::Progressed,
+            "Recent",
+            Some(events_binding()),
+        ),
+    ] {
+        let mut session = ordinary.open(&[name], kind, binding, 100).unwrap();
+        let text = text(0);
+        session.step(sample(&text), &cancel).unwrap();
+        let before = session.checkpoint().unwrap();
+        let marker = [spine::TimestampedMissingValuation {
+            position: 1,
+            atom: 0,
+        }];
+        let mut observation = sample(&text);
+        observation.missing = &marker;
+        assert!(matches!(
+            session.step(observation, &cancel),
+            Err(StageFailure::Refused(MonitorRefusal::Observation {
+                member: "missing",
+                cause: "invalid-value"
+            }))
+        ));
+        assert_eq!(session.checkpoint().unwrap().as_bytes(), before.as_bytes());
+        session.step(sample(&text), &cancel).unwrap();
+    }
 }
