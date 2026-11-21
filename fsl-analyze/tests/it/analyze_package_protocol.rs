@@ -388,6 +388,153 @@ fn package_repeat_proof_refuses_before_execution() {
     assert!(item.get("exploration").is_none(), "{item}");
 }
 
+fn await_request(
+    ws: &Workspace,
+    delivery: &str,
+    matched: &str,
+    then: &str,
+    timeout: &str,
+) -> std::path::PathBuf {
+    let controls = channel_send("Handed", "handed", "handed.n = k.v")
+        + &format!(
+            "await Wait after Handed using t0 clock \"line-clock\" within [0, 120]
+                match receive Inspected via Release of Handed as (seen: M::Attempt) {{ {matched} }};
+                then {then}
+                timeout {timeout}"
+        );
+    let ordering = format!("ordering unordered delivery {delivery} capacity 4 overflow block");
+    channel_request(ws, finite_channel_model(), &ordering, &controls, "closing")
+}
+
+/// The complete await body explores both the receive and timeout continuations.
+#[trace("TC-2958", "FR-940-AC-6", "FR-206-AC-5", "FR-383-AC-7")]
+#[test]
+fn package_await_runs_the_complete_matched_receive_body() {
+    for delivery in ["exactly-once-premise", "at-least-once"] {
+        let ws = Workspace::new(&format!("package-await-complete-{delivery}"));
+        let path = await_request(
+            &ws,
+            delivery,
+            "seen.n = handed.n",
+            "sequence InTime {}",
+            "sequence TooSlow {}",
+        );
+        let item = channel_send_parity(&ws, &path, "proved");
+        if delivery == "exactly-once-premise" {
+            // The two continuations reach different finish states: timeout
+            // retains the queued entry, while the match consumes it.
+            assert_eq!(item["exploration"]["states"], "5", "{item}");
+            assert_eq!(item["exploration"]["transitions"], "5", "{item}");
+        } else {
+            let transitions = item["exploration"]["transitions"]
+                .as_str()
+                .expect("the explored transition count")
+                .parse::<u64>()
+                .expect("a natural count");
+            assert!(transitions > 5, "duplicate delivery is explored: {item}");
+        }
+    }
+}
+
+/// A blocked timeout continuation retains its counterexample and replay refusals.
+#[trace("TC-2958", "FR-940-AC-6", "FR-940-AC-22", "FR-206-AC-5")]
+#[test]
+fn package_await_timeout_deadlock_preserves_replay_and_refusal() {
+    let timeout = format!(
+        "sequence TooSlow {{ {} }}",
+        receive_fifo_receive("Never", "Handed", "late", "false")
+    );
+    let request = |ws: &Workspace| {
+        await_request(
+            ws,
+            "exactly-once-premise",
+            "seen.n = handed.n",
+            "sequence InTime {}",
+            &timeout,
+        )
+    };
+    let ws = Workspace::new("package-await-timeout-deadlock");
+    let path = request(&ws);
+    let item = channel_send_parity(&ws, &path, "refuted");
+    let prefix = item["counterexample"]["prefix"]
+        .as_array()
+        .expect("the timeout deadlock prefix");
+    let timed_out = prefix
+        .iter()
+        .find(|step| step["transition"]["step"] == "timeout")
+        .expect("the timeout continuation was taken");
+    assert_eq!(timed_out["transition"]["node"], "Main/Wait", "{item}");
+    assert!(
+        prefix
+            .iter()
+            .all(|step| step["transition"]["step"] != "receive"),
+        "the matched receive leads to the healthy continuation: {item}"
+    );
+    let blocked = item["counterexample"]["blocked"]
+        .as_array()
+        .expect("the blocked timeout receive");
+    assert_eq!(blocked.len(), 1, "{item}");
+    assert_eq!(
+        blocked[0]["rest"]["node"], "Main/Wait/TooSlow/Never",
+        "{item}"
+    );
+    assert_eq!(blocked[0]["cause"]["type"], "constraint", "{item}");
+
+    let bounded_ws = Workspace::new("package-await-replay-bound");
+    let bounded_path = request(&bounded_ws);
+    let (package_path, bytes) = package_request(&bounded_ws, &bounded_path);
+    let below = u64::try_from(bytes.len() / 2).expect("the package length");
+    let source_limited =
+        crate::analyze_cli_support::analyze_under_replay_bytes(&bounded_path, below);
+    assert!(
+        source_limited.item(0).get("record").is_some(),
+        "{}",
+        source_limited.document()
+    );
+    assert_eq!(
+        label(&source_limited.item(0)),
+        "inconclusive",
+        "{}",
+        source_limited.document()
+    );
+    let cause = &source_limited.item(0)["record"]["cause"];
+    assert_eq!(cause["kind"], "replay-refused", "{cause}");
+    assert_eq!(cause["code"], "stage_limit_exceeded", "{cause}");
+    assert_eq!(cause["cause"], "input-bytes-exceeded", "{cause}");
+    std::fs::remove_file(bounded_ws.path("program.fsl"))
+        .expect("remove source before package replay refusal");
+    let package_limited =
+        crate::analyze_cli_support::analyze_under_replay_bytes(&package_path, below);
+    assert_eq!(
+        package_limited.item(0),
+        source_limited.item(0),
+        "{}",
+        package_limited.document()
+    );
+    assert_eq!(package_limited.exit, source_limited.exit);
+}
+
+/// A false match keeps timeout enabled and never enters the blocked success arm.
+#[trace("TC-2958", "FR-940-AC-6", "FR-206-AC-5", "FR-211-AC-5")]
+#[test]
+fn package_await_false_match_keeps_timeout_enabled() {
+    let ws = Workspace::new("package-await-false-match");
+    let then = format!(
+        "sequence InTime {{ {} }}",
+        receive_fifo_receive("Never", "Handed", "early", "false")
+    );
+    let path = await_request(
+        &ws,
+        "exactly-once-premise",
+        "not (seen.n = handed.n)",
+        &then,
+        "sequence TooSlow {}",
+    );
+    let item = channel_send_parity(&ws, &path, "proved");
+    assert_eq!(item["exploration"]["states"], "4", "{item}");
+    assert_eq!(item["exploration"]["transitions"], "3", "{item}");
+}
+
 fn receive_fifo_request(
     ws: &Workspace,
     key: &str,
