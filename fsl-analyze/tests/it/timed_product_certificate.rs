@@ -909,41 +909,48 @@ fn witness_mass(record: &AnalyzeRecord) -> Rational {
 }
 
 /// `tick` is free and guarded `self.x >= 1 ms` (window 1 to 2 ms) while `send`
-/// is given 1 or 2 ms, under `Both`: the scheduler picks tick at 1 or at 2, so
-/// the minimum `8641/32000` is below the maximum `7876923/10240000`.
-fn free_tick_world() -> World {
-    let claim = |name: &str, bound: &str| {
-        format!(
-            "probabilistic {name} using ev on M over (c: M::Call) under Both on origin \
-             {{ probability {bound} [ eventually[0 ms, 5 ms] holds(c.retried) ] }}\n"
-        )
-    };
+/// is given `delays`, under `Both`: the scheduler picks tick at 1 or at 2, so
+/// the minimum is below the maximum. `claims` are `(name, bound)` pairs over
+/// `eventually[0 ms, 5 ms] holds(c.retried)`.
+fn free_tick_world(delays: &str, claims: &[(&str, &str)]) -> World {
+    let claims: String = claims
+        .iter()
+        .map(|(name, bound)| {
+            format!(
+                "probabilistic {name} using ev on M over (c: M::Call) under Both on origin \
+                 {{ probability {bound} [ eventually[0 ms, 5 ms] holds(c.retried) ] }}\n"
+            )
+        })
+        .collect();
     retx_with(
         &[("send", &["late", "x"]), ("tick", &["retried"])],
         GUARD,
         true,
-        "delay M::Call::send ~ discrete { 1 ms: 1, 2 ms: 1 };\n\
-         pre Tick using v on M::Call::tick { not self.late and not self.retried and self.x >= 1 ms }\n\
-         post Ticked using v on M::Call::tick { self.retried = true }\n\
-         workload Both on M { weight Call::send = 1; weight Call::tick = 1; }\n",
         &format!(
-            "{}{}{}{}",
-            claim("AtLeastMin", ">= 0.27003125"),
-            claim("AtMostMax", "<= 0.76923076171875"),
-            claim("AtLeastBetween", ">= 0.5"),
-            claim("AtMostBetween", "<= 0.5"),
+            "delay M::Call::send ~ discrete {delays};\n\
+             pre Tick using v on M::Call::tick {{ not self.late and not self.retried and self.x >= 1 ms }}\n\
+             post Ticked using v on M::Call::tick {{ self.retried = true }}\n\
+             workload Both on M {{ weight Call::send = 1; weight Call::tick = 1; }}\n"
         ),
+        &claims,
     )
 }
 
 /// FR-920-AC-4: over a workload that leaves the scheduler a delay choice, a
-/// `>=` bound is spelled and decided by the minimum, a `<=` bound by the
-/// maximum, and a bound strictly between them is refuted with the mass of the
-/// extremum's scheduler.
+/// `>=` bound is spelled and decided by the minimum and a `<=` bound by the
+/// maximum, and the other spellings are not the checker's own. With `send`
+/// given 1 or 2 ms the minimum is `8641/32000` and the maximum
+/// `7876923/10240000`.
 #[trace("TC-2489", "FR-920-AC-4")]
 #[test]
 fn a_workload_with_a_delay_choice_is_decided_on_its_extremum() {
-    let world = free_tick_world();
+    let world = free_tick_world(
+        "{ 1 ms: 1, 2 ms: 1 }",
+        &[
+            ("AtLeastMin", ">= 0.27003125"),
+            ("AtMostMax", "<= 0.76923076171875"),
+        ],
+    );
     let least = settle(&world, "AtLeastMin");
     assert_eq!(proved_value(&least), ratio(8641, 32000));
     assert_eq!(spelling(&least), "workload-minimum");
@@ -952,7 +959,6 @@ fn a_workload_with_a_delay_choice_is_decided_on_its_extremum() {
     assert_eq!(proved_value(&most), ratio(7_876_923, 10_240_000));
     assert_eq!(spelling(&most), "workload-maximum");
     assert!(accepted(&world, "AtMostMax", &document(&most)));
-    // The other spellings are not the checker's own.
     for other in ["workload", "workload-maximum"] {
         assert!(
             objective_mismatch(&world, "AtLeastMin", &relabelled(&document(&least), other)),
@@ -965,31 +971,39 @@ fn a_workload_with_a_delay_choice_is_decided_on_its_extremum() {
             "{other}"
         );
     }
-    // `>= 0.5` lies above the minimum: the minimising scheduler fails it with
-    // the mass of not retrying, `1 - 8641/32000`.
-    let below = settle(&world, "AtLeastBetween");
-    assert!(is_refuted(&below), "{below:#?}");
-    // The mass is the checker graph's own recomputation of the witness
-    // scheduler's failing outcome: above the bound's `1 - 0.5` and never above
-    // the best a scheduler does (`1 - 8641/32000`).
-    let mass = witness_mass(&below);
-    assert!(
-        mass > ratio(1, 2) && mass <= ratio(23_359, 32_000),
-        "{mass:?}"
-    );
-    // `<= 0.5` lies below the maximum: the maximising scheduler fails it with
-    // the maximum mass.
-    let above = settle(&world, "AtMostBetween");
-    assert!(is_refuted(&above), "{above:#?}");
-    assert_eq!(witness_mass(&above), ratio(7_876_923, 10_240_000));
 }
 
-/// FR-920-AC-4: a witness of the minimising choice cannot refute the bound
-/// the maximum fails.
+/// The world where `send` is given 2 ms: the minimum is `21/40` (tick at 2,
+/// the tie) and the maximum 1 (tick at 1).
+fn between_world() -> World {
+    free_tick_world(
+        "{ 2 ms: 1 }",
+        &[("AtLeastBetween", ">= 0.8"), ("AtMostBetween", "<= 0.8")],
+    )
+}
+
+/// FR-920-AC-4: a bound strictly between the extrema is refuted with the mass
+/// the checker recomputes for the extremum's scheduler: `>= 0.8` over the
+/// minimum `21/40` fails with `19/40` (not retrying), `<= 0.8` under the
+/// maximum 1 fails with 1.
+#[trace("TC-2489", "FR-920-AC-4")]
+#[test]
+fn a_bound_between_the_extrema_is_refuted_with_the_recomputed_mass() {
+    let world = between_world();
+    let below = settle(&world, "AtLeastBetween");
+    assert!(is_refuted(&below), "{below:#?}");
+    assert_eq!(witness_mass(&below), ratio(19, 40));
+    let above = settle(&world, "AtMostBetween");
+    assert!(is_refuted(&above), "{above:#?}");
+    assert_eq!(witness_mass(&above), ratio(1, 1));
+}
+
+/// FR-920-AC-4: a witness that picks tick at 2 (the minimising choice)
+/// cannot refute the bound the maximum fails.
 #[trace("TC-2489", "FR-920-AC-4")]
 #[test]
 fn a_witness_of_the_other_extremum_settles_parity() {
-    let world = free_tick_world();
+    let world = between_world();
     let low = settle(&world, "AtLeastBetween")
         .probabilistic_counterexample
         .as_ref()

@@ -4281,18 +4281,13 @@ fn price_witness_paths(
     };
     // The witness selects the scheduler; the mass is the checker graph's own
     // probability of the failing outcome under that memoryless choice (states
-    // the witness never visits take their first choice). At a visited state the
-    // choices that cover the witness's steps equally are the witness's
-    // scheduler up to the identity of the steps' targets, which several choices
-    // can share, so the one with the greatest failing mass among them is the
-    // one the witness names (the first on a tie). A step the checker does not
-    // itself have therefore contributes nothing, and a cycle under the choice
-    // is refused rather than approximated.
+    // the witness never visits take their first choice). A step the checker
+    // does not itself have therefore contributes nothing, and a cycle under the
+    // choice is refused rather than approximated.
     #[allow(clippy::too_many_arguments)]
     fn mass_of<'a>(
         graph: &'a CheckerGraph,
-        candidates: &BTreeMap<ProbabilityProductKey, Vec<usize>>,
-        picked: &mut BTreeMap<ProbabilityProductKey, usize>,
+        chosen: &BTreeMap<ProbabilityProductKey, usize>,
         failing: bool,
         key: &'a ProbabilityProductKey,
         memo: &mut BTreeMap<&'a ProbabilityProductKey, Rational>,
@@ -4318,53 +4313,25 @@ fn price_witness_paths(
                 if !on_path.insert(key) {
                     return Err(Error::Refused);
                 }
-                let options = candidates.get(key).map_or(&[0_usize][..], Vec::as_slice);
-                let mut best: Option<(usize, Rational)> = None;
-                for (position, index) in options.iter().enumerate() {
-                    let before = on_path.clone();
-                    let mut sum = zero();
-                    let mut refused = false;
-                    if let Some(choice) = state.choices.get(*index) {
-                        for edge in choice.iter().filter(|edge| edge.probability > zero()) {
-                            match mass_of(
-                                graph,
-                                candidates,
-                                picked,
-                                failing,
-                                &edge.target,
-                                memo,
-                                on_path,
-                                cancel,
-                                check_bits,
-                            ) {
-                                Ok(child) => {
-                                    sum = sum.add(&edge.probability.mul(&child));
-                                    check_bits(&sum)?;
-                                }
-                                // A cycle under one of several equally covering
-                                // choices only rules that choice out.
-                                Err(Error::Refused) if options.len() > 1 => {
-                                    refused = true;
-                                    break;
-                                }
-                                Err(error) => return Err(error),
-                            }
-                        }
-                    }
-                    if refused {
-                        *on_path = before;
-                        if position + 1 == options.len() && best.is_none() {
-                            return Err(Error::Refused);
-                        }
-                        continue;
-                    }
-                    if best.as_ref().is_none_or(|(_, most)| sum > *most) {
-                        best = Some((*index, sum));
+                let index = chosen.get(key).copied().unwrap_or(0);
+                let mut sum = zero();
+                if let Some(choice) = state.choices.get(index) {
+                    for edge in choice.iter().filter(|edge| edge.probability > zero()) {
+                        let child = mass_of(
+                            graph,
+                            chosen,
+                            failing,
+                            &edge.target,
+                            memo,
+                            on_path,
+                            cancel,
+                            check_bits,
+                        )?;
+                        sum = sum.add(&edge.probability.mul(&child));
+                        check_bits(&sum)?;
                     }
                 }
                 on_path.remove(key);
-                let (index, sum) = best.ok_or(Error::Refused)?;
-                picked.insert(key.clone(), index);
                 sum
             }
         };
@@ -4404,30 +4371,27 @@ fn price_witness_paths(
                 return Ok(None);
             }
         }
-        // The choices of each visited state that the paths cover most.
-        let mut candidates: BTreeMap<ProbabilityProductKey, Vec<usize>> = BTreeMap::new();
+        // One choice per visited state: the one the paths cover most (the first
+        // on a tie).
+        let mut chosen: BTreeMap<ProbabilityProductKey, usize> = BTreeMap::new();
         for (key, targets) in &used {
             let state = graph.states.get(key).ok_or(Error::Refused)?;
-            let mut best: Option<(Vec<usize>, usize)> = None;
+            let mut best: Option<(usize, usize)> = None;
             for (position, choice) in state.choices.iter().enumerate() {
                 let covered = targets
                     .iter()
                     .filter(|target| covers(choice, target))
                     .count();
-                match &mut best {
-                    Some((tied, most)) if covered == *most => tied.push(position),
-                    Some((_, most)) if covered < *most => {}
-                    _ => best = Some((vec![position], covered)),
+                if best.is_none_or(|(_, most)| covered > most) {
+                    best = Some((position, covered));
                 }
             }
-            let (tied, _) = best.ok_or(Error::Refused)?;
-            candidates.insert(key.clone(), tied);
+            let (index, _) = best.ok_or(Error::Refused)?;
+            chosen.insert(key.clone(), index);
         }
-        let mut chosen: BTreeMap<ProbabilityProductKey, usize> = BTreeMap::new();
         let mass = mass_of(
-            graph,
-            &candidates,
-            &mut chosen,
+            &graph,
+            &chosen,
             failing,
             &graph.initial,
             &mut BTreeMap::new(),
