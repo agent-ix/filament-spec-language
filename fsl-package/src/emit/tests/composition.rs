@@ -926,7 +926,7 @@ fn composition_declaration_and_canonical_members_keep_their_authored_regions() {
         supplies,
         environment,
         ..
-    }) = admitted.term(key)
+    }) = admitted.term(&named.declaration)
     else {
         panic!("strict readback retains the typed composition");
     };
@@ -980,22 +980,24 @@ fn composition_declaration_and_canonical_members_keep_their_authored_regions() {
         }
         assert!(slots > 0, "the raw clause retains foreign operand slots");
         let expected_position = usize::try_from(*expected_position).expect("dependency position");
+        let clause_held_id = owner
+            .document_held_id(expected_position)
+            .expect("the independently selected dependency document node");
         assert_eq!(
-            Some(&raw_target),
-            owner.document_held_id(expected_position),
+            &raw_target, clause_held_id,
             "{component}::{name} keeps its exact dependency document target"
         );
-        let clause_key = owner
+        let clause_structural_key = owner
             .structural_key_at(expected_position)
             .expect("the foreign clause exists in its own graph");
-        assert!(owner.term(clause_key).is_some());
-        let reference = admitted
+        assert!(owner.term(clause_held_id).is_some());
+        let clause_dependency_held_id = admitted
             .resolve_node_held(position, &guarantee.clause)
             .expect("resolve the composition's foreign operand slots");
-        assert_eq!(reference.package.as_ref(), *identity);
+        assert_eq!(clause_dependency_held_id.package.as_ref(), *identity);
         assert_eq!(
-            owner.structural_key(&reference),
-            Some(clause_key),
+            owner.structural_key(&clause_dependency_held_id),
+            Some(clause_structural_key),
             "the expanded reference resolves in its authenticated owner"
         );
         let names: Vec<_> = owner
@@ -1009,7 +1011,7 @@ fn composition_declaration_and_canonical_members_keep_their_authored_regions() {
         };
         assert_eq!(
             owner.structural_key(&named_clause.declaration),
-            Some(clause_key),
+            Some(clause_structural_key),
             "the foreign position resolves to this owner's named clause"
         );
     }
@@ -1059,7 +1061,10 @@ fn composition_declaration_and_canonical_members_keep_their_authored_regions() {
         panic!("source-map entry order does not change composition admission");
     };
     assert_eq!(reordered.claim_name_for_path(&["Sys"]), Some(named));
-    assert_eq!(reordered.term(key), admitted.term(key));
+    assert_eq!(
+        reordered.term(&named.declaration),
+        admitted.term(&named.declaration)
+    );
     for entry in entries {
         let matching: Vec<_> = reordered
             .source_map()
