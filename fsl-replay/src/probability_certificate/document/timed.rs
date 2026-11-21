@@ -3142,9 +3142,9 @@ pub(in crate::probability_certificate) fn replay_timed_witness(
     // A closed time-convergent component all of whose members stay in it
     // under the witness is a scheduler that never lets time diverge; its
     // mass is not the claim's.
-    let components = super::super::nonprogressive_end_components_by_axis(&graph, cancel, None)
+    let components = super::super::nonprogressive_end_components_by_kind(&graph, cancel, None)
         .map_err(Error::Graph)?;
-    for (axis, members) in &components {
+    for (kind, members) in &components {
         let set = members.iter().collect::<BTreeSet<_>>();
         let stays = members.iter().all(|key| {
             let (Some(index), Some(state)) = (chosen.get(key), graph.states.get(key)) else {
@@ -3156,7 +3156,8 @@ pub(in crate::probability_certificate) fn replay_timed_witness(
                     .filter(|edge| edge.probability > zero())
                     .all(|edge| {
                         set.contains(&edge.target)
-                            && crate::timed_edge_axes(key, &edge.target).contains(axis)
+                            && (*kind != super::super::ComponentKind::ZeroTime
+                                || super::super::timed_axes::edge_is_zero_time(key, &edge.target))
                     })
             })
         });
