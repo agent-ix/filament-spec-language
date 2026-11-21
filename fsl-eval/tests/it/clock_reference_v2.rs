@@ -339,7 +339,7 @@ fn assert_producer_clause(
     }
 }
 
-#[trace("TC-464", "TC-3084", "FR-106-AC-72", "FR-106-AC-74")]
+#[trace("TC-464", "TC-3084", "FR-106-AC-72", "FR-106-AC-76")]
 #[test]
 fn actual_clock_references_roundtrip_as_data_through_source_and_bare() {
     let checked = fixture(false);
@@ -512,7 +512,7 @@ fn actual_clock_references_roundtrip_as_data_through_source_and_bare() {
     }
 }
 
-#[trace("TC-464", "FR-106-AC-73", "FR-106-AC-74")]
+#[trace("TC-464", "FR-106-AC-73", "FR-106-AC-76")]
 #[test]
 fn removing_x_never_rebinds_its_actual_reference_to_y_at_the_reused_ordinal() {
     let checked = fixture(false);
