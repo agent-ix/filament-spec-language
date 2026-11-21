@@ -160,13 +160,7 @@ pub(super) fn run(
     ) {
         Ok(FhResult::Exact { values, policy }) => (values, policy),
         Ok(_) => return broken(),
-        Err(error) => {
-            eprintln!(
-                "QSL2158_DIAG induction error {:?}",
-                std::mem::discriminant(&error)
-            );
-            return document_failure(induction_failure(error, cancel), subject);
-        }
+        Err(error) => return document_failure(induction_failure(error, cancel), subject),
     };
     for state in &mut product.states {
         let Some(control) = state.monitor else {
@@ -316,16 +310,6 @@ pub(super) fn run(
             cancel,
         )
     })();
-    match &checked {
-        Ok(ExactProbabilityCertificateCheck::Rejected(rejection)) => {
-            eprintln!("QSL2158_DIAG checked rejected {:?}", rejection.rule)
-        }
-        Ok(_) => eprintln!("QSL2158_DIAG checked accepted"),
-        Err(error) => eprintln!(
-            "QSL2158_DIAG checked error {:?}",
-            std::mem::discriminant(error)
-        ),
-    }
     let failed_bound = matches!(&checked, Ok(ExactProbabilityCertificateCheck::Rejected(rejection)) if rejection.rule == ProbabilityCertificateRule::ThresholdMissed || matches!(&claim.form,ProbForm::Quantile { threshold:Bound::AtLeast(_),.. }) && values.get(initial.index()).is_some_and(Rational::is_zero));
     if failed_bound && tamper.is_none() {
         if matches!(claim.form, ProbForm::MeanOfFraction { .. }) {
@@ -427,12 +411,24 @@ fn refute(
     };
     let mut issue = None;
     let mut control = |work: WitnessWork<'_>| {
-        witness_payload_bytes(work, system)
-            .and_then(|bytes| witness_charge(&mut meter, &mut storage, bytes, limits, cancel))
-            .map_err(|failure| {
-                issue = Some(failure);
-                WitnessError::InvalidState
-            })
+        witness_payload_bytes(work, system, |target| {
+            for state in &product.states {
+                witness_charge(&mut meter, &mut storage, 0, limits, cancel)?;
+                if state == target && state.pending.is_none() {
+                    let key = state
+                        .certificate_state
+                        .as_ref()
+                        .ok_or_else(|| Box::new(ExactProbBuildIssue::BrokenInvariant))?;
+                    return Ok(std::mem::size_of_val(state).saturating_add(key.as_bytes().len()));
+                }
+            }
+            Err(Box::new(ExactProbBuildIssue::BrokenInvariant))
+        })
+        .and_then(|bytes| witness_charge(&mut meter, &mut storage, bytes, limits, cancel))
+        .map_err(|failure| {
+            issue = Some(failure);
+            WitnessError::InvalidState
+        })
     };
     let produced = match &claim.form {
         ProbForm::Quantile { q, threshold, .. } => {
@@ -504,14 +500,6 @@ fn refute(
     };
     if let Some(issue) = issue {
         return settled(&issue, subject);
-    }
-    match &produced {
-        Ok(Some(_)) => eprintln!("QSL2158_DIAG produced witness"),
-        Ok(None) => eprintln!("QSL2158_DIAG produced none"),
-        Err(error) => eprintln!(
-            "QSL2158_DIAG produced error {:?}",
-            std::mem::discriminant(error)
-        ),
     }
     match produced {
         Ok(Some(produced)) => replay_produced_witness(

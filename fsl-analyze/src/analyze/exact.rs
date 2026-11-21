@@ -259,10 +259,6 @@ fn unbounded_failure(
 }
 
 fn broken() -> EngineReport {
-    let trace = std::backtrace::Backtrace::force_capture().to_string();
-    for line in trace.lines().take(20) {
-        eprintln!("QSL2158_DIAG broken {line}");
-    }
     EngineReport::Refused(Refusal::Failed(BROKEN))
 }
 
@@ -1602,15 +1598,19 @@ fn reserve_certificate_storage(
 fn witness_payload_bytes(
     work: crate::exact_probabilistic::WitnessWork<'_>,
     system: &ModelSystem<'_>,
+    mut post_state_bytes: impl FnMut(
+        &crate::exact_probabilistic::ProbKey,
+    ) -> Result<usize, Box<ExactProbBuildIssue>>,
 ) -> Result<usize, Box<ExactProbBuildIssue>> {
     use crate::exact_probabilistic::{ProductAction, WitnessWork};
-    let action_bytes = |action: &ProductAction| -> Result<usize, Box<ExactProbBuildIssue>> {
+    let mut action_bytes = |action: &ProductAction| -> Result<usize, Box<ExactProbBuildIssue>> {
         match action {
             ProductAction::Identity(identity) => system
                 .scheduled_identity_key(identity)
                 .map(|bytes| bytes.len())
                 .map_err(|stop| Box::new(ExactProbBuildIssue::Expansion(stop))),
             ProductAction::TerminalStutter => Ok(0),
+            ProductAction::PostState(target) => post_state_bytes(target),
             _ => Err(Box::new(ExactProbBuildIssue::BrokenInvariant)),
         }
     };
@@ -1897,7 +1897,10 @@ fn replay_refutation(
         .map(|outcomes| outcomes.iter().map(Option::is_some).collect::<Vec<_>>());
     let mut producer_issue = None;
     let mut control = |work: crate::exact_probabilistic::WitnessWork<'_>| {
-        let result = witness_payload_bytes(work, system).and_then(|bytes| {
+        let result = witness_payload_bytes(work, system, |_| {
+            Err(Box::new(ExactProbBuildIssue::BrokenInvariant))
+        })
+        .and_then(|bytes| {
             witness_charge(
                 &mut producer_meter,
                 &mut producer_storage,
@@ -2309,16 +2312,7 @@ fn replay_produced_witness(
     let Some(package) = system.source_package() else {
         return not_yet();
     };
-    let replayed = replay_probabilistic_witness(package, system, &item, &witness, limits, cancel);
-    match &replayed {
-        Ok(ProbabilityWitnessReplay::Reproduced(_)) => eprintln!("QSL2158_DIAG replay reproduced"),
-        Ok(ProbabilityWitnessReplay::Parity) => eprintln!("QSL2158_DIAG replay parity"),
-        Err(error) => eprintln!(
-            "QSL2158_DIAG replay error {:?}",
-            std::mem::discriminant(error)
-        ),
-    }
-    match replayed {
+    match replay_probabilistic_witness(package, system, &item, &witness, limits, cancel) {
         Ok(ProbabilityWitnessReplay::Reproduced(token)) => {
             let scope = package.graph().scope();
             let quantile_bound;
@@ -2342,12 +2336,6 @@ fn replay_produced_witness(
                 &|state| system.state_key(state).ok().map(|(_, key)| key),
                 &spelled_scheduler,
             );
-            if let Err(error) = &wire {
-                eprintln!(
-                    "QSL2158_DIAG wire error {:?}",
-                    std::mem::discriminant(error)
-                );
-            }
             EngineReport::Exact(Box::new(ExactReport::Refuted(token, Box::new(wire))))
         }
         Ok(ProbabilityWitnessReplay::Parity) => {
