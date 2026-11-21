@@ -77,6 +77,11 @@ pub(crate) fn explore(
     start: &TimedState,
     limits: &Limits,
 ) -> Result<Closure, ExploreStop> {
+    if timed.is_free_delay() {
+        // Every concrete state admits unbounded delay when the concrete
+        // model has no time source, clock places, invariants or urgency.
+        return Ok(Closure::Divergent);
+    }
     match timed.tick_period() {
         Some(_) => explore_ticks(timed, start, limits),
         None => explore_zones(timed, start, limits),

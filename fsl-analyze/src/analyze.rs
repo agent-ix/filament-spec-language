@@ -39,6 +39,7 @@ pub mod document;
 mod exact;
 mod hybrid_item;
 mod hybrid_process;
+mod finite_hyper_item;
 mod hyper_route;
 mod invariant_item;
 mod items;
@@ -56,8 +57,9 @@ mod timed_item;
 pub(crate) use request::analyze_bound;
 
 pub use request::{
-    analyze, ClaimItem, ClaimRefusal, HybridItem, ItemForm, ItemOptions, NegotiatedItem,
-    ProbabilisticItem, ProbabilisticLimits, ProvisionRefusal, SourceProvision, TemporalItem,
+    analyze, ClaimItem, ClaimRefusal, FiniteHyperItem, HybridItem, ItemForm, ItemOptions,
+    NegotiatedItem, ProbabilisticItem, ProbabilisticLimits, ProvisionRefusal, SourceProvision,
+    TemporalItem,
 };
 
 use filament_exact::{Cancel, ObjectReference, ScalarLimits};
@@ -884,6 +886,8 @@ pub enum Counterexample {
     Hybrid(Box<fsl_replay::HybridCounterexample>),
     /// A task-product model trace accepted by FR-237 and spelled by FR-364.
     TaskProduct(Box<serde_json::Value>),
+    /// FR-898's reproduced trace tuple and joint position.
+    FiniteHyper(Box<serde_json::Value>),
 }
 
 /// What a state-graph engine run reports for one item (FR-628): the record of
@@ -1340,6 +1344,13 @@ pub enum Payload {
         /// The modes its manifest advertises for the kind.
         modes: Vec<Mode>,
     },
+    /// A finite trace population exceeds the bound declared by its hyper clause.
+    FiniteHyperBound {
+        /// The declared trace bound.
+        bound: u64,
+        /// The number of distinct traces supplied.
+        found: usize,
+    },
     /// A capability kind that does not apply to the checked claim family.
     Inapplicable {
         /// The request item's index.
@@ -1408,6 +1419,9 @@ impl Payload {
                 ("option", json!(option)),
                 ("value", json!(value)),
             ],
+            Self::FiniteHyperBound { bound, found } => {
+                vec![("bound", json!(bound)), ("found", json!(found))]
+            }
             Self::NotEmitted { kind, backend } => vec![
                 ("kind", json!(kind.to_wire())),
                 ("backend", json!(backend.as_str())),
@@ -1542,9 +1556,20 @@ pub(crate) enum EngineReport {
     GlobalConformance(Box<crate::protocol_analysis::conformance::ConformanceReport>),
     /// A hybrid provider's answer, settled by FR-250 and FR-450.
     Hybrid(Box<hybrid_item::HybridReport>),
+    /// FR-898's finite trace-set verdict and reproduced tuple witness.
+    FiniteHyper(Box<FiniteHyperReport>),
     /// The engine refused the item, and its settlement map gives the refusal
     /// no terminal record.
     Refused(Refusal),
+}
+
+/// A finite-hyperproperty result already checked against its request
+/// population and checked body.
+pub(crate) struct FiniteHyperReport {
+    /// The evidence-backed terminal result.
+    pub terminal: TerminalRecord,
+    /// The FR-898 false-tuple witness, when refuted.
+    pub counterexample: Option<serde_json::Value>,
 }
 
 /// The FR-281 "Engine refusals" table's rows.
@@ -1561,6 +1586,8 @@ pub(crate) enum Refusal {
     ),
     /// An unbounded extent: `unsupported` with `unbounded-extent`.
     RequiresBound,
+    /// A finite trace population exceeds the bound declared by its hyper clause.
+    RequiresFiniteHyperBound { bound: u64, found: usize },
     /// EN-4 `NotStatistical`: `invalid-request` with `not-statistical`.
     NotStatistical,
     /// A published option's value outside its domain (FSpec FR-779-AC-2):
@@ -1910,6 +1937,8 @@ pub struct AnalyzeRecord {
     pub task_product: Option<Box<TaskProductReport>>,
     /// FR-364 task-product model trace, already replayed by the rebuilt plan.
     pub(crate) task_product_counterexample: Option<Box<serde_json::Value>>,
+    /// FR-898's reproduced false-tuple witness.
+    pub finite_hyper_counterexample: Option<serde_json::Value>,
     /// The number of steps of a supplied trace a `finite-replay` item
     /// replayed to its proof (FR-941).
     pub replayed_steps: Option<u64>,
@@ -1957,6 +1986,7 @@ impl AnalyzeRecord {
             hybrid_disagreement: None,
             task_product: None,
             task_product_counterexample: None,
+            finite_hyper_counterexample: None,
             state_graph: None,
         }
     }
@@ -2041,6 +2071,9 @@ impl AnalyzeRecord {
                 "counterexample": (**found).clone(),
             })));
         }
+        if let Some(found) = &self.finite_hyper_counterexample {
+            return Some(Ok(found.clone()));
+        }
         self.probabilistic_counterexample
             .as_ref()
             .map(|found| found.wire.clone())
@@ -2101,6 +2134,9 @@ impl AnalyzeRecord {
         }
         if let Some(found) = self.task_product_counterexample.take() {
             return Some(Counterexample::TaskProduct(found));
+        }
+        if let Some(found) = self.finite_hyper_counterexample.take() {
+            return Some(Counterexample::FiniteHyper(Box::new(found)));
         }
         self.probabilistic_counterexample
             .take()
@@ -2220,7 +2256,8 @@ impl Counterexample {
             | Self::GlobalConformance(_)
             | Self::ScheduleMiss(_)
             | Self::Hybrid(_)
-            | Self::TaskProduct(_) => None,
+            | Self::TaskProduct(_)
+            | Self::FiniteHyper(_) => None,
         }
     }
 }
@@ -2806,6 +2843,10 @@ fn settle(
             protocol_conformance_counterexample: report.counterexample,
             ..record(terminal(report.terminal), None)
         },
+        EngineReport::FiniteHyper(report) => AnalyzeRecord {
+            finite_hyper_counterexample: report.counterexample,
+            ..record(terminal(report.terminal), None)
+        },
         EngineReport::Exact(exact) => {
             let (settled_record, evidence, counterexample) = exact.settle(index, backend);
             let mut settled = record(terminal(settled_record), None);
@@ -3027,6 +3068,14 @@ fn settle(
             };
             disposed(DispositionKind::Unsupported, diagnostic, backend)
         }
+        EngineReport::Refused(Refusal::RequiresFiniteHyperBound { bound, found }) => disposed(
+            DispositionKind::RequiresBound,
+            Diagnostic {
+                code: CatalogCode::new("requires_bound", "requires-bound"),
+                payload: Payload::FiniteHyperBound { bound, found },
+            },
+            backend,
+        ),
     }
 }
 

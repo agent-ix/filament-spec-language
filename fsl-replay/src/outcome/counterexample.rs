@@ -1262,6 +1262,19 @@ fn refinement(failure: &RefinementFailure) -> Result<Json, CounterexampleWireErr
         RefinementFailure::NoAbstractMatch { position } => {
             json!({"kind": "NoAbstractMatch", "position": position})
         }
+        RefinementFailure::AbstractClockGuard {
+            position,
+            operation,
+        } => json!({
+            "kind": "AbstractClockGuard",
+            "position": position,
+            "operation": operation,
+        }),
+        RefinementFailure::AbstractTimeInvariant { position, model } => json!({
+            "kind": "AbstractTimeInvariant",
+            "position": position,
+            "model": model,
+        }),
         RefinementFailure::AbstractStepRejected {
             position,
             transition,
@@ -1286,6 +1299,9 @@ fn refinement(failure: &RefinementFailure) -> Result<Json, CounterexampleWireErr
         }
         RefinementFailure::AbstractUnfair { constraint } => {
             json!({"kind": "AbstractUnfair", "constraint": canonical(constraint, "fairness")?})
+        }
+        RefinementFailure::HiddenUnfair { constraint } => {
+            json!({"kind": "HiddenUnfair", "constraint": canonical(constraint, "fairness")?})
         }
         RefinementFailure::RefusalNotPermitted { position, label } => json!({
             "kind": "RefusalNotPermitted",

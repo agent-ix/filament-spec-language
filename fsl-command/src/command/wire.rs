@@ -586,6 +586,9 @@ pub(super) struct AnalyzeRequest {
     pub package: Option<HandoffSelection>,
     #[serde(default, deserialize_with = "deserialize_objects")]
     pub models: Vec<Model>,
+    /// FR-640: the clock configurations used when compiling the program.
+    #[serde(default, deserialize_with = "clocks")]
+    pub clocks: fsl_replay::spine::RequestClocks,
     #[serde(default, deserialize_with = "deserialize_objects")]
     pub libraries: Vec<Library>,
     #[serde(default, deserialize_with = "present_json_value")]

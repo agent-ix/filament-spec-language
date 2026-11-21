@@ -224,8 +224,10 @@ fn a_refinement_budget_of_one_state_is_incomplete() {
 }
 
 /// FR-630, FR-143: a strong abstract fairness constraint gives the
-/// liveness half the typed result the library gives it, through the wire;
-/// the item is never `proved` (QSL-2243 decides the strong reading).
+/// liveness half the typed result the library gives it, through the wire. The
+/// only concrete step maps to the strongly fair abstract `inc`, so no
+/// abstract-unfair loop exists and the claim is decided `proved`; the refuted
+/// reading is covered by the refinement liveness tests.
 #[trace("TC-1590", "FR-630")]
 #[test]
 fn a_strong_abstract_fairness_refinement_settles_the_library_result() {
@@ -241,8 +243,7 @@ fn a_strong_abstract_fairness_refinement_settles_the_library_result() {
             "temporal": {"item_kind": "refinement"}}]),
     ));
     let item = run.item(0);
-    assert_ne!(label(&item), "proved", "{item}");
-    assert_eq!(label(&item), "unsupported", "{item}");
+    assert_eq!(label(&item), "proved", "{item}");
 }
 
 /// FR-630, FSpec FR-368: an `abstract_subject` whose `identity` is not the
@@ -384,7 +385,7 @@ fn non_interference_proves_and_refutes() {
 /// FR-631-AC-4: a hyper clause with no object parameter is analyzable.
 #[trace("TC-1591", "FR-631-AC-4")]
 #[test]
-#[ignore = "QSL-2248: a hyper clause with no object parameter is checked but not emitted"]
+#[ignore = "QSL-2128: hyperproperty items are not reachable through fsl analyze yet"]
 fn an_object_free_hyper_clause_is_analyzed() {
     use crate::hyper_world::{request_files, Vault};
     let declaration = "hyper Whole using inf over behaviours () \

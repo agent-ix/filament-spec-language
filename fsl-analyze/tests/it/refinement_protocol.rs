@@ -4,22 +4,23 @@
 //! protocol subject, with protocol-state replay inputs kept explicit.
 
 use filament_exact::Cancel;
-use fsl_analyze::model_check::{check_refinement, ModelCheckRefusal, RefinementCheckRequest};
+use filament_semantic_value::checking::CheckMode;
+use fsl_analyze::model_check::{ModelCheckRefusal, RefinementCheckRequest, check_refinement};
 use fsl_eval::model_subject::ModelSubject;
-use fsl_eval::simulation::model::operation_identity_text;
 use fsl_eval::simulation::TransitionSystem;
+use fsl_eval::simulation::model::operation_identity_text;
 use fsl_replay::{
-    check_protocol_initial, check_protocol_step, check_simulation_certificate,
+    Certification, ClosureRefusal, ConcreteStep, ModelCheckLimits, ProofBasis,
+    ProtocolAssumptionReplaySettlement, RefinementPosition, RefinementTraceSettlement,
+    SafetyOutcome, SettlementBasis, SimulationCertificateRequest, SimulationRefusal, StepVerdict,
+    TerminalValue, check_protocol_initial, check_protocol_step, check_simulation_certificate,
     open_protocol_systems, replay_protocol_assumption_witness, replay_refinement_trace,
-    settle_refinement_safety, settle_refinement_safety_with_assumption_replay, Certification,
-    ClosureRefusal, ConcreteStep, ModelCheckLimits, ProofBasis, ProtocolAssumptionReplaySettlement,
-    RefinementPosition, RefinementTraceSettlement, SafetyOutcome, SettlementBasis,
-    SimulationCertificateRequest, SimulationRefusal, StepVerdict, TerminalValue,
+    settle_refinement_safety, settle_refinement_safety_with_assumption_replay,
 };
 use ix_trace_rs::trace;
 
-use crate::refinement_fixture::{cas_refines_counter, World, UNLIMITED};
-use crate::refinement_fixture::{key, Variant, CAS, SPEC};
+use crate::refinement_fixture::{CAS, SPEC, Variant, key};
+use crate::refinement_fixture::{UNLIMITED, World, cas_refines_counter};
 
 pub(crate) fn cas_twice(peek: bool, lost_update: bool) -> String {
     let retries = if lost_update {
@@ -154,12 +155,11 @@ fn a_twice_protocol_refinement_holds_uncertified() {
     assert_eq!(settled.basis, SettlementBasis::ClosedScope);
 }
 
-/// FR-147-AC-3 (TC-552 step 3): a requested fairness guarantee over a
-/// hidden abstract field leaves protocol safety available and marks only
-/// the liveness half unsupported.
-#[trace("TC-552", "FR-147-AC-3")]
+/// FR-899-AC-10 (TC-552): the weak `inc` requirement settles over protocol
+/// candidate configurations even when the model mapping hides its value.
+#[trace("TC-552", "FR-899-AC-10")]
 #[test]
-fn a_protocol_refinement_with_hidden_fairness_state_reports_unsupported_liveness() {
+fn a_protocol_refinement_checks_hidden_fairness_state_liveness() {
     let source = cas_twice(false, false)
         .replace(
             "object Spec::Counter from Impl::Counter { value = self.value; }",
@@ -194,15 +194,71 @@ fn a_protocol_refinement_with_hidden_fairness_state_reports_unsupported_liveness
         &Cancel::new(),
     )
     .expect("the abstract protocol subject is admitted");
-    assert!(matches!(
-        outcome.safety,
-        SafetyOutcome::HoldsUncertified { .. }
-    ));
-    assert_eq!(
-        outcome.liveness,
-        Some(fsl_replay::LivenessHalf::Unsupported(
-            fsl_replay::UnavailabilityCause::HiddenFieldLiveness
-        ))
+    assert!(
+        matches!(outcome.safety, SafetyOutcome::HoldsUncertified { .. }),
+        "safety outcome: {:?}",
+        outcome.safety
+    );
+    assert!(
+        matches!(
+            outcome.liveness,
+            Some(fsl_replay::LivenessHalf::Checked(
+                fsl_replay::ModelCheckOutcome::HoldsReduced { .. }
+            ))
+        ),
+        "liveness outcome: {:?}",
+        outcome.liveness
+    );
+}
+
+/// FR-899-AC-10 (TC-552): `CasTwice`'s two concrete commits take the weak
+/// `Spec::Counter::inc` class along a coherent protocol candidate run.
+#[trace("TC-552", "FR-899-AC-10")]
+#[test]
+fn cas_twice_without_peek_holds_weak_abstract_inc_fairness() {
+    let source = cas_twice(false, false).replace(
+        "step Impl::Counter::retryB -> stutter;",
+        "step Impl::Counter::retryB -> stutter;\nensure fair weak Spec::Counter::inc;",
+    );
+    let world = World::with_internals(
+        Variant {
+            peek: false,
+            intended_terminal: true,
+            ..Variant::CAS
+        },
+        &source,
+        serde_json::json!([{"refinement":"CasTwice","internal":["Spec::Twice::Done"]}]),
+    );
+    let outcome = check_refinement(
+        RefinementCheckRequest {
+            refinement: world.refinement(),
+            concrete: ModelSubject {
+                simulation: world.concrete_request(UNLIMITED),
+                proof_bounds: Vec::new(),
+            },
+            abstract_package: world.package(),
+            abstract_initial: vec![world.abstract_initial()].into(),
+            abstract_protocol_binding: Some(protocol_binding()),
+            max_depth: None,
+            limits: ModelCheckLimits::default(),
+        },
+        &Cancel::new(),
+    )
+    .expect("the abstract protocol subject is admitted");
+    assert!(
+        matches!(outcome.safety, SafetyOutcome::HoldsUncertified { .. }),
+        "safety outcome: {:?}",
+        outcome.safety
+    );
+    assert!(
+        matches!(
+            outcome.liveness,
+            Some(fsl_replay::LivenessHalf::Checked(
+                fsl_replay::ModelCheckOutcome::HoldsReduced { .. }
+            ))
+        ),
+        "liveness outcome: {:?}",
+        outcome.liveness
     );
 }
 
@@ -532,16 +588,18 @@ fn one_protocol_class_does_not_imply_a_second_concrete_operation_assumption() {
     );
     let peek = operation_identity_text(&key(crate::refinement_fixture::CAS, "Counter/peek"))
         .expect("the concrete peek identity is canonical");
-    assert!(witness.path.steps[loop_entry..].iter().any(|step| step
-        .concrete
-        .as_ref()
-        .is_some_and(|transition| transition.operation() == peek)));
+    assert!(witness.path.steps[loop_entry..].iter().any(|step| {
+        step.concrete
+            .as_ref()
+            .is_some_and(|transition| transition.operation() == peek)
+    }));
     let commit = operation_identity_text(&key(crate::refinement_fixture::CAS, "Counter/commitA"))
         .expect("the unmet commit identity is canonical");
-    assert!(!witness.path.steps[loop_entry..].iter().any(|step| step
-        .concrete
-        .as_ref()
-        .is_some_and(|transition| transition.operation() == commit)));
+    assert!(!witness.path.steps[loop_entry..].iter().any(|step| {
+        step.concrete
+            .as_ref()
+            .is_some_and(|transition| transition.operation() == commit)
+    }));
     let systems = open_protocol_systems(
         world.refinement(),
         &concrete,
@@ -1085,14 +1143,19 @@ fn tso_flush_fairness_replays_against_an_unmet_inc_assumption() {
 fn an_undetermined_assumption_predicate_has_a_typed_finite_witness() {
     let source = cas_twice(false, false)
         .replace(
+            "profile p = \"filament.protocol.finite-global/v1\";",
+            "profile p = \"filament.protocol.finite-global/v1\";\n\
+             function unknown_at_one using v(n: Int[0, 2]): Boolean pure { 6 mod (1 - n) >= 0 }",
+        )
+        .replace(
             "protocol Twice",
-            "pre UnknownCommit using v on Impl::Counter::commitA { mod_defined(self.value) }\nfunction mod_defined using v(n: Int[0, 2]): Boolean pure { 6 mod (1 - n) >= 0 }\nprotocol Twice",
+            "pre UnknownCommit using v on Impl::Counter::commitA { unknown_at_one(self.value) }\nprotocol Twice",
         )
         .replace(
             "step Impl::Counter::commitB -> Spec::Counter::inc(self);",
             "step Impl::Counter::commitB -> Spec::Counter::inc(self);\nassume fair weak whole Impl::Counter::commitA;",
         );
-    let world = World::with_internals(
+    let world = World::with_internals_mode(
         Variant {
             kernel: true,
             peek: false,
@@ -1101,6 +1164,7 @@ fn an_undetermined_assumption_predicate_has_a_typed_finite_witness() {
         },
         &source,
         serde_json::json!([{"refinement":"CasTwice","internal":["Spec::Twice::Done"]}]),
+        CheckMode::Kernel,
     );
     let outcome = check_refinement(
         RefinementCheckRequest {
@@ -1189,8 +1253,13 @@ fn an_undetermined_assumption_predicate_has_a_typed_finite_witness() {
 fn an_undetermined_protocol_assumption_has_a_typed_finite_witness() {
     let source = cas_twice(false, false)
         .replace(
+            "profile p = \"filament.protocol.finite-global/v1\";",
+            "profile p = \"filament.protocol.finite-global/v1\";\n\
+             function unknown_at_one using v(n: Int[0, 2]): Boolean pure { 6 mod (1 - n) >= 0 }",
+        )
+        .replace(
             "protocol Twice",
-            "pre UnknownProtocol using v on Spec::Counter::inc { mod_defined(self.value) }\nfunction mod_defined using v(n: Int[0, 2]): Boolean pure { 6 mod (1 - n) >= 0 }\n\
+            "pre UnknownProtocol using v on Spec::Counter::inc { unknown_at_one(self.value) }\n\
              temporal Left using inf over (k: Spec::Counter) clock \"model-steps\" on origin { fair weak whole Spec::Counter::inc; eventually holds(k.value >= 0) }\n\
              protocol Twice",
         )
@@ -1203,7 +1272,7 @@ fn an_undetermined_protocol_assumption_has_a_typed_finite_witness() {
             "role w on Spec::Counter; requires temporal Left; scheduling adversarial;",
         )
         .replace("finish Done as (d: Boolean) { true };", "finish Done as (d: Boolean) { false };");
-    let world = World::with_internals(
+    let world = World::with_internals_mode(
         Variant {
             kernel: true,
             peek: false,
@@ -1211,6 +1280,7 @@ fn an_undetermined_protocol_assumption_has_a_typed_finite_witness() {
         },
         &source,
         serde_json::json!([{"refinement":"CasTwice","internal":["Spec::Twice::Done"]}]),
+        CheckMode::Kernel,
     );
     let initial = world.abstract_initial();
     let outcome = check_refinement(
@@ -1244,10 +1314,12 @@ fn an_undetermined_protocol_assumption_has_a_typed_finite_witness() {
         fsl_replay::ProtocolAssumptionReason::RelationUndetermined
     );
     assert!(witness.path.loop_entry.is_none());
-    assert!(witness
-        .undecided_locus
-        .as_deref()
-        .is_some_and(|locus| locus.starts_with("ProtocolContractUndetermined:")));
+    assert!(
+        witness
+            .undecided_locus
+            .as_deref()
+            .is_some_and(|locus| locus.starts_with("ProtocolContractUndetermined:"))
+    );
     assert!(witness.identities.iter().any(|identity| {
         identity.side == fsl_replay::AssumptionSide::Specification
             && matches!(
@@ -1356,17 +1428,23 @@ fn a_second_commit_against_once_replays() {
     );
 }
 
-/// FR-148-AC-5 (TC-553): a mapped concrete `peek` loop diverges while every
-/// protocol candidate at the initial product state enables `Twice::a1`.
+/// FR-148-AC-5 and FR-899-AC-10 (TC-552/TC-553): the mapped concrete `peek`
+/// loop diverges while every protocol candidate at the initial product state
+/// enables `Twice::a1`; the liveness half does not run after safety refutes.
 #[trace("TC-553", "FR-148-AC-5")]
+#[trace("TC-552", "FR-899-AC-10")]
 #[test]
 fn a_stuttering_peek_loop_is_protocol_observable_divergence() {
+    let source = cas_twice(true, false).replace(
+        "step Impl::Counter::retryB -> stutter;",
+        "step Impl::Counter::retryB -> stutter;\nensure fair weak Spec::Counter::inc;",
+    );
     let world = World::with_internals(
         Variant {
             peek: true,
             ..Variant::CAS
         },
-        &cas_twice(true, false),
+        &source,
         serde_json::json!([{"refinement":"CasTwice","internal":["Spec::Twice::Done"]}]),
     );
     let outcome = check_refinement(
@@ -1385,6 +1463,7 @@ fn a_stuttering_peek_loop_is_protocol_observable_divergence() {
         &Cancel::new(),
     )
     .expect("the abstract protocol subject is admitted");
+    assert!(outcome.liveness.is_none());
     let SafetyOutcome::Violated { counterexample, .. } = outcome.safety else {
         panic!(
             "observable protocol divergence refutes the refinement: {:?}",
@@ -1971,10 +2050,12 @@ fn check_initial_and_steps_retain_protocol_control_candidates() {
     let (next, _concrete_state) = apply(&position, &concrete_state, "commitB", 4);
     position = next;
     assert_eq!(counter_value(&position.abstract_states[0]), 2);
-    assert!(position
-        .abstract_protocol_states
-        .iter()
-        .any(|state| protocol.successors(state).unwrap().successors.is_empty()));
+    assert!(
+        position
+            .abstract_protocol_states
+            .iter()
+            .any(|state| protocol.successors(state).unwrap().successors.is_empty())
+    );
 }
 
 /// FR-148-AC-1 (TC-553): `any` admits the union of internal stutter and visible
@@ -2060,9 +2141,11 @@ fn an_any_row_can_take_a_visible_protocol_transition() {
             .collect(),
         other => panic!("any selects a visible protocol transition: {other:?}"),
     };
-    assert!(transitions
-        .iter()
-        .any(|transition| transition.node() == Some("Main/a1")));
+    assert!(
+        transitions
+            .iter()
+            .any(|transition| transition.node() == Some("Main/a1"))
+    );
     assert_eq!(counter_value(&post.abstract_states[0]), 1);
 }
 
@@ -2288,10 +2371,12 @@ fn an_abstract_protocol_side_takes_its_capacity_binding_from_the_request() {
             capacities,
         )
     };
-    assert!(open(&binding(&[("K", 1)]))
-        .expect("a bound capacity opens")
-        .abstract_protocol
-        .is_some());
+    assert!(
+        open(&binding(&[("K", 1)]))
+            .expect("a bound capacity opens")
+            .abstract_protocol
+            .is_some()
+    );
     assert!(matches!(
         open(&[]),
         Err(ProtocolSystemsRefusal::UnboundCapacity(names)) if names == [UnboundCapacity {

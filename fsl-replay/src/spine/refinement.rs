@@ -314,7 +314,6 @@ fn check_limit(cause: &CheckCause) -> Option<ReachedLimit> {
             | RefinementCause::Unsupported { .. }
             | RefinementCause::UnsupportedRowForm { .. }
             | RefinementCause::AbstractRelationships { .. }
-            | RefinementCause::TimedAbstract { .. }
             | RefinementCause::ClockRead
             | RefinementCause::PopulationBound { .. }
             | RefinementCause::NodeArgumentCount { .. }

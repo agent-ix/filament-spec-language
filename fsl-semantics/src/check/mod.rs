@@ -532,7 +532,7 @@ pub use field_refinement::RefinementObligation;
 /// The premises a [`CheckedChannel`] records exactly as written (FR-218
 /// "Channels"), which its readers match on.
 pub use fsl_forms::{
-    AccessOrdering, ChannelCapacity, ChannelDelivery, ChannelOverflow, LossSelector,
+    AccessOrdering, ChannelCapacity, ChannelDelivery, ChannelOverflow, LossSelector, QuantifierKind,
 };
 pub use hybrid::{
     hybrid_horizon, ArithmeticOp, CaptureIndex, CheckedFunctionRef, CheckedHybridClaim,
@@ -546,9 +546,10 @@ pub use hybrid_locus::{HybridTermHome, HybridTermNode};
 #[cfg(any(test, feature = "test-support"))]
 pub use hyper_clause::check_hyper_clauses;
 pub use hyper_clause::{
-    decodable_argument, operation_text, ArgumentRead, AtomSlot, CheckedHyper, CheckedHyperClause,
-    CheckedModelRelation, CheckedQuantifier, CheckedStepPredicate, CopyGenerator, CopyGroup,
-    HyperCause, HyperDeclaration, HyperDeclarations, HyperForm, HyperIdentity, HyperTraceFamily,
+    decodable_argument, operation_text, ArgumentRead, AtomSlot, CheckedFiniteHyperClause,
+    CheckedFiniteTraceQuantifier, CheckedHyper, CheckedHyperClause, CheckedModelRelation,
+    CheckedQuantifier, CheckedStepPredicate, CopyGenerator, CopyGroup, HyperCause,
+    HyperDeclaration, HyperDeclarations, HyperForm, HyperIdentity, HyperTraceFamily,
     HyperUnsupported, MatchPart, ModelAlias, ObjectParameter, OperationContractClaim, StepRead,
     STUTTER_TEXT,
 };
@@ -1082,6 +1083,9 @@ pub struct CheckedGraph {
     /// FR-488: every emitted hyper clause over `behaviours`, in declaration
     /// order, each carrying its `claim` occurrence.
     hyper_nodes: Vec<hyper_clause::CheckedHyperClause>,
+    /// FR-898: every emitted finite trace-set hyper clause, in declaration
+    /// order, each carrying its `claim` occurrence.
+    finite_hyper_nodes: Vec<hyper_clause::CheckedFiniteHyperClause>,
     /// FR-180: every checked model relation emitted as a step-relation claim.
     step_relations: Vec<hyper_clause::CheckedModelRelation>,
     /// FR-165: every checked state-graph claim, in declaration order.
@@ -1241,6 +1245,7 @@ impl DebugWith for CheckedGraph {
             protocol_node_keys,
             temporal_clauses,
             hyper_nodes,
+            finite_hyper_nodes,
             step_relations,
             state_graph_claims,
             synthesis_claims,
@@ -1379,6 +1384,7 @@ impl DebugWith for CheckedGraph {
             )
             .field("temporal_clauses", &Seq(temporal_clauses, table))
             .field("hyper_nodes", &hyper_nodes)
+            .field("finite_hyper_nodes", &finite_hyper_nodes)
             .field("step_relations", &Seq(step_relations, table))
             .field("state_graph_claims", &state_graph_claims)
             .field("synthesis_claims", &synthesis_claims)
@@ -4282,7 +4288,6 @@ impl PackageDeclarations {
                     lists: &internal_lists,
                     protocols: $views,
                     defer_abstract_protocol_resolution: $defer_abstract,
-                    time_sources: &self.time_sources,
                     clock_reading: &self.clock_reading,
                 };
                 let (checked, used) = refinement::check_refinement(
@@ -5464,6 +5469,7 @@ impl PackageDeclarations {
             clause_source: std::cell::RefCell::new(None),
         };
         let mut checked_hyper: Vec<hyper_clause::CheckedHyperClause> = Vec::new();
+        let mut checked_finite_hyper: Vec<hyper_clause::CheckedFiniteHyperClause> = Vec::new();
         let mut checked_relations: Vec<hyper_clause::CheckedModelRelation> = Vec::new();
         for clause in &self.hyper_clauses {
             let mut contract_cx = crate::family::CheckContext::new(
@@ -5483,6 +5489,9 @@ impl PackageDeclarations {
                             Some(refusal) => refusals.push(refusal),
                             None => checked_hyper.push(*checked),
                         }
+                    }
+                    hyper_clause::CheckedHyper::Finite(checked) => {
+                        checked_finite_hyper.push(*checked);
                     }
                     hyper_clause::CheckedHyper::Relation(relation) => {
                         checked_relations.push(*relation);
@@ -5592,6 +5601,9 @@ impl PackageDeclarations {
             for table in clause.take_formed_units() {
                 units.append(table);
             }
+        }
+        for clause in &mut checked_finite_hyper {
+            units.append(clause.take_formed_units());
         }
         for claim in &mut checked_state_graph_claims {
             for table in claim.take_formed_units() {
@@ -6733,6 +6745,16 @@ impl PackageDeclarations {
                 }
             }
         }
+        let mut lowered_finite_hyper = Vec::with_capacity(checked_finite_hyper.len());
+        for (finite_index, clause) in checked_finite_hyper.iter().enumerate() {
+            match lowering.finite_hyper_clause(&lowering::FiniteHyperClauseInput {
+                index: checked_hyper.len() + finite_index,
+                clause,
+            }) {
+                Ok(lowered) => lowered_finite_hyper.push(lowered),
+                Err(refusal) => refusals.push(refusal),
+            }
+        }
         // FR-410: each checked state-graph claim, after every function its
         // predicates may call.
         let mut lowered_state_graph = Vec::with_capacity(checked_state_graph_claims.len());
@@ -7434,6 +7456,9 @@ impl PackageDeclarations {
         if lowered_hyper.len() != checked_hyper.len() {
             return Err(unlowered());
         }
+        if lowered_finite_hyper.len() != checked_finite_hyper.len() {
+            return Err(unlowered());
+        }
         if lowered_relations.len() != checked_relations.len() {
             return Err(unlowered());
         }
@@ -7477,6 +7502,19 @@ impl PackageDeclarations {
                 for slot in 0..conjunct.slots().len() {
                     type_spans.insert(hyper_site(index, make(at, slot)), conjunct.span());
                 }
+            }
+        }
+        for (finite_index, clause) in checked_finite_hyper.iter().enumerate() {
+            use hyper_clause::lowering::{hyper_site, Site};
+            let index = checked_hyper.len() + finite_index;
+            type_spans.insert(hyper_site(index, Site::Claim), clause.span());
+            type_spans.insert(hyper_site(index, Site::FiniteDomain), clause.span());
+            site_spans.insert(
+                format!("finite hyper {} body", clause.name()),
+                clause.body_spans().clone(),
+            );
+            for slot in 0..clause.body_parameters().len() {
+                type_spans.insert(hyper_site(index, Site::FiniteSlot(slot)), clause.span());
             }
         }
         for (index, relation) in checked_relations.iter().enumerate() {
@@ -7548,6 +7586,33 @@ impl PackageDeclarations {
                     })?;
                 Ok(checked
                     .assembled_at(OccurrenceKey::new(claims::wire(lowered.key.clone()), claim)))
+            })
+            .collect::<Result<Vec<_>, Vec<CheckRefusal>>>()?;
+        let finite_hyper_nodes = checked_finite_hyper
+            .into_iter()
+            .zip(&lowered_finite_hyper)
+            .enumerate()
+            .map(|(finite_index, (checked, lowered))| {
+                let location = hyper_clause::lowering::hyper_location(
+                    hyper_nodes.len() + finite_index,
+                    hyper_clause::lowering::Site::Claim,
+                );
+                let claim = occurrences
+                    .first_origin(&lowered.key, family::OccurrenceRole::Claim, |at| {
+                        *at == location
+                    })
+                    .ok_or_else(|| {
+                        vec![CheckRefusal {
+                            location: location.clone(),
+                            cause: CheckCause::InternalFault(Box::new(
+                                KeyFault::UnkeyableRequirements,
+                            )),
+                        }]
+                    })?;
+                Ok(checked.assembled_at(
+                    lowered.key.clone(),
+                    OccurrenceKey::new(claims::wire(lowered.key.clone()), claim),
+                ))
             })
             .collect::<Result<Vec<_>, Vec<CheckRefusal>>>()?;
         // FR-410 "Outputs": each state-graph claim carries its `claim`
@@ -8474,6 +8539,7 @@ impl PackageDeclarations {
                 .collect(),
             temporal_clauses,
             hyper_nodes,
+            finite_hyper_nodes,
             step_relations: Vec::new(),
             state_graph_claims: state_graph_nodes,
             synthesis_claims: checked_syntheses
@@ -9924,6 +9990,29 @@ impl CheckedGraph {
     /// order, each with its `claim` occurrence.
     pub fn hyper_clauses(&self) -> &[hyper_clause::CheckedHyperClause] {
         &self.hyper_nodes
+    }
+
+    /// FR-898: every emitted finite trace-set hyper clause, in declaration
+    /// order, each with its `claim` occurrence.
+    pub fn finite_hyper_clauses(&self) -> &[hyper_clause::CheckedFiniteHyperClause] {
+        &self.finite_hyper_nodes
+    }
+
+    /// FR-898: the checked finite-hyper body as a standalone expression
+    /// owned by this graph, ready for one tuple's field values.
+    pub fn finite_hyper_expression(&self, name: &str) -> Option<CheckedExpression> {
+        let clause = self
+            .finite_hyper_nodes
+            .iter()
+            .find(|clause| clause.name() == name)?;
+        Some(CheckedExpression {
+            graph_identity: self.graph_identity.clone(),
+            parameters: clause.body_parameters().to_vec(),
+            root: clause.typed_body().clone(),
+            slots: clause.body_slots(),
+            formed_units: self.evaluation_units.clone(),
+            effective_limits: self.effective_limits,
+        })
     }
 
     /// FR-180: every admitted `relation` declaration, in source order, with

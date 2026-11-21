@@ -1856,6 +1856,20 @@ impl<'a> Typer<'a> {
                             &location,
                         )));
                     }
+                    // FR-898 finite trace bodies read a field from the
+                    // current position's record through `trace.field`.
+                    if let Some((slot, value_type)) = self
+                        .hyper
+                        .as_ref()
+                        .and_then(|hyper| hyper.finite_traces.get(&execution.name))
+                        .and_then(|fields| fields.get(field))
+                    {
+                        return Ok(Step::Typed(node(
+                            NodeKind::Local(*slot),
+                            value_type.clone(),
+                            &location,
+                        )));
+                    }
                 }
                 if let ExprNode::Deref(reference) = operand.node() {
                     let reference = operand.at(*reference);

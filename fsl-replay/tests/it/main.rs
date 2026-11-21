@@ -15,6 +15,7 @@ mod compile_text_literals;
 mod conditioned_product_key;
 mod declaration_only_unit;
 mod format_outcome_facade;
+mod hyper_finite_replay;
 mod hyper_identity;
 mod hyper_per_trace_clock;
 mod hyper_query;
