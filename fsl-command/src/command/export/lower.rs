@@ -1330,6 +1330,7 @@ pub(super) fn lower(
             object,
             binder: binder.clone(),
             tf: read.tf,
+            formula_sites: read.formula_sites,
             refuse_at: read.refuse_at,
             defs,
             cur,

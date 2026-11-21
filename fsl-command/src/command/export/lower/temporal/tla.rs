@@ -969,7 +969,7 @@ fn tla_clause(mut ctx: Ctx<'_>, out: &mut Vec<Definition>, extra: &mut Extra) ->
                 }
             }
         }
-        Shape::Tableau => return tableau::emit(&ctx, &root, out, extra),
+        Shape::Tableau => return tableau::emit(&ctx, out, extra),
     }
     let names = &ctx.names;
     let composed = !vars.is_empty();

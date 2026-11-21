@@ -25,31 +25,25 @@ pub(super) const CONSTRUCT: &str = "temporal/temporal_clause";
 /// An operator's interval: `None` for an unbounded operator, otherwise the
 /// inclusive lower bound and the inclusive upper bound when there is one.
 #[derive(Clone, Copy, PartialEq)]
-pub(super) struct Iv {
-    bounds: Option<(u64, Option<u64>)>,
-    node: Option<usize>,
-}
+pub(super) struct Iv(Option<(u64, Option<u64>)>);
 
 impl Iv {
     /// No interval.
     pub(super) const fn none() -> Self {
-        Self {
-            bounds: None,
-            node: None,
-        }
+        Self(None)
     }
     /// The inclusive lower bound and the inclusive upper bound, if any.
     fn bounds(self) -> (u64, Option<u64>) {
-        self.bounds.unwrap_or_default()
+        self.0.unwrap_or_default()
     }
     fn lower(self) -> u64 {
-        self.bounds.map_or(0, |(lower, _)| lower)
+        self.0.map_or(0, |(lower, _)| lower)
     }
     fn upper(self) -> Option<u64> {
-        self.bounds.and_then(|(_, upper)| upper)
+        self.0.and_then(|(_, upper)| upper)
     }
     pub(super) fn is_some(self) -> bool {
-        self.bounds.is_some()
+        self.0.is_some()
     }
 }
 
@@ -75,6 +69,12 @@ pub(super) enum Tf {
     Timed(Box<super::dense::Window>),
 }
 
+/// The checked node and operands corresponding to a use in the original formula.
+pub(super) struct FormulaSite {
+    position: usize,
+    operands: Vec<usize>,
+}
+
 /// One fairness constraint of a clause, as read from the package.
 pub(super) struct FairRead {
     pub(super) strong: bool,
@@ -98,6 +98,7 @@ pub(super) struct ClauseRead {
     /// The `over` binder node.
     pub(super) over: usize,
     pub(super) tf: Tf,
+    pub(super) formula_sites: Vec<FormulaSite>,
     /// The first future operator the clause's TLA+ text has no deterministic
     /// monitor for, when one exists.
     pub(super) refuse_at: Option<usize>,
@@ -115,6 +116,7 @@ pub(super) struct ClauseLow {
     pub(super) object: usize,
     pub(super) binder: String,
     pub(super) tf: Tf,
+    pub(super) formula_sites: Vec<FormulaSite>,
     /// The node a clause without a deterministic monitor is refused at.
     pub(super) refuse_at: Option<usize>,
     /// The FR-812 definedness conditions of the atoms, which `ok_<clause>`
@@ -146,7 +148,7 @@ fn at_node(graph: &Graph<'_>, id: &filament_contract_model::CheckedNodeId) -> Lo
     })
 }
 
-fn interval(graph: &Graph<'_>, node: &FormulaNodeUse<'_>, at: usize) -> Lower<Iv> {
+fn interval(graph: &Graph<'_>, node: &FormulaNodeUse<'_>) -> Lower<Iv> {
     let bound = |text: String| {
         text.parse::<u64>()
             .map_err(|_| refusal("temporal/interval", "an interval bound beyond 64 bits"))
@@ -162,17 +164,17 @@ fn interval(graph: &Graph<'_>, node: &FormulaNodeUse<'_>, at: usize) -> Lower<Iv
             Ok(if (lower, upper) == (0, None) {
                 Iv::none()
             } else {
-                Iv {
-                    bounds: Some((lower, upper)),
-                    node: Some(at),
-                }
+                Iv(Some((lower, upper)))
             })
         }
-        Some(CheckedOperationInterval::Timed { .. }) => defer_at(
-            at,
-            &graph.construct(at),
-            "a timed interval this build does not lower",
-        ),
+        Some(CheckedOperationInterval::Timed { .. }) => {
+            let at = at_node(graph, node.node)?;
+            defer_at(
+                at,
+                &graph.construct(at),
+                "a timed interval this build does not lower",
+            )
+        }
     }
 }
 
@@ -258,7 +260,7 @@ fn build(
         })
         .map(|window| Tf::Timed(Box::new(window)));
     }
-    let iv = interval(graph, node, here)?;
+    let iv = interval(graph, node)?;
     if direction == Some(OperatorDirection::Future) {
         if scope.past {
             return defer_at(
@@ -444,6 +446,19 @@ pub(super) fn read(
         .collect::<Lower<Vec<_>>>()?;
     let binder = super::parameter_name(graph, over)
         .ok_or_else(|| refusal(CONSTRUCT, "the `over` binder has no name"))?;
+    let formula_sites = if target == Target::Tla && timed_root.is_none() {
+        view.formula_graph()
+            .iter()
+            .map(|usage| {
+                Ok(FormulaSite {
+                    position: at_node(graph, usage.node)?,
+                    operands: usage.operands.clone(),
+                })
+            })
+            .collect::<Lower<Vec<_>>>()?
+    } else {
+        Vec::new()
+    };
     Ok(ClauseRead {
         name: name.to_owned(),
         position,
@@ -452,6 +467,7 @@ pub(super) fn read(
         binder: mangle("p_", &binder),
         over,
         tf,
+        formula_sites,
         refuse_at,
         atoms,
         fairness: super::fairness_of(graph, position)?,

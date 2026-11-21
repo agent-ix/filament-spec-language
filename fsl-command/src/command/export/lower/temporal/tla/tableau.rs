@@ -3,6 +3,7 @@
 //! monitor run without disabling any transition of the subject.
 
 use super::{conjuncts, fairness, Cond, Ctx, Extra, Iv, Tf, Var};
+use crate::command::export::lower::temporal::FormulaSite;
 use crate::command::export::lower::{
     bullets, defer_at, define, mangle, Definition, Kind, Lower, E,
 };
@@ -28,6 +29,39 @@ enum Node {
 enum Refused {
     History,
     Limit(Option<usize>),
+}
+
+impl Refused {
+    fn at(self, site: Site<'_>) -> Self {
+        match self {
+            Self::Limit(None) => Self::Limit(site.node()),
+            error => error,
+        }
+    }
+}
+
+/// A use in the checked source tree. Unit formulas have no checked sites.
+#[derive(Clone, Copy, Default)]
+struct Site<'a> {
+    nodes: &'a [FormulaSite],
+    at: usize,
+}
+
+impl Site<'_> {
+    fn node(self) -> Option<usize> {
+        self.nodes.get(self.at).map(|site| site.position)
+    }
+
+    fn operand(self, index: usize) -> Self {
+        match self
+            .nodes
+            .get(self.at)
+            .and_then(|site| site.operands.get(index))
+        {
+            Some(&at) => Self { at, ..self },
+            None => Self::default(),
+        }
+    }
 }
 
 /// A deadline that can be checked when its upper bound has elapsed.
@@ -62,7 +96,7 @@ impl Response {
             upper: window.upper()?,
             trigger: *trigger,
             ready: *ready,
-            node: window.node,
+            node: None,
         })
     }
 
@@ -140,15 +174,19 @@ impl Closure {
         Ok(at)
     }
 
-    fn counterexample(&mut self, tf: &Tf) -> Result<usize, Refused> {
+    fn counterexample(&mut self, tf: &Tf, site: Site<'_>) -> Result<usize, Refused> {
         if let Tf::And(left, right) = tf {
-            let left = self.counterexample(left)?;
-            let right = self.counterexample(right)?;
-            return self.add(Node::Or(left, right));
+            let left = self.counterexample(left, site.operand(0))?;
+            let right = self.counterexample(right, site.operand(1))?;
+            return self
+                .add(Node::Or(left, right))
+                .map_err(|error| error.at(site));
         }
-        let Some(response) = Response::of(tf) else {
-            return self.formula(tf, false);
+        let Some(mut response) = Response::of(tf) else {
+            return self.formula(tf, false, site);
         };
+        // The interval is the right operand of the implication under `always`.
+        response.node = site.operand(0).operand(1).node();
         self.response_counterexample(response)
             .map_err(|_| Refused::Limit(response.node))
     }
@@ -166,17 +204,22 @@ impl Closure {
         self.add(Node::Until(any, violation))
     }
 
-    fn formula(&mut self, tf: &Tf, positive: bool) -> Result<usize, Refused> {
+    fn formula(&mut self, tf: &Tf, positive: bool, site: Site<'_>) -> Result<usize, Refused> {
+        self.formula_nodes(tf, positive, site)
+            .map_err(|error| error.at(site))
+    }
+
+    fn formula_nodes(&mut self, tf: &Tf, positive: bool, site: Site<'_>) -> Result<usize, Refused> {
         match tf {
             Tf::Const(value) => self.add(Node::Constant(positive == *value)),
             Tf::Atom(index) => self.add(Node::Atom {
                 index: *index,
                 positive,
             }),
-            Tf::Not(inner) => self.formula(inner, !positive),
+            Tf::Not(inner) => self.formula(inner, !positive, site.operand(0)),
             Tf::And(left, right) | Tf::Or(left, right) => {
-                let left = self.formula(left, positive)?;
-                let right = self.formula(right, positive)?;
+                let left = self.formula(left, positive, site.operand(0))?;
+                let right = self.formula(right, positive, site.operand(1))?;
                 self.add(if positive == matches!(tf, Tf::And(..)) {
                     Node::And(left, right)
                 } else {
@@ -184,8 +227,8 @@ impl Closure {
                 })
             }
             Tf::Implies(left, right) => {
-                let left = self.formula(left, !positive)?;
-                let right = self.formula(right, positive)?;
+                let left = self.formula(left, !positive, site.operand(0))?;
+                let right = self.formula(right, positive, site.operand(1))?;
                 self.add(if positive {
                     Node::Or(left, right)
                 } else {
@@ -195,13 +238,13 @@ impl Closure {
             Tf::Always(iv, inner) | Tf::Eventually(iv, inner) => {
                 let eventually = positive == matches!(tf, Tf::Eventually(..));
                 let left = self.add(Node::Constant(eventually))?;
-                let right = self.formula(inner, positive)?;
+                let right = self.formula(inner, positive, site.operand(0))?;
                 self.window(*iv, eventually, left, right)
             }
             Tf::Until(iv, left, right) | Tf::Release(iv, left, right) => {
                 let until = positive == matches!(tf, Tf::Until(..));
-                let left = self.formula(left, positive)?;
-                let right = self.formula(right, positive)?;
+                let left = self.formula(left, positive, site.operand(0))?;
+                let right = self.formula(right, positive, site.operand(1))?;
                 self.window(*iv, until, left, right)
             }
             Tf::Hist(_)
@@ -228,7 +271,7 @@ impl Closure {
             return self.add(Node::Constant(!until));
         }
         if lower >= MAX_NODES as u64 || upper.is_some_and(|upper| upper >= MAX_NODES as u64) {
-            return Err(Refused::Limit(interval.node));
+            return Err(Refused::Limit(None));
         }
         let mut root = if let Some(upper) = upper {
             let mut step = right;
@@ -372,13 +415,9 @@ fn mixed_fragment(ctx: &Ctx<'_>, formula: &Tf) -> bool {
             .all(|index| field(index).is_some_and(|atom| atom != persistence && atom != recurrence))
 }
 
-pub(super) fn emit(
-    ctx: &Ctx<'_>,
-    formula: &Tf,
-    out: &mut Vec<Definition>,
-    extra: &mut Extra,
-) -> Lower<()> {
+pub(super) fn emit(ctx: &Ctx<'_>, out: &mut Vec<Definition>, extra: &mut Extra) -> Lower<()> {
     let clause = ctx.clause;
+    let formula = &clause.tf;
     let names = &ctx.names;
     let anchor = clause.refuse_at.unwrap_or(clause.position);
     if !mixed_fragment(ctx, formula) {
@@ -389,7 +428,11 @@ pub(super) fn emit(
         );
     }
     let mut closure = Closure::default();
-    let root = match closure.counterexample(formula) {
+    let site = Site {
+        nodes: &clause.formula_sites,
+        at: 0,
+    };
+    let root = match closure.counterexample(formula, site) {
         Ok(root) => root,
         Err(reason) => {
             let (node, detail) = match reason {
@@ -572,11 +615,50 @@ pub(super) fn emit(
 
 #[cfg(test)]
 mod tests {
-    use super::{Closure, Iv, Node, Tf};
+    use super::{Closure, FormulaSite, Iv, Node, Refused, Site, Tf, MAX_NODES};
     use ix_trace_rs::trace;
 
     fn bit(assignment: usize, node: usize) -> bool {
         assignment & (1 << node) != 0
+    }
+
+    #[test]
+    #[trace("FSpec-TC-1972", "FSpec-FR-813-AC-24")]
+    fn tableau_names_the_conjunction_when_only_its_combination_overflows() {
+        let mut closure = Closure::default();
+        for index in 0..MAX_NODES {
+            closure
+                .add(Node::Atom {
+                    index,
+                    positive: false,
+                })
+                .unwrap();
+        }
+        let formula = Tf::And(Box::new(Tf::Atom(0)), Box::new(Tf::Atom(1)));
+        let nodes = [
+            FormulaSite {
+                position: 90,
+                operands: vec![1, 2],
+            },
+            FormulaSite {
+                position: 91,
+                operands: Vec::new(),
+            },
+            FormulaSite {
+                position: 92,
+                operands: Vec::new(),
+            },
+        ];
+        assert!(matches!(
+            closure.counterexample(
+                &formula,
+                Site {
+                    nodes: &nodes,
+                    at: 0
+                }
+            ),
+            Err(Refused::Limit(Some(90)))
+        ));
     }
 
     /// Search the graph of compatible rows over a finite presentation of an
@@ -589,7 +671,7 @@ mod tests {
     ) -> bool {
         let mut closure = Closure::default();
         let root = closure
-            .counterexample(formula)
+            .counterexample(formula, Site::default())
             .expect("small future formula");
         // Extend the finite prefix until every position in the loop has
         // the same history on each repetition.
@@ -713,10 +795,7 @@ mod tests {
     fn tableau_distinguishes_the_following_position_at_a_deadline() {
         let a = Box::new(Tf::Atom(0));
         let b = Box::new(Tf::Atom(1));
-        let interval = Iv {
-            bounds: Some((1, Some(1))),
-            node: None,
-        };
+        let interval = Iv(Some((1, Some(1))));
         let response = Tf::Eventually(interval, b);
         let formula = Tf::Always(Iv::none(), Box::new(Tf::Implies(a, Box::new(response))));
         assert!(!accepts_negation(
@@ -746,10 +825,7 @@ mod tests {
     fn tableau_reads_both_window_ends_after_the_first_deadline() {
         let trigger = Box::new(Tf::Atom(0));
         let ready = Box::new(Tf::Atom(1));
-        let interval = Iv {
-            bounds: Some((1, Some(2))),
-            node: None,
-        };
+        let interval = Iv(Some((1, Some(2))));
         let response = Tf::Eventually(interval, ready);
         let formula = Tf::Always(
             Iv::none(),
@@ -776,10 +852,7 @@ mod tests {
         let g = |inner| Tf::Always(Iv::none(), Box::new(inner));
         let f = |inner| Tf::Eventually(Iv::none(), Box::new(inner));
         let and = |a, b| Tf::And(Box::new(a), Box::new(b));
-        let interval = Iv {
-            bounds: Some((1, Some(1))),
-            node: None,
-        };
+        let interval = Iv(Some((1, Some(1))));
         let response = Tf::Eventually(interval, Box::new(Tf::Atom(3)));
         let response = g(Tf::Implies(Box::new(Tf::Atom(2)), Box::new(response)));
         let formula = and(and(f(g(Tf::Atom(0))), g(f(Tf::Atom(1)))), response);
