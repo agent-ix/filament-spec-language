@@ -2662,9 +2662,8 @@ fn replay_timed_refutation(
                                 let key = system.state_key(&post).ok()?.0;
                                 let discrete: serde_json::Value =
                                     serde_json::from_slice(&key).ok()?;
-                                (Some(&discrete) == wanted.as_ref()).then(|| {
-                                    (transition, draw.random.clone(), post)
-                                })
+                                (Some(&discrete) == wanted.as_ref())
+                                    .then(|| (transition, draw.random.clone(), post))
                             })
                         });
                     match found {
@@ -2685,7 +2684,12 @@ fn replay_timed_refutation(
                             ) else {
                                 return not_yet();
                             };
-                            (Some(identity.clone()), Some(transition), step.draw.clone(), post)
+                            (
+                                Some(identity.clone()),
+                                Some(transition),
+                                step.draw.clone(),
+                                post,
+                            )
                         }
                     }
                 }
@@ -2777,17 +2781,35 @@ fn timed_step_for(
         .collect::<Option<Vec<_>>>()?;
     let timed = TimedSystem::new(system, claim.subject.alias.as_str()).ok()?;
     let valuation = ClockValuation::new(values);
-    for clocks in [valuation.delayed(elapsed), valuation] {
-        let at = TimedState::new(state.clone(), clocks);
-        let Ok(steps) = timed.steps(&at) else {
-            continue;
-        };
-        for (step, post) in steps {
-            let key = system.state_key(post.discrete()).ok()?.0;
-            let discrete: serde_json::Value = serde_json::from_slice(&key).ok()?;
-            if Some(&discrete) == wanted {
-                return Some((step.transition().clone(), post.discrete().clone()));
+    // The product resolves every tied zero-time operation in one step, so the
+    // wanted model state may be several operations deep; search a bounded
+    // chain and report the first operation taken.
+    const CHAIN: usize = 4;
+    let reaches = |from: TimedState| {
+        let mut frontier = vec![(from, None)];
+        for _ in 0..CHAIN {
+            let mut next = Vec::new();
+            for (at, first) in frontier {
+                let Ok(steps) = timed.steps(&at) else {
+                    continue;
+                };
+                for (step, post) in steps {
+                    let first = first.clone().unwrap_or_else(|| step.transition().clone());
+                    let key = system.state_key(post.discrete()).ok()?.0;
+                    let discrete: serde_json::Value = serde_json::from_slice(&key).ok()?;
+                    if Some(&discrete) == wanted {
+                        return Some((first, post.discrete().clone()));
+                    }
+                    next.push((post, Some(first)));
+                }
             }
+            frontier = next;
+        }
+        None
+    };
+    for clocks in [valuation.delayed(elapsed), valuation] {
+        if let Some(found) = reaches(TimedState::new(state.clone(), clocks)) {
+            return Some(found);
         }
     }
     None
