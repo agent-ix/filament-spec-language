@@ -424,16 +424,12 @@ fn a_window_member_without_a_valuation_is_a_missing_valuation() {
     }
 }
 
-/// FR-194-AC-16, `min_count 30`, closed: complete through 300000 with
-/// watermark 300000 the clause is undefined with
-/// `InsufficientData{where: position 0, count: 1, min_count: 30}`.
-///
-/// The same unit complete only through 9 (watermark 19) reports the same
-/// `insufficient-data` at position 0, not the `pending-window` the ruling
-/// states: FR-501 "Verdicts" returns an `Undefined` atom, in evaluation order,
-/// before any `Pending` activation, and the atoms at positions 0 to 9 are
-/// covered and short of 30 values. That half is asserted by the atom-level
-/// tests, not here, until the spec settles the order.
+/// FR-194-AC-16, `min_count 30`: with completeness through 9 and watermark 19,
+/// and again complete through 300000 with watermark 300000, the run reports
+/// `insufficient-data` at position 0 with count 1 and `min_count` 30: FR-501
+/// "Verdicts" returns an undefined atom in evaluation order before any
+/// pending activation, and the atoms at positions 0 to 9 are covered and short
+/// of 30 values.
 #[test]
 #[trace("TC-629", "FR-194-AC-16")]
 fn a_covered_window_short_of_min_count_is_undefined_through_run() {
@@ -441,10 +437,12 @@ fn a_covered_window_short_of_min_count_is_undefined_through_run() {
     let clocks = json!({"plant-ms": {"kind": "timestamped_event", "timestamp_unit": "ms"}});
     let unit =
         aggregate_unit("quantile 0.95 of r.latency over past[0 ms, 300 s] min_count 30 <= 5 ms");
-    let (_, closed) = run(directory.path(), &unit, clocks, "P", responses());
-    let temporal = &closed["disposition"]["temporal"];
-    assert_eq!(temporal["kind"], "insufficient-data", "{temporal}");
-    assert_eq!(temporal["position"], 0, "{temporal}");
-    assert_eq!(temporal["count"], 1, "{temporal}");
-    assert_eq!(temporal["min_count"], 30, "{temporal}");
+    for trace in [responses_with_progress(19, 9), responses()] {
+        let (_, document) = run(directory.path(), &unit, clocks.clone(), "P", trace);
+        let temporal = &document["disposition"]["temporal"];
+        assert_eq!(temporal["kind"], "insufficient-data", "{temporal}");
+        assert_eq!(temporal["position"], 0, "{temporal}");
+        assert_eq!(temporal["count"], 1, "{temporal}");
+        assert_eq!(temporal["min_count"], 30, "{temporal}");
+    }
 }

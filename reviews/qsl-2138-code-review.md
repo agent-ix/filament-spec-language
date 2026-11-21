@@ -23,3 +23,10 @@ Ticket: QSL-2138. The two-valued incomplete-window rule is sound. A covered wind
 ## Verdict
 
 Fix round needed, small. FND-002 to FND-004 are in-PR edits. FND-001 needs a spec ruling, given in the ticket comment, then a test edit. Checked clean: exact ceiling lag, monotone `established`, covered atoms never two-valued, carried equals batch at each progress step, evidence route reads only established activations, failing tests not touched.
+
+## Disposition (fix round 1)
+
+- FND-001 fixed: spec wording and test follow FR-641 (a `missing` entry marks an admitted observation's valuation absent; reason position 18).
+- FND-002 fixed.
+- FND-003: min_count arm covered (`an_incomplete_window_short_of_min_count_is_two_valued`, `a_covered_window_short_of_min_count_is_undefined_through_run`). Undefined-stays arm: no source form under the timestamped-event profile produces an undefined read (Divide is profile-prohibited, check.rs:4542-4548, and `mod` is refused likewise as `ProfileProhibitedOperator(IntegerMod)`); no unit test exists for it at the finite-window run level.
+- FND-004 fixed: `aggregate_lag` falls back to 0.
