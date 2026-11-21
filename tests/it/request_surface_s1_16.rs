@@ -1795,16 +1795,14 @@ fn a_refused_condition_in_a_clause_run_has_the_same_code_and_cause_on_both_route
         {"lasso":{"prefix":[],"loop":[level_sample(1)]}}}},"observations":{}});
     let directory = tempfile::tempdir().unwrap();
     spine::write(directory.path(), Case::Healthy).unwrap();
-    let clocks =
-        json!({"sensor":{"kind":"event_position","sequence_authority":"counter-sequence"}});
-    let models = compile_handoff_with_clocks(directory.path(), &unit, Some(clocks.clone()));
+    let models = compile_handoff(directory.path(), &unit);
     std::fs::write(directory.path().join("caller.native"), &unit).unwrap();
     let mut caller = source("unit.native");
     caller["file"] = json!("caller.native");
     let expected = write_request(
         directory.path(),
         &json!({"format":"native-run/1","request":{
-        "models":models,"program":{"source":caller},"clocks":clocks,"clause":clause}}),
+        "models":models,"program":{"source":caller},"clause":clause}}),
     );
     assert_eq!(expected.0, 22, "{}", expected.1);
     let refusal = &expected.1["disposition"]["outcome"];
