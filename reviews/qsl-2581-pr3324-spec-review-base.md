@@ -21,3 +21,12 @@ Ticket: QSL-2581. The rewritten FR-488 sentence states system behaviour (no chan
 ## Verdict
 
 Fix round needed for FND-001 (spec-only edit). FR-103 cross-reference checked: Origin::ModelOperationClause resolves to no region (fsl-semantics/src/check/region.rs:183-186), matching "the refusal names no region for it".
+
+## Dispositions
+
+Round 1, at head d6812eb95e611de91f01e667592488f4cc8b3d0c, read-only.
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | AC-29 now requires the identifier's own name token and names let, fold accumulator and case-arm binder examples; TC-3082 step 3 and Expected Results updated to the exact identifier text. |
+| FND-002 | fixed | The region sentence is a SHALL and lists fold or reduce, count or sum and population-form binders. |
