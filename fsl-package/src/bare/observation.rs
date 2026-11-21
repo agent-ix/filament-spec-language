@@ -118,6 +118,51 @@ impl BarePackage<'_> {
         ),
         AdmissionFailure,
     > {
+        let world = self.call_snapshot_world()?;
+        let model_selections = self.model_selections();
+        fsl_semantics::model::observation::admit_current_snapshot(
+            model_selections.as_slice(),
+            world.types(),
+            packages,
+            model_limits,
+            snapshots,
+            selected,
+            limits,
+        )
+    }
+
+    /// [`Self::admit_call_snapshot`] retaining the effective model views
+    /// from the same snapshot admission for subsequent population binding.
+    /// The returned views are moved from admission without normalization.
+    pub fn admit_call_snapshot_with_views(
+        &self,
+        packages: &PackageInput,
+        model_limits: ModelNormalizationLimits,
+        snapshots: &BTreeMap<DocumentRef, Vec<u8>>,
+        selected: &DocumentRef,
+        limits: ObservationLimits,
+    ) -> Result<
+        (
+            fsl_semantics::model::object_environment::ObjectEnvironment,
+            fsl_semantics::model::observation::AdmissionUsage,
+            Vec<fsl_semantics::model::normalize::EffectiveView>,
+        ),
+        AdmissionFailure,
+    > {
+        let world = self.call_snapshot_world()?;
+        let model_selections = self.model_selections();
+        fsl_semantics::model::observation::admit_current_snapshot_with_views(
+            model_selections.as_slice(),
+            world.types(),
+            packages,
+            model_limits,
+            snapshots,
+            selected,
+            limits,
+        )
+    }
+
+    fn call_snapshot_world(&self) -> Result<crate::BareWorld, AdmissionFailure> {
         let unsupported = |reason: &str| {
             AdmissionFailure::Refused(Box::new(refused(
                 CatalogCode::new("unknown_required_feature", "unsupported-feature"),
@@ -144,16 +189,7 @@ impl BarePackage<'_> {
             .map_err(|_| unsupported("missing-type-representation"))?;
         self.object_declarations()
             .map_err(|_| unsupported("missing-type-representation"))?;
-        let model_selections = self.model_selections();
-        fsl_semantics::model::observation::admit_current_snapshot(
-            model_selections.as_slice(),
-            world.types(),
-            packages,
-            model_limits,
-            snapshots,
-            selected,
-            limits,
-        )
+        Ok(world)
     }
 
     /// Admit one current snapshot for a model this package selects, over the

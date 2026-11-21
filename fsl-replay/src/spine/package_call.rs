@@ -81,7 +81,35 @@ pub fn run_package_with_sources(
     cancel: &Cancel,
 ) -> PackageCallResult {
     let attribution = std::cell::RefCell::new(None);
-    let outcome = run_package_resolving(package, call, objects, sources, cancel, &attribution);
+    let outcome =
+        run_package_resolving(package, call, objects, None, sources, cancel, &attribution);
+    PackageCallResult {
+        outcome,
+        attribution: attribution.into_inner(),
+    }
+}
+
+/// Run a package call using the effective views retained by its snapshot
+/// admission. Population arguments bind against those same views, preserving
+/// their declared maxima without normalizing the selected models again.
+pub fn run_package_with_snapshot_views(
+    package: &BarePackage<'_>,
+    call: &Call,
+    objects: &ObjectEnvironment,
+    views: &[fsl_semantics::model::normalize::EffectiveView],
+    sources: &[fsl_foundation::Source],
+    cancel: &Cancel,
+) -> PackageCallResult {
+    let attribution = std::cell::RefCell::new(None);
+    let outcome = run_package_resolving(
+        package,
+        call,
+        objects,
+        Some(views),
+        sources,
+        cancel,
+        &attribution,
+    );
     PackageCallResult {
         outcome,
         attribution: attribution.into_inner(),
@@ -92,6 +120,7 @@ fn run_package_resolving(
     package: &BarePackage<'_>,
     call: &Call,
     objects: &ObjectEnvironment,
+    views: Option<&[fsl_semantics::model::normalize::EffectiveView]>,
     sources: &[fsl_foundation::Source],
     cancel: &Cancel,
     attribution: &std::cell::RefCell<Option<PackageSourceAttributionFailure>>,
@@ -142,6 +171,15 @@ fn run_package_resolving(
     let world = match package.world() {
         Ok(world) => world,
         Err(_) => return Err(call_failure(package, &name, objects, call, cancel)),
+    };
+    let bound_objects;
+    let objects = match (call.snapshot.as_ref(), views) {
+        (Some(_), Some(views)) => {
+            bound_objects =
+                super::call::bind_snapshot_populations(objects, views.iter(), &parameters, call)?;
+            &bound_objects
+        }
+        _ => objects,
     };
     // FR-533 "Types the bytes cannot project": the bytes carry no declared
     // enumeration index, so the forms read no enumeration by name.
