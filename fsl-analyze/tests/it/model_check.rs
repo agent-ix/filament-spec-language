@@ -1379,6 +1379,8 @@ fn unbounded_roots(refusal: &ModelCheckRefusal) -> Vec<(DomainKey, DomainKind)> 
     match refusal {
         ModelCheckRefusal::RequiresBound(bound) => bound
             .domains
+            .as_ref()
+            .expect("generic unbounded domains")
             .iter()
             .map(|(key, kind)| (key.clone(), kind))
             .collect(),

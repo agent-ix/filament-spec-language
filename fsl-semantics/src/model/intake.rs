@@ -1887,37 +1887,6 @@ fn policy_less_decimal_root<'t>(types: &'t [Value], reference: &str) -> Option<&
     None
 }
 
-/// Whether the type `reference` of `tree` is a Decimal subject: a `decimal`
-/// scalar, a node carrying a policy, or an alias chain that reaches one or
-/// native Decimal.
-fn walks_to_decimal(tree: &Value, reference: &str) -> bool {
-    let Some(types) = tree.get("types").and_then(Value::as_array) else {
-        return false;
-    };
-    let mut current = reference;
-    for _ in 0..=types.len() {
-        let Some(node) = types
-            .iter()
-            .find(|node| node.get("identity").and_then(Value::as_str) == Some(current))
-        else {
-            return false;
-        };
-        if node.get("scalar").and_then(Value::as_str) == Some("decimal")
-            || node.get("decimal").is_some()
-        {
-            return true;
-        }
-        let Some(target) = node.get("target").and_then(Value::as_str) else {
-            return false;
-        };
-        if target == "ix://filament/native/Decimal" {
-            return true;
-        }
-        current = target;
-    }
-    false
-}
-
 /// Whether `reference` reaches native Decimal through a value type bound to it
 /// by `target`, with no policy on the way. Such a value type is an untyped
 /// native alias, not a Decimal walk that lacks its policy.
@@ -4423,6 +4392,9 @@ fn read_value_type(
             .malformed("a value type declares no supertype"));
     }
     if let Some(target) = type_value.get("target").and_then(Value::as_str) {
+        if type_value.get("scalar").is_some() {
+            return Err(ctx.malformed_in("scalar", "a native-target value type declares no scalar"));
+        }
         let value_type = read_value_type_ref(package, &ctx, target, false)?;
         let ValueTypeRef::Native(native) = value_type else {
             return Err(ctx.malformed_in("target", "an FSL value alias names a native value type"));
@@ -4433,12 +4405,13 @@ fn read_value_type(
                 "DECIMAL_POLICY_CONFLICT: a value type bound to native Decimal by target carries no policy",
             ));
         }
-        if !ctx.array_field("constraints")?.is_empty() {
-            return Err(unsupported_at(
-                type_value,
-                at,
-                format!("{}:target constraints", meaning::VALUE_TYPE),
-            ));
+        if let Some(constraint) = ctx.array_field("constraints")?.first() {
+            return Err(
+                NodeCtx::new(constraint, format!("{at}.constraints[0]")).malformed_in(
+                    "keyword",
+                    "a native-target value type carries no constraint",
+                ),
+            );
         }
         return Ok(ScalarTypeRecord {
             key: declaration_key(package, node),
@@ -5940,6 +5913,33 @@ fn read_type_node(
             }
         }
     }
+    if type_value.get("kind").and_then(Value::as_str) == Some("reference") {
+        for member in [
+            "fields",
+            "operations",
+            "relationships",
+            "supertypes",
+            "constraints",
+        ] {
+            if !ctx.array_field(member)?.is_empty() {
+                return Err(ctx
+                    .malformed_in(member, "a reference type declares no such members")
+                    .into());
+            }
+        }
+        let target = ctx.str_field("target")?;
+        if semantic.and_then(|document| document.resolve(target)).is_some_and(|resolved| {
+            matches!(resolved, agent_ix_semantic_ir::rules::Resolved::Node(definition)
+                if definition.get("kind").and_then(agent_ix_semantic_ir::json::Json::as_str) == Some("reference"))
+        }) {
+            return Err(ctx.malformed_in("target", "a clock reference target is not another reference type").into());
+        }
+        let target = read_value_type_ref(package, &ctx, target, true)?;
+        return Ok(vec![DomainPackageRecord::AliasType(AliasTypeRecord {
+            key,
+            target,
+        })]);
+    }
     if type_value.get("kind").and_then(Value::as_str) == Some("alias") {
         if let Some(decimal) =
             decimal_type_for_identity(package, raw_types, type_positions, decimal_type_cache, node)?
@@ -6208,6 +6208,30 @@ fn read_type_node(
             read_clauses(package, node, &ctx, &mut records)?;
         }
         meaning::VALUE_TYPE => {
+            if type_value.get("target").and_then(Value::as_str)
+                == Some("ix://filament/native/Clock")
+            {
+                if type_value.get("scalar").is_some() {
+                    return Err(ctx
+                        .malformed_in("scalar", "a native-target value type declares no scalar")
+                        .into());
+                }
+                for member in ["fields", "operations", "relationships", "supertypes"] {
+                    if !ctx.array_field(member)?.is_empty() {
+                        return Err(ctx
+                            .malformed_in(member, "a clock value type declares no such members")
+                            .into());
+                    }
+                }
+                let target = ValueTypeRef::Clock;
+                let bounds = read_value_bounds(package, &ctx, at, node, Some((&key, &target)))?;
+                records.push(DomainPackageRecord::AliasType(AliasTypeRecord {
+                    key,
+                    target,
+                }));
+                records.extend(bounds);
+                return Ok(records);
+            }
             records.push(DomainPackageRecord::ScalarType(read_value_type(
                 package, type_value, node, at,
             )?));
@@ -6691,37 +6715,17 @@ pub fn read_records(
 /// meaning and FCD origin. No origin is inferred from a key or another
 /// declaration, and no metadata enters a normalization preimage. Typed
 /// declaration refusals are retained on the package until normalization has
-/// charged all source records, as FR-154 requires.
+/// charged all source records, as FR-154 requires. A shared reader refusal
+/// ends intake before those declaration checks, retaining the reader's order.
 pub fn read_domain_package(
     selection: DomainPackageRef,
     document: &PackageDocument,
 ) -> Result<DomainPackage, Vec<ModelRefusal>> {
-    let mut intake_refusals = validate_with_semantic_ir(document)
-        .err()
-        .unwrap_or_default();
-    let semantic_refused_nodes: std::collections::BTreeSet<String> = intake_refusals
-        .iter()
-        .filter_map(refusal_node)
-        .map(str::to_owned)
-        .collect();
-    let unsupported_form_nodes: std::collections::BTreeSet<String> = intake_refusals
-        .iter()
-        .filter(|refusal| {
-            matches!(
-                refusal.cause,
-                ModelRefusalCause::UnsupportedDeclarationForm { .. }
-            )
-        })
-        .filter_map(refusal_node)
-        .map(str::to_owned)
-        .collect();
+    validate_with_semantic_ir(document)?;
+    let mut intake_refusals = Vec::new();
     let semantic = agent_ix_semantic_ir::rules::Document::read(&document.bundle);
-    let (records, reader_refusals) = read_nodes_partial(
-        &selection.identity,
-        &document.tree,
-        semantic.as_ref(),
-        intake_refusals.is_empty(),
-    );
+    let (records, reader_refusals) =
+        read_nodes_partial(&selection.identity, &document.tree, semantic.as_ref(), true);
     let mut reported = std::collections::BTreeSet::new();
     for refusal in reader_refusals {
         // A node read once per path that reaches it (an alias chain over a
@@ -6730,32 +6734,6 @@ pub fn read_domain_package(
             if !reported.insert((node.to_owned(), refusal.detail.clone())) {
                 continue;
             }
-        }
-        // The reader's own dangling `persists`/`members` entry repeats what the
-        // semantic-IR missing-name refusal already reports for that node.
-        let reader_node = match &refusal.cause {
-            ModelRefusalCause::UnknownMember { record, .. } => Some(record.node.as_str()),
-            _ => refusal_node(&refusal),
-        };
-        // An unsupported declaration form (FR-103-AC-3) is a distinct refusal
-        // the IR validator cannot express, so an IR refusal of another
-        // family at the same node does not subsume it.
-        let distinct_family = matches!(
-            refusal.cause,
-            ModelRefusalCause::UnsupportedDeclarationForm { .. }
-        ) && reader_node
-            .is_some_and(|node| !unsupported_form_nodes.contains(node));
-        // A constraint of a node the validator refused is that refusal's
-        // detail: the validator reports an unreadable bound at its owner.
-        let constraint_owner = reader_node
-            .and_then(|node| node.rsplit_once("/constraints/"))
-            .map(|(owner, _)| owner)
-            .filter(|owner| walks_to_decimal(&document.tree, owner));
-        if (!distinct_family
-            && reader_node.is_some_and(|node| semantic_refused_nodes.contains(node)))
-            || constraint_owner.is_some_and(|owner| semantic_refused_nodes.contains(owner))
-        {
-            continue;
         }
         intake_refusals.push(refusal);
     }
@@ -6813,7 +6791,10 @@ pub fn read_domain_package(
                             )
                         }
                         Some(kind)
-                            if matches!(kind.as_str(), Some("option" | "sequence" | "map")) =>
+                            if matches!(
+                                kind.as_str(),
+                                Some("option" | "sequence" | "map" | "reference")
+                            ) =>
                         {
                             None
                         }
@@ -7292,6 +7273,7 @@ fn read_nodes_partial(
     prefer_key_refusals(package_identity, types, &records, &mut refusals);
     if refusals.is_empty() {
         check_alias_chains(types, &mut records, &mut refusals);
+        resolve_clock_reference_types(types, &mut records, &mut refusals);
         check_map_types(types, &records, &mut refusals);
     }
     // FR-103: resolve every queued operation frame against the whole
@@ -7304,6 +7286,40 @@ fn read_nodes_partial(
         resolve_pending_frames(package_identity, &pending, &mut records, &mut refusals);
     }
     (records, refusals)
+}
+
+/// Resolve canonical reference definitions through the same alias records as
+/// clock places, then retain their declaration identity with a data leaf.
+fn resolve_clock_reference_types(
+    types: &[Value],
+    records: &mut [DomainPackageRecord],
+    refusals: &mut Vec<ModelRefusal>,
+) {
+    let snapshot = records.to_vec();
+    for record in records {
+        let DomainPackageRecord::AliasType(alias) = record else {
+            continue;
+        };
+        let Some((position, definition)) = types.iter().enumerate().find(|(_, definition)| {
+            definition.get("identity").and_then(Value::as_str) == Some(alias.key.node.as_str())
+                && definition.get("kind").and_then(Value::as_str) == Some("reference")
+        }) else {
+            continue;
+        };
+        let resolved = super::domain_package::unaliased(&alias.target, |key| {
+            snapshot.iter().find(|record| record.key() == key)
+        });
+        if matches!(resolved, Some((ValueTypeRef::Clock, 0))) {
+            alias.target = ValueTypeRef::Resolved(Box::new(crate::check::clock_reference_type()));
+        } else {
+            refusals.push(
+                NodeCtx::new(definition, format!("$.types[{position}]")).malformed_in(
+                    "target",
+                    "a clock reference target names Clock or an alias of Clock",
+                ),
+            );
+        }
+    }
 }
 
 /// What a map's key type resolves to (FSpec FR-154 "Map types").
@@ -9130,6 +9146,17 @@ mod tests {
             refusals.len(),
             2,
             "both invalid types refuse, not only the first"
+        );
+        let domain_refusals = read_domain_package(
+            DomainPackageRef {
+                identity: "acme/orders".to_owned(),
+            },
+            &parse_document(document.as_bytes()),
+        )
+        .expect_err("a reader-refused document never enters FSL declaration intake");
+        assert_eq!(
+            domain_refusals, refusals,
+            "every shared diagnostic keeps its reader order at domain intake"
         );
         let nodes: std::collections::BTreeSet<&str> = refusals
             .iter()

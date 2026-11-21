@@ -1018,9 +1018,18 @@ fn requires_bound_refuses_before_any_transition_system_call() {
         let NotSimulated::RequiresBound(requires_bound) = error else {
             panic!("expected RequiresBound, got {error:?}");
         };
-        assert_eq!(requires_bound.domains.len(), 1);
+        assert_eq!(
+            requires_bound
+                .domains
+                .as_ref()
+                .expect("generic unbounded domains")
+                .len(),
+            1
+        );
         let (domain_key, domain_kind) = requires_bound
             .domains
+            .as_ref()
+            .expect("generic unbounded domains")
             .iter()
             .next()
             .expect("one unbounded domain");

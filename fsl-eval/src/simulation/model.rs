@@ -865,13 +865,23 @@ impl<'a> ModelSystem<'a> {
         field: &StateField,
         references: &[ObjectReference],
     ) -> Option<domain::Domain> {
+        self.field_domain_with_clock_selectors(type_key, field, references, None)
+    }
+
+    fn field_domain_with_clock_selectors(
+        &self,
+        type_key: &DeclarationKey,
+        field: &StateField,
+        references: &[ObjectReference],
+        selectors: Option<&domain::ClockSelectorMaxima>,
+    ) -> Option<domain::Domain> {
         let infeasible = self.clock_counts.iter().any(|(key, count, min, max)| {
             key == type_key && count.key == field.key && max.is_some_and(|max| max < *min)
         });
         if infeasible {
             return Some(domain::Domain::Listed(Vec::new()));
         }
-        self.value_domain(&field.value_type, references)
+        self.value_domain_with_clock_selectors(&field.value_type, references, selectors)
     }
 
     pub(crate) fn typing(&self) -> encode::Typing<'_> {
@@ -1053,7 +1063,12 @@ impl<'a> ModelSystem<'a> {
         let input = request.input;
         let types = input.types;
         let only = selections.selections();
-        let model = StateModel::new(selections, types, request.packages, request.normalization)?;
+        let model = StateModel::new(
+            selections.with_clock_places(input.timed_models),
+            types,
+            request.packages,
+            request.normalization,
+        )?;
         let populations = model.populations();
 
         let mut universes = BTreeMap::new();
@@ -1624,6 +1639,15 @@ impl<'a> ModelSystem<'a> {
         value_type: &ValueType,
         objects: &[ObjectReference],
     ) -> Option<domain::Domain> {
+        self.value_domain_with_clock_selectors(value_type, objects, None)
+    }
+
+    fn value_domain_with_clock_selectors(
+        &self,
+        value_type: &ValueType,
+        objects: &[ObjectReference],
+        selectors: Option<&domain::ClockSelectorMaxima>,
+    ) -> Option<domain::Domain> {
         let bits = match self
             .max_value_bits
             .load(std::sync::atomic::Ordering::Relaxed)
@@ -1631,7 +1655,17 @@ impl<'a> ModelSystem<'a> {
             0 => None,
             bits => Some(bits),
         };
-        domain::Domain::of_bounded(value_type, objects, self.types, &self.record_orders, bits)
+        domain::Domain::of_bounded_with_clock_places(
+            value_type,
+            objects,
+            self.types,
+            &self.record_orders,
+            bits,
+            domain::ClockDomains {
+                models: self.input.timed_models,
+                maxima: selectors,
+            },
+        )
     }
 
     pub(super) fn reset_value_bound_cuts(&self) {
@@ -2377,12 +2411,92 @@ pub fn check_model_bounds(
     system: &ModelSystem<'_>,
     position_limit: u64,
 ) -> Result<(), NotSimulated> {
-    let domains = system.rooted_domains();
-    let roots: Vec<(NodeKey, Vec<u32>, &ValueType)> = domains
+    check_model_bounds_with_clock_selectors(system, position_limit, None)
+}
+
+fn check_model_bounds_with_clock_selectors(
+    system: &ModelSystem<'_>,
+    position_limit: u64,
+    selectors: Option<&domain::ClockSelectorMaxima>,
+) -> Result<(), NotSimulated> {
+    use fsl_semantics::family::ClaimExtent;
+    let roots = system.rooted_domains();
+    let borrowed: Vec<_> = roots
         .iter()
-        .map(|(id, base, value_type)| (id.clone(), base.clone(), value_type))
+        .map(|(node, path, value_type)| (node.clone(), path.clone(), value_type))
         .collect();
-    crate::simulation::not_simulated::check_requires_bound(&roots, system.types, position_limit)
+    let extent = fsl_semantics::family::classify_extent_at(&borrowed, system.types, position_limit)
+        .map_err(NotSimulated::Extent)?;
+    let domains = match extent {
+        ClaimExtent::Bounded => None,
+        ClaimExtent::Unbounded(domains) => Some(domains),
+    };
+    let clock_references = clock_reference_domains(system, &roots, selectors);
+    if domains.is_none() && clock_references.is_empty() {
+        Ok(())
+    } else {
+        Err(NotSimulated::RequiresBound(
+            crate::simulation::RequiresBound {
+                domains,
+                capacities: Vec::new(),
+                clock_references,
+            },
+        ))
+    }
+}
+
+/// Clock selector requirements under already classified, actual subject roots.
+/// A caller's one generic classification owns its resource ceiling and errors.
+pub(super) fn clock_reference_domains(
+    system: &ModelSystem<'_>,
+    roots: &[(NodeKey, Vec<u32>, ValueType)],
+    selectors: Option<&domain::ClockSelectorMaxima>,
+) -> Vec<crate::simulation::ClockReferenceDomain> {
+    use fsl_foundation::bound::DomainKey;
+    // Use original member types: finite composite roots may have been reduced
+    // to Boolean by the ordinary classifier, while still carrying references.
+    let generated = system.generation_domains();
+    let mut clock_references = Vec::new();
+    for (node, base, classified_type) in roots {
+        let value_type = generated
+            .iter()
+            .find(|(actual, path, _)| actual == node && path == base)
+            .map_or(classified_type, |(_, _, original)| original);
+        for path in domain::clock_reference_paths(value_type, system.types) {
+            let mut member_path = base.clone();
+            member_path.extend(path);
+            for timed in system.input.timed_models {
+                for (clock, template) in timed.clocks().iter().zip(timed.place_nodes()) {
+                    if selectors.is_some_and(|maxima| maxima.contains_key(template))
+                        || clock.slots().any(|shape| shape.map)
+                    {
+                        continue;
+                    }
+                    for (at, step) in clock.path().iter().enumerate() {
+                        if !matches!(step, fsl_semantics::check::PlaceStep::Slot(shape) if shape.max.is_none())
+                        {
+                            continue;
+                        }
+                        let Ok(at) = u32::try_from(at) else {
+                            continue;
+                        };
+                        let slot = vec![at];
+                        clock_references.push(crate::simulation::ClockReferenceDomain {
+                            member: DomainKey::Node {
+                                node: node.clone(),
+                                path: member_path.clone(),
+                            },
+                            clock: template.clone(),
+                            slot,
+                        });
+                    }
+                }
+            }
+        }
+    }
+    clock_references.sort();
+    clock_references.dedup();
+    clock_references
 }
 
 /// FR-101's `explore_request` over `system`, its [`ModelSystem::domains`] and
@@ -2398,6 +2512,7 @@ pub fn explore_model(
     limits: Limits,
     poll: impl FnMut() -> bool,
 ) -> Result<Exploration<ModelFinding>, NotSimulated> {
+    check_model_bounds(system, position_limit)?;
     let domains = system.rooted_domains();
     let roots: Vec<(NodeKey, Vec<u32>, &ValueType)> = domains
         .iter()
@@ -2455,6 +2570,7 @@ pub(super) fn sample_model_with_omitted_clause(
     max_steps: usize,
     omitted_clause: Option<NodeKey>,
 ) -> Result<ModelTrace, ModelSampleError> {
+    check_model_bounds(system, position_limit)?;
     let domains = system.rooted_domains();
     let roots: Vec<(NodeKey, Vec<u32>, &ValueType)> = domains
         .iter()
@@ -2834,6 +2950,7 @@ pub fn sample_model_runs(
     mut poll: impl FnMut() -> bool,
 ) -> Result<SampledDraw, NotSimulated> {
     use filament_exact::{length_amount, Charge, ChargePoint};
+    check_model_bounds(system, position_limit)?;
     let domains = system.rooted_domains();
     let roots: Vec<(NodeKey, Vec<u32>, &ValueType)> = domains
         .iter()
@@ -3007,6 +3124,7 @@ pub fn sample_model_walk(
         start,
         memo,
     };
+    check_model_bounds(system, position_limit)?;
     let domains = system.rooted_domains();
     let roots: Vec<(NodeKey, Vec<u32>, &ValueType)> = domains
         .iter()

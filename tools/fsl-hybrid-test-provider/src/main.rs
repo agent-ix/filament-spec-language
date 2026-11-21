@@ -11,6 +11,7 @@
 //! `size` (the length an `oversize` frame announces) and `record_request` (a
 //! path the request body is written to) and `require_dependencies` (identities the request's
 //! `dependencies` must carry, or the provider exits nonzero).
+//! An `answer_delay_ms` delays an `answer` to exercise host deadlines.
 
 use std::io::{Read, Write};
 use std::process::ExitCode;
@@ -98,6 +99,9 @@ fn run(script: &Value) -> Result<(), String> {
     }
     match mode {
         "answer" => {
+            if let Some(delay) = script["answer_delay_ms"].as_u64() {
+                std::thread::sleep(std::time::Duration::from_millis(delay));
+            }
             write_frame(&mut output, &frame(id, "result", script["outcome"].clone()))?;
             // The host's `shutdown`, then exit.
             let _ = read_frame(&mut input);

@@ -25,6 +25,23 @@ driver's `export --evidence <request>` verb runs the same intake.
 
 ## Behavior
 
+### Admission while evidence checking is unavailable
+
+Until original generated-package binding and target-result verification are
+implemented, FSL SHALL admit the closed `export_evidence` input shape and
+then refuse admitted evidence with `unimplemented_capability` /
+`unimplemented-meaning`, `details.capability` `export_evidence`, category
+`unsupported`, exit `21`. This boundary performs no package-key or
+obligation binding, artifact read, tool probe, tool execution or native
+trace replay; it writes no proof result. Malformed evidence retains its
+member-specific admission refusal before this capability refusal.
+
+### Evidence checking contract
+
+The following checking rules and AC-1/AC-2 remain required of the future
+evidence checker; admission and the pending capability refusal establish
+none of their proof, replay or package-binding claims.
+
 - The `export_evidence` member SHALL carry `package` (the `package` member
   of an assembled export's outcome, FSpec FR-817, which with that export's
   records is its FSpec FR-299 package key), `obligation`, `tool` (`tlc`,
@@ -57,7 +74,7 @@ driver's `export --evidence <request>` verb runs the same intake.
 | --- | --- | --- |
 | FR-1022-AC-1 | A Lean proof of `Ob_Low` accepted by the Lean child process settles `proved`, `trusted`, extent `unbounded`, never `certified`; with `lean` absent the intake settles `unsupported`, `tool-unavailable`, exit `21`. | Test (TC-2872) |
 | FR-1022-AC-2 | A TLC trace of a seeded violation reads back through the name map and settles `refuted` after native replay; the same trace edited so it no longer replays settles nothing. | Test (TC-2872) |
-| FR-1022-AC-3 | Evidence naming an `unrepresented` record, and evidence whose `package` key names an export of a changed model, each refuse `invalid_runtime_input`/`invalid-value` at the member. | Test (TC-2872) |
+| FR-1022-AC-3 | Until original generated-package binding and target-result verification are implemented, a well-shaped `export_evidence` input carrying an assembled export's `package`, a nonempty obligation, a declared tool and a nonempty artifact path is admitted and then refused with `unimplemented_capability` / `unimplemented-meaning`, `details.capability` `export_evidence`, category `unsupported`, exit `21`, with null `last_stage` and `result`. No artifact is read or tool probed or run; no proof, counterexample or package binding is accepted. Malformed evidence is refused at its own member before this capability refusal. | Test |
 
 ## Dependencies
 

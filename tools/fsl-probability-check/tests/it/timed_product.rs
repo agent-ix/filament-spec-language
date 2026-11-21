@@ -14,6 +14,13 @@ use serde_json::{json, Value};
 
 const SNAPSHOT: &[u8] = include_bytes!("../fixtures/link.snapshot.json");
 
+/// The `link` snapshot with the added Boolean `spun` set false (clocks carry no snapshot value).
+fn snapshot() -> Vec<u8> {
+    let mut snapshot: Value = serde_json::from_slice(SNAPSHOT).unwrap();
+    snapshot["populations"][0]["objects"][0]["fields"]["spun"] = json!({"boolean": false});
+    serde_json::to_vec(&snapshot).unwrap()
+}
+
 /// The `link` domain with `Msg.x: Clock` and `Msg.spun: Boolean`; `send_a`
 /// modifies `delivered` and `x`, `send_b` modifies `spun`.
 fn domain() -> Vec<u8> {
@@ -46,7 +53,7 @@ fn retx(guard: &str, declarations: &str, form: &str) -> String {
         .unwrap();
     format!(
         "{language}\n\
-        profile v = \"filament.model.complete/v1\";\n\
+        profile v = \"filament.temporal.complete/v1\";\n\
         profile ev = \"filament.temporal.timed/v1\";\n\
         model M = \"test/link\";\n\
         dimension Time;\nunit s : Time = rational(1, 1);\nunit ms : Time = rational(1, 1000) * s;\n\
@@ -68,7 +75,7 @@ const TOGGLE: &str = "pre B using v on M::Msg::send_b { true }\n\
 
 fn certified(source: &str) -> Value {
     let (request, settlement) =
-        request_with(source, SNAPSHOT, ExactProbLimits::default(), &domain());
+        request_with(source, &snapshot(), ExactProbLimits::default(), &domain());
     request.unwrap_or_else(|| {
         panic!("every timed proof retains an accepted certificate: {settlement:?}\n{source}")
     })
@@ -77,7 +84,6 @@ fn certified(source: &str) -> Value {
 #[trace("TC-2495", "FR-921-AC-4")]
 #[trace("FSpec-TC-1768", "FSpec-FR-751-AC-4")]
 #[test]
-#[ignore = "QSL-2156: timed-product certificates through the independent checker not implemented yet"]
 fn timed_product_certificates_pass_the_separate_checker() {
     let cases = [
         (
@@ -93,30 +99,42 @@ fn timed_product_certificates_pass_the_separate_checker() {
             ),
         ),
         ("digital", retx(">= 1 ms", TOGGLE, DEADLINE)),
-        (
-            "digital",
-            retx(
-                ">= 1 ms",
-                NO_TOGGLE,
-                "quantile 0.5 of (elapsed from holds(not m.delivered) until holds(m.delivered) \
-                 within 4 ms) <= 2 ms",
-            ),
-        ),
     ];
     for (route, source) in cases {
-        let request = certified(&source);
-        let (code, output) = run(&request);
-        assert_eq!(code, 0, "{output}\n{source}");
-        let doc = document(&request);
-        assert_eq!(
-            doc["objective"]["profile"],
-            "filament.probability-objective/timed-product/v1"
-        );
-        assert_eq!(doc["objective"]["timed"]["route"], route);
-        let altered = mutate(&request, |doc| {
-            doc["values"][0]["value"] = json!({"numerator": "1", "denominator": "7"});
-        });
-        let (code, output) = run(&altered);
-        assert_ne!(code, 0, "an altered certificate is rejected: {output}");
+        assert_separate_checker(route, &source);
     }
+}
+
+/// FR-921-AC-4, the elapsed-quantile document (FR-877).
+#[trace("TC-2495", "FR-921-AC-4")]
+#[trace("FSpec-TC-1768", "FSpec-FR-751-AC-4")]
+#[test]
+#[ignore = "QSL-2156: elapsed-quantile (FR-877) timed-product documents are not produced or checked yet"]
+fn elapsed_quantile_certificate_passes_the_separate_checker() {
+    assert_separate_checker(
+        "digital",
+        &retx(
+            ">= 1 ms",
+            NO_TOGGLE,
+            "quantile 0.5 of (elapsed from holds(not m.delivered) until holds(m.delivered) \
+             within 4 ms) <= 2 ms",
+        ),
+    );
+}
+
+fn assert_separate_checker(route: &str, source: &str) {
+    let request = certified(source);
+    let (code, output) = run(&request);
+    assert_eq!(code, 0, "{output}\n{source}");
+    let doc = document(&request);
+    assert_eq!(
+        doc["objective"]["profile"],
+        "filament.probability-objective/timed-product/v1"
+    );
+    assert_eq!(doc["objective"]["timed"]["route"], route);
+    let altered = mutate(&request, |doc| {
+        doc["values"][0]["value"] = json!({"numerator": "1", "denominator": "7"});
+    });
+    let (code, output) = run(&altered);
+    assert_ne!(code, 0, "an altered certificate is rejected: {output}");
 }

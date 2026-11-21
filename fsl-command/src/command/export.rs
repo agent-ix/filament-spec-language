@@ -5,13 +5,14 @@
 //! `filament.export-outcome/v1` document and, when a file is named and a
 //! package was assembled, the target file.
 
+mod evidence;
 mod lower;
 mod map;
 mod request;
 
 use super::{
-    check_sources, intake_with_bytes, output::NativeResult, output_file, wire, FileCounts,
-    RequestOverrides, Result, RunCause, RunLimits, RunResult,
+    check_sources, intake_with_bytes, output::NativeResult, output_file, wire, ExportSelection,
+    FileCounts, RequestOverrides, Result, RunCause, RunLimits, RunResult,
 };
 use filament_semantic_value::catalog::Category;
 use fsl_replay::{OutcomeDocument, OutcomeStage};
@@ -125,16 +126,68 @@ pub(super) fn run_bytes(
     limits: RunLimits,
     overrides: &RequestOverrides<'_>,
 ) -> Result<Option<RunResult>> {
-    let mut document: Value = serde_json::from_slice(bytes).map_err(RunCause::Json)?;
+    let document = admitted_document(bytes)?;
+    run_document(directory, bytes, document, limits, overrides)
+}
+
+/// Execute an explicit export selection from the same bounded raw bytes.
+pub(super) fn run_selected_bytes(
+    directory: &Path,
+    bytes: &[u8],
+    selection: ExportSelection,
+    limits: RunLimits,
+    overrides: &RequestOverrides<'_>,
+) -> Result<RunResult> {
+    let document = admitted_document(bytes)?;
+    if document.get("format").and_then(Value::as_str)
+        != Some(fsl_foundation::wire_format::WireFormat::RunRequest.as_str())
+    {
+        return Err(RunCause::Format);
+    }
+    let required = selection.member();
+    if document
+        .get("request")
+        .and_then(|body| body.get(required))
+        .is_none()
+    {
+        return Err(RunCause::ClauseRequest {
+            member: required.to_owned(),
+            reason: format!("the selected export invocation requires {required}"),
+        });
+    }
+    run_document(directory, bytes, document, limits, overrides)?.ok_or_else(|| {
+        RunCause::ClauseRequest {
+            member: required.to_owned(),
+            reason: format!("the selected export invocation requires {required}"),
+        }
+    })
+}
+
+fn run_document(
+    directory: &Path,
+    bytes: &[u8],
+    document: crate::unique_json::Deep,
+    limits: RunLimits,
+    overrides: &RequestOverrides<'_>,
+) -> Result<Option<RunResult>> {
     if document.get("format").and_then(Value::as_str)
         != Some(fsl_foundation::wire_format::WireFormat::RunRequest.as_str())
     {
         return Ok(None);
     }
-    let Some(body) = document.get_mut("request").and_then(Value::as_object_mut) else {
+    let Some(body) = document.get("request").and_then(Value::as_object) else {
         return Ok(None);
     };
-    let Some(member) = body.remove("export") else {
+    if let Some(member) = body.get("export_evidence") {
+        if body.contains_key("export") {
+            return Err(RunCause::ClauseRequest {
+                member: "export_evidence".to_owned(),
+                reason: "export_evidence is exclusive with export".to_owned(),
+            });
+        }
+        return evidence::run(bytes, member, overrides).map(Some);
+    }
+    let Some(member) = body.get("export") else {
         return Ok(None);
     };
     // FR-1031: an export beside a transfer is a selection conflict.
@@ -149,12 +202,11 @@ pub(super) fn run_bytes(
             .collect();
         return Err(super::transfer_conflict(&present));
     }
-    let package_selection = body.get("package").cloned();
     let given = overrides
         .limits
         .map(|limits| limits.export)
         .unwrap_or_default();
-    let request = request::read(&member, &given)?;
+    let request = request::read(member, &given)?;
     for name in ["output", "handoff"] {
         if body.contains_key(name) {
             return Err(RunCause::ClauseRequest {
@@ -165,7 +217,7 @@ pub(super) fn run_bytes(
         }
     }
     let output = target_path(directory, &request, overrides)?;
-    let package_program = package_selection.as_ref().map(source_package).transpose()?;
+    let package_program = body.get("package").map(source_package).transpose()?;
     if let Some(observer) = &request.observer {
         return Ok(Some(unsupported_observer(
             &request,
@@ -173,9 +225,9 @@ pub(super) fn run_bytes(
             output.as_deref(),
         )));
     }
-    if let (Some(_), Some(program)) = (&package_selection, package_program) {
-        document["format"] = json!(fsl_foundation::wire_format::WireFormat::RunRequest.as_str());
-        let package_request_bytes = serde_json::to_vec(&document).map_err(RunCause::Output)?;
+    if let Some(program) = package_program {
+        let package_request_bytes =
+            request_without_export(bytes, fsl_foundation::wire_format::WireFormat::RunRequest)?;
         let package_request: wire::Request = super::request(&package_request_bytes)?;
         super::package_run::validate_request(&package_request)?;
         let Some(package) = package_request.package.as_ref() else {
@@ -229,11 +281,52 @@ pub(super) fn run_bytes(
         )?;
         return finish(&request, &mapped, &program, output.as_deref());
     }
-    document["format"] = json!(fsl_foundation::wire_format::WireFormat::CompileRequest.as_str());
-    let compile = serde_json::to_vec(&document).map_err(RunCause::Output)?;
+    let compile = request_without_export(
+        bytes,
+        fsl_foundation::wire_format::WireFormat::CompileRequest,
+    )?;
     let compile: wire::CompileRequest = super::request(&compile)?;
     let mapped = compile_and_map(directory, &compile, &request, limits, overrides)?;
     finish(&request, &mapped.0, &mapped.1, output.as_deref())
+}
+
+/// Strip only the selected member, retaining every other value as borrowed
+/// raw bytes. No admitted tree leaves its iterative owner, and conversion
+/// into the existing typed reader never clones or serializes a deep Value.
+fn request_without_export(
+    bytes: &[u8],
+    format: fsl_foundation::wire_format::WireFormat,
+) -> Result<Vec<u8>> {
+    let super::Object(envelope): super::Object<wire::Envelope<'_>> = serde_json::from_slice(bytes)?;
+    let mut members: std::collections::BTreeMap<String, &serde_json::value::RawValue> =
+        serde_json::from_str(envelope.request.get())?;
+    members.remove("export");
+    let request = serde_json::value::RawValue::from_string(
+        serde_json::to_string(&members).map_err(RunCause::Output)?,
+    )?;
+    serde_json::to_vec(&wire::Envelope {
+        format: format.as_str().to_owned(),
+        request: &request,
+    })
+    .map_err(RunCause::Output)
+}
+
+/// Admit the raw tree before any selection or dependent file is inspected.
+/// The shared reader preserves duplicate names until it can refuse them;
+/// the typed envelope rejects additional top-level members.
+pub(super) fn admitted_document(bytes: &[u8]) -> Result<crate::unique_json::Deep> {
+    let document = crate::unique_json::read(bytes).map_err(|reason| RunCause::ClauseRequest {
+        member: "request".to_owned(),
+        reason,
+    })?;
+    let document = crate::unique_json::Deep::new(document);
+    if document.get("format").and_then(Value::as_str)
+        == Some(fsl_foundation::wire_format::WireFormat::RunRequest.as_str())
+    {
+        let super::Object(_): super::Object<wire::Envelope<'_>> =
+            serde_json::from_slice(bytes).map_err(RunCause::Json)?;
+    }
+    Ok(document)
 }
 
 /// Read the exact source identity/version pair an export request supplies
@@ -731,6 +824,112 @@ mod tests {
     use crate::command::RunError;
     use fsl_foundation::Code;
     use ix_trace_rs::trace;
+
+    /// Raw duplicates must refuse before a missing source can be opened.
+    #[test]
+    #[trace("TC-104", "FR-026")]
+    fn duplicate_envelope_members_refuse_before_source_io() {
+        for bytes in [
+            br#"{"format":"native-run/1","request":{"models":[],"models":[{}],"program":{"source":{"file":"absent.native"}},"export":{}}}"#.as_slice(),
+            br#"{"format":"native-run/1","request":{"models":[],"program":{"source":{"file":"absent.native"}},"export":{"profile":"a","profile":"b"}}}"#.as_slice(),
+            br#"{"format":"native-run/1","request":{},"request":{"export":{}}}"#.as_slice(),
+        ] {
+            let directory = tempfile::tempdir().unwrap();
+            let cause = run_bytes(
+                directory.path(),
+                bytes,
+                RunLimits::default(),
+                &RequestOverrides::default(),
+            )
+            .expect_err("the repeated key must be refused");
+            assert_eq!(cause.code(), Code::InvalidRequest);
+            assert!(cause.to_string().contains("duplicate object key"), "{cause}");
+            assert_eq!(directory.path().read_dir().unwrap().count(), 0);
+        }
+    }
+
+    /// An unknown envelope member cannot disappear during export conversion.
+    #[test]
+    #[trace("TC-104", "FR-026")]
+    fn unknown_envelope_member_refuses_before_export_selection() {
+        let cause =
+            admitted_document(br#"{"format":"native-run/1","request":{"export":{}},"extra":true}"#)
+                .err()
+                .expect("closed envelope");
+        assert_eq!(cause.code(), Code::InvalidRequest);
+        assert!(cause.to_string().contains("extra"), "{cause}");
+    }
+
+    /// The ordinary mapper refusal and its lifecycle diagnostic carry the
+    /// same catalog capability and validate against the closed schema.
+    #[test]
+    #[trace("FR-286", "FR-1015")]
+    fn ordinary_unlowered_refusals_retain_the_catalog_payload() {
+        let schema_value: Value =
+            serde_json::from_str(fsl_replay::outcome::OUTCOME_SCHEMA_1).unwrap();
+        let schema = jsonschema::JSONSchema::options()
+            .with_draft(jsonschema::Draft::Draft202012)
+            .compile(&schema_value)
+            .unwrap();
+        for (profile, family) in [
+            ("filament.output.tla2/v1", "tla"),
+            ("filament.output.lean4/v1", "lean"),
+        ] {
+            let request = request::read(
+                &json!({"profile": profile, "obligations": ["Low"]}),
+                &fsl_replay::spine::ExportLimits::default(),
+            )
+            .unwrap();
+            let mapped = Mapped::Assembled {
+                text: String::new(),
+                name_map: Vec::new(),
+                records: Vec::new(),
+                unlowered: Some(Unlowered {
+                    obligation: "Low".to_owned(),
+                    construct: "temporal/formula".to_owned(),
+                    detail: String::new(),
+                    node: "fixture-node".to_owned(),
+                    locus: Value::Null,
+                    fault: false,
+                }),
+                work: 0,
+                regions_written: 0,
+            };
+            let result = finish(
+                &request,
+                &mapped,
+                &Program {
+                    identity: "fixture".to_owned(),
+                    version: "1".to_owned(),
+                },
+                None,
+            )
+            .unwrap()
+            .unwrap();
+            assert_eq!(result.exit_code, 21);
+            let document = serde_json::to_value(result.outcome.unwrap()).unwrap();
+            assert!(schema.is_valid(&document), "{document}");
+            let capability = format!("export:{family}:temporal/formula");
+            assert_eq!(
+                document["result"]["export"]["refusal"],
+                json!({
+                    "code": "unimplemented_capability", "cause": "unimplemented-meaning",
+                    "capability": capability, "target": family, "construct": "temporal/formula",
+                    "node": "fixture-node", "locus": null,
+                })
+            );
+            assert_eq!(
+                document["diagnostics"][0]["details"]["capability"],
+                capability
+            );
+            let mut unknown = document.clone();
+            unknown["diagnostics"][0]["details"]["unrecognized"] = json!(true);
+            assert!(
+                !schema.is_valid(&unknown),
+                "diagnostic details must remain closed"
+            );
+        }
+    }
 
     /// FSpec FR-817-AC-17: a package the run compiled but admission refuses
     /// stops the export with the refusal's own code, cause and pointer and

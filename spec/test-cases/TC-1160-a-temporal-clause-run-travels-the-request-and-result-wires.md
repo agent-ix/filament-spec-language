@@ -27,7 +27,7 @@ basis, and that a refused `holds` condition settles as a refusal at its
 position.
 
 Scope: FR-312-AC-7, FR-312-AC-8, FR-267-AC-13, FR-267-AC-14, FR-267-AC-15, FR-267-AC-16, FR-267-AC-18, FR-267-AC-24, FR-266-AC-4,
-FR-327-AC-6, FR-330-AC-7.
+FR-327-AC-6, FR-330-AC-7, FR-267-AC-30 and FR-267-AC-31.
 
 ## Test Procedure
 
@@ -60,6 +60,22 @@ clause `Fair`, TC-847's undefined and `GuardUndefined` clauses, FR-328-AC-1's
 8. Write and read back FR-267-AC-24's `window-limit-reached` and
    `progress-limit-reached` rows, then read each with `value` a JSON number
    and with `value` `"02"`.
+
+9. Write TC-840 step 7's model reports from both routes, read each through
+   the native strict reader and compare the typed payloads and RFC 8785
+   re-encoded bytes. Include the later failing activation and initially
+   terminal case. Write TC-840 step 8's model undefined report without a
+   counterexample; when an undefined model witness is carried, also read
+   and re-encode its finite prefix and state-key envelope. Keep step 2 and
+   FR-330-AC-18's sample witness as observed-arm controls.
+10. Independently apply each malformed edit of FR-267-AC-31 to step 9's
+    model documents and the observed control; strictly read every edited
+    document. Test document and sample steps in both prefix and loop, mixed
+    step members, null and mistyped initial indexes and bindings, malformed
+    state keys and transition members, misplaced undefined identity members,
+    changed `trace_position`, and omission of a violated row's witness.
+    Keep well-shaped but semantically foreign keys and bindings for TC-523's
+    replay checks rather than treating structural read as subject validation.
 
 Tag the tests `#[trace("TC-1160", "<criterion>")]` with the criterion each
 step asserts.
@@ -97,3 +113,13 @@ step asserts.
   11; each edited document refuses naming the member.
 - Step 8: both rows read back equal with `value` `"2"` and `"4"`; each
   edited row refuses naming `disposition.temporal.value`.
+- Step 9: equal typed model payloads and canonical bytes retain the actual
+  initial index, binding, fairness, taken transitions, post-state keys,
+  prefix/loop boundary, interval and report position. No-witness model
+  undefined retains its reason and position; a carried witness retains the
+  actual finite prefix and state-key envelope. The observed controls retain
+  their existing closed observed shapes.
+- Step 10: every malformed document refuses with a located diagnostic naming
+  the offending member. Removing a violated row's counterexample refuses;
+  accepting the existing model undefined omission does not make that witness
+  optional. Semantic replay controls remain separately asserted by TC-523.

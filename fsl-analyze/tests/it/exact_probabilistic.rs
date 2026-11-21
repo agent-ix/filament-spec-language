@@ -61,7 +61,6 @@ fn built(world: &World, claim: &str) -> ProbProduct {
 #[trace("TC-709", "FR-254-AC-3")]
 #[trace("TC-639", "FR-204-AC-2")]
 #[test]
-#[ignore = "QSL-2156: the region MDP for strict clock constraints not implemented yet"]
 fn exact_request_over_strict_guard_timed_rpc_is_decided_over_regions() {
     let document =
         crate::timed_world::document(&["x"], &[("send", &["phase"]), ("reply", &["phase"])]);
