@@ -1121,7 +1121,6 @@ fn a_rational_literal_takes_signed_constants_and_never_a_runtime_expression() {
 /// significant token sequence and an equal production tree.
 #[trace("TC-2784", "FR-003-AC-14")]
 #[test]
-#[ignore = "QSL-1974: formatting the whole complete-grammar corpus is not covered yet"]
 fn every_corpus_unit_formats_idempotently_with_its_tokens_and_tree() {
     let shape = |parsed: &ParsedSource| {
         let tokens: Vec<Vec<u8>> = parsed

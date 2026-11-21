@@ -413,7 +413,7 @@ fn float_model() -> Value {
 #[test]
 #[trace("TC-3006", "FR-056-AC-62")]
 #[trace("FSpec-TC-1971", "FSpec-FR-812-AC-8")]
-#[ignore = "QSL-2176: float model fields exported through the FR-812 float mapping, with NaN bits kept, not implemented yet"]
+#[ignore = "QSL-2176 completed; current blocker has no assigned owner: a float model field compiles to a package that is refused invalid_package/operator-ineligible at result_type, so it cannot export yet"]
 fn a_float_model_field_exports_its_exact_bits() {
     let directory = tempfile::tempdir().unwrap();
     std::fs::write(

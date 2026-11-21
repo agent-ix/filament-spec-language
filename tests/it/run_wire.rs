@@ -161,7 +161,6 @@ fn refusal(output: &crate::command_harness::Output) -> Value {
 /// name and the package carries one binding row per clock-bearing clause.
 #[test]
 #[trace("TC-1660", "FR-640-AC-1", "FSpec-TC-1160", "FSpec-FR-540-AC-1")]
-#[ignore = "QSL-2254, QSL-2136: the unit's timed clause over a record trace subject waits on the timed clock configuration"]
 fn clocks_member_compiles_event_position_fixed_sample_and_timestamped_clauses() {
     let directory = tempfile::tempdir().unwrap();
     let path = write(directory.path(), "compile.json", &compile_request(clocks()));
@@ -195,7 +194,6 @@ fn clocks_member_compiles_event_position_fixed_sample_and_timestamped_clauses() 
 /// member order does not.
 #[test]
 #[trace("TC-1660", "FR-640-AC-5", "FSpec-TC-1160", "FSpec-FR-540-AC-3")]
-#[ignore = "QSL-2254, QSL-2136: the unit's timed clause over a record trace subject waits on the timed clock configuration"]
 fn clock_configuration_changes_package_identity_and_member_order_does_not() {
     let directory = tempfile::tempdir().unwrap();
     let base = compile_file(&write(
@@ -227,7 +225,6 @@ fn clock_configuration_changes_package_identity_and_member_order_does_not() {
 /// each refuse at stage `emit` with their cause and the clock's name.
 #[test]
 #[trace("TC-1661", "FR-640-AC-3", "FSpec-TC-1160", "FSpec-FR-540-AC-2")]
-#[ignore = "QSL-2254, QSL-2136: the unit's timed clause over a record trace subject waits on the timed clock configuration"]
 fn missing_unused_and_mismatched_clock_selections_refuse_naming_the_clock() {
     let directory = tempfile::tempdir().unwrap();
     let mut missing = clocks();
@@ -714,7 +711,6 @@ fn a_trace_kind_the_profile_does_not_read_refuses_with_profile_and_kinds() {
     "FSpec-FR-541-AC-3"
 )]
 #[trace("TC-1665", "FR-642-AC-5")]
-#[ignore = "QSL-2254/QSL-2136: timed clock kind and timed clause over a trace subject"]
 fn a_timed_clause_over_untimed_samples_refuses_with_profile_and_kinds() {
     let directory = tempfile::tempdir().unwrap();
     let request = run_request(json!({"name": "Ack", "trace": {"finite": samples(&[0, 1])}}));
@@ -881,7 +877,6 @@ fn a_settled_event_carries_the_reading_that_decided_it() {
 /// refused as a reserved clock name.
 #[test]
 #[trace("TC-1661", "FR-640-AC-4", "FR-640-AC-6")]
-#[ignore = "QSL-2254, QSL-2136: the unit's timed clause over a record trace subject waits on the timed clock configuration"]
 fn malformed_and_reserved_clock_members_refuse() {
     let directory = tempfile::tempdir().unwrap();
     let mut unknown = clocks();
@@ -1261,7 +1256,6 @@ fn a_bad_record_is_an_event_and_a_bad_request_is_refused() {
 /// is the selection list the replay recompile builds from the package.
 #[test]
 #[trace("TC-2182", "FR-640-AC-8")]
-#[ignore = "QSL-2254, QSL-2136: the unit's timed clause over a record trace subject waits on the timed clock configuration"]
 fn clocks_rebuilt_from_package_rows_compile_the_same_package() {
     let directory = tempfile::tempdir().unwrap();
     let first = compile_file(&write(
@@ -1402,7 +1396,6 @@ fn a_window_aggregate_over_a_progressed_sample_trace_refuses_and_never_faults() 
 /// is read at stamp 0.
 #[test]
 #[trace("TC-1664", "FR-641-AC-4", "FR-642-AC-1")]
-#[ignore = "QSL-2254: timed clock kind"]
 fn a_timed_trace_answers_a_timed_clause() {
     let directory = tempfile::tempdir().unwrap();
     let request = run_request(json!({"name": "Ack", "trace": {"timed": {

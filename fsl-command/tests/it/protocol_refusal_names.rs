@@ -104,7 +104,6 @@ fn assert_named(text: &str, item: &str, code: &str, cause: &str, names: &[&str])
 /// text form shows that name and location.
 #[test]
 #[trace("TC-2978", "FR-218-AC-17")]
-#[ignore = "QSL-2215: protocol decision refusals do not yet all name their item by declared name and slot at the item's span"]
 fn each_protocol_refusal_names_its_subject() {
     let over = unit(
         "sequence Main { choice Pick by R visible () { \

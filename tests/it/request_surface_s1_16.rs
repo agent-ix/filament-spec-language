@@ -1356,7 +1356,6 @@ fn shape_low(leaf: &str) -> String {
 /// `case_binders_match_across_the_source_and_package_routes`.
 #[test]
 #[trace("TC-3039", "FR-931-AC-13")]
-#[ignore = "QSL-2632: a bounded-integer argument to a union member emits a union_value the strict package read refuses (TypeMismatch); the literal-argument twin below runs"]
 fn case_binders_print_under_their_declared_names() {
     let atom = |leaf: &str| {
         let (code, value) = run(

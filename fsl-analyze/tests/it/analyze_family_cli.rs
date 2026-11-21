@@ -1324,7 +1324,7 @@ fn set_elapsed(ws: &Workspace, path: &str, ms: i64) {
 /// the bound itself) it is proved.
 #[trace("TC-2971", "FR-630-AC-6")]
 #[test]
-#[ignore = "QSL-2407: an image outside an abstract unit bound settled InitialNotAbstract not implemented yet"]
+#[ignore = "QSL-2407 completed; current blocker has no assigned owner: the analyze item for an image outside an abstract unit bound carries no terminal record (null) instead of settling InitialNotAbstract"]
 fn an_image_outside_an_abstract_unit_bound_is_initial_not_abstract() {
     let body = "dimension Time;\nunit s : Time = rational(1, 1);\nunit ms : Time = rational(1, 1000) * s;\n\
          refinement Late using t0 abstract Spec concrete M {\n\
