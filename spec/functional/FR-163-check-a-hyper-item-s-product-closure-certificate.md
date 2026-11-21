@@ -204,13 +204,12 @@ spellings").
   model admission and successor primitives without a state-key decoder.
   When reconstruction completes with missing initial states, the checker SHALL reject
   `InitialMissing`, first by alias declaration order and then by ascending
-  state-key octets. When all initial membership checks pass, the checker
-  SHALL compare each alias's supplied and reachable sets in alias declaration
+  state-key octets.
+  When all initial membership checks pass, the checker SHALL compare each alias's supplied and reachable sets in alias declaration
   order, selecting the least key in their symmetric difference by state-key
-  octets. When the selected key is missing from the supplied set, the checker
-  SHALL reject `SuccessorMissing` at that missing key. When the selected key
-  is extra in the supplied set, including a noncanonical or foreign key,
-  the checker SHALL reject `Malformed` at that supplied key. This ordering also
+  octets.
+  When the selected key is missing from the supplied set, the checker SHALL reject `SuccessorMissing` at that missing key.
+  When the selected key is extra in the supplied set, including a noncanonical or foreign key, the checker SHALL reject `Malformed` at that supplied key. This ordering also
   applies when missing and extra keys occur together. Every admitted member
   is therefore independently reached and expanded. The checker SHALL recompute every edge
   independently of the certificate's edge sequences. After closure is
