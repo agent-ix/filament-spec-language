@@ -363,6 +363,76 @@ fn health_variants_are_not_markov() {
     assert_eq!(counts, [(false, 1), (true, 0)]);
 }
 
+/// The full drawn identity preserves parameter order even when a random
+/// parameter lies between non-random parameters and no successor exists.
+#[trace("TC-622", "FR-187-AC-3")]
+#[test]
+fn not_markov_retains_the_full_identity_with_interleaved_random_arguments() {
+    for (post, count) in [("true", 2), ("self.up and not self.up", 0)] {
+        let mut model = world::gate("left and not right", post, "");
+        model.operations[0].parameters = vec![
+            ("left", world::BOOLEAN.to_owned()),
+            ("x", world::BOOLEAN.to_owned()),
+            ("right", world::BOOLEAN.to_owned()),
+        ];
+        let world = World::new(&model);
+        let system = world.system();
+        let start = initial(&system);
+        let not_markov = not_markov_of(
+            system
+                .weighted_steps(&start, world.workload("Unit"))
+                .expect("the state expands"),
+            "the draw has zero or multiple post-states",
+        );
+        assert_eq!(not_markov.post_states, count);
+        assert_eq!(
+            not_markov.state,
+            system.canonical_state_key(&start).unwrap()
+        );
+        assert_eq!(
+            not_markov.transition.operation,
+            operation_text(&system, "step")
+        );
+        assert!(super::same_values(
+            &not_markov.transition.arguments,
+            &[Value::Boolean(true), Value::Boolean(false)]
+        ));
+        assert!(super::same_values(
+            &not_markov.random,
+            &[Value::Boolean(false)]
+        ));
+        let drawn = &not_markov.drawn_transition;
+        assert_eq!(drawn.operation(), not_markov.transition.operation);
+        let receiver = super::super::reference_canonical_text(&not_markov.transition.receiver)
+            .expect("the receiver has canonical text");
+        assert_eq!(drawn.receiver(), Some(receiver.as_str()));
+        assert_eq!(
+            drawn.arguments(),
+            &[
+                r#"{"type":"boolean","value":true}"#,
+                r#"{"type":"boolean","value":false}"#,
+                r#"{"type":"boolean","value":false}"#,
+            ]
+        );
+        let [action] = <[_; 1]>::try_from(
+            system
+                .enabled_actions(&start)
+                .expect("expands")
+                .expect("decided"),
+        )
+        .expect("one enabled scheduled identity, including the zero-post case");
+        let draw = action
+            .draws
+            .first()
+            .expect("a draw even without successors");
+        assert_eq!(&draw.transition, drawn);
+        assert_eq!(draw.successors.len(), usize::try_from(count).unwrap());
+        for (transition, _) in &draw.successors {
+            assert_eq!(transition, drawn);
+        }
+    }
+}
+
 /// FR-187-AC-4 (TC-622 step 4): `refund = n - 3` over `n: Int[0, 5]`
 /// refuses admission `invalid_probabilistic_model`/`negative-reward`,
 /// naming the operation, the reward and `n = 0`.

@@ -77,6 +77,9 @@ pub struct Action {
 /// One vector of a scheduled identity's random arguments (FR-187).
 #[derive(Clone, Debug)]
 pub struct Draw {
+    /// The complete operation identity, with every argument in declared order,
+    /// retained even when this draw has no successor.
+    pub transition: ModelTransition,
     /// One value per random parameter, in declared order.
     pub random: Vec<Value>,
     /// The product of the values' PM-1 probabilities: the draws of an
@@ -131,6 +134,9 @@ pub struct NotMarkov {
     pub state: StateKey,
     /// The scheduled identity.
     pub transition: ScheduledIdentity,
+    /// The complete operation identity of the draw, with every argument in
+    /// declared order, retained independently of its post-states.
+    pub drawn_transition: ModelTransition,
     /// The drawn random values, in declared order.
     pub random: Vec<Value>,
     /// How many post-states the drawn vector gives: 0, or more than 1.
@@ -141,6 +147,7 @@ impl PartialEq for NotMarkov {
     fn eq(&self, other: &Self) -> bool {
         self.state == other.state
             && self.transition == other.transition
+            && self.drawn_transition == other.drawn_transition
             && same_values(&self.random, &other.random)
             && self.post_states == other.post_states
     }
@@ -873,6 +880,7 @@ impl ModelSystem<'_> {
                 None => reached.sort_by(|left, right| left.0.cmp(&right.0)),
             };
             let draw = Draw {
+                transition: vector.transition,
                 random,
                 probability,
                 successors: reached
@@ -1009,6 +1017,7 @@ impl ModelSystem<'_> {
                     return Ok(Err(Unsteppable::NotMarkov(NotMarkov {
                         state: key,
                         transition: action.identity.clone(),
+                        drawn_transition: draw.transition.clone(),
                         random: draw.random.clone(),
                         post_states: u32::try_from(draw.successors.len()).unwrap_or(u32::MAX),
                     })));

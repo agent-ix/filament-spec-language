@@ -494,6 +494,7 @@ fn take_step(
             SampleStop::NotMarkov(NotMarkov {
                 state: state.clone(),
                 transition: action.identity.clone(),
+                drawn_transition: draw.transition.clone(),
                 random: random.clone(),
                 post_states: u32::try_from(successors.len()).unwrap_or(u32::MAX),
             })

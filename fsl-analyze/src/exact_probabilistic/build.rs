@@ -1055,6 +1055,7 @@ impl Builder<'_, '_, '_, '_> {
                     return Err(ProductRefusal::NotMarkov(Box::new(NotMarkov {
                         state: fsl_eval::simulation::StateKey::from_canonical_bytes(state),
                         transition: action.identity,
+                        drawn_transition: draw.transition,
                         random: draw.random,
                         post_states: 0,
                     }))

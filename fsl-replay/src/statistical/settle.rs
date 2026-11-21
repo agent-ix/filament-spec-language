@@ -355,17 +355,29 @@ mod tests {
 
     /// A non-unique post-state of a `tick` with no argument.
     fn not_markov() -> fsl_eval::simulation::model::NotMarkov {
+        let transition = fsl_eval::simulation::model::ScheduledIdentity {
+            operation: r#""tick""#.to_owned(),
+            receiver: filament_exact::ObjectReference::new(
+                crate::fixture_universe(1),
+                crate::fixture_effective(2),
+                filament_exact::ObjectId::new("n").expect("a key"),
+            ),
+            arguments: Vec::new(),
+        };
+        let drawn_transition = ModelTransition::new(
+            transition.operation.clone(),
+            Some(
+                fsl_eval::simulation::model::reference_canonical_text(&transition.receiver)
+                    .expect("a receiver"),
+            ),
+            Vec::new(),
+            quire_canonical::Limits::new(u64::MAX),
+        )
+        .expect("a transition");
         fsl_eval::simulation::model::NotMarkov {
             state: fsl_eval::simulation::StateKey::from_canonical_bytes(b"\"healthy\"".to_vec()),
-            transition: fsl_eval::simulation::model::ScheduledIdentity {
-                operation: "tick".to_owned(),
-                receiver: filament_exact::ObjectReference::new(
-                    crate::fixture_universe(1),
-                    crate::fixture_effective(2),
-                    filament_exact::ObjectId::new("n").expect("a key"),
-                ),
-                arguments: Vec::new(),
-            },
+            transition,
+            drawn_transition,
             random: Vec::new(),
             post_states: 2,
         }
