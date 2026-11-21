@@ -172,7 +172,7 @@ fn systems_source_compiles_to_the_same_checked_package_as_its_document() {
             command::compile_outcome(&path).expect("Semantic IR model and protocol compile");
         assert_eq!(from_source.package_bytes(), from_document.package_bytes());
         let checked: Value = serde_json::from_slice(from_source.package_bytes()).unwrap();
-        let nodes = checked["nodes"].as_array().unwrap();
+        let nodes = checked["semantic_graph"]["nodes"].as_array().unwrap();
         let channel = nodes
             .iter()
             .find(|node| node["semantic_form"] == "channel")
@@ -185,8 +185,21 @@ fn systems_source_compiles_to_the_same_checked_package_as_its_document() {
             .expect("via emitted");
         let target = &connection["value"]["target"];
         assert!(!target.is_null(), "{connection}");
+        assert_eq!(target["package"], "test/plant");
+        assert_eq!(target["path"], json!(["relation", "relationship", "ix://test/plant/Pipe"]));
         assert!(nodes.iter().any(|node| &node["node_id"] == target));
         assert!(channel["dependencies"].as_array().unwrap().contains(target));
+        let mut ports = Vec::new();
+        for role in nodes.iter().filter(|node| node["semantic_form"] == "role") {
+            let member = role["body"]["arguments"].as_array().unwrap().iter()
+                .find(|argument| argument["name"] == "model_member").expect("Port role retains member");
+            let fields = member["value"]["members"].as_array().unwrap();
+            let field = |name: &str| &fields.iter().find(|field| field["name"] == name).unwrap()["value"]["value"];
+            assert_eq!(field("package"), "test/plant");
+            ports.push(field("node").as_str().unwrap());
+        }
+        ports.sort_unstable();
+        assert_eq!(ports, ["ix://test/plant/PumpOut", "ix://test/plant/TankIn"]);
     }
 }
 
