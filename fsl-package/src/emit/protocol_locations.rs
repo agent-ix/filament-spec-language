@@ -487,34 +487,6 @@ fn term_application<'c>(
         })
         .map(|(_, key)| key)
         .collect();
-    if let [first, _, ..] = outermost[..] {
-        // Sibling parts of one lowering (an IEEE ordering's two halves) are
-        // outermost together; the parent's application reads them in the
-        // order the checked tree holds its children.
-        let named = under.and_then(|(parent, earlier)| {
-            let operands = graph
-                .semantic_graph()
-                .node(parent.clone())?
-                .body()
-                .leaves()
-                .into_iter()
-                .filter_map(|leaf| match leaf {
-                    LeafTerm::Reference { target } => target.admitted(),
-                    LeafTerm::Literal { .. } | LeafTerm::DependencyReference { .. } => None,
-                })
-                .collect::<Vec<_>>();
-            operands
-                .into_iter()
-                .find(|operand| {
-                    !earlier.contains(operand) && outermost.iter().any(|key| ***key == **operand)
-                })
-                .and_then(|operand| outermost.iter().find(|key| ****key == *operand).copied())
-        });
-        return match named {
-            Some(key) => Ok(Some(key)),
-            None => Err(refusal(first)),
-        };
-    }
     let mut outer = outermost.into_iter();
     match (outer.next(), outer.next()) {
         (Some(key), None) => Ok(Some(key)),
