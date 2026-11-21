@@ -482,7 +482,7 @@ mod tests {
             .expect("the dependency keys")
             .key(&foreign)
             .expect("the exact dependency dimension key");
-        let quarter = Rational::new(Integer::from(1), Integer::from(4)).expect("a quarter");
+        let quarter = Rational::new(Integer::from(1_i64), Integer::from(4_i64)).expect("a quarter");
         let foreign_operand = CheckedDimensionOperand::Package(CheckedPackageNodeRef {
             package: dependency.name().into(),
             node: CheckedDeclaredNodeId::try_new(foreign.clone())
@@ -499,7 +499,7 @@ mod tests {
             (
                 [foreign_operand, local_operand],
                 [foreign, local.clone()],
-                Rational::from_integer(Integer::from(4)),
+                Rational::from_integer(Integer::from(4_i64)),
             )
         };
         // As in IR's mixed dimension-operand fixture, the producer-selected
@@ -698,7 +698,7 @@ mod tests {
             .expect("the exact target quantity");
         assert_eq!(
             quantity.magnitude(),
-            &Rational::new(Integer::from(1), Integer::from(4)).expect("a quarter")
+            &Rational::new(Integer::from(1_i64), Integer::from(4_i64)).expect("a quarter")
         );
         assert_eq!(quantity.unit(), &target);
     }
