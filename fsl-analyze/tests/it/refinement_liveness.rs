@@ -367,22 +367,13 @@ fn assert_reproduced(world: &AuxWorld<'_>, payload: &TemporalCounterexample) {
     }
 }
 
-/// The operations of `payload`'s stem and of its loop, by name.
+/// The operation identities of `payload`'s stem and of its loop.
 fn stem_and_loop(payload: &TemporalCounterexample) -> (Vec<String>, Vec<String>) {
     let entry = payload.lasso.as_ref().expect("a lasso").entry;
-    let name = |step: &fsl_replay::ModelStep| {
-        let is_separator = |c: char| !c.is_alphanumeric() && c != '_';
-        step.transition
-            .operation()
-            .trim_end_matches(is_separator)
-            .rsplit(is_separator)
-            .next()
-            .unwrap_or_default()
-            .to_owned()
-    };
+    let identity = |step: &fsl_replay::ModelStep| step.transition.operation().to_owned();
     (
-        payload.prefix[..entry].iter().map(name).collect(),
-        payload.prefix[entry..].iter().map(name).collect(),
+        payload.prefix[..entry].iter().map(identity).collect(),
+        payload.prefix[entry..].iter().map(identity).collect(),
     )
 }
 
@@ -408,8 +399,9 @@ fn cx1_refutes_when_fire_only_leaves_the_candidate_cycle() {
         Some(RefinementFailure::HiddenUnfair { .. })
     ));
     let (stem, cycle) = stem_and_loop(&counterexample);
-    assert_eq!(stem, ["tick", "tick"]);
-    assert_eq!(cycle, ["tick"]);
+    let tick = operation_identity_text(&unit.concrete_key("M/tick")).expect("the tick identity");
+    assert_eq!(stem, [tick.clone(), tick.clone()]);
+    assert_eq!(cycle, [tick]);
     assert_reproduced(&world, &counterexample);
 
     // With `fire` also mapping `h = 2` to `h = 1` keeping `v`, the cycle

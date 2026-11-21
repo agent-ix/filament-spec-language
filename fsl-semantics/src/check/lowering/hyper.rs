@@ -135,7 +135,10 @@ impl Lowering<'_> {
         for (level, (name, value_type)) in clause.body_parameters().iter().enumerate() {
             let site = hyper_location(input.index, Site::FiniteSlot(level));
             let semantic_type = self.binder_type(value_type, None, &site)?;
-            let parameter = self.parameter(name, level, semantic_type.clone(), &site)?;
+            // The source slot name is `trace.field`, which is no identifier;
+            // the parameter node carries the collision-free escape of it.
+            let node_name = format!("finite_s{}", esc(name));
+            let parameter = self.parameter(&node_name, level, semantic_type.clone(), &site)?;
             self.record(semantic_type.clone(), OccurrenceRole::Type, site);
             scope.push(Binder {
                 slot: level,
