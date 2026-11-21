@@ -107,7 +107,7 @@ fn argument_domains(
                 position,
             ) {
                 Some(support) => Some(Domain::Listed(support.values())),
-                None => system.value_domain(value_type, &references),
+                None => walk.value_domain(value_type, &references),
             }
         })
         .collect::<Option<Vec<_>>>()
@@ -830,10 +830,7 @@ impl Run<'_, '_, '_> {
         let result = match self.application.declaration.result() {
             None => None,
             Some(result_type) => {
-                let domain = self
-                    .walk
-                    .system
-                    .value_domain(result_type, &self.walk.references());
+                let domain = self.walk.value_domain(result_type, &self.walk.references());
                 match domain.and_then(|domain| domain.nth(0)) {
                     Some(value) => Some(value),
                     None => return Ok(None),
@@ -899,9 +896,7 @@ impl Run<'_, '_, '_> {
                                 .map(|candidate| &candidate.value_type);
                             if field_type
                                 .and_then(|field_type| {
-                                    self.walk
-                                        .system
-                                        .value_domain(field_type, &self.walk.references())
+                                    self.walk.value_domain(field_type, &self.walk.references())
                                 })
                                 .is_some_and(|domain| match value.as_ref() {
                                     Some(value @ Value::Integer(_)) => {
@@ -1079,7 +1074,8 @@ impl Run<'_, '_, '_> {
                 {
                     continue;
                 }
-                let domain = system
+                let domain = self
+                    .walk
                     .field_domain(&member.type_key, field, &post_references)
                     .ok_or_else(|| stop(BROKEN))?;
                 // `None` marks a field whose targets send the whole
@@ -1132,7 +1128,7 @@ impl Run<'_, '_, '_> {
             budget.charge()?;
             let candidate =
                 self.build(deleted, &members, plan.slots, created, &dimensions, &digits)?;
-            if !is_closed(&candidate, &post_references)? {
+            if !is_closed(&candidate, &post_references, system)? {
                 continue;
             }
             let Ok(delta) = self.decide_touched(&candidate, Some(&touched))? else {
@@ -1399,7 +1395,7 @@ impl Run<'_, '_, '_> {
                 // A field with no finite domain (an `Integer`, a string, an
                 // unbounded collection) is bounded by no frame that grants it,
                 // so it cannot be written here.
-                let Some(domain) = system.value_domain(&field.value_type, &references) else {
+                let Some(domain) = self.walk.value_domain(&field.value_type, &references) else {
                     continue;
                 };
                 let mut different: Option<Option<Value>> = None;
@@ -1545,7 +1541,6 @@ impl Run<'_, '_, '_> {
         };
         let domain = self
             .walk
-            .system
             .value_domain(result_type, post_references)
             .ok_or_else(|| stop(BROKEN))?;
         if domain.len() > RESULT_ORDER_LIMIT {
@@ -1885,10 +1880,12 @@ fn frame_objects(objects: &BTreeMap<String, StateObject>) -> Vec<FrameObject<'_,
         .collect()
 }
 
-/// Whether every reference of `candidate` names one of `references`.
+/// Whether candidate references name present objects or declared clock places
+/// owned by those objects. The frame decision still checks each field's type.
 fn is_closed(
     candidate: &ModelState,
     references: &[ObjectReference],
+    system: &ModelSystem<'_>,
 ) -> Result<bool, ExpansionStop> {
     let mut named = Vec::new();
     for object in candidate.populations.values().flat_map(BTreeMap::values) {
@@ -1902,9 +1899,14 @@ fn is_closed(
         return Ok(true);
     }
     let present: BTreeSet<&ObjectReference> = references.iter().collect();
-    Ok(named
-        .into_iter()
-        .all(|reference| present.contains(reference)))
+    let clocks =
+        fsl_semantics::model::clock_reference::DeclaredClockPlaces::new(system.input.timed_models);
+    Ok(named.into_iter().all(|reference| {
+        present.contains(reference)
+            || references
+                .iter()
+                .any(|owner| clocks.contains(reference, owner, system.types))
+    }))
 }
 
 /// Every object reference `value` holds.
