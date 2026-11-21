@@ -692,9 +692,19 @@ fn admit_protocol_clock_seed(
                 .find(|member| member.object().as_str() == identity.owner)
         })
         .ok_or_else(dangling)?;
-    if reference.universe() != owner.universe()
-        || !super::clock_reference::is_declared_identity(&identity, scope, owner, table, types)
+    // Authenticate context independently of whether a clock path survives.
+    if &identity.population != scope
+        || reference.universe() != owner.universe()
+        || !super::clock_reference::is_declared_owner_scope(
+            &identity.template.scope,
+            owner,
+            table,
+            types,
+        )
     {
+        return Err(admission_record(Code::InvalidRuntimeInput, "invalid-value"));
+    }
+    if !super::clock_reference::is_declared_identity(&identity, scope, owner, table, types) {
         return Err(dangling());
     }
     Ok(())
