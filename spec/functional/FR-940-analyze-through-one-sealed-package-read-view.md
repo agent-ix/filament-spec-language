@@ -675,12 +675,15 @@ NOT infer declaration order from first execution use. FSL SHALL emit the
 witness from `CheckedModelRelation::aliases()` while retaining the existing
 first-use `subjects` and execution order. Absence SHALL remain globally
 admissible for legacy four-member packages: only selection of an HP-1
-package form SHALL return an `UnsupportedView` whose existing catalog pair
-is `unknown_required_feature`/`unsupported-feature`, whose owning package
-is the selected package and whose `Node` locus is the relation's node key.
-Its typed reason SHALL be `MissingSubjectDeclarationOrder`, with stable
-name `missing-subject-declaration-order` (an addition to FR-390's projection
-reasons, not a new catalog cause). Analyze SHALL settle that item
+package form SHALL return the separate typed relation-form selection
+refusal `ModelRelationFormRefusal::MissingSubjectDeclarationOrder`, carrying
+the selected package identity and the relation's node key. Its existing
+catalog pair SHALL be `unknown_required_feature`/`unsupported-feature`,
+with reason detail `missing-subject-declaration-order` and a node locus at
+that key. This refusal SHALL NOT be an `UnsupportedView` or `ViewFailure`,
+and SHALL NOT change FR-390's all-or-nothing view creation, reason inventory
+or reason ordering: the view is already admitted, and this refusal selects
+no HP-1 form from it. Analyze SHALL settle that item
 `unsupported` with these diagnostics and structured package, node and
 reason details through its existing `UnsupportedWithDetail` settlement,
 before exploration and without source fallback; sibling item families SHALL
