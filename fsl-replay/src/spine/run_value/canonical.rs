@@ -11,7 +11,13 @@ impl Forms<'_> {
         declared: &ValueType,
     ) -> Result<Value, ReadStop> {
         let normalized = self.canonical_input(form, declared, &mut Path::new())?;
-        self.read(&normalized, declared)
+        self.read(&normalized, declared).map_err(|stop| match stop {
+            ReadStop::Defect(mut defect) => {
+                defect.path = canonical_pointer(form, &normalized, &defect.path);
+                ReadStop::Defect(defect)
+            }
+            fault @ ReadStop::Fault(_) => fault,
+        })
     }
 
     fn canonical_input(
@@ -356,14 +362,19 @@ impl Forms<'_> {
                         key.type_identity.clone(),
                         object,
                     ));
-                    fsl_eval::simulation::model::run_value_json(&value, self.types, self.enums)
-                        .ok_or(WriteStop::NoForm)
+                    fsl_eval::simulation::model::run_value_json(
+                        &value,
+                        self.types,
+                        self.enums,
+                        self.variants,
+                    )
+                    .ok_or(WriteStop::NoForm)
                 })
                 .collect::<Result<Vec<_>, _>>()?;
             elements.sort_by_key(order_key);
             return Ok(json!({"type": "set", "elements": elements}));
         }
-        fsl_eval::simulation::model::run_value_json(value, self.types, self.enums)
+        fsl_eval::simulation::model::run_value_json(value, self.types, self.enums, self.variants)
             .ok_or(WriteStop::NoForm)
     }
 }
@@ -383,4 +394,87 @@ fn declaration_form(key: &NodeKey) -> Result<Json, ReadStop> {
     fsl_eval::simulation::model::run_declaration_name(key)
         .map(Json::String)
         .ok_or(ReadStop::Fault("run-type-has-declaration-name"))
+}
+
+/// Preserve the typed reader's refusal while locating it in the caller's
+/// canonical tree, including record slots and native optional-field wrappers.
+fn canonical_pointer(mut canonical: &Json, mut native: &Json, pointer: &str) -> String {
+    let mut path = Path::new();
+    let mut segments = pointer
+        .strip_prefix('/')
+        .unwrap_or("")
+        .split('/')
+        .peekable();
+    if pointer.is_empty() {
+        return String::new();
+    }
+    while let Some(segment) = segments.next() {
+        let segment = segment.replace("~1", "/").replace("~0", "~");
+        let kind = canonical.get("type").and_then(Json::as_str);
+        if matches!(
+            segment.as_str(),
+            "record" | "tuple" | "variant" | "reference"
+        ) && native.get(&segment).is_some()
+        {
+            native = &native[&segment];
+            continue;
+        }
+        if segment == "present" && kind != Some("option") && native.get("present").is_some() {
+            native = &native["present"];
+            continue;
+        }
+        if segment == "fields" && kind == Some("record") {
+            path.push("fields");
+            canonical = &canonical["fields"];
+            native = &native["fields"];
+            if let Some(name) = segments.next() {
+                let name = name.replace("~1", "/").replace("~0", "~");
+                let Some((index, field)) = canonical.as_array().and_then(|fields| {
+                    fields
+                        .iter()
+                        .enumerate()
+                        .find(|(_, field)| field["name"].as_str() == Some(&name))
+                }) else {
+                    path.push(&name);
+                    continue;
+                };
+                path.push(&index.to_string());
+                path.push("value");
+                canonical = &field["value"];
+                native = &native[&name];
+            }
+            continue;
+        }
+        let mapped = match segment.as_str() {
+            "integer" | "boolean" | "present" => "value",
+            "sequence" | "set" | "bag" | "ordered-set" => "elements",
+            "map" => "entries",
+            "case" => "member",
+            "type" if kind == Some("reference") => "object_type",
+            "type" if matches!(kind, Some("record" | "tuple" | "union" | "enum")) => "name",
+            "object_identity" => "identity",
+            "text" if canonical.get("value").is_some() => "value",
+            other => other,
+        };
+        path.push(mapped);
+        native = native
+            .get(&segment)
+            .or_else(|| {
+                segment
+                    .parse::<usize>()
+                    .ok()
+                    .and_then(|index| native.get(index))
+            })
+            .unwrap_or(&Json::Null);
+        canonical = canonical
+            .get(mapped)
+            .or_else(|| {
+                mapped
+                    .parse::<usize>()
+                    .ok()
+                    .and_then(|index| canonical.get(index))
+            })
+            .unwrap_or(&Json::Null);
+    }
+    path.pointer()
 }

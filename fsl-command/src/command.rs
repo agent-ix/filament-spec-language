@@ -1877,6 +1877,11 @@ pub fn run_with_limits(
 /// Run with explicit byte ceilings and request members supplied beside the
 /// request file (FR-640): [`run_with_providers`] with no provider, the
 /// default [`ProviderOptions`] and a handle that is never cancelled.
+/// Function calls use FR-181's canonical argument and completed-value forms.
+/// Verification plans and independent selections run through their existing
+/// coordinators, preserving their dispositions and aggregate exit category.
+/// Drivers dispatch the run verb here rather than through function-only
+/// preparation and execution.
 pub fn run_with_limits_and_overrides(
     path: &Path,
     limits: RunLimits,

@@ -1186,10 +1186,11 @@ pub fn run_value_json(
     value: &Value,
     types: &TypeEnvironment,
     enums: &[EnumBinding],
+    variants: &[VariantTypeDeclaration],
 ) -> Option<serde_json::Value> {
     canonical_json(&value_enc(
         value,
-        Typing::with_variants(types, &[]).with_enums(enums),
+        Typing::with_variants(types, variants).with_enums(enums),
     ))
 }
 

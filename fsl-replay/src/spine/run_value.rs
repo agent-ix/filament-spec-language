@@ -61,6 +61,7 @@ pub(crate) enum WriteStop {
 pub(crate) struct Forms<'a> {
     types: &'a TypeEnvironment,
     enums: &'a [EnumBinding],
+    variants: &'a [fsl_semantics::check::VariantTypeDeclaration],
     /// The package string the unit's own declarations live in.
     own_package: &'a str,
     /// The call's object world, when the call names a snapshot.
@@ -81,9 +82,18 @@ impl<'a> Forms<'a> {
         Self {
             types,
             enums,
+            variants: &[],
             own_package: "",
             world: None,
         }
+    }
+
+    pub(crate) fn with_variants(
+        mut self,
+        variants: &'a [fsl_semantics::check::VariantTypeDeclaration],
+    ) -> Self {
+        self.variants = variants;
+        self
     }
 
     /// These forms for a unit whose own declarations live in `own_package`,

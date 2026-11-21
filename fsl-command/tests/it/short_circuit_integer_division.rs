@@ -26,7 +26,8 @@ fn write_run(
             "identity":"test:short-circuit", "document":"ShortCircuit", "formal_revision":1
         }},
         "call":{"function":function, "arguments":[
-            {"parameter":"x", "value":x}, {"parameter":"y", "value":y}
+            {"parameter":"x", "value":{"type":"integer","value":x.to_string()}},
+            {"parameter":"y", "value":{"type":"integer","value":y.to_string()}}
         ]}
     }});
     let path = directory.join("run.json");
@@ -43,7 +44,7 @@ fn assert_boolean(directory: &Path, program: &str, function: &str, x: i64, y: i6
     let document = result.value.as_value();
     assert_eq!(
         document["outcome"],
-        json!({"kind":"completed", "value":{"boolean":expected}}),
+        json!({"kind":"completed", "value":{"type":"boolean","value":expected}}),
         "{function}({x}, {y})"
     );
 }

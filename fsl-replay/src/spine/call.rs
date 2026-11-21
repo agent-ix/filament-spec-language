@@ -1052,6 +1052,7 @@ pub(crate) fn run_compiled(
         package.graph().scope().types(),
         package.graph().scope().enums(),
     )
+    .with_variants(package.graph().scope().variant_types())
     .in_world(own_package, world.as_ref());
     let supplied = admit_wire_arguments(&forms, selected.parameters, call)?;
     let arguments = bind_arguments(selected.parameters, &supplied)?;

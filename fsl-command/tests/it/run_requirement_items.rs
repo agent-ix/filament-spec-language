@@ -50,7 +50,7 @@ fn sq(directory: &Path, requirements: Option<Value>) -> PathBuf {
     write(
         directory,
         "sq",
-        json!([{"parameter": "x", "value": 3}]),
+        json!([{"parameter": "x", "value": {"type":"integer","value":"3"}}]),
         requirements,
     )
 }
@@ -114,7 +114,7 @@ fn a_run_call_names_the_backend_of_its_requirement_items() {
     let (value, outcome) = documents(&result);
     assert_eq!(
         value["outcome"],
-        json!({"kind": "completed", "value": {"integer": "16"}})
+        json!({"kind": "completed", "value": {"type":"integer", "value":"16"}})
     );
     let items = entries(&value);
     assert_eq!(items.len(), 3, "{value}");
@@ -269,14 +269,14 @@ fn plain_run_settles_with_the_linked_engines_only() {
     let request = write(
         directory.path(),
         "Even",
-        json!([{"parameter": "n", "value": 4}]),
+        json!([{"parameter": "n", "value": {"type":"integer","value":"4"}}]),
         Some(json!({"backend": PROVIDER})),
     );
     let result = command::run(&request, &Fr290).expect("the run completes");
     let (value, _) = documents(&result);
     assert_eq!(
         value["outcome"],
-        json!({"kind": "completed", "value": {"boolean": true}})
+        json!({"kind": "completed", "value": {"type":"boolean", "value":true}})
     );
     let items = entries(&value);
     assert!(!items.is_empty(), "Even has requirement items: {value}");
@@ -518,7 +518,7 @@ fn run_with_providers_settles_the_call_s_items_after_negotiation() {
     let request = write(
         directory.path(),
         "Even",
-        json!([{"parameter": "n", "value": 4}]),
+        json!([{"parameter": "n", "value": {"type":"integer","value":"4"}}]),
         Some(json!({"backend": PROVIDER})),
     );
     let run = run_with_providers(
@@ -536,7 +536,7 @@ fn run_with_providers_settles_the_call_s_items_after_negotiation() {
     assert_eq!(run.max_frame_bytes, 1_048_576);
     assert_eq!(
         run.document["outcome"],
-        json!({"kind": "completed", "value": {"boolean": true}})
+        json!({"kind": "completed", "value": {"type":"boolean", "value":true}})
     );
     for item in items {
         assert_eq!(item["record"]["result"], "proved", "{item}");
@@ -549,7 +549,7 @@ fn run_with_providers_settles_the_call_s_items_after_negotiation() {
     let bare = write(
         directory.path(),
         "Even",
-        json!([{"parameter": "n", "value": 4}]),
+        json!([{"parameter": "n", "value": {"type":"integer","value":"4"}}]),
         None,
     );
     let run = run_with_providers(
@@ -572,7 +572,7 @@ fn provider_run_accepts_run_limits_and_request_overrides() {
     let request = write(
         directory.path(),
         "Even",
-        json!([{"parameter": "n", "value": 4}]),
+        json!([{"parameter": "n", "value": {"type":"integer","value":"4"}}]),
         Some(json!({"backend": PROVIDER})),
     );
     let request_bytes = std::fs::metadata(&request).unwrap().len() as usize;
@@ -607,7 +607,7 @@ fn provider_run_accepts_run_limits_and_request_overrides() {
     .expect("the exact request and dependent-file ceilings admit the provider run");
     assert_eq!(
         documents(&result).0["outcome"]["value"],
-        json!({"boolean": true})
+        json!({"type":"boolean", "value":true})
     );
     assert_eq!(seen.lock().unwrap().settle_calls, 1);
 
@@ -711,7 +711,7 @@ fn provider_run_applies_s1_node_limit_before_requirement_settlement() {
     let request = write(
         directory.path(),
         "Even",
-        json!([{"parameter": "n", "value": 4}]),
+        json!([{"parameter": "n", "value": {"type":"integer","value":"4"}}]),
         Some(json!({"backend": PROVIDER})),
     );
     let mut stage_limits = fsl_replay::spine::SpineLimits::default();
@@ -831,7 +831,7 @@ fn run_with_providers_refuses_and_settles_the_negative_cases() {
     let request = write(
         directory.path(),
         "Even",
-        json!([{"parameter": "n", "value": 4}]),
+        json!([{"parameter": "n", "value": {"type":"integer","value":"4"}}]),
         Some(json!({"backend": PROVIDER})),
     );
     let repeated =
@@ -891,7 +891,7 @@ fn provider_total_byte_limit_settles_failed_with_typed_cause() {
     let request = write(
         directory.path(),
         "Even",
-        json!([{"parameter": "n", "value": 4}]),
+        json!([{"parameter": "n", "value": {"type":"integer","value":"4"}}]),
         Some(json!({"backend": PROVIDER})),
     );
     let result = run_with_providers(&request, Scenario::TotalBytesFailure)
@@ -959,7 +959,7 @@ fn a_published_option_reaches_the_provider_and_an_unpublished_one_settles() {
         write(
             directory.path(),
             "Even",
-            json!([{"parameter": "n", "value": 4}]),
+            json!([{"parameter": "n", "value": {"type":"integer","value":"4"}}]),
             Some(json!({"backend": PROVIDER, "options": options})),
         )
     };
@@ -994,7 +994,7 @@ fn a_published_option_reaches_the_provider_and_an_unpublished_one_settles() {
     }
     assert_eq!(
         unpublished.document["outcome"],
-        json!({"kind": "completed", "value": {"boolean": true}}),
+        json!({"kind": "completed", "value": {"type":"boolean", "value":true}}),
         "the call's value is unchanged"
     );
 }

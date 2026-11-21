@@ -45,8 +45,8 @@ fn remaining() -> (Case, std::path::PathBuf) {
     packing(
         "Remaining",
         &[
-            ("total", json!({"integer": "17"})),
-            ("held", json!({"integer": "5"})),
+            ("total", json!({"type":"integer", "value": "17"})),
+            ("held", json!({"type":"integer", "value": "5"})),
         ],
     )
 }
@@ -244,14 +244,17 @@ fn a_completed_call_writes_its_value() {
     let document = outcome.expect("execute", "success", 0);
     assert_eq!(
         document["result"],
-        json!({"kind": "completed", "value": {"integer": "12"}}),
+        json!({"kind": "completed", "value": {"type":"integer", "value": "12"}}),
         "{document}"
     );
-    let (_case, path) = packing("IsPacked", &[("n", json!({"integer": "7"}))]);
+    let (_case, path) = packing(
+        "IsPacked",
+        &[("n", json!({"type":"integer", "value": "7"}))],
+    );
     let document = plain(&path);
     assert_eq!(
         document.expect("execute", "success", 0)["result"]["value"],
-        json!({"boolean": true})
+        json!({"type":"boolean", "value": true})
     );
 }
 
@@ -340,12 +343,12 @@ fn call_defects_refuse_invalid_runtime_input() {
     for (function, arguments, cause) in [
         (
             "IsPacked",
-            vec![("n", json!({"integer": "11"}))],
+            vec![("n", json!({"type":"integer", "value": "11"}))],
             "invalid-value",
         ),
         (
             "IsPacked",
-            vec![("n", json!({"boolean": true}))],
+            vec![("n", json!({"type":"boolean", "value": true}))],
             "wrong-value-kind",
         ),
     ] {
@@ -366,8 +369,8 @@ fn an_exhausted_call_budget_exits_22() {
         "packing.fsl",
         "Remaining",
         &[
-            ("total", json!({"integer": "17"})),
-            ("held", json!({"integer": "5"})),
+            ("total", json!({"type":"integer", "value": "17"})),
+            ("held", json!({"type":"integer", "value": "5"})),
         ],
     );
     exhausted["request"]["call"]["accounting"] = json!({"work_units": 0});
