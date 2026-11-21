@@ -3493,7 +3493,7 @@ fn price_witness_paths(
     > {
         let mut used: BTreeMap<ProbabilityProductKey, BTreeSet<ProbabilityProductKey>> =
             BTreeMap::new();
-        let mut sequences = BTreeSet::new();
+        let mut seen = BTreeSet::new();
         for index in paths {
             let path = &sequences[*index];
             poll(cancel).map_err(cancelled)?;
@@ -3514,7 +3514,7 @@ fn price_witness_paths(
             if sequence.is_empty() || end.terminal != Some(!failing) {
                 return Ok(None);
             }
-            if !sequences.insert(sequence) {
+            if !seen.insert(sequence) {
                 return Ok(None);
             }
         }
