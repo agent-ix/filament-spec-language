@@ -3382,14 +3382,25 @@ pub(in crate::probability_certificate) fn replay_timed_witness(
     let mut chosen: BTreeMap<ProbabilityProductKey, usize> = BTreeMap::new();
     for (key, targets) in &used {
         let state = graph.states.get(key).ok_or(Error::Refused)?;
+        let covers = |choice: &Vec<ProbabilityEdge>, target: &ProbabilityProductKey| {
+            choice
+                .iter()
+                .any(|edge| &edge.target == target && edge.probability > zero())
+        };
+        // The witness only selects the scheduler: the mass is recomputed from the
+        // checker graph below. A step the checker has no edge for is accepted only
+        // when it ends in a decided state, where it cannot change what the chosen
+        // choice reaches.
         let index = state
             .choices
             .iter()
             .position(|choice| {
                 targets.iter().all(|target| {
-                    choice
-                        .iter()
-                        .any(|edge| &edge.target == target && edge.probability > zero())
+                    covers(choice, target)
+                        || graph
+                            .states
+                            .get(target)
+                            .is_some_and(|post| post.terminal.is_some())
                 })
             })
             .ok_or(Error::Refused)?;
