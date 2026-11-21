@@ -4123,7 +4123,7 @@ fn package_remainder_call_and_condition_refusals_keep_caller_source_loci() {
         type Zero = Int[0, 0];\n\
         function ints using v(xs: Sequence<Integer>[0, 3]): Sequence<Integer>[0, 3] pure { xs }\n\
         type Total = Int[0, 4000];\n\
-        function totalVersions using v(p: Population<Config::ConfigVersion>[4]): Total pure { sum<Total>(r in allInstances<Config::ConfigVersion>(p): deref(r).versionNumber) }\n\
+        function populationSize using v(): Integer pure { size(allInstances<Config::ConfigVersion>(Config::config_history)) }\n\
         temporal C using t over (c: Config::ConfigVersion) clock \"model-steps\" on origin \
         { always[0,5] holds(size(allInstances<Config::ConfigVersion>(Config::config_history)) >= 0) }\n\
         temporal Other using t over (c: Config::ConfigVersion) clock \"model-steps\" on origin \
@@ -4142,8 +4142,8 @@ fn package_remainder_call_and_condition_refusals_keep_caller_source_loci() {
     for (member, selection, term) in [
         (
             "call",
-            json!({"function":"totalVersions","snapshot":"spine-snapshot.json","arguments":[{"parameter":"p","value":{"population":format!("ix://{}/config_history", spine::PACKAGE_IDENTITY)}}]}),
-            "allInstances<Config::ConfigVersion>(p)",
+            json!({"function":"populationSize","snapshot":"spine-snapshot.json","arguments":[]}),
+            "allInstances<Config::ConfigVersion>(Config::config_history)",
         ),
         (
             "clause",
@@ -4153,7 +4153,12 @@ fn package_remainder_call_and_condition_refusals_keep_caller_source_loci() {
             "allInstances<Config::ConfigVersion>(Config::config_history)",
         ),
     ] {
-        let start = unit.find(term).unwrap();
+        let owner = if member == "call" {
+            0
+        } else {
+            unit.find("temporal C").unwrap()
+        };
+        let start = owner + unit[owner..].find(term).unwrap();
         let span = serde_json::to_value(
             offered
                 .locate(Span {
