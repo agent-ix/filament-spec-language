@@ -64,11 +64,10 @@ fn recipe(kind: &str) -> (&'static str, Vec<(&'static str, ClockConfiguration)>)
                     epoch: ClockExactNumber::Integer {
                         decimal: "0".into(),
                     },
-                    period: ClockExactNumber::Rational {
-                        numerator: "1".into(),
-                        denominator: "10".into(),
+                    period: ClockExactNumber::Integer {
+                        decimal: "1".into(),
                     },
-                    unit: "milliseconds".into(),
+                    unit: "step".into(),
                 },
             )],
         ),
