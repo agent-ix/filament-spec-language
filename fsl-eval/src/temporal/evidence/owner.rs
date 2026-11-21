@@ -334,6 +334,7 @@ fn admit_defined(
         binding: binding_selection,
         expected_subject,
         relationships: Vec::new(),
+        relationship_extents: Vec::new(),
         required_relationships: Vec::new(),
         scope,
         records,
