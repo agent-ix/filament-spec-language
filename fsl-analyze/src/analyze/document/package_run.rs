@@ -542,6 +542,7 @@ pub fn settle_package_run(
         &item_routes,
         &[],
         engines,
+        &|| fsl_semantics::check::wire_id::WireGraph::of_package_bytes(package_bytes).ok(),
     )?)
 }
 
