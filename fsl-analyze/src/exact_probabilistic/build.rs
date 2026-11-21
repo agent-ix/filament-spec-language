@@ -1058,6 +1058,7 @@ impl Builder<'_, '_, '_, '_> {
                         drawn_transition: draw.transition,
                         random: draw.random,
                         post_states: 0,
+                        post_state_examples: Vec::new(),
                     }))
                     .into());
                 }

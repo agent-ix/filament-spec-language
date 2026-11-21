@@ -140,7 +140,10 @@ pub struct NotMarkov {
     /// The drawn random values, in declared order.
     pub random: Vec<Value>,
     /// How many post-states the drawn vector gives: 0, or more than 1.
-    pub post_states: u32,
+    pub post_states: u64,
+    /// The first two distinct post-state keys in the owner's deterministic
+    /// order; empty when there are no post-states.
+    pub post_state_examples: Vec<StateKey>,
 }
 
 impl PartialEq for NotMarkov {
@@ -150,6 +153,7 @@ impl PartialEq for NotMarkov {
             && self.drawn_transition == other.drawn_transition
             && same_values(&self.random, &other.random)
             && self.post_states == other.post_states
+            && self.post_state_examples == other.post_state_examples
     }
 }
 
@@ -1019,7 +1023,10 @@ impl ModelSystem<'_> {
                         transition: action.identity.clone(),
                         drawn_transition: draw.transition.clone(),
                         random: draw.random.clone(),
-                        post_states: u32::try_from(draw.successors.len()).unwrap_or(u32::MAX),
+                        post_states: u64::try_from(draw.successors.len())
+                            .expect("supported targets have at most 64-bit usize"),
+                        post_state_examples: self
+                            .not_markov_post_keys_impl(draw, cancel, key_policy)?,
                     })));
                 }
             }
@@ -1083,6 +1090,46 @@ impl ModelSystem<'_> {
         }
         steps.sort_by(|left, right| left.0.cmp(&right.0));
         Ok(Ok(steps.into_iter().map(|(_, step)| step).collect()))
+    }
+
+    /// Capture the refusal's bounded post-state evidence through the same
+    /// canonical identity owner as the draw's successor ordering.
+    pub(crate) fn not_markov_post_keys(&self, draw: &Draw) -> Result<Vec<StateKey>, ExpansionStop> {
+        self.not_markov_post_keys_impl(draw, None, None)
+    }
+
+    fn not_markov_post_keys_impl(
+        &self,
+        draw: &Draw,
+        cancel: Option<&filament_exact::Cancel>,
+        key_policy: Option<&dyn super::key_budget::KeyPolicy>,
+    ) -> Result<Vec<StateKey>, ExpansionStop> {
+        let mut keys: Vec<StateKey> = Vec::new();
+        super::key_budget::reserve(key_policy, &mut keys, draw.successors.len().min(2))?;
+        for (_, post) in draw.successors.iter().take(2) {
+            if cancel.is_some_and(filament_exact::Cancel::poll) {
+                return Err(exhausted(ExpansionLimit::EvaluationMeter(
+                    filament_exact::LimitKind::WorkUnits,
+                )));
+            }
+            let key = match key_policy {
+                Some(policy) => policy.key(self, &post.state)?,
+                None => self.canonical_state_key(post).map_err(|_| stop(BROKEN))?,
+            };
+            // Candidate generation visits each assignment once and retains
+            // only its first satisfying result; sorted successors are distinct.
+            if let Some(previous) = keys.first() {
+                let order = match key_policy {
+                    Some(policy) => policy.compare(previous.as_bytes(), key.as_bytes())?,
+                    None => previous.cmp(&key),
+                };
+                if order != std::cmp::Ordering::Less {
+                    return Err(stop(BROKEN));
+                }
+            }
+            keys.push(key);
+        }
+        Ok(keys)
     }
 
     /// `workload`'s weight for the operation whose identity text is

@@ -353,7 +353,7 @@ mod tests {
         }
     }
 
-    /// A non-unique post-state of a `tick` with no argument.
+    /// A `tick` with no argument and no post-state.
     fn not_markov() -> fsl_eval::simulation::model::NotMarkov {
         let transition = fsl_eval::simulation::model::ScheduledIdentity {
             operation: r#""tick""#.to_owned(),
@@ -379,7 +379,8 @@ mod tests {
             transition,
             drawn_transition,
             random: Vec::new(),
-            post_states: 2,
+            post_states: 0,
+            post_state_examples: Vec::new(),
         }
     }
 

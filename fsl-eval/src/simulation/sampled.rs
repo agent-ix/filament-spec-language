@@ -489,16 +489,17 @@ fn take_step(
         .iter()
         .find(|draw| same_values(&draw.random, &random))
         .ok_or_else(broken)?;
-    let [(transition, post)] =
-        <[_; 1]>::try_from(draw.successors.clone()).map_err(|successors: Vec<_>| {
-            SampleStop::NotMarkov(NotMarkov {
-                state: state.clone(),
-                transition: action.identity.clone(),
-                drawn_transition: draw.transition.clone(),
-                random: random.clone(),
-                post_states: u32::try_from(successors.len()).unwrap_or(u32::MAX),
-            })
-        })?;
+    let [(transition, post)] = draw.successors.as_slice() else {
+        return Err(SampleStop::NotMarkov(NotMarkov {
+            state: state.clone(),
+            transition: action.identity.clone(),
+            drawn_transition: draw.transition.clone(),
+            random: random.clone(),
+            post_states: u64::try_from(draw.successors.len())
+                .expect("supported targets have at most 64-bit usize"),
+            post_state_examples: system.not_markov_post_keys(draw)?,
+        }));
+    };
     let identities = Rational::from_integer(Integer::from(
         u64::try_from(enabled.len()).map_err(|_| broken())?,
     ));
@@ -508,8 +509,8 @@ fn take_step(
         .ok_or_else(broken)?
         .mul(&draw.probability);
     Ok(Taken {
-        post,
-        transition: TransitionId::Operation(transition),
+        post: post.clone(),
+        transition: TransitionId::Operation(transition.clone()),
         random: draw.random.clone(),
         probability,
         rewards: draw.rewards.clone(),

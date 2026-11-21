@@ -368,13 +368,22 @@ fn health_variants_are_not_markov() {
 #[trace("TC-622", "FR-187-AC-3")]
 #[test]
 fn not_markov_retains_the_full_identity_with_interleaved_random_arguments() {
-    for (post, count) in [("true", 2), ("self.up and not self.up", 0)] {
+    for (post, spare, count) in [
+        ("true", false, 2),
+        ("true", true, 4),
+        ("self.up and not self.up", false, 0),
+    ] {
         let mut model = world::gate("left and not right", post, "");
         model.operations[0].parameters = vec![
             ("left", world::BOOLEAN.to_owned()),
             ("x", world::BOOLEAN.to_owned()),
             ("right", world::BOOLEAN.to_owned()),
         ];
+        if spare {
+            model.fields.push(("spare", world::BOOLEAN.to_owned()));
+            model.operations[0].modifies.push("spare");
+            model.initial["spare"] = serde_json::json!({"boolean": false});
+        }
         let world = World::new(&model);
         let system = world.system();
         let start = initial(&system);
@@ -427,10 +436,59 @@ fn not_markov_retains_the_full_identity_with_interleaved_random_arguments() {
             .expect("a draw even without successors");
         assert_eq!(&draw.transition, drawn);
         assert_eq!(draw.successors.len(), usize::try_from(count).unwrap());
+        let expected = draw
+            .successors
+            .iter()
+            .take(2)
+            .map(|(_, post)| {
+                system
+                    .canonical_state_key(post)
+                    .expect("an actual post-state")
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(not_markov.post_state_examples, expected);
+        assert_eq!(
+            not_markov.post_state_examples.len(),
+            usize::try_from(count.min(2)).unwrap()
+        );
+        assert!(not_markov
+            .post_state_examples
+            .windows(2)
+            .all(|pair| pair[0] < pair[1]));
         for (transition, _) in &draw.successors {
             assert_eq!(transition, drawn);
         }
     }
+}
+
+/// The bounded evidence capture refuses a repeated state instead of
+/// exporting the same state twice as evidence of nondeterminism.
+#[trace("TC-622", "FR-187-AC-3")]
+#[test]
+fn not_markov_post_evidence_requires_distinct_owner_keys() {
+    let world = World::new(&world::loose_health());
+    let system = world.system();
+    let [mut action] = <[_; 1]>::try_from(
+        system
+            .actions(&initial(&system))
+            .expect("expands")
+            .expect("decided"),
+    )
+    .expect("one action");
+    let draw = action.draws.first_mut().expect("a draw");
+    assert_eq!(draw.successors.len(), 2);
+    let first = draw
+        .successors
+        .first()
+        .expect("an actual successor")
+        .clone();
+    draw.successors[1] = first;
+    assert_eq!(
+        system
+            .not_markov_post_keys(draw)
+            .expect_err("duplicate owner keys"),
+        super::super::walk::stop(super::super::BROKEN)
+    );
 }
 
 /// FR-187-AC-4 (TC-622 step 4): `refund = n - 3` over `n: Int[0, 5]`

@@ -506,7 +506,8 @@ mod tests {
             transition,
             drawn_transition,
             random: Vec::new(),
-            post_states: 2,
+            post_states: 0,
+            post_state_examples: Vec::new(),
         };
         assert_eq!(code(SampleStop::NotMarkov(not_markov)), NOT_MARKOV);
         assert_eq!(code(SampleStop::UndecidedSuccessor), BROKEN);
