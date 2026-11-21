@@ -1728,6 +1728,7 @@ impl<'wire> ReaderBuilder<'_, 'wire> {
             if let CheckedTerm::Application {
                 operation,
                 arguments,
+                ..
             } = &node.body
             {
                 if operation.identity() == Some("filament.op.function.call") {
