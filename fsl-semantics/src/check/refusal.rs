@@ -2960,6 +2960,10 @@ pub struct ReservedSlotName {
     /// The identifier's own span, when the declaring form records one;
     /// otherwise the refusal's location names the declaring node.
     pub span: Option<Span>,
+    /// Where the identifier is declared when its own span lives in an
+    /// expression tree: the declaring node and the identifier's position
+    /// among the binders that node declares (`ExpressionSpans::binder_spans`).
+    pub binder: Option<(Location, usize)>,
 }
 
 /// [`CheckCause::AmbiguousMember`]'s payload.

@@ -564,7 +564,10 @@ impl<V: DebugWith> DebugWith for Binding<V> {
         f.debug_struct("Binding")
             .field("name", &self.name)
             .field("value", &With(&self.value, table))
-            .field("binder", &self.binder.as_ref().map(|binder| With(binder, table)))
+            .field(
+                "binder",
+                &self.binder.as_ref().map(|binder| With(binder, table)),
+            )
             .finish()
     }
 }
@@ -1138,11 +1141,7 @@ impl MemberTerm {
     /// A `let`'s `{term: "binding", name, value, binder}`: the binding of a
     /// Leaf with the `value`/`parameter` node it binds (FSpec FR-322 "The
     /// binder link").
-    pub(crate) fn let_binding(
-        name: impl Into<String>,
-        value: LeafTerm,
-        binder: NodeRef,
-    ) -> Self {
+    pub(crate) fn let_binding(name: impl Into<String>, value: LeafTerm, binder: NodeRef) -> Self {
         Self::Binding(Binding {
             binder: Some(binder),
             ..Binding::new(name, BindingValue::Leaf(value))

@@ -719,3 +719,23 @@ fn set_steps_outside_the_catalog_refuse() {
         );
     }
 }
+
+/// FR-488-AC-29 (TC-3082): `seq` and the population forms of a state clause
+/// refuse a binder in the reserved slot form at the binder identifier.
+#[trace("TC-3082", "FR-488-AC-29")]
+#[test]
+fn a_state_clause_binder_in_the_reserved_slot_form_is_refused_at_the_identifier() {
+    for clause in [
+        "invariant S using v on M::Counter at current { size(seq(op_sa in 0 .. 2: op_sa)) = 3 }",
+        "invariant C using v on M::Counter at current { count(op_sa in M::counters where op_sa.v = 2) <= 3 }",
+        "invariant E using v on M::Counter at current { exists(op_sa in M::counters where op_sa.v = 2) or true }",
+    ] {
+        let declarations = format!("bound B on M::counters [3]\n{clause}");
+        let (code, cause, at) = population_fixture::refused(false, &declarations);
+        assert_eq!(
+            (code.as_str(), cause.as_str(), at.as_str()),
+            (Code::AmbiguousDeclaration.as_str(), "ambiguous-name", "op_sa"),
+            "{clause}"
+        );
+    }
+}
