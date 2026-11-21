@@ -155,7 +155,7 @@ impl BarePackage<'_> {
                     let name = declaration
                         .qualified_name
                         .iter()
-                        .map(|part| part.as_ref().parse::<Identifier>())
+                        .map(|part| Identifier::new(part.to_string()))
                         .collect::<Result<Vec<_>, _>>()
                         .map_err(|_| fault("admitted-source-name-is-qualified-identifiers"))?;
                     let owner = SourceOwner::new(authority.as_ref(), identity.as_ref())
@@ -181,24 +181,23 @@ impl BarePackage<'_> {
         }
         let mut source = SourceDeclarations::from_facts(source)
             .map_err(|_| fault("admitted-source-declaration-provenance-is-consistent"))?;
-        let mut aliases = self
-            .source_records()
-            .iter()
-            .map(|row| (&row.structural_node, row.type_handle.clone()))
-            .chain(
-                self.source_unions()
-                    .iter()
-                    .map(|row| (&row.structural_node, row.type_handle.clone())),
-            )
-            .collect::<Vec<_>>();
-        if let Ok((_, identities)) = self.witness() {
-            aliases.extend(
-                identities
-                    .source_tuple_rows()
-                    .iter()
-                    .map(|row| (&row.structural_node, row.type_handle.clone())),
-            );
-        }
+        let aliases = match self.witness() {
+            Ok((_, identities)) => identities
+                .source_record_rows()
+                .map(|row| (&row.structural_node, row.type_handle.clone()))
+                .chain(
+                    identities
+                        .source_union_rows()
+                        .map(|row| (&row.structural_node, row.type_handle.clone())),
+                )
+                .chain(
+                    identities
+                        .source_tuple_rows()
+                        .map(|row| (&row.structural_node, row.type_handle.clone())),
+                )
+                .collect::<Vec<_>>(),
+            Err(_) => Vec::new(),
+        };
         for (node, handle) in aliases {
             let key = self
                 .node_key(node)
