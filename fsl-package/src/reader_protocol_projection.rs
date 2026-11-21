@@ -1978,6 +1978,49 @@ impl<'wire> ReaderBuilder<'_, 'wire> {
         }
         let node = self.node(id)?;
         let (kind, children, term) = match &node.body {
+            CheckedTerm::Literal { .. }
+                if matches!(
+                    node.body.literal_read().map(|literal| literal.value),
+                    Some(filament_contract_model::CheckedLiteralValue::Reference(_))
+                ) =>
+            {
+                let Some(filament_contract_model::CheckedLiteralValue::Reference(identity)) =
+                    node.body.literal_read().map(|literal| literal.value)
+                else {
+                    return Err(fault("reader-reference-literal-has-identity").into());
+                };
+                let ValueType::Reference(object_type) = self.value_type(id)? else {
+                    return Err(fault("reader-reference-literal-has-object-type").into());
+                };
+                let bytes = identity.as_bytes();
+                let canonical = !bytes.is_empty()
+                    && bytes.len() % 2 == 0
+                    && bytes
+                        .iter()
+                        .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(byte));
+                let identity = canonical
+                    .then(|| {
+                        bytes
+                            .chunks_exact(2)
+                            .map(|pair| {
+                                u8::from_str_radix(std::str::from_utf8(pair).ok()?, 16).ok()
+                            })
+                            .collect::<Option<Vec<_>>>()
+                    })
+                    .flatten()
+                    .ok_or_else(|| BuildError::Unsupported {
+                        reason: UnsupportedReason::MissingLiteralProjection,
+                        node: id.clone(),
+                    })?;
+                (
+                    NodeKind::ReferenceLiteral {
+                        object_type,
+                        identity,
+                    },
+                    Vec::new(),
+                    None,
+                )
+            }
             CheckedTerm::Literal { .. } => {
                 let literal = node
                     .body
