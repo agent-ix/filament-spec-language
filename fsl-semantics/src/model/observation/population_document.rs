@@ -155,21 +155,32 @@ fn copy(value: &str) -> Result<String, AdmissionFailure> {
 }
 
 fn references(slot: &FieldValue) -> Result<Vec<String>, AdmissionFailure> {
+    match slot {
+        FieldValue::Present(value) => {
+            map_references(value, |reference| copy(reference.object().as_str()))
+        }
+        FieldValue::Absent | FieldValue::Null => Ok(Vec::new()),
+    }
+}
+
+/// Map references in the same canonical order used for population documents.
+pub(super) fn map_references<T>(
+    value: &Value,
+    mut map: impl FnMut(&filament_exact::ObjectReference) -> Result<T, AdmissionFailure>,
+) -> Result<Vec<T>, AdmissionFailure> {
     let mut values = Vec::new();
     let mut pending = Vec::new();
-    if let FieldValue::Present(value) = slot {
-        pending
-            .try_reserve(1)
-            .map_err(|_| allocation_failed(std::mem::size_of::<&Value>()))?;
-        pending.push(value);
-    }
+    pending
+        .try_reserve(1)
+        .map_err(|_| allocation_failed(std::mem::size_of::<&Value>()))?;
+    pending.push(value);
     while let Some(value) = pending.pop() {
         match value {
             Value::Reference(reference) => {
                 values
                     .try_reserve(1)
-                    .map_err(|_| allocation_failed(std::mem::size_of::<String>()))?;
-                values.push(copy(reference.object().as_str())?);
+                    .map_err(|_| allocation_failed(std::mem::size_of::<T>()))?;
+                values.push(map(reference)?);
             }
             Value::Option(option) => {
                 if let Some(payload) = option.payload() {

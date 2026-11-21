@@ -27,6 +27,7 @@ mod evaluate;
 mod family;
 pub mod post_targets;
 mod protocol_slot;
+pub(crate) use protocol_slot::reference_occurrences;
 mod s6a;
 mod slot_admission;
 mod slot_supply;

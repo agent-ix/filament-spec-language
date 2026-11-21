@@ -2690,6 +2690,60 @@ pub use extents::{
     PopulationManifest, RelationshipExtents, ResolveBundle,
 };
 pub(crate) use initial::{admit_initial_state, observe_state, state_fields, state_reference};
+
+/// A simulator's closed state with the same population catalog and recursive
+/// reference closure that protocol snapshot admission retains.
+pub(crate) fn observe_protocol_state(
+    views: &[ModelView],
+    types: &TypeEnvironment,
+    state: &crate::model::state::ModelState,
+    identity: DocumentRef,
+) -> Result<Observation, AdmissionFailure> {
+    let mut observation = observe_state(views, types, state, identity)?;
+    let facts = relationships::model_facts(views, types)?;
+    let provenance = facts.population_provenance()?;
+    let mut holders = BTreeMap::new();
+    for population in observation.populations.keys() {
+        for reference in observation.environment.population_members(population).into_iter().flatten() {
+            holders.insert(reference.clone(), population.clone());
+        }
+    }
+    let references = holders.keys().cloned().collect();
+    let mut edges = BTreeMap::new();
+    for (population, objects) in &state.populations {
+        let mut targets = Vec::new();
+        for object in objects.values() {
+            for value in object.fields.values() {
+                for target in population_document::map_references(value, |reference| {
+                    holders.get(reference).cloned().ok_or_else(|| fault("closed-state-reference-has-a-population"))
+                })? {
+                    if !targets.contains(&target) { targets.push(target); }
+                }
+            }
+        }
+        edges.insert(population.node.clone(), targets);
+    }
+    let extents = relationships::admit_supplied_extents(types, facts.clone(), state.extents.clone(), &observation.populations)?;
+    let closures = facts.population_identities().map(|seed| {
+        let mut closure = vec![seed.to_owned()];
+        let mut next = 0;
+        while next < closure.len() {
+            let population = &closure[next];
+            let targets = edges.get(population).into_iter().flatten().cloned()
+                .chain(relationships::related_population_ids(&extents, population));
+            for target in targets {
+                if !closure.contains(&target) { closure.push(target); }
+            }
+            next += 1;
+        }
+        (seed.to_owned(), closure)
+    }).collect();
+    observation.environment = observation.environment
+        .with_references(references)
+        .with_population_provenance(provenance)
+        .with_population_reference_closures(closures);
+    Ok(observation)
+}
 pub use write::{
     write_environment_document, EnvironmentLabels, EnvironmentModel, EnvironmentObject,
     EnvironmentPopulation,

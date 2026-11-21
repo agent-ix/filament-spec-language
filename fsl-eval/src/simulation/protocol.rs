@@ -63,7 +63,7 @@ use crate::simulation::explore::TransitionSystem;
 use crate::simulation::footprint::Location;
 use crate::simulation::key::{self, EncodingRefusal};
 use crate::simulation::model::encode::{
-    self, Canonicalizer, Enc, map_enc, reference_enc, value_enc,
+    self, map_enc, reference_enc, value_enc, Canonicalizer, Enc,
 };
 use crate::simulation::model::{
     verdict, ClauseOutcome, ModelEvaluator, ModelFinding, ModelSimState, ModelSystem, Observed,
@@ -1168,6 +1168,8 @@ pub struct ProtocolSystem<'a, M: MemoryModel> {
     /// The admitted package execution form, when this system was built from
     /// package nodes rather than a source `CheckedProtocol`.
     package_program: Option<PackageProtocolProgram<'a>>,
+    /// The package route's model admission inputs for current slot observations.
+    package_subject: Option<&'a ProtocolSubject<'a>>,
     /// A loop proof item is a product of the ordinary protocol state with
     /// the prior decision value for exactly one repeat invocation.
     loop_proof_target: Option<ProtocolLoopProofTarget>,
@@ -1517,6 +1519,7 @@ impl<'a, M: MemoryModel> ProtocolSystem<'a, M> {
             protocol_name: protocol.name.clone(),
             program,
             package_program: None,
+            package_subject: None,
             loop_proof_target,
             memory,
             channel_message_bound: None,
@@ -1695,6 +1698,7 @@ impl<'a, M: MemoryModel> ProtocolSystem<'a, M> {
             protocol_name: subject.protocol.clone(),
             program,
             package_program: Some(package),
+            package_subject: Some(subject),
             loop_proof_target: None,
             memory,
             channel_message_bound: None,
@@ -2816,6 +2820,7 @@ impl<'a, M: MemoryModel> ProtocolSystem<'a, M> {
         &self,
         node: fsl_semantics::check::ProtocolNodeId,
         frame: Vec<Option<Value>>,
+        state: &ModelSimState,
     ) -> Result<Option<Verdict>, ExpansionStop> {
         let Some(package) = self.package_program.as_ref() else {
             return Ok(None);
@@ -2826,9 +2831,10 @@ impl<'a, M: MemoryModel> ProtocolSystem<'a, M> {
         let Some(slot) = control.constraint.as_ref() else {
             return Ok(None);
         };
-        let binders = package_binder_values(&self.program, frame);
+        let observation = self.package_observation(state)?;
+        let binders = self.package_binder_values(frame, &observation, slot)?;
         let supply = package
-            .supply_for_slot(slot, binders, None)
+            .supply_for_slot(slot, binders, Some(&observation))
             .map_err(|_| broken())?;
         let result = package
             .evaluate_control_constraint(node, &supply, &mut Meter::new(self.model.meter()))
@@ -2840,6 +2846,7 @@ impl<'a, M: MemoryModel> ProtocolSystem<'a, M> {
     pub(super) fn evaluate_package_finish(
         &self,
         frame: Vec<Option<Value>>,
+        state: &ModelSimState,
     ) -> Result<Option<Verdict>, ExpansionStop> {
         let Some(package) = self.package_program.as_ref() else {
             return Ok(None);
@@ -2847,9 +2854,10 @@ impl<'a, M: MemoryModel> ProtocolSystem<'a, M> {
         let Some(slot) = package.finish.as_ref() else {
             return Ok(None);
         };
-        let binders = package_binder_values(&self.program, frame);
+        let observation = self.package_observation(state)?;
+        let binders = self.package_binder_values(frame, &observation, slot)?;
         let supply = package
-            .supply_for_slot(slot, binders, None)
+            .supply_for_slot(slot, binders, Some(&observation))
             .map_err(|_| broken())?;
         let result = package
             .evaluate_finish(&supply, &mut Meter::new(self.model.meter()))
@@ -2857,6 +2865,128 @@ impl<'a, M: MemoryModel> ProtocolSystem<'a, M> {
         result
             .map(|evaluation| package_slot_verdict(Some(evaluation)))
             .transpose()
+    }
+
+    fn package_observation(
+        &self,
+        state: &ModelSimState,
+    ) -> Result<
+        filament_semantic_value::admission::ObservationAdmission<
+            fsl_package::AdmittedProtocolObservation<'static>,
+        >,
+        ExpansionStop,
+    > {
+        let subject = self.package_subject.ok_or_else(broken)?;
+        let request = &subject.model.simulation;
+        let package = self.package_program.as_ref().ok_or_else(broken)?;
+        let ValueType::Reference(over) = &package.over_type else {
+            return Err(broken());
+        };
+        let declaring = self
+            .model
+            .declaring_package(over.clone())
+            .ok_or_else(broken)?;
+        let selection = request
+            .input
+            .model_selections
+            .iter()
+            .find(|selection| selection.identity == declaring)
+            .ok_or_else(broken)?;
+        self.evaluator
+            .package_protocol_observation(
+                selection,
+                request.packages,
+                request.normalization,
+                state.state(),
+                self.model.observation_of(state)?.identity,
+            )
+            .map_err(|_| broken())
+    }
+
+    fn package_binder_values(
+        &self,
+        frame: Vec<Option<Value>>,
+        observation: &filament_semantic_value::admission::ObservationAdmission<
+            fsl_package::AdmittedProtocolObservation<'_>,
+        >,
+        slot: &crate::value::ProtocolSlot,
+    ) -> Result<
+        Vec<(
+            fsl_package::CheckedNodeId,
+            crate::value::ProtocolSuppliedValue,
+        )>,
+        ExpansionStop,
+    > {
+        let filament_semantic_value::admission::ObservationAdmission::Admitted(observation) =
+            observation
+        else {
+            return Err(broken());
+        };
+        let subject = self.package_subject.ok_or_else(broken)?;
+        let package = self.package_program.as_ref().ok_or_else(broken)?;
+        let required: BTreeSet<_> = package
+            .slot_binders(slot)
+            .map_err(|_| broken())?
+            .into_iter()
+            .collect();
+        self.program
+            .package_binders
+            .iter()
+            .zip(frame)
+            .filter(|(binder, _)| {
+                binder
+                    .as_ref()
+                    .and_then(|binder| self.evaluator.package_node_key(binder))
+                    .is_some_and(|key| required.contains(&key))
+            })
+            .filter_map(|(binder, value)| {
+                binder.as_ref().map(|binder| {
+                    let mut references = Vec::new();
+                    let value = match value {
+                        Some(value) => {
+                            for (path, reference) in crate::value::reference_occurrences(
+                                &value,
+                                subject.model.simulation.input.types,
+                            )
+                            .map_err(|_| broken())?
+                            {
+                                let environment = observation.environment();
+                                let population = if binder == &package.over {
+                                    fsl_semantics::model::key::population_node_key(
+                                        &subject.over.population,
+                                    )
+                                    .map_err(|_| broken())?
+                                } else {
+                                    environment
+                                        .population_completeness()
+                                        .keys()
+                                        .find(|population| {
+                                            environment
+                                                .population_members(population)
+                                                .is_some_and(|members| members.contains(&reference))
+                                        })
+                                        .and_then(|population| {
+                                            environment.population_node(population)
+                                        })
+                                        .cloned()
+                                        .ok_or_else(broken)?
+                                };
+                                references.push(crate::value::ProtocolReferenceOccurrence {
+                                    path,
+                                    population,
+                                });
+                            }
+                            crate::value::SuppliedValue::Value(value)
+                        }
+                        None => crate::value::SuppliedValue::Unavailable(BROKEN),
+                    };
+                    Ok((
+                        binder.clone(),
+                        crate::value::ProtocolSuppliedValue { value, references },
+                    ))
+                })
+            })
+            .collect()
     }
 
     /// FR-211 and ADR-027 PD-1: the class of `state`. A state with no live
@@ -2940,33 +3070,6 @@ impl<'a, M: MemoryModel> ProtocolSystem<'a, M> {
             }
         }
     }
-}
-
-/// `runtime_invariant`/`established-invariant-broken`.
-fn package_binder_values(
-    program: &Program<'_>,
-    frame: Vec<Option<Value>>,
-) -> Vec<(
-    fsl_package::CheckedNodeId,
-    crate::value::ProtocolSuppliedValue,
-)> {
-    program
-        .package_binders
-        .iter()
-        .zip(frame)
-        .filter_map(|(binder, value)| {
-            binder.clone().map(|binder| {
-                let value = match value {
-                    Some(value) => crate::value::SuppliedValue::Value(value),
-                    None => crate::value::SuppliedValue::Unavailable(CatalogCode::new(
-                        "runtime_invariant",
-                        "established-invariant-broken",
-                    )),
-                };
-                (binder, crate::value::ProtocolSuppliedValue::from(value))
-            })
-        })
-        .collect()
 }
 
 fn package_slot_verdict(

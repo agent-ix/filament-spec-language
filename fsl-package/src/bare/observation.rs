@@ -26,6 +26,69 @@ fn refused(catalog: CatalogCode, fields: BTreeMap<&'static str, String>) -> Admi
 }
 
 impl BarePackage<'_> {
+    /// Admit a simulated current state against this package's selected models
+    /// and type environment. The resulting authority belongs to this exact
+    /// bare package, as an admitted snapshot's authority does.
+    pub fn admit_protocol_state(
+        &self,
+        model: &DomainPackageRef,
+        packages: &PackageInput,
+        model_limits: ModelNormalizationLimits,
+        state: &fsl_semantics::model::state::ModelState,
+        identity: DocumentRef,
+    ) -> ObservationAdmission<AdmittedProtocolObservation<'static>> {
+        if !self.model_selections().contains(model) {
+            return ObservationAdmission::Refused(refused(
+                CatalogCode::new("invalid_model_binding", "wrong-model-selection"),
+                BTreeMap::new(),
+            ));
+        }
+        let unsupported = |reason: &str| {
+            ObservationAdmission::Refused(refused(
+                CatalogCode::new("unknown_required_feature", "unsupported-feature"),
+                BTreeMap::from([
+                    ("package", self.package().name().to_owned()),
+                    ("reason", reason.to_owned()),
+                ]),
+            ))
+        };
+        if let Err(failure) = self.witness() {
+            return match failure {
+                crate::BareSelectionFailure::Identity(refusal) => unsupported(
+                    &crate::reader_protocol_projection::UnsupportedReason::from(refusal).name(),
+                ),
+                _ => unsupported("missing-type-representation"),
+            };
+        }
+        if self.object_declarations().is_err() {
+            return unsupported("missing-type-representation");
+        }
+        let Ok(world) = self.world() else {
+            return unsupported("missing-type-representation");
+        };
+        let observed = fsl_semantics::model::state::StateModel::new(
+            self.model_selections().as_slice(),
+            world.types(),
+            packages,
+            model_limits,
+        )
+        .and_then(|model| model.protocol_observation(state, identity.clone()));
+        match observed {
+            Ok(observation) => {
+                ObservationAdmission::Admitted(AdmittedProtocolObservation::admitted_by_bare(
+                    self.owner(),
+                    model.clone(),
+                    identity,
+                    observation,
+                    fsl_semantics::model::observation::AdmissionUsage::default(),
+                ))
+            }
+            Err(AdmissionFailure::Refused(record)) => ObservationAdmission::Refused(*record),
+            Err(AdmissionFailure::Incomplete(record)) => ObservationAdmission::Incomplete(*record),
+            Err(AdmissionFailure::Fault(fault)) => ObservationAdmission::Fault(fault),
+        }
+    }
+
     /// Admit the current snapshot a package function call resolves its
     /// Reference and Population arguments against (FR-650). The model
     /// selections, checked types and witness rows come from this admitted

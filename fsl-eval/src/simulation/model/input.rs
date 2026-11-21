@@ -25,10 +25,10 @@ use fsl_package::{
     TerminalResolveRefusal, UnreadModelForm,
 };
 use fsl_semantics::check::footprint::{
-    FootprintRefusal, ReferenceLiterals, SymbolicFootprint, SymbolicLocation, derive_atom_reads,
-    derive_attempt_footprint_fallback_with_reference_literals, derive_constraint_reads,
-    derive_footprint, derive_guard_reads, derive_node_reads,
+    derive_atom_reads, derive_attempt_footprint_fallback_with_reference_literals,
+    derive_constraint_reads, derive_footprint, derive_guard_reads, derive_node_reads,
     derive_selected_footprint_with_reference_literals, derive_slot_reads, reference_literals_of,
+    FootprintRefusal, ReferenceLiterals, SymbolicFootprint, SymbolicLocation,
 };
 use fsl_semantics::check::{
     CheckedBody, CheckedHyperClause, CheckedNode, CheckedProbabilisticModel, CheckedProtocol,
@@ -1194,6 +1194,24 @@ pub trait ModelEvaluator: sealed::Sealed + Sync {
         Err(CallFailure::Fault(SOURCE_FORM))
     }
 
+    /// Admit a simulated state as this package evaluator's current protocol
+    /// observation, retaining the bare package's admission authority.
+    fn package_protocol_observation(
+        &self,
+        _model: &DomainPackageRef,
+        _packages: &fsl_semantics::model::intake::PackageInput,
+        _limits: fsl_semantics::model::accounting::ModelNormalizationLimits,
+        _state: &fsl_semantics::model::state::ModelState,
+        _identity: fsl_semantics::model::observation::DocumentRef,
+    ) -> Result<
+        filament_semantic_value::admission::ObservationAdmission<
+            fsl_package::AdmittedProtocolObservation<'static>,
+        >,
+        InternalFault,
+    > {
+        Err(SOURCE_FORM)
+    }
+
     /// [`crate::value::evaluate_join_predicate`].
     ///
     /// # Errors
@@ -1844,6 +1862,22 @@ const NO_SOURCE_FOOTPRINT: FootprintRefusal = FootprintRefusal::Unresolved {
 };
 
 impl ModelEvaluator for BarePackage<'_> {
+    fn package_protocol_observation(
+        &self,
+        model: &DomainPackageRef,
+        packages: &fsl_semantics::model::intake::PackageInput,
+        limits: fsl_semantics::model::accounting::ModelNormalizationLimits,
+        state: &fsl_semantics::model::state::ModelState,
+        identity: fsl_semantics::model::observation::DocumentRef,
+    ) -> Result<
+        filament_semantic_value::admission::ObservationAdmission<
+            fsl_package::AdmittedProtocolObservation<'static>,
+        >,
+        InternalFault,
+    > {
+        Ok(self.admit_protocol_state(model, packages, limits, state, identity))
+    }
+
     fn evaluate_clause(
         &self,
         clause: &QualifiedName,
@@ -2475,7 +2509,7 @@ fn source_predicate<'p>(
 
 #[cfg(test)]
 mod tests {
-    use super::{ClauseBinder, receiver_slots};
+    use super::{receiver_slots, ClauseBinder};
     use ix_trace_rs::trace;
 
     /// FR-940-AC-11, FR-156: a package term gives frame slots to the binders

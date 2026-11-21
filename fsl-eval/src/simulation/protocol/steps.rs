@@ -39,16 +39,16 @@ use super::program::{Cursor, Join, Rest};
 use super::race::AccessRecord;
 use super::settle::Settled;
 use super::{
-    Bound, Disposition, Instance, Parallel, ParallelKey, PendingAccess, ProtocolRefusal,
-    ProtocolState, ProtocolSystem, Thread, undetermined,
+    undetermined, Bound, Disposition, Instance, Parallel, ParallelKey, PendingAccess,
+    ProtocolRefusal, ProtocolState, ProtocolSystem, Thread,
 };
 use crate::simulation::expansion::{Expansion, ExpansionLimit, ExpansionStop};
 use crate::simulation::footprint::Location;
+use crate::simulation::model::encode::{reference_enc, value_enc, Enc};
 use crate::simulation::model::FootprintError;
-use crate::simulation::model::encode::{Enc, reference_enc, value_enc};
 use crate::simulation::model::{
-    Applied, Budget, ClauseOutcome, EXHAUSTED, FirstApplication, ModelFinding, ModelSimState,
-    Observed, ObservedIdentities, OperationRef, Verdict, verdict,
+    verdict, Applied, Budget, ClauseOutcome, FirstApplication, ModelFinding, ModelSimState,
+    Observed, ObservedIdentities, OperationRef, Verdict, EXHAUSTED,
 };
 use crate::simulation::subject::Cut;
 
@@ -570,8 +570,12 @@ impl<M: MemoryModel> ProtocolSystem<'_, M> {
                                     let verdict = if let Some(constraint) = attempt.constraint {
                                         self.evaluate_observed(constraint, frame, observed)?
                                     } else {
-                                        self.evaluate_package_control(node, frame)?
-                                            .unwrap_or(Verdict::True)
+                                        self.evaluate_package_control(
+                                            node,
+                                            frame,
+                                            observed.state(),
+                                        )?
+                                        .unwrap_or(Verdict::True)
                                     };
                                     if !matches!(verdict, Verdict::True) {
                                         continue;
@@ -1907,7 +1911,7 @@ impl<M: MemoryModel> ProtocolSystem<'_, M> {
                 let verdict = if let Some(constraint) = attempt.constraint {
                     self.evaluate_observed(constraint, frame, observed)?
                 } else {
-                    self.evaluate_package_control(node, frame)?
+                    self.evaluate_package_control(node, frame, observed.state())?
                         .unwrap_or(Verdict::True)
                 };
                 match verdict {
@@ -2327,7 +2331,7 @@ impl<M: MemoryModel> ProtocolSystem<'_, M> {
                 let verdict = if let Some(constraint) = attempt.constraint {
                     self.evaluate_observed(constraint, frame, &observed)?
                 } else {
-                    self.evaluate_package_control(node, frame)?
+                    self.evaluate_package_control(node, frame, observed.state())?
                         .unwrap_or(Verdict::True)
                 };
                 match verdict {
@@ -2902,7 +2906,7 @@ impl<M: MemoryModel> ProtocolSystem<'_, M> {
                 if let Some(value) = frame.get_mut(*slot) {
                     *value = Some(record.clone());
                 }
-                match self.evaluate_package_finish(frame)? {
+                match self.evaluate_package_finish(frame, &state.model)? {
                     Some(Verdict::True) | None => true,
                     Some(Verdict::False) => false,
                     Some(Verdict::Undecided(outcome)) => {
