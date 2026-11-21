@@ -903,6 +903,9 @@ fn the_checker_refuses_a_workload_that_weighs_an_enabled_operation_at_zero() {
     };
     let mut doc = document(&settle(&world("under every scheduler"), "W"));
     doc["objective"]["optimization"] = json!("workload");
+    eprintln!("DOCID {}", doc["identity"]);
+    let b = world("under Both");
+    eprintln!("BOTHID {:?}", fsl_replay::probabilistic_claim_identity(b.package.graph().probabilistic_model().claim("W").unwrap()));
     let result = check(&world("under Both"), "W", &doc);
     assert!(
         matches!(result, Err(ProbabilityDocumentError::Unsupported)),
