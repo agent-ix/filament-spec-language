@@ -156,28 +156,56 @@ fn the_package_records_the_observe_boundary() {
         serde_json::from_value(node(&plain, &["Flow", "role", "Auditor"])["node_id"].clone())
             .expect("the unmarked role node has a checked identity");
     assert_eq!(checked_plain.protocol_role_boundary(&plain_role_id), None);
-    assert!(
-        nodes(&plain)
-            .iter()
-            .all(|node| !argument_names(node).contains(&"boundary"))
-    );
-    let ids = |wire: &Value| -> Vec<Value> {
+    assert!(nodes(&plain)
+        .iter()
+        .all(|node| !argument_names(node).contains(&"boundary")));
+    // FR-322: a node id holds graph indexes, so the two packages compare
+    // their nodes by structural key.
+    use fsl_semantics::check::wire_id::WireGraph;
+    let marked_graph = WireGraph::of_package_value(&marked).expect("the marked graph");
+    let plain_graph = WireGraph::of_package_value(&plain).expect("the plain graph");
+    let key_set = |graph: &WireGraph, wire: &Value| -> std::collections::BTreeSet<String> {
         nodes(wire)
             .iter()
-            .map(|node| node["node_id"].clone())
+            .map(|node| graph.key_of_value(&node["node_id"]).unwrap().to_string())
             .collect()
     };
-    assert_eq!(ids(&marked), ids(&plain));
+    assert_eq!(nodes(&marked).len(), nodes(&plain).len());
+    assert_eq!(
+        key_set(&marked_graph, &marked),
+        key_set(&plain_graph, &plain)
+    );
 
     let changed_ids = [
-        node(&marked, &["Flow", "role", "Auditor"])["node_id"].to_string(),
-        node(&marked, &["Flow", "run", "Review"])["node_id"].to_string(),
+        marked_graph
+            .key_of_value(&node(&marked, &["Flow", "role", "Auditor"])["node_id"])
+            .unwrap()
+            .to_string(),
+        marked_graph
+            .key_of_value(&node(&marked, &["Flow", "run", "Review"])["node_id"])
+            .unwrap()
+            .to_string(),
     ];
-    for (marked_node, plain_node) in nodes(&marked).iter().zip(nodes(&plain)) {
-        assert_eq!(marked_node["node_id"], plain_node["node_id"]);
-        let id = marked_node["node_id"].to_string();
+    for marked_node in nodes(&marked) {
+        let plain_node = nodes(&plain)
+            .iter()
+            .find(|candidate| {
+                plain_graph
+                    .key_of_value(&candidate["node_id"])
+                    .unwrap()
+                    .to_string()
+                    == marked_graph
+                        .key_of_value(&marked_node["node_id"])
+                        .unwrap()
+                        .to_string()
+            })
+            .expect("the unmarked package has the node");
+        let id = marked_graph
+            .key_of_value(&marked_node["node_id"])
+            .unwrap()
+            .to_string();
         if changed_ids.contains(&id) {
-            let mut body = marked_node["body"].clone();
+            let mut body = marked_graph.structural_value(marked_node).unwrap()["body"].clone();
             let arguments = body["arguments"]
                 .as_array_mut()
                 .expect("the marked body has arguments");
@@ -185,12 +213,14 @@ fn the_package_records_the_observe_boundary() {
             assert_eq!(boundary["name"], "boundary");
             assert_eq!(boundary["value"]["value"], "observe-only");
             assert_eq!(
-                body, plain_node["body"],
+                body,
+                plain_graph.structural_value(plain_node).unwrap()["body"],
                 "only the boundary differs at {id}"
             );
         } else {
             assert_eq!(
-                marked_node["body"], plain_node["body"],
+                marked_graph.structural_value(marked_node).unwrap()["body"],
+                plain_graph.structural_value(plain_node).unwrap()["body"],
                 "unmarked node body is unchanged for {id}"
             );
         }

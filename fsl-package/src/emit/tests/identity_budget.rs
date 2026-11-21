@@ -101,8 +101,8 @@ fn authentic_identity_rows_pay_producer_join_and_output_once_and_preserve_native
                     &original.original_member_identity,
                     &original.admitted_name,
                     original.presence,
-                    &original.type_node,
-                    &original.value_type
+                    &Some(original.type_node.clone()),
+                    &Some(original.value_type.clone())
                 ),
                 (
                     &copied.original_member_identity,
@@ -316,7 +316,7 @@ fn source_record_admitted_i128_endpoint_types_are_copied_exactly_with_precharged
         .expect("call executed")
         .expect("charged boundary output");
     assert!(observed.bytes_total > 0);
-    let ValueType::Int(interval) = &copied.source_records()[0].members[0].value_type else {
+    let Some(ValueType::Int(interval)) = &copied.source_records()[0].members[0].value_type else {
         panic!("original bounded integer retained")
     };
     let lower: filament_exact::Integer =
@@ -595,7 +595,7 @@ fn later_authentic_record_member_copy_denial_retains_an_observed_admitted_prefix
     );
     assert_eq!(
         second.members[0].value_type,
-        records[tagged_index].members[0].value_type
+        Some(records[tagged_index].members[0].value_type.clone())
     );
     assert_eq!(
         second.members[1].presence,
@@ -603,7 +603,7 @@ fn later_authentic_record_member_copy_denial_retains_an_observed_admitted_prefix
     );
     assert_eq!(
         second.members[2].value_type,
-        records[tagged_index].members[2].value_type
+        Some(records[tagged_index].members[2].value_type.clone())
     );
     let need = measure.consumed();
     for (work, storage, kind) in [

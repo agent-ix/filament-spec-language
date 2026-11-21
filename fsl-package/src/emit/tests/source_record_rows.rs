@@ -344,7 +344,7 @@ fn required_identity_handoff_preserves_original_record_keys_and_native_views() {
         .unwrap();
     assert_eq!(
         tagged.members[0].value_type,
-        ValueType::Composite(point.record_key.clone())
+        Some(ValueType::Composite(point.record_key.clone()))
     );
 }
 

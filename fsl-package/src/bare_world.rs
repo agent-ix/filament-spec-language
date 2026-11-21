@@ -209,12 +209,15 @@ impl BarePackage<'_> {
             let fields = record
                 .members
                 .iter()
-                .map(|member| {
-                    FieldDeclaration::new(
+                // A clock member is no Exact field; the identity-file read refuses
+                // a data member without a value type (FR-531).
+                .filter(|member| member.member_type.is_none())
+                .filter_map(|member| {
+                    Some(FieldDeclaration::new(
                         member.original_member_identity.as_ref(),
-                        member.value_type.clone(),
+                        member.value_type.clone()?,
                         member.presence,
-                    )
+                    ))
                 })
                 .collect();
             composites.push((
