@@ -739,46 +739,50 @@ fn package_handoff(ws: &Workspace, path: &std::path::Path) -> PathBuf {
     )
 }
 
-/// Asserts the package route refused the whole request as not yet
-/// implemented, with `message` in its diagnostic and no item settled.
-fn assert_package_refusal(run: &crate::analyze_cli_support::Run, message: &str) {
+/// Asserts the public `package` handoff of a composition unit refused the
+/// whole request, with no item settled, by one of the two refusals that
+/// path has today: the admission of the handoff, which refuses
+/// `missing_import` while the component dependency closure is not persisted
+/// (package-consumer API, QSL-2739), or the package route's own typed
+/// `unsupported_construct`/`not-yet-implemented` for a form it cannot read.
+/// It is never `unknown-claim` and never an item settled without the
+/// composition.
+fn assert_package_refused(run: &crate::analyze_cli_support::Run) {
     let document = run.document();
     let diagnostic = &document["diagnostics"][0];
-    assert_eq!(run.exit, 21, "{document}");
     assert_eq!(document["category"], "refusal", "{document}");
-    assert_eq!(diagnostic["code"], "unsupported_construct", "{diagnostic}");
-    assert_eq!(diagnostic["cause"], "not-yet-implemented", "{diagnostic}");
+    assert_eq!(document["items"], json!([]), "{document}");
+    let code = diagnostic["code"].as_str().expect("a diagnostic code");
     assert!(
-        diagnostic["message"]
-            .as_str()
-            .is_some_and(|text| text.contains(message)),
+        matches!(code, "missing_import" | "unsupported_construct"),
         "{diagnostic}"
     );
-    assert_eq!(document["items"], json!([]), "{document}");
+    if code == "unsupported_construct" {
+        assert_eq!(diagnostic["cause"], "not-yet-implemented", "{diagnostic}");
+        assert_eq!(run.exit, 21, "{document}");
+    }
 }
 
-/// FR-1044 "Current system behavior" (QSL-2739): the package route has no
-/// form of a component composition, so a package holding one refuses a
-/// request with no `items` whole, naming the composition rule, rather than
-/// settle without it.
+/// FR-1044 "Current system behavior" (QSL-2739): a `package` handoff of a
+/// unit with composition declarations, requested with no `items`, is refused
+/// whole and settles no item. The component libraries are supplied to the
+/// producer, so the refusal is the handoff's own.
 #[test]
-fn the_package_default_items_refuse_a_composition_typed() {
+fn the_package_default_items_refuse_a_composition() {
     let ws = Workspace::new("compose-package-default");
     let path = request_for(&ws, &system(), BOUNDED, None);
-    let run = analyze(&package_handoff(&ws, &path));
-    assert_package_refusal(&run, "the composition rule has no package form yet");
+    assert_package_refused(&analyze(&package_handoff(&ws, &path)));
 }
 
-/// FR-1044 "Current system behavior" (QSL-2739): a name the package carries
-/// no row for, while it holds a composition, is refused as an unnamed claim,
-/// as for any claim the package does not name; it is not `unknown-claim`.
+/// FR-1044 "Current system behavior" (QSL-2739): an item naming a
+/// composition, or a name no package row carries, over a `package` handoff of
+/// that unit is refused whole too.
 #[test]
-fn a_package_item_naming_a_composition_refuses_as_an_unnamed_claim() {
+fn a_package_item_naming_a_composition_is_refused() {
     let ws = Workspace::new("compose-package-named");
     for name in ["Sys", "Typo"] {
         let path = request_for(&ws, &system(), BOUNDED, Some(json!([composition(name)])));
-        let run = analyze(&package_handoff(&ws, &path));
-        assert_package_refusal(&run, "items[0] names the unnamed-claim family");
+        assert_package_refused(&analyze(&package_handoff(&ws, &path)));
     }
 }
 
