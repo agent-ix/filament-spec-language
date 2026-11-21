@@ -10,7 +10,7 @@ use filament_exact::{
 use filament_semantic_value::declaration::CompositeShape;
 use fsl_foundation::IdentityLimits;
 use fsl_semantics::model::state::{ModelState, StateObject};
-use quire_canonical::{Encode, Node, NodeRef, Sink, Writer};
+use quire_canonical::{Node, NodeRef};
 use std::collections::{BTreeMap, BTreeSet};
 
 /// Key construction and scalar admission share the actual caller's accounting scope.
@@ -46,14 +46,6 @@ fn read_error(error: quire_canonical::ReadError, identity: IdentityLimits) -> Mo
             .into()
         }
         _ => bad(),
-    }
-}
-fn encode_error(error: quire_canonical::Error, identity: IdentityLimits) -> ModelRestoreError {
-    match error {
-        quire_canonical::Error::ReservationDenied { .. } => ModelKeyError::Denied.into(),
-        other => {
-            ModelKeyError::Encoding(crate::simulation::EncodingRefusal::of(&other, identity)).into()
-        }
     }
 }
 fn bad() -> ModelRestoreError {
@@ -161,34 +153,8 @@ impl Restore<'_, '_, '_> {
         ))
     }
     fn canonical(&mut self, node: NodeRef<'_>) -> Result<Vec<u8>, ModelRestoreError> {
-        struct Count(usize);
-        impl Sink for Count {
-            fn write_bytes(&mut self, bytes: &[u8]) -> Result<(), quire_canonical::Error> {
-                self.0 =
-                    self.0
-                        .checked_add(bytes.len())
-                        .ok_or(quire_canonical::Error::Allocation {
-                            requested: usize::MAX,
-                        })?;
-                Ok(())
-            }
-        }
-        let mut count = Count(0);
-        let mut writer = Writer::with_reservation(
-            &mut count,
-            quire_canonical::Limits::new(self.identity.input_bytes),
-            self.budget,
-        );
-        node.encode_into(&mut writer)
-            .and_then(|()| writer.finish().map(|_| ()))
-            .map_err(|error| encode_error(error, self.identity))?;
-        self.retain(count.0.checked_mul(2).ok_or(ModelKeyError::SizeOverflow)?)?;
-        self.tick(count.0)?;
-        quire_canonical::to_vec(
-            &node,
-            quire_canonical::Limits::new(self.identity.input_bytes),
-        )
-        .map_err(|error| encode_error(error, self.identity))
+        super::encode::bounded::node_bytes(node, self.identity, self.budget, self.cancel)
+            .map_err(ModelRestoreError::Key)
     }
     fn reference(
         &mut self,

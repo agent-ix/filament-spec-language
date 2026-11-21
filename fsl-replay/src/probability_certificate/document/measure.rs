@@ -436,6 +436,160 @@ struct Graph {
     states: BTreeMap<ProbabilityProductKey, State>,
 }
 
+fn restore_error(
+    error: fsl_eval::simulation::model::ModelRestoreError,
+    admission: &mut ProbabilityKeyAdmission<'_>,
+    cancel: &Cancel,
+) -> ProbabilityDocumentError {
+    use fsl_eval::simulation::model::ModelRestoreError;
+    if let Some(cause) = cancel.tripped() {
+        return ProbabilityDocumentError::Cancelled(cause);
+    }
+    match error {
+        ModelRestoreError::Malformed(_)
+        | ModelRestoreError::Key(ModelKeyError::Unsupported(_))
+        | ModelRestoreError::Key(ModelKeyError::Encoding(
+            fsl_eval::simulation::EncodingRefusal::NoEncoding(_),
+        )) => ProbabilityDocumentError::MalformedMember("values"),
+        ModelRestoreError::Key(error) => admission.refusal(error),
+        ModelRestoreError::Accounting(error) => ProbabilityDocumentError::Accounting(error),
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn restore_named(
+    system: &ModelSystem<'_>,
+    plan: &Plan<'_>,
+    binding: Option<&ObjectReference>,
+    key: &ProbabilityProductKey,
+    limits: ProbabilityDocumentLimits,
+    cancel: &Cancel,
+    meter: &mut filament_exact::Meter,
+    storage: &mut u64,
+) -> Result<(ModelSimState, MonitorState, Accumulator, Option<Resolution>), ProbabilityDocumentError>
+{
+    let malformed = || ProbabilityDocumentError::MalformedMember("values");
+    poll(cancel)?;
+    let mut admission = ProbabilityKeyAdmission::new(meter, storage, limits.storage_bytes, cancel);
+    let parsed =
+        quire_canonical::read_with_reservation(key.as_bytes(), limits.bytes, &mut admission)
+            .map_err(|error| match error {
+                quire_canonical::ReadError::ReservationDenied { .. } => {
+                    admission.refusal(ModelKeyError::Denied)
+                }
+                quire_canonical::ReadError::Limit(limit) => {
+                    exceeded(ProbabilityDocumentLimit::Bytes, limit.bound, limit.required)
+                }
+                _ => malformed(),
+            })?;
+    let Node::Array(parts) = parsed.root().node() else {
+        return Err(malformed());
+    };
+    if parts.len() != 8 {
+        return Err(malformed());
+    }
+    let parts: [_; 8] = parts
+        .collect::<Vec<_>>()
+        .try_into()
+        .map_err(|_| malformed())?;
+    let Node::Array(model) = parts[4].node() else {
+        return Err(malformed());
+    };
+    let [_, model]: [_; 2] = model
+        .collect::<Vec<_>>()
+        .try_into()
+        .map_err(|_| malformed())?;
+    let identity = fsl_foundation::IdentityLimits::default();
+    let raw =
+        writer::encode_admitted(&model, identity.input_bytes, &mut admission).map_err(|error| {
+            match error {
+                Error::ReservationDenied { .. } => admission.refusal(ModelKeyError::Denied),
+                _ => malformed(),
+            }
+        })?;
+    let model = system
+        .restore_state_key_with_budget(&raw, identity, &mut admission, cancel)
+        .map_err(|error| restore_error(error, &mut admission, cancel))?;
+    let (control, accumulator) = plan
+        .control
+        .restore_fraction_control(parts[5], parts[6], &mut admission)
+        .map_err(|error| restore_error(error, &mut admission, cancel))?;
+    let pending = if matches!(parts[7].node(), Node::Null) {
+        None
+    } else {
+        Some(
+            writer::encode_admitted(&parts[7], identity.input_bytes, &mut admission).map_err(
+                |error| match error {
+                    Error::ReservationDenied { .. } => admission.refusal(ModelKeyError::Denied),
+                    _ => malformed(),
+                },
+            )?,
+        )
+    };
+    drop(admission);
+    let rebuilt = measure_probability_product_key(
+        binding,
+        &raw,
+        control,
+        &accumulator,
+        pending.as_deref(),
+        plan.objective.reward.as_ref(),
+        limits,
+        cancel,
+        meter,
+        storage,
+    )?;
+    if &rebuilt != key {
+        return Err(malformed());
+    }
+    let resolution = if let Some(pending) = pending {
+        if control.is_decided() || plan.objective.optimization == ProbabilityObjective::Workload {
+            return Err(malformed());
+        }
+        let mut admission =
+            ProbabilityKeyAdmission::new(meter, storage, limits.storage_bytes, cancel);
+        let actions = system
+            .enabled_actions_with_budget(&model, identity, &mut admission, cancel)
+            .map_err(|error| distribution_error(error, &mut admission))?
+            .map_err(|_| {
+                ProbabilityDocumentError::Build(Box::new(
+                    crate::ExactProbBuildIssue::UndecidedSuccessor,
+                ))
+            })?;
+        let mut selected = None;
+        for action in actions {
+            for draw in action.draws {
+                poll(cancel)?;
+                if draw.probability.is_zero() || draw.successors.len() < 2 {
+                    continue;
+                }
+                let actual = system
+                    .pending_key_bytes_with_budget(
+                        &action.identity,
+                        &draw.random,
+                        identity,
+                        &mut admission,
+                        cancel,
+                    )
+                    .map_err(|error| admission.refusal(error))?;
+                if actual == pending {
+                    if selected.is_some() {
+                        return Err(malformed());
+                    }
+                    selected = Some((
+                        draw.successors.into_iter().map(|(_, post)| post).collect(),
+                        draw.rewards,
+                    ));
+                }
+            }
+        }
+        Some(selected.ok_or_else(malformed)?)
+    } else {
+        None
+    };
+    Ok((model, control, accumulator, resolution))
+}
+
 #[allow(clippy::too_many_arguments)]
 fn enumerate(
     system: &ModelSystem<'_>,
@@ -563,6 +717,34 @@ fn enumerate(
         .first()
         .cloned()
         .ok_or(ProbabilityDocumentError::Malformed)?;
+    if let Some(named) = named {
+        for key in named {
+            if seen.contains(key) {
+                continue;
+            }
+            let (model, control, accumulator, resolution) =
+                restore_named(system, plan, binding, key, limits, cancel, meter, storage)?;
+            let truths = if control.is_decided() {
+                Vec::new()
+            } else {
+                read(&model)?
+            };
+            if seen.len() >= limits.states {
+                return Err(exceeded(
+                    ProbabilityDocumentLimit::States,
+                    u64::try_from(limits.states).unwrap_or(u64::MAX),
+                    u64::try_from(seen.len().saturating_add(1)).unwrap_or(u64::MAX),
+                ));
+            }
+            charge(
+                storage,
+                limits.storage_bytes,
+                u64::try_from(key.as_bytes().len().saturating_mul(3)).unwrap_or(u64::MAX),
+            )?;
+            seen.insert(key.clone());
+            queue.push_back((key.clone(), model, control, accumulator, truths, resolution));
+        }
+    }
     let mut states = BTreeMap::new();
     let mut edges = 0usize;
     while let Some((key, model, control, accumulator, truths, resolution)) = queue.pop_front() {

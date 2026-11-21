@@ -205,3 +205,152 @@ impl Encode for MeasureProductKey<'_, '_> {
         writer.end_array()
     }
 }
+
+impl super::MeasurePlan<'_> {
+    /// Restore this claim's fraction control and accumulator. The model and
+    /// reward descriptor are checked by the caller's full owner-key round trip.
+    ///
+    /// # Errors
+    /// An impossible phase/count/sum or a caller's actual admission stop.
+    pub fn restore_fraction_control(
+        &self,
+        control: NodeRef<'_>,
+        accumulator: NodeRef<'_>,
+        budget: &mut dyn crate::simulation::model::ModelRestoreBudget,
+    ) -> Result<(MonitorState, Accumulator), crate::simulation::model::ModelRestoreError> {
+        use crate::simulation::model::ModelRestoreError as Stop;
+        use filament_exact::{
+            OrderedOperands, OrderingOperator, Outcome, Rational, RationalArithmetic,
+        };
+        use quire_canonical::Node;
+        let malformed = || Stop::Malformed("control");
+        fn parts<const N: usize>(node: NodeRef<'_>) -> Result<[NodeRef<'_>; N], Stop> {
+            let Node::Array(items) = node.node() else {
+                return Err(Stop::Malformed("control"));
+            };
+            if items.len() != N {
+                return Err(Stop::Malformed("control"));
+            }
+            items
+                .collect::<Vec<_>>()
+                .try_into()
+                .map_err(|_| Stop::Malformed("control"))
+        }
+        fn text(node: NodeRef<'_>) -> Result<&str, Stop> {
+            match node.node() {
+                Node::String(text) => Ok(text),
+                _ => Err(Stop::Malformed("control")),
+            }
+        }
+        fn completed<T>(outcome: Outcome<T>) -> Result<T, Stop> {
+            match outcome {
+                Outcome::Completed(value) => Ok(value),
+                Outcome::Incomplete(error) => Err(Stop::Accounting(Box::new(error))),
+                Outcome::Undefined(_) | Outcome::Refused(_) => Err(Stop::Malformed("accumulator")),
+            }
+        }
+        fn rational(
+            node: NodeRef<'_>,
+            budget: &mut dyn crate::simulation::model::ModelRestoreBudget,
+        ) -> Result<Rational, Stop> {
+            let [n, d] = parts::<2>(node)?;
+            let mut read = |node| -> Result<Integer, Stop> {
+                let text = text(node)?;
+                budget
+                    .work(
+                        u64::try_from(text.len().saturating_mul(text.len())).map_err(|_| {
+                            Stop::Key(crate::simulation::model::ModelKeyError::SizeOverflow)
+                        })?,
+                    )
+                    .map_err(|_| Stop::Key(crate::simulation::model::ModelKeyError::Denied))?;
+                budget
+                    .reserve(text.len().saturating_mul(4))
+                    .map_err(|_| Stop::Key(crate::simulation::model::ModelKeyError::Denied))?;
+                let value = text.parse().map_err(|_| Stop::Malformed("accumulator"))?;
+                budget
+                    .integer(&value)
+                    .map_err(|_| Stop::Key(crate::simulation::model::ModelKeyError::Denied))?;
+                Ok(value)
+            };
+            let n = Rational::from_integer(read(n)?);
+            let d = Rational::from_integer(read(d)?);
+            completed(filament_exact::evaluate_rational_arithmetic(
+                RationalArithmetic::Divide(&n, &d),
+                None,
+                budget.meter(),
+            ))
+        }
+        let super::MeasurePlan::Fraction { window, weight } = self else {
+            return Err(malformed());
+        };
+        budget
+            .work(1)
+            .map_err(|_| Stop::Key(crate::simulation::model::ModelKeyError::Denied))?;
+        budget
+            .reserve(16 * std::mem::size_of::<NodeRef<'_>>())
+            .map_err(|_| Stop::Key(crate::simulation::model::ModelKeyError::Denied))?;
+        let [tag, remaining, phase] = parts::<3>(control)?;
+        if text(tag)? != "fraction" {
+            return Err(malformed());
+        }
+        let remaining: u64 = text(remaining)?.parse().map_err(|_| malformed())?;
+        let positions = window.checked_add(1).ok_or_else(malformed)?;
+        if remaining > positions
+            || text(phase)?
+                != if remaining == 0 {
+                    "complete"
+                } else {
+                    "collecting"
+                }
+        {
+            return Err(malformed());
+        }
+        let sums = match weight {
+            None => {
+                let [tag, truths, count] = parts::<3>(accumulator)?;
+                if text(tag)? != "count-fraction" {
+                    return Err(malformed());
+                }
+                let true_count: u64 = text(truths)?.parse().map_err(|_| malformed())?;
+                let position_count: u64 = text(count)?.parse().map_err(|_| malformed())?;
+                if true_count > position_count
+                    || position_count.checked_add(remaining) != Some(positions)
+                {
+                    return Err(malformed());
+                }
+                Accumulator::CountFraction {
+                    true_count,
+                    position_count,
+                }
+            }
+            Some(_) => {
+                let [tag, _, _, truths, total] = parts::<5>(accumulator)?;
+                if text(tag)? != "weighted-fraction" {
+                    return Err(malformed());
+                }
+                let true_sum = rational(truths, budget)?;
+                let total_sum = rational(total, budget)?;
+                let zero = Rational::from_integer(Integer::zero());
+                for (left, right) in [(&zero, &true_sum), (&true_sum, &total_sum)] {
+                    if !completed(filament_exact::order_numbers(
+                        OrderingOperator::LessOrEqual,
+                        OrderedOperands::Rationals(left, right),
+                        budget.meter(),
+                    ))? {
+                        return Err(malformed());
+                    }
+                }
+                if remaining == positions && (!true_sum.is_zero() || !total_sum.is_zero())
+                    || remaining == 0 && total_sum.is_zero()
+                {
+                    return Err(malformed());
+                }
+                Accumulator::WeightedFraction {
+                    true_sum,
+                    total_sum,
+                }
+            }
+        };
+        Ok((MonitorState::Fraction { remaining }, sums))
+    }
+}

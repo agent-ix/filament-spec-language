@@ -2720,3 +2720,167 @@ fn vacuity_cancellation_at_the_checker_boundary_retains_its_typed_cause() {
         );
     }
 }
+
+#[trace("TC-3152", "FR-1043-AC-9", "FR-202-AC-28")]
+#[test]
+fn partial_lower_restores_detached_terminal_undecided_and_pending_rows() {
+    fn sort_rows(document: &mut Value) {
+        for member in ["values", "ranking"] {
+            document[member]
+                .as_array_mut()
+                .unwrap()
+                .sort_by_cached_key(|row| {
+                    URL_SAFE_NO_PAD
+                        .decode(row["state"].as_str().unwrap())
+                        .unwrap()
+                });
+        }
+    }
+    fn rekey(document: &mut Value, old: &Value, changed: &Value) {
+        let state =
+            json!(URL_SAFE_NO_PAD.encode(fsl_foundation::canonical_json::encode(changed).unwrap()));
+        for member in ["values", "ranking"] {
+            document[member]
+                .as_array_mut()
+                .unwrap()
+                .iter_mut()
+                .find(|row| &row["state"] == old)
+                .unwrap()["state"] = state.clone();
+        }
+        sort_rows(document);
+    }
+    for residual in [false, true] {
+        let mut model = retry(&claim(
+            "Q",
+            "every scheduler",
+            "mean of fraction holds(m.delivered) over [0,2] <= rational(1,4)",
+        ));
+        if residual {
+            model.body = model.body.replace("self.delivered = (lost = 1)", "true");
+        }
+        let world = World::new(&model);
+        let baseline = settle(&world, "Q", ModelCheckLimits::default());
+        assert_eq!(
+            baseline.terminal().unwrap().value(),
+            &TerminalValue::Refuted
+        );
+        let mut offered = baseline
+            .probabilistic_counterexample
+            .as_ref()
+            .unwrap()
+            .evidence()
+            .clone();
+        let full: Value =
+            serde_json::from_slice(offered.subsystem.as_ref().unwrap().as_bytes()).unwrap();
+        let root = json!(URL_SAFE_NO_PAD.encode(offered.initial_key.as_bytes()));
+        let initial: Value = serde_json::from_slice(offered.initial_key.as_bytes()).unwrap();
+        let mut partial = mean_bound(&offered, true, true);
+        if !residual {
+            partial["values"].as_array_mut().unwrap().retain(|row| {
+                row["state"] == root || row["value"] == json!({"numerator":"2","denominator":"3"})
+            });
+            partial["values"]
+                .as_array_mut()
+                .unwrap()
+                .iter_mut()
+                .find(|row| row["state"] == root)
+                .unwrap()["value"] = json!({"numerator":"1","denominator":"3"});
+        }
+        let named = partial["values"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|row| row["state"].clone())
+            .collect::<Vec<_>>();
+        partial["ranking"]
+            .as_array_mut()
+            .unwrap()
+            .retain(|row| named.contains(&row["state"]));
+        partial.as_object_mut().unwrap().remove("policy");
+        offered.scheduler.clear();
+        for remaining in if residual { vec![1] } else { vec![0, 1] } {
+            let detached = full["values"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|row| {
+                    let state = key(row);
+                    state[4] == initial[4]
+                        && state[5][1] == remaining.to_string()
+                        && state[6]
+                            == json!([
+                                "count-fraction",
+                                "0",
+                                if remaining == 0 { "3" } else { "2" }
+                            ])
+                        && state[7].is_null() != residual
+                })
+                .expect("a genuine all-fail row behind an omitted intermediate");
+            assert!(!named.contains(&detached["state"]));
+            assert_eq!(
+                detached["value"],
+                json!({"numerator":"0","denominator":"1"})
+            );
+            let rank = full["ranking"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|row| row["state"] == detached["state"])
+                .unwrap();
+            let mut document = partial.clone();
+            document["values"]
+                .as_array_mut()
+                .unwrap()
+                .push(detached.clone());
+            document["ranking"]
+                .as_array_mut()
+                .unwrap()
+                .push(rank.clone());
+            sort_rows(&mut document);
+            let replay = replay_mean_document(&world, &offered, &document);
+            let Ok(fsl_replay::ProbabilityWitnessReplay::Reproduced(token)) = replay else {
+                panic!("detached remaining{remaining}/residual{residual}: {replay:?}");
+            };
+            if remaining > 0 {
+                let detached_key = URL_SAFE_NO_PAD
+                    .decode(detached["state"].as_str().unwrap())
+                    .unwrap();
+                let (_, action) = token
+                    .evidence()
+                    .scheduler
+                    .iter()
+                    .find(|(key, _)| key.as_bytes() == detached_key)
+                    .expect("the independently checked detached state's selection is retained");
+                if residual {
+                    assert!(matches!(action, fsl_replay::ProductAction::PostState(_)));
+                }
+            }
+            for mutation in 0..if residual { 3 } else { 2 } {
+                let mut forged = document.clone();
+                let mut changed = key(detached);
+                match mutation {
+                    0 => {
+                        changed[4][1]["semantic"]["entries"][0]["value"]["entries"][0]["key"]
+                            ["identity"] = json!("outside-universe")
+                    }
+                    1 => changed[5][1] = json!("4"),
+                    _ => changed[7][2][0] = json!({"type":"integer","value":"99"}),
+                }
+                rekey(&mut forged, &detached["state"], &changed);
+                let rejected = replay_mean_document(&world, &offered, &forged);
+                assert!(
+                    matches!(
+                        rejected,
+                        Err(fsl_replay::ProbabilityWitnessError::CertificateRejected(
+                            ProbabilityCertificateRejection {
+                                rule: ProbabilityCertificateRule::Malformed,
+                                at: ProbabilityCertificateLocus::Member("values")
+                            }
+                        ))
+                    ),
+                    "forged detached key/control/draw{mutation}: {rejected:?}"
+                );
+            }
+        }
+    }
+}

@@ -12,7 +12,7 @@ use filament_exact::{
 use filament_semantic_value::declaration::{CompositeDeclaration, TypeEnvironment};
 use fsl_foundation::{IdentityLimits, Setting};
 use fsl_semantics::model::state::{ModelState, StateField, StateModel, StateObject};
-use quire_canonical::{Error, Limits, Sink, Writer};
+use quire_canonical::{Encode, Error, Limits, NodeRef, Sink, Writer};
 
 use super::super::{ModelKeyBudget, ModelKeyError};
 use super::projection::{self, ArrayOrder, Scalar, StructuralSink, ValueSink};
@@ -984,6 +984,21 @@ impl ValueSink for Bounded<'_, '_> {
         }
         Ok(value.to_u64())
     }
+}
+
+pub(crate) fn node_bytes(
+    node: NodeRef<'_>,
+    identity: IdentityLimits,
+    budget: &mut dyn ModelKeyBudget,
+    cancel: &Cancel,
+) -> Result<Vec<u8>, ModelKeyError> {
+    let scope = Scope {
+        budget: RefCell::new(budget),
+        cancel,
+        identity,
+        refused: RefCell::new(None),
+    };
+    scope.canonical(|writer| node.encode_into(writer))
 }
 
 pub(crate) fn model_bytes(
