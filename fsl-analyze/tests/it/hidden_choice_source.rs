@@ -89,7 +89,7 @@ fn hidden_choice_source_refutes_with_a_counterexample() {
 )]
 #[test]
 fn protocol_counterexample_intake_parity_and_schema() {
-    use crate::analyze_cli_support::package_selection;
+    use crate::analyze_cli_support::package_selection_named;
     use serde_json::{json, Value};
 
     let original =
@@ -223,7 +223,10 @@ fn protocol_counterexample_intake_parity_and_schema() {
         assert_schema_accepts(&body_schema, body);
         assert_protocol_body_adverses(&body_schema, body);
 
-        let (selected, _) = package_selection(&ws, &request["request"]);
+        let namespace = request["request"]["program"]["source"]["identity"]
+            .as_str()
+            .expect("single-unit source identity");
+        let (selected, _) = package_selection_named(&ws, &request["request"], namespace);
         let package_request = json!({"format": "native-analyze/1", "request": selected});
         let package_path = ws.write("package.json", package_request.to_string().as_bytes());
         std::fs::remove_file(ws.path("program.fsl")).unwrap();
