@@ -9,7 +9,9 @@ use filament_contract_model::CheckedPackageV2;
 use filament_semantic_value::catalog::CatalogCode;
 use fsl_eval::simulation::protocol::ProtocolRefusal;
 use fsl_foundation::{BackendId, Code, RequestIndex};
-use fsl_replay::protocol_analysis::{AnalysisOutcome, ProtocolAnalysisSettlement};
+use fsl_replay::protocol_analysis::{
+    AnalysisOutcome, ProtocolAnalysisCounterexample, ProtocolAnalysisSettlement,
+};
 use fsl_replay::spine::{ProtocolAnalysisRecord, ProtocolRecordError};
 use fsl_replay::{DeclineCode, ProofRefusalCause, TerminalRecord};
 use fsl_route::Mode;
@@ -34,6 +36,41 @@ pub enum ProtocolAnalysisArtifact {
 }
 
 impl ProtocolAnalysisArtifact {
+    /// The decisive counterexample, retaining the native replayed evidence.
+    #[must_use]
+    pub fn counterexample(&self) -> Option<ProtocolAnalysisCounterexample> {
+        match self {
+            Self::Projection(result) => match &result.outcome {
+                AnalysisOutcome::Refuted(found) => Some(
+                    ProtocolAnalysisCounterexample::Projection(Box::new(found.clone())),
+                ),
+                _ => None,
+            },
+            Self::Realizability(result) => match &result.outcome {
+                AnalysisOutcome::Refuted(found) => Some(
+                    ProtocolAnalysisCounterexample::Realizability(Box::new(found.clone())),
+                ),
+                _ => None,
+            },
+        }
+    }
+
+    /// The complete FR-331 body of a refutation, absent for other outcomes.
+    pub(crate) fn counterexample_wire(
+        &self,
+    ) -> Option<Result<serde_json::Value, fsl_replay::CounterexampleWireError>> {
+        match self {
+            Self::Projection(result) => match &result.outcome {
+                AnalysisOutcome::Refuted(found) => Some(found.to_wire()),
+                _ => None,
+            },
+            Self::Realizability(result) => match &result.outcome {
+                AnalysisOutcome::Refuted(found) => Some(found.to_wire()),
+                _ => None,
+            },
+        }
+    }
+
     /// The result's FR-573 settlement.
     #[must_use]
     pub fn settlement(&self) -> ProtocolAnalysisSettlement {

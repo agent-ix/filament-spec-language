@@ -1572,3 +1572,155 @@ fn a_bounded_spawn_projects_to_one_local_role_class() {
         .expect("the pool class sends Done");
     assert!(found.local_graph.edges.contains(&(receive.id, send.id)));
 }
+
+/// Both native projection decisions survive the shared outcome adapter with
+/// their complete evidence, without a synthesized local graph.
+#[trace("FR-286-AC-35", "FR-573-AC-2", "FR-570-AC-6", "FR-890-AC-5")]
+#[test]
+fn protocol_counterexample_outcomes_keep_both_projection_decisions() {
+    use filament_exact::Cancel;
+    use fsl_analyze::analyze::{
+        analyze_document, analyze_items, split_records, Counterexample, Engines,
+    };
+    use fsl_analyze::protocol_analysis::{projection_item, ProtocolAnalysisArtifact};
+    use fsl_foundation::RequestIndex;
+    use fsl_replay::protocol_analysis::ProtocolAnalysisCounterexample;
+    use serde_json::json;
+
+    let hidden = source(
+        MEMBERS,
+        &format!(
+            "sequence Main {{ send Placed via Order as (placed: Ack) {{ true }}; \
+         receive Got via Order of Placed as (got: Ack) {{ true }}; \
+         choice Decide by Seller visible (got.ok) {{ \
+         case no when {{ not got.ok }} sequence Cancel {{ }} \
+         case yes when {{ got.ok }} sequence Ship {{ {PICK} }} }} }}"
+        ),
+    );
+    let replicated = source(
+        "role Buyer on M::Cell; role Warehouse on M::Cell; \
+         role Pool each M::Cell from cells max 18446744073709551615 lifetime workflow; \
+         channel Job from Pool to Buyer carries Ack ordering unordered delivery \
+         exactly-once-premise capacity 4 overflow reject;",
+        "sequence Main { send J via Job as (j: Ack) { true }; \
+         receive K via Job of J as (got_job: Ack) { true }; }",
+    );
+    for (text, role, profile, kind) in [
+        (hidden, "Warehouse", "bounded-static", "choice"),
+        (replicated, "Pool", "bounded", "acting-instance"),
+    ] {
+        let checked = package(&text);
+        let admitted = admitted_source(&text);
+        let mut request = request(&admitted, role);
+        request.profile = Some(profile.to_owned());
+        let records = analyze_items(
+            &Engines::fsl().unwrap(),
+            vec![projection_item(RequestIndex::new(0), &admitted, request)],
+            &Cancel::new(),
+        );
+        let artifact = records[0].protocol_analysis.as_ref().unwrap();
+        let ProtocolAnalysisArtifact::Projection(result) = artifact.as_ref() else {
+            panic!("a projection result");
+        };
+        let AnalysisOutcome::Refuted(native) = &result.outcome else {
+            panic!("a real projection refutation: {:?}", result.outcome);
+        };
+        let native = native.clone();
+        let record: serde_json::Value =
+            serde_json::from_slice(&artifact.record().unwrap().to_bytes().unwrap()).unwrap();
+        assert!(record.get("counterexample").is_none());
+        let (terminals, found) = split_records(records, &checked);
+        assert_eq!(found.len(), 1);
+        let Counterexample::ProtocolAnalysis(typed) = &found[0].counterexample else {
+            panic!("typed protocol counterexample");
+        };
+        assert!(
+            matches!(typed.as_ref(), ProtocolAnalysisCounterexample::Projection(found) if found.as_ref() == &native)
+        );
+        let entry = found[0].wire.as_ref().unwrap();
+        assert_eq!(entry["request_index"], 0);
+        assert_eq!(
+            entry["backend"],
+            fsl_analyze::protocol_analysis::manifest::BACKEND_ID
+        );
+        let body = &entry["counterexample"];
+        assert_eq!(body.as_object().unwrap().len(), 6);
+        assert_eq!(body["type"], "protocol-analysis-counterexample");
+        assert_eq!(body["kind"], "projection");
+        assert_eq!(body["key"], record["analysis"]["key"]);
+        assert_eq!(body["role"], json!(native.role));
+        assert_eq!(body["separating_witness"], record["witness"]);
+        let decision = &body["decision"];
+        assert_eq!(decision["kind"], kind);
+        match &native.decision {
+            ProjectionDecision::Choice {
+                choice,
+                owner,
+                cases,
+                paths,
+                actions,
+            } => {
+                assert_eq!(decision.as_object().unwrap().len(), 6);
+                assert_eq!(decision["choice"], json!(choice));
+                let DecisionOwner::Role(owner) = owner else {
+                    panic!("a role choice");
+                };
+                assert_eq!(decision["owner"], json!({"kind": "role", "role": owner}));
+                assert_eq!(decision["cases"], json!(cases));
+                for side in 0..2 {
+                    let path = decision["paths"][side].as_array().unwrap();
+                    assert_eq!(path.len(), paths[side].len());
+                    for (wire, native) in path.iter().zip(&paths[side]) {
+                        assert_eq!(wire.as_object().unwrap().len(), 2);
+                        assert_eq!(wire["node"], json!(native.node));
+                        assert_eq!(
+                            wire["port"],
+                            match native.port {
+                                fsl_package::protocol_view::Port::Enter => "enter",
+                                fsl_package::protocol_view::Port::Exit => "exit",
+                            }
+                        );
+                    }
+                    match &actions[side] {
+                        Some(action) => {
+                            assert_eq!(
+                                decision["actions"][side],
+                                json!({
+                                    "direction": "receive", "peer": action.peer,
+                                    "message_type": action.message_type,
+                                    "at": {"node": action.at.node, "port": "enter"},
+                                })
+                            );
+                        }
+                        None => assert!(decision["actions"][side].is_null()),
+                    }
+                }
+            }
+            ProjectionDecision::ActingInstance {
+                event,
+                owner,
+                instances,
+                maximum,
+            } => {
+                assert_eq!(decision.as_object().unwrap().len(), 5);
+                assert_eq!(owner, &DecisionOwner::Environment);
+                assert_eq!(decision["owner"], json!({"kind": "environment"}));
+                assert_eq!(
+                    decision["event"],
+                    json!({"node": event.node, "port": "enter"})
+                );
+                assert_eq!(
+                    decision["instances"],
+                    json!(instances.map(|value| value.to_string()))
+                );
+                assert_eq!(*maximum, u64::MAX);
+                assert_eq!(decision["maximum"], "18446744073709551615");
+            }
+        }
+        let document = analyze_document(&terminals, &found).unwrap();
+        let wire: serde_json::Value =
+            serde_json::from_slice(&document.to_bytes().unwrap()).unwrap();
+        assert_eq!(wire["items"][0]["result"], "refuted");
+        assert_eq!(&wire["items"][0]["counterexample"], entry);
+    }
+}

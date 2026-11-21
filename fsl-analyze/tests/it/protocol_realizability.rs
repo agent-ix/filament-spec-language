@@ -1600,3 +1600,147 @@ fn a_symbolic_capacity_is_decided_at_its_bound_value_under_bounded() {
         }
     );
 }
+
+/// The shared outcome adapter retains complete real arena refutations and
+/// their originating item association for both realizability alternatives.
+#[trace("FR-286-AC-33", "FR-286-AC-34", "FR-573-AC-2", "FSpec-FR-331-AC-61")]
+#[test]
+fn protocol_counterexample_outcomes_keep_both_realizability_bodies() {
+    use fsl_analyze::analyze::{analyze_document, split_records, Counterexample};
+    use fsl_replay::protocol_analysis::ProtocolAnalysisCounterexample;
+
+    let hidden = worked("exactly-once-premise", PICK, "");
+    let loss = worked("at-most-once", PICK, CANCELLED);
+    let records = analyze_items(
+        &Engines::fsl().expect("engines register"),
+        vec![
+            realizability_item(RequestIndex::new(0), &hidden.admitted, hidden.request(64)),
+            realizability_item(RequestIndex::new(1), &loss.admitted, loss.request(64)),
+        ],
+        &Cancel::new(),
+    );
+    let expected_keys: Vec<_> = records
+        .iter()
+        .map(|record| {
+            let record = record.protocol_analysis.as_ref().unwrap().record().unwrap();
+            let wire: serde_json::Value =
+                serde_json::from_slice(&record.to_bytes().unwrap()).unwrap();
+            assert!(
+                wire.get("counterexample").is_none(),
+                "FR-352 excludes the body"
+            );
+            (wire["analysis"]["key"].clone(), wire["witness"].clone())
+        })
+        .collect();
+    let (terminals, found) = split_records(records, &hidden.checked);
+    assert_eq!(found.len(), 2);
+    for (at, ((key, witness), found)) in expected_keys.iter().zip(&found).enumerate() {
+        assert_eq!(found.request_index, RequestIndex::new(at));
+        assert_eq!(
+            found.backend.as_str(),
+            protocol_analysis::manifest::BACKEND_ID
+        );
+        let Counterexample::ProtocolAnalysis(typed) = &found.counterexample else {
+            panic!("a typed protocol analysis counterexample");
+        };
+        let ProtocolAnalysisCounterexample::Realizability(native) = typed.as_ref() else {
+            panic!("a realizability counterexample");
+        };
+        let entry = found.wire.as_ref().unwrap();
+        assert_eq!(entry["request_index"], at);
+        assert_eq!(entry["backend"], protocol_analysis::manifest::BACKEND_ID);
+        let body = &entry["counterexample"];
+        assert_eq!(body["type"], "protocol-analysis-counterexample");
+        assert_eq!(&body["key"], key);
+        assert_eq!(&body["separating_witness"], witness);
+        let plays: Vec<(&Play, &serde_json::Value)> = match native.as_ref() {
+            RealizabilityCounterexample::IndistinguishableHistories {
+                role,
+                history_a,
+                history_b,
+                obligation,
+                ..
+            } => {
+                assert_eq!(body.as_object().unwrap().len(), 10);
+                assert_eq!(body["kind"], "indistinguishable-histories");
+                assert_eq!(body["role"], serde_json::to_value(role).unwrap());
+                assert_eq!(
+                    body["obligation"],
+                    serde_json::to_value(obligation).unwrap()
+                );
+                let actions = [&body["action_a"], &body["action_b"]];
+                assert!(actions.iter().any(|action| action["kind"] == "end"));
+                assert!(actions.iter().any(|action| action["kind"] == "receive"
+                    && action["peer"] == serde_json::to_value(hidden.named("Seller")).unwrap()));
+                vec![
+                    (history_a, &body["history_a"]),
+                    (history_b, &body["history_b"]),
+                ]
+            }
+            RealizabilityCounterexample::EnvironmentDefeat {
+                defeats_per_branch,
+                obligation,
+                ..
+            } => {
+                assert_eq!(body.as_object().unwrap().len(), 6);
+                assert_eq!(body["kind"], "environment-defeat");
+                assert_eq!(
+                    body["obligation"],
+                    serde_json::to_value(obligation).unwrap()
+                );
+                let branches = body["defeats_per_branch"].as_array().unwrap();
+                assert!(!branches.is_empty());
+                assert_eq!(branches.len(), defeats_per_branch.len());
+                defeats_per_branch
+                    .iter()
+                    .zip(branches)
+                    .map(|(native, branch)| {
+                        assert_eq!(branch.as_object().unwrap().len(), 1);
+                        (&native.play, &branch["play"])
+                    })
+                    .collect()
+            }
+        };
+        let mut sends = 0;
+        for (native, wire) in plays {
+            assert_eq!(wire.as_object().unwrap().len(), 2);
+            assert_eq!(wire["initial"], native.initial.to_string());
+            let steps = wire["steps"].as_array().unwrap();
+            assert_eq!(steps.len(), native.steps.len());
+            for (native, wire) in native.steps.iter().zip(steps) {
+                assert_eq!(wire["successor"], native.successor.to_string());
+                assert_eq!(
+                    wire["transition"],
+                    fsl_eval::simulation::protocol::transition_json(&native.transition).unwrap()
+                );
+                match native.transition.send_record() {
+                    Some(record) => {
+                        sends += 1;
+                        assert_eq!(wire.as_object().unwrap().len(), 3);
+                        assert_eq!(
+                            wire["send_record"],
+                            fsl_eval::simulation::protocol::send_record_json(record).unwrap()
+                        );
+                    }
+                    None => {
+                        assert_eq!(wire.as_object().unwrap().len(), 2);
+                        assert!(wire.get("send_record").is_none());
+                    }
+                }
+            }
+        }
+        assert!(
+            sends > 0,
+            "the real histories exercise send-record encoding"
+        );
+    }
+    let document = analyze_document(&terminals, &found).expect("refutations have their bodies");
+    let wire: serde_json::Value = serde_json::from_slice(&document.to_bytes().unwrap()).unwrap();
+    let items = wire["items"].as_array().unwrap();
+    assert_eq!(items.len(), 2);
+    for (at, item) in items.iter().enumerate() {
+        assert_eq!(item["request_index"], at);
+        assert_eq!(item["result"], "refuted");
+        assert_eq!(item["counterexample"], *found[at].wire.as_ref().unwrap());
+    }
+}
