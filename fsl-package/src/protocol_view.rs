@@ -738,7 +738,6 @@ pub fn protocol_execution_view<'p>(
         binder: finish_binder,
         constraint: finish_constraint,
     };
-    drop(node_list);
     let protocol_path: Vec<String> = nodes
         .get(&view.clause)
         .and_then(|clause| clause.declaration.as_ref())

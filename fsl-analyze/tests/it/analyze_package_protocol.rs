@@ -48,7 +48,7 @@ fn package_run(ws: &Workspace, request_path: &std::path::Path) -> Run {
 
 /// FR-940-AC-6: the store-buffering litmus claim under TSO has equal records,
 /// counterexamples and package-byte replay on both analyze routes.
-#[trace("TC-2958", "FR-940-AC-6")]
+#[trace("TC-2958", "FR-940-AC-6", "TC-3050", "FR-850-AC-11")]
 #[test]
 fn the_tso_litmus_claim_has_source_and_package_route_parity() {
     let body = sb_unit(&sb_run("", "release", "acquire"));
@@ -72,7 +72,7 @@ fn the_tso_litmus_claim_has_source_and_package_route_parity() {
 
 /// FR-940-AC-6: the protocol's race-freedom result reads the same admitted
 /// protocol and memory-model facts on the package route.
-#[trace("TC-2958", "FR-940-AC-6")]
+#[trace("TC-2958", "FR-940-AC-6", "TC-3050", "FR-850-AC-11")]
 #[test]
 fn the_tso_race_freedom_item_has_source_and_package_route_parity() {
     let body = sb_unit(&sb_run("", "", ""));

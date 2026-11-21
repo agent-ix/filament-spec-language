@@ -2712,7 +2712,6 @@ fn package_slot_verdict(
     }
 }
 
-#[track_caller]
 fn broken() -> ExpansionStop {
     ExpansionStop {
         cause: BROKEN,
@@ -2723,7 +2722,7 @@ fn broken() -> ExpansionStop {
 /// The stop a refusal of the checked protocol is during an expansion: an
 /// established invariant broke.
 impl From<ProtocolRefusal> for ExpansionStop {
-    fn from(refusal: ProtocolRefusal) -> Self {
+    fn from(_: ProtocolRefusal) -> Self {
         broken()
     }
 }
