@@ -3569,7 +3569,7 @@ fn each_operation_refuses_at_the_stage_that_owns_the_defect() {
         select(&parsed, &BTreeMap::new(), limits.model, &live)
             .expect_err("no document is supplied"),
     );
-    assert_eq!(missing.stage(), SpineStage::Intake);
+    assert_eq!(missing.stage(), SpineStage::Compile);
     let region = missing.region().expect("the refusal is located");
     let (start, end) = (
         usize::try_from(region.start()).expect("a start offset"),

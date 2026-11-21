@@ -19,16 +19,17 @@ mod requirements;
 mod settle;
 mod synthesis;
 mod tl;
+mod transfer;
 mod wire;
 
 pub use analyze::{
-    AnalyzeInput, PreparedAnalyze, analyze, analyze_with_limits, analyze_with_providers,
-    analyze_with_providers_and_limits, prepare_analyze,
+    analyze, analyze_with_limits, analyze_with_providers, analyze_with_providers_and_limits,
+    prepare_analyze, AnalyzeInput, PreparedAnalyze,
 };
 pub use flow::{FlowAnalyzeError, analyze_flow_report};
 pub use monitor::{MonitorEvent, MonitorProviders, MonitorSummary, monitor};
 pub use output::NativeResult;
-pub use tl::{AtomMapping, TlRecord, record as tl_record};
+pub use tl::{record as tl_record, AtomMapping, TlRecord};
 
 use crate::formal_source::FormalSource;
 use filament_contract_model as ir;
@@ -646,6 +647,8 @@ pub enum PreparedRun {
     Package(Box<package_run::PreparedPackageRun>),
     /// FSpec FR-190: the result of the direct model-based testing request.
     ModelBasedTest(PreparedModelBasedTestRun),
+    /// FR-1030: a refinement transfer, settled by the native run executor.
+    RefinementTransfer(Box<transfer::PreparedTransfer>),
 }
 
 /// The direct model-based test record and sources admitted to produce it.
@@ -706,6 +709,9 @@ impl PreparedRun {
             Self::TlLowering(prepared) => prepared.sources.clone(),
             Self::Package(prepared) => prepared.sources(),
             Self::ModelBasedTest(prepared) => prepared.sources.clone(),
+            Self::RefinementTransfer(prepared) => {
+                crate::Sources::from_sources([prepared.source.source().clone()])
+            }
         }
     }
 }
@@ -836,6 +842,19 @@ pub enum RunCause {
     RequiresDirectory {
         /// The wire member that needs the handoff rows.
         member: String,
+    },
+    /// FR-1031: a native-run transfer declaration failed after compilation
+    /// while names, relationships, and clause families were being selected.
+    #[error("refinement transfer selection refused at {member}: {message}")]
+    TransferSelection {
+        /// The selected request member.
+        member: String,
+        /// The stable selection cause.
+        cause: &'static str,
+        /// The catalogued diagnostic code.
+        code: Code,
+        /// Why this member was refused.
+        message: String,
     },
     /// Typed output serialization failed.
     #[error("cannot serialize native result: {0}")]
@@ -1164,6 +1183,7 @@ impl RunCause {
             Self::Output(_) | Self::ClauseOutput(_) | Self::ExportOutput { .. } => {
                 Code::OutputFailure
             }
+            Self::TransferSelection { code, .. } => *code,
             Self::Format => Code::UnknownWire,
             Self::Limit(_) => Code::ResourceExhausted,
             Self::Identifier { .. } => Code::InvalidIdentifier,
@@ -1420,6 +1440,7 @@ impl RunError {
             | RunCause::ClauseRequest { .. }
             | RunCause::RequiresDirectory { .. }
             | RunCause::IntegerDivisionLaw { .. }
+            | RunCause::TransferSelection { .. }
             | RunCause::TlCorrespondence { .. }
             | RunCause::TlClause { .. }
             | RunCause::TlSubject(_)
@@ -3893,6 +3914,56 @@ fn prepare_run_bytes_with_sources(
             reason: "model_based_test and tl_lowering are mutually exclusive".to_owned(),
         });
     }
+    if let Some(transfer) = &request.refinement_transfer {
+        validate_transfer_member(&request, transfer)?;
+        let selections = [
+            ("call", request.call.is_some()),
+            ("clause", request.clause.is_some()),
+            ("items", request.items.is_some()),
+            ("tl_lowering", request.tl_lowering.is_some()),
+            ("model_based_test", request.model_based_test.is_some()),
+            ("verification_plan", request.verification_plan.is_some()),
+            ("synthesis", request.synthesis.is_some()),
+        ];
+        let present: Vec<_> = selections
+            .into_iter()
+            .filter_map(|(name, is_present)| is_present.then_some(name))
+            .collect();
+        if !present.is_empty() {
+            return Err(RunCause::ClauseRequest {
+                member: "refinement_transfer".to_owned(),
+                reason: format!(
+                    "refinement_transfer is exclusive with {}",
+                    present.join(", ")
+                ),
+            });
+        }
+        let mut intake = intake_with_bytes(
+            directory,
+            FileCounts {
+                programs: request.libraries.len().saturating_add(1),
+                models: request.models.len(),
+                observations: transfer
+                    .observations
+                    .values()
+                    .collect::<std::collections::BTreeSet<_>>()
+                    .len(),
+                extensions: request.extensions.len(),
+            },
+            dependent_bytes,
+        )?;
+        let source = intake.source(&program.source, "program.source")?;
+        require_native_header(source.source())?;
+        return Ok(PreparedRun::RefinementTransfer(Box::new(
+            transfer::PreparedTransfer {
+                directory: directory.to_path_buf(),
+                dependent_bytes,
+                request,
+                source,
+                integer_division,
+            },
+        )));
+    }
     if request.items.is_some() {
         return Err(RunCause::ClauseRequest {
             member: "items".to_owned(),
@@ -3954,6 +4025,86 @@ fn prepare_run_bytes_with_sources(
     })();
     *admitted_sources = crate::Sources::from_sources(intake.sources.iter().cloned());
     prepared
+}
+
+fn validate_transfer_member(
+    request: &wire::Request,
+    member: &wire::RefinementTransfer,
+) -> Result<()> {
+    if member.refinement.is_empty() {
+        return Err(RunCause::ClauseRequest {
+            member: "/refinement_transfer/refinement".to_owned(),
+            reason: "expected a non-empty refinement name".to_owned(),
+        });
+    }
+    if member.clauses.is_empty() {
+        return Err(RunCause::ClauseRequest {
+            member: "/refinement_transfer/clauses".to_owned(),
+            reason: "expected a non-empty clause list".to_owned(),
+        });
+    }
+    let mut clauses = std::collections::BTreeSet::new();
+    for (index, clause) in member.clauses.iter().enumerate() {
+        if clause.is_empty() {
+            return Err(RunCause::ClauseRequest {
+                member: format!("/refinement_transfer/clauses/{index}"),
+                reason: "expected a non-empty clause name".to_owned(),
+            });
+        }
+        if !clauses.insert(clause) {
+            return Err(RunCause::ClauseRequest {
+                member: format!("/refinement_transfer/clauses/{index}"),
+                reason: "a clause name occurs more than once".to_owned(),
+            });
+        }
+    }
+    for (side, subject) in [
+        ("abstract", &member.abstract_subject),
+        ("concrete", &member.concrete),
+    ] {
+        if subject.model.is_empty() {
+            return Err(RunCause::ClauseRequest {
+                member: format!("/refinement_transfer/{side}/model"),
+                reason: "expected a non-empty model alias".to_owned(),
+            });
+        }
+        if subject.initial.is_empty() {
+            return Err(RunCause::ClauseRequest {
+                member: format!("/refinement_transfer/{side}/initial"),
+                reason: "expected a non-empty initial snapshot list".to_owned(),
+            });
+        }
+        for (index, initial) in subject.initial.iter().enumerate() {
+            if initial.is_empty() {
+                return Err(RunCause::ClauseRequest {
+                    member: format!("/refinement_transfer/{side}/initial/{index}"),
+                    reason: "expected a non-empty snapshot key".to_owned(),
+                });
+            }
+            if !member.observations.contains_key(initial) {
+                return Err(RunCause::ClauseRequest {
+                    member: format!("/refinement_transfer/{side}/initial/{index}"),
+                    reason: "initial snapshot key is absent from observations".to_owned(),
+                });
+            }
+        }
+    }
+    if let Some(premises) = &member.premises {
+        for name in premises.claims.keys() {
+            if !member.clauses.contains(name) {
+                return Err(RunCause::ClauseRequest {
+                    member: format!("/refinement_transfer/premises/claims/{name}"),
+                    reason: "premise clause is absent from clauses".to_owned(),
+                });
+            }
+        }
+    }
+    if request.models.iter().any(|model| !is_model_input_format(model)) {
+        return Err(RunCause::CompleteRunSelection(
+            CompleteRunSelection::NativeModel,
+        ));
+    }
+    Ok(())
 }
 
 /// FR-931: prepare a `tl_lowering` request. Its clause is read through
@@ -4289,6 +4440,9 @@ fn execute_prepared(prepared: PreparedRun, settle: &settle::Settle<'_>) -> Resul
                 requirements: None,
                 sources: prepared.sources,
             });
+        }
+        PreparedRun::RefinementTransfer(prepared) => {
+            return transfer::execute(*prepared, settle);
         }
         PreparedRun::Clause(request) => {
             let selection = request.selection.clone();

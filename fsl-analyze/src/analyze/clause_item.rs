@@ -31,6 +31,7 @@ use fsl_replay::{
     StateEnvironment, TemporalCounterexample, Witness, WitnessEnvelope, WitnessPacket,
 };
 use fsl_route::Mode;
+use filament_semantic_value::fairness::PropertyForm;
 use fsl_semantics::check::{Capability, TemporalClauseNode};
 
 use super::items::{BROKEN, CLAUSE_FAMILY, ModelItem, admission, settle_model_item};
@@ -185,10 +186,16 @@ impl<'a> ClauseSubject<'a> {
             Mode::Bounded,
             en1::BACKEND_ID,
             move |cancel| {
+                let stutter_closure = subject
+                    .temporal
+                    .as_ref()
+                    .is_some_and(|temporal| temporal.stutter_closure == Some(true));
                 if let Some(temporal) = &subject.temporal {
                     if temporal.item_kind != fsl_route::request::ItemKind::Formula
                         || temporal.abstract_subject.is_some()
-                        || temporal.stutter_closure.is_some()
+                        || (stutter_closure
+                            && subject.node.clause().property_form()
+                                != Some(PropertyForm::Liveness))
                         || temporal.fairness != subject.node.clause().fairness()
                     {
                         return EngineReport::Refused(Refusal::Unsupported(super::items::NOT_YET));
@@ -226,6 +233,7 @@ impl<'a> ClauseSubject<'a> {
                                 .map(|temporal| temporal.reductions.clone())
                                 .unwrap_or_default(),
                         },
+                        stutter_closure,
                         certificate: CertificateRequest {
                             temporal_clock_selections: &subject.selections,
                             subject: subject.model_subject(),
@@ -866,6 +874,7 @@ impl<'a> PackageClauseSubject<'a> {
                                 .map(|temporal| temporal.reductions.clone())
                                 .unwrap_or_default(),
                         },
+                        stutter_closure: false,
                         certificate: CertificateRequest {
                             temporal_clock_selections: &[],
                             subject: subject.model_subject(),

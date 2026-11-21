@@ -171,6 +171,7 @@ pub enum LivenessRefusal {
 pub(super) fn check(
     request: ModelCheckRequest<'_>,
     cancel: &Cancel,
+    stutter_closure: bool,
 ) -> Result<ModelCheckOutcome, ModelCheckRefusal> {
     let ModelCheckItem::Clause { clause, letters } = request.item else {
         return Err(fault("a-liveness-item-is-a-clause"));
@@ -270,6 +271,7 @@ pub(super) fn check(
         RunRequest {
             max_depth: request.max_depth,
             partial_order: request.reductions.partial_order,
+            stutter_closure,
             limits: request.limits,
             meter,
             max_candidates,
@@ -395,6 +397,7 @@ pub(super) fn check_protocol<M: MemoryModel>(
         RunRequest {
             max_depth,
             partial_order: false,
+            stutter_closure: false,
             limits: options.limits,
             meter: simulation.meter,
             max_candidates: simulation.expansion.max_candidates,
@@ -511,6 +514,7 @@ trait LiveSubject: SubjectSystem<TransitionId: Ord> + Sized {
         &self,
         state: &Self::State,
         enforce: bool,
+        stutter_closure: bool,
     ) -> Result<Bounded<Tr<Self>, Self::State>, ExpansionStop>;
 
     /// How the state constraint `name` reads at `state` (FR-158).
@@ -591,13 +595,14 @@ impl<'a> LiveSubject for ModelSystem<'a> {
         &self,
         state: &ModelSimState,
         enforce: bool,
+        _stutter_closure: bool,
     ) -> Result<Bounded<ModelTransition, ModelSimState>, ExpansionStop> {
-        let expansion = if enforce {
+        if enforce {
             self.successors_enforced(state)
         } else {
             self.successors(state)
-        }?;
-        Ok((expansion, Cut::default()))
+        }
+        .map(|expansion| (expansion, Cut::default()))
     }
 
     fn permuter(&self) -> Option<PermuterOf<'_, Self>> {
@@ -664,6 +669,7 @@ impl<M: MemoryModel> LiveSubject for ProtocolSystem<'_, M> {
         &self,
         state: &Self::State,
         _enforce: bool,
+        _stutter_closure: bool,
     ) -> Result<Bounded<ProtocolTransition, Self::State>, ExpansionStop> {
         self.successors_bounded(state)
     }
@@ -807,6 +813,8 @@ struct RunRequest {
     max_depth: Option<usize>,
     /// Whether partial-order reduction is selected (FR-156).
     partial_order: bool,
+    /// Add an unfair self-loop at every model state (FR-380).
+    stutter_closure: bool,
     limits: fsl_replay::ModelCheckLimits,
     meter: ScalarLimits,
     max_candidates: u64,
@@ -958,6 +966,8 @@ struct LassoSystem<'r, S: LiveSubject> {
     enforce: bool,
     /// The request's state constraint (FR-158).
     constraint: Option<&'r str>,
+    /// Add an unfair self-loop at each model state (FR-380).
+    stutter_closure: bool,
     /// The depth of the first-phase finding the exploration has met: a
     /// state that would sit there or deeper ranks after it, so none is
     /// created (FR-126 ends the first phase at its finding).
@@ -999,7 +1009,7 @@ impl<S: LiveSubject> LassoSystem<'_, S> {
     /// it unexpanded, recording why when it stops.
     fn expand(&self, state: &S::State) -> Result<Bounded<Tr<S>, S::State>, ExpansionStop> {
         self.system
-            .expand_live(state, self.enforce)
+            .expand_live(state, self.enforce, self.stutter_closure)
             .inspect_err(|&stop| {
                 self.record(Halt::Expansion(stop));
             })
@@ -1275,7 +1285,8 @@ impl<S: LiveSubject> TransitionSystem for LassoSystem<'_, S> {
                 findings,
             });
         }
-        let steps: Vec<(Self::TransitionId, S::State)> = if expansion.successors.is_empty() {
+        let has_model_successors = !expansion.successors.is_empty();
+        let mut steps: Vec<(Self::TransitionId, S::State)> = if !has_model_successors {
             vec![(ProductTransition::TerminalStutter, state.model.clone())]
         } else {
             expansion
@@ -1284,6 +1295,9 @@ impl<S: LiveSubject> TransitionSystem for LassoSystem<'_, S> {
                 .map(|(transition, model)| (ProductTransition::Model(transition), model))
                 .collect()
         };
+        if has_model_successors && self.stutter_closure {
+            steps.push((ProductTransition::StutterClosure, state.model.clone()));
+        }
         let mut successors = Vec::new();
         for (transition, model) in steps {
             let reading = self.reading(&model)?;
@@ -1334,7 +1348,9 @@ impl<S: LiveSubject> TransitionSystem for LassoSystem<'_, S> {
             ProductTransition::Model(transition) => {
                 TransitionSystem::footprint(self.system, transition)
             }
-            ProductTransition::TerminalStutter => Some(Ok(Footprint::default())),
+            ProductTransition::TerminalStutter | ProductTransition::StutterClosure => {
+                Some(Ok(Footprint::default()))
+            }
         }
     }
 
@@ -1898,6 +1914,7 @@ impl<'r, S: LiveSubject> Run<'r, S> {
             max_depth: [self.request.max_depth, cap].into_iter().flatten().min(),
             constraint: self.constraint,
             enforce: self.request.partial_order,
+            stutter_closure: self.request.stutter_closure,
             found: Cell::new(None),
             halt: RefCell::new(None),
         };
@@ -2672,14 +2689,14 @@ impl<'r, S: LiveSubject> Run<'r, S> {
                     .ok_or_else(|| fault("a-loop-edge-is-retained"))?;
                 edges.push(edge);
             }
-            // A terminal model state has only its stutter edge, so a loop
-            // holds stutter edges alone or model edges alone.
-            let stutters = edges
+            // Terminal stutter has no model operation and can appear only
+            // alone; closure stutter may join ordinary steps in any loop.
+            let terminal_stutters = edges
                 .iter()
                 .filter(|edge| edge.transition == ProductTransition::TerminalStutter)
                 .count();
-            let terminal_stutter = stutters > 0;
-            if terminal_stutter && stutters != edges.len() {
+            let terminal_stutter = terminal_stutters > 0;
+            if terminal_stutter && terminal_stutters != edges.len() {
                 return Err(
                     LiftStop::from(fault("a-loop-is-all-stutter-or-all-model-steps")).into(),
                 );
@@ -2818,7 +2835,7 @@ impl<'a> Run<'_, ModelSystem<'a>> {
                         seen.insert(transition.clone());
                         Some(transition.clone())
                     }
-                    ProductTransition::TerminalStutter => None,
+                    ProductTransition::TerminalStutter | ProductTransition::StutterClosure => None,
                 };
                 outgoing.push(QuotientEdge {
                     label,
@@ -2963,7 +2980,9 @@ impl FairModel {
                     ProductTransition::Model(transition) => {
                         EdgeLabel::Transition(identity(transition)?)
                     }
-                    ProductTransition::TerminalStutter => EdgeLabel::Stutter,
+                    ProductTransition::TerminalStutter | ProductTransition::StutterClosure => {
+                        EdgeLabel::Stutter
+                    }
                 };
                 fair.add_edge(vertex(source)?, vertex(edge.target)?, label)
                     .map_err(|_| fault("an-edge-joins-two-vertices"))?;

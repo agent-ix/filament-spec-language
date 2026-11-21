@@ -169,7 +169,7 @@ impl From<SpineStage> for OutcomeStage {
         match stage {
             SpineStage::Source => Self::S1,
             SpineStage::Forms => Self::S2,
-            SpineStage::Intake => Self::I1,
+            SpineStage::Intake | SpineStage::Compile => Self::I1,
             SpineStage::Assembly | SpineStage::Check => Self::S3,
             SpineStage::Emit => Self::S4,
         }

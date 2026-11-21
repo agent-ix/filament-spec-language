@@ -26,6 +26,7 @@ use crate::certificate::closure::{
 use crate::certificate::scc::ProofCertificate;
 use crate::execute::ReplayRefusal;
 use crate::model_check::counterexample::TemporalCounterexample;
+use crate::model_check::item::ItemRefusal;
 use crate::model_check::limits::{ModelCheckLimit, ModelCheckLimits, ReachedLimit};
 use crate::model_check::outcome::{MemoryCause, ModelCheckOutcome, ReductionCause, RunStats};
 use crate::model_check::replay::{
@@ -39,6 +40,7 @@ use crate::proof_result::{
     WeakAccessFailure as OutcomeWeakAccessFailure,
 };
 use filament_semantic_value::model_transition::ModelTransition;
+use fsl_eval::automaton::TranslationRefusal;
 use fsl_eval::model_subject::ProtocolSubject;
 use fsl_eval::simulation::model::ModelSystem;
 use fsl_eval::simulation::protocol::{
@@ -766,7 +768,8 @@ impl Row {
     /// the certificate, `CertificateRejected{rule, at}` when it rejects it,
     /// an `Incomplete` row naming the limit when a limit or cancellation
     /// stops it; a refused check settles `NoInstance` or `NoInitialState`,
-    /// and `failed` otherwise.
+    /// an uncertified proof when the item has no canonical translation, and
+    /// `failed` otherwise.
     pub(super) fn of_check(
         check: Result<TemporalCertificateCheck, ClosureRefusal>,
         accepted: impl FnOnce() -> Self,
@@ -796,6 +799,15 @@ impl Row {
             Ok(TemporalCertificateCheck::InstanceBoundReached { bound, states }) => {
                 Self::inconclusive(InconclusiveCause::InstanceBoundReached { bound, states })
             }
+            // A form with no core certificate checker settles `proved`,
+            // `Uncertified` (ADR-018 RU-6); it is never inconclusive.
+            Err(ClosureRefusal::Item(ItemRefusal::Translation(
+                TranslationRefusal::NotTranslated(_),
+            ))) => Self::proof(
+                ProofBasis::Exhaustive,
+                Certification::Uncertified,
+                SettlementBasis::ClosedScope,
+            ),
             Err(ClosureRefusal::NoInstance) => Self::inconclusive(InconclusiveCause::NoInstance),
             Err(ClosureRefusal::NoInitialState) => {
                 Self::inconclusive(InconclusiveCause::NoInitialState)

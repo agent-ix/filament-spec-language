@@ -133,10 +133,20 @@ The run outcome's `refinement_transfer` member:
 
 | ID | Criteria | Verification |
 | --- | --- | --- |
-| FR-1030-AC-1 | A `refinement_transfer` request over the step-for-step `ThirdRefinesSpec` for `PrevSafe` (`once[1,1]`) and `SoonTwo` (`eventually[0,2]`), with no `premises`, settles the refinement and both abstract claims in the run and writes `step_for_step.holds` `true` and two transfers, each `proved`, `decisive-witness`, with both premise identities in its `transfer` record; exit `0`. | Test (TC-2920) |
+| FR-1030-AC-1 | A `refinement_transfer` request over the step-for-step `ThirdRefinesSpec` for `PrevSafe` (`always (holds(c.value = 1) implies once[1,1] holds(c.value = 0))`) and `SoonTwo` (`always (holds(c.value = 1) implies eventually[0,2] holds(c.value = 2))`), with no `premises`, settles the refinement and both abstract claims in the run and writes `step_for_step.holds` `true` and two transfers, each `proved`, `decisive-witness`, with both premise identities in its `transfer` record; exit `0`. | Test (TC-2920) |
 | FR-1030-AC-2 | The same clauses through `CasRefinesCounter` write `step_for_step.holds` `false` with `row` naming `Impl::Counter::beginA`, `stutter`, and each transfer `inconclusive`, `unsettled`, `transfer-not-preserving{reason: fragment}` naming `once[1,1]` and `eventually[0,2]`; `always holds(c.value <= 2)` in the same request transfers `proved`; exit `22`. | Test (TC-2920) |
 | FR-1030-AC-3 | With `premises.refinement` and `premises.claims.PrevSafe` supplied as complete proved FSpec FR-492 premise results marked `certified`, FSL settles neither premise again and the transfer is `proved`, `uncertified`; with the supplied claim premise `refuted`, the transfer settles `inconclusive`, `premise-unproved` naming slot 1 and `refuted`. | Test (TC-2920) |
 | FR-1030-AC-4 | FSpec FR-380-AC-8's liveness clause, with no `premises`, is settled over the abstract stutter closure and transfers through `CasRefinesCounter` `proved`. | Test (TC-2920) |
+| FR-1030-AC-5 | A transfer premise reads its model with the same semantics as any model-subject claim, so the terminal state repeats under stutter extension: the clause `PrevStutter`, `always (holds(c.value = 2) implies once[1,1] holds(c.value = 1))`, is not proved at the repeated terminal state 2 (the state one step back is 2), and its transfer through the step-for-step `ThirdRefinesSpec` settles `inconclusive`, `premise-unproved` naming slot 1; exit `22`. | Test (TC-2920) |
+
+## Rationale
+
+The `PrevSafe` fixture clause is a bounded-past premise that holds under
+terminal stutter. Its earlier form, `PrevStutter`, was ruled not to hold
+(architecture ruling of 2026-11-20 on QSL-2247): a transfer premise has no
+special case for a step-for-step refinement, and at the repeated terminal
+state the state one step back is the terminal state itself. FR-1030-AC-5 pins
+that reading.
 
 ## Dependencies
 

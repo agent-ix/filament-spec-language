@@ -33,7 +33,7 @@ use filament_exact::{Cancel, ObjectReference, ValueType};
 use super::{AnalyzeItem, EngineReport, Refusal};
 use crate::claim_family::{claim_family, kind_family};
 use crate::model_check::{
-    check_model, check_protocol_constrained, manifest as en1, HyperRefusal, LivenessRefusal,
+    check_model_with_stutter_closure, check_protocol_constrained, manifest as en1, HyperRefusal, LivenessRefusal,
     ModelCheckRefusal, ModelCheckRequest, ProtocolCheckRequest,
 };
 use crate::statistical::{check_statistical, manifest as en4, StatisticalRequest};
@@ -98,6 +98,9 @@ pub(super) const INVALID_VALUE: CatalogCode =
 pub struct ModelItem<'a> {
     /// The EN-1 run.
     pub request: ModelCheckRequest<'a>,
+    /// Whether this temporal liveness item is checked over the abstract
+    /// subject's stutter closure (FR-380).
+    pub stutter_closure: bool,
     /// The closure checker's request over the same subject and item.
     pub certificate: CertificateRequest<'a>,
     /// Replays the run's counterexample.
@@ -209,11 +212,12 @@ fn bound_over(
 pub(super) fn settle_model_item(item: ModelItem<'_>, cancel: &Cancel) -> EngineReport {
     let ModelItem {
         request,
+        stutter_closure,
         certificate,
         replay,
     } = item;
     let limits = request.limits;
-    match check_model(request, cancel) {
+    match check_model_with_stutter_closure(request, cancel, stutter_closure) {
         Ok(outcome) => EngineReport::Model(Box::new(fsl_replay::settle_model_check(
             &outcome,
             &limits,

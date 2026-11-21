@@ -116,6 +116,7 @@ pub(super) fn invariant_item<'a>(
             Some(DeclarationFamily::StateModel),
             ModelItem {
                 request,
+                stutter_closure: false,
                 certificate,
                 replay,
             },
@@ -228,6 +229,7 @@ impl<'a> PackageInvariantSubject<'a> {
             Some(DeclarationFamily::StateModel),
             ModelItem {
                 request,
+                stutter_closure: false,
                 certificate,
                 replay: Box::new(move |payload: &TemporalCounterexample| self.replay(payload)),
             },

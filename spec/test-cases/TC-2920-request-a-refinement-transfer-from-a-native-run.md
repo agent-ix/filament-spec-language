@@ -10,7 +10,7 @@ relationships:
 
 ## Description
 
-Verify the `refinement_transfer` request member and its outcome. Scope: FR-1030-AC-1 to AC-4.
+Verify the `refinement_transfer` request member and its outcome. Scope: FR-1030-AC-1 to AC-5.
 
 ## Test Procedure
 
@@ -18,6 +18,7 @@ Verify the `refinement_transfer` request member and its outcome. Scope: FR-1030-
 2. Run the same clauses and `always holds(c.value <= 2)` through `CasRefinesCounter`.
 3. Supply proved `certified` premise results for the refinement and `PrevSafe`, then a `refuted` claim premise.
 4. Run FSpec FR-380-AC-8's liveness clause through `CasRefinesCounter` with no `premises`.
+5. Run `PrevStutter`, `always (holds(c.value = 2) implies once[1,1] holds(c.value = 1))`, through `ThirdRefinesSpec` with no `premises`.
 
 ## Expected Results
 
@@ -25,3 +26,4 @@ Verify the `refinement_transfer` request member and its outcome. Scope: FR-1030-
 - Step 2: `step_for_step.holds` `false` naming `Impl::Counter::beginA`, `stutter`; `inconclusive`, `transfer-not-preserving{reason: fragment}` naming `once[1,1]` and `eventually[0,2]`; the fragment clause `proved`; exit `22`.
 - Step 3: no premise settled again; `proved`, `uncertified`; then `premise-unproved` naming slot 1, `refuted`.
 - Step 4: settled over the stutter closure; `proved`.
+- Step 5: the abstract claim premise is not proved at the repeated terminal state; `inconclusive`, `premise-unproved` naming slot 1; exit `22`.

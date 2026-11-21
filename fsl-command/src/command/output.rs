@@ -259,6 +259,9 @@ pub(super) fn error(error: &RunError, artifact: bool) -> Result<Value, serde_jso
         | RunCause::OutputGivenTwice
         | RunCause::OutputExists { .. }
         | RunCause::ExtractionRequiresRun => (types::Stage::Request, types::Details::None),
+        RunCause::TransferSelection { .. } => {
+            (types::Stage::SpineRun("select"), types::Details::None)
+        }
         RunCause::ExtensionCatalog(_) | RunCause::UnknownExtensionCapability(_) => (
             types::Stage::Spine(fsl_replay::spine::SpineStage::Forms),
             types::Details::None,
@@ -436,6 +439,7 @@ pub(super) fn error(error: &RunError, artifact: bool) -> Result<Value, serde_jso
             | RunCause::SynthesisRequest { cause, .. }
             | RunCause::ModelBasedTestRequest { cause, .. } => Some(*cause),
             RunCause::ExportOutput { .. } => Some("output-failure"),
+            RunCause::TransferSelection { cause, .. } => Some(cause),
             RunCause::TemporalCorrection(_) => Some("invalid-value"),
             RunCause::ModelPackageInput(refusal) => Some(refusal.cause.as_str()),
             RunCause::TlCorrespondence { .. } | RunCause::IntegerDivisionLaw { .. } => {

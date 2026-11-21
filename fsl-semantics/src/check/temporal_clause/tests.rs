@@ -133,6 +133,33 @@ fn checked(temporal: &[&str], formula: &str) -> (String, CheckedTemporalClause) 
     }
 }
 
+/// FR-380 transfer settlement names position-counting operators in formula
+/// order, while unbounded stutter-invariant clauses have no such operator.
+#[ix_trace_rs::trace("FSpec-TC-2000", "FSpec-FR-820-AC-1")]
+#[test]
+fn position_counting_operator_names_previous_and_finite_intervals() {
+    let (_, previous) = checked(
+        &[INFINITE],
+        "always (holds(c.level = 2) implies once[1,1] holds(c.level = 1))",
+    );
+    assert_eq!(
+        previous.position_counting_operator().as_deref(),
+        Some("once[1,1]")
+    );
+
+    let (_, interval) = checked(
+        &[INFINITE],
+        "always (holds(c.level = 1) implies eventually[0,2] holds(c.level = 2))",
+    );
+    assert_eq!(
+        interval.position_counting_operator().as_deref(),
+        Some("eventually[0,2]")
+    );
+
+    let (_, fragment) = checked(&[INFINITE], "always holds(c.level <= 2)");
+    assert_eq!(fragment.position_counting_operator(), None);
+}
+
 /// The cause the clause refuses with.
 fn refused(temporal: &[&str], formula: &str) -> (String, TemporalCause) {
     let text = source(temporal, "Counter", formula);

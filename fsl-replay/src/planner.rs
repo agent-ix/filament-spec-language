@@ -31,6 +31,7 @@ mod json;
 mod key;
 mod request;
 mod settle;
+mod transfer;
 
 #[cfg(test)]
 use request::read_declared;
@@ -41,6 +42,8 @@ use settle::settle_declared;
 mod composition_tests;
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod transfer_tests;
 
 pub use compose::{DischargeEntry, DischargeRecord, DischargeSource, Relation};
 pub use declaration::{
@@ -66,4 +69,8 @@ pub use request::{
 pub use settle::{
     settle, Budget, Conclusion, ConclusionExtent, PlannerCause, PlannerResult, PlannerValue,
     SettleRefusal, SlotOutcome, SlotValue,
+};
+pub use transfer::{
+    read_transfer_settlement_request, settle_transfer, TransferFacts, TransferPremiseValue,
+    TransferSettlement,
 };

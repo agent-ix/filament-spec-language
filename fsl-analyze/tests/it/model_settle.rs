@@ -77,6 +77,7 @@ impl Case {
                 limits: ModelCheckLimits::default(),
                 reductions: Default::default(),
             },
+            stutter_closure: false,
             certificate: self.request(),
             replay: Box::new(|payload| replay(self, payload.clone())),
         }
