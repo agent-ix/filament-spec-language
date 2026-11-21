@@ -747,6 +747,29 @@ fn a_derived_item_over_a_temporal_clause_is_an_unknown_claim() {
     assert_eq!(run.exit, 20);
 }
 
+/// Explicit derived items keep their model identity when an authored
+/// temporal clause exists, including when no terminal state is intended.
+#[trace("TC-1586", "FR-626-AC-1", "FR-626-AC-2", "FSpec-FR-366-AC-4")]
+#[test]
+fn a_deadlock_item_with_an_authored_temporal_clause_refutes_and_replays() {
+    for (name, terminal) in [
+        ("none", ""),
+        ("empty", "terminal Empty using v on M when { false };\n"),
+    ] {
+        let ws = Workspace::new(&format!("cli-deadlock-authored-{name}"));
+        let run = analyze(&counter_request(
+            &ws,
+            &format!("{}{terminal}", bounded()),
+            json!([{"claim": "M", "kind": "temporal-satisfaction",
+                "temporal": {"item_kind": "deadlock-freedom"}}]),
+        ));
+        assert_eq!(run.document()["items"].as_array().expect("items").len(), 1);
+        assert_eq!(label(&run.item(0)), "refuted", "{}", run.document());
+        assert_eq!(run.item(0)["replay"]["reproduced"], true);
+        assert_eq!(run.exit, 10);
+    }
+}
+
 /// FR-896-AC-1, AC-2 (TC-2532): a `global-conformance` item with no
 /// recording is decided over every behaviour of the protocol and its bound
 /// role implementations: the order protocol conforms, and without its
