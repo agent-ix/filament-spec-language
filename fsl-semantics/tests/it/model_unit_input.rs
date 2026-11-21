@@ -1086,3 +1086,178 @@ population orders: Order;
     assert_eq!(bounds.lower().to_string(), "0");
     assert_eq!(bounds.upper().to_string(), "3");
 }
+
+/// Inline ranges use the existing constrained-field alias identity and reach
+/// the same exact checked domain as an authored named bounded type.
+#[test]
+#[trace("FR-710-AC-1", "FR-710-AC-5", "FSpec-FR-154")]
+fn inline_integer_fields_retain_exact_admitted_bounds_and_origins() {
+    use filament_exact::{Integer, Value, ValueType};
+    let mut admitted_types = Vec::new();
+    for (declaration, field_type) in [("", "Int[-2,3]"), ("type Amount = Int[-2,3];\n", "Amount")] {
+        let source = format!("language \"ix:native\" edition \"1-draft\";\ndomain \"example/shop\";\n{declaration}object Order {{ total: {field_type}; }}\npopulation orders: Order;\n");
+        let parsed = fsl_cst::parse(
+            fsl_foundation::SourceIdentity::new("test", "inline-bounds"),
+            "inline.native",
+            source.as_bytes(),
+            fsl_cst::Limits::default(),
+        )
+        .unwrap();
+        let compiled = compile_model_unit(&parsed, ModelNormalizationLimits::default())
+            .expect("a valid declared range compiles");
+        assert_eq!(
+            compiled,
+            compile_model_unit(&parsed, ModelNormalizationLimits::default()).unwrap(),
+            "compilation is deterministic"
+        );
+        let document: serde_json::Value = serde_json::from_slice(compiled.bytes()).unwrap();
+        let definitions = document["types"].as_array().unwrap();
+        let order = definitions
+            .iter()
+            .find(|node| node["identity"] == "ix://example/shop/Order")
+            .unwrap();
+        let reference = order["fields"][0]["typeRef"].as_str().unwrap();
+        let scalar = definitions
+            .iter()
+            .find(|node| node["identity"] == reference)
+            .unwrap();
+        assert_eq!(scalar["kind"]["name"], "value_type");
+        assert_eq!(scalar["roles"], serde_json::json!([]));
+        assert_eq!(scalar["scalar"], "integer");
+        assert_eq!(scalar["constraints"][0]["operands"]["value"], "-2");
+        assert_eq!(scalar["constraints"][1]["operands"]["value"], "3");
+        assert_eq!(
+            scalar["origin"]["source"]["sourceIdentity"],
+            "ix://test/inline-bounds"
+        );
+        assert_eq!(scalar["origin"]["source"]["path"], "inline.native");
+        assert_eq!(
+            order["fields"][0]["origin"]["source"]["path"],
+            "inline.native"
+        );
+        if declaration.is_empty() {
+            assert_eq!(reference, "ix://example/shop/OrderTotal");
+            assert_eq!(
+                scalar["constraints"][0]["identity"],
+                "ix://example/shop/constraint/OrderTotal/min"
+            );
+            assert_eq!(scalar["origin"]["source"]["startLine"], 3);
+            assert_eq!(scalar["origin"]["source"]["startColumn"], 23);
+        }
+        let packages = package_input([compiled.bytes()]).unwrap();
+        checked_domain_package("example/shop", &packages);
+        let mut declarations = selected_unit_declarations("example/shop", &packages).unwrap();
+        declarations
+            .link_dispatch(ModelNormalizationLimits::default())
+            .unwrap();
+        let graph = declarations
+            .check(
+                CheckMode::Linked,
+                CheckingLimits::default(),
+                &crate::reward_evaluator::ZeroRewardEvaluator,
+            )
+            .unwrap();
+        let types = graph.scope().types();
+        let order = types
+            .object_types()
+            .find(|object| object.name() == "M::Order")
+            .unwrap();
+        let total = types
+            .attributes(order.key())
+            .unwrap()
+            .iter()
+            .find(|attribute| attribute.field().name() == "total")
+            .unwrap();
+        let value_type = total.field().value_type();
+        let ValueType::Int(bounds) = value_type else {
+            panic!("the actual admitted field must stay bounded: {value_type:?}");
+        };
+        assert_eq!(
+            (bounds.lower().to_string(), bounds.upper().to_string()),
+            ("-2".to_owned(), "3".to_owned())
+        );
+        for (value, expected) in [(-3_i64, false), (-2, true), (3, true), (4, false)] {
+            assert_eq!(
+                value_type.admits(&Value::Integer(Integer::from(value))),
+                expected,
+                "admission of {value} under {field_type}"
+            );
+        }
+        admitted_types.push(value_type.clone());
+    }
+    assert_eq!(admitted_types[0], admitted_types[1]);
+}
+
+/// Invalid intervals reuse the scalar reader's refusals at the authored
+/// inline type, rather than emitting an unbounded field or a broken document.
+#[test]
+#[trace("FR-710-AC-3", "FSpec-FR-154")]
+fn inline_integer_fields_refuse_invalid_intervals_at_the_authored_type() {
+    for interval in [
+        "Int[3,0]",
+        "Int[-170141183460469231731687303715884105729,3]",
+    ] {
+        let source = format!("language \"ix:native\" edition \"1-draft\";\ndomain \"example/shop\";\nobject Order {{ total: {interval}; }}\npopulation orders: Order;\n");
+        let parsed = fsl_cst::parse(
+            fsl_foundation::SourceIdentity::new("test", "invalid-inline-bounds"),
+            "inline.native",
+            source.as_bytes(),
+            fsl_cst::Limits::default(),
+        )
+        .unwrap();
+        let diagnostics = fsl_semantics::model::intake::compile_model_unit_with_causes(
+            &parsed,
+            ModelNormalizationLimits::default(),
+        )
+        .expect_err("the same scalar bounds owner refuses the invalid interval");
+        let [diagnostic] = diagnostics.as_slice() else {
+            panic!("one located bound refusal: {diagnostics:?}");
+        };
+        assert_eq!(diagnostic.code, fsl_cst::CompleteCode::InvalidModelBinding);
+        assert_eq!(diagnostic.cause.as_str(), "malformed-declaration");
+        let span = parsed
+            .source()
+            .render(diagnostic.region.as_ref().unwrap())
+            .unwrap();
+        assert_eq!(&source[span.start.byte..span.end.byte], interval);
+    }
+}
+
+/// Generated constrained-field identities participate in the existing global
+/// declaration collision rules, without reserving an invented source name.
+#[test]
+#[trace("FR-710-AC-3", "FSpec-FR-154")]
+fn inline_integer_fields_refuse_constrained_alias_identity_collisions() {
+    for declarations in [
+        "type OrderTotal = Int[0,9]; object Order { total: Int[0,3]; }",
+        "object Order { total: Int[0,3]; } type OrderTotal = Int[0,9];",
+        "object Order { total: Int[0,3]; } object OrderTotal {}",
+        "object Holder { Maybe: Option<Integer>; } object Option_Holder_ { maybe: Int[0,3]; }",
+    ] {
+        let source = format!(
+            "language \"ix:native\" edition \"1-draft\"; domain \"example/shop\"; {declarations}"
+        );
+        let parsed = fsl_cst::parse(
+            fsl_foundation::SourceIdentity::new("test", "inline-collision"),
+            "inline.native",
+            source.as_bytes(),
+            fsl_cst::Limits::default(),
+        )
+        .unwrap();
+        let diagnostics = fsl_semantics::model::intake::compile_model_unit_with_causes(
+            &parsed,
+            ModelNormalizationLimits::default(),
+        )
+        .expect_err("the constrained alias cannot shadow an authored declaration");
+        let [diagnostic] = diagnostics.as_slice() else {
+            panic!("one collision refusal: {diagnostics:?}");
+        };
+        assert_eq!(diagnostic.code, fsl_cst::CompleteCode::AmbiguousDeclaration);
+        assert_eq!(diagnostic.cause.as_str(), "ambiguous-name");
+        let span = parsed
+            .source()
+            .render(diagnostic.region.as_ref().unwrap())
+            .unwrap();
+        assert_eq!(&source[span.start.byte..span.end.byte], "Int[0,3]");
+    }
+}
