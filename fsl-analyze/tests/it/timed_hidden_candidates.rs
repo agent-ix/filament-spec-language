@@ -8,13 +8,15 @@
 
 use filament_exact::{Cancel, Integer};
 use fsl_analyze::zone_check::{
-    certificate_item, check_timed_refinement, TimedLivenessHalf, TimedLivenessOutcome,
-    TimedRefinementRefusal, TimedSafetyOutcome, ZoneCheckLimits, ZoneCheckRefusal,
+    certificate_item, check_timed_refinement, settle_timed_refinement, TimedLivenessHalf,
+    TimedLivenessOutcome, TimedRefinementRefusal, TimedSafetyOutcome, ZoneCheckLimits,
+    ZoneCheckRefusal,
 };
 use fsl_replay::{
-    check_zone_certificate, CertEdge, CertificateCheckLimits, CertificateRule, CertifiedItem,
-    DivergentTarget, RefinementFailure, RefinementTraceSettlement, SilentMove,
-    TemporalCounterexample, ZoneCertificate, ZoneCertificateRequest, ZoneCertificateVerdict,
+    check_zone_certificate, CertEdge, CertificateCheckLimits, CertificateRule, Certification,
+    CertifiedItem, DivergentTarget, ProofBasis, RefinementFailure, RefinementTraceSettlement,
+    SilentMove, TemporalCounterexample, TerminalValue, ZoneCertificate, ZoneCertificateRequest,
+    ZoneCertificateVerdict,
 };
 use fsl_route::deadlock::ItemObligation;
 use ix_trace_rs::trace;
@@ -995,6 +997,30 @@ fn timed_hidden_a_survivor_that_satisfies_the_claim_holds_both_halves() {
         checked(&world, &certificate),
         ZoneCertificateVerdict::Accepted
     );
+    // ADR-020 CT-4: no core checker covers the liveness half.
+    let outcome = both_halves(&world);
+    let record = settle_timed_refinement(
+        &outcome,
+        &Cancel::new(),
+        |certificate| {
+            check_zone_certificate(
+                request(&world),
+                &obligation(&world),
+                certificate_item,
+                certificate,
+                CertificateCheckLimits::default(),
+                &Cancel::new(),
+            )
+        },
+        |_| panic!("a holding half replays no lasso"),
+    );
+    assert_eq!(
+        record.value,
+        TerminalValue::Proved {
+            basis: ProofBasis::Exhaustive,
+            certification: Certification::Uncertified,
+        }
+    );
 }
 
 /// The surviving candidate is the only run once the other is dead: it keeps
@@ -1018,6 +1044,7 @@ fn timed_hidden_a_survivor_that_violates_the_claim_is_a_lasso_through_the_death(
         first > filament_exact::Rational::from_integer(Integer::from(2_i64)),
         "the lasso passes the death at y = 2: {first:?}"
     );
+    assert_reproduced(&world, &counterexample);
 }
 
 /// The soundness case: the `not h` candidate would run fair for ever (it never
@@ -1028,9 +1055,79 @@ fn timed_hidden_a_survivor_that_violates_the_claim_is_a_lasso_through_the_death(
 #[test]
 fn timed_hidden_a_dead_candidate_cannot_satisfy_the_liveness_claim() {
     assert_liveness_holds(&polling("", FAIR_IDLE));
-    let counterexample = liveness_violation(&polling(DIES_FALSE, FAIR_IDLE));
+    let world = polling(DIES_FALSE, FAIR_IDLE);
+    let counterexample = liveness_violation(&world);
     assert!(matches!(
         counterexample.refinement,
         Some(RefinementFailure::HiddenUnfair { .. })
     ));
+    assert_reproduced(&world, &counterexample);
+}
+
+/// FR-145 reproduces the refutation: replay drops each candidate by its own
+/// invariant along the loop's delays, so a dead candidate is no fair run.
+fn assert_reproduced(world: &Refining, counterexample: &TemporalCounterexample) {
+    assert!(
+        matches!(
+            replay(world, counterexample),
+            RefinementTraceSettlement::Reproduced {
+                failure: RefinementFailure::HiddenUnfair { .. },
+                ..
+            }
+        ),
+        "{:?}",
+        replay(world, counterexample)
+    );
+}
+
+/// The concrete `poll` fires every 3 units (guard `x >= 3`, invariant
+/// `x <= 3`, resets `x`) and maps to the abstract `tick`, which resets `y` and
+/// leaves `h` free: two post rows, `h' = true` and `h' = false`. `idle` needs
+/// `h`; `invariant` is the abstract time invariant of the `not h` candidate.
+fn ticking(invariant: &str) -> Refining {
+    let abstract_document = abstract_document(&[("tick", &["y", "h"]), ("idle", &["inflight"])]);
+    let concrete = document(&["x"], &[("poll", &["x"])]);
+    refining(
+        &abstract_document,
+        &concrete,
+        &format!(
+            "{DENSE}time A dense unit ms;\n\
+             pre ATickable using v on A::Call::tick {{ self.y >= 0 ms }}\n\
+             post ATick using v on A::Call::tick {{ self.y = 0 ms }}\n\
+             pre AIdleable using v on A::Call::idle {{ self.h }}\n\
+             post AIdled using v on A::Call::idle {{ self.inflight = pre(self.inflight) }}\n\
+             {invariant}\n\
+             time invariant MInv when {{ true }} {{ self.x <= 3 ms }}\n\
+             pre MPoll using v on M::Call::poll {{ self.x >= 3 ms }}\n\
+             post MPolled using v on M::Call::poll {{ self.x = 0 ms }}\n{}",
+            refinement("self.inflight")
+                .replace(" late = self.late;", "")
+                .replace(
+                    "step M::Call::send -> A::Call::send(self);",
+                    &format!("step M::Call::poll -> A::Call::tick(self);\n{FAIR_IDLE}"),
+                )
+        ),
+    )
+    .unwrap_or_else(|refusals| panic!("{refusals:?}"))
+    .with_abstract_hidden_initials(&abstract_document, &[false, true])
+}
+
+/// A candidate born at every tick and dead before the next one is no witness
+/// of an infinite run, and the search cannot chain a different candidate into
+/// each iteration: with `y <= 2` the `not h` run dies at `y > 2` before the
+/// tick at `y = 3`, so every infinite run is the `h` run, which enables `idle`
+/// for ever; with `y <= 3` the `not h` run is reborn at each tick and never
+/// enables `idle`. Both are replayed.
+#[trace("TC-2538", "FR-899")]
+#[test]
+fn timed_hidden_a_candidate_born_at_each_tick_and_dead_before_the_next_is_no_run() {
+    let dying = ticking("time invariant IF when { not self.h } { self.y <= 2 ms }");
+    let counterexample = liveness_violation(&dying);
+    let Some(RefinementFailure::HiddenUnfair { constraint }) = &counterexample.refinement else {
+        panic!("{:?}", counterexample.refinement);
+    };
+    assert_eq!(constraint.operation().name(), "idle");
+    assert_reproduced(&dying, &counterexample);
+    let surviving = ticking("time invariant IF when { not self.h } { self.y <= 3 ms }");
+    assert_liveness_holds(&surviving);
 }

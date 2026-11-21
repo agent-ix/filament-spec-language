@@ -1591,22 +1591,33 @@ fn replay_lasso(
                 (positions, rows)
             };
         if let Some(segments) = &segments {
-            // Each delay is its segments, the candidates staying put between
-            // them; the step's rows leave the last.
+            // Each delay is its segments, the alive candidates staying put
+            // between them (a candidate whose own invariant fails is dead: no
+            // run along the loop, FR-900 "Delay"); the step's rows leave the
+            // last, from the candidates alive there, to those alive when the
+            // next delay starts.
             let mut timed_positions = Vec::new();
             let mut timed_rows = Vec::new();
             for (index, step_segments) in segments.iter().enumerate() {
-                let keys: Vec<Vec<u8>> = positions[index]
-                    .iter()
-                    .map(|(key, _)| key.clone())
-                    .collect();
+                let known: Vec<&Vec<u8>> = positions[index].iter().map(|(key, _)| key).collect();
+                let next_alive = segments[(index + 1) % segments.len()]
+                    .first()
+                    .map(|segment| segment.alive.as_slice())
+                    .unwrap_or_default();
                 for (at, segment) in step_segments.iter().enumerate() {
+                    let keys: Vec<Vec<u8>> = segment
+                        .alive
+                        .iter()
+                        .filter(|key| known.contains(key))
+                        .cloned()
+                        .collect();
                     timed_positions.push(
                         keys.iter()
                             .map(|key| {
                                 (
                                     key.clone(),
                                     segment
+                                        .enabled
                                         .iter()
                                         .filter(|(candidate, _)| candidate == key)
                                         .map(|(_, transition)| transition.clone())
@@ -1616,13 +1627,23 @@ fn replay_lasso(
                             .collect::<Vec<_>>(),
                     );
                     if at + 1 < step_segments.len() {
+                        let later = &step_segments[at + 1].alive;
                         timed_rows.push(
                             keys.iter()
+                                .filter(|key| later.contains(key))
                                 .map(|key| (key.clone(), None, key.clone(), Vec::new()))
                                 .collect::<Vec<_>>(),
                         );
                     } else {
-                        timed_rows.push(candidate_rows[index].clone());
+                        timed_rows.push(
+                            candidate_rows[index]
+                                .iter()
+                                .filter(|(pre, _, post, _)| {
+                                    keys.contains(pre) && next_alive.contains(post)
+                                })
+                                .cloned()
+                                .collect::<Vec<_>>(),
+                        );
                     }
                 }
             }
@@ -1781,6 +1802,7 @@ fn replay_lasso(
                 .flatten()
                 .map(|segment| {
                     segment
+                        .enabled
                         .iter()
                         .map(|(_, transition)| transition.clone())
                         .collect()
@@ -1861,7 +1883,7 @@ enum TimedLoop {
     /// The abstract subject is untimed: enabledness is read at positions.
     Untimed,
     /// For each loop step, the segments of its delay with what each enables.
-    Segments(Vec<Vec<crate::refinement::SegmentEnabled>>),
+    Segments(Vec<Vec<crate::refinement::Segment>>),
     /// One abstract clock valuation cannot follow the loop.
     Unreadable,
 }

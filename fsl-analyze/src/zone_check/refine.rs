@@ -1401,18 +1401,18 @@ impl Product<'_, '_> {
                 && rows.iter().all(|(_, key)| key.is_some()))
             .then(|| holding.iter().filter_map(|(_, key)| key.clone()).collect());
             let mut candidates = Vec::with_capacity(post.abstract_states.len());
+            let mut candidate_keys = Vec::with_capacity(post.abstract_states.len());
             for candidate in &post.abstract_states {
-                if let Some(wanted) = &wanted {
-                    let key = self
-                        .abstract_system
-                        .state_key_of(candidate)
-                        .map_err(|_| Halt::from(ZoneCheckRefusal::Fault("position-key")))?
-                        .0;
-                    if !wanted.contains(&key) {
-                        continue;
-                    }
+                let key = self
+                    .abstract_system
+                    .state_key_of(candidate)
+                    .map_err(|_| Halt::from(ZoneCheckRefusal::Fault("position-key")))?
+                    .0;
+                if wanted.as_ref().is_some_and(|wanted| !wanted.contains(&key)) {
+                    continue;
                 }
                 candidates.push(candidate.clone());
+                candidate_keys.push(key);
             }
             for piece in Self::entry_pieces(run, timed, zone, &candidates)? {
                 // No post candidate's invariant holds at landing: the
@@ -1432,21 +1432,14 @@ impl Product<'_, '_> {
                     .iter()
                     .map(|&at| candidates[at].clone())
                     .collect();
-                let mut alive_keys = Vec::with_capacity(position.abstract_states.len());
-                for candidate in &position.abstract_states {
-                    alive_keys.push(
-                        self.abstract_system
-                            .state_key_of(candidate)
-                            .map_err(|_| Halt::from(ZoneCheckRefusal::Fault("position-key")))?
-                            .0,
-                    );
-                }
+                let alive_keys: Vec<&Vec<u8>> =
+                    piece.alive.iter().map(|&at| &candidate_keys[at]).collect();
                 let kept = match taken {
                     Taken::CandidateSteps(steps) => Taken::CandidateSteps(
                         steps
                             .iter()
                             .zip(&mask)
-                            .filter(|(step, held)| **held && alive_keys.contains(&step.post_state))
+                            .filter(|(step, held)| **held && alive_keys.contains(&&step.post_state))
                             .map(|(step, _)| step.clone())
                             .collect(),
                     ),

@@ -42,6 +42,7 @@ use num_bigint::BigInt;
 
 mod fair_loops;
 
+use super::super::concretise::ClockTransform;
 use super::{
     Judgement, Product, TimedRefinementStop, TimedRefinementUndecided, TimedSafetyOutcome,
 };
@@ -112,7 +113,10 @@ struct Arc {
     /// The abstract steps a position takes; `None` for a delay.
     taken: Option<Taken>,
     /// Auxiliary abstract clock operation for a mapped discrete step.
-    auxiliary_transform: Option<super::super::concretise::ClockTransform>,
+    auxiliary_transform: Option<ClockTransform>,
+    /// For a death edge, the constraints that cut its piece: the alive
+    /// candidates' invariants and a failing branch of each dying one's.
+    cut: Vec<PlaceConstraint>,
 }
 
 /// A position's judgement, by its position, its state's key and its step
@@ -517,21 +521,14 @@ impl Product<'_, '_> {
                 // the truth pattern of their rows' clock guards (FR-899
                 // "Timed subjects"); a landing no row or no post candidate
                 // admits is time-locked, since the safety half holds.
-                let landings: Vec<(
-                    Dbm,
-                    usize,
-                    Taken,
-                    Option<super::super::concretise::ClockTransform>,
-                )> = if run.auxiliary_timed.is_some() {
-                    self.step_pieces(run, node.q, q, &taken, next)?
-                        .0
-                        .into_iter()
-                        .map(|piece| (piece.zone, piece.target, piece.taken, piece.transform))
-                        .collect()
-                } else {
-                    vec![(next, q, taken, None)]
-                };
-                for (landed, q, taken, auxiliary_transform) in landings {
+                let landings = self.step_pieces(run, node.q, q, &taken, next)?.0;
+                for landing in landings {
+                    let (landed, q, taken, auxiliary_transform) = (
+                        landing.zone,
+                        landing.target,
+                        landing.taken,
+                        landing.transform,
+                    );
                     if landed.is_empty() {
                         continue;
                     }
@@ -562,6 +559,7 @@ impl Product<'_, '_> {
                             },
                             taken: Some(taken.clone()),
                             auxiliary_transform: auxiliary_transform.clone(),
+                            cut: Vec::new(),
                         };
                         created.extend(add_node(run, live, next, Some(arc))?);
                     }
@@ -584,7 +582,7 @@ impl Product<'_, '_> {
                 if !next_cell(&node.cell, &cell) {
                     continue;
                 }
-                for (target_q, alive) in self.delay_pieces(run, node.q, piece)? {
+                for (target_q, alive, cut) in self.delay_pieces(run, node.q, piece)? {
                     let target_extra = self.abstract_view(run, live, target_q)?.atoms;
                     for (target_cell, part) in
                         run.split(&mut live.cells, &node.state, &target_extra, &alive)?
@@ -618,6 +616,11 @@ impl Product<'_, '_> {
                             },
                             taken: None,
                             auxiliary_transform: None,
+                            cut: if target_q == node.q {
+                                Vec::new()
+                            } else {
+                                cut.clone()
+                            },
                         };
                         created.extend(add_node(run, live, next, Some(arc))?);
                     }
@@ -648,6 +651,7 @@ impl Product<'_, '_> {
                         via: Via::Diverge,
                         taken: None,
                         auxiliary_transform: None,
+                        cut: Vec::new(),
                     };
                     created.extend(add_node(run, live, next, Some(arc))?);
                 }
@@ -674,17 +678,12 @@ impl Product<'_, '_> {
         // The stutter's position reads other abstract guards, and its alive
         // candidates are those whose invariant holds: its zone is split by
         // them, each piece a vertex.
-        let landings: Vec<(Dbm, usize, Taken)> = if run.auxiliary_timed.is_some() {
-            self.step_pieces(run, node.q, q, &taken, node.zone.clone())?
-                .0
-                .into_iter()
-                .map(|piece| (piece.zone, piece.target, piece.taken))
-                .collect()
-        } else {
-            vec![(node.zone.clone(), q, taken)]
-        };
+        let landings = self
+            .step_pieces(run, node.q, q, &taken, node.zone.clone())?
+            .0;
         let mut created = Vec::new();
-        for (landed, q, taken) in landings {
+        for landing in landings {
+            let (landed, q, taken) = (landing.zone, landing.target, landing.taken);
             let next = Node {
                 q,
                 positioned: true,
@@ -700,6 +699,7 @@ impl Product<'_, '_> {
                 via: Via::Stutter,
                 taken: Some(taken),
                 auxiliary_transform: None,
+                cut: Vec::new(),
             };
             if run.auxiliary_timed.is_none() {
                 created.extend(add_node(run, live, next, Some(arc))?);
@@ -733,18 +733,18 @@ impl Product<'_, '_> {
         run: &Run<'_, '_, '_>,
         q: usize,
         zone: Dbm,
-    ) -> Result<Vec<(usize, Dbm)>, Halt> {
+    ) -> Result<Vec<(usize, Dbm, Vec<PlaceConstraint>)>, Halt> {
         let Some(timed) = run.auxiliary_timed else {
-            return Ok(vec![(q, zone)]);
+            return Ok(vec![(q, zone, Vec::new())]);
         };
-        let position = self
+        let candidates = &self
             .positions
             .get(q)
             .ok_or(ZoneCheckRefusal::Fault("auxiliary-position"))?
-            .clone();
-        let count = position.abstract_states.len();
+            .abstract_states;
+        let count = candidates.len();
         let mut invariants = Vec::with_capacity(count);
-        for candidate in &position.abstract_states {
+        for candidate in candidates {
             invariants.push(Self::candidate_invariants(run, timed, candidate)?);
         }
         let mut leads = Vec::new();
@@ -753,16 +753,16 @@ impl Product<'_, '_> {
                 continue;
             }
             if piece.alive.len() == count {
-                leads.push((q, piece.zone));
+                leads.push((q, piece.zone, Vec::new()));
                 continue;
             }
-            let mut survivors = position.clone();
+            let mut survivors = self.positions[q].clone();
             survivors.abstract_states = piece
                 .alive
                 .iter()
-                .map(|&at| position.abstract_states[at].clone())
+                .map(|&at| self.positions[q].abstract_states[at].clone())
                 .collect();
-            leads.push((self.intern(survivors, run)?, piece.zone));
+            leads.push((self.intern(survivors, run)?, piece.zone, piece.cut));
         }
         Ok(leads)
     }
@@ -931,17 +931,15 @@ impl Product<'_, '_> {
                     .push((key.clone(), step.transition().clone(), parts));
             }
         }
-        // With several alive candidates the constants of their invariants
-        // are cell atoms too, so the alive set is uniform on each cell and a
-        // death happens at a cell boundary.
-        if position.abstract_states.len() > 1 {
-            for candidate in &position.abstract_states {
-                for constraint in Self::candidate_invariants(run, timed, candidate)? {
-                    atoms.insert((
-                        constraint.place() + 1,
-                        scaled(constraint.bound(), &run.scale),
-                    ));
-                }
+        // The constants of the alive candidates' invariants are cell atoms
+        // too, so the alive set is uniform on each cell, a death happens at a
+        // cell boundary and no cell runs past an alive invariant.
+        for candidate in &position.abstract_states {
+            for constraint in Self::candidate_invariants(run, timed, candidate)? {
+                atoms.insert((
+                    constraint.place() + 1,
+                    scaled(constraint.bound(), &run.scale),
+                ));
             }
         }
         view.atoms = atoms.into_iter().collect();
@@ -1671,23 +1669,43 @@ fn stage(run: &mut Run<'_, '_, '_>, live: &mut Live, arc: usize) -> Result<Stage
                 fixed: None,
             }
         }
-        Via::Wait | Via::Dies => Stage {
-            invariants: invariants.clone(),
-            elapses,
-            target: invariants,
-            before: None,
-            after: None,
-            auxiliary_carries: Vec::new(),
-            auxiliary_resets: Vec::new(),
-            piece: run.cell_zone(&mut live.cells, &target.state, &target_atoms, &target.cell)?,
-            step: None,
-            position: Vec::new(),
-            position_resets: Vec::new(),
-            silent: true,
-            fixed: None,
-        },
+        Via::Wait | Via::Dies => {
+            let cell =
+                run.cell_zone(&mut live.cells, &target.state, &target_atoms, &target.cell)?;
+            Stage {
+                invariants: invariants.clone(),
+                elapses,
+                target: invariants,
+                before: None,
+                after: None,
+                auxiliary_carries: Vec::new(),
+                auxiliary_resets: Vec::new(),
+                piece: dying_piece(run, cell, &arc.cut)?,
+                step: None,
+                position: Vec::new(),
+                position_resets: Vec::new(),
+                silent: true,
+                fixed: None,
+            }
+        }
         Via::Diverge | Via::Stutter => return Err(ZoneCheckRefusal::Fault("stage-edge").into()),
     })
+}
+
+/// `cell` held to the cut of a death edge: the alive candidates' invariants
+/// hold and each dying candidate's has failed, so the delay lands after the
+/// death instant and not before it (FR-900 "Delay").
+fn dying_piece(
+    run: &Run<'_, '_, '_>,
+    cell: Option<Dbm>,
+    cut: &[PlaceConstraint],
+) -> Result<Option<Dbm>, Halt> {
+    if cut.is_empty() {
+        return Ok(cell);
+    }
+    let mut zone = cell.map_or_else(|| Dbm::universe(run.dim()), |zone| zone.widened(run.dim()));
+    constrain_at(&mut zone, cut, &run.scale)?;
+    Ok(Some(zone))
 }
 
 fn fairness(run: &Run<'_, '_, '_>, error: FairnessError) -> Halt {
