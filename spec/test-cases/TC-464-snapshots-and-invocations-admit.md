@@ -92,10 +92,33 @@ their document identity.
    that field's nested path. As an ordinary-object boundary check, return
    to the valid step 7 snapshot and replace `c1.peer` by a present object
    reference to `ghost` in complete `calls`, leaving the clock references valid.
+   In step 7 declare `x` before `y`; in this variant remove only the `x`
+   declaration and its uses while retaining the other declarations' order.
+   The oracle concerns the old declared path, never an asserted S3/S4 id.
+9. On each route, invoke the declared-table/admission entry with TC-3084
+   step 7's negative table fixture: two distinct authenticated declaration
+   origins normalize to the same declared scope and full path. Supply an
+   otherwise valid snapshot and retain both declaration origins. Repeat
+   with the same authenticated declaration selected through two aliases
+   and one canonical normalized declared path, as the one-view positive.
+10. Exercise FR-230-AC-45's canonicality and kind-change controls on both
+    routes. Admit the exact delimiter-bearing vector of FR-230-AC-43;
+    separately supply its uppercase-hex, zero-padded selector,
+    whitespace-JSON and extra-component variants. Restore the valid
+    model and capture `x`'s actual reference. Remove and re-add precisely
+    the same authenticated field declaration with unchanged path and kind,
+    then compare its actual evaluated reference. Separately replace that
+    declared `x: Clock` by `x: Option<Clock>`, updating its uses to be valid
+    and evaluating the new reference in a state where the place is present;
+    attempt raw admission of the old `x` reference in the data fields.
 
 Tag the tests `#[trace("TC-464", "FR-106-AC-n")]`. Bind step 7 to
 `FR-106-AC-72` and step 8's three undeclared-place cases to
-`FR-106-AC-73`.
+`FR-106-AC-73`. Bind the cross-route, two-population and removed-path
+controls of steps 7 and 8 additionally to `FR-106-AC-74`; bind step 9 to
+`FR-106-AC-75`.
+Bind step 10 to `FR-230-AC-43` and `FR-230-AC-45`; these encoding controls
+are not substitutes for AC-72/AC-73.
 
 ## Expected Results
 
@@ -137,7 +160,20 @@ Tag the tests `#[trace("TC-464", "FR-106-AC-n")]`. Bind step 7 to
   `refs` element 0 where applicable), and the undeclared target identity;
   no observation or truth value is produced.
   In both routes the actual old `x` reference refuses after `x` is removed
-  and `y` retained, including when `y` occupies the former allocation
-  position of `x`; no stored `x` value is admitted as `y`.
+  and `y` retained, regardless of internal allocation order; no stored `x`
+  value is admitted as `y`.
   The ordinary-object `peer` case still refuses the same code/cause naming `ghost` in complete
   `calls`.
+- Step 9: the distinct-origin fixture refuses
+  `conflicting_declaration`/`duplicate-declaration`, names both origins and
+  produces no partial place table, admitted observation or truth value.
+  The repeated-alias view admits the otherwise valid snapshot with the
+  same full reference identity.
+- Step 10: the exact vector admits. Each noncanonical spelling refuses
+  `invalid_runtime_input`/`invalid-value` at its supplied reference value.
+  The same declaration/path/kind produces the same full reference after
+  re-addition. The `Option<Clock>` variant has a different typed-path
+  identity, and admission of the old canonical `Clock` identity refuses
+  `dangling_reference`/`absent-target-in-complete-population`, with the
+  AC-73 nested-field loci and no observation or truth value; it is not
+  admitted as the new optional place.
