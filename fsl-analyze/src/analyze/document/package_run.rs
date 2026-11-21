@@ -776,10 +776,39 @@ fn resolve_names<'s>(
                 return Err(pending(PendingFamily::Simulation));
             };
             let derived = item_kind.is_some_and(|kind| kind != ItemKind::Formula);
+            let protocol = if matches!(
+                selection.kind.as_deref(),
+                Some("local-projection" | "realizability")
+            ) || (item_kind == Some(ItemKind::DeadlockFreedom)
+                && selection.kind.as_deref() == Some(Capability::TemporalSatisfaction.to_wire()))
+            {
+                match view.protocol_execution_named(name) {
+                    Ok(form) => form.is_some(),
+                    Err(fsl_package::protocol_view::ViewRefusal::MalformedMember {
+                        node,
+                        member: "operator",
+                    }) => {
+                        let mut detail = Map::new();
+                        detail.insert("fact".to_owned(), json!("operator"));
+                        detail.insert("node".to_owned(), json!(node));
+                        return Ok(Named::Settled(ResolvedItem::Settled {
+                            claim_name: Some(name.to_owned()),
+                            record: Box::new(TerminalRecord::disposition_unsupported(
+                                index,
+                                CatalogCode::new("unsupported_construct", "not-yet-implemented"),
+                                detail,
+                            )),
+                        }));
+                    }
+                    Err(_) => return Err(PackageRunError::Document(AnalyzeDocumentError::Fault)),
+                }
+            } else {
+                false
+            };
             if matches!(
                 selection.kind.as_deref(),
                 Some("local-projection" | "realizability")
-            ) && view.protocol_execution_named(name).ok().flatten().is_some()
+            ) && protocol
             {
                 return Ok(Named::ProtocolAnalysis {
                     index,
@@ -789,7 +818,7 @@ fn resolve_names<'s>(
             }
             if item_kind == Some(ItemKind::DeadlockFreedom)
                 && selection.kind.as_deref() == Some(Capability::TemporalSatisfaction.to_wire())
-                && view.protocol_execution_named(name).ok().flatten().is_some()
+                && protocol
             {
                 return Ok(Named::ProtocolFreedom {
                     index,

@@ -224,13 +224,22 @@ impl<M: MemoryModel> ProtocolSystem<'_, M> {
                     }
                     ControlStep::Await => return Ok(Settled::Rest(Rest::Await(node))),
                     ControlStep::Check => {
-                        let condition = self
-                            .program
-                            .checks
-                            .get(&node)
-                            .copied()
-                            .ok_or_else(|| ProtocolRefusal::fault("a-check-has-a-condition"))?;
-                        match self.decide(instance, path, node, condition, model)? {
+                        let decision = if let Some(condition) = self.program.checks.get(&node) {
+                            self.decide(instance, path, node, condition, model)?
+                        } else {
+                            let frame = self.frame(instance, path, node);
+                            match self
+                                .evaluate_package_control(node, frame, model)?
+                                .ok_or_else(|| ProtocolRefusal::fault("a-check-has-a-condition"))?
+                            {
+                                Verdict::True => Decision::Value(true),
+                                Verdict::False => Decision::Value(false),
+                                Verdict::Undecided(outcome) => Decision::Undecided(Box::new(
+                                    undetermined(self.program.text(node)?, outcome),
+                                )),
+                            }
+                        };
+                        match decision {
                             Decision::Value(true) => Cursor::Exit(node),
                             Decision::Value(false) => return Ok(Settled::Rest(Rest::Check(node))),
                             Decision::Undecided(finding) => return Ok(Settled::Undecided(finding)),

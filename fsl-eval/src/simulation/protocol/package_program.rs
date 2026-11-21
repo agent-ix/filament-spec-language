@@ -41,7 +41,7 @@ pub struct PackageControl {
     pub memory_default: Option<MemoryModelName>,
     /// The operation's admitted predicate slot: a constraint or repeat guard.
     pub constraint: Option<ProtocolSlot>,
-    /// The operation's operation-anchor identity, for an `attempt`.
+    /// The operation-anchor identity of an attempt or recommendation.
     pub operation_anchor: Option<NodeKey>,
     /// The declaring model type resolved by the package evaluator.
     pub operation_declaring: Option<filament_exact::EffectiveId>,
@@ -65,7 +65,7 @@ pub struct PackageControl {
     pub(super) from: Option<ProtocolNodeId>,
     /// The attempt's explicit memory ordering.
     pub ordering: Option<fsl_forms::AccessOrdering>,
-    /// The state clauses selected by an attempt's `contracts` member.
+    /// The state clauses selected by the operation call's `contracts` member.
     pub contracts: Vec<fsl_package::CheckedNodeId>,
     /// The FR-531 identities of the selected state clauses.
     pub contract_keys: Vec<NodeKey>,
@@ -816,9 +816,13 @@ impl<'a> PackageProtocolProgram<'a> {
                 ControlBody::Attempt {
                     role,
                     operation,
-                    ordering,
                     contracts,
-                    binder,
+                    ..
+                }
+                | ControlBody::Recommend {
+                    role,
+                    operation,
+                    contracts,
                     ..
                 } => {
                     let anchor = input.evaluator.package_node_key(operation).ok_or_else(|| {
@@ -837,12 +841,18 @@ impl<'a> PackageProtocolProgram<'a> {
                         Vec::new(),
                         Vec::new(),
                         Some((*role).clone()),
-                        Some((*binder).clone()),
+                        match &control.body {
+                            ControlBody::Attempt { binder, .. } => Some((*binder).clone()),
+                            _ => None,
+                        },
                         Some(anchor),
                         Some(operation_declaring),
                         None,
                         Some(operation_name),
-                        *ordering,
+                        match &control.body {
+                            ControlBody::Attempt { ordering, .. } => *ordering,
+                            _ => None,
+                        },
                         contracts
                             .iter()
                             .map(|contract| (*contract).clone())
@@ -854,6 +864,18 @@ impl<'a> PackageProtocolProgram<'a> {
                     Vec::new(),
                     None,
                     Some((*binder).clone()),
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    Vec::new(),
+                ),
+                ControlBody::Check { .. } => (
+                    Vec::new(),
+                    Vec::new(),
+                    None,
+                    None,
                     None,
                     None,
                     None,
@@ -903,6 +925,8 @@ impl<'a> PackageProtocolProgram<'a> {
                 || matches!(
                     &control.body,
                     ControlBody::Attempt { .. }
+                        | ControlBody::Recommend { .. }
+                        | ControlBody::Check { .. }
                         | ControlBody::Send { .. }
                         | ControlBody::Receive { .. }
                 ) {
@@ -913,6 +937,8 @@ impl<'a> PackageProtocolProgram<'a> {
                             &control.node.node_id,
                             if control.operation == ControlOperation::Repeat {
                                 "guard"
+                            } else if control.operation == ControlOperation::Check {
+                                "condition"
                             } else {
                                 "constraint"
                             },
@@ -1190,25 +1216,30 @@ impl<'a> PackageProtocolProgram<'a> {
             .map(Some)
     }
 
-    /// Resolve one admitted attempt to the model system's operation input.
+    /// Resolve an admitted attempt or recommendation to its model operation input.
     pub(crate) fn operation_ref(
         &self,
         control: ProtocolNodeId,
     ) -> Result<OperationRef<'_>, PackageProgramRefusal> {
-        let attempt = self
+        let call = self
             .controls
             .get(&control)
-            .filter(|control| control.operation == ControlOperation::Attempt)
+            .filter(|control| {
+                matches!(
+                    control.operation,
+                    ControlOperation::Attempt | ControlOperation::Recommend
+                )
+            })
             .ok_or(PackageProgramRefusal::MissingOperation(control))?;
-        let declaring = attempt
+        let declaring = call
             .operation_declaring
             .clone()
             .ok_or(PackageProgramRefusal::MissingOperation(control))?;
-        let name = attempt
+        let name = call
             .operation_name
             .as_deref()
             .ok_or(PackageProgramRefusal::MissingOperation(control))?;
-        let role_id = attempt
+        let role_id = call
             .role
             .as_ref()
             .ok_or(PackageProgramRefusal::MissingOperation(control))?;

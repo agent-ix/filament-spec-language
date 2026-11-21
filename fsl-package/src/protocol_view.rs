@@ -178,6 +178,8 @@ pub enum ControlOperation {
     Receive,
     /// An `attempt` control.
     Attempt,
+    /// A side-effect-free `recommend` control.
+    Recommend,
     /// An `effect` control.
     Effect,
     /// An `event` control.
@@ -210,6 +212,7 @@ impl ControlOperation {
             "send" => Self::Send,
             "receive" => Self::Receive,
             "attempt" => Self::Attempt,
+            "recommend" => Self::Recommend,
             "effect" => Self::Effect,
             "event" => Self::Event,
             "commit" => Self::Commit,
@@ -1083,6 +1086,7 @@ impl Derive<'_, '_> {
             | ControlOperation::Check
             | ControlOperation::Send
             | ControlOperation::Attempt
+            | ControlOperation::Recommend
             | ControlOperation::Event
             | ControlOperation::Commit
             | ControlOperation::Fence
@@ -1705,6 +1709,17 @@ pub enum ControlBody<'n> {
         /// The optional constraint expression node.
         constraint: Option<&'n CheckedNodeId>,
     },
+    /// A recommendation's operation call and result-free constraint.
+    Recommend {
+        /// The observing role.
+        role: &'n CheckedNodeId,
+        /// The selected operation anchor.
+        operation: &'n CheckedNodeId,
+        /// The selected contracts, in authored order.
+        contracts: Vec<&'n CheckedNodeId>,
+        /// The result-free constraint expression.
+        constraint: &'n CheckedNodeId,
+    },
     /// An `effect` or domain `event` operation and its enclosing attempt.
     Effect {
         /// The attempt this operation affects.
@@ -1789,6 +1804,12 @@ pub fn control_body(node: &CheckedSemanticNodeV2) -> Result<ControlBody<'_>, Vie
             contracts: references(node, "contracts")?,
             binder: single(node, "binder")?,
             constraint: Some(single(node, "constraint")?),
+        },
+        ControlOperation::Recommend => ControlBody::Recommend {
+            role: single(node, "role")?,
+            operation: single(node, "operation")?,
+            contracts: references(node, "contracts")?,
+            constraint: single(node, "constraint")?,
         },
         ControlOperation::Effect => ControlBody::Effect {
             attempt: single(node, "of")?,
