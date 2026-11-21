@@ -4123,14 +4123,16 @@ fn package_remainder_condition_refusal_keeps_caller_source_locus() {
         type Zero = Int[0, 0];\n\
         function ints using v(xs: Sequence<Integer>[0, 3]): Sequence<Integer>[0, 3] pure { xs }\n\
         type Total = Int[0, 4000];\n\
-        temporal C using t over (c: Config::ConfigVersion) clock \"model-steps\" on origin \
+        temporal C using t over (c: Counter) clock \"sensor\" on origin \
         { always[0,5] holds(size(allInstances<Config::ConfigVersion>(Config::config_history)) >= 0) }\n\
-        temporal Other using t over (c: Config::ConfigVersion) clock \"model-steps\" on origin \
+        temporal Other using t over (c: Counter) clock \"sensor\" on origin \
         { always[0,5] holds(size(allInstances<Config::ConfigVersion>(Config::config_history)) >= 0) }\n";
     let directory = tempfile::tempdir().unwrap();
     spine::write(directory.path(), Case::Incomplete).unwrap();
     std::fs::write(directory.path().join("caller.native"), unit).unwrap();
-    let models = compile_handoff(directory.path(), unit);
+    let clocks =
+        json!({"sensor":{"kind":"event_position","sequence_authority":"counter-sequence"}});
+    let models = compile_handoff_with_clocks(directory.path(), unit, Some(clocks.clone()));
     let offered = Source::read_typed(
         SourceIdentity::new("agent-ix", "test:s1-16:unit.native"),
         "caller.native",
@@ -4140,9 +4142,8 @@ fn package_remainder_condition_refusal_keeps_caller_source_locus() {
     .unwrap_or_else(|refusal| panic!("valid caller source: {}", refusal.error.message));
     for (member, selection, term) in [(
         "clause",
-        json!({"selection":{"temporal":{"name":"C","trace":{"finite":["s0"]},
-                "over":{"reference":{"population":format!("ix://{}/config_history", spine::PACKAGE_IDENTITY),"key":"child"}}}},
-                "observations":{"s0":"spine-snapshot.json"}}),
+        json!({"selection":{"temporal":{"name":"C","trace":{"finite":[level_sample(1)]}}},
+                "observations":{}}),
         "allInstances<Config::ConfigVersion>(Config::config_history)",
     )] {
         let owner = if member == "call" {
@@ -4165,7 +4166,7 @@ fn package_remainder_condition_refusal_keeps_caller_source_locus() {
         caller["document"] = json!("CallerDocument");
         caller["formal_revision"] = json!(19);
         let mut source_request = json!({"format":"native-run/1","request":{
-            "models":models,"program":{"source":caller}
+            "models":models,"program":{"source":caller},"clocks":clocks
         }});
         source_request["request"][member] = selection.clone();
         let expected = write_request(directory.path(), &source_request);
@@ -4180,7 +4181,7 @@ fn package_remainder_condition_refusal_keeps_caller_source_locus() {
         let refusal = outcome(&expected.1);
         assert_eq!(refusal["kind"], "refused", "{}", expected.1);
         assert_eq!(refusal["code"], "incomplete_population", "{refusal}");
-        assert_eq!(refusal["cause"], "incomplete-scope", "{refusal}");
+        assert_eq!(refusal["cause"], "missing-required-artifact", "{refusal}");
         assert_eq!(
             refusal["fields"],
             json!({"population":format!("ix://{}/config_history", spine::PACKAGE_IDENTITY)})
