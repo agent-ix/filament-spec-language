@@ -684,12 +684,21 @@ mod tests {
                 u128::from(completed),
                 "the first unpaid charge retains the cumulative attempted total: {refusal:?}"
             );
-            assert!(
-                matches!(
-                    refusal.native.native(),
-                    fsl_package::NativeJoinFailure::Projection(_)
-                ),
-                "the original typed projection refusal is preserved: {refusal:?}"
+            let fsl_package::NativeJoinFailure::Projection(projection) = refusal.native.native()
+            else {
+                panic!("the original projection owner is preserved: {refusal:?}");
+            };
+            let expected_code = match kind {
+                filament_contract_model::NativeJoinChargeKind::Work => {
+                    filament_contract_model::ExactTypeProjectionErrorCode::ExhaustedWork
+                }
+                filament_contract_model::NativeJoinChargeKind::Storage => {
+                    filament_contract_model::ExactTypeProjectionErrorCode::ExhaustedStorage
+                }
+            };
+            assert_eq!(
+                projection.code, expected_code,
+                "the original typed owner code is preserved: {refusal:?}"
             );
         }
     }
