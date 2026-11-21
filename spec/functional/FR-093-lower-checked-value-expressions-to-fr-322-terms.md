@@ -525,12 +525,23 @@ is the text-leaf list (Text leaves, below) of the compared type
 `set`, `bag` or `ordered_set` result. `laws` is `[]`, `mode` is
 `null`, `member` is `null` and `leaves` is `[]` unless the row says
 otherwise.
+A `let` binding term SHALL carry `binder`, the `NodeRef` of the
+`value`/`parameter` node of the slot the `let` binds, typed by the binder's
+type (its annotation when the source writes one, the value's type
+otherwise), and S4 SHALL add that node to the application's `dependencies`
+whether or not the body reads the binder (FSpec FR-322 "The binder link").
+The reader then checks the binder against its value without matching by
+name, so a binder declared narrower than its value is refused even when the
+body never reads it. Every read of the binder in the body is a `reference`
+to that same node. A checker-introduced `let` (the `#ieee_operand` `let` of
+an IEEE ordering) carries its binder the same way.
+
 `T(x)` is the type node of `x`'s checked type, and `ref(x)` is the `reference`
 to `x`'s node.
 
 | Checked node (`Expression` form) | `operator` | `operation.identity` | Member, mode, laws, leaves | `arguments` |
 |---|---|---|---|---|
-| `Let{slot, value, body}` (`let x = v in b`) | `let` | `filament.op.control.let` | | `[binding{name: x, value: ref(v)}, ref(b)]` |
+| `Let{slot, value, body}` (`let x = v in b`) | `let` | `filament.op.control.let` | | `[binding{name: x, value: ref(v), binder: x's parameter node}, ref(b)]`; the binder node is among the application's `dependencies` |
 | `If` (`if c then t else o`) | `conditional` | `filament.op.control.if` | | `[ref(c), ref(t), ref(o)]` |
 | `Connective(And, Or, Implies)` | `binary` | `filament.op.boolean.and`, `.or`, `.implies` | | `[ref(l), ref(r)]` |
 | `Not` | `unary` | `filament.op.boolean.not` | | `[ref(e)]` |
@@ -1139,6 +1150,7 @@ fix the leaf spelling.
 | FR-093-AC-65 | A `let` binds an option `value` under its presence guard (QSL-2249; IR-1447). Over `o: Option<Int[0, 9]>`, `function guarded using v(o: Option<Int[0, 9]>): Integer pure { if present(o) then (let q = value(o) in q) else 0 }` checks, emits and reads back `Verified`: one `filament.op.control.if` node whose condition is a `filament.op.option.present` node and whose then-branch is a `filament.op.control.let` node binding a `filament.op.option.value` node. The unguarded `function unguarded using v(o: Option<Int[0, 9]>): Integer pure { let q = value(o) in q }` refuses `undefined_expression`/`unproved-presence` (AC-15). | Test (TC-1423) |
 | FR-093-AC-66 | Over `t: Text[0, 64; unicode-scalars]`, with FR-091-AC-44's units: (1) `convert<Decimal[0, 1000; 0, 2; exact]>(t)` lowers to `filament.op.text.to_decimal` with mode `{"kind":"rounding","value":"exact"}` and the `text_profile` law; (2) `convert<Text[0, 64; unicode-scalars]>(t)` builds no node and its parent references `t`; (3) `convert<Quantity<ms, Int[0, 9]>>(t)` refuses `ill_typed`/`operator-ineligible` at the `convert` and builds no node; (4) the S1 texts `convert<Decimal>(t)` and `convert<Rational>(t)` refuse `invalid_syntax`/`unexpected-token` at the `>` after the type name, and no check runs; (5) through `CheckedGraph::check_expression`, a `convert` whose target is `TypeForm::builtin(BuiltinType::Decimal)` with no bounds refuses `ill_typed`/`type-mismatch` at the `convert`, and no `ConvertText` node is built. A checker that admits a bound-less `Decimal` as an unbounded type fails (5); one that admits carried quantities fails (3); an identity convert that builds a node fails (2); a mode taken from anywhere but the target fails (1); a recognizer that admits a bare `Decimal` fails (4). | Test (TC-1196) |
 | FR-093-AC-67 | Standalone `convert<Int[0,9]>(n)` over `n: Integer` under `n >= 0 and n <= 9`, and over `q: Int[0,20]` under `q <= 9`, checks and lowers to `filament.op.numeric.narrow` with target member and no mode. Without the respective proof each refuses `undefined_expression`/`unproved-range`. A `let` binding of `rational(-6,-4)` declared `Rational[-20,20;1,20]`, converted to `Rational[0,10;1,10]`, proves normalized `3/2` membership and lowers to `filament.op.rational.narrow`; `11/1` and `1/11` refuse `unproved-range`. `Decimal[0,9;0,0;exact]` to `Integer` is exact; narrowing a scale-zero decimal into `Int[0,9]` requires membership proof; a scale-2 decimal to `Integer` refuses `operator-ineligible`. Float-to-integer conversion and direct equality narrowing remain refused. In Kernel mode the integer and rational narrowing backstops refuse values outside either target endpoint or normalized rational part, and an integral admitted value is preserved without a loss record. | Test (TC-3135) |
+| FR-093-AC-68 | Over `function g using v(a: Integer): Boolean pure { true }` and `x: Int[0, 1000]`, the `let` of `let y: Integer = x in g(y)` lowers to a `filament.op.control.let` application whose binding term carries `binder`, the `NodeRef` of `y`'s `value`/`parameter` node typed by the `Integer` node, that node is among the application's `dependencies`, and the call argument is a `reference` to the same node; the strict reader admits the package (FSpec IC-14). `let y: Int[0, 1000] = x in true`, whose binder the body never reads, still carries `binder` and the node in its `dependencies`; `sqrt(p) <= sqrt(q)`'s two `#ieee_operand` `let`s each carry the binder node of their level. Changing only the annotation of an unread binder changes the `let` node's `node_id`. | Test (TC-3137) |
 
 ## Dependencies
 
