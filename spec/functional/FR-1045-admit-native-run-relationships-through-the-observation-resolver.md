@@ -55,7 +55,7 @@ native-run result and exit category.
   `relationships` extents supply the candidate relationships.
 - The optional closed `call.relationships` object. It contains exactly
   `producer`, `binding`, `expected_subject`, `required_relationships`,
-  `scope`, `records` and `limits`. The `limits` object contains exactly the
+  `relationship_identities`, `scope`, `records` and `limits`. The `limits` object contains exactly the
   resolver's names `max_records`, `max_members`, `max_relationships` and
   `max_required_relationships`. Their values use the resolver's corresponding
   selected types, with `expected_subject` in FR-287's authority-qualified
@@ -66,24 +66,45 @@ native-run result and exit category.
   array count before collapsing equal slots. Equal slots identify one slot;
   the resolver evaluates distinct slots once in canonical
   `RequiredRelationship` order.
-- Every instance in each supplied relationship extent supplies a non-empty `identity` in the
+- `relationship_identities` is the caller's correspondence between package
+  relationships and Producer relationship declarations. The selected
+  package's model view records each navigation relationship under its FR-056
+  declaration identity
+  `ix://<package identity>/relationship/<Name>-<verb>-<TargetName>`, which is
+  the text a snapshot entry's `relationship` carries. A Producer interface 1.2
+  bundle names each relationship declaration by a `relationshipIdentity` its
+  producer selects. The two spellings are independent, and no package or
+  domain artifact records one for the other, so the request states the
+  correspondence. It is an array, possibly empty, of closed objects
+  `{"relationship": text, "declaration_identity": text}`. `relationship` is the
+  FR-056 declaration identity of a navigation relationship of the selected
+  package. `declaration_identity` is the Producer `relationshipIdentity` in the
+  selected bundle. The correspondence is one to one. The mapping is the
+  caller's assertion: FSL neither derives one identity from the other nor
+  compares their spellings. The resolver's endpoint-kind comparison is what
+  detects a mapping to the wrong declaration.
+- A snapshot relationship entry whose `relationship` has a
+  `relationship_identities` entry is a correlation candidate entry. Every
+  instance of a candidate entry supplies a non-empty `identity` in the
   lowercase-hex encoding of its producer-supplied `RelationshipIdentity`
   bytes (FR-106-AC-74, FSpec FR-181 and FR-480). The resolver receives the
-  exact decoded bytes; FSL SHALL NOT derive this identity. These instances are
-  the complete candidate set passed to the resolver; FSL SHALL NOT filter
-  them by required declaration before identity validation.
+  exact decoded bytes; FSL SHALL NOT derive this identity. The instances of
+  the candidate entries are the complete candidate set passed to the
+  resolver; FSL SHALL NOT filter them by required declaration before identity
+  validation. A snapshot entry whose `relationship` has no mapping entry is
+  not a correlation candidate: neither its instances nor its extent state
+  reach the resolver, and it takes no part in the result. A snapshot may hold
+  relationships the request does not correlate.
 - FSL builds each snapshot candidate from the selected checked package and
-  Producer bundle. Its declaration identity is the Producer
-  `relationshipIdentity` that the selected package's model view records for
-  the navigation relationship the snapshot entry's `relationship` names;
+  Producer bundle. Its declaration identity is the `declaration_identity` of
+  the mapping entry for the snapshot entry's `relationship`.
   `Relationship::new` and `RelationshipExtent::new` resolve it against the
-  bundle's `relationships[].relationshipIdentity`. The selected package's
-  model view records each navigation relationship under its FR-056
-  declaration identity `ix://<package identity>/relationship/<Name>-<verb>-<TargetName>`,
-  which is the text the snapshot entry's `relationship` carries. A Producer
-  interface 1.2 bundle's `relationshipIdentity` is the identity its producer
-  selects. FSL derives neither identity from the other and does not compare
-  the entry's `relationship` text with the bundle's identity. Each `source` and `target` object
+  bundle's `relationships[].relationshipIdentity`. A mapped identity that the
+  bundle does not declare is the resolver's own
+  `InvalidReference(UnknownRelationshipDeclaration)` outcome. A mapping to a
+  declaration whose endpoint type identities differ from the objects' kinds
+  is the resolver's own `InvalidReference(WrongEndpointKind)` outcome. FSL
+  adds no check of its own for either. Each `source` and `target` object
   reference `{"population": P, "key": K}` becomes
   `QualifiedSubject::from_authority(<selected bundle key>, SubjectKind::new(<kind>), SubjectIdentity::new(<UTF-8 of K>))`.
   `<kind>` is the UTF-8 of the `type` text of the referenced object's entry in
@@ -102,8 +123,12 @@ native-run result and exit category.
   `relationship` names no navigation relationship of the selected package
   refuses `invalid-request` at that entry's `relationship` path after snapshot
   read and before resolver evaluation.
-- The resolver receives each selected FR-106 relationship extent state
-  unchanged: unlisted means not supplied, `complete: false` is incomplete, and
+- After the selected package is admitted and before the snapshot is used, a
+  `relationship_identities` entry whose `relationship` names no navigation
+  relationship of the selected package refuses `invalid-request` at that
+  entry's `relationship` path, stage `request`, exit 20.
+- The resolver receives each candidate entry's FR-106 relationship extent
+  state unchanged: unlisted means not supplied, `complete: false` is incomplete, and
   `complete: true` with no instances is known empty. FSL SHALL NOT collapse or
   reinterpret these states.
 - `binding`, `expected_subject`, `required_relationships`, `scope`, `records`
@@ -235,8 +260,9 @@ Pointers are relative to `/call/relationships`.
 | `/scope/members/<i>` | closed `{"object_identity": text, "record_identity": text, "anchor": N}` | one `ScopeSelection.members: Vec<Member>` entry, in array order | `invalid-request` at the failing nested member |
 | `/records/<i>` | closed record object below | one `records: Vec<AdmittedRecord>` entry, in array order | `invalid-request` at the failing nested member |
 | `/limits/max_records`, `/max_members`, `/max_relationships`, `/max_required_relationships` | *u64* | `limits: ResourceLimits`, the `usize` field of the same name; on a target whose `usize` is narrower than 64 bits, a value above `usize::MAX` is passed as `usize::MAX`, which no count can exceed, so the outcome is the same on every target | `invalid-request` at the member |
-| (none) | each instance of the snapshot's FR-106 `relationships` extents | `relationships: Vec<Relationship>`, from `Relationship::new(producer, declaration identity, RelationshipIdentity::new(decoded identity), source, target)` | `invalid-request` at the instance's `identity` path or the entry's `relationship` path, after read; a `Relationship::new` refusal is a resolver outcome |
-| (none) | each FR-106 extent of the snapshot | `relationship_extents: Vec<RelationshipExtent>`, from `RelationshipExtent::new(producer, declaration identity, state)`, `complete: true` as `Complete` and `complete: false` as `Incomplete`; an unlisted declaration has no entry | not a wire member |
+| `/relationship_identities/<i>` | closed `{"relationship": text, "declaration_identity": text}`; no two entries share a `relationship` or a `declaration_identity` | not an `AdmissionRequest` field: selects the candidate entries of the snapshot and supplies each one's declaration identity to `Relationship::new` and `RelationshipExtent::new` | `invalid-request` at the failing nested member or the duplicated member, before any file is opened; an unknown package `relationship` refuses at that path after package admission |
+| (none) | each instance of a candidate entry of the snapshot's FR-106 `relationships` | `relationships: Vec<Relationship>`, from `Relationship::new(producer, mapped declaration identity, RelationshipIdentity::new(decoded identity), source, target)` | `invalid-request` at the instance's `identity` path or the entry's `relationship` path, after read; a `Relationship::new` refusal is a resolver outcome |
+| (none) | each candidate entry of the snapshot | `relationship_extents: Vec<RelationshipExtent>`, from `RelationshipExtent::new(producer, mapped declaration identity, state)`, `complete: true` as `Complete` and `complete: false` as `Incomplete`; a declaration with no candidate entry has no extent and is unlisted | not a wire member |
 
 Each `records` entry is a closed object with exactly the members of the FR-014
 record form, which are the fields of `AdmittedRecord`:
@@ -273,7 +299,11 @@ outside its type's range each refuse `invalid-request` at stage `request`,
 exit 20, before any selected file is opened. The command-error details are
 `{"path":P}`, where `P` is the full JSON Pointer of the offending member from
 the request root (for example `/call/relationships/records/0/anchor/kind`).
-No member takes a default.
+No member takes a default. In `relationship_identities`, a second entry with
+the `relationship` of an earlier entry refuses the same way at the later
+entry's `relationship` path, and a second entry with the
+`declaration_identity` of an earlier entry refuses at the later entry's
+`declaration_identity` path.
 
 FSL builds, in this order and each array in array order,
 `binding.subject_kind`, `expected_subject`, every `required_relationships`
@@ -316,7 +346,7 @@ included. It is not a request-shape refusal.
   kind and opaque identity. A relationship retains FR-262's relationship type,
   package, declaration identity and ordered source/target endpoints. FSL SHALL
   NOT sort, normalize, infer or replace endpoint identities.
-- Every instance in each supplied extent is a candidate and SHALL carry its
+- Every instance of each candidate entry is a candidate and SHALL carry its
   producer-supplied relationship identity. An absent, empty, non-string,
   uppercase, odd-length or otherwise malformed identity is `invalid-request`
   at that instance's identity path after the snapshot is read and before
@@ -433,7 +463,7 @@ slot order.
   `{"path":"/call/relationships/producer","cause":S}`, `S` the exact Display
   text of the Producer reader's `Refusal`.
 - An absent, empty, non-string, uppercase, odd-length or otherwise malformed
-  relationship `identity` on any instance in a supplied extent SHALL refuse
+  relationship `identity` on any instance of a candidate entry SHALL refuse
   `invalid-request` at that instance's `identity` member path, stage `request`,
   exit 20, after snapshot read and before resolver evaluation; command-error
   details are `{"path":P}` for that exact JSON Pointer `P`. Identity is the producer's exact value,
@@ -459,8 +489,8 @@ slot order.
 
 | ID | Criteria | Verification |
 | --- | --- | --- |
-| FR-1045-AC-1 | `call.relationships` is a closed nested object with exactly `producer`, `binding`, `expected_subject`, `required_relationships`, `scope`, `records` and `limits`, whose four limit members are the resolver names; a missing snapshot or malformed/unknown request member refuses `invalid-request` at stage `request`, exit 20, before selected-file I/O. | Test (`tests/it/native_run_relationships.rs::invalid_relationship_selection_fails_before_snapshot_io`) |
-| FR-1045-AC-2 | Every instance in each supplied extent maps to the selected package's exact relationship type/declaration and complete ordered FR-287 endpoints; reversed direction refuses `InvalidReference`. Each candidate requires non-empty lowercase-hex identity bytes passed unchanged to the resolver; replay with equal identity and facts deduplicates, identity rebind refuses `RelationshipIdentityContradiction`, and equal facts with distinct identities are distinct candidates. An absent/empty/non-string/uppercase/odd-length identity or undeclared relationship type refuses `invalid-request` at its exact path after read and before resolver evaluation; without correlation, FR-106 keeps `wrong-role-mapping`. | Test (`tests/it/native_run_relationships.rs::snapshot_relationship_identity_round_trips_exact_bytes`, `tests/it/native_run_relationships.rs::invalid_relationship_identity_refuses_after_snapshot_read`, `tests/it/native_run_relationships.rs::relationship_identity_defines_exact_replay`, `tests/it/native_run_relationships.rs::unknown_relationship_type_in_correlation_is_invalid_request_after_snapshot_read`, `tests/it/native_run_relationships.rs::invalid_snapshot_relationship_references_keep_exact_refusals`) |
+| FR-1045-AC-1 | `call.relationships` is a closed nested object with exactly `producer`, `binding`, `expected_subject`, `required_relationships`, `relationship_identities`, `scope`, `records` and `limits`, whose four limit members are the resolver names; a missing snapshot or malformed/unknown request member refuses `invalid-request` at stage `request`, exit 20, before selected-file I/O. | Test (`tests/it/native_run_relationships.rs::invalid_relationship_selection_fails_before_snapshot_io`) |
+| FR-1045-AC-2 | Every instance of each candidate entry maps to the selected package's exact relationship type/declaration and complete ordered FR-287 endpoints; reversed direction refuses `InvalidReference`. Each candidate requires non-empty lowercase-hex identity bytes passed unchanged to the resolver; replay with equal identity and facts deduplicates, identity rebind refuses `RelationshipIdentityContradiction`, and equal facts with distinct identities are distinct candidates. An absent/empty/non-string/uppercase/odd-length identity or undeclared relationship type refuses `invalid-request` at its exact path after read and before resolver evaluation; without correlation, FR-106 keeps `wrong-role-mapping`. | Test (`tests/it/native_run_relationships.rs::snapshot_relationship_identity_round_trips_exact_bytes`, `tests/it/native_run_relationships.rs::invalid_relationship_identity_refuses_after_snapshot_read`, `tests/it/native_run_relationships.rs::relationship_identity_defines_exact_replay`, `tests/it/native_run_relationships.rs::unknown_relationship_type_in_correlation_is_invalid_request_after_snapshot_read`, `tests/it/native_run_relationships.rs::invalid_snapshot_relationship_references_keep_exact_refusals`) |
 | FR-1045-AC-3 | For each required slot, an unlisted or complete-empty extent with no candidate yields `MissingRelationship`; a `complete: false` extent yields `IncompleteRelationshipExtent` even with a matching candidate, unless a known incompatible candidate establishes `RelationshipConflict`. Any incompatible candidate conflicts even with a match; two distinct matches with no incompatible candidate yield `AmbiguousRelationship`. | Test (`tests/it/native_run_relationships.rs::relationship_extent_states_and_conflict_precedence_reach_resolver`) |
 | FR-1045-AC-4 | Equal required slots are one set member. The resolver applies `max_required_relationships` to the raw list before deduplication; afterward, distinct slots are evaluated in canonical `RequiredRelationship` order. Every missing or incomplete-extent slot is returned once in that order only if slot evaluation completes without refusal; a slot refusal returns alone and discards collected incomplete reasons. An incomplete outcome before slot evaluation is returned unchanged. Candidate relationships do not create required slots that the caller omitted. | Test (`tests/it/native_run_relationships.rs::required_slots_are_a_set_and_missing_reasons_use_canonical_order`, `tests/it/native_run_relationships.rs::required_relationship_limit_counts_raw_entries`, `tests/it/native_run_relationships.rs::candidate_relationships_do_not_infer_required_slots`, `tests/it/native_run_relationships.rs::slot_refusal_discards_collected_incomplete_reasons`) |
 | FR-1045-AC-5 | `Available` proceeds to the ordinary call; typed incompletes return a `spine-run-result/1` incomplete outcome with reasons and payloads, exit 22; `ResourceLimit` returns incomplete exit 22 with the corresponding limit; all other refusals return a `spine-run-result/1` refused outcome with the exact code, cause and text fields, exit 20. Resolver outcomes have no stage member. | Test (`tests/it/native_run_relationships.rs::resolver_outcomes_keep_native_run_stage_and_category`, `tests/it/native_run_relationships.rs::resolver_incomplete_reasons_preserve_typed_payloads`, `tests/it/native_run_relationships.rs::resolver_refusals_keep_cause_codes_and_fields`) |
@@ -470,6 +500,9 @@ slot order.
 | FR-1045-AC-9 | A `scope` reaches the resolver as a `ScopeSelection` with every field decoded. Each of the three `range` forms with members anchored in the same family gives the matching `ClockRange` and `Anchor` variants. `kind` snapshot and window give the matching `ScopeKind`. The `membership_document` string's UTF-8 bytes pass unchanged, and `membership_digest` decodes to its 32 bytes. Both closure members `null` returns incomplete with reason `missing-closure`, exit 22. Exactly one `null` returns refused `invalid-selection` with `selection` `closure`. An event-position range with `start` equal to `end_exclusive` returns refused `invalid-window`. The owner's membership document with its four JSON members written in another order returns refused `derived-identity-mismatch` with `artifact` `membership-document`. Each of these refuses `invalid-request` at its exact pointer, stage `request`, exit 20, before any file is opened: `range.clock_family` `"timestamp"`, anchor `kind` `"timestamped-event"`, `kind` written as `{"snapshot":{"snapshot_identity":"s"}}`, `membership_digest` with an uppercase digit or 63 digits, `membership_document` as a JSON object, an omitted `closure_identity`, and a member with an extra `position` member. | Test (`tests/it/native_run_relationships.rs::scope_members_decode_into_scope_selection`, `tests/it/native_run_relationships.rs::malformed_scope_members_refuse_at_their_pointer_before_io`) |
 | FR-1045-AC-10 | `expected_subject`, each required-slot endpoint and each record `subject` reach the resolver as `QualifiedSubject::from_authority` values with the written authority, the UTF-8 bytes of `subject_kind` and the decoded identity bytes. `binding` maps field-for-field onto `ObservationBinding`. The limits become `ResourceLimits`, `max_records` `"18446744073709551615"` decodes to `usize::MAX` on a 64-bit target, and the package selection equals FR-944's. An authority whose `digest.label` differs from the selected bundle's returns refused `invalid-reference-foreign-authority`, and so does an authority whose `digest.value` lacks the `sha256:` prefix. A slot naming no Producer declaration returns refused `invalid-reference-unknown-relationship-declaration` with that `identity`. A binding `identity` of `""` returns refused `invalid-selection` with `selection` `binding-identity`, not a request refusal. Each of these refuses `invalid-request` at its exact pointer, stage `request`, exit 20, before any file is opened: `bundle_revision` as a JSON string, `authority_local_object_identity` `""` or `"AB"`, a non-string `subject_kind`, binding `required` `"true"`, and a limit of `5` (a JSON number), `"-1"`, `"05"` or `"18446744073709551616"`. | Test (`tests/it/native_run_relationships.rs::subject_binding_and_limit_members_decode_exactly`, `tests/it/native_run_relationships.rs::malformed_subject_binding_and_limit_members_refuse_before_io`) |
 | FR-1045-AC-11 | A `producer` member holding a valid Producer interface 1.2.0 static bundle reaches the resolver as the `AdmittedStaticBundle` that `StaticProducerBundle::admit_json` returns for the same bytes. A bundle of interface `1.1.0`, one with a top-level member changed so its declared digest no longer recomputes, and a `producer` that is a JSON string each refuse `invalid-request` at stage `request`, exit 20, before any selected file is opened, with details `{"path":"/call/relationships/producer","cause":S}` where `S` is the Producer reader's refusal text, and no resolver outcome. | Test (`tests/it/native_run_relationships.rs::producer_bundle_admits_through_the_producer_reader`, `tests/it/native_run_relationships.rs::invalid_producer_bundle_refuses_before_io`) |
+| FR-1045-AC-12 | A snapshot holds three relationship entries, two of them mapped by `relationship_identities` to two Producer declarations of the selected bundle whose FR-056 and Producer spellings differ. The two mapped entries reach the resolver as candidates whose declaration identity is the mapped `declaration_identity`, with their extent states, and their required slots correlate. The third, unmapped entry contributes no `Relationship` and no `RelationshipExtent` and does not change the outcome: the same request without that entry in the snapshot gives an equal result. An empty `relationship_identities` array admits with no snapshot candidate. | Test (`tests/it/native_run_relationships.rs::mapped_relationships_correlate_and_unmapped_relationships_are_ignored`) |
+| FR-1045-AC-13 | Each of these refuses `invalid-request` at stage `request`, exit 20, with details `{"path":P}`. Before any selected file is opened: a second entry with an earlier entry's `relationship` (`P` is that later `relationship`), a second entry with an earlier entry's `declaration_identity` (`P` is that later `declaration_identity`), an entry without `declaration_identity`, an entry with an extra member, and `relationship_identities` omitted. After package admission and before the snapshot is used: an entry whose `relationship` names no navigation relationship of the selected package (`P` is that `relationship`). | Test (`tests/it/native_run_relationships.rs::malformed_relationship_identities_refuse_before_io`, `tests/it/native_run_relationships.rs::unknown_package_relationship_in_mapping_refuses_after_package_admission`) |
+| FR-1045-AC-14 | A mapping whose `declaration_identity` the selected bundle does not declare returns refused `invalid-reference-unknown-relationship-declaration` with that `identity`, exit 20. A mapping to a declared Producer relationship whose endpoint `typeIdentity` values differ from the snapshot objects' `type` text returns refused `invalid-reference-wrong-endpoint-kind` with the first mismatched `endpoint`, exit 20. FSL raises neither as a request refusal and compares no spellings itself. | Test (`tests/it/native_run_relationships.rs::mapping_to_undeclared_producer_relationship_is_resolver_refusal`, `tests/it/native_run_relationships.rs::mapping_to_wrong_declaration_is_wrong_endpoint_kind`) |
 
 ## Dependencies
 

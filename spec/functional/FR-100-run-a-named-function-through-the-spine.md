@@ -338,7 +338,7 @@ A native-run/1 request (FR-026's closed envelope and shared limits). For a
     the call's object world (FR-650).
   - `relationships`: optional, the closed relationship-correlation selection
     specified by FR-1045. When present, it requires `snapshot`; FR-1045 owns
-    its seven members and all nested wire forms.
+    its eight members and all nested wire forms.
   - `accounting`: optional, a closed object whose members are any subset of
     the ten `filament.value.accounting/v1` counter names; each value is a JSON
     integer from 0 to 18446744073709551615 (`u64::MAX`). An omitted object
