@@ -419,11 +419,12 @@ fn check_refinement_with_time_source<S>(
             // half is still reported.
             match liveness(&mut product, &mut run) {
                 Ok(outcome) => Some(TimedLivenessHalf::Checked(outcome)),
-                Err(TimedRefinementRefusal::Zone(ZoneCheckRefusal::HiddenCandidateLiveness)) => {
-                    Some(TimedLivenessHalf::Refused(
-                        ZoneCheckRefusal::HiddenCandidateLiveness,
-                    ))
-                }
+                Err(TimedRefinementRefusal::Zone(
+                    refusal @ ZoneCheckRefusal::HiddenCandidateLiveness,
+                )) => Some(TimedLivenessHalf::Refused(refusal)),
+                Err(TimedRefinementRefusal::Zone(
+                    refusal @ ZoneCheckRefusal::HiddenCandidateClockBlocks,
+                )) => Some(TimedLivenessHalf::Refused(refusal)),
                 Err(refusal) => return Err(refusal),
             }
         }
@@ -1297,6 +1298,7 @@ impl Product<'_, '_> {
                     zone,
                     target,
                     transform: None,
+                    taken: taken.clone(),
                 }],
                 Vec::new(),
             ));
@@ -1445,6 +1447,26 @@ impl Product<'_, '_> {
                     .iter()
                     .map(|&at| candidates[at].clone())
                     .collect();
+                let mut alive_keys = Vec::with_capacity(position.abstract_states.len());
+                for candidate in &position.abstract_states {
+                    alive_keys.push(
+                        self.abstract_system
+                            .state_key_of(candidate)
+                            .map_err(|_| Halt::from(ZoneCheckRefusal::Fault("position-key")))?
+                            .0,
+                    );
+                }
+                let kept = match taken {
+                    Taken::CandidateSteps(steps) => Taken::CandidateSteps(
+                        steps
+                            .iter()
+                            .zip(&mask)
+                            .filter(|(step, held)| **held && alive_keys.contains(&step.post_state))
+                            .map(|(step, _)| step.clone())
+                            .collect(),
+                    ),
+                    other => other.clone(),
+                };
                 let leads = if position.abstract_states.len() == post.abstract_states.len() {
                     target
                 } else {
@@ -1455,6 +1477,7 @@ impl Product<'_, '_> {
                     zone,
                     target: leads,
                     transform: transform.clone(),
+                    taken: kept,
                 });
             }
         }
@@ -1590,210 +1613,6 @@ impl Product<'_, '_> {
             )?;
         }
         Ok(None)
-    }
-
-    /// Apply the timed abstract operation selected by the row, then read
-    /// invariants at its mapped target.
-    fn auxiliary_step(
-        &self,
-        run: &Run<'_, '_, '_>,
-        source: usize,
-        target: usize,
-        taken: &Taken,
-        zone: &mut Dbm,
-    ) -> Result<
-        (
-            Option<(Dbm, String)>,
-            Option<super::concretise::ClockTransform>,
-        ),
-        Halt,
-    > {
-        let Some(timed) = run.auxiliary_timed else {
-            return Ok((None, None));
-        };
-        if matches!(taken, Taken::Abstract(_) | Taken::CandidateSteps(_)) {
-            let matched = self.matched_auxiliary_step(run, timed, source, taken)?;
-            if let Matched::Step(step) = matched {
-                let concrete_places = run.timed.places().len();
-                let failed = self
-                    .auxiliary_guard_complement(run, zone, &step)?
-                    .map(|failed| (failed, step.operation().to_owned()));
-                let transform = super::concretise::ClockTransform {
-                    carries: step
-                        .carries()
-                        .iter()
-                        .map(|(to, from)| (concrete_places + to, concrete_places + from))
-                        .collect(),
-                    resets: step
-                        .resets()
-                        .iter()
-                        .map(|(place, value)| (concrete_places + place, value.clone()))
-                        .collect(),
-                };
-                let original = zone.clone();
-                let mut admitted = None;
-                for part in step.parts() {
-                    let shifted = auxiliary_constraints(concrete_places, part);
-                    let mut candidate = original.clone();
-                    run.constrain(&mut candidate, &shifted)?;
-                    if candidate.is_empty() {
-                        continue;
-                    }
-                    let carries: Vec<_> = step
-                        .carries()
-                        .iter()
-                        .map(|(to, from)| (concrete_places + to + 1, concrete_places + from + 1))
-                        .collect();
-                    let resets: Vec<_> = step
-                        .resets()
-                        .iter()
-                        .map(|(place, value)| (concrete_places + place + 1, run.scaled(value)))
-                        .collect();
-                    candidate.assign_clocks(&carries, &resets)?;
-                    admitted = Some(candidate);
-                    break;
-                }
-                if let Some(mut admitted) = admitted {
-                    self.auxiliary_invariants(run, target, &mut admitted)?;
-                    *zone = admitted;
-                } else {
-                    zone.constrain(0, 0, Bound::lt(0.into()))?;
-                }
-                return Ok((failed, Some(transform)));
-            } else if matches!(matched, Matched::Missing) {
-                return Ok((Some((zone.clone(), "mapped-operation".to_owned())), None));
-            }
-        }
-        self.auxiliary_invariants(run, target, zone)?;
-        Ok((None, None))
-    }
-
-    /// The abstract step whose clock guard, carries and resets the product
-    /// applies for `taken`. With a hidden field the rows are per candidate;
-    /// the single clock set of the product can follow them only when every
-    /// row yields the same clock behaviour, otherwise the combination is
-    /// refused.
-    fn matched_auxiliary_step(
-        &self,
-        run: &Run<'_, '_, '_>,
-        timed: &TimedSystem<'_, '_>,
-        source: usize,
-        taken: &Taken,
-    ) -> Result<Matched, Halt> {
-        let source_position = self
-            .positions
-            .get(source)
-            .ok_or(ZoneCheckRefusal::Fault("auxiliary-source"))?;
-        let mut candidate_states = Vec::with_capacity(source_position.abstract_states.len());
-        for candidate in &source_position.abstract_states {
-            let key = self
-                .abstract_system
-                .state_key_of(candidate)
-                .map_err(|_| Halt::from(ZoneCheckRefusal::Fault("position-key")))?
-                .0;
-            let state = timed
-                .system()
-                .pre_state(candidate.clone(), timed.system().declared_anchor());
-            candidate_states.push((key, state));
-        }
-        match taken {
-            Taken::Abstract(transitions) => {
-                for (_, state) in &candidate_states {
-                    for step in run.timed(timed.guarded_steps(state))? {
-                        if transitions.contains(step.transition()) {
-                            return Ok(Matched::Step(Box::new(step)));
-                        }
-                    }
-                }
-                Ok(Matched::Missing)
-            }
-            Taken::CandidateSteps(rows) => {
-                let mut chosen: Option<GuardedStep> = None;
-                let mut stutters = false;
-                for row in rows {
-                    let Some(transition) = &row.transition else {
-                        stutters = true;
-                        continue;
-                    };
-                    let (_, state) = candidate_states
-                        .iter()
-                        .find(|(key, _)| *key == row.pre_state)
-                        .ok_or(ZoneCheckRefusal::Fault("auxiliary-candidate"))?;
-                    let step = run
-                        .timed(timed.guarded_steps(state))?
-                        .into_iter()
-                        .find(|step| step.transition() == transition)
-                        .ok_or(ZoneCheckRefusal::Fault("auxiliary-candidate-step"))?;
-                    match &chosen {
-                        None => chosen = Some(step),
-                        Some(first)
-                            if first.parts() == step.parts()
-                                && first.carries() == step.carries()
-                                && first.resets() == step.resets() => {}
-                        Some(_) => return Err(ZoneCheckRefusal::HiddenCandidateLiveness.into()),
-                    }
-                }
-                match chosen {
-                    Some(_) if stutters => Err(ZoneCheckRefusal::HiddenCandidateLiveness.into()),
-                    Some(step) => Ok(Matched::Step(Box::new(step))),
-                    None if stutters => Ok(Matched::Stutter),
-                    None => Ok(Matched::Missing),
-                }
-            }
-            _ => Ok(Matched::Missing),
-        }
-    }
-
-    /// Find a zone point outside every convex part of an abstract guard.
-    fn auxiliary_guard_complement(
-        &self,
-        run: &Run<'_, '_, '_>,
-        zone: &Dbm,
-        step: &GuardedStep,
-    ) -> Result<Option<Dbm>, Halt> {
-        let offset = run.timed.places().len();
-        let mut residuals = vec![zone.clone()];
-        for part in step.parts() {
-            let mut outside = Vec::new();
-            for residual in residuals {
-                let mut prefix = residual;
-                for constraint in part {
-                    let place = offset + constraint.place();
-                    for op in negations(constraint.op()) {
-                        let mut branch = prefix.clone();
-                        run.constrain(
-                            &mut branch,
-                            &[PlaceConstraint::new(
-                                constraint.place() + offset,
-                                op,
-                                constraint.bound().clone(),
-                            )],
-                        )?;
-                        if !branch.is_empty() {
-                            outside.push(branch);
-                        }
-                    }
-                    run.constrain(
-                        &mut prefix,
-                        &[PlaceConstraint::new(
-                            place,
-                            constraint.op(),
-                            constraint.bound().clone(),
-                        )],
-                    )?;
-                    if prefix.is_empty() {
-                        break;
-                    }
-                }
-                // `prefix` satisfies this whole part and is removed from
-                // the residual set for the next convex part.
-            }
-            residuals = outside;
-            if residuals.is_empty() {
-                return Ok(None);
-            }
-        }
-        Ok(residuals.into_iter().next())
     }
 
     /// FR-244's refinement form of the run's certificate: the run's proof
@@ -2055,6 +1874,12 @@ struct StepPiece {
     zone: Dbm,
     target: usize,
     transform: Option<super::concretise::ClockTransform>,
+    /// What the edge takes on this piece (FR-899 "Hidden fields"): the
+    /// candidate rows whose abstract clock guard holds on the piece and whose
+    /// post candidate is alive in `target`. A candidate run that dies at the
+    /// landing is no run along the behaviour. The liveness half reads it; the
+    /// safety half's certificate keeps the edge's own `taken`.
+    taken: Taken,
 }
 
 /// The convex branches whose union negates the conjunction `constraints`:
@@ -2105,16 +1930,6 @@ fn refuted(
         blocked: Vec::new(),
         final_delay: None,
     }
-}
-
-/// The abstract step an edge's clock behaviour follows.
-enum Matched {
-    /// One guarded step.
-    Step(Box<GuardedStep>),
-    /// Every candidate stutters: no clock guard, carry or reset.
-    Stutter,
-    /// The row's operation has no guarded step.
-    Missing,
 }
 
 /// One piece of a zone split by the truth pattern of candidate invariants:
