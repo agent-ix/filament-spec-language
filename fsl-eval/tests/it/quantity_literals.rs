@@ -385,6 +385,13 @@ fn records_and_collections_compare_same_typed_carried_quantities() {
 #[trace("FR-497-AC-2", "TC-1287", "FSpec-TC-187", "FSpec-FR-142-AC-27")]
 #[test]
 fn a_carried_quantity_is_not_an_arithmetic_operand() {
+    use filament_exact::{
+        CarriedQuantityType, Integer, IntegerInterval, QuantityCarrier, RoundingMode, UnitId,
+        ValueType,
+    };
+    use filament_semantic_value::catalog::CatalogCode;
+    use fsl_forms::BinaryOperator;
+
     let source = format!(
         "{FUNCTIONS}\
          function illegal_add using v(a: Quantity<m, Int[-2, 2]>): Quantity<m, Int[-2, 2]> pure {{ a + a }}\n\
@@ -396,18 +403,54 @@ fn a_carried_quantity_is_not_an_arithmetic_operand() {
          function illegal_order using v(a: Quantity<m, Int[-2, 2]>): Boolean pure {{ a < a }}\n\
          function illegal_dimension using v(): Quantity<m, Int[-2, 2]> pure {{ convert<Quantity<m, Int[-2, 2]>>(1 ms) }}\n"
     );
-    let refusals = package_with(&source).expect_err("carried arithmetic refuses during checking");
+    let mut regions = None;
+    let mut carried_type = None;
+    let mut function_indices = Vec::new();
+    let refusals = package_with_aliases(&source, |declarations| {
+        regions = Some(declarations.regions());
+        function_indices = declarations
+            .functions
+            .iter()
+            .enumerate()
+            .map(|(index, function)| (function.name.clone(), index))
+            .collect();
+        let units = declarations.types.units();
+        let metre = units
+            .ids()
+            .find(|id| match id {
+                UnitId::Declared(key) => units
+                    .nominal_node(key)
+                    .is_some_and(|node| node.declaration.qualified_declaration == ["m"]),
+                UnitId::Compound(_) => false,
+            })
+            .expect("the source declares m");
+        carried_type = Some(ValueType::carried_quantity(CarriedQuantityType::new(
+            metre,
+            QuantityCarrier::Integer {
+                domain: IntegerInterval::new(Integer::from(-2_i64), Integer::from(2_i64))
+                    .expect("the specified ordered carrier bounds"),
+                rounding: RoundingMode::Exact,
+            },
+        )));
+    })
+    .expect_err("carried arithmetic refuses during checking");
+    let regions = regions.expect("the assembled source has regions");
+    let carried_type = carried_type.expect("the specified carried quantity type");
     let prohibited = [
-        "illegal_add",
-        "illegal_subtract",
-        "illegal_negate",
-        "illegal_multiply",
-        "illegal_divide",
-        "illegal_equal",
-        "illegal_order",
-        "illegal_dimension",
+        ("illegal_add", "a + a", Some(BinaryOperator::Add)),
+        ("illegal_subtract", "a - a", Some(BinaryOperator::Subtract)),
+        ("illegal_negate", "-a", None),
+        ("illegal_multiply", "a * a", Some(BinaryOperator::Multiply)),
+        ("illegal_divide", "a / a", Some(BinaryOperator::Divide)),
+        ("illegal_equal", "a = a", None),
+        ("illegal_order", "a < a", None),
+        (
+            "illegal_dimension",
+            "convert<Quantity<m, Int[-2, 2]>>(1 ms)",
+            None,
+        ),
     ];
-    for function in prohibited {
+    for (function, expression, operator) in prohibited {
         let matching: Vec<_> = refusals
             .iter()
             .filter(|refusal| {
@@ -424,16 +467,55 @@ fn a_carried_quantity_is_not_an_arithmetic_operand() {
             "{function} has exactly one expression refusal: {refusals:?}"
         );
         let refusal = matching[0];
-        assert!(
-            matches!(
+        assert_eq!(refusal.cause.code(), fsl_foundation::Code::IllTyped);
+        assert_eq!(
+            refusal.cause.catalog_code(),
+            Some(CatalogCode::new("ill_typed", "type-mismatch")),
+            "{function}: the specified refusal code and cause"
+        );
+        if let Some(expected) = operator {
+            let CheckCause::OperandTypeMismatch {
+                operator,
+                left_type,
+                right_type,
+            } = &refusal.cause
+            else {
+                panic!("{function} retains its binary operands: {refusal:?}");
+            };
+            assert_eq!(*operator, expected, "{function}: the source operator");
+            assert_eq!(**left_type, carried_type, "{function}: the left type");
+            assert_eq!(**right_type, carried_type, "{function}: the right type");
+        } else {
+            assert!(matches!(
                 &refusal.cause,
                 CheckCause::IllTyped(filament_exact::IllTypedCause::TypeMismatch)
-            ),
-            "{function} is refused as a type mismatch: {refusal:?}"
-        );
+            ));
+        }
+        let (_, expected_index) = function_indices
+            .iter()
+            .find(|(name, _)| name == function)
+            .expect("the named source function");
+        assert!(matches!(
+            &refusal.location.origin,
+            filament_semantic_value::location::ExpressionOwner::Body { function: found, index }
+                if found == function && index == expected_index
+        ));
         assert!(
             refusal.location.path().is_empty(),
             "{function} is refused at its root expression: {refusal:?}"
+        );
+        let region = regions
+            .refusal_region(refusal)
+            .expect("the refusal is located");
+        let full_source = format!(
+            "language \"ix:native\" edition \"1-draft\";\nprofile v = \"filament.value.complete/v1\";\n{source}"
+        );
+        let start = usize::try_from(region.start()).expect("the start fits the source");
+        let end = usize::try_from(region.end()).expect("the end fits the source");
+        assert_eq!(
+            &full_source[start..end],
+            expression,
+            "{function}: exact span"
         );
     }
     // The checker returns no package for any prohibited expression, so there
