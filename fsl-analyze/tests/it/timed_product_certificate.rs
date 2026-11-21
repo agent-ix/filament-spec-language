@@ -876,39 +876,38 @@ fn reset_loop_is_nonprogressive_without_a_deadline_clock() {
     assert!(proved_value_of(&tampered).is_none());
 }
 
-/// FR-923: a workload resolves a state by its weights, so an operation it weighs
-/// at zero cannot be dropped from the checker's product. The engine's own
-/// product faults on a zero-weight race (`workload-weights-sum`), so no
-/// document exists for the checker to refuse and the item settles `failed`,
-/// never `proved`. The checker's `Unsupported` refusal of such a state
-/// (`admit_workload`) is therefore not reachable through this pipeline.
+/// FR-923: a workload resolves a state by its weights, so an operation it
+/// weighs at zero cannot be dropped from the checker's product. The engine's own
+/// product faults on a zero-weight race, so no engine document exists for such
+/// a model; the checker is handed the document of the same model with the
+/// operation weighted `1` (the claim and every source span are unchanged) and
+/// must refuse it as `Unsupported` rather than check a product without `tick`.
 #[trace("TC-2492")]
 #[test]
-fn a_workload_that_gives_an_enabled_operation_no_weight_is_not_proved() {
-    let claim = "probabilistic ZeroWeight using ev on M over (c: M::Call) under One on origin \
-         { probability >= 0.01 [ eventually[0 ms, 5 ms] holds(c.retried) ] }\n";
-    let world = retx_with(
-        &[("send", &["late", "x"]), ("tick", &["retried"])],
-        GUARD,
-        true,
-        "delay M::Call::send ~ discrete { 2 ms: 1 };\n\
-         pre Tick using v on M::Call::tick { not self.late and not self.retried and self.x >= 2 ms }\n\
-         post Ticked using v on M::Call::tick { self.retried = true }\n\
-         workload One on M { weight Call::send = 1; weight Call::tick = 0; }\n",
-        claim,
-    );
-    let record = settle(&world, "ZeroWeight");
-    assert!(
-        matches!(
-            record.terminal().map(|terminal| terminal.value()),
-            Some(TerminalValue::Failed)
-        ),
-        "{record:#?}"
-    );
-    assert!(record
-        .terminal()
-        .and_then(|terminal| terminal.exact_certificate_document())
-        .is_none());
+fn the_checker_refuses_a_workload_that_weighs_an_enabled_operation_at_zero() {
+    let model = |tick_weight: &str| {
+        retx_with(
+            &[("send", &["late", "x"]), ("tick", &["retried"])],
+            GUARD,
+            true,
+            &format!(
+                "delay M::Call::send ~ discrete {{ 2 ms: 1 }};\n\
+                 pre Tick using v on M::Call::tick {{ not self.late and not self.retried and self.x >= 2 ms }}\n\
+                 post Ticked using v on M::Call::tick {{ self.retried = true }}\n\
+                 workload Both on M {{ weight Call::send = 1; weight Call::tick = {tick_weight}; }}\n"
+            ),
+            "probabilistic Weighted using ev on M over (c: M::Call) under Both on origin \
+             { probability <= 0.6 [ eventually[0 ms, 5 ms] holds(c.retried) ] }\n",
+        )
+    };
+    let weighted = model("1");
+    let record = settle(&weighted, "Weighted");
+    let doc = document(&record);
+    assert!(accepted(&weighted, "Weighted", &doc));
+    assert!(matches!(
+        check(&model("0"), "Weighted", &doc),
+        Err(ProbabilityDocumentError::Unsupported)
+    ));
 }
 
 /// The exact value of a `proved` record, when it is one.
