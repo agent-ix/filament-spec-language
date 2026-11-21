@@ -186,6 +186,7 @@ mod terminal_two_models;
 mod tied_item_resolution;
 mod time_lock_item;
 mod timed_product_certificate;
+mod timed_hidden_candidates;
 mod timed_refinement;
 mod timed_refinement_certificate;
 mod timed_refinement_liveness;

@@ -797,6 +797,38 @@ impl Refining {
         self
     }
 
+    /// This world with one abstract initial candidate per entry of
+    /// `candidates`: the `inflight`, `late` and `retried` flags and the
+    /// hidden `h` of each.
+    pub(crate) fn with_abstract_candidates(
+        mut self,
+        abstract_document: &[u8],
+        candidates: &[([bool; 3], Option<bool>)],
+    ) -> Self {
+        let abstract_package = serde_json::from_slice::<Json>(abstract_document).expect("JSON")
+            ["package"]["identity"]
+            .as_str()
+            .expect("an identity")
+            .to_owned();
+        self.abstract_initials = candidates
+            .iter()
+            .enumerate()
+            .map(|(index, &(flags, hidden))| {
+                snapshot(
+                    &mut self.snapshots,
+                    (&abstract_package, abstract_document),
+                    &format!("c{index}"),
+                    flags,
+                    hidden,
+                )
+            })
+            .collect();
+        if let Some(initial) = self.abstract_initials.first() {
+            self.abstract_initial = initial.clone();
+        }
+        self
+    }
+
     /// This world with `M`'s initial states replaced by one per entry of
     /// `states`, in order: `c`'s `inflight`, `late` and `retried`.
     /// `concrete_document` is `M`'s package.
