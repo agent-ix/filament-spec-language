@@ -1326,10 +1326,13 @@ pub(super) fn lower_over_package(
     bare: &fsl_package::BarePackage<'_>,
     lowering: &TlLowering,
     run: &package_observed::PackageRun<'_>,
-) -> Result<TlRecord> {
+) -> Result<PackageLowered> {
     use fsl_package::checked_views::{temporal_subject, FormulaOperation};
 
     let fault = |message: &str| RunCause::TlFault(message.to_owned());
+    // The snapshot is read and its universes checked before the clause is
+    // resolved, as the source route's request preparation orders them.
+    let initial = package_observed::initial(lowering, run)?;
     let package = bare.package();
     let row = package
         .temporal_clause_names()
@@ -1419,7 +1422,13 @@ pub(super) fn lower_over_package(
         key.clone(),
         filament_exact::Origin::new(filament_exact::Role::new("claim"), row.occurrence),
     );
-    let observed = package_observed::observe(bare, &claim, &key, lowering, run)?;
+    let observed =
+        match package_observed::observe(bare, &claim, &key, lowering, run, initial.as_ref())? {
+            package_observed::Observation::Valued(observed) => observed,
+            package_observed::Observation::Reported(reported) => {
+                return Ok(PackageLowered::Reported(reported));
+            }
+        };
     // Printing an atom is not evaluation (FR-931 "The lowering input"): the
     // names and term structure come from the package's own nodes, and no
     // world is built.
@@ -1454,6 +1463,15 @@ pub(super) fn lower_over_package(
         },
         lowering,
     )
+    .map(PackageLowered::Record)
+}
+
+/// What lowering a package's clause came to.
+pub(super) enum PackageLowered {
+    /// The `tl_lowering` record.
+    Record(TlRecord),
+    /// A stop the source route reports as a clause report.
+    Reported(Box<package_observed::Reported>),
 }
 
 /// The checked interval a package operator carries.

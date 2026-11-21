@@ -431,7 +431,7 @@ pub struct PackageBehaviours<'a> {
 /// broken invariant.
 pub fn run_package_behaviours(
     request: PackageBehaviours<'_>,
-) -> Result<crate::BehaviourValuations, ClauseDisposition> {
+) -> Result<crate::BehaviourValuations, Box<ClauseDisposition>> {
     let PackageBehaviours {
         input,
         clause,
@@ -445,7 +445,9 @@ pub fn run_package_behaviours(
         max_steps,
     } = request;
     let Some(mut universes) = universes(snapshots, std::slice::from_ref(initial)) else {
-        return Err(fault("admitted-universe-snapshot-reads").disposition);
+        return Err(Box::new(
+            fault("admitted-universe-snapshot-reads").disposition,
+        ));
     };
     for universe in &mut universes {
         universe.keys.sort();
@@ -464,17 +466,17 @@ pub fn run_package_behaviours(
         meter: accounting,
         emit: fsl_package::EmitLimits::new(u64::MAX),
     })
-    .map_err(ClauseDisposition::Admit)?;
+    .map_err(|failure| Box::new(ClauseDisposition::Admit(failure)))?;
     let Ok(instances) = system.instances(&clause.over().1) else {
-        return Err(fault("model-instances-are-listed").disposition);
+        return Err(Box::new(fault("model-instances-are-listed").disposition));
     };
     let Ok(letters) = system.package_clause_letters(clause, key) else {
-        return Err(fault("model-clause-has-letters").disposition);
+        return Err(Box::new(fault("model-clause-has-letters").disposition));
     };
     crate::model_check::replay::behaviour_valuations(
         &system, clause, &letters, &instances, max_steps, accounting,
     )
-    .map_err(replay_refusal)
+    .map_err(|refusal| Box::new(replay_refusal(refusal)))
 }
 
 /// The disposition of an expansion that stopped before the behaviour was

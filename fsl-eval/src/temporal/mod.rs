@@ -81,7 +81,7 @@ pub use observed::{
     evaluate_sampled_finite_window, letters_valuation, observed_valuation,
     package_observed_valuation, push_object, push_sample, read_object_stop, read_sample_stop,
     CarriedWindow, DescentSlice, FirstUndefined, HoldsStop, ObservedLocus, ObservedPositions,
-    ObservedRun, ObservedValuation, ObservedWindowRun, PackagePositions, SampleStop, ValuationStop,
+    ObservedRun, ObservedValuation, ObservedWindowRun, SampleStop, ValuationStop,
     WindowValuations,
 };
 pub use observed_window::{ObservedWindowExpressions, ObservedWindowSource};

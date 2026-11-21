@@ -1330,7 +1330,7 @@ pub(crate) fn run_package_temporal_over(
     )
 }
 
-/// FR-330: one temporal clause a checked package carries, run over a trace of
+/// FR-330: one temporal clause a checked package carries, read over a trace of
 /// record samples through the package's own evaluator.
 pub struct PackageSampledRequest<'a> {
     /// The package's evaluator.
@@ -1352,21 +1352,13 @@ pub struct PackageSampledRequest<'a> {
     pub accounting: filament_exact::ScalarLimits,
 }
 
-/// FR-330: [`run_temporal`] over the record samples of a checked package's
-/// clause, for the one route the package form reads: a clause under the
-/// infinite-trace profile over a finite trace or a lasso. A condition the
-/// evaluator refuses is an internal failure here; the source route reports
-/// its record.
-pub fn run_package_sampled(request: &PackageSampledRequest<'_>) -> ClauseRunReport {
-    let PackageSampledRequest {
-        evaluator,
-        name,
-        clause,
-        types,
-        trace,
-        accounting,
-    } = *request;
-    let report = |disposition: ClauseDisposition, usage: ClauseRunUsage| ClauseRunReport {
+/// The report of a package-route run that stopped with `disposition` and used
+/// `usage`: no witness, ledger, window or counterexample.
+pub fn disposition_report(
+    disposition: ClauseDisposition,
+    usage: ClauseRunUsage,
+) -> Box<ClauseRunReport> {
+    Box::new(ClauseRunReport {
         basis: match &disposition {
             ClauseDisposition::Temporal(verdict) => verdict.basis(),
             _ => SettlementBasis::Unavailable,
@@ -1387,52 +1379,117 @@ pub fn run_package_sampled(request: &PackageSampledRequest<'_>) -> ClauseRunRepo
         decisive: None,
         authenticated_temporal_selection: None,
         refused_at: None,
+    })
+}
+
+/// The clause, its node's key, the represented samples and the trace's shape
+/// of `request`, or the report of the first thing that stops the run: a clause
+/// the package does not declare, a trace the package form does not read, a
+/// sample the clause's record type refuses.
+fn package_samples<'a>(
+    request: &PackageSampledRequest<'a>,
+) -> Result<
+    (
+        &'a fsl_semantics::check::CheckedTemporalClause,
+        &'a filament_exact::NodeKey,
+        Vec<Value>,
+        TemporalTrace,
+    ),
+    Box<ClauseRunReport>,
+> {
+    let early = |disposition| disposition_report(disposition, ClauseRunUsage::default());
+    let Some((clause, key)) = request.clause else {
+        return Err(early(ClauseDisposition::MissingName {
+            name: request.name.to_owned(),
+        }));
     };
-    let early = |disposition| report(disposition, ClauseRunUsage::default());
-    let Some((clause, key)) = clause else {
-        return early(ClauseDisposition::MissingName {
-            name: name.to_owned(),
-        });
-    };
-    let (ValueType::Composite(record), Some(shape)) = (&clause.over().1, trace.shape()) else {
-        return early(ClauseDisposition::EvaluateFault(
+    let (ValueType::Composite(record), Some(shape)) = (&clause.over().1, request.trace.shape())
+    else {
+        return Err(early(ClauseDisposition::EvaluateFault(
             filament_semantic_value::catalog::InternalFault::new(
                 "temporal",
                 "package-sampled-run-reads-a-record-trace",
             ),
-        ));
+        )));
     };
     let mut samples: Vec<Value> = Vec::new();
-    for (index, document) in trace.documents().enumerate() {
+    for (index, document) in request.trace.documents().enumerate() {
         match fsl_semantics::model::observation::admit_record_sample(
-            types,
+            request.types,
             record,
             document.identity.as_bytes(),
         ) {
             Ok(sample) => samples.push(sample),
             Err(mut record) => {
                 record.fields.insert("position", index.to_string());
-                return early(ClauseDisposition::Admit(AdmissionFailure::Refused(
+                return Err(early(ClauseDisposition::Admit(AdmissionFailure::Refused(
                     Box::new(record),
-                )));
+                ))));
             }
         }
     }
-    let mut meter = Meter::new(accounting);
-    let observed = fsl_eval::temporal::evaluate_package_positions(
-        evaluator,
+    Ok((clause, key, samples, shape))
+}
+
+/// FR-757 "Cross-evaluation" over a checked package: the valuation of every
+/// atom and activation of the clause over the record samples of a finite
+/// trace or lasso, as the source route's valuation run reads it.
+///
+/// # Errors
+///
+/// The report the source route gives for the same stop: a missing clause, a
+/// refused sample, or the fault of a valuation that reads every atom and
+/// activation.
+pub fn run_package_valuation(
+    request: &PackageSampledRequest<'_>,
+) -> Result<fsl_eval::temporal::ObservedValuation, Box<ClauseRunReport>> {
+    let (clause, key, samples, shape) = package_samples(request)?;
+    let mut meter = Meter::new(request.accounting);
+    fsl_eval::temporal::package_observed_valuation(
+        request.evaluator,
         clause,
         key,
-        fsl_eval::temporal::PackagePositions::Samples(&samples),
+        &samples,
+        shape,
+        &mut meter,
+    )
+    .map_err(|_| {
+        disposition_report(
+            ClauseDisposition::EvaluateFault(filament_semantic_value::catalog::InternalFault::new(
+                "temporal",
+                "valuation-reads-every-atom-and-activation",
+            )),
+            ClauseRunUsage::from_meter(&meter, AdmissionUsage::default()),
+        )
+    })
+}
+
+/// FR-330: [`run_temporal`] over the record samples of a checked package's
+/// clause, for the one route the package form reads: a clause under the
+/// infinite-trace profile over a finite trace or a lasso. A refused condition
+/// reports the source route's refusal code and cause, with no source span.
+pub fn run_package_sampled(request: &PackageSampledRequest<'_>) -> Box<ClauseRunReport> {
+    let (clause, key, samples, shape) = match package_samples(request) {
+        Ok(read) => read,
+        Err(report) => return report,
+    };
+    let mut meter = Meter::new(request.accounting);
+    let observed = fsl_eval::temporal::evaluate_package_positions(
+        request.evaluator,
+        clause,
+        key,
+        &samples,
         shape,
         &mut meter,
     );
     let (disposition, refused_at) = match (observed.stopped, observed.result) {
-        (Some(HoldsStop::Refused { at, .. }), _) => (
-            ClauseDisposition::EvaluateFault(filament_semantic_value::catalog::InternalFault::new(
-                "temporal",
-                "package-condition-refused",
-            )),
+        // A refused condition is the caller's: the source route's code and
+        // cause, located at the package node, which has no source span.
+        (Some(HoldsStop::Refused { at, evaluation }), _) => (
+            match super::super::call::convert_outcome_resolving(evaluation, |_| None, &[]) {
+                Ok(outcome) => ClauseDisposition::Evaluate(outcome),
+                Err(refusal) => refusal_disposition(*refusal),
+            },
             Some(at.index()),
         ),
         (Some(HoldsStop::Failed(failure)), _) => {
@@ -1448,9 +1505,9 @@ pub fn run_package_sampled(request: &PackageSampledRequest<'_>) -> ClauseRunRepo
         ),
     };
     let (disposition, counterexample) =
-        with_counterexample(clause, trace, disposition, observed.undefined);
+        with_counterexample(clause, request.trace, disposition, observed.undefined);
     let usage = ClauseRunUsage::from_meter(&meter, AdmissionUsage::default());
-    let mut finished = report(disposition, usage);
+    let mut finished = disposition_report(disposition, usage);
     finished.counterexample = counterexample;
     finished.refused_at = refused_at;
     finished

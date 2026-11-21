@@ -341,7 +341,7 @@ fn execute_clause(
             trace: &work.trace,
             accounting: work.accounting,
         });
-    output::clause_report(report, &work.selection)
+    output::clause_report(*report, &work.selection)
 }
 
 /// FR-1039: prepare a `tl_lowering` request over a selected package. Its
@@ -744,7 +744,7 @@ pub(super) fn execute(prepared: PreparedPackageRun) -> Result<RunResult> {
             return Ok(result);
         }
         Work::Lowering(lowering, snapshot) => {
-            let record = super::tl::lower_over_package(
+            let lowered = super::tl::lower_over_package(
                 &bare,
                 &lowering,
                 &super::tl::PackageRun {
@@ -753,13 +753,23 @@ pub(super) fn execute(prepared: PreparedPackageRun) -> Result<RunResult> {
                     snapshot: snapshot.as_deref(),
                 },
             )?;
-            return Ok(RunResult {
-                exit_code: record.exit_code,
-                value: super::NativeResult::lowering_document(super::tl::document(record.record)),
-                outcome: None,
-                requirements: None,
-                sources: crate::Sources::from_sources(models),
-            });
+            let mut result = match lowered {
+                super::tl::PackageLowered::Record(record) => RunResult {
+                    exit_code: record.exit_code,
+                    value: super::NativeResult::lowering_document(super::tl::document(
+                        record.record,
+                    )),
+                    outcome: None,
+                    requirements: None,
+                    sources: crate::Sources::default(),
+                },
+                // The source route's clause report for the same stop.
+                super::tl::PackageLowered::Reported(reported) => {
+                    output::clause_report(*reported.report, &reported.selection)?
+                }
+            };
+            result.sources = crate::Sources::from_sources(models);
+            return Ok(result);
         }
     };
     let objects = if let Some(snapshot) = &call.snapshot {

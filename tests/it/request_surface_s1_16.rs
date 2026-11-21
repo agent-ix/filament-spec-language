@@ -1365,25 +1365,29 @@ fn compile_handoff(directory: &Path, unit: &str) -> Value {
 #[test]
 #[trace("TC-2601", "FR-931-AC-18")]
 fn a_lasso_cross_evaluation_over_a_handoff_directory_returns_the_source_record() {
-    let unit = counter_unit("");
-    let lower = json!({"clause": "C", "cross_evaluate": {"trace": {"lasso": {"prefix": [],
-        "loop": [{"sample": {"level": {"integer": "0"}}}]}}}});
-    let (source_code, from_source) = run(&unit, true, ("tl_lowering", lower.clone()));
-    assert_eq!(source_code, 0, "{from_source}");
-    let cross = &from_source["tl_lowering"]["cross_evaluation"];
-    assert_eq!(cross["traces"], 1, "{from_source}");
-    assert_eq!(cross["agree"], true, "{from_source}");
-
+    let unit = lasso_unit();
     let directory = tempfile::tempdir().unwrap();
     spine::write(directory.path(), Case::Healthy).unwrap();
     let models = compile_handoff(directory.path(), &unit);
-    let (code, from_package) = write_request(
-        directory.path(),
-        &json!({"format": "native-run/1", "request": {"models": models,
-            "package": {"directory": "handoff"}, "tl_lowering": lower}}),
-    );
-    assert_eq!(code, source_code, "{from_package}");
-    assert_eq!(from_package, from_source);
+    for (trace, _, _) in lasso_cases() {
+        for clause in ["Safe", "Hits"] {
+            let lower = json!({"clause": clause, "cross_evaluate": {"trace": trace}});
+            let (source_code, from_source) = run(&unit, true, ("tl_lowering", lower.clone()));
+            assert_eq!(source_code, 0, "{clause} {trace}: {from_source}");
+            let cross = &from_source["tl_lowering"]["cross_evaluation"];
+            assert_eq!(cross["traces"], 1, "{from_source}");
+            assert_eq!(cross["agree"], true, "{from_source}");
+
+            let (code, from_package) = write_request(
+                directory.path(),
+                &json!({"format": "native-run/1", "request": {"models": models,
+                    "package": {"directory": "handoff"}, "tl_lowering": lower}}),
+            );
+            assert_eq!(code, source_code, "{clause} {trace}: {from_package}");
+            assert_eq!(from_package, from_source, "{clause} {trace}");
+        }
+    }
+    let lower = json!({"clause": "Safe", "cross_evaluate": {"trace": lasso_cases()[0].0}});
     for package in [
         json!({"file": "package.json"}),
         json!({"file": "package.json", "equality": "handoff/equality.json"}),
@@ -1403,57 +1407,121 @@ fn a_lasso_cross_evaluation_over_a_handoff_directory_returns_the_source_record()
     }
 }
 
-/// FR-1039 (TC-3019): a `clause` run of a temporal clause over record samples,
-/// over the unit's handoff `{"directory": D}` with the source removed, returns
-/// the source route's result document, byte-equal, for a satisfied and a
-/// violated trace and a lasso; over `{file}` it refuses `invalid-request` with
+/// FR-1039 Outputs (TC-3019): a `clause` run of a temporal clause over record
+/// samples, over the unit's handoff `{"directory": D}` with the source
+/// removed, returns the source route's result document, byte-equal, and the
+/// verdict the lasso's slots give (`Settles` and `Recurs` over lassos whose
+/// prefix and loop slots differ in value) and for finite traces; over `{file}`
+/// and `{file, equality}` it refuses `invalid-request` with
 /// `requires: directory`.
 #[test]
-#[trace("TC-3019", "FR-1039-AC-6")]
+#[trace("TC-3019", "FR-1039")]
 fn a_clause_run_over_a_handoff_directory_returns_the_source_result() {
-    let unit = counter_unit("");
-    let sample = |level: u32| json!({"sample": {"level": {"integer": level.to_string()}}});
-    let traces = [
-        json!({"lasso": {"prefix": [], "loop": [sample(0)]}}),
-        json!({"lasso": {"prefix": [sample(1)], "loop": [sample(1)]}}),
-        json!({"finite": [sample(1), sample(1), sample(2)]}),
-        json!({"finite": [sample(0), sample(1)]}),
-    ];
+    let unit = lasso_unit();
     let directory = tempfile::tempdir().unwrap();
     spine::write(directory.path(), Case::Healthy).unwrap();
     let models = compile_handoff(directory.path(), &unit);
-    let mut verdicts = std::collections::BTreeSet::new();
-    for trace in &traces {
-        let clause = json!({"selection": {"temporal": {"name": "C", "trace": trace}},
+    let finite = json!({"finite": [level_sample(1), level_sample(1), level_sample(2)]});
+    let mut cases: Vec<(&str, Value, Option<u8>)> = Vec::new();
+    for (trace, settles, recurs) in lasso_cases() {
+        cases.push(("Settles", trace.clone(), Some(settles)));
+        cases.push(("Recurs", trace, Some(recurs)));
+    }
+    cases.push(("Settles", finite.clone(), None));
+    cases.push(("Recurs", finite, None));
+    for (name, trace, expected) in &cases {
+        let clause = json!({"selection": {"temporal": {"name": name, "trace": trace}},
             "observations": {}});
         let (source_code, from_source) = run(&unit, true, ("clause", clause.clone()));
-        assert_ne!(source_code, 20, "{trace}: {from_source}");
+        assert_ne!(source_code, 20, "{name} {trace}: {from_source}");
+        if let Some(expected) = expected {
+            assert_eq!(source_code, *expected, "{name} {trace}: {from_source}");
+        }
         let (code, from_package) = write_request(
             directory.path(),
             &json!({"format": "native-run/1", "request": {"models": models,
                 "package": {"directory": "handoff"}, "clause": clause}}),
         );
-        assert_eq!(code, source_code, "{trace}: {from_package}");
-        assert_eq!(from_package, from_source, "{trace}");
-        verdicts.insert(source_code);
+        assert_eq!(code, source_code, "{name} {trace}: {from_package}");
+        assert_eq!(from_package, from_source, "{name} {trace}");
     }
-    assert!(
-        verdicts.len() > 1,
-        "a satisfied and a violated trace: {verdicts:?}"
-    );
-    let (code, value) = write_request(
+    for package in [
+        json!({"file": "package.json"}),
+        json!({"file": "package.json", "equality": "handoff/equality.json"}),
+    ] {
+        let (code, value) = write_request(
+            directory.path(),
+            &json!({"format": "native-run/1", "request": {"models": models,
+                "package": package,
+                "clause": {"selection": {"temporal": {"name": "Settles",
+                    "trace": cases[0].1}}, "observations": {}}}}),
+        );
+        assert_eq!(code, 20, "{package}: {value}");
+        assert_eq!(value["code"], "invalid-request", "{package}: {value}");
+        assert_eq!(
+            value["details"],
+            json!({"member": "clause", "requires": "directory"}),
+            "{package}: {value}"
+        );
+    }
+}
+
+/// FR-1039 (TC-3019): a `holds` condition the kernel refuses inside a clause
+/// run is the caller's refusal on both routes, never an internal failure. The
+/// package route reports the source route's code and cause; only the locus
+/// differs, because the package carries no source span.
+#[test]
+#[trace("TC-3019", "FR-1039")]
+fn a_refused_condition_in_a_clause_run_has_the_same_code_and_cause_on_both_routes() {
+    // `count<Zero>` of a non-zero element leaves `Int[0, 0]`: the kernel
+    // refuses the condition at a level of 1 or more.
+    let unit = "language \"ix:native\" edition \"1-draft\";\n\
+        profile v = \"filament.value.complete/v1\";\n\
+        profile m = \"filament.model.complete/v1\";\n\
+        profile t = \"filament.temporal.infinite-trace/v1\";\n\
+        model Config = \"example/config-version\";\n\
+        record Counter { level: Int[0, 9]; }\n\
+        type Zero = Int[0, 0];\n\
+        function ints using v(xs: Sequence<Integer>[0, 3]): Sequence<Integer>[0, 3] pure { xs }\n\
+        temporal C using t over (c: Counter) clock \"steps\" on each (q: Counter) \
+        { always holds(count<Zero>(m in ints(sequence[c.level]): m > 0) = 0) }\n";
+    let clause = json!({"selection": {"temporal": {"name": "C", "trace":
+        {"lasso": {"prefix": [], "loop": [level_sample(1)]}}}}, "observations": {}});
+    let directory = tempfile::tempdir().unwrap();
+    spine::write(directory.path(), Case::Healthy).unwrap();
+    let models = compile_handoff(directory.path(), unit);
+    let (source_code, from_source) = run(unit, true, ("clause", clause.clone()));
+    let (code, from_package) = write_request(
         directory.path(),
         &json!({"format": "native-run/1", "request": {"models": models,
-            "package": {"file": "package.json"},
-            "clause": {"selection": {"temporal": {"name": "C", "trace": traces[0]}},
-                "observations": {}}}}),
+            "package": {"directory": "handoff"}, "clause": clause}}),
     );
-    assert_eq!(code, 20, "{value}");
-    assert_eq!(value["code"], "invalid-request", "{value}");
+    // Neither route is an internal failure, and both give the same exit code.
+    assert_ne!(source_code, 30, "{from_source}");
+    assert_eq!(code, source_code, "{from_package}\n{from_source}");
+    // The same code and cause; the locus is the one member that may differ.
+    fn without_locus(value: &Value) -> Value {
+        match value {
+            Value::Object(members) => Value::Object(
+                members
+                    .iter()
+                    .filter(|(name, _)| !matches!(name.as_str(), "locus" | "location" | "message"))
+                    .map(|(name, member)| (name.clone(), without_locus(member)))
+                    .collect(),
+            ),
+            Value::Array(items) => Value::Array(items.iter().map(without_locus).collect()),
+            other => other.clone(),
+        }
+    }
+    let disposition = |value: &Value| without_locus(&value["disposition"]);
     assert_eq!(
-        value["details"],
-        json!({"member": "clause", "requires": "directory"}),
-        "{value}"
+        disposition(&from_package),
+        disposition(&from_source),
+        "{from_package}\n{from_source}"
+    );
+    assert!(
+        from_source.to_string().contains("integer_out_of_domain"),
+        "the fixture refuses a condition: {from_source}"
     );
 }
 
@@ -1491,7 +1559,80 @@ fn an_initial_cross_evaluation_over_a_handoff_directory_returns_the_source_recor
         );
         assert_eq!(code, source_code, "{keys:?} {max_steps}: {from_package}");
         assert_eq!(from_package, from_source, "{keys:?} {max_steps}");
+        for package in [
+            json!({"file": "package.json"}),
+            json!({"file": "package.json", "equality": "handoff/equality.json"}),
+        ] {
+            let (code, value) = write_request(
+                directory.path(),
+                &json!({"format": "native-run/1", "request": {"models": models,
+                    "package": package, "tl_lowering": lower}}),
+            );
+            assert_eq!(code, 20, "{package}: {value}");
+            assert_eq!(value["code"], "invalid-request", "{package}: {value}");
+            assert_eq!(
+                value["details"],
+                json!({"member": "tl_lowering.cross_evaluate", "requires": "directory"}),
+                "{package}: {value}"
+            );
+        }
     }
+}
+
+/// FR-931 "Cross-evaluation" (package route): a request the source route
+/// answers with its clause report, a sample its record type refuses, is
+/// answered with the same report, byte-equal and with the same exit code,
+/// over the handoff `{"directory": D}`.
+#[test]
+#[trace("TC-3019", "FR-1039")]
+fn a_refused_sample_in_a_cross_evaluation_returns_the_source_clause_report() {
+    let unit = lasso_unit();
+    let directory = tempfile::tempdir().unwrap();
+    spine::write(directory.path(), Case::Healthy).unwrap();
+    let models = compile_handoff(directory.path(), &unit);
+    let lower = json!({"clause": "Settles",
+        "cross_evaluate": {"trace": {"finite": [level_sample(1), level_sample(12)]}}});
+    let (source_code, from_source) = run(&unit, true, ("tl_lowering", lower.clone()));
+    assert!(from_source.get("tl_lowering").is_none(), "{from_source}");
+    let (code, from_package) = write_request(
+        directory.path(),
+        &json!({"format": "native-run/1", "request": {"models": models,
+            "package": {"directory": "handoff"}, "tl_lowering": lower}}),
+    );
+    assert_eq!(code, source_code, "{from_package}\n{from_source}");
+    assert_eq!(from_package, from_source);
+}
+
+/// FR-931 "Cross-evaluation" (package route): an `initial` snapshot with an
+/// incomplete population refuses before the clause is resolved, as on the
+/// source route, so a clause the package does not declare gives the same
+/// refusal on both.
+#[test]
+#[trace("TC-3019", "FR-1039")]
+fn an_incomplete_snapshot_refuses_before_a_missing_clause_on_both_routes() {
+    let unit = bump_low();
+    let directory = bump_directory(&unit, &["a"], false);
+    let lower = json!({"clause": "NoSuchClause",
+        "cross_evaluate": {"initial": "s.json", "max_steps": 1}});
+    let (source_code, from_source) = write_request(
+        directory.path(),
+        &json!({"format": "native-run/1", "request": {
+            "models": [{"format": "semantic-ir/2.0.0",
+                "source": source("spine-model.semantic-ir.json")}],
+            "program": {"source": source("unit.native")}, "tl_lowering": lower}}),
+    );
+    assert!(
+        from_source.to_string().contains("incomplete"),
+        "the source route refuses the population: {from_source}"
+    );
+    let models = compile_handoff(directory.path(), &unit);
+    let (code, from_package) = write_request(
+        directory.path(),
+        &json!({"format": "native-run/1", "request": {"models": models,
+            "package": {"directory": "handoff"}, "tl_lowering": lower}}),
+    );
+    assert_eq!(code, source_code, "{from_package}\n{from_source}");
+    assert_eq!(from_package, from_source);
 }
 
 /// FR-400-AC-13 and FR-931-AC-13 (package route): the reader-backed read
@@ -2171,6 +2312,54 @@ fn counter_unit(constraint: &str) -> String {
          temporal C using t over (c: Counter) clock \"steps\" on each (q: Counter) \
          {{ {constraint}once[1,1] not holds(c.level = 0) }}\n"
     )
+}
+
+/// The record-sample unit of the lasso parity tests: `Settles` holds where
+/// level 0 occurs only in the prefix, `Recurs` where it recurs in the loop, so
+/// the verdict of each depends on which slot every position of a lasso reads.
+fn lasso_unit() -> String {
+    "language \"ix:native\" edition \"1-draft\";\n\
+     profile v = \"filament.value.complete/v1\";\n\
+     profile m = \"filament.model.complete/v1\";\n\
+     profile t = \"filament.temporal.infinite-trace/v1\";\n\
+     model Config = \"example/config-version\";\n\
+     record Counter { level: Int[0, 9]; }\n\
+     temporal Settles using t over (c: Counter) clock \"steps\" on each (q: Counter) \
+     { eventually always not holds(c.level = 0) }\n\
+     temporal Recurs using t over (c: Counter) clock \"steps\" on each (q: Counter) \
+     { always eventually holds(c.level = 0) }\n\
+     temporal Safe using t over (c: Counter) clock \"steps\" on each (q: Counter) \
+     { always not holds(c.level = 0) }\n\
+     temporal Hits using t over (c: Counter) clock \"steps\" on each (q: Counter) \
+     { eventually holds(c.level = 0) }\n"
+        .to_owned()
+}
+
+/// A record sample of the lasso unit.
+fn level_sample(level: u32) -> Value {
+    json!({"sample": {"level": {"integer": level.to_string()}}})
+}
+
+/// The lassos of the parity tests, each with the exit code `Settles` and
+/// `Recurs` settle with. In the first, level 0 is only in the prefix; in the
+/// second, level 0 is only in the loop, after a prefix and a loop slot that
+/// differ in value, so a lasso that wraps to the wrong slot (the loop offset
+/// dropped, or the prefix folded into the cycle) reads another verdict.
+fn lasso_cases() -> [(Value, u8, u8); 2] {
+    [
+        (
+            json!({"lasso": {"prefix": [level_sample(0)],
+                "loop": [level_sample(1), level_sample(2)]}}),
+            0,
+            10,
+        ),
+        (
+            json!({"lasso": {"prefix": [level_sample(2)],
+                "loop": [level_sample(1), level_sample(0)]}}),
+            10,
+            0,
+        ),
+    ]
 }
 
 /// FR-931-AC-10, fairness half (TC-3023 step 4): the infinite-trace clause

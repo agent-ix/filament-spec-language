@@ -2365,22 +2365,10 @@ pub(crate) enum HorizonFault {
 /// before the horizon is computed.
 pub(crate) fn horizon(formula: &TemporalFormulaForm) -> Result<u64, HorizonFault> {
     let nodes = formula.nodes();
-    let mut reach = vec![0_u64; nodes.len()];
-    for (index, node) in nodes.iter().enumerate().rev() {
+    let rows = nodes.iter().enumerate().filter_map(|(index, node)| {
         let TemporalNodeForm::Operator(operator) = node else {
-            continue;
+            return None;
         };
-        let mut deepest = 0_u64;
-        for operand in &operator.operands {
-            if operand.index() <= index {
-                return Err(HorizonFault::Broken("operands-follow-operator"));
-            }
-            deepest = deepest.max(
-                *reach
-                    .get(operand.index())
-                    .ok_or(HorizonFault::Broken("operand-in-arena"))?,
-            );
-        }
         let own = match &operator.interval {
             Some(OperatorInterval::Steps(IntervalForm {
                 upper: IntervalUpper::Finite(upper),
@@ -2388,21 +2376,93 @@ pub(crate) fn horizon(formula: &TemporalFormulaForm) -> Result<u64, HorizonFault
             })) => *upper,
             Some(OperatorInterval::Steps(_) | OperatorInterval::Timed(_)) | None => 0,
         };
-        let Some(total) = deepest.checked_add(own) else {
-            return Err(HorizonFault::Overflow {
+        Some(ReachRow {
+            index,
+            operands: operator
+                .operands
+                .iter()
+                .map(|operand| operand.index())
+                .collect(),
+            own,
+        })
+    });
+    greatest_reach(nodes.len(), formula.root().index(), rows).map_err(|fault| match fault {
+        ReachFault::Overflow {
+            index,
+            deepest,
+            own,
+        } => match nodes.get(index) {
+            Some(TemporalNodeForm::Operator(operator)) => HorizonFault::Overflow {
                 span: operator.operator_span,
                 deepest,
                 own,
+            },
+            Some(_) | None => HorizonFault::Broken("operator-in-arena"),
+        },
+        ReachFault::Broken(invariant) => HorizonFault::Broken(invariant),
+    })
+}
+
+/// One operator of a formula arena, as the horizon reads it.
+struct ReachRow {
+    /// The operator's arena index.
+    index: usize,
+    /// Its operands' arena indices, each after `index`.
+    operands: Vec<usize>,
+    /// Its own interval's finite upper bound; 0 for none.
+    own: u64,
+}
+
+/// Why [`greatest_reach`] found no horizon.
+enum ReachFault {
+    /// The sum of interval upper bounds at the operator `index` passed `u64`.
+    Overflow {
+        index: usize,
+        deepest: u64,
+        own: u64,
+    },
+    /// A broken invariant of the formula's arena.
+    Broken(&'static str),
+}
+
+/// The greatest sum of interval upper bounds along a path from `root` of an
+/// arena of `len` nodes: each operator's `rows` entry, in arena order, reads
+/// its operands' reaches, which a reverse pass has already computed. The one
+/// computation behind both the source form's [`horizon`] and the package
+/// form's.
+fn greatest_reach(
+    len: usize,
+    root: usize,
+    rows: impl DoubleEndedIterator<Item = ReachRow>,
+) -> Result<u64, ReachFault> {
+    let mut reach = vec![0_u64; len];
+    for row in rows.rev() {
+        let mut deepest = 0_u64;
+        for operand in &row.operands {
+            if *operand <= row.index {
+                return Err(ReachFault::Broken("operands-follow-operator"));
+            }
+            deepest = deepest.max(
+                *reach
+                    .get(*operand)
+                    .ok_or(ReachFault::Broken("operand-in-arena"))?,
+            );
+        }
+        let Some(total) = deepest.checked_add(row.own) else {
+            return Err(ReachFault::Overflow {
+                index: row.index,
+                deepest,
+                own: row.own,
             });
         };
         *reach
-            .get_mut(index)
-            .ok_or(HorizonFault::Broken("operator-in-arena"))? = total;
+            .get_mut(row.index)
+            .ok_or(ReachFault::Broken("operator-in-arena"))? = total;
     }
     reach
-        .get(formula.root().index())
+        .get(root)
         .copied()
-        .ok_or(HorizonFault::Broken("root-in-arena"))
+        .ok_or(ReachFault::Broken("root-in-arena"))
 }
 
 /// The horizon of the clause `declaration`: a sum past `u64` is a work-budget
@@ -2608,6 +2668,10 @@ pub enum PackageClauseRefusal {
     /// The formula's arena does not place each operator before its operands.
     #[error("the package formula is not an arena in operator order")]
     Arena,
+    /// The formula's horizon passes `u64`: the work-budget stage limit the
+    /// source form raises at the same sum.
+    #[error("the package formula's horizon exceeds the work-unit limit")]
+    Horizon(LimitExceeded),
     /// The parameter types do not classify within the position limit.
     #[error("the clause's parameter domains do not classify")]
     Domains,
@@ -2620,15 +2684,14 @@ pub enum PackageClauseRefusal {
 }
 
 /// A bounded package formula's horizon, as [`horizon`] reads it from the
-/// source form: the greatest sum of interval upper bounds along a path from
-/// the root. Each operator precedes its operands in the arena.
+/// source form. Each operator precedes its operands in the arena; a sum past
+/// `u64` is the work-budget stage limit the source form raises.
 fn package_horizon(nodes: &[FormulaNode]) -> Result<u64, PackageClauseRefusal> {
-    let mut reach = vec![0_u64; nodes.len()];
-    for (index, node) in nodes.iter().enumerate().rev() {
-        let (operands, interval): (Vec<usize>, Option<&CheckedInterval>) = match node {
+    let rows = nodes.iter().enumerate().filter_map(|(index, node)| {
+        let (operands, interval) = match node {
             FormulaNode::Constant(_)
             | FormulaNode::Holds { .. }
-            | FormulaNode::Aggregate { .. } => continue,
+            | FormulaNode::Aggregate { .. } => return None,
             FormulaNode::Not(operand) => (vec![operand.0], None),
             FormulaNode::And(left, right)
             | FormulaNode::Or(left, right)
@@ -2643,15 +2706,6 @@ fn package_horizon(nodes: &[FormulaNode]) -> Result<u64, PackageClauseRefusal> {
                 ..
             } => (vec![left.0, right.0], interval.as_ref()),
         };
-        let mut deepest = 0_u64;
-        for operand in operands {
-            deepest = deepest.max(
-                reach
-                    .get(operand)
-                    .copied()
-                    .ok_or(PackageClauseRefusal::Arena)?,
-            );
-        }
         let own = match interval {
             Some(CheckedInterval::Steps(steps)) => match steps.upper() {
                 TemporalUpper::Finite(upper) => upper,
@@ -2659,11 +2713,22 @@ fn package_horizon(nodes: &[FormulaNode]) -> Result<u64, PackageClauseRefusal> {
             },
             Some(CheckedInterval::Timed(_)) | None => 0,
         };
-        *reach.get_mut(index).ok_or(PackageClauseRefusal::Arena)? = deepest
-            .checked_add(own)
-            .ok_or(PackageClauseRefusal::Arena)?;
-    }
-    reach.first().copied().ok_or(PackageClauseRefusal::Arena)
+        Some(ReachRow {
+            index,
+            operands,
+            own,
+        })
+    });
+    greatest_reach(nodes.len(), 0, rows).map_err(|fault| match fault {
+        ReachFault::Overflow { deepest, own, .. } => {
+            PackageClauseRefusal::Horizon(LimitExceeded::new(
+                Setting::S3WorkUnits,
+                u64::MAX,
+                u128::from(deepest) + u128::from(own),
+            ))
+        }
+        ReachFault::Broken(_) => PackageClauseRefusal::Arena,
+    })
 }
 
 impl CheckedTemporalClause {

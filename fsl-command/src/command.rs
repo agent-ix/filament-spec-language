@@ -3867,7 +3867,7 @@ fn prepare_lowering(
     let run = clause::read(intake, request, &clause, source, observation_override)?;
     let behaviours = match &lowering.cross {
         Some(tl::CrossEvaluate::Initial { max_steps, .. }) => {
-            Some(initial_subject(&run, *max_steps)?)
+            Some(initial_subject(&run.snapshots, *max_steps)?)
         }
         Some(tl::CrossEvaluate::Trace { .. }) | None => None,
     };
@@ -3887,10 +3887,10 @@ fn prepare_lowering(
 /// refuses `incomplete_population` naming it, as FR-620 refuses a universe
 /// snapshot's.
 fn initial_subject(
-    run: &fsl_replay::spine::ClauseRunRequest,
+    provision: &fsl_semantics::model::observation::DocumentProvision,
     max_steps: u64,
 ) -> Result<(fsl_semantics::model::observation::DocumentRef, usize)> {
-    let mut snapshots = run.snapshots.keys();
+    let mut snapshots = provision.keys();
     let (Some(initial), None) = (snapshots.next(), snapshots.next()) else {
         return Err(RunCause::ClauseRequest {
             member: "tl_lowering.cross_evaluate.initial".to_owned(),
@@ -3906,7 +3906,7 @@ fn initial_subject(
             "proof_bounds": [],
         }))?;
     subject
-        .check_universes(&run.snapshots)
+        .check_universes(provision)
         .map_err(RunCause::AnalyzeUniverse)?;
     let max_steps = usize::try_from(max_steps).map_err(|_| RunCause::ClauseRequest {
         member: "tl_lowering.cross_evaluate.max_steps".to_owned(),

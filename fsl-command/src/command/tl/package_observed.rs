@@ -12,16 +12,16 @@
 use std::collections::BTreeMap;
 
 use fsl_eval::simulation::model::{PackageModelInput, PendingClauseForm, PendingPackageForm};
-use fsl_eval::temporal::{PackagePositions, TemporalTrace};
 use fsl_foundation::source::provenance::OccurrenceKey;
 use fsl_package::BarePackage;
 use fsl_replay::spine::{
-    read_clause_selection, ClauseDisposition, ClauseRunSelection, ObservedValuation,
-    PackageBehaviours, SuppliedObservation, TraceInput,
+    read_clause_selection, ClauseDisposition, ClauseRunReport, ClauseRunSelection,
+    ObservedValuation, PackageBehaviours, PackageSampledRequest, SuppliedObservation, TraceInput,
 };
 use fsl_replay::BehaviourValuations;
 use fsl_semantics::model::accounting::ModelNormalizationLimits;
 use fsl_semantics::model::intake::PackageInput;
+use fsl_semantics::model::observation::DocumentProvision;
 
 use super::{CrossEvaluate, TlLowering};
 use crate::command::{wire, Result, RunCause};
@@ -37,6 +37,17 @@ pub(in crate::command) struct PackageRun<'a> {
     pub(in crate::command) snapshot: Option<&'a [u8]>,
 }
 
+/// The snapshot a `cross_evaluate.initial` request builds its model subject
+/// from, checked as the source route checks it.
+pub(in crate::command) struct Initial {
+    /// The snapshot, read as an observation named `initial`.
+    observation: SuppliedObservation,
+    /// The snapshot document, by reference.
+    snapshots: DocumentProvision,
+    /// The longest behaviour, in steps.
+    max_steps: usize,
+}
+
 /// The native valuation of a package's clause: the one trace of a `trace`
 /// request, or the behaviours of an `initial` request. A request that asks
 /// for the clause alone, or whose trace the clause's profile does not read,
@@ -49,6 +60,23 @@ pub(in crate::command) struct Observed {
     pub(in crate::command) behaviours: Option<BehaviourValuations>,
 }
 
+/// A run that stopped before it had a valuation: the clause report the source
+/// route gives for the same stop, and the selection it echoes.
+pub(in crate::command) struct Reported {
+    /// The clause report.
+    pub(in crate::command) report: Box<ClauseRunReport>,
+    /// The selection the report echoes.
+    pub(in crate::command) selection: ClauseRunSelection,
+}
+
+/// What reading a package's clause came to.
+pub(in crate::command) enum Observation {
+    /// The valuation the lowering compares with.
+    Valued(Observed),
+    /// A stop the source route reports as a clause report.
+    Reported(Box<Reported>),
+}
+
 fn invalid(member: &str, reason: impl Into<String>) -> RunCause {
     RunCause::ClauseRequest {
         member: member.to_owned(),
@@ -56,8 +84,52 @@ fn invalid(member: &str, reason: impl Into<String>) -> RunCause {
     }
 }
 
-fn fault(message: &str) -> RunCause {
-    RunCause::TlFault(message.to_owned())
+/// The `initial` snapshot of `lowering`, when it asks for behaviours: read,
+/// and its universes checked, before the clause is resolved, as the source
+/// route's `prepare_lowering` does.
+pub(in crate::command) fn initial(
+    lowering: &TlLowering,
+    run: &PackageRun<'_>,
+) -> Result<Option<Initial>> {
+    let Some(CrossEvaluate::Initial { initial, max_steps }) = &lowering.cross else {
+        return Ok(None);
+    };
+    let bytes = run.snapshot.ok_or_else(|| {
+        invalid(
+            "tl_lowering.cross_evaluate.initial",
+            "expected one snapshot file",
+        )
+    })?;
+    let mut observation = SuppliedObservation::from_document(super::INITIAL_KEY, bytes.to_vec())
+        .map_err(|error| invalid(&error.member, error.reason))?;
+    observation.path = Some(initial.clone());
+    let snapshots: DocumentProvision =
+        BTreeMap::from([(observation.reference.clone(), observation.bytes.clone())]);
+    let (_, max_steps) = crate::command::initial_subject(&snapshots, *max_steps)?;
+    Ok(Some(Initial {
+        observation,
+        snapshots,
+        max_steps,
+    }))
+}
+
+/// The selection the source route reads `lowering`'s clause run from.
+fn clause_selection(
+    lowering: &TlLowering,
+    initial: Option<&Initial>,
+) -> Result<ClauseRunSelection> {
+    let selection: wire::ClauseRun = serde_json::from_value(super::selection(lowering))?;
+    let parts = selection
+        .selection
+        .into_parts()
+        .map_err(|error| invalid(&error.member, error.reason))?;
+    let observations = initial
+        .map(|initial| {
+            BTreeMap::from([(super::INITIAL_KEY.to_owned(), initial.observation.clone())])
+        })
+        .unwrap_or_default();
+    read_clause_selection(parts, &observations, None)
+        .map_err(|error| invalid(&error.member, error.reason))
 }
 
 /// The native valuation `lowering`'s `cross_evaluate` asks of the clause
@@ -68,9 +140,10 @@ pub(super) fn observe(
     key: &filament_exact::NodeKey,
     lowering: &TlLowering,
     run: &PackageRun<'_>,
-) -> Result<Observed> {
+    initial: Option<&Initial>,
+) -> Result<Observation> {
     let Some(cross) = &lowering.cross else {
-        return Ok(Observed::default());
+        return Ok(Observation::Valued(Observed::default()));
     };
     let model = PackageModelInput::of(bare, run.packages, run.model_limits)
         .map_err(|refusal| not_read(&refusal))?;
@@ -80,10 +153,14 @@ pub(super) fn observe(
             filament_semantic_value::checking::CheckingLimits::default().nodes(),
         )
         .map_err(|refusal| clause_not_read(&refusal))?;
+    let selection = clause_selection(lowering, initial)?;
     match cross {
-        CrossEvaluate::Trace { .. } => trace(bare, &model, &clause, key, lowering),
-        CrossEvaluate::Initial { max_steps, .. } => {
-            behaviours(&model, &clause, key, run, *max_steps)
+        CrossEvaluate::Trace { .. } => trace(bare, &model, (&clause, key), selection),
+        CrossEvaluate::Initial { .. } => {
+            let initial = initial.ok_or_else(|| {
+                RunCause::TlFault("an initial request reads its snapshot".to_owned())
+            })?;
+            behaviours(&model, (&clause, key), run, initial, selection)
         }
     }
 }
@@ -102,41 +179,32 @@ fn clause_not_read(refusal: &PendingClauseForm) -> RunCause {
 fn trace(
     bare: &BarePackage<'_>,
     model: &PackageModelInput<'_>,
-    clause: &fsl_semantics::check::CheckedTemporalClause,
-    key: &filament_exact::NodeKey,
-    lowering: &TlLowering,
-) -> Result<Observed> {
-    let selection: wire::ClauseRun = serde_json::from_value(super::selection(lowering))?;
-    let parts = selection
-        .selection
-        .into_parts()
-        .map_err(|error| invalid(&error.member, error.reason))?;
-    let ClauseRunSelection::SampledTemporal { trace, .. } =
-        read_clause_selection(parts, &BTreeMap::new(), None)
-            .map_err(|error| invalid(&error.member, error.reason))?
-    else {
+    (clause, key): (
+        &fsl_semantics::check::CheckedTemporalClause,
+        &filament_exact::NodeKey,
+    ),
+    selection: ClauseRunSelection,
+) -> Result<Observation> {
+    let ClauseRunSelection::SampledTemporal { name, trace, .. } = &selection else {
         return Err(invalid(
             "tl_lowering.cross_evaluate.over",
             "a package run reads record samples, which name no object",
         ));
     };
-    let filament_exact::ValueType::Composite(record) = &clause.over().1 else {
+    let filament_exact::ValueType::Composite(_) = &clause.over().1 else {
         return Err(invalid(
             "tl_lowering.cross_evaluate.trace",
             "the clause reads objects of a model, not record samples",
         ));
     };
-    let (documents, shape) = match &trace {
-        TraceInput::Finite(positions) if positions.is_empty() => return Ok(Observed::default()),
-        TraceInput::Finite(positions) => (
-            positions.iter().collect::<Vec<_>>(),
-            TemporalTrace::Finite {
-                len: length(positions.len())?,
-            },
-        ),
-        TraceInput::Lasso { prefix, repeat } => {
+    match trace {
+        TraceInput::Finite(positions) if positions.is_empty() => {
+            return Ok(Observation::Valued(Observed::default()))
+        }
+        TraceInput::Finite(_) => {}
+        TraceInput::Lasso { repeat, .. } => {
             if !fsl_replay::spine::profile_reads(clause.profile()).contains(&"lasso") {
-                return Ok(Observed::default());
+                return Ok(Observation::Valued(Observed::default()));
             }
             if repeat.is_empty() {
                 return Err(invalid(
@@ -144,13 +212,6 @@ fn trace(
                     "a lasso's loop holds at least one position",
                 ));
             }
-            (
-                prefix.iter().chain(repeat).collect(),
-                TemporalTrace::Lasso {
-                    prefix: length(prefix.len())?,
-                    loop_len: length(repeat.len())?,
-                },
-            )
         }
         TraceInput::Progressed { .. }
         | TraceInput::Timestamped { .. }
@@ -161,77 +222,39 @@ fn trace(
                 "only a finite trace or a lasso is cross-evaluated",
             ))
         }
+    }
+    let request = PackageSampledRequest {
+        evaluator: bare,
+        name,
+        clause: Some((clause, key)),
+        types: model.input().types,
+        trace,
+        accounting: fsl_replay::AccountingLimits::default().0,
     };
-    let types = model.input().types;
-    let samples = documents
-        .into_iter()
-        .map(|document| {
-            fsl_semantics::model::observation::admit_record_sample(
-                types,
-                record,
-                document.identity.as_bytes(),
-            )
-            .map_err(|record| RunCause::TlSubject(Box::new(record)))
-        })
-        .collect::<Result<Vec<_>>>()?;
-    let mut meter = filament_exact::Meter::new(fsl_replay::AccountingLimits::default().0);
-    let positions = fsl_eval::temporal::package_observed_valuation(
-        bare,
-        clause,
-        key,
-        PackagePositions::Samples(&samples),
-        shape,
-        &mut meter,
-    )
-    .map_err(|_| fault("the valuation reads every atom and activation"))?;
-    Ok(Observed {
-        positions: Some(positions),
-        behaviours: None,
-    })
-}
-
-fn length(len: usize) -> Result<u64> {
-    u64::try_from(len).map_err(|_| fault("a trace's length fits 64 bits"))
+    match fsl_replay::spine::run_package_valuation(&request) {
+        Ok(positions) => Ok(Observation::Valued(Observed {
+            positions: Some(positions),
+            behaviours: None,
+        })),
+        Err(report) => Ok(Observation::Reported(Box::new(Reported {
+            report,
+            selection,
+        }))),
+    }
 }
 
 /// The valuation of every behaviour of 1 to `max_steps` steps of the model
 /// subject the one `initial` snapshot builds.
 fn behaviours(
     model: &PackageModelInput<'_>,
-    clause: &fsl_semantics::check::CheckedTemporalClause,
-    key: &filament_exact::NodeKey,
+    (clause, key): (
+        &fsl_semantics::check::CheckedTemporalClause,
+        &filament_exact::NodeKey,
+    ),
     run: &PackageRun<'_>,
-    max_steps: u64,
-) -> Result<Observed> {
-    let bytes = run.snapshot.ok_or_else(|| {
-        invalid(
-            "tl_lowering.cross_evaluate.initial",
-            "expected one snapshot file",
-        )
-    })?;
-    let observation = SuppliedObservation::from_document("initial", bytes.to_vec())
-        .map_err(|error| invalid(&error.member, error.reason))?;
-    let snapshots: fsl_semantics::model::observation::DocumentProvision =
-        BTreeMap::from([(observation.reference.clone(), observation.bytes.clone())]);
-    let reference = serde_json::json!({
-        "authority": observation.reference.authority,
-        "identity": observation.reference.identity,
-    });
-    let subject: fsl_analyze::analyze::document::SubjectSelection =
-        serde_json::from_value(serde_json::json!({
-            "initial_states": [reference],
-            "universes": [reference],
-            "proof_bounds": [],
-        }))?;
-    subject
-        .check_universes(&snapshots)
-        .map_err(RunCause::AnalyzeUniverse)?;
-    let max_steps = usize::try_from(max_steps).map_err(|_| {
-        invalid(
-            "tl_lowering.cross_evaluate.max_steps",
-            "the step bound does not fit this platform",
-        )
-    })?;
+    initial: &Initial,
+    selection: ClauseRunSelection,
+) -> Result<Observation> {
     let observation_limits = fsl_replay::spine::ObservationLimitsWire::resolve(None)
         .map_err(|error| invalid(&error.member, error.reason))?;
     let valuations = fsl_replay::spine::run_package_behaviours(PackageBehaviours {
@@ -240,20 +263,29 @@ fn behaviours(
         key,
         packages: run.packages,
         model_limits: run.model_limits,
-        snapshots: &snapshots,
-        initial: &observation.reference,
+        snapshots: &initial.snapshots,
+        initial: &initial.observation.reference,
         observation_limits,
         accounting: fsl_replay::AccountingLimits::default().0,
-        max_steps,
-    })
-    .map_err(|disposition| match disposition {
-        ClauseDisposition::Admit(fsl_semantics::model::observation::AdmissionFailure::Refused(
-            record,
-        )) => RunCause::TlSubject(record),
-        other => RunCause::TlFault(format!("the behaviours were not valued: {other:?}")),
-    })?;
-    Ok(Observed {
-        positions: None,
-        behaviours: Some(valuations),
-    })
+        max_steps: initial.max_steps,
+    });
+    match valuations {
+        Ok(valuations) => Ok(Observation::Valued(Observed {
+            positions: None,
+            behaviours: Some(valuations),
+        })),
+        // FR-931: a snapshot the subject builder refuses refuses the request.
+        Err(disposition) => match *disposition {
+            ClauseDisposition::Admit(
+                fsl_semantics::model::observation::AdmissionFailure::Refused(record),
+            ) => Err(RunCause::TlSubject(record)),
+            other => Ok(Observation::Reported(Box::new(Reported {
+                report: fsl_replay::spine::disposition_report(
+                    other,
+                    fsl_replay::spine::ClauseRunUsage::default(),
+                ),
+                selection,
+            }))),
+        },
+    }
 }

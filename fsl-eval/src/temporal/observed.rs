@@ -723,6 +723,45 @@ const ACTIVATION_CODES: [&str; 2] = [
     "activation-condition-boolean",
 ];
 
+/// Keep the first undefined reading at the earliest position read, the
+/// position the evaluator reports (ADR-018 UE-1).
+fn keep_first_undefined(
+    undefined: &mut Option<FirstUndefined>,
+    locus: impl FnOnce() -> ObservedLocus,
+    position: TemporalPosition,
+    cause: &UndefinedCause,
+) {
+    if undefined
+        .as_ref()
+        .is_none_or(|first| position.index() < first.position.index())
+    {
+        *undefined = Some(FirstUndefined {
+            locus: locus(),
+            position,
+            cause: cause.clone(),
+        });
+    }
+}
+
+/// The represented slot position `index` of `trace` reads: a lasso wraps past
+/// its last represented position into the loop. `None` for an empty loop,
+/// which the evaluator refuses before it reads a letter.
+fn represented_slot(trace: TemporalTrace, index: u64) -> Option<usize> {
+    let slot = match trace {
+        TemporalTrace::Finite { .. } => Some(index),
+        TemporalTrace::Lasso { prefix, loop_len } => {
+            if index < prefix {
+                Some(index)
+            } else {
+                (index - prefix)
+                    .checked_rem(loop_len)
+                    .and_then(|offset| prefix.checked_add(offset))
+            }
+        }
+    };
+    slot.and_then(|slot| usize::try_from(slot).ok())
+}
+
 pub(super) struct ObservedLetters<'a> {
     package: &'a CheckedPackage,
     clause: &'a TemporalClauseNode,
@@ -781,18 +820,7 @@ impl<'a> ObservedLetters<'a> {
             ObservedPositions::ObjectTape { tape, from, .. } => (tape, from),
             ObservedPositions::Objects { .. } | ObservedPositions::Samples(_) => return None,
         };
-        let index = match self.trace {
-            TemporalTrace::Finite { .. } => position.index(),
-            TemporalTrace::Lasso { prefix, loop_len } => {
-                if position.index() < prefix {
-                    position.index()
-                } else {
-                    (position.index() - prefix)
-                        .checked_rem(loop_len)
-                        .and_then(|offset| prefix.checked_add(offset))?
-                }
-            }
-        };
+        let index = u64::try_from(represented_slot(self.trace, position.index())?).ok()?;
         match tape.entry(index.checked_add(from)?)? {
             TapeEntry::Read(letter) => Some(letter),
             TapeEntry::Held(_) | TapeEntry::Object(_) => None,
@@ -801,25 +829,14 @@ impl<'a> ObservedLetters<'a> {
 }
 
 impl ObservedLetters<'_> {
-    /// Keep the first undefined reading at the earliest position read, the
-    /// position the evaluator reports (ADR-018 UE-1).
+    /// Keep the first undefined reading at the earliest position read.
     fn note(
         &mut self,
         locus: impl FnOnce() -> ObservedLocus,
         position: TemporalPosition,
         cause: &UndefinedCause,
     ) {
-        if self
-            .undefined
-            .as_ref()
-            .is_none_or(|first| position.index() < first.position.index())
-        {
-            self.undefined = Some(FirstUndefined {
-                locus: locus(),
-                position,
-                cause: cause.clone(),
-            });
-        }
+        keep_first_undefined(&mut self.undefined, locus, position, cause);
     }
 
     /// Whether `position` is a silent sample (FR-504).
@@ -835,22 +852,7 @@ impl ObservedLetters<'_> {
         &self,
         position: TemporalPosition,
     ) -> Result<(&ObjectEnvironment, Value), LetterStop> {
-        let index = position.index();
-        let slot = match self.trace {
-            TemporalTrace::Finite { .. } => Some(index),
-            TemporalTrace::Lasso { prefix, loop_len } => {
-                if index < prefix {
-                    Some(index)
-                } else {
-                    // `loop_len` is at least 1: the evaluator refuses an empty
-                    // loop before it reads a letter.
-                    (index - prefix)
-                        .checked_rem(loop_len)
-                        .and_then(|offset| prefix.checked_add(offset))
-                }
-            }
-        };
-        let slot = slot.and_then(|slot| usize::try_from(slot).ok());
+        let slot = represented_slot(self.trace, position.index());
         let found = match self.positions {
             ObservedPositions::Objects { environments, over } => slot
                 .and_then(|slot| environments.get(slot))
@@ -1544,22 +1546,6 @@ pub fn observed_valuation(
     letters_valuation(clause.clause(), &mut letters, trace, meter)
 }
 
-/// What the represented positions of a package-route valuation hold.
-#[derive(Clone, Copy, Debug)]
-pub enum PackagePositions<'a> {
-    /// Snapshot positions: the object environment each admitted, and the
-    /// object the clause's `over` parameter names.
-    Objects {
-        /// The environment of each represented position.
-        environments: &'a [ObjectEnvironment],
-        /// The object bound to `over`.
-        over: &'a ObjectReference,
-    },
-    /// Record samples of a declared record trace subject, one per
-    /// represented position.
-    Samples(&'a [Value]),
-}
-
 /// The `holds` atoms and `on each` guard of a clause a checked package
 /// carries, read at the positions of an observed trace through the package's
 /// own evaluator.
@@ -1567,7 +1553,8 @@ struct PackageLetters<'a> {
     evaluator: &'a dyn crate::simulation::model::ModelEvaluator,
     clause: &'a fsl_semantics::check::CheckedTemporalClause,
     key: &'a filament_exact::NodeKey,
-    positions: PackagePositions<'a>,
+    /// The record sample at each represented position.
+    samples: &'a [Value],
     trace: TemporalTrace,
     /// The environment a sample position reads: it holds no object.
     empty: ObjectEnvironment,
@@ -1577,65 +1564,21 @@ struct PackageLetters<'a> {
 }
 
 impl PackageLetters<'_> {
-    /// Keep the first undefined reading at the earliest position read, the
-    /// position the evaluator reports (ADR-018 UE-1).
-    fn note(
-        &mut self,
-        locus: impl FnOnce() -> ObservedLocus,
-        position: TemporalPosition,
-        reading: &Result<AtomReading, LetterStop>,
-    ) {
-        let Ok(AtomReading::Undefined(cause)) = reading else {
-            return;
-        };
-        if self
-            .undefined
-            .as_ref()
-            .is_none_or(|first| position.index() < first.position.index())
-        {
-            self.undefined = Some(FirstUndefined {
-                locus: locus(),
-                position,
-                cause: cause.clone(),
-            });
-        }
-    }
-
     /// The environment position `position` observes and the value its `over`
-    /// parameter takes there: a lasso wraps past its last represented
-    /// position into the loop.
+    /// parameter takes there: the record sample at its represented slot.
     fn subject(
         &self,
         position: TemporalPosition,
     ) -> Result<(&ObjectEnvironment, Value), LetterStop> {
-        let index = position.index();
-        let slot = match self.trace {
-            TemporalTrace::Finite { .. } => Some(index),
-            TemporalTrace::Lasso { prefix, loop_len } => {
-                if index < prefix {
-                    Some(index)
-                } else {
-                    (index - prefix)
-                        .checked_rem(loop_len)
-                        .and_then(|offset| prefix.checked_add(offset))
-                }
-            }
-        }
-        .and_then(|slot| usize::try_from(slot).ok());
-        let found = match self.positions {
-            PackagePositions::Objects { environments, over } => slot
-                .and_then(|slot| environments.get(slot))
-                .map(|environment| (environment, Value::Reference(over.clone()))),
-            PackagePositions::Samples(samples) => slot
-                .and_then(|slot| samples.get(slot))
-                .map(|sample| (&self.empty, sample.clone())),
-        };
-        found.ok_or_else(|| {
-            LetterStop::Fault(InternalFault::new(
-                "temporal.observed",
-                "position-has-an-environment",
-            ))
-        })
+        represented_slot(self.trace, position.index())
+            .and_then(|slot| self.samples.get(slot))
+            .map(|sample| (&self.empty, sample.clone()))
+            .ok_or_else(|| {
+                LetterStop::Fault(InternalFault::new(
+                    "temporal.observed",
+                    "position-has-an-environment",
+                ))
+            })
     }
 }
 
@@ -1655,9 +1598,16 @@ impl TemporalLetters for PackageLetters<'_> {
             .evaluator
             .evaluate_holds(&named, over, &[], objects, meter);
         let reading =
-            ObservedLetters::reading(&mut self.stopped, position, evaluation, HOLDS_CODES);
-        self.note(|| ObservedLocus::Atom(atom), position, &reading);
-        reading
+            ObservedLetters::reading(&mut self.stopped, position, evaluation, HOLDS_CODES)?;
+        if let AtomReading::Undefined(cause) = &reading {
+            keep_first_undefined(
+                &mut self.undefined,
+                || ObservedLocus::Atom(atom),
+                position,
+                cause,
+            );
+        }
+        Ok(reading)
     }
 
     fn activation(
@@ -1670,9 +1620,16 @@ impl TemporalLetters for PackageLetters<'_> {
             .evaluator
             .evaluate_guard(self.key, over, objects, meter);
         let reading =
-            ObservedLetters::reading(&mut self.stopped, position, evaluation, ACTIVATION_CODES);
-        self.note(|| ObservedLocus::Activation, position, &reading);
-        reading
+            ObservedLetters::reading(&mut self.stopped, position, evaluation, ACTIVATION_CODES)?;
+        if let AtomReading::Undefined(cause) = &reading {
+            keep_first_undefined(
+                &mut self.undefined,
+                || ObservedLocus::Activation,
+                position,
+                cause,
+            );
+        }
+        Ok(reading)
     }
 
     fn captures(
@@ -1702,7 +1659,7 @@ pub fn package_observed_valuation(
     evaluator: &dyn crate::simulation::model::ModelEvaluator,
     clause: &fsl_semantics::check::CheckedTemporalClause,
     key: &filament_exact::NodeKey,
-    positions: PackagePositions<'_>,
+    samples: &[Value],
     trace: TemporalTrace,
     meter: &mut Meter,
 ) -> Result<ObservedValuation, ValuationStop> {
@@ -1710,7 +1667,7 @@ pub fn package_observed_valuation(
         evaluator,
         clause,
         key,
-        positions,
+        samples,
         trace,
         empty: ObjectEnvironment::default(),
         stopped: None,
@@ -1727,7 +1684,7 @@ pub fn evaluate_package_positions(
     evaluator: &dyn crate::simulation::model::ModelEvaluator,
     clause: &fsl_semantics::check::CheckedTemporalClause,
     key: &filament_exact::NodeKey,
-    positions: PackagePositions<'_>,
+    samples: &[Value],
     trace: TemporalTrace,
     meter: &mut Meter,
 ) -> ObservedRun {
@@ -1735,7 +1692,7 @@ pub fn evaluate_package_positions(
         evaluator,
         clause,
         key,
-        positions,
+        samples,
         trace,
         empty: ObjectEnvironment::default(),
         stopped: None,
