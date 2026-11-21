@@ -1,0 +1,261 @@
+   Compiling proc-macro2 v1.0.107
+   Compiling unicode-ident v1.0.24
+   Compiling quote v1.0.47
+   Compiling serde_core v1.0.228
+   Compiling memchr v2.8.3
+   Compiling zmij v1.0.23
+   Compiling itoa v1.0.18
+   Compiling cfg-if v1.0.4
+   Compiling version_check v0.9.5
+   Compiling serde v1.0.228
+   Compiling autocfg v1.5.1
+   Compiling allocator-api2 v0.2.21
+   Compiling serde_json v1.0.151
+   Compiling libc v0.2.189
+   Compiling foldhash v0.2.0
+   Compiling num-traits v0.2.19
+   Compiling equivalent v1.0.2
+   Compiling once_cell v1.21.4
+   Compiling regex-syntax v0.8.11
+   Compiling syn v2.0.119
+   Compiling syn v3.0.5
+   Compiling thiserror v2.0.20
+   Compiling num-integer v0.1.47
+   Compiling generic-array v0.14.7
+   Compiling typenum v1.20.1
+   Compiling num-bigint v0.4.8
+   Compiling heck v0.5.0
+   Compiling smallvec v1.16.0
+   Compiling getrandom v0.3.4
+   Compiling zerocopy v0.8.57
+   Compiling crypto-common v0.1.7
+   Compiling block-buffer v0.10.4
+   Compiling digest v0.10.7
+   Compiling hashbrown v0.17.1
+   Compiling aho-corasick v1.1.5
+   Compiling ahash v0.8.12
+   Compiling cpufeatures v0.2.17
+   Compiling stable_deref_trait v1.2.1
+   Compiling sha2 v0.10.9
+   Compiling num-rational v0.4.2
+   Compiling regex-automata v0.4.18
+   Compiling synstructure v0.13.2
+   Compiling num-iter v0.1.46
+   Compiling num-complex v0.4.6
+   Compiling parking_lot_core v0.9.12
+   Compiling thiserror-impl v2.0.20
+   Compiling serde_derive v1.0.228
+   Compiling zerofrom-derive v0.1.7
+   Compiling yoke-derive v0.8.2
+   Compiling zerofrom v0.1.8
+   Compiling zerovec-derive v0.11.6
+   Compiling num v0.4.3
+   Compiling log v0.4.34
+   Compiling ryu-js v1.0.3
+   Compiling scopeguard v1.2.0
+   Compiling ref-cast v1.0.27
+   Compiling tinyvec_macros v0.1.1
+   Compiling percent-encoding v2.3.2
+   Compiling tinyvec v1.13.2
+   Compiling lock_api v0.4.14
+   Compiling yoke v0.8.3
+   Compiling displaydoc v0.2.7
+   Compiling ref-cast-impl v1.0.27
+   Compiling quire-canonical-derive v0.3.0 (https://github.com/agent-ix/quire-canonical?tag=v0.3.1#2204c5c3)
+   Compiling zerovec v0.11.8
+   Compiling parking_lot v0.12.5
+   Compiling unicode-normalization v0.1.25
+   Compiling triomphe v0.1.17
+   Compiling bytecount v0.6.9
+   Compiling borrow-or-share v0.2.4
+   Compiling num-cmp v0.1.0
+   Compiling spin v0.9.9
+   Compiling arrayvec v0.7.8
+   Compiling crossbeam-utils v0.8.23
+   Compiling fraction v0.17.0
+   Compiling regex v1.13.1
+   Compiling bit-vec v0.8.0
+   Compiling crossbeam-epoch v0.9.21
+   Compiling micromap v0.3.0
+   Compiling getrandom v0.4.3
+   Compiling unicode-general-category v1.1.0
+   Compiling bit-set v0.8.0
+   Compiling tinystr v0.8.4
+   Compiling strum_macros v0.28.0
+   Compiling serde_derive_internals v0.29.1
+   Compiling hashbrown v0.16.1
+   Compiling quire-canonical v0.3.1 (https://github.com/agent-ix/quire-canonical?tag=v0.3.1#2204c5c3)
+   Compiling filament-exact v0.3.0 (https://github.com/agent-ix/filament-exact?rev=b26a8e4c592503fccdc4a0e3d2cce23dd8487616#b26a8e4c)
+   Compiling fluent-uri v0.4.1
+   Compiling shlex v2.0.1
+   Compiling schemars v0.8.22
+   Compiling vsimd v0.8.0
+   Compiling crossbeam-deque v0.8.8
+   Compiling writeable v0.6.4
+   Compiling outref v0.5.2
+   Compiling litemap v0.8.3
+   Compiling find-msvc-tools v0.1.12
+   Compiling object v0.39.1
+   Compiling icu_locale_core v2.3.0
+   Compiling cc v1.4.5
+   Compiling uuid-simd v0.8.0
+   Compiling schemars_derive v0.8.22
+   Compiling strum v0.28.0
+   Compiling email_address v0.2.9
+   Compiling fancy-regex v0.19.2
+   Compiling potential_utf v0.1.6
+   Compiling zerotrie v0.2.5
+   Compiling data-encoding v2.11.1
+   Compiling dyn-clone v1.0.20
+   Compiling utf8_iter v1.0.4
+   Compiling icu_properties_data v2.3.0
+   Compiling icu_normalizer_data v2.3.0
+   Compiling icu_provider v2.3.1
+   Compiling icu_collections v2.3.0
+   Compiling filament-semantic-value v0.1.5 (https://github.com/agent-ix/filament-semantic-value?rev=fa5e78aa71fcea5418492b67f13a33124af84459#fa5e78aa)
+   Compiling semver v1.0.28
+   Compiling regress v0.11.1
+   Compiling rayon-core v1.13.0
+   Compiling uuid v1.26.0
+   Compiling serde_tokenstream v0.2.3
+   Compiling bstr v1.13.1
+   Compiling same-file v1.0.6
+   Compiling walkdir v2.5.0
+   Compiling globset v0.4.20
+   Compiling icu_properties v2.3.0
+   Compiling typify-impl v0.7.0
+   Compiling icu_normalizer v2.3.0
+   Compiling ar_archive_writer v0.5.3
+   Compiling referencing v0.56.0
+   Compiling jsonschema-value v0.56.0
+   Compiling psm v0.1.32
+   Compiling indexmap v2.14.2
+   Compiling jsonschema-regex v0.56.0
+   Compiling utf8parse v0.2.2
+   Compiling ix-trace-rs v0.1.2 (https://github.com/agent-ix/ix-trace-rs?tag=v0.1.2#e29cc07f)
+   Compiling time-core v0.1.9
+   Compiling num-conv v0.2.2
+   Compiling fnv v1.0.7
+   Compiling either v1.18.0
+   Compiling ryu v1.0.23
+   Compiling libyaml-rs v0.3.0
+   Compiling time-macros v0.2.32
+   Compiling rayon v1.12.0
+   Compiling logos-codegen v0.16.1
+   Compiling yaml_serde v0.10.7
+   Compiling typify-macro v0.7.0
+   Compiling anstyle-parse v1.0.0
+   Compiling jsonschema v0.56.0
+   Compiling idna_adapter v1.2.2
+   Compiling ignore v0.4.33
+   Compiling stacker v0.1.15
+   Compiling colorchoice v1.0.5
+   Compiling anyhow v1.0.104
+   Compiling bit-vec v0.6.3
+   Compiling is_terminal_polyfill v1.70.2
+   Compiling anstyle v1.0.14
+   Compiling deranged v0.5.8
+   Compiling powerfmt v0.2.0
+   Compiling typify v0.7.0
+   Compiling anstyle-query v1.1.5
+   Compiling filament-verification-contracts v0.2.1 (https://github.com/agent-ix/filament-verification-contracts?rev=cd0c8ef67e5d4263ce12773831cedd771246e5e5#cd0c8ef6)
+   Compiling anstream v1.0.0
+   Compiling bit-set v0.5.3
+   Compiling idna v1.1.0
+   Compiling logos-derive v0.16.1
+   Compiling fsl-foundation v0.1.0 (/home/peter/dev/.worktrees/luna-qsl-2758-2760/fsl-foundation)
+   Compiling referencing v0.55.1
+   Compiling time v0.3.55
+   Compiling jsonschema-value v0.55.1
+   Compiling form_urlencoded v1.2.2
+   Compiling jsonschema-regex v0.55.1
+   Compiling nom v8.0.0
+   Compiling strsim v0.11.1
+   Compiling clap_lex v1.1.1
+   Compiling lazy_static v1.5.0
+   Compiling rustix v1.1.4
+   Compiling filament-walk v0.1.1 (https://github.com/agent-ix/filament-walk?tag=v0.1.1#6b37f032)
+   Compiling fraction v0.13.1
+   Compiling clap_builder v4.6.6
+   Compiling jsonschema v0.55.1
+   Compiling url v2.5.8
+   Compiling logos v0.16.1
+   Compiling fancy-regex v0.11.0
+   Compiling iso8601 v0.6.5
+   Compiling clap_derive v4.6.4
+   Compiling linux-raw-sys v0.12.1
+   Compiling bitflags v2.13.1
+   Compiling base64 v0.21.7
+   Compiling agent-ix-semantic-schema v0.3.0 (https://github.com/agent-ix/filament-core-data?branch=main#c23980ea)
+   Compiling jsonschema v0.17.1
+   Compiling clap v4.6.6
+   Compiling fsl-cst v0.1.0 (/home/peter/dev/.worktrees/luna-qsl-2758-2760/fsl-cst)
+   Compiling serde_stacker v0.1.11
+   Compiling serde_path_to_error v0.1.20
+   Compiling agent-ix-semantic-ir v0.1.1 (https://github.com/agent-ix/filament-core-data?rev=424ba49ebca649906dd9d0f5f3cd2f8e7f3e0194#424ba49e)
+   Compiling fastrand v2.5.0
+   Compiling tempfile v3.27.0
+   Compiling quire-rs v0.53.0 (https://github.com/agent-ix/quire-rs?rev=71a1f970bebc8d7267424dda26cf4c665bcc5ae5#71a1f970)
+   Compiling filament-checked v0.1.6 (https://github.com/agent-ix/filament-eval?rev=a0e8e1254827de71738cbf87646e09ef68531692#a0e8e125)
+   Compiling filament-observation v0.1.1 (https://github.com/agent-ix/filament-observation?rev=a583c51260420829c0cd99b24c3af96311de05b2#a583c512)
+   Compiling agent-ix-semantic-schema v0.3.0 (https://github.com/agent-ix/filament-core-data?tag=semantic-schema-v0.6.0#327a49ca)
+   Compiling quire-rs v0.62.3 (https://github.com/agent-ix/quire-rs?tag=v0.62.3#0c9dcc83)
+   Compiling fsl-forms v0.1.0 (/home/peter/dev/.worktrees/luna-qsl-2758-2760/fsl-forms)
+   Compiling filament-eval v0.1.6 (https://github.com/agent-ix/filament-eval?rev=a0e8e1254827de71738cbf87646e09ef68531692#a0e8e125)
+   Compiling base64 v0.22.1
+   Compiling tl-mltl v0.4.1 (https://github.com/agent-ix/tl-mltl?rev=06cda7776a3566ae90e223c3bc286c254618d39a#06cda777)
+   Compiling tl-syntax v0.4.0 (https://github.com/agent-ix/tl-syntax.git?rev=9f7b1c868df605cb6e885291db95a948cd08829c#9f7b1c86)
+   Compiling filament-contract-model v0.1.2 (https://github.com/agent-ix/filament-contract-ir?rev=a03c86b3bcb639c0f029bfc5d983803ef66124c3#a03c86b3)
+   Compiling filament-mltl v0.1.0 (https://github.com/agent-ix/filament-mltl?rev=c21d0d0a41664adb57fe5a1065b9816f81f6a37d#c21d0d0a)
+   Compiling agent-ix-extraction-frontend v0.2.1 (https://github.com/agent-ix/filament-core-data?rev=424ba49ebca649906dd9d0f5f3cd2f8e7f3e0194#424ba49e)
+   Compiling fsl-source v0.1.0 (/home/peter/dev/.worktrees/luna-qsl-2758-2760/fsl-source)
+   Compiling fsl-semantics v0.1.0 (/home/peter/dev/.worktrees/luna-qsl-2758-2760/fsl-semantics)
+   Compiling fsl-package v0.3.0 (/home/peter/dev/.worktrees/luna-qsl-2758-2760/fsl-package)
+   Compiling fsl-route v0.1.0 (/home/peter/dev/.worktrees/luna-qsl-2758-2760/fsl-route)
+   Compiling fsl-eval v0.1.0 (/home/peter/dev/.worktrees/luna-qsl-2758-2760/fsl-eval)
+   Compiling fsl-replay v0.3.0 (/home/peter/dev/.worktrees/luna-qsl-2758-2760/fsl-replay)
+error[E0004]: non-exhaustive patterns: `&RunRefusal::Reference(_)` not covered
+    --> fsl-replay/src/spine/native_result.rs:3107:35
+     |
+3107 |                 let cause = match refusal.as_ref() {
+     |                                   ^^^^^^^^^^^^^^^^ pattern `&RunRefusal::Reference(_)` not covered
+     |
+note: `RunRefusal` defined here
+    --> fsl-replay/src/spine/call.rs:349:10
+     |
+ 349 | pub enum RunRefusal {
+     |          ^^^^^^^^^^
+...
+ 352 |     Reference(Box<crate::reference_codec::ReferenceCodecError>),
+     |     --------- not covered
+     = note: the matched value is of type `&RunRefusal`
+help: ensure that all possible cases are being handled by adding a match arm with a wildcard pattern or an explicit pattern as shown
+     |
+3127 ~                     super::RunRefusal::Storage { failure, .. } => membership_failure_cause(failure),
+3128 ~                     &RunRefusal::Reference(_) => todo!(),
+     |
+
+error[E0004]: non-exhaustive patterns: `&RunRefusal::Reference(_)` not covered
+    --> fsl-replay/src/spine/native_result.rs:3130:23
+     |
+3130 |                 match refusal.as_ref() {
+     |                       ^^^^^^^^^^^^^^^^ pattern `&RunRefusal::Reference(_)` not covered
+     |
+note: `RunRefusal` defined here
+    --> fsl-replay/src/spine/call.rs:349:10
+     |
+ 349 | pub enum RunRefusal {
+     |          ^^^^^^^^^^
+...
+ 352 |     Reference(Box<crate::reference_codec::ReferenceCodecError>),
+     |     --------- not covered
+     = note: the matched value is of type `&RunRefusal`
+help: ensure that all possible cases are being handled by adding a match arm with a wildcard pattern or an explicit pattern as shown
+     |
+3237 ~                     | super::RunRefusal::UnsupportedHelper(_) => {},
+3238 +                     &RunRefusal::Reference(_) => todo!()
+     |
+
+For more information about this error, try `rustc --explain E0004`.
+error: could not compile `fsl-replay` (lib) due to 2 previous errors
+warning: build failed, waiting for other jobs to finish...

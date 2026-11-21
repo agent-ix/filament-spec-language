@@ -1,0 +1,31 @@
+warning: unused import: `identity_form::is_effective_form`
+   --> fsl-replay/src/spine.rs:234:16
+    |
+234 | pub(crate) use identity_form::is_effective_form;
+    |                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: function `is_effective_form` is never used
+   --> fsl-replay/src/spine/identity_form.rs:160:15
+    |
+160 | pub(crate) fn is_effective_form(form: &Json) -> bool {
+    |               ^^^^^^^^^^^^^^^^^
+    |
+    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: function `sample_fingerprint` is never used
+   --> fsl-replay/src/spine/clause/temporal.rs:335:15
+    |
+335 | pub(crate) fn sample_fingerprint(
+    |               ^^^^^^^^^^^^^^^^^^
+
+warning: `fsl-replay` (lib) generated 3 warnings (run `cargo fix --lib -p fsl-replay` to apply 1 suggestion)
+    Finished `test` profile [unoptimized] target(s) in 0.21s
+     Running tests/it/main.rs (target/debug/deps/it-737e3cc78399c326)
+
+running 1 test
+test short_circuit_integer_division::guarded_integer_division_in_and_or_and_implies_compiles_and_runs ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 198 filtered out; finished in 0.34s
+
