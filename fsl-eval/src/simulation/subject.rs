@@ -23,7 +23,7 @@ use filament_semantic_value::model_transition::ModelTransition;
 /// What a method bound left of a state unexpanded: a store the memory bound
 /// cut (ADR-025 MB-3), or an `activate` step the instance bound did not
 /// expand (ADR-027 AE-4). Either makes the state limited.
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct Cut {
     /// The memory bound left a store of the state unexpanded.
     pub memory: bool,
@@ -32,6 +32,10 @@ pub struct Cut {
     /// The state has `max_live_instances` live instances and an `activate`
     /// step enabled.
     pub instances: bool,
+    /// The steps a bound cut, each named by a representative identity of its
+    /// thread and node: a step disabled only by a bound reads as enabled to
+    /// fairness, so a bound never makes an unfair lasso fair (ADR-025 MF-4).
+    pub steps: Vec<ProtocolTransition>,
 }
 
 /// An expansion, and what a method bound left of its state unexpanded.
