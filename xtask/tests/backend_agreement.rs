@@ -156,11 +156,11 @@ mod backend_agreement {
                 &item.claim.item.claim,
             )
             .unwrap();
-            let assignment = vec![RuntimeValue::Integer(Integer::from(4))];
+            let assignment = vec![RuntimeValue::Integer(Integer::from(4_i64))];
             let reference = target.evaluate(&assignment, &Cancel::new()).unwrap();
             // Both fixture functions have the exact finite input domain 0..=10.
             // A reference proof requires every assignment, not one sampled run.
-            let holds_everywhere = (0..=10).all(|value| {
+            let holds_everywhere = (0_i64..=10).all(|value| {
                 matches!(
                     target
                         .evaluate(
@@ -217,11 +217,14 @@ mod backend_agreement {
             )
             .unwrap()
             .with_limits(item.limits.accounting);
-            match target.evaluate(&[RuntimeValue::Integer(Integer::from(4))], &Cancel::new()) {
+            match target.evaluate(
+                &[RuntimeValue::Integer(Integer::from(4_i64))],
+                &Cancel::new(),
+            ) {
                 Ok(Verdict::Violated(expected)) => {
                     assert!(target
                         .replay(
-                            &[RuntimeValue::Integer(Integer::from(4))],
+                            &[RuntimeValue::Integer(Integer::from(4_i64))],
                             &expected,
                             &Cancel::new()
                         )
