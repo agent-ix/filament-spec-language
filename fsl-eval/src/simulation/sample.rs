@@ -98,6 +98,15 @@ impl Sampler for PinnedSampler {
 /// state, or the first encoding refusal reached.
 type SampleResult<T, F> = Result<Option<Trace<T, F>>, EncodingRefusal>;
 
+/// One sampled walk's draw identity and limits.
+struct SamplePlan {
+    sampler: DefinitionRef,
+    seed: u64,
+    trace_index: u64,
+    max_steps: usize,
+    identity: IdentityLimits,
+}
+
 /// Draw one sampled run from `system`, starting at trace `trace_index mod m`
 /// among `system`'s `m` distinct initial states (no draw selects the
 /// start). The run ends at the first state where `end` holds, unexpanded
@@ -112,14 +121,6 @@ type SampleResult<T, F> = Result<Option<Trace<T, F>>, EncodingRefusal>;
 ///
 /// [`EncodingRefusal`] when a state or transition identity reached during
 /// the run has no RFC 8785 encoding.
-struct SamplePlan {
-    sampler: DefinitionRef,
-    seed: u64,
-    trace_index: u64,
-    max_steps: usize,
-    identity: IdentityLimits,
-}
-
 fn sample<S: TransitionSystem>(
     system: &S,
     plan: SamplePlan,

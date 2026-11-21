@@ -3334,6 +3334,15 @@ impl WalkMemo {
         cancel: Option<&filament_exact::Cancel>,
     ) -> Result<OrderedModelExpansion, crate::simulation::EncodingRefusal> {
         use filament_exact::{length_amount, Charge, ChargePoint, Meter};
+        let mut work = Meter::new(system.meter);
+        if let Some(cancel) = cancel {
+            work = work.with_cancel(cancel.clone());
+        }
+        if let Err(incomplete) = work.charge(Charge::new(ChargePoint::GraphEdge)) {
+            return Ok(Expanded::Stopped(walk::exhausted(
+                crate::simulation::ExpansionLimit::EvaluationMeter(incomplete.limit_kind),
+            )));
+        }
         let anchor = format!("{:?}", state.anchor());
         if let Some(found) = self
             .ordered
@@ -3341,15 +3350,6 @@ impl WalkMemo {
             .get(key)
             .and_then(|anchors| anchors.get(&anchor))
         {
-            let mut work = Meter::new(system.meter);
-            if let Some(cancel) = cancel {
-                work = work.with_cancel(cancel.clone());
-            }
-            if let Err(incomplete) = work.charge(Charge::new(ChargePoint::GraphEdge)) {
-                return Ok(Expanded::Stopped(walk::exhausted(
-                    crate::simulation::ExpansionLimit::EvaluationMeter(incomplete.limit_kind),
-                )));
-            }
             return Ok(found.clone());
         }
         let expanded = expand(system, state, identity_limits())?;

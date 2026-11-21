@@ -103,6 +103,68 @@ fn keyed_model_walks_preserve_the_seeded_trace_and_step_limit() {
     }
 }
 
+/// Storage saturation falls back to ordinary expansion; cancellation on
+/// both misses and hits stops before a transition is selected.
+#[trace("FR-166-AC-1", "FR-166-AC-4")]
+#[test]
+fn keyed_model_walks_fall_back_at_storage_limits_and_observe_cancellation() {
+    use fsl_eval::simulation::model::{
+        sample_model_walk, sample_model_walk_keyed, ModelWalkSettings, WalkMemo,
+    };
+    let world = config_world(REACHES_TWO, &[(0, 0)]);
+    let sampler =
+        fsl_foundation::selection::DefinitionRef::new("filament", "filament.simulation.sampler/v1")
+            .expect("sampler");
+    for result_units in [512, UNLIMITED.result_units] {
+        let system = ModelSystem::new(
+            world
+                .subject(
+                    AB,
+                    filament_exact::ScalarLimits {
+                        result_units,
+                        ..UNLIMITED
+                    },
+                )
+                .simulation,
+        )
+        .expect("admits");
+        let memo = WalkMemo::new();
+        let cancel = Cancel::new();
+        let settings = || ModelWalkSettings {
+            position_limit: fsl_eval::simulation::BOUND_POSITIONS,
+            sampler: &sampler,
+            seed: 7,
+            trace: 3,
+            max_steps: 12,
+            cancel: Some(&cancel),
+        };
+        let ordinary = sample_model_walk(
+            &system,
+            0,
+            fsl_eval::simulation::BOUND_POSITIONS,
+            &sampler,
+            7,
+            3,
+            12,
+            None,
+            |_| false,
+        )
+        .expect("ordinary walk");
+        let keyed = sample_model_walk_keyed(&system, 0, settings(), &memo, |_, _| false)
+            .expect("keyed walk");
+        assert_eq!(keyed, ordinary);
+        assert_eq!(keyed.steps.len(), 12);
+        cancel.cancel(CancelCause::Requested);
+        let stopped = sample_model_walk_keyed(&system, 0, settings(), &memo, |_, _| false)
+            .expect("stopped walk");
+        assert!(stopped.steps.is_empty());
+        assert!(matches!(
+            stopped.provenance.expect("provenance").stopped,
+            StopReason::Stopped(_)
+        ));
+    }
+}
+
 /// Every reachable state of `world` over universe `keys`, by breadth-first
 /// enumeration of its `ModelSystem`, with its state key, and the
 /// number of edges.
