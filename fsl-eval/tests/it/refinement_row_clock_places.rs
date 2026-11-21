@@ -568,7 +568,7 @@ fn clock_reference_snapshot_refuses_an_undeclared_place() {
 fn clock_reference_external_observations_are_explicitly_unsupported() {
     use filament_semantic_value::admission::ObservationAdmission;
     use fsl_semantics::model::observation::{AdmissionFailure, ObservationLimits};
-    use serde_json::json;
+    use serde_json::{json, Value as Json};
     let checked = clock_reference_fixture(true);
     let package = CheckedPackage::link(checked.graph);
     let read = fsl_package::read_evaluation_package(
@@ -612,6 +612,27 @@ fn clock_reference_external_observations_are_explicitly_unsupported() {
         panic!("source raw snapshot must refuse external Clock identity")
     };
     assert_unsupported(&record);
+    for complete in [true, false] {
+        for target in [reference.object().as_str(), "not-a-place-id"] {
+            let mut snapshot: Json =
+                serde_json::from_slice(snapshots.get(&identity).expect("snapshot"))
+                    .expect("snapshot JSON");
+            snapshot["populations"][0]["complete"] = json!(complete);
+            snapshot["populations"][0]["objects"][0]["fields"]["r"]["reference"]["key"] =
+                json!(target);
+            let Err(AdmissionFailure::Refused(record)) = source_model.admit_initial(
+                &BTreeMap::from([(
+                    identity.clone(),
+                    serde_json::to_vec(&snapshot).expect("snapshot"),
+                )]),
+                &identity,
+                ObservationLimits::default(),
+            ) else {
+                panic!("external Clock value must refuse before completeness/ID decoding")
+            };
+            assert_unsupported(&record);
+        }
+    }
     let raw = json!({"reference":{"population":crate::ring_queue::node(CLOCKS,"calls"),"key":reference.object().as_str()}});
     let target = filament_exact::ValueType::Reference(reference.object_type().clone());
     for (value_type, value) in [
@@ -639,16 +660,22 @@ fn clock_reference_external_observations_are_explicitly_unsupported() {
         )
         .expect("record key");
         let types = TypeEnvironment::new(
-            [CompositeDeclaration::new(
-                record_key.clone(),
-                "Record",
-                CompositeShape::Record(vec![FieldDeclaration::new(
-                    "r",
-                    value_type,
-                    filament_exact::Presence::Required,
+            package
+                .graph()
+                .scope()
+                .types()
+                .composites()
+                .cloned()
+                .chain([CompositeDeclaration::new(
+                    record_key.clone(),
+                    "Record",
+                    CompositeShape::Record(vec![FieldDeclaration::new(
+                        "r",
+                        value_type,
+                        filament_exact::Presence::Required,
+                    )]),
                 )]),
-            )],
-            [],
+            package.graph().scope().types().object_types().cloned(),
         )
         .expect("typed record");
         let record = fsl_semantics::model::observation::admit_record_sample(
@@ -678,17 +705,29 @@ fn clock_reference_external_observations_are_explicitly_unsupported() {
             let mut r = field("OrderLifecycle", "r", &id("ClockRef"));
             r["presence"] = json!("optional");
             machine["fields"].as_array_mut().expect("fields").push(r);
+            let mut peer = field("OrderLifecycle", "peer", &id("Order"));
+            peer["presence"] = json!("optional");
+            machine["fields"].as_array_mut().expect("fields").push(peer);
             machine["operations"][0]["params"] = json!([{"identity":id("OrderLifecycle/place/target"),"name":"target","typeRef":id("ClockRef"),"presence":"required","nullable":false,"defaultKind":"none","multiplicity":{"lower":1,"upper":1,"ordered":false,"unique":true},"origin":origin("OrderLifecycle/place/target")}]);
+            document["populations"] = json!([{"identity":id("orders"),"displayName":"orders","kind":{"module":crate::tc235_k2::BUSINESS,"name":"population"},"members":[id("Order")],"extent":"closed","origin":origin("orders")}]);
         },
     );
     let (context_package,_,context_packages) = crate::tc235_business_meaning_runtime::model_package_unpinned(&document,"invariant ContextClock using v on M::OrderLifecycle at current { true }\npre Target using v on M::OrderLifecycle::place { true }").expect("typed Clock context and parameter");
-    for parameter in [false, true] {
+    for mode in ["context", "parameter", "ordinary"] {
+        let parameter = mode == "parameter";
         use fsl_semantics::model::observation::{
             AnchorKind, ClauseSelectionInput, SelectedAnchor, SelectedObject, SnapshotValue,
         };
         let selected =
             crate::tc235_business_meaning_runtime::lifecycle_document_ref("clock-external");
         let mut snapshot = json!({"format":"filament.state.snapshot/v1","identity":crate::tc235_business_meaning_runtime::lifecycle_identity(&selected),"observation":if parameter {"pre"} else {"current"},"model":{"identity":crate::tc235_k2::PACKAGE},"populations":[],"contexts":[{"machine":crate::tc235_k2::id("OrderLifecycle"),"fields":{"placed":{"boolean":false},"cancelled":{"boolean":false},"r":if parameter {json!({"absent":{}})} else {json!({"present":raw})}}}]});
+        snapshot["contexts"][0]["fields"]["peer"] = json!({"absent":{}});
+        if mode == "ordinary" {
+            snapshot["contexts"][0]["fields"]["r"] = json!({"absent":{}});
+            snapshot["contexts"][0]["fields"]["peer"] = json!({"present":{"reference":{"population":crate::tc235_k2::id("orders"),"key":"ghost"}}});
+            snapshot["populations"] =
+                json!([{"population":crate::tc235_k2::id("orders"),"complete":true,"objects":[]}]);
+        }
         if !parameter {
             snapshot["anchor"] = json!({"kind":"handler","name":"validate"});
         }
@@ -730,7 +769,22 @@ fn clock_reference_external_observations_are_explicitly_unsupported() {
         else {
             panic!("external Clock context/parameter must refuse")
         };
-        assert_unsupported(&record);
+        if mode == "ordinary" {
+            assert_eq!(
+                record.catalog,
+                filament_semantic_value::catalog::CatalogCode::new(
+                    "dangling_reference",
+                    "absent-target-in-complete-population"
+                )
+            );
+            assert_eq!(record.fields.get("field").map(String::as_str), Some("peer"));
+            assert_eq!(
+                record.fields.get("object").map(String::as_str),
+                Some("ghost")
+            );
+        } else {
+            assert_unsupported(&record);
+        }
     }
     let Err(AdmissionFailure::Refused(record)) = bare.admit_call_snapshot(
         &checked.packages,
