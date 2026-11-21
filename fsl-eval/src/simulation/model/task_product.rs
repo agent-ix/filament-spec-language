@@ -276,6 +276,11 @@ impl TaskProductState {
         &self.source
     }
 
+    /// Each task's last nominal activation time, absent before its first.
+    pub fn arrivals(&self) -> &[Option<Rational>] {
+        &self.arrivals
+    }
+
     /// Current absolute task-product time.
     pub fn now(&self) -> &Rational {
         &self.now
@@ -658,77 +663,61 @@ impl<'s, 'a> TaskProductSystem<'s, 'a> {
                 push_rational_key(&mut key, value);
             }
         }
-        key.push('|');
-        for (task_index, arrival) in state.arrivals.iter().enumerate() {
-            key.push_str(&task_index.to_string());
-            key.push(':');
-            match arrival {
-                Some(last) => push_rational_key(&mut key, &state.now.sub(last)),
-                None => key.push('-'),
-            }
-            key.push(';');
-        }
         // The vector reflects source-transition ordering; that order does
         // not change future scheduling, so key live jobs by their stable
         // task slot to merge equivalent release interleavings.
         let mut jobs: Vec<_> = state.jobs.iter().collect();
         jobs.sort_by_key(|job| (job.task_index, job.slot));
-        for job in jobs {
-            key.push('|');
-            key.push_str(&job.task_index.to_string());
-            key.push(':');
-            key.push_str(&job.slot.to_string());
-            key.push(':');
-            push_rational_key(&mut key, &job.demand);
-            key.push(':');
-            push_rational_key(&mut key, &job.jitter);
-            key.push(':');
-            push_rational_key(&mut key, &job.deadline.sub(&state.now));
-            key.push(':');
-            push_rational_key(&mut key, &job.service);
-            key.push(':');
-            key.push(match job.allowance_phase {
-                AllowancePhase::Lo => 'l',
-                AllowancePhase::Hi => 'h',
-            });
-            key.push(':');
-            key.push(if job.ready { 'r' } else { 'p' });
-            key.push(':');
-            key.push(if state.running == Some((job.task_index, job.slot)) {
-                'x'
-            } else {
-                '-'
-            });
-            let identity = crate::simulation::model::canonical_json(&job.release)
-                .ok_or(TaskProductStateKeyRefusal::TransitionIdentity)?;
-            key.push(':');
-            key.push_str(
-                &serde_json::to_string(&identity)
-                    .map_err(|_| TaskProductStateKeyRefusal::TransitionIdentity)?,
-            );
-        }
-        key.push(match state.criticality_mode {
-            CriticalityMode::Lo => 'l',
-            CriticalityMode::Hi => 'h',
-        });
-        for pending in &state.pending_budget_changes {
-            key.push(':');
-            key.push_str(&pending.task_index.to_string());
-            key.push('@');
-            key.push_str(&pending.slot.to_string());
-            key.push('#');
-            key.push_str(&pending.generation.to_string());
-            key.push('@');
-            key.push_str(&pending.occurrence.to_string());
-            let identity = crate::simulation::model::canonical_json(&pending.source_transition)
-                .ok_or(TaskProductStateKeyRefusal::TransitionIdentity)?;
-            key.push(':');
-            key.push_str(
-                &serde_json::to_string(&identity)
-                    .map_err(|_| TaskProductStateKeyRefusal::TransitionIdentity)?,
-            );
-        }
-        key.push(if state.missed { '!' } else { '.' });
+        let rational_text = |value: &Rational| {
+            let mut text = String::new();
+            push_rational_key(&mut text, value);
+            text
+        };
+        // One writer shared with FR-418's symbolic node key.
+        let control = super::task_key::TaskKeyControl {
+            arrivals: state
+                .arrivals
+                .iter()
+                .map(|arrival| {
+                    arrival
+                        .as_ref()
+                        .map(|last| rational_text(&state.now.sub(last)))
+                })
+                .collect(),
+            jobs: jobs
+                .iter()
+                .map(|job| super::task_key::TaskKeyJob {
+                    task: job.task_index,
+                    rank: None,
+                    slot: job.slot,
+                    concrete: vec![
+                        rational_text(&job.demand),
+                        rational_text(&job.jitter),
+                        rational_text(&job.deadline.sub(&state.now)),
+                        rational_text(&job.service),
+                    ],
+                    high_allowance: job.allowance_phase == AllowancePhase::Hi,
+                    ready: job.ready,
+                    running: state.running == Some((job.task_index, job.slot)),
+                    release: &job.release,
+                })
+                .collect(),
+            queue: None,
+            high_mode: state.criticality_mode == CriticalityMode::Hi,
+            pending: state
+                .pending_budget_changes
+                .iter()
+                .map(|pending| super::task_key::TaskKeyPending {
+                    task: pending.task_index,
+                    index: pending.slot,
+                    generation_occurrence: Some((pending.generation, pending.occurrence)),
+                    source_transition: &pending.source_transition,
+                })
+                .collect(),
+            missed: state.missed,
+        };
+        super::task_key::write_task_control(&mut key, &control)
+            .map_err(|_| TaskProductStateKeyRefusal::TransitionIdentity)?;
         Ok(key.into_bytes())
     }
 
@@ -1509,7 +1498,11 @@ impl<'s, 'a> TaskProductSystem<'s, 'a> {
         }
     }
 
-    fn job_order(&self, left: &TaskProductJob, right: &TaskProductJob) -> std::cmp::Ordering {
+    pub(super) fn job_order(
+        &self,
+        left: &TaskProductJob,
+        right: &TaskProductJob,
+    ) -> std::cmp::Ordering {
         let left_task = &self.plan.task_set.tasks[left.task_index];
         let right_task = &self.plan.task_set.tasks[right.task_index];
         match self.plan.policy {
@@ -1758,7 +1751,7 @@ impl<'a> TaskProductPlan<'a> {
     }
 }
 
-fn source_clock_maxima(source: &TimedSystem<'_, '_>) -> Vec<Rational> {
+pub(super) fn source_clock_maxima(source: &TimedSystem<'_, '_>) -> Vec<Rational> {
     let mut maxima = vec![task_zero(); source.model().clocks().len()];
     for guard in source.model().guards() {
         for part in guard.parts() {

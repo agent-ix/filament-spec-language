@@ -988,7 +988,7 @@ fn an_urgency_reading_element_presences_is_not_emitted() {
 
 /// `units`, each a source identity and its text, assembled as one package
 /// over `documents`, as spine `compile` runs several source units.
-fn assemble_units_with_models(
+pub(super) fn assemble_units_with_models(
     units: &[(&str, &str)],
     documents: &[&[u8]],
 ) -> Result<PackageDeclarations, String> {

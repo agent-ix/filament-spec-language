@@ -165,7 +165,7 @@ fn build_configured(
         fsl_semantics::check::ProbScheduler::Every => (ProductKind::Mdp, None),
     };
     let (plan, reads) = Plan::of(claim, limits.max_automaton_states)
-        .map_err(|fault| plan_refusal(fault, claim.occurrence()))?;
+        .map_err(|fault| plan_refusal(fault, claim.occurrence(), claim.timed_form_member_path()))?;
     let bindings = match &claim.over {
         None => vec![(None, None)],
         Some(over) => {
@@ -245,12 +245,17 @@ fn fault(invariant: &'static str) -> ProductRefusal {
     ProductRefusal::Internal(InternalFault::new("exact-probabilistic", invariant))
 }
 
-fn plan_refusal(fault_: PlanFault, claim: Option<&OccurrenceKey>) -> ProductRefusal {
+fn plan_refusal(
+    fault_: PlanFault,
+    claim: Option<&OccurrenceKey>,
+    member: Option<fsl_semantics::check::ClaimMemberPath>,
+) -> ProductRefusal {
     match fault_ {
         PlanFault::Automaton(error) => automaton_refusal(error),
         PlanFault::TimedFormShape { span } => ProductRefusal::TimedFormShape {
             span,
             claim: claim.cloned(),
+            member,
         },
         PlanFault::Broken(invariant) => fault(invariant),
     }
@@ -278,7 +283,7 @@ mod tests {
     fn timed_form_shape_preserves_its_span() {
         let span = fsl_foundation::Span { start: 12, end: 34 };
         let ProductRefusal::TimedFormShape { span: actual, .. } =
-            plan_refusal(PlanFault::TimedFormShape { span }, None)
+            plan_refusal(PlanFault::TimedFormShape { span }, None, None)
         else {
             panic!("a timed form shape refusal");
         };
@@ -295,7 +300,7 @@ mod tests {
             .expect("a valid key"),
         );
         let ProductRefusal::TimedFormShape { claim, .. } =
-            plan_refusal(PlanFault::TimedFormShape { span }, Some(&key))
+            plan_refusal(PlanFault::TimedFormShape { span }, Some(&key), None)
         else {
             panic!("a timed form shape refusal");
         };
@@ -319,7 +324,7 @@ impl From<ProductRefusal> for Halt {
 
 impl From<PlanFault> for Halt {
     fn from(fault: PlanFault) -> Self {
-        Self::Refusal(plan_refusal(fault, None))
+        Self::Refusal(plan_refusal(fault, None, None))
     }
 }
 

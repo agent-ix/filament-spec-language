@@ -2,6 +2,7 @@
 //! Remaining projection, execution-relation and protocol-refinement source cases.
 
 use fsl_command::command;
+use fsl_replay::Operation;
 use ix_trace_rs::trace;
 use serde_json::Value;
 use std::path::{Path, PathBuf};
@@ -64,6 +65,40 @@ fn remaining_source_forms_compile_and_refuse_as_specified() {
         crate::source_corpus::run_directory(&corpus()).expect("the source cases match"),
         "flips_with: none"
     );
+}
+
+#[test]
+#[trace("TC-597", "FR-172-AC-9")]
+fn an_empty_align_skip_reaches_s3_and_refuses_at_the_list() {
+    let request = corpus().join("projection-empty-skip.request.json");
+    let source = std::fs::read_to_string(corpus().join("projection-empty-skip.native"))
+        .expect("the authored program");
+    let error = match command::compile_outcome(&request) {
+        Ok(_) => panic!("S3 refuses the empty align-skip list"),
+        Err(error) => error,
+    };
+    let outcome: Value = serde_json::from_slice(
+        &error
+            .outcome_document(Operation::Package)
+            .to_bytes()
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(outcome["last_stage"], "S3", "{outcome}");
+    assert_eq!(outcome["category"], "unsupported", "{outcome}");
+    assert_eq!(outcome["exit_code"], 21, "{outcome}");
+    let diagnostics = outcome["diagnostics"].as_array().expect("diagnostics");
+    assert_eq!(diagnostics.len(), 1, "{outcome}");
+    assert_eq!(diagnostics[0]["code"], "unsupported_construct", "{outcome}");
+    assert_eq!(diagnostics[0]["cause"], "expression-form", "{outcome}");
+    let start = diagnostics[0]["locus"]["start"]
+        .as_u64()
+        .expect("a located diagnostic") as usize;
+    let end = diagnostics[0]["locus"]["end"]
+        .as_u64()
+        .expect("a located diagnostic") as usize;
+    assert_eq!(&source[start..end], "align skip {}", "{outcome}");
+    assert!(!outcome.to_string().contains("invalid_syntax"), "{outcome}");
 }
 
 #[test]

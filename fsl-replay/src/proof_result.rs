@@ -615,6 +615,9 @@ pub enum UnavailabilityCause {
         /// (FR-498); `None` for a claim checked outside an assembled
         /// package, which keeps the span as its locus.
         claim: Option<fsl_foundation::source::provenance::OccurrenceKey>,
+        /// The member path of the unsupported part of the claim (FSL FR-498):
+        /// FSL's own; the FSpec FR-331 wire locus stays `{node, occurrence}`.
+        member: Option<fsl_semantics::check::ClaimMemberPath>,
     },
     /// ADR-020 AX-5: a refinement with a hidden abstract field and a
     /// non-empty `F_A` has no liveness half to decide. Wire cause

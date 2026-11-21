@@ -1245,3 +1245,113 @@ fn untimed_delay_names_missing_binding_and_duration_stays_a_reward() {
         } if name.as_str() == "duration"
     ));
 }
+
+/// The `TimedFormShape` refusal of `claim` with its identity and member path.
+fn timed_form_shape(
+    world: &World,
+    claim: &str,
+) -> (
+    Option<fsl_foundation::source::provenance::OccurrenceKey>,
+    Option<fsl_semantics::check::ClaimMemberPath>,
+) {
+    match refusal(world, claim) {
+        ProductRefusal::TimedFormShape { claim, member, .. } => (claim, member),
+        other => panic!("{claim:?}: expected a timed form shape refusal, got {other:?}"),
+    }
+}
+
+fn formula_root(world: &World, claim: &str) -> filament_exact::NodeKey {
+    use fsl_semantics::check::Statement;
+    let claim = world
+        .package
+        .graph()
+        .probabilistic_model()
+        .claim(claim)
+        .expect("the claim checks");
+    let Some(Statement::Aggregate(claim)) = claim.statement() else {
+        panic!("a lowered statement");
+    };
+    let find = |members: &[(&'static str, Statement)], name: &str| {
+        members
+            .iter()
+            .find(|(held, _)| *held == name)
+            .map(|(_, value)| value.clone())
+    };
+    let Some(Statement::Aggregate(form)) = find(claim, "form") else {
+        panic!("a form binding");
+    };
+    let Some(Statement::Aggregate(event)) = find(&form, "event") else {
+        panic!("an event binding");
+    };
+    let Some(Statement::Formula { root, .. }) = find(&event, "formula") else {
+        panic!("a formula binding");
+    };
+    root
+}
+
+/// FR-498-AC-8 (TC-1288 step 3): a `TimedFormShape` cause of a claim with an
+/// identity carries the member path of the part it refuses: `[form]` and no
+/// formulas for a form with no timed reading, `[form, measure]` for an
+/// elapsed measure under a quantile.
+#[trace("FR-498-AC-8", "TC-1288")]
+#[test]
+fn a_timed_form_shape_cause_carries_the_claim_member_path() {
+    let claims = "probabilistic Mean using ev on M over (c: M::Call) under every scheduler \
+                  on origin { expected elapsed until holds(c.late) <= 3 ms }\n\
+                  probabilistic Elapsed using ev on M over (c: M::Call) under every scheduler \
+                  on origin { quantile 0.5 of (elapsed from holds(not c.late) until \
+                  holds(c.late) within 4 ms) <= 1 ms }\n";
+    let world = retx(GUARD, true, "", claims);
+    let identity = |name: &str| {
+        world
+            .package
+            .graph()
+            .probabilistic_model()
+            .claim(name)
+            .and_then(|claim| claim.occurrence().cloned())
+            .expect("the claim has a package identity")
+    };
+
+    let (claim, member) = timed_form_shape(&world, "Mean");
+    assert_eq!(claim, Some(identity("Mean")));
+    let member = member.expect("a member path");
+    assert_eq!(member.body, ["form"]);
+    assert!(member.formulas.is_empty());
+
+    let (claim, member) = timed_form_shape(&world, "Elapsed");
+    assert_eq!(claim, Some(identity("Elapsed")));
+    let member = member.expect("a member path");
+    assert_eq!(member.body, ["form", "measure"]);
+    assert!(member.formulas.is_empty());
+}
+
+/// FR-498-AC-8 (TC-1288 step 3): the member path of an event formula names
+/// the formula nodes from the one the `formula` binding references down to
+/// the node whose interval is refused, outermost first; with the refused
+/// operator as the whole event it is that one node.
+#[trace("FR-498-AC-8", "TC-1288")]
+#[test]
+fn a_timed_form_shape_member_path_names_the_nested_formula_nodes() {
+    let claims = "probabilistic Nested using ev on M over (c: M::Call) under every scheduler \
+                  on origin { probability >= 0.99 \
+                  [ always[0 ms, 4 ms] eventually[2 ms, 2 ms] holds(c.late) ] }\n\
+                  probabilistic Whole using ev on M over (c: M::Call) under every scheduler \
+                  on origin { probability >= 0.99 [ eventually[2 ms, 2 ms] holds(c.late) ] }\n";
+    let world = retx(GUARD, true, "", claims);
+
+    let (_, member) = timed_form_shape(&world, "Nested");
+    let member = member.expect("a member path");
+    assert_eq!(member.body, ["form", "event", "formula"]);
+    assert_eq!(
+        member.formulas.len(),
+        2,
+        "the always node, then its operand"
+    );
+    assert_eq!(member.formulas[0], formula_root(&world, "Nested"));
+    assert_ne!(member.formulas[0], member.formulas[1]);
+
+    let (_, member) = timed_form_shape(&world, "Whole");
+    let member = member.expect("a member path");
+    assert_eq!(member.body, ["form", "event", "formula"]);
+    assert_eq!(member.formulas, [formula_root(&world, "Whole")]);
+}

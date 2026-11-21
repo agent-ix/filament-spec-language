@@ -163,6 +163,12 @@ impl<'c> Form<'c> {
         let shape = || ProductRefusal::TimedFormShape {
             span: claim.span,
             claim: claim.occurrence().cloned(),
+            member: claim.timed_form_member_path(),
+        };
+        let shape_at = |chain: &[usize]| ProductRefusal::TimedFormShape {
+            span: claim.span,
+            claim: claim.occurrence().cloned(),
+            member: claim.formula_member_path(chain),
         };
         match &claim.form {
             ProbForm::Probability {
@@ -171,7 +177,8 @@ impl<'c> Form<'c> {
             } => {
                 let checked = formula.formula();
                 let nodes = checked.nodes();
-                let root = nodes.get(checked.root().index()).ok_or_else(shape)?;
+                let root_at = checked.root().index();
+                let root = nodes.get(root_at).ok_or_else(|| shape_at(&[root_at]))?;
                 let holds = |id: super::FormulaNodeId| {
                     matches!(nodes.get(id.index()), Some(FormulaNode::Holds { .. }))
                         .then(|| formula.condition(id.index()).map(|p| (id, p)))
@@ -185,7 +192,7 @@ impl<'c> Form<'c> {
                     } => (
                         DeadlineKind::Eventually,
                         interval,
-                        vec![holds(*operand).ok_or_else(shape)?],
+                        vec![holds(*operand).ok_or_else(|| shape_at(&[root_at, operand.index()]))?],
                     ),
                     FormulaNode::Unary {
                         operator: UnaryTemporal::Always,
@@ -194,7 +201,7 @@ impl<'c> Form<'c> {
                     } => (
                         DeadlineKind::Always,
                         interval,
-                        vec![holds(*operand).ok_or_else(shape)?],
+                        vec![holds(*operand).ok_or_else(|| shape_at(&[root_at, operand.index()]))?],
                     ),
                     FormulaNode::Binary {
                         operator: BinaryTemporal::Until,
@@ -205,18 +212,18 @@ impl<'c> Form<'c> {
                         DeadlineKind::Until,
                         interval,
                         vec![
-                            holds(*left).ok_or_else(shape)?,
-                            holds(*right).ok_or_else(shape)?,
+                            holds(*left).ok_or_else(|| shape_at(&[root_at, left.index()]))?,
+                            holds(*right).ok_or_else(|| shape_at(&[root_at, right.index()]))?,
                         ],
                     ),
-                    _ => return Err(shape()),
+                    _ => return Err(shape_at(&[root_at])),
                 };
                 if !(interval.lower().is_zero() && interval.lower_closed()) {
-                    return Err(shape());
+                    return Err(shape_at(&[root_at]));
                 }
                 // A deadline needs an upper bound; `[0, *)` checks as no interval.
                 let Some(bound) = interval.upper() else {
-                    return Err(shape());
+                    return Err(shape_at(&[root_at]));
                 };
                 Ok(Self::Deadline {
                     kind,

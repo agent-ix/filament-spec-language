@@ -123,29 +123,24 @@ fn body(body: &str) -> (String, FunctionDeclaration) {
 /// Provenance: QSL-2006.
 #[trace("TC-113", "FR-035-AC-7")]
 #[test]
-fn collection_constructor_names_never_reach_an_invalid_forms_shape() {
+fn collection_constructor_names_are_ordinary_names_in_the_forms_tree() {
     for name in ["set", "bag", "orderedSet"] {
         for declaration in [
             format!("function f using v({name}: Integer): Boolean pure {{ true }}"),
             format!("function f using v(x: Integer): Boolean pure {{ let {name} = x in true }}"),
         ] {
+            // QSL-2683: the lowercase constructor spellings are in neither reserved
+            // inventory, so they parse as ordinary names and S2 maps them.
             let (text, parsed) = parse(&declaration);
-            assert!(!parsed.is_admissible(), "{text}");
-            let [diagnostic] = parsed.diagnostics() else {
-                panic!("one refusal for {text}: {:?}", parsed.diagnostics());
-            };
-            assert_eq!(
-                diagnostic.code,
-                fsl_cst::CompleteCode::InvalidSyntax,
-                "{text}"
-            );
-            assert!(diagnostic.message.contains(name), "{text}: {diagnostic:?}");
-            assert!(
-                build_unit(&parsed).is_err(),
-                "a refused source must not produce a forms tree: {text}"
-            );
+            assert!(parsed.is_admissible(), "{text}: {:?}", parsed.diagnostics());
+            let unit = build_unit(&parsed).expect("an admitted name builds a forms tree");
+            assert!(!unit.forms().is_empty(), "{text}");
         }
     }
+
+    // The name is usable as a value too: the corpus case `fn-param-named-set-2006`.
+    let (_, unit) = build("function f using v(set: Int[0, 9]): Int[0, 9] pure { set }");
+    assert!(!unit.forms().is_empty());
 
     for declaration in [
         "function f using v(n: Integer, setting: Integer): Boolean pure { let ok = n in set[ok, setting] }",

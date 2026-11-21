@@ -510,6 +510,18 @@ impl Lowering<'_> {
         boolean: NodeKey,
         scope: &[Binder],
     ) -> Result<NodeKey, CheckRefusal> {
+        self.temporal_formula_nodes(input, boolean, scope)
+            .map(|(root, _)| root)
+    }
+
+    /// [`Self::temporal_formula`], also returning the key of every node by
+    /// its node index.
+    pub(super) fn temporal_formula_nodes(
+        &mut self,
+        input: &FormulaInput<'_, '_>,
+        boolean: NodeKey,
+        scope: &[Binder],
+    ) -> Result<(NodeKey, Vec<NodeKey>), CheckRefusal> {
         let formula = input.formula;
         let mut keys: Vec<Option<NodeKey>> = vec![None; formula.nodes().len()];
         for (index, node) in formula.nodes().iter().enumerate().rev() {
@@ -611,10 +623,12 @@ impl Lowering<'_> {
                 *slot = Some(key);
             }
         }
-        keys.get(formula.root().index())
+        let root = keys
+            .get(formula.root().index())
             .cloned()
             .flatten()
-            .ok_or_else(|| stage_fault(input.root_site, "formula-root-keyed"))
+            .ok_or_else(|| stage_fault(input.root_site, "formula-root-keyed"))?;
+        Ok((root, keys.into_iter().flatten().collect()))
     }
 
     /// FR-337-AC-15, FSpec FR-370 "Window aggregate atom": the one argument

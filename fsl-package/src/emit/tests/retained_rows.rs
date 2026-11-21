@@ -147,6 +147,7 @@ fn composite() -> Emission {
                 clock: ClockConfiguration::EventPosition {
                     sequence_authority: "authority".into(),
                 },
+                source_unit: None,
                 trace: None,
             },
         )],
@@ -166,6 +167,7 @@ fn composite() -> Emission {
             clock: ClockConfiguration::EventPosition {
                 sequence_authority: "authority".into(),
             },
+            source_unit: None,
             trace: None,
         }],
     };

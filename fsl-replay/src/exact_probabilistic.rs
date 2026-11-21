@@ -393,6 +393,7 @@ mod tests {
                 UnavailabilityCause::TimedFormShape {
                     span: fsl_foundation::Span { start: 0, end: 1 },
                     claim: None,
+                    member: None,
                 },
                 "timed-form-shape",
             ),

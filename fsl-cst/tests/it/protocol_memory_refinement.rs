@@ -515,7 +515,6 @@ fn a_history_row_parses_each_initial_literal_spelling() {
 /// A collection, record, float or other non-constant initial value is refused
 /// at its first token as a syntax error.
 #[test]
-#[ignore = "QSL-2683: contextual set must parse as the literal name before refusing the collection bracket"]
 fn a_history_row_refuses_a_non_literal_initial_value_at_its_first_token() {
     for (initial, offending) in [
         ("[1, 2]", "["),
