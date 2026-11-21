@@ -750,31 +750,30 @@ fn settled(
 }
 
 /// A TP-3 past clause is keyed by its monitor's viable configurations: over
-/// the Counter subject (values 0 to 3, then the terminal stutter),
-/// `always (once[1,1] p or historically p)` holds with a non-empty
-/// certificate whose keys carry the past memory, so the origin and the later
-/// positions have distinct keys; the core checker accepts it and the proof
-/// settles `proved`, `Certified`. The certificate with the value-1 product
-/// state removed is rejected `SuccessorMissing` at it, and with the value-1
-/// state's past memory replaced by the origin's, `SuccessorMissing` at the
-/// value-1 state the monitor actually reaches.
+/// the Counter subject (values 0 to 3, then the terminal stutter), with `p`
+/// true except at value 2, `always (not p implies once[1,1] p)` holds, the
+/// only position it reads `once[1,1] p` at being value 2, whose previous
+/// position (value 1) has `p`. The `once[1,1] p` memory is the offset of the
+/// last position `p` held at (FR-338's `history`): `["1"]` after every
+/// position but value 2, where `p` is false, so it is `[]` there. The
+/// certificate is non-empty, keys value 2 apart from the others (values 0, 1
+/// and 3, and the stutters at 3, share one key), and the core checker accepts
+/// it; the proof settles `proved`, `Certified`. The certificate with the
+/// value-2 product state removed is rejected `SuccessorMissing` at it, and
+/// with the value-2 state's past memory replaced by the origin's,
+/// `SuccessorMissing` at the value-2 state the monitor actually reaches.
 #[trace("TC-525", "FR-338-AC-29")]
 #[trace("TC-525", "FR-127-AC-1")]
 #[test]
 fn a_past_clause_proof_carries_monitor_keys_the_core_accepts() {
     let world = world(CONTRACT, &[("c", 0)]);
+    // Both `holds` atoms spell the same condition, so they are one atom.
     let claim = world.invariant(
-        "always (once[1,1] holds(c.value <= 3) or historically holds(c.value <= 3))",
-        |v| Some(v <= 3),
+        "always (not holds(c.value != 2) implies once[1,1] holds(c.value != 2))",
+        |v| Some(v != 2),
     );
     let outcome = claim.run(&world);
     let full = certificate(&outcome);
-    let keys: std::collections::BTreeSet<_> = full
-        .states
-        .iter()
-        .map(|state| state.automaton_state.clone())
-        .collect();
-    assert!(keys.len() > 1, "the past memory is part of the key");
     let request = claim.request(&world, UNLIMITED);
     assert_eq!(check(&request, &full), TemporalCertificateCheck::Accepted);
     assert_eq!(
@@ -785,21 +784,26 @@ fn a_past_clause_proof_carries_monitor_keys_the_core_accepts() {
         }
     );
 
-    let one = world.state_key(&[1]);
-    let origin = world.state_key(&[0]);
-    let at_origin = full
-        .states
-        .iter()
-        .find(|state| state.model_state == origin)
-        .expect("the origin is certified")
-        .clone();
-    let at = full
-        .states
-        .iter()
-        .find(|state| state.model_state == one)
-        .expect("value 1 is certified")
-        .clone();
-    assert_ne!(at.automaton_state, at_origin.automaton_state);
+    let entry = |value: i64| {
+        let model = world.state_key(&[value]);
+        let mut states = full.states.iter().filter(|state| state.model_state == model);
+        let state = states.next().expect("the value is certified").clone();
+        assert!(states.next().is_none(), "one monitor state per value");
+        state
+    };
+    let at_origin = entry(0);
+    let at = entry(2);
+    assert_ne!(
+        at.automaton_state, at_origin.automaton_state,
+        "the past memory is part of the key"
+    );
+    for value in [1, 3] {
+        assert_eq!(
+            entry(value).automaton_state,
+            at_origin.automaton_state,
+            "the memory is the same wherever p held"
+        );
+    }
 
     let mut removed = full.clone();
     removed.states.retain(|state| *state != at);
