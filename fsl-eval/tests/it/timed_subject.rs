@@ -1114,7 +1114,7 @@ fn protocol_preflight_retains_generic_domains_and_clock_selector_sites() {
 record Count { a: Integer; b: Integer; }
 protocol Gate using p over (input: M::Call) on origin {
   role R on M::Call;
-  run sequence Main { event Read by R as (count: Count) { true }; }
+  run sequence Main { event Read by R as (tally: Count) { true }; }
   finish End as (outcome: Boolean) { true };
 }
 "#,
@@ -1135,7 +1135,7 @@ protocol Gate using p over (input: M::Call) on origin {
     };
     let binder = graph
         .protocol_node_keys("Gate")
-        .and_then(|keys| keys.binders.iter().find(|binder| binder.name == "count"))
+        .and_then(|keys| keys.binders.iter().find(|binder| binder.name == "tally"))
         .expect("actual checked binder");
     let actual: Vec<_> = required
         .domains
