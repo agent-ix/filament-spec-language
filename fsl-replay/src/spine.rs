@@ -2385,6 +2385,10 @@ fn check_message_one(first: &CheckRefusal) -> String {
                 TemporalCause::ClockReadOutsideConstraint { .. } => format!(
                     "{message}: a clock is read only as the clock of an atomic clock constraint"
                 ),
+                TemporalCause::ClockReadingCycle { cycle, .. } => format!(
+                    "{message}: the unfolding of {} reaches a value that is not a constant",
+                    cycle.join(" -> ")
+                ),
                 TemporalCause::ClockComparison { .. } => {
                     format!("{message}: a clock constraint compares a clock with a constant")
                 }

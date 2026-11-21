@@ -27,33 +27,35 @@
 //! one object type the model's populations range over.
 
 use fsl_foundation::source::node_table::{
-    DebugTable, DebugWith, NodeKeyDebug, NodeList, With, standalone,
+    standalone, DebugTable, DebugWith, NodeKeyDebug, NodeList, With,
 };
 use std::collections::{BTreeMap, BTreeSet};
 
 use filament_checked::key::DeclarationKey;
-use filament_exact::{EffectiveId, NodeKey, Rational, ValueType};
+use filament_exact::{
+    Charge, ChargePoint, EffectiveId, Integer, Meter, NodeKey, Rational, ValueType,
+};
 use filament_semantic_value::declaration::{CompositeShape, TypeEnvironment};
 use fsl_forms::{
     BinaryOperator, ExprId, ExprNode, ExpressionForm, QuantityForm, StateClauseKind,
     TimeInvariantForm, TypeFormHead, UrgentForm, UrgentTarget,
 };
+use fsl_foundation::source::provenance::{RawSourceRef, SourceRegion};
 use fsl_foundation::Span;
-use fsl_foundation::source::provenance::RawSourceRef;
 
 pub use self::collection_write::{CollectionWrite, Written};
 use super::assemble::TimedDeclaration;
 use super::check::NamedScope;
 use super::ir::{CheckedBody, CheckedNode};
-use super::lowering::{AdmittedModel, CollectionShape, PlaceStep, strictly_below};
+use super::lowering::{strictly_below, AdmittedModel, CollectionShape, PlaceStep};
 use super::refusal::TimedConstruct;
 use super::refusal::{
     CheckCause, CheckRefusal, ExcludedClauseForm, TemporalCause, TimedOmission,
     UnwrittenTimedMember,
 };
 use super::state_clause::{
-    ClauseDeclarations, ClauseOperation, ClauseView, PopulationDomain, StateClauseDeclaration,
-    check_clause, check_clause_named, population_of,
+    check_clause, check_clause_named, population_of, ClauseDeclarations, ClauseOperation,
+    ClauseView, PopulationDomain, StateClauseDeclaration,
 };
 use super::state_graph_claim::StatePredicate;
 use super::temporal_clause::{ModelTimeSource, TimeSourceKind};
@@ -1837,6 +1839,8 @@ pub(crate) struct Inputs<'a> {
     /// Each selected model alias's declaration span, which locates a clock
     /// field of an untimed model that no clause reads.
     pub(crate) model_spans: &'a std::collections::BTreeMap<String, Span>,
+    /// The source region a span of the unit names.
+    pub(crate) locate: &'a dyn Fn(Span) -> Option<SourceRegion>,
 }
 
 /// `cause`, located by the span it carries.
@@ -2767,13 +2771,17 @@ type Dnf = Vec<(Vec<(DataLiteral, bool)>, Vec<ClockConstraint>)>;
 
 /// The parts of a guard's disjunctive forms, counted against the package's
 /// node limit: a guard whose disjunctive form grows past it is refused, as
-/// a body with that many nodes would be.
-struct PartBudget {
+/// a body with that many nodes would be. It also charges each unfolding of a
+/// clock-reading declaration to the checker's work meter.
+struct PartBudget<'m> {
     limit: u64,
     used: u64,
+    meter: &'m mut Meter,
+    /// The source region of a span, for a refusal located at a call.
+    locate: &'m dyn Fn(Span) -> Option<SourceRegion>,
 }
 
-impl PartBudget {
+impl PartBudget<'_> {
     fn charge(&mut self, parts: usize) -> Result<(), CheckCause> {
         let actual = self
             .used
@@ -2793,6 +2801,32 @@ impl PartBudget {
         Ok(())
     }
 
+    /// Charge one unfolding of the clock-reading declaration called at
+    /// `call` to the work meter.
+    fn unfold(&mut self, call: Span) -> Result<(), CheckCause> {
+        self.meter
+            .charge(Charge::new(ChargePoint::DeclarationCheck).work(Integer::from(1_u64)))
+            .map_err(|incomplete| {
+                limit_exceeded(
+                    super::refusal::CheckingLimitKind::WorkBudget,
+                    incomplete.limit,
+                    u128::from(incomplete.consumed) + 1,
+                    (self.locate)(call),
+                )
+            })
+    }
+
+    /// The refusal of a constant of `bits` bits past the rational-bit
+    /// ceiling `limit`, located at `at`.
+    fn too_wide(&self, limit: u64, bits: u64, at: Span) -> CheckCause {
+        limit_exceeded(
+            super::refusal::CheckingLimitKind::RationalBits,
+            limit,
+            u128::from(bits),
+            (self.locate)(at),
+        )
+    }
+
     fn product(&mut self, left: &Dnf, right: &Dnf) -> Result<Dnf, CheckCause> {
         self.charge(left.len().saturating_mul(right.len()))?;
         Ok(left
@@ -2807,6 +2841,21 @@ impl PartBudget {
             })
             .collect())
     }
+}
+
+fn limit_exceeded(
+    kind: super::refusal::CheckingLimitKind,
+    limit: u64,
+    actual: u128,
+    region: Option<SourceRegion>,
+) -> CheckCause {
+    CheckCause::ResourceExhausted(Box::new(super::refusal::StageLimitCause {
+        stage: super::refusal::CheckingStage::Typing,
+        kind,
+        limit,
+        actual,
+        region,
+    }))
 }
 
 fn timed(cause: TemporalCause) -> CheckCause {
@@ -3045,7 +3094,11 @@ fn part_predicate(
                 // the data predicate.
                 DataLiteral::Family(_) | DataLiteral::Presence(_) => return None,
             };
-            if positive { Some(cut) } else { cut.negated() }
+            if positive {
+                Some(cut)
+            } else {
+                cut.negated()
+            }
         })
         .collect::<Option<Vec<_>>>()?;
     ExpressionForm::conjunction(operands)
@@ -4310,6 +4363,7 @@ fn urgency(
 pub(crate) fn prepare(
     inputs: &Inputs<'_>,
     state_clauses: &mut [StateClauseDeclaration],
+    meter: &mut Meter,
 ) -> Result<TimedDrafts, CheckRefusal> {
     // FR-146 over the clock-reading declarations, which have no function
     // node for the value checker's measure check to reach (FR-091-AC-30).
@@ -4326,16 +4380,19 @@ pub(crate) fn prepare(
             },
         });
     }
-    prepare_models(inputs, state_clauses).map_err(refusal)
+    prepare_models(inputs, state_clauses, meter).map_err(refusal)
 }
 
 fn prepare_models(
     inputs: &Inputs<'_>,
     state_clauses: &mut [StateClauseDeclaration],
+    meter: &mut Meter,
 ) -> Result<TimedDrafts, CheckCause> {
     let mut budget = PartBudget {
         limit: inputs.nodes,
         used: 0,
+        meter,
+        locate: inputs.locate,
     };
     // FR-230 "Clock-reading declarations": each body is checked once. A call
     // this check does not expand reaches the value checker, which refuses it
@@ -5218,7 +5275,7 @@ pub(crate) fn not_emitted(model: &TimedModel) -> Option<CheckRefusal> {
 
 #[cfg(test)]
 mod tests {
-    use fsl_forms::{ExpressionForm, ExpressionSpans, parse_clause_text};
+    use fsl_forms::{parse_clause_text, ExpressionForm, ExpressionSpans};
     use ix_trace_rs::trace;
 
     use super::DataLiteral;

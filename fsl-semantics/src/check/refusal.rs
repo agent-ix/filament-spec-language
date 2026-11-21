@@ -1055,9 +1055,6 @@ pub enum TimedConstruct {
     Release,
     /// A `mode` switch declaration (FSpec FR-419, FSL FR-249).
     ModeSwitch,
-    /// A clock-reading declaration whose expansion reaches its own call
-    /// (FR-230 "Clock-reading declarations").
-    RecursiveClockReading,
     /// A clock of an object other than the receiver, reached through a
     /// reference (FR-230 "Parameters").
     ReferencedClock,
@@ -1077,7 +1074,6 @@ impl TimedConstruct {
             Self::Response => "a `response` claim",
             Self::Release => "a `release` declaration",
             Self::ModeSwitch => "a `mode` switch declaration",
-            Self::RecursiveClockReading => "a recursive clock-reading declaration",
             Self::ReferencedClock => "a clock of another object",
         }
     }
@@ -1486,6 +1482,17 @@ pub enum TemporalCause {
     /// read.
     ClockReadOutsideConstraint {
         /// The read's span.
+        span: Span,
+    },
+    /// FR-230 "Recursive clock readings": the unfolding of a recursive
+    /// clock-reading declaration reaches a call with a data argument, or an
+    /// `if` or `case` condition, that is not a constant, so no finite set
+    /// of atomic constraints stands for it. Located at the outermost call.
+    ClockReadingCycle {
+        /// The declarations of the cycle in call order, the first repeated
+        /// at the end.
+        cycle: Vec<String>,
+        /// The call's span.
         span: Span,
     },
     /// FR-230: an atomic constraint compares a clock with another clock.
@@ -2226,6 +2233,7 @@ impl TemporalCause {
             | Self::TimedStateObject { span, .. }
             | Self::ClockWithoutDenseTime { span, .. }
             | Self::ClockReadOutsideConstraint { span }
+            | Self::ClockReadingCycle { span, .. }
             | Self::ClockComparison { span }
             | Self::NegativeClockConstant { span }
             | Self::ClockBoundNotConstant { span }
@@ -2322,6 +2330,7 @@ impl TemporalCause {
             }
             Self::ClockWithoutDenseTime { .. }
             | Self::ClockReadOutsideConstraint { .. }
+            | Self::ClockReadingCycle { .. }
             | Self::ClockComparison { .. }
             | Self::NegativeClockConstant { .. }
             | Self::ClockBoundNotConstant { .. }
@@ -2410,7 +2419,9 @@ impl TemporalCause {
                 }
             }
             Self::ClockWithoutDenseTime { .. } => "clock-without-dense-time",
-            Self::ClockReadOutsideConstraint { .. } => "clock-read-outside-constraint",
+            Self::ClockReadOutsideConstraint { .. } | Self::ClockReadingCycle { .. } => {
+                "clock-read-outside-constraint"
+            }
             Self::ClockComparison { .. } => "clock-comparison",
             Self::NegativeClockConstant { .. } => "negative-clock-constant",
             Self::ClockBoundNotConstant { .. } => "clock-bound-not-constant",

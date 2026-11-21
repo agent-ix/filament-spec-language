@@ -2647,6 +2647,15 @@ impl PackageDeclarations {
                 return Err(refusals);
             }
         }
+        // The checking stage's work meter, created before the timed reader so
+        // its unfoldings and every later charge draw on the one budget.
+        let contract_meter_limits = filament_exact::ScalarLimits {
+            work_units: limits.work_budget(),
+            integer_bits: limits.rational_bits(),
+            ..family::SCALAR_LIMITS_UNLIMITED
+        };
+        let mut contract_meter =
+            filament_exact::Meter::new(contract_meter_limits).with_cancel(cancel.clone());
         // FR-230: the clocks of each timed model, read out of the state
         // clauses before they are typed.
         let timed_drafts = {
@@ -2673,8 +2682,10 @@ impl PackageDeclarations {
                     rational_bits: limits.rational_bits(),
                     nodes: limits.nodes(),
                     model_spans: &self.declared_type_spans,
+                    locate: &|span| region::region(&self.source, self.embedding.as_deref(), span),
                 },
                 &mut self.state_clauses,
+                &mut contract_meter,
             )
             .map_err(|refusal| vec![refusal])?
         };
@@ -3451,13 +3462,6 @@ impl PackageDeclarations {
             input_bytes: limits.input_bytes(),
             node_count: limits.nodes(),
         };
-        let contract_meter_limits = filament_exact::ScalarLimits {
-            work_units: limits.work_budget(),
-            integer_bits: limits.rational_bits(),
-            ..family::SCALAR_LIMITS_UNLIMITED
-        };
-        let mut contract_meter =
-            filament_exact::Meter::new(contract_meter_limits).with_cancel(cancel.clone());
         // FR-319: a body's equality over a union is typed against the sealed
         // declaration, so each union is sealed under the node id of its type
         // node before any body is typed. A union's type closure needs no
