@@ -673,7 +673,6 @@ fn quantiles() -> World {
 /// FR-877-AC-1: `<= 2 ms` is proved with the transform's minimum `2/5`.
 #[trace("TC-2494", "FR-877-AC-1")]
 #[trace("FSpec-TC-1820", "FSpec-FR-753-AC-4")]
-#[ignore = "QSL-2156: elapsed-time quantile claims are not routed to the timed product yet (QSL-2158 source interface)"]
 #[test]
 fn elapsed_quantile_at_most_is_certified() {
     let world = quantiles();
@@ -686,6 +685,25 @@ fn elapsed_quantile_at_most_is_certified() {
     assert_eq!(doc["objective"]["timed"]["form"], "elapsed-quantile");
     assert_eq!(doc["objective"]["timed"]["route"], "digital");
     assert!(accepted(&world, "AtMostTwo", &doc));
+}
+
+/// FR-877-AC-2 (certificate half): AC-1's item with its initial value set to
+/// `1/2` is rejected `InequalityFails` by the checker's own enumeration.
+#[trace("TC-2494", "FR-877-AC-2")]
+#[test]
+fn elapsed_quantile_altered_transform_value_is_rejected() {
+    let world = quantiles();
+    let tampered = settle_tampered(&world, "AtMostTwo", |certificate| {
+        for entry in &mut certificate.values {
+            if entry.value == ratio(2, 5) {
+                entry.value = ratio(1, 2);
+            }
+        }
+    });
+    assert_eq!(
+        rejected_item_rule(&tampered),
+        CertificateRule::InequalityFails
+    );
 }
 
 /// FR-877-AC-2: `<= 1 ms` is refuted; a tampered transform value rejects.

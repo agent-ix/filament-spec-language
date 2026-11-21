@@ -668,6 +668,21 @@ fn reward_ratio(
     Ok(value)
 }
 
+/// FR-877: a quantile transform value `E[[activated] * ([M <= c] - q)]` lies in
+/// `[-1, 1]`.
+fn signed_unit_ratio(
+    wire: WireRational,
+    bits: u64,
+    meter: &mut filament_exact::Meter,
+    cancel: &Cancel,
+) -> Result<Rational, ProbabilityDocumentError> {
+    let value = ratio_checked(wire, bits, meter, cancel, false)?;
+    if value < rational(-1) || value > rational(1) {
+        return Err(ProbabilityDocumentError::Malformed);
+    }
+    Ok(value)
+}
+
 fn ratio_checked(
     wire: WireRational,
     bits: u64,
@@ -924,6 +939,9 @@ fn read_document_profile(
     let extended_timed_value_profile = timed
         .as_ref()
         .is_some_and(|objective| objective.form == TimedProbabilityForm::ExpectedElapsed);
+    let signed_unit_profile = timed
+        .as_ref()
+        .is_some_and(|objective| objective.form == TimedProbabilityForm::ElapsedQuantile);
     let reward = match (wire.objective.reward, wire.objective.unit) {
         (Some((model, name)), Some(unit)) => Some(ProbabilityRewardObjective {
             model: fsl_foundation::node_wire::node_key_from_text(model.get())
@@ -978,13 +996,17 @@ fn read_document_profile(
         poll(cancel)?;
         values.push(ExactProbabilityValue {
             state: decode_key(&row.state, limits)?,
-            value: reward_ratio(
-                row.value,
-                limits.scalar_bits,
-                reward_profile || extended_timed_value_profile,
-                meter,
-                cancel,
-            )?,
+            value: if signed_unit_profile {
+                signed_unit_ratio(row.value, limits.scalar_bits, meter, cancel)?
+            } else {
+                reward_ratio(
+                    row.value,
+                    limits.scalar_bits,
+                    reward_profile || extended_timed_value_profile,
+                    meter,
+                    cancel,
+                )?
+            },
         });
     }
     ordered(values.iter().map(|row| row.state.clone())).map_err(|error| {

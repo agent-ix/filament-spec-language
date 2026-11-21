@@ -251,7 +251,6 @@ fn timed_form_shape_names_the_selected_claim_among_equal_names() {
 /// claims.
 #[trace("FR-498-AC-3", "TC-1288")]
 #[test]
-#[ignore = "QSL-2156: elapsed-time quantile forms over digital clocks not implemented yet"]
 fn timed_form_shape_names_the_selected_elapsed_claim_among_equal_names() {
     let elapsed = |threshold: &str| {
         format!(
@@ -1282,16 +1281,13 @@ fn formula_root(world: &World, claim: &str) -> filament_exact::NodeKey {
 
 /// FR-498-AC-8 (TC-1288 step 3): a `TimedFormShape` cause of a claim with an
 /// identity carries the member path of the part it refuses: `[form]` and no
-/// formulas for a form with no timed reading, `[form, measure]` for an
-/// elapsed measure under a quantile.
+/// formulas for a form with no timed reading. An elapsed measure under a
+/// quantile has one (FR-877), so it is no longer refused.
 #[trace("FR-498-AC-8", "TC-1288")]
 #[test]
 fn a_timed_form_shape_cause_carries_the_claim_member_path() {
     let claims = "probabilistic LongRun using ev on M over (c: M::Call) under every scheduler \
-                  on origin { long_run_fraction holds(c.late) <= 0.5 }\n\
-                  probabilistic Elapsed using ev on M over (c: M::Call) under every scheduler \
-                  on origin { quantile 0.5 of (elapsed from holds(not c.late) until \
-                  holds(c.late) within 4 ms) <= 1 ms }\n";
+                  on origin { long_run_fraction holds(c.late) <= 0.5 }\n";
     let world = retx(GUARD, true, "", claims);
     let identity = |name: &str| {
         world
@@ -1307,12 +1303,6 @@ fn a_timed_form_shape_cause_carries_the_claim_member_path() {
     assert_eq!(claim, Some(identity("LongRun")));
     let member = member.expect("a member path");
     assert_eq!(member.body, ["form"]);
-    assert!(member.formulas.is_empty());
-
-    let (claim, member) = timed_form_shape(&world, "Elapsed");
-    assert_eq!(claim, Some(identity("Elapsed")));
-    let member = member.expect("a member path");
-    assert_eq!(member.body, ["form", "measure"]);
     assert!(member.formulas.is_empty());
 }
 

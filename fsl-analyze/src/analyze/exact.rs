@@ -9,6 +9,7 @@
 //! independent FR-202 replay; long-run document evidence authorizes proofs.
 
 mod candidate;
+mod elapsed;
 mod long_run;
 mod measure;
 mod undefined;
@@ -840,6 +841,15 @@ fn run(
         }
     ) {
         return run_timed(request, cancel, tamper);
+    }
+    if matches!(
+        &request.claim.form,
+        ProbForm::Quantile {
+            measure: fsl_semantics::check::BoundedMeasure::Elapsed { .. },
+            ..
+        }
+    ) {
+        return elapsed::run(request, cancel, tamper);
     }
     if matches!(request.claim.form, ProbForm::LongRunFraction { .. }) {
         return long_run::run(request, cancel, tamper);

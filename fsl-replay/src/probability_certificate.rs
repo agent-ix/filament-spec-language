@@ -244,6 +244,9 @@ pub struct RegionProductKeyInput {
     pub accumulator: Option<Value>,
     /// The actual pending draw control, if present.
     pub pending: Option<Value>,
+    /// An elapsed-time measure clock: its window and its value, `None` before
+    /// activation (FR-920). Exclusive with `deadline`.
+    pub elapsed: Option<(u64, Option<u64>)>,
     /// Region encoding kind.
     pub kind: RegionKeyKind,
     /// The corner coordinates in clock-entry order, including the deadline.
@@ -273,6 +276,9 @@ pub struct DigitalProductKeyInput {
     pub accumulator: Option<Value>,
     /// The actual pending draw control, if present.
     pub pending: Option<Value>,
+    /// An elapsed-time measure clock: its window and its value, `None` before
+    /// activation (FR-920). Exclusive with `deadline`.
+    pub elapsed: Option<(u64, Option<u64>)>,
 }
 
 /// Encode the FR-196 canonical ProductKey for one admitted digital state.
@@ -301,8 +307,9 @@ pub fn digital_probability_product_key(
         monitor,
         accumulator,
         pending,
+        elapsed,
     } = input;
-    if scale == 0 {
+    if scale == 0 || (deadline.is_some() && elapsed.is_some()) {
         return Err(ExactProbabilityGraphError::InvalidDigitalKey);
     }
 
@@ -337,7 +344,22 @@ pub fn digital_probability_product_key(
             json!(["deadline", limit.to_string(), elapsed.to_string()])
         }
         Some(_) => return Err(ExactProbabilityGraphError::InvalidDigitalKey),
-        None => Value::Null,
+        None => match elapsed {
+            // FR-920: the measure's elapsed clock, `null` before activation
+            // and capped at the window plus one.
+            Some((limit, value))
+                if value
+                    .is_none_or(|value| limit.checked_add(1).is_some_and(|cap| value <= cap)) =>
+            {
+                json!([
+                    "elapsed",
+                    limit.to_string(),
+                    value.map(|value| value.to_string())
+                ])
+            }
+            Some(_) => return Err(ExactProbabilityGraphError::InvalidDigitalKey),
+            None => Value::Null,
+        },
     };
     let model = json!([
         "filament.simulation.state-key/v1",
@@ -380,10 +402,11 @@ pub fn region_probability_product_key(
         monitor,
         accumulator,
         pending,
+        elapsed,
         kind,
         corner,
     } = input;
-    if scale == 0 || subdivisions < 2 {
+    if scale == 0 || subdivisions < 2 || elapsed.is_some() {
         return Err(ExactProbabilityGraphError::InvalidDigitalKey);
     }
     let mut keyed_clocks = clocks
@@ -1777,6 +1800,117 @@ fn check_exact_reachability(
     ))
 }
 
+/// Check exact values of an expected terminal reward on an acyclic
+/// checker-owned graph: a terminal state's value is its reward (zero when it
+/// has none), every other state's value is the best choice's expectation.
+/// FR-877's quantile transform is such a reward.
+fn check_exact_terminal_rewards(
+    graph: &CheckerGraph,
+    rewards: &BTreeMap<ProbabilityProductKey, Rational>,
+    certificate: &ExactProbabilityCertificate,
+    objective: ProbabilityObjective,
+    bound: &Bound,
+    cancel: &Cancel,
+) -> Result<ExactProbabilityCertificateCheck, ExactProbabilityGraphError> {
+    poll_cancel(cancel)?;
+    let values = match certificate_values(graph, certificate, cancel)? {
+        CertificateValues::Complete(values) => values,
+        CertificateValues::Rejected(rejection) => {
+            return Ok(ExactProbabilityCertificateCheck::Rejected(rejection));
+        }
+    };
+    topological_order(graph, cancel)?;
+    let zero = rational(0);
+    let one = rational(1);
+    for (key, state) in &graph.states {
+        poll_cancel(cancel)?;
+        let actual = if state.terminal.is_some() {
+            rewards.get(key).cloned().unwrap_or_else(|| zero.clone())
+        } else {
+            if state.choices.is_empty() {
+                return Ok(rejected(
+                    ProbabilityCertificateRule::InequalityFails,
+                    key.clone(),
+                ));
+            }
+            let mut choice_values = Vec::with_capacity(state.choices.len());
+            for choice in &state.choices {
+                poll_cancel(cancel)?;
+                let mut mass = zero.clone();
+                let mut value = zero.clone();
+                for edge in choice {
+                    poll_cancel(cancel)?;
+                    if edge.probability < zero {
+                        return Ok(rejected(
+                            ProbabilityCertificateRule::InequalityFails,
+                            key.clone(),
+                        ));
+                    }
+                    if edge.probability == zero {
+                        continue;
+                    }
+                    let Some(successor) = values.get(&edge.target) else {
+                        return Ok(rejected(
+                            ProbabilityCertificateRule::InequalityFails,
+                            key.clone(),
+                        ));
+                    };
+                    mass = mass.add(&edge.probability);
+                    value = value.add(&edge.probability.mul(successor));
+                }
+                if mass != one {
+                    return Ok(rejected(
+                        ProbabilityCertificateRule::InequalityFails,
+                        key.clone(),
+                    ));
+                }
+                choice_values.push(value);
+            }
+            match objective {
+                ProbabilityObjective::Minimum => choice_values.into_iter().min(),
+                ProbabilityObjective::Maximum => choice_values.into_iter().max(),
+                ProbabilityObjective::Workload => {
+                    return Err(ExactProbabilityGraphError::UnsupportedClaimForm);
+                }
+            }
+            .unwrap_or_else(|| zero.clone())
+        };
+        if values.get(key) != Some(&actual) {
+            return Ok(rejected(
+                ProbabilityCertificateRule::InequalityFails,
+                key.clone(),
+            ));
+        }
+    }
+    let Some(initial) = values.get(&graph.initial) else {
+        return Ok(rejected(
+            ProbabilityCertificateRule::InequalityFails,
+            graph.initial.clone(),
+        ));
+    };
+    let meets_bound = match bound {
+        Bound::AtLeast(threshold) => initial >= threshold,
+        Bound::AtMost(threshold) => initial <= threshold,
+    };
+    if !meets_bound {
+        return Ok(rejected(
+            ProbabilityCertificateRule::ThresholdMissed,
+            graph.initial.clone(),
+        ));
+    }
+    Ok(ExactProbabilityCertificateCheck::Accepted(
+        ExactProbabilityAcceptance {
+            document: None,
+            value: initial.clone(),
+            certificate: certificate.clone(),
+            side: match bound {
+                Bound::AtLeast(_) => ProbabilityBoundSide::AtLeast,
+                Bound::AtMost(_) => ProbabilityBoundSide::AtMost,
+            },
+        },
+    ))
+}
+
 enum CertificateValues {
     Complete(BTreeMap<ProbabilityProductKey, Rational>),
     Rejected(ProbabilityCertificateRejection),
@@ -2364,6 +2498,7 @@ mod tests {
                 monitor: Some(json!(["deadline", "eventually", "pending"])),
                 accumulator: None,
                 pending: None,
+                elapsed: None,
             })
             .expect("digital timed keys are valid")
         };
@@ -2381,6 +2516,7 @@ mod tests {
             monitor: None,
             accumulator: None,
             pending: None,
+            elapsed: None,
         })
         .expect("clockless timed key is valid");
         let one_clock = digital_probability_product_key(DigitalProductKeyInput {
@@ -2398,6 +2534,7 @@ mod tests {
             monitor: None,
             accumulator: None,
             pending: None,
+            elapsed: None,
         })
         .expect("clocked timed key is valid");
         let graph = |state: ProbabilityProductKey| CheckerGraph {
@@ -2468,6 +2605,7 @@ mod tests {
             monitor: None,
             accumulator: None,
             pending: None,
+            elapsed: None,
             kind: RegionKeyKind::Region,
             corner: None,
         })
@@ -2488,6 +2626,7 @@ mod tests {
             monitor: None,
             accumulator: None,
             pending: None,
+            elapsed: None,
             kind: RegionKeyKind::Region,
             corner: None,
         })
@@ -2765,11 +2904,54 @@ mod tests {
             monitor: None,
             accumulator: None,
             pending: None,
+            elapsed: None,
         })
         .expect("the complete timed key is representable");
         assert_eq!(
             key.as_bytes(),
             br#"["filament.probability-product-key/v1",null,null,null,["filament.simulation.state-key/v1",["digital",["state",{"a":true,"z":1}],["unit","second"],"10",[[["Type","alpha",["u","object-a"]],"0","3"],[["Type","zeta",["u","object-z"]],"1","3"]],["deadline","4","1"],"idle-delayed"]],null,null,null]"#
+        );
+    }
+
+    #[trace("FR-920-AC-1")]
+    #[test]
+    fn digital_elapsed_key_encodes_the_measure_clock_and_rejects_a_second_clock() {
+        let key = |deadline, elapsed| {
+            digital_probability_product_key(DigitalProductKeyInput {
+                binding: None,
+                discrete: json!([]),
+                unit: json!(["unit", "second"]),
+                scale: 1,
+                clocks: Vec::new(),
+                deadline,
+                tail: DigitalTail::Running,
+                monitor: Some(json!(["measure", null, "inactive"])),
+                accumulator: None,
+                pending: None,
+                elapsed,
+            })
+        };
+        let inactive = key(None, Some((4, None))).expect("an inactive measure encodes");
+        let active = key(None, Some((4, Some(0)))).expect("an active measure encodes");
+        assert_ne!(inactive, active, "null differs from zero");
+        assert!(String::from_utf8_lossy(inactive.as_bytes()).contains(r#"["elapsed","4",null]"#));
+        assert!(
+            key(None, Some((4, Some(5)))).is_ok(),
+            "the clock is capped at W + 1"
+        );
+        assert_eq!(
+            key(None, Some((4, Some(6)))),
+            Err(ExactProbabilityGraphError::InvalidDigitalKey)
+        );
+        assert_eq!(
+            key(
+                Some(DigitalDeadlineKey {
+                    limit: 4,
+                    elapsed: 0
+                }),
+                Some((4, None))
+            ),
+            Err(ExactProbabilityGraphError::InvalidDigitalKey)
         );
     }
 
@@ -2793,6 +2975,7 @@ mod tests {
                 monitor: None,
                 accumulator: None,
                 pending: None,
+                elapsed: None,
             })
         };
         assert_eq!(
