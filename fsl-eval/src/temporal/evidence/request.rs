@@ -22,7 +22,7 @@ use super::trigger::{
     TriggerEvidence,
 };
 use crate::temporal::facts::ClauseFacts;
-use crate::temporal::finite_window::{ClockCover, OrderKey, Valuation};
+use crate::temporal::finite_window::{ClockCover, OrderKey, StampInterval, Valuation};
 use crate::temporal::ledger::{
     LedgerBinding, ProgressClosure, ProgressCompleteness, ProgressLedger,
 };
@@ -84,8 +84,15 @@ impl EvidenceRef {
 pub struct EvidencePosition {
     /// The observation.
     pub observation: EvidenceRef,
+    /// The retained semantic-value canonical JSON for a spine-admitted
+    /// FR-106 position, when this route carries the document itself.
+    pub admitted_document: Option<serde_json::Value>,
     /// The position's stamp: its tick under the timestamped-event clock.
     pub position: u64,
+    /// The FR-501 interval stamp carried by this position, when present.
+    pub interval: Option<StampInterval>,
+    /// The FR-966 arrival watermark carried by this position, when present.
+    pub arrival: Option<u64>,
     /// The order key, when the observation has one.
     pub order_key: Option<OrderKey>,
     /// The valuation of each atom (by the atom's node index in the clause's
@@ -443,6 +450,19 @@ pub struct SubjectOccurrence<'p> {
     pub source_map: &'p CheckedSourceMapEntry,
 }
 
+/// How a clock's stamps convert to nanoseconds (FR-944): a count of steps, a
+/// declared linear time unit's exact factor to seconds, or a declared unit the
+/// route cannot read, which the call refuses and never counts.
+#[derive(Clone, Debug, PartialEq)]
+pub enum ClockScale {
+    /// The unit names no declared time unit (or the clock has none): `s` = 1.
+    Count,
+    /// A declared linear time unit, exactly this many seconds per tick.
+    PerSecond(filament_exact::Rational),
+    /// A declared unit that is no usable linear time unit on this route.
+    Unreadable,
+}
+
 /// The checked package's facts about the clause a call assesses (FR-515):
 /// the declaration and profile row, each occurrence with the clock row its
 /// key selects, the clause's formula, activation and captures, the atoms that
@@ -454,8 +474,14 @@ pub struct SubjectOccurrence<'p> {
 pub struct EvidenceSubject<'p> {
     /// The checked package identity the subject was read from.
     pub package_identity: String,
+    /// The exact canonical package bytes retained by the checked reader.
+    pub canonical_package_bytes: Option<&'p [u8]>,
+    /// How this occurrence's clock stamps convert to nanoseconds (FR-944).
+    pub time_unit_scale: ClockScale,
     /// The clause's declaration node.
     pub declaration: &'p CheckedNodeId,
+    /// The checked signal node the temporal clause observes.
+    pub signal: &'p CheckedNodeId,
     /// The lock's `profile_selections` row of the clause.
     pub profile: &'p CheckedSelection,
     /// The declaration's occurrences with their clock rows.
