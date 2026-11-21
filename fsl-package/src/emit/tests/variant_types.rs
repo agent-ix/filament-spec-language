@@ -524,6 +524,29 @@ fn model_enum_equality_emits_exact_member_identities() {
     }
 }
 
+/// Original model declaration keys are document-owned, but their final nodes
+/// are local equality facts and must reach the native decision reader.
+#[trace("FR-531-AC-42", "FSpec-FR-322-AC-288")]
+#[test]
+fn retained_model_enum_equality_facts_form_native_decisions() {
+    let emitted = emit_unit(UNIT);
+    let Read::Verified { admitted, .. } = emitted.read(emitted.emission.package.bytes()) else {
+        panic!("actual emitted enums admit")
+    };
+    let mut budget = filament_contract_model::NativeJoinBudget::new(10_000_000, 10_000_000);
+    assert_eq!(emitted.emission.equality_producer_identity_rows().len(), 4);
+    for row in emitted.emission.equality_producer_identity_rows() {
+        let decision = emitted
+            .emission
+            .admitted_equality(&admitted, row.checked_node(), row.occurrence(), &mut budget)
+            .expect("complete local model enum equality witness");
+        assert_eq!(
+            decision.schedule(),
+            filament_semantic_value::declaration::EqualitySchedule::Enum
+        );
+    }
+}
+
 /// FR-360-AC-8: a unit naming only a variant type with identifier cases emits
 /// its model enum; IR admits the carrier and the accessor reports the exact
 /// enum-member witness it still needs. The document's `Account` operations
