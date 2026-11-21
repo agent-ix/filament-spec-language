@@ -157,6 +157,18 @@ impl SourceDeclarations {
                 return Ok(Some(scope.clone()));
             }
         }
+        let mut original = None;
+        for (key, scope) in &self.declarations {
+            if key.node == text {
+                if original.as_ref().is_some_and(|previous| previous != scope) {
+                    return Err(fault("clock-original-type-row-has-one-scope"));
+                }
+                original = Some(scope.clone());
+            }
+        }
+        if original.is_some() {
+            return Ok(original);
+        }
         let normalized = self.text(text);
         let mut found = None;
         for scope in self.node_scopes.values().chain(self.model_scopes.values()) {
