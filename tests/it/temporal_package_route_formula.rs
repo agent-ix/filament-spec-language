@@ -365,9 +365,9 @@ fn bindings_that_are_not_the_packages_are_refused() {
 #[test]
 fn a_clause_with_an_aggregate_atom_is_read_from_its_samples() {
     let clauses = "record Sample { level: Int[0, 9]; }\n\
-        temporal Fed using t over (e: Sample) clock \"model-steps\" \
+        temporal Fed using t over (e: Sample) clock \"samples\" \
         on origin { always[0,2] (count over past[0,1] min_count 1 >= 1) }\n\
-        temporal Starved using t over (e: Sample) clock \"model-steps\" \
+        temporal Starved using t over (e: Sample) clock \"samples\" \
         on origin { always[0,2] (count over past[0,1] min_count 5 >= 1) }";
     let built = event_clauses(clauses, &[("Fed", "fed"), ("Starved", "starved")]);
     let read = built.read(&built.emission);
