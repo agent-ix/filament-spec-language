@@ -413,8 +413,7 @@ fn fsl_eval_calls_the_owner_repair_module() {
 /// The items FR-861-AC-4 forbids `fsl-eval` to define: the local rules the
 /// four owners replace. A definition of any of these names is a second copy.
 const FORBIDDEN_ITEMS: &[&str] = &[
-    // partial: the local evidence-letter fallback and interval algebra.
-    "EvidenceLetters",
+    // partial: the local interval algebra (`EvidenceLetters` reads through the owner).
     "PossibilitySet",
     "OrderPossibilities",
     "EventTimeInterval",
@@ -526,7 +525,7 @@ fn fsl_eval_defines_no_second_copy_of_the_four_owners_rule_sets() {
     // The scan finds what it forbids.
     let planted = [(
         "planted.rs".to_owned(),
-        "fn scope_disposition() {} struct EvidenceLetters; \
+        "fn scope_disposition() {} struct OrderPossibilities; \
          fn revise_again(a: ProgressCompleteness, b: ProgressCompleteness) {}"
             .to_owned(),
     )];
