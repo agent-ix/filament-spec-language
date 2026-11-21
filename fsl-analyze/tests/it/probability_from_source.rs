@@ -983,7 +983,12 @@ fn bounded_delay_fraction_from_source_clips_the_first_leaving_step() {
     for index in 0..2 {
         let item = &document["items"][index];
         assert_eq!(label(item), "measured", "{document}");
-        assert_eq!(item["verdict"]["decision"], "accepted", "{item}");
+        assert_eq!(item["verdict"]["decision"]["type"], "accepted", "{item}");
+        assert_eq!(
+            item["verdict"]["estimate"]["value"],
+            json!({"numerator": "1", "denominator": "1"}),
+            "{item}"
+        );
     }
 }
 
