@@ -60,3 +60,16 @@ Disposition pass 2 at head 586c552b0e, a static review plus /tmp/qsl2590-focused
 | FND-002 | fixed | - |
 | FND-003 | still-open | No AC was added for FR-283's `Inactive` row or for FR-621's `inactive` kind. `MonitorVerdict::Inactive` is reached only by the failing monitor test. This closes with FND-001 if that test passes. A separate AC is optional. |
 | FND-004 | deferred | QSL-2254: every timed run-wire test is still ignored, so the timed inactive branch cannot have an end-to-end test yet. |
+
+Disposition pass 3 at head 883c0b4a7c, a static review plus /tmp/qsl2590-focused-6.log.
+
+| FND | Outcome | Reason |
+| --- | --- | --- |
+| FND-001 | fixed | - |
+| FND-003 | accepted-no-change | `the_monitor_reports_a_closed_false_guard_scope_inactive_like_the_batch_run` now reaches `MonitorVerdict::Inactive` through `native-monitor/1` and asserts kind `inactive`. FR-267-AC-28 owns the behaviour, so a separate AC per Outputs-table row would add nothing. |
+
+## New findings (disposition pass 3)
+
+| ID | Severity | Summary | Refs |
+| --- | --- | --- | --- |
+| FND-005 | medium | No test covers a guarded `on each` clause with every guard false over a `Progressed` or `Timestamped` trace. That route reports `holds` with truth true (code-review SR FND-009). | fsl-eval/src/temporal/finite_window/run.rs:1383-1395 |

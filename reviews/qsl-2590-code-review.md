@@ -76,3 +76,19 @@ Disposition pass 2 at head 586c552b0e (fix commits 59a2658636, 362fdab606, 00e6c
 | ID | Severity | Summary | Refs |
 | --- | --- | --- | --- |
 | FND-008 | low | `an_inactive_requirement_is_satisfied_when_closed_and_pending_when_open` is tagged `FR-895-AC-1`. That AC is the all-satisfied order fixture that settles `proved`, and it does not state the new inactive-requirement rule. The new FR-895 Requirement row sentence ("satisfied when the recording is closed and pending when it is open") has no acceptance criterion of its own. Add one, for example FR-895-AC-N, and tag the test to it. | fsl-analyze/tests/it/protocol_recording.rs:1593; spec/functional/FR-895-assess-a-recorded-protocol-execution-against-its-obligations.md:76 |
+
+Disposition pass 3 at head 883c0b4a7c (fix commits 74b61f03e6 and 883c0b4a7c), rebased on main c9e9a4d5c8. This is a static review plus /tmp/qsl2590-focused-6.log (the monitor test, 1 passed, exit 0). The draco run of the four focused commands was still in flight.
+
+Soundness of the `decided` change (clause_state.rs:1607-1617). It returns `None` only for the two bounded false-extension profiles, and only when the streamed report is `Inactive`. That report means no guard over the positions seen has read true (stream.rs `inactive()`: closed reading, guarded `on each`, `admitted` false). With no activation there is no obligation, so the open-scope reading has nothing it could legitimately decide. The only decisive answer it could give is the vacuous `Holds` of an empty activation set, described in FND-009. No genuinely decided clause can be `Inactive`. A guard error leaves the report undefined or refused, not inactive. A true guard sets `admitted`. At stream end, the session reports the latest record whether or not it settled, so the inactive result is still reported, as the 0, 0, 0 half of the test shows. The `InfiniteTrace` arm still lists `Inactive` as decided. On a streamed reading it cannot be reached, because `inactive()` requires the closed reading, and a lasso batch is complete, so settling there is correct. The change is sound.
+
+| FND | Outcome | Reason |
+| --- | --- | --- |
+| FND-005 | fixed | - |
+| FND-008 | fixed | - |
+
+## New findings (disposition pass 3)
+
+| ID | Severity | Summary | Refs |
+| --- | --- | --- | --- |
+| FND-009 | medium | The finite-window evaluator, which runs every `Progressed` and `Timestamped` trace (`run_window`, temporal.rs:2553), has no inactive result. When a guarded `on each` run has no activation, `Tail::Done` with `done` empty reports `WindowVerdict::Holds`. Its basis is `ClosedScope` under a closed scope and `DecisiveWitness` under an open one, and the truth is true either way. So a progressed trace with a closed, complete scope and every guard false still reports active, truth true (FSpec FR-093-AC-5, closed half). An open scope reports a decisive witness and truth, where AC-5 requires activation-unknown and no truth (open half). This vacuous decisive `Holds` is also the real source of the monitor freeze, which the `decided` guard now catches at the caller. It is pre-existing and not introduced by this PR. Fix it in the evaluator (no activation and a closed scope gives inactive, an open scope gives activation unknown), here or in a linked follow-up ticket. | fsl-eval/src/temporal/finite_window/run.rs:1383-1395 |
+| FND-010 | low | FR-895-AC-8 (from main, spec batch 4) also states the item labels: `proved` when the recording is closed, and `inconclusive`/`open-history` when it is open. `an_inactive_requirement_is_satisfied_when_closed_and_pending_when_open` asserts only the requirement obligation's verdict. Add `assessed.global` label assertions to the same test. | fsl-analyze/tests/it/protocol_recording.rs:1593-1598 |
