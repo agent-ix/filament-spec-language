@@ -871,6 +871,7 @@ impl CheckedPackageEvaluation for BarePackage<'_> {
             .map_err(CallFailure::Fault)
     }
 
+    #[allow(clippy::too_many_arguments)] // each value is an explicit evaluation input
     fn evaluate_model_holds(
         &self,
         atom: &super::HoldsAtom,

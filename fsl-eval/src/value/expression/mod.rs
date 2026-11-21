@@ -1583,6 +1583,10 @@ pub trait CheckedPackageEvaluation: family::sealed::Sealed {
     ) -> Result<Evaluation, CallFailure>;
 
     /// Evaluate a model behaviour's holds condition with FR-107 model-read accounting.
+    /// With `absent_population`, `over` is a reference to an absent instance:
+    /// constants evaluate normally, field reads are undefined and lookup retains
+    /// the key's population provenance (FR-125).
+    #[allow(clippy::too_many_arguments)] // each value is an explicit evaluation input
     fn evaluate_model_holds(
         &self,
         atom: &HoldsAtom,
@@ -1628,6 +1632,8 @@ pub trait CheckedPackageEvaluation: family::sealed::Sealed {
     ) -> Result<Evaluation, CallFailure>;
 
     /// Evaluate a model behaviour's activation guard with FR-107 model-read accounting.
+    /// `absent_population` applies the same absent key to both over and trigger
+    /// binders, at the slots their checked form actually reads (FR-125).
     fn evaluate_model_guard(
         &self,
         clause: &NodeKey,
@@ -2674,6 +2680,7 @@ impl CheckedPackageEvaluation for CheckedPackage {
         .map_err(CallFailure::Fault)
     }
 
+    #[allow(clippy::too_many_arguments)] // each value is an explicit evaluation input
     fn evaluate_model_holds(
         &self,
         atom: &HoldsAtom,

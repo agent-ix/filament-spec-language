@@ -1008,6 +1008,9 @@ pub trait ModelEvaluator: sealed::Sealed + Sync {
     ) -> Result<Evaluation, CallFailure>;
 
     /// Evaluate a model behaviour's holds condition with FR-107 model-read accounting.
+    /// With `absent_population`, `over` is the real instance key of a population
+    /// holding no conforming object: only a read through it is undefined (FR-125).
+    #[allow(clippy::too_many_arguments)] // each value is an explicit evaluation input
     fn evaluate_model_holds(
         &self,
         atom: &crate::value::HoldsAtom,
@@ -1034,6 +1037,8 @@ pub trait ModelEvaluator: sealed::Sealed + Sync {
     ) -> Result<Evaluation, CallFailure>;
 
     /// Evaluate a model behaviour's activation guard with FR-107 model-read accounting.
+    /// `absent_population` marks both the over and trigger binders absent;
+    /// lookup provenance can still read their real key (FR-125).
     fn evaluate_model_guard(
         &self,
         clause: &NodeKey,
@@ -1606,6 +1611,7 @@ impl ModelEvaluator for CheckedPackage {
         CheckedPackageEvaluation::evaluate_holds(self, atom, over, captures, objects, meter)
     }
 
+    #[allow(clippy::too_many_arguments)] // each value is an explicit evaluation input
     fn evaluate_model_holds(
         &self,
         atom: &crate::value::HoldsAtom,
@@ -2123,6 +2129,7 @@ impl ModelEvaluator for BarePackage<'_> {
         CheckedPackageEvaluation::evaluate_holds(self, atom, over, captures, objects, meter)
     }
 
+    #[allow(clippy::too_many_arguments)] // each value is an explicit evaluation input
     fn evaluate_model_holds(
         &self,
         atom: &crate::value::HoldsAtom,
