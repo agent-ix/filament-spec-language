@@ -489,11 +489,20 @@ fn run_model(
         Err(refusal) => return stopped(replay_refusal(refusal), admitted),
     };
     let ModelTraceRun {
+        call_failure,
         outcome,
         decisive,
         meter,
         ..
     } = evaluated;
+    if let Some(failure) = call_failure {
+        return Ok(finished(
+            super::package_call_disposition(failure),
+            (&meter, admitted),
+            None,
+            None,
+        ));
+    }
     let (disposition, _) = super::package_disposition(None, outcome, false);
     let violated = matches!(
         disposition,

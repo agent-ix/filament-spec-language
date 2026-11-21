@@ -104,6 +104,8 @@ pub struct ClauseLetters<'s, 'a> {
     observed: RefCell<Option<(StateKey, Rc<Observed>)>>,
     /// How many states have been observed (not read from `observed`).
     observations: Cell<u64>,
+    /// Original package call stop, retained beyond the letter engine boundary.
+    call_failure: RefCell<Option<filament_eval::CallFailure>>,
 }
 
 /// The clause a [`ClauseLetters`] reads: the source route's checked node, or
@@ -232,6 +234,7 @@ impl<'a> ModelSystem<'a> {
                 .collect(),
             observed: RefCell::new(None),
             observations: Cell::new(0),
+            call_failure: RefCell::new(None),
         })
     }
 }
@@ -253,6 +256,22 @@ impl StatePredicate for Condition<'_> {
 }
 
 impl ClauseLetters<'_, '_> {
+    /// Take the original checked-package call failure after the letter engine
+    /// stops. Its admission diagnostic and package locus are kept intact.
+    pub fn take_call_failure(&self) -> Option<filament_eval::CallFailure> {
+        self.call_failure.borrow_mut().take()
+    }
+
+    fn call_stop(&self, failure: filament_eval::CallFailure) -> AtomStop {
+        if let filament_eval::CallFailure::Fault(fault) = failure {
+            return AtomStop::Fault(fault);
+        }
+        *self.call_failure.borrow_mut() = Some(failure);
+        // The engine accepts letter stops only; the caller reads the original
+        // typed failure before interpreting this boundary stop.
+        fault("package-call-stopped")
+    }
+
     /// Evaluate one `holds` atom with the capture values fixed for its
     /// activation position.
     pub(super) fn atom_with_captures(
@@ -285,7 +304,7 @@ impl ClauseLetters<'_, '_> {
                             &self.reference_bindings,
                             meter,
                         )
-                        .map_err(call_stop)?
+                        .map_err(|failure| self.call_stop(failure))?
                         .outcome,
                 );
             }
@@ -549,16 +568,6 @@ const PACKAGE_FOOTPRINT: FootprintRefusal = FootprintRefusal::Unresolved {
     what: "package-form clause footprint",
 };
 
-/// A package-form evaluation that did not evaluate: a fault stays a fault, a
-/// refused call is a broken invariant of the letters, which read only atoms
-/// and guards the clause holds over a bound instance.
-fn call_stop(failure: filament_eval::CallFailure) -> AtomStop {
-    match failure {
-        filament_eval::CallFailure::Fault(fault) => AtomStop::Fault(fault),
-        _ => fault("package-form-call-refused"),
-    }
-}
-
 /// A broken invariant of the letters.
 fn fault(invariant: &'static str) -> AtomStop {
     AtomStop::Fault(InternalFault::new("model-letters", invariant))
@@ -632,7 +641,7 @@ impl ModelLetters for ClauseLetters<'_, '_> {
                             &self.reference_bindings,
                             meter,
                         )
-                        .map_err(call_stop)?
+                        .map_err(|failure| self.call_stop(failure))?
                         .outcome,
                 );
             }

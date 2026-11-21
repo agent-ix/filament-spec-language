@@ -1573,6 +1573,23 @@ pub fn run_package_valuation(
     })
 }
 
+fn package_call_disposition(failure: filament_eval::CallFailure) -> ClauseDisposition {
+    match failure {
+        filament_eval::CallFailure::Admission(failure) => {
+            let failure = match *failure {
+                filament_eval::CallAdmissionFailure::Refused(record) => {
+                    AdmissionFailure::Refused(Box::new(record.record))
+                }
+                filament_eval::CallAdmissionFailure::Incomplete(record) => {
+                    AdmissionFailure::Incomplete(Box::new(record.record))
+                }
+            };
+            ClauseDisposition::Admit(failure)
+        }
+        failure => refusal_disposition(*convert_call_failure(failure)),
+    }
+}
+
 fn package_disposition(
     stopped: Option<HoldsStop>,
     result: Result<TemporalOutcome, TemporalRefusal>,
@@ -1588,9 +1605,7 @@ fn package_disposition(
             },
             Some(at.index()),
         ),
-        (Some(HoldsStop::Failed(failure)), _) => {
-            (refusal_disposition(*convert_call_failure(failure)), None)
-        }
+        (Some(HoldsStop::Failed(failure)), _) => (package_call_disposition(failure), None),
         (None, Ok(_)) if inactive => (ClauseDisposition::Temporal(TemporalVerdict::Inactive), None),
         (None, Ok(outcome)) => (ClauseDisposition::Temporal(verdict(outcome)), None),
         (None, Err(TemporalRefusal::Fault(fault))) => {
@@ -2685,9 +2700,7 @@ pub(super) fn observed_disposition(
             refused_disposition(evaluation, graph, sources),
             Some(at.index()),
         ),
-        (Some(HoldsStop::Failed(failure)), _) => {
-            (refusal_disposition(*convert_call_failure(failure)), None)
-        }
+        (Some(HoldsStop::Failed(failure)), _) => (package_call_disposition(failure), None),
         (None, Ok(outcome)) => (ClauseDisposition::Temporal(verdict(outcome)), None),
         (None, Err(TemporalRefusal::Fault(fault))) => {
             (ClauseDisposition::EvaluateFault(fault), None)
