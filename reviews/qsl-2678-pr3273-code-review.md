@@ -897,3 +897,14 @@ scope:
   role: examined
   excerpt: fn bounded_fair_keys_carry_all_eight_members() {
 ```
+
+## Dispositions
+
+Round 1, independently inspected at `d10554aae7d603545081e99f239660b18bb0f721`. The fix delta changes only the two ignored-reason strings plus byte-identical copies of the original review artifacts at `reviews/qsl-2678-pr3273-{code-review,gap-analysis}.md`. Both strings now match the inherited root log. Historical ticket identifiers QSL-2400/QSL-2274, completed status and explicit unassigned current owner remain honest; the unchanged ignored-reason gate still accepts their identifiers. Removing ignore lines makes both before/after test files byte-identical, confirming no test body, assertion, trace tag or enable change. No new findings.
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | Reason now records distinct compiled body wrappers versus the shared-wrapper assertion. |
+| FND-002 | fixed | Reason now records inconclusive replay with verdict disagreement versus reproduced-without-witness. |
+
+Current code-review outcome: PASS for reviewed defects; both findings resolved. Final-head focused execution remains pending at this disposition. Draco's requested 93-test run is queued at the original 9b4f776c61 source; the subsequent delta is review prose and ignored-reason strings only, so those execution counts can be reused when delivered. No Cargo, tests or matrix scan was run in this disposition. The original review/findings sections above are preserved as historical records.
