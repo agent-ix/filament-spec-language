@@ -75,6 +75,7 @@ pub(super) fn admitted_with_progress_limits(
         },
         expected_subject: subject.clone(),
         relationships: vec![],
+        relationship_extents: vec![],
         required_relationships: vec![],
         scope: ScopeSelection {
             population_identity: id("unassigned"),

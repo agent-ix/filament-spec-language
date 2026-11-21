@@ -1557,6 +1557,7 @@ fn budgeted_converted_model_enum_shapes_are_joined_by_the_native_monitor_closure
                 declarations: identities.declarations(),
                 fields: identities.fields(),
                 model_tuples: emission.selected_tuple_declaration_rows(),
+                model_unions: &[],
                 source_units: emission.selected_source_unit_rows(),
                 model_enum_declarations: emission.selected_model_enum_declaration_rows(),
                 model_enum_members: emission.selected_model_enum_member_rows(),
