@@ -2547,14 +2547,33 @@ impl<'wire> ReaderBuilder<'_, 'wire> {
                 let ValueType::Rational(domain) = &value_type else {
                     return Err(fault("reader-rational-division-has-rational-result").into());
                 };
-                Ok((
+                // The catalog identity is shared by integer operands promoted
+                // to a Rational result and by Rational operands; the operand
+                // type selects the node.
+                let operand_types = [*left, *right].map(|operand| &self.nodes[operand].value_type);
+                let kind = if operand_types
+                    .iter()
+                    .all(|ty| matches!(ty, ValueType::Integer | ValueType::Int(_)))
+                {
                     NodeKind::Divide {
                         left: *left,
                         right: *right,
                         domain: domain.clone(),
-                    },
-                    children,
-                ))
+                    }
+                } else if operand_types
+                    .iter()
+                    .all(|ty| matches!(ty, ValueType::Rational(_)))
+                {
+                    NodeKind::Rational {
+                        operator: ArithmeticOperator::Divide,
+                        left: *left,
+                        right: *right,
+                        domain: domain.clone(),
+                    }
+                } else {
+                    return Err(fault("reader-rational-division-operands-share-a-type").into());
+                };
+                Ok((kind, children))
             }
             Some(
                 "filament.op.rational.add"
