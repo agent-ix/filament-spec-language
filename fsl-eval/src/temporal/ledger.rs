@@ -84,7 +84,8 @@ pub struct ObservedPosition {
     /// FR-993: a record sample's content fingerprint, `sha256:` and 64
     /// lowercase hex digits over its canonical value bytes; `None` for every
     /// other position. Integrity data, never part of the identity: the
-    /// covered set keys a position by its identity and stamp only.
+    /// covered set holds a position by its identity (`get_by_identity`), and
+    /// the ledger refuses a listed fingerprint that differs from the held one.
     pub fingerprint: Option<String>,
 }
 

@@ -369,6 +369,30 @@ fn defined_items(source: &str) -> (Vec<String>, Vec<String>) {
         defined: Vec<String>,
         comparing: Vec<String>,
     }
+    /// Whether `pat` names a `ProgressCompleteness` variant.
+    fn completeness_variant(pat: &syn::Pat) -> bool {
+        let path = match pat {
+            syn::Pat::Path(node) => &node.path,
+            syn::Pat::Struct(node) => &node.path,
+            syn::Pat::TupleStruct(node) => &node.path,
+            syn::Pat::Reference(node) => return completeness_variant(&node.pat),
+            _ => return false,
+        };
+        path.segments.len() >= 2
+            && path.segments[path.segments.len() - 2].ident == "ProgressCompleteness"
+    }
+    /// Whether `expr` is a field or identifier named `completeness`.
+    fn names_completeness(expr: &syn::Expr) -> bool {
+        match expr {
+            syn::Expr::Field(node) => {
+                matches!(&node.member, syn::Member::Named(name) if name == "completeness")
+            }
+            syn::Expr::Path(node) => node.path.is_ident("completeness"),
+            syn::Expr::Paren(node) => names_completeness(&node.expr),
+            syn::Expr::Reference(node) => names_completeness(&node.expr),
+            _ => false,
+        }
+    }
     fn completeness_params(signature: &syn::Signature) -> usize {
         signature
             .inputs
@@ -394,6 +418,43 @@ fn defined_items(source: &str) -> (Vec<String>, Vec<String>) {
                 self.comparing.push(node.sig.ident.to_string());
             }
             syn::visit::visit_impl_item_fn(self, node);
+        }
+        fn visit_pat_tuple(&mut self, node: &'ast syn::PatTuple) {
+            if node
+                .elems
+                .iter()
+                .filter(|pat| completeness_variant(pat))
+                .count()
+                >= 2
+            {
+                self.comparing
+                    .push("a tuple pattern over two completeness variants".to_owned());
+            }
+            syn::visit::visit_pat_tuple(self, node);
+        }
+        fn visit_pat_slice(&mut self, node: &'ast syn::PatSlice) {
+            if node
+                .elems
+                .iter()
+                .filter(|pat| completeness_variant(pat))
+                .count()
+                >= 2
+            {
+                self.comparing
+                    .push("a slice pattern over two completeness variants".to_owned());
+            }
+            syn::visit::visit_pat_slice(self, node);
+        }
+        fn visit_expr_binary(&mut self, node: &'ast syn::ExprBinary) {
+            use syn::BinOp::{Eq, Ge, Gt, Le, Lt, Ne};
+            if matches!(node.op, Eq(_) | Ne(_) | Lt(_) | Le(_) | Gt(_) | Ge(_))
+                && names_completeness(&node.left)
+                && names_completeness(&node.right)
+            {
+                self.comparing
+                    .push("a comparison of two completeness values".to_owned());
+            }
+            syn::visit::visit_expr_binary(self, node);
         }
         fn visit_item_struct(&mut self, node: &'ast syn::ItemStruct) {
             self.defined.push(node.ident.to_string());
@@ -502,6 +563,24 @@ fn no_fsl_crate_defines_a_second_copy_of_the_four_owners_rule_sets() {
     let found = second_copies(&planted);
     assert_eq!(found.len(), 5, "{found:?}");
     assert!(found.iter().all(|(file, _)| file == "planted.rs"));
+    // Both forms of a comparison of two values are found, in any function.
+    for (source, finding) in [
+        (
+            "fn judge(a: Entry, b: Entry) { match (a.completeness, b.completeness) { \
+             (ProgressCompleteness::Complete { through: x }, \
+             ProgressCompleteness::Complete { through: y }) if y < x => {} _ => {} } }",
+            "a tuple pattern over two completeness variants",
+        ),
+        (
+            "fn judge(a: Entry, b: Entry) -> bool { a.completeness != b.completeness }",
+            "a comparison of two completeness values",
+        ),
+    ] {
+        let planted = [("planted_form.rs".to_owned(), source.to_owned())];
+        let found = second_copies(&planted);
+        assert_eq!(found.len(), 1, "{source}: {found:?}");
+        assert!(found[0].1.contains(finding), "{found:?}");
+    }
     // One parameter of the type is no comparison.
     let single = [(
         "single.rs".to_owned(),
@@ -534,19 +613,19 @@ fn the_progress_ledger_calls_the_owners_completeness_revision_check() {
 struct Disagreement {
     case: String,
     evaluator: String,
-    expected: String,
+    stated: String,
 }
 
 /// Equal answers pass; any other pair is reported with the case and both
 /// answers, never passed on as either one.
-fn agree(case: &str, evaluator: &str, expected: &str) -> Result<(), Disagreement> {
-    if evaluator == expected {
+fn agree(case: &str, evaluator: &str, stated: &str) -> Result<(), Disagreement> {
+    if evaluator == stated {
         return Ok(());
     }
     Err(Disagreement {
         case: case.to_owned(),
         evaluator: evaluator.to_owned(),
-        expected: expected.to_owned(),
+        stated: stated.to_owned(),
     })
 }
 
@@ -630,7 +709,7 @@ fn the_owner_activation_gives_the_dispositions_fr_524_states() {
     ];
     let failures: Vec<_> = cases
         .iter()
-        .filter_map(|(case, evaluator, expected)| agree(case, evaluator, expected).err())
+        .filter_map(|(case, evaluator, stated)| agree(case, evaluator, stated).err())
         .collect();
     assert!(failures.is_empty(), "disagreements: {failures:?}");
     // A disagreement is reported naming the case and both answers.
@@ -639,7 +718,46 @@ fn the_owner_activation_gives_the_dispositions_fr_524_states() {
         Err(Disagreement {
             case: cases[0].0.to_owned(),
             evaluator: "Unknown trigger-scope-open".to_owned(),
-            expected: "Inactive no-trigger-admitted".to_owned(),
+            stated: "Inactive no-trigger-admitted".to_owned(),
         })
+    );
+}
+
+/// FR-944-AC-4 (TC-2624, TC-3036): a position whose content, stamp and
+/// order key equal a covered position's, listed under a new FR-106 identity,
+/// shares that position's owner record identity in the admitted history, but
+/// coverage is decided by the FR-106 identity, so it is refused
+/// `UncoveredMember`: FR-502's contradiction on `Completeness`.
+#[test]
+#[trace("TC-2624", "TC-3036", "FR-944-AC-4")]
+fn a_position_equal_to_a_covered_one_under_a_new_identity_is_an_uncovered_member() {
+    use crate::temporal_activation as fixture;
+    use filament_eval::{CallAdmissionFailure, CallFailure};
+    use fsl_eval::temporal::Valuation;
+    let (env, atom) = fixture::each_env();
+    let subject = env.subject(&[]);
+    let values = [(atom, Valuation::True)];
+    let mut asked = fixture::request(&env, fixture::at_t0(&values));
+    asked.progress_ledger = Some(fsl_eval::temporal::ProgressLedger::new());
+    let first = fixture::call(&env, &subject, &asked).expect("the first request");
+    asked.progress_ledger = first.progress_ledger.clone();
+    let mut twin = fixture::position(0, &values);
+    twin.observation = fsl_eval::temporal::evidence::EvidenceRef::named("twin-of-obs0");
+    asked.positions.push(twin);
+    let refused = fixture::call(&env, &subject, &asked);
+    let Err(CallFailure::Admission(failure)) = refused else {
+        panic!("a refusal, got {refused:?}");
+    };
+    let CallAdmissionFailure::Refused(record) = *failure else {
+        panic!("a refusal record");
+    };
+    let fields = &record.record.fields;
+    assert_eq!(
+        fields.get("cause").map(String::as_str),
+        Some("progress-contradiction")
+    );
+    assert_eq!(
+        fields.get("contradicted_dimension").map(String::as_str),
+        Some("Completeness")
     );
 }

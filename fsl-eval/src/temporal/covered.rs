@@ -12,9 +12,11 @@
 //! order the ledger's wire form writes, and two sets are equal when they
 //! hold the same positions.
 //!
-//! A position is keyed by its identity and stamp only: a record sample's
-//! content fingerprint (FR-993) is integrity data the set holds beside its
-//! key, never part of membership or order.
+//! The set stores and orders positions by identity then stamp, and
+//! membership is by identity (`get_by_identity`, FR-502): the ledger adds a
+//! position only when its identity is not held. A record sample's content
+//! fingerprint (FR-993) is integrity data the set holds beside its key,
+//! never part of membership or order.
 //!
 //! The set is a treap whose priorities are a hash of each position's key, so its
 //! shape depends only on the positions it holds and not on the order they

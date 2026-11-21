@@ -232,7 +232,12 @@ fn assertion(completeness: ProgressCompleteness) -> ProgressAssertion {
 }
 
 fn retained_positions() -> Vec<ObservedPosition> {
-    vec![position("a", 0), position("b", 50), position("c", 100)]
+    vec![
+        position("a", 0),
+        position("b", 50),
+        position("p1", 80),
+        position("c", 100),
+    ]
 }
 
 /// What the owner's `check_revision` answers for `asserted` over `positions`
@@ -341,6 +346,12 @@ fn revision_cases() -> Vec<(
             "Complete through 100",
             ProgressCompleteness::Complete { through: 100 },
             held.clone(),
+            "accepted".to_owned(),
+        ),
+        (
+            "the covered p1 stamped 80 listed alone",
+            ProgressCompleteness::Complete { through: 100 },
+            vec![position("p1", 80)],
             "accepted".to_owned(),
         ),
         (
