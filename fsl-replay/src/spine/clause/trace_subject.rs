@@ -439,7 +439,7 @@ pub(super) fn run_subject_observing(
         refused: None,
         fixed: BTreeMap::new(),
     };
-    let result = fsl_eval::temporal::evaluate(
+    let (result, inactive) = fsl_eval::temporal::evaluate_reporting_inactive(
         node.clause(),
         TemporalTrace::Finite { len },
         &mut letters,
@@ -455,6 +455,7 @@ pub(super) fn run_subject_observing(
         let mut report = subject_report(
             node,
             Ok(TemporalOutcome::Pending),
+            false,
             None,
             &BTreeMap::new(),
             usage,
@@ -468,6 +469,7 @@ pub(super) fn run_subject_observing(
     subject_report(
         node,
         result,
+        inactive,
         letters.undefined_atom,
         &letters.atom_values,
         usage,
@@ -475,12 +477,14 @@ pub(super) fn run_subject_observing(
 }
 
 /// FR-330-AC-17's report of the trace-subject clause `node` from the outcome
-/// `result` of its evaluation, the last data-shortfall atom it read, the atom
+/// `result` of its evaluation, whether the closed trace left the clause
+/// inactive, the last data-shortfall atom it read, the atom
 /// values it read (by node and position) for the decisive aggregate, and
 /// `usage`. The batch run and FR-820's carried state build it alike.
 pub(crate) fn subject_report(
     node: &TemporalClauseNode,
     result: Result<TemporalOutcome, fsl_eval::temporal::TemporalRefusal>,
+    inactive: bool,
     undefined_atom: Option<usize>,
     atom_values: &BTreeMap<(usize, u64), Option<bool>>,
     usage: ClauseRunUsage,
@@ -489,7 +493,11 @@ pub(crate) fn subject_report(
         Ok(outcome) => {
             let decisive = decisive_aggregate(node, &outcome, atom_values);
             (
-                ClauseDisposition::Temporal(map_outcome(outcome, undefined_atom)),
+                ClauseDisposition::Temporal(if inactive {
+                    super::TemporalVerdict::Inactive
+                } else {
+                    map_outcome(outcome, undefined_atom)
+                }),
                 decisive,
             )
         }

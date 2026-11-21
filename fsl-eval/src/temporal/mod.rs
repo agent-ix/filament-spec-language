@@ -167,7 +167,7 @@ pub fn evaluate_with_enabledness_decisive<L: TemporalLetters>(
     Result<TemporalOutcome, TemporalRefusal>,
     Option<DecisiveSearch>,
 ) {
-    engine::run_seeking(
+    let (result, decisive, _) = engine::run_seeking(
         engine::Subject {
             fairness: &[],
             ..engine::Subject::of_clause(clause)
@@ -177,7 +177,28 @@ pub fn evaluate_with_enabledness_decisive<L: TemporalLetters>(
         true,
         letters,
         meter,
-    )
+    );
+    (result, decisive)
+}
+
+/// [`evaluate`] that also reports whether the clause is inactive: a guarded
+/// `on each` clause over a closed trace or a lasso that holds with no guard
+/// true at any position, so no instance of it exists.
+pub fn evaluate_reporting_inactive<L: TemporalLetters>(
+    clause: &CheckedTemporalClause,
+    trace: TemporalTrace,
+    letters: &mut L,
+    meter: &mut Meter,
+) -> (Result<TemporalOutcome, TemporalRefusal>, bool) {
+    let (result, _, inactive) = engine::run_seeking(
+        engine::Subject::of_clause(clause),
+        trace,
+        engine::Goal::Clause,
+        false,
+        letters,
+        meter,
+    );
+    (result, inactive)
 }
 
 /// Evaluate `clause` on a finite prefix of `len` positions whose continuation

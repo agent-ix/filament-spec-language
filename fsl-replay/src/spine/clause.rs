@@ -919,6 +919,8 @@ pub fn temporal_batch_exit_code<'a>(outcomes: impl IntoIterator<Item = &'a Tempo
 /// types). Positions are zero-based trace indices.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum TemporalVerdict {
+    /// A closed, complete trigger scope admitted no activation; no truth.
+    Inactive,
     /// `Completed(true)`: every activation evaluated true. Evidence for this
     /// trace only (`tested`), never `proved` (ADR-014 section 8).
     Holds,
@@ -1007,7 +1009,7 @@ impl TemporalVerdict {
     pub fn category(&self) -> filament_semantic_value::catalog::Category {
         use filament_semantic_value::catalog::Category;
         match self {
-            Self::Holds => Category::Success,
+            Self::Holds | Self::Inactive => Category::Success,
             Self::Undefined {
                 cause: TemporalUndefinedCause::InsufficientData { .. },
                 ..
@@ -1471,6 +1473,7 @@ impl ClauseRunReport {
     pub fn axes(&self) -> crate::OutcomeAxes {
         use crate::{ActivationAxis, ExecutionAxis, TruthAxis};
         let activation = match &self.disposition {
+            ClauseDisposition::Temporal(TemporalVerdict::Inactive) => ActivationAxis::Inactive,
             ClauseDisposition::Compile(_)
             | ClauseDisposition::UnknownLanguage { .. }
             | ClauseDisposition::MissingName { .. }

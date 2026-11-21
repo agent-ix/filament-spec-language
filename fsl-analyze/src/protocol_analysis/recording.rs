@@ -2329,6 +2329,15 @@ fn assess_obligations(
                 crate::monitor::MonitorVerdict::Violated
                 | crate::monitor::MonitorVerdict::Undefined,
             ) => (RecordingVerdict::Violated, Some(RecordingCause::Unexpected)),
+            // False guards create no obligation: a closed recording has no
+            // continuation that could activate one, an open recording may.
+            Some(crate::monitor::MonitorVerdict::Inactive) => {
+                if document.closure.state == "closed" {
+                    (RecordingVerdict::Satisfied, None)
+                } else {
+                    (RecordingVerdict::Pending, None)
+                }
+            }
             _ if document.closure.state == "closed" => {
                 (RecordingVerdict::Violated, Some(RecordingCause::Missing))
             }

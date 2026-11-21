@@ -3430,6 +3430,7 @@ pub(crate) fn item_record(report: &ClauseRunReport) -> Result<ItemRecord, Native
             reason: Reason::IncompleteInput | Reason::MissingHistory | Reason::StraddlesBound,
             ..
         }
+        | TemporalVerdict::Inactive
         | TemporalVerdict::Holds
         | TemporalVerdict::Pending
         | TemporalVerdict::PendingWindow { .. }

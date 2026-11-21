@@ -2007,7 +2007,8 @@ fn clause_run_cause(report: &ClauseRunReport, clause: &str) -> Option<ItemCause>
     };
     match &report.disposition {
         ClauseDisposition::Temporal(verdict) => match verdict {
-            TemporalVerdict::Holds
+            TemporalVerdict::Inactive
+            | TemporalVerdict::Holds
             | TemporalVerdict::Violated { .. }
             | TemporalVerdict::Pending
             | TemporalVerdict::PendingWindow { .. }

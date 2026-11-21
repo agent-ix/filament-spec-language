@@ -1351,8 +1351,14 @@ pub(crate) fn streamed_sample_report(
         (Some(HoldsStop::Refused { .. }), Ok(_)) => None,
         (stopped, _) => stopped,
     };
+    let inactive = observed.inactive;
     let (disposition, refused_at) =
         observed_disposition(stopped, observed.result, package.graph(), sources);
+    let disposition = if inactive {
+        ClauseDisposition::Temporal(TemporalVerdict::Inactive)
+    } else {
+        disposition
+    };
     let needs_positions = matches!(
         &disposition,
         ClauseDisposition::Temporal(
@@ -1898,6 +1904,11 @@ pub(super) fn run_temporal(run: &CompiledRun<'_>, request: &TemporalRun<'_>) -> 
         );
         let (disposition, refused_at) =
             observed_disposition(timed.stopped, timed.result, graph, run.sources);
+        let disposition = if timed.inactive {
+            ClauseDisposition::Temporal(TemporalVerdict::Inactive)
+        } else {
+            disposition
+        };
         let (disposition, counterexample) =
             with_counterexample(node, trace, disposition, timed.undefined);
         let usage = ClauseRunUsage::from_meter(&meter, admitted);
@@ -2226,12 +2237,18 @@ pub(super) fn run_temporal(run: &CompiledRun<'_>, request: &TemporalRun<'_>) -> 
             &mut meter,
         ),
     };
+    let inactive = observed.inactive;
     let (disposition, refused_at) = observed_disposition(
         observed.stopped,
         observed.result,
         run.package.graph(),
         run.sources,
     );
+    let disposition = if inactive {
+        ClauseDisposition::Temporal(TemporalVerdict::Inactive)
+    } else {
+        disposition
+    };
     let (disposition, counterexample, decisive) = match objects {
         Some((environments, reference)) => {
             let (disposition, counterexample) =

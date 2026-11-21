@@ -247,6 +247,7 @@ in the place of `holds`, under ADR-014 A-4:
 | `InsufficientData` | FR-327's insufficient-data outcome, `InsufficientData{where, atom, count, min_count}` (a window aggregate short of data, FSpec FR-414) over a `Samples` trace, not an `Undefined` | `position`, `atom`, `count`, `min_count` | undefined, with the label `undefined` and reason `insufficient-data` | 10 |
 | `Pending` | `Pending`, finite trace | none | pending | 0 |
 | `Indeterminate` | `Indeterminate`, a finite-window clause (FR-501) over a `Typed` `Timestamped` trace, whose window is closed and whose evidence stays unresolved | the FR-501 reason, with its `atom` where the reason names one (`MissingValuation`, `ConflictingValuation`), and `position` where that reason names one | indeterminate | 11 |
+| `Inactive` | A closed, complete guarded scope whose every guard is false | none | success | 0 |
 | `Tested` | `Completed(true)` | none | success | 0 |
 | `MissingFairnessPremise` | `MissingFairnessPremise`, a clause with a non-empty fairness set | `constraint`, the first constraint of the fairness set | unsupported | 21 |
 | `Incomplete` | `Incomplete` | the charge point and limit | incomplete | 22 |
