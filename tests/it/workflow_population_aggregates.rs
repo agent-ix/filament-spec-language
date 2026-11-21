@@ -73,14 +73,6 @@ fn workflow_model() -> Value {
         .position(|ty| ty["identity"] == ORDER)
         .expect("the Order object type");
     let mut order = types[order_index].clone();
-    order["fields"] = json!([{
-        "identity": format!("{ORDER}/total"), "name": "total",
-        "typeRef": "ix://test/workflow-aggregates/VersionNumber",
-        "presence": "required", "nullable": false, "defaultKind": "none",
-        "multiplicity": {"lower": 1, "upper": 1, "ordered": false, "unique": true},
-        "origin": {"generated": {"generatorIdentity": format!("{ORDER}/total"),
-            "generatorVersion": "1.0.0", "inputIdentities": [format!("{ORDER}/total")]}}
-    }]);
     order["operations"] = json!([]);
 
     let workflow_type = |name: &str, identity: &str| {
@@ -157,8 +149,10 @@ fn workflow_snapshot(complete_refunds: bool, add_contradictory_refund: bool) -> 
         "model": {"identity": PACKAGE},
         "populations": [
             {"population": ORDERS, "complete": true, "objects": [
-                {"key": "o1", "type": ORDER, "fields": {"total": {"integer": "4"}}},
-                {"key": "o2", "type": ORDER, "fields": {"total": {"integer": "7"}}}
+                {"key": "o1", "type": ORDER, "fields": {"versionNumber": {"integer": "4"},
+                    "parent": {"absent": {}}}},
+                {"key": "o2", "type": ORDER, "fields": {"versionNumber": {"integer": "7"},
+                    "parent": {"absent": {}}}}
             ]},
             {"population": RESERVATIONS, "complete": true, "objects": [
                 {"key": "s1", "type": RESERVATION, "fields": {
@@ -238,7 +232,16 @@ fn an_incomplete_refund_population_cannot_settle_a_recovery_aggregate() {
     let output = run(false, false);
     assert_eq!(output.status.code(), Some(22), "{output:?}");
     let document = outcome(&output);
-    assert_eq!(document["outcome"]["kind"], "incomplete", "{document}");
+    assert_eq!(document["category"], "incomplete", "{document}");
+    assert_eq!(document["outcome"]["kind"], "refused", "{document}");
+    assert_eq!(
+        document["outcome"]["code"], "incomplete_population",
+        "{document}"
+    );
+    assert_eq!(
+        document["outcome"]["cause"], "incomplete-scope",
+        "{document}"
+    );
     assert_ne!(document["outcome"]["value"], json!({"boolean": true}));
 }
 

@@ -2402,6 +2402,31 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
         }
     }
 
+    /// FR-046-AC-6: a source query over an explicit population view cannot
+    /// return an aggregate from only the members currently listed in an
+    /// incomplete snapshot. Keep this check beside the function-query path;
+    /// named model populations use `named_members` below.
+    fn require_complete_population(&self, population: &DeclarationKey) -> Result<(), Halt> {
+        let objects = match self.anchor {
+            Anchor::Post => self.objects,
+            Anchor::Pre => self
+                .pre_objects
+                .ok_or_else(|| invariant("pre-population-observation-present"))?,
+        };
+        let listed = objects
+            .population_completeness()
+            .contains_key(&population.node);
+        if !objects.population_complete(&population.node) {
+            return Err(Halt::Family(FamilyResult::Refused(Box::new(
+                NamedPopulationIncomplete {
+                    population: population.node.clone(),
+                    listed,
+                },
+            ))));
+        }
+        Ok(())
+    }
+
     /// Charge one nested value-function body against FR-484's `max_cases`.
     fn enter_function_case(&mut self) -> Result<(), Halt> {
         let Some(limit) = self.function_case_limit else {
@@ -4047,6 +4072,7 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
                 };
                 let binding = self.resolve_population(population_id, *maximum)?;
                 let binding = self.select_anchor(binding)?;
+                self.require_complete_population(binding.population_key())?;
                 self.log_membership_read(binding, None);
                 evaluate_all_instances(binding, collection_type, self.meter)?
             }
