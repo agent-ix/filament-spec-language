@@ -129,6 +129,20 @@ impl Certificate {
         }
     }
 
+    /// Replace only the recorded total, leaving the native path unchanged.
+    pub(crate) fn forge_accumulated(&mut self, entry: usize, value: Rational) {
+        if let Some(entry) = self.entries.get_mut(entry) {
+            entry.key.accumulated = Some(value);
+        }
+    }
+
+    /// Replace only the initial potential, without changing source offset.
+    pub(crate) fn forge_initial_value(&mut self, value: Rational) {
+        if let Some(entry) = self.entries.first_mut() {
+            entry.value = Some(value);
+        }
+    }
+
     /// A library test seam: point entry `entry`'s parent record at the
     /// entry itself before the core checker reads the certificate.
     pub(crate) fn parent_cycle(&mut self, entry: usize) {
@@ -144,7 +158,7 @@ impl Certificate {
 /// canonical exploration order (layers by step count, each in FSpec
 /// FR-801's within-layer order).
 pub(crate) fn write<R: PlanRules>(
-    search: &Search<'_, '_, R>,
+    search: &mut Search<'_, '_, R>,
     kind: CertificateKind,
 ) -> Result<Certificate, PlanStopCause> {
     let deepest = search
@@ -170,7 +184,7 @@ pub(crate) fn write<R: PlanRules>(
         position[*node] = entry;
     }
     let potential = match kind {
-        CertificateKind::Potential => Some(potentials(search)),
+        CertificateKind::Potential => Some(potentials(search)?),
         CertificateKind::Closure => None,
     };
     let entries = order
@@ -207,7 +221,9 @@ pub(crate) fn write<R: PlanRules>(
 
 /// `pi(n)`: the least remaining cost to a goal node, `None` when none is
 /// reachable within the length bound.
-fn potentials<R: PlanRules>(search: &Search<'_, '_, R>) -> Vec<Option<Rational>> {
+fn potentials<R: PlanRules>(
+    search: &mut Search<'_, '_, R>,
+) -> Result<Vec<Option<Rational>>, PlanStopCause> {
     let mut pi: Vec<Option<Rational>> = vec![None; search.nodes.len()];
     let deepest = search
         .nodes
@@ -224,16 +240,21 @@ fn potentials<R: PlanRules>(search: &Search<'_, '_, R>) -> Vec<Option<Rational>>
             let mut best = node.goal.as_ref().map(|_| zero());
             for (_, target, cost) in &node.successors {
                 if let Some(rest) = &pi[*target] {
-                    let through = cost.add(rest);
-                    if best.as_ref().is_none_or(|kept| through < *kept) {
-                        best = Some(through);
+                    if let Some(through) = search
+                        .rules
+                        .add_objective_values(cost, rest)
+                        .map_err(super::stop_cause)?
+                    {
+                        if best.as_ref().is_none_or(|kept| through < *kept) {
+                            best = Some(through);
+                        }
                     }
                 }
             }
             pi[index] = best;
         }
     }
-    pi
+    Ok(pi)
 }
 
 /// The checker's own meter: one `max_check_work` unit per entry read and
@@ -429,6 +450,14 @@ pub(crate) fn check<R: PlanRules>(
                 .collect();
             derived.sort_by(|left, right| left.0.cmp(&right.0));
         }
+        let prefix_total = if certificate.objective == ObjectiveKind::StepSum {
+            let Some(total) = step_total(rules, &states, &steps)? else {
+                return reject(CertificateRule::Closure, index);
+            };
+            Some(total)
+        } else {
+            None
+        };
         let mut records = 0_usize;
         for (_, step, state) in derived {
             if native.is_none() {
@@ -456,26 +485,30 @@ pub(crate) fn check<R: PlanRules>(
             if rejected {
                 continue;
             }
-            let cost = match certificate.objective {
-                ObjectiveKind::StepSum => {
-                    let mut extended_states = states.clone();
-                    extended_states.push(state.clone());
-                    let mut extended_steps = steps.clone();
-                    extended_steps.push(step.clone());
-                    let view = PlanView {
-                        states: &extended_states,
-                        steps: &extended_steps,
-                    };
-                    match rules
-                        .step_cost(&view, extended_steps.len() - 1)
-                        .map_err(super::stop_cause)?
-                    {
-                        Some(cost) => cost,
-                        // An undefined cost admits no completion: no record.
-                        None => continue,
-                    }
-                }
-                ObjectiveKind::General => zero(),
+            let (cost, accumulated) = if let Some(total) = &prefix_total {
+                let mut extended_states = states.clone();
+                extended_states.push(state.clone());
+                let mut extended_steps = steps.clone();
+                extended_steps.push(step.clone());
+                let view = PlanView {
+                    states: &extended_states,
+                    steps: &extended_steps,
+                };
+                let Some(cost) = rules
+                    .step_cost_typed(&view, extended_steps.len() - 1)
+                    .map_err(super::stop_cause)?
+                else {
+                    continue;
+                };
+                let Some(next) = rules
+                    .extend_step_sum(&view, total, &cost)
+                    .map_err(super::stop_cause)?
+                else {
+                    continue;
+                };
+                (cost.value, Some(next.value))
+            } else {
+                (zero(), None)
             };
             records += 1;
             let Some((_, target)) = entry
@@ -493,7 +526,7 @@ pub(crate) fn check<R: PlanRules>(
             };
             // With no cost dominance the node keeps its accumulated value,
             // which the re-derived step must reproduce.
-            let accumulated = entry.key.accumulated.as_ref().map(|value| value.add(&cost));
+            let accumulated = entry.key.accumulated.as_ref().and(accumulated);
             let names_node = successor.key.state == state_key
                 && successor.key.monitors == next_monitors
                 && successor.key.depth == entry.key.depth + 1
@@ -508,7 +541,10 @@ pub(crate) fn check<R: PlanRules>(
                 let holds = match (&entry.value, &successor.value) {
                     (_, None) => true,
                     (None, Some(_)) => false,
-                    (Some(pi), Some(rest)) => *pi <= cost.add(rest),
+                    (Some(pi), Some(rest)) => rules
+                        .add_objective_values(&cost, rest)
+                        .map_err(super::stop_cause)?
+                        .is_some_and(|through| *pi <= through),
                 };
                 if !holds {
                     return reject(CertificateRule::Descent, index);
@@ -526,6 +562,12 @@ pub(crate) fn check<R: PlanRules>(
         let (states, steps) = prefix(entries, index);
         let mut goal = lengths.contains(entry.key.depth)
             && goal_holds(rules, &states, &steps, &entry.monitors)?;
+        let value = if goal {
+            objective_value(rules, certificate.objective, &states, &steps)?
+        } else {
+            None
+        };
+        goal = value.is_some();
         match certificate.kind {
             CertificateKind::Potential => {
                 // Rule `goal`: pi(n) <= 0 at every node whose length is in
@@ -538,12 +580,6 @@ pub(crate) fn check<R: PlanRules>(
             CertificateKind::Closure => {
                 // The checker re-evaluates the objective itself; a plan
                 // whose objective is undefined is not a goal (FSpec FR-802).
-                let value = if goal {
-                    objective_value(rules, certificate.objective, &states, &steps)?
-                } else {
-                    None
-                };
-                goal = value.is_some();
                 match plan_value {
                     None if goal => return reject(CertificateRule::GoalFree, index),
                     Some(plan) if goal => {
@@ -560,8 +596,22 @@ pub(crate) fn check<R: PlanRules>(
             }
         }
     }
-    if certificate.kind == CertificateKind::Potential && first.value.as_ref() != plan_value {
-        return reject(CertificateRule::Initial, 0);
+    if certificate.kind == CertificateKind::Potential {
+        let offset = rules
+            .objective_offset(&PlanView {
+                states: std::slice::from_ref(&start),
+                steps: &[],
+            })
+            .map_err(super::stop_cause)?;
+        let initial = match first.value.as_ref().zip(offset) {
+            Some((value, offset)) => rules
+                .add_objective_values(value, &offset)
+                .map_err(super::stop_cause)?,
+            None => None,
+        };
+        if initial.as_ref() != plan_value {
+            return reject(CertificateRule::Initial, 0);
+        }
     }
     Ok(CertificateOutcome::Accepted)
 }
@@ -608,20 +658,43 @@ fn objective_value<R: PlanRules>(
             .objective(&PlanView { states, steps })
             .map_err(super::stop_cause),
         ObjectiveKind::StepSum => {
-            let mut sum = zero();
-            for index in 0..steps.len() {
-                let view = PlanView {
-                    states: &states[..=index + 1],
-                    steps: &steps[..=index],
-                };
-                match rules.step_cost(&view, index).map_err(super::stop_cause)? {
-                    Some(cost) => sum = sum.add(&cost),
-                    None => return Ok(None),
-                }
-            }
-            Ok(Some(sum))
+            let Some(sum) = step_total(rules, states, steps)? else {
+                return Ok(None);
+            };
+            rules
+                .step_sum_objective(&PlanView { states, steps }, &sum.value)
+                .map_err(super::stop_cause)
         }
     }
+}
+
+/// Recompute the ordered sum independently of the recorded node values.
+fn step_total<R: PlanRules>(
+    rules: &mut R,
+    states: &[ModelSimState],
+    steps: &[super::PlanStep],
+) -> Result<Option<super::StepTotal>, PlanStopCause> {
+    let mut sum = super::StepTotal::from_rational(zero());
+    for index in 0..steps.len() {
+        let view = PlanView {
+            states: &states[..=index + 1],
+            steps: &steps[..=index],
+        };
+        let Some(cost) = rules
+            .step_cost_typed(&view, index)
+            .map_err(super::stop_cause)?
+        else {
+            return Ok(None);
+        };
+        let Some(total) = rules
+            .extend_step_sum(&view, &sum, &cost)
+            .map_err(super::stop_cause)?
+        else {
+            return Ok(None);
+        };
+        sum = total;
+    }
+    Ok(Some(sum))
 }
 
 /// Whether entry `index`'s parent record names an earlier entry, one step

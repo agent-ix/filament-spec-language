@@ -284,6 +284,31 @@ pub enum RuleStop {
     Cancelled(CancelCause),
 }
 
+/// A running exact objective value, including its family's admitted payload.
+/// The payload preserves Decimal scale and rounding state across extensions;
+/// ordering and certificate values use the exact Rational projection.
+#[derive(Clone, Debug)]
+pub struct StepTotal {
+    pub(crate) value: Rational,
+    pub(crate) carried: Option<filament_exact::Value>,
+}
+
+impl StepTotal {
+    /// A Rational-only adapter's running value. Source adapters retain their
+    /// typed payload instead of reconstructing it from this projection.
+    pub fn from_rational(value: Rational) -> Self {
+        Self {
+            value,
+            carried: None,
+        }
+    }
+
+    /// The exact mathematical value used for canonical objective ordering.
+    pub fn value(&self) -> &Rational {
+        &self.value
+    }
+}
+
 /// The goal, objective and policy rules of one plan synthesis, evaluated
 /// by the caller over its checked expressions and the evaluation meter.
 ///
@@ -369,6 +394,79 @@ pub trait PlanRules {
         index: usize,
     ) -> Result<Option<Rational>, RuleStop>;
 
+    /// Evaluate one step's cost with any admitted numeric payload needed by
+    /// later additions. The default preserves existing Rational adapters.
+    ///
+    /// # Errors
+    /// [`RuleStop`] for cancellation or a denied shared-meter charge.
+    fn step_cost_typed(
+        &mut self,
+        plan: &PlanView<'_>,
+        index: usize,
+    ) -> Result<Option<StepTotal>, RuleStop> {
+        Ok(self.step_cost(plan, index)?.map(StepTotal::from_rational))
+    }
+
+    /// Extend an ordered sum after the engine has inspected the step's sign.
+    /// The default preserves existing Rational-only adapters; source rules
+    /// retain the actual Decimal policy/scale payload and use typed addition.
+    ///
+    /// # Errors
+    /// [`RuleStop`] for cancellation or a denied shared-meter charge.
+    fn extend_step_sum(
+        &mut self,
+        plan: &PlanView<'_>,
+        total: &StepTotal,
+        cost: &StepTotal,
+    ) -> Result<Option<StepTotal>, RuleStop> {
+        Ok(self
+            .accumulate_step_cost(plan, &total.value, &cost.value)?
+            .map(StepTotal::from_rational))
+    }
+
+    /// Rational-only fallback for the default `extend_step_sum` adapter.
+    /// `plan` includes the new step. Source rules override `extend_step_sum`
+    /// to retain the complete admitted payload and apply its numeric policy.
+    /// A resource denial returns a stop.
+    fn accumulate_step_cost(
+        &mut self,
+        _plan: &PlanView<'_>,
+        total: &Rational,
+        cost: &Rational,
+    ) -> Result<Option<Rational>, RuleStop> {
+        self.add_objective_values(total, cost)
+    }
+
+    /// Add exact objective projections while constructing or checking a
+    /// certificate. Evaluating implementations charge their numeric meter.
+    fn add_objective_values(
+        &mut self,
+        left: &Rational,
+        right: &Rational,
+    ) -> Result<Option<Rational>, RuleStop> {
+        Ok(Some(left.add(right)))
+    }
+
+    /// The constant offset of a per-step objective, evaluated independently
+    /// of its steps. It is added once, including for an empty plan.
+    fn objective_offset(&mut self, _plan: &PlanView<'_>) -> Result<Option<Rational>, RuleStop> {
+        Ok(Some(zero()))
+    }
+
+    /// Complete a per-step objective from its accumulated costs and its
+    /// constant offset. Implementations with typed arithmetic apply that
+    /// arithmetic and its meter here, preserving authored domain failures.
+    fn step_sum_objective(
+        &mut self,
+        plan: &PlanView<'_>,
+        total: &Rational,
+    ) -> Result<Option<Rational>, RuleStop> {
+        match self.objective_offset(plan)? {
+            Some(offset) => self.add_objective_values(total, &offset),
+            None => Ok(None),
+        }
+    }
+
     /// The objective value of a completed `plan`, for an
     /// [`ObjectiveKind::General`] objective; `None` when it is undefined.
     ///
@@ -408,6 +506,18 @@ pub enum PlanFault {
         entry: usize,
         /// The entry whose state is copied.
         source: usize,
+    },
+    /// Replace a recorded prefix total before independent certificate checking.
+    ForgeAccumulated {
+        /// The certificate entry whose recorded total is replaced.
+        entry: usize,
+        /// The forged total; the checker must derive the actual total itself.
+        value: Rational,
+    },
+    /// Replace the initial potential before its offset and descent checks.
+    ForgeInitialValue {
+        /// The forged remaining cost at the initial certificate entry.
+        value: Rational,
     },
     /// Point the parent record of certificate entry `entry` at the entry
     /// itself before the core checker reads it. A library test seam for the
@@ -599,7 +709,7 @@ pub(crate) struct Node<K> {
     pub(crate) monitors: Vec<Vec<u8>>,
     pub(crate) depth: u64,
     /// The representative prefix's accumulated per-step cost.
-    pub(crate) accumulated: Rational,
+    pub(crate) accumulated: StepTotal,
     /// The representative prefix: parent node and step.
     pub(crate) parent: Option<(usize, PlanStep)>,
     /// The representative prefix's FR-804 step keys.
@@ -832,7 +942,7 @@ impl<R: PlanRules> Search<'_, '_, R> {
             state: start,
             monitors,
             depth: 0,
-            accumulated: zero(),
+            accumulated: StepTotal::from_rational(zero()),
             parent: None,
             prefix: Vec::new(),
             goal: None,
@@ -865,8 +975,8 @@ impl<R: PlanRules> Search<'_, '_, R> {
             let right = &self.nodes[*right];
             let by_value = if sum {
                 match direction {
-                    Direction::Minimize => left.accumulated.cmp(&right.accumulated),
-                    Direction::Maximize => right.accumulated.cmp(&left.accumulated),
+                    Direction::Minimize => left.accumulated.value.cmp(&right.accumulated.value),
+                    Direction::Maximize => right.accumulated.value.cmp(&left.accumulated.value),
                 }
             } else {
                 std::cmp::Ordering::Equal
@@ -1044,33 +1154,36 @@ impl<R: PlanRules> Search<'_, '_, R> {
         }
         let mut prefix = self.nodes[parent].prefix.clone();
         prefix.push(step_key);
-        let cost = match self.kind {
-            ObjectiveKind::StepSum => {
-                let (states, steps) = self.prefix_with(parent, &step, &state);
-                let view = PlanView {
-                    states: &states,
-                    steps: &steps,
-                };
-                let Some(cost) = self.rules.step_cost(&view, steps.len() - 1)? else {
-                    // An undefined step cost makes every completion's
-                    // objective undefined: the prefix is not admissible.
-                    self.explored.undefined_objectives += 1;
-                    return Ok(());
-                };
-                if cost < zero() && self.negative_step.is_none() {
-                    return Err(Stop::Negative(steps.len() - 1));
-                }
-                cost
+        let (accumulated, cost) = if self.kind == ObjectiveKind::StepSum {
+            let (states, steps) = self.prefix_with(parent, &step, &state);
+            let view = PlanView {
+                states: &states,
+                steps: &steps,
+            };
+            let Some(cost) = self.rules.step_cost_typed(&view, steps.len() - 1)? else {
+                self.explored.undefined_objectives += 1;
+                return Ok(());
+            };
+            if cost.value < zero() && self.negative_step.is_none() {
+                return Err(Stop::Negative(steps.len() - 1));
             }
-            ObjectiveKind::General => zero(),
+            let Some(total) =
+                self.rules
+                    .extend_step_sum(&view, &self.nodes[parent].accumulated, &cost)?
+            else {
+                self.explored.undefined_objectives += 1;
+                return Ok(());
+            };
+            (total, cost.value)
+        } else {
+            (StepTotal::from_rational(zero()), zero())
         };
-        let accumulated = self.nodes[parent].accumulated.add(&cost);
         let key = NodeKey {
             state: self.state_key(&state)?,
             monitors: monitors.clone(),
             depth,
             accumulated: (!self.dominance && self.kind == ObjectiveKind::StepSum)
-                .then(|| accumulated.clone()),
+                .then(|| accumulated.value.clone()),
             prefix: (!self.rules.merges_prefixes()).then_some(self.nodes.len()),
         };
         if let Some(&existing) = self.index.get(&key) {
@@ -1079,17 +1192,20 @@ impl<R: PlanRules> Search<'_, '_, R> {
             self.nodes[parent]
                 .successors
                 .push((step.clone(), existing, cost.clone()));
-            if self.dominance && self.better(&accumulated, &self.nodes[existing].accumulated) {
+            if self.dominance
+                && self.better(&accumulated.value, &self.nodes[existing].accumulated.value)
+            {
                 // Cost dominance: the strictly better prefix becomes the
                 // representative. The goal depends on the node alone, so
                 // only a goal node's per-step sum value changes.
+                let was_goal = self.nodes[existing].goal.is_some();
                 let node = &mut self.nodes[existing];
-                if node.goal.is_some() {
-                    node.goal = Some(accumulated.clone());
-                }
                 node.accumulated = accumulated;
                 node.parent = Some((parent, step));
                 node.prefix = prefix;
+                if was_goal {
+                    self.evaluate_goal_value(existing)?;
+                }
             }
             return Ok(());
         }
@@ -1178,7 +1294,16 @@ impl<R: PlanRules> Search<'_, '_, R> {
 
     fn evaluate_goal_value(&mut self, index: usize) -> Result<(), Stop> {
         let value = match self.kind {
-            ObjectiveKind::StepSum => Some(self.nodes[index].accumulated.clone()),
+            ObjectiveKind::StepSum => {
+                let (states, steps) = self.prefix_of(index);
+                self.rules.step_sum_objective(
+                    &PlanView {
+                        states: &states,
+                        steps: &steps,
+                    },
+                    &self.nodes[index].accumulated.value,
+                )?
+            }
             ObjectiveKind::General => {
                 let (states, steps) = self.prefix_of(index);
                 self.rules.objective(&PlanView {
@@ -1288,7 +1413,7 @@ impl<R: PlanRules> Search<'_, '_, R> {
         } else {
             CertificateKind::Closure
         };
-        let mut written = match certificate::write(&self, kind) {
+        let mut written = match certificate::write(&mut self, kind) {
             Ok(written) => written,
             Err(limit) => return self.stopped(limit),
         };
@@ -1300,6 +1425,12 @@ impl<R: PlanRules> Search<'_, '_, R> {
                 written.forge_state(*entry, *source);
             }
             Some(PlanFault::ParentCycle { entry }) => written.parent_cycle(*entry),
+            Some(PlanFault::ForgeAccumulated { entry, value }) => {
+                written.forge_accumulated(*entry, value.clone())
+            }
+            Some(PlanFault::ForgeInitialValue { value }) => {
+                written.forge_initial_value(value.clone())
+            }
             Some(PlanFault::ReportPlan(_)) | None => {}
         }
         let entries = written.entries();

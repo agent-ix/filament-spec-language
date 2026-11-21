@@ -3229,8 +3229,8 @@ fn expression_type_forms<'e>(roots: impl IntoIterator<Item = &'e Expression>) ->
                     ..
                 }
                 | ExprNode::Sum {
-                    result_type: name,
-                    result_type_span: span,
+                    result_type: Some(name),
+                    result_type_span: Some(span),
                     ..
                 } => forms.push(TypeForm::name(name.clone(), *span)),
                 ExprNode::Boolean(_)
@@ -3245,6 +3245,7 @@ fn expression_type_forms<'e>(roots: impl IntoIterator<Item = &'e Expression>) ->
                 | ExprNode::String(_)
                 | ExprNode::ReferenceLiteral { .. }
                 | ExprNode::Name(_)
+                | ExprNode::Sum { .. }
                 | ExprNode::Let { .. }
                 | ExprNode::Case(_)
                 | ExprNode::If { .. }

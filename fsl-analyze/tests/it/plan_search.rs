@@ -1689,3 +1689,400 @@ fn native_outcome_collection_names_its_retained_value_limit() {
         }
     }
 }
+
+/// Intercept the real source arithmetic at the first potential addition.
+/// Every other rule remains the production source adapter's implementation.
+struct CancelPotentialAdd<'a, 'c> {
+    source: fsl_analyze::plan_source::SourcePlan<'a>,
+    system: &'a ModelSystem<'a>,
+    cancel: &'c Cancel,
+    cause: CancelCause,
+    reached: bool,
+}
+
+impl<'a> PlanRules for CancelPotentialAdd<'a, '_> {
+    type StepKey = <fsl_analyze::plan_source::SourcePlan<'a> as PlanRules>::StepKey;
+    fn direction(&self) -> Direction {
+        self.source.direction()
+    }
+    fn objective_kind(&self) -> ObjectiveKind {
+        self.source.objective_kind()
+    }
+    fn merges_prefixes(&self) -> bool {
+        self.source.merges_prefixes()
+    }
+    fn step_key(&self, step: &ModelTransition) -> Self::StepKey {
+        self.source.step_key(step)
+    }
+    fn native_operations(&self) -> Option<std::sync::Arc<[(filament_exact::EffectiveId, String)]>> {
+        self.source.native_operations()
+    }
+    fn policy_count(&self) -> usize {
+        self.source.policy_count()
+    }
+    fn policy_start(
+        &mut self,
+        policy: usize,
+        state: &ModelSimState,
+    ) -> Result<MonitorStep, RuleStop> {
+        self.source.policy_start(policy, state)
+    }
+    fn policy_advance(
+        &mut self,
+        policy: usize,
+        monitor: &[u8],
+        state: &ModelSimState,
+    ) -> Result<MonitorStep, RuleStop> {
+        self.source.policy_advance(policy, monitor, state)
+    }
+    fn policy_accepts(
+        &mut self,
+        policy: usize,
+        monitor: &[u8],
+        last: &ModelSimState,
+    ) -> Result<bool, RuleStop> {
+        self.source.policy_accepts(policy, monitor, last)
+    }
+    fn goal(&mut self, plan: &PlanView<'_>) -> Result<bool, RuleStop> {
+        self.source.goal(plan)
+    }
+    fn step_cost(
+        &mut self,
+        plan: &PlanView<'_>,
+        index: usize,
+    ) -> Result<Option<Rational>, RuleStop> {
+        self.source.step_cost(plan, index)
+    }
+    fn step_cost_typed(
+        &mut self,
+        plan: &PlanView<'_>,
+        index: usize,
+    ) -> Result<Option<fsl_analyze::plan_search::StepTotal>, RuleStop> {
+        self.source.step_cost_typed(plan, index)
+    }
+    fn extend_step_sum(
+        &mut self,
+        plan: &PlanView<'_>,
+        total: &fsl_analyze::plan_search::StepTotal,
+        cost: &fsl_analyze::plan_search::StepTotal,
+    ) -> Result<Option<fsl_analyze::plan_search::StepTotal>, RuleStop> {
+        self.source.extend_step_sum(plan, total, cost)
+    }
+    fn add_objective_values(
+        &mut self,
+        left: &Rational,
+        right: &Rational,
+    ) -> Result<Option<Rational>, RuleStop> {
+        self.reached = true;
+        self.system.cancel_plan_with(self.cancel);
+        self.cancel.cancel(self.cause);
+        self.source.add_objective_values(left, right)
+    }
+    fn objective_offset(&mut self, plan: &PlanView<'_>) -> Result<Option<Rational>, RuleStop> {
+        self.source.objective_offset(plan)
+    }
+    fn step_sum_objective(
+        &mut self,
+        plan: &PlanView<'_>,
+        total: &Rational,
+    ) -> Result<Option<Rational>, RuleStop> {
+        self.source.step_sum_objective(plan, total)
+    }
+    fn objective(&mut self, plan: &PlanView<'_>) -> Result<Option<Rational>, RuleStop> {
+        self.source.objective(plan)
+    }
+    fn begin_replay(&mut self) {
+        self.source.begin_replay();
+    }
+}
+
+fn lambda_objective_world(objective: &str, types: &str) -> World {
+    lambda_objective_world_for_goal(objective, types, "Reach.length >= 1")
+}
+
+fn lambda_objective_world_for_goal(objective: &str, types: &str, goal: &str) -> World {
+    native_plan_world(
+        "language \"ix:native\" edition \"1-draft\"; domain \"test/native-plan\"; type Amount = Int[0,3]; object Counter { number: Amount; operation inc() modifies self.number; } population counters: Counter;",
+        &format!("{types}\npost Inc using v on M::Counter::inc {{ self.number = pre(self.number) + 1 }}\ntype Lengths = Int[0,3]; synthesis Reach using v grammar M::Counter domain Lengths {objective} satisfies {{ {goal} }};"),
+        &[("c",json!({"number":{"integer":"0"}}))],
+    )
+}
+
+/// Cancellation must survive the new typed addition and offset paths as
+/// requested/deadline cancellation, independently from named accounting stops.
+#[test]
+#[trace("FSpec-FR-801-AC-2", "FSpec-FR-802")]
+fn lambda_objective_arithmetic_distinguishes_cancellation_from_accounting() {
+    use fsl_analyze::plan_search::StepTotal;
+    use fsl_analyze::plan_source::SourcePlan;
+    let world = lambda_objective_world(
+        "minimize Reach.steps.sum(s => convert<Cost>(0.10)) + 0.05",
+        "type Cost = Decimal[0,10000;2,2;exact];",
+    );
+    let system = world_system(&world);
+    let synthesis = &world.package.graph().syntheses()[0];
+    let mut rules = SourcePlan::new(&world.package, synthesis, &system, vec![], UNLIMITED).unwrap();
+    let result = search(
+        &system,
+        &mut rules,
+        PlanSearchRequest {
+            lengths: PlanLengths::new(2, 2).unwrap(),
+            limits: PlanSearchLimits::default(),
+            cancel: &Cancel::new(),
+            fault: None,
+        },
+    )
+    .unwrap();
+    assert_eq!(result.status, PlanStatus::Optimal);
+    let plan = result.plan.unwrap();
+    let first = PlanView {
+        states: &plan.states[..2],
+        steps: &plan.steps[..1],
+    };
+    let cost = rules.step_cost_typed(&first, 0).unwrap().unwrap();
+    let total = rules
+        .extend_step_sum(&first, &StepTotal::from_rational(integer(0)), &cost)
+        .unwrap()
+        .unwrap();
+    let second_cost = rules.step_cost_typed(&plan.view(), 1).unwrap().unwrap();
+    for cause in [CancelCause::Requested, CancelCause::Deadline] {
+        for operation in ["typed-add", "potential-add", "offset", "objective"] {
+            system.begin_plan_replay(UNLIMITED);
+            let mut rules =
+                SourcePlan::new(&world.package, synthesis, &system, vec![], UNLIMITED).unwrap();
+            let cancel = Cancel::new();
+            system.cancel_plan_with(&cancel);
+            cancel.cancel(cause);
+            let outcome = match operation {
+                "typed-add" => rules
+                    .extend_step_sum(&plan.view(), &total, &second_cost)
+                    .map(|_| ()),
+                "potential-add" => rules
+                    .add_objective_values(&integer(2), &integer(7))
+                    .map(|_| ()),
+                "offset" => rules.objective_offset(&plan.view()).map(|_| ()),
+                "objective" => rules
+                    .step_sum_objective(&plan.view(), &integer(0))
+                    .map(|_| ()),
+                _ => unreachable!(),
+            };
+            assert_eq!(outcome, Err(RuleStop::Cancelled(cause)), "{operation}");
+        }
+    }
+    system.begin_plan_replay(UNLIMITED);
+    let mut rules = SourcePlan::new(
+        &world.package,
+        synthesis,
+        &system,
+        vec![],
+        ScalarLimits {
+            work_units: 0,
+            ..UNLIMITED
+        },
+    )
+    .unwrap();
+    assert_eq!(
+        rules.add_objective_values(&integer(2), &integer(7)),
+        Err(RuleStop::Accounting {
+            counter: "work_units",
+            value: 0
+        })
+    );
+    let world = lambda_objective_world_for_goal(
+        "minimize Reach.steps.sum(s => convert<Cost>(0.10)) + 0.05",
+        "type Cost = Decimal[0,10000;2,2;exact];",
+        "Reach.final.number = 3",
+    );
+    let system = world_system(&world);
+    for cause in [CancelCause::Requested, CancelCause::Deadline] {
+        system.begin_plan_replay(UNLIMITED);
+        let cancel = Cancel::new();
+        let source = SourcePlan::new(
+            &world.package,
+            &world.package.graph().syntheses()[0],
+            &system,
+            vec![],
+            UNLIMITED,
+        )
+        .unwrap();
+        let mut rules = CancelPotentialAdd {
+            source,
+            system: &system,
+            cancel: &cancel,
+            cause,
+            reached: false,
+        };
+        let result = search(
+            &system,
+            &mut rules,
+            PlanSearchRequest {
+                lengths: PlanLengths::new(0, 3).unwrap(),
+                limits: PlanSearchLimits::default(),
+                cancel: &cancel,
+                fault: None,
+            },
+        )
+        .unwrap();
+        assert!(
+            rules.reached,
+            "the real potential addition must be reached before cancellation"
+        );
+        assert_eq!(result.status, PlanStatus::Incomplete);
+        assert_eq!(result.cause, Some(PlanStopCause::Cancelled(cause)));
+        assert!(!result.certified);
+        assert!(result.certificate.is_none());
+        assert_eq!(
+            result.plan.unwrap().steps.len(),
+            3,
+            "an admissible goal was found before certificate construction was cancelled"
+        );
+    }
+}
+
+/// The checker recomputes a negative-cost prefix rather than trusting the
+/// recorded total in a closure node without cost dominance.
+#[test]
+#[trace("FSpec-FR-802-AC-4", "FSpec-FR-650")]
+fn lambda_objective_certificate_rejects_a_forged_accumulated_total() {
+    use fsl_analyze::plan_source::SourcePlan;
+    let world = lambda_objective_world("minimize Reach.steps.sum(s => -2) + 7", "");
+    let system = world_system(&world);
+    for forged in [false, true] {
+        let mut rules = SourcePlan::new(
+            &world.package,
+            &world.package.graph().syntheses()[0],
+            &system,
+            vec![],
+            UNLIMITED,
+        )
+        .unwrap();
+        let fault = PlanFault::ForgeAccumulated {
+            entry: 1,
+            value: integer(999),
+        };
+        let result = search(
+            &system,
+            &mut rules,
+            PlanSearchRequest {
+                lengths: PlanLengths::new(0, 3).unwrap(),
+                limits: PlanSearchLimits::default(),
+                cancel: &Cancel::new(),
+                fault: forged.then_some(&fault),
+            },
+        )
+        .unwrap();
+        if forged {
+            assert!(!result.certified);
+            assert_eq!(
+                result.certificate.unwrap().outcome,
+                CertificateOutcome::Rejected {
+                    rule: CertificateRule::Closure,
+                    entry: 0
+                }
+            );
+        } else {
+            assert_eq!(result.status, PlanStatus::Optimal);
+            assert_eq!(result.objective, Some(integer(1)));
+            assert_eq!(
+                result.certificate.unwrap().outcome,
+                CertificateOutcome::Accepted
+            );
+        }
+    }
+}
+
+/// A potential with an initial value that omits or doubles the constant
+/// offset cannot certify the independently recomputed source objective.
+#[test]
+#[trace("FSpec-FR-802-AC-1", "FSpec-FR-650")]
+fn lambda_objective_certificate_rejects_a_forged_initial_offset() {
+    use fsl_analyze::plan_source::SourcePlan;
+    let world = lambda_objective_world("minimize Reach.steps.sum(s => 2) + 7", "");
+    let system = world_system(&world);
+    for (forged, rule) in [
+        (-5, CertificateRule::Initial),
+        (9, CertificateRule::Descent),
+    ] {
+        let mut rules = SourcePlan::new(
+            &world.package,
+            &world.package.graph().syntheses()[0],
+            &system,
+            vec![],
+            UNLIMITED,
+        )
+        .unwrap();
+        let fault = PlanFault::ForgeInitialValue {
+            value: integer(forged),
+        };
+        let result = search(
+            &system,
+            &mut rules,
+            PlanSearchRequest {
+                lengths: PlanLengths::new(0, 3).unwrap(),
+                limits: PlanSearchLimits::default(),
+                cancel: &Cancel::new(),
+                fault: Some(&fault),
+            },
+        )
+        .unwrap();
+        assert!(!result.certified);
+        assert_eq!(
+            result.certificate.unwrap().outcome,
+            CertificateOutcome::Rejected { rule, entry: 0 }
+        );
+    }
+}
+
+/// A complete-plan-dependent summand remains a general objective; length
+/// and final-value objectives retain their actual classification and proof.
+#[test]
+#[trace("FSpec-FR-802-AC-1", "FSpec-FR-802-AC-6")]
+fn lambda_objective_classification_preserves_whole_plan_terms_and_default_length() {
+    use fsl_analyze::plan_source::SourcePlan;
+    for (objective, kind, expected, certificate, length) in [
+        ("", ObjectiveKind::StepSum, 1, CertificateKind::Potential, 1),
+        (
+            "maximize Reach.final.number",
+            ObjectiveKind::General,
+            3,
+            CertificateKind::Closure,
+            3,
+        ),
+        (
+            "maximize Reach.steps.sum(s => Reach.length)",
+            ObjectiveKind::General,
+            9,
+            CertificateKind::Closure,
+            3,
+        ),
+    ] {
+        let world = lambda_objective_world(objective, "");
+        let system = world_system(&world);
+        let mut rules = SourcePlan::new(
+            &world.package,
+            &world.package.graph().syntheses()[0],
+            &system,
+            vec![],
+            UNLIMITED,
+        )
+        .unwrap();
+        assert_eq!(rules.objective_kind(), kind);
+        let result = search(
+            &system,
+            &mut rules,
+            PlanSearchRequest {
+                lengths: PlanLengths::new(0, 3).unwrap(),
+                limits: PlanSearchLimits::default(),
+                cancel: &Cancel::new(),
+                fault: None,
+            },
+        )
+        .unwrap();
+        assert_eq!(result.status, PlanStatus::Optimal);
+        assert_eq!(result.objective, Some(integer(expected)));
+        assert_eq!(result.plan.unwrap().steps.len(), length);
+        let proof = result.certificate.unwrap();
+        assert_eq!(proof.kind, certificate);
+        assert_eq!(proof.outcome, CertificateOutcome::Accepted);
+    }
+}

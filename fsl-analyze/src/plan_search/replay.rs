@@ -322,18 +322,28 @@ fn objective_value<R: PlanRules>(
             .objective(&plan.view())
             .map_err(PlanSearchError::RuleStopped)?,
         ObjectiveKind::StepSum => {
-            let mut sum = Some(zero());
+            let mut sum = Some(super::StepTotal::from_rational(zero()));
             for index in 0..plan.steps.len() {
                 let view = PlanView {
                     states: &plan.states[..=index + 1],
                     steps: &plan.steps[..=index],
                 };
                 let cost = rules
-                    .step_cost(&view, index)
+                    .step_cost_typed(&view, index)
                     .map_err(PlanSearchError::RuleStopped)?;
-                sum = sum.zip(cost).map(|(sum, cost)| sum.add(&cost));
+                sum = match (sum, cost) {
+                    (Some(total), Some(cost)) => rules
+                        .extend_step_sum(&view, &total, &cost)
+                        .map_err(PlanSearchError::RuleStopped)?,
+                    _ => None,
+                };
             }
-            sum
+            match sum {
+                Some(total) => rules
+                    .step_sum_objective(&plan.view(), &total.value)
+                    .map_err(PlanSearchError::RuleStopped)?,
+                None => None,
+            }
         }
     };
     value.ok_or(undefined)

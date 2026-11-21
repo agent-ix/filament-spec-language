@@ -4,7 +4,11 @@
 //! objective, into a `Synthesis` form, on real complete-V1 source through
 //! `fsl_cst::parse` and `build_unit`.
 
-use fsl_forms::{build_unit, DeclarationForm, SynthesisDirectionForm, SynthesisForm};
+use filament_exact::Integer;
+use fsl_forms::{
+    build_unit, BinaryOperator, DeclarationForm, ExprNode, ExpressionForm, SynthesisDirectionForm,
+    SynthesisForm,
+};
 use fsl_foundation::SourceIdentity;
 use ix_trace_rs::trace;
 
@@ -166,4 +170,115 @@ fn pick_with_maximize_builds_a_synthesis_form_holding_its_objective() {
         .unwrap_or_else(|refusal| panic!("S1 and S2 build the objective: {refusal}"));
     let objective = form.objective.expect("maximize is retained");
     assert_eq!(objective.direction, SynthesisDirectionForm::Maximize);
+}
+
+const STEP_SUM: &str = "synthesis Reach using p grammar M::G domain M::D \
+     minimize Reach.steps.sum(s => s.index) + 3 satisfies { true };";
+
+/// FSpec FR-802 "Classification": `Reach.steps.sum(s => c) + k` builds one
+/// sum over the plan's `steps` field with no written result type, plus the
+/// constant, each node spanned in source order.
+#[trace("FSpec-TC-1952", "FSpec-FR-802-AC-1")]
+#[test]
+fn a_step_sum_objective_builds_a_sum_over_the_plan_steps() {
+    let form = synthesis_form(STEP_SUM).unwrap_or_else(|refusal| panic!("S2 builds it: {refusal}"));
+    let objective = form.objective.expect("the objective is retained");
+    assert_eq!(objective.direction, SynthesisDirectionForm::Minimize);
+    let ExpressionForm { expression, spans } = &objective.expression;
+    let root = expression.root();
+    let ExprNode::Binary {
+        operator: BinaryOperator::Add,
+        left,
+        right,
+    } = root.node()
+    else {
+        panic!("the root adds the constant: {expression:?}");
+    };
+    let ExprNode::Sum {
+        result_type: None,
+        result_type_span: None,
+        binder,
+        source,
+        summand,
+        ..
+    } = root.at(*left).node()
+    else {
+        panic!("the left operand is the step sum: {expression:?}");
+    };
+    assert_eq!(binder, "s");
+    assert!(matches!(
+        root.at(*source).node(),
+        ExprNode::Field { field, .. } if field == "steps"
+    ));
+    assert!(matches!(
+        root.at(*summand).node(),
+        ExprNode::Field { field, .. } if field == "index"
+    ));
+    assert!(
+        matches!(root.at(*right).node(), ExprNode::Integer(three) if *three == Integer::from(3_i64))
+    );
+    let text = format!("{HEADER}{STEP_SUM}\n");
+    let span = spans.span(spans.root()).expect("the root is spanned");
+    assert_eq!(
+        &text[span.start..span.end],
+        "Reach.steps.sum(s => s.index) + 3"
+    );
+}
+
+/// FSpec FR-802: `Reach.steps.sum(s => e)` reads only as the objective root:
+/// any other aggregate, or the form inside another expression, is a syntax
+/// refusal.
+#[trace("FSpec-TC-1952", "FSpec-FR-802-AC-1")]
+#[test]
+fn a_step_sum_outside_the_objective_root_is_refused_at_s1() {
+    for declaration in [
+        "synthesis Reach using p grammar M::G domain M::D minimize Reach.steps.min(s => 1) satisfies { true };",
+        "synthesis Reach using p grammar M::G domain M::D minimize 1 + Reach.steps.sum(s => 1) satisfies { true };",
+        "synthesis Reach using p grammar M::G domain M::D satisfies { Reach.steps.sum(s => 1) > 0 };",
+        "synthesis Reach using p grammar M::G domain M::D minimize Reach.steps.sum(s => 1) + Reach.length * 2 satisfies { true };",
+    ] {
+        let refusal = synthesis_form(declaration).expect_err(declaration);
+        assert!(refusal.starts_with("S1:"), "{declaration}: {refusal}");
+    }
+}
+
+/// Numeric families remain representable even when a planner must return
+/// an explicit unsupported result for their execution.
+#[trace("FSpec-FR-802")]
+#[test]
+fn a_step_sum_retains_float_and_quantity_constant_forms() {
+    for (term, constant) in [
+        (
+            "float64(bits: 0x3ff0000000000000)",
+            "float64(bits: 0x3ff0000000000000)",
+        ),
+        ("30 M::seconds", "1 M::seconds"),
+    ] {
+        let form = synthesis_form(&format!("synthesis Reach using p grammar M::G domain M::D minimize Reach.steps.sum(s => {term}) + {constant} satisfies {{ true }};"))
+            .expect("S2 preserves numeric constant syntax");
+        let objective = form.objective.expect("the objective is retained");
+        let root = objective.expression.expression.root();
+        let ExprNode::Binary {
+            operator: BinaryOperator::Add,
+            left,
+            right,
+        } = root.node()
+        else {
+            panic!("the root adds the numeric constant");
+        };
+        assert!(matches!(
+            root.at(*left).node(),
+            ExprNode::Sum {
+                result_type: None,
+                ..
+            }
+        ));
+        match term {
+            "30 M::seconds" => assert!(matches!(root.at(*right).node(), ExprNode::Quantity(_))),
+            _ => assert!(matches!(
+                root.at(*right).node(),
+                ExprNode::Float64(0x3ff0000000000000)
+            )),
+        }
+    }
 }

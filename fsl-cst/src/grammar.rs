@@ -3196,12 +3196,42 @@ fn analysis(g: &mut Grammar) {
             x("domain"),
             c(vec![r(P::QualifiedName), x("Integer")]),
             opt(c(vec![
-                s(vec![contextual("minimize"), r(P::Expression)]),
-                s(vec![contextual("maximize"), r(P::Expression)]),
+                s(vec![
+                    contextual("minimize"),
+                    c(vec![r(P::StepSumObjective), r(P::Expression)]),
+                ]),
+                s(vec![
+                    contextual("maximize"),
+                    c(vec![r(P::StepSumObjective), r(P::Expression)]),
+                ]),
             ])),
             x("satisfies"),
             r(P::Block),
             x(";"),
+        ]),
+    );
+    g.insert(
+        P::StepSumObjective,
+        s(vec![
+            ident(),
+            x("."),
+            literal("steps"),
+            x("."),
+            x("sum"),
+            x("("),
+            ident(),
+            x("=>"),
+            r(P::Expression),
+            x(")"),
+            opt(s(vec![
+                x("+"),
+                opt(x("-")),
+                c(vec![
+                    r(P::QuantityLiteral),
+                    r(P::FloatValue),
+                    r(P::ExactValue),
+                ]),
+            ])),
         ]),
     );
     g.insert(
