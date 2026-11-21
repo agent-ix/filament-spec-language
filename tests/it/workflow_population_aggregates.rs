@@ -2,9 +2,9 @@
 //! QSL-2740: execute source aggregates over explicit reservation and refund
 //! populations, retaining group identity, repeated values, and completeness.
 
-use crate::command_harness::{run_file, Output};
+use crate::command_harness::{Output, run_file};
 use ix_trace_rs::trace;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::path::Path;
 
 const PACKAGE: &str = "test/workflow-aggregates";
@@ -22,9 +22,12 @@ profile v = \"filament.model.complete/v1\";\n\
 model Workflow = \"test/workflow-aggregates\";\n\
 type Total = Int[0, 10000];\n\
 type Count = Int[0, 4];\n\
-function refundTotal using v(order: Workflow::Order, refunds: Population<Workflow::Refund>[4]): Total pure {\
+function refundTotal using v(order: Workflow::Order, refunds: Population<Workflow::Refund>[4],\
+    receipts: Population<Workflow::DeliveryReceipt>[4]): Total pure {\
   sum<Total>(r in allInstances<Workflow::Refund>(refunds):\
-    if deref(r).order = order then deref(r).amount else 0)\
+    if deref(r).order = order and count<Count>(d in allInstances<Workflow::DeliveryReceipt>(receipts):\
+      deref(d).effect = r) > 0\
+    then deref(r).amount else 0)\
 }\n\
 function reservationTotal using v(order: Workflow::Order, reservations: Population<Workflow::Reservation>[4]): Total pure {\
   sum<Total>(r in allInstances<Workflow::Reservation>(reservations):\
@@ -33,8 +36,9 @@ function reservationTotal using v(order: Workflow::Order, reservations: Populati
 function refundCount using v(order: Workflow::Order, refunds: Population<Workflow::Refund>[4]): Count pure {\
   count<Count>(r in allInstances<Workflow::Refund>(refunds): deref(r).order = order)\
 }\n\
-function recovered using v(order: Workflow::Order, reservations: Population<Workflow::Reservation>[4], refunds: Population<Workflow::Refund>[4]): Boolean pure {\
-  reservationTotal(order, reservations) = refundTotal(order, refunds)\
+function recovered using v(order: Workflow::Order, reservations: Population<Workflow::Reservation>[4],\
+    refunds: Population<Workflow::Refund>[4], receipts: Population<Workflow::DeliveryReceipt>[4]): Boolean pure {\
+  reservationTotal(order, reservations) = refundTotal(order, refunds, receipts)\
 }\n";
 
 fn source(file: &str, document: &str) -> Value {
@@ -159,6 +163,18 @@ fn workflow_snapshot(complete_refunds: bool, add_contradictory_refund: bool) -> 
         refund_objects.push(json!({"key": "r4", "type": REFUND, "fields": {
             "amount": {"integer": "1"}, "order": related_order("o1")}}));
     }
+    let mut delivery_receipt_objects = vec![
+        json!({"key": "d1", "type": DELIVERY_RECEIPT, "fields": {
+            "effect": {"reference": {"population": REFUNDS, "key": "r1"}}}}),
+        json!({"key": "d2", "type": DELIVERY_RECEIPT, "fields": {
+            "effect": {"reference": {"population": REFUNDS, "key": "r1"}}}}),
+        json!({"key": "d3", "type": DELIVERY_RECEIPT, "fields": {
+            "effect": {"reference": {"population": REFUNDS, "key": "r2"}}}}),
+    ];
+    if add_contradictory_refund {
+        delivery_receipt_objects.push(json!({"key": "d4", "type": DELIVERY_RECEIPT, "fields": {
+            "effect": {"reference": {"population": REFUNDS, "key": "r4"}}}}));
+    }
     json!({
         "format": "filament.state.snapshot/v1",
         "identity": {"authority": "agent-ix", "identity": "ix://test/workflow-aggregates/snapshot"},
@@ -181,14 +197,7 @@ fn workflow_snapshot(complete_refunds: bool, add_contradictory_refund: bool) -> 
                     "amount": {"integer": "7"}, "order": related_order("o2")}}
             ]},
             {"population": REFUNDS, "complete": complete_refunds, "objects": refund_objects},
-            {"population": DELIVERY_RECEIPTS, "complete": true, "objects": [
-                {"key": "d1", "type": DELIVERY_RECEIPT, "fields": {
-                    "effect": {"reference": {"population": REFUNDS, "key": "r1"}}}},
-                {"key": "d2", "type": DELIVERY_RECEIPT, "fields": {
-                    "effect": {"reference": {"population": REFUNDS, "key": "r1"}}}},
-                {"key": "d3", "type": DELIVERY_RECEIPT, "fields": {
-                    "effect": {"reference": {"population": REFUNDS, "key": "r2"}}}}
-            ]}
+            {"population": DELIVERY_RECEIPTS, "complete": true, "objects": delivery_receipt_objects}
         ]
     })
 }
@@ -211,7 +220,8 @@ fn write_run(directory: &Path, complete_refunds: bool, add_contradictory_refund:
         "call": {"function": "recovered", "snapshot": "snapshot.json", "arguments": [
             {"parameter": "order", "value": {"reference": {"population": ORDERS, "key": "o1"}}},
             {"parameter": "reservations", "value": {"population": RESERVATIONS}},
-            {"parameter": "refunds", "value": {"population": REFUNDS}}
+            {"parameter": "refunds", "value": {"population": REFUNDS}},
+            {"parameter": "receipts", "value": {"population": DELIVERY_RECEIPTS}}
         ]}
     }});
     std::fs::write(
@@ -243,13 +253,14 @@ fn outcome(output: &Output) -> Value {
     "FSpec-FR-180-AC-5",
     "FSpec-FR-049-AC-2",
     "FSpec-FR-049-AC-8",
-    "FSpec-FR-046-AC-6"
+    "FSpec-FR-046-AC-6",
+    "FSpec-TC-173"
 )]
 fn source_aggregates_count_effects_not_duplicate_delivery_receipts() {
-    // r1 has two delivery receipts, while r2 is a distinct second effect
-    // with the same amount. The recovery aggregate must count r1 and r2
-    // once each: receipt rows would total 6, while value-based deduplication
-    // would total 2; reservations and effects both total 4.
+    // The source joins receipt effects to the refund population by identity.
+    // d1 and d2 both reference r1, so r1 contributes once; d3 references
+    // distinct r2, which also contributes. Counting receipt rows gives 6,
+    // while deduplicating by amount gives 2; the correct effect total is 4.
     let output = run(true, false);
     assert_eq!(output.status.code(), Some(0), "{output:?}");
     let document = outcome(&output);
@@ -285,8 +296,15 @@ fn an_incomplete_refund_population_cannot_settle_a_recovery_aggregate() {
 }
 
 #[test]
-#[trace("FSpec-FR-180-AC-5", "FSpec-FR-049-AC-8", "FSpec-FR-046-AC-6")]
+#[trace(
+    "FSpec-FR-180-AC-5",
+    "FSpec-FR-049-AC-8",
+    "FSpec-FR-046-AC-6",
+    "FSpec-TC-173"
+)]
 fn a_contradictory_refund_total_does_not_pass_recovery() {
+    // r4 is a distinct effect with its own receipt; unlike the repeated r1
+    // receipt, it adds one to the aggregate and makes the order unrecovered.
     let output = run(true, true);
     assert_eq!(output.status.code(), Some(0), "{output:?}");
     let document = outcome(&output);
