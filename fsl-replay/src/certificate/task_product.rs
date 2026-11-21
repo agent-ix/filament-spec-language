@@ -4,6 +4,15 @@
 use filament_exact::{Integer, NonZeroInteger, Rational};
 use filament_semantic_value::model_transition::ModelTransition;
 
+mod key;
+mod wire;
+
+pub use key::{
+    TaskArrivalPhase, TaskJobPhase, TaskLiveJob, TaskPendingBudgetChange, TaskProductKey,
+    TaskProductKeyRefusal, TaskSchedulerControl,
+};
+pub use wire::{TaskProductShapeReason, TaskProductShapeRefusal, TaskProductWireError};
+
 /// A checked arrival rule copied into the FR-418 task-product certificate.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum TaskArrivalKind {

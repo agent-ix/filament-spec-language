@@ -178,9 +178,11 @@ pub use certificate::state_graph::{
     check_state_graph, StateGraphCertificate, StateGraphCertificateRequest,
 };
 pub use certificate::task_product::{
-    TaskArrivalKind, TaskClockCeiling, TaskClosureEvidence, TaskClosureMethod,
-    TaskDiagonalConstraint, TaskDiagonalOperator, TaskProductCertificate, TaskQueueBound,
-    TaskSubtraction, TaskTimeProgress, TaskTransitionTemplate,
+    TaskArrivalKind, TaskArrivalPhase, TaskClockCeiling, TaskClosureEvidence, TaskClosureMethod,
+    TaskDiagonalConstraint, TaskDiagonalOperator, TaskJobPhase, TaskLiveJob,
+    TaskPendingBudgetChange, TaskProductCertificate, TaskProductKey, TaskProductKeyRefusal,
+    TaskProductShapeReason, TaskProductShapeRefusal, TaskProductWireError, TaskQueueBound,
+    TaskSchedulerControl, TaskSubtraction, TaskTimeProgress, TaskTransitionTemplate,
 };
 pub use certificate::zone::{LuBounds, Zone, ZoneError};
 pub use certificate::zone_certificate::{
