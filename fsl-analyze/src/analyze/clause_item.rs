@@ -894,11 +894,8 @@ impl<'a> PackageClauseSubject<'a> {
                 if let Some(temporal) = &subject.temporal {
                     if temporal.item_kind != fsl_route::request::ItemKind::Formula
                         || temporal.abstract_subject.is_some()
-                        // EN-1's liveness run reads a package's source forms, which
-                        // the package route does not have, so the flag's engine run
-                        // is unsupported here; the package route replays a closure
-                        // lasso through `replay_counterexample` (FR-128-AC-15).
-                        || stutter_closure
+                        || (stutter_closure
+                            && subject.clause.property_form() != Some(PropertyForm::Liveness))
                         || temporal.fairness != subject.clause.fairness()
                     {
                         return EngineReport::Refused(Refusal::Unsupported(super::items::NOT_YET));

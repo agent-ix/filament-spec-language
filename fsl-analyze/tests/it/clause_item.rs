@@ -1054,13 +1054,20 @@ fn closure_round_trip(formula: &str, stem: usize) {
         )
         .expect("the package holds the clause")
         .configured(temporal());
-        // The read-back lasso replays over the package bytes.
+        // The read-back lasso replays over the package bytes before the package
+        // item settles, so a mismatch names its stage.
         reproduces(package.replay_counterexample(&read));
-        // FR-128-AC-15 is the package route's replay of the closure lasso, which
-        // is asserted above. The package route's EN-1 liveness run is a separate
-        // boundary: `liveness::check` reads the source forms of a package and
-        // faults (`liveness-reads-source-forms`) over a package-only subject,
-        // so no package item settles a liveness clause, closure or not.
+        let record = settle(package.item(RequestIndex::new(0)));
+        // A package item that fails after its engine refuted names where: the
+        // engine's value and the `over` reference its wire is spelled with.
+        assert_eq!(
+            record.terminal().expect("a terminal record").value(),
+            &TerminalValue::Refuted,
+            "engine {:?}, over {:?}",
+            record.model_check.as_ref().map(|model| &model.value),
+            record.over_reference
+        );
+        assert_eq!(format!("{record:?}"), format!("{source:?}"));
     });
 }
 

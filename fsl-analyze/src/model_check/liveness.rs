@@ -178,20 +178,23 @@ pub(super) fn check(
     };
     let symmetric = !request.reductions.symmetry.is_empty();
     // The clause's identity is resolved from the package, as the safety path
-    // does (FR-337-AC-5): a package that gives it no root refuses.
-    let package = request
-        .subject
-        .simulation
-        .source_package()
-        .ok_or_else(|| fault("liveness-reads-source-forms"))?;
-    let root_cancelled = match ClauseIdentity::resolve(
-        package,
-        request.subject.simulation.packages,
-        clause,
-        request.temporal_clock_selections,
-        cancel,
-        request.subject.simulation.emit,
-    ) {
+    // does (FR-337-AC-5): the source route from its own emission, the package
+    // route from its admitted bytes (FR-940); a package that gives it no root
+    // refuses.
+    let simulation = &request.subject.simulation;
+    let identity = match (simulation.source_package(), simulation.admitted_package()) {
+        (Some(package), _) => ClauseIdentity::resolve(
+            package,
+            simulation.packages,
+            clause,
+            request.temporal_clock_selections,
+            cancel,
+            simulation.emit,
+        ),
+        (None, Some(admitted)) => ClauseIdentity::of_admitted(admitted, clause),
+        (None, None) => return Err(fault("liveness-reads-a-package")),
+    };
+    let root_cancelled = match identity {
         Ok(_) => None,
         Err(ClauseRootRefusal::Cancelled(cause)) => Some(cause),
         Err(refusal) => return Err(ModelCheckRefusal::Item(ItemRefusal::ClauseRoot(refusal))),
