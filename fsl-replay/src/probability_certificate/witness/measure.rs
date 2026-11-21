@@ -92,9 +92,6 @@ pub(super) fn replay(
     limits: &ExactProbLimits,
     cancel: &Cancel,
 ) -> Result<ProbabilityWitnessReplay, ProbabilityWitnessError> {
-    if !claim.fairness.is_empty() {
-        return Err(ExactProbabilityGraphError::UnsupportedClaimForm.into());
-    }
     let kind = match &claim.form {
         ProbForm::Probability { .. } => MeasurePayoffKind::Event,
         ProbForm::Quantile { .. } => MeasurePayoffKind::Satisfied,

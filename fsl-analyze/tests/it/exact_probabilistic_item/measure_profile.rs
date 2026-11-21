@@ -1138,3 +1138,81 @@ fn bounded_mean_refutation_roles_accept_upper_minimum_and_partial_lower_maximum(
         }
     }
 }
+
+#[trace("FR-1043-AC-2", "FR-1043-AC-5", "FR-1043-AC-8")]
+#[test]
+fn bounded_fair_measure_proofs_and_native_refutations_keep_the_same_optimum() {
+    let claims = claim(
+        "Q",
+        "every scheduler fair weak Msg::fast",
+        &format!("quantile 0.4 of ({}) <= 3", steps()),
+    ) + &claim(
+        "No",
+        "every scheduler fair weak Msg::fast",
+        &format!("quantile 0.5 of ({}) <= 2", steps()),
+    ) + &claim(
+        "MeanNo",
+        "every scheduler fair strong Msg::fast",
+        "mean of fraction holds(m.delivered) over [0,2] >= rational(1,2)",
+    );
+    let world = World::new(&retry(&claims));
+    let document = proof(&world, "Q", ratio(57, 320));
+    assert_eq!(
+        document["objective"]["fairness"].as_array().unwrap().len(),
+        1
+    );
+    let accepted = check(&world, "Q", &document);
+    assert!(
+        matches!(accepted, Ok(ExactProbabilityCertificateCheck::Accepted(_))),
+        "{accepted:?}"
+    );
+    refuted(&world, "No");
+    refuted(&world, "MeanNo");
+}
+
+#[trace("FR-1043-AC-4", "FR-1043-AC-5", "FR-1043-AC-8")]
+#[test]
+fn weighted_fraction_keeps_exact_sums_and_checks_its_mean_independently() {
+    let mut model = retry(
+        &(claim(
+            "Yes",
+            "Steady",
+            "mean of fraction holds(m.delivered) over [0,2] weighted by effort >= rational(29,100)",
+        ) + &claim(
+            "No",
+            "Steady",
+            "mean of fraction holds(m.delivered) over [0,2] weighted by effort >= rational(3,10)",
+        )),
+    );
+    model.body = model
+        .body
+        .replace("{ not self.delivered }", "{ true }")
+        .replace("terminal Done using v on M when { self.delivered };", "")
+        + "\nreward effort on Msg::fast = lost + 1;\nreward effort on Msg::slow = lost + 1;\n";
+    let world = World::new(&model);
+    // Eight equally likely triples of positive weights, independently summed
+    // as (a*(b+1)+b*(c+1))/(a+b+c+3), have this exact average.
+    let document = proof(&world, "Yes", ratio(71, 240));
+    assert_eq!(
+        document["objective"]["measure"]["kind"],
+        "weighted-fraction"
+    );
+    let accepted = check(&world, "Yes", &document);
+    assert!(
+        matches!(accepted, Ok(ExactProbabilityCertificateCheck::Accepted(_))),
+        "{accepted:?}"
+    );
+    let accumulators = document["values"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|row| key(row)[6].clone())
+        .collect::<Vec<_>>();
+    assert!(
+        accumulators
+            .iter()
+            .any(|sum| sum.to_string().contains("weighted-fraction")),
+        "{accumulators:?}"
+    );
+    refuted(&world, "No");
+}
