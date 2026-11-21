@@ -4895,10 +4895,11 @@ mod order_tests {
             &ValueType::Population(Some(0))
         );
         let projection = package.project_function("reference").unwrap().unwrap();
-        assert!(matches!(
-            projection.selected_function().unwrap().parameters[0].value_type,
-            ValueType::Reference(_)
-        ));
+        assert_eq!(
+            &projection.selected_function().unwrap().parameters[0].value_type,
+            &checked.graph().callable("reference").unwrap().parameters[0].1,
+            "the package retains the source-selected object identity"
+        );
     }
 
     /// Representation admission preserves opaque references and still checks
