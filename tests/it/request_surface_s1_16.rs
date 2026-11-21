@@ -1511,15 +1511,16 @@ fn unit_both_routes_over_model(
     let models =
         json!([{"format": "semantic-ir/2.0.0", "source": source("spine-model.semantic-ir.json")}]);
     let compile = directory.path().join("compile.json");
-    let mut request = json!({"format": "native-compile/1", "request": {
-        "models": models, "program": {"source": source("unit.native")},
-        "output": {"package": "package.json"},
-        "handoff": {"directory": "handoff", "package_name": "test:s1-16:unit.native",
-            "native_join": {"work_units": 1_u64 << 40, "storage": 1_u64 << 24}}}});
-    if let Some(clocks) = clocks {
-        request["request"]["clocks"] = clocks;
-    }
-    std::fs::write(&compile, serde_json::to_vec(&request).unwrap()).unwrap();
+    std::fs::write(
+        &compile,
+        serde_json::to_vec(&json!({"format": "native-compile/1", "request": {
+            "models": models, "program": {"source": source("unit.native")},
+            "output": {"package": "package.json"},
+            "handoff": {"directory": "handoff", "package_name": "test:s1-16:unit.native",
+                "native_join": {"work_units": 1_u64 << 40, "storage": 1_u64 << 24}}}}))
+        .unwrap(),
+    )
+    .unwrap();
     fsl_command::command::compile(&compile).expect("the unit compiles");
     std::fs::remove_file(directory.path().join("unit.native")).unwrap();
     edit(directory.path());
@@ -1647,16 +1648,15 @@ fn compile_handoff_with_clocks(directory: &Path, unit: &str, clocks: Option<Valu
     let models =
         json!([{"format": "semantic-ir/2.0.0", "source": source("spine-model.semantic-ir.json")}]);
     let compile = directory.join("compile.json");
-    std::fs::write(
-        &compile,
-        serde_json::to_vec(&json!({"format": "native-compile/1", "request": {
-            "models": models, "program": {"source": source("unit.native")},
-            "output": {"package": "package.json"},
-            "handoff": {"directory": "handoff", "package_name": "test:s1-16:unit.native",
-                "native_join": {"work_units": 1_u64 << 40, "storage": 1_u64 << 24}}}}))
-        .unwrap(),
-    )
-    .unwrap();
+    let mut request = json!({"format": "native-compile/1", "request": {
+        "models": models, "program": {"source": source("unit.native")},
+        "output": {"package": "package.json"},
+        "handoff": {"directory": "handoff", "package_name": "test:s1-16:unit.native",
+            "native_join": {"work_units": 1_u64 << 40, "storage": 1_u64 << 24}}}});
+    if let Some(clocks) = clocks {
+        request["request"]["clocks"] = clocks;
+    }
+    std::fs::write(&compile, serde_json::to_vec(&request).unwrap()).unwrap();
     fsl_command::command::compile(&compile).expect("the unit compiles");
     std::fs::remove_file(directory.join("unit.native")).unwrap();
     models
