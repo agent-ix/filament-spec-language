@@ -551,3 +551,47 @@ Evidence custody: supplied six cohorts total 26 tests but have different heads/f
 - `tests/it/main.rs`
 - `tests/it/package_model_native.rs`
 - `tests/it/request_surface_s1_16.rs`
+
+## Dispositions
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | Typed ProvisionsSeed duplicate_sources flag drives the duplicate-source refusal; both diagnostic-prose branches are removed. Malformed duplicate carrier precedence is covered in the passing prefix8 acceptance cohort. |
+
+## Disposition pass 1
+
+**PASS for the reviewed PR scope** — all original findings are fixed; no new findings. The original review verdict and Findings table above remain the historical initial record. Root final service acceptance remains pending.
+
+Reviewed fix head `ff9887a265f23ef27e1535e91f0d4e9504208fb8`, same initial head `178791a0377722d5fd12263511dd5d8a824df52c`, actual base `f89c2e03082342f690be623f6181977c4453d8ed`.
+
+The full 13-path fix diff from original178791 to910b was read, then the exact 910b→ff9887a fixture-only diff. The Population/Reference bridge reads existing admitted types plus selected exact object identities, preserves optional/zero/u64 maximum distinctions, attaches the existing population catalog to the bare walker, and retains the actual EffectiveViews from the same snapshot normalization. Command passes those same views; source population binding is neutrally factored through the shared existing algorithm. No second StateModel, new wire/IR carrier, dependency pin or repeated normalization was introduced. Original committed SR copies matched canonical bytes before this append. No new finding was identified. The descendant metadata error-pointer concern remains UNPROVEN, not a demonstrated runtime defect or an acceptance claim.
+
+No Cargo/build/gate or runtime command was run by the reviewer; the actual focused results were supplied by Root and their retained logs inspected. Root owns the final service gate. No Linear query, read or write was performed during disposition1: hard cooldown through19:45 UTC. Exact disposition comment bodies and keys are queued locally; publication and readback remain pending cooldown clearance.
+
+Acceptance evidence is cohort-specific: root checked-handoff prefix8 at `910b7b1982942124f19b591e1fb3728dc7ea2bf9` passed 8/0 failed/0 ignored (1373 filtered), exit0, `/tmp/qsl-2726-review1-final-prefix8.log`. The exact later diff to `ff9887a265f23ef27e1535e91f0d4e9504208fb8` only removed unused infinite-profile request clocks in the affected legacy fixture; production and prefix8 test code are unchanged. Legacy exact1 at ff9887a passed 1/0 failed/0 ignored (1380 filtered), exit0, `/tmp/qsl-2726-review1-final-lasso2.log`. Its earlier lasso1 setup RED was `Emit ClockSelection UnusedClockSelection(sensor)` before evaluation and is retained, not hidden. Separate bridge unit evidence passed1 at helper3901a43638a98bdbc53a3013e281bedd07839d26, `/tmp/qsl-2726-population-focused-7.log`; this is not an at-final-head result.
+
+Current `quire trace --scope . --id FR-1039-AC-10 --json` and AC-11 counterpart both exited0 at910b, resolved true: respectively one and four structural verifies claims, no citations. These are binding facts, not runtime evidence. Full original matrix/coverage extraction limitations remain recorded above; no global assurance PASS is claimed.
+
+```yaml
+{
+  "round": 1,
+  "head": "ff9887a265f23ef27e1535e91f0d4e9504208fb8",
+  "original_head": "178791a0377722d5fd12263511dd5d8a824df52c",
+  "artifact_id": "SR-20261121003354001",
+  "method": "code-review",
+  "initial_comment_id": "9d537fcf-857c-439b-80bb-23a4ac874a01",
+  "dispositions": [
+    {
+      "fnd": "FND-001",
+      "outcome": "fixed",
+      "artifact_id": "rust-style/error-classification",
+      "severity": "low",
+      "original_finding": "Duplicate-sources classification branches on serde diagnostic prose instead of a typed structural condition. The same prefix match is duplicated in command.rs:3873; route duplicate detection through the structural preflight and preserve other JSON errors unchanged.",
+      "excerpt": "- Use `Option` for genuine absence, `Result` for recoverable failures, and a\n  distinct typed condition for each failure a caller must distinguish. Each\n  crate that surfaces errors uses a stable `Copy` code enum and a `thiserror`\n  envelope; never branch on human-readable error text.",
+      "reason": "Typed ProvisionsSeed duplicate_sources flag drives the duplicate-source refusal; both diagnostic-prose branches are removed. Malformed duplicate carrier precedence is covered in the passing prefix8 acceptance cohort.",
+      "after_excerpt": "        if duplicate_sources {\n            RunCause::ClauseRequest {\n                member: \"/request/sources\".to_owned(),\n                reason: \"repeated member\".to_owned(),\n            }\n        } else {\n            RunCause::Json(error)\n        }\n    })?;\n    decoder.end()?;\n    validate_provisions("
+    }
+  ],
+  "new_findings": []
+}
+```

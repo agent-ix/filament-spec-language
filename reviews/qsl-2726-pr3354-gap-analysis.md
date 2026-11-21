@@ -552,3 +552,58 @@ Evidence custody: supplied six cohorts total 26 tests but have different heads/f
 - `tests/it/main.rs`
 - `tests/it/package_model_native.rs`
 - `tests/it/request_surface_s1_16.rs`
+
+## Dispositions
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | The existing real window parity/missing-source controls now bind FR-1039-AC-10; current quire trace resolves one structural verifies claim and the prefix8 cohort passed. |
+| FND-002 | fixed | Actual CALL and CONDITION tests bind FR-1039-AC-11 and assert exact source/package refusal code, cause, fields and caller locus, formal-metadata independence, and absent/empty/wrong/short/both split-UTF8 endpoint controls. Both passed in prefix8; affected lasso refusal parity passed after removing unused request clocks. |
+
+## Disposition pass 1
+
+**PASS for the reviewed PR scope** — all original findings are fixed; no new findings. The original review verdict and Findings table above remain the historical initial record. Root final service acceptance remains pending.
+
+Reviewed fix head `ff9887a265f23ef27e1535e91f0d4e9504208fb8`, same initial head `178791a0377722d5fd12263511dd5d8a824df52c`, actual base `f89c2e03082342f690be623f6181977c4453d8ed`.
+
+The full 13-path fix diff from original178791 to910b was read, then the exact 910b→ff9887a fixture-only diff. The Population/Reference bridge reads existing admitted types plus selected exact object identities, preserves optional/zero/u64 maximum distinctions, attaches the existing population catalog to the bare walker, and retains the actual EffectiveViews from the same snapshot normalization. Command passes those same views; source population binding is neutrally factored through the shared existing algorithm. No second StateModel, new wire/IR carrier, dependency pin or repeated normalization was introduced. Original committed SR copies matched canonical bytes before this append. No new finding was identified. The descendant metadata error-pointer concern remains UNPROVEN, not a demonstrated runtime defect or an acceptance claim.
+
+No Cargo/build/gate or runtime command was run by the reviewer; the actual focused results were supplied by Root and their retained logs inspected. Root owns the final service gate. No Linear query, read or write was performed during disposition1: hard cooldown through19:45 UTC. Exact disposition comment bodies and keys are queued locally; publication and readback remain pending cooldown clearance.
+
+Acceptance evidence is cohort-specific: root checked-handoff prefix8 at `910b7b1982942124f19b591e1fb3728dc7ea2bf9` passed 8/0 failed/0 ignored (1373 filtered), exit0, `/tmp/qsl-2726-review1-final-prefix8.log`. The exact later diff to `ff9887a265f23ef27e1535e91f0d4e9504208fb8` only removed unused infinite-profile request clocks in the affected legacy fixture; production and prefix8 test code are unchanged. Legacy exact1 at ff9887a passed 1/0 failed/0 ignored (1380 filtered), exit0, `/tmp/qsl-2726-review1-final-lasso2.log`. Its earlier lasso1 setup RED was `Emit ClockSelection UnusedClockSelection(sensor)` before evaluation and is retained, not hidden. Separate bridge unit evidence passed1 at helper3901a43638a98bdbc53a3013e281bedd07839d26, `/tmp/qsl-2726-population-focused-7.log`; this is not an at-final-head result.
+
+Current `quire trace --scope . --id FR-1039-AC-10 --json` and AC-11 counterpart both exited0 at910b, resolved true: respectively one and four structural verifies claims, no citations. These are binding facts, not runtime evidence. Full original matrix/coverage extraction limitations remain recorded above; no global assurance PASS is claimed.
+
+```yaml
+{
+  "round": 1,
+  "head": "ff9887a265f23ef27e1535e91f0d4e9504208fb8",
+  "original_head": "178791a0377722d5fd12263511dd5d8a824df52c",
+  "artifact_id": "SR-20261121003354002",
+  "method": "gap-analysis",
+  "initial_comment_id": "6b21eb6d-5854-461f-98a1-a5be7573c0bd",
+  "dispositions": [
+    {
+      "fnd": "FND-001",
+      "outcome": "fixed",
+      "artifact_id": "FR-1039-AC-10",
+      "severity": "high",
+      "original_finding": "FR-1039-AC-10 has no test bound to its criterion id. The new window parity and missing-source controls exercise this behavior but carry FR-1039-AC-8 instead; bind the actual behavior test to AC-10.",
+      "excerpt": "Source and package runs of TC-1295 rows 41 and 42 use the same admitted source bytes and native references: timestamped and progressed inputs, with and without a ledger, render non-empty decision support with the exact whole atom `holds( p )`. Removing or changing its reference, shortening the admitted source below the region, or placing a region endpoint inside a UTF-8 scalar gives `SourceNotSupplied`, `invalid_runtime_input`/`missing-member` naming `sources`, stage `call`, exit 20, source identity and clause, no clause record. Handoff source bytes cannot satisfy the request.",
+      "reason": "The existing real window parity/missing-source controls now bind FR-1039-AC-10; current quire trace resolves one structural verifies claim and the prefix8 cohort passed.",
+      "after_excerpt": "#[trace(\"TC-1295\", \"FR-501-AC-31\", \"FR-1039-AC-10\")]"
+    },
+    {
+      "fnd": "FND-002",
+      "outcome": "fixed",
+      "artifact_id": "FR-1039-AC-11",
+      "severity": "high",
+      "original_finding": "FR-1039-AC-11 has no bound behavior test for the changed package call and source-native condition refusal loci. Add real source/package refusal parity plus missing/wrong/short/split-UTF8 caller-source controls and tag AC-11; successful decision-support rendering and a direct scoped resolver check do not exercise these refusal paths.",
+      "excerpt": "A package call refusal and a refused source-native condition with a region locus render the same code, cause, fields and native source span as their source runs, with `file` equal to the caller-supplied authored path even when it differs from the compiler's path. An omitted or wrong native reference, a short source or a non-UTF-8-boundary endpoint gives the caller-source refusal in AC-10 at stage `call`, exit 20, with no rendered member outcome. Different valid formal metadata does not change native region matching or atom text.",
+      "reason": "Actual CALL and CONDITION tests bind FR-1039-AC-11 and assert exact source/package refusal code, cause, fields and caller locus, formal-metadata independence, and absent/empty/wrong/short/both split-UTF8 endpoint controls. Both passed in prefix8; affected lasso refusal parity passed after removing unused request clocks.",
+      "after_excerpt": "#[trace(\"TC-3019\", \"FR-1039-AC-11\", \"TC-451\", \"FR-100-AC-9\")]\nfn package_remainder_call_refusal_keeps_caller_source_locus() {\n    assert_package_refusal_sources(\"call\");\n}\n\n/// A refused native condition renders its actual selected-claim region.\n#[test]\n#[trace(\"TC-3019\", \"FR-1039-AC-11\")]\nfn package_remainder_condition_refusal_keeps_caller_source_locus() {\n    assert_package_refusal_sources(\"clause\");\n}"
+    }
+  ],
+  "new_findings": []
+}
+```
