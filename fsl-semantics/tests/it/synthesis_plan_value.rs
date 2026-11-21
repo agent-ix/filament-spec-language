@@ -176,7 +176,7 @@ fn unsupported_operation_parameters_are_named_before_search() {
         .expect_err("conflicting argument fields cannot be silently omitted");
     assert!(refusal.contains("PlanUnsupported"), "{refusal}");
     assert!(
-        refusal.contains("parameter amount has conflicting types"),
+        refusal.contains("parameter amount has conflicting types or declared presence in operations pay and change"),
         "{refusal}"
     );
 }

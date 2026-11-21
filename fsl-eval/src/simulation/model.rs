@@ -631,6 +631,7 @@ struct Clauses {
 
 /// One boundary of the native relation's ordered, gated invocation walk.
 /// No expression meter is borrowed while the visitor is called.
+#[derive(Clone, Copy)]
 pub enum NativeCandidateEvent<'a> {
     /// Gate one logical operation/receiver/argument invocation before its
     /// preconditions or runtime post-state relation are evaluated.

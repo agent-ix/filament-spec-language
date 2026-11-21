@@ -366,7 +366,22 @@ pub(super) fn visit_operation(
             Some((row, application))
         })
         .collect();
-    rows.sort_by(|(left, _), (right, _)| left.reference.cmp(&right.reference));
+    for at in 1..rows.len() {
+        let mut next = at;
+        while next > 0 {
+            budget.charge()?;
+            if !rows[next - 1]
+                .0
+                .reference
+                .cmp(&rows[next].0.reference)
+                .is_gt()
+            {
+                break;
+            }
+            rows.swap(next - 1, next);
+            next -= 1;
+        }
+    }
     for (row, application) in rows {
         // Receiver-scoped frame caches must never be reused by another row.
         let frames = ArgumentFrames::default();
@@ -384,7 +399,12 @@ pub(super) fn visit_operation(
             let args = arguments_of(application, &domains, &digits)?;
             let transition = transition_of(row, application, &args, walk.system.typing())?;
             match walk.visit(super::NativeCandidateEvent::Begin(&transition))? {
-                super::NativeCandidateControl::Skip => continue,
+                super::NativeCandidateControl::Skip => {
+                    // Replay selection still accounts for walking the finite
+                    // invocation identities that precede its selected one.
+                    budget.charge()?;
+                    continue;
+                }
                 super::NativeCandidateControl::Continue => {}
                 super::NativeCandidateControl::Stop => return Err(stop(BROKEN)),
             }

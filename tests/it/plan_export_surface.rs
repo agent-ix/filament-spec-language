@@ -1542,7 +1542,8 @@ fn planning_examples_hold_only_their_envelope() {
 /// The clauses to transfer, the contracts of the third counter model and the
 /// identity refinement `ThirdRefinesSpec`, which maps the one concrete
 /// operation to the one abstract operation and so is step-for-step.
-const TRANSFER_DECLARATIONS: &str = "profile ev = \"filament.temporal.event-position.false-extension/v1\";\n\
+const TRANSFER_DECLARATIONS: &str =
+    "profile ev = \"filament.temporal.event-position.false-extension/v1\";\n\
      pre ThirdCanInc using v on Third::Counter::inc { self.value < 2 }\n\
      post ThirdInc using v on Third::Counter::inc \
      { pre(self.value) < 2 and self.value = pre(self.value) + 1 }\n\
@@ -2531,7 +2532,7 @@ synthesis Reach using v grammar Config::ConfigVersion domain Lengths satisfies {
     assert_eq!(outcome["status"], "optimal", "{value}");
     assert_eq!(
         outcome["plan"]["steps"],
-        json!([{"index":0,"operation":"assign", "arguments":[{"parameter":"amount","value":{"type":"integer","value":"3"}}, {"parameter":"accepted","value":{"type":"boolean","value":true}}]}]),
+        json!([{"index":0,"operation":"assign", "receiver":{"type":"reference", "identity":"root", "object_type":{"original":{"package":"example/config-version","node":"ix://example/config-version/ConfigVersion"},"owner_effective_type":null}, "universe":{"package":"example/config-version","path":["model","object_type","ix://example/config-version/ConfigVersion"],"ordinal":0}}, "outcome_ordinal":0, "arguments":[{"parameter":"amount","value":{"type":"integer","value":"3"}}, {"parameter":"accepted","value":{"type":"boolean","value":true}}]}]),
         "{value}"
     );
     let states = outcome["plan"]["states"].as_array().expect("plan states");
@@ -2741,4 +2742,40 @@ fn an_unbounded_plan_domain_names_its_unbounded_extent() {
         at + "Lengths".len(),
         "{value}"
     );
+}
+
+/// A runtime's internal argument/frame enumeration cannot preempt the
+/// canonical apply/admit/goal charge order or discard its admitted prefix.
+#[test]
+#[trace("FR-1011-AC-1", "FSpec-FR-801", "FSpec-FR-804-AC-4")]
+fn source_step_expansion_preserves_the_canonical_work_prefix() {
+    let unit = plan_unit("Int[1,1]", "", "true");
+    for (work, states, expected_plan) in [(1, 2, false), (3, 3, true)] {
+        let (exit, value) = plan(&unit, json!({"limits":{"max_work":work}}));
+        let (repeat_exit, repeat) = plan(&unit, json!({"limits":{"max_work":work}}));
+        assert_eq!(repeat_exit, exit, "{repeat}");
+        assert_eq!(
+            repeat.to_string(),
+            value.to_string(),
+            "canonical prefix outcomes are deterministic"
+        );
+        assert_eq!(exit, 22, "{value}");
+        let outcome = &value["synthesis"];
+        assert_eq!(outcome["status"], "incomplete", "{value}");
+        assert_eq!(
+            outcome["cause"]["setting"], "plan_search.max_work",
+            "{value}"
+        );
+        assert_eq!(outcome["explored"]["work"], work, "{value}");
+        assert_eq!(outcome["explored"]["states"], states, "{value}");
+        assert_eq!(!outcome["plan"].is_null(), expected_plan, "{value}");
+        if expected_plan {
+            assert_eq!(
+                outcome["objective"]["value"],
+                json!({"type":"integer","value":"1"}),
+                "{value}"
+            );
+            assert_eq!(outcome["replay"]["outcome"], "reproduced", "{value}");
+        }
+    }
 }
