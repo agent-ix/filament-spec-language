@@ -920,7 +920,20 @@ fn a_universal_package_hyper_form_rebuilds_equal_from_emitted_facts() {
         assert_eq!(rebuilt.aliases(), source.aliases());
         assert_eq!(rebuilt.parameters(), source.parameters());
         assert_eq!(rebuilt.quantifiers(), source.quantifiers());
-        assert_eq!(rebuilt.body(), source.body());
+        let expected: Vec<_> = source
+            .body()
+            .nodes()
+            .iter()
+            .map(|node| match node {
+                fsl_semantics::check::FormulaNode::Holds { .. } => {
+                    fsl_semantics::check::FormulaNode::Holds {
+                        span: rebuilt.span(),
+                    }
+                }
+                node => node.clone(),
+            })
+            .collect();
+        assert_eq!(rebuilt.body().nodes(), expected);
         assert_eq!(rebuilt.operators(), source.operators());
         assert_eq!(
             rebuilt.form(),
@@ -1061,6 +1074,128 @@ fn a_package_hyper_constructor_refuses_inconsistent_atom_facts() {
                 Err(fsl_semantics::check::PackageClauseRefusal::Shape)
             ));
         }
+    });
+}
+
+/// The declared symmetry classes and the executable swaps describe one group.
+#[trace("FR-940-AC-16")]
+#[test]
+fn a_package_hyper_constructor_refuses_inconsistent_copy_classes() {
+    let built = build(INFINITE, &["V"], PACKAGE_EQUAL);
+    let admitted = admitted(&built);
+    let root = hyper_roots(&admitted).expect("hyper roots").remove(0);
+    supplied_hyper(&built, &admitted, |bare| {
+        let form = bare
+            .hyper_clause_form(root.occurrence())
+            .expect("Equal facts");
+        for defect in [
+            "ghost",
+            "overlap",
+            "missing",
+            "reversed",
+            "extra",
+            "cross-alias",
+        ] {
+            let mut changed = form.clone();
+            match defect {
+                "ghost" => changed.copy_group.classes[0][1] = "ghost".to_owned(),
+                "overlap" => changed
+                    .copy_group
+                    .classes
+                    .push(vec!["a".to_owned(), "b".to_owned()]),
+                "missing" => changed.copy_group.generators.clear(),
+                "reversed" => changed.copy_group.classes[0].reverse(),
+                "extra" => changed.copy_group.classes.clear(),
+                "cross-alias" => {
+                    changed.aliases.push("W".to_owned());
+                    changed.quantifiers[1].alias = "W".to_owned();
+                    // Remove slots so this variant reaches group validation.
+                    changed.atom_slots.clear();
+                    changed.atoms[0].2 = 0;
+                }
+                _ => unreachable!(),
+            }
+            assert!(
+                matches!(
+                    fsl_semantics::check::CheckedHyperClause::of_package_form(
+                        changed,
+                        &built.types,
+                        1_000_000
+                    ),
+                    Err(fsl_semantics::check::PackageClauseRefusal::Shape)
+                ),
+                "{defect}"
+            );
+        }
+    });
+}
+
+/// Expression provenance can move without changing any package hyper fact.
+#[trace("FR-940-AC-16")]
+#[test]
+fn package_hyper_spans_use_only_the_claim_declaration_region() {
+    let built = build(INFINITE, &["V"], PACKAGE_EQUAL);
+    let original = admitted(&built);
+    let root = hyper_roots(&original).expect("hyper roots").remove(0);
+    let mut expected = None;
+    supplied_hyper(&built, &original, |bare| {
+        expected = Some(
+            bare.hyper_clause_form(root.occurrence())
+                .expect("Equal facts"),
+        );
+    });
+    let expected = expected.expect("form");
+    let mut changed = built.wire.clone();
+    let holds = nodes(&changed)
+        .iter()
+        .find(|node| node["body"]["operation"]["identity"] == "filament.op.temporal.holds")
+        .expect("holds node")["node_id"]
+        .clone();
+    let source = changed["source_map"]
+        .as_array_mut()
+        .expect("source map")
+        .iter_mut()
+        .find(|source| source["node_id"] == holds && source["role"] == "expression")
+        .expect("holds expression region");
+    let region = &mut source["regions"][0];
+    let old_start = region["start"].as_u64().expect("start");
+    let end = region["end"].as_u64().expect("end");
+    assert!(old_start + 1 < end);
+    region["start"] = json!(old_start + 1);
+    assert_eq!(strict_verdict(&built, &changed), None);
+    let mut evidence = read_evidence(&built.emission);
+    for document in &built.documents {
+        evidence
+            .insert_domain_package_document(package_identity(document), document.clone())
+            .expect("model evidence");
+    }
+    let changed = crate::checked_v2::read_checked_package_v2(
+        &jcs(&changed),
+        library(),
+        V2ReadLimits::fixture(),
+        &evidence,
+    )
+    .expect("changed provenance admits")
+    .into_value()
+    .admitted;
+    supplied_hyper(&built, &changed, |bare| {
+        let actual = bare
+            .hyper_clause_form(root.occurrence())
+            .expect("same facts");
+        assert_eq!(actual.formula, expected.formula);
+        assert_eq!(actual.atoms, expected.atoms);
+        assert_eq!(actual.copy_group, expected.copy_group);
+        assert_eq!(actual.normal_body, expected.normal_body);
+        assert_eq!(actual.span, expected.span);
+        let spans: Vec<_> = actual
+            .formula
+            .iter()
+            .filter_map(|node| match node {
+                fsl_semantics::check::PackageFormulaNode::Holds { span } => Some(*span),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(spans, [actual.span]);
     });
 }
 

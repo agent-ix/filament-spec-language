@@ -11,6 +11,65 @@ use std::collections::{BTreeMap, BTreeSet, VecDeque};
 pub(super) struct Inputs<'a, 'p> {
     pub(super) nodes: &'a Nodes<'p>,
     pub(super) graph: &'a fsl_semantics::check::wire_id::WireGraph,
+    pub(super) root: &'a CheckedNodeId,
+}
+
+/// Cumulative admission: bytes are never refunded, so repeated encodings and
+/// growing unary suffixes consume the same finite allowance as expression work.
+struct Budget<'a> {
+    node: &'a CheckedNodeId,
+    work: u64,
+    storage: u64,
+}
+
+impl Budget<'_> {
+    fn json(&mut self, value: &impl serde::Serialize) -> Result<Vec<u8>, BareClauseRefusal> {
+        struct Count {
+            bytes: usize,
+            limit: u64,
+        }
+        impl std::io::Write for Count {
+            fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+                let total = self
+                    .bytes
+                    .checked_add(bytes.len())
+                    .ok_or_else(|| std::io::Error::other("normal form bound"))?;
+                if u64::try_from(total).map_or(true, |total| total > self.limit) {
+                    return Err(std::io::Error::other("normal form bound"));
+                }
+                self.bytes = total;
+                Ok(bytes.len())
+            }
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+        let mut count = Count {
+            bytes: 0,
+            limit: self.work.min(self.storage),
+        };
+        serde_json::to_writer(&mut count, value)
+            .map_err(|_| pending(self.node, "hyper-normal-form-work"))?;
+        self.charge(count.bytes.saturating_mul(2), count.bytes)?;
+        serde_json::to_vec(value).map_err(|_| pending(self.node, "hyper-normal-form-work"))
+    }
+    fn copy(&mut self, bytes: &[u8]) -> Result<Vec<u8>, BareClauseRefusal> {
+        self.charge(bytes.len(), bytes.len())?;
+        Ok(bytes.to_vec())
+    }
+    fn charge(&mut self, work: usize, storage: usize) -> Result<(), BareClauseRefusal> {
+        let work = u64::try_from(work).ok();
+        let storage = u64::try_from(storage).ok();
+        let admitted = work
+            .and_then(|work| self.work.checked_sub(work))
+            .zip(storage.and_then(|storage| self.storage.checked_sub(storage)));
+        let Some((work, storage)) = admitted else {
+            return Err(pending(self.node, "hyper-normal-form-work"));
+        };
+        self.work = work;
+        self.storage = storage;
+        Ok(())
+    }
 }
 
 struct NodeBytes<'a>(&'a filament_exact::NodeKey);
@@ -28,13 +87,22 @@ impl Inputs<'_, '_> {
         &self,
         node: &CheckedNodeId,
         claim: &OccurrenceKey,
+        budget: &mut Budget<'_>,
     ) -> Result<Vec<u8>, BareClauseRefusal> {
         let key = self.graph.key(node).map_err(|_| malformed(claim))?;
-        quire_canonical::to_vec(
-            &NodeBytes(&key),
-            quire_canonical::Limits::new(fsl_foundation::IdentityLimits::default().input_bytes),
-        )
-        .map_err(|_| malformed(claim))
+        struct Discard;
+        impl quire_canonical::Sink for Discard {
+            fn write_bytes(&mut self, _: &[u8]) -> Result<(), quire_canonical::Error> {
+                Ok(())
+            }
+        }
+        let limits = quire_canonical::Limits::new(budget.work.min(budget.storage));
+        let size = quire_canonical::encode(&mut Discard, &NodeBytes(&key), limits)
+            .map_err(|_| pending(budget.node, "hyper-normal-form-work"))?;
+        let size =
+            usize::try_from(size).map_err(|_| pending(budget.node, "hyper-normal-form-work"))?;
+        budget.charge(size.saturating_mul(2), size)?;
+        quire_canonical::to_vec(&NodeBytes(&key), limits).map_err(|_| malformed(claim))
     }
 }
 
@@ -45,16 +113,45 @@ struct Encoded {
     traces: BTreeSet<usize>,
 }
 
-fn encode(tag: &[u8], parts: &[Vec<u8>]) -> Vec<u8> {
-    let mut bytes = Vec::new();
+fn encode(
+    tag: &[u8],
+    parts: &[Vec<u8>],
+    budget: &mut Budget<'_>,
+) -> Result<Vec<u8>, BareClauseRefusal> {
+    let size = std::iter::once(tag)
+        .chain(parts.iter().map(Vec::as_slice))
+        .try_fold(0usize, |total, part| {
+            total.checked_add(8)?.checked_add(part.len())
+        })
+        .ok_or_else(|| pending(budget.node, "hyper-normal-form-work"))?;
+    budget.charge(size, size)?;
+    let mut bytes = Vec::with_capacity(size);
     for part in std::iter::once(tag).chain(parts.iter().map(Vec::as_slice)) {
         bytes.extend_from_slice(&u64::try_from(part.len()).unwrap_or(u64::MAX).to_be_bytes());
         bytes.extend_from_slice(part);
     }
-    bytes
+    Ok(bytes)
 }
 
-fn combine(tag: Vec<u8>, children: Vec<Encoded>, associative: bool, symmetric: bool) -> Encoded {
+fn combine(
+    tag: Vec<u8>,
+    children: Vec<Encoded>,
+    associative: bool,
+    symmetric: bool,
+    budget: &mut Budget<'_>,
+) -> Result<Encoded, BareClauseRefusal> {
+    let count = children
+        .iter()
+        .try_fold(0usize, |count, child| {
+            count.checked_add(child.traces.len())?.checked_add(
+                child
+                    .associative
+                    .as_ref()
+                    .map_or(1, |(_, parts)| parts.len()),
+            )
+        })
+        .ok_or_else(|| pending(budget.node, "hyper-normal-form-work"))?;
+    budget.charge(count, count.saturating_mul(std::mem::size_of::<Encoded>()))?;
     let traces = children
         .iter()
         .flat_map(|child| child.traces.iter().copied())
@@ -67,13 +164,26 @@ fn combine(tag: Vec<u8>, children: Vec<Encoded>, associative: bool, symmetric: b
         }
     }
     if associative || symmetric {
+        let bytes = parts
+            .iter()
+            .try_fold(0usize, |sum, part| sum.checked_add(part.len()))
+            .ok_or_else(|| pending(budget.node, "hyper-normal-form-work"))?;
+        // Sorting can compare every byte at each comparison-tree level.
+        budget.charge(
+            bytes.saturating_mul(
+                usize::try_from(parts.len().max(1).ilog2())
+                    .unwrap_or(usize::MAX)
+                    .saturating_add(1),
+            ),
+            0,
+        )?;
         parts.sort();
     }
-    Encoded {
-        bytes: encode(&tag, &parts),
+    Ok(Encoded {
+        bytes: encode(&tag, &parts, budget)?,
         associative: associative.then_some((tag, parts)),
         traces,
-    }
+    })
 }
 
 enum Work<'a> {
@@ -93,15 +203,17 @@ fn expression(
     root: &CheckedNodeId,
     slots: &BTreeMap<CheckedNodeId, (usize, usize)>,
     swap: Option<(usize, usize)>,
-    work_left: &mut u64,
+    budget: &mut Budget<'_>,
     claim: &OccurrenceKey,
 ) -> Result<Encoded, BareClauseRefusal> {
+    budget.charge(1, std::mem::size_of::<Work<'_>>())?;
     let mut pending_work = vec![Work::Node(root)];
     let mut values: Vec<Encoded> = Vec::new();
     while let Some(work) = pending_work.pop() {
-        *work_left = work_left
-            .checked_sub(1)
-            .ok_or_else(|| pending(root, "hyper-normal-form-work"))?;
+        budget.charge(
+            1,
+            std::mem::size_of::<Work<'_>>().saturating_add(std::mem::size_of::<Encoded>()),
+        )?;
         match work {
             Work::Node(id) => {
                 if let Some(&(parameter, trace)) = slots.get(id) {
@@ -123,7 +235,8 @@ fn expression(
                                     .to_be_bytes()
                                     .to_vec(),
                             ],
-                        ),
+                            budget,
+                        )?,
                         associative: None,
                         traces: BTreeSet::from([trace]),
                     });
@@ -138,7 +251,7 @@ fn expression(
                     return Err(pending(id, "hyper-local-binder"));
                 } else {
                     values.push(Encoded {
-                        bytes: encode(b"declaration", &[inputs.key(id, claim)?]),
+                        bytes: encode(b"declaration", &[inputs.key(id, claim, budget)?], budget)?,
                         associative: None,
                         traces: BTreeSet::new(),
                     });
@@ -153,11 +266,9 @@ fn expression(
                 } => {
                     let bytes = encode(
                         format!("literal:{value_kind:?}").as_bytes(),
-                        &[
-                            inputs.key(type_id, claim)?,
-                            serde_json::to_vec(value).map_err(|_| malformed(claim))?,
-                        ],
-                    );
+                        &[inputs.key(type_id, claim, budget)?, budget.json(value)?],
+                        budget,
+                    )?;
                     values.push(Encoded {
                         bytes,
                         associative: None,
@@ -189,19 +300,20 @@ fn expression(
                         }) => encode(
                             b"field",
                             &[
-                                inputs.key(declaration, claim)?,
-                                name.as_bytes().to_vec(),
+                                inputs.key(declaration, claim, budget)?,
+                                budget.copy(name.as_bytes())?,
                                 format!("{read_form:?}").into_bytes(),
                             ],
-                        ),
+                            budget,
+                        )?,
                         _ => return Err(pending(root, "hyper-normal-form-member")),
                     };
                     let tag = encode(
                         b"application",
                         &[
-                            identity.as_bytes().to_vec(),
+                            budget.copy(identity.as_bytes())?,
                             member,
-                            inputs.key(result_type, claim)?,
+                            inputs.key(result_type, claim, budget)?,
                             encode(
                                 b"constraints",
                                 &read
@@ -223,12 +335,21 @@ fn expression(
                                                     .as_bytes()
                                                     .to_vec(),
                                             ],
+                                            budget,
                                         )
                                     })
-                                    .collect::<Vec<_>>(),
-                            ),
+                                    .collect::<Result<Vec<_>, _>>()?,
+                                budget,
+                            )?,
                         ],
-                    );
+                        budget,
+                    )?;
+                    budget.charge(
+                        arguments.len(),
+                        arguments
+                            .len()
+                            .saturating_mul(std::mem::size_of::<Work<'_>>()),
+                    )?;
                     pending_work.push(Work::Finish {
                         tag,
                         count: arguments.len(),
@@ -257,7 +378,7 @@ fn expression(
                     .checked_sub(count)
                     .ok_or_else(|| malformed(claim))?;
                 let children = values.split_off(from);
-                let value = combine(tag, children, associative, symmetric);
+                let value = combine(tag, children, associative, symmetric, budget)?;
                 if model_read && value.traces.len() != 1 {
                     return Err(malformed(claim));
                 }
@@ -265,10 +386,10 @@ fn expression(
             }
         }
     }
-    let [value] = values.as_slice() else {
+    let [_] = values.as_slice() else {
         return Err(malformed(claim));
     };
-    Ok(value.clone())
+    values.pop().ok_or_else(|| malformed(claim))
 }
 
 fn body(
@@ -277,23 +398,38 @@ fn body(
     atoms: &[(usize, filament_exact::NodeKey, usize)],
     slots: &BTreeMap<CheckedNodeId, (usize, usize)>,
     swap: Option<(usize, usize)>,
-    work_left: &mut u64,
+    budget: &mut Budget<'_>,
     claim: &OccurrenceKey,
 ) -> Result<(Vec<u8>, Vec<Vec<u8>>), BareClauseRefusal> {
+    budget.charge(
+        formula.len(),
+        formula
+            .len()
+            .saturating_mul(std::mem::size_of::<Option<Encoded>>()),
+    )?;
+    budget.charge(
+        atoms.len(),
+        atoms.len().saturating_mul(std::mem::size_of::<Encoded>()),
+    )?;
     let mut atom_bytes = Vec::new();
     let mut by_index = BTreeMap::new();
     for (at, key, _) in atoms {
-        let id = inputs
-            .nodes
-            .keys()
-            .find(|id| inputs.graph.key(id).as_ref().ok() == Some(key))
-            .ok_or_else(|| malformed(claim))?;
-        let value = expression(inputs, id, slots, swap, work_left, claim)?;
-        atom_bytes.push(value.bytes.clone());
+        let mut found = None;
+        for id in inputs.nodes.keys() {
+            budget.charge(1, 0)?;
+            if inputs.graph.key(id).as_ref().ok() == Some(key) {
+                found = Some(*id);
+                break;
+            }
+        }
+        let id = found.ok_or_else(|| malformed(claim))?;
+        let value = expression(inputs, id, slots, swap, budget, claim)?;
+        atom_bytes.push(budget.copy(&value.bytes)?);
         by_index.insert(*at, value);
     }
     let mut encoded: Vec<Option<Encoded>> = vec![None; formula.len()];
     for (at, node) in formula.iter().enumerate().rev() {
+        budget.charge(1, 0)?;
         let (tag, children, associative, symmetric) = match node {
             PackageFormulaNode::Constant(value) => (
                 format!("constant:{value}").into_bytes(),
@@ -303,7 +439,13 @@ fn body(
             ),
             PackageFormulaNode::Holds { .. } => {
                 let value = by_index.remove(&at).ok_or_else(|| malformed(claim))?;
-                encoded[at] = Some(combine(b"holds".to_vec(), vec![value], false, false));
+                encoded[at] = Some(combine(
+                    b"holds".to_vec(),
+                    vec![value],
+                    false,
+                    false,
+                    budget,
+                )?);
                 continue;
             }
             PackageFormulaNode::Not(only) => (b"not".to_vec(), vec![*only], false, false),
@@ -347,7 +489,7 @@ fn body(
                     .ok_or_else(|| malformed(claim))
             })
             .collect::<Result<Vec<_>, _>>()?;
-        encoded[at] = Some(combine(tag, children, associative, symmetric));
+        encoded[at] = Some(combine(tag, children, associative, symmetric, budget)?);
     }
     Ok((
         encoded
@@ -359,7 +501,22 @@ fn body(
     ))
 }
 
-fn exchange(plain: &[Vec<u8>], swapped: &[Vec<u8>]) -> Option<Vec<usize>> {
+fn exchange(
+    plain: &[Vec<u8>],
+    swapped: &[Vec<u8>],
+    budget: &mut Budget<'_>,
+) -> Result<Option<Vec<usize>>, BareClauseRefusal> {
+    let bytes = plain
+        .iter()
+        .chain(swapped)
+        .try_fold(0usize, |sum, bytes| sum.checked_add(bytes.len()))
+        .ok_or_else(|| pending(budget.node, "hyper-normal-form-work"))?;
+    budget.charge(
+        bytes.saturating_mul(plain.len().max(1).ilog2() as usize + 1),
+        plain.len().saturating_mul(
+            std::mem::size_of::<VecDeque<usize>>() + 2 * std::mem::size_of::<usize>(),
+        ),
+    )?;
     let mut positions: BTreeMap<&[u8], VecDeque<usize>> = BTreeMap::new();
     for (index, bytes) in plain.iter().enumerate() {
         positions.entry(bytes).or_default().push_back(index);
@@ -367,12 +524,15 @@ fn exchange(plain: &[Vec<u8>], swapped: &[Vec<u8>]) -> Option<Vec<usize>> {
     let exchange = swapped
         .iter()
         .map(|bytes| positions.get_mut(bytes.as_slice())?.pop_front())
-        .collect::<Option<Vec<_>>>()?;
-    exchange
+        .collect::<Option<Vec<_>>>();
+    let Some(exchange) = exchange else {
+        return Ok(None);
+    };
+    Ok(exchange
         .iter()
         .enumerate()
         .all(|(index, target)| exchange.get(*target) == Some(&index))
-        .then_some(exchange)
+        .then_some(exchange))
 }
 
 pub(super) fn copy_group(
@@ -383,13 +543,155 @@ pub(super) fn copy_group(
     quantifiers: &[PackageHyperQuantifier],
     claim: &OccurrenceKey,
 ) -> Result<(Vec<u8>, CopyGroup), BareClauseRefusal> {
-    let mut work_left = FORMULA_VISITS;
-    let (plain, atom_bytes) = body(&inputs, formula, atoms, slots, None, &mut work_left, claim)?;
+    let mut budget = Budget {
+        node: inputs.root,
+        work: FORMULA_VISITS,
+        storage: fsl_foundation::IdentityLimits::default().input_bytes,
+    };
+    copy_group_with_budget(
+        inputs,
+        formula,
+        atoms,
+        slots,
+        quantifiers,
+        claim,
+        &mut budget,
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ix_trace_rs::trace;
+
+    /// Atom-free formulas still pay for every repeated encoding and swap.
+    #[trace("FR-940-AC-16")]
+    #[test]
+    fn atom_free_formulas_and_swap_trials_share_finite_work_and_storage() {
+        let root: CheckedNodeId = serde_json::from_value(serde_json::json!({
+            "package": "test", "path": ["claim"], "ordinal": 0
+        }))
+        .expect("node id");
+        let graph = fsl_semantics::check::wire_id::WireGraph::new([&root]).expect("graph");
+        let claim = OccurrenceKey::new(
+            graph.key(&root).expect("key"),
+            filament_exact::Origin::new(filament_exact::Role::new("claim"), 0),
+        );
+        let nodes = BTreeMap::new();
+        let slots = BTreeMap::new();
+        let run = |depth: usize, copies: usize, work: u64, storage: u64| {
+            let mut formula: Vec<_> = (0..depth)
+                .map(|at| PackageFormulaNode::Not(at + 1))
+                .collect();
+            formula.push(PackageFormulaNode::Constant(true));
+            let quantifiers: Vec<_> = (0..copies)
+                .map(|at| PackageHyperQuantifier {
+                    variable: format!("t{at}"),
+                    kind: fsl_forms::QuantifierKind::Forall,
+                    alias: "M".to_owned(),
+                    fairness: Vec::new(),
+                })
+                .collect();
+            let mut budget = Budget {
+                node: &root,
+                work,
+                storage,
+            };
+            copy_group_with_budget(
+                Inputs {
+                    nodes: &nodes,
+                    graph: &graph,
+                    root: &root,
+                },
+                &formula,
+                &[],
+                &slots,
+                &quantifiers,
+                &claim,
+                &mut budget,
+            )
+        };
+        let (_, group) = run(0, 2, 2_000, 1_000_000).expect("a small atom-free swap admits");
+        assert_eq!(group.classes, [vec!["t0".to_owned(), "t1".to_owned()]]);
+        assert_eq!(group.generators.len(), 1);
+        assert!(
+            run(64, 1, 1_000_000, 1_000_000).is_ok(),
+            "the formula itself is valid"
+        );
+        for (depth, copies, work, storage) in [
+            (64, 1, 2_000, 1_000_000),
+            (0, 64, 2_000, 1_000_000),
+            (64, 1, 1_000_000, 10_000),
+        ] {
+            let error = run(depth, copies, work, storage).expect_err("shared normal-form bound");
+            assert!(
+                matches!(error, BareClauseRefusal::Pending { fact: "hyper-normal-form-work", node } if node == root)
+            );
+        }
+    }
+
+    /// Encoding admission precedes allocation and leaves both counters intact
+    /// if either limit cannot admit the complete output.
+    #[test]
+    fn encoding_checks_the_complete_size_before_spending_or_allocating() {
+        let root: CheckedNodeId = serde_json::from_value(serde_json::json!({
+            "package": "test", "path": ["claim"], "ordinal": 0
+        }))
+        .expect("node id");
+        for (work, storage) in [(8, 100), (100, 8)] {
+            let mut budget = Budget {
+                node: &root,
+                work,
+                storage,
+            };
+            assert!(matches!(
+                encode(b"x", &[], &mut budget),
+                Err(BareClauseRefusal::Pending {
+                    fact: "hyper-normal-form-work",
+                    ..
+                })
+            ));
+            assert_eq!((budget.work, budget.storage), (work, storage));
+        }
+        let mut budget = Budget {
+            node: &root,
+            work: 9,
+            storage: 9,
+        };
+        assert_eq!(
+            encode(b"x", &[], &mut budget).expect("exact bound").len(),
+            9
+        );
+        assert_eq!((budget.work, budget.storage), (0, 0));
+    }
+}
+
+fn copy_group_with_budget(
+    inputs: Inputs<'_, '_>,
+    formula: &[PackageFormulaNode],
+    atoms: &[(usize, filament_exact::NodeKey, usize)],
+    slots: &BTreeMap<CheckedNodeId, (usize, usize)>,
+    quantifiers: &[PackageHyperQuantifier],
+    claim: &OccurrenceKey,
+    budget: &mut Budget<'_>,
+) -> Result<(Vec<u8>, CopyGroup), BareClauseRefusal> {
+    budget.charge(
+        quantifiers.len(),
+        quantifiers.len().saturating_mul(
+            std::mem::size_of::<CopyGenerator>() + 4 * std::mem::size_of::<usize>(),
+        ),
+    )?;
+    let (plain, atom_bytes) = body(&inputs, formula, atoms, slots, None, budget, claim)?;
     let mut classes: Vec<Vec<usize>> = Vec::new();
     let mut generators = Vec::new();
     for later in 0..quantifiers.len() {
+        budget.charge(
+            1 + quantifiers[later].variable.len(),
+            quantifiers[later].variable.len(),
+        )?;
         let mut joined = false;
         for class in &mut classes {
+            budget.charge(1, 0)?;
             let Some(&earlier) = class.last() else {
                 return Err(malformed(claim));
             };
@@ -402,13 +704,14 @@ pub(super) fn copy_group(
                 atoms,
                 slots,
                 Some((earlier, later)),
-                &mut work_left,
+                budget,
                 claim,
             )?;
+            budget.charge(plain.len().min(swapped.len()), 0)?;
             if swapped != plain {
                 continue;
             }
-            let Some(atoms) = exchange(&atom_bytes, &swapped_atoms) else {
+            let Some(atoms) = exchange(&atom_bytes, &swapped_atoms, budget)? else {
                 continue;
             };
             generators.push(CopyGenerator {

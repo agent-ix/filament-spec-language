@@ -503,7 +503,8 @@ pub struct PackageHyperForm {
     pub quantifiers: Vec<PackageHyperQuantifier>,
     /// Atom slots, in level order.
     pub atom_slots: Vec<AtomSlot>,
-    /// The formula in pre-order, as FR-532 reads it.
+    /// The formula in pre-order, as FR-532 reads it. Each `holds` span is
+    /// the claim row's declaration region, with no expression provenance.
     pub formula: Vec<super::PackageFormulaNode>,
     /// Formula arena index, expression node and atom slot count.
     pub atoms: Vec<(usize, NodeKey, usize)>,
@@ -711,10 +712,44 @@ impl CheckedHyperClause {
             return Err(Shape);
         }
         let atom_count = package_atoms.len();
-        for generator in &form.copy_group.generators {
+        let mut seen = BTreeSet::new();
+        let mut expected = Vec::new();
+        let mut previous_class = None;
+        for class in &form.copy_group.classes {
+            if class.len() < 2 {
+                return Err(Shape);
+            }
+            let mut indices = Vec::with_capacity(class.len());
+            for variable in class {
+                let index = quantifiers
+                    .iter()
+                    .position(|q| &q.variable == variable)
+                    .ok_or(Shape)?;
+                if !seen.insert(index) || indices.last().is_some_and(|last| *last >= index) {
+                    return Err(Shape);
+                }
+                indices.push(index);
+            }
+            let first = indices[0];
+            if previous_class.is_some_and(|previous| previous >= first)
+                || indices
+                    .iter()
+                    .any(|index| quantifiers[*index].alias != quantifiers[first].alias)
+            {
+                return Err(Shape);
+            }
+            previous_class = Some(first);
+            expected.extend(indices.windows(2).map(|pair| (pair[0], pair[1])));
+        }
+        expected.sort_unstable_by_key(|pair| pair.1);
+        if expected.len() != form.copy_group.generators.len() {
+            return Err(Shape);
+        }
+        for (generator, pair) in form.copy_group.generators.iter().zip(expected) {
             if generator.first >= quantifiers.len()
                 || generator.second >= quantifiers.len()
                 || generator.first == generator.second
+                || (generator.first, generator.second) != pair
                 || generator.atoms.len() != atom_count
                 || generator
                     .atoms

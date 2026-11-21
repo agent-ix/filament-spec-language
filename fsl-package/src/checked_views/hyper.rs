@@ -109,6 +109,8 @@ impl BarePackage<'_> {
     /// Read the admitted universal hyper form at its exact claim occurrence.
     /// No source body is retained or reconstructed. Other hyper forms remain
     /// explicit pending facts until their package evaluators are available.
+    /// Every `holds` span is the selected claim row's declaration region;
+    /// expression source-map regions never contribute to the form.
     ///
     /// # Errors
     /// A missing occurrence or inconsistent slot is `MalformedNode`; a
@@ -269,24 +271,7 @@ impl BarePackage<'_> {
                         graph.key(expression).map_err(|_| malformed(claim))?,
                         0,
                     ));
-                    let regions: Vec<_> = package
-                        .source_map()
-                        .iter()
-                        .filter(|source| {
-                            source.node_id == *entry.node
-                                && source.role == CheckedOccurrenceRole::Expression
-                        })
-                        .flat_map(|source| &source.regions)
-                        .filter(|region| {
-                            region.source == row.declaration_region.source
-                                && region.start >= row.declaration_region.start
-                                && region.end <= row.declaration_region.end
-                        })
-                        .collect();
-                    let region = match regions.as_slice() {
-                        [only] => *only,
-                        _ => &row.declaration_region,
-                    };
+                    let region = &row.declaration_region;
                     PackageFormulaNode::Holds {
                         span: fsl_foundation::Span {
                             start: usize::try_from(region.start).map_err(|_| malformed(claim))?,
@@ -438,6 +423,7 @@ impl BarePackage<'_> {
             normal::Inputs {
                 nodes: &nodes,
                 graph: &graph,
+                root: &node.node_id,
             },
             &formula,
             &atoms,
