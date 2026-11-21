@@ -87,7 +87,7 @@ pub(crate) fn assert_allocation_outcome(records: &[fsl_replay::TerminalRecord], 
 #[trace("FR-259", "FR-1046-AC-7")]
 fn a_model_replay_allocation_keeps_the_actual_item_resource_evidence() {
     use fsl_analyze::analyze::{analyze_items, split_records, Engines};
-    let case = case(CONTRACT, &[0]);
+    let case = case(&crate::derived_request::counter_body(""), &[0]);
     let mut item = case.model_item();
     let calls = std::cell::Cell::new(0);
     item.replay = Box::new(|payload| {
