@@ -1803,7 +1803,7 @@ fn lambda_objective_world(objective: &str, types: &str) -> World {
 fn lambda_objective_world_for_goal(objective: &str, types: &str, goal: &str) -> World {
     native_plan_world(
         "language \"ix:native\" edition \"1-draft\"; domain \"test/native-plan\"; type Amount = Int[0,3]; object Counter { number: Amount; operation inc() modifies self.number; } population counters: Counter;",
-        &format!("{types}\npost Inc using v on M::Counter::inc {{ self.number = pre(self.number) + 1 }}\ntype Lengths = Int[0,3]; synthesis Reach using v grammar M::Counter domain Lengths {objective} satisfies {{ {goal} }};"),
+        &format!("{types}\npost Inc using v on M::Counter::inc {{ (pre(self.number) = 0 and self.number = 1) or (pre(self.number) = 1 and self.number = 2) or (pre(self.number) = 2 and self.number = 3) }}\ntype Lengths = Int[0,3]; synthesis Reach using v grammar M::Counter domain Lengths {objective} satisfies {{ {goal} }};"),
         &[("c",json!({"number":{"integer":"0"}}))],
     )
 }

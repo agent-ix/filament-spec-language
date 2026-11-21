@@ -567,16 +567,19 @@ fn negative_and_maximized_step_sums_keep_their_once_only_offset_and_closure() {
 fn a_nonconstant_suffix_on_an_explicit_sum_remains_general() {
     for (objective, expected) in [
         (
-            "minimize sum<Integer>(s in Reach.steps: 2) + Reach.length",
+            "minimize sum<SumTotal>(s in Reach.steps: 2) + Reach.length",
             "6",
         ),
         (
-            "minimize let costs: Sequence<Integer>[2,2] = [1,2] in sum<Integer>(s in costs: s) + 7",
+            "minimize let costs: Sequence<Integer>[2,2] = [1,2] in sum<SumTotal>(s in costs: s) + 7",
             "10",
         ),
     ] {
         let (exit, value) = plan(
-            &plan_unit("Int[0, 3]", objective, "Reach.length >= 2"),
+            &plan_unit("Int[0, 3]", objective, "Reach.length >= 2").replace(
+                "type Lengths",
+                "type SumTotal = Integer;\ntype Lengths",
+            ),
             json!({}),
         );
         let outcome = &value["synthesis"];
