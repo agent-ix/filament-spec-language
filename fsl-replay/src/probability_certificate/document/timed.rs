@@ -3388,21 +3388,23 @@ pub(in crate::probability_certificate) fn replay_timed_witness(
         };
         // The witness only selects the scheduler: the mass is recomputed from the
         // checker graph below. A step the checker has no edge for is accepted only
-        // when it ends in a decided state, where it cannot change what the chosen
-        // choice reaches.
-        let index = state
-            .choices
-            .iter()
-            .position(|choice| {
-                targets.iter().all(|target| {
-                    covers(choice, target)
-                        || graph
-                            .states
-                            .get(target)
-                            .is_some_and(|post| post.terminal.is_some())
-                })
-            })
-            .ok_or(Error::Refused)?;
+        // when it ends in a decided state; of the admissible choices the one the
+        // witness covers most is taken (the first on a tie).
+        let mut best: Option<(usize, usize)> = None;
+        for (position, choice) in state.choices.iter().enumerate() {
+            let covered = targets.iter().filter(|target| covers(choice, target)).count();
+            let admissible = targets.iter().all(|target| {
+                covers(choice, target)
+                    || graph
+                        .states
+                        .get(target)
+                        .is_some_and(|post| post.terminal.is_some())
+            });
+            if admissible && best.is_none_or(|(_, most)| covered > most) {
+                best = Some((position, covered));
+            }
+        }
+        let (index, _) = best.ok_or(Error::Refused)?;
         chosen.insert(key.clone(), index);
     }
     // A closed time-convergent component all of whose members stay in it
