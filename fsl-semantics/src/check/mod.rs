@@ -9504,6 +9504,7 @@ impl CheckedGraph {
         };
         let declarations = SourceDeclarations::from_graph(self).map_err(internal)?;
         let mut entries = Vec::new();
+        let mut run_places = Vec::new();
         let mut locations = BTreeMap::new();
         for model in &self.timed_models {
             let Some(index) = self
@@ -9534,13 +9535,14 @@ impl CheckedGraph {
                     },
                 }]
             };
-            for clock in model.clocks() {
+            for (clock, node) in model.clocks().iter().zip(model.place_nodes()) {
                 if clock.slots().any(|shape| shape.map) {
                     continue;
                 }
                 let template = declarations.clock_template(clock).map_err(resolution)?;
                 let origin = declarations.clock_origin(clock).map_err(resolution)?;
                 locations.insert(origin.clone(), location.clone());
+                run_places.push((node.clone(), clock.owner(), template.clone()));
                 entries.push((template, origin));
             }
         }
@@ -9553,7 +9555,9 @@ impl CheckedGraph {
                     cause: CheckCause::DuplicateClockDeclaration(Box::new(collision)),
                 }]
             })?
-            .with_source_declarations(declarations);
+            .with_source_declarations(declarations)
+            .with_run_places(run_places)
+            .map_err(internal)?;
         Ok(())
     }
 
