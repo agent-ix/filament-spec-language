@@ -801,6 +801,81 @@ fn control_path(node: &CheckedSemanticNodeV2, protocol_path: &[String]) -> Vec<S
     path
 }
 
+/// The control's slot-site path, including the labelled holders omitted
+/// from canonical declaration paths. The admitted run tree must give the
+/// control exactly one ancestry; no location row or source text supplies it.
+///
+/// # Errors
+/// Returns the native view refusal for missing members, duplicate ancestry
+/// or a control outside the named protocol's run tree.
+pub(crate) fn control_site_path(
+    package: &CheckedPackageV2,
+    protocol: &str,
+    control: &CheckedNodeId,
+) -> Result<Vec<String>, ViewRefusal> {
+    let index = Index::new(package);
+    let mut clauses = index.nodes.values().copied().filter(|node| {
+        has_form(node, WireTag::Protocol, WireForm::ProtocolClause)
+            && node.declaration.as_ref().is_some_and(|declaration| {
+                declaration.qualified_name.len() == 1
+                    && declaration.qualified_name[0].as_ref() == protocol
+            })
+    });
+    let clause = clauses.next().ok_or_else(|| missing(control, "protocol"))?;
+    if clauses.next().is_some() {
+        return Err(malformed(control, "protocol"));
+    }
+    let mut pending = vec![(single(clause, "run")?, Vec::new())];
+    let mut seen = BTreeSet::new();
+    let mut selected = None;
+    while let Some((id, mut path)) = pending.pop() {
+        if !seen.insert(id) {
+            return Err(malformed(&clause.node_id, "run"));
+        }
+        let node = index.target(&clause.node_id, "run", id)?;
+        let declared = node
+            .declaration
+            .as_ref()
+            .ok_or_else(|| missing(id, "declaration.qualified_name"))?;
+        if declared.qualified_name.len() < 3
+            || declared.qualified_name[0].as_ref() != protocol
+            || declared.qualified_name[1].as_ref() != "run"
+        {
+            return Err(malformed(id, "declaration.qualified_name"));
+        }
+        let own = declared
+            .qualified_name
+            .last()
+            .ok_or_else(|| missing(id, "declaration.qualified_name"))?;
+        path.push(own.to_string());
+        if id == control {
+            selected = Some(path.clone());
+        }
+        let operation = control_operation(node)?;
+        match operation {
+            ControlOperation::Parallel | ControlOperation::Choice => {
+                let member = if operation == ControlOperation::Parallel {
+                    "branches"
+                } else {
+                    "cases"
+                };
+                for (label, body) in records(node, member)?.into_iter().rev() {
+                    let mut held = path.clone();
+                    held.push(label.to_owned());
+                    pending.push((body, held));
+                }
+            }
+            _ => pending.extend(
+                children(node)?
+                    .into_iter()
+                    .rev()
+                    .map(|child| (child, path.clone())),
+            ),
+        }
+    }
+    selected.ok_or_else(|| missing(control, "run"))
+}
+
 fn control_memory(
     node: &CheckedSemanticNodeV2,
 ) -> Result<Option<fsl_foundation::MemoryModelName>, ViewRefusal> {

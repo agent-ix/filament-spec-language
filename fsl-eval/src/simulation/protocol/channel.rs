@@ -94,7 +94,7 @@ impl<M: MemoryModel> ProtocolSystem<'_, M> {
             .unwrap_or(0);
         Ok(MessageOccurrence::new(
             instance,
-            node,
+            self.program.text(node)?.to_owned(),
             path.clone(),
             ordinal,
         ))
@@ -1042,11 +1042,10 @@ fn store(instance: &mut Instance, key: QueueKey, queue: Vec<Entry>) {
 mod delivery_index_tests {
     use super::resume_delivery_index;
     use crate::simulation::protocol::{DeliveryIdentity, MessageOccurrence, ThreadPath};
-    use fsl_semantics::check::ProtocolNodeId;
 
     #[test]
     fn a_pending_interval_resumes_after_a_duplicate_reserved_an_index() {
-        let message = MessageOccurrence::new(4, ProtocolNodeId(12), ThreadPath::root(4), 0);
+        let message = MessageOccurrence::new(4, "Main/Send".to_owned(), ThreadPath::root(4), 0);
         let partial_entries = 2_u64;
         let pending_next = partial_entries;
         let duplicate = DeliveryIdentity::new(message.clone(), pending_next);
