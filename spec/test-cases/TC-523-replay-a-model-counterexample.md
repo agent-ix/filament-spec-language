@@ -18,7 +18,7 @@ post-states of one transition identity; an engine disagreement settles
 `inconclusive`; a loop that does not close, an unfair lasso, a disabled step, a bad initial state and a misplaced
 `terminal-stutter` step refuse.
 
-Scope: FR-128-AC-1 to FR-128-AC-4 and FR-330-AC-20.
+Scope: FR-128-AC-1 to FR-128-AC-4, FR-128-AC-10 to FR-128-AC-15 and FR-330-AC-20.
 
 ## Test Procedure
 
@@ -48,6 +48,8 @@ snapshot and source in the byte provision and its universe in the request.
    loop. Preserve the rest of each request's identity and inputs. Use the
    structural malformed-arm controls from TC-1160 separately.
 
+7. Closure stutter (FR-128-AC-10 to AC-15), over the fixtures that AC names, with hand-written lassos and the item selecting `stutter_closure`: replay the empty-stem and non-empty-stem closure lassos, with and without the flag; replay each refusal of AC-11, with its pointer and its order cases, through the replay entry and the reference-literal source route; replay the fair and unfair lassos of AC-12 under weak, strong, whole and `each` constraints, and the terminal-stutter lasso with and without the flag; replay the parity and mixed-loop cases of AC-13; write and read back the lassos of AC-14 and refuse a closure step through `ModelStepWire`; replay AC-10's empty-stem lasso through both the source and the package route (AC-15).
+
 Tag the tests `#[trace("TC-523", "FR-128-AC-n")]` and the added model-run
 replay checks `#[trace("TC-523", "FR-330-AC-20")]`.
 
@@ -65,6 +67,7 @@ replay checks `#[trace("TC-523", "FR-330-AC-20")]`.
   routes, even with no source file remaining. The branch key selects the
   actual successor; the initially terminal case replays its actual terminal
   key without requiring a fabricated observed snapshot.
+- Step 7: AC-10 reproduces with `trace_position` 0 for both stems and refuses at `/loop/0/transition/type` without the flag; each AC-11 case refuses at its pointer; AC-12 reproduces for the disabled-`inc` lasso and refuses `UnfairLasso` naming the constraint for the enabled-`inc` lasso, and the terminal-stutter lasso is unchanged; AC-13 settles `inconclusive`, `ReplayParity` (`NoValue` for the undefined atom); AC-14 reads back equal and re-indexes position 3 to 2; AC-15 reproduces on both routes with equal results. The schema vectors of FSpec FR-364-AC-26 are not evidence of any of these.
 - Step 6: every semantic defect refuses replay with no reproduced result.
   A native reader's acceptance of a well-shaped state key or typed binding
   does not count as successful model re-execution or subject authentication.

@@ -96,7 +96,8 @@ member of its own.
   (`"model"` here; this entry refuses the `"observed"` arm), `kind`
   (formula, deadlock or the undefined-evaluation envelope), `initial_state`,
   `prefix`, `loop` (whose steps are transition identities with post-state
-  keys, or FR-364's `terminal-stutter` step), `over_binding`,
+  keys, FR-364's `terminal-stutter` step, or, for an item that selects
+  `stutter_closure`, FR-364's `closure-stutter` step), `over_binding`,
   `fairness`, `interval` and `trace_position` (ADR-018 CX-2). The envelope names the clause, or the
   deadlock-freedom item, by its clause node and occurrence key (FR-070).
   The envelope's remaining identity members, and the request's, are fixed
@@ -107,7 +108,9 @@ member of its own.
   `claim` occurrence; `backend` is EN-1's identity; and `source` is the
   witness transcript `<<<assertion|model_check|clause|>>>`, which carries no
   values because the payload is the lasso. The replay reads none of these
-  but the clause node, the occurrence key and the fairness set.
+  but the clause node, the occurrence key and the fairness set; the selected
+  `stutter_closure` comes from the admitted item, as the next input says, and
+  not from the envelope.
 - The item's selected `stutter_closure` (FSpec FR-368), read from the admitted
   item's obligation identity. It is a Rust replay input threaded through the
   existing `ModelTraceSubject`, and through every other existing entry that
@@ -183,28 +186,35 @@ member of its own.
     loop of more than one step), then kind, each at the step's
     `/transition/type`; then a present `delay` member, zero included, at the
     step's own `/delay`. The ordinary wire-shape checks come first.
-  - After re-execution it SHALL refuse a terminal loop state at
-    `/loop/0/transition` and a `post_state` key other than the entry state's
-    at `/loop/0/post_state`. An empty prefix is allowed: the entry is then the
-    initial state.
+  - When re-execution ends at a terminal loop state, the executor SHALL refuse
+    at `/loop/0/transition`.
+  - When re-execution ends with a `post_state` key other than the entry
+    state's, the executor SHALL refuse at `/loop/0/post_state`.
+  - The executor SHALL allow an empty prefix, whose entry is the initial state.
   - The `terminal-stutter` step keeps every rule above and is unchanged,
     including for an item that selects `stutter_closure`; a closure step is
     never accepted at a terminal state, and an absent or empty loop is never
     read as either stutter.
   - The closure step is a synthetic step of the product, not an operation of
-    the model. Every route that reads a user trace as observed model steps
-    SHALL keep refusing it: the observed `ModelStepWire` does not gain the
+    the model. The routes that read a user trace as observed model steps SHALL
+    keep refusing it, so the observed `ModelStepWire` does not gain the
     alternative.
   - The reference-literal source route, which bypasses `ModelTraceSubject`
     through `replay_checked_source_model_trace`, SHALL require the same
     selected identity, so that it cannot accept a closure step for an item
-    that does not select the flag. The source clause route and the package
-    route of a bounded ordinary model clause SHALL both read the existing flag
-    with the semantics above; a route whose adapter does not yet read the flag
-    SHALL keep refusing it as it does today and SHALL NOT be reported as
-    equivalent until it carries its own consumer evidence. The timed, task,
-    hybrid, protocol, invariant, state-graph, derived and refinement
-    subjects SHALL NOT gain the alternative.
+    that does not select the flag.
+  - Both the source clause route and the package route of a bounded ordinary
+    untimed model clause SHALL read the item's existing `temporal.
+    stutter_closure` and replay a closure lasso with the semantics above.
+    The package route SHALL do so through its existing
+    `PackageClauseSubject` adapter, which stops refusing the flag for this
+    subject and constructs its `ModelTraceSubject` with it, with no new
+    package form, IR or compiler path (FR-128-AC-15). A refusal-only package
+    route does not meet this requirement; if the existing representation
+    cannot carry the flag without an upstream API or pin change, the
+    implementer SHALL report that exact blocker and not invent a substitute.
+  - The timed, task-derived, hybrid, protocol, invariant, state-graph,
+    derived and refinement subjects SHALL NOT gain the alternative.
 - For `kind: Formula` the executor SHALL check the lasso against the
   fairness set, reading enabledness from `ModelSystem` at every loop state,
   and refuse an unfair lasso with `ReplayRefusal::UnfairLasso{constraint}`,
@@ -368,11 +378,12 @@ member of its own.
 | FR-128-AC-7 | Over FR-128-AC-6's deadlock-freedom subject under `terminal when 6 mod (3 - c.value) = 0` with the added `pre CanInc { 6 mod (3 - self.value) >= 0 }` on `inc`, which has no value at value 3, the prefix to value 3 with `kind: UndefinedEvaluation{where: position 3, locus: CanInc with the inc transition, cause: division-by-zero}` replays to `reproduced-with-evaluated-witness` with `trace_position` 3. The same prefix with `where.locus` naming the `terminal when` predicate settles `inconclusive`, `ReplayParity`: the contract conjunction is read first, and its undefined value leaves the expansion undetermined, so value 3 is not shown terminal and `P` is not read. | Test (TC-539) |
 | FR-128-AC-8 | Over ADR-021 §7.3's subject (FR-158) with `constraint Odd using v on M::Counter at current { 6 mod (2 - self.v) >= 0 }` selected and the claim `always holds(x.v <= 3)`, the run's `Violated` counterexample with cause `UndefinedEvaluation`, ending at the first reached state with a counter at 2, replays through a request that selects no reduction to `reproduced-with-evaluated-witness` with the `UndefinedEvaluation{where, cause: division-by-zero}` value, `where.locus` naming `Odd`. The same payload with its last step removed, and with `cause` changed to another reason, each settle `inconclusive`, `ReplayParity`. | Test (TC-539) |
 | FR-128-AC-9 | A task-automaton counterexample with FSpec FR-364 derived scheduler steps uses the same `ReplaySource::ModelTrace` request and settles on FR-072's existing ModelTrace result arm. The replay rebuilds the FR-249 task product; an accepted FSpec FR-364 witness settles reproduced, and a rejected witness does not reproduce. No new replay-result arm or FSL task-trace wire is constructed. | Test (TC-704) |
-| FR-128-AC-10 | Over the `Counter` subject of `fsl-analyze/tests/it/lasso_replay.rs`, for a liveness clause with no fairness whose item selects `stutter_closure` (the `always eventually` clause that fails when the model repeats its initial state forever), the lasso with an empty prefix and the one `closure-stutter` loop step with `post_state` the initial state's key reproduces to `reproduced-with-evaluated-witness` with `Truth(false)`. A clause of the form `always (holds(c.value = 1) implies eventually holds(c.value = 3))` (an `Int` counter whose antecedent first holds after one `inc`), with one real `inc` step as the prefix and the closure step as the loop at value 1, reproduces with `trace_position` the entry position. The same payloads for an item that does not select the flag refuse at `/loop/0/transition/type`. | Test (TC-523) |
-| FR-128-AC-11 | The ordered refusals of FSpec FR-364-AC-27 hold: a closure step in the prefix, in a loop of two steps, in a `deadlock` or `UndefinedEvaluation` counterexample, with a present `delay` of zero, at a terminal state and with a key other than the entry's each refuse `invalid_runtime_input`/`invalid-value` at the pointer FR-364 names, and a step failing two checks is refused by the earlier one (alphabet before placement before kind before delay). A timed, task-derived, hybrid or protocol subject, and a refinement item, refuse a closure step at `/transition/type` even when the item selects the flag. The same refusals hold through the reference-literal source route. The schema-only vectors of FSpec FR-364-AC-26 are not evidence of these. | Test (TC-523) |
-| FR-128-AC-12 | A closure lasso under a weak or strong, `each` or whole, constraint that is enabled at the loop state refuses with `UnfairLasso` naming that constraint; the same lasso with no constraint enabled there is fair. A `terminal-stutter` loop at a terminal state replays as before for an item that selects `stutter_closure` and for one that does not. | Test (TC-523) |
-| FR-128-AC-13 | A closure lasso whose formula is true at `trace_position`, and one whose value is undefined there, each settle `inconclusive`, `ReplayParity`. A lasso that mixes closure stutters with model steps is written with the closure stutters dropped and `trace_position` re-indexed, and a stutter-sensitive clause that differs settles `inconclusive`, `ReplayParity`, never `refuted`. | Test (TC-523) |
-| FR-128-AC-14 | The writer's closure-only lasso reads back through the model-alphabet reader to the same lasso, with an empty and a non-empty prefix; the observed `ModelStepWire` refuses a `closure-stutter` step as a user-supplied trace. A route whose adapter does not read the flag, if any remains, refuses it with its existing typed error and is not counted as passing the closure cases. | Test (TC-523) |
+| FR-128-AC-10 | Over the `Counter` subject of `fsl-analyze/tests/it/lasso_replay.rs` over `document(false)` (`inc` to value 3, value 3 terminal), with the item selecting `stutter_closure` and no fairness, and one-`fn(i64)` `Letters`, so every counterexample is written by hand rather than found, since EN-1 may find another violating lasso. Empty stem: for `FORMULA` (`always eventually holds(c.value = 3)`, atom `is_three`), the lasso with an empty prefix and the one `closure-stutter` loop step whose `post_state` is the initial state's key (value 0) reproduces to `reproduced-with-evaluated-witness` with `Truth(false)` and `trace_position` 0. Non-empty stem: for the single-atom clause `always eventually holds(c.value = 0)` (atom `is_zero`), the prefix of one `inc` step to value 1 and the loop of one closure step with the key of value 1 reproduces with `Truth(false)` and `trace_position` 0. The same payloads for an item that does not select the flag refuse `invalid_runtime_input`/`invalid-value` at `/loop/0/transition/type`. | Test (TC-523) |
+| FR-128-AC-11 | Over the fixtures of AC-10 with the flag selected, each refusal is `invalid_runtime_input`/`invalid-value` at FSpec FR-364's pointer, with no result: a closure step in the prefix (`/prefix/0/transition/type`); a loop of two steps with a closure step as its first (`/loop/0/transition/type`); an `UndefinedEvaluation` counterexample whose loop is the sole closure step (`/loop/0/transition/type`); the sole loop closure step with a `delay` of `0` present (`/loop/0/delay`); the sole closure loop at value 3, which is terminal (`/loop/0/transition`); and the sole closure loop with the key of value 2 after a prefix to value 1 (`/loop/0/post_state`). The order is shown by a closure step in the prefix with a `delay` member, refused at `/prefix/0/transition/type` and not at its `/delay`, and by a prefix closure step and a later failing loop step, where the prefix step is the one refused. Each refusal is also made through the reference-literal source route. A refinement item never selects the flag, so a closure step in its `refinement_failure` prefix refuses at `/prefix/<i>/transition/type`. Cases for a timed, task-derived, hybrid and protocol subject (proposed, built on the existing FR-237, FR-249, FR-193 and FR-217 replay fixtures with the flag selected on the request side) refuse at `/transition/type`. The schema-only vectors of FSpec FR-364-AC-26 are not evidence of these. | Test (TC-523) |
+| FR-128-AC-12 | Over `document_with_ranged_parameter()` (`setTo(n)` makes value 3 non-terminal, while `inc` is disabled there) with the item selecting `stutter_closure`, clause `always eventually holds(c.value = 0)` and `fair weak M::Counter::inc;`: a hand-written lasso of three `inc` steps to value 3 and the closure loop at value 3 is fair, since `inc` is disabled there, and reproduces with `Truth(false)` and `trace_position` 0. The prefix of one `inc` and the closure loop at value 1 refuses `UnfairLasso` naming `fair weak M::Counter::inc`, since `inc` is enabled and the closure step takes nothing. The same two lassos give the same outcomes for `fair strong M::Counter::inc;`, and, for the `each` granularity, `fair weak each M::Counter::inc;` and `fair strong each M::Counter::inc;` (the forms of the existing fairness fixtures). The `terminal-stutter` lasso at value 3 over `document(false)` replays as before whether or not the item selects the flag. | Test (TC-523) |
+| FR-128-AC-13 | A closure lasso whose atoms are read true at every position (as `a_lasso_on_which_the_claim_holds_disagrees` reads them) settles `inconclusive`, `ReplayParity` by `Verdicts`; one whose atom is read undefined settles `inconclusive` with `NoValue` and the item cause `ReplayParity`. Named limit, over `document_with_ranged_parameter()` with the item selecting the flag, no fairness and the proposed clause `always (holds(c.value = 1) implies not once[1,1] holds(c.value = 1))` (atom `is_one`; every atom is the same one): the engine's lasso is the prefix of one `inc`, then the loop closure at value 1, `inc` to 2, `setTo(1)` back to 1, which is false at position 0 because value 1 follows value 1. The lasso written without the closure stutter, the prefix of one `inc` and the loop `inc` to 2 and `setTo(1)`, is true there, so replay settles `inconclusive`, `ReplayParity` by `Verdicts`, never `reproduced` or `refuted`. | Test (TC-523) |
+| FR-128-AC-14 | At the writer and reader (`fsl-replay/src/outcome/counterexample.rs`): a closure-only engine lasso with an empty prefix and one with a prefix of one `inc` each write the sole closure loop step with the entry key, and the reader reads each back to the same lasso for the model alphabet only. Over a constructed engine lasso with a closure stutter at product position 1 and a position 3, the writer drops the stutter and writes position 2 (re-indexed by the one dropped stutter that precedes it). The observed `ModelStepWire` refuses a `closure-stutter` step as a user-supplied trace. | Test (TC-523) |
+| FR-128-AC-15 | Positive closure replay on both routes of a bounded ordinary untimed model clause, over the Counter world of `fsl-analyze/tests/it/clause_item.rs` and the lasso of AC-10's empty-stem case, with an item whose `temporal.stutter_closure` is true: the source route (`ClauseSubject`, replay through `ReplayInputs`) and the package route (`PackageClauseSubject::new` over `over_package_route`'s emitted package, as the existing both-routes parity test does) each settle `reproduced-with-evaluated-witness` with `Truth(false)` and `trace_position` 0, and equal results. For the same item without the flag, both routes refuse the closure step at `/loop/0/transition/type`. The package case is a required positive case and is not satisfied by a refusal. | Test (TC-523) |
 
 ## Dependencies
 
