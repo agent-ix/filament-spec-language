@@ -113,7 +113,7 @@ fn admit_defined(
     let package_digest: [u8; 32] = Sha256::digest(bytes).into();
     let package_digest = Digest::new(package_digest);
     let clock = &binding.clock;
-    let time_factor = nanos_per_tick(binding, subject.time_unit_scale)?;
+    let time_factor = nanos_per_tick(subject.time_unit_scale)?;
     // A caller limit or an unrepresentable timestamp must be reported
     // before deriving any owner identity, even at a later position.
     for position in positions {
@@ -848,20 +848,20 @@ fn clock_unit(clock: &ClockConfiguration) -> &str {
 }
 
 fn nanos_per_tick(
-    binding: &AuthenticatedBinding,
     scale: Option<&filament_exact::Rational>,
 ) -> Result<filament_exact::Rational, CallFailure> {
     use filament_exact::{Integer, Rational};
     let Some(scale) = scale else {
-        return match binding.clock {
-            // FR-944: a clock with no time unit takes `s` = 1. A timed unit with no
-            // declared factor is never guessed: the call faults.
-            ClockConfiguration::EventPosition { .. } => {
-                Ok(Rational::from_integer(Integer::from(1_i64)))
-            }
-            _ => Err(fault("checked-clock-has-time-unit-scale")),
-        };
+        // FR-944: a clock whose unit names no declared time unit counts steps
+        // (an event position, a fixed-sample count, or a timestamped clock
+        // with no `duration` window, FR-965): `s` = 1.
+        return Ok(Rational::from_integer(Integer::from(1_i64)));
     };
+    // A zero factor marks a unit the package declares but this route cannot
+    // read; it is never a factor, so the call refuses rather than guess.
+    if scale.is_zero() {
+        return Err(fault("declared-time-unit-factor-is-readable"));
+    }
     Ok(scale.mul(&Rational::from_integer(Integer::from(1_000_000_000_i64))))
 }
 
@@ -1380,6 +1380,22 @@ mod tests {
             owner.qualified.records()[0].ingestion_time_nanos,
             Some(3_000_000)
         );
+    }
+
+    #[test]
+    #[ix_trace_rs::trace("TC-3036", "FR-944-AC-13")]
+    fn an_undeclared_unit_counts_steps_and_an_unreadable_declared_unit_is_refused() {
+        use filament_exact::Rational;
+        // FR-944: no declared time unit, `s` = 1; a declared factor is exact.
+        let one = nanos_per_tick(None).expect("a count");
+        assert_eq!(one, Rational::from_integer(1_i64.into()));
+        let ms = Rational::new(1_i64.into(), 1000_i64.into()).expect("ms");
+        let scaled = nanos_per_tick(Some(&ms)).expect("a declared unit");
+        assert_eq!(scaled, Rational::from_integer(1_000_000_i64.into()));
+        // A declared unit this route cannot read carries a zero factor, never s = 1.
+        let zero = Rational::from_integer(0_i64.into());
+        let failure = nanos_per_tick(Some(&zero)).expect_err("refused");
+        assert!(format!("{failure:?}").contains("declared-time-unit-factor-is-readable"));
     }
 
     #[test]

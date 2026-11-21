@@ -200,7 +200,11 @@ FR-526's reports, read from them.
   declared rational factor to the second (FR-230's `time ... unit`) times
   10^9, so `ms` = `rational(1, 1000)` gives `s` = 1000000, with no
   rounding; a clock with no time unit (an event position or fixed sample
-  count) takes `s` = 1. A product that is not an integer number of
+  count) takes `s` = 1. A timestamped-event clock whose `timestamp_unit` names
+  no declared time unit (FR-640's default `step`, or any other non-empty
+  name) likewise takes `s` = 1: its stamps are a count of steps, and FR-965
+  admits such a clock only for a clause with no `duration` window, so no
+  stamp is ever read as a real duration. A product that is not an integer number of
   nanoseconds, or that exceeds the owner's nanosecond range, SHALL refuse the
   request at stage `admit`, `invalid_runtime_input`/`invalid-value`, naming
   the position, before any owner call.
