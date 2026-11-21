@@ -1144,8 +1144,9 @@ fn a_read_must_stay_in_the_component_its_slot_root_names() {
 
 /// FR-488-AC-18: a clause with two refusals reports the first in the order
 /// of "Clauses S4 does not emit". An alias that binds no object parameter is
-/// not a refusal, so the fairness set under a bounded profile is reported, at
-/// its constraint, ahead of the unencodable read.
+/// not a refusal (AC-2 emits its `model_root` subject), so the fairness set
+/// under a bounded profile is reported, at its constraint, ahead of the
+/// unencodable read.
 #[trace("TC-1266", "FR-488-AC-18")]
 #[test]
 fn the_first_refusal_in_precedence_order_is_reported() {
