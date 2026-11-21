@@ -648,7 +648,7 @@ fn tree(directory: &Path) -> std::collections::BTreeMap<std::path::PathBuf, Vec<
 }
 
 #[test]
-#[trace("FR-517-AC-27", "FR-517-AC-28", "TC-1312")]
+#[trace("FR-517-AC-27", "FR-517-AC-28", "FR-850-AC-12", "TC-1312", "TC-2410")]
 fn dependency_handoff_is_deterministic_under_provision_order_and_refuses_conflicts_atomically() {
     let directory = tempfile::tempdir().unwrap();
     let mut request = prepare(directory.path(), false);
