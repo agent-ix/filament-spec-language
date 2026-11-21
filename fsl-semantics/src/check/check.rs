@@ -2631,6 +2631,7 @@ pub(crate) struct NamedScope {
     /// names no population is missing at its second segment.
     pub(crate) aliases: Vec<String>,
     pub(crate) plan_operations: Vec<(String, EffectiveId, String)>,
+    pub(crate) plan_parameter_origins: BTreeMap<(EffectiveId, String, String), serde_json::Value>,
 }
 
 /// One population a population position may name (FR-391).
@@ -2659,6 +2660,7 @@ impl NamedScope {
         let mut ambiguous = Vec::new();
         let mut aliases = Vec::new();
         let mut plan_operations = Vec::new();
+        let mut plan_parameter_origins = BTreeMap::new();
         for model in models {
             let Some(alias) = model.alias() else {
                 continue;
@@ -2668,6 +2670,7 @@ impl NamedScope {
                 continue;
             }
             aliases.push(alias.to_owned());
+            plan_parameter_origins.extend(model.plan_parameter_origins());
             plan_operations.extend(
                 model
                     .plan_operation_order()
@@ -2694,6 +2697,7 @@ impl NamedScope {
             ambiguous,
             aliases,
             plan_operations,
+            plan_parameter_origins,
         }
     }
 

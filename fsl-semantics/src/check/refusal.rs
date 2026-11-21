@@ -2982,6 +2982,33 @@ pub enum NavigationBound {
     Ordered,
 }
 
+/// The retained authored position of a model operation parameter.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PlanParameterOrigin {
+    /// The exact imported source artifact identity URI.
+    pub artifact: String,
+    /// The original model source path.
+    pub path: String,
+    /// Its source identity, when encoded by the native source compiler.
+    pub source: Option<fsl_foundation::source::provenance::RawSourceRef>,
+    /// The authored line and column; FCD origins do not supply byte offsets.
+    pub span: fsl_foundation::LocatedSpan,
+}
+
+impl std::hash::Hash for PlanParameterOrigin {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        use std::hash::Hash;
+        self.artifact.hash(state);
+        self.path.hash(state);
+        self.source.hash(state);
+        for position in [self.span.start, self.span.end] {
+            position.byte.hash(state);
+            position.line.hash(state);
+            position.column.hash(state);
+        }
+    }
+}
+
 /// The typed cause of a checking refusal.
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub enum CheckCause {
@@ -3074,6 +3101,17 @@ pub enum CheckCause {
         component: String,
         /// The authored `domain` name.
         span: Span,
+    },
+    /// A native operation parameter whose value extent is unbounded.
+    PlanUnboundedParameter {
+        /// The declared operation.
+        operation: String,
+        /// The parameter with no finite domain.
+        parameter: String,
+        /// The first unbounded type component.
+        component: String,
+        /// The parameter's authored model path and position, when supplied.
+        origin: Option<Box<PlanParameterOrigin>>,
     },
     /// A completed model conformance stage retains every axis failure.
     ModelConformance(Box<super::model_conformance::ModelConformanceFailure>),
@@ -3861,7 +3899,9 @@ impl CheckCause {
             Self::TerminalWithoutObjectType { .. }
             | Self::RefinementNotEmitted { .. }
             | Self::TimedNotChecked { .. } => Code::UnsupportedConstruct,
-            Self::SynthesisUnboundedDomain { .. } => Code::UnsupportedProjection,
+            Self::SynthesisUnboundedDomain { .. } | Self::PlanUnboundedParameter { .. } => {
+                Code::UnsupportedProjection
+            }
             Self::PlanUnsupported { .. } => Code::UnsupportedConstruct,
             Self::PlanUnknownField { .. } => Code::MissingDeclaration,
             Self::Refinement(cause) => cause.cause.code(),
@@ -3955,7 +3995,9 @@ impl CheckCause {
             Self::RefinementNotEmitted { .. } | Self::TimedNotChecked { .. } => {
                 Some("not-yet-implemented")
             }
-            Self::SynthesisUnboundedDomain { .. } => Some("unbounded-extent"),
+            Self::SynthesisUnboundedDomain { .. } | Self::PlanUnboundedParameter { .. } => {
+                Some("unbounded-extent")
+            }
             Self::PlanUnsupported { .. } => Some("not-yet-implemented"),
             Self::PlanUnknownField { .. } => Some("missing-name"),
             Self::Refinement(cause) => cause.cause.cause(),

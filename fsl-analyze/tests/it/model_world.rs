@@ -238,6 +238,22 @@ pub(crate) struct World {
 }
 
 impl World {
+    /// Compile an authored model with a typed initial population document.
+    /// Each population is complete and keeps its own declared object type.
+    pub(crate) fn with_populations(
+        domain: Domain,
+        body: &str,
+        profile: &str,
+        populations: &[(&str, &str, &[(&str, Json)])],
+    ) -> Self {
+        let mut world = Self::new(domain, body, profile, &[], &[]);
+        world.snapshots.clear();
+        world.initial.clear();
+        let start = world.snapshot_populations(populations);
+        world.initial.push(start);
+        world
+    }
+
     /// The unit selecting `domain` as `M` with `body` (its contracts) and
     /// `clauses` under the temporal profile `profile` (a unit selects one),
     /// from one initial snapshot of the objects `start`, each `(key,
@@ -412,19 +428,24 @@ impl World {
 
     /// An initialization snapshot of `objects`, provisioned here.
     fn snapshot(&mut self, objects: &[(&str, Json)]) -> DocumentRef {
-        let object_type = self.domain.node(self.domain.object);
-        let objects: Vec<Json> = objects
-            .iter()
-            .map(|(key, fields)| json!({"key": key, "type": object_type, "fields": fields}))
-            .collect();
+        self.snapshot_populations(&[(self.domain.population, self.domain.object, objects)])
+    }
+
+    fn snapshot_populations(
+        &mut self,
+        populations: &[(&str, &str, &[(&str, Json)])],
+    ) -> DocumentRef {
+        let populations: Vec<_> = populations.iter().map(|(population, object_type, objects)| {
+            let objects: Vec<_> = objects.iter().map(|(key, fields)| json!({"key": key, "type": self.domain.node(object_type), "fields": fields})).collect();
+            json!({"population": self.domain.node(population), "complete":true, "objects":objects})
+        }).collect();
         let header = json!({"identity": self.domain.package});
         let document = json!({
             "format": "filament.state.snapshot/v1",
             "identity": {"authority": "test", "identity": "s0"},
             "observation": "current", "model": header,
             "anchor": {"kind": "initialization", "name": "start"},
-            "populations": [{"population": self.domain.node(self.domain.population),
-                "complete": true, "objects": objects}],
+            "populations": populations,
         });
         let bytes = document.to_string().into_bytes();
         self.snapshots.insert(
@@ -460,6 +481,23 @@ impl World {
             },
             proof_bounds: Vec::new(),
         }
+    }
+
+    /// The same native subject with explicit existing key sets per population.
+    pub(crate) fn subject_populations(
+        &self,
+        keys: &[(&str, &[&str])],
+        meter: ScalarLimits,
+    ) -> ModelSubject<'_> {
+        let mut subject = self.subject(&[], meter);
+        subject.simulation.universes = keys
+            .iter()
+            .map(|(population, keys)| PopulationUniverse {
+                population: self.domain.key(population),
+                keys: keys.iter().map(|key| (*key).to_owned()).collect(),
+            })
+            .collect();
+        subject
     }
 
     /// The model state at each position of `counterexample`, read by

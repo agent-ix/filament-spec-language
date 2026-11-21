@@ -164,28 +164,47 @@ fn a_plan_declaration_refuses_what_the_plan_value_does_not_have() {
     );
 }
 
-/// The source adapter names finite argument forms it does not yet carry;
-/// it never emits an argument record that silently omits those fields.
+/// Unbounded parameters refuse at their model signature; finite argument
+/// fields retain their exact declared enum or reference type.
 #[trace("FR-1013", "FSpec-FR-800")]
 #[test]
-fn unsupported_operation_parameters_are_named_before_search() {
-    for (parameter, declarations) in [
-        ("Integer", ""),
-        ("Order", ""),
-        ("Choice", "enum Choice { First, Second }\n"),
-    ] {
+fn finite_arguments_preserve_types_and_refuse_unbounded_signatures() {
+    let model = SHOP.replace("operation pay()", "operation pay(amount: Integer)");
+    let refusal =
+        check_model(&model, "Int[0,1]", "", "true").expect_err("Integer has no finite extent");
+    assert!(refusal.contains("PlanUnboundedParameter"), "{refusal}");
+    assert!(
+        refusal.contains("parameter: \"amount\"")
+            && refusal.contains("component: \"Integer\"")
+            && refusal.contains("shop.fsl"),
+        "{refusal}"
+    );
+    for (parameter, declarations) in [("Order", ""), ("Choice", "enum Choice { First, Second }\n")]
+    {
         let model = SHOP.replace(
             "operation pay()",
             &format!("operation pay(amount: {parameter})"),
         );
         let model = model.replace("object Order", &format!("{declarations}object Order"));
-        let refusal = check_model(&model, "Int[0,1]", "", "true")
-            .expect_err("an unsupported argument type cannot be dropped from a step");
-        assert!(refusal.contains("PlanUnsupported"), "{refusal}");
-        assert!(
-            refusal.contains("operation pay parameter amount"),
-            "{refusal}"
-        );
+        let synthesis = check_model(
+            &model,
+            "Int[0,1]",
+            "",
+            "forall(s in Reach.steps: present(s.arguments.amount))",
+        )
+        .expect("a finite argument is carried by the sealed source record");
+        let plan = synthesis.plan().unwrap();
+        let fields = plan.shape().argument_fields();
+        assert_eq!(fields.len(), 1);
+        assert_eq!(fields[0].0, "amount");
+        match parameter {
+            "Order" => assert!(
+                matches!(&fields[0].1, ValueType::Reference(target) if target == &plan.shape().grammar)
+            ),
+            _ => assert!(
+                matches!(&fields[0].1, ValueType::Enum(shape) if shape.variants().count() == 2)
+            ),
+        }
     }
     let model = SHOP
         .replace("operation pay()", "operation pay(amount: Boolean)")
@@ -200,6 +219,20 @@ fn unsupported_operation_parameters_are_named_before_search() {
         refusal.contains("parameter amount has conflicting types or declared presence in operations pay and change"),
         "{refusal}"
     );
+}
+
+#[test]
+#[trace("FSpec-FR-800", "FSpec-FR-806-AC-6", "FR-1013")]
+fn finite_arguments_keep_distinct_reference_and_enum_types_separate() {
+    for (first, second, declarations) in [
+        ("Order", "Other", "object Other { operation change(amount: Other); }\n"),
+        ("First", "Second", "enum First { A, B } enum Second { A, B } object Other { operation change(amount: Second); }\n"),
+    ] {
+        let model=SHOP.replace("operation pay()",&format!("operation pay(amount: {first})"))
+            .replace("population orders",&format!("{declarations}population orders"));
+        let refusal=check_model(&model,"Int[0,1]","","true").expect_err("same labels or conformance cannot widen the shared argument field");
+        assert!(refusal.contains("PlanUnsupported") && refusal.contains("parameter amount") && refusal.contains("operations pay and change"),"{first}/{second}: {refusal}");
+    }
 }
 
 /// The existing authored Semantic-IR fixture builder can express declared

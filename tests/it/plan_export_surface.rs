@@ -141,6 +141,97 @@ fn plan_in(
     )
 }
 
+/// Real authored enum/reference invocations reach the ordinary native-run
+/// adapter, retaining canonical typed wire values and deterministic results.
+#[test]
+#[trace(
+    "FSpec-FR-800-AC-1",
+    "FSpec-FR-804-AC-3",
+    "FSpec-FR-804-AC-4",
+    "FR-1012"
+)]
+fn finite_arguments_render_typed_reference_and_enum_values_deterministically() {
+    let directory = tempfile::tempdir().unwrap();
+    let model = r#"language "ix:native" edition "1-draft";
+domain "example/config-version";
+enum Cell { c1, c0 }
+object Robot { operation move(r: Robot, c: Cell); }
+population robots: Robot;
+"#;
+    std::fs::write(
+        directory.path().join("finite-model.json"),
+        crate::support::plan_model::compile(model),
+    )
+    .unwrap();
+    let snapshot = json!({
+        "format":"filament.state.snapshot/v1", "identity":{"authority":"test","identity":"finite-start"},
+        "observation":"current", "model":{"identity":"example/config-version"}, "anchor":{"kind":"initialization","name":"start"},
+        "populations":[{"population":"ix://example/config-version/robots", "complete":true,
+        "objects":[{"key":"b","type":"ix://example/config-version/Robot","fields":{}},{"key":"a","type":"ix://example/config-version/Robot","fields":{}}]}]
+    });
+    std::fs::write(
+        directory.path().join("finite-start.json"),
+        serde_json::to_vec(&snapshot).unwrap(),
+    )
+    .unwrap();
+    let unit = r#"language "ix:native" edition "1-draft";
+profile v = "filament.temporal.infinite-trace/v1";
+model M = "example/config-version";
+type Lengths = Int[1,1];
+synthesis Reach using v grammar M::Robot domain Lengths satisfies { forall(s in Reach.steps: present(s.arguments.r) and present(s.arguments.c)) };
+"#;
+    let (exit, first) = plan_in(
+        directory.path(),
+        unit,
+        "finite-model.json",
+        "finite-start.json",
+        json!({}),
+    );
+    assert_eq!(exit, 0, "{first}");
+    let outcome = &first["synthesis"];
+    assert_eq!(outcome["status"], "optimal", "{first}");
+    assert_eq!(outcome["certification"], "certified", "{first}");
+    assert_eq!(outcome["replay"]["outcome"], "reproduced", "{first}");
+    let steps = outcome["plan"]["steps"].as_array().unwrap();
+    assert_eq!(steps.len(), 1, "{first}");
+    assert_eq!(steps[0]["receiver"]["type"], "reference", "{first}");
+    assert_eq!(steps[0]["receiver"]["identity"], "a", "{first}");
+    assert_eq!(steps[0]["arguments"][0]["parameter"], "r", "{first}");
+    assert_eq!(
+        steps[0]["arguments"][0]["value"], steps[0]["receiver"],
+        "{first}"
+    );
+    assert_eq!(steps[0]["arguments"][1]["parameter"], "c", "{first}");
+    assert_eq!(steps[0]["arguments"][1]["value"]["type"], "enum", "{first}");
+    assert_eq!(steps[0]["arguments"][1]["value"]["member"], "c0", "{first}");
+    let (exit, second) = plan_in(
+        directory.path(),
+        unit,
+        "finite-model.json",
+        "finite-start.json",
+        json!({}),
+    );
+    assert_eq!(exit, 0, "{second}");
+    assert_eq!(first.to_string(), second.to_string());
+    let limited = json!({"limits":{"max_work":1}});
+    let (_, first) = plan_in(
+        directory.path(),
+        unit,
+        "finite-model.json",
+        "finite-start.json",
+        limited.clone(),
+    );
+    let (_, second) = plan_in(
+        directory.path(),
+        unit,
+        "finite-model.json",
+        "finite-start.json",
+        limited,
+    );
+    assert_eq!(first["synthesis"]["status"], "incomplete", "{first}");
+    assert_eq!(first.to_string(), second.to_string());
+}
+
 // ---- QSL-1978: planner and optimizer ------------------------------------
 
 /// FR-1010-AC-1 and FSpec FR-805-AC-1: an optimal plan writes the

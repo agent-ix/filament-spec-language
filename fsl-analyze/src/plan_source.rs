@@ -87,32 +87,21 @@ pub enum ArgumentKey {
     Boolean(bool),
     /// An integer argument.
     Integer(Integer),
-    /// An invalid producer argument; building/rendering the step fails closed.
-    Invalid,
+    /// A reference in the canonical order of its complete identity.
+    Reference(filament_exact::ObjectReference),
+    /// An admitted enum member's declaration rank. The operation fixes its enum type.
+    Enum(u32),
 }
 
 impl ArgumentKey {
-    fn of(text: &str) -> Self {
-        match argument_value(text) {
-            Some(Value::Boolean(value)) => Self::Boolean(value),
-            Some(Value::Integer(value)) => Self::Integer(value),
-            _ => Self::Invalid,
-        }
-    }
-}
-
-/// The value a step argument's canonical typed text (FSpec FR-181) reads
-/// back to, for the Boolean and integer arguments a step record carries.
-fn argument_value(text: &str) -> Option<Value> {
-    let document: serde_json::Value = serde_json::from_str(text).ok()?;
-    let object = document.as_object()?;
-    match object.get("type")?.as_str()? {
-        "integer" => {
-            let digits = object.get("value")?.as_str()?;
-            Some(Value::Integer(digits.parse::<Integer>().ok()?))
-        }
-        "boolean" => Some(Value::Boolean(object.get("value")?.as_bool()?)),
-        _ => None,
+    fn of(value: &Value) -> Option<Self> {
+        Some(match value {
+            Value::Boolean(value) => Self::Boolean(*value),
+            Value::Integer(value) => Self::Integer(value.clone()),
+            Value::Reference(value) => Self::Reference(value.clone()),
+            Value::Enum(value) => Self::Enum(value.rank()),
+            _ => return None,
+        })
     }
 }
 
@@ -133,7 +122,6 @@ pub struct SourcePlan<'a> {
     /// transition carries.
     operations: BTreeMap<String, usize>,
     native_operations: std::sync::Arc<[(filament_exact::EffectiveId, String)]>,
-    receivers: BTreeMap<String, filament_exact::ObjectReference>,
     direction: Direction,
     kind: ObjectiveKind,
     merges: bool,
@@ -201,16 +189,6 @@ impl<'a> SourcePlan<'a> {
                 .ok_or_else(|| PlanSourceError::UnknownOperation(name.to_owned()))?;
             operations.insert(text.to_owned(), index);
         }
-        use fsl_eval::simulation::TransitionSystem;
-        let receivers = system
-            .initial()
-            .iter()
-            .map(|state| system.invocation_receivers(state))
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(|_| PlanSourceError::UnknownOperation("receiver identity".to_owned()))?
-            .into_iter()
-            .flatten()
-            .collect();
         for operation in &shape.operations {
             let declaration = plan
                 .scope()
@@ -226,7 +204,10 @@ impl<'a> SourcePlan<'a> {
                 ) && !system.has_native_result_domain(result)
                 {
                     return Err(PlanSourceError::UnsupportedForm {
-                        form: format!("operation `{}` result type {result:?} (native result domain is not enumerable)", operation.name),
+                        form: format!(
+                            "operation `{}` result type {result:?} (native result domain is not enumerable)",
+                            operation.name
+                        ),
                         location: synthesis.satisfies().root().location().clone(),
                     });
                 }
@@ -317,7 +298,6 @@ impl<'a> SourcePlan<'a> {
             limits,
             operations,
             native_operations,
-            receivers,
             direction,
             kind,
             merges,
@@ -405,6 +385,7 @@ impl<'a> SourcePlan<'a> {
     ) -> Option<Value> {
         let shape = self.plan.shape();
         let operation = self.operation(step)?;
+        let (native_receiver, native_arguments) = self.invocation_values(step)?;
         let member = shape
             .operation_enum
             .members
@@ -415,18 +396,21 @@ impl<'a> SourcePlan<'a> {
         let slots = carried
             .iter()
             .map(|(name, _)| {
-                let value = operation
+                match operation
                     .parameters
                     .iter()
                     .position(|(parameter, _)| parameter == name)
-                    .and_then(|position| step.arguments().get(position))
-                    .and_then(|text| argument_value(text));
-                value.map_or(FieldValue::Absent, FieldValue::Present)
+                {
+                    Some(position) => {
+                        Some(FieldValue::Present(native_arguments.get(position)?.clone()))
+                    }
+                    None => Some(FieldValue::Absent),
+                }
             })
-            .collect::<Vec<_>>();
+            .collect::<Option<Vec<_>>>()?;
         let arguments = from_admitted_slots(shape.arguments.clone(), slots.into_boxed_slice());
         let receiver = if shape.receiver_type.is_some() {
-            let reference = self.receivers.get(step.receiver()?)?;
+            let reference = native_receiver;
             if !self
                 .plan
                 .scope()
@@ -704,6 +688,31 @@ impl<'a> SourcePlan<'a> {
         }
     }
 
+    fn invocation_values<'s>(
+        &self,
+        step: &'s PlanStep,
+    ) -> Option<(&'s filament_exact::ObjectReference, &'s [Value])> {
+        let operation = self.operation(step)?;
+        let (receiver, arguments) = step.native_values()?;
+        let types = self.plan.scope().types();
+        if !types.conforms(receiver.object_type().clone(), operation.declaring.clone())
+            || arguments.len() != operation.parameters.len()
+            || !operation
+                .parameters
+                .iter()
+                .zip(arguments)
+                .all(|((_, declared), value)| match (declared, value) {
+                    (ValueType::Reference(target), Value::Reference(reference)) => {
+                        types.conforms(reference.object_type().clone(), target.clone())
+                    }
+                    _ => declared.admits(value),
+                })
+        {
+            return None;
+        }
+        Some((receiver, arguments))
+    }
+
     /// The state-attribute reads need exactly one object of the grammar's
     /// type in the state they read; without one, the evaluation is undefined.
     fn readable(&self, reads_attributes: bool, view: &PlanView<'_>) -> bool {
@@ -834,7 +843,7 @@ fn constant_offset(mut node: CheckedNode<'_>) -> bool {
                 return matches!(
                     &literal.0,
                     Value::Integer(_) | Value::Rational(_) | Value::Decimal(_)
-                )
+                );
             }
             NodeKind::Negate(inner)
             | NodeKind::RationalNegate(inner, _)
@@ -864,20 +873,28 @@ impl PlanRules for SourcePlan<'_> {
         self.merges
     }
 
-    fn step_key(&self, step: &ModelTransition) -> Self::StepKey {
-        (
-            self.operations
-                .get(step.operation())
-                .copied()
-                .unwrap_or(usize::MAX),
-            step.receiver()
-                .and_then(|receiver| self.receivers.get(receiver))
-                .cloned(),
-            step.arguments()
-                .iter()
-                .map(|text| ArgumentKey::of(text))
-                .collect(),
-        )
+    fn step_key(&mut self, step: &PlanStep) -> Result<Self::StepKey, RuleStop> {
+        let key = self
+            .operations
+            .get(step.operation())
+            .copied()
+            .zip(self.invocation_values(step))
+            .and_then(|(operation, (receiver, arguments))| {
+                Some((
+                    operation,
+                    Some(receiver.clone()),
+                    arguments
+                        .iter()
+                        .map(ArgumentKey::of)
+                        .collect::<Option<Vec<_>>>()?,
+                ))
+            });
+        key.ok_or_else(|| {
+            self.fault.get_or_insert_with(|| {
+                "a native plan step has no admitted typed invocation values".to_owned()
+            });
+            RuleStop::Cancelled(filament_exact::CancelCause::Requested)
+        })
     }
 
     fn native_operations(&self) -> Option<std::sync::Arc<[(filament_exact::EffectiveId, String)]>> {

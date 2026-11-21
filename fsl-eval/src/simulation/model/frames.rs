@@ -94,7 +94,33 @@ fn argument_domains(
     application: &Application,
 ) -> Result<Vec<Domain>, ExpansionStop> {
     let system = walk.system;
-    let references = walk.references();
+    let mut references = walk.references();
+    if walk.candidate_visitor.is_some() {
+        // Planning uses the complete typed reference identity order, which
+        // may differ from population row order or canonical JSON text order.
+        for at in 1..references.len() {
+            let mut next = at;
+            while next > 0 {
+                walk.meter()
+                    .charge(filament_exact::Charge::new(
+                        filament_exact::ChargePoint::CollectionVisit,
+                    ))
+                    .map_err(|incomplete| {
+                        super::walk::exhausted(
+                            crate::simulation::expansion::ExpansionLimit::EvaluationMeter(
+                                incomplete.limit_kind,
+                            ),
+                        )
+                    })?;
+                if references[next - 1] <= references[next] {
+                    break;
+                }
+                references.swap(next - 1, next);
+                next -= 1;
+            }
+        }
+        references.dedup();
+    }
     application
         .declaration
         .parameters()
@@ -389,7 +415,15 @@ pub(super) fn visit_operation(
             .declaration
             .parameters()
             .iter()
-            .any(|(_, value_type)| !matches!(value_type, ValueType::Boolean | ValueType::Int(_)))
+            .any(|(_, value_type)| {
+                !matches!(
+                    value_type,
+                    ValueType::Boolean
+                        | ValueType::Int(_)
+                        | ValueType::Reference(_)
+                        | ValueType::Enum(_)
+                )
+            })
         {
             return Err(stop(BROKEN));
         }
@@ -510,6 +544,8 @@ pub(super) fn visit_operation(
                     .map_err(|_| stop(BROKEN))?;
                 walk.visit(super::NativeCandidateEvent::Completed {
                     transition: &applied.transition,
+                    receiver: &applied.receiver,
+                    arguments: &applied.arguments,
                     state: &applied.state,
                     outcome,
                 })?;
@@ -2132,7 +2168,10 @@ impl Run<'_, '_, '_> {
 /// outcomes count until deduplication, so sorting cannot hide retained memory.
 fn retain_outcome(walk: &Walk<'_, '_>, next: &Applied) -> Result<(), ExpansionStop> {
     let occurrences = |applied: &Applied| {
-        let mut count = filament_exact::Integer::one();
+        let mut count = filament_exact::Integer::from(2_i64);
+        for argument in &applied.arguments {
+            count = count.add(&argument.occ());
+        }
         for objects in applied.state.state.populations.values() {
             count = count.add(&filament_exact::Integer::one());
             for object in objects.values() {
