@@ -44,6 +44,7 @@ tl-syntax = { git = "https://github.com/agent-ix/tl-syntax.git", rev = "9f7b1c86
 filament-mltl = { git = "https://github.com/agent-ix/filament-mltl", rev = "94f3eb20927d70bbdc8af72e7b0333485e9c583f" }
 
 [dev-dependencies]
+filament-observation = { workspace = true }
 tempfile = "3.27.0"
 jsonschema = { version = "0.17.1", default-features = false, features = ["draft202012"] }
 # FR-400-AC-9: command unit tests construct checked declaration keys.

@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! The command's temporal dependencies share their owners' public types.
 
-use filament_mltl::request::{RequestInput, TemporalInput};
+use filament_mltl::request::{ObservationInputs, RequestInput, TemporalInput};
 use filament_mltl::{OwnerReadError, OwnerReadErrorCode};
+use filament_observation::authority::{availability, clock, closure, completeness, progress};
 use ix_trace_rs::trace;
 use tl_mltl::wire::{trace, OwnerLimits};
 use tl_mltl::{TraceDocument, TraceSchemaVersion};
@@ -15,6 +16,13 @@ fn temporal_owner_types_share_one_dependency_cohort() {
     let _: for<'a> fn(RequestInput<'a>) -> &'a FormulaDocument = |input| input.formula;
     let _: for<'a> fn(RequestInput<'a>) -> &'a PropositionMapDocument =
         |input| input.proposition_map;
+    let _: for<'a> fn(RequestInput<'a>) -> &'a clock::View = |input| input.clock;
+    let _: for<'a> fn(ObservationInputs<'a>) -> &'a progress::View =
+        |input| input.decision_scope_progress;
+    let _: for<'a> fn(ObservationInputs<'a>) -> &'a closure::View =
+        |input| input.decision_scope_closure;
+    let _: for<'a> fn(ObservationInputs<'a>) -> &'a completeness::View = |input| input.completeness;
+    let _: for<'a> fn(ObservationInputs<'a>) -> &'a availability::View = |input| input.availability;
 
     let document = TraceDocument {
         schema_version: TraceSchemaVersion::V1,
