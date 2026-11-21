@@ -1363,7 +1363,7 @@ fn reach_model_type(reached: ReachedModelType) {
 
     let union = !matches!(reached, ReachedModelType::Enum);
     let (type_name, field_name) = if union {
-        ("Mode", "mode")
+        ("Mode", "stage")
     } else {
         ("Tier", "tier")
     };
