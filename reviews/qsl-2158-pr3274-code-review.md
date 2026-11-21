@@ -110,3 +110,33 @@ At heads `96d6bd53e6` and `92c54c46a8`, the existing fsl-eval test `fsl-eval/tes
 | --- | --- | --- |
 | FND-001 | fixed | - |
 | FND-010 | fixed | - |
+
+
+Round 3 (validation corrections only): final head `dff76d9d005d0df5548c2c1c896140a5722f9dc4`. Static review only; no cargo was run by the reviewer. The `reviews/` copies match the disposition-2 scratch versions (checked with `cmp`). The only code changes since `eda0a92d` are in `fsl-analyze/tests/it/exact_probabilistic_item.rs`; no production code changed. `rustfmt --check` and `git diff --check` are clean.
+
+- **7b86dea391** adds the missing `use fsl_replay::ProbabilityCertificateDocument;`.
+- **dff76d9d** corrects `external_always_probability_certificate_remains_unsupported`. It now expects exactly `Err(ProbabilityDocumentError::Unsupported)` and prints the actual result on failure.
+
+**The corrected assertion matches the public checker contract.** `check_probability_certificate_document` reaches `bounded::enumerate_controlled`, where `QualifiedBoundedMonitor::new` refuses always and maps the refusal to `Graph(UnsupportedClaimForm)` (`bounded.rs:170-176`). The existing `From<ExactProbabilityGraphError>` (`document.rs:299-310`) then converts that to `Unsupported` at the public envelope. The round-2 note attributing `UnsupportedClaimForm` to the public result was wrong in that one respect; the native path-set entry does keep `Graph(UnsupportedClaimForm)`.
+
+**The refusal comes from the constructor, not from an early check.** For this fixture none of the checker's earlier `Unsupported` exits apply:
+
+- `profile_dispatch` gives `Exact`, because the document was written by `write_probability_certificate`.
+- The identity and fairness checks pass, since the claim has no fairness.
+- The `cyclic_dtmc` guard does not fire, because the document sets it to false.
+- The timed and fairness guard does not fire: the subject is untimed and the claim has no fairness.
+- `claim_binding` and `claim_workload` succeed; the helper itself unwraps `claim_binding`.
+- `limits.states` is 100, so the zero-state check passes.
+
+Without the gate, a true certificate would continue to value checking, which returns `Ok` or `Rejected`/`ObjectiveMismatch`, never `Unsupported`.
+
+**Evidence.**
+
+| Head | Result |
+| --- | --- |
+| `eda0a92d` | fsl-eval `qualified_bounded_monitor::` 6 passed; the analyzer test target did not compile (missing import) |
+| `7b86dea391` | Six analyzer commands: 23 passed, 1 failed (only this named test, envelope variant) |
+| Combined | 29 green |
+| `dff76d9d` | Exact single-test rerun pending |
+
+No finding needed recheck this round, and none is added. The latest outcomes are unchanged: all fixed.
