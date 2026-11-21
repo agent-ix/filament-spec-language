@@ -666,13 +666,59 @@ fn a_composition_over_dependency_components_is_emitted_and_admitted() {
 #[test]
 fn composition_declaration_and_canonical_members_keep_their_authored_regions() {
     let world = World::new();
-    let declaration = "compose Sys rule interface { \
+    // FR-491 orders clauses by NodeRef, whose admitted identity is an
+    // opaque NodeKey, not the temporal declaration's source name. Obtain
+    // each real target from its checked dependency, and independently bind
+    // it to the position that dependency's emitted graph actually holds.
+    let mut expected_guarantees: Vec<_> = [
+        ("Producer", &world.producer, "Sends"),
+        ("Producer", &world.producer, "Counted"),
+        ("Consumer", &world.consumer, "Done"),
+        ("Consumer", &world.consumer, "Bounded"),
+    ]
+    .into_iter()
+    .map(|(component, dependency, name)| {
+        let target = dependency
+            .package
+            .graph()
+            .temporal_clauses()
+            .iter()
+            .find(|clause| clause.clause().name() == name)
+            .expect("the named source clause in its own checked dependency")
+            .identity();
+        let emission = emit_checked(&dependency.package).expect("the genuine dependency emits");
+        let graph = WireGraph::new(emission.wire_nodes.iter().map(|node| &node.node_id))
+            .expect("the dependency's document graph");
+        let position = graph
+            .keys()
+            .iter()
+            .position(|key| *key == target)
+            .expect("the emitted graph holds the exact source target");
+        (
+            component,
+            dependency.identity.as_str(),
+            name,
+            target,
+            u64::try_from(position).expect("dependency position"),
+        )
+    })
+    .collect();
+    expected_guarantees.sort_by(|left, right| (left.0, &left.3).cmp(&(right.0, &right.3)));
+    let canonical_guarantees: Vec<_> = expected_guarantees
+        .iter()
+        .map(|(component, _, name, _, _)| format!("guarantee {component}::{name};"))
+        .collect();
+    let authored_guarantees = canonical_guarantees
+        .iter()
+        .rev()
+        .map(String::as_str)
+        .collect::<Vec<_>>()
+        .join(" ");
+    let declaration = format!(
+        "compose Sys rule interface {{ \
         component Producer from P using M; \
         component Consumer from Q using M; \
-        guarantee Producer::Sends; \
-        guarantee Producer::Counted; \
-        guarantee Consumer::Done; \
-        guarantee Consumer::Bounded; \
+        {authored_guarantees} \
         rely Producer::Sends on Consumer::Bounded; \
         rely Consumer::Done on Producer::Counted; \
         depends Producer::Sends on Consumer::Done; \
@@ -680,9 +726,12 @@ fn composition_declaration_and_canonical_members_keep_their_authored_regions() {
         supplies fair weak each M::Producer::send; \
         supplies fair strong each M::Producer::send; \
         environment Zulu by \"scheduler\" fair weak each M::Producer::send; \
-        environment Alpha by \"scheduler\" fair weak each M::Producer::send; }";
-    let source = unit(declaration);
-    let package = world.compile(declaration, None).expect("the source checks");
+        environment Alpha by \"scheduler\" fair weak each M::Producer::send; }}"
+    );
+    let source = unit(&declaration);
+    let package = world
+        .compile(&declaration, None)
+        .expect("the source checks");
     let emission = emit_checked(&package).expect("the composition emits");
     assert!(emission.omitted().is_empty());
     let document = serde_json::to_vec(&fixture::document()).expect("model document");
@@ -761,7 +810,7 @@ fn composition_declaration_and_canonical_members_keep_their_authored_regions() {
     assert_eq!(whole.source.authority.as_ref(), "agent-ix");
     assert_eq!(whole.source.identity.as_ref(), "test:composition");
     let start = source
-        .find(declaration)
+        .find(declaration.as_str())
         .expect("whole declaration in source");
     assert_eq!(whole.start, u64::try_from(start).expect("source offset"));
     assert_eq!(
@@ -771,6 +820,7 @@ fn composition_declaration_and_canonical_members_keep_their_authored_regions() {
 
     // This independent table fixes both canonical group offsets and the
     // authored text each generated coordinate must retain after sorting.
+    let guarantee_members: Vec<_> = canonical_guarantees.iter().map(String::as_str).collect();
     let groups: [(&str, &[&str]); 6] = [
         (
             "components",
@@ -779,15 +829,7 @@ fn composition_declaration_and_canonical_members_keep_their_authored_regions() {
                 "component Producer from P using M;",
             ],
         ),
-        (
-            "guarantees",
-            &[
-                "guarantee Consumer::Bounded;",
-                "guarantee Consumer::Done;",
-                "guarantee Producer::Counted;",
-                "guarantee Producer::Sends;",
-            ],
-        ),
+        ("guarantees", &guarantee_members),
         (
             "relies",
             &[
@@ -891,13 +933,10 @@ fn composition_declaration_and_canonical_members_keep_their_authored_regions() {
         ),
         (2, 4, 2, 2, 2, 2)
     );
-    for (guarantee, (component, identity, clause)) in guarantees.iter().zip([
-        ("Consumer", "test/consumer", "Bounded"),
-        ("Consumer", "test/consumer", "Done"),
-        ("Producer", "test/producer", "Counted"),
-        ("Producer", "test/producer", "Sends"),
-    ]) {
-        assert_eq!(guarantee.component.as_ref(), component);
+    for (guarantee, (component, identity, name, _, expected_position)) in
+        guarantees.iter().zip(&expected_guarantees)
+    {
+        assert_eq!(guarantee.component.as_ref(), *component);
         let reference = admitted
             .resolve_node_held(position, &guarantee.clause)
             .expect("resolve the composition's foreign operand slot");
@@ -906,18 +945,32 @@ fn composition_declaration_and_canonical_members_keep_their_authored_regions() {
         else {
             panic!("the guarantee retains a dependency position: {reference:?}");
         };
-        assert_eq!(package.as_ref(), identity);
+        assert_eq!(package.as_ref(), *identity);
+        assert_eq!(
+            *node, *expected_position,
+            "{component}::{name} keeps its actual dependency target"
+        );
         let owner = admitted
             .direct_dependencies()
-            .find(|owner| owner.name() == identity)
+            .find(|owner| owner.name() == *identity)
             .expect("the authenticated component owner");
         let clause_key = owner
             .structural_key_at(usize::try_from(*node).expect("dependency position"))
             .expect("the foreign clause exists in its own graph");
         assert!(owner.term(clause_key).is_some());
+        let names: Vec<_> = owner
+            .temporal_clause_names()
+            .expect("authenticated temporal names")
+            .iter()
+            .filter(|row| row.name.as_ref() == *name)
+            .collect();
+        let [named_clause] = names.as_slice() else {
+            panic!("one actual declaration of {identity}::{name}");
+        };
         assert_eq!(
-            serde_json::to_value(clause_key).expect("clause identity")["path"],
-            serde_json::json!([clause])
+            owner.structural_key(&named_clause.declaration),
+            Some(clause_key),
+            "the foreign position resolves to this owner's named clause"
         );
     }
     let owners: BTreeSet<_> = admitted
