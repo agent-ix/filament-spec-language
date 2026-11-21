@@ -722,7 +722,6 @@ fn a_bounded_item_without_trace_keeps_its_engine_outcome() {
 
 #[test]
 #[trace("FR-1046-AC-2")]
-#[ignore = "QSL-2741 FR1046AC2: Package protocol selection unavailable before receipt binding"]
 fn checked_package_receipts_match_the_same_actual_recommendation() {
     let mut fixture = Fixture::new();
     fixture.request["request"]["items"][0]["kind"] = json!("temporal-satisfaction");
