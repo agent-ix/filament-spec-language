@@ -250,6 +250,37 @@ two indices, over one shared set of premise items.
 - When a `package` request (FR-850) selects the same unit's checked package,
   FSL SHALL settle the same items, records and exit code as the source request.
 
+- When a registered backend advertises `composition`, FSL SHALL negotiate the
+  routed item to it (FSpec FR-348-AC-3) and send it, through the external
+  provider request, the item with its derived `premises` slot keys and its
+  `options`. FSL settles the provider's verdict as for any external provider:
+  `proved` carries the provider's own certification, `unknown` is
+  `inconclusive`, and a `refuted` verdict is `inconclusive` too, because FSL
+  has nothing to replay it at. FSL sends no premise result and no component
+  proof with it. How a provider reads the premises' results, and what it
+  refutes, is the second PR's decision.
+
+### Current system behavior
+
+The architecture ruling on QSL-2739 (PR #3287) lands this requirement with
+the following typed results where the system cannot yet deliver an AC. Each
+AC below stays as written and open on QSL-2739.
+
+- **AC-7.** No compiler or profile step binds a profile that declares FSpec
+  FR-176's lattice to a source unit, so a request through `fsl analyze` meets
+  no lattice and a cycle settles by the AC-6 refusal. The `fixed-point` item
+  is written, with its `premises` and `options`, only for a checked package
+  that carries the lattice. Which profile declares the lattice, and its
+  binding, are decisions for the standard before the second PR.
+- **AC-10, `package` handoff.** The package route reads no composition term's
+  slots or component packages, so a `package` request that names a
+  composition refuses the whole request, typed, naming the `composition`
+  family as not yet implemented (FR-940), and settles no item. The owner is
+  the package-consumer API lane.
+- **Text mode.** Text rendering of the outcome belongs to the external driver.
+  No test in this repository exercises it, and this requirement does not
+  weaken the text half of the fixture.
+
 ## Acceptance Criteria
 
 The fixture. The domain package `test/counter` is FR-620's Counter fixture

@@ -146,6 +146,10 @@ pub enum PendingFamily {
     UnnamedClaim,
     /// An item decided over a protocol subject (FSL FR-1033).
     ProtocolSubject,
+    /// A name the package carries no row for while it holds a component
+    /// composition: its derived slots and component packages have no package
+    /// form yet (FSL FR-1044), so the name is not settled `unknown-claim`.
+    Composition,
     /// A temporal clause fact its package form does not read yet.
     ClauseFact(&'static str),
     /// A form of the package its model-check input does not read yet.
@@ -172,6 +176,7 @@ impl PendingFamily {
             Self::Declaration => "declaration",
             Self::UnnamedClaim => "unnamed-claim",
             Self::ProtocolSubject => "protocol-subject",
+            Self::Composition => "composition",
             Self::ClauseFact(fact) => fact,
             Self::ModelForm(_) => "model-form",
             Self::ProbabilisticSourceModel => "probabilistic-source-model",
@@ -770,7 +775,16 @@ fn resolve_names<'s>(
                 };
             }
             if unnamed {
-                return Err(pending(PendingFamily::UnnamedClaim));
+                let composition = view.unnamed_claims().into_iter().any(|id| {
+                    view.package().resolved_graph().nodes.iter().any(|node| {
+                        &node.node_id == id && &*node.semantic_form == "component_composition"
+                    })
+                });
+                return Err(pending(if composition {
+                    PendingFamily::Composition
+                } else {
+                    PendingFamily::UnnamedClaim
+                }));
             }
             Ok(Named::Settled(unknown_claim(index, name)))
         })
@@ -1452,7 +1466,12 @@ impl<'a> WorkInputs<'_, 'a> {
         let item = &negotiated.item;
         let temporal_kind = match &item.form {
             Some(ItemForm::Temporal(form)) => form.item_kind,
-            Some(ItemForm::FiniteHyper(_) | ItemForm::Probabilistic(_) | ItemForm::Hybrid(_))
+            Some(
+                ItemForm::FiniteHyper(_)
+                | ItemForm::Probabilistic(_)
+                | ItemForm::Hybrid(_)
+                | ItemForm::Composition(_),
+            )
             | None => ItemKind::Formula,
         };
         let family = (self.family)(temporal_kind, &item.claim);
@@ -1493,7 +1512,10 @@ impl<'a> WorkInputs<'_, 'a> {
                 let form = match &item.form {
                     Some(ItemForm::Temporal(form)) => form.clone(),
                     Some(
-                        ItemForm::FiniteHyper(_) | ItemForm::Probabilistic(_) | ItemForm::Hybrid(_),
+                        ItemForm::FiniteHyper(_)
+                        | ItemForm::Probabilistic(_)
+                        | ItemForm::Hybrid(_)
+                        | ItemForm::Composition(_),
                     )
                     | None => super::super::TemporalItem::default(),
                 };
@@ -1520,7 +1542,12 @@ impl<'a> WorkInputs<'_, 'a> {
                 Some(crate::protocol_analysis::manifest::BACKEND_ID)
             }
             Some(ItemForm::Temporal(_)) => Some(crate::model_check::manifest::BACKEND_ID),
-            Some(ItemForm::FiniteHyper(_) | ItemForm::Probabilistic(_) | ItemForm::Hybrid(_))
+            Some(
+                ItemForm::FiniteHyper(_)
+                | ItemForm::Probabilistic(_)
+                | ItemForm::Hybrid(_)
+                | ItemForm::Composition(_),
+            )
             | None => None,
         };
         if let (Some(expected), fsl_route::routing::Disposition::Supported(candidate)) =

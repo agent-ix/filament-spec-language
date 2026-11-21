@@ -8,7 +8,14 @@
 //! supplied as request libraries, and the unit `test/system` imports them
 //! over the Counter domain package. The registry is `Engines::fsl()`, which
 //! registers no composition backend, so a composition settles `unsupported`
-//! (FSpec FR-348-AC-4). FSpec FR-348-AC-1 and AC-2 are not delivered here.
+//! (FSpec FR-348-AC-4); a registered provider that advertises `composition`
+//! is sent the item with its derived premises (FSpec FR-348-AC-3). FSpec
+//! FR-348-AC-1 and AC-2 are not delivered here.
+//!
+//! The outcome document names a stage for the document only (`last_stage`),
+//! so a per-item stage is asserted only through a request whose sole item
+//! settles at it. Text mode is the external driver's rendering and is not
+//! exercised here (FR-1044 "Current system behavior").
 
 use std::path::PathBuf;
 
@@ -16,7 +23,8 @@ use ix_trace_rs::trace;
 use serde_json::{json, Value};
 
 use crate::analyze_cli_support::{
-    analyze, counter_snapshot, label, package_selection, request_members, Workspace, HANDOFF,
+    analyze, analyze_with_providers, counter_snapshot, label, package_selection, request_members,
+    Workspace,
 };
 use crate::counter::{clause_text, document};
 
@@ -37,6 +45,7 @@ fn program(body: &str) -> String {
     format!(
         "language \"ix:native\" edition \"1-draft\";\n\
          profile v = \"filament.value.complete/v1\";\n\
+         profile m0 = \"filament.model.complete/v1\";\n\
          profile t0 = \"filament.temporal.infinite-trace/v1\";\n\
          import \"test/part-a\" as A;\n\
          import \"test/part-b\" as B;\n\
@@ -156,10 +165,18 @@ fn a_routed_composition_is_unsupported_beside_its_proved_premises() {
     let items = document["items"].as_array().expect("items");
     assert_eq!(items.len(), 3, "{document}");
     assert_routed(&items[0]);
-    assert_eq!(items[1]["claim_name"], "Bounded", "{document}");
-    assert_eq!(label(&items[1]), "proved", "{document}");
-    assert_eq!(items[2]["claim_name"], "Capped", "{document}");
-    assert_eq!(label(&items[2]), "proved", "{document}");
+    assert_eq!(items[0]["request"]["kind"], "composition", "{document}");
+    for (slot, (premise, name)) in [(1, "Bounded"), (2, "Capped")].into_iter().enumerate() {
+        let item = &items[premise];
+        assert_eq!(item["claim_name"], name, "{document}");
+        assert_eq!(label(item), "proved", "{document}");
+        assert_eq!(item["record"]["backend"], "en-1", "{document}");
+        // The composition names the premise by the slot key of the clause
+        // the premise item checks.
+        let key = &items[0]["request"]["premises"][slot]["key"];
+        assert_eq!(key["kind"], "temporal-satisfaction", "{document}");
+        assert_eq!(key["claim"], item["request"]["claim"], "{document}");
+    }
     assert_eq!(run.exit, 21, "{document}");
 }
 
@@ -181,6 +198,90 @@ fn the_production_registry_has_no_composition_candidate() {
     ));
 }
 
+const PROVIDER: &str = "fsl.test-composition-provider";
+
+/// A registered composition provider outside FSL that records every request
+/// it is sent as serialized, and decides nothing.
+#[derive(Debug, Default)]
+struct Recording(std::sync::Arc<std::sync::Mutex<Vec<Value>>>);
+
+impl fsl_analyze::provider::ExternalProvider for Recording {
+    fn settle(
+        &self,
+        request: &fsl_analyze::provider::ProviderRequest<'_>,
+        _cancel: &filament_exact::Cancel,
+    ) -> Vec<fsl_analyze::provider::ProviderVerdict> {
+        self.0
+            .lock()
+            .expect("the record lock")
+            .push(serde_json::to_value(request).expect("the request serializes"));
+        vec![fsl_analyze::provider::ProviderVerdict::Unknown; request.items().len()]
+    }
+}
+
+fn composition_provider(
+    seen: &std::sync::Arc<std::sync::Mutex<Vec<Value>>>,
+) -> fsl_analyze::analyze::Engine {
+    use fsl_semantics::check::Capability;
+    let descriptor = fsl_route::descriptor_from_manifest(
+        fsl_route::Candidate::new(fsl_foundation::BackendId::new(PROVIDER)),
+        fsl_route::ProviderOrigin::Process,
+        vec![(
+            Some(Capability::Composition.to_wire()),
+            Some(fsl_route::Mode::Unbounded.to_wire()),
+        )],
+        fsl_route::ManifestMembers {
+            domains: None,
+            fairness_kinds: None,
+            evidence_kinds: None,
+            memory_models: None,
+            reductions: None,
+        },
+    )
+    .expect("the descriptor advertises composition");
+    fsl_analyze::analyze::Engine::external(
+        descriptor,
+        fsl_analyze::analyze::BackendTool::new("test-composition", "1").expect("a tool"),
+        Box::new(Recording(std::sync::Arc::clone(seen))),
+    )
+    .expect("a composition process provider registers (FR-635)")
+}
+
+/// FSpec FR-348-AC-3: a registered composition-capable provider is
+/// negotiated the routed item and receives it with its derived premise slot
+/// keys; its `unknown` verdict settles `inconclusive`, never `proved`, and
+/// the components still settle by their own engine.
+#[trace("FSpec-FR-348-AC-3")]
+#[test]
+fn a_registered_provider_receives_the_composition_with_its_premises() {
+    let ws = Workspace::new("compose-provider");
+    let path = request(&ws, &system(), json!([composition("Sys")]));
+    let seen = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let run = analyze_with_providers(&path, vec![composition_provider(&seen)]);
+    let document = run.document();
+    let items = document["items"].as_array().expect("items");
+    assert_eq!(label(&items[0]), "inconclusive", "{document}");
+    assert_eq!(items[0]["record"]["backend"], PROVIDER, "{document}");
+    assert_eq!(
+        items[0]["request"]["candidates"],
+        json!({"type": "set", "backends": [PROVIDER]}),
+        "{document}"
+    );
+    assert_eq!(label(&items[1]), "proved", "{document}");
+    assert_eq!(label(&items[2]), "proved", "{document}");
+    let sent = seen.lock().expect("the record lock");
+    assert_eq!(sent.len(), 1, "one request to the one provider");
+    let sent_items = sent[0]["items"].as_array().expect("sent items");
+    assert_eq!(sent_items.len(), 1, "only the composition is sent");
+    assert_eq!(sent_items[0]["kind"], "composition");
+    assert_eq!(sent_items[0]["request_index"], 0);
+    assert_eq!(
+        sent_items[0]["premises"], items[0]["request"]["premises"],
+        "the derived slot keys reach the provider"
+    );
+    assert_eq!(sent_items[0]["candidates"]["backends"], json!([PROVIDER]));
+}
+
 /// FR-1044-AC-2: the other routed rules write AC-1's items; an
 /// `assume-guarantee` selection is planner-local, with no `request` member.
 #[trace("FR-1044-AC-2")]
@@ -199,9 +300,15 @@ fn the_other_rules_and_the_planner_local_item_settle_unsupported() {
     let item = &document["items"][0];
     assert_unsupported_composition(item);
     assert_eq!(item["claim_name"], "SysAG", "{document}");
-    assert!(item["request"].is_null(), "{item}");
-    assert_eq!(document["items"][1]["claim_name"], "Bounded", "{document}");
-    assert_eq!(document["items"][2]["claim_name"], "Capped", "{document}");
+    assert!(item["request"].is_null(), "no request item: {item}");
+    assert!(item["request"]["candidates"].is_null(), "{item}");
+    assert_eq!(document["items"].as_array().expect("items").len(), 3);
+    for (index, name) in [(1, "Bounded"), (2, "Capped")] {
+        let premise = &document["items"][index];
+        assert_eq!(premise["claim_name"], name, "{document}");
+        assert_eq!(label(premise), "proved", "{document}");
+        assert_eq!(premise["record"]["backend"], "en-1", "{document}");
+    }
     assert_eq!(run.exit, 21, "{document}");
 }
 
@@ -248,54 +355,95 @@ fn each_selector_settles_by_its_own_rule() {
     assert_eq!(run.exit, 20, "{document}");
 }
 
-/// The roles and keys of `item`'s `request.premises`, as the caller restates
-/// them, each object's members written in reverse.
-fn restated(item: &Value) -> Value {
-    Value::Array(
-        item["request"]["premises"]
-            .as_array()
-            .expect("premises")
-            .iter()
-            .map(|premise| {
-                let mut reversed = serde_json::Map::new();
-                reversed.insert("key".to_owned(), premise["key"].clone());
-                reversed.insert("role".to_owned(), premise["role"].clone());
-                Value::Object(reversed)
-            })
-            .collect(),
-    )
+/// The members of every object of `value`, written in reverse of the order
+/// serde_json writes them: the raw text of a caller that permutes members.
+fn permuted(value: &Value) -> String {
+    match value {
+        Value::Object(members) => {
+            let members: Vec<String> = members
+                .iter()
+                .rev()
+                .map(|(name, member)| {
+                    format!("{}:{}", Value::from(name.as_str()), permuted(member))
+                })
+                .collect();
+            format!("{{{}}}", members.join(","))
+        }
+        Value::Array(entries) => {
+            let entries: Vec<String> = entries.iter().map(permuted).collect();
+            format!("[{}]", entries.join(","))
+        }
+        other => other.to_string(),
+    }
+}
+
+/// The request of `items` where each item's `premises` member holds the raw
+/// text `premises` in place of the placeholder string.
+fn request_with_raw_premises(ws: &Workspace, name: &str, premises: &str) -> PathBuf {
+    let items = json!([{"claim": name, "kind": "composition", "premises": "@premises@"}]);
+    let path = request(ws, &system(), items);
+    let text = std::fs::read_to_string(&path).expect("the request reads");
+    assert!(
+        text.contains("\"@premises@\""),
+        "the placeholder is written"
+    );
+    std::fs::write(&path, text.replace("\"@premises@\"", premises))
+        .expect("the request is rewritten");
+    path
 }
 
 fn with_premises(name: &str, premises: &Value) -> Value {
     json!({"claim": name, "kind": "composition", "premises": premises})
 }
 
-/// FR-1044-AC-4: a caller may restate the derived slot list and nothing
-/// else; a mistyped member refuses the request, a different list refuses
-/// the item.
+/// The refusal document of a whole-request refusal: its category, its code
+/// and the member its message names, as `member: reason`.
+fn assert_request_refusal(run: &crate::analyze_cli_support::Run, pointer: &str) {
+    let document = run.document();
+    assert_eq!(run.exit, 20, "{document}");
+    assert_eq!(document["category"], "refusal", "{document}");
+    assert_eq!(document["items"], json!([]), "{document}");
+    assert_eq!(
+        document["diagnostics"][0]["code"], "invalid-request",
+        "{document}"
+    );
+    let message = document["diagnostics"][0]["message"]
+        .as_str()
+        .expect("a diagnostic message");
+    assert!(
+        message.starts_with(&format!("invalid analyze request member {pointer}:")),
+        "the member is exactly {pointer}: {message}"
+    );
+}
+
+/// FR-1044-AC-4: a caller may only restate the derived slot list; a
+/// mistyped member refuses the request at its exact pointer, a different
+/// list refuses the item, and another kind's `premises` is untouched.
 #[trace("FR-1044-AC-4")]
 #[test]
 fn a_caller_may_only_restate_the_derived_premise_keys() {
     let ws = Workspace::new("compose-ac4");
     let derived = analyze(&request(&ws, &system(), json!([composition("Sys")]))).item(0);
-    let listed = restated(&derived);
-    // (a) the derived list, with members reversed, is the item without it.
+    let listed = derived["request"]["premises"].clone();
+    // (a) the derived list, every object's members written in reverse order
+    // in the raw request, is the item without it.
+    let raw = permuted(&listed);
+    assert!(
+        raw.starts_with("[{\"role\":"),
+        "the members are permuted in the raw text: {raw}"
+    );
     for name in ["Sys", "SysAG"] {
         let plain = analyze(&request(&ws, &system(), json!([composition(name)])));
-        let run = analyze(&request(
-            &ws,
-            &system(),
-            json!([with_premises(name, &listed)]),
-        ));
-        assert_eq!(run.exit, 21, "{name}");
-        assert_eq!(
-            run.document()["items"].as_array().map(Vec::len),
-            plain.document()["items"].as_array().map(Vec::len),
-            "{name}"
-        );
-        assert_eq!(label(&run.item(1)), label(&plain.item(1)), "{name}");
+        let path = request_with_raw_premises(&ws, name, &raw);
+        assert!(std::fs::read_to_string(&path)
+            .expect("reads")
+            .contains(&raw));
+        let run = analyze(&path);
+        let (plain, run) = (plain.document(), run.document());
+        assert_eq!(plain["items"], run["items"], "{name}");
     }
-    // (b) a slot removed, two swapped or one relabelled refuses that item.
+    // (b) a slot removed, two swapped or one relabelled refuses that item,
+    // before any premise item, and the sibling still runs.
     let slots = listed.as_array().expect("the list").clone();
     let mut relabelled = slots.clone();
     relabelled[1]["role"] = json!("rely");
@@ -314,6 +462,7 @@ fn a_caller_may_only_restate_the_derived_premise_keys() {
             let document = run.document();
             let items = document["items"].as_array().expect("items");
             assert_eq!(items.len(), 2, "no premise item: {document}");
+            assert_eq!(items[0]["category"], "refusal", "{document}");
             assert_eq!(
                 items[0]["record"]["diagnostic"]["code"], "invalid_runtime_input",
                 "{document}"
@@ -323,18 +472,22 @@ fn a_caller_may_only_restate_the_derived_premise_keys() {
                 items[0]["record"]["diagnostic"]["detail"]["pointer"], "/items/0/premises",
                 "{document}"
             );
+            assert_eq!(
+                items[0]["record"]["settled_by"], "disposition",
+                "{document}"
+            );
             assert_eq!(label(&items[1]), "proved", "{document}");
             assert_eq!(run.exit, 20, "{document}");
+            // Alone, the refused item is the only one settled, at `S4`.
+            let alone = analyze(&request(
+                &ws,
+                &system(),
+                json!([with_premises(name, premises)]),
+            ));
+            assert_eq!(alone.document()["last_stage"], "S4", "{name}: {premises}");
         }
     }
-    // The item that settles alone settles at the request stage `S4`.
-    let alone = analyze(&request(
-        &ws,
-        &system(),
-        json!([with_premises("Sys", &json!([]))]),
-    ));
-    assert_eq!(alone.document()["last_stage"], "S4");
-    // (c) a mistyped member refuses the whole request.
+    // (c) a mistyped member refuses the whole request at its exact pointer.
     for (premises, pointer) in [
         (json!({}), "/items/0/premises"),
         (json!([1]), "/items/0/premises/0"),
@@ -348,13 +501,7 @@ fn a_caller_may_only_restate_the_derived_premise_keys() {
             &system(),
             json!([with_premises("Sys", &premises)]),
         ));
-        let document = run.document();
-        assert_eq!(run.exit, 20, "{document}");
-        assert!(document.to_string().contains(pointer), "{document}");
-        assert!(
-            document["items"].as_array().is_none_or(Vec::is_empty),
-            "{document}"
-        );
+        assert_request_refusal(&run, pointer);
     }
     // (d) a name that is no composition keeps its own refusal, with no
     // premise item.
@@ -376,6 +523,20 @@ fn a_caller_may_only_restate_the_derived_premise_keys() {
     assert_eq!(document["items"].as_array().map(Vec::len), Some(2));
 }
 
+/// FR-1044-AC-4(e): an FR-571 `realizability` item's `premises` is not
+/// refused for being a member of an item that is no composition.
+#[trace("FR-1044-AC-4")]
+#[test]
+fn a_realizability_item_keeps_its_premises() {
+    let item = crate::protocol_item_bounds::realizability(
+        json!({"profile": "bounded-static", "max_depth": 16, "max_history": 16}),
+    );
+    assert!(item["premises"].is_object(), "{item}");
+    let run = crate::protocol_item_bounds::run_items("compose-ac4e", vec![item]);
+    assert_eq!(run.exit, 0, "{}", run.document());
+    assert_eq!(label(&run.item(0)), "proved", "{}", run.item(0));
+}
+
 /// FR-1044-AC-5: a guarantee checked under peer guarantees is not run as
 /// the clause alone.
 #[trace("FR-1044-AC-5")]
@@ -393,6 +554,10 @@ fn a_premise_under_assumptions_is_not_run_as_the_clause_alone() {
     assert_eq!(label(assumed), "unsupported", "{document}");
     assert_eq!(assumed["record"]["settled_by"], "disposition", "{document}");
     assert_eq!(
+        assumed["record"]["diagnostic"]["code"], "unsupported_projection",
+        "{document}"
+    );
+    assert_eq!(
         cause(assumed),
         "unsupported-requested-capability",
         "{document}"
@@ -401,6 +566,9 @@ fn a_premise_under_assumptions_is_not_run_as_the_clause_alone() {
         assumed["record"]["diagnostic"]["detail"]["kind"], "temporal-satisfaction",
         "{document}"
     );
+    // No engine ran: no backend produced the record, and the item has no
+    // candidate an engine could have been negotiated from.
+    assert!(assumed["record"]["backend"].is_null(), "{document}");
     assert_eq!(
         assumed["request"]["candidates"],
         json!({"type": "set", "backends": []}),
@@ -408,8 +576,12 @@ fn a_premise_under_assumptions_is_not_run_as_the_clause_alone() {
     );
     assert_unsupported_composition(&items[0]);
     assert_eq!(run.exit, 21, "{document}");
-    // The clause alone, in its own package, is a different request.
+    // Its request is the clause as `test/part-b` declares it: the item the
+    // clause settles to alone, but for the candidates.
     let alone = analyze(&request(&ws, &system(), json!([composition("Sys")])));
+    let mut clause = alone.item(2)["request"].clone();
+    clause["candidates"] = assumed["request"]["candidates"].clone();
+    assert_eq!(assumed["request"], clause, "{document}");
     assert_eq!(label(&alone.item(2)), "proved");
 }
 
@@ -427,6 +599,7 @@ fn a_cycle_without_a_lattice_refuses_the_item() {
         "{document}"
     );
     let item = &document["items"][0];
+    assert_eq!(item["category"], "refusal", "{item}");
     assert_eq!(
         item["record"]["diagnostic"]["code"], "invalid_model_binding",
         "{item}"
@@ -469,21 +642,19 @@ fn a_shared_premise_is_written_once() {
     let document = run.document();
     let items = document["items"].as_array().expect("items");
     assert_eq!(items.len(), 6, "{document}");
-    for index in 0..3 {
-        assert_unsupported_composition(&items[index]);
+    for item in &items[..3] {
+        assert_unsupported_composition(item);
     }
     assert_eq!(items[3]["claim_name"], "Bounded", "{document}");
     assert_eq!(label(&items[4]), "proved", "{document}");
     assert_eq!(label(&items[5]), "unsupported", "{document}");
-    assert_eq!(items[5]["request"], {
-        let mut equal = items[4]["request"].clone();
-        equal["request_index"] = json!(5);
-        equal["candidates"] = items[5]["request"]["candidates"].clone();
-        equal
-    });
+    let mut equal = items[4]["request"].clone();
+    equal["request_index"] = json!(5);
+    equal["candidates"] = items[5]["request"]["candidates"].clone();
+    assert_eq!(items[5]["request"], equal, "{document}");
 }
 
-/// FR-1044-AC-9: a refuted component guarantee keeps its own result, and the
+/// FR-1044-AC-9: a refuted component guarantee keeps its own record, and the
 /// composition is neither `proved` nor `refuted`.
 #[trace("FR-1044-AC-9")]
 #[test]
@@ -497,12 +668,29 @@ fn a_refuted_premise_keeps_its_own_record() {
     ));
     let document = run.document();
     assert_unsupported_composition(&document["items"][0]);
-    assert_eq!(label(&document["items"][1]), "proved", "{document}");
-    let capped = &document["items"][2];
+    let (bounded, capped) = (&document["items"][1], &document["items"][2]);
+    assert_eq!(label(bounded), "proved", "{document}");
+    assert_eq!(
+        bounded["record"]["certification"], "certified",
+        "{document}"
+    );
     assert_eq!(label(capped), "refuted", "{document}");
+    assert_eq!(capped["record"]["backend"], "en-1", "{document}");
+    assert!(capped["record"]["certification"].is_null(), "{document}");
+    for premise in [bounded, capped] {
+        assert_eq!(
+            premise["request"]["extent"]["classification"], "bounded",
+            "{document}"
+        );
+    }
+    // The counterexample ends in a state with `value = 3`.
+    let value =
+        |state: &str| format!(r#""name":"value","value":{{"type":"integer","value":"{state}"}}"#);
+    let counterexample = capped["counterexample"].to_string();
+    let last = counterexample.rfind(r#""name":"value""#).expect("a value");
     assert!(
-        capped["counterexample"].to_string().contains("\"3\""),
-        "the counterexample reaches value = 3: {capped}"
+        counterexample[last..].starts_with(&value("3")),
+        "the final state holds value = 3: {capped}"
     );
     assert_eq!(run.exit, 21, "{document}");
 }
@@ -520,27 +708,54 @@ fn a_composition_is_a_default_item() {
     );
     let run = analyze(&request_for(&ws, &body, BOUNDED, None));
     let document = run.document();
-    let names: Vec<&str> = document["items"]
-        .as_array()
-        .expect("items")
-        .iter()
-        .map(|item| item["claim_name"].as_str().unwrap_or(""))
-        .collect();
-    assert_eq!(names[..2], ["Local", "Sys"], "{document}");
-    assert_eq!(names[3..], ["Bounded", "Capped"], "{document}");
+    let items = document["items"].as_array().expect("items");
+    assert_eq!(items.len(), 5, "{document}");
+    assert_eq!(items[0]["claim_name"], "Local", "{document}");
+    assert_eq!(label(&items[0]), "proved", "{document}");
+    assert_eq!(items[1]["claim_name"], "Sys", "{document}");
+    assert_unsupported_composition(&items[1]);
+    assert_eq!(
+        items[2]["request"]["temporal"]["item_kind"], "deadlock-freedom",
+        "{document}"
+    );
+    assert_eq!(items[3]["claim_name"], "Bounded", "{document}");
+    assert_eq!(items[4]["claim_name"], "Capped", "{document}");
     assert_eq!(run.exit, 21, "{document}");
-    assert_eq!(label(&document["items"][0]), "proved", "{document}");
-    assert_unsupported_composition(&document["items"][1]);
 }
 
 /// FR-1044-AC-10, second half: over the unit's `package` handoff the same
 /// items, records and exit code. The package route reads no composition
-/// declaration (it refuses the family typed, FR-940), so this is the
-/// request's current outcome.
+/// term (QSL-2739: package form), so it refuses the request typed, naming
+/// the `composition` family.
+#[trace("FR-1044-AC-10")]
 #[test]
-#[ignore = "QSL-2739: the package route has no composition form"]
-fn the_package_route_settles_the_same_items() {
+fn the_package_route_refuses_a_composition_typed() {
     let ws = Workspace::new("compose-ac10-package");
+    let path = request_for(&ws, &system(), BOUNDED, Some(json!([composition("Sys")])));
+    let source: Value =
+        serde_json::from_slice(&std::fs::read(&path).expect("the request reads")).expect("JSON");
+    let (selected, _) = package_selection(&ws, &source["request"]);
+    let handoff = ws.write(
+        "analyze-package.json",
+        json!({"format": "native-analyze/1", "request": selected})
+            .to_string()
+            .as_bytes(),
+    );
+    let run = analyze(&handoff);
+    let document = run.document();
+    assert_eq!(document["category"], "refusal", "{document}");
+    assert!(
+        document.to_string().contains("composition family"),
+        "the refusal names the composition family: {document}"
+    );
+}
+
+/// FR-1044-AC-10, second half, once the package route reads a composition:
+/// the same items, records and exit code as the source request.
+#[test]
+#[ignore = "QSL-2739: the package route has no composition form (package-consumer API)"]
+fn the_package_route_settles_the_same_items() {
+    let ws = Workspace::new("compose-ac10-package-equal");
     let body = format!(
         "{}{}",
         clause_text("Local", "", BOUNDED),
@@ -556,7 +771,6 @@ fn the_package_route_settles_the_same_items() {
             .to_string()
             .as_bytes(),
     );
-    let _ = HANDOFF;
     let by_source = analyze(&path);
     let by_package = analyze(&handoff);
     assert_eq!(by_package.exit, by_source.exit);

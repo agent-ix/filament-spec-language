@@ -105,14 +105,19 @@ fn validate_activated_population(
     Ok(())
 }
 
-/// FSpec FR-331's five `premises` roles a composition item names.
-const PREMISE_ROLES: [&str; 5] = [
-    "component-guarantee",
-    "rely",
-    "liveness-dependency",
-    "fairness",
-    "environment",
-];
+/// Whether `role` is one of FSpec FR-331's five `premises` roles a
+/// composition item names.
+fn is_premise_role(role: fsl_replay::planner::SlotRole) -> bool {
+    use fsl_replay::planner::SlotRole;
+    matches!(
+        role,
+        SlotRole::ComponentGuarantee
+            | SlotRole::Rely
+            | SlotRole::LivenessDependency
+            | SlotRole::Fairness
+            | SlotRole::Environment
+    )
+}
 
 /// FR-1044: a composition item's `premises` is an array of closed
 /// `{role, key}` objects whose `role` is one of FSpec FR-331's five, each
@@ -141,7 +146,8 @@ fn validate_composition_premises(
             ));
         }
         match entry.get("role").and_then(serde_json::Value::as_str) {
-            Some(role) if PREMISE_ROLES.contains(&role) => {}
+            Some(role)
+                if fsl_replay::planner::SlotRole::parse(role).is_some_and(is_premise_role) => {}
             Some(role) => {
                 return Err((
                     format!("{pointer}/role"),
@@ -1102,12 +1108,11 @@ fn read_run_members(
 /// `simulation` member to a simulation item alone.
 pub(super) fn validate_items(items: Option<&[ItemSelection]>) -> Result<()> {
     for (position, item) in items.unwrap_or_default().iter().enumerate() {
-        if let (Some(premises), true) = (
-            &item.premises,
-            item.kind.as_deref() == Some(fsl_semantics::check::Capability::Composition.to_wire()),
-        ) {
-            validate_composition_premises(position, premises)
-                .map_err(|(pointer, reason)| invalid(&pointer, reason))?;
+        if item.kind.as_deref() == Some(fsl_semantics::check::Capability::Composition.to_wire()) {
+            if let Some(premises) = &item.premises {
+                validate_composition_premises(position, premises)
+                    .map_err(|(pointer, reason)| invalid(&pointer, reason))?;
+            }
         }
         if item.recording.is_some()
             && item.kind.as_deref()

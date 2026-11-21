@@ -13,7 +13,7 @@
 //! settles `unsupported` at negotiation, and the `assume-guarantee` item,
 //! which has no FSpec FR-331 request item, settles `unsupported` before it.
 
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashSet};
 use std::sync::Arc;
 
 use filament_semantic_value::catalog::CatalogCode;
@@ -22,7 +22,7 @@ use fsl_foundation::RequestIndex;
 use fsl_package::CheckedPackage;
 use fsl_replay::planner::{composition_premises, CompositionPremise, ItemKey, SlotKey, SlotRole};
 use fsl_replay::TerminalRecord;
-use fsl_route::request::ExtentClassification;
+use fsl_route::request::{ExtentClassification, ItemKind};
 use fsl_route::Registry;
 use fsl_semantics::check::{
     Capability, CheckedComposition, ClauseRef, CompositionRule, CompositionSlotKey,
@@ -34,7 +34,9 @@ use super::{
     candidate_list, invalid_kind, resolve_one, unknown_option, ItemSelection, ResolvedClaim,
     ResolvedItem, SubjectSelection,
 };
-use crate::analyze::{ClaimItem, Diagnostic, ItemOptions, Payload, SubjectBinding};
+use crate::analyze::{
+    ClaimItem, CompositionItem, Diagnostic, ItemForm, ItemOptions, Payload, SubjectBinding,
+};
 
 /// A claim item the composition selection derives or settles (FR-1044),
 /// beside the ordinary [`ResolvedItem::Claim`].
@@ -42,9 +44,6 @@ use crate::analyze::{ClaimItem, Diagnostic, ItemOptions, Payload, SubjectBinding
 pub struct CompositionClaim {
     /// The claim item and its candidates.
     pub claim: ResolvedClaim,
-    /// The FSpec FR-331 request members the admitted `request` echo carries
-    /// beside the claim item's own: `premises` and `options`.
-    pub members: Map<String, Value>,
     /// The checked package of the component the claim is a clause of, which
     /// the item is analyzed over; `None` for a claim of the request's own
     /// package.
@@ -74,7 +73,7 @@ enum PremiseKind {
     /// A `component-guarantee` slot.
     Guarantee {
         clause: ClauseRef,
-        library: String,
+        library: LibraryName,
         /// Whether the guarantee is checked under peer guarantees, which no
         /// registered engine reads.
         assumed: bool,
@@ -84,8 +83,11 @@ enum PremiseKind {
         name: String,
         node: filament_exact::NodeKey,
         profile: String,
-        premises: Value,
+        premises: Vec<Value>,
     },
+    /// A slot whose component or key the checked declaration does not
+    /// resolve: an invariant break, settled as a typed `failed` record.
+    Unresolved { composition: String },
 }
 
 /// What a selection is resolved against.
@@ -126,7 +128,7 @@ fn occurrence(node: &filament_exact::NodeKey) -> OccurrenceKey {
     )
 }
 
-fn failed(index: RequestIndex, name: &str) -> ResolvedItem {
+pub(super) fn failed(index: RequestIndex, name: &str) -> ResolvedItem {
     ResolvedItem::Settled {
         claim_name: Some(name.to_owned()),
         record: Box::new(TerminalRecord::disposition_failed(
@@ -181,8 +183,15 @@ pub(super) fn resolve(
             payload: Payload::Inapplicable {
                 request_index: index,
                 capability: kind,
-                family: (!planner_local)
-                    .then_some(fsl_semantics::check::DeclarationFamily::Protocol),
+                family: if planner_local {
+                    None
+                } else {
+                    crate::claim_family::claim_family(
+                        ctx.package,
+                        ItemKind::Formula,
+                        &occurrence(composition.node()),
+                    )
+                },
             },
         };
         return settled(ResolvedItem::Settled {
@@ -288,11 +297,6 @@ fn routed(
     ) {
         return refused;
     }
-    let mut members = Map::new();
-    members.insert("premises".to_owned(), Value::Array(listed));
-    if !backend_options.is_empty() {
-        members.insert("options".to_owned(), json!(backend_options));
-    }
     let unrouted = ItemSelection {
         premises: None,
         ..selection.clone()
@@ -304,7 +308,7 @@ fn routed(
         (name, composition.node()),
         named,
         (backend_options, selection.required.unwrap_or(true)),
-        members,
+        listed,
         unrouted,
     )
 }
@@ -315,8 +319,8 @@ fn claim_item(
     index: RequestIndex,
     (name, node): (&str, &filament_exact::NodeKey),
     named: Option<fsl_foundation::BackendId>,
-    (backend_options, required): (std::collections::BTreeMap<String, String>, bool),
-    members: Map<String, Value>,
+    (backend_options, required): (BTreeMap<String, String>, bool),
+    premises: Vec<Value>,
     unrouted: bool,
 ) -> ResolvedItem {
     let candidates = ctx
@@ -342,7 +346,7 @@ fn claim_item(
             backend_options,
             protocol_analysis: None,
         },
-        form: None,
+        form: Some(ItemForm::Composition(CompositionItem { premises })),
     };
     ResolvedItem::Composition(Box::new(CompositionClaim {
         claim: ResolvedClaim {
@@ -352,7 +356,6 @@ fn claim_item(
             subject: ctx.subject.clone(),
             unrouted,
         },
-        members,
         package: None,
         settled: None,
     }))
@@ -361,50 +364,56 @@ fn claim_item(
 /// The premise items of `composition` in FSpec FR-491 order: each
 /// `component-guarantee` slot, then each `fixed-point` slot.
 fn premises_of(composition: &CheckedComposition, slots: &[CompositionPremise]) -> Vec<Premise> {
-    let guarantees = slots.iter().filter_map(|premise| {
-        let (Some(CompositionSlotKey::ComponentGuarantee(key)), Some(clause)) =
-            (&premise.slot.key, &premise.slot.guarantee)
-        else {
-            return None;
-        };
-        let SlotKey::Item(item) = &premise.derived.key else {
-            return None;
-        };
-        let library = composition
-            .components()
+    let of_role = |fixed: bool| {
+        slots
             .iter()
-            .find(|component| component.name == clause.component)?
-            .subject
-            .package
-            .clone();
-        Some(Premise {
-            key: item.clone(),
-            kind: PremiseKind::Guarantee {
-                clause: clause.clone(),
-                library,
-                assumed: !key.assumptions.is_empty(),
-            },
-        })
-    });
-    let fixed_points = slots.iter().filter_map(|premise| {
-        let Some(CompositionSlotKey::FixedPoint { node, profile, .. }) = &premise.slot.key else {
-            return None;
-        };
-        let SlotKey::Item(item) = &premise.derived.key else {
-            return None;
-        };
-        let premises = item.to_wire().ok()?.get("premises").cloned()?;
-        Some(Premise {
-            key: item.clone(),
-            kind: PremiseKind::FixedPoint {
+            .filter(move |premise| (premise.derived.role == SlotRole::FixedPoint) == fixed)
+            .filter_map(|premise| premise_of(composition, premise))
+    };
+    of_role(false).chain(of_role(true)).collect()
+}
+
+/// The premise item `premise` derives, `None` for a slot no item backs.
+fn premise_of(composition: &CheckedComposition, premise: &CompositionPremise) -> Option<Premise> {
+    let SlotKey::Item(key) = &premise.derived.key else {
+        return None;
+    };
+    let unresolved = || PremiseKind::Unresolved {
+        composition: composition.name().to_owned(),
+    };
+    let kind = match &premise.slot.key {
+        Some(CompositionSlotKey::ComponentGuarantee(guarantee)) => premise
+            .slot
+            .guarantee
+            .as_ref()
+            .and_then(|clause| {
+                let component = composition
+                    .components()
+                    .iter()
+                    .find(|component| component.name == clause.component)?;
+                Some(PremiseKind::Guarantee {
+                    clause: clause.clone(),
+                    library: LibraryName::new(component.subject.package.as_str()).ok()?,
+                    assumed: !guarantee.assumptions.is_empty(),
+                })
+            })
+            .unwrap_or_else(unresolved),
+        Some(CompositionSlotKey::FixedPoint { node, profile, .. }) => key
+            .to_wire()
+            .ok()
+            .and_then(|wire| wire.get("premises")?.as_array().cloned())
+            .map_or_else(unresolved, |premises| PremiseKind::FixedPoint {
                 name: composition.name().to_owned(),
                 node: node.clone(),
                 profile: profile.clone(),
                 premises,
-            },
-        })
-    });
-    guarantees.chain(fixed_points).collect()
+            }),
+        None => return None,
+    };
+    Some(Premise {
+        key: key.clone(),
+        kind,
+    })
 }
 
 /// The premise items of `groups`, one group per selected composition, each
@@ -428,34 +437,27 @@ pub(super) fn premise_items(
 
 fn premise_item(ctx: &Context<'_>, index: RequestIndex, premise: Premise) -> ResolvedItem {
     match premise.kind {
+        PremiseKind::Unresolved { composition } => failed(index, &composition),
         PremiseKind::FixedPoint {
             name,
             node,
             profile,
             premises,
-        } => {
-            let mut members = Map::new();
-            members.insert("premises".to_owned(), premises);
-            members.insert("options".to_owned(), json!({"profile": profile}));
-            claim_item(
-                ctx,
-                index,
-                (&name, &node),
-                None,
-                (std::collections::BTreeMap::new(), true),
-                members,
-                false,
-            )
-        }
+        } => claim_item(
+            ctx,
+            index,
+            (&name, &node),
+            None,
+            (BTreeMap::from([("profile".to_owned(), profile)]), true),
+            premises,
+            false,
+        ),
         PremiseKind::Guarantee {
             clause,
             library,
             assumed,
         } => {
-            let component = LibraryName::new(library.as_str())
-                .ok()
-                .and_then(|library| ctx.package.dependencies().get(&library).cloned());
-            let Some(component) = component else {
+            let Some(component) = ctx.package.dependencies().get(&library).cloned() else {
                 return failed(index, &clause.name);
             };
             let selection = ItemSelection {
@@ -484,7 +486,6 @@ fn premise_item(ctx: &Context<'_>, index: RequestIndex, premise: Premise) -> Res
             });
             ResolvedItem::Composition(Box::new(CompositionClaim {
                 claim: *claim,
-                members: Map::new(),
                 package: Some(component),
                 settled,
             }))

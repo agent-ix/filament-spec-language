@@ -3013,10 +3013,12 @@ fn default_items(
                     ..ItemSelection::default()
                 };
                 let index = RequestIndex::new(resolved.len());
-                if let Some(selected) = composition_item::resolve(&compositions, index, &selection)
-                {
-                    resolved.push(selected.item);
-                    premises.push(selected.premises);
+                match composition_item::resolve(&compositions, index, &selection) {
+                    Some(selected) => {
+                        resolved.push(selected.item);
+                        premises.push(selected.premises);
+                    }
+                    None => resolved.push(composition_item::failed(index, composition.name())),
                 }
             }
             continue;
@@ -3390,6 +3392,12 @@ impl ClaimItem {
         if let Some(ItemForm::Hybrid(hybrid)) = &self.form {
             if !hybrid.options.is_empty() {
                 item.insert("options".to_owned(), json!(hybrid.options));
+            }
+        }
+        if let Some(ItemForm::Composition(composition)) = &self.form {
+            item.insert("premises".to_owned(), json!(composition.premises));
+            if !self.options.backend_options.is_empty() {
+                item.insert("options".to_owned(), json!(self.options.backend_options));
             }
         }
         if let Some(protocol) = &self.options.protocol_analysis {
@@ -3787,7 +3795,7 @@ fn negotiate_items(
     let mut simulations: Vec<super::SimulationItem> = Vec::new();
     let mut components = BTreeMap::new();
     for resolved in items {
-        let (claim, members, owner, before) = match resolved {
+        let (claim, owner, before) = match resolved {
             ResolvedItem::Simulation(item) => {
                 simulations.push(*item);
                 continue;
@@ -3796,129 +3804,115 @@ fn negotiate_items(
                 settled.insert(record.request_index(), (claim_name, *record));
                 continue;
             }
-            ResolvedItem::Claim(claim) => (*claim, Map::new(), None, None),
+            ResolvedItem::Claim(claim) => (*claim, None, None),
             ResolvedItem::Composition(derived) => {
                 let CompositionClaim {
                     claim,
-                    members,
                     package,
                     settled,
                 } = *derived;
-                (claim, members, package, settled)
+                (claim, package, settled)
             }
         };
-        {
-            {
-                let ResolvedClaim {
-                    mut item,
-                    claim_name,
-                    candidates,
-                    subject,
-                    unrouted,
-                } = claim;
-                let admitted = (reads.admit)(&mut item);
-                let mut echo = item
-                    .request_item_wire(&subject)
-                    .map_err(|_| AnalyzeDocumentError::Fault)?;
-                if let Some(request) = echo.as_object_mut() {
-                    request.extend(members);
-                }
-                let owning = match &owner {
-                    Some(package) => owning_model(package, &item.claim).map(str::to_owned),
-                    None => (reads.owner)(&item.claim),
-                };
-                let identity = owning
-                    .map(|model| fsl_replay::certificate_identity_wire(&item.claim, &model))
-                    .transpose()
-                    .map_err(|_| AnalyzeDocumentError::Fault)?;
-                echoes.insert(
-                    item.request_index,
-                    Echo {
-                        claim_name,
-                        request: echo,
-                        locus: fsl_replay::claim_locus_wire(&item.claim).ok(),
-                        identity,
-                        required: item.options.required,
-                        scoped: has_activation_scope(item.kind),
-                    },
-                );
-                if let Some(record) = before {
-                    // FR-1044: settled before negotiation, with its echo.
-                    settled.insert(item.request_index, (None, *record));
-                    continue;
-                }
-                if let Err(refused) = admitted {
-                    let record = match refused {
-                        super::reduction_item::ReductionIssue::UnknownConstraint(name) => {
-                            let mut detail = Map::new();
-                            detail.insert("name".to_owned(), json!(name));
-                            TerminalRecord::disposition_invalid_request(
-                                item.request_index,
-                                CatalogCode::new("invalid_runtime_input", "invalid-value"),
-                                detail,
-                            )
-                        }
-                        super::reduction_item::ReductionIssue::Malformed(_) => {
-                            TerminalRecord::disposition_declined(
-                                item.request_index,
-                                fsl_replay::ProofRefusalCause::InvalidInput,
-                                fsl_replay::DeclineCode::Fsl(
-                                    fsl_foundation::Code::InvalidRuntimeInput,
-                                ),
-                                CatalogCode::new("invalid_runtime_input", "invalid-value"),
-                            )
-                        }
-                    };
-                    settled.insert(item.request_index, (None, record));
-                    continue;
-                }
-                let (disposition, diagnostic) = negotiate.negotiate(&item, &candidates);
-                // A member no route reads settles `unsupported`, except where
-                // negotiation refused the item as invalid first: a kind its
-                // claim's family does not admit (FR-507, FR-627-AC-4).
-                let temporal_kind = match &item.form {
-                    Some(ItemForm::Temporal(form)) => form.item_kind,
-                    _ => ItemKind::Formula,
-                };
-                let family = match &owner {
-                    Some(package) => {
-                        crate::claim_family::claim_family(package, temporal_kind, &item.claim)
-                    }
-                    None => (reads.family)(temporal_kind, &item.claim),
-                };
-                let inapplicable =
-                    family.is_none_or(|family| !item.kind.applies_to_declaration(family));
-                if unrouted
-                    && !inapplicable
-                    && !matches!(disposition, fsl_route::routing::Disposition::InvalidRequest)
-                {
-                    let mut detail = Map::new();
-                    detail.insert("kind".to_owned(), json!(item.kind.to_wire()));
-                    unrouted_items.push(item.request_index);
-                    settled.insert(
-                        item.request_index,
-                        (
-                            None,
-                            TerminalRecord::disposition_unsupported(
-                                item.request_index,
-                                fsl_route::NegotiationOutcome::UnsupportedRequestedCapability
-                                    .code(),
-                                detail,
-                            ),
-                        ),
-                    );
-                    continue;
-                }
-                if let Some(package) = owner {
-                    components.insert(item.request_index, package);
-                }
-                negotiated.push(NegotiatedItem {
-                    item,
-                    disposition,
-                    diagnostic,
-                });
-            }
+        let ResolvedClaim {
+            mut item,
+            claim_name,
+            candidates,
+            subject,
+            unrouted,
+        } = claim;
+        let admitted = (reads.admit)(&mut item);
+        let echo = item
+            .request_item_wire(&subject)
+            .map_err(|_| AnalyzeDocumentError::Fault)?;
+        let owning = match &owner {
+            Some(package) => owning_model(package, &item.claim).map(str::to_owned),
+            None => (reads.owner)(&item.claim),
+        };
+        let identity = owning
+            .map(|model| fsl_replay::certificate_identity_wire(&item.claim, &model))
+            .transpose()
+            .map_err(|_| AnalyzeDocumentError::Fault)?;
+        echoes.insert(
+            item.request_index,
+            Echo {
+                claim_name,
+                request: echo,
+                locus: fsl_replay::claim_locus_wire(&item.claim).ok(),
+                identity,
+                required: item.options.required,
+                scoped: has_activation_scope(item.kind),
+            },
+        );
+        if let Some(record) = before {
+            // FR-1044: settled before negotiation, with its echo.
+            settled.insert(item.request_index, (None, *record));
+            continue;
         }
+        if let Err(refused) = admitted {
+            let record = match refused {
+                super::reduction_item::ReductionIssue::UnknownConstraint(name) => {
+                    let mut detail = Map::new();
+                    detail.insert("name".to_owned(), json!(name));
+                    TerminalRecord::disposition_invalid_request(
+                        item.request_index,
+                        CatalogCode::new("invalid_runtime_input", "invalid-value"),
+                        detail,
+                    )
+                }
+                super::reduction_item::ReductionIssue::Malformed(_) => {
+                    TerminalRecord::disposition_declined(
+                        item.request_index,
+                        fsl_replay::ProofRefusalCause::InvalidInput,
+                        fsl_replay::DeclineCode::Fsl(fsl_foundation::Code::InvalidRuntimeInput),
+                        CatalogCode::new("invalid_runtime_input", "invalid-value"),
+                    )
+                }
+            };
+            settled.insert(item.request_index, (None, record));
+            continue;
+        }
+        let (disposition, diagnostic) = negotiate.negotiate(&item, &candidates);
+        // A member no route reads settles `unsupported`, except where
+        // negotiation refused the item as invalid first: a kind its
+        // claim's family does not admit (FR-507, FR-627-AC-4).
+        let temporal_kind = match &item.form {
+            Some(ItemForm::Temporal(form)) => form.item_kind,
+            _ => ItemKind::Formula,
+        };
+        let family = match &owner {
+            Some(package) => crate::claim_family::claim_family(package, temporal_kind, &item.claim),
+            None => (reads.family)(temporal_kind, &item.claim),
+        };
+        let inapplicable = family.is_none_or(|family| !item.kind.applies_to_declaration(family));
+        if unrouted
+            && !inapplicable
+            && !matches!(disposition, fsl_route::routing::Disposition::InvalidRequest)
+        {
+            let mut detail = Map::new();
+            detail.insert("kind".to_owned(), json!(item.kind.to_wire()));
+            unrouted_items.push(item.request_index);
+            settled.insert(
+                item.request_index,
+                (
+                    None,
+                    TerminalRecord::disposition_unsupported(
+                        item.request_index,
+                        fsl_route::NegotiationOutcome::UnsupportedRequestedCapability.code(),
+                        detail,
+                    ),
+                ),
+            );
+            continue;
+        }
+        if let Some(package) = owner {
+            components.insert(item.request_index, package);
+        }
+        negotiated.push(NegotiatedItem {
+            item,
+            disposition,
+            diagnostic,
+        });
     }
     Ok(Negotiation {
         components,

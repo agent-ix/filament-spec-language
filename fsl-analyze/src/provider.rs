@@ -318,11 +318,39 @@ impl<'r> ProviderRequest<'r> {
 
 /// The typed claim target paired with an FR-331 provider request item.
 pub enum ProviderTarget<'r> {
+    /// A composition: its derived premise slot keys travel with the item
+    /// (FSpec FR-348-AC-3). There is nothing to replay for it.
+    Composition(&'r CompositionTarget),
     /// A value-validity target whose counterexample is replayed by the value
     /// evaluator.
     Value(&'r ValueTarget<'r>),
     /// An operation-contract claim selected by FR-485.
     Contract(&'r fsl_replay::contract_check::ContractClaim),
+}
+
+/// The members of a `composition` provider item beside its claim (FSpec
+/// FR-331 `premises`): the derived premise slots, each `{role, key}`.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CompositionTarget {
+    claim: OccurrenceKey,
+    premises: Vec<serde_json::Value>,
+}
+
+impl CompositionTarget {
+    /// The composition at `claim` over the derived `premises`.
+    pub fn new(claim: OccurrenceKey, premises: Vec<serde_json::Value>) -> Self {
+        Self { claim, premises }
+    }
+
+    /// The composition's claim occurrence.
+    pub fn claim(&self) -> &OccurrenceKey {
+        &self.claim
+    }
+
+    /// The derived premise slots, each `{role, key}`.
+    pub fn premises(&self) -> &[serde_json::Value] {
+        &self.premises
+    }
 }
 
 impl ProviderTarget<'_> {
@@ -331,6 +359,7 @@ impl ProviderTarget<'_> {
         match self {
             Self::Value(target) => target.claim(),
             Self::Contract(target) => target.claim(),
+            Self::Composition(target) => target.claim(),
         }
     }
 }
@@ -342,7 +371,8 @@ impl serde::Serialize for ProviderRequest<'_> {
         let items = self
             .items
             .iter()
-            .map(|item| request_item_wire(&self.graph, item))
+            .zip(&self.targets)
+            .map(|(item, target)| request_item_wire(&self.graph, item, target))
             .collect::<Result<Vec<_>, _>>()
             .map_err(S::Error::custom)?;
         let mut dependencies: Vec<&fsl_replay::HybridProcessDependency> =
@@ -439,6 +469,7 @@ fn proof_bound_wire(
 fn request_item_wire(
     graph: &WireGraph,
     item: &RequirementItem,
+    target: &ProviderTarget<'_>,
 ) -> Result<serde_json::Value, serde_json::Error> {
     use serde::ser::Error as _;
     let origin = item.occurrence().origin();
@@ -500,6 +531,12 @@ fn request_item_wire(
         }
         if !item.options().is_empty() {
             members.insert("options".to_owned(), serde_json::json!(item.options()));
+        }
+        if let ProviderTarget::Composition(composition) = target {
+            members.insert(
+                "premises".to_owned(),
+                serde_json::Value::Array(composition.premises().to_vec()),
+            );
         }
     }
     Ok(wire)
@@ -717,6 +754,7 @@ pub(crate) struct ProviderWork<'a> {
 
 /// The selected target retained until an external provider's verdict settles.
 enum ProviderSelection<'a> {
+    Composition(CompositionTarget),
     Value(Result<ValueTarget<'a>, Selection>),
     Contract(
         Result<
@@ -729,6 +767,7 @@ enum ProviderSelection<'a> {
 impl ProviderSelection<'_> {
     fn is_err(&self) -> bool {
         match self {
+            Self::Composition(_) => false,
             Self::Value(selection) => selection.is_err(),
             Self::Contract(selection) => selection.is_err(),
         }
@@ -736,6 +775,7 @@ impl ProviderSelection<'_> {
 
     fn target(&self) -> Option<ProviderTarget<'_>> {
         match self {
+            Self::Composition(target) => Some(ProviderTarget::Composition(target)),
             Self::Value(Ok(target)) => Some(ProviderTarget::Value(target)),
             Self::Contract(Ok(target)) => Some(ProviderTarget::Contract(target)),
             Self::Value(Err(_)) | Self::Contract(Err(_)) => None,
@@ -817,6 +857,55 @@ pub(crate) fn contract_provider_item_over<'a>(
             selection: ProviderSelection::Contract(selection),
         },
     )
+}
+
+/// The `composition` item at `target` for an external provider (FSpec
+/// FR-348-AC-3). The provider request is emitted only after negotiation, and
+/// carries the derived `premises` and the item's `options`.
+pub(crate) fn composition_provider_item_over<'a>(
+    index: RequestIndex,
+    backend: &BackendId,
+    package: &'a CheckedPackage,
+    packages: &'a PackageInput,
+    (routed, emit): (Option<RequirementItem>, EmitLimits),
+    target: CompositionTarget,
+    shared: Option<Shared<'a>>,
+) -> AnalyzeItem<'a> {
+    let family = claim_family(package, ItemKind::Formula, target.claim());
+    AnalyzeItem::new_with_provider(
+        index,
+        family,
+        Capability::Composition,
+        backend.as_str(),
+        ProviderWork {
+            package,
+            shared,
+            packages,
+            routed,
+            emit,
+            selection: ProviderSelection::Composition(target),
+        },
+    )
+}
+
+/// The FR-331 request item of the `composition` claim at `claim`, with
+/// candidates computed from the current provider registrations and the
+/// item's `options`.
+pub(crate) fn routed_composition_item<'d>(
+    registrations: impl IntoIterator<Item = &'d BackendDescriptor>,
+    index: RequestIndex,
+    claim: &OccurrenceKey,
+    named: Option<&BackendId>,
+) -> Option<RequirementItem> {
+    let mut registry = Registry::new();
+    for descriptor in registrations {
+        registry.register(descriptor.clone()).ok()?;
+    }
+    Some(RequirementItem::composition_clause(
+        index,
+        claim.clone(),
+        registry.candidates(Capability::Composition, named),
+    ))
 }
 
 /// Each provider item's verdict, or the refusal it settles with when no
@@ -1043,7 +1132,9 @@ pub(crate) fn finish(
         | ProviderSelection::Contract(Err(fsl_replay::contract_check::ContractSelection::Fault(
             fault,
         ))) => return EngineReport::Refused(Refusal::Failed(fault.catalog_code())),
-        ProviderSelection::Contract(Ok(_)) => None,
+        // A contract and a composition have no value target to replay a
+        // counterexample at: a `refuted` verdict is never accepted for them.
+        ProviderSelection::Contract(Ok(_)) | ProviderSelection::Composition(_) => None,
     };
     let verdict = match settled {
         Some(Ok(verdict)) => verdict,
