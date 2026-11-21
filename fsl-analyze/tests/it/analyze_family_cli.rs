@@ -540,18 +540,19 @@ fn closed_form_schedule_request(claim: &str, expected: &str, exit: i32, analysis
         taskset Over {\n\
         task a periodic 10 ms deadline 10 ms wcet 6 ms priority 1 lo;\n\
         task b periodic 20 ms deadline 20 ms wcet 10 ms priority 2 lo;\n}\n\
+        taskset Ctl {\n\
+        task a periodic 4 ms deadline 4 ms wcet 1 ms priority 1 lo;\n\
+        task b periodic 6 ms deadline 6 ms wcet 2 ms priority 2 lo;\n\
+        task c periodic 12 ms deadline 12 ms wcet 5 ms priority 3 lo;\n}\n\
         schedulable FullEdf on Full under edf;\n\
+        schedulable CtlFp on Ctl under fixed_priority;\n\
         schedulable OverEdf on Over under edf;\n\
         response AResponse5 on Full.a <= 5 ms under fixed_priority;\n\
         response AResponse4 on Full.a <= 4 ms under fixed_priority;\n";
-    let source = format!(
-        "{source}{}",
-        ctl_body(5, "schedulable CtlFp on Ctl under fixed_priority;\n")
-    );
     let ws = Workspace::new(&format!("schedule-negotiation-{claim}"));
     let path = request_over(
         &ws,
-        &source,
+        source,
         &crate::counter::document(false),
         &[],
         json!({"models": [], "items": [{"claim": claim}]}),
