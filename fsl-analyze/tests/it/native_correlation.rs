@@ -44,6 +44,24 @@ impl Fixture {
     }
 
     fn with_channels(captures: &str, channels: &str, run: &str, owns: bool) -> Self {
+        Self::with_prelude(
+            captures,
+            channels,
+            run,
+            owns,
+            "",
+            filament_semantic_value::checking::CheckMode::Linked,
+        )
+    }
+
+    fn with_prelude(
+        captures: &str,
+        channels: &str,
+        run: &str,
+        owns: bool,
+        prelude: &str,
+        mode: filament_semantic_value::checking::CheckMode,
+    ) -> Self {
         let mut model: Json = serde_json::from_slice(&fill::document()).expect("model JSON");
         model["types"]
             .as_array_mut()
@@ -82,7 +100,7 @@ impl Fixture {
             .push(other);
         let model = serde_json::to_vec(&model).expect("model bytes");
         let body = format!(
-            "protocol P using pp over (k: M::Cell) on origin {{
+            "{prelude}protocol P using pp over (k: M::Cell) on origin {{
             {captures}
             role w on M::Cell;
             relationship Owns = M::owns;
@@ -95,7 +113,7 @@ impl Fixture {
             finish Done as (done: Boolean) {{ false }};
         }}"
         );
-        let checked = fill::package_over(model.clone(), "package", "", &body);
+        let checked = fill::package_over_with_mode(model.clone(), "package", "", &body, mode);
         let reference = json!({"population": "ix://test/fill/cells", "key": "c"});
         let snapshot = json!({
             "format": "filament.state.snapshot/v1",
@@ -335,13 +353,18 @@ fn false_send_and_receive_premises_disable_only_their_candidate() {
             .len(),
         1
     );
-    let undefined = Fixture::new(
+    // The complete-value helper admits modulo; Kernel leaves its nonzero
+    // obligation to runtime. The end calls it without widening the protocol profile.
+    let undefined = Fixture::with_prelude(
+        "",
         "",
         &controls(
-            "related by Owns ((if 6 mod (if tx then 0 else 1) >= 0 then k else k), k)",
+            "related by Owns ((if q(if tx then 0 else 1) >= 0 then k else k), k)",
             "",
         ),
         true,
+        "function q using v(x: Integer): Integer pure { 6 mod x }\n",
+        filament_semantic_value::checking::CheckMode::Kernel,
     );
     undefined.with_routes(true, |source, native| {
         let source = fill::sc_system(source);
@@ -371,11 +394,20 @@ fn false_send_and_receive_premises_disable_only_their_candidate() {
 #[test]
 fn correlation_only_capture_and_prior_binder_reads_remain_live_after_an_earlier_step() {
     let run = format!(
-        "send First via spare as (prior: Reference<M::Cell>) {{ true }}; check Between using v {{ true }}; {}",
-        controls("related by Owns (saved, prior)", "related by Owns (prior, saved)")
+        "send First via spare as (prior: Boolean) {{ prior }}; check Between using v {{ true }}; {}",
+        controls("related by Owns ((if prior then saved else k), saved)", "related by Owns (saved, (if prior then saved else k))")
     );
-    let fixture = Fixture::with_channels("capture saved: Reference<M::Cell> = k;", "channel spare from w to w carries Reference<M::Cell> ordering unordered delivery exactly-once-premise capacity 1 overflow block;", &run, true);
+    let fixture = Fixture::with_channels("capture saved: Reference<M::Cell> = k;", "channel spare from w to w carries Boolean ordering unordered delivery exactly-once-premise capacity 1 overflow block;", &run, true);
     let graph = fixture.graph();
+    let prior = graph
+        .iter()
+        .flat_map(|state| &state.steps)
+        .find(|(step, _)| step.node() == Some("Main/First"))
+        .expect("prior Boolean send");
+    assert!(matches!(
+        prior.0.binder_record(),
+        Some(filament_exact::Value::Boolean(true))
+    ));
     let tx = graph
         .iter()
         .flat_map(|state| &state.steps)

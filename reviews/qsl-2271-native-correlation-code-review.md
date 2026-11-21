@@ -153,3 +153,17 @@ Actual passing tests: sc_send_receive_uses_real_extents_and_preserves_queue_and_
 The third failure is a typed parameter-representation precondition at native ProtocolSystem construction, before related-value evaluation. It does not establish a correlation semantic defect, and this review does not authorize or require a general native type port. Production code is unchanged. No new finding is allocated: these are remaining defects of the same genuine qualification fixtures. Reviewer ran no Cargo, tests, services, relay or tracker writes.
 
 Bounded verdict: NOT MERGEABLE. Code FND-001 remains open; the full seven-test filter is red. Existing gap findings remain fixed. Initial findings, Pass 1 rows and diagnosis clarification remain unchanged.
+
+### Pass 3
+
+Actual FIX2 receipt simple3407-99eb-c1 at 99eb9f0da39ac1f5bd13ec8cf83ae780f4fe104d: exit 101, 1 passed / 2 failed / 0 ignored, 2795 filtered out; the request selected the three previously failing tests. Raw log: /home/peter/.cache/handoff/protocol-batch-2-native-correlation-fix2-runtime.log.
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | still-open | Two genuine qualification fixtures still fail at Source checking before their target correlation runtime: the binder-liveness fixture declares spare carrying Reference<M::Cell>, refused ProtocolAnchor::ChannelCarriesObject at native_correlation.rs:377; the undefined-end subcase uses IntegerMod in a RelatedEnd slot, refused SlotClause::ProfileProhibitedOperator(IntegerMod) at :338-345. These are invalid channel/slot-profile preconditions, not observed correlation production defects. Keep Code FND-001 still-open until admitted fixture forms execute the intended binder/undefined oracles and pass. Do not widen channel reference support, the operator profile, or general native types to repair these fixtures. |
+
+weak_package_profile_refuses_correlation_outside_parallel_and_sc_override_executes passed at 99eb: whole-protocol Tso/Ra correlation refusal and the SC override assertions executed. Combined historical receipts now cover five unique passing test functions: this weak-profile test plus the four retained tests passing at 8fed (positive SC graph/queues/binders; missing-carrier/empty-legacy; Attempt/Recommend guards; mixed-canonical/repeated-alias/replay). This historical union is not a seven-test exact-head PASS. The two remaining test functions are unqualified. Production code is unchanged.
+
+No new finding is allocated: the actual failures remain within the existing high fixture-qualification finding. Original finding rows and Pass 1/2 history are preserved. Reviewer ran no Cargo, tests, services, relay or tracker writes, and made no branch changes.
+
+Bounded verdict: NOT MERGEABLE — Code FND-001 remains open for the two fixture preconditions and complete required runtime qualification is red. No full FR-731, weak correlation, Effect/Event or POR claim is made.

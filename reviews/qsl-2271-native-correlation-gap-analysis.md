@@ -164,3 +164,15 @@ Both gap findings retain their Pass 1 fixed outcomes. FND-001 now additionally h
 Actual passing tests: sc_send_receive_uses_real_extents_and_preserves_queue_and_binder_values; missing_authored_carrier_is_typed_unavailable_but_empty_legacy_group_executes; unported_attempt_and_recommend_correlations_remain_named_unsupported; replay_reports_first_authored_alias_including_repeated_canonical_premises. The last test executes the new differing canonical-index, earlier-true/later-false, exact Other replay, swapped-order and original repeated-alias assertions. The failing false_send_and_receive_premises_disable_only_their_candidate test executes its genuine Owns/Other negative graph, waiting queue and disabled Receive assertions before failing in the separate undefined capture constructor.
 
 Bounded verdict: gap findings fixed; NOT MERGEABLE while code-review FND-001 remains open and the exact required filter reports three fixture failures. No whole-program, weak correlation, Effect/Event or full FR-731 qualification is asserted.
+
+### Pass 3
+
+Actual FIX2 receipt simple3407-99eb-c1 at 99eb9f0da39ac1f5bd13ec8cf83ae780f4fe104d: exit 101, 1 passed / 2 failed / 0 ignored, 2795 filtered out; the request selected the three previously failing tests. Raw log: /home/peter/.cache/handoff/protocol-batch-2-native-correlation-fix2-runtime.log.
+
+Both gap findings retain their Pass 1 fixed outcomes; the Pass 2 actual passing mixed-premise replay evidence remains historical proof for that unchanged test. No prior-open gap findings require new rows. No new findings.
+
+weak_package_profile_refuses_correlation_outside_parallel_and_sc_override_executes passed at 99eb: whole-protocol Tso/Ra correlation refusal and the SC override assertions executed. Combined historical receipts now cover five unique passing test functions: this weak-profile test plus the four retained tests passing at 8fed (positive SC graph/queues/binders; missing-carrier/empty-legacy; Attempt/Recommend guards; mixed-canonical/repeated-alias/replay). This historical union is not a seven-test exact-head PASS. The two remaining test functions are unqualified. Production code is unchanged.
+
+Original finding rows and Pass 1/2 history are preserved. Reviewer ran no Cargo, tests, services, relay or tracker writes, and made no branch changes.
+
+Bounded verdict: NOT MERGEABLE — Code FND-001 remains open for the two fixture preconditions and complete required runtime qualification is red. No full FR-731, weak correlation, Effect/Event or POR claim is made.

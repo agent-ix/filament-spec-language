@@ -421,9 +421,20 @@ pub(crate) fn package_over(
     profiles: &str,
     body: &str,
 ) -> CheckedPackage {
+    package_over_with_mode(document, package_name, profiles, body, CheckMode::Linked)
+}
+
+/// [`package_over`] with the declared functions checked under `mode`.
+pub(crate) fn package_over_with_mode(
+    document: Vec<u8>,
+    package_name: &str,
+    profiles: &str,
+    body: &str,
+    mode: CheckMode,
+) -> CheckedPackage {
     let graph = declarations_over(document, package_name, profiles, body)
         .check(
-            CheckMode::Linked,
+            mode,
             CheckingLimits::default(),
             &fsl_eval::value::S6aRewardEvaluator,
         )
