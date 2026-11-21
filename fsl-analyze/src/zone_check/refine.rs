@@ -788,7 +788,7 @@ impl Product<'_, '_> {
         } else {
             run.successors(&state, &zone, &scale)?
         };
-        for mut successor in successors {
+        for successor in successors {
             let step = steps
                 .get(successor.step)
                 .ok_or(ZoneCheckRefusal::Fault("refinement-step"))?;
