@@ -1129,6 +1129,7 @@ pub(super) fn carry_rows(
             occurrence: _,
             clock_name: _,
             clock: _,
+            source_unit: _,
             trace: _,
         } = row;
         rekey.id(declaration);
@@ -1155,6 +1156,7 @@ pub(super) fn carry_rows(
             occurrence: _,
             clock_name: _,
             clock: _,
+            source_unit: _,
             trace: _,
         } = row;
         rekey.id(declaration);

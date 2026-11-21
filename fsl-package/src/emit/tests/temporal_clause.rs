@@ -2414,3 +2414,89 @@ fn the_requirement_node_is_the_clause_node_and_changes_with_the_captures() {
         );
     }
 }
+
+/// FSpec FR-322 "Clause source unit" (AC-359): in a two-unit package whose
+/// units both select the model, the clause row's `source_unit` is the unit
+/// that declares the clause, whichever of the two it is, never the other
+/// unit that selects the same model.
+#[trace("FR-322-AC-359")]
+#[test]
+fn a_clause_row_names_the_unit_that_declares_the_clause() {
+    let clause = declared("Bound", "eventually[0,1] holds(true)");
+    for declaring in ["a", "b"] {
+        let text = |name: &str| unit(EVENT, if name == declaring { &clause } else { "" });
+        let (a, b) = (text("a"), text("b"));
+        let graph = super::clock_places::assemble_units_with_models(
+            &[("a", a.as_str()), ("b", b.as_str())],
+            &[document()],
+        )
+        .expect("the units assemble")
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &fsl_semantics::check::test_support::ZeroRewardEvaluator,
+        )
+        .unwrap_or_else(|refusals| panic!("the package checks: {refusals:?}"));
+        let selections = graph
+            .temporal_clauses()
+            .iter()
+            .map(|temporal| {
+                let location = graph
+                    .occurrence(temporal.identity(), temporal.claim())
+                    .expect("the clause occurrence");
+                let source = graph.region(location).expect("the region").source().clone();
+                crate::emit::TemporalClockSelection::new(
+                    source,
+                    temporal.clause().span(),
+                    filament_contract_model::ClockConfiguration::EventPosition {
+                        sequence_authority: "test-events".into(),
+                    },
+                )
+            })
+            .collect::<Vec<_>>();
+        let emission = crate::emit::emit_checked_with_temporal_selections(
+            &CheckedPackage::link(graph),
+            &selections,
+            crate::EmitLimits::fixture(),
+        )
+        .expect("the package emits");
+        let wire = wire(&emission);
+        let sources = wire["lock"]["sources"].as_array().expect("lock sources");
+        assert_eq!(sources.len(), 2, "{sources:?}");
+        let declaring_source = sources
+            .iter()
+            .find(|source| source["identity"] == declaring)
+            .unwrap_or_else(|| panic!("a lock source for unit {declaring}: {sources:?}"));
+        let rows = wire["temporal_bindings"].as_array().expect("clause rows");
+        assert_eq!(rows.len(), 1, "{rows:?}");
+        assert_eq!(&rows[0]["source_unit"], declaring_source);
+    }
+}
+
+/// FSpec FR-322 "Formula intervals": an unbounded operator contributes no
+/// interval operand, a bounded one holds its canonical text right after the
+/// operator name.
+#[trace("FR-322")]
+#[test]
+fn an_unbounded_operator_has_no_interval_operand_and_a_bounded_one_has_its_text() {
+    let compiled = compile(&unit(INFINITE, &declared("Free", EVENTUALLY_TWO)));
+    let paths = |wire: &Value| -> Vec<String> {
+        nodes(wire)
+            .iter()
+            .filter(|node| node["node_tag"] == "temporal" && node["semantic_form"] == "formula")
+            .map(|node| node["node_id"]["path"].to_string())
+            .collect()
+    };
+    let free = paths(&compiled.wire);
+    assert!(!free.is_empty());
+    assert!(free.iter().all(|path| !path.contains("steps:")), "{free:?}");
+    let bounded = compile(&unit(
+        EVENT,
+        &declared("Bound", "always[0,2] holds(true)"),
+    ));
+    let bounded = paths(&bounded.wire);
+    assert!(
+        bounded.iter().any(|path| path.contains("\"steps:0..2\"")),
+        "{bounded:?}"
+    );
+}
