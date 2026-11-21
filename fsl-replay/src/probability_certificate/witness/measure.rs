@@ -207,7 +207,11 @@ pub(super) fn replay(
                 cancel,
                 step::ActionRefusal::UnsupportedDraw,
                 |post, rewards, meter, storage| {
-                    let post_truths = read(system, &selected.predicates, reference, post, cancel)?;
+                    let post_truths = if selected.control.reads_post(Some(control)) {
+                        read(system, &selected.predicates, reference, post, cancel)?
+                    } else {
+                        Vec::new()
+                    };
                     let (next, next_sums) = selected
                         .control
                         .step(
@@ -490,6 +494,9 @@ pub(super) fn replay_undefined(
     let mut edges = 0;
     for position in 0..=path.steps.len() {
         bounded::visit(&mut meter, cancel)?;
+        if position > 0 && !selected.control.reads_post(Some(control)) {
+            return Ok(ProbabilityWitnessReplay::Parity);
+        }
         if position > 0 && control.is_decided() {
             return Ok(ProbabilityWitnessReplay::Parity);
         }

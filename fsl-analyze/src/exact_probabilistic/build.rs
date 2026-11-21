@@ -815,7 +815,11 @@ impl Builder<'_, '_, '_, '_> {
         step: Option<&TraceStep>,
     ) -> Step<Target> {
         let binding = self.binding_of(at)?;
-        let truths = match self.truths(post, binding)? {
+        let truths = match if self.plan.reads_post(self.nodes[at].key.monitor) {
+            self.truths(post, binding)?
+        } else {
+            Ok(Vec::new())
+        } {
             Ok(truths) => truths,
             Err(hit) => {
                 let source = &self.nodes[at].key;

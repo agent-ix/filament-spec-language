@@ -341,7 +341,7 @@ pub fn measure_probability_product_key(
             .map_err(|_| ModelKeyError::Denied)?;
         let model =
             quire_canonical::read_with_reservation(raw, identity.input_bytes, &mut Reserve(&scope))
-                .map_err(|_| ModelKeyError::Denied)?;
+                .map_err(|error| key_parse_error(error, identity))?;
         if !key::model_form(model.root()) {
             return Err(ModelKeyError::Unsupported("canonical model body"));
         }
@@ -357,7 +357,7 @@ pub fn measure_probability_product_key(
                     identity.input_bytes,
                     &mut Reserve(&scope),
                 )
-                .map_err(|_| ModelKeyError::Denied)
+                .map_err(|error| key_parse_error(error, identity))
             })
             .transpose()?;
         let key = fsl_eval::probabilistic::key::MeasureProductKey {
@@ -748,7 +748,11 @@ fn enumerate(
                             u64::try_from(edges).unwrap_or(u64::MAX),
                         ));
                     }
-                    let post_truths = read(&post)?;
+                    let post_truths = if plan.control.reads_post(Some(control)) {
+                        read(&post)?
+                    } else {
+                        Vec::new()
+                    };
                     let (next, sums) = plan
                         .control
                         .step(
@@ -1930,5 +1934,29 @@ impl MeasurePayoffKind {
             })
             .collect::<Result<Vec<_>, _>>()?;
         selected.control.start(&truths, meter).map_err(scalar_error)
+    }
+}
+
+fn key_parse_error(
+    error: quire_canonical::ReadError,
+    identity: fsl_foundation::IdentityLimits,
+) -> ModelKeyError {
+    match error {
+        quire_canonical::ReadError::ReservationDenied { .. } => ModelKeyError::Denied,
+        quire_canonical::ReadError::Allocation { requested } => {
+            ModelKeyError::Encoding(fsl_eval::simulation::EncodingRefusal::Allocation { requested })
+        }
+        quire_canonical::ReadError::Limit(limit) => {
+            ModelKeyError::Encoding(fsl_eval::simulation::EncodingRefusal::Limit(
+                fsl_foundation::diagnostic::LimitExceeded::new(
+                    fsl_foundation::Setting::IdentityInputBytes,
+                    identity.input_bytes,
+                    u128::from(limit.required),
+                ),
+            ))
+        }
+        other => ModelKeyError::Encoding(fsl_eval::simulation::EncodingRefusal::NoEncoding(
+            other.to_string(),
+        )),
     }
 }

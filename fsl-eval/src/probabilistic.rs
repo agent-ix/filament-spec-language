@@ -297,6 +297,19 @@ impl MeasurePlan<'_> {
         }
     }
 
+    /// Whether the resolved step's destination contributes a predicate read.
+    /// A fraction's last departing contribution completes its window before
+    /// any predicate outside that window is evaluated.
+    pub fn reads_post(&self, control: Option<MonitorState>) -> bool {
+        !matches!(
+            (self, control),
+            (
+                Self::Fraction { .. },
+                Some(MonitorState::Fraction { remaining: 1 })
+            )
+        )
+    }
+
     /// Advance once after a model step resolves and its predicates are defined.
     /// For a fraction the predicate belongs to the position the step leaves.
     ///

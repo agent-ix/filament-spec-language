@@ -233,6 +233,13 @@ impl<'c> Plan<'c> {
         }
     }
 
+    pub(super) fn reads_post(&self, control: Option<MonitorState>) -> bool {
+        match self {
+            Self::Bounded(plan) => plan.reads_post(control),
+            Self::Formula(_) | Self::Labels => true,
+        }
+    }
+
     /// The control and amounts after a model step that leaves a state whose
     /// predicates read `source` and reaches one whose predicates read `post`,
     /// with the step's `rewards`.

@@ -322,12 +322,79 @@ fn a_draw_with_multiple_post_states_retains_its_full_pending_control() {
         .iter()
         .all(|key| key[7][0] == "drawn" && key[5][0] == "measure"));
     assert!(
-        pending.iter().any(|key| key[7][2][0] == "0")
-            || pending.iter().any(|key| !key[7][2].is_null())
+        pending
+            .iter()
+            .any(|key| key[7][2][0] == json!({"type":"integer","value":"0"})),
+        "{pending:?}"
+    );
+    assert!(
+        pending
+            .iter()
+            .any(|key| key[7][2][0] == json!({"type":"integer","value":"1"})),
+        "{pending:?}"
     );
     let checked = check(&world, "Q", &doc);
     assert!(
         matches!(checked, Ok(ExactProbabilityCertificateCheck::Accepted(_))),
         "{checked:?}"
     );
+}
+
+#[trace("TC-3152", "FR-1043-AC-5", "FR-196-AC-11")]
+#[test]
+fn a_completed_fraction_does_not_read_an_outside_window_deleted_object() {
+    let model=prob_world::coin("probabilistic Mean using ev on M over (c:M::Coin) under Even on origin { mean of fraction holds(c.v = 0) over [0,0] >= rational(1,2) }");
+    let world = World::new(&model);
+    proof(&world, "Mean", ratio(1, 1));
+}
+
+#[trace("TC-3152", "FR-1043-AC-7", "FR-196-AC-13")]
+#[test]
+fn measure_and_fraction_undefined_reads_replay_the_unadvanced_control() {
+    for form in [
+        "probability >= 0.5 [steps from holds(c.v = 0) until holds(c.v = 1) within 2 <= 1]",
+        "quantile 0.5 of (steps from holds(c.v = 0) until holds(c.v = 1) within 2) <= 1",
+        "mean of fraction holds(c.v = 0) over [0,2] >= rational(1,2)",
+    ] {
+        let source = format!(
+            "probabilistic Q using ev on M over (c:M::Coin) under Even on origin {{ {form} }}"
+        );
+        let world = World::new(&prob_world::coin(&source));
+        let record = settle(&world, "Q", ModelCheckLimits::default());
+        let terminal = record
+            .terminal()
+            .unwrap_or_else(|| panic!("{:?}", record.settlement));
+        assert_eq!(
+            terminal.value(),
+            &TerminalValue::Refuted,
+            "{form}: {:?}",
+            terminal.value()
+        );
+        let reproduced = record
+            .probabilistic_counterexample
+            .as_ref()
+            .expect("native undefined evidence");
+        let undefined = reproduced
+            .undefined()
+            .expect("an independently reproduced undefined observation");
+        assert_eq!(undefined.evaluation.site.position, 1);
+        let decoded: Value = serde_json::from_slice(undefined.product_state.as_bytes()).unwrap();
+        assert!(!decoded[5].is_null() && !decoded[6].is_null(), "{decoded}");
+        let system = ModelSystem::new(world.subject().simulation).unwrap();
+        let replay = fsl_replay::replay_probabilistic_undefined(
+            &world.package,
+            &system,
+            &undefined.path.item,
+            undefined,
+            &fsl_analyze::exact_probabilistic::ExactProbLimits::default(),
+            &Cancel::new(),
+        );
+        assert!(
+            matches!(
+                replay,
+                Ok(fsl_replay::ProbabilityWitnessReplay::Reproduced(_))
+            ),
+            "{replay:?}"
+        );
+    }
 }
