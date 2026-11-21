@@ -34,6 +34,7 @@ pub struct SourceDeclarations {
     namespaces: BTreeMap<String, (String, String)>,
     declarations: BTreeMap<DeclarationKey, DeclarationScope>,
     node_scopes: BTreeMap<NodeKey, DeclarationScope>,
+    model_scopes: BTreeMap<NodeKey, DeclarationScope>,
 }
 
 impl SourceDeclarations {
@@ -75,6 +76,17 @@ impl SourceDeclarations {
             });
         }
         let mut result = Self::from_facts(facts)?;
+        for node in graph.semantic_graph().nodes() {
+            if let Some(crate::check::Owner::Model(owner)) = node.owner() {
+                result.model_scopes.insert(
+                    node.key(),
+                    DeclarationScope::Model {
+                        identity: owner.identity().to_owned(),
+                        declaration: owner.node().to_owned(),
+                    },
+                );
+            }
+        }
         for declaration in graph.scope().types().composites() {
             if let Some(node) = graph.semantic_graph().composite_node(&declaration.key()) {
                 if result.node_scope(node).is_some() {
@@ -130,6 +142,60 @@ impl SourceDeclarations {
     /// Callers may not replace an absent join by a global short-name match.
     pub fn node_scope(&self, node: &NodeKey) -> Option<&DeclarationScope> {
         self.node_scopes.get(node)
+    }
+
+    /// Resolve the complete type identity already carried by a checked
+    /// resolution row against actual declaration metadata. Distinct scopes
+    /// sharing a rendering are refused rather than selected by map order.
+    pub fn row_scope(&self, text: &str) -> Result<Option<DeclarationScope>, InternalFault> {
+        if let Ok(node) = text.parse::<NodeKey>() {
+            if let Some(scope) = self
+                .node_scopes
+                .get(&node)
+                .or_else(|| self.model_scopes.get(&node))
+            {
+                return Ok(Some(scope.clone()));
+            }
+        }
+        let normalized = self.text(text);
+        let mut found = None;
+        for scope in self.node_scopes.values().chain(self.model_scopes.values()) {
+            let declaration = match scope {
+                DeclarationScope::Source { declaration, .. }
+                | DeclarationScope::Model { declaration, .. } => declaration,
+            };
+            if declaration == &normalized {
+                if found.as_ref().is_some_and(|previous| previous != scope) {
+                    return Err(fault("clock-type-rendering-has-one-original-scope"));
+                }
+                found = Some(scope.clone());
+            }
+        }
+        Ok(found)
+    }
+
+    /// Normalize an actual checked clock field using this graph's retained
+    /// declaration context. Inherited fields select their original first
+    /// declaring row, not their effective receiver type.
+    pub fn clock_template(
+        &self,
+        clock: &crate::check::ClockField,
+    ) -> Result<super::identity::PlaceTemplate, InternalFault> {
+        let first = clock
+            .resolved_path()
+            .first()
+            .ok_or_else(|| fault("clock-field-has-a-resolved-path"))?;
+        let scope = self
+            .row_scope(&first.declaring_type)?
+            .ok_or_else(|| fault("clock-field-has-original-declaring-scope"))?;
+        super::path::normalize(
+            scope,
+            clock.path(),
+            clock.resolved_path(),
+            |text| self.text(text),
+            |declaring, member| self.member(declaring, member),
+            |text| self.row_scope(text),
+        )
     }
 
     /// Retain a type handle whose actual checked/selected declaration join

@@ -7,6 +7,8 @@ use filament_exact::{NodeKey, ObjectId, ObjectReference, Value};
 pub mod identity;
 /// Authenticated source declaration spelling shared by emission and clock ids.
 pub mod normalization;
+/// Normalized typed clock paths shared by the source and admitted routes.
+pub mod path;
 
 /// Whether the target type is the native clock reference's exact target.
 pub fn is_clock_type(target: &filament_exact::EffectiveId) -> bool {
