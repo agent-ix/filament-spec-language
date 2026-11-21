@@ -355,10 +355,10 @@ fn finite_imported_parameter_origins_preserve_uri_endpoints_and_flat_details() {
 #[trace("TC-1746", "FR-663-AC-4", "FSpec-FR-806-AC-1")]
 fn finite_missing_parameter_origins_remain_unavailable() {
     let mut model = finite_parameter_model();
-    finite_parameter(&mut model)
-        .as_object_mut()
-        .unwrap()
-        .remove("origin");
+    finite_parameter(&mut model)["origin"] = json!({"generated":{
+        "generatorIdentity":"ix://example/generated-parameter",
+        "generatorVersion":"1.0.0","inputIdentities":[]
+    }});
     for (native, canonical, retained) in
         finite_parameter_refusals(&model, "program-with-native-labels")
     {

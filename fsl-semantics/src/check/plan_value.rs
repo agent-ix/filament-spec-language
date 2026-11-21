@@ -157,92 +157,15 @@ fn carried(value_type: &ValueType) -> bool {
 
 /// Find unbounded argument components without treating a state-relative
 /// reference domain as an unbounded value-synthesis population.
-fn unbounded_parameter<'a>(
-    types: &'a filament_semantic_value::declaration::TypeEnvironment,
-    value_type: &'a ValueType,
+fn unbounded_parameter(
+    types: &filament_semantic_value::declaration::TypeEnvironment,
+    value_type: &ValueType,
 ) -> Option<String> {
-    enum Work<'a> {
-        Visit(&'a ValueType, String),
-        Leave(NodeKey),
-    }
-    let mut pending = vec![Work::Visit(value_type, String::new())];
-    let mut visiting = BTreeSet::new();
-    while let Some(work) = pending.pop() {
-        let (value_type, path) = match work {
-            Work::Visit(value_type, path) => (value_type, path),
-            Work::Leave(key) => {
-                visiting.remove(&key);
-                continue;
-            }
-        };
-        let member = |name: &str| {
-            if path.is_empty() {
-                name.to_owned()
-            } else {
-                format!("{path}.{name}")
-            }
-        };
-        match value_type {
-            ValueType::Integer => return Some(member("Integer")),
-            ValueType::String => return Some(member("String")),
-            ValueType::Bytes => return Some(member("Bytes")),
-            ValueType::JsonObject => return Some(member("JsonObject")),
-            ValueType::Option(inner) => pending.push(Work::Visit(inner, member("some"))),
-            ValueType::Collection(collection) => {
-                if collection.bound().is_none() {
-                    return Some(member("unbounded collection"));
-                }
-                pending.push(Work::Visit(collection.element(), member("element")));
-            }
-            ValueType::Map(map) => {
-                if map.bound().is_none() {
-                    return Some(member("unbounded map"));
-                }
-                pending.push(Work::Visit(map.values(), member("value")));
-                pending.push(Work::Visit(map.key(), member("key")));
-            }
-            ValueType::Composite(key) => {
-                if !visiting.insert(key.clone()) {
-                    return Some(member("recursive composite"));
-                }
-                let Some(declaration) = types.composite(key.clone()) else {
-                    return Some(member("unknown composite"));
-                };
-                pending.push(Work::Leave(key.clone()));
-                let children: Vec<_> = match declaration.shape() {
-                    CompositeShape::Record(fields) => fields
-                        .iter()
-                        .map(|field| (member(field.name()), field.value_type()))
-                        .collect(),
-                    CompositeShape::Tuple(positions) => positions
-                        .iter()
-                        .enumerate()
-                        .map(|(index, ty)| (member(&index.to_string()), ty))
-                        .collect(),
-                    CompositeShape::Union(members) => {
-                        let mut children = Vec::new();
-                        for case in members {
-                            for (index, ty) in case.positions().iter().enumerate() {
-                                children
-                                    .push((member(&format!("{}.{index}", case.identifier())), ty));
-                            }
-                        }
-                        children
-                    }
-                };
-                pending.extend(
-                    children
-                        .into_iter()
-                        .rev()
-                        .map(|(path, ty)| Work::Visit(ty, path)),
-                );
-            }
-            // Other finite or staged families are handled by the carried
-            // support boundary; their unsupported status is not unboundedness.
-            _ => {}
-        }
-    }
-    None
+    super::finite_domain::first_unbounded_component(
+        types,
+        value_type,
+        super::finite_domain::DomainContext::PlanParameter,
+    )
 }
 
 fn argument_fields(operations: &[PlanOperation]) -> Vec<(String, ValueType)> {

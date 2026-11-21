@@ -194,6 +194,7 @@ pub use source_model::{
     object_types_of_source_rows, package_of_source_rows, source_identity, source_type_node_key,
     SourceRowObject, SourceRowOperation, SourceRowParameter,
 };
+mod finite_domain;
 mod plan_value;
 pub(crate) mod state_clause;
 mod state_graph_claim;

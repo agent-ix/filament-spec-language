@@ -101,6 +101,8 @@ struct Counter<'w> {
     trip: Option<Cancel>,
     found: bool,
     native: Option<std::sync::Arc<[(filament_exact::EffectiveId, String)]>>,
+    /// Observe an actual retained payload at the library adapter boundary.
+    on_native_payload: Option<Box<dyn FnMut(&PlanStep)>>,
 }
 
 impl<'w> Counter<'w> {
@@ -122,6 +124,7 @@ impl<'w> Counter<'w> {
             trip: None,
             found: false,
             native: None,
+            on_native_payload: None,
         }
     }
 
@@ -172,6 +175,9 @@ impl PlanRules for Counter<'_> {
         &mut self,
         step: &fsl_analyze::plan_search::PlanStep,
     ) -> Result<Self::StepKey, RuleStop> {
+        if let Some(observe) = &mut self.on_native_payload {
+            observe(step);
+        }
         let order = match self.operation(step) {
             "inc" => 0,
             "double" => 1,
@@ -1317,8 +1323,8 @@ fn finite_reference_arguments_drain_two_servers_and_survive_replay() {
     use fsl_analyze::plan_search::replay;
     use fsl_analyze::plan_source::SourcePlan;
     let servers = [
-        ("n2", json!({"drained":false})),
-        ("n1", json!({"drained":false})),
+        ("n2", json!({"drained":{"boolean":false}})),
+        ("n1", json!({"drained":{"boolean":false}})),
     ];
     let world = finite_argument_world(
         DRAIN_MODEL,
@@ -1511,10 +1517,10 @@ fn finite_arguments_keep_mixed_receiver_types_and_source_union_cases() {
     use fsl_analyze::plan_source::SourcePlan;
     let model = DRAIN_MODEL.replace("population servers", "object Router { active: Boolean; operation drain(s: Server) modifies self.active { pre Idle { not self.active }; post Routed { self.active }; } } population routers: Router;\npopulation servers");
     let servers = [
-        ("n1", json!({"drained":false})),
-        ("n2", json!({"drained":false})),
+        ("n1", json!({"drained":{"boolean":false}})),
+        ("n2", json!({"drained":{"boolean":false}})),
     ];
-    let routers = [("r", json!({"active":false}))];
+    let routers = [("r", json!({"active":{"boolean":false}}))];
     let world = finite_argument_world(
         &model,
         "Server",
@@ -1719,8 +1725,8 @@ fn finite_reference_arguments_exclude_objects_deleted_by_an_earlier_step() {
     };
     let model = DRAIN_MODEL.replace("population servers", "object Controller { operation remove() deletes Server; operation choose(s: Server); } population controllers: Controller;\npopulation servers");
     let servers = [
-        ("n1", json!({"drained":false})),
-        ("n2", json!({"drained":false})),
+        ("n1", json!({"drained":{"boolean":false}})),
+        ("n2", json!({"drained":{"boolean":false}})),
     ];
     let controllers = [("c", json!({}))];
     let world = finite_argument_world(
@@ -1862,6 +1868,270 @@ fn finite_argument_retention_denies_the_exact_named_occurrence_bound() {
     assert!(
         matches!(result.cause,Some(PlanStopCause::LimitReached {ref setting,value:6,..}) if setting=="accounting.value_occurrences")
     );
+}
+
+fn finite_payload_world() -> World {
+    native_plan_world(
+        "language \"ix:native\" edition \"1-draft\"; domain \"test/native-plan\"; type ValueRange = Int[0,0]; enum Cell { c0 } object Counter { number: ValueRange; operation move(r: Counter, c: Cell); } population counters: Counter;",
+        "", &[("c",json!({"number":{"integer":"0"}}))],
+    )
+}
+
+fn finite_payload_rules<'a>(world: &'a World, system: &ModelSystem<'_>) -> Counter<'a> {
+    let mut rules = Counter::new(world, system, 0);
+    rules.value_field = "number";
+    rules.native = Some(native_order(system, &["move"]).into());
+    rules
+}
+
+fn finite_payload_observer() -> (Cancel, std::sync::Arc<std::sync::atomic::AtomicUsize>) {
+    let polls = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let observed = polls.clone();
+    let cancel = Cancel::observing(move || {
+        observed.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    });
+    (cancel, polls)
+}
+
+fn finite_payload_cancel_at(
+    target: usize,
+    cause: CancelCause,
+) -> (Cancel, std::sync::Arc<std::sync::Mutex<Option<Cancel>>>) {
+    let slot = std::sync::Arc::new(std::sync::Mutex::new(None::<Cancel>));
+    let weak = std::sync::Arc::downgrade(&slot);
+    let polls = std::sync::atomic::AtomicUsize::new(0);
+    let cancel = Cancel::observing(move || {
+        if polls.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1 == target {
+            if let Some(slot) = weak.upgrade() {
+                if let Some(cancel) = slot.lock().unwrap().as_ref() {
+                    cancel.cancel(cause);
+                }
+            }
+        }
+    });
+    *slot.lock().unwrap() = Some(cancel.clone());
+    (cancel, slot)
+}
+
+/// Applied retention is seven result units; the separate retained invocation
+/// payload is four. A ten-unit request admits Completed but denies the payload.
+#[test]
+#[trace("FR-1012", "FSpec-FR-801", "FSpec-FR-804")]
+fn finite_payload_retention_stops_after_a_real_completed_invocation() {
+    use filament_exact::LimitKind;
+    use fsl_eval::simulation::model::{
+        NativeCandidateControl as Control, NativeCandidateEvent as Event,
+    };
+    let world = finite_payload_world();
+    let system = world_system(&world);
+    let limits = ScalarLimits {
+        result_units: 10,
+        ..UNLIMITED
+    };
+    system.begin_plan_replay(limits);
+    let mut completed = 0;
+    system.visit_plan_candidates(&system.initial()[0],&native_order(&system,&["move"]),None,&mut|event| {
+        if let Event::Completed { receiver,arguments,.. }=event {
+            assert!(matches!(arguments,[filament_exact::Value::Reference(target),filament_exact::Value::Enum(case)] if target==receiver && case.rank()==0));
+            completed+=1;
+        }
+        Control::Continue
+    }).unwrap();
+    assert_eq!(completed, 1);
+    assert_eq!(
+        system.evaluation_meter().consumed(LimitKind::ResultUnits),
+        7
+    );
+    system.begin_plan_replay(limits);
+    let mut rules = finite_payload_rules(&world, &system);
+    let result = run(
+        &mut rules,
+        &system,
+        (1, 1),
+        PlanSearchLimits::default(),
+        None,
+    )
+    .unwrap();
+    assert_eq!(result.status, PlanStatus::Incomplete);
+    assert!(result.plan.is_none() && result.certificate.is_none() && !result.certified);
+    assert!(
+        matches!(result.cause,Some(PlanStopCause::LimitReached{ref setting,value:10,..}) if setting=="accounting.result_units")
+    );
+    assert_eq!(
+        system.evaluation_meter().consumed(LimitKind::ResultUnits),
+        7,
+        "payload denial retains no invalid candidate"
+    );
+}
+
+/// Native replay and the independent checker rederive the real payload and
+/// preserve its shared-meter accounting and cancellation causes.
+#[test]
+#[trace("FR-1012", "FSpec-FR-650", "FSpec-FR-801")]
+fn finite_payload_replay_and_checker_preserve_retention_stops() {
+    use filament_exact::LimitKind;
+    use fsl_eval::simulation::model::{
+        NativeCandidateControl as Control, NativeCandidateEvent as Event,
+    };
+    use std::sync::{atomic::Ordering, Arc, Mutex};
+    let world = finite_payload_world();
+    let system = world_system(&world);
+    system.begin_plan_replay(UNLIMITED);
+    let (cancel, polls) = finite_payload_observer();
+    system.cancel_plan_with(&cancel);
+    let checkpoints = Arc::new(Mutex::new(Vec::new()));
+    let observed = checkpoints.clone();
+    let counted = polls.clone();
+    let mut rules = finite_payload_rules(&world, &system);
+    rules.on_native_payload = Some(Box::new(move |step| {
+        assert!(step.native_values().is_some());
+        observed
+            .lock()
+            .unwrap()
+            .push(counted.load(Ordering::Relaxed));
+    }));
+    let result = run_with(
+        &mut rules,
+        &system,
+        (1, 1),
+        PlanSearchLimits::default(),
+        None,
+        &cancel,
+    )
+    .unwrap();
+    assert_eq!(result.status, PlanStatus::Optimal);
+    assert!(result.certified);
+    let plan = result.plan.unwrap();
+    let checkpoints = checkpoints.lock().unwrap().clone();
+    assert_eq!(
+        checkpoints.len(),
+        2,
+        "search and independent checker each retain one payload"
+    );
+    assert_eq!(
+        system.evaluation_meter().consumed(LimitKind::ResultUnits),
+        33,
+        "search, checker and replay each retain seven native plus four payload units"
+    );
+
+    // The checker gets its own actual Completed event after the search's eleven
+    // units. At twenty-one units only its separate payload retention is denied.
+    system.begin_plan_replay(ScalarLimits {
+        result_units: 21,
+        ..UNLIMITED
+    });
+    let mut rules = finite_payload_rules(&world, &system);
+    let checked = run(
+        &mut rules,
+        &system,
+        (1, 1),
+        PlanSearchLimits::default(),
+        None,
+    )
+    .unwrap();
+    assert_eq!(checked.status, PlanStatus::Incomplete);
+    assert!(!checked.certified && checked.certificate.is_none());
+    assert!(
+        rules.found,
+        "the one-step search goal was found before independent checking stopped"
+    );
+    assert!(
+        matches!(checked.cause,Some(PlanStopCause::LimitReached{ref setting,value:21,..}) if setting=="accounting.result_units")
+    );
+    assert_eq!(
+        system.evaluation_meter().consumed(LimitKind::ResultUnits),
+        18
+    );
+
+    system.begin_plan_replay(ScalarLimits {
+        result_units: 10,
+        ..UNLIMITED
+    });
+    let mut rules = finite_payload_rules(&world, &system);
+    let replayed = fsl_analyze::plan_search::replay::replay(
+        &system,
+        &mut rules,
+        &plan,
+        PlanLengths::new(1, 1).unwrap(),
+        ObjectiveKind::StepSum,
+    );
+    assert!(matches!(
+        replayed,
+        Err(PlanSearchError::RuleStopped(RuleStop::Accounting {
+            counter: "result_units",
+            value: 10
+        }))
+    ));
+    assert_eq!(
+        system.evaluation_meter().consumed(LimitKind::ResultUnits),
+        7
+    );
+
+    system.begin_plan_replay(UNLIMITED);
+    let (native_cancel, native_polls) = finite_payload_observer();
+    system.cancel_plan_with(&native_cancel);
+    let mut completed_at = None;
+    system
+        .visit_plan_candidates(
+            &system.initial()[0],
+            &native_order(&system, &["move"]),
+            None,
+            &mut |event| {
+                if let Event::Completed { .. } = event {
+                    completed_at = Some(native_polls.load(Ordering::Relaxed));
+                }
+                Control::Continue
+            },
+        )
+        .unwrap();
+    let completed_at = completed_at.unwrap();
+    assert_eq!(
+        native_polls.load(Ordering::Relaxed),
+        completed_at,
+        "the next charge after Completed belongs to plan payload retention"
+    );
+    for cause in [CancelCause::Requested, CancelCause::Deadline] {
+        system.begin_plan_replay(UNLIMITED);
+        let (cancel, _keep_slot) = finite_payload_cancel_at(completed_at + 1, cause);
+        system.cancel_plan_with(&cancel);
+        let mut rules = finite_payload_rules(&world, &system);
+        let replayed = fsl_analyze::plan_search::replay::replay(
+            &system,
+            &mut rules,
+            &plan,
+            PlanLengths::new(1, 1).unwrap(),
+            ObjectiveKind::StepSum,
+        );
+        assert!(
+            matches!(replayed,Err(PlanSearchError::RuleStopped(RuleStop::Cancelled(found))) if found==cause)
+        );
+        assert_eq!(
+            system.evaluation_meter().consumed(LimitKind::ResultUnits),
+            7
+        );
+
+        system.begin_plan_replay(UNLIMITED);
+        let (cancel, _keep_slot) = finite_payload_cancel_at(checkpoints[1], cause);
+        system.cancel_plan_with(&cancel);
+        let mut rules = finite_payload_rules(&world, &system);
+        let checked = run_with(
+            &mut rules,
+            &system,
+            (1, 1),
+            PlanSearchLimits::default(),
+            None,
+            &cancel,
+        )
+        .unwrap();
+        assert_eq!(checked.status, PlanStatus::Incomplete);
+        assert!(!checked.certified && checked.certificate.is_none());
+        assert!(matches!(checked.cause,Some(PlanStopCause::Cancelled(found)) if found==cause));
+        assert_eq!(
+            system.evaluation_meter().consumed(LimitKind::ResultUnits),
+            18,
+            "the checker completed native retention before its payload stop"
+        );
+    }
 }
 
 fn native_order(

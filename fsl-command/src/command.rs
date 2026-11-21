@@ -1295,6 +1295,12 @@ impl RunCause {
             | Self::ExportOutput { .. }
             | Self::TlFault(_) => filament_semantic_value::catalog::Category::InternalFailure,
             Self::SpineRun(refusal) => refusal.category(),
+            // FR-663/TC-1746: an unbounded plan parameter is a check-time
+            // admission refusal. Other unsupported projections retain their
+            // existing catalog category.
+            Self::Spine(failure) if failure.refusal.unbounded_parameter_origin().is_some() => {
+                filament_semantic_value::catalog::Category::Refusal
+            }
             Self::AnalyzeRefused(refusal) => refusal.document().category(),
             Self::MonitorRefused(refusal) => refusal.document().category(),
             Self::AnalyzeFault => filament_semantic_value::catalog::Category::InternalFailure,

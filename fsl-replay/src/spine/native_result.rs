@@ -2325,6 +2325,7 @@ fn validate_command_details(
     document: &CommandErrorRead,
     details: NodeRef<'_>,
     code: Code,
+    budget: &mut WorkingBudget,
 ) -> Result<(), NativeRunReadError> {
     let invalid = |member, reason| NativeRunReadError::Invalid { member, reason };
     if code == Code::UnsupportedProjection
@@ -2334,13 +2335,18 @@ fn validate_command_details(
         if matches!(details.node(), Node::Null) {
             return Ok(());
         }
-        let _: ImportedCommandDetails =
-            serde_json::from_str(document._details.get()).map_err(|_| {
-                invalid(
-                    "details",
-                    "closed imported-source details without bytes or native labels",
-                )
-            })?;
+        // The shallow envelope splices details out. Validate the original
+        // retained arena member, rather than its empty placeholder.
+        let encoded = budget
+            .canonical(&details)
+            .map_err(|_| budget.copy_failure("details", "cannot copy imported-source details"))?;
+        budget.charge(u64::try_from(encoded.len()).unwrap_or(u64::MAX))?;
+        let _: ImportedCommandDetails = serde_json::from_slice(&encoded).map_err(|_| {
+            invalid(
+                "details",
+                "closed imported-source details without bytes or native labels",
+            )
+        })?;
         return Ok(());
     }
     let Node::Object(members) = details.node() else {
@@ -2946,7 +2952,7 @@ pub fn read_native_run_result_bounded(
                 reason: "unknown catalog code",
             });
         };
-        validate_command_details(&document, details, code)?;
+        validate_command_details(&document, details, code, &mut budget)?;
         Ok(NativeRunResult::CommandError(Box::new(CommandErrorRecord(
             document, tree,
         ))))
