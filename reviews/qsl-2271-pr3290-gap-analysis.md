@@ -21,7 +21,7 @@ No specification or plan changes occur, so spec-review and its sub-analyses do n
 
 ## Verdict
 
-CONDITIONAL: no slice-local defects found; matrix, full repository audit and runtime acceptance remain unassessed.
+CONDITIONAL for full repository assurance because matrix/full audit were explicitly excluded; no open slice-local findings and all three focused runtime tests pass. This bounded review adds no merge hold.
 
 ## Findings
 
@@ -121,3 +121,41 @@ scope:
     package''s admission. This requirement adds no checked-package member and no Contract'
 findings: []
 ```
+
+## Mechanical range check
+
+Current head: 2394498f7556566e29cd15c8726c399a20983fe7; current parent: 5cb84ef9e24d5ef94d32619dd447b87f406190d4. Git range-diff marks all three original child commits equivalent. The two production files are byte-identical to reviewed d50e806f9b. The only further executable change is nine fixture lines retaining construct metadata for value_type, object_type and population after the existing Level/Cell/Idle type pruning. These are exactly the construct kinds the remaining declarations and populations use; unused record/variant construct declarations are removed. All oracles, replay assertions and runtime implementation are unchanged. No defect remains in this mechanical delta.
+
+No Cargo or runtime command was run in this follow-up. The three focused Any tests remain conditional on Draco; no runtime acceptance is inferred from the parent's static review or this range check.
+
+## New findings (runtime disposition pass 1)
+
+| ID | Severity | Summary | Refs |
+| --- | --- | --- | --- |
+| FND-002 | medium | Package finish uses the synthetic label Flow::finish instead of authored Done, changing blocked-thread locations and counterexample state keys on the package route. | fsl-eval/src/simulation/protocol/program.rs:1162; fsl-analyze/tests/it/analyze_package_protocol.rs:158; fsl-analyze/tests/it/analyze_package_protocol.rs:188 |
+
+Runtime at 2394498f7556566e29cd15c8726c399a20983fe7: 1 passed, 2 failed, 0 ignored, 2513 filtered, exit 101. Replay-refusal passes. The two package/source equality tests fail after the expected source outcome assertions pass. Parsing the full item records and decoding their state keys shows only the finish name differs: package `Flow::finish`, source `Done`, at blocked[0].rest.node and the root thread's rest in prefix post-states and canonical state keys. Nested case has five differing paths including decoded keys; ordinary joined-label case has three. All other record fields compare equal for those two failing cases. The source builder uses protocol.finish's authored name; the package builder hardcodes protocol-name::finish. The admitted finish node already carries declaration identity. Preserve that native authored identity; do not normalize the assertions or change the fixture name to the synthetic value.
+
+## Dispositions
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-002 | still-open | Runtime establishes an actual FR-940-AC-6 counterexample/state-key mismatch; no fix has been reviewed. |
+| FND-002 | fixed | At edb954558b, package finish text preserves the authored declaration name, removing the sole decoded record mismatch. Static fix verified; the two failed runtime tests remain pending Draco. |
+
+## Fix disposition pass 2
+
+Head: edb954558b346829c6d0ff317cd4a117e717b536. The only executable delta from 2394498f75 is nine additions and one deletion in program.rs. The package finish text now comes from the admitted finish node's declaration qualified-name component 2. The emission contract is corroborated by fsl-package/src/emit/tests/protocol_view.rs:385 (`[protocol.name, "finish", "Closed"]`) and protocol_reference.rs:337 (`["Fill", "finish", "End"]`); source uses the same authored finish name. Missing declaration/name returns the existing typed invariant fault instead of panicking or guessing a name. No test fixture or assertion changed. No new static finding was found.
+
+
+The unchanged replay-refusal result at 2394498f75 remains evidence for that test only. No Cargo/runtime/matrix command ran during this disposition.
+
+## Final focused runtime acceptance
+
+The lead supplied Draco's exact-head result for edb954558b346829c6d0ff317cd4a117e717b536: both previously failed exact filters passed, 2 passed, 0 failed, 0 ignored, 2514 filtered, exit 0; raw runner log `/private/tmp/qsl-3290-edb9-fix1.log`. These are `package_parallel_any_cancels_nested_running_branches` and `package_parallel_any_preserves_outstanding_and_joined_labels`. The unchanged `package_parallel_any_preserves_replay_refusal_code_and_cause` passed at 2394498f7556566e29cd15c8726c399a20983fe7 and is retained rather than rerun. The entire three-test focused family is therefore green. The sole executable fix since 2394498f75 preserves the authored finish name and changes no assertion or replay-limit setting. FND-002 is closed with runtime evidence.
+
+No additional Cargo/runtime command was executed by this reviewer. Under the explicitly scoped lane policy, this slice is mergeable; QSL-2271 remains In Progress for its remaining families. Pure equivalent rebases need range checking, not a new full runtime cycle. Repository-wide assurance remains outside this review.
+
+## Final equivalent rebase
+
+Landing head f0f99c6cd2c096ce0be9fef624abc7fdd67457a7 on main32afa435df retains the same production/test patch as 5cb84ef9..edb954558b. The lead measured equal patch-id 06474a6ad65b1fe2b61df32c57963a7f7af099c3. Reviewer inspection of the resulting production diff shows only upstream CheckedTerm::Binding pattern `..` additions outside the child patch; Any join projection, authored finish-name fix and assertions are unchanged. Existing focused runtime evidence remains applicable; no new test cycle was run.
