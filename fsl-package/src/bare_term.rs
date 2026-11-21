@@ -114,6 +114,50 @@ impl From<BareClauseRefusal> for BareFairnessRefusal {
     }
 }
 
+/// A batch clause-form read keeps admitted-view, existing form and native
+/// refusals distinct; no denial is converted into a semantic pending fact.
+#[derive(Debug, thiserror::Error)]
+pub enum BareClauseFormRefusal {
+    /// An existing package clause-form refusal.
+    #[error("package clause form refused: {0:?}")]
+    Form(BareClauseRefusal),
+    /// The requested naming row or clause shape is not owned by this package.
+    #[error(transparent)]
+    View(#[from] crate::checked_views::ViewRefusal),
+    /// The invocation's original native allowance was exhausted.
+    #[error(transparent)]
+    Native(#[from] NativeRowError),
+    /// A paid body reservation failed.
+    #[error("package clause body allocation failed: {0}")]
+    Allocation(#[from] std::collections::TryReserveError),
+}
+
+impl From<BareClauseRefusal> for BareClauseFormRefusal {
+    fn from(refusal: BareClauseRefusal) -> Self {
+        Self::Form(refusal)
+    }
+}
+impl From<crate::checked_views::ClauseBodyRefusal> for BareClauseFormRefusal {
+    fn from(refusal: crate::checked_views::ClauseBodyRefusal) -> Self {
+        match refusal {
+            crate::checked_views::ClauseBodyRefusal::View(refusal) => Self::View(refusal),
+            crate::checked_views::ClauseBodyRefusal::Native(refusal) => Self::Native(refusal),
+            crate::checked_views::ClauseBodyRefusal::Allocation(refusal) => {
+                Self::Allocation(refusal)
+            }
+        }
+    }
+}
+
+struct FormParts<'a, 'p> {
+    over: &'p CheckedNodeId,
+    activation: &'a Activation,
+    captures: &'a [CheckedNodeId],
+    capture_names: &'a [String],
+    formula: &'a [crate::checked_views::FormulaNodeUse<'p>],
+    profile: &'p filament_contract_model::CheckedSelection,
+}
+
 trait FairnessWork {
     type Error: From<BareClauseRefusal>;
     fn visit(&mut self) -> Result<(), Self::Error>;
@@ -166,6 +210,53 @@ impl FairnessWork for MeteredFairness<'_> {
     }
     fn node(&mut self, value: &CheckedNodeId) -> Result<(), Self::Error> {
         Ok(native_row::node(self.budget, self.locus, value)?)
+    }
+}
+
+trait FormWork: FairnessWork {
+    fn value_type(&mut self, value: &filament_exact::ValueType) -> Result<(), Self::Error>;
+    fn interval(&mut self, value: &crate::CheckedOperationInterval) -> Result<(), Self::Error>;
+}
+impl FormWork for UnmeteredFairness {
+    fn value_type(&mut self, _: &filament_exact::ValueType) -> Result<(), Self::Error> {
+        Ok(())
+    }
+    fn interval(&mut self, _: &crate::CheckedOperationInterval) -> Result<(), Self::Error> {
+        Ok(())
+    }
+}
+struct MeteredForm<'a> {
+    budget: &'a mut NativeJoinBudget,
+    locus: NativeJoinLocus,
+}
+impl FairnessWork for MeteredForm<'_> {
+    type Error = BareClauseFormRefusal;
+    fn visit(&mut self) -> Result<(), Self::Error> {
+        Ok(native_row::work(self.budget, self.locus, 1)?)
+    }
+    fn items(&mut self, count: usize) -> Result<(), Self::Error> {
+        Ok(native_row::items(self.budget, self.locus, count)?)
+    }
+    fn text(&mut self, text: &str) -> Result<(), Self::Error> {
+        Ok(native_row::text(self.budget, self.locus, text)?)
+    }
+    fn node(&mut self, node: &CheckedNodeId) -> Result<(), Self::Error> {
+        Ok(native_row::node(self.budget, self.locus, node)?)
+    }
+}
+impl FormWork for MeteredForm<'_> {
+    fn value_type(&mut self, value: &filament_exact::ValueType) -> Result<(), Self::Error> {
+        Ok(native_row::value_type(self.budget, self.locus, value)?)
+    }
+    fn interval(&mut self, value: &crate::CheckedOperationInterval) -> Result<(), Self::Error> {
+        self.visit()?;
+        if let crate::CheckedOperationInterval::Timed { lower, upper, .. } = value {
+            for bound in std::iter::once(lower).chain(upper) {
+                native_row::integer(self.budget, self.locus, &bound.numerator)?;
+                native_row::integer(self.budget, self.locus, &bound.denominator)?;
+            }
+        }
+        Ok(())
     }
 }
 
@@ -1101,6 +1192,93 @@ impl<'p> BarePackage<'p> {
         self.read_temporal_clause_form(claim, false)
     }
 
+    /// Project several authentic naming rows of this owner through one paid
+    /// graph index and the same converter used by the legacy clause reader.
+    /// Step/timed interval payloads are read as the package run form does;
+    /// populations remain the caller's supplied domain facts.
+    ///
+    /// # Errors
+    /// Rejects foreign/copied naming rows, preserves unsupported clause facts,
+    /// and retains the original first unpaid native charge without a new meter.
+    pub fn temporal_clause_forms_with_budget(
+        &self,
+        rows: &[&filament_contract_model::TemporalClauseName],
+        budget: &mut NativeJoinBudget,
+    ) -> Result<Vec<fsl_semantics::check::PackageClauseForm>, BareClauseFormRefusal> {
+        let locus = native_row::start(budget, "temporal_clause_forms")?;
+        native_row::work(budget, locus, 1)?;
+        self.witness().map_err(BareClauseRefusal::from)?;
+        let bodies = crate::checked_views::ClauseBodies::new(self.package(), budget)?;
+        let mut work = MeteredForm { budget, locus };
+        work.items(rows.len())?;
+        let mut forms = Vec::with_capacity(rows.len());
+        for row in rows {
+            let mut authentic = false;
+            for candidate in self.package().temporal_clause_names().into_iter().flatten() {
+                work.visit()?;
+                if std::ptr::eq(candidate, *row) {
+                    authentic = true;
+                    break;
+                }
+            }
+            if !authentic {
+                return Err(crate::checked_views::ViewRefusal::UnresolvedClause.into());
+            }
+            let body = bodies.body(&row.declaration, work.budget)?;
+            let node = bodies
+                .node(&row.declaration)
+                .ok_or(crate::checked_views::ViewRefusal::UnresolvedClause)?;
+            forms.push(self.finish_temporal_clause_form(
+                row,
+                node,
+                FormParts {
+                    over: body.over,
+                    activation: &body.activation,
+                    captures: &body.captures,
+                    capture_names: &body.capture_names,
+                    formula: &body.formula,
+                    profile: body.profile,
+                },
+                |id| bodies.node(id),
+                true,
+                &|| BareClauseRefusal::from(fault("clause-form-shape-is-admitted")),
+                &mut |_position, atom, work| {
+                    let mut found = None;
+                    let mut multiple = false;
+                    for entry in self.package().source_map() {
+                        work.visit()?;
+                        if entry.node_id != *atom.node
+                            || entry.role
+                                != filament_contract_model::CheckedOccurrenceRole::Expression
+                        {
+                            continue;
+                        }
+                        for region in &entry.regions {
+                            work.visit()?;
+                            if region.source == row.declaration_region.source
+                                && region.start >= row.declaration_region.start
+                                && region.end <= row.declaration_region.end
+                            {
+                                if found.is_some() {
+                                    multiple = true;
+                                } else {
+                                    found = Some(region_span(region));
+                                }
+                            }
+                        }
+                    }
+                    match (found, multiple) {
+                        (Some(span), false) => Ok(span),
+                        (Some(_), true) => Ok(region_span(&row.declaration_region)),
+                        (None, _) => Err(crate::checked_views::ViewRefusal::LeafHasNoSource.into()),
+                    }
+                },
+                &mut work,
+            )?);
+        }
+        Ok(forms)
+    }
+
     /// [`Self::temporal_clause_form`] with each operator's step interval read
     /// into the form, for a run that evaluates the clause over a trace. A
     /// timed interval is still a pending fact.
@@ -1183,7 +1361,6 @@ impl<'p> BarePackage<'p> {
         claim: &fsl_foundation::source::provenance::OccurrenceKey,
         intervals: bool,
     ) -> Result<fsl_semantics::check::PackageClauseForm, BareClauseRefusal> {
-        use fsl_semantics::check::{BinaryTemporal, PackageFormulaNode, UnaryTemporal};
         let package = self.package();
         self.witness()?;
         let nodes: BTreeMap<&CheckedNodeId, &CheckedSemanticNodeV2> = package
@@ -1206,6 +1383,55 @@ impl<'p> BarePackage<'p> {
                 ordinal: claim.origin().ordinal(),
             })
             .ok_or_else(malformed)?;
+        self.finish_temporal_clause_form(
+            row,
+            node,
+            FormParts {
+                over: view.over(),
+                activation: view.activation(),
+                captures: view.captures(),
+                capture_names: view.capture_names(),
+                formula: view.formula_graph(),
+                profile: view.profile(),
+            },
+            |id| nodes.get(id).copied(),
+            intervals,
+            &|| BareClauseRefusal::from(malformed()),
+            &mut |position, _entry, _work| {
+                let sources = self
+                    .temporal_atom_sources(claim, position)
+                    .map_err(|_| malformed())?;
+                match sources.as_slice() {
+                    [only] => Ok(fsl_foundation::Span {
+                        start: usize::try_from(only.region.start()).map_err(|_| malformed())?,
+                        end: usize::try_from(only.region.end()).map_err(|_| malformed())?,
+                    }),
+                    _ => Ok(region_span(&row.declaration_region)),
+                }
+            },
+            &mut UnmeteredFairness,
+        )
+    }
+
+    #[ix_trace_rs::string_edge]
+    fn finish_temporal_clause_form<'n, W: FormWork>(
+        &self,
+        row: &filament_contract_model::TemporalClauseName,
+        node: &'n CheckedSemanticNodeV2,
+        parts: FormParts<'_, '_>,
+        lookup: impl Fn(&CheckedNodeId) -> Option<&'n CheckedSemanticNodeV2>,
+        intervals: bool,
+        malformed: &impl Fn() -> BareClauseRefusal,
+        atom_span: &mut impl FnMut(
+            usize,
+            &crate::checked_views::FormulaNodeUse<'_>,
+            &mut W,
+        ) -> Result<fsl_foundation::Span, W::Error>,
+        work: &mut W,
+    ) -> Result<fsl_semantics::check::PackageClauseForm, W::Error> {
+        use fsl_semantics::check::{BinaryTemporal, PackageFormulaNode, UnaryTemporal};
+        let package = self.package();
+        work.text(row.name.as_ref())?;
         let name = row.name.as_ref().to_owned();
         let CheckedTerm::Application { arguments, .. } = &node.body else {
             return Err(malformed().into());
@@ -1215,27 +1441,48 @@ impl<'p> BarePackage<'p> {
         let [_, clock, _, _, CheckedTerm::Aggregate { .. }, _] = arguments.as_slice() else {
             return Err(malformed().into());
         };
-        let fairness =
-            self.read_clause_fairness(&node.node_id, &node.body, &mut UnmeteredFairness)?;
-        let clock = text(clock).ok_or_else(malformed)?.to_owned();
+        let fairness = self.read_clause_fairness(&node.node_id, &node.body, work)?;
+        let clock = text(clock).ok_or_else(malformed)?;
+        work.text(clock)?;
+        let clock = clock.to_owned();
         // FSpec FR-322 "Clause declaration regions": the whole declaration.
         let span = region_span(&row.declaration_region);
-        let binder =
-            |id: &CheckedNodeId| -> Result<(String, filament_exact::ValueType), BareClauseRefusal> {
-                let parameter = nodes.get(id).ok_or_else(malformed)?;
-                let name = group_member(&parameter.body, "name")
-                    .and_then(text)
-                    .ok_or_else(malformed)?;
+        let mut binder =
+            |id: &CheckedNodeId| -> Result<(String, filament_exact::ValueType), W::Error> {
+                work.visit()?;
+                let parameter = lookup(id).ok_or_else(malformed)?;
+                let CheckedTerm::Aggregate { members } = &parameter.body else {
+                    return Err(malformed().into());
+                };
+                let mut name = None;
+                for field in members {
+                    work.visit()?;
+                    if let CheckedTerm::Binding {
+                        name: bound, value, ..
+                    } = field
+                    {
+                        if bound.kind()
+                            == filament_contract_model::CheckedBindingNameKind::Other("name")
+                        {
+                            name = text(value);
+                            break;
+                        }
+                    }
+                }
+                let name = name.ok_or_else(malformed)?;
+                work.visit()?;
                 let value_type = self
                     .exact_type_projections()
                     .get(id)
                     .and_then(|projected| projected.as_ref().ok())
-                    .map(|projected| projected.value_type().clone())
+                    .map(|projected| projected.value_type())
                     .ok_or_else(malformed)?;
-                Ok((name.to_owned(), value_type))
+                work.value_type(value_type)?;
+                work.text(name)?;
+                Ok((name.to_owned(), value_type.clone()))
             };
-        let over = binder(view.over())?;
-        let (activation, trigger) = match view.activation() {
+        let over = binder(parts.over)?;
+        let (activation, trigger) = match parts.activation {
             Activation::Origin => (fsl_semantics::check::Activation::Origin, None),
             Activation::Each { trigger, guard } => (
                 fsl_semantics::check::Activation::Each {
@@ -1244,19 +1491,25 @@ impl<'p> BarePackage<'p> {
                 Some(binder(trigger)?),
             ),
         };
-        let mut captures = Vec::with_capacity(view.captures().len());
-        for (initializer, capture) in view.captures().iter().zip(view.capture_names()) {
+        work.items(parts.captures.len())?;
+        let mut captures = Vec::with_capacity(parts.captures.len());
+        for (initializer, capture) in parts.captures.iter().zip(parts.capture_names) {
+            work.visit()?;
             let value_type = self
                 .exact_type_projections()
                 .get(initializer)
                 .and_then(|projected| projected.as_ref().ok())
-                .map(|projected| projected.value_type().clone())
+                .map(|projected| projected.value_type())
                 .ok_or_else(malformed)?;
-            captures.push((capture.clone(), value_type));
+            work.value_type(value_type)?;
+            work.text(capture)?;
+            captures.push((capture.clone(), value_type.clone()));
         }
-        let uses = view.formula_graph();
+        let uses = parts.formula;
+        work.items(uses.len())?;
         let mut formula = Vec::with_capacity(uses.len());
         for (position, entry) in uses.iter().enumerate() {
+            work.visit()?;
             let pending = |fact| BareClauseRefusal::Pending {
                 fact,
                 node: entry.node.clone(),
@@ -1264,9 +1517,19 @@ impl<'p> BarePackage<'p> {
             let interval = match (&entry.interval, intervals) {
                 (None, _) => None,
                 (Some(interval), true) => {
-                    Some(checked_interval(interval).ok_or_else(|| pending("interval"))?)
+                    work.interval(interval)?;
+                    match checked_interval(interval) {
+                        Some(interval) => Some(interval),
+                        None => {
+                            work.node(entry.node)?;
+                            return Err(pending("interval").into());
+                        }
+                    }
                 }
-                (Some(_), false) => return Err(pending("interval")),
+                (Some(_), false) => {
+                    work.node(entry.node)?;
+                    return Err(pending("interval").into());
+                }
             };
             let operand =
                 |position: usize| entry.operands.get(position).copied().ok_or_else(malformed);
@@ -1275,19 +1538,13 @@ impl<'p> BarePackage<'p> {
                 FormulaOperation::True => PackageFormulaNode::Constant(true),
                 FormulaOperation::False => PackageFormulaNode::Constant(false),
                 FormulaOperation::Holds => {
-                    let sources = self
-                        .temporal_atom_sources(claim, position)
-                        .map_err(|_| malformed())?;
-                    let atom_span = match sources.as_slice() {
-                        [only] => fsl_foundation::Span {
-                            start: usize::try_from(only.region.start()).map_err(|_| malformed())?,
-                            end: usize::try_from(only.region.end()).map_err(|_| malformed())?,
-                        },
-                        _ => span,
-                    };
+                    let atom_span = atom_span(position, entry, work)?;
                     PackageFormulaNode::Holds { span: atom_span }
                 }
-                FormulaOperation::Aggregate => return Err(pending("aggregate")),
+                FormulaOperation::Aggregate => {
+                    work.node(entry.node)?;
+                    return Err(pending("aggregate").into());
+                }
                 FormulaOperation::Not => PackageFormulaNode::Not(operand(0)?),
                 FormulaOperation::And => PackageFormulaNode::And(operand(0)?, operand(1)?),
                 FormulaOperation::Or => PackageFormulaNode::Or(operand(0)?, operand(1)?),
@@ -1322,9 +1579,10 @@ impl<'p> BarePackage<'p> {
             });
         }
         let profile = fsl_semantics::check::TemporalProfile::from_identity(
-            &view.profile().definition.identity,
+            &parts.profile.definition.identity,
         )
         .ok_or_else(malformed)?;
+        work.text(package.name())?;
         Ok(fsl_semantics::check::PackageClauseForm {
             name,
             span,
