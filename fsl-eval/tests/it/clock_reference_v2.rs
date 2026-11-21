@@ -404,7 +404,8 @@ fn actual_clock_references_roundtrip_as_data_through_source_and_bare() {
                 .into_iter()
                 .chain(present.then_some("maybe_stored"))
             {
-                let function = QualifiedName::unqualified(function).expect("function");
+                let function_name = function;
+                let function = QualifiedName::unqualified(function_name).expect("function");
                 let source_value = completed(
                     package
                         .call(
@@ -425,7 +426,7 @@ fn actual_clock_references_roundtrip_as_data_through_source_and_bare() {
                     .expect("actual Bare stored-data call"),
                 );
                 assert_value(&bare_value, &source_value);
-                match function.as_unqualified().expect("local function") {
+                match function_name {
                     "stored" => assert_value(&bare_value, &Value::Reference(places[index].clone())),
                     "maybe_stored" => {
                         assert_value(&bare_value, &Value::Reference(places[1].clone()))
