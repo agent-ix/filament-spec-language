@@ -63,11 +63,11 @@ mod value;
 /// semantic intake. Layer 3 depends on S2, so it obtains these through this
 /// narrow S2 surface instead of naming `fsl-cst` as a direct dependency.
 pub mod cst {
+    pub use fsl_cst::diagnostic::{error, read_source, resource_exhausted};
     pub use fsl_cst::{
         CompleteCause, CompleteCode, CompleteDiagnostic, Limits, ParsedSource, TokenClass, parse,
         parse_source,
     };
-    pub use fsl_cst::diagnostic::{error, read_source};
 }
 
 pub use abstraction_declaration::{
@@ -119,26 +119,25 @@ pub use syntax::{
     FairnessGranularity, FairnessKind, FieldInitializer, FractionForm, FrameEntryForm,
     FunctionDeclaration, HorizonForm, HybridForm, HybridInitialForm, HybridModeForm,
     InitialEntryForm, IntervalForm, IntervalUpper, MeasureForm, MeasureWindowForm, ModeSwitchForm,
-    NameForm,
-    ObjectFieldForm, ObjectForm, ObjectMemberForm, ObjectOperationForm, ObjectPopulationForm,
-    OperationBodyForm, OperatorInterval, ParameterForm, PastWindowForm, PolicyForm,
-    PopulationBoundForm, PopulationForm, PriorityForm, ProbabilisticBody, ProbabilisticForm,
-    ProtocolBodyForm, ProtocolConstructForm, ProtocolConstructKind, ProtocolDeclarationForm,
-    ProtocolNodeDeclaration, ProtocolNodeKind, QuantifiedClockBoundForm, QuantityForm, RandomForm,
-    RatioNumberForm, RatioNumberKind, RatioTermForm, RecordFieldForm, RecordForm, RedefinesForm,
-    RelatedForm, RelationshipForm, ReleaseForm, ReplicatedRoleForm, RequirementForm, ResponseForm,
-    RewardForm, RoleForm, RoleLifetime, SchedulableForm, SchedulerForm, ScopeEntry, ScopeId,
-    ScopeName, ScopedAnchorForm, ShapeChanged, SignedQuantityForm, SignificantContent, Spellings,
-    StateClauseForm, StateClauseKind, StateGraphClaimForm, StateGraphClaimKind,
-    StateGraphPredicateForm, StepLabelForm, StringLiteral, SynthesisDirectionForm, SynthesisForm,
-    SynthesisObjectiveForm, TaskForm, TasksetForm, TemporalClauseForm, TemporalFormulaForm,
-    TemporalNodeForm, TemporalNodeId, TemporalOperator, TemporalOperatorForm, TemporalOperatorUse,
-    TermOperator, TerminalDeclarationForm, TerminalDeclarationKind, TimeInvariantBoundForm,
-    TimeInvariantForm, TimeSourceForm, TimeSourceSyntax, TimedIntervalForm, TimedUpper,
-    TransitionForm, TreeRefusal, TupleForm, TypeForm, TypeFormHead, UnionForm, UnionMemberForm,
-    UnitForm, UnitTermForm, UrgentForm, UrgentTarget, UsingAlias, VerificationPlanForm,
-    VerificationStepForm, WeightedDelayForm, WeightedValueForm, WeightingForm, WorkloadForm,
-    WorkloadWeightForm,
+    NameForm, ObjectFieldForm, ObjectForm, ObjectMemberForm, ObjectOperationForm,
+    ObjectPopulationForm, OperationBodyForm, OperatorInterval, ParameterForm, PastWindowForm,
+    PolicyForm, PopulationBoundForm, PopulationForm, PriorityForm, ProbabilisticBody,
+    ProbabilisticForm, ProtocolBodyForm, ProtocolConstructForm, ProtocolConstructKind,
+    ProtocolDeclarationForm, ProtocolNodeDeclaration, ProtocolNodeKind, QuantifiedClockBoundForm,
+    QuantityForm, RandomForm, RatioNumberForm, RatioNumberKind, RatioTermForm, RecordFieldForm,
+    RecordForm, RedefinesForm, RelatedForm, RelationshipForm, ReleaseForm, ReplicatedRoleForm,
+    RequirementForm, ResponseForm, RewardForm, RoleForm, RoleLifetime, SchedulableForm,
+    SchedulerForm, ScopeEntry, ScopeId, ScopeName, ScopedAnchorForm, ShapeChanged,
+    SignedQuantityForm, SignificantContent, Spellings, StateClauseForm, StateClauseKind,
+    StateGraphClaimForm, StateGraphClaimKind, StateGraphPredicateForm, StepLabelForm,
+    StringLiteral, SynthesisDirectionForm, SynthesisForm, SynthesisObjectiveForm, TaskForm,
+    TasksetForm, TemporalClauseForm, TemporalFormulaForm, TemporalNodeForm, TemporalNodeId,
+    TemporalOperator, TemporalOperatorForm, TemporalOperatorUse, TermOperator,
+    TerminalDeclarationForm, TerminalDeclarationKind, TimeInvariantBoundForm, TimeInvariantForm,
+    TimeSourceForm, TimeSourceSyntax, TimedIntervalForm, TimedUpper, TransitionForm, TreeRefusal,
+    TupleForm, TypeForm, TypeFormHead, UnionForm, UnionMemberForm, UnitForm, UnitTermForm,
+    UrgentForm, UrgentTarget, UsingAlias, VerificationPlanForm, VerificationStepForm,
+    WeightedDelayForm, WeightedValueForm, WeightingForm, WorkloadForm, WorkloadWeightForm,
 };
 
 /// Each explicit heap stack S2 and the form traits keep grows by at most a
