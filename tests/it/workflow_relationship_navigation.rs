@@ -266,7 +266,7 @@ fn assert_value(function: &str, input_key: &str, expected: Value) {
     assert_eq!(document["outcome"]["value"], expected, "{document}");
 }
 
-fn reference(type_identity: &str, object_identity: &str) -> Value {
+fn canonical_reference(type_identity: &str, object_identity: &str) -> Value {
     json!({"reference": {
         "universe": {
             "package": PACKAGE,
@@ -287,31 +287,47 @@ fn source_relationship_members_return_concrete_workflow_references() {
     assert_value(
         "shipments",
         "o1",
-        json!({"set": [reference(SHIPMENT, "s1"), reference(SHIPMENT, "s2")]}),
+        json!({"set": [canonical_reference(SHIPMENT, "s1"), canonical_reference(SHIPMENT, "s2")]}),
     );
     assert_value(
         "shipments",
         "o2",
-        json!({"set": [reference(SHIPMENT, "s3")]}),
+        json!({"set": [canonical_reference(SHIPMENT, "s3")]}),
     );
-    assert_value("paymentAttempts", "o1", reference(PAYMENT_ATTEMPT, "p1"));
-    assert_value("paymentAttempts", "o2", reference(PAYMENT_ATTEMPT, "p2"));
-    assert_value("refunds", "o1", json!({"present": reference(REFUND, "r1")}));
-    assert_value("refunds", "o2", json!({"present": reference(REFUND, "r2")}));
+    assert_value(
+        "paymentAttempts",
+        "o1",
+        canonical_reference(PAYMENT_ATTEMPT, "p1"),
+    );
+    assert_value(
+        "paymentAttempts",
+        "o2",
+        canonical_reference(PAYMENT_ATTEMPT, "p2"),
+    );
+    assert_value(
+        "refunds",
+        "o1",
+        json!({"present": canonical_reference(REFUND, "r1")}),
+    );
+    assert_value(
+        "refunds",
+        "o2",
+        json!({"present": canonical_reference(REFUND, "r2")}),
+    );
     assert_value(
         "provider",
         "o1",
-        json!({"present": reference(PROVIDER, "provider0")}),
+        json!({"present": canonical_reference(PROVIDER, "provider0")}),
     );
     assert_value(
         "provider",
         "o2",
-        json!({"present": reference(PROVIDER, "provider0")}),
+        json!({"present": canonical_reference(PROVIDER, "provider0")}),
     );
     assert_value(
         "providerOrders",
         "provider0",
-        json!({"set": [reference(ORDER, "o1"), reference(ORDER, "o2")]}),
+        json!({"set": [canonical_reference(ORDER, "o1"), canonical_reference(ORDER, "o2")]}),
     );
 }
 
