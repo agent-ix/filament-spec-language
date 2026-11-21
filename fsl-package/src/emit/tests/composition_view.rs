@@ -218,3 +218,170 @@ fn composition_views_keep_member_regions_and_owner_bound_targets() {
         Err(CompositionViewRefusal::NotComposition)
     ));
 }
+
+/// Attribution and owner-reference projection continue one finite native
+/// ledger, with actual source-map visits and first-unpaid limit refusals.
+#[trace("FR-940-AC-1", "FR-531-AC-39", "FSpec-FR-491-AC-7")]
+#[test]
+fn composition_view_projection_preserves_the_cumulative_native_budget() {
+    use crate::NativeRowErrorCode;
+    use filament_contract_model::{NativeJoinBudget, NativeJoinChargeKind};
+
+    let world = World::new();
+    let package = world.checked("interface", CASE_ONE_MEMBERS);
+    let emission = emit_checked(&package).expect("the actual source emits");
+    let document = serde_json::to_vec(&fixture::document()).expect("model document");
+    let models = fsl_semantics::model::intake::package_input([document.as_slice()])
+        .expect("the actual model input");
+    let read = crate::checked_v2::read_evaluation_emission(
+        &package,
+        &emission,
+        library(),
+        &models,
+        crate::checked_v2::V2ReadLimits::fixture(),
+        crate::EmitLimits::fixture(),
+        crate::checked_v2::SourceWitnessSupplier::new(&emission),
+    )
+    .expect("the actual dependency packages and source read-back are admitted");
+    let claim = read.claim_name("Sys").expect("composition name");
+    let view = read.composition(&claim.declaration).expect("legacy view");
+    let mut budget = NativeJoinBudget::new(1_000_000, 1_000_000);
+    let projected = read
+        .composition_with_budget(&claim.declaration, &mut budget)
+        .expect("metered declaration");
+    let declaration_charge = budget.consumed();
+    assert!(declaration_charge.work > 0 && declaration_charge.storage > 0);
+    assert_eq!(view.name(), projected.name());
+    assert_eq!(view.source(), projected.source());
+    let mut visited = 0;
+    // Consume one member at a time so reference reads continue the same budget.
+    for index in 0..view.members().count() {
+        let before = budget.consumed();
+        let member = projected
+            .members_with_budget(&mut budget)
+            .nth(index)
+            .expect("the canonical member")
+            .expect("metered attribution");
+        let after_attribution = budget.consumed();
+        assert!(after_attribution.work > before.work);
+        assert!(after_attribution.storage > before.storage);
+        match member.value() {
+            CompositionMemberValue::Component(component) => {
+                let target = projected
+                    .component_subject_with_budget(&component.name, &mut budget)
+                    .expect("metered owner-bound subject");
+                assert!(target.owner().term(target.node()).is_some());
+            }
+            CompositionMemberValue::Guarantee(clause) => {
+                let target = projected
+                    .clause_with_budget(clause, &mut budget)
+                    .expect("metered owner-bound clause");
+                assert!(target.owner().term(target.node()).is_some());
+            }
+            CompositionMemberValue::Rely(premise)
+            | CompositionMemberValue::LivenessDependency(premise) => {
+                for clause in [&premise.guarantee, &premise.on] {
+                    let target = projected
+                        .clause_with_budget(clause, &mut budget)
+                        .expect("metered owner-bound premise");
+                    assert!(target.owner().term(target.node()).is_some());
+                }
+            }
+            CompositionMemberValue::Supply(_) | CompositionMemberValue::Environment(_) => {}
+        }
+        visited += 1;
+    }
+    assert_eq!(visited, 8);
+    assert!(budget.consumed().work > declaration_charge.work);
+    assert!(budget.consumed().storage > declaration_charge.storage);
+
+    let first = view
+        .members()
+        .next()
+        .expect("first member")
+        .expect("attribution");
+    let row_visits = read
+        .admitted()
+        .source_map()
+        .iter()
+        .position(|entry| {
+            entry.node_id == *view.node()
+                && entry.role == first.occurrence().role
+                && entry.ordinal == first.occurrence().ordinal
+        })
+        .expect("the exact admitted member row")
+        + 1;
+    let region = &first.source().region;
+    let expected_work = 1
+        + ("generated".len() + 1)
+        + row_visits
+        + 1
+        + 2 * (region.source().authority().len() + 1)
+        + 2 * (region.source().identity().len() + 1);
+    let expected_storage = ("generated".len() + 1)
+        + 2
+        + 2 * (region.source().authority().len() + 1)
+        + 2 * (region.source().identity().len() + 1);
+    let mut exact = NativeJoinBudget::new(
+        u64::try_from(expected_work).expect("work"),
+        u64::try_from(expected_storage).expect("storage"),
+    );
+    let actual = view
+        .members_with_budget(&mut exact)
+        .next()
+        .expect("first member")
+        .expect("exact work and storage bounds admit the attribution");
+    assert_eq!(actual.source(), first.source());
+    assert_eq!(
+        exact.consumed().work,
+        u64::try_from(expected_work).expect("work")
+    );
+    assert_eq!(
+        exact.consumed().storage,
+        u64::try_from(expected_storage).expect("storage")
+    );
+
+    for (work, storage, kind, code) in [
+        (
+            0,
+            1_000_000,
+            NativeJoinChargeKind::Work,
+            NativeRowErrorCode::WorkLimit,
+        ),
+        (
+            1_000_000,
+            0,
+            NativeJoinChargeKind::Storage,
+            NativeRowErrorCode::StorageLimit,
+        ),
+    ] {
+        let mut denied = NativeJoinBudget::new(work, storage);
+        let Err(CompositionViewRefusal::Native(refusal)) =
+            read.composition_with_budget(&claim.declaration, &mut denied)
+        else {
+            panic!("projection preserves the native {kind:?} denial");
+        };
+        assert_eq!(refusal.code(), code);
+        assert_eq!(refusal.configured_bound(), Some(0));
+        assert_eq!(refusal.denied(), denied.first_unpaid());
+        assert_eq!(refusal.denied().expect("first unpaid").kind, kind);
+        assert_eq!(refusal.locus(), denied.first_unpaid_locus());
+        let consumed = denied.consumed();
+        let first_unpaid = denied.first_unpaid();
+        let Some(Err(CompositionViewRefusal::Native(repeated))) =
+            view.members_with_budget(&mut denied).next()
+        else {
+            panic!("a later attribution preserves the original denial");
+        };
+        assert_eq!(repeated, refusal);
+        assert!(
+            matches!(view.component_subject_with_budget("Producer", &mut denied), Err(CompositionViewRefusal::Native(error)) if error == refusal)
+        );
+        assert_eq!(denied.first_unpaid(), first_unpaid);
+        assert_eq!(
+            denied.consumed(),
+            consumed,
+            "a denied phase performs no later charge or copy"
+        );
+    }
+}
