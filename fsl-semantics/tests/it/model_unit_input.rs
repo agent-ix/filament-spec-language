@@ -298,7 +298,7 @@ fn package_input_from_sources_keeps_source_labels_and_compiled_document_conflict
 fn a_model_unit_compiles_its_relationship_and_population() {
     let source = r#"language "ix:native" edition "1-draft";
 domain "example/graph";
-object Node { relationship next: Node [0, 1]; }
+object Node { rank: Int[0, 9]; relationship next: Node [0, 1]; }
 population nodes: Node;
 "#;
     let parsed = fsl_cst::parse(
@@ -324,15 +324,16 @@ population nodes: Node;
     assert_eq!(relationship["sourceEnd"]["role"], "next");
     assert!(relationship["targetEnd"].get("role").is_none());
     assert_eq!(relationship["sourceEnd"]["multiplicity"]["lower"], 0);
-    assert!(relationship["sourceEnd"]["multiplicity"]["upper"].is_null());
+    assert!(relationship["sourceEnd"]["multiplicity"].get("upper").is_none());
     assert_eq!(document["populations"][0]["extent"], "closed");
     let packages = package_input([source.as_bytes()]).expect("model unit becomes package input");
-    admit(
+    let (_, admitted) = admit(
         "example/graph",
         &packages,
         ModelNormalizationLimits::default().intake,
     )
     .expect("FR-154 admits the compiled relationship document");
+    read_records("example/graph", &admitted).expect("the relationship records are read");
 }
 
 #[trace("FR-710-AC-2", "TC-1942")]

@@ -1084,9 +1084,7 @@ fn read_object(
                 let mut target_role = None;
                 // Without an `inverse` the reverse end is unnamed and
                 // claims no multiplicity.
-                let mut source_multiplicity = json!(
-                    {"lower": 0, "upper": null, "ordered": false, "unique": true}
-                );
+                let mut source_multiplicity = end_multiplicity(0, None, false, true);
                 if tokens
                     .get(index)
                     .is_some_and(|token| token.text == "inverse")
@@ -1094,9 +1092,7 @@ fn read_object(
                     target_role = Some(tokens.get(index + 1)?.text.clone());
                     index += 2;
                     let (lower, upper, ordered, unique, next) = read_multiplicity(tokens, index)?;
-                    source_multiplicity = json!(
-                        {"lower": lower, "upper": upper, "ordered": ordered, "unique": unique}
-                    );
+                    source_multiplicity = end_multiplicity(lower, upper, ordered, unique);
                     index = next;
                 }
                 if tokens.get(index)?.text != ";" {
@@ -1107,7 +1103,7 @@ fn read_object(
                 relationship_targets.push((target.clone(), target_span));
                 let mut target_end = json!({
                     "type": format!("ix://{package}/{target}"),
-                    "multiplicity": {"lower": lower, "upper": upper, "ordered": ordered, "unique": unique},
+                    "multiplicity": end_multiplicity(lower, upper, ordered, unique),
                 });
                 if let Some(role) = target_role {
                     target_end["role"] = json!(role);
@@ -2217,6 +2213,16 @@ fn read_tuple_type(
         name,
         index,
     ))
+}
+
+/// A relationship end's multiplicity; an unbounded `upper` is left out, as
+/// the Semantic IR schema admits no `null` bound.
+fn end_multiplicity(lower: u64, upper: Option<u64>, ordered: bool, unique: bool) -> Value {
+    let mut multiplicity = json!({"lower": lower, "ordered": ordered, "unique": unique});
+    if let Some(upper) = upper {
+        multiplicity["upper"] = json!(upper);
+    }
+    multiplicity
 }
 
 fn read_multiplicity(
