@@ -49,10 +49,11 @@ use crate::model_check::replay::{
 use crate::refinement::{
     abstract_classes, candidate_lasso_has_fair_run, check_initial, check_protocol_initial,
     check_protocol_state_relations, check_protocol_step, check_step, initial_history, map_state,
-    step_history, stop_verdict, AssumptionSide, AssumptionTarget, CandidateFairState,
-    CandidateFairStep, ConcreteStep, ProtocolAssumptionReason, ProtocolAssumptionWitness,
-    ProtocolRelationError, ProtocolStateRelation, RefinementFailure, RefinementPosition,
-    RefinementSystems, StepVerdict, Taken,
+    row_clock_step, step_history, stop_verdict, AssumptionSide, AssumptionTarget, CandidateFairHop,
+    CandidateFairState, CandidateFairStep, ConcreteStep, InvariantReading,
+    ProtocolAssumptionReason, ProtocolAssumptionWitness, ProtocolRelationError,
+    ProtocolStateRelation, RefinementFailure, RefinementPosition, RefinementSystems, RowClockStep,
+    StepVerdict, Taken,
 };
 use crate::result::DisagreementCause;
 use crate::timed::explore::{explore, widen, Closure};
@@ -856,6 +857,32 @@ fn replay_refinement_trace_with_time_source(
     })
 }
 
+/// How the abstract time invariants of `candidates` read at `clocks`: a
+/// failure counts only when every candidate's invariant fails, since a
+/// candidate whose invariant holds can still go on (FR-899 "Timed subjects").
+fn invariant_reading(
+    systems: &RefinementSystems<'_>,
+    timed: &TimedSystem<'_, '_>,
+    candidates: &[ModelState],
+    clocks: &ClockValuation,
+) -> Result<InvariantReading, ReplayRefusal> {
+    let mut failing = 0_usize;
+    for candidate in candidates {
+        let state = systems
+            .abstract_system
+            .pre_state(candidate.clone(), systems.abstract_system.declared_anchor());
+        if timed
+            .invariants(&state)
+            .map_err(|_| fault("timed-abstract-invariant"))?
+            .iter()
+            .any(|constraint| !constraint.holds(clocks))
+        {
+            failing += 1;
+        }
+    }
+    Ok(InvariantReading::of(failing, candidates.len()))
+}
+
 /// Replay FR-900's derived abstract clocks along the mapped discrete path.
 fn replay_abstract_timed_failure(
     refinement: &CheckedRefinement,
@@ -906,16 +933,10 @@ fn replay_abstract_timed_failure(
         },
     };
     mapped.extend(prior.abstract_states.first().cloned());
-    for candidate in &prior.abstract_states {
-        let state = systems
-            .abstract_system
-            .pre_state(candidate.clone(), systems.abstract_system.declared_anchor());
-        if timed
-            .invariants(&state)
-            .map_err(|_| fault("timed-abstract-invariant"))?
-            .iter()
-            .any(|constraint| !constraint.holds(&clocks))
-        {
+    match invariant_reading(systems, &timed, &prior.abstract_states, &clocks)? {
+        InvariantReading::Holds => {}
+        InvariantReading::Mixed => return Ok(None),
+        InvariantReading::Fails => {
             return Ok(Some((
                 RefinementFailure::AbstractTimeInvariant {
                     position: 0,
@@ -930,16 +951,10 @@ fn replay_abstract_timed_failure(
             return Ok(None);
         };
         clocks = clocks.delayed(delay);
-        for candidate in &prior.abstract_states {
-            let state = systems
-                .abstract_system
-                .pre_state(candidate.clone(), systems.abstract_system.declared_anchor());
-            if timed
-                .invariants(&state)
-                .map_err(|_| fault("timed-abstract-invariant"))?
-                .iter()
-                .any(|constraint| !constraint.holds(&clocks))
-            {
+        match invariant_reading(systems, &timed, &prior.abstract_states, &clocks)? {
+            InvariantReading::Holds => {}
+            InvariantReading::Mixed => return Ok(None),
+            InvariantReading::Fails => {
                 return Ok(Some((
                     RefinementFailure::AbstractTimeInvariant {
                         position: u64::try_from(index + 1).unwrap_or(u64::MAX),
@@ -1023,49 +1038,42 @@ fn replay_abstract_timed_failure(
             }
             clocks = selected.reset(&clocks);
         } else if let Taken::CandidateSteps(steps) = *taken {
-            let mut selected = None;
-            'candidates: for candidate in &prior.abstract_states {
-                let state = systems
-                    .abstract_system
-                    .pre_state(candidate.clone(), systems.abstract_system.declared_anchor());
-                for abstract_step in timed
-                    .guarded_steps(&state)
-                    .map_err(|_| fault("timed-abstract-guard"))?
-                {
-                    if steps.iter().any(|step| {
-                        step.transition
-                            .as_ref()
-                            .is_some_and(|transition| transition == abstract_step.transition())
-                    }) {
-                        selected = Some(abstract_step);
-                        break 'candidates;
+            // Each row's step is the one of the candidate it starts from; the
+            // rows must agree on guard, carries and resets, and a mix of
+            // stutter and step settles nothing from the guard.
+            match row_clock_step(
+                &systems.abstract_system,
+                &timed,
+                &prior.abstract_states,
+                &steps,
+            ) {
+                Ok(RowClockStep::Stutter) => {}
+                Ok(RowClockStep::Agreed(selected)) => {
+                    if !selected
+                        .parts()
+                        .iter()
+                        .any(|part| part.iter().all(|constraint| constraint.holds(&clocks)))
+                    {
+                        return Ok(Some((
+                            RefinementFailure::AbstractClockGuard {
+                                position: u64::try_from(index + 1).unwrap_or(u64::MAX),
+                                operation: selected.operation().to_owned(),
+                            },
+                            mapped,
+                        )));
                     }
+                    clocks = selected.reset(&clocks);
                 }
+                Ok(RowClockStep::Disagree) => return Ok(None),
+                Err(_) => return Err(fault("timed-abstract-guard")),
             }
-            let Some(selected) = selected else {
-                return Ok(None);
-            };
-            if !selected
-                .parts()
-                .iter()
-                .any(|part| part.iter().all(|constraint| constraint.holds(&clocks)))
-            {
-                return Ok(None);
-            }
-            clocks = selected.reset(&clocks);
         }
         prior = *post;
         mapped.extend(prior.abstract_states.first().cloned());
-        for candidate in &prior.abstract_states {
-            let state = systems
-                .abstract_system
-                .pre_state(candidate.clone(), systems.abstract_system.declared_anchor());
-            if timed
-                .invariants(&state)
-                .map_err(|_| fault("timed-abstract-invariant"))?
-                .iter()
-                .any(|constraint| !constraint.holds(&clocks))
-            {
+        match invariant_reading(systems, &timed, &prior.abstract_states, &clocks)? {
+            InvariantReading::Holds => {}
+            InvariantReading::Mixed => return Ok(None),
+            InvariantReading::Fails => {
                 return Ok(Some((
                     RefinementFailure::AbstractTimeInvariant {
                         position: u64::try_from(index + 1).unwrap_or(u64::MAX),
@@ -1513,54 +1521,79 @@ fn replay_lasso(
         payload.refinement.as_ref(),
         Some(RefinementFailure::HiddenUnfair { .. })
     ) {
-        let mut positions = Vec::with_capacity(loop_trail.len());
         let mut identities = BTreeSet::<ModelTransition>::new();
-        for position in loop_trail {
-            let mut candidates = Vec::with_capacity(position.abstract_states.len());
-            for candidate in &position.abstract_states {
-                let (key, _) = systems
-                    .abstract_system
-                    .state_key_of(candidate)
-                    .map_err(|_| fault("hidden-liveness-candidate-has-a-state-key"))?;
-                let expansion = match systems.abstract_system.expand_state(candidate) {
-                    Ok(expansion) => expansion,
-                    Err(stop) => match stop_verdict(&systems.abstract_system, stop) {
-                        StepVerdict::Stopped(reached) => {
-                            return Ok(RefinementTraceSettlement::Stopped(reached));
+        let (positions, candidate_rows) =
+            if let Some(protocol) = systems.abstract_protocol.as_ref() {
+                match protocol_hidden_graph(protocol, loop_trail, loop_taken)? {
+                    ProtocolHiddenGraph::Built(positions, rows) => (positions, rows),
+                    ProtocolHiddenGraph::Settled(settlement) => return Ok(settlement),
+                }
+            } else {
+                let mut positions = Vec::with_capacity(loop_trail.len());
+                for position in loop_trail {
+                    let mut candidates = Vec::with_capacity(position.abstract_states.len());
+                    for candidate in &position.abstract_states {
+                        let (key, _) = systems
+                            .abstract_system
+                            .state_key_of(candidate)
+                            .map_err(|_| fault("hidden-liveness-candidate-has-a-state-key"))?;
+                        let expansion = match systems.abstract_system.expand_state(candidate) {
+                            Ok(expansion) => expansion,
+                            Err(stop) => match stop_verdict(&systems.abstract_system, stop) {
+                                StepVerdict::Stopped(reached) => {
+                                    return Ok(RefinementTraceSettlement::Stopped(reached));
+                                }
+                                _ => return Err(fault("hidden-liveness-candidate-expands")),
+                            },
+                        };
+                        if expansion.findings.iter().any(|finding| {
+                            matches!(finding, ModelFinding::ContractUndetermined { .. })
+                        }) {
+                            return Ok(RefinementTraceSettlement::Inconclusive(no_value_cause()));
                         }
-                        _ => return Err(fault("hidden-liveness-candidate-expands")),
-                    },
-                };
-                if expansion
-                    .findings
+                        let transitions: Vec<_> = expansion
+                            .successors
+                            .into_iter()
+                            .map(|(transition, _)| transition)
+                            .collect();
+                        identities.extend(transitions.iter().cloned());
+                        candidates.push((key, transitions));
+                    }
+                    positions.push(candidates);
+                }
+                let rows = loop_taken
                     .iter()
-                    .any(|finding| matches!(finding, ModelFinding::ContractUndetermined { .. }))
-                {
-                    return Ok(RefinementTraceSettlement::Inconclusive(no_value_cause()));
-                }
-                let transitions: Vec<_> = expansion
-                    .successors
-                    .into_iter()
-                    .map(|(transition, _)| transition)
-                    .collect();
-                identities.extend(transitions.iter().cloned());
-                candidates.push((key, transitions));
-            }
-            positions.push(candidates);
-        }
-        let mut taken_identities = Vec::<ModelTransition>::new();
-        for taken in loop_taken {
-            match taken {
-                Taken::Abstract(transitions) => {
-                    taken_identities.extend(transitions.iter().cloned())
-                }
-                Taken::CandidateSteps(steps) => {
-                    taken_identities.extend(steps.iter().filter_map(|step| step.transition.clone()))
-                }
-                Taken::Stutter | Taken::Protocol(_) | Taken::ProtocolTraces(_) => {}
+                    .map(|taken| match taken {
+                        Taken::CandidateSteps(rows) => Ok(rows
+                            .iter()
+                            .map(|row| {
+                                (
+                                    row.pre_state.clone(),
+                                    row.transition.clone(),
+                                    row.post_state.clone(),
+                                    Vec::new(),
+                                )
+                            })
+                            .collect::<Vec<_>>()),
+                        _ => Err(fault("hidden-liveness-loop-retains-candidate-steps")),
+                    })
+                    .collect::<Result<Vec<_>, ReplayRefusal>>()?;
+                (positions, rows)
+            };
+        for candidates in &positions {
+            for (_, enabled) in candidates {
+                identities.extend(enabled.iter().cloned());
             }
         }
-        identities.extend(taken_identities);
+        for rows in &candidate_rows {
+            for (_, transition, _, hops) in rows {
+                identities.extend(transition.iter().cloned());
+                for (enabled, taken) in hops {
+                    identities.extend(enabled.iter().cloned());
+                    identities.extend(taken.iter().cloned());
+                }
+            }
+        }
         let identities: Vec<_> = identities.into_iter().collect();
         let numbered: BTreeMap<_, _> = identities
             .iter()
@@ -1589,29 +1622,46 @@ fn replay_lasso(
                     .collect::<Result<Vec<_>, ReplayRefusal>>()
             })
             .collect::<Result<Vec<_>, ReplayRefusal>>()?;
-        let candidate_steps = loop_taken
+        let candidate_steps = candidate_rows
             .iter()
-            .map(|taken| match taken {
-                Taken::CandidateSteps(rows) => {
-                    rows.iter()
-                        .map(|row| {
-                            Ok(CandidateFairStep {
-                                pre_state: row.pre_state.clone(),
-                                transition: row
-                                    .transition
-                                    .as_ref()
-                                    .map(|transition| {
-                                        numbered.get(transition).copied().ok_or_else(|| {
-                                            fault("candidate-taken-transition-numbered")
-                                        })
-                                    })
-                                    .transpose()?,
-                                post_state: row.post_state.clone(),
+            .map(|rows| {
+                rows.iter()
+                    .map(|(pre_state, transition, post_state, hops)| {
+                        let number = |transition: &ModelTransition| {
+                            numbered
+                                .get(transition)
+                                .copied()
+                                .ok_or_else(|| fault("candidate-taken-transition-numbered"))
+                        };
+                        let interior = hops
+                            .iter()
+                            .map(|(enabled, taken)| {
+                                Ok(CandidateFairHop {
+                                    enabled: enabled.iter().map(number).collect::<Result<
+                                        Vec<_>,
+                                        ReplayRefusal,
+                                    >>(
+                                    )?,
+                                    transition: taken.as_ref().map(number).transpose()?,
+                                })
                             })
+                            .collect::<Result<Vec<_>, ReplayRefusal>>()?;
+                        Ok(CandidateFairStep {
+                            pre_state: pre_state.clone(),
+                            transition: transition
+                                .as_ref()
+                                .map(|transition| {
+                                    numbered
+                                        .get(transition)
+                                        .copied()
+                                        .ok_or_else(|| fault("candidate-taken-transition-numbered"))
+                                })
+                                .transpose()?,
+                            post_state: post_state.clone(),
+                            interior,
                         })
-                        .collect::<Result<Vec<_>, ReplayRefusal>>()
-                }
-                _ => Err(fault("hidden-liveness-loop-retains-candidate-steps")),
+                    })
+                    .collect::<Result<Vec<_>, ReplayRefusal>>()
             })
             .collect::<Result<Vec<_>, ReplayRefusal>>()?;
         let fair_in = |scope: ConstraintScope| -> Result<bool, ReplayRefusal> {
@@ -1970,6 +2020,170 @@ enum Enabledness {
 enum ConstraintScope {
     Through(usize),
     Only(usize),
+}
+
+/// A candidate configuration key with the operations enabled from it.
+type EnabledCandidate = (Vec<u8>, Vec<ModelTransition>);
+
+/// The operations enabled at a configuration and the one a step takes from it.
+type HopRow = (Vec<ModelTransition>, Option<ModelTransition>);
+
+/// One candidate step row: source key, first taken operation, target key and
+/// the further steps through intermediate configurations.
+type CandidateRow = (Vec<u8>, Option<ModelTransition>, Vec<u8>, Vec<HopRow>);
+
+/// The candidate graph of a hidden abstract protocol lasso: per position the
+/// candidate configurations' keys with the abstract operations the protocol
+/// has a step of from each, and per loop edge the candidate step rows.
+enum ProtocolHiddenGraph {
+    Built(Vec<Vec<EnabledCandidate>>, Vec<Vec<CandidateRow>>),
+    Settled(RefinementTraceSettlement),
+}
+
+/// The abstract operations the protocol has a step of from `candidate`'s
+/// configuration, or the settlement a stop or an undecided contract ends the
+/// replay with.
+fn protocol_enabled_at(
+    protocol: &crate::refinement::AbstractProtocolSystem<'_>,
+    candidate: &crate::refinement::ProtocolCandidate,
+) -> Result<Result<Vec<ModelTransition>, RefinementTraceSettlement>, ReplayRefusal> {
+    let expansion = match protocol.successors(candidate) {
+        Ok(expansion) => expansion,
+        Err(stop) => match stop_verdict(protocol.model(), stop) {
+            StepVerdict::Stopped(reached) => {
+                return Ok(Err(RefinementTraceSettlement::Stopped(reached)));
+            }
+            _ => return Err(fault("hidden-liveness-protocol-candidate-expands")),
+        },
+    };
+    if expansion
+        .findings
+        .iter()
+        .any(|finding| matches!(finding, ModelFinding::ContractUndetermined { .. }))
+    {
+        return Ok(Err(RefinementTraceSettlement::Inconclusive(
+            no_value_cause(),
+        )));
+    }
+    let mut enabled: Vec<ModelTransition> = Vec::new();
+    for (transition, _) in &expansion.successors {
+        if let Some(application) = transition.application() {
+            if !enabled.contains(application) {
+                enabled.push(application.clone());
+            }
+        }
+    }
+    Ok(Ok(enabled))
+}
+
+/// Rebuild the candidate graph of a protocol subject from the recomputed
+/// loop positions and the protocol steps each loop edge took (FR-899
+/// "Abstract protocol subjects"): a class is enabled at a candidate when the
+/// protocol has a step of it from that candidate's configuration, and a
+/// trace edge runs through the configurations of its internal closure, each
+/// with its own enabledness and its own taken application.
+fn protocol_hidden_graph(
+    protocol: &crate::refinement::AbstractProtocolSystem<'_>,
+    loop_trail: &[RefinementPosition],
+    loop_taken: &[Taken],
+) -> Result<ProtocolHiddenGraph, ReplayRefusal> {
+    let key_of = |candidate: &crate::refinement::ProtocolCandidate| {
+        protocol
+            .state_key(candidate)
+            .map(|(key, _)| key)
+            .map_err(|_| fault("hidden-liveness-protocol-candidate-has-a-state-key"))
+    };
+    let mut positions = Vec::with_capacity(loop_trail.len());
+    for position in loop_trail {
+        let mut candidates = Vec::with_capacity(position.abstract_protocol_states.len());
+        for candidate in &position.abstract_protocol_states {
+            let enabled = match protocol_enabled_at(protocol, candidate)? {
+                Ok(enabled) => enabled,
+                Err(settlement) => return Ok(ProtocolHiddenGraph::Settled(settlement)),
+            };
+            candidates.push((key_of(candidate)?, enabled));
+        }
+        positions.push(candidates);
+    }
+    let mut steps = Vec::with_capacity(loop_taken.len());
+    for (index, taken) in loop_taken.iter().enumerate() {
+        let source = loop_trail
+            .get(index)
+            .ok_or_else(|| fault("a-protocol-loop-edge-has-a-source"))?;
+        let target = positions
+            .get((index + 1) % positions.len())
+            .ok_or_else(|| fault("a-protocol-loop-edge-has-a-target"))?;
+        let reaches = |key: &Vec<u8>| target.iter().any(|(candidate, _)| candidate == key);
+        let mut rows = Vec::new();
+        for candidate in &source.abstract_protocol_states {
+            let pre = key_of(candidate)?;
+            match taken {
+                Taken::Stutter => {
+                    if reaches(&pre) {
+                        rows.push((pre.clone(), None, pre, Vec::new()));
+                    }
+                }
+                Taken::Protocol(transitions) => {
+                    let expansion = protocol
+                        .successors(candidate)
+                        .map_err(|_| fault("hidden-liveness-protocol-candidate-expands"))?;
+                    for (transition, post) in expansion.successors {
+                        if !transitions.contains(&transition) {
+                            continue;
+                        }
+                        let post = key_of(&post)?;
+                        if reaches(&post) {
+                            rows.push((
+                                pre.clone(),
+                                transition.application().cloned(),
+                                post,
+                                Vec::new(),
+                            ));
+                        }
+                    }
+                }
+                Taken::ProtocolTraces(traces) => {
+                    for trace in traces.iter().filter(|trace| trace.start_key == pre) {
+                        let post = trace
+                            .candidate_keys
+                            .last()
+                            .unwrap_or(&trace.start_key)
+                            .clone();
+                        if !reaches(&post) {
+                            continue;
+                        }
+                        let first = trace
+                            .transitions
+                            .first()
+                            .and_then(|step| step.application().cloned());
+                        // The configuration each later step leaves is the one
+                        // the step before it reached.
+                        let mut hops = Vec::new();
+                        for (step, from) in trace
+                            .transitions
+                            .iter()
+                            .skip(1)
+                            .zip(trace.candidates.iter())
+                        {
+                            let enabled = match protocol_enabled_at(protocol, from)? {
+                                Ok(enabled) => enabled,
+                                Err(settlement) => {
+                                    return Ok(ProtocolHiddenGraph::Settled(settlement));
+                                }
+                            };
+                            hops.push((enabled, step.application().cloned()));
+                        }
+                        rows.push((pre.clone(), first, post, hops));
+                    }
+                }
+                Taken::Abstract(_) | Taken::CandidateSteps(_) => {
+                    return Err(fault("a-protocol-loop-edge-takes-protocol-steps"));
+                }
+            }
+        }
+        steps.push(rows);
+    }
+    Ok(ProtocolHiddenGraph::Built(positions, steps))
 }
 
 fn replay_candidate_constraints(

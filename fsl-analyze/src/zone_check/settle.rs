@@ -428,6 +428,9 @@ pub fn settle_timed_refinement<S>(
             timed_stopped(*cause, cancel)
         }
         TimedLivenessHalf::Checked(TimedLivenessOutcome::Fault { .. }) => ZoneCheckRecord::failed(),
+        // The item layer reports a refused liveness half as its refusal; a
+        // settlement that reaches here proves nothing.
+        TimedLivenessHalf::Refused(_) => ZoneCheckRecord::failed(),
     }
 }
 
