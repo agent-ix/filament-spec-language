@@ -188,7 +188,7 @@ fn write_run(directory: &Path, complete_refunds: bool, add_contradictory_refund:
     let request = json!({"format": "native-run/1", "request": {
         "models": [{"format": "semantic-ir/2.0.0", "source": source("model.semantic-ir.json", "WorkflowModel")}],
         "program": {"source": source("workflow.native", "WorkflowUnit")},
-        "call": {"function": "recovered", "snapshot": "current", "arguments": [
+        "call": {"function": "recovered", "snapshot": "snapshot.json", "arguments": [
             {"parameter": "order", "value": {"reference": {"population": ORDERS, "key": "o1"}}},
             {"parameter": "reservations", "value": {"population": RESERVATIONS}},
             {"parameter": "refunds", "value": {"population": REFUNDS}}

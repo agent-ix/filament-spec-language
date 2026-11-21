@@ -460,7 +460,7 @@ fn a_population_result_is_a_set_of_references() {
 #[trace("TC-128", "FR-046-AC-6")]
 fn source_queries_aggregate_a_complete_population_view() {
     let directory = spine_dir(
-        "type Total = Int[0, 2000];\n\
+        "type Total = Int[0, 4000];\n\
          type Count = Int[0, 4];\n\
          function totalVersions using v(p: Population<Config::ConfigVersion>[4]): Total pure {\
            sum<Total>(r in allInstances<Config::ConfigVersion>(p): deref(r).versionNumber)\
@@ -487,7 +487,7 @@ fn source_queries_aggregate_a_complete_population_view() {
 fn an_aggregate_over_an_incomplete_population_is_not_a_total() {
     let directory = spine_dir_for_case(
         Case::Incomplete,
-        "type Total = Int[0, 2000];\n\
+        "type Total = Int[0, 4000];\n\
          function totalVersions using v(p: Population<Config::ConfigVersion>[4]): Total pure {\
            sum<Total>(r in allInstances<Config::ConfigVersion>(p): deref(r).versionNumber)\
          }\n",
