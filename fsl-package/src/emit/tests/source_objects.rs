@@ -3,8 +3,7 @@
 
 use super::*;
 use filament_contract_model::{
-    CheckedJson, CheckedNodeId, CheckedPackageReadLimits, CheckedPackageV2,
-    CheckedPackageV2ReadResult, CheckedSemanticNodeV2, CheckedTerm, LiteralKind,
+    CheckedPackageReadLimits, CheckedPackageV2, CheckedPackageV2ReadResult,
 };
 use filament_semantic_value::checking::CheckMode;
 
@@ -982,13 +981,24 @@ fn owner_identity(wire: &Value, name: &str) -> String {
 #[trace("FR-995-AC-1", "TC-2816")]
 #[test]
 fn source_owner_key_uses_its_identity_qualified_ix_spelling() {
-    let source_keys = super::super::SourceDeclarationKeys {
-        packages: BTreeMap::from([("source/unit".to_owned(), "source-owner".to_owned())]),
-        checked_nodes: BTreeMap::new(),
-    };
+    let package = fixture_s_package();
+    let graph = package.graph();
+    let source_keys = super::super::SourceDeclarationKeys::from_graph(graph)
+        .expect("actual checked source-owner declarations");
+    let node = graph
+        .semantic_graph()
+        .nodes()
+        .find(|node| {
+            node.declaration()
+                .is_some_and(|name| name.len() == 1 && name[0].as_str() == "Order")
+        })
+        .expect("the checked original Order declaration");
+    let original = graph
+        .resolve_declaration(node.key())
+        .expect("Order retains its original declaration key");
     let identity = filament_exact::EffectiveId::new(
         None,
-        filament_exact::OriginalDeclarationKey::new("source/unit", "ix://source/unit/Order"),
+        filament_exact::OriginalDeclarationKey::new(&original.package, &original.node),
     );
 
     let emitted = super::super::checked_effective_id(&identity, &source_keys)
@@ -999,8 +1009,8 @@ fn source_owner_key_uses_its_identity_qualified_ix_spelling() {
         json!({
             "owner_effective_type": null,
             "original": {
-                "package": "source-owner",
-                "node": "ix://source-owner/Order"
+                "package": "test:spine-model",
+                "node": "ix://test:spine-model/Order"
             }
         })
     );
@@ -1009,45 +1019,44 @@ fn source_owner_key_uses_its_identity_qualified_ix_spelling() {
 #[trace("FR-996-AC-1", "TC-2818")]
 #[test]
 fn source_clock_place_keys_use_the_source_owner_identity() {
-    let source_keys = super::super::SourceDeclarationKeys {
-        packages: BTreeMap::from([("source/unit".to_owned(), "source-owner".to_owned())]),
-        checked_nodes: BTreeMap::from([(
-            "pkg:[\"W\",]:0".to_owned(),
-            "ix://source-owner/W".to_owned(),
-        )]),
-    };
-    let node_id = CheckedNodeId {
-        package: "source/unit".into(),
-        path: Vec::new(),
-        ordinal: 0,
-    };
-    let source_key = "W/c";
-    let mut node = CheckedSemanticNodeV2 {
-        node_id: node_id.clone(),
-        schema_version: GRAPH_V2.into(),
-        node_tag: "expression".into(),
-        semantic_form: "clock_place".into(),
-        semantic_type: node_id.clone(),
-        dependencies: Vec::new(),
-        occurrences: Vec::new(),
-        recursion_group: None,
-        declaration: None,
-        owner: None,
-        owner_model: None,
-        check_mode: None,
-        body: CheckedTerm::Literal {
-            type_id: node_id,
-            value_kind: LiteralKind::Text,
-            value: CheckedJson::from_serializable(&source_key).expect("a text literal"),
-        },
-    };
-
-    super::super::rewrite_source_keys_in_clock_place(&mut node, &source_keys)
-        .expect("the source clock-place key is emitted");
-
+    let source = "language \"ix:native\" edition \"1-draft\";\n\
+        profile P = \"filament.temporal.complete/v1\";\n\
+        dimension Time; unit ms : Time = rational(1, 1); time Order dense unit ms;\n\
+        record W { c: Clock; }\n\
+        object Order { w: W; }\n";
+    let packages = fsl_semantics::model::intake::package_input(std::iter::empty::<&[u8]>())
+        .expect("source-only package input");
+    let graph = assemble_with_models(source.as_bytes(), &packages)
+        .expect("actual source declarations")
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &fsl_semantics::check::test_support::ZeroRewardEvaluator,
+        )
+        .unwrap_or_else(|refusals| panic!("source clock place checks: {refusals:?}"));
+    let source_keys = super::super::SourceDeclarationKeys::from_graph(&graph)
+        .expect("checked source declaration context");
+    let row = graph
+        .timed_models()
+        .first()
+        .expect("timed Order")
+        .clocks()
+        .first()
+        .expect("W.c clock")
+        .resolved_path()
+        .last()
+        .expect("W.c row");
     assert_eq!(
-        serde_json::to_value(node).expect("the clock place serializes")["body"]["value"],
-        "ix://source-owner/W/c"
+        source_keys
+            .member(&row.declaring_type, &row.member_identity)
+            .expect("actual W.c member in its declaring row"),
+        "ix://test:spine-model/W/c",
+    );
+    assert!(
+        source_keys
+            .member("ix://test:spine-model/Order", &row.member_identity)
+            .is_err(),
+        "W/c must not resolve through an unrelated declaring type"
     );
 }
 
