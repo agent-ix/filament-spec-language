@@ -296,6 +296,16 @@ A native-run/1 request (FR-026's closed envelope and shared limits). For a
   package's `lock` and name rows stand in for the program header, its
   bindings and its names. A request needs exactly one of `program` and
   `package`.
+- `sources`: optional, package-only caller source provisions for rendering,
+  as [FR-1039](FR-1039-run-every-native-run-member-over-a-selected-checked-package.md)
+  "Caller source provisions" specifies: an ordered array of the existing
+  source selections, each with exactly `file`, `authority`, `identity`,
+  `document` and `formal_revision`. This is a new run-request member,
+  distinct from compiler program selections and `libraries`. A request
+  carrying `program` and `sources`, even `sources: []`, SHALL refuse
+  `invalid-request` at stage `request`, exit 20, naming `/request/sources`,
+  before any selected file is opened. Source runs retain the sources
+  admitted by their compilation.
 - `models`: zero or more `{format, source}` entries, each a
   `semantic-ir/2.0.0` domain package document or a `native-model-unit/1`
   model unit compiled to its document (FR-710), read and handed to spine
@@ -711,6 +721,7 @@ apply to it.
 | FR-100-AC-20 | Under `CheckMode::Linked`, `function d using v(n: Int[0, 9]): Integer pure decreases(n) { if n = 0 then 0 else d(n - 1) + 10 mod (n - 1) }` refuses `undefined_expression`/`unproved-nonzero` at `10 mod (n - 1)`, as its only refusal (the range of the divisor `n - 1` contains zero, and no exact nonzero guard excludes it), so no package is linked and `run` never calls it. Checked under `CheckMode::Kernel`, which records no nonzero obligation, and called through S6a: `d(1)` returns `Undefined` at the `Location` of `10 mod (n - 1)` with `frame_depth` 0; `d(2)` and `d(3)` return `Undefined` at that same `Location` with `frame_depth` 1 and 2; `d(0)` completes `0` with `frame_depth` 0; and `function e using v(n: Int[0, 9]): Integer pure { d(n) }` called with `1` returns `Undefined` at that `Location` with `frame_depth` 1. | Test (TC-444) |
 | FR-100-AC-21 | A completed function run's `spine-run-result/1` document carries no `axes` member. | Test (TC-1582) |
 | FR-100-AC-22 | A request whose `package` selects a checked package and which carries no `program` is admitted and runs its `call` from the package, the edition read from the package's `lock`; a request carrying neither `program` nor `package` refuses `invalid-request` at stage `request` naming `program`, exit 20, and one carrying `package` and `integer_division` refuses `invalid-request` naming `integer_division` before the package file is opened. | Test (TC-3019) |
+| FR-100-AC-23 | A package request admits the optional top-level `sources` array under FR-1039's caller source contract. The same member beside `program`, both as `[]` and as a non-empty valid array naming an unavailable file, refuses `invalid-request` at stage `request`, exit 20, naming `/request/sources`, before any file is opened. A source request without the member retains its existing compilation sources and outcomes. | Test |
 
 The typed-call acceptance criteria supplement all existing scalar oracles;
 FR-100-AC-13 is the QSL-656 accounting-object criterion.
