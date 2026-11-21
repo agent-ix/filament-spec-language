@@ -36,3 +36,25 @@ U6 probe (throwaway worktree): the dual-WCET item settles `incomplete` with caus
 | FND-005 | medium | FR-418-AC-21 / U6 is not verified. `a_dual_wcet_set_settles_incomplete_never_proved` declares no `mode … hi on` switch, and its task has `wcet` 2 / `wcet_hi` 3, so `certification()` refuses `NotFixedWork`, not `DualWcetModeSwitch`. The test also does not assert the `certificate-unchecked` cause that AC-21 and the FR-418 behaviour text require. An `Uncertified` pass falls through to the concrete search, so the cause is whatever that search ends with. A probe of this test's item shows `unresolved-dynamics` with `task_search`. | fsl-analyze/tests/it/task_automaton_lowering.rs:867-886; fsl-analyze/src/analyze.rs:4100-4101 |
 | FND-006 | medium | FR-249-AC-8 is still unmet. It is ignored with a measured reason, pending an arch ruling. The ticket AC "the zone engine's deadline verdict equals the EN-7 response-time verdict on the Buttazzo example" is therefore not done. The refute arm would also first spend the full symbolic budget (SR-20261121063601 FND-006). | fsl-analyze/tests/it/task_automaton_lowering.rs:307-310 |
 | FND-007 | low | The FR-249-AC-7 assertions are partial. The AC lists `taskset` and `max_jitter` in each row, and also the lowered subject's task-timing rows. The test reads neither. | fsl-analyze/tests/it/task_automaton_lowering.rs:248-290 |
+
+## Dispositions
+
+Round 1 is checked at e950d4d4ec. The PR tests named below pass (see SR-20261121063601 Dispositions for the runs and mutations). On NotFixedWork, FR-418 does not ask for an analyze-level test: AC-21 covers only dual-WCET with a mode switch, and FR-249 keeps variable demand on bounded exploration. That path is already covered by `an_unequal_budget_product_never_proves_and_stops_with_task_search_evidence`, which passes.
+
+| FND | Outcome | Reason |
+| --- | --- | --- |
+| FND-001 | fixed | - |
+| FND-002 | fixed | - |
+| FND-003 | fixed | - |
+| FND-004 | fixed | - |
+| FND-005 | fixed | - |
+| FND-006 | deferred | FR-249-AC-8 stays ignored, with its measured reason, pending the arch ruling on the abstraction or the AC wording. QSL-2240's Buttazzo AC remains open, so the ticket must not close on this PR. |
+| FND-007 | fixed | - |
+
+### Disposition pass 2
+
+Checked the final fix at `f20c14a6a3fc79b54d6425e30bc5744bd7a00b3d`. No gap finding had a latest `still-open` or missing outcome before this pass, so no new disposition rows are required. The original round-1 outcomes remain current. No new gap was found in the bounded fix diff.
+
+The renamed concrete-first refutation regression retains its `TC-371` tag and requires `refuted` plus reproduced replay. The new witness read-back regression also claims only `TC-371` and asserts both successful codec traversal and a changed decoded witness before requiring guard refusal. No acceptance criterion is newly overclaimed.
+
+Observed local logs report 14/14 focused integration tests and 7/7 focused library tests passing; this reviewer ran no Cargo, Python or gate. The default-budget Pair proof remains a separate pending verification. FR-249-AC-8 remains ignored with the measured reason already recorded in round 1, and remains open on QSL-2240 pending architecture's abstraction/criterion ruling. This disposition does not claim that the Buttazzo acceptance criterion is complete.

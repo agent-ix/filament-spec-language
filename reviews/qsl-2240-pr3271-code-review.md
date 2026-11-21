@@ -51,3 +51,57 @@ Items 2 and 6 are sound. Item 3 is sound (see Summary). Mutation result: with th
 | FND-008 | low | An accepted proof skips the concrete search. That removes the only run-time cross-check between the S3 `TaskAutomaton` lowering, which the producer and checker share, and the concrete FR-419 `TaskProductSystem`. The quotient-agreement test compares two explorers over the same lowering, so a lowering divergence would settle `proved` where the concrete search would refute. The S3 sampled cross-check is the only guard. | fsl-analyze/src/analyze/task_product_item.rs:121-139 |
 | FND-009 | low | Any missed vertex refuses the certificate, including a time-locked miss that FR-418 permits as a `locked` node. This is a loss of completeness only. | fsl-analyze/src/zone_check/task_certificate.rs:160-162 |
 | FND-010 | low | The test assertions are weak. `no_certificate_is_built_for_a_reachable_miss` asserts `is_err()`, not `Missed`. `a_tampered_emitted_certificate_is_rejected` accepts `SuccessorMissing \| Malformed` or just `!= Accepted`. `let _ = build;` is dead code. | fsl-analyze/tests/it/task_product_producer.rs:255-321, 342 |
+
+## New findings (disposition pass 1)
+
+| ID | Severity | Summary | Refs |
+| --- | --- | --- | --- |
+| FND-011 | high | Running the symbolic pass first breaks the FR-249-AC-9 refutation test, the ticket's negative AC. `an_unschedulable_set_refutes_with_its_first_missed_deadline` (set B, `t3` `wcet` 4, fixed priority) ran more than 60 min in debug at 12 GB RSS without finishing at e950d4d4ec, and was killed. With the symbolic pass skipped (main's behaviour, throwaway switch `nosym`), the same test passes in 0.67 s. Stopping at the first miss does not help: breadth-first region exploration of set B's quotient (more than 100M work, per AC-8) exhausts the budget before it reaches `t3`'s first deadline, and only then does the concrete search refute. | fsl-analyze/src/analyze/task_product_item.rs:121-139; fsl-analyze/src/zone_check/task_symbolic.rs:596-601; fsl-analyze/tests/it/task_automaton_lowering.rs:404-415 |
+
+## Dispositions
+
+Round 1 is checked at fix commit e950d4d4ec, which sits on the rebased S5 commits.
+
+**Test runs.** At the head, name-filtered: the `task_automaton_lowering` tests passed 21 of 21, with the AC-9 test killed (FND-011) and AC-8 not run. The `fsl-analyze` lib tests `proof_value_tests` and `task_certificate::tests` passed 7 of 7. In the throwaway at the same head with no mutation active: `task_product_producer`, `task_product_certificate`, `zone_certificate::` and the remaining lowering tests passed 48 of 49. The one failure is `the_certificate_members_are_the_schema_fifty_one_names` (61 vs 51). It is a red already on main: its inputs (the contract-model and FSpec pins, and the test) are identical between origin/main ab98ea12d8 and this branch, and the branch changes no Cargo manifest.
+
+**Mutations** (throwaway, runtime `RV_M` switch):
+
+| Mutation | Result |
+| --- | --- |
+| `plumb`: setting ignored | caught by `a_small_max_check_work_settles_limit_reached` |
+| `eff`: null `object_type` accepted | caught by `a_null_receiver_object_type_is_not_read` |
+| `miss`: no stop at the first miss | caught by `no_certificate_is_built_for_a_reachable_miss` |
+| `guard`: decoded-witness comparison removed | survives (8/8) |
+| `erase`: `erase_loops` and the `canonical` filter skipped | survives (8/8) |
+
+The last two survive because no current set builds a witness that the decode would change. Only the `canonical`/`erase_loops` unit tests exercise that logic.
+
+**FND-002 placement.** Pinned FSpec 6ad873d5 FR-331 and `backend-provider-v1/schema.json` `TemporalLimits` both carry `max_check_work`, described as "setting zone_check.max_check_work, default 100000000". So `temporal.limits.max_check_work` is the specified request member, and the coder's note that the schema has no such member is mistaken. The `limit-reached` cause names `max_check_work` and `zone_check.max_check_work`, as FR-418-AC-20 requires.
+
+| FND | Outcome | Reason |
+| --- | --- | --- |
+| FND-001 | fixed | - |
+| FND-002 | fixed | - |
+| FND-003 | fixed | - |
+| FND-004 | fixed | - |
+| FND-005 | fixed | - |
+| FND-006 | still-open | Stopping at the first miss covers only small sets. On set B the pass exhausts the 100M work before any miss vertex appears, so a refutable set still waits for the full symbolic budget (see FND-011). The coder's objection to running the concrete search first was that sporadic sets hit the cap. But the concrete search's own cap (`max_task_product_work`, default 1048576) bounds that cost. The concrete search could run first and refute, with the symbolic pass running only when it does not refute, or the symbolic pass could get a smaller first slice of budget. |
+| FND-007 | fixed | - |
+| FND-008 | accepted-no-change | Documented in the task_product_item module doc. The S3 sampled cross-check is the stated guard. This was low and is a design decision. |
+| FND-009 | accepted-no-change | Documented as a completeness loss: the concrete search then decides, and a time-locked miss is never refuted, so the result is not unsound. |
+| FND-010 | fixed | - |
+
+### Disposition pass 2
+
+Recovery disposition checked at `f20c14a6a3fc79b54d6425e30bc5744bd7a00b3d`, following the unavailable original reviewer's round 1. The final fix diff is `7747319762..f20c14a6a3`; the rebase preserves the accepted checker-only proof path. Original findings and previous outcomes above are unchanged.
+
+| FND | Outcome | Reason |
+| --- | --- | --- |
+| FND-006 | fixed | The bounded concrete search now runs before the symbolic pass. A refuted result or a cancelled concrete search does not invoke `prove`; other stopped outcomes may attempt symbolic certification. A core-accepted certificate still controls `proved`. |
+| FND-011 | fixed | The AC-9 negative case no longer waits for the symbolic quotient. `an_unschedulable_set_refutes_with_its_first_missed_deadline` passes in the final focused run, and `a_refutable_set_refutes_before_the_symbolic_pass` requires a replayed counterexample. |
+
+The new witness regression requires an admitted witness in every producer fixture, successfully encodes and decodes a changed target, asserts that the decoded witness differs, and requires `read_back_unchanged` to refuse it. Removing the admitted-witness comparison would let the final assertion fail, so the test exercises that guard without a conditional/vacuous assertion. The production caller uses the same helper before invoking the core checker.
+
+Evidence inspected, not run by this recovery reviewer: `tmp/recovery-fix2-focused-final.log` reports 14 passed, 0 failed, 0 ignored (37.46 s); `tmp/recovery-fix2-lib.log` reports 7 passed, 0 failed, 0 ignored; `tmp/recovery-fix2-witness.log` reports the corrected witness test passed 1/1. No Cargo, Python, mutation build or full gate ran in this disposition. The default-budget Pair test is separately queued on production-identical ancestor `83765b21c5`; only the witness test changed after that head. Its result remains pending.
+
+**Current verdict:** no remaining static review blocker and no new finding in this fix round. Final mergeability remains conditional on the requested default-budget Pair result. FR-249-AC-8 remains the explicitly deferred gap on QSL-2240; the ticket must stay open.
