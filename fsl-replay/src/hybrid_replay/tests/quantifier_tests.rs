@@ -841,8 +841,8 @@ fn coupled_solver_result(trace: &HybridTrace) -> crate::hybrid::SolverResult {
 #[test]
 fn cad_replay_work_boundary_is_deterministic_and_both_provider_paths_settle_incomplete() {
     use crate::hybrid::HybridSettlement;
-    use crate::ModelCheckLimit;
     use crate::proof_result::{IncompleteCause, TerminalValue};
+    use crate::ModelCheckLimit;
     let unit = nonlinear_coupled(
         "v * w <= 1/2",
         "true",
