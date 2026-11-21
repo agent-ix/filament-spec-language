@@ -108,6 +108,13 @@ fn failure(
             },
             subject,
         ),
+        ProbabilityWitnessError::CertificateRejected(rejection) => checked_report(
+            Ok(ExactProbabilityCertificateCheck::Rejected(rejection)),
+            ExactProbabilityCertificate { values: Vec::new() },
+            None,
+            None,
+            subject,
+        ),
         ProbabilityWitnessError::Refused => {
             EngineReport::Exact(Box::new(ExactReport::ReplayRefused))
         }
@@ -437,6 +444,7 @@ fn materialize_inner(
                 initial_key,
                 scheduler: scheduler.into_iter().collect(),
                 paths: vec![ProbabilityWitnessPath { steps }],
+                subsystem: None,
             },
             evaluation: fsl_replay::UndefinedEvaluation {
                 site: fsl_replay::UndefinedSite {

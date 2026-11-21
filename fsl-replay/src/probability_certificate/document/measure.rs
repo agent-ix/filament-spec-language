@@ -402,6 +402,7 @@ struct State {
     terminal: Option<Rational>,
     rank: u64,
     choices: Vec<Vec<ProbabilityEdge>>,
+    actions: Vec<Option<crate::ProductAction>>,
     activated: bool,
 }
 struct Graph {
@@ -540,13 +541,18 @@ fn enumerate(
             }
         );
         let mut choices = Vec::new();
+        let mut action_labels = Vec::new();
+        let resolving = resolution.is_some();
         if terminal.is_none() {
             let mut admission =
                 ProbabilityKeyAdmission::new(meter, storage, limits.storage_bytes, cancel);
             let distributions = if let Some((posts, rewards)) = resolution {
                 posts
                     .into_iter()
-                    .map(|post| vec![Successor::Position(rational(1), post, rewards.clone())])
+                    .map(|post| {
+                        action_labels.push(None);
+                        vec![Successor::Position(rational(1), post, rewards.clone())]
+                    })
                     .collect()
             } else if let Some(workload) = workload {
                 let steps = system
@@ -563,6 +569,7 @@ fn enumerate(
                             crate::ExactProbBuildIssue::NotMarkov,
                         ))
                     })?;
+                action_labels.push(None);
                 vec![steps
                     .into_iter()
                     .map(|step| Successor::Position(step.probability, step.post, step.rewards))
@@ -596,6 +603,7 @@ fn enumerate(
                             ))
                         })
                         .collect::<Result<Vec<_>, ProbabilityDocumentError>>()?;
+                    action_labels.push(Some(crate::ProductAction::TerminalStutter));
                     vec![vec![Successor::Position(
                         rational(1),
                         model.clone(),
@@ -604,6 +612,10 @@ fn enumerate(
                 } else {
                     let mut distributions = Vec::new();
                     for action in actions {
+                        action_labels.push(Some(crate::ProductAction::Identity(
+                            crate::Schedule::of(system, &action.identity)
+                                .map_err(|_| ProbabilityDocumentError::Malformed)?,
+                        )));
                         let mut distribution = Vec::new();
                         for draw in action.draws {
                             if draw.successors.is_empty() {
@@ -794,6 +806,17 @@ fn enumerate(
                         probability,
                     });
                 }
+                if resolving {
+                    let target = choice
+                        .first()
+                        .ok_or(ProbabilityDocumentError::Malformed)?
+                        .target
+                        .clone();
+                    *action_labels
+                        .get_mut(choices.len())
+                        .ok_or(ProbabilityDocumentError::Malformed)? =
+                        Some(crate::ProductAction::PostState(target));
+                }
                 choices.push(choice);
             }
         }
@@ -803,6 +826,7 @@ fn enumerate(
                 terminal,
                 rank,
                 choices,
+                actions: action_labels,
                 activated,
             },
         );
@@ -2079,4 +2103,148 @@ fn key_parse_error(
             other.to_string(),
         )),
     }
+}
+
+/// Internal role result; it cannot be used as a proof acceptance token.
+pub(in crate::probability_certificate) enum MeanRefutationCheck {
+    Accepted,
+    Rejected(ProbabilityCertificateRejection),
+    PolicyParity,
+}
+#[allow(clippy::too_many_arguments)]
+pub(in crate::probability_certificate) fn check_mean_refutation(
+    system: &ModelSystem<'_>,
+    claim: &CheckedProbabilisticClaim,
+    item: &ObligationIdentity,
+    bytes: &[u8],
+    scheduler: &[(ProbabilityProductKey, crate::ProductAction)],
+    limits: ProbabilityDocumentLimits,
+    cancel: &Cancel,
+) -> Result<MeanRefutationCheck, ProbabilityDocumentError> {
+    let mut meter = filament_exact::Meter::new(limits.accounting).with_cancel(cancel.clone());
+    let mut storage = 0;
+    let document =
+        decode_measure_probability_certificate(bytes, limits, cancel, &mut meter, &mut storage)?;
+    if document.identity != *item {
+        return Err(ProbabilityDocumentError::IdentityMismatch);
+    }
+    if document.conditional.is_some() || document.payoff != MeasurePayoffKind::Fraction {
+        return Err(ProbabilityDocumentError::MalformedMember("kind"));
+    }
+    let selected = plan(
+        system,
+        claim,
+        MeasurePayoffKind::Fraction,
+        limits,
+        cancel,
+        &mut meter,
+        &mut storage,
+    )?;
+    if selected.objective != document.objective {
+        return Err(ProbabilityDocumentError::ObjectiveMismatch);
+    }
+    validate_ranges(&document, limits, cancel, &mut meter)?;
+    let graph = enumerate(
+        system,
+        claim,
+        &selected,
+        limits,
+        cancel,
+        &mut meter,
+        &mut storage,
+    )?;
+    let values = match checked_values(&document, &graph, limits, cancel, &mut meter)? {
+        Ok(values) => values,
+        Err(ExactProbabilityCertificateCheck::Rejected(rejection)) => {
+            return Ok(MeanRefutationCheck::Rejected(rejection))
+        }
+        Err(_) => return Err(ProbabilityDocumentError::Malformed),
+    };
+    if selected.objective.optimization == ProbabilityObjective::Workload {
+        if !scheduler.is_empty() {
+            return Ok(MeanRefutationCheck::PolicyParity);
+        }
+    } else {
+        let policy = scheduler
+            .iter()
+            .map(|(key, action)| (key, action))
+            .collect::<BTreeMap<_, _>>();
+        for (key, action) in scheduler {
+            poll(cancel)?;
+            let Some(state) = graph.states.get(key) else {
+                return Ok(MeanRefutationCheck::PolicyParity);
+            };
+            let Some(index) = state
+                .actions
+                .iter()
+                .position(|candidate| candidate.as_ref() == Some(action))
+            else {
+                return Ok(MeanRefutationCheck::PolicyParity);
+            };
+            if state.terminal.is_some()
+                || action_sum(
+                    state
+                        .choices
+                        .get(index)
+                        .ok_or(ProbabilityDocumentError::Malformed)?,
+                    &values,
+                    &mut meter,
+                    cancel,
+                )? != *values.get(key).ok_or(ProbabilityDocumentError::Malformed)?
+            {
+                return Ok(MeanRefutationCheck::PolicyParity);
+            }
+        }
+        let mut queue = VecDeque::from([graph.initial.clone()]);
+        let mut seen = BTreeSet::from([graph.initial.clone()]);
+        while let Some(key) = queue.pop_front() {
+            poll(cancel)?;
+            let state = graph
+                .states
+                .get(&key)
+                .ok_or(ProbabilityDocumentError::Malformed)?;
+            if state.terminal.is_some() {
+                continue;
+            }
+            let index = if let Some(action) = policy.get(&key) {
+                state
+                    .actions
+                    .iter()
+                    .position(|candidate| candidate.as_ref() == Some(*action))
+                    .ok_or(ProbabilityDocumentError::Malformed)?
+            } else if state.choices.len() == 1 {
+                0
+            } else {
+                return Ok(MeanRefutationCheck::PolicyParity);
+            };
+            for edge in &state.choices[index] {
+                if !edge.probability.is_zero() && seen.insert(edge.target.clone()) {
+                    charge(
+                        &mut storage,
+                        limits.storage_bytes,
+                        u64::try_from(edge.target.as_bytes().len().saturating_mul(2))
+                            .unwrap_or(u64::MAX),
+                    )?;
+                    queue.push_back(edge.target.clone());
+                }
+            }
+        }
+    }
+    let value = values
+        .get(&graph.initial)
+        .ok_or(ProbabilityDocumentError::Malformed)?;
+    let refutes = match &selected.bound {
+        Bound::AtLeast(threshold) => value < threshold,
+        Bound::AtMost(threshold) => value > threshold,
+    };
+    if !refutes {
+        return Ok(MeanRefutationCheck::Rejected(
+            ProbabilityCertificateRejection {
+                rule: ProbabilityCertificateRule::ThresholdMissed,
+                at: ProbabilityCertificateLocus::ProductState(graph.initial),
+            },
+        ));
+    }
+    poll(cancel)?;
+    Ok(MeanRefutationCheck::Accepted)
 }

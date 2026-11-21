@@ -1297,6 +1297,7 @@ fn external_always_path_set_remains_unsupported() {
         initial_key: key,
         scheduler: Vec::new(),
         paths: vec![fsl_replay::ProbabilityWitnessPath { steps: Vec::new() }],
+        subsystem: None,
     };
     let limits = world
         .request("External", ModelCheckLimits::default())

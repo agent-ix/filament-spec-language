@@ -2325,6 +2325,7 @@ fn replay_produced_witness(
         initial_key,
         scheduler,
         paths,
+        subsystem: None,
     };
     if let Some(tamper) = tamper {
         tamper(&mut witness);
@@ -2362,6 +2363,13 @@ fn replay_produced_witness(
             EngineReport::Exact(Box::new(ExactReport::ReplayParity))
         }
         Err(ProbabilityWitnessError::Build(issue)) => settled(&issue, subject),
+        Err(ProbabilityWitnessError::CertificateRejected(rejection)) => checked_report(
+            Ok(ExactProbabilityCertificateCheck::Rejected(rejection)),
+            ExactProbabilityCertificate { values: Vec::new() },
+            None,
+            None,
+            subject,
+        ),
         Err(ProbabilityWitnessError::Refused) => {
             EngineReport::Exact(Box::new(ExactReport::ReplayRefused))
         }

@@ -1919,6 +1919,15 @@ pub fn probabilistic_wire(
         "bound": {"comparison": comparison, "threshold": rational(threshold)},
         "evidence": {"type": "path-set", "paths": paths},
     });
+    if let Some(subsystem) = &witness.subsystem {
+        if !witness.paths.is_empty() {
+            return Err(Unspelled("mixed probabilistic evidence"));
+        }
+        let certificate: Json = serde_json::from_slice(subsystem.as_bytes())
+            .map_err(|_| Unspelled("probabilistic subsystem certificate"))?;
+        written["instance"] = Json::Null;
+        written["evidence"] = json!({"type":"subsystem","certificates":[certificate]});
+    }
     if !scheduler.is_empty() {
         let entries = scheduler
             .iter()

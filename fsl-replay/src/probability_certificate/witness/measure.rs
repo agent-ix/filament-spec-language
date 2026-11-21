@@ -681,3 +681,107 @@ pub(super) fn replay_undefined(
     }
     Ok(ProbabilityWitnessReplay::Parity)
 }
+
+pub(super) fn replay_subsystem(
+    system: &ModelSystem<'_>,
+    claim: &CheckedProbabilisticClaim,
+    witness: &ProbabilisticCounterexample,
+    limits: &ExactProbLimits,
+    cancel: &Cancel,
+) -> Result<ProbabilityWitnessReplay, ProbabilityWitnessError> {
+    if !matches!(claim.form, ProbForm::MeanOfFraction { .. }) || !witness.paths.is_empty() {
+        return Err(ProbabilityWitnessError::Refused);
+    }
+    let subsystem = witness
+        .subsystem
+        .as_ref()
+        .ok_or(ProbabilityWitnessError::Refused)?;
+    let document_limits = limits_of(system, limits);
+    let mut meter = filament_exact::Meter::new(system.meter_limits()).with_cancel(cancel.clone());
+    let mut storage = 0;
+    let binding = claim_binding(system, claim)?;
+    let reference = binding.as_ref().map(|binding| &binding.reference);
+    if reference != witness.binding.as_ref() {
+        return Err(ProbabilityWitnessError::Refused);
+    }
+    let selected = replay_control(
+        system,
+        claim,
+        MeasurePayoffKind::Fraction,
+        document_limits,
+        cancel,
+        &mut meter,
+        &mut storage,
+    )
+    .map_err(bounded::document_error)?;
+    let initials = system.initial();
+    let [initial] = initials.as_slice() else {
+        return Err(ExactProbabilityGraphError::UnsupportedInitial.into());
+    };
+    let truths = read(system, &selected.predicates, reference, initial, cancel)?;
+    let (control, sums) = selected
+        .control
+        .start(&truths, &mut meter)
+        .map_err(measure_error)?;
+    let control = control.ok_or(ProbabilityWitnessError::Refused)?;
+    let sums = sums.ok_or(ProbabilityWitnessError::Refused)?;
+    let initial_key = key(
+        system,
+        reference,
+        initial,
+        control,
+        &sums,
+        selected.reward.as_ref(),
+        document_limits,
+        &mut meter,
+        &mut storage,
+        cancel,
+    )?;
+    if initial_key != witness.initial_key
+        || key(
+            system,
+            reference,
+            &witness.initial,
+            control,
+            &sums,
+            selected.reward.as_ref(),
+            document_limits,
+            &mut meter,
+            &mut storage,
+            cancel,
+        )? != initial_key
+        || initial.anchor() != witness.initial.anchor()
+        || initial.reached_by() != witness.initial.reached_by()
+    {
+        return Err(ProbabilityWitnessError::Refused);
+    }
+    step::scheduler(&witness.scheduler, limits, &mut meter, &mut storage, cancel)?;
+    match super::super::document::measure::check_mean_refutation(
+        system,
+        claim,
+        &witness.item,
+        subsystem.as_bytes(),
+        &witness.scheduler,
+        document_limits,
+        cancel,
+    )
+    .map_err(bounded::document_error)?
+    {
+        super::super::document::measure::MeanRefutationCheck::Accepted => {
+            poll_cancel(cancel)?;
+            Ok(ProbabilityWitnessReplay::Reproduced(Box::new(
+                ReproducedProbabilityWitness {
+                    evidence: witness.clone(),
+                    mass: rational(1),
+                    undefined: None,
+                },
+            )))
+        }
+        super::super::document::measure::MeanRefutationCheck::Rejected(rejection) => {
+            Err(ProbabilityWitnessError::CertificateRejected(rejection))
+        }
+        super::super::document::measure::MeanRefutationCheck::PolicyParity => {
+            Ok(ProbabilityWitnessReplay::Parity)
+        }
+    }
+}

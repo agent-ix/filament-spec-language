@@ -30,6 +30,9 @@ pub fn replay_probabilistic_undefined(
 ) -> Result<ProbabilityWitnessReplay, ProbabilityWitnessError> {
     poll_cancel(cancel)?;
     let evidence = &witness.path;
+    if evidence.subsystem.is_some() {
+        return Err(ProbabilityWitnessError::Refused);
+    }
     if !system
         .source_package()
         .is_some_and(|own| std::ptr::eq(package, own))
