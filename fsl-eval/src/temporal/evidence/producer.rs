@@ -42,7 +42,7 @@ mod tests {
     use super::*;
 
     #[test]
-    #[ix_trace_rs::trace("TC-3036", "FR-944-AC-8")]
+    #[ix_trace_rs::trace("TC-3036", "FR-944-AC-9")]
     fn caller_admits_the_fixed_producer_selection() {
         let first = producer_bundle()
             .expect("producer selection")
