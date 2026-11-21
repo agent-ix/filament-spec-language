@@ -59,54 +59,77 @@ impl PlanRequest {
         self.seed.unwrap_or(0)
     }
 
-    /// Close the member set by the selected plan (FSpec FR-824 "Request"):
-    /// `initial` on a plan with no consuming step, and `seed` on a plan with
-    /// no consuming step, refuse `unknown-member` at their pointers.
+    /// Close the member set by the selected plan (FSpec FR-824 "Request"),
+    /// member by member in the request table's order: `initial`, `seed`,
+    /// `max_trace_length` or `max_value_bits` on a plan with no step that
+    /// consumes it refuses `unknown-member` at its pointer; when `execute`
+    /// holds, an absent `max_trace_length` or `max_value_bits` that a step
+    /// consumes refuses `missing-member` there, naming the first consuming
+    /// step in source order.
     ///
     /// # Errors
     ///
-    /// `unknown-member` at `/verification_plan/initial` or `/seed`.
-    pub fn close_by_plan(
-        &self,
-        consumes_initial: bool,
-        consumes_seed: bool,
-        consumes_max_trace_length: bool,
-        consumes_max_value_bits: bool,
-    ) -> Result<()> {
-        if self.initial.is_some() && !consumes_initial {
-            return Err(refuse(
-                "/initial",
+    /// `unknown-member` or `missing-member` at the first defective member's
+    /// `/request/verification_plan` pointer.
+    pub fn close_by_plan(&self, consumers: &Consumers<'_>) -> Result<()> {
+        let unknown = |member: &str| {
+            refuse(
+                &format!("/{member}"),
                 "unknown-member",
-                "no step of the selected plan consumes `initial`",
-            ));
+                format!("no step of the selected plan consumes `{member}`"),
+            )
+        };
+        if self.initial.is_some() && consumers.initial.is_none() {
+            return Err(unknown("initial"));
         }
-        if self.seed.is_some() && !consumes_seed {
-            return Err(refuse(
-                "/seed",
-                "unknown-member",
-                "no step of the selected plan consumes `seed`",
-            ));
+        if self.seed.is_some() && consumers.seed.is_none() {
+            return Err(unknown("seed"));
         }
-        if self.max_trace_length.is_some() && !consumes_max_trace_length {
-            return Err(refuse(
-                "/max_trace_length",
-                "unknown-member",
-                "no step of the selected plan consumes `max_trace_length`",
-            ));
-        }
-        if self.max_value_bits.is_some() && !consumes_max_value_bits {
-            return Err(refuse(
-                "/max_value_bits",
-                "unknown-member",
-                "no step of the selected plan consumes `max_value_bits`",
-            ));
+        for (member, supplied, consumer) in [
+            (
+                "max_trace_length",
+                self.max_trace_length.is_some(),
+                consumers.max_trace_length,
+            ),
+            (
+                "max_value_bits",
+                self.max_value_bits.is_some(),
+                consumers.max_value_bits,
+            ),
+        ] {
+            match (supplied, consumer) {
+                (true, None) => return Err(unknown(member)),
+                (false, Some(step)) if self.execute => {
+                    return Err(refuse(
+                        &format!("/{member}"),
+                        "missing-member",
+                        format!("the step `{step}` consumes `{member}`"),
+                    ));
+                }
+                _ => {}
+            }
         }
         Ok(())
     }
 }
 
+/// The first step, in source order, of the selected plan that consumes each
+/// request input; `None` when no step consumes it (FSpec FR-824).
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct Consumers<'a> {
+    /// The first step consuming `initial`.
+    pub initial: Option<&'a str>,
+    /// The first step consuming `seed`.
+    pub seed: Option<&'a str>,
+    /// The first step consuming `max_trace_length`.
+    pub max_trace_length: Option<&'a str>,
+    /// The first step consuming `max_value_bits`.
+    pub max_value_bits: Option<&'a str>,
+}
+
 fn refuse(pointer: &str, cause: &'static str, reason: impl Into<String>) -> RunCause {
     RunCause::PlanRequest {
+        code: fsl_foundation::Code::InvalidRuntimeInput,
         path: format!("/request/verification_plan{pointer}"),
         cause,
         reason: reason.into(),
@@ -285,6 +308,17 @@ mod tests {
     use ix_trace_rs::trace;
     use serde_json::json;
 
+    /// Consumers naming the step `s` for each consumed input.
+    fn consumed(initial: bool, seed: bool, trace: bool, bits: bool) -> Consumers<'static> {
+        let step = |consumed: bool| consumed.then_some("s");
+        Consumers {
+            initial: step(initial),
+            seed: step(seed),
+            max_trace_length: step(trace),
+            max_value_bits: step(bits),
+        }
+    }
+
     fn cause(member: &Value, route: Route) -> (String, &'static str) {
         match read(member, route) {
             Err(RunCause::PlanRequest { path, cause, .. }) => (path, cause),
@@ -301,12 +335,14 @@ mod tests {
             Route::Source,
         )
         .unwrap();
-        assert!(request.close_by_plan(true, true, true, true).is_ok());
+        assert!(request
+            .close_by_plan(&consumed(true, true, false, false))
+            .is_ok());
         for (initial, seed, pointer) in [
             (true, false, "/request/verification_plan/seed"),
             (false, true, "/request/verification_plan/initial"),
         ] {
-            match request.close_by_plan(initial, seed, true, true) {
+            match request.close_by_plan(&consumed(initial, seed, true, true)) {
                 Err(RunCause::PlanRequest { path, cause, .. }) => {
                     assert_eq!((path.as_str(), cause), (pointer, "unknown-member"));
                 }
@@ -328,7 +364,9 @@ mod tests {
         .unwrap();
         assert_eq!(request.max_trace_length, Some(8));
         assert_eq!(request.max_value_bits, Some(64));
-        assert!(request.close_by_plan(true, true, true, true).is_ok());
+        assert!(request
+            .close_by_plan(&consumed(true, true, true, true))
+            .is_ok());
         for (member, pointer) in [
             (
                 "max_trace_length",
@@ -343,12 +381,7 @@ mod tests {
             input[member] = json!(8);
             let request = read(&input, Route::Source).unwrap();
             let error = request
-                .close_by_plan(
-                    true,
-                    true,
-                    member != "max_trace_length",
-                    member != "max_value_bits",
-                )
+                .close_by_plan(&consumed(true, true, false, false))
                 .expect_err("an unconsumed input is unknown to the selected plan");
             match error {
                 RunCause::PlanRequest { path, cause, .. } => {
@@ -381,6 +414,46 @@ mod tests {
                 "wrong-value-kind"
             )
         );
+    }
+
+    /// FR-1038-AC-4, FSpec FR-824-AC-3/7: an absent consumed bound refuses
+    /// `missing-member` naming its first consumer, `max_trace_length` first,
+    /// and only when the plan executes.
+    #[test]
+    #[trace("TC-3032", "FR-1038-AC-4")]
+    #[trace("FSpec-TC-2039", "FSpec-FR-824-AC-3")]
+    #[trace("FSpec-TC-2046", "FSpec-FR-824-AC-7")]
+    fn an_absent_consumed_bound_refuses_missing_member_in_table_order() {
+        let both = consumed(false, false, true, true);
+        let refused =
+            |member: Value| match read(&member, Route::Source).unwrap().close_by_plan(&both) {
+                Err(RunCause::PlanRequest {
+                    path,
+                    cause,
+                    reason,
+                    ..
+                }) => (path, cause, reason),
+                other => panic!("expected a refusal, got {other:?}"),
+            };
+        let (path, cause, reason) = refused(json!({"plan": "Sized"}));
+        assert_eq!(
+            (path.as_str(), cause),
+            (
+                "/request/verification_plan/max_trace_length",
+                "missing-member"
+            )
+        );
+        assert!(reason.contains("`s`"), "{reason}");
+        let (path, cause, _) = refused(json!({"plan": "Sized", "max_trace_length": 8}));
+        assert_eq!(
+            (path.as_str(), cause),
+            (
+                "/request/verification_plan/max_value_bits",
+                "missing-member"
+            )
+        );
+        let emit_only = read(&json!({"emit": true, "execute": false}), Route::Source).unwrap();
+        assert!(emit_only.close_by_plan(&both).is_ok());
     }
 
     #[test]

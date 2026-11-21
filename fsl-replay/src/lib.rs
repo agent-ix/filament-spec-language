@@ -177,13 +177,18 @@ pub use certificate::smt::{
 pub use certificate::state_graph::{
     check_state_graph, StateGraphCertificate, StateGraphCertificateRequest,
 };
+pub use certificate::task_product::{
+    TaskArrivalKind, TaskClockCeiling, TaskClosureEvidence, TaskClosureMethod,
+    TaskDiagonalConstraint, TaskDiagonalOperator, TaskProductCertificate, TaskQueueBound,
+    TaskSubtraction, TaskTimeProgress, TaskTransitionTemplate,
+};
 pub use certificate::zone::{LuBounds, Zone, ZoneError};
 pub use certificate::zone_certificate::{
     check_zone_certificate, AcceptanceSet, CertEdge, CertNode, CertificateCheckLimits,
     CertificateItem, CertifiedItem, CheckerFault, ComponentReason, Components, DivergenceWitness,
-    DivergentTarget, FairnessMember, ItemIdentity, NonZeno, ProductMark, RefinementIdentity, RefinementPart,
-    SilentMove, StateGraphCertificateForm, StateGraphPart, ZoneCertificate, ZoneCertificateRefusal,
-    ZoneCertificateRequest, ZoneCertificateVerdict,
+    DivergentTarget, FairnessMember, ItemIdentity, NonZeno, ProductMark, RefinementIdentity,
+    RefinementPart, SilentMove, StateGraphCertificateForm, StateGraphPart, ZoneCertificate,
+    ZoneCertificateRefusal, ZoneCertificateRequest, ZoneCertificateVerdict,
 };
 pub use certificate::{CertificateLocus, CertificateMember, CertificateRule, QueryPart};
 /// FR-322 "Operand index segments": a package's graph and its wire ids.
@@ -223,13 +228,15 @@ pub use execute::{
     ValueParityPreimage, ValueParityReport, ValueParityResult,
 };
 pub use hybrid::{
-    CertificateRecord, CertificateStatus, HYBRID_CERTIFICATE_CHECKER,
-    hybrid_locus_site, hybrid_locus_wire, settle_hybrid_candidates, AdmittedHybridProcessItem, AdmittedHybridProcessRequest,
-    BoundDimension, BudgetRefusal, ClaimHorizon, HybridProcessDependencyPackage, HybridProcessItem,
+    CertificateRecord, CertificateStatus, HYBRID_CERTIFICATE_CHECKER, hybrid_locus_site,
+    hybrid_locus_wire, settle_hybrid_candidates, AdmittedHybridProcessItem,
+    AdmittedHybridProcessRequest, BoundDimension, BudgetRefusal, ClaimHorizon, HybridAnswer,
+    HybridEntryRefusal, HybridProcessDependencyPackage, HybridProcessItem,
     HybridProcessPackageContext, HybridProcessRequest, HybridProcessRequestRefusal,
-    HybridProcessDependency, HybridProcessStage, HybridAnswer, HybridEntryRefusal, HybridProvider, HybridSettlement, HybridSolveRequest,
-    HybridVerdict, NegativeHorizon, OptionRefusal, SolverBudget, SolverCoverage, SolverHorizon, SolverMethod,
-    SolverOutcome, SolverResult, SolverStop, UnsupportedConstruct,
+    HybridProcessDependency, HybridProcessStage, HybridProvider, HybridSettlement,
+    HybridSolveRequest, HybridVerdict, NegativeHorizon, OptionRefusal, SolverBudget,
+    SolverCoverage, SolverHorizon, SolverMethod, SolverOutcome, SolverResult, SolverStop,
+    UnsupportedConstruct,
 };
 pub use hybrid_replay::{
     probe_flowpipe_claim as probe_hybrid_flowpipe_claim, ProbeOutcome as HybridProbeOutcome,
@@ -386,13 +393,19 @@ pub use fsl_foundation::{BackendId, Code, RequestIndex};
 pub use outcome::undefined_reason;
 pub use outcome::{
     assignments_wire, certificate_identity_wire, claim_locus_wire, graph_evidence_wire,
-    probabilistic_wire, protocol_temporal_wire, temporal_wire, ClauseRunNotAnItem,
+    omitted_witnesses, sampled_witness_wire, OmittedWitness, WitnessOmission,
+    probabilistic_wire, protocol_temporal_wire, read_task_temporal_counterexample,
+    read_task_temporal_document, read_temporal_counterexample, replay_model_trace_document,
+    state_key_wire, task_product_transition_wire, ReadCounterexample, TraceAlphabet,
+    replay_task_product_trace, task_source_transition_wire, task_temporal_wire,
+    task_temporal_wire_with_queue_growth, task_transition_wire, temporal_wire, ClauseRunNotAnItem,
     ConformanceClosureOutput, ConformanceGlobalOutput, ConformanceMessageBoundOutput,
     ConformanceObligationOutput, ConformanceProjectionOutput, ConformanceRecordingIdentity,
     ConformanceReplayOutput, CounterexampleWireError, ExecuteResult, ItemCause, ItemLabel,
     Operation, OutcomeDiagnostic, OutcomeDocument, OutcomeItem, OutcomeItemError, OutcomeLocus,
     OutcomeStage, OutcomeWriteError, ParityReason, ProtocolConformanceOutput, ProtocolWire,
-    ResultLimit, ResultValue, OUTCOME_FORMAT,
+    ResultLimit, ResultValue, TaskProductCounterexampleDocument, TaskProductTraceReplayRefusal,
+    TemporalCounterexampleReadRefusal, OUTCOME_FORMAT,
 };
 pub use planner::{
     read_premise_item, read_result_entry, read_settlement_request, Budget, PlannerDeclaration,
@@ -450,16 +463,16 @@ pub use proof_result::{
     read_backend_provider_envelope, read_first_party_solver_basis, read_plugin_assignments,
     read_plugin_basis, read_plugin_cause_kind, read_plugin_certification,
     read_plugin_hybrid_counterexample, read_plugin_hybrid_counterexample_over,
-    read_plugin_inconclusive_cause,
-    read_plugin_inconclusive_cause_over, AppliedReduction, BackendProviderSource, BoundsMethod,
-    Certification, DeclineCode, EmptyEnvelopeSet, ExactBinding, ExactEntry, ExactOrBounds,
-    ExactRational, Extremum, FslOnlyCause, IncompleteCause, InconclusiveCause, InstanceBound,
-    MemoryBound, MemoryBoundMember, PluginReplayContext, PluginReplayRefusal, PluginResultRefusal,
-    PremiseOutcome, ProofBasis, ProofRefusalCause, ProofResultEnvelope, ProofResultRefusal,
-    Proviso, ReportedInconclusiveCause, SettlementBasis, StaleIdentity, StatedInstanceBound,
-    StatedMemoryBound, StatisticalRequestRefusal, SymmetryBrokenCause, SymmetryRefusal,
-    TerminalRecord, TerminalRecordRefusal, TerminalValue, ToolFailure, TransferReason,
-    UnavailabilityCause, ValueCheckUnsupported, ValueFault, WeakAccessFailure,
+    read_plugin_inconclusive_cause, read_plugin_inconclusive_cause_over, AppliedReduction,
+    BackendProviderSource, BoundsMethod, Certification, DeclineCode, EmptyEnvelopeSet,
+    ExactBinding, ExactEntry, ExactOrBounds, ExactRational, Extremum, FslOnlyCause,
+    IncompleteCause, InconclusiveCause, InstanceBound, MemoryBound, MemoryBoundMember,
+    PluginReplayContext, PluginReplayRefusal, PluginResultRefusal, PremiseOutcome, ProofBasis,
+    ProofRefusalCause, ProofResultEnvelope, ProofResultRefusal, Proviso, ReportedInconclusiveCause,
+    SettlementBasis, StaleIdentity, StatedInstanceBound, StatedMemoryBound,
+    StatisticalRequestRefusal, SymmetryBrokenCause, SymmetryRefusal, TerminalRecord,
+    TerminalRecordRefusal, TerminalValue, ToolFailure, TransferReason, UnavailabilityCause,
+    ValueCheckUnsupported, ValueFault, WeakAccessFailure,
 };
 // The inputs `call_site` takes and the typed operation name it and FR-115
 // select by. They are defined in `spine` because the spine compile reads
@@ -522,6 +535,9 @@ pub use filament_semantic_value::call::InputRefusal;
 // constructor (ADR-011 §3 FB-05).
 pub use execute::{ObjectEnvironmentFailure, Unresolved};
 pub use filament_exact::{EmptyInterval, Incomplete, Integer, IntegerInterval};
+pub use fsl_eval::simulation::model::{
+    TaskProductTransition, TaskTransitionAction, TaskTransitionIdentity,
+};
 pub use fsl_foundation::bound::{
     DomainKey, DomainKind, EmptyFiniteBound, FiniteBound, FiniteBoundKind, ProofBound,
     ProofBoundRefusal,
@@ -542,10 +558,10 @@ pub use request::{
 pub use result::{
     read_bounded, runtime_value_path_json, CauseCodecError, DecidingElement, DisagreementCause,
     EvaluatedValue, HybridReplayRecord, HybridReplayResult, HybridReplaySettlement,
-    HybridTraceDisagreement, InputArmResult, InputSettlement,
-    ObservedTemporalParity, ObservedTemporalResult, ObservedTemporalSettlement, ReplayResult,
-    SeparatingWitnessRecord, SeparationReason, SeparationRefusal, TemporalDecisive, Verdict,
-    WitnessArmResult, WitnessCheck, WitnessFailure, WitnessSettlement,
+    HybridTraceDisagreement, InputArmResult, InputSettlement, ObservedTemporalParity,
+    ObservedTemporalResult, ObservedTemporalSettlement, ReplayResult, SeparatingWitnessRecord,
+    SeparationReason, SeparationRefusal, TemporalDecisive, Verdict, WitnessArmResult, WitnessCheck,
+    WitnessFailure, WitnessSettlement,
 };
 pub use supplied_limits::{read_supplied_limits, SuppliedLimitsRefusal};
 // FSpec FR-323: the replay target a packet, envelope and request each carry.
@@ -566,13 +582,13 @@ pub use scalar::{
     OperatorIdentity, OperatorParityReport, OperatorParityResult, ScalarAgreement, ScalarClaim,
     ScalarOperand, ScalarOperation, ScalarOperator, ScalarOutcome, ValueClaim, ValueIdentity,
 };
+pub use witness::{derive_state_clause_witness, DerivationRefusal};
 pub use witness::{
     CanonicalAssignment, ClaimedChange, DecodeRefusal, EntryFault, EnvelopeSource, FamilyPayload,
     FrameCounterexample, FrameOperation, MalformedTranscript, NoPayload, ObservedTemporalEnvelope,
     QuantityMagnitude, ReplaySource, ValueTextError, Witness, WitnessBinding, WitnessEnvelope,
     WitnessField, WitnessPacket, WitnessRefusal, WitnessSlot, WitnessValue, WitnessValueType,
 };
-pub use witness::{derive_state_clause_witness, DerivationRefusal};
 pub use witness_entry_name::witness_entry_name;
 // FR-116: the FR-106 document, object and FR-115 frame witness types a
 // frame counterexample and its replay result carry, re-exported so CG can

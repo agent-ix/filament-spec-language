@@ -302,6 +302,10 @@ pub(super) struct Request {
     /// handler for either a source program or a selected checked package.
     #[serde(default, deserialize_with = "present_json_value")]
     pub synthesis: Option<serde_json::Value>,
+    /// FR-1038: the verification plan request, read by its own strict
+    /// reader before any stage runs (`plan::request`).
+    #[serde(default, deserialize_with = "present_json_value")]
+    pub verification_plan: Option<serde_json::Value>,
 }
 
 fn from_object_opt<'de, D: serde::Deserializer<'de>, T: serde::Deserialize<'de>>(

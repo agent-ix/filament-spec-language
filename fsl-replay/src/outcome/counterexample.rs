@@ -3,6 +3,7 @@
 //! (FR-286 "Analyze items and their counterexamples"): FSpec FR-364's
 //! `TemporalCounterexample` over a model subject, and canonical assignments.
 
+use crate::{TaskProductTransition, TaskTransitionIdentity};
 use filament_exact::{ObjectReference, Rational, Value};
 use filament_semantic_value::fairness::FairnessConstraint;
 use filament_semantic_value::model_transition::ModelTransition;
@@ -15,6 +16,7 @@ use fsl_eval::simulation::SubjectTransition;
 use fsl_foundation::node_wire::node_key_to_json;
 use fsl_foundation::source::provenance::OccurrenceKey;
 use serde_json::{json, Value as Json};
+use std::any::{Any, TypeId};
 
 use super::{undefined_reason, TimedStateWire, TimedTransitionWire};
 use crate::model_check::counterexample::{
@@ -29,6 +31,917 @@ pub enum CounterexampleWireError {
     /// The counterexample's member has no FR-286 spelling yet.
     #[error("the counterexample's {0} has no wire spelling")]
     Unspelled(&'static str),
+}
+
+/// Why a temporal counterexample document failed its typed FR-364 readback.
+#[derive(Clone, Debug, Eq, PartialEq, thiserror::Error)]
+pub enum TemporalCounterexampleReadRefusal {
+    /// The supplied JSON does not have the canonical typed counterexample's
+    /// shape or value at this pointer.
+    #[error("malformed temporal counterexample ({cause}) at {pointer}")]
+    MalformedWire {
+        /// The FR-364 wire cause.
+        cause: &'static str,
+        /// The JSON pointer of the first disagreement.
+        pointer: String,
+    },
+    /// A well-shaped transition belongs to another subject alphabet.
+    #[error("temporal counterexample uses another trace alphabet at {pointer}")]
+    TraceAlphabet {
+        /// The transition type that selected the other alphabet.
+        pointer: String,
+    },
+    /// A well-shaped task identity disagrees with the recomputed product.
+    #[error("invalid task trace value at {pointer}: supplied {supplied}, recomputed {recomputed}")]
+    InvalidRuntimeInput {
+        /// The JSON pointer of the changed value.
+        pointer: String,
+        /// The supplied value.
+        supplied: String,
+        /// The value recomputed from the checked product.
+        recomputed: String,
+    },
+}
+
+/// Why a typed task-product counterexample could not be replayed against its
+/// rebuilt product.
+#[derive(Clone, Debug, Eq, PartialEq, thiserror::Error)]
+pub enum TaskProductTraceReplayRefusal {
+    /// The supplied typed counterexample uses the model transition alphabet.
+    #[error("task-product replay received another trace alphabet at {pointer}")]
+    TraceAlphabet {
+        /// The first transition pointer.
+        pointer: String,
+    },
+    /// A task trace step does not carry the required exact delay.
+    #[error("task-product replay is missing a delay at {pointer}")]
+    MissingDelay {
+        /// The missing delay pointer.
+        pointer: String,
+    },
+    /// The rebuilt product could not replay the typed transition sequence.
+    #[error("task-product replay refused the transition sequence: {0}")]
+    Product(#[from] fsl_eval::simulation::model::TaskProductReplayRefusal),
+    /// The rebuilt product could not form a key for a replayed state.
+    #[error("task-product replay could not key a replayed state: {0}")]
+    StateKey(#[from] fsl_eval::simulation::model::TaskProductStateKeyRefusal),
+    /// A recorded post-state differs from the state's recomputed key.
+    #[error("task-product replay found a post-state mismatch at {pointer}")]
+    InvalidRuntimeInput {
+        /// The first differing JSON pointer.
+        pointer: String,
+        /// The supplied state key, in canonical hexadecimal form.
+        supplied: String,
+        /// The recomputed state key, in canonical hexadecimal form.
+        recomputed: String,
+    },
+}
+
+/// A losslessly read task-product FR-364 model trace and its optional
+/// inductive queue-growth continuation.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TaskProductCounterexampleDocument {
+    /// The typed source-plus-scheduler trace.
+    pub counterexample: TemporalCounterexample<TaskProductTransition>,
+    /// FSpec FR-364's queue-growth continuation, retained in its wire shape.
+    pub queue_growth: Option<Json>,
+}
+
+/// Replay a typed temporal trace against a rebuilt task product.
+///
+/// The transition alphabet is checked before product expansion. Every delay,
+/// enabled transition, post-state key and positive-time lasso closure is then
+/// checked by the product's FR-237 replay path.
+#[allow(private_bounds)] // Only FR-364 subject transitions with canonical spelling are accepted.
+pub fn replay_task_product_trace<T: Spelling + Clone + 'static>(
+    product: &fsl_eval::simulation::model::TaskProductSystem<'_, '_>,
+    counterexample: &TemporalCounterexample<T>,
+) -> Result<(), TaskProductTraceReplayRefusal> {
+    if TypeId::of::<T>() != TypeId::of::<TaskProductTransition>() {
+        return Err(TaskProductTraceReplayRefusal::TraceAlphabet {
+            pointer: "/prefix/0/transition/type".to_owned(),
+        });
+    }
+    let mut steps = Vec::with_capacity(counterexample.prefix.len());
+    for (index, step) in counterexample.prefix.iter().enumerate() {
+        let Some(delay) = step.delay.clone() else {
+            return Err(TaskProductTraceReplayRefusal::MissingDelay {
+                pointer: format!("/prefix/{index}/delay"),
+            });
+        };
+        let Some(transition) = (&step.transition as &dyn Any)
+            .downcast_ref::<TaskProductTransition>()
+            .cloned()
+        else {
+            return Err(TaskProductTraceReplayRefusal::TraceAlphabet {
+                pointer: format!("/prefix/{index}/transition/type"),
+            });
+        };
+        steps.push(fsl_eval::simulation::model::TaskProductTraceStep { delay, transition });
+    }
+    if counterexample
+        .lasso
+        .as_ref()
+        .is_some_and(|lasso| lasso.terminal_stutter)
+    {
+        let Some(delay) = counterexample
+            .lasso
+            .as_ref()
+            .and_then(|lasso| lasso.terminal_stutter_delay.clone())
+        else {
+            return Err(TaskProductTraceReplayRefusal::MissingDelay {
+                pointer: "/loop/0/delay".to_owned(),
+            });
+        };
+        steps.push(fsl_eval::simulation::model::TaskProductTraceStep {
+            delay,
+            transition: TaskProductTransition::TerminalStutter,
+        });
+    }
+    let trace = fsl_eval::simulation::model::TaskProductTrace {
+        initial_state: counterexample.initial_state,
+        steps,
+        lasso_entry: counterexample.lasso.as_ref().map(|lasso| lasso.entry),
+    };
+    let entry = counterexample.lasso.as_ref().map(|lasso| lasso.entry);
+    // A refusal names the step on the wire: steps from the lasso entry are
+    // the `loop`, the rest are the `prefix` (FSpec FR-364).
+    let step_pointer = |index: usize| match entry {
+        Some(entry) if index >= entry => format!("/loop/{}", index - entry),
+        _ => format!("/prefix/{index}"),
+    };
+    let mut key_refusal = None;
+    let replayed = product.replay_trace_observed(&trace, |index, state| {
+        let Some(step) = counterexample.prefix.get(index) else {
+            return Ok(());
+        };
+        match product.state_key(state) {
+            Ok(bytes) => {
+                let recomputed = fsl_eval::simulation::StateKey::from_canonical_bytes(bytes);
+                if step.post_state == recomputed {
+                    return Ok(());
+                }
+                Err(
+                    fsl_eval::simulation::model::TaskProductReplayRefusal::Member {
+                        step: Some(index),
+                        member: "/post_state".to_owned(),
+                        supplied: step.post_state.hex(),
+                        recomputed: recomputed.hex(),
+                    },
+                )
+            }
+            Err(error) => {
+                key_refusal = Some(error);
+                Err(fsl_eval::simulation::model::TaskProductReplayRefusal::Transition)
+            }
+        }
+    });
+    if let Some(error) = key_refusal {
+        return Err(error.into());
+    }
+    match replayed {
+        Ok(_) => Ok(()),
+        Err(fsl_eval::simulation::model::TaskProductReplayRefusal::Member {
+            step,
+            member,
+            supplied,
+            recomputed,
+        }) => Err(TaskProductTraceReplayRefusal::InvalidRuntimeInput {
+            pointer: match step {
+                Some(index) => format!("{}{member}", step_pointer(index)),
+                None => member,
+            },
+            supplied,
+            recomputed,
+        }),
+        Err(other) => Err(other.into()),
+    }
+}
+
+/// Read an FSpec FR-364 model-arm counterexample document with step alphabet
+/// `T`, `ModelTransition` or `TaskProductTransition` (FR-237 "Reading the
+/// wire"). The reader takes no expected value: it reads exactly the FR-331
+/// schema members, checks the whole payload's shape first, and returns a step
+/// outside `T`'s alphabet as an alphabet refusal only for a payload with no
+/// shape fault.
+///
+/// The model alphabet reads the formula-kind, unfair, untimed-interval subset
+/// of the model arm that [`read_task_temporal_document`] reads.
+#[allow(private_bounds)] // The reader accepts only subject types with sealed FR-364 spellings.
+pub fn read_temporal_counterexample<T: Spelling + Clone + 'static>(
+    document: &Json,
+) -> Result<TemporalCounterexample<T>, TemporalCounterexampleReadRefusal> {
+    let read = read_task_temporal_document(document)?;
+    let task = read.counterexample;
+    if TypeId::of::<T>() == TypeId::of::<TaskProductTransition>() {
+        return (&task as &dyn Any)
+            .downcast_ref::<TemporalCounterexample<T>>()
+            .cloned()
+            .ok_or_else(unsupported_alphabet);
+    }
+    if TypeId::of::<T>() != TypeId::of::<ModelTransition>() {
+        return Err(unsupported_alphabet());
+    }
+    let entry = task.lasso.as_ref().map(|lasso| lasso.entry);
+    let mut prefix = Vec::with_capacity(task.prefix.len());
+    for (index, step) in task.prefix.iter().enumerate() {
+        let TaskProductTransition::Source(transition) = &step.transition else {
+            return Err(TemporalCounterexampleReadRefusal::TraceAlphabet {
+                pointer: match entry {
+                    Some(entry) if index >= entry => {
+                        format!("/loop/{}/transition/type", index - entry)
+                    }
+                    _ => format!("/prefix/{index}/transition/type"),
+                },
+            });
+        };
+        prefix.push(ModelStep {
+            transition: transition.clone(),
+            post_state: step.post_state.clone(),
+            delay: step.delay.clone(),
+        });
+    }
+    let model = TemporalCounterexample::<ModelTransition> {
+        initial_state: task.initial_state,
+        prefix,
+        over_binding: task.over_binding,
+        fairness: task.fairness,
+        kind: task.kind,
+        lasso: task.lasso,
+        blocked: task.blocked,
+        refinement: task.refinement,
+        final_delay: task.final_delay,
+    };
+    (&model as &dyn Any)
+        .downcast_ref::<TemporalCounterexample<T>>()
+        .cloned()
+        .ok_or_else(unsupported_alphabet)
+}
+
+fn unsupported_alphabet() -> TemporalCounterexampleReadRefusal {
+    TemporalCounterexampleReadRefusal::MalformedWire {
+        cause: "unsupported-alphabet",
+        pointer: "/".to_owned(),
+    }
+}
+
+/// Read the task-product subset of an FR-364 model counterexample without an
+/// independently supplied typed expectation. The rebuilt product remains
+/// responsible for validating enabledness, derived identity and post-state.
+pub fn read_task_temporal_document(
+    document: &Json,
+) -> Result<TaskProductCounterexampleDocument, TemporalCounterexampleReadRefusal> {
+    use base64::Engine;
+    use filament_exact::Integer;
+    use fsl_eval::simulation::model::{TaskTransitionAction as Action, TaskTransitionIdentity};
+
+    fn malformed(
+        cause: &'static str,
+        pointer: impl Into<String>,
+    ) -> TemporalCounterexampleReadRefusal {
+        TemporalCounterexampleReadRefusal::MalformedWire {
+            cause,
+            pointer: pointer.into(),
+        }
+    }
+    fn object<'a>(
+        value: &'a Json,
+        pointer: &str,
+    ) -> Result<&'a serde_json::Map<String, Json>, TemporalCounterexampleReadRefusal> {
+        value
+            .as_object()
+            .ok_or_else(|| malformed("wrong-value-kind", pointer))
+    }
+    fn required<'a>(
+        value: &'a Json,
+        key: &str,
+        pointer: &str,
+    ) -> Result<&'a Json, TemporalCounterexampleReadRefusal> {
+        value
+            .get(key)
+            .ok_or_else(|| malformed("missing-member", format!("{pointer}/{key}")))
+    }
+    fn exact_members(
+        value: &Json,
+        required_names: &[&str],
+        optional_names: &[&str],
+        pointer: &str,
+    ) -> Result<(), TemporalCounterexampleReadRefusal> {
+        let found = object(value, pointer)?;
+        for name in required_names {
+            if !found.contains_key(*name) {
+                return Err(malformed("missing-member", format!("{pointer}/{name}")));
+            }
+        }
+        if let Some(name) = found.keys().find(|name| {
+            !required_names.contains(&name.as_str()) && !optional_names.contains(&name.as_str())
+        }) {
+            return Err(malformed("unknown-member", format!("{pointer}/{name}")));
+        }
+        Ok(())
+    }
+    fn rational(
+        value: &Json,
+        pointer: &str,
+    ) -> Result<Rational, TemporalCounterexampleReadRefusal> {
+        exact_members(value, &["numerator", "denominator"], &[], pointer)?;
+        let integer = |member: &str| -> Result<Integer, TemporalCounterexampleReadRefusal> {
+            required(value, member, pointer)?
+                .as_str()
+                .ok_or_else(|| malformed("wrong-value-kind", format!("{pointer}/{member}")))?
+                .parse()
+                .map_err(|_| malformed("invalid-value", format!("{pointer}/{member}")))
+        };
+        Rational::new(integer("numerator")?, integer("denominator")?)
+            .map_err(|_| malformed("invalid-value", pointer))
+    }
+    fn source_transition(
+        value: &Json,
+        pointer: &str,
+    ) -> Result<ModelTransition, TemporalCounterexampleReadRefusal> {
+        exact_members(
+            value,
+            &["type", "operation", "receiver", "arguments"],
+            &[],
+            pointer,
+        )?;
+        if required(value, "type", pointer)?.as_str() != Some("transition") {
+            return Err(TemporalCounterexampleReadRefusal::TraceAlphabet {
+                pointer: format!("{pointer}/type"),
+            });
+        }
+        let operation_wire = required(value, "operation", pointer)?;
+        // FR-364 carries source operations as their stable node URI. Recover
+        // the canonical node/package identity used by ModelTransition. Other
+        // canonical operation identities, including a model arm's structured
+        // operation value, are preserved verbatim.
+        let operation_value = match operation_wire {
+            Json::String(operation) => match serde_json::from_str::<Json>(operation) {
+                Ok(value) => value,
+                Err(_) if operation.starts_with("ix://") => {
+                    let mut parts = operation
+                        .strip_prefix("ix://")
+                        .unwrap_or_default()
+                        .split('/');
+                    let owner = parts.next().filter(|part| !part.is_empty());
+                    let repository = parts.next().filter(|part| !part.is_empty());
+                    let package = owner
+                        .zip(repository)
+                        .map(|(owner, repository)| format!("{owner}/{repository}"))
+                        .ok_or_else(|| {
+                            malformed("invalid-value", format!("{pointer}/operation"))
+                        })?;
+                    json!({"node": operation, "package": package})
+                }
+                Err(_) => Json::String(operation.clone()),
+            },
+            Json::Object(_) => operation_wire.clone(),
+            _ => {
+                return Err(malformed(
+                    "wrong-value-kind",
+                    format!("{pointer}/operation"),
+                ))
+            }
+        };
+        let receiver = match required(value, "receiver", pointer)? {
+            Json::Null => None,
+            value => Some(
+                serde_json::to_string(value)
+                    .map_err(|_| malformed("invalid-value", format!("{pointer}/receiver")))?,
+            ),
+        };
+        let arguments = required(value, "arguments", pointer)?
+            .as_array()
+            .ok_or_else(|| malformed("wrong-value-kind", format!("{pointer}/arguments")))?
+            .iter()
+            .enumerate()
+            .map(|(index, value)| {
+                serde_json::to_string(value)
+                    .map_err(|_| malformed("invalid-value", format!("{pointer}/arguments/{index}")))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        ModelTransition::new(
+            serde_json::to_string(&operation_value)
+                .map_err(|_| malformed("invalid-value", format!("{pointer}/operation")))?,
+            receiver,
+            arguments,
+            quire_canonical::Limits::new(u64::MAX),
+        )
+        .map_err(|_| malformed("invalid-value", pointer))
+    }
+    fn task_transition(
+        value: &Json,
+        pointer: &str,
+    ) -> Result<TaskTransitionIdentity, TemporalCounterexampleReadRefusal> {
+        let action_text = required(value, "action", pointer)?
+            .as_str()
+            .ok_or_else(|| malformed("wrong-value-kind", format!("{pointer}/action")))?;
+        let action = match action_text {
+            "activate" => Action::Activate,
+            "release" => Action::Release,
+            "dispatch" => Action::Dispatch,
+            "preempt" => Action::Preempt,
+            "resume" => Action::Resume,
+            "complete" => Action::Complete,
+            "budget-change" => Action::BudgetChange,
+            "deadline-miss" => Action::DeadlineMiss,
+            _ => return Err(malformed("unknown-variant", format!("{pointer}/action"))),
+        };
+        let budget_present = value.get("budget_delta").is_some();
+        if budget_present != (action == Action::BudgetChange) {
+            return Err(malformed(
+                "budget-delta-presence",
+                format!("{pointer}/budget_delta"),
+            ));
+        }
+        let required_names = [
+            "type",
+            "action",
+            "taskset",
+            "task",
+            "job",
+            "slot",
+            "generation",
+            "release",
+            "source_transition",
+            "demand",
+            "jitter",
+            "deadline",
+        ];
+        let optional_names = ["priority", "budget_delta"];
+        exact_members(value, &required_names, &optional_names, pointer)?;
+        if required(value, "type", pointer)?.as_str() != Some("task-transition") {
+            return Err(TemporalCounterexampleReadRefusal::TraceAlphabet {
+                pointer: format!("{pointer}/type"),
+            });
+        }
+        let string = |member: &str| -> Result<String, TemporalCounterexampleReadRefusal> {
+            required(value, member, pointer)?
+                .as_str()
+                .map(str::to_owned)
+                .ok_or_else(|| malformed("wrong-value-kind", format!("{pointer}/{member}")))
+        };
+        let integer = |member: &str| -> Result<u64, TemporalCounterexampleReadRefusal> {
+            required(value, member, pointer)?
+                .as_u64()
+                .ok_or_else(|| malformed("wrong-value-kind", format!("{pointer}/{member}")))
+        };
+        let optional_integer = match value.get("priority") {
+            None => None,
+            Some(value) => Some(
+                value
+                    .as_u64()
+                    .ok_or_else(|| malformed("wrong-value-kind", format!("{pointer}/priority")))?,
+            ),
+        };
+        let source_optional = match required(value, "source_transition", pointer)? {
+            Json::Null => None,
+            source => Some(source_transition(
+                source,
+                &format!("{pointer}/source_transition"),
+            )?),
+        };
+        Ok(TaskTransitionIdentity {
+            action,
+            task_set: string("taskset")?,
+            task: string("task")?,
+            job: integer("job")?,
+            slot: integer("slot")?,
+            generation: integer("generation")?,
+            release: source_transition(
+                required(value, "release", pointer)?,
+                &format!("{pointer}/release"),
+            )?,
+            source_transition: source_optional,
+            demand: rational(
+                required(value, "demand", pointer)?,
+                &format!("{pointer}/demand"),
+            )?,
+            jitter: rational(
+                required(value, "jitter", pointer)?,
+                &format!("{pointer}/jitter"),
+            )?,
+            deadline: rational(
+                required(value, "deadline", pointer)?,
+                &format!("{pointer}/deadline"),
+            )?,
+            priority: optional_integer,
+            budget_delta: value
+                .get("budget_delta")
+                .map(|value| rational(value, &format!("{pointer}/budget_delta")))
+                .transpose()?,
+        })
+    }
+    fn check_step_shape(
+        value: &Json,
+        pointer: &str,
+    ) -> Result<(), TemporalCounterexampleReadRefusal> {
+        exact_members(value, &["transition", "post_state"], &["delay"], pointer)?;
+        let transition_pointer = format!("{pointer}/transition");
+        let transition = required(value, "transition", pointer)?;
+        let kind = required(transition, "type", &transition_pointer)?
+            .as_str()
+            .ok_or_else(|| malformed("wrong-value-kind", format!("{transition_pointer}/type")))?;
+        match kind {
+            "transition" => exact_members(
+                transition,
+                &["type", "operation", "receiver", "arguments"],
+                &[],
+                &transition_pointer,
+            ),
+            "task-transition" => exact_members(
+                transition,
+                &[
+                    "type",
+                    "action",
+                    "taskset",
+                    "task",
+                    "job",
+                    "slot",
+                    "generation",
+                    "release",
+                    "source_transition",
+                    "demand",
+                    "jitter",
+                    "deadline",
+                ],
+                &["priority", "budget_delta"],
+                &transition_pointer,
+            ),
+            "terminal-stutter" => exact_members(transition, &["type"], &[], &transition_pointer),
+            _ => {
+                // Validate the remainder before returning the alphabet refusal.
+                exact_members(transition, &["type"], &[], &transition_pointer)
+            }
+        }?;
+        let state = required(value, "post_state", pointer)?;
+        exact_members(state, &["key"], &[], &format!("{pointer}/post_state"))?;
+        if required(state, "key", &format!("{pointer}/post_state"))?
+            .as_str()
+            .is_none()
+        {
+            return Err(malformed(
+                "wrong-value-kind",
+                format!("{pointer}/post_state/key"),
+            ));
+        }
+        // A source step of the model alphabet may omit its delay; a task step
+        // and the terminal stutter carry theirs (FR-237 "Reading the wire").
+        if kind == "transition" && value.get("delay").is_none() {
+            return Ok(());
+        }
+        let _ = rational(
+            required(value, "delay", pointer)?,
+            &format!("{pointer}/delay"),
+        )?;
+        Ok(())
+    }
+    fn parse_step(
+        value: &Json,
+        pointer: &str,
+    ) -> Result<ModelStep<TaskProductTransition>, TemporalCounterexampleReadRefusal> {
+        let transition = required(value, "transition", pointer)?;
+        let transition_pointer = format!("{pointer}/transition");
+        let kind = required(transition, "type", &transition_pointer)?
+            .as_str()
+            .unwrap_or_default();
+        let transition = match kind {
+            "transition" => {
+                TaskProductTransition::Source(source_transition(transition, &transition_pointer)?)
+            }
+            "task-transition" => {
+                TaskProductTransition::Task(task_transition(transition, &transition_pointer)?)
+            }
+            "terminal-stutter" => TaskProductTransition::TerminalStutter,
+            _ => {
+                return Err(TemporalCounterexampleReadRefusal::TraceAlphabet {
+                    pointer: format!("{transition_pointer}/type"),
+                })
+            }
+        };
+        let post_state = required(
+            required(value, "post_state", pointer)?,
+            "key",
+            &format!("{pointer}/post_state"),
+        )?
+        .as_str()
+        .ok_or_else(|| malformed("wrong-value-kind", format!("{pointer}/post_state/key")))?;
+        let bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD
+            .decode(post_state)
+            .map_err(|_| malformed("invalid-value", format!("{pointer}/post_state/key")))?;
+        Ok(ModelStep {
+            transition,
+            post_state: fsl_eval::simulation::StateKey::from_canonical_bytes(bytes),
+            delay: value
+                .get("delay")
+                .map(|delay| rational(delay, &format!("{pointer}/delay")))
+                .transpose()?,
+        })
+    }
+
+    exact_members(
+        document,
+        &[
+            "trace",
+            "kind",
+            "initial_state",
+            "prefix",
+            "loop",
+            "over_binding",
+            "fairness",
+            "interval",
+            "trace_position",
+        ],
+        &["final_delay", "queue_growth"],
+        "",
+    )?;
+    if required(document, "trace", "")?.as_str() != Some("model")
+        || required(document, "kind", "")?.as_str() != Some("formula")
+        || required(document, "over_binding", "")? != &Json::Null
+        || required(document, "fairness", "")?
+            .as_array()
+            .is_none_or(|items| !items.is_empty())
+        || required(document, "interval", "")? != &Json::Null
+        || document.get("final_delay").is_some()
+    {
+        return Err(malformed("invalid-value", "/kind"));
+    }
+    let prefix = required(document, "prefix", "")?
+        .as_array()
+        .ok_or_else(|| malformed("wrong-value-kind", "/prefix"))?;
+    let looped = required(document, "loop", "")?
+        .as_array()
+        .ok_or_else(|| malformed("wrong-value-kind", "/loop"))?;
+    let queue_growth = document.get("queue_growth").cloned();
+    // FSpec FR-364 (FR-364-AC-17): a task counterexample whose prefix holds a
+    // deadline miss carries exactly one continuation, a non-empty `loop` or a
+    // `queue_growth` witness; a bare prefix is refused before replay. A trace
+    // with no task miss is the plain finite model-arm shape.
+    let holds_miss = prefix.iter().any(|step| {
+        let identity = &step["transition"];
+        identity["type"] == "task-transition" && identity["action"] == "deadline-miss"
+    });
+    if holds_miss && looped.is_empty() && queue_growth.is_none() {
+        return Err(malformed("missing-member", "/loop"));
+    }
+    if !looped.is_empty() && queue_growth.is_some() {
+        return Err(malformed("invalid-value", "/queue_growth"));
+    }
+    if queue_growth.is_some() && !holds_miss {
+        return Err(malformed("invalid-value", "/queue_growth"));
+    }
+    if let Some(witness) = &queue_growth {
+        if !valid_queue_growth_envelope(witness) {
+            return Err(TemporalCounterexampleReadRefusal::InvalidRuntimeInput {
+                pointer: "/queue_growth".to_owned(),
+                supplied: witness.to_string(),
+                recomputed: "a well-formed queue-growth continuation".to_owned(),
+            });
+        }
+    }
+    // Shape-check the entire payload before classifying a foreign transition
+    // alphabet, so a later malformed member wins over an earlier type.
+    for (index, step) in prefix.iter().enumerate() {
+        check_step_shape(step, &format!("/prefix/{index}"))?;
+    }
+    for (index, step) in looped.iter().enumerate() {
+        check_step_shape(step, &format!("/loop/{index}"))?;
+    }
+    let initial_state = required(document, "initial_state", "")?
+        .as_u64()
+        .and_then(|value| usize::try_from(value).ok())
+        .ok_or_else(|| malformed("wrong-value-kind", "/initial_state"))?;
+    let mut steps = Vec::with_capacity(prefix.len() + looped.len());
+    let mut alphabet_refusal = None;
+    for (index, step) in prefix.iter().enumerate() {
+        match parse_step(step, &format!("/prefix/{index}")) {
+            Ok(step) => steps.push(step),
+            Err(error @ TemporalCounterexampleReadRefusal::TraceAlphabet { .. }) => {
+                alphabet_refusal.get_or_insert(error);
+            }
+            Err(error) => return Err(error),
+        }
+    }
+    let entry = steps.len();
+    let terminal_stutter =
+        looped.len() == 1 && looped[0]["transition"]["type"].as_str() == Some("terminal-stutter");
+    // The terminal-stutter step is never part of the read prefix: replay
+    // appends it from `Lasso::terminal_stutter_delay` (FR-249-AC-11).
+    let mut stutter_delay = None;
+    for (index, step) in looped.iter().enumerate() {
+        match parse_step(step, &format!("/loop/{index}")) {
+            Ok(step) if terminal_stutter => stutter_delay = step.delay,
+            Ok(step) => steps.push(step),
+            Err(error @ TemporalCounterexampleReadRefusal::TraceAlphabet { .. }) => {
+                alphabet_refusal.get_or_insert(error);
+            }
+            Err(error) => return Err(error),
+        }
+    }
+    if let Some(error) = alphabet_refusal {
+        return Err(error);
+    }
+    if looped
+        .iter()
+        .any(|step| step["transition"]["type"] == "terminal-stutter")
+        && !terminal_stutter
+    {
+        return Err(malformed("invalid-value", "/loop/0/transition/type"));
+    }
+    let lasso = (!looped.is_empty()).then(|| crate::Lasso {
+        entry,
+        terminal_stutter,
+        terminal_stutter_delay: stutter_delay,
+    });
+    let counterexample = TemporalCounterexample {
+        initial_state,
+        prefix: steps,
+        over_binding: None,
+        fairness: Vec::new(),
+        kind: CounterexampleKind::Formula,
+        lasso,
+        blocked: Vec::new(),
+        refinement: None,
+        final_delay: None,
+    };
+    let position = required(document, "trace_position", "")?;
+    let expected_position = if queue_growth.is_some() {
+        task_miss_position(&counterexample).map(Json::from)
+    } else {
+        counterexample.trace_position().map(Json::from)
+    };
+    if expected_position.as_ref() != Some(position) {
+        return Err(malformed("invalid-value", "/trace_position"));
+    }
+    if queue_growth.is_some()
+        && task_miss_position(&counterexample)
+            != counterexample
+                .prefix
+                .len()
+                .checked_sub(1)
+                .and_then(|index| u64::try_from(index).ok())
+    {
+        return Err(TemporalCounterexampleReadRefusal::InvalidRuntimeInput {
+            pointer: "/trace_position".to_owned(),
+            supplied: position.to_string(),
+            recomputed: "the final deadline-miss step".to_owned(),
+        });
+    }
+    Ok(TaskProductCounterexampleDocument {
+        counterexample,
+        queue_growth,
+    })
+}
+
+/// Read the typed task trace when callers do not need to retain a queue-growth
+/// continuation value.
+pub fn read_task_temporal_counterexample(
+    document: &Json,
+) -> Result<TemporalCounterexample<TaskProductTransition>, TemporalCounterexampleReadRefusal> {
+    read_task_temporal_document(document).map(|read| read.counterexample)
+}
+
+fn json_pointer<'a>(document: &'a Json, pointer: &str) -> Option<&'a Json> {
+    let mut value = document;
+    for member in pointer.strip_prefix('/')?.split('/') {
+        let member = member.replace("~1", "/").replace("~0", "~");
+        value = match value {
+            Json::Object(object) => object.get(&member)?,
+            Json::Array(array) => array.get(member.parse::<usize>().ok()?)?,
+            _ => return None,
+        };
+    }
+    Some(value)
+}
+
+fn first_wire_shape_difference(
+    supplied: &Json,
+    expected: &Json,
+    pointer: &str,
+) -> Option<(&'static str, String)> {
+    match (supplied, expected) {
+        (Json::Object(supplied), Json::Object(expected)) => {
+            for member in expected.keys() {
+                if !supplied.contains_key(member) {
+                    return Some(("missing-member", format!("{pointer}/{member}")));
+                }
+            }
+            for member in supplied.keys() {
+                if !expected.contains_key(member) {
+                    let cause = if member == "budget_delta" {
+                        "budget-delta-presence"
+                    } else {
+                        "unknown-member"
+                    };
+                    return Some((cause, format!("{pointer}/{member}")));
+                }
+            }
+            for (member, expected_value) in expected {
+                let child = format!("{pointer}/{member}");
+                if let Some(difference) =
+                    first_wire_shape_difference(&supplied[member], expected_value, &child)
+                {
+                    return Some(difference);
+                }
+            }
+            None
+        }
+        (Json::Array(supplied), Json::Array(expected)) => {
+            if supplied.len() != expected.len() {
+                let index = supplied.len().min(expected.len());
+                let cause = if supplied.len() < expected.len() {
+                    "missing-member"
+                } else {
+                    "unknown-member"
+                };
+                return Some((cause, format!("{pointer}/{index}")));
+            }
+            supplied
+                .iter()
+                .zip(expected)
+                .enumerate()
+                .find_map(|(index, (supplied, expected))| {
+                    first_wire_shape_difference(supplied, expected, &format!("{pointer}/{index}"))
+                })
+        }
+        _ => None,
+    }
+}
+
+fn first_wire_difference(
+    supplied: &Json,
+    expected: &Json,
+    pointer: &str,
+) -> Option<(&'static str, String)> {
+    match (supplied, expected) {
+        (Json::Object(supplied), Json::Object(expected)) => {
+            // FR-364 checks object shape before transition alphabets or values.
+            for member in expected.keys() {
+                if !supplied.contains_key(member) {
+                    return Some(("missing-member", format!("{pointer}/{member}")));
+                }
+            }
+            for member in supplied.keys() {
+                if !expected.contains_key(member) {
+                    let cause = if member == "budget_delta" {
+                        "budget-delta-presence"
+                    } else {
+                        "unknown-member"
+                    };
+                    return Some((cause, format!("{pointer}/{member}")));
+                }
+            }
+            for (member, expected_value) in expected {
+                let supplied_value = &supplied[member];
+                let child = format!("{pointer}/{member}");
+                if let Some(difference) =
+                    first_wire_difference(supplied_value, expected_value, &child)
+                {
+                    return Some(difference);
+                }
+            }
+            None
+        }
+        (Json::Array(supplied), Json::Array(expected)) => {
+            if supplied.len() < expected.len() {
+                return Some(("missing-member", format!("{pointer}/{}", supplied.len())));
+            }
+            if supplied.len() > expected.len() {
+                return Some(("unknown-member", format!("{pointer}/{}", expected.len())));
+            }
+            supplied
+                .iter()
+                .zip(expected)
+                .enumerate()
+                .find_map(|(index, (supplied, expected))| {
+                    first_wire_difference(supplied, expected, &format!("{pointer}/{index}"))
+                })
+        }
+        (supplied, expected) if supplied == expected => None,
+        (supplied, expected) => {
+            let cause = if wire_kind(supplied) != wire_kind(expected) {
+                "wrong-value-kind"
+            } else if pointer.ends_with("/transition/type") {
+                "trace-alphabet"
+            } else if pointer.ends_with("/transition/action") {
+                "unknown-variant"
+            } else {
+                "invalid-value"
+            };
+            Some((cause, pointer.to_owned()))
+        }
+    }
+}
+
+fn wire_kind(value: &Json) -> &'static str {
+    match value {
+        Json::Null => "null",
+        Json::Bool(_) => "boolean",
+        Json::Number(_) => "number",
+        Json::String(_) => "string",
+        Json::Array(_) => "array",
+        Json::Object(_) => "object",
+    }
 }
 
 fn rational(value: &Rational) -> Json {
@@ -61,6 +974,10 @@ trait Spelling: SubjectTransition {
     fn transition(&self) -> Result<Json, CounterexampleWireError>;
     fn send_record(&self) -> Result<Option<Json>, CounterexampleWireError>;
     fn fairness(member: &Self::Fairness) -> Result<Json, CounterexampleWireError>;
+
+    fn terminal_stutter_delay_required() -> bool {
+        false
+    }
 }
 
 impl Spelling for ModelTransition {
@@ -74,6 +991,42 @@ impl Spelling for ModelTransition {
 
     fn fairness(member: &FairnessConstraint) -> Result<Json, CounterexampleWireError> {
         canonical(member, "fairness")
+    }
+}
+
+impl Spelling for TaskTransitionIdentity {
+    fn transition(&self) -> Result<Json, CounterexampleWireError> {
+        task_transition_wire(self)
+    }
+
+    fn send_record(&self) -> Result<Option<Json>, CounterexampleWireError> {
+        Ok(None)
+    }
+
+    fn fairness(member: &FairnessConstraint) -> Result<Json, CounterexampleWireError> {
+        canonical(member, "fairness")
+    }
+}
+
+impl Spelling for TaskProductTransition {
+    fn transition(&self) -> Result<Json, CounterexampleWireError> {
+        match self {
+            Self::Source(transition) => task_source_transition_wire(transition),
+            Self::Task(transition) => transition.transition(),
+            Self::TerminalStutter => Ok(json!({"type": "terminal-stutter"})),
+        }
+    }
+
+    fn send_record(&self) -> Result<Option<Json>, CounterexampleWireError> {
+        Ok(None)
+    }
+
+    fn fairness(member: &FairnessConstraint) -> Result<Json, CounterexampleWireError> {
+        canonical(member, "fairness")
+    }
+
+    fn terminal_stutter_delay_required() -> bool {
+        true
     }
 }
 
@@ -153,6 +1106,109 @@ fn undefined(
         "where": at,
         "cause": undefined_reason(&evaluation.cause),
     }))
+}
+
+/// The FR-410 `where` of an undefined sample: its test, trace, position and
+/// state. FR-364's `locus` is not here: the verdict does not hold the claim.
+pub(super) fn sampled_undefined_wire(
+    undefined: &crate::statistical::SampledUndefined,
+) -> Result<Json, CounterexampleWireError> {
+    let site = &undefined.evaluation.site;
+    Ok(json!({
+        "type": "undefined-evaluation",
+        "where": {
+            "position": site.position,
+            "state_key": state(&site.state_key)?,
+            "test": undefined.test,
+            "trace_index": undefined.trace.to_string(),
+        },
+        "cause": undefined_reason(&undefined.evaluation.cause),
+    }))
+}
+
+/// A `binding` member (FSpec FR-410): the typed reference, or `null`.
+pub(super) fn binding_wire(
+    binding: Option<&ObjectReference>,
+) -> Result<Json, CounterexampleWireError> {
+    binding.map_or(Ok(Json::Null), reference)
+}
+
+/// Why `witness` cannot be written to a verdict's `witnesses`: the first
+/// member with no schema-valid spelling.
+pub(super) fn witness_omission(
+    witness: &crate::statistical::SampledWitness,
+) -> super::WitnessOmission {
+    use crate::statistical::{MeasureValue, WitnessValue};
+    use fsl_eval::simulation::model::TransitionId;
+    if matches!(witness.value, WitnessValue::Measure(MeasureValue::Censored)) {
+        return super::WitnessOmission::CensoredMeasure;
+    }
+    if witness
+        .steps
+        .iter()
+        .any(|step| matches!(step.transition, TransitionId::Stutter))
+    {
+        return super::WitnessOmission::TerminalStutterStep;
+    }
+    super::WitnessOmission::ScheduledIdentityNotSpellable
+}
+
+/// One sampled witness (FSpec FR-410 "Sampled witness"), its drawn values
+/// spelled with the package's declarations. The schema requires each step's
+/// `scheduled` as a `TypedValue` that cannot hold the scheduled identity, so
+/// no witness is spelled yet: the first member with no spelling is the error.
+///
+/// # Errors
+///
+/// [`super::WitnessOmission`] naming why the witness is left out.
+pub fn sampled_witness_wire(
+    witness: &crate::statistical::SampledWitness,
+    types: &filament_semantic_value::declaration::TypeEnvironment,
+    variants: &[fsl_semantics::check::VariantTypeDeclaration],
+) -> Result<Json, super::WitnessOmission> {
+    use crate::statistical::{MeasureValue, WitnessValue};
+    use fsl_eval::simulation::model::TransitionId;
+    let omitted = |_| witness_omission(witness);
+    let _value = match &witness.value {
+        WitnessValue::Event(holds) => json!({"type": "event", "value": holds}),
+        WitnessValue::Fraction(fraction) | WitnessValue::Measure(MeasureValue::Value(fraction)) => {
+            json!({"type": "measure", "value": {"value": rational(fraction)}})
+        }
+        WitnessValue::Measure(MeasureValue::Censored) => return Err(witness_omission(witness)),
+        WitnessValue::Undefined(evaluation) => {
+            sampled_undefined_wire(&crate::statistical::SampledUndefined {
+                test: witness.test,
+                trace: witness.trace,
+                evaluation: evaluation.clone(),
+            })
+            .map_err(omitted)?
+        }
+    };
+    let mut steps = Vec::with_capacity(witness.steps.len());
+    for step in &witness.steps {
+        let TransitionId::Operation(transition) = &step.transition else {
+            return Err(witness_omission(witness));
+        };
+        let mut random = Vec::with_capacity(step.random.len());
+        for drawn in &step.random {
+            random.push(
+                fsl_eval::simulation::model::typed_value_json(drawn, types, variants)
+                    .ok_or_else(|| witness_omission(witness))?,
+            );
+        }
+        let mut written = json!({
+            "transition": model_transition(transition).map_err(omitted)?,
+            "post_state": state(&step.post_state).map_err(omitted)?,
+            "random": random,
+        });
+        if let Some(delay) = &step.delay {
+            written["delay"] = rational(delay);
+        }
+        steps.push(written);
+    }
+    // `scheduled` has no spelling, so no step is complete.
+    let _ = steps;
+    Err(super::WitnessOmission::ScheduledIdentityNotSpellable)
 }
 
 fn race(race: &Race) -> Result<Json, CounterexampleWireError> {
@@ -275,7 +1331,7 @@ fn temporal<T: Spelling>(
         .iter()
         .map(step::<T>)
         .collect::<Result<Vec<_>, _>>()?;
-    let (stem, mut looped) = match counterexample.lasso {
+    let (stem, mut looped) = match counterexample.lasso.as_ref() {
         Some(lasso) => {
             let split = lasso.entry.min(steps.len());
             let mut stem = steps;
@@ -286,6 +1342,7 @@ fn temporal<T: Spelling>(
     };
     if counterexample
         .lasso
+        .as_ref()
         .is_some_and(|lasso| lasso.terminal_stutter)
     {
         let last = counterexample
@@ -294,10 +1351,29 @@ fn temporal<T: Spelling>(
             .ok_or(CounterexampleWireError::Unspelled(
                 "initial terminal stutter",
             ))?;
-        looped.push(json!({
+        let mut stutter = json!({
             "transition": {"type": "terminal-stutter"},
             "post_state": state(&last.post_state)?,
-        }));
+        });
+        match counterexample
+            .lasso
+            .as_ref()
+            .and_then(|lasso| lasso.terminal_stutter_delay.as_ref())
+        {
+            Some(delay) if delay > &zero_rational() => stutter["delay"] = rational(delay),
+            Some(_) => {
+                return Err(CounterexampleWireError::Unspelled(
+                    "non-positive terminal stutter delay",
+                ));
+            }
+            None if T::terminal_stutter_delay_required() => {
+                return Err(CounterexampleWireError::Unspelled(
+                    "missing terminal stutter delay",
+                ));
+            }
+            None => {}
+        }
+        looped.push(stutter);
     }
     let over_binding = match (&counterexample.over_binding, over) {
         (None, _) => Json::Null,
@@ -350,6 +1426,343 @@ pub fn temporal_wire(
     claim: Option<&OccurrenceKey>,
 ) -> Result<Json, CounterexampleWireError> {
     temporal(counterexample, over, claim)
+}
+
+/// The FSpec FR-364 wire form for a task-product counterexample. Source
+/// transitions and derived task transitions retain their existing tagged
+/// wire arms.
+pub fn task_temporal_wire(
+    counterexample: &TemporalCounterexample<TaskProductTransition>,
+    over: Option<&ObjectReference>,
+    claim: Option<&OccurrenceKey>,
+) -> Result<Json, CounterexampleWireError> {
+    temporal(counterexample, over, claim)
+}
+
+/// The step alphabet a resolved item fixes for its counterexample document
+/// (FR-237 "Document form"). It is never read from the payload.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum TraceAlphabet {
+    /// The plain model alphabet, [`ModelTransition`].
+    Model,
+    /// The task-derived alphabet of a release-backed schedulability item over
+    /// an FR-249 task product, [`TaskProductTransition`].
+    Task,
+}
+
+/// A counterexample document read with its item's alphabet.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum ReadCounterexample {
+    /// A model-alphabet counterexample.
+    Model(TemporalCounterexample<ModelTransition>),
+    /// A task-alphabet counterexample.
+    Task(TemporalCounterexample<TaskProductTransition>),
+}
+
+/// Read a model-trace JSON document with the alphabet its resolved item
+/// fixes, then run `replay` over the typed counterexample.
+///
+/// This is the analyze-side readback seam: a refutation settles only when the
+/// JSON the engine wrote passes the reader an auditor uses and then replays.
+///
+/// # Errors
+///
+/// The reader's [`TemporalCounterexampleReadRefusal`] for a malformed or
+/// foreign-alphabet document, and any refusal `replay` returns.
+pub fn replay_model_trace_document(
+    document: &Json,
+    alphabet: TraceAlphabet,
+    replay: impl FnOnce(&ReadCounterexample) -> Result<bool, TemporalCounterexampleReadRefusal>,
+) -> Result<bool, TemporalCounterexampleReadRefusal> {
+    let read = match alphabet {
+        TraceAlphabet::Task => {
+            let read = read_task_temporal_document(document)?;
+            if read.queue_growth.is_some() {
+                return Err(TemporalCounterexampleReadRefusal::InvalidRuntimeInput {
+                    pointer: "/queue_growth".to_owned(),
+                    supplied: "queue-growth continuation".to_owned(),
+                    recomputed: "queue-growth replay support is required".to_owned(),
+                });
+            }
+            ReadCounterexample::Task(read.counterexample)
+        }
+        TraceAlphabet::Model => {
+            if document.get("queue_growth").is_some() {
+                return Err(TemporalCounterexampleReadRefusal::MalformedWire {
+                    cause: "unknown-member",
+                    pointer: "/queue_growth".to_owned(),
+                });
+            }
+            ReadCounterexample::Model(read_temporal_counterexample::<ModelTransition>(document)?)
+        }
+    };
+    replay(&read)
+}
+
+/// The FSpec FR-364 task-counterexample spelling with an inductive
+/// `queue_growth` continuation. The finite model trace remains the existing
+/// FR-364 arm; this helper only supplies its already-specified continuation
+/// member and decisive miss position.
+///
+/// # Errors
+///
+/// [`CounterexampleWireError`] when the counterexample is not a non-empty
+/// finite task miss prefix or the continuation has no JSON spelling.
+pub fn task_temporal_wire_with_queue_growth(
+    counterexample: &TemporalCounterexample<TaskProductTransition>,
+    over: Option<&ObjectReference>,
+    claim: Option<&OccurrenceKey>,
+    queue_growth: Json,
+    trace_position: u64,
+) -> Result<Json, CounterexampleWireError> {
+    if counterexample.lasso.is_some()
+        || counterexample.prefix.is_empty()
+        || !matches!(counterexample.kind, CounterexampleKind::Formula)
+        || task_miss_position(counterexample) != Some(trace_position)
+        || !valid_queue_growth_envelope(&queue_growth)
+    {
+        return Err(CounterexampleWireError::Unspelled(
+            "task queue-growth counterexample shape",
+        ));
+    }
+    let mut written = temporal(counterexample, over, claim)?;
+    written["queue_growth"] = queue_growth;
+    written["trace_position"] = json!(trace_position);
+    Ok(written)
+}
+
+fn task_miss_position(
+    counterexample: &TemporalCounterexample<TaskProductTransition>,
+) -> Option<u64> {
+    let mut misses = counterexample
+        .prefix
+        .iter()
+        .enumerate()
+        .filter(|(_, step)| {
+            matches!(
+                &step.transition,
+                TaskProductTransition::Task(identity)
+                    if identity.action == crate::TaskTransitionAction::DeadlineMiss
+            )
+        });
+    let (position, _) = misses.next()?;
+    if misses.next().is_some() || position + 1 != counterexample.prefix.len() {
+        return None;
+    }
+    u64::try_from(position).ok()
+}
+
+fn valid_queue_growth_envelope(witness: &Json) -> bool {
+    let Some(object) = witness.as_object() else {
+        return false;
+    };
+    let required = [
+        "version",
+        "stem",
+        "source_entry",
+        "source_exit",
+        "clock_order",
+        "region_entry",
+        "region_exit",
+        "elapsed",
+        "before",
+        "after",
+        "cycle",
+        "iteration_shift",
+        "identity_map",
+        "fresh_releases",
+        "backlog_growth",
+    ];
+    if object.len() != required.len()
+        || required.iter().any(|member| !object.contains_key(*member))
+        || object.get("version").and_then(Json::as_str) != Some("queue-growth/v1")
+        || object.get("source_entry") != object.get("source_exit")
+        || object.get("region_entry") != object.get("region_exit")
+        || object.get("stem").and_then(Json::as_array).is_none()
+        || object
+            .get("clock_order")
+            .and_then(Json::as_array)
+            .map_or(true, Vec::is_empty)
+        || object
+            .get("cycle")
+            .and_then(Json::as_array)
+            .map_or(true, Vec::is_empty)
+        || object
+            .get("identity_map")
+            .and_then(Json::as_array)
+            .is_none()
+        || object
+            .get("fresh_releases")
+            .and_then(Json::as_array)
+            .is_none()
+        || !valid_queue_growth_identity_map(&object["identity_map"])
+    {
+        return false;
+    }
+
+    let Some(before) = object.get("before").and_then(Json::as_object) else {
+        return false;
+    };
+    let Some(after) = object.get("after").and_then(Json::as_object) else {
+        return false;
+    };
+    let word_members = [
+        "cycle_offset",
+        "block_offset",
+        "prefix",
+        "growth_block",
+        "suffix",
+    ];
+    if before.len() != word_members.len()
+        || after.len() != word_members.len()
+        || word_members
+            .iter()
+            .any(|member| !before.contains_key(*member) || !after.contains_key(*member))
+    {
+        return false;
+    }
+    let Some(shift) = object.get("iteration_shift").and_then(Json::as_u64) else {
+        return false;
+    };
+    let Some(growth_block_len) = before
+        .get("growth_block")
+        .and_then(Json::as_array)
+        .map(Vec::len)
+        .and_then(|len| u64::try_from(len).ok())
+    else {
+        return false;
+    };
+    let Some(after_block_len) = after
+        .get("growth_block")
+        .and_then(Json::as_array)
+        .map(Vec::len)
+    else {
+        return false;
+    };
+    let Some(before_offset) = before.get("block_offset").and_then(Json::as_u64) else {
+        return false;
+    };
+    let Some(after_offset) = after.get("block_offset").and_then(Json::as_u64) else {
+        return false;
+    };
+    if shift == 0
+        || growth_block_len == 0
+        || after_block_len == 0
+        || before.get("cycle_offset").and_then(Json::as_u64) != Some(0)
+        || after.get("cycle_offset").and_then(Json::as_u64) != Some(shift)
+        || before_offset.checked_add(shift) != Some(after_offset)
+        || object.get("backlog_growth").and_then(Json::as_u64)
+            != shift.checked_mul(growth_block_len)
+    {
+        return false;
+    }
+
+    let Some(elapsed) = object.get("elapsed").and_then(rational_from_wire) else {
+        return false;
+    };
+    if elapsed <= zero_rational() {
+        return false;
+    }
+    let mut cycle_elapsed = zero_rational();
+    for step in object
+        .get("cycle")
+        .and_then(Json::as_array)
+        .into_iter()
+        .flatten()
+    {
+        let Some(delay) = step.get("delay").and_then(rational_from_wire) else {
+            return false;
+        };
+        cycle_elapsed = cycle_elapsed.add(&delay);
+    }
+    cycle_elapsed == elapsed
+}
+
+fn valid_queue_growth_identity_map(value: &Json) -> bool {
+    let Some(mappings) = value.as_array() else {
+        return false;
+    };
+    let mut destinations = std::collections::BTreeSet::new();
+    mappings.iter().all(|mapping| {
+        let Some(mapping) = mapping.as_object() else {
+            return false;
+        };
+        let required = [
+            "from_ref",
+            "from_index_start",
+            "from_index_end",
+            "to_ref",
+            "to_index_start",
+            "to_index_stride",
+            "cycle_shift",
+        ];
+        if mapping.len() != required.len()
+            || required.iter().any(|field| !mapping.contains_key(*field))
+            || mapping
+                .get("from_ref")
+                .and_then(Json::as_str)
+                .is_none_or(str::is_empty)
+            || mapping
+                .get("to_ref")
+                .and_then(Json::as_str)
+                .is_none_or(str::is_empty)
+        {
+            return false;
+        }
+        let Some(from_start) = mapping.get("from_index_start").and_then(Json::as_u64) else {
+            return false;
+        };
+        let from_end = match mapping.get("from_index_end") {
+            Some(Json::Null) => true,
+            Some(Json::String(end)) => end == "word-end",
+            Some(Json::Number(end)) => end.as_u64().is_some_and(|end| end >= from_start),
+            _ => false,
+        };
+        let Some(to_start) = mapping.get("to_index_start").and_then(Json::as_u64) else {
+            return false;
+        };
+        if !from_end
+            || mapping
+                .get("to_index_stride")
+                .and_then(Json::as_u64)
+                .is_none_or(|stride| stride == 0)
+            || mapping
+                .get("cycle_shift")
+                .and_then(Json::as_u64)
+                .is_none_or(|shift| shift == 0)
+        {
+            return false;
+        }
+        let destination = (mapping["to_ref"].as_str().unwrap_or_default(), to_start);
+        destinations.insert(destination)
+    })
+}
+
+fn rational_from_wire(value: &Json) -> Option<Rational> {
+    let numerator = value.get("numerator")?.as_str()?.parse().ok()?;
+    let denominator = value.get("denominator")?.as_str()?.parse().ok()?;
+    Rational::new(numerator, denominator).ok()
+}
+
+fn zero_rational() -> Rational {
+    Rational::from_integer(filament_exact::Integer::zero())
+}
+
+/// FSpec FR-181's source-transition identity spelling for a task queue-growth
+/// cycle or release template.
+pub fn task_source_transition_wire(
+    identity: &ModelTransition,
+) -> Result<Json, CounterexampleWireError> {
+    serde_json::to_value(super::TaskSourceTransitionWire::from(identity))
+        .map_err(|_| CounterexampleWireError::Unspelled("source transition"))
+}
+
+/// FSpec FR-181's finite task-transition identity spelling.
+pub fn task_transition_wire(
+    identity: &TaskTransitionIdentity,
+) -> Result<Json, CounterexampleWireError> {
+    serde_json::to_value(super::TaskTransitionWire::from(identity))
+        .map_err(|_| CounterexampleWireError::Unspelled("task transition"))
 }
 
 /// The protocol subject a counterexample was found over (FSpec FR-433's
@@ -669,7 +2082,6 @@ pub fn graph_evidence_wire(
                     StateGraphPropertyForm::AlwaysPossible,
                 ) => "Q",
                 (fsl_semantics::check::PredicateRole::From, _) => "X",
-                
             });
             let mut at = json!({
                 "position": stem.steps.len(),
@@ -762,6 +2174,440 @@ mod tests {
         }
     }
 
+    /// FR-364 retains the existing model arm when an unbounded task queue is
+    /// carried as its checked continuation.
+    #[trace(
+        "TC-372-RT-25",
+        "FR-237-AC-7",
+        "FR-237-AC-10",
+        "FR-237-AC-11",
+        "FR-237-AC-12",
+        "FR-364-AC-2"
+    )]
+    #[test]
+    fn task_queue_growth_uses_the_existing_model_counterexample_shape() {
+        let release = step(1).transition;
+        let source_release = task_source_transition_wire(&release).expect("source transition");
+        let one = json!({"base": 0, "cycle_stride": 0, "cohort_stride": 0});
+        let one_rational = json!({
+            "base": {"numerator": "0", "denominator": "1"},
+            "cycle_stride": {"numerator": "0", "denominator": "1"},
+            "cohort_stride": {"numerator": "0", "denominator": "1"}
+        });
+        let job = json!({
+            "ref": "G",
+            "taskset": "S",
+            "task": "t",
+            "occurrence": one,
+            "generation": one,
+            "queue_position": one,
+            "demand": {"numerator": "2", "denominator": "1"},
+            "remaining": {"numerator": "2", "denominator": "1"},
+            "activation_offset": one_rational,
+            "deadline_offset": one_rational,
+            "jitter": {"numerator": "0", "denominator": "1"},
+            "priority": 1,
+            "allowance": {"numerator": "2", "denominator": "1"},
+            "status": "ready"
+        });
+        let queue_word = json!({
+            "cycle_offset": 0,
+            "block_offset": 0,
+            "prefix": [],
+            "growth_block": [job],
+            "suffix": []
+        });
+        let missed_job = TaskTransitionIdentity {
+            action: crate::TaskTransitionAction::DeadlineMiss,
+            task_set: "S".to_owned(),
+            task: "t".to_owned(),
+            job: 0,
+            slot: 0,
+            generation: 0,
+            release: release.clone(),
+            source_transition: None,
+            demand: rational(2, 1),
+            jitter: rational(0, 1),
+            deadline: rational(1, 1),
+            priority: Some(1),
+            budget_delta: None,
+        };
+        let task_counterexample = TemporalCounterexample {
+            initial_state: 0,
+            prefix: vec![ModelStep {
+                transition: TaskProductTransition::Task(missed_job.clone()),
+                post_state: key(1),
+                delay: Some(rational(1, 1)),
+            }],
+            over_binding: None,
+            fairness: Vec::new(),
+            kind: CounterexampleKind::Formula,
+            lasso: None,
+            blocked: Vec::new(),
+            refinement: None,
+            final_delay: None,
+        };
+        let mut activation = missed_job.clone();
+        activation.action = crate::TaskTransitionAction::Activate;
+        activation.source_transition = Some(release.clone());
+        let readable_counterexample = TemporalCounterexample {
+            initial_state: 0,
+            prefix: vec![
+                ModelStep {
+                    transition: TaskProductTransition::Task(activation),
+                    post_state: key(0),
+                    delay: Some(rational(0, 1)),
+                },
+                task_counterexample.prefix[0].clone(),
+                ModelStep {
+                    transition: TaskProductTransition::Source(step(2).transition),
+                    post_state: key(2),
+                    delay: Some(rational(1, 1)),
+                },
+            ],
+            over_binding: None,
+            fairness: Vec::new(),
+            kind: CounterexampleKind::Formula,
+            lasso: Some(Lasso {
+                entry: 2,
+                terminal_stutter: false,
+                terminal_stutter_delay: None,
+            }),
+            blocked: Vec::new(),
+            refinement: None,
+            final_delay: None,
+        };
+        let readable_wire = task_temporal_wire(&readable_counterexample, None, None)
+            .expect("activation, miss and loop use the task-product alphabet");
+        let independently_read = read_task_temporal_counterexample(&readable_wire)
+            .expect("the task-product document reads without a typed expectation");
+        assert_eq!(
+            task_temporal_wire(&independently_read, None, None)
+                .expect("independently read task trace rewrites losslessly"),
+            readable_wire
+        );
+        let admitted = read_temporal_counterexample::<TaskProductTransition>(&readable_wire)
+            .expect("the typed task counterexample reads back");
+        assert_eq!(
+            task_temporal_wire(&admitted, None, None).expect("rewritten task trace"),
+            readable_wire
+        );
+
+        let mut unknown_member = readable_wire.clone();
+        unknown_member["prefix"][1]["transition"]["phase"] = json!("hi");
+        assert_eq!(
+            read_task_temporal_counterexample(&unknown_member),
+            Err(TemporalCounterexampleReadRefusal::MalformedWire {
+                cause: "unknown-member",
+                pointer: "/prefix/1/transition/phase".to_owned(),
+            })
+        );
+        let mut alphabet_then_malformed = readable_wire.clone();
+        alphabet_then_malformed["prefix"][0]["transition"] = json!({"type": "other"});
+        alphabet_then_malformed["prefix"][1]["transition"]["phase"] = json!("hi");
+        assert_eq!(
+            read_task_temporal_counterexample(&alphabet_then_malformed),
+            Err(TemporalCounterexampleReadRefusal::MalformedWire {
+                cause: "unknown-member",
+                pointer: "/prefix/1/transition/phase".to_owned(),
+            })
+        );
+        assert_eq!(
+            read_temporal_counterexample::<TaskProductTransition>(&unknown_member),
+            Err(TemporalCounterexampleReadRefusal::MalformedWire {
+                cause: "unknown-member",
+                pointer: "/prefix/1/transition/phase".to_owned(),
+            })
+        );
+        let mut unknown_action = readable_wire.clone();
+        unknown_action["prefix"][1]["transition"]["action"] = json!("overflow");
+        assert_eq!(
+            read_temporal_counterexample::<TaskProductTransition>(&unknown_action),
+            Err(TemporalCounterexampleReadRefusal::MalformedWire {
+                cause: "unknown-variant",
+                pointer: "/prefix/1/transition/action".to_owned(),
+            })
+        );
+        let mut unexpected_delta = readable_wire.clone();
+        unexpected_delta["prefix"][0]["transition"]["budget_delta"] = json!({
+            "numerator": "1",
+            "denominator": "1"
+        });
+        assert_eq!(
+            read_temporal_counterexample::<TaskProductTransition>(&unexpected_delta),
+            Err(TemporalCounterexampleReadRefusal::MalformedWire {
+                cause: "budget-delta-presence",
+                pointer: "/prefix/0/transition/budget_delta".to_owned(),
+            })
+        );
+        let mut missing_delay = readable_wire.clone();
+        missing_delay["prefix"][0]
+            .as_object_mut()
+            .unwrap()
+            .remove("delay");
+        assert_eq!(
+            read_temporal_counterexample::<TaskProductTransition>(&missing_delay),
+            Err(TemporalCounterexampleReadRefusal::MalformedWire {
+                cause: "missing-member",
+                pointer: "/prefix/0/delay".to_owned(),
+            })
+        );
+        let mut wrong_job_kind = readable_wire.clone();
+        wrong_job_kind["prefix"][0]["transition"]["job"] = json!("0");
+        assert_eq!(
+            read_temporal_counterexample::<TaskProductTransition>(&wrong_job_kind),
+            Err(TemporalCounterexampleReadRefusal::MalformedWire {
+                cause: "wrong-value-kind",
+                pointer: "/prefix/0/transition/job".to_owned(),
+            })
+        );
+        // A step outside the requested alphabet is an alphabet refusal, and
+        // a shape fault anywhere wins over it.
+        assert_eq!(
+            read_temporal_counterexample::<ModelTransition>(&readable_wire),
+            Err(TemporalCounterexampleReadRefusal::TraceAlphabet {
+                pointer: "/prefix/0/transition/type".to_owned(),
+            })
+        );
+        let mut malformed_before_alphabet = readable_wire.clone();
+        malformed_before_alphabet["prefix"][0]["transition"]["phase"] = json!("hi");
+        assert_eq!(
+            read_temporal_counterexample::<ModelTransition>(&malformed_before_alphabet),
+            Err(TemporalCounterexampleReadRefusal::MalformedWire {
+                cause: "unknown-member",
+                pointer: "/prefix/0/transition/phase".to_owned(),
+            })
+        );
+        let mut tampered_deadline = readable_wire.clone();
+        tampered_deadline["prefix"][1]["transition"]["deadline"]["numerator"] = json!("2");
+        // A well-shaped value is the replay's to check against the rebuilt
+        // product, not the reader's: it reads back, and rewriting gives the
+        // tampered JSON unchanged.
+        let tampered_read =
+            read_temporal_counterexample::<TaskProductTransition>(&tampered_deadline)
+                .expect("a well-shaped tampered value reads");
+        assert_eq!(
+            task_temporal_wire(&tampered_read, None, None).expect("rewritten tampered trace"),
+            tampered_deadline
+        );
+        let continuation = json!({
+            "version": "queue-growth/v1",
+            "stem": [],
+            "source_entry": {"key": "AA"},
+            "source_exit": {"key": "AA"},
+            "clock_order": ["0"],
+            "region_entry": [[{"bound": "0", "strict": false}]],
+            "region_exit": [[{"bound": "0", "strict": false}]],
+            "elapsed": {"numerator": "1", "denominator": "1"},
+            "before": {
+                "cycle_offset": 0,
+                "block_offset": 0,
+                "prefix": [],
+                "growth_block": [job],
+                "suffix": []
+            },
+            "after": {
+                "cycle_offset": 1,
+                "block_offset": 1,
+                "prefix": [],
+                "growth_block": [job],
+                "suffix": []
+            },
+            "cycle": [{
+                "transition": {
+                    "type": "task-queue-growth-transition",
+                    "action": "complete",
+                    "taskset": "S",
+                    "task": "t",
+                    "job_ref": "G",
+                    "occurrence": one,
+                    "generation": one,
+                    "virtual_position": one,
+                    "release_transition": source_release,
+                    "source_transition": null,
+                    "demand": {"numerator": "2", "denominator": "1"},
+                    "jitter": {"numerator": "0", "denominator": "1"},
+                    "deadline_offset": one_rational,
+                    "priority": 1
+                },
+                "job_ref": "G",
+                "delay": {"numerator": "1", "denominator": "1"},
+                "service": {"numerator": "2", "denominator": "1"},
+                "ready_order": queue_word
+            }],
+            "iteration_shift": 1,
+            "identity_map": [],
+            "fresh_releases": [],
+            "backlog_growth": 1
+        });
+        let wire = task_temporal_wire_with_queue_growth(
+            &task_counterexample,
+            None,
+            None,
+            continuation.clone(),
+            0,
+        )
+        .expect("the typed task prefix keeps the existing FR-364 model arm");
+        assert_eq!(wire["trace"], "model");
+        assert_eq!(wire["prefix"].as_array().map(Vec::len), Some(1));
+        assert_eq!(wire["loop"], json!([]));
+        assert_eq!(wire["trace_position"], 0);
+        assert_eq!(wire["queue_growth"], continuation);
+        assert!(wire.get("task_automaton_trace").is_none());
+        let read_document = read_task_temporal_document(&wire)
+            .expect("the queue-growth model arm reads as one FR-364 document");
+        assert_eq!(read_document.queue_growth.as_ref(), Some(&continuation));
+        assert!(read_document.counterexample.lasso.is_none());
+
+        assert!(task_temporal_wire_with_queue_growth(
+            &task_counterexample,
+            None,
+            None,
+            wire["queue_growth"].clone(),
+            1,
+        )
+        .is_err());
+        let mut repeated_miss = task_counterexample.clone();
+        repeated_miss.prefix.push(repeated_miss.prefix[0].clone());
+        assert!(task_temporal_wire_with_queue_growth(
+            &repeated_miss,
+            None,
+            None,
+            wire["queue_growth"].clone(),
+            0,
+        )
+        .is_err());
+        let mut looped = task_counterexample.clone();
+        looped.lasso = Some(Lasso {
+            entry: 0,
+            terminal_stutter: false,
+            terminal_stutter_delay: None,
+        });
+        assert!(task_temporal_wire_with_queue_growth(
+            &looped,
+            None,
+            None,
+            wire["queue_growth"].clone(),
+            0,
+        )
+        .is_err());
+        let mut trailing_step = task_counterexample.clone();
+        trailing_step.prefix.push(ModelStep {
+            transition: TaskProductTransition::Source(step(2).transition),
+            post_state: key(2),
+            delay: Some(rational(0, 1)),
+        });
+        assert!(task_temporal_wire_with_queue_growth(
+            &trailing_step,
+            None,
+            None,
+            wire["queue_growth"].clone(),
+            0,
+        )
+        .is_err());
+
+        for (member, value) in [
+            ("backlog_growth", json!(0)),
+            ("elapsed", json!({"numerator": "2", "denominator": "1"})),
+        ] {
+            let mut invalid = wire["queue_growth"].clone();
+            invalid[member] = value;
+            assert!(task_temporal_wire_with_queue_growth(
+                &task_counterexample,
+                None,
+                None,
+                invalid,
+                0,
+            )
+            .is_err());
+        }
+        let mut invalid_offset = wire["queue_growth"].clone();
+        invalid_offset["after"]["block_offset"] = json!(0);
+        assert!(task_temporal_wire_with_queue_growth(
+            &task_counterexample,
+            None,
+            None,
+            invalid_offset,
+            0,
+        )
+        .is_err());
+
+        let mut duplicate_destination = wire["queue_growth"].clone();
+        let mapping = json!({
+            "from_ref": "G",
+            "from_index_start": 0,
+            "from_index_end": 0,
+            "to_ref": "head",
+            "to_index_start": 0,
+            "to_index_stride": 1,
+            "cycle_shift": 1
+        });
+        duplicate_destination["identity_map"] = json!([mapping.clone(), mapping]);
+        assert!(task_temporal_wire_with_queue_growth(
+            &task_counterexample,
+            None,
+            None,
+            duplicate_destination,
+            0,
+        )
+        .is_err());
+
+        let mut malformed_identity = wire["queue_growth"].clone();
+        malformed_identity["identity_map"] = json!([{
+            "from_ref": "G",
+            "from_index_start": 0,
+            "from_index_end": "past-end",
+            "to_ref": "head",
+            "to_index_start": 0,
+            "to_index_stride": 1,
+            "cycle_shift": 1
+        }]);
+        assert!(task_temporal_wire_with_queue_growth(
+            &task_counterexample,
+            None,
+            None,
+            malformed_identity,
+            0,
+        )
+        .is_err());
+    }
+
+    /// FSpec FR-364-AC-15: task-transition spelling preserves a checked
+    /// declared priority and omits priority when the task has none.
+    #[trace("FSpec-FR-364-AC-15")]
+    #[test]
+    fn task_transition_wire_preserves_optional_priority() {
+        let release = ModelTransition::new(
+            r#"{"name":"release"}"#.to_owned(),
+            None,
+            Vec::new(),
+            quire_canonical::Limits::new(u64::MAX),
+        )
+        .expect("a canonical release identity");
+        let identity = |priority| TaskTransitionIdentity {
+            action: crate::TaskTransitionAction::Activate,
+            task_set: "S".to_owned(),
+            task: "T".to_owned(),
+            job: 0,
+            slot: 0,
+            generation: 0,
+            release: release.clone(),
+            source_transition: Some(release.clone()),
+            demand: rational(2, 1),
+            jitter: rational(0, 1),
+            deadline: rational(1, 1),
+            priority,
+            budget_delta: None,
+        };
+
+        let with_priority = task_transition_wire(&identity(Some(3))).expect("spelled task step");
+        assert_eq!(with_priority["priority"], json!(3));
+        assert_eq!(with_priority["release"]["operation"], "release");
+
+        let without_priority = task_transition_wire(&identity(None)).expect("spelled task step");
+        assert!(without_priority.get("priority").is_none());
+    }
+
     fn claim() -> OccurrenceKey {
         OccurrenceKey::new(crate::fixture_node(7), Origin::new(Role::new("claim"), 2))
     }
@@ -797,6 +2643,7 @@ mod tests {
         found.lasso = Some(Lasso {
             entry: 1,
             terminal_stutter: false,
+            terminal_stutter_delay: None,
         });
         let wire = temporal_wire(&found, None, None).expect("spelled");
         assert_eq!(wire["prefix"].as_array().map(Vec::len), Some(1));
@@ -804,6 +2651,31 @@ mod tests {
         assert_eq!(looped.len(), 2);
         assert_eq!(looped[1]["post_state"], state(&key(3)).expect("a key"));
         assert_eq!(wire["trace_position"], 0);
+    }
+
+    /// FR-237-AC-10: analyze only settles a refutation after its emitted
+    /// document matches the canonical typed trace and that trace replays.
+    #[trace("FR-237-AC-10")]
+    #[test]
+    fn emitted_model_trace_is_re_admitted_before_replay() {
+        let found = counterexample(1, CounterexampleKind::Formula);
+        let wire = temporal_wire(&found, None, None).expect("spelled");
+        assert!(
+            replay_model_trace_document(&wire, TraceAlphabet::Model, |_| Ok(true))
+                .expect("wire can be checked")
+        );
+
+        let mut changed = wire;
+        changed["kind"] = json!("time-lock");
+        let mut replayed = false;
+        assert!(
+            replay_model_trace_document(&changed, TraceAlphabet::Model, |_| {
+                replayed = true;
+                Ok(true)
+            })
+            .is_err()
+        );
+        assert!(!replayed, "mismatched wire must not reach replay");
     }
 
     /// FR-286-AC-14: a loop that is the terminal stutter appends the
@@ -816,6 +2688,7 @@ mod tests {
         found.lasso = Some(Lasso {
             entry: 2,
             terminal_stutter: true,
+            terminal_stutter_delay: None,
         });
         let wire = temporal_wire(&found, None, None).expect("spelled");
         assert_eq!(wire["prefix"].as_array().map(Vec::len), Some(2));
@@ -830,6 +2703,7 @@ mod tests {
         initial.lasso = Some(Lasso {
             entry: 0,
             terminal_stutter: true,
+            terminal_stutter_delay: None,
         });
         assert_eq!(
             temporal_wire(&initial, None, None),
@@ -960,4 +2834,28 @@ mod tests {
             );
         }
     }
+}
+
+/// FSpec FR-331's `TransitionIdentity` spelling of one task-derived
+/// transition: a source `transition`, a `task-transition` or the
+/// `terminal-stutter` marker.
+///
+/// # Errors
+///
+/// [`CounterexampleWireError`] when the identity has no canonical spelling.
+pub fn task_product_transition_wire(
+    transition: &TaskProductTransition,
+) -> Result<Json, CounterexampleWireError> {
+    Spelling::transition(transition)
+}
+
+/// FSpec FR-331's `State` locus `{key}` of a state key.
+///
+/// # Errors
+///
+/// [`CounterexampleWireError`] when the key has no wire spelling.
+pub fn state_key_wire(
+    key: &fsl_eval::simulation::StateKey,
+) -> Result<Json, CounterexampleWireError> {
+    state(key)
 }

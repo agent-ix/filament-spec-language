@@ -163,7 +163,7 @@ impl Model {
     }
 
     /// The domain package document.
-    fn document(&self, symmetric: bool) -> Vec<u8> {
+    pub(crate) fn document(&self, symmetric: bool) -> Vec<u8> {
         let mut kinds = vec![
             ("object_type", meaning::OBJECT_TYPE),
             ("population", meaning::POPULATION),

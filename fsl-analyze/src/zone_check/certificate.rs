@@ -85,6 +85,7 @@ impl Proof {
             admitted: Some(self.admitted),
             state_graph: self.state_graph,
             refinement: None,
+            task_product: None,
         }
     }
 }
@@ -124,6 +125,7 @@ pub(crate) fn state_graph_certificate<S>(
             CertEdge {
                 from: edge.from,
                 transition: Some(edge.transition.clone()),
+                task_transition: None,
                 part: Some(edge.part_index),
                 horizon,
                 to: edge.to,
@@ -159,6 +161,7 @@ pub(crate) fn state_graph_certificate<S>(
         admitted: None,
         state_graph,
         refinement: None,
+        task_product: None,
     })
 }
 
@@ -234,6 +237,7 @@ impl Run<'_, '_, '_> {
             edges.push(CertEdge {
                 from,
                 transition,
+                task_transition: None,
                 part,
                 horizon,
                 to,

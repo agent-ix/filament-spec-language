@@ -260,15 +260,17 @@ fn malformed(form: &TypeForm) -> TypeFormError {
     fault(form, TypeFormFault::Malformed)
 }
 
-/// The native value type a spelling names (FR-091): `String`, `UUID` and
-/// `Timestamp` are unreserved names, so the native type is one candidate
-/// beside the declared forms of the same name.
+/// The native value type a spelling names (FR-091): `String`, `UUID`,
+/// `Timestamp`, `Bytes` and `JsonObject` are unreserved names, so the native
+/// type is one candidate beside the declared forms of the same name.
 #[ix_trace_rs::string_edge]
 pub(crate) fn native_scalar_named(name: &str) -> Option<ValueType> {
     match name {
         "String" => Some(ValueType::String),
         "UUID" => Some(ValueType::Uuid),
         "Timestamp" => Some(ValueType::Timestamp),
+        "Bytes" => Some(ValueType::Bytes),
+        "JsonObject" => Some(ValueType::JsonObject),
         _ => None,
     }
 }

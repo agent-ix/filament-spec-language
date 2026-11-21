@@ -1116,6 +1116,7 @@ fn an_invariant_counterexample_replays_by_the_invariant_rule() {
     looped.lasso = Some(fsl_replay::Lasso {
         entry: 0,
         terminal_stutter: false,
+        terminal_stutter_delay: None,
     });
     let mut deadlock = payload;
     deadlock.kind = CounterexampleKind::Deadlock;

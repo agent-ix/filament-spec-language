@@ -20,9 +20,9 @@ use crate::proof_result::SettlementBasis;
 use crate::result::SeparatingWitnessRecord;
 use crate::{
     bounds::ReplayLimits,
-    execute::prepare_state_clause,
+    execute::{prepare_state_clause, separation_refusal},
     result::SeparationRefusal,
-    spine::{CallOutcome, CallRefusal, CallValue, ClauseDisposition},
+    spine::{CallOutcome, CallValue, ClauseDisposition},
     ReplayRefusal, ReplayRequestWire, StateClauseCounterexample, WitnessEnvelope,
 };
 use fsl_foundation::Code;
@@ -117,17 +117,19 @@ pub fn derive_state_clause_witness(
         .and_then(|observations| observations.post.as_ref())
         .map(|post| post.out_of_range.clone())
         .unwrap_or_default();
-    if !range_violations.is_empty() {
-        return Err(DerivationRefusal::RangeViolation(range_violations));
-    }
-
-    let report = prepared.check.report;
-    classify_clause_outcome(report.disposition, report.witness)
+    let check = prepared.check;
+    classify_with_range_violations(
+        range_violations,
+        check.report.disposition,
+        check.report.witness,
+        check.stopped_call,
+    )
 }
 
 fn classify_clause_outcome(
     disposition: ClauseDisposition,
     witness: Option<SeparatingWitnessRecord>,
+    stopped_call: Option<ExpressionLocation>,
 ) -> Result<Option<SeparatingWitnessRecord>, DerivationRefusal> {
     match disposition {
         ClauseDisposition::Admit(failure)
@@ -158,9 +160,12 @@ fn classify_clause_outcome(
                         "undefined-evaluation-is-located",
                     )))
                 },
-                |expression| {
+                |inner| {
+                    // TC-3121 row 5: an undefined result inside a called
+                    // body names the clause expression that ended undefined,
+                    // the clause's call, keeping the body's cause.
                     Err(DerivationRefusal::Undefined {
-                        expression,
+                        expression: stopped_call.unwrap_or(inner),
                         cause: reason,
                     })
                 },
@@ -195,13 +200,54 @@ mod tests {
     #[test]
     fn in_crate_fault_disposition_remains_a_derivation_fault() {
         let fault = InternalFault::new("S6a", "checked-program-invariant");
-        let error = classify_clause_outcome(
-            ClauseDisposition::EvaluateFault(fault),
-            None,
-        )
-        .expect_err("an in-crate fault is a typed derivation refusal");
+        let error = classify_clause_outcome(ClauseDisposition::EvaluateFault(fault), None, None)
+            .expect_err("an in-crate fault is a typed derivation refusal");
         assert_eq!(error.code(), Code::RuntimeInvariant.as_str());
         assert!(matches!(error, DerivationRefusal::Fault(_)));
+    }
+
+    /// TC-3121: an admitted range violation takes precedence over a clause
+    /// evaluator fault, while the same fault without a range violation stays
+    /// a runtime-invariant refusal.
+    #[ix_trace_rs::trace("TC-3121", "FR-269-AC-8")]
+    #[test]
+    fn range_violation_precedes_an_in_crate_fault() {
+        let fault = InternalFault::new("S6a", "checked-program-invariant");
+        let observed = filament_exact::Integer::from(-1_i64);
+        let object_type = filament_exact::EffectiveId::new(
+            None,
+            filament_exact::OriginalDeclarationKey::new("agent-ix/config-version", "ConfigVersion"),
+        );
+        let range_violation = OutOfRange {
+            object: filament_exact::ObjectReference::new(
+                filament_exact::UniverseId::new(crate::fixture_node(1)),
+                object_type.clone(),
+                filament_exact::ObjectId::new("child").unwrap(),
+            ),
+            field: filament_semantic_value::declaration::FieldRef::new(
+                object_type,
+                "versionNumber",
+            ),
+            index: None,
+            range: filament_exact::IntegerInterval::new(
+                filament_exact::Integer::from(0_i64),
+                filament_exact::Integer::from(1000_i64),
+            )
+            .unwrap(),
+            observed,
+            steps: Vec::new(),
+        };
+        let error = classify_with_range_violations(
+            vec![range_violation.clone()],
+            ClauseDisposition::EvaluateFault(fault),
+            None,
+            None,
+        )
+        .expect_err("range admission takes precedence over clause evaluation");
+        assert!(matches!(
+            error,
+            DerivationRefusal::RangeViolation(violations) if violations == vec![range_violation]
+        ));
     }
 
     /// TC-3121: the undefined evaluator outcome keeps its native cause and
@@ -222,6 +268,7 @@ mod tests {
                 location: Some(location.clone()),
             }),
             None,
+            None,
         )
         .expect_err("an undefined evaluation has no witness");
         assert_eq!(error.code(), Code::UndefinedExpression.as_str());
@@ -232,21 +279,54 @@ mod tests {
                 if expression == location && cause == "division-by-zero"
         ));
     }
+
+    /// TC-3121 row 5: an undefined result inside a called function's body
+    /// names the clause's call that ended undefined and keeps the body's
+    /// cause.
+    #[ix_trace_rs::trace("TC-3121", "FR-269-AC-7")]
+    #[test]
+    fn undefined_inside_a_called_body_names_the_clause_call() {
+        let inner = ExpressionLocation::at(
+            filament_semantic_value::location::ExpressionOwner::Body {
+                function: "u".to_owned(),
+                index: 0,
+            },
+            &[0],
+        );
+        let call = ExpressionLocation::at(
+            filament_semantic_value::location::ExpressionOwner::StateClause {
+                clause: "UndefinedDomain".to_owned(),
+                index: 0,
+            },
+            &[0, 0],
+        );
+        let error = classify_clause_outcome(
+            ClauseDisposition::Evaluate(CallOutcome::Undefined {
+                reason: "division-by-zero",
+                location: Some(inner),
+            }),
+            None,
+            Some(call.clone()),
+        )
+        .expect_err("an undefined evaluation has no witness");
+        assert!(matches!(
+            error,
+            DerivationRefusal::Undefined { expression, cause }
+                if expression == call && cause == "division-by-zero"
+        ));
+    }
 }
 
-fn separation_refusal(refusal: CallRefusal) -> SeparationRefusal {
-    let (code, fields) = match refusal {
-        CallRefusal::Record { code, fields, .. } => (code, fields),
-        CallRefusal::Family { code, .. } => (code, std::collections::BTreeMap::new()),
-    };
-    SeparationRefusal {
-        code: code.code().to_owned(),
-        cause: code.cause().to_owned(),
-        fields: fields
-            .into_iter()
-            .map(|(name, value)| (name.to_owned(), value))
-            .collect(),
+fn classify_with_range_violations(
+    range_violations: Vec<OutOfRange>,
+    disposition: ClauseDisposition,
+    witness: Option<SeparatingWitnessRecord>,
+    stopped_call: Option<ExpressionLocation>,
+) -> Result<Option<SeparatingWitnessRecord>, DerivationRefusal> {
+    if !range_violations.is_empty() {
+        return Err(DerivationRefusal::RangeViolation(range_violations));
     }
+    classify_clause_outcome(disposition, witness, stopped_call)
 }
 
 /// FR-265's output for a clause that completed a Boolean: the basis, and
@@ -443,7 +523,11 @@ pub(crate) fn decisive_stop<'e>(
                     Connective::And | Connective::Implies => !left_value,
                     Connective::Or => left_value,
                 };
-                if stopped_on_left { left } else { right }
+                if stopped_on_left {
+                    left
+                } else {
+                    right
+                }
             }
             NodeKind::Query {
                 visit: Visit::Forall | Visit::Exists,

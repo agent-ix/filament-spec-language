@@ -563,7 +563,9 @@ fn production_letters_decide_each_guard_row_and_include_guard_only_por_visibilit
             .expect("the production letters build");
         let outcome = check_model(
             ModelCheckRequest {
-                temporal_clock_selections: &[],
+                temporal_clock_selections: &crate::fill::tcb_01_event_position_selection(
+                    &world.package,
+                ),
                 subject: world.subject(&["c"], UNLIMITED),
                 item: ModelCheckItem::Clause {
                     clause: node.clause(),

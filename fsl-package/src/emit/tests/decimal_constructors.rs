@@ -197,7 +197,7 @@ fn a_quotient_by_a_nonzero_literal_lowers_one_div_node() {
 fn a_literal_beside_a_typed_operand_lowers_at_the_peers_type() {
     // `p_literal` pins P's own type node: its literal is typed by P.
     let emission = emitted(
-        "type P = Decimal[0, 1000; 2, 2; exact];\n\
+        "type P = Decimal[0, 100000; 2, 2; exact];\n\
          type R = Decimal[0, 1000; 1, 1; exact];\n\
          function f using v(r: R): P pure { convert<P>(decimal(15, 1) + r) }\n\
          function p_literal using v(): P pure { decimal(150, 2) }\n",

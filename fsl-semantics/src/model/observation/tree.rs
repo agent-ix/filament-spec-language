@@ -112,7 +112,9 @@ fn push(nodes: &mut Vec<RawNode>, node: RawNode) -> usize {
 type Charge<'c, E> = &'c mut dyn FnMut() -> Result<(), E>;
 
 /// Read one FR-106 value form from `json`, or `Ok(None)` when it is neither a
-/// native payload object nor one of the seven tagged shapes: a wire-reading edge (ADR-012 §9), converting
+/// native payload object nor one of the tagged shapes. Defective object
+/// envelopes retain their member names for declared collection admission.
+/// This is a wire-reading edge (ADR-012 §9), converting
 /// each value's tag to a closed form once, here. The tree is walked from an
 /// explicit heap stack, so a value of any depth reads in constant native
 /// stack; `charge` runs once per value form read (`observation.values`),
@@ -207,8 +209,31 @@ pub(super) fn read_raw_value<E>(
         };
         charge()?;
         let Some(object) = next.as_object() else {
-            return Ok(None);
+            // The enclosing collection's length must be checked before
+            // this element's kind (FR-144-AC-18, FR-106-AC-60).
+            finished = Some(push(&mut nodes, RawNode::NonObject));
+            continue;
         };
+        // Keep defective collection envelopes for the declared-kind check.
+        // Do not read their elements: envelope defects precede the bound
+        // and every element defect (FR-106-AC-66/68/69).
+        let count = object.iter().count();
+        let collection = object
+            .iter()
+            .find(|(name, _)| collection_kind_of_tag(name).is_some());
+        // A payload object (one with a `kind` member) is judged in the
+        // native payload order, never as a collection envelope.
+        let payload_object = object.contains_key("kind");
+        if (!payload_object
+            && collection.is_some_and(|(_, payload)| count != 1 || payload.as_array().is_none()))
+            || (count != 1 && !payload_object)
+        {
+            finished = Some(push(
+                &mut nodes,
+                RawNode::ObjectMembers(object.keys().map(str::to_owned).collect()),
+            ));
+            continue;
+        }
         // FR-106's native payload objects carry their kind as a member beside
         // the payload, not as the single tag the other forms use. They are
         // kept as read, every defect included, so admission judges them in
@@ -361,7 +386,12 @@ pub(super) fn read_raw_value<E>(
                     },
                 ));
             }
-            _ => return Ok(None),
+            _ => {
+                finished = Some(push(
+                    &mut nodes,
+                    RawNode::ObjectMembers(object.keys().map(str::to_owned).collect()),
+                ));
+            }
         }
     }
 }
@@ -405,9 +435,14 @@ fn native_object(object: Object<'_>, nested: bool) -> NativeObject {
             })
             .collect()
     };
+    let kind_at = object
+        .iter()
+        .position(|(name, _)| name == "kind")
+        .unwrap_or(0);
     NativeObject {
         kind,
         members,
+        kind_at,
         objects,
     }
 }

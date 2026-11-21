@@ -138,7 +138,7 @@ holds no route-specific step:
 | declared name | the declared name of the checked temporal clause `tl_lowering.clause` names | the `name` of the `temporal_clause_names` row equal to `tl_lowering.clause` (FSpec FR-322 "Temporal clause names") |
 | temporal profile | the checked clause's profile | the `temporal_profile` law of the `filament.op.temporal.clause` application that is the body of that row's `declaration` node, which equals the lock's `profile_selections` row of that role (FSpec FR-370) |
 | formula graph | the checked clause's formula | the `formula_graph()` entries of FR-515's temporal subject view over that node, read through FR-940's `AnalysisView` package form: each `filament.op.temporal.*` application with its operator identity and `temporal_interval` member, each connective and constant, and each leaf (the node's sixth argument, `formula`, FSpec FR-370) |
-| atom texts | printed from each leaf's checked expression | printed from each leaf's term read through its reader projection (FR-940 "Package forms of the source-checked evaluators"), by the same printer |
+| atom texts | printed from each leaf's checked expression | printed from each leaf's term read through its reader projection (FR-940 "Package forms of the source-checked evaluators"), by the same printer; printing is not evaluation, so this read takes names and term structure from the package's own nodes and needs no identity row and no world: a declaration no identity row selects is named by its own declaration node |
 
 For one unit and one request, the source route and the package route over
 that unit's checked package SHALL produce byte-equal lowering records:

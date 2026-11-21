@@ -172,12 +172,15 @@ pub enum CounterexampleKind {
 /// prefix is the state at position `entry`. A loop that is the terminal
 /// stutter step (ADR-018 SM-4) has no model step: `entry` is the prefix's
 /// length, the position of the terminal state, and the marker is set.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Lasso {
     /// The position the loop re-enters, in `0..=prefix.len()`.
     pub entry: usize,
     /// Whether the loop is the one terminal stutter step.
     pub terminal_stutter: bool,
+    /// The positive delay of a terminal-stutter loop, when present. A
+    /// non-terminal loop leaves this absent.
+    pub terminal_stutter_delay: Option<Rational>,
 }
 
 /// A counterexample over a model subject, or over a protocol subject with
@@ -240,7 +243,9 @@ impl<T: SubjectTransition> TemporalCounterexample<T> {
     /// (ADR-018 SM-4) that [`Self::prefix`] does not list.
     pub fn len(&self) -> usize {
         self.prefix.len().saturating_add(usize::from(
-            self.lasso.is_some_and(|lasso| lasso.terminal_stutter),
+            self.lasso
+                .as_ref()
+                .is_some_and(|lasso| lasso.terminal_stutter),
         ))
     }
 
@@ -252,12 +257,19 @@ impl<T: SubjectTransition> TemporalCounterexample<T> {
 
     /// FSpec FR-364's `trace_position`: the prefix's last position for a
     /// formula and an undefined-evaluation counterexample, `None` for a
-    /// deadlock and a time-lock. A formula lasso is evaluated from its
-    /// origin (ADR-018 §6), so its position is 0.
+    /// deadlock and a time-lock. A formula lasso normally uses its origin
+    /// (ADR-018 §6); task-product transitions may identify a decisive miss
+    /// within the prefix.
     pub fn trace_position(&self) -> Option<u64> {
-        match (&self.kind, self.lasso) {
+        match (&self.kind, self.lasso.as_ref()) {
             (CounterexampleKind::Deadlock | CounterexampleKind::TimeLock, _) => None,
-            (CounterexampleKind::Formula, Some(_)) => Some(0),
+            (CounterexampleKind::Formula, Some(_)) => T::formula_lasso_trace_position(
+                &self
+                    .prefix
+                    .iter()
+                    .map(|step| step.transition.clone())
+                    .collect::<Vec<_>>(),
+            ),
             (
                 CounterexampleKind::Formula
                 | CounterexampleKind::Race(_)

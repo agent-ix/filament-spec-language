@@ -1403,7 +1403,8 @@ fn a_stuttering_peek_loop_is_protocol_observable_divergence() {
         counterexample.lasso,
         Some(fsl_replay::Lasso {
             entry: 0,
-            terminal_stutter: false
+            terminal_stutter: false,
+            terminal_stutter_delay: None,
         })
     );
     assert!(matches!(

@@ -230,6 +230,7 @@ pub(super) fn run_model(
             entry
         },
         terminal_stutter: *terminal_stutter,
+        terminal_stutter_delay: None,
     };
     let payload = TemporalCounterexample {
         initial_state: 0,

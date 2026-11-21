@@ -45,6 +45,13 @@ pub trait SubjectTransition: Clone + Eq + std::fmt::Debug {
     /// One member of a fairness set over the subject.
     type Fairness: Clone + Eq + std::fmt::Debug;
 
+    /// The decisive position of a formula lasso for this subject. Most
+    /// liveness counterexamples are decided at the loop origin (position 0);
+    /// task-derived deadline-miss lassos decide at their recorded miss step.
+    fn formula_lasso_trace_position(_prefix: &[Self]) -> Option<u64> {
+        Some(0)
+    }
+
     /// The shared-location access the step makes, when it makes one under a
     /// weak memory model (ADR-025 DR-3).
     fn access(&self) -> Option<&AccessRecord> {

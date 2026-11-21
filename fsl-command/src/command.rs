@@ -12,6 +12,7 @@ mod output_file;
 mod package_run;
 pub mod plan;
 pub use package_run::PreparedPackageRun;
+pub mod plan_request;
 mod replay;
 mod requirements;
 mod settle;
@@ -754,12 +755,25 @@ pub enum RunCause {
         /// Why the member is refused.
         reason: String,
     },
+    /// FR-1015-AC-17: a protocol binding has the same invalid-request
+    /// classification as the analyze reader, while retaining its export
+    /// request pointer for the caller.
+    #[error("invalid analyze request member {path}: {reason}")]
+    ExportProtocolRequest {
+        /// The export protocol binding at fault.
+        path: String,
+        /// Why the binding is refused.
+        reason: String,
+    },
     /// FR-1038: a `verification_plan` member the request reader refuses, with
     /// its FR-805 cause apart from the message.
     #[error("invalid verification plan request member {path}: {cause}: {reason}")]
     PlanRequest {
         /// The JSON pointer of the member at fault.
         path: String,
+        /// The FR-805 code: `invalid_runtime_input` for a member defect, the
+        /// selection's `missing_declaration` or `ambiguous_declaration`.
+        code: Code,
         /// The FR-805 cause.
         cause: &'static str,
         /// Why the member is refused.
@@ -1105,10 +1119,11 @@ impl RunCause {
             | Self::RequiresDirectory { .. }
             | Self::ClocksGivenTwice
             | Self::OutputGivenTwice
-            | Self::OutputExists { .. } => Code::InvalidRequest,
+            | Self::OutputExists { .. }
+            | Self::ExportProtocolRequest { .. } => Code::InvalidRequest,
             Self::ExportMapper { .. } => Code::RuntimeInvariant,
-            Self::ExportRequest { .. } | Self::PlanRequest { .. } => Code::InvalidRuntimeInput,
-            Self::SynthesisRequest { code, .. } => *code,
+            Self::ExportRequest { .. } => Code::InvalidRuntimeInput,
+            Self::PlanRequest { code, .. } | Self::SynthesisRequest { code, .. } => *code,
             Self::Output(_) | Self::ClauseOutput(_) | Self::ExportOutput { .. } => {
                 Code::OutputFailure
             }
@@ -1236,6 +1251,10 @@ impl RunError {
         &self,
         operation: fsl_replay::Operation,
     ) -> fsl_replay::OutcomeDocument {
+        self.refusal_document(operation).with_empty_analyze_members()
+    }
+
+    fn refusal_document(&self, operation: fsl_replay::Operation) -> fsl_replay::OutcomeDocument {
         use fsl_replay::{OutcomeDiagnostic, OutcomeDocument, OutcomeLocus};
 
         match &self.cause {
@@ -1319,6 +1338,20 @@ impl RunError {
                 OutcomeDocument::new(operation, None, self.category()).with_diagnostics(vec![
                     OutcomeDiagnostic::new(
                         Some(*cause),
+                        self.cause.code().as_str(),
+                        None,
+                        self.outcome_message(),
+                    )
+                    .with_details(Some(serde_json::Map::from_iter([(
+                        "path".to_owned(),
+                        serde_json::Value::String(path.clone()),
+                    )]))),
+                ])
+            }
+            RunCause::ExportProtocolRequest { path, .. } => {
+                OutcomeDocument::new(operation, None, self.category()).with_diagnostics(vec![
+                    OutcomeDiagnostic::new(
+                        None,
                         self.cause.code().as_str(),
                         None,
                         self.outcome_message(),
@@ -1785,6 +1818,9 @@ fn run_configured(
             replay::run_bytes(directory, path.to_str(), bytes, limits.dependent_bytes).map(Some)
         } else {
             plan::check_member(bytes)?;
+            if let Some(result) = plan::run_bytes(directory, bytes, limits, &settle)? {
+                return Ok(Some(result));
+            }
             if let Some(result) = export::run_bytes(directory, bytes, limits, overrides)? {
                 return Ok(Some(result));
             }
@@ -3125,41 +3161,54 @@ fn handoff_clock_selections(
     checked: &fsl_replay::spine::CheckedUnit,
     selections: &[fsl_package::TemporalClockSelection],
 ) -> Vec<crate::emit_checked_v2::ClockSelection> {
-    selections
-        .iter()
-        .filter_map(|selection| {
-            let name = checked
-                .package()
-                .graph()
-                .temporal_clauses()
-                .iter()
-                .find(|node| node.clause().span() == selection.declaration_span)
-                .map(|node| node.clause().name().to_owned())
-                .or_else(|| {
-                    checked
-                        .package()
-                        .graph()
-                        .protocols()
-                        .iter()
-                        .flat_map(|protocol| &protocol.obligations.compensations)
-                        .find(|template| template.span == selection.declaration_span)
-                        .map(|template| template.name.clone())
-                })
-                .or_else(|| {
-                    checked
-                        .package()
-                        .graph()
-                        .hyper_clauses()
-                        .iter()
-                        .find(|hyper| hyper.span() == selection.declaration_span)
-                        .map(|hyper| hyper.name().to_owned())
-                })?;
-            Some(crate::emit_checked_v2::ClockSelection {
-                clause: name,
-                clock: selection.clock.clone(),
+    let graph = checked.package().graph();
+    // A selection the model derives is derived again on read, so it is not
+    // written (FR-640): a hyper clause over two models has one for each trace.
+    let derived =
+        fsl_replay::spine::RequestClocks::model_selections(checked.package()).unwrap_or_default();
+    let mut named: Vec<crate::emit_checked_v2::ClockSelection> = Vec::new();
+    for selection in selections {
+        if selection.trace.is_some()
+            && derived.iter().any(|held| {
+                held.declaration_span == selection.declaration_span
+                    && held.trace == selection.trace
+                    && held.clock == selection.clock
             })
-        })
-        .collect()
+        {
+            continue;
+        }
+        let name = graph
+            .temporal_clauses()
+            .iter()
+            .find(|node| node.clause().span() == selection.declaration_span)
+            .map(|node| node.clause().name().to_owned())
+            .or_else(|| {
+                graph
+                    .protocols()
+                    .iter()
+                    .flat_map(|protocol| &protocol.obligations.compensations)
+                    .find(|template| template.span == selection.declaration_span)
+                    .map(|template| template.name.clone())
+            })
+            .or_else(|| {
+                graph
+                    .hyper_clauses()
+                    .iter()
+                    .find(|hyper| hyper.span() == selection.declaration_span)
+                    .map(|hyper| hyper.name().to_owned())
+            });
+        let Some(name) = name else {
+            continue;
+        };
+        let found = crate::emit_checked_v2::ClockSelection {
+            clause: name,
+            clock: selection.clock.clone(),
+        };
+        if !named.contains(&found) {
+            named.push(found);
+        }
+    }
+    named
 }
 
 /// The pipeline of [`complete_sources`] through S4: the checked unit is
@@ -3396,12 +3445,11 @@ fn check_sources<T>(
             );
         }
         let checked = checked_result.map_err(failure)?.into_value();
-        let selections = match &request.clocks {
-            Some(clocks) => clocks
-                .package_selections(&checked, &[&parsed])
-                .map_err(|refusal| spine_failure(*refusal))?,
-            None => Vec::new(),
-        };
+        // An absent `clocks` member selects like an empty one: a clause whose
+        // clock needs no configuration still binds its default selection.
+        let selections = clocks
+            .package_selections(&checked, &[&parsed])
+            .map_err(|refusal| spine_failure(*refusal))?;
         (checked, selections)
     };
     finish(
@@ -3762,6 +3810,12 @@ fn prepare_run_bytes_with_sources(
         return Err(RunCause::ClauseRequest {
             member: "items".to_owned(),
             reason: "items is handled by the multi-selection runner".to_owned(),
+        });
+    }
+    if request.verification_plan.is_some() {
+        return Err(RunCause::ClauseRequest {
+            member: "verification_plan".to_owned(),
+            reason: "a verification plan is run by the plan coordinator route".to_owned(),
         });
     }
     let mut intake = intake_with_bytes(

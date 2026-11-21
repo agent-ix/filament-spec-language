@@ -3140,6 +3140,57 @@ fn a_clocked_hyper_clause_handoff_carries_one_binding_row_per_quantifier() {
 }
 
 /// FR-517-AC-26 with FR-640 (QSL-2277): a clocked hyper clause whose
+/// quantifiers name two models writes a handoff that compiles back: the
+/// handoff names no clock, and each trace's row is derived again from its model.
+#[trace("TC-3128", "FR-517-AC-26")]
+#[test]
+fn a_clocked_hyper_clause_over_two_models_round_trips_its_handoff() {
+    let holder = tempfile::tempdir().unwrap();
+    let document = std::fs::read_to_string(CONFIG_MODEL).unwrap();
+    let models: Vec<PathBuf> = ["device-saving", "device-normal"]
+        .iter()
+        .map(|name| {
+            let path = holder.path().join(format!("{name}.json"));
+            std::fs::write(
+                &path,
+                document.replace("example/config-version", &format!("example/{name}")),
+            )
+            .unwrap();
+            path
+        })
+        .collect();
+    let body = "model S = \"example/device-saving\";\nmodel N = \"example/device-normal\";\n\
+         hyper Saves using t over behaviours (d: S::ConfigVersion, e: N::ConfigVersion) \
+         forall trace s of S forall trace n of N \
+         { always [0, 3] holds(d.versionNumber @ s <= e.versionNumber @ n) }";
+    let request = hyper_request(holder.path(), models, body, Vec::new());
+    let out = holder.path().join("handoff");
+    write(&request, &out).expect("the two-model handoff is written");
+    let handoff = compile(&out).expect("the directory compiles back");
+    let rows = handoff
+        .admitted()
+        .temporal_bindings()
+        .expect("binding rows");
+    let traces: Vec<Option<&str>> = rows.iter().map(|row| row.trace.as_deref()).collect();
+    assert_eq!(traces, [Some("s"), Some("n")], "{rows:?}");
+    for (row, package) in rows
+        .iter()
+        .zip(["example/device-saving", "example/device-normal"])
+    {
+        assert_eq!(
+            row.clock,
+            ClockConfiguration::EventPosition {
+                sequence_authority: format!(
+                    "{{\"node\":\"ix://{package}/ConfigVersion\",\"package\":\"{package}\"}}"
+                )
+                .into(),
+            },
+            "{row:?}"
+        );
+    }
+}
+
+/// FR-517-AC-26 with FR-640 (QSL-2277): a clocked hyper clause whose
 /// quantifiers name two models is refused `PerTraceClockConfigurations`
 /// instead of taking one request clock for both traces.
 #[trace("TC-3128", "FR-517-AC-26")]

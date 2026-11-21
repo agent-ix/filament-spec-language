@@ -758,6 +758,7 @@ fn source_and_types(g: &mut Grammar) {
         r(P::SchedulableDeclaration),
         r(P::ResponseDeclaration),
         r(P::ReleaseDeclaration),
+        r(P::ModeSwitchDeclaration),
         r(P::RandomDeclaration),
         r(P::RewardDeclaration),
         r(P::DelayDeclaration),
@@ -1557,7 +1558,6 @@ fn expressions(g: &mut Grammar) {
             r(P::CollectionValue),
             r(P::RecordValue),
             r(P::TupleValue),
-            r(P::EnumValue),
             s(vec![
                 c(vec![
                     x("present"),
@@ -1634,6 +1634,14 @@ fn expressions(g: &mut Grammar) {
                 x(")"),
             ]),
             s(vec![ident(), args]),
+            // `qualified-name '(' ')'`: the empty call of a qualified name
+            // (FSpec FR-339-AC-1). A nonempty one is a `TupleValue` and an
+            // unqualified one the identifier call above. It precedes
+            // `EnumValue`, which would otherwise take the name and leave the
+            // `(`; no alternative between `TupleValue` and here admits a
+            // name followed by `::`, so `EnumValue` keeps every match it had.
+            s(vec![r(P::QualifiedName), x("("), x(")")]),
+            r(P::EnumValue),
             r(P::QualifiedName),
         ]),
     );
@@ -2167,6 +2175,22 @@ fn temporal(g: &mut Grammar) {
             ident(),
             x("."),
             ident(),
+            x("on"),
+            r(P::QualifiedName),
+            x(";"),
+        ]),
+    );
+    // `mode-switch-decl`. `mode` keeps its reservation and begins this
+    // declaration only at declaration level; inside a `hybrid` body it begins
+    // `initial-entry` and `hybrid-mode`, which are not declarations. `hi` is a
+    // keyword spelling here and in `task` only and an identifier elsewhere.
+    // There is no `lo` form (FSpec FR-419 defines no return to `LO`).
+    g.insert(
+        P::ModeSwitchDeclaration,
+        s(vec![
+            x("mode"),
+            ident(),
+            literal("hi"),
             x("on"),
             r(P::QualifiedName),
             x(";"),

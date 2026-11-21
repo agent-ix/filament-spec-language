@@ -191,6 +191,7 @@ impl Run<'_, '_, '_> {
         Ok(CertEdge {
             from: offset + edge.from,
             transition,
+            task_transition: None,
             part,
             horizon: None,
             to: offset + edge.to,

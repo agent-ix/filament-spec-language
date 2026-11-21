@@ -6,11 +6,11 @@
 //! `a_package_selection_analyzes_as_its_source`.
 
 use ix_trace_rs::trace;
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 
 use crate::analyze_cli_support::{
-    HANDOFF, Run, Workspace, analyze, below_three, bounded, clause, counter_request, label,
-    package_selection, request_members,
+    analyze, below_three, bounded, clause, counter_request, label, package_selection,
+    request_members, Run, Workspace, HANDOFF,
 };
 
 fn at_most_two() -> String {
@@ -1169,4 +1169,92 @@ fn declarations_of_a_shared_clause_node_keep_their_own_occurrence() {
         );
         assert_eq!(run.exit, source.exit, "{name}");
     }
+}
+
+/// The `(claim_name, kind)` of each item of `run`, in document order.
+fn item_heads(run: &Run) -> Vec<(Value, Value)> {
+    run.document()["items"]
+        .as_array()
+        .map(|items| {
+            items
+                .iter()
+                .map(|item| (item["claim_name"].clone(), item["request"]["kind"].clone()))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// FR-620 "Subject, compilation and default items" (QSL-2726): a task-set
+/// claim is a default item of the package as of the source.
+#[trace("TC-1580", "FR-620-AC-1")]
+#[test]
+fn package_default_items_equal_the_source_defaults() {
+    // A task set with its schedulability claim.
+    let ws = Workspace::new("package-defaults-task-set");
+    let path = crate::analyze_family_cli::ctl_request(
+        &ws,
+        "schedulable CtlFp on Ctl under fixed_priority;\n",
+        json!(null),
+    );
+    let mut document: Value =
+        serde_json::from_slice(&std::fs::read(&path).expect("the request")).expect("JSON");
+    document["request"]
+        .as_object_mut()
+        .expect("request")
+        .remove("items");
+    let path = ws.write("analyze-defaults.json", document.to_string().as_bytes());
+    let source = analyze(&path);
+    let (members, _) = package_selection(&ws, &document["request"]);
+    let package = analyze_members(&ws, "analyze-package-defaults.json", &members);
+    // The source route writes the task-set claim after every other claim; the
+    // package route names the same default item and refuses the run typed,
+    // as it refuses a named schedulability claim, for it has no package form
+    // of that family yet.
+    assert_eq!(
+        item_heads(&source),
+        vec![(json!("CtlFp"), json!("schedulability"))],
+        "{}",
+        source.document()
+    );
+    let diagnostic = first_diagnostic(&package);
+    assert_eq!(diagnostic["cause"], "not-yet-implemented", "{diagnostic}");
+    assert!(
+        diagnostic.to_string().contains("declaration"),
+        "{diagnostic}"
+    );
+}
+
+/// FR-620 (QSL-2726): the Counter's temporal clauses, `invariant` and
+/// state-graph claims give the same default items over the package as over
+/// the source, each claim at its declaration's place in the source order.
+#[trace("TC-1580", "FR-620-AC-1")]
+#[test]
+fn package_default_items_equal_the_source_defaults_over_every_claim_form() {
+    let body = format!(
+        "{}{}{}{}",
+        bounded(),
+        not_above_three(),
+        state_graph_claims(),
+        at_most_two()
+    );
+    let ws = Workspace::new("package-defaults-claim-forms");
+    let path = counter_request(&ws, &body, json!(null));
+    let mut document: Value =
+        serde_json::from_slice(&std::fs::read(&path).expect("the request")).expect("JSON");
+    document["request"]
+        .as_object_mut()
+        .expect("request")
+        .remove("items");
+    let path = ws.write("analyze-defaults.json", document.to_string().as_bytes());
+    let source = analyze(&path);
+    let (members, _) = package_selection(&ws, &document["request"]);
+    let package = analyze_members(&ws, "analyze-package-defaults.json", &members);
+    assert!(!item_heads(&source).is_empty(), "{}", source.document());
+    assert_eq!(
+        item_heads(&package),
+        item_heads(&source),
+        "package: {}\nsource: {}",
+        package.document(),
+        source.document()
+    );
 }

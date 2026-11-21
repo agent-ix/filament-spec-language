@@ -742,12 +742,7 @@ struct Fixture {
 }
 
 fn fixture() -> Fixture {
-    fixture_of(
-        SOURCE,
-        &BTreeMap::new(),
-        &DependencyInput::default(),
-        None,
-    )
+    fixture_of(SOURCE, &BTreeMap::new(), &DependencyInput::default(), None)
 }
 
 fn fixture_of(

@@ -83,7 +83,11 @@ fn a_source_tuple_emits_its_declaration_and_ordered_position_rows() {
     let ordinals: Vec<u64> = row.positions.iter().map(|p| p.ordinal).collect();
     assert_eq!(ordinals, [0, 1, 2]);
     let pair = declaration(&package, "Pair").key();
-    let types: Vec<ValueType> = row.positions.iter().map(|p| p.value_type.clone()).collect();
+    let types: Vec<ValueType> = row
+        .positions
+        .iter()
+        .map(|p| p.value_type.clone().expect("a data position"))
+        .collect();
     assert_eq!(
         types,
         [
@@ -101,7 +105,7 @@ fn a_source_tuple_emits_its_declaration_and_ordered_position_rows() {
     let rowed: Vec<Value> = row
         .positions
         .iter()
-        .map(|p| id_json(&p.type_node))
+        .map(|p| id_json(p.type_node.as_ref().expect("a data position")))
         .collect();
     assert_eq!(
         rowed, bound,
@@ -109,7 +113,7 @@ fn a_source_tuple_emits_its_declaration_and_ordered_position_rows() {
     );
     assert_eq!(
         row.positions[0].type_node,
-        row_of(&package, &emission, "Pair").structural_node
+        Some(row_of(&package, &emission, "Pair").structural_node.clone())
     );
 
     let (_, records, _) = emitted(super::source_record_rows::RECORDS);
@@ -265,7 +269,7 @@ fn the_final_tuple_node_decides_each_position_type_node() {
     };
     let repointed = edit(&|members| {
         members[1] = CheckedTerm::Reference {
-            target: row.positions[2].type_node.clone(),
+            target: row.positions[2].type_node.clone().expect("a data position"),
         };
     });
     let mut stale = vec![row.clone()];
@@ -433,10 +437,10 @@ fn nested_enum_tuple_and_collection_elements_are_paired_with_their_final_nodes()
         .expect("budgeted source enum rows")[0];
     let color = enum_row.declaration.structural_node.clone();
     let inner = row_of(&package, &emission, "Inner");
-    assert_eq!(inner.positions[0].type_node, color);
+    assert_eq!(inner.positions[0].type_node, Some(color.clone()));
     assert_eq!(
         inner.positions[0].value_type,
-        ValueType::Enum(enum_row.declaration.shape.clone())
+        Some(ValueType::Enum(enum_row.declaration.shape.clone()))
     );
     let rec = super::source_record_rows::row_of(&package, &emission, "Rec");
     assert_eq!(rec.members[1].type_node, inner.structural_node);

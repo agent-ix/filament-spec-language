@@ -27,7 +27,7 @@ filament-checked = { git = "https://github.com/agent-ix/filament-eval", rev = "2
 # its own repository so RT and CG depend on it without the FSL repo.
 filament-eval = { git = "https://github.com/agent-ix/filament-eval", rev = "2184793a5764e8ce4fe6ab508388932646673e1c" }
 # IR-owned staged identity, operation-member, and model-enum witness joins.
-filament-contract-model = { git = "https://github.com/agent-ix/filament-contract-ir", rev = "af45a9836e5963398fae414622e4def25faf7043" }
+filament-contract-model = { git = "https://github.com/agent-ix/filament-contract-ir", rev = "c353c3f38239935b601c2e5730c83bf30ed21993" }
 # Observation's checked-value vocabulary aligned to the same exact/semantic-value revisions.
 filament-observation = { git = "https://github.com/agent-ix/filament-observation", rev = "39b3ebb11525db626a3ba4d3b7693a96aee33d2a" }
 
@@ -47,11 +47,14 @@ default = []
 checked-handoff = []
 # `population_fixtures`, the writer of the `Population<T>[N]` Contract IR v2
 # packages the admission corpus emits (QSL-771). It embeds the spine-model
-# fixtures under `tests/fixtures/`, so the default build leaves it out. It adds
-# no dependency.
-population-fixtures = []
+# fixtures under `tests/fixtures/`, so the default build leaves it out. It
+# enables the optional `fsl-eval` dependency.
+population-fixtures = ["dep:fsl-eval"]
 
 [dependencies]
+# `population_fixtures` checks its spine model through the evaluator's S6a reward
+# evaluator; only the `population-fixtures` feature pulls it in.
+fsl-eval = { path = "fsl-eval", optional = true }
 # ADR-013 O-05: only `model` calls the kernel `EffectiveId` constructor,
 # enforced by the ADR-011 T-12 arch-lint `api-surface` check (`tools/arch-lint`),
 # not by this dependency edge itself -- every crate that depends on

@@ -148,11 +148,12 @@ for each hyper clause whose profile is clock-configured, keyed on its
 (FR-488 "Clause names and clock bindings"); the emitter writes exactly those
 rows and none keyed on the body wrapper. `Selection::check` refuses on
 `clause.binding` when a trace's row is missing or present against an absent
-binding, and on the clock axes when a value differs. A hyper clause whose
-quantifiers name more than one model under a clock-configured profile is not
-given one request clock for every trace: the request is refused
-`unsupported_construct`/`not-yet-implemented` (`PerTraceClockConfigurations`)
-until per-trace clock derivation lands (QSL-2277).
+binding, and on the clock axes when a value differs. Per-trace clocks are
+derived from each trace's model (FR-640-AC-12), and a handoff names no clock a
+model derives. An explicit clause-name selection for a hyper clause whose
+quantifiers name more than one model is refused
+`unsupported_construct`/`not-yet-implemented` (`PerTraceClockConfigurations`);
+a single-model hyper clause takes the selection for every trace.
 
 
 `checked_handoff::Selection::read(bytes)` parses the sidecar and

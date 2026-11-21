@@ -18,6 +18,7 @@ use crate::{
 use filament_exact::Identifier;
 use filament_exact::NodeKey;
 use filament_semantic_value::catalog::Category;
+use filament_semantic_value::checking::CheckMode;
 use fsl_foundation::source::provenance::OccurrenceKey;
 use fsl_semantics::model::observation::{AdmissionFailure, FrameChange, SelectedObject};
 
@@ -45,6 +46,33 @@ pub(super) fn unit_for(unit: String, domain_document: Vec<u8>) -> Unit {
         SpineLimits::default(),
     )
     .expect("the ConfigVersion unit compiles");
+    Unit {
+        bytes: unit.into_bytes(),
+        domain_document,
+        compiled,
+    }
+}
+
+pub(super) fn unit_for_with_function_modes(
+    unit: String,
+    domain_document: Vec<u8>,
+    function_modes: &std::collections::BTreeMap<String, CheckMode>,
+) -> Unit {
+    let packages =
+        fsl_semantics::model::intake::package_input([domain_document.as_slice()]).unwrap();
+    let compiled = crate::spine::compose_in_mode(
+        source(),
+        IDENTITY,
+        unit.as_bytes(),
+        &packages,
+        &DependencyInput::default(),
+        SpineLimits::default(),
+        crate::spine::ComposeModes {
+            check_mode: Some(CheckMode::Linked),
+            function_modes,
+        },
+    )
+    .expect("the ConfigVersion unit compiles with its requested function modes");
     Unit {
         bytes: unit.into_bytes(),
         domain_document,
@@ -737,8 +765,7 @@ fn an_envelope_clause_node_other_than_the_frame_refuses_before_recompiling() {
     assert!(
         matches!(
             refusal,
-            ReplayRefusal::Recompile { .. }
-                | ReplayRefusal::RecompileWithProtocolResults { .. }
+            ReplayRefusal::Recompile { .. } | ReplayRefusal::RecompileWithProtocolResults { .. }
         ),
         "{refusal:?}"
     );

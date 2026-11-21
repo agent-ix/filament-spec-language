@@ -8,13 +8,13 @@
 
 mod tla;
 
-pub(super) use self::tla::{Extra, tla};
+pub(super) use self::tla::{tla, Extra};
 use super::{
-    Definition, E, Graph, Input, Lower, defer_at, define, mangle, parameters, refusal, refuse,
+    defer_at, define, mangle, parameters, refusal, refuse, Definition, Graph, Input, Lower, E,
 };
 use filament_contract_model::CheckedOperationInterval;
 use fsl_package::checked_views::{
-    Activation, FormulaNodeUse, FormulaOperation, OperatorDirection, temporal_subject,
+    temporal_subject, Activation, FormulaNodeUse, FormulaOperation, OperatorDirection,
 };
 use fsl_semantics::check::TemporalProfile;
 
@@ -291,6 +291,10 @@ pub(super) fn read(graph: &Graph<'_>, name: &str, position: usize) -> Lower<Clau
         // The capture is read as a name, with no node of its own.
         return defer_at(position, "temporal/capture", "a capture of the activation");
     }
+    let over = graph
+        .position(view.over())
+        .ok_or_else(|| refusal(CONSTRUCT, "the `over` binder names no package node"))?;
+    let (context, context_node) = super::context_of(graph, over)?;
     let profile = TemporalProfile::from_identity(&view.profile().definition.identity);
     if profile != Some(TemporalProfile::InfiniteTrace) {
         // The package has no node for the profile selection (a lock row), so
@@ -328,12 +332,8 @@ pub(super) fn read(graph: &Graph<'_>, name: &str, position: usize) -> Lower<Clau
                 .ok_or_else(|| refusal(CONSTRUCT, "an atom names no package node"))
         })
         .collect::<Lower<Vec<_>>>()?;
-    let over = graph
-        .position(view.over())
-        .ok_or_else(|| refusal(CONSTRUCT, "the `over` binder names no package node"))?;
     let binder = super::parameter_name(graph, over)
         .ok_or_else(|| refusal(CONSTRUCT, "the `over` binder has no name"))?;
-    let (context, context_node) = super::context_of(graph, over)?;
     Ok(ClauseRead {
         name: name.to_owned(),
         position,
@@ -419,13 +419,15 @@ impl LeanClause<'_> {
             }
             Tf::Always(iv, inner) => {
                 let d = self.fresh("d");
-                let body = self.at(inner, &format!("({position} + {d})"))?;
+                let next_position = format!("({position} + {d})");
+                let body = self.at(inner, &next_position)?;
                 let window = Self::window(*iv, &d, None).join(" -> ");
                 format!("(forall {d} : Int, {window} -> {body})")
             }
             Tf::Eventually(iv, inner) => {
                 let d = self.fresh("d");
-                let body = self.at(inner, &format!("({position} + {d})"))?;
+                let next_position = format!("({position} + {d})");
+                let body = self.at(inner, &next_position)?;
                 let window = Self::window(*iv, &d, None).join(" /\\ ");
                 format!("(exists {d} : Int, {window} /\\ {body})")
             }
@@ -494,7 +496,7 @@ fn lean_fair(input: &Input<'_>, clause: &ClauseLow) -> Lower<Option<String>> {
             .operations
             .get(constraint.operation)
             .ok_or_else(|| refusal("temporal/fairness", "an operation outside the state"))?;
-        let name = mangle("op_", &operation.name);
+        let name = object.operation(operation);
         let params = parameters(operation);
         let names: Vec<&str> = params.iter().map(|(param, _)| param.as_str()).collect();
         let chosen: Vec<&str> = if constraint.each {

@@ -108,6 +108,13 @@ fn a_postcondition_pre_over_1000_levels_refuses_on_a_small_stack() {
         [],
     )
     .expect("the minimal type fixture is admitted");
+    declarations.functions.push(crate::check::depth_forms::function(
+        "probe",
+        &[],
+        crate::check::depth_forms::boolean(),
+        None,
+        fsl_forms::Expression::boolean(true),
+    ));
     let graph = declarations
         .check(
             CheckMode::Linked,

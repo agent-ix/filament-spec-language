@@ -16,13 +16,13 @@ use filament_contract_model::CheckedNodePathSegment as Segment;
 use filament_contract_model::{CheckedSemanticNodeV2, CheckedTerm};
 use filament_exact::Rational;
 
-use crate::wire_form::{WireForm, WireTag, has_form, has_tag};
+use crate::wire_form::{has_form, has_tag, WireForm, WireTag};
 
 use super::{
-    CheckedNodeId, CheckedOccurrence, CheckedOccurrenceRole, CheckedPackageSidecarsRef,
-    CheckedPackageSourceCorrespondenceRef, CheckedPackageV2, CheckedSemanticGraphV2,
-    CheckedSourceMapEntry, Emission, EmitRefusal, EmittedPackage, ForeignNodes, GRAPH_V2,
-    OmittedNode, StructuralIds, own_evidence, read_index_segments, write_index_segments,
+    own_evidence, read_index_segments, write_index_segments, CheckedNodeId, CheckedOccurrence,
+    CheckedOccurrenceRole, CheckedPackageSidecarsRef, CheckedPackageSourceCorrespondenceRef,
+    CheckedPackageV2, CheckedSemanticGraphV2, CheckedSourceMapEntry, Emission, EmitRefusal,
+    EmittedPackage, ForeignNodes, OmittedNode, StructuralIds, GRAPH_V2,
 };
 
 /// What the writer needs of one plan.
@@ -955,6 +955,7 @@ pub(super) fn carry_rows(
                 member: _,
                 payload_nodes,
                 payload: _,
+                clock_payload: _,
             } = member;
             for node in payload_nodes {
                 rekey.id(node);
@@ -1020,8 +1021,12 @@ pub(super) fn carry_rows(
                 ordinal: _,
                 type_node,
                 value_type: _,
+                member_type: _,
+                collections: _,
             } = position;
-            rekey.id(type_node);
+            if let Some(type_node) = type_node {
+                rekey.id(type_node);
+            }
         }
     }
     let mut model_enum_shapes = retained.selected_model_enum_shape_rows.clone();
@@ -1248,7 +1253,7 @@ pub(super) fn follow_final_positions(
             ));
         }
         for (position, target) in row.positions.iter_mut().zip(targets) {
-            position.type_node = target.clone();
+            position.type_node = Some(target.clone());
         }
     }
     Ok(())

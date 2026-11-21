@@ -8,7 +8,6 @@
 use std::collections::BTreeSet;
 
 use crate::identity::{DeclaredDomain, ProfileSelection};
-use fsl_package::ObligationIdentity;
 use crate::witness::FamilyPayload;
 use filament_exact::{NodeKey, ObjectReference, ScalarLimits};
 use filament_semantic_value::location::ExpressionLocation as Location;
@@ -17,6 +16,7 @@ use fsl_eval::simulation::StateKey;
 use fsl_eval::temporal::UndefinedCause;
 use fsl_foundation::BackendId;
 use fsl_foundation::ReductionKind;
+use fsl_package::ObligationIdentity;
 use fsl_semantics::check::PredicateRole;
 use fsl_semantics::check::StateGraphForm;
 use serde::{Serialize, Serializer};

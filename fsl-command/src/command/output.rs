@@ -36,6 +36,12 @@ impl NativeResult {
         Self(document)
     }
 
+    /// The FR-1038 plan run result: FSpec FR-824's outcome as the
+    /// `verification_plan` member.
+    pub(super) fn plan_document(document: Value) -> Self {
+        Self(serde_json::json!({"verification_plan": document}))
+    }
+
     /// The FR-621 `analyze` document, written by `fsl-analyze`.
     pub(super) fn analyze_document(document: Value) -> Self {
         Self(document)
@@ -219,6 +225,13 @@ pub(super) fn error(error: &RunError, artifact: bool) -> Result<Value, serde_jso
         RunCause::ExportRequest { path, .. }
         | RunCause::PlanRequest { path, .. }
         | RunCause::SynthesisRequest { path, .. } => (
+            types::Stage::Request,
+            types::Details::Object(serde_json::Map::from_iter([(
+                "path".to_owned(),
+                Value::String(path.clone()),
+            )])),
+        ),
+        RunCause::ExportProtocolRequest { path, .. } => (
             types::Stage::Request,
             types::Details::Object(serde_json::Map::from_iter([(
                 "path".to_owned(),

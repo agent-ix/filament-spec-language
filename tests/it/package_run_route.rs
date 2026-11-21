@@ -392,3 +392,43 @@ fn a_foreign_equality_witness_refuses_unjoined() {
     names(&value, "refused-file");
     names(&value, "Unjoined");
 }
+
+/// FR-1039-AC-5 (`Even`): a function whose `n * 2 - n = n` is an equality
+/// application runs over `{file, equality}` with the source removed and gives
+/// the source route's outcome; selected as `{file}` alone it refuses
+/// `invalid_package`/`missing-file` at `/request/package/equality`, exit 20.
+#[test]
+#[trace("TC-3019", "FR-1039-AC-5")]
+fn an_equality_function_runs_over_a_file_with_its_equality_file() {
+    let unit = "language \"ix:native\" edition \"1-draft\";\n\
+                profile v = \"filament.value.complete/v1\";\n\
+                function Even using v(n: Integer): Boolean pure { n * 2 - n = n }\n";
+    let call = json!({"function": "Even", "arguments": [{"parameter": "n", "value": 4}]});
+    let with_source = tempfile::tempdir().unwrap();
+    std::fs::write(with_source.path().join("unit.native"), unit).unwrap();
+    let (source_exit, from_source) = run(
+        with_source.path(),
+        json!({"models": [], "program": {"source": source("unit.native")}, "call": call}),
+    );
+    assert_eq!(source_exit, 0, "{from_source}");
+    let packaged = tempfile::tempdir().unwrap();
+    compile(packaged.path(), unit, json!({}));
+    let (exit, from_package) = run(
+        packaged.path(),
+        json!({"models": [], "call": call,
+            "package": {"file": "package.json", "equality": "handoff/equality.json"}}),
+    );
+    assert_eq!(exit, source_exit, "{from_package}");
+    assert_eq!(
+        from_package["outcome"], from_source["outcome"],
+        "{from_package}"
+    );
+    let (exit, value) = run(
+        packaged.path(),
+        json!({"models": [], "call": call, "package": {"file": "package.json"}}),
+    );
+    assert_eq!(exit, 20, "{value}");
+    assert_eq!(value["code"], "invalid_package", "{value}");
+    names(&value, "missing-file");
+    names(&value, "/request/package/equality");
+}

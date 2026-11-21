@@ -5,12 +5,12 @@ use std::path::Path;
 
 use filament_exact::Cancel;
 use fsl_command::command::{self, PreparedRun, RunLimits};
-use fsl_foundation::SourceIdentity;
 use fsl_foundation::source::Source;
+use fsl_foundation::SourceIdentity;
 use fsl_replay::spine::{self, DependencyInput, ParseRequest, SpineLimits};
 use fsl_replay::{Operation, OutcomeDocument};
 use ix_trace_rs::trace;
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 
 const PROGRAM: &[u8] = include_bytes!("../../../tests/fixtures/spine-run.native");
 const DOMAIN: &[u8] = include_bytes!("../../../examples/config-version/model.semantic-ir.json");
@@ -233,7 +233,10 @@ fn prepared_function_input_retains_the_request_integer_division_law() {
     let integer_division = input
         .integer_division
         .expect("prepared input retains the request's integer-division law");
-    assert_eq!(integer_division.profile(), filament_exact::DivisionProfile::Floor);
+    assert_eq!(
+        integer_division.profile(),
+        filament_exact::DivisionProfile::Floor
+    );
 }
 
 #[test]
@@ -277,9 +280,9 @@ fn stage_refusals_preserve_the_reached_stage_and_available_location() {
         ),
         (
             "type Digit = Int[0, 9];\n",
-            "S4",
-            "unsupported_projection",
-            false,
+            "S3",
+            "missing_declaration",
+            true,
         ),
     ] {
         let directory = tempfile::tempdir().unwrap();
@@ -589,12 +592,10 @@ fn observation_override_conflict_refuses_before_observation_read() {
     let envelope = error.value().expect("refusal envelope");
     assert_eq!(envelope["stage"], "request", "{envelope}");
     assert_eq!(envelope["code"], "invalid-request", "{envelope}");
-    assert!(
-        envelope["message"]
-            .as_str()
-            .unwrap()
-            .contains("observation_limits")
-    );
+    assert!(envelope["message"]
+        .as_str()
+        .unwrap()
+        .contains("observation_limits"));
 }
 
 #[test]
@@ -711,12 +712,10 @@ fn extracted_clause_observation_override_conflict_refuses_before_observation_rea
     let envelope = error.value().expect("refusal envelope");
     assert_eq!(envelope["stage"], "request", "{envelope}");
     assert_eq!(envelope["code"], "invalid-request", "{envelope}");
-    assert!(
-        envelope["message"]
-            .as_str()
-            .unwrap()
-            .contains("observation_limits")
-    );
+    assert!(envelope["message"]
+        .as_str()
+        .unwrap()
+        .contains("observation_limits"));
 }
 
 #[test]
@@ -791,8 +790,8 @@ fn run_document(function: &str, arguments: Value) -> OutcomeDocument {
 
 /// FR-286-AC-1, FR-286-AC-5, FR-286-AC-6, TC-770: every lifecycle outcome
 /// document carries `category` and `last_stage`: a successful run, a
-/// violation, a refusal and an unsupported result, each with its category
-/// and the stage it reached (`null` where FR-286 defines none).
+/// violation and refusals, plus a driver-owned unsupported result, each with
+/// its category and the stage it reached (`null` where FR-286 defines none).
 #[test]
 #[trace("TC-770", "FR-286-AC-1", "FR-286-AC-5", "FR-286-AC-6")]
 fn command_outcome_documents_include_category_and_last_stage() {
@@ -843,20 +842,19 @@ fn command_outcome_documents_include_category_and_last_stage() {
         json!("S3"),
     );
 
-    // An unsupported result: a source the package stage cannot project.
-    let directory = tempfile::tempdir().unwrap();
-    let path = compile_request(
-        directory.path(),
-        format!("{HEADER}type Digit = Int[0, 9];\n").as_bytes(),
-    );
-    let error = command::compile_outcome(&path)
-        .err()
-        .expect("the stage refuses");
-    assert_members(
-        &document(&error.outcome_document(Operation::Package)),
-        "unsupported",
-        json!("S4"),
-    );
+    // A driver-owned unsupported result: an engine the build does not supply.
+    let unsupported = OutcomeDocument::new(
+        Operation::Execute,
+        None,
+        filament_semantic_value::catalog::Category::Unsupported,
+    )
+    .with_diagnostics(vec![fsl_replay::OutcomeDiagnostic::new(
+        Some("backend-not-supplied"),
+        fsl_foundation::diagnostic::Code::UnimplementedCapability.as_str(),
+        None,
+        "the AOT engine is not built",
+    )]);
+    assert_members(&document(&unsupported), "unsupported", Value::Null);
 }
 
 fn assert_members(document: &Value, category: &str, last_stage: Value) {

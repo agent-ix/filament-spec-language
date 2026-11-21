@@ -10,7 +10,7 @@ use fsl_eval::automaton::{
 use fsl_foundation::Span;
 use fsl_semantics::check::{
     Bound, BoundedMeasure, CheckedPredicate, CheckedProbabilisticClaim, Event, ProbForm,
-    ReachTarget, TemporalProfile,
+    ReachTarget, TemporalProfile, Weighting,
 };
 
 use crate::model_check::false_extension::false_extension_rejects;
@@ -40,6 +40,17 @@ impl From<AutomatonError> for PlanFault {
 /// The state predicates a claim reads at each model state, in the order
 /// their truths are kept.
 pub(super) type Reads<'c> = Vec<(UndefinedRead, &'c CheckedPredicate)>;
+
+fn reward_weight(
+    weighting: Option<&Weighting>,
+    span: Span,
+) -> Result<Option<&Identifier>, PlanFault> {
+    match weighting {
+        None => Ok(None),
+        Some(Weighting::Reward(name)) => Ok(Some(name)),
+        Some(Weighting::Delay) => Err(PlanFault::TimedFormShape { span }),
+    }
+}
 
 /// How the claim's control advances.
 pub(super) enum Plan<'c> {
@@ -106,16 +117,16 @@ impl<'c> Plan<'c> {
             ProbForm::Probability {
                 event: Event::Compare { measure, bound },
                 ..
-            } => Self::of_measure(measure, threshold(bound))?,
+            } => Self::of_measure(measure, threshold(bound), claim.span)?,
             ProbForm::Quantile {
                 measure,
                 threshold: bound,
                 ..
-            } => Self::of_measure(measure, threshold(bound))?,
+            } => Self::of_measure(measure, threshold(bound), claim.span)?,
             ProbForm::MeanOfFraction { fraction, .. } => (
                 Self::Fraction {
                     window: fraction.window,
-                    weight: fraction.weight.as_ref(),
+                    weight: reward_weight(fraction.weight.as_ref(), claim.span)?,
                 },
                 vec![role(PredicateRole::Target, &fraction.predicate)],
             ),
@@ -146,6 +157,7 @@ impl<'c> Plan<'c> {
     fn of_measure(
         measure: &'c BoundedMeasure,
         threshold: &Rational,
+        span: Span,
     ) -> Result<(Self, Reads<'c>), PlanFault> {
         let role = |role, predicate| (UndefinedRead::Predicate(role), predicate);
         Ok(match measure {
@@ -188,7 +200,7 @@ impl<'c> Plan<'c> {
             BoundedMeasure::Fraction(fraction) => (
                 Self::Fraction {
                     window: fraction.window,
-                    weight: fraction.weight.as_ref(),
+                    weight: reward_weight(fraction.weight.as_ref(), span)?,
                 },
                 vec![role(PredicateRole::Target, &fraction.predicate)],
             ),
@@ -429,7 +441,8 @@ impl<'c> Plan<'c> {
             return Ok(match closed {
                 fsl_eval::automaton::BoundedState::Accept => MonitorVerdict::Accept,
                 fsl_eval::automaton::BoundedState::Reject => MonitorVerdict::Reject,
-                fsl_eval::automaton::BoundedState::Open { .. } => {
+                fsl_eval::automaton::BoundedState::Open { .. }
+                | fsl_eval::automaton::BoundedState::Idle => {
                     return Err(PlanFault::Broken("terminal-has-no-open-debt"))
                 }
             });

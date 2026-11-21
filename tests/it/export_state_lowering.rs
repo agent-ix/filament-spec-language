@@ -5,10 +5,10 @@
 
 use crate::plan_export_surface::outcome_json;
 use crate::plan_export_surface::{counter_export, counter_request};
-use crate::support::config_version_spine::{Case, spine};
+use crate::support::config_version_spine::{spine, Case};
 use crate::support::refinement_cas::{self, Variant};
 use ix_trace_rs::trace;
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 
 fn tla() -> Value {
     json!({"profile": "filament.output.tla2/v1", "obligations": ["Bounded"]})
@@ -22,6 +22,98 @@ fn text(value: &Value) -> &str {
     value["export"]["target_text"]
         .as_str()
         .expect("target text")
+}
+
+#[test]
+#[trace("FR-1039-AC-1", "FSpec-FR-812-AC-7")]
+fn selected_package_export_uses_its_models_to_lower_object_state() {
+    use crate::plan_export_surface::{counter_model, COUNTER_UNIT};
+
+    let directory = tempfile::tempdir().unwrap();
+    std::fs::write(directory.path().join("counter.json"), counter_model()).unwrap();
+    std::fs::write(directory.path().join("unit.native"), COUNTER_UNIT).unwrap();
+    let initial = json!({
+        "format": "filament.state.snapshot/v1",
+        "identity": {"authority": "test", "identity": "example/counter-third/start"},
+        "observation": "current",
+        "model": {"identity": "example/counter-third"},
+        "anchor": {"kind": "initialization", "name": "start"},
+        "populations": [{"population": "ix://example/counter-third/counters", "complete": true,
+            "objects": [{"key": "c", "type": "ix://example/counter-third/Counter",
+                "fields": {"value": {"integer": "0"}}}]}]
+    });
+    std::fs::write(directory.path().join("counter-0.json"), initial.to_string()).unwrap();
+    let model = json!({"format": "semantic-ir/2.0.0", "source": {
+        "file": "counter.json", "authority": "agent-ix",
+        "identity": "example/counter-third", "document": "Counter", "formal_revision": 1
+    }});
+    let compile = json!({"format": "native-compile/1", "request": {
+        "models": [model],
+        "program": {"source": {"file": "unit.native", "authority": "agent-ix",
+            "identity": "test:w21:unit.native", "document": "W21", "formal_revision": 1}},
+        "output": {"package": "package.json"},
+        "handoff": {"directory": "handoff", "package_name": "test:w21:unit.native",
+            "native_join": {"work_units": 1_u64 << 40, "storage": 1_u64 << 24}}
+    }});
+    let compile_path = directory.path().join("compile.json");
+    std::fs::write(&compile_path, compile.to_string()).unwrap();
+    fsl_command::command::compile(&compile_path).expect("the checked package compiles");
+
+    let request = json!({"format": "native-run/1", "request": {
+        "models": [model],
+        "package": {"file": "package.json", "equality": "handoff/equality.json",
+            "source_package": {
+            "identity": "test:w21:unit.native", "version": "1"
+        }},
+        "export": {"profile": "filament.output.tla2/v1",
+            "obligations": ["Bounded"], "minimum_fidelity": "any",
+            "initial": "counter-0.json"}
+    }});
+    let request_path = directory.path().join("request.json");
+    std::fs::write(&request_path, request.to_string()).unwrap();
+    let result = fsl_command::command::run(&request_path, &crate::negotiation::Fr290)
+        .expect("the checked package exports");
+    let value = result.value.as_value();
+    assert_eq!(result.exit_code, 0, "{value}");
+    let module = text(value);
+    assert!(module.contains("VARIABLES v_Counter"), "{module}");
+    assert!(module.contains("op_Counter_inc(r_self) =="), "{module}");
+    assert!(module.contains("Init ==\n  /\\ v_Counter ="), "{module}");
+
+    let (source_exit, source_value) = crate::plan_export_surface::counter_export(json!({
+        "profile": "filament.output.tla2/v1",
+        "obligations": ["Bounded"],
+        "minimum_fidelity": "any"
+    }));
+    assert_eq!(source_exit, 0, "{source_value}");
+    let selected_text = value["export"]["target_text"].as_str().unwrap();
+    let source_text = source_value["export"]["target_text"].as_str().unwrap();
+    let first_difference = selected_text
+        .bytes()
+        .zip(source_text.bytes())
+        .take_while(|(selected, source)| selected == source)
+        .count();
+    assert_eq!(
+        selected_text,
+        source_text,
+        "target text first differs at byte {first_difference}; selected={:?}; source={:?}",
+        &selected_text[first_difference.saturating_sub(40)..][..selected_text
+            .len()
+            .saturating_sub(first_difference.saturating_sub(40))
+            .min(100)],
+        &source_text[first_difference.saturating_sub(40)..][..source_text
+            .len()
+            .saturating_sub(first_difference.saturating_sub(40))
+            .min(100)]
+    );
+    assert_eq!(
+        value["export"]["records"],
+        source_value["export"]["records"]
+    );
+    assert_eq!(
+        value["export"]["target_text"],
+        source_value["export"]["target_text"]
+    );
 }
 
 fn assert_canonical(text: &str, marker: &str) {
@@ -55,7 +147,7 @@ fn the_counter_invariant_lowers_to_tla() {
         "VARIABLES v_Counter",
         "TypeOK ==",
         "v_Counter = [k \\in {<<99>>} |-> CASE k = <<99>> -> [fld_value |-> 0]]",
-        "op_inc(r_self) ==",
+        "op_Counter_inc(r_self) ==",
         "Next ==",
         "Spec == Init /\\ [][Next]_vars /\\ WF_vars(Next)",
         "c_Bounded == \\A r_self \\in DOMAIN v_Counter",
@@ -85,17 +177,24 @@ fn the_counter_invariant_lowers_to_tla() {
         .collect();
     assert_eq!(
         names,
-        ["v_Counter", "op_inc", "c_Bounded", "Th_Bounded"],
+        [
+            "Th_Bounded",
+            "c_Bounded",
+            "fld_value",
+            "op_Counter_inc",
+            "v_Counter",
+        ],
         "{value}"
     );
     let entries = value["export"]["name_map"].as_array().unwrap();
     assert!(
-        entries[1]["node"]
+        entries[3]["node"]
             .as_str()
             .unwrap()
             .contains("operation_anchor"),
-        "op_inc reads back to the operation node: {value}"
+        "the qualified operation reads back to the operation node: {value}"
     );
+    assert_eq!(entries[2]["binding"], entries[2]["node"], "{value}");
     let variables = module.find("VARIABLES").unwrap();
     assert!(
         module[..variables]
@@ -123,7 +222,7 @@ fn the_counter_invariant_lowers_to_lean() {
         "def WF (s : State)",
         "def Init (s : State)",
         "s.v_Counter = [([99], { fld_value := 0 })]",
-        "def op_inc (s : State)",
+        "def op_Counter_inc (s : State)",
         "def Step (s : State)",
         "structure Behaviour where",
         "def c_Bounded (s : State)",
@@ -242,8 +341,66 @@ fn spec_doc() -> Vec<u8> {
     refinement_cas::documents(variant).remove(0)
 }
 
+fn enum_spec_doc() -> Vec<u8> {
+    let mut document: Value = serde_json::from_slice(&spec_doc()).expect("the spec model is json");
+    let tier = "ix://example/counter-spec/Tier";
+    document["constructs"].as_array_mut().unwrap().push(json!({
+        "kind": {"module": "example/counter-spec", "name": "variant_type"},
+        "moduleVersion": "1.0.0",
+        "construct": {"identity": "none", "shape": "enumeration",
+            "members": {"variants": "required"}, "meaning": "filament.meaning.model.variant-type/v1"}
+    }));
+    let case = |name: &str, line: u64| {
+        json!({"identity": format!("ix://example/counter-spec/variant/Tier-{name}"), "name": name,
+            "origin": {"source": {"sourceIdentity": "ix://example/counter-spec/spec",
+                "path": "spec.fspec", "startLine": line, "startColumn": 3}}})
+    };
+    document["types"]
+        .as_array_mut()
+        .expect("model types")
+        .push(json!({
+            "identity": tier,
+            "displayName": "Tier",
+            "kind": {"module": "example/counter-spec", "name": "variant_type"},
+            "roles": [], "origin": {"generated": {"generatorIdentity": tier,
+                "generatorVersion": "1.0.0", "inputIdentities": [tier]}},
+            "constraints": [], "extensions": [], "unknownPolicy": "reject",
+            "variants": [case("Gold", 1), case("Silver", 2)]
+        }));
+    let counter = document["types"]
+        .as_array_mut()
+        .unwrap()
+        .iter_mut()
+        .find(|node| node["identity"] == "ix://example/counter-spec/Counter")
+        .expect("Counter type");
+    counter["fields"].as_array_mut().unwrap().push(json!({
+        "identity": "ix://example/counter-spec/Counter/tier", "name": "tier",
+        "typeRef": tier, "presence": "required", "nullable": false, "defaultKind": "none",
+        "multiplicity": {"lower": 1, "upper": 1, "ordered": false, "unique": true},
+        "origin": {"generated": {"generatorIdentity": tier,
+            "generatorVersion": "1.0.0", "inputIdentities": [tier]}}
+    }));
+    serde_json::to_vec(&document).expect("the enum model serializes")
+}
+
+fn enum_collision_models() -> Vec<(&'static str, &'static str, Vec<u8>)> {
+    let second = String::from_utf8(enum_spec_doc())
+        .unwrap()
+        .replace("example/counter-spec", "example/other-spec")
+        .replace("Counter", "Gauge")
+        .into_bytes();
+    vec![
+        ("spec.json", refinement_cas::SPEC, enum_spec_doc()),
+        ("other.json", "example/other-spec", second),
+    ]
+}
+
 fn spec_models() -> Vec<(&'static str, &'static str, Vec<u8>)> {
     vec![("spec.json", refinement_cas::SPEC, spec_doc())]
+}
+
+fn enum_spec_models() -> Vec<(&'static str, &'static str, Vec<u8>)> {
+    vec![("spec.json", refinement_cas::SPEC, enum_spec_doc())]
 }
 
 fn spec_member(profile: &str) -> Value {
@@ -251,6 +408,7 @@ fn spec_member(profile: &str) -> Value {
 }
 
 const SPEC_UNIT: &str = "model Spec = \"example/counter-spec\";\n\
+     pre AddWithin using v on Spec::Counter::add { self.value <= n }\n\
      invariant Low using m on Spec::Counter at current { self.value <= 2 }\n";
 
 fn spec_unit() -> String {
@@ -272,8 +430,8 @@ fn an_operation_with_a_parameter_and_a_receiver_frame_lowers_to_tla() {
     assert_eq!(exit, 0, "{value}");
     let module = text(&value);
     for part in [
-        "op_add(r_self, p_n) ==",
-        "\\/ \\E r_self \\in DOMAIN v_Counter, p_n \\in 0..1 : op_add(r_self, p_n)",
+        "op_Counter_add(r_self, p_n) ==",
+        "\\/ \\E r_self \\in DOMAIN v_Counter, p_n \\in 0..1 : op_Counter_add(r_self, p_n)",
         "p_n >= 0",
         "p_n <= 1",
         "\\A k \\in DOMAIN v_Counter : k /= r_self => v_Counter'[k].fld_value = v_Counter[k].fld_value",
@@ -282,7 +440,7 @@ fn an_operation_with_a_parameter_and_a_receiver_frame_lowers_to_tla() {
     ] {
         assert!(module.contains(part), "{part}: {module}");
     }
-    for name in ["op_inc", "op_tick", "op_add"] {
+    for name in ["op_Counter_inc", "op_Counter_tick", "op_Counter_add"] {
         let entry = value["export"]["name_map"]
             .as_array()
             .unwrap()
@@ -291,6 +449,18 @@ fn an_operation_with_a_parameter_and_a_receiver_frame_lowers_to_tla() {
             .unwrap_or_else(|| panic!("{name} in the name map: {value}"));
         assert!(entry["node"].is_string(), "{entry}");
     }
+    let parameter = value["export"]["name_map"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|entry| entry["name"] == "p_n")
+        .expect("the parameter binding is in the name map");
+    assert!(parameter["binding"].is_string(), "{parameter}");
+    assert!(parameter["node"].as_str().unwrap().contains("parameter"));
+    assert!(parameter["binding"]
+        .as_str()
+        .unwrap()
+        .contains("operation_anchor"));
 }
 
 /// The Lean `op_` of a receiver-only frame keeps its later conjuncts out of
@@ -307,7 +477,7 @@ fn a_receiver_frame_does_not_swallow_the_later_lean_conjuncts() {
     let file = text(&value);
     let tick = file
         .split("\n\n")
-        .find(|block| block.contains("def op_tick"))
+        .find(|block| block.contains("def op_Counter_tick"))
         .expect("op_tick");
     let guarded = tick
         .lines()
@@ -319,7 +489,9 @@ fn a_receiver_frame_does_not_swallow_the_later_lean_conjuncts() {
     );
     assert!(tick.contains("(WF s')"), "{tick}");
     assert!(
-        file.contains("def op_add (s : State) (s' : State) (r_self : List Nat) (p_n : Int)"),
+        file.contains(
+            "def op_Counter_add (s : State) (s' : State) (r_self : List Nat) (p_n : Int)"
+        ),
         "{file}"
     );
     assert!(file.contains("exists r_self, exists p_n,"), "{file}");
@@ -410,6 +582,8 @@ fn two_exported_object_types_frame_each_other() {
     assert!(module.contains("VARIABLES v_Counter, v_Gauge"), "{module}");
     assert!(module.contains("UNCHANGED v_Gauge"), "{module}");
     assert!(module.contains("UNCHANGED v_Counter"), "{module}");
+    assert!(module.contains("op_Counter_inc(r_self) =="), "{module}");
+    assert!(module.contains("op_Gauge_inc(r_self) =="), "{module}");
     let names: Vec<&str> = value["export"]["name_map"]
         .as_array()
         .unwrap()
@@ -420,9 +594,136 @@ fn two_exported_object_types_frame_each_other() {
         names.contains(&"v_Gauge") && names.contains(&"v_Counter"),
         "{names:?}"
     );
+    assert!(
+        names.contains(&"op_Counter_inc") && names.contains(&"op_Gauge_inc"),
+        "{names:?}"
+    );
+    let field_rows: Vec<&Value> = value["export"]["name_map"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|entry| entry["name"] == "fld_value")
+        .collect();
+    assert_eq!(field_rows.len(), 2, "{value}");
+    assert_ne!(
+        field_rows[0]["binding"], field_rows[1]["binding"],
+        "{value}"
+    );
+    for entry in field_rows {
+        assert_eq!(entry["node"], entry["binding"], "{entry}");
+    }
     let (exit, value) = exported(&models, &unit, &member("filament.output.lean4/v1"));
     assert_eq!(exit, 0, "{value}");
     assert!(text(&value).contains("s'.v_Gauge = s.v_Gauge"), "{value}");
+}
+
+#[test]
+#[trace("FSpec-FR-812")]
+fn enum_fields_lower_to_finite_tla_values_and_lean_constructors() {
+    let models = enum_spec_models();
+    let (exit, tla_value) = exported(
+        &models,
+        &spec_unit(),
+        &spec_member("filament.output.tla2/v1"),
+    );
+    assert_eq!(exit, 0, "{tla_value}");
+    let tla = text(&tla_value);
+    let name_map = tla_value["export"]["name_map"].as_array().unwrap();
+    let enum_cases: Vec<&str> = name_map
+        .iter()
+        .filter_map(|entry| entry["name"].as_str())
+        .filter(|name| name.starts_with("e_ix_u3A_"))
+        .collect();
+    assert_eq!(enum_cases.len(), 2, "{name_map:?}");
+    assert!(enum_cases.iter().all(|name| tla.contains(name)), "{tla}");
+    for name in enum_cases {
+        let entry = name_map
+            .iter()
+            .find(|entry| entry["name"] == name)
+            .expect("enum case is in the name map");
+        assert!(
+            entry["node"].as_str().unwrap().contains("object_type"),
+            "{entry}"
+        );
+        assert_eq!(entry["binding"], entry["node"], "{entry}");
+    }
+
+    let (exit, lean_value) = exported(
+        &models,
+        &spec_unit(),
+        &spec_member("filament.output.lean4/v1"),
+    );
+    assert_eq!(exit, 0, "{lean_value}");
+    let lean = text(&lean_value);
+    let lean_type = lean_value["export"]["name_map"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find_map(|entry| {
+            entry["name"]
+                .as_str()
+                .filter(|name| name.starts_with("E_ix_u3A_"))
+        })
+        .expect("Lean enum type is in the name map");
+    let lean_cases: Vec<&str> = lean_value["export"]["name_map"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|entry| entry["name"].as_str())
+        .filter(|name| name.starts_with("e_ix_u3A_"))
+        .collect();
+    assert!(lean.contains(lean_type), "{lean}");
+    assert!(lean_cases.iter().all(|name| lean.contains(name)), "{lean}");
+    assert!(lean.contains(&format!("fld_tier : {lean_type}")), "{lean}");
+}
+
+#[test]
+#[trace("FSpec-FR-812")]
+fn enum_names_and_name_map_preserve_distinct_declaration_owners() {
+    let models = enum_collision_models();
+    let unit = format!(
+        "{HEADER}model Spec = \"example/counter-spec\";\n\
+         model Other = \"example/other-spec\";\n\
+         invariant Low using m on Spec::Counter at current {{ self.value <= 2 }}\n\
+         invariant High using m on Other::Gauge at current {{ self.value <= 2 }}\n"
+    );
+    let (exit, value) = exported(
+        &models,
+        &unit,
+        &json!({"profile": "filament.output.lean4/v1", "obligations": ["Low", "High"]}),
+    );
+    assert_eq!(exit, 0, "{value}");
+    let name_map = value["export"]["name_map"].as_array().unwrap();
+    let enum_types: Vec<&str> = name_map
+        .iter()
+        .filter_map(|entry| entry["name"].as_str())
+        .filter(|name| name.starts_with("E_ix_u3A_"))
+        .collect();
+    let enum_cases: Vec<&str> = name_map
+        .iter()
+        .filter_map(|entry| entry["name"].as_str())
+        .filter(|name| name.starts_with("e_ix_u3A_"))
+        .collect();
+    assert_eq!(enum_types.len(), 2, "{name_map:?}");
+    assert_ne!(enum_types[0], enum_types[1], "{name_map:?}");
+    assert_eq!(enum_cases.len(), 4, "{name_map:?}");
+    assert_eq!(
+        enum_cases
+            .iter()
+            .copied()
+            .collect::<std::collections::BTreeSet<_>>()
+            .len(),
+        4
+    );
+    let target = text(&value);
+    assert!(
+        enum_types.iter().all(|name| target.contains(name)),
+        "{target}"
+    );
+    assert!(
+        enum_cases.iter().all(|name| target.contains(name)),
+        "{target}"
+    );
 }
 
 /// Population bounds (`bound`, FSpec FR-812-AC-6) are not lowered, so an
@@ -548,7 +849,7 @@ fn an_incomplete_export_renders_its_limit() {
 
 fn render(result: &fsl_command::command::RunResult) -> Vec<String> {
     use filament_exact::Cancel;
-    use fsl_inspect::{RenderForm, RenderSources, render_outcome};
+    use fsl_inspect::{render_outcome, RenderForm, RenderSources};
     let rendered = render_outcome(
         result.outcome.as_ref().expect("an outcome document"),
         RenderForm::Text,

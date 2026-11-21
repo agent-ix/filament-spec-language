@@ -263,6 +263,7 @@ fn replay_lasso(
     let trace_lasso = Lasso {
         entry,
         terminal_stutter,
+        terminal_stutter_delay: None,
     };
     let replay_positions: Vec<ReplayPosition> = positions
         .iter()
@@ -271,7 +272,7 @@ fn replay_lasso(
             state_key: state_key.clone(),
         })
         .collect();
-    close_loop(system, &replay_positions, trace_lasso)?;
+    close_loop(system, &replay_positions, trace_lasso.clone())?;
     let mut loop_states = Vec::new();
     if !terminal_stutter {
         for index in entry..steps {
@@ -302,7 +303,7 @@ fn replay_lasso(
     if unfair_constraint(
         system,
         &loop_states,
-        trace_lasso,
+        trace_lasso.clone(),
         &clause.quantifiers()[0].fairness,
     )?
     .is_some()

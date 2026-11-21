@@ -612,7 +612,7 @@ dependencies = [
 [[package]]
 name = "filament-contract-model"
 version = "0.1.2"
-source = "git+https://github.com/agent-ix/filament-contract-ir?rev=af45a9836e5963398fae414622e4def25faf7043#af45a9836e5963398fae414622e4def25faf7043"
+source = "git+https://github.com/agent-ix/filament-contract-ir?rev=c353c3f38239935b601c2e5730c83bf30ed21993#c353c3f38239935b601c2e5730c83bf30ed21993"
 dependencies = [
  "filament-exact",
  "filament-semantic-value",
@@ -1073,10 +1073,12 @@ dependencies = [
  "filament-checked",
  "filament-exact",
  "fsl-analyze",
+ "fsl-command",
  "fsl-eval",
  "fsl-foundation",
  "fsl-package",
  "fsl-replay",
+ "fsl-route",
  "fsl-semantics",
  "ix-trace-rs",
  "serde",

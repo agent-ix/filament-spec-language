@@ -727,8 +727,8 @@ pub fn replay_refinement_trace(
     let Some(positions) = reexecute(&systems.concrete, payload)? else {
         return Ok(RefinementTraceSettlement::Inconclusive(no_value_cause()));
     };
-    if let Some(lasso) = payload.lasso {
-        close_loop(&systems.concrete, &positions, lasso)?;
+    if let Some(lasso) = payload.lasso.as_ref() {
+        close_loop(&systems.concrete, &positions, lasso.clone())?;
     }
     settle_positions(refinement, systems, payload, recorded, &positions)
 }
@@ -976,14 +976,20 @@ fn settle_positions(
             StepVerdict::Fault(_) => return Err(fault("refinement-step")),
         }
     }
-    if let Some(lasso) = payload.lasso {
+    if let Some(lasso) = payload.lasso.as_ref() {
         if let Some(RefinementFailure::Divergence {
             protocol_class: Some(class),
             ..
         }) = payload.refinement.as_ref()
         {
             return replay_protocol_divergence(
-                refinement, systems, payload, lasso, positions, mapped, class,
+                refinement,
+                systems,
+                payload,
+                lasso.clone(),
+                positions,
+                mapped,
+                class,
             );
         }
         let walk = Walk {
@@ -991,7 +997,15 @@ fn settle_positions(
             trail,
             taken_by,
         };
-        return replay_lasso(refinement, systems, payload, lasso, walk, found, mapped);
+        return replay_lasso(
+            refinement,
+            systems,
+            payload,
+            lasso.clone(),
+            walk,
+            found,
+            mapped,
+        );
     }
     Ok(match found {
         Found::Failed(failure)
@@ -1182,14 +1196,15 @@ fn replay_lasso(
             entry: lasso.entry,
         }));
     }
-    let Some(loop_states) = loop_states_of(&systems.concrete, payload, walk.positions, lasso)?
+    let Some(loop_states) =
+        loop_states_of(&systems.concrete, payload, walk.positions, lasso.clone())?
     else {
         return Ok(RefinementTraceSettlement::Inconclusive(no_value_cause()));
     };
     if let Some(constraint) = unfair_constraint(
         &systems.concrete,
         &loop_states,
-        lasso,
+        lasso.clone(),
         &refinement
             .concrete_operation_fairness()
             .cloned()
@@ -1276,7 +1291,7 @@ fn replay_protocol_divergence(
     mapped: Vec<ModelState>,
     class: &str,
 ) -> Result<RefinementTraceSettlement, ReplayRefusal> {
-    close_loop(&systems.concrete, positions, lasso)?;
+    close_loop(&systems.concrete, positions, lasso.clone())?;
     let (
         Some(protocol),
         Some(RefinementFailure::Divergence {

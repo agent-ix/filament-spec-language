@@ -95,6 +95,97 @@ fn a_release_is_recorded_on_its_operation_and_a_second_task_is_allowed() {
     assert_eq!(released, ["a", "b"]);
 }
 
+#[trace("TC-704", "FR-249-AC-13")]
+#[test]
+fn a_mode_switch_is_checked_in_source_order_and_requires_a_release_to_back_a_claim() {
+    let graph = checked(
+        "mode Ctl hi on ConfigVersion::attemptUpdate;\n\
+         mode Ctl hi on ConfigVersion::command;",
+    );
+    let [first, second] = graph.task_sets().mode_switches() else {
+        panic!("two mode switches: {:?}", graph.task_sets().mode_switches());
+    };
+    assert_eq!(first.task_set(), "Ctl");
+    assert_eq!(first.operation().name(), "attemptUpdate");
+    assert_eq!(second.operation().name(), "command");
+
+    assert_eq!(
+        refused("mode Nope hi on ConfigVersion::attemptUpdate;"),
+        [(Code::MissingDeclaration, "missing-name", "Nope".to_owned())]
+    );
+    assert_eq!(
+        refused("mode Ctl hi on ConfigVersion::nope;"),
+        [(
+            Code::MissingDeclaration,
+            "missing-name",
+            "ConfigVersion::nope".to_owned()
+        )]
+    );
+    assert_eq!(
+        refused(
+            "mode Ctl hi on ConfigVersion::attemptUpdate;\n\
+             mode Ctl hi on ConfigVersion::attemptUpdate;"
+        ),
+        [(
+            Code::ConflictingDeclaration,
+            "duplicate-declaration",
+            "mode Ctl hi on ConfigVersion::attemptUpdate;".to_owned()
+        )]
+    );
+
+    let unbacked = checked(
+        "mode Ctl hi on ConfigVersion::attemptUpdate;\n\
+         schedulable CtlFp on Ctl under fixed_priority;",
+    );
+    let claim = unbacked
+        .task_sets()
+        .claims()
+        .iter()
+        .find(|claim| claim.task_set == "Ctl")
+        .and_then(|claim| claim.occurrence())
+        .expect("a keyed schedulability claim");
+    assert!(
+        !unbacked.requirements()[&claim]
+            .requirements()
+            .task_product()
+    );
+}
+
+#[trace("TC-704", "FR-249-AC-7")]
+#[test]
+fn only_a_task_set_with_a_checked_release_requires_a_task_product() {
+    let released = checked(
+        "schedulable CtlFp on Ctl under fixed_priority;\n\
+         release Ctl.a on ConfigVersion::attemptUpdate;",
+    );
+    let claim = released
+        .task_sets()
+        .claims()
+        .iter()
+        .find(|claim| claim.task_set == "Ctl")
+        .and_then(|claim| claim.occurrence())
+        .expect("a keyed schedulability claim");
+    assert!(
+        released.requirements()[&claim]
+            .requirements()
+            .task_product()
+    );
+
+    let unreleased = checked("schedulable CtlFp on Ctl under fixed_priority;");
+    let claim = unreleased
+        .task_sets()
+        .claims()
+        .iter()
+        .find(|claim| claim.task_set == "Ctl")
+        .and_then(|claim| claim.occurrence())
+        .expect("a keyed schedulability claim");
+    assert!(
+        !unreleased.requirements()[&claim]
+            .requirements()
+            .task_product()
+    );
+}
+
 #[trace("TC-704", "FR-249-AC-6")]
 #[test]
 fn an_operation_that_releases_nothing_records_no_release() {
@@ -262,7 +353,6 @@ fn an_operation_inherited_from_two_unrelated_types_is_ambiguous() {
 /// and the release adds no `missing-name`.
 #[trace("TC-3008", "FR-249-AC-10")]
 #[test]
-#[ignore = "QSL-2240: refusal of a release of a non-positive-period task at the period alone not verified yet"]
 fn a_release_of_a_non_positive_period_task_refuses_at_the_period() {
     for period in ["0 ms", "-4 ms"] {
         let reported = refused(&format!(
@@ -278,4 +368,120 @@ fn a_release_of_a_non_positive_period_task_refuses_at_the_period() {
             "{period}: at {at:?}"
         );
     }
+}
+
+#[trace("TC-704", "FR-249-AC-13")]
+#[test]
+fn mode_switches_are_recorded_in_source_order_beside_the_releases() {
+    let graph = checked(
+        "release Ctl.a on ConfigVersion::attemptUpdate;\n
+         mode Ctl hi on ConfigVersion::command;\n
+         mode Ctl hi on ConfigVersion::attemptUpdate;",
+    );
+    let sets = graph.task_sets();
+    assert_eq!(sets.releases().len(), 1);
+    let [first, second] = sets.mode_switches() else {
+        panic!("two mode switches: {:?}", sets.mode_switches());
+    };
+    assert_eq!(
+        (first.task_set(), first.operation().name()),
+        ("Ctl", "command")
+    );
+    assert_eq!(
+        (second.task_set(), second.operation().name()),
+        ("Ctl", "attemptUpdate")
+    );
+    assert!(first.span().start < second.span().start);
+    // A unit with no `mode` declaration records none.
+    assert!(checked("").task_sets().mode_switches().is_empty());
+}
+
+#[trace("TC-704", "FR-249-AC-13")]
+#[test]
+fn unresolved_and_repeated_mode_switches_refuse_at_the_name_or_the_second() {
+    for (declaration, at) in [
+        ("mode Nope hi on ConfigVersion::command;", "Nope"),
+        ("mode Ctl hi on ConfigVersion::nope;", "ConfigVersion::nope"),
+    ] {
+        assert_eq!(
+            refused(declaration),
+            [(Code::MissingDeclaration, "missing-name", at.to_owned())],
+            "{declaration}"
+        );
+    }
+    assert_eq!(
+        refused("mode Nope hi on ConfigVersion::nope;"),
+        [
+            (Code::MissingDeclaration, "missing-name", "Nope".to_owned()),
+            (
+                Code::MissingDeclaration,
+                "missing-name",
+                "ConfigVersion::nope".to_owned()
+            ),
+        ]
+    );
+    assert_eq!(
+        refused(
+            "mode Ctl hi on ConfigVersion::command;\n
+             mode Ctl hi on ConfigVersion::command;"
+        ),
+        [(
+            Code::ConflictingDeclaration,
+            "duplicate-declaration",
+            "mode Ctl hi on ConfigVersion::command;".to_owned()
+        )]
+    );
+}
+
+#[trace("TC-704", "FR-249-AC-13")]
+#[test]
+fn a_mode_switch_on_an_ambiguous_operation_refuses_ambiguous_name() {
+    let text = unit_text("mode Ctl hi on Config::Both::dup;");
+    let refusals =
+        admit_and_assemble_with_profiles(&ambiguous_operation_document(), PROFILES, &text)
+            .expect("S2 keeps the mode switch")
+            .check(
+                CheckMode::Linked,
+                CheckingLimits::default(),
+                &crate::reward_evaluator::ZeroRewardEvaluator,
+            )
+            .expect_err("the operation is ambiguous");
+    let [refusal] = &refusals[..] else {
+        panic!("one refusal: {refusals:?}");
+    };
+    let CheckCause::Temporal(cause) = &refusal.cause else {
+        panic!("a temporal refusal: {refusal:?}");
+    };
+    assert_eq!(
+        (cause.code(), cause.tag()),
+        (Code::AmbiguousDeclaration, "ambiguous-name")
+    );
+}
+
+#[trace("TC-704", "FR-230-AC-7")]
+#[test]
+fn a_mode_switch_is_refused_unless_the_timed_facet_is_selected() {
+    let text = format!("{SET}mode Ctl hi on ConfigVersion::command;\n");
+    let refusals = admit_and_assemble_with_profiles(
+        &document(),
+        "profile t = \"filament.value.complete/v1\";\n",
+        &text,
+    )
+    .expect("S2 keeps the forms")
+    .check(
+        CheckMode::Linked,
+        CheckingLimits::default(),
+        &crate::reward_evaluator::ZeroRewardEvaluator,
+    )
+    .expect_err("the facet gate refuses");
+    let found = refusals.iter().any(|refusal| {
+        matches!(
+            &refusal.cause,
+            CheckCause::Temporal(cause) if matches!(
+                &**cause,
+                TemporalCause::TimedFacetRequired { construct: TimedConstruct::ModeSwitch, .. }
+            )
+        )
+    });
+    assert!(found, "{refusals:?}");
 }

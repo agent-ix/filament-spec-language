@@ -304,6 +304,7 @@ pub(crate) fn unit_text_with_functions(
         "language \"ix:native\" edition \"1-draft\";\n\
          profile v = \"filament.value.complete/v1\";\n\
          profile inf = \"filament.temporal.infinite-trace/v1\";\n\
+         profile ep = \"filament.temporal.event-position.false-extension/v1\";\n\
          profile p = \"filament.protocol.finite-global/v1\";\n\
          model V = \"{PACKAGE}\";\n\
          {second}function Noop using v(): Boolean pure {{ true }}\n\

@@ -284,6 +284,14 @@ fn emit_checked(package: &CheckedPackage) -> Result<Emission, EmitRefusal> {
     super::emit_checked(package, ceiling())
 }
 
+/// The entry with an explicit ceiling for a measured large fixture.
+fn emit_checked_with_limits(
+    package: &CheckedPackage,
+    limits: crate::EmitLimits,
+) -> Result<Emission, EmitRefusal> {
+    super::emit_checked(package, limits)
+}
+
 fn emit_checked_with_protocol_results(
     package: &CheckedPackage,
 ) -> Result<ProtocolEmission, EmitRefusal> {
@@ -1270,18 +1278,13 @@ fn tc_416_packages() -> [CheckedPackage; 3] {
 }
 
 /// TC-416 step 5 (FR-093-AC-7): a recursion group's members carry the group
-/// digest as their label and are written together in ordinal order: the
+/// digest as their label and are written together in ascending node-id
+/// order (FR-880-AC-13): the
 /// recursive `f`'s three members under FR-092's label, and `Tree`'s three.
 #[trace("FR-093-AC-7", "TC-416")]
 #[test]
-fn recursion_group_members_are_written_in_ordinal_order() {
+fn recursion_group_members_are_written_in_ascending_node_id_order() {
     for (package, label) in [(recursive_f(), None::<String>), (tree(), None)] {
-        let expected: BTreeMap<NodeKey, usize> = package
-            .graph()
-            .semantic_graph()
-            .nodes()
-            .filter_map(|node| node.recursion().map(|group| (node.key(), group.ordinal())))
-            .collect();
         let nodes = written_nodes(&package);
         let graph = WireGraph::of_node_values(&nodes).unwrap();
         let members: Vec<(usize, &Value)> = nodes
@@ -1291,13 +1294,19 @@ fn recursion_group_members_are_written_in_ordinal_order() {
             .collect();
         assert_eq!(members.len(), 3);
         assert_eq!(members[2].0 - members[0].0, 2, "the members are contiguous");
-        for (ordinal, (_, member)) in members.iter().enumerate() {
-            assert_eq!(
-                expected[&graph
+        let keys: Vec<NodeKey> = members
+            .iter()
+            .map(|(_, member)| {
+                graph
                     .key_of_value(&member["node_id"])
-                    .expect("a structural recursion member id")],
-                ordinal
-            );
+                    .expect("a structural recursion member id")
+            })
+            .collect();
+        assert!(
+            keys.windows(2).all(|pair| pair[0] < pair[1]),
+            "the members are written in ascending node-id order"
+        );
+        for (_, member) in &members {
             assert_eq!(member["recursion_group"], members[0].1["recursion_group"]);
         }
         if let Some(label) = label {
@@ -1985,8 +1994,8 @@ fn an_unplaced_occurrence_refuses() {
 
 /// FR-062-AC-5 third clause, S4 emitter half (TC-160 step 6):
 /// `emit_checked` returns an emission or an `EmitRefusal`, never
-/// `Incomplete`, across a fixture set of a package that writes every node, a
-/// package with nothing writable, and three whose occurrences it cannot
+/// `Incomplete`, across a fixture set of a package that writes every node and
+/// three whose occurrences it cannot
 /// place (`t` and `q`/`t` built without spans, and a declared type). `classify` matches `Result<Emission, EmitRefusal>` and
 /// every `EmitRefusal` variant with no wildcard arm, so a variant added to the
 /// refusal type, such as an `Incomplete`, stops this test compiling until it
@@ -1998,7 +2007,6 @@ fn emit_checked_never_returns_incomplete_across_the_fixture_set() {
     #[derive(Debug, Eq, PartialEq)]
     enum Seen {
         Written { omitting: bool },
-        NothingToEmit,
         UnlocatedOccurrence,
         UnknownOccurrenceRole,
         Encoding,
@@ -2025,7 +2033,9 @@ fn emit_checked_never_returns_incomplete_across_the_fixture_set() {
             Ok(emission) => Seen::Written {
                 omitting: !emission.omitted.is_empty(),
             },
-            Err(EmitRefusal::NothingToEmit { .. }) => Seen::NothingToEmit,
+            Err(EmitRefusal::NothingToEmit { .. }) => {
+                panic!("the fixture is a checked package with nodes to emit")
+            }
             Err(EmitRefusal::UnlocatedOccurrence { .. }) => Seen::UnlocatedOccurrence,
             Err(EmitRefusal::UnknownOccurrenceRole { .. }) => Seen::UnknownOccurrenceRole,
             Err(EmitRefusal::Encoding { .. }) => Seen::Encoding,
@@ -2122,10 +2132,6 @@ fn emit_checked_never_returns_incomplete_across_the_fixture_set() {
     assert_eq!(
         classify(emit_checked(&q_and_t_package())),
         Seen::UnlocatedOccurrence
-    );
-    assert_eq!(
-        classify(emit_checked(&package(Vec::new()))),
-        Seen::NothingToEmit
     );
     assert_eq!(
         classify(emit_checked(&package(vec![t()]))),

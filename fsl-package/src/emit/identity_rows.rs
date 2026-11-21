@@ -308,8 +308,10 @@ pub(super) fn copy_source_record(
                     original_member_identity: member.original_member_identity.clone(),
                     admitted_name: member.admitted_name.clone(),
                     presence: member.presence,
-                    type_node: member.type_node.clone(),
-                    value_type: member.value_type.clone(),
+                    type_node: Some(member.type_node.clone()),
+                    value_type: Some(member.value_type.clone()),
+                    member_type: None,
+                    collections: Vec::new(),
                 },
             )
             .collect(),
@@ -418,6 +420,11 @@ fn union(
         charge::items(budget, locus, member.payload.len())?;
         for value in &member.payload {
             charge::value_type(budget, locus, value)?;
+        }
+        charge::items(budget, locus, member.clock_payload.len())?;
+        for entry in &member.clock_payload {
+            charge::text(budget, locus, &entry.member_type)?;
+            charge::items(budget, locus, entry.collections.len())?;
         }
     }
     Ok(())

@@ -108,15 +108,28 @@ fn a_child_is_accepted_at_a_parent_typed_function_argument() {
     .expect("a child and a grandchild check at a parent-typed argument and result");
 }
 
-/// FR-359-AC-1: a parent-typed read of a field only the child declares keeps
-/// the checker's `ill_typed`/`type-mismatch`.
+/// FR-359-AC-1: a parent-typed read of a field only the child declares
+/// refuses `ill_typed`/`type-mismatch` naming the field, the pair FR-300 and
+/// FR-363 give every undeclared record field.
 #[trace("FR-359-AC-1", "TC-998")]
 #[test]
 fn a_parent_typed_read_of_a_child_field_is_refused() {
-    refused_at(
-        "function promised using v(e: M::OrderPlaced): Integer pure { e.promised_by }",
-        "promised",
-        &[],
+    let refusals = check("function promised using v(e: M::OrderPlaced): Integer pure { e.promised_by }")
+        .expect_err("the unit does not check");
+    assert_eq!(refusals.len(), 1, "{refusals:?}");
+    let cause = &refusals[0].cause;
+    assert_eq!(cause.code(), fsl_foundation::diagnostic::Code::IllTyped);
+    assert_eq!(cause.cause(), Some("type-mismatch"));
+    assert!(
+        matches!(cause, CheckCause::UnknownField { owner, field, .. }
+            if owner.ends_with("OrderPlaced") && &**field == "promised_by"),
+        "names the field: {cause:?}"
+    );
+    assert!(
+        matches!(&refusals[0].location.origin,
+            Origin::Body { function, .. } if function == "promised"),
+        "{:?}",
+        refusals[0].location
     );
 }
 
@@ -641,7 +654,18 @@ fn refusal_of(result: Result<(), AdmissionFailure>) -> Refusal {
 /// A refusal's cause, object, field and typed path.
 type Refusal = (String, String, String, Vec<PathStep>);
 
-fn refusal(cause: &str, field: &str, path: Vec<PathStep>) -> Refusal {
+/// A refusal at the snapshot field `field`: the path is the document path of
+/// the field (`populations/0/objects/0/fields/<field>`) followed by the typed
+/// steps `below` it (FR-106 nested path).
+fn refusal(cause: &str, field: &str, below: Vec<PathStep>) -> Refusal {
+    let mut path: Vec<PathStep> = ["populations", "0", "objects", "0", "fields", field]
+        .iter()
+        .map(|step| match step.parse::<usize>() {
+            Ok(index) => PathStep::Index(index),
+            Err(_) => field_step(step),
+        })
+        .collect();
+    path.extend(below);
     (cause.to_owned(), "o1".to_owned(), field.to_owned(), path)
 }
 

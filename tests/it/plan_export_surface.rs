@@ -401,7 +401,7 @@ pub(crate) const COUNTER_UNIT: &str = "language \"ix:native\" edition \"1-draft\
 /// The counter's domain package: the fixture's third counter model with its
 /// `Level` widened to `Int[0, 9]`, so `value <= 5` is a clause the
 /// precondition keeps and not a consequence of the type.
-fn counter_model() -> Vec<u8> {
+pub(crate) fn counter_model() -> Vec<u8> {
     use crate::support::refinement_cas::{self, Variant};
     let mut document: Value =
         serde_json::from_slice(&refinement_cas::documents(Variant::CAS)[2]).unwrap();

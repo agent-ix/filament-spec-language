@@ -114,6 +114,9 @@ pub(crate) struct PackagePlace {
     pub(crate) members: Vec<(String, Option<String>)>,
     /// Element identities supplied by checked types for source collection slots.
     pub(crate) resolved_slots: BTreeMap<usize, String>,
+    /// Whether the place is a source timed model's, whose tuple and union
+    /// member identities FSpec FR-789 spells `<type>/p<i>` and `<type>/<case>`.
+    pub(crate) source: bool,
 }
 
 /// A source value type's clock paths and its FR-322 type identity.
@@ -148,6 +151,7 @@ pub struct PlaceRow {
     /// The declaring object, record, variant or collection type.
     pub declaring_type: String,
     /// The member identity: a field's declaration key, `<type>/union/<case>`
+    /// (`<type>/<case>` of a source timed model)
     /// or `<collection>[slot]`.
     pub member_identity: String,
     /// The member's declared type, rendered.
@@ -230,7 +234,16 @@ pub(crate) fn clock_type_identity(
                 pending.push(Part::Text(">"));
                 pending.push(Part::Value(map.values()));
                 pending.push(Part::Text(", "));
-                pending.push(Part::Value(map.key()));
+                // FSpec FR-789 "Rendering": a native scalar key renders as its bare
+                // name, as the reader's `key_rendering` spells it.
+                match map.key() {
+                    ValueType::String => pending.push(Part::Text("Text")),
+                    ValueType::Boolean => pending.push(Part::Text("Boolean")),
+                    ValueType::Integer => pending.push(Part::Text("Integer")),
+                    ValueType::Uuid => pending.push(Part::Text("UUID")),
+                    ValueType::Timestamp => pending.push(Part::Text("Timestamp")),
+                    key => pending.push(Part::Value(key)),
+                }
             }
             ValueType::Boolean => output.push_str("ix://filament/native/Boolean"),
             ValueType::Integer => output.push_str("ix://filament/native/Integer"),
@@ -284,14 +297,20 @@ impl PackagePlace {
                     let identity = name
                         .parse::<u64>()
                         .ok()
-                        .map(|position| format!("{declaring}/tuple/{position}"))
+                        .map(|position| {
+                            if self.source {
+                                format!("{declaring}/p{position}")
+                            } else {
+                                format!("{declaring}/tuple/{position}")
+                            }
+                        })
                         .or(identity)
                         .unwrap_or_default();
                     (declaring, identity)
                 }
                 PlaceStep::Slot(shape) if shape.map => {
                     let parent = previous.unwrap_or_default();
-                    (parent.clone(), format!("{parent}[key]"))
+                    (parent.clone(), format!("{parent}[slot]"))
                 }
                 PlaceStep::Slot(_) => {
                     let parent = previous.unwrap_or_default();
@@ -305,7 +324,13 @@ impl PackagePlace {
                 }
                 PlaceStep::Union(case) => {
                     let declaring = previous.unwrap_or_default();
-                    let identity = identity.unwrap_or_else(|| format!("{declaring}/union/{case}"));
+                    let identity = identity.unwrap_or_else(|| {
+                        if self.source {
+                            format!("{declaring}/{case}")
+                        } else {
+                            format!("{declaring}/union/{case}")
+                        }
+                    });
                     (declaring, identity)
                 }
             };
@@ -1186,6 +1211,7 @@ impl AdmittedModel {
                 declaring: key.node.clone(),
                 members: Vec::new(),
                 resolved_slots: BTreeMap::new(),
+                source: true,
             };
             let value_ref = crate::model::domain_package::ValueTypeRef::Package(key.clone());
             let mut places = Vec::new();
@@ -1455,7 +1481,10 @@ impl AdmittedModel {
                 Some(DomainPackageRecord::ObjectType(_))
             )
         {
-            return crate::model::key::source_object_node_key(declaration, self.source_package.as_deref()?);
+            return crate::model::key::source_object_node_key(
+                declaration,
+                self.source_package.as_deref()?,
+            );
         }
         record_node_key(self.records.get(declaration)?)
             .ok()
@@ -1727,6 +1756,7 @@ impl AdmittedModel {
                 declaring: field.owner.node.clone(),
                 members: Vec::new(),
                 resolved_slots: BTreeMap::new(),
+                source: self.source_package.is_some(),
             };
             self.places_of(field, root, &mut Vec::new(), &mut places);
         }
@@ -2910,6 +2940,26 @@ impl<'a> Lowering<'a> {
         location: &Location,
     ) -> Result<NodeKey, CheckRefusal> {
         let (owner, model) = self.model_owner(declaration, location)?;
+        if model.alias() == Some("") {
+            // FR-322 "Population reference" (item 4): a source-declared
+            // population is one declared `relation`/`population` node
+            // carrying the unit's `SourceOwner`, not a model-owned node.
+            let name = crate::model::intake::type_identity_segment(
+                &declaration.package,
+                &declaration.node,
+            )
+            .and_then(|name| filament_exact::Identifier::new(name).ok())
+            .ok_or_else(|| fault(location, KeyFault::UnknownDeclaration(declaration.clone())))?;
+            let node = self.insert_ref(
+                location,
+                NodeTag::Relation,
+                "population",
+                None,
+                Some(vec![name]),
+                BodyTerm::aggregate(Vec::new()),
+            )?;
+            return super::require_admitted(node, location);
+        }
         let key = model_declaration_key(
             &model.selection.identity,
             NodeTag::Relation,

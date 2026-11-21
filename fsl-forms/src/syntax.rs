@@ -5039,6 +5039,20 @@ pub struct ReleaseForm {
     pub span: Span,
 }
 
+/// `mode S hi on M::o;` (FSpec FR-419 "Criticality mode", FSL FR-249): a
+/// step of the operation taken while the task product of `S` is in `LO` mode
+/// switches it to `HI` mode. S2 resolves nothing: the task set and the
+/// operation stay spelled.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ModeSwitchForm {
+    /// The task set, spelled.
+    pub task_set: DeclaredName,
+    /// The operation, spelled.
+    pub operation: NameForm,
+    /// The span of the whole declaration, `;` included.
+    pub span: Span,
+}
+
 /// `hybrid Name using p { [initial { entry+ }] mode+ }` (FR-447, FSpec FR-193
 /// "Source form and the clock line"). S2 resolves nothing: the `using`
 /// alias, the mode and transition names and every equation's left side stay
@@ -5239,6 +5253,8 @@ pub enum DeclarationForm {
     Response(Box<ResponseForm>),
     /// A `release` declaration (FSpec FR-419, FSL FR-249).
     Release(Box<ReleaseForm>),
+    /// A `mode` switch declaration (FSpec FR-419, FSL FR-249).
+    ModeSwitch(Box<ModeSwitchForm>),
     /// A `hybrid` declaration (FR-447), boxed for the same reason as
     /// [`Self::Function`].
     Hybrid(Box<HybridForm>),

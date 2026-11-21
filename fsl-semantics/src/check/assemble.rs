@@ -1195,6 +1195,9 @@ impl Unit {
                 DeclarationForm::Release(release) => unit
                     .task_sets
                     .push(super::task_set::TaskSetDeclaration::Release(release)),
+                DeclarationForm::ModeSwitch(switch) => unit
+                    .task_sets
+                    .push(super::task_set::TaskSetDeclaration::ModeSwitch(switch)),
                 DeclarationForm::HyperBehaviours(clause) => unit
                     .hyper_clauses
                     .push(super::hyper_clause::HyperDeclaration::Behaviours(*clause)),
@@ -2653,6 +2656,12 @@ fn model_value_type(
             NativeValueType::Integer => ValueType::Integer,
             NativeValueType::Uuid => ValueType::Uuid,
             NativeValueType::Timestamp => ValueType::Timestamp,
+            NativeValueType::Duration => ValueType::Quantity(
+                units
+                    .get("s")
+                    .ok_or_else(|| Unmapped::QuantityName("s".to_owned()))?
+                    .clone(),
+            ),
             NativeValueType::Bytes => ValueType::Bytes,
             NativeValueType::JsonObject => ValueType::JsonObject,
             NativeValueType::Float32 => {
@@ -4292,6 +4301,7 @@ impl PackageDeclarations {
                         | fsl_forms::DeclarationForm::Schedulable(_)
                         | fsl_forms::DeclarationForm::Response(_)
                         | fsl_forms::DeclarationForm::Release(_)
+                        | fsl_forms::DeclarationForm::ModeSwitch(_)
                 ) {
                     source_owners.insert(format!("task_set {task_set_index}"), source.clone());
                     task_set_index += 1;

@@ -2546,6 +2546,7 @@ impl<'r, S: LiveSubject> Run<'r, S> {
                 lasso: Some(Lasso {
                     entry: entry_index,
                     terminal_stutter,
+                    terminal_stutter_delay: None,
                 }),
                 blocked: Vec::new(),
                 refinement: None,

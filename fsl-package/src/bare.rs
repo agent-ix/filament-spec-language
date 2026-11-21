@@ -693,10 +693,28 @@ struct SourceObjectParameterJson {
 
 #[derive(Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
-struct ClockCollectionLayerJson {
+pub(super) struct ClockCollectionLayerJson {
     kind: String,
     minimum: String,
     maximum: String,
+}
+
+impl ClockCollectionLayerJson {
+    pub(super) fn of(layer: &filament_contract_model::SelectedClockCollectionLayer) -> Self {
+        Self {
+            kind: layer.kind.to_string(),
+            minimum: layer.minimum.to_string(),
+            maximum: layer.maximum.to_string(),
+        }
+    }
+
+    pub(super) fn layer(self) -> filament_contract_model::SelectedClockCollectionLayer {
+        filament_contract_model::SelectedClockCollectionLayer {
+            kind: self.kind.into(),
+            minimum: self.minimum.into(),
+            maximum: self.maximum.into(),
+        }
+    }
 }
 
 impl SourceObjectParameterJson {
@@ -1293,7 +1311,15 @@ impl ReadIdentityRows {
         &self,
         package: &'a CheckedPackageV2,
     ) -> Result<SelectedSourceObjects<'a>, filament_contract_model::SelectedSourceObjectError> {
-        SelectedSourceObjects::from_stage_rows(package, self.source_objects.iter().cloned())
+        SelectedSourceObjects::from_stage_rows(
+            package,
+            self.source_objects.iter().cloned(),
+            filament_contract_model::SelectedSourceClockRows {
+                records: &self.source_records,
+                tuples: &[],
+                unions: &self.source_unions,
+            },
+        )
     }
 
     /// Validate source-operation rows against this package under `work_limit`.

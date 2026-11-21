@@ -26,7 +26,7 @@ use fsl_replay::TerminalRecord;
 use fsl_route::request::{ExtentClassification, ItemKind};
 use fsl_route::{CandidateOutcome, Registry};
 use fsl_semantics::check::{Capability, DeclarationFamily};
-use serde_json::{Map, json};
+use serde_json::{json, Map};
 
 use super::super::{
     AnalyzeItem, AnalyzeLimits, ClaimItem, ClauseItemRefusal, ClauseLimits, Engines, ItemForm,
@@ -34,10 +34,10 @@ use super::super::{
     PackageInvariantSubject, PackageItemInputs, PackageStateGraphSubject, SubjectBinding,
 };
 use super::{
-    AnalyzeDocumentError, ItemReads, ItemSelection, Negotiate, Negotiation, ResolvedClaim,
-    ResolvedItem, SettledParts, SettledRun, SubjectSelection, candidate_list, invalid_kind,
-    negotiate_items, negotiated_routes, temporal_settings, unknown_claim, unknown_option,
-    write_run,
+    candidate_list, invalid_kind, negotiate_items, negotiated_routes, temporal_settings,
+    unknown_claim, unknown_option, write_run, AnalyzeDocumentError, ItemReads, ItemSelection,
+    Negotiate, Negotiation, ResolvedClaim, ResolvedItem, SettledParts, SettledRun,
+    SubjectSelection,
 };
 
 /// A `package` request (FR-850) whose item names a family the package route
@@ -129,10 +129,6 @@ fn node_words(node: &CheckedNodeId) -> String {
 /// What a pending package-route item names.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum PendingFamily {
-    /// The default items of a request with no `items` member: they are
-    /// every claim of the package, and a claim with no name row is not
-    /// enumerated by name yet.
-    DefaultItems,
     /// A claimless `simulation` item (FR-634).
     Simulation,
     /// A derived item other than a model subject's deadlock-freedom item
@@ -165,7 +161,6 @@ impl PendingFamily {
     #[must_use]
     pub const fn name(self) -> &'static str {
         match self {
-            Self::DefaultItems => "default-items",
             Self::Simulation => "simulation",
             Self::Derived => "derived",
             Self::Declaration => "declaration",
@@ -274,6 +269,8 @@ pub fn settle_package_run(
         engines,
         limits,
     } = run;
+    let defaults = items.is_none().then(|| default_selections(package));
+    let items: &[ItemSelection] = items.or(defaults.as_deref()).unwrap_or_default();
     if let Some(refusal) =
         probabilistic_source_refusal(package, binding.packages, limits.normalization, items)?
     {
@@ -391,6 +388,19 @@ pub fn settle_package_run(
                     resolved.push(ResolvedItem::Claim(claim));
                 }
             },
+        }
+    }
+    // A default derived item is named by no claim (FR-620), as the source
+    // route writes it; an authored one is named by its model's identity.
+    if defaults.is_some() {
+        for (selection, item) in items.iter().zip(resolved.iter_mut()) {
+            let derived = selection
+                .temporal
+                .as_ref()
+                .is_some_and(|temporal| temporal.item_kind.is_some());
+            if let (true, ResolvedItem::Claim(claim)) = (derived, item) {
+                claim.claim_name.clear();
+            }
         }
     }
     let model_input = input.as_ref().map(PackageModelInput::input);
@@ -543,7 +553,7 @@ fn probabilistic_source_refusal(
     package: &BarePackage<'_>,
     packages: &fsl_semantics::model::intake::PackageInput,
     normalization: fsl_semantics::model::accounting::ModelNormalizationLimits,
-    items: Option<&[ItemSelection]>,
+    items: &[ItemSelection],
 ) -> Result<Option<PendingPackageFamily>, PackageRunError> {
     if !matches!(
         package.first_unread_model_form(),
@@ -553,20 +563,18 @@ fn probabilistic_source_refusal(
     }
     let view: &dyn AnalysisView = package;
     let declared = view.declared_names();
-    let Some((index, name, node)) = items.and_then(|items| {
-        items.iter().enumerate().find_map(|(position, item)| {
-            let name = item.claim.as_deref()?;
-            let node = declared
-                .iter()
-                .find(|(declared, _)| declared == name)
-                .map(|(_, node)| (*node).clone())
-                .or_else(|| view.claim_name(name).map(|found| found.declaration))?;
-            view.package()
-                .probabilistic_claims()
-                .iter()
-                .any(|claim| same_claim_node(&claim.node, &node))
-                .then(|| (RequestIndex::new(position), name, node))
-        })
+    let Some((index, name, node)) = items.iter().enumerate().find_map(|(position, item)| {
+        let name = item.claim.as_deref()?;
+        let node = declared
+            .iter()
+            .find(|(declared, _)| declared == name)
+            .map(|(_, node)| (*node).clone())
+            .or_else(|| view.claim_name(name).map(|found| found.declaration))?;
+        view.package()
+            .probabilistic_claims()
+            .iter()
+            .any(|claim| same_claim_node(&claim.node, &node))
+            .then(|| (RequestIndex::new(position), name, node))
     }) else {
         return Ok(None);
     };
@@ -637,7 +645,7 @@ fn unresolved_reason(refusal: &PendingPackageForm) -> Option<String> {
 /// claim's.
 fn resolve_names<'s>(
     view: &dyn AnalysisView,
-    selections: Option<&'s [ItemSelection]>,
+    selections: &'s [ItemSelection],
 ) -> Result<Vec<Named<'s>>, PackageRunError> {
     let pending = |request_index, family| {
         PackageRunError::Pending(PendingPackageFamily {
@@ -646,9 +654,6 @@ fn resolve_names<'s>(
             family,
             node: None,
         })
-    };
-    let Some(selections) = selections else {
-        return Err(pending(None, PendingFamily::DefaultItems));
     };
     let clauses = view.clause_names();
     let declared = view.declared_names();
@@ -1149,6 +1154,7 @@ impl<'r, 'a: 'r> ClaimReads<'r, 'a> {
             options: ItemOptions {
                 required: selection.required.unwrap_or(true),
                 max_cases: None,
+                max_task_product_work: None,
                 trace: None,
                 recording: None,
                 population: None,
@@ -1334,6 +1340,11 @@ fn options(selection: &ItemSelection, backend_options: BTreeMap<String, String>)
     ItemOptions {
         required: selection.required.unwrap_or(true),
         max_cases: selection.check.map(|check| check.limits.max_cases),
+        max_task_product_work: selection
+            .temporal
+            .as_ref()
+            .and_then(|temporal| temporal.limits)
+            .and_then(|limits| limits.max_task_product_work),
         trace: selection
             .trace
             .as_ref()
@@ -1497,4 +1508,110 @@ impl<'a> WorkInputs<'_, 'a> {
             negotiated.diagnostic.clone(),
         )
     }
+}
+
+/// FR-620 "Subject, compilation and default items" over a package, as the
+/// source route's `default_items` writes them: one item per kind each claim
+/// admits, in source order (a unit's position in the package's source list,
+/// then the start byte of the claim's declaration span), then each task-set
+/// schedulability claim, then the derived deadlock-freedom item of each model
+/// selection. Each item carries the published default of every setting.
+fn default_selections(view: &dyn AnalysisView) -> Vec<ItemSelection> {
+    use filament_contract_model::CheckedSourceRegion;
+
+    let units = &view.package().lock().sources;
+    let span = |region: &CheckedSourceRegion| {
+        (
+            units
+                .iter()
+                .position(|unit| {
+                    unit.authority == region.source.authority
+                        && unit.identity == region.source.identity
+                })
+                .unwrap_or(usize::MAX),
+            region.start,
+        )
+    };
+    let mut claims: Vec<((usize, u64), String, Vec<Capability>)> = view
+        .clause_names()
+        .iter()
+        .map(|row| {
+            (
+                span(&row.declaration_region),
+                row.name.to_string(),
+                vec![Capability::TemporalSatisfaction],
+            )
+        })
+        .collect();
+    let mut schedulability: Vec<((usize, u64), String)> = Vec::new();
+    let mut declarations: Vec<&CheckedNodeId> = Vec::new();
+    for row in view.claim_names() {
+        if declarations.contains(&&row.declaration) {
+            continue;
+        }
+        declarations.push(&row.declaration);
+        let name = row.qualified_name.join("::");
+        let at = span(&row.declaration_region);
+        if is_schedulability(view, &row.declaration) {
+            schedulability.push((at, name));
+            continue;
+        }
+        let kinds = if is_state_graph(view, &row.declaration) {
+            vec![Capability::TemporalSatisfaction]
+        } else if is_state_clause(view, &row.declaration) {
+            vec![Capability::OperationContract]
+        } else {
+            Vec::new()
+        };
+        claims.push((at, name, kinds));
+    }
+    claims.sort_by(|(left, ..), (right, ..)| left.cmp(right));
+    schedulability.sort_by(|(left, _), (right, _)| left.cmp(right));
+    let item = |name: String, kind: Option<Capability>| ItemSelection {
+        claim: Some(name),
+        kind: kind.map(|kind| kind.to_wire().to_owned()),
+        ..ItemSelection::default()
+    };
+    let mut items: Vec<ItemSelection> = Vec::new();
+    for (_, name, kinds) in claims {
+        if kinds.is_empty() {
+            // A claim form with no package record of its kinds yet: the
+            // name alone, which the name tables settle.
+            items.push(item(name, None));
+            continue;
+        }
+        for kind in Capability::ALL.iter().filter(|kind| kinds.contains(kind)) {
+            items.push(item(name.clone(), Some(*kind)));
+        }
+    }
+    items.extend(
+        schedulability
+            .into_iter()
+            .map(|(_, name)| item(name, Some(Capability::Schedulability))),
+    );
+    items.extend(
+        view.model_selections()
+            .into_iter()
+            .map(|selection| ItemSelection {
+                claim: Some(selection.identity),
+                temporal: Some(super::TemporalSelection {
+                    item_kind: Some(super::ItemKindSelection::DeadlockFreedom),
+                    ..super::TemporalSelection::default()
+                }),
+                ..ItemSelection::default()
+            }),
+    );
+    items
+}
+
+/// Whether the package node `node` is a `claim`/`schedulability` node (FR-246).
+fn is_schedulability(view: &dyn AnalysisView, node: &CheckedNodeId) -> bool {
+    view.package()
+        .resolved_graph()
+        .nodes
+        .iter()
+        .find(|candidate| candidate.node_id == *node)
+        .is_some_and(|candidate| {
+            &*candidate.node_tag == "claim" && candidate.semantic_form.as_ref() == "schedulability"
+        })
 }

@@ -62,7 +62,7 @@ mod timed_claim;
 mod timed_window;
 mod translate;
 
-pub use bounded::{bounded_shape, BoundedKind, BoundedState, BoundedTranslation};
+pub use bounded::{bounded_shape, closure_shape, BoundedKind, BoundedState, BoundedTranslation};
 pub use counters::{
     AlwaysOffsets, DeadlineCounter, EventuallyWindows, Expired, ExtentCounter, PastAgeCounter,
     ShiftCounter, Violated,

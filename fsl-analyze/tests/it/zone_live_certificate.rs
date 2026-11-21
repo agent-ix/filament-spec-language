@@ -9,7 +9,7 @@ use fsl_analyze::zone_check::ZoneCheckLimits;
 use fsl_replay::{
     CertificateCheckLimits, CertificateLocus, CertificateMember, CertificateRejection,
     CertificateRule, ComponentReason, Components, DivergenceWitness, DivergentTarget,
-    FairnessMember, ZoneCertificateVerdict,
+    FairnessMember, NonZeno, ZoneCertificateVerdict,
 };
 use fsl_route::deadlock::ObligationKind;
 use ix_trace_rs::trace;
@@ -455,4 +455,39 @@ fn a_deep_strong_nesting_clones_compares_and_prints() {
         &printed[..80]
     );
     assert_eq!(printed.matches("Strong(").count(), 200_000);
+}
+
+/// FR-245 and FR-235: the checker recomputes the non-Zeno premise from the
+/// certificate's own nodes, reading each step's enabledness over the node's
+/// zone as the search does (FR-232), so a fairness-constrained proof is
+/// accepted and a certificate whose stated premise differs from the
+/// recomputed one is rejected `NonZenoMismatch`, whichever way it is flipped.
+#[trace("TC-700", "FR-245-AC-1")]
+#[test]
+fn the_non_zeno_premise_is_recomputed_over_the_zones_a_fair_proof_reads() {
+    let fair = serve(
+        ">= 1 ms",
+        "fair weak M::Call::serve; fair weak M::Call::idle;",
+    );
+    let certificate = proved(decide(&fair));
+    assert_eq!(
+        verdict(&fair, &certificate),
+        ZoneCertificateVerdict::Accepted
+    );
+    let stated = certificate.non_zeno.expect("a stated premise");
+    for flipped in [NonZeno::NotRequired, NonZeno::Assumed, NonZeno::Refuted] {
+        if flipped == stated {
+            continue;
+        }
+        let mut tampered = certificate.clone();
+        tampered.non_zeno = Some(flipped);
+        assert_eq!(
+            verdict(&fair, &tampered),
+            rejected(
+                CertificateRule::NonZenoMismatch,
+                CertificateLocus::NonZenoMember
+            ),
+            "{stated:?} stated as {flipped:?}"
+        );
+    }
 }

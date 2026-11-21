@@ -315,6 +315,8 @@ pub struct TestResult {
     pub initial: u32,
     /// The `over` binding, when the claim has one.
     pub binding: Option<ModelInstance>,
+    /// The reference `binding` names, which the wire spells (FR-410).
+    pub reference: Option<filament_exact::ObjectReference>,
     /// The test's decision.
     pub decision: Decision,
     /// The exact point estimate; `None` while the test has counted no
@@ -401,6 +403,8 @@ pub struct TestProvenance {
     pub initial: u32,
     /// The `over` binding.
     pub binding: Option<ModelInstance>,
+    /// The reference `binding` names, which the wire spells (FR-410).
+    pub reference: Option<filament_exact::ObjectReference>,
     /// The trace indices the test used.
     pub traces: TraceRange,
 }
@@ -642,6 +646,10 @@ pub enum StatisticalRefusal {
         /// The claim's form.
         form: ClaimForm,
     },
+    /// A delay-weighted fraction (FR-254): sampling it is not yet implemented,
+    /// and the method the caller chose is not at fault.
+    #[error("sampling a delay-weighted fraction is not yet implemented")]
+    DelayWeighting,
     /// The sampler is not `filament.simulation.sampler/v1` (FR-188).
     #[error("sampler {supplied:?} is not the filament.simulation.sampler/v1 generator")]
     GeneratorMismatch {

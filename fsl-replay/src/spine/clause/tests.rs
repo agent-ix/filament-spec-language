@@ -2149,7 +2149,9 @@ fn run_clause_reports_incomplete_for_an_incomplete_population() {
                 fsl_foundation::diagnostic::Code::IncompletePopulation.as_str()
             );
         }
-        other => panic!("expected snapshot-admission Incomplete(incomplete_population), got {other:?}"),
+        other => {
+            panic!("expected snapshot-admission Incomplete(incomplete_population), got {other:?}")
+        }
     }
     assert_eq!(
         report.disposition.category(),

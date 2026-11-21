@@ -55,7 +55,8 @@ fn braking(flow: &str, guard: &str) -> String {
 
 const FLOW: &str = "v' = -a; a' = 0; t' = 1;";
 
-const CLAIMS: &str = "temporal SlowEnough using p over (h: Braking) clock \"model-time\" on origin {\n\
+const CLAIMS: &str =
+    "temporal SlowEnough using p over (h: Braking) clock \"model-time\" on origin {\n\
        always [0, 10] holds(h.v < 30)\n\
      }\n\
      temporal Positive using p over (h: Braking) clock \"model-time\" on origin {\n\
@@ -813,17 +814,17 @@ mod settlement {
     };
     use crate::model_check::limits::ModelCheckLimit;
     use crate::proof_result::{
-        AppliedReduction, Certification, IncompleteCause, InconclusiveCause, PluginResultRefusal,
-        ProofBasis, Proviso, TerminalRecord, TerminalValue, ValueFault,
         read_first_party_solver_basis, read_plugin_hybrid_counterexample,
-        read_plugin_inconclusive_cause_over,
+        read_plugin_inconclusive_cause_over, AppliedReduction, Certification, IncompleteCause,
+        InconclusiveCause, PluginResultRefusal, ProofBasis, Proviso, TerminalRecord, TerminalValue,
+        ValueFault,
     };
     use crate::result::{DisagreementCause, HybridTraceDisagreement};
     use filament_exact::LimitKind;
     use fsl_foundation::{BackendId, RequestIndex};
-    use fsl_semantics::check::VariableIndex;
     use fsl_semantics::check::wire_id::WireGraph;
-    use serde_json::{Value, json};
+    use fsl_semantics::check::VariableIndex;
+    use serde_json::{json, Value};
     use std::collections::BTreeSet;
 
     fn result(outcome: SolverOutcome) -> SolverResult {
@@ -1979,8 +1980,8 @@ mod settlement {
     #[test]
     fn read_entry_resolves_an_unsupported_entrys_locus_through_the_graph() {
         use crate::hybrid::{
-            HybridAnswer, HybridEntryRefusal, HybridVerdict, UnsupportedConstruct,
-            hybrid_locus_wire,
+            hybrid_locus_wire, HybridAnswer, HybridEntryRefusal, HybridVerdict,
+            UnsupportedConstruct,
         };
         let flow = "v' = -a / (1 + v); a' = 0; t' = 1;";
         let unit = braking_unit(flow, "v = 0");

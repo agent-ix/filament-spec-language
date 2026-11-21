@@ -17,9 +17,9 @@ use filament_semantic_value::catalog::CatalogCode;
 use filament_semantic_value::checking::CheckingLimits;
 use filament_semantic_value::model_transition::ModelTransition;
 use fsl_eval::simulation::model::{
-    BehaviourReading, ClockValuation, ExpansionLimits, ModelSimulationRequest, ModelSystem,
-    MoveRefusal, PopulationUniverse, TimedBehaviour, TimedState, TimedStop, TimedSystem,
-    check_model_bounds,
+    check_model_bounds, BehaviourReading, ClockValuation, ExpansionLimits, ModelSimulationRequest,
+    ModelSystem, MoveRefusal, PopulationUniverse, TaskReleaseBinding, TimedBehaviour, TimedState,
+    TimedStop, TimedSystem,
 };
 use fsl_eval::simulation::{BOUND_POSITIONS, NotSimulated};
 use fsl_package::CheckedPackage;
@@ -488,6 +488,46 @@ fn rpc_delays_and_steps_read_exact_clock_values() {
     assert_eq!(
         late.advance(&timed, &exact(7, 2), &reply),
         Err(MoveRefusal::Delay)
+    );
+}
+
+/// FR-249-AC-6: a source operation bound by a checked release carries that
+/// task activation binding on the corresponding timed successor.
+#[trace("TC-704", "FR-249-AC-6")]
+#[test]
+fn a_timed_source_step_carries_its_checked_task_release_bindings() {
+    let world = world(&rpc_unit(
+        4,
+        "taskset Pair { task a periodic 4 ms deadline 3 ms bcet 1 ms wcet 1 ms priority 1 lo; }\n\
+         release Pair.a on M::Call::send;",
+    ));
+    let [release] = world.package.graph().task_sets().releases() else {
+        panic!("one checked release binding");
+    };
+    let system = system(&world);
+    let timed = TimedSystem::new(&system, "M")
+        .expect("a timed model")
+        .with_task_releases(vec![TaskReleaseBinding::new(
+            release.task_set().to_owned(),
+            release.task().to_owned(),
+            release.operation().key().clone(),
+        )]);
+    let [initial] = &timed.initial()[..] else {
+        panic!("one initial state");
+    };
+    let send = timed
+        .guarded_steps(initial.discrete())
+        .expect("source transitions")
+        .into_iter()
+        .find(|step| step.operation().contains("Call/send"))
+        .expect("the send source transition");
+    assert_eq!(send.task_releases().len(), 1);
+    assert_eq!(
+        (
+            send.task_releases()[0].taskset(),
+            send.task_releases()[0].task()
+        ),
+        ("Pair", "a")
     );
 }
 

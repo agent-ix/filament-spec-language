@@ -4,11 +4,14 @@
 
 use base64::Engine;
 use std::io::Write;
+use std::path::Path;
 use std::process::{Command, Stdio};
 
 use filament_checked::key::DeclarationKey;
 use filament_exact::Cancel;
+use fsl_analyze::analyze::document::Negotiate;
 use fsl_analyze::analyze::{analyze_items, exact_probabilistic_item, Engines};
+use fsl_analyze::analyze::{ClaimItem, Diagnostic};
 use fsl_analyze::exact_probabilistic::{ExactProbLimits, ProductRequest};
 use fsl_eval::model_subject::ModelSubject;
 use fsl_eval::simulation::model::{
@@ -29,6 +32,31 @@ const DOMAIN: &[u8] = include_bytes!("../fixtures/link.semantic-ir.json");
 const SNAPSHOT: &[u8] = include_bytes!("../fixtures/link.snapshot.json");
 const SOURCE: &str = include_str!("../fixtures/link.native");
 const CLAIM: &str = "\nprobabilistic Likely using inf on M over (m: M::Msg) under every scheduler on origin { probability >= 0.95 [ eventually holds(m.delivered) ] }\n";
+
+/// The same FR-290 one-candidate settlement used by the driver for this
+/// source-only test. This fixture has one linked EN-5 candidate.
+struct SupportedCandidate;
+
+impl Negotiate for SupportedCandidate {
+    fn negotiate(
+        &self,
+        _item: &ClaimItem,
+        candidates: &fsl_route::CandidateOutcome,
+    ) -> (fsl_route::routing::Disposition, Option<Diagnostic>) {
+        match candidates {
+            fsl_route::CandidateOutcome::Candidates(set) => match set.candidates() {
+                [candidate] => (
+                    fsl_route::routing::Disposition::Supported(candidate.clone()),
+                    None,
+                ),
+                _ => (fsl_route::routing::Disposition::Unsupported, None),
+            },
+            fsl_route::CandidateOutcome::UnknownBackend(_) => {
+                (fsl_route::routing::Disposition::Unsupported, None)
+            }
+        }
+    }
+}
 
 fn proof_request(claim: &str) -> Value {
     proof_request_with(claim, |_, _, _, _, _| {})
@@ -533,6 +561,61 @@ fn an_actual_en5_proof_is_checked_in_a_fresh_process_using_its_source() {
         result["value"],
         json!({"numerator":"24", "denominator":"25"})
     );
+}
+
+#[trace("TC-764", "FR-282-AC-1", "FR-201-AC-11")]
+#[test]
+fn certificate_checks_independently() {
+    let scratch = std::env::temp_dir().join(format!("qsl-2158-certificate-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&scratch);
+    std::fs::create_dir_all(&scratch).unwrap();
+    std::fs::write(scratch.join("program.fsl"), format!("{SOURCE}{CLAIM}")).unwrap();
+    std::fs::write(scratch.join("model.json"), DOMAIN).unwrap();
+    std::fs::write(scratch.join("snapshot.json"), SNAPSHOT).unwrap();
+    let analyze_request = json!({
+        "format": "native-analyze/1",
+        "request": {
+            "program": {"source": {"file": "program.fsl", "authority": "test",
+                "identity": "certificate-fixture", "document": "CertificateFixture",
+                "formal_revision": 1}},
+            "models": [{"format": "semantic-ir/2.0.0", "source": {
+                "file": "model.json", "authority": "test", "identity": "link-model",
+                "document": "Link", "formal_revision": 1}}],
+            "documents": [{"file": "snapshot.json"}],
+            "items": [{"claim": "Likely", "probabilistic": {"evidence": "exact"}}]
+        }
+    });
+    let analyze_path = scratch.join("analyze.json");
+    std::fs::write(&analyze_path, analyze_request.to_string()).unwrap();
+    let analyzed = fsl_command::command::analyze(
+        Path::new(&analyze_path),
+        &SupportedCandidate,
+        &Cancel::new(),
+    )
+    .expect("fsl analyze runs from source");
+    assert_eq!(analyzed.exit_code, 0);
+    let outcome = serde_json::to_value(analyzed.value).expect("the analyze document is JSON");
+    let item = &outcome["items"][0];
+    assert_eq!(item["record"]["result"], "proved", "{item}");
+    let certificate = &item["certificate"]["document"];
+    assert!(certificate.is_object(), "{item}");
+
+    let mut checker_request = proof_request(CLAIM);
+    let certificate_text = serde_json::to_string(certificate).unwrap();
+    assert_eq!(
+        serde_json::from_str::<Value>(checker_request["certificate"].as_str().unwrap()).unwrap(),
+        *certificate,
+        "the verb emits the source certificate checked by this process"
+    );
+    checker_request["certificate"] = json!(certificate_text);
+    let (code, result) = run(&checker_request, &[]);
+    assert_eq!(code, 0, "{result}");
+    assert_eq!(result["status"], "accepted");
+    assert_eq!(
+        result["value"],
+        json!({"numerator":"24", "denominator":"25"})
+    );
+    std::fs::remove_dir_all(scratch).unwrap();
 }
 
 #[trace("TC-764", "FR-282-AC-1", "FR-282-AC-2", "FR-282-AC-11", "FR-201-AC-10")]

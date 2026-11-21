@@ -93,6 +93,8 @@ pub struct ItemOptions {
     pub required: bool,
     /// Optional finite assignment/case budget of the native check arms.
     pub max_cases: Option<std::num::NonZeroU64>,
+    /// EN-6's work bound for release-backed task-product search (FR-415).
+    pub max_task_product_work: Option<std::num::NonZeroU64>,
     /// The provisioned document a `finite-replay` item replays.
     pub trace: Option<fsl_semantics::model::observation::DocumentRef>,
     /// The provisioned FR-737 execution assessed by `global-conformance`.
@@ -337,6 +339,8 @@ pub struct ProbabilisticItem {
     pub sampler: Option<fsl_foundation::selection::DefinitionRef>,
     /// Maximum sampled witnesses retained.
     pub max_witnesses: Option<u32>,
+    /// Number of workers requested for a statistical run (FR-331), when set.
+    pub workers: Option<std::num::NonZeroU32>,
     /// Declared statistical symmetries.
     pub symmetry: Vec<fsl_route::reductions::SymmetryDeclaration>,
     /// Timed statistical sampling settings.
@@ -553,9 +557,9 @@ pub(super) fn dependency_wires(
     dependencies.into_values().collect()
 }
 
-pub(super) fn simulation<'a>(
+pub(crate) fn simulation<'a>(
     input: &fsl_eval::simulation::model::ModelCheckInput<'a>,
-    binding: &super::SubjectBinding<'a>,
+    binding: &'a super::SubjectBinding<'a>,
     limits: &super::AnalyzeLimits,
 ) -> fsl_eval::simulation::model::ModelSimulationRequest<'a> {
     fsl_eval::simulation::model::ModelSimulationRequest {
@@ -741,7 +745,7 @@ fn protocol_analysis_work<'a>(
 
 fn work<'a>(
     analysis: &'a super::RunInput<'a>,
-    binding: &super::SubjectBinding<'a>,
+    binding: &'a super::SubjectBinding<'a>,
     provision: &'a SourceProvision,
     negotiated: &'a NegotiatedItem,
     engines: &super::Engines,
@@ -937,7 +941,7 @@ fn work<'a>(
         Some(ItemForm::Temporal(form))
             if item.kind == Capability::TemporalSatisfaction
                 && form.item_kind == ItemKind::Formula
-                && super::document::timed(package) =>
+                && super::document::claim_timed(package, &item.claim, binding) =>
         {
             if digital {
                 super::digital_item::digital_clause_item(
@@ -1206,8 +1210,22 @@ fn work<'a>(
             super::contract_item(item.request_index, package, &item.claim, selection)
         }
         None if item.kind == Capability::Schedulability => {
-            super::schedule_item::schedule_item(package, item.request_index, &item.claim)
+            if negotiated.disposition.target().is_some_and(|backend| {
+                backend.id().as_str() == crate::zone_check::manifest::BACKEND_ID
+            }) {
+                super::task_product_item::item(
+                    analysis,
+                    binding,
+                    *limits,
+                    item.options.max_task_product_work,
+                    &item.claim,
+                    item.request_index,
+                )
                 .unwrap_or_else(absent)
+            } else {
+                super::schedule_item::schedule_item(package, item.request_index, &item.claim)
+                    .unwrap_or_else(absent)
+            }
         }
         _ => absent(),
     };
@@ -1232,11 +1250,17 @@ fn work<'a>(
         Some(ItemForm::Temporal(form))
             if digital
                 && form.item_kind == ItemKind::Formula
-                && super::document::timed(package) =>
+                && super::document::claim_timed(package, &item.claim, binding) =>
         {
             Some(crate::model_check::manifest::BACKEND_ID)
         }
-        Some(ItemForm::Temporal(_)) if super::document::timed(package) => {
+        Some(ItemForm::Temporal(form))
+            if if form.item_kind == ItemKind::Formula {
+                super::document::claim_timed(package, &item.claim, binding)
+            } else {
+                super::document::timed(package)
+            } =>
+        {
             Some(crate::zone_check::manifest::BACKEND_ID)
         }
         Some(ItemForm::Temporal(_)) => Some(crate::model_check::manifest::BACKEND_ID),
@@ -1246,7 +1270,13 @@ fn work<'a>(
         },
         Some(ItemForm::Hybrid(_)) => None,
         None if item.kind == Capability::Schedulability => {
-            Some(crate::schedulability::manifest::BACKEND_ID)
+            negotiated.disposition.target().map(|backend| {
+                if backend.id().as_str() == crate::zone_check::manifest::BACKEND_ID {
+                    crate::zone_check::manifest::BACKEND_ID
+                } else {
+                    crate::schedulability::manifest::BACKEND_ID
+                }
+            })
         }
         None => None,
     };
@@ -1269,9 +1299,22 @@ fn work<'a>(
     // task set in closed form, which has no bound to ask for, so a
     // schedulability item is read in the `unbounded` mode it advertises
     // (FR-247).
-    let zone = matches!(&item.form, Some(ItemForm::Temporal(_))) && super::document::timed(package);
+    let zone = match &item.form {
+        Some(ItemForm::Temporal(form)) if form.item_kind == ItemKind::Formula => {
+            super::document::claim_timed(package, &item.claim, binding)
+        }
+        Some(ItemForm::Temporal(_)) => super::document::timed(package),
+        _ => false,
+    };
     built.mode = match item.extent {
         _ if zone => fsl_route::Mode::Bounded,
+        _ if item.kind == Capability::Schedulability
+            && negotiated.disposition.target().is_some_and(|backend| {
+                backend.id().as_str() == crate::zone_check::manifest::BACKEND_ID
+            }) =>
+        {
+            fsl_route::Mode::Bounded
+        }
         _ if item.kind == Capability::Schedulability => fsl_route::Mode::Unbounded,
         ExtentClassification::Bounded => fsl_route::Mode::Bounded,
         ExtentClassification::Unbounded { .. } => fsl_route::Mode::Unbounded,

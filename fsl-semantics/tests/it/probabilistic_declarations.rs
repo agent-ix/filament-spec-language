@@ -23,8 +23,8 @@ use fsl_foundation::diagnostic::Code;
 use fsl_semantics::check::{
     Bound, BoundedMeasure, CheckCause, CheckRefusal, CheckedGraph, CheckingLimitKind, Confidence,
     Event, PackageDeclarations, PreconditionSite, ProbForm, ProbScheduler, ProbabilisticCause,
-    ReachTarget, Reward, RewardEvaluationFailure, RewardEvaluator,
-    SemanticNode, WeightOwner,
+    ReachTarget, Reward, RewardEvaluationFailure, RewardEvaluator, SemanticNode, WeightOwner,
+    Weighting,
 };
 use fsl_semantics::model::accounting::ModelNormalizationLimits;
 use fsl_semantics::model::intake::{admit_unit, meaning, package_input};
@@ -1453,7 +1453,10 @@ fn a_checked_claim_and_a_reward_are_both_lowered() {
                 reward.name()
             );
         }
-        assert!(model.rewards().iter().any(|reward| reward.name() == "latency"));
+        assert!(model
+            .rewards()
+            .iter()
+            .any(|reward| reward.name() == "latency"));
     }
 }
 
@@ -1674,10 +1677,18 @@ fn a_reward_a_claim_names_is_one_the_model_declares() {
     };
     assert_eq!(*bound, Bound::AtLeast(ratio(1, 2)));
     assert_eq!(fraction.window, 10);
-    assert_eq!(
-        fraction.weight.as_ref().map(|weight| weight.as_str()),
-        Some("latency")
-    );
+    assert!(matches!(
+        fraction.weight.as_ref(),
+        Some(Weighting::Reward(ref weight)) if weight.as_str() == "latency"
+    ));
+    let duration = checked(&weighted("duration"));
+    let ProbForm::MeanOfFraction { fraction, .. } = &claim_of(&duration).form else {
+        panic!("a checked duration-weighted fraction");
+    };
+    assert!(matches!(
+        fraction.weight.as_ref(),
+        Some(Weighting::Reward(weight)) if weight.as_str() == "duration"
+    ));
     assert_eq!(
         located(&weighted("nothing")),
         [(
@@ -1686,15 +1697,11 @@ fn a_reward_a_claim_names_is_one_the_model_declares() {
             "nothing".to_owned()
         )]
     );
-    // FR-186: `delay` is the delay weighting, never a reward lookup; it has no
-    // emitted form until QSL-2551, so it is a typed refusal at its name.
+    // FR-186: `delay` is the delay weighting, never a reward lookup; over the
+    // untimed service it is ill typed at the `delay` word.
     assert_eq!(
         located(&weighted("delay")),
-        [(
-            Code::InvalidProbabilisticModel,
-            Some("delay-weighting-unsupported"),
-            "delay".to_owned()
-        )]
+        [(Code::IllTyped, Some("type-mismatch"), "delay".to_owned())]
     );
     let long_run = |weight: &str| {
         service(
@@ -1711,9 +1718,82 @@ fn a_reward_a_claim_names_is_one_the_model_declares() {
     let ProbForm::LongRunFraction { weight, .. } = &claim_of(&graph).form else {
         panic!("a long-run fraction");
     };
+    assert!(matches!(
+        weight,
+        Some(Weighting::Reward(weight)) if weight.as_str() == "latency"
+    ));
+    let graph = checked(&long_run("duration"));
+    let ProbForm::LongRunFraction { weight, .. } = &claim_of(&graph).form else {
+        panic!("a checked duration-weighted long-run fraction");
+    };
+    assert!(matches!(
+        weight,
+        Some(Weighting::Reward(weight)) if weight.as_str() == "duration"
+    ));
+}
+
+/// FR-186-AC-15: `delay` is a timed weighting, not a reward named `delay`.
+#[trace("TC-2168", "TC-2169", "FR-186-AC-15")]
+#[test]
+fn delay_weighting_is_a_timed_subject_form() {
+    let timed = |form: &str| {
+        service(
+            None,
+            &format!(
+                "time Service dense unit ms;\nprobabilistic C using tm on Service {OVER} \
+                 under Steady on origin {{ {form} }}"
+            ),
+        )
+    };
+    let long_run = checked_timed_service(&timed(&format!(
+        "long_run_fraction holds({IDLE}) weighted by delay >= 0.5"
+    )));
+    let ProbForm::LongRunFraction { weight, .. } = &claim_of(&long_run).form else {
+        panic!("a checked long-run fraction");
+    };
+    assert_eq!(weight, &Some(Weighting::Delay));
+    let unweighted =
+        checked_timed_service(&timed(&format!("long_run_fraction holds({IDLE}) >= 0.5")));
+    assert_ne!(
+        claim_of(&long_run).normal_form,
+        claim_of(&unweighted).normal_form
+    );
+
+    let fraction = checked_timed_service(&timed(&format!(
+        "probability >= 0.5 [ fraction holds({IDLE}) over [0, 5 ms] \
+         weighted by delay <= rational(1, 2) ]"
+    )));
+    let ProbForm::Probability {
+        event:
+            Event::Compare {
+                measure: BoundedMeasure::Fraction(fraction),
+                ..
+            },
+        ..
+    } = &claim_of(&fraction).form
+    else {
+        panic!("a checked weighted fraction");
+    };
+    assert_eq!(fraction.weight, Some(Weighting::Delay));
+
+    let untimed = service(
+        None,
+        &claim(&format!(
+            "{{ long_run_fraction holds({IDLE}) weighted by delay >= 0.5 }}"
+        )),
+    );
+    let refusals = refusals_of(&untimed);
+    let [refusal] = refusals.as_slice() else {
+        panic!("one refusal: {refusals:?}");
+    };
+    assert!(matches!(
+        &refusal.cause,
+        CheckCause::Probabilistic(cause)
+            if matches!(cause.as_ref(), ProbabilisticCause::TimeTypeMismatch { .. })
+    ));
     assert_eq!(
-        weight.as_ref().map(|weight| weight.as_str()),
-        Some("latency")
+        located(&untimed),
+        [(Code::IllTyped, Some("type-mismatch"), "delay".to_owned())]
     );
 }
 
@@ -2169,6 +2249,54 @@ fn elapsed_timed_checks() {
         panic!("a time-valued steps window: {:?}", claim_of(&window).form);
     };
     assert_eq!(timed_within, &Some(ratio(5, 1)));
+}
+
+/// FR-186-AC-16: an elapsed quantile keeps its elapsed measure and rejects
+/// a unitless threshold or an elapsed form over an untimed subject.
+#[trace("TC-2168", "TC-2169", "FR-186-AC-16")]
+#[test]
+fn elapsed_quantile_uses_the_timed_measure_form() {
+    let from = format!("holds({IDLE})");
+    let until = format!("holds({})", phase("Done"));
+    let source = |form: &str| {
+        service(
+            None,
+            &format!(
+                "time Service dense unit ms;\nprobabilistic C using tm on Service {OVER} \
+                 under Steady on origin {{ {form} }}"
+            ),
+        )
+    };
+    let form = format!("quantile 0.5 of (elapsed from {from} until {until} within 5 ms) <= 3 ms");
+    let graph = checked_timed_service(&source(&form));
+    let ProbForm::Quantile {
+        q,
+        measure: BoundedMeasure::Elapsed { within, .. },
+        threshold,
+    } = &claim_of(&graph).form
+    else {
+        panic!("an elapsed quantile: {:?}", claim_of(&graph).form);
+    };
+    assert_eq!(*q, ratio(1, 2));
+    assert_eq!(*within, ratio(5, 1));
+    assert_eq!(*threshold, Bound::AtMost(ratio(3, 1)));
+
+    let unitless = form.replace("<= 3 ms", "<= 3");
+    assert_eq!(
+        located_over(&timed_service_document(), &source(&unitless)),
+        [(Code::IllTyped, Some("type-mismatch"), "3".to_owned())]
+    );
+    let untimed = service(
+        None,
+        &claim(&format!(
+            "{{ quantile 0.5 of (elapsed from {from} until {until} within 5) <= 3 ms }}"
+        )),
+    );
+    let measure = format!("elapsed from {from} until {until} within 5");
+    assert_eq!(
+        located(&untimed),
+        [(Code::IllTyped, Some("type-mismatch"), measure)]
+    );
 }
 
 /// A claim `C` `using` the profile `profile`, `on origin`, over `Service`'s

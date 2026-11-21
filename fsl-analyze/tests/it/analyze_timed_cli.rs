@@ -691,3 +691,118 @@ fn both_timed_routes_state_the_non_zeno_premise() {
     assert_eq!(items[2]["record"]["non_zeno"], "checked", "{}", items[2]);
     assert_eq!(items[3]["record"]["non_zeno"], "checked", "{}", items[3]);
 }
+
+/// A snapshot of the one call `c` of the domain package `package`.
+fn call_snapshot(package: &str, identity: &str) -> Value {
+    json!({
+        "format": "filament.state.snapshot/v1",
+        "identity": {"authority": "test", "identity": identity},
+        "observation": "current", "model": {"identity": package},
+        "anchor": {"kind": "initialization", "name": "start"},
+        "populations": [{"population": format!("ix://{package}/calls"), "complete": true,
+            "objects": [{"key": "c", "type": format!("ix://{package}/Call"),
+                "fields": {"phase": {"integer": "0"}, "inflight": {"boolean": false},
+                    "late": {"boolean": false}, "retried": {"boolean": false}}}]}],
+    })
+}
+
+/// The untimed claim `Plain` over model `A` (`test/req`), run through
+/// `fsl analyze` in a unit that also selects the timed model `M`
+/// (`test/timed`, `time M dense`) when `timed_m`; `item` is the request
+/// item; `scratch` names the test's own scratch directory. The one snapshot
+/// covers `A` only, so the subject reads no timed model.
+fn untimed_beside_timed(
+    scratch: &str,
+    timed_m: bool,
+    item: Value,
+) -> crate::analyze_cli_support::Run {
+    use crate::timed_refinement::{req, treq};
+    let time = if timed_m {
+        "dimension Time;\nunit s : Time = rational(1, 1);\n\
+         unit ms : Time = rational(1, 1000) * s;\ntime M dense unit ms;\n"
+    } else {
+        ""
+    };
+    let m_decl = if timed_m {
+        "model M = \"test/timed\";\n"
+    } else {
+        ""
+    };
+    let unit = format!(
+        "language \"ix:native\" edition \"1-draft\";\nprofile v = \"filament.model.complete/v1\";\n\
+         profile inf = \"filament.temporal.infinite-trace/v1\";\n\
+         profile t = \"filament.temporal.complete/v1\";\n\
+         profile tt = \"filament.temporal.timed/v1\";\nmodel A = \"test/req\";\n{m_decl}{time}\
+         pre Send using v on A::Call::send {{ not self.inflight }}\n\
+         post Sent using v on A::Call::send {{ self.inflight }}\n\
+         temporal Plain using inf over (c: A::Call) clock \"model-steps\" on origin \
+         {{ always holds(c.phase <= 3) }}\n"
+    );
+    let ws = Workspace::new(scratch);
+    ws.write("program.fsl", unit.as_bytes());
+    ws.write("a.json", &req());
+    ws.write("m.json", &treq());
+    ws.write(
+        "snap-a.json",
+        call_snapshot("test/req", "sa").to_string().as_bytes(),
+    );
+    let source = |file: &str, identity: &str, document: &str| {
+        json!({"format": "semantic-ir/2.0.0", "source": {"file": file, "authority": "test",
+            "identity": identity, "document": document, "formal_revision": 1}})
+    };
+    let mut models = vec![source("a.json", "a-model", "A")];
+    let mut documents = vec![json!({"file": "snap-a.json"})];
+    if timed_m {
+        models.push(source("m.json", "m-model", "M"));
+    }
+    let mut request = crate::analyze_cli_support::request_members(Some(json!([item])));
+    request["models"] = json!(models);
+    request["documents"] = json!(documents);
+    analyze(
+        &ws.write(
+            "analyze.json",
+            json!({"format": "native-analyze/1", "request": request})
+                .to_string()
+                .as_bytes(),
+        ),
+    )
+}
+
+/// QSL-2654, FR-243: a clause over an untimed model routes by the models its
+/// subject reads, so a `time` declaration of another model of the unit leaves
+/// it on EN-1: same backend, same verdict and same closure certificate as
+/// without the timed model, never EN-6's zone product.
+#[trace("TC-1592", "FR-243-AC-4")]
+#[test]
+fn an_untimed_claim_stays_on_en_1_beside_a_timed_model() {
+    let mut outcomes = Vec::new();
+    for timed_m in [false, true] {
+        let run = untimed_beside_timed("untimed-en-1", timed_m, json!({"claim": "Plain"}));
+        let item = run.item(0);
+        assert_eq!(run.exit, 0, "timed_m={timed_m}: {item}");
+        outcomes.push((
+            item["record"].clone(),
+            item["certificate"]["checker"].clone(),
+            item["certificate"]["accepted"].clone(),
+        ));
+    }
+    assert_eq!(outcomes[0].0["backend"], "en-1");
+    assert_eq!(outcomes[0].0["result"], "proved");
+    assert_eq!(outcomes[0], outcomes[1], "the timed model changes nothing");
+}
+
+/// QSL-2654, FSpec FR-415: `max_clocks` is read by a timed subject only. An
+/// untimed claim beside a timed model it does not read ignores no option
+/// silently: EN-1 does not read it, so the item is `unsupported`.
+#[trace("TC-1592", "FR-632-AC-3")]
+#[test]
+fn max_clocks_on_an_untimed_claim_beside_a_timed_model_is_unrouted() {
+    let item = json!({"claim": "Plain", "temporal": {"limits": {"max_clocks": 1}}});
+    let run = untimed_beside_timed("untimed-max-clocks", true, item);
+    assert_eq!(
+        run.item(0)["record"]["result"],
+        "unsupported",
+        "{}",
+        run.item(0)
+    );
+}

@@ -173,7 +173,7 @@ impl QualifiedBoundedMonitor {
     pub fn rank(&self, state: StateId) -> Result<u64, QualifiedBoundedError> {
         Ok(match self.state(state)? {
             BoundedState::Open { remaining } => remaining,
-            BoundedState::Accept | BoundedState::Reject => 0,
+            BoundedState::Accept | BoundedState::Reject | BoundedState::Idle => 0,
         })
     }
 

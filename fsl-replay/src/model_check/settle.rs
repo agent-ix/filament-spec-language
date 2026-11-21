@@ -204,6 +204,8 @@ pub enum CertificateChecker {
     Component,
     /// The EN-6 FR-245 zone-certificate checker.
     Zone,
+    /// The EN-5 probability-certificate checker (FR-201).
+    ProbabilityCertificate,
 }
 
 impl CertificateChecker {
@@ -213,6 +215,7 @@ impl CertificateChecker {
             Self::Closure => "en-1-closure",
             Self::Component => "scc-ranking",
             Self::Zone => "zone-certificate",
+            Self::ProbabilityCertificate => "probability-certificate",
         }
     }
 }
@@ -781,6 +784,8 @@ impl Row {
                     IncompleteCause::TimedOut
                     | IncompleteCause::Cancelled { .. }
                     | IncompleteCause::ResourceExhausted
+                    | IncompleteCause::UnresolvedDynamics
+                    | IncompleteCause::CertificateUnchecked
                     | IncompleteCause::PrecisionBudget { .. } => None,
                 };
                 Self::incomplete(cause, limit_reached)

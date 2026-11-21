@@ -19,6 +19,7 @@ mod absent_literal;
 mod accounting_boundaries;
 mod aggregate_samples;
 mod application_observation;
+mod automaton_bounded_each;
 mod automaton_kernels;
 mod automaton_key;
 mod automaton_key_bounded;

@@ -497,16 +497,11 @@ fn collections_of_a_union_are_admitted() {
 
 #[trace("FR-323-AC-3", "TC-833")]
 #[test]
-fn a_keyed_collection_of_an_ieee_bearing_union_is_refused() {
+fn keyed_collections_of_an_ieee_bearing_union_are_admitted() {
     for collection in ["Set<F>[0, 4]", "Bag<F>[0, 4]", "OrderedSet<F>[0, 4]"] {
         let unit = with_parameters(&format!("a: {collection}"));
         let (typed, _) = unit.type_body(ClauseKind::Body, CheckingLimits::default());
-        let refusal = typed.expect_err(collection);
-        assert_eq!(
-            refusal.cause,
-            CheckCause::IllTyped(IllTypedCause::OperatorIneligible),
-            "{collection}"
-        );
+        typed.expect(collection);
     }
 }
 

@@ -109,7 +109,7 @@ pub use bare_state_graph::BareStatePredicate;
 #[cfg(feature = "std")]
 pub use bare_term::{
     BareClauseRefusal, BareClauseTerm, BareFrameOperation, BareStateClause,
-    BareStateClauseDeclaration, ClauseBinder,
+    BareStateClauseDeclaration, ClauseBinder, DeclaredComposite, DeclaredShape,
 };
 #[cfg(feature = "std")]
 pub use bare_terminal::{BareTerminal, BareTerminalDeclaration, BareTerminalPredicate};

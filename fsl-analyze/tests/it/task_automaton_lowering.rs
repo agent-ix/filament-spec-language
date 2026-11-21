@@ -6,6 +6,9 @@
 //! deadline miss is exact. The source is ADR-026 section 11's `Rpc` with one
 //! always-enabled `fire_*` operation per task, each releasing its task.
 
+use fsl_eval::simulation::model::{
+    TaskProductState, TaskProductSystem, TaskTransitionAction, TimedSystem,
+};
 use ix_trace_rs::trace;
 use serde_json::{json, Value};
 
@@ -67,6 +70,152 @@ fn task_set_b(third: u32) -> String {
     )
 }
 
+/// FR-249-AC-3: concrete scheduler progress stops at active task events.
+/// t1 completes at 1, t2 completes before the next t1 release at 4, and the
+/// first deadline miss is t3#0 at 10 with exactly three units of service.
+#[trace("FR-249-AC-3")]
+#[test]
+fn task_scheduler_stops_at_completion_and_release_boundaries() {
+    let model_document = crate::zone_search::rpc_document_with(&[
+        ("fire_t1", &["phase"]),
+        ("fire_t2", &["phase"]),
+        ("fire_t3", &["phase"]),
+    ]);
+    let body = format!("{}{}", crate::timed_world::DENSE, task_set_b(4));
+    let world = crate::timed_world::world(&model_document, crate::zone_search::TIMED, &body);
+    let model = world.system();
+    let timed = TimedSystem::new(&model, "M").expect("dense timed model");
+    let product = TaskProductSystem::new(timed, "BFp").expect("checked task product");
+    let mut state = product.initial().into_iter().next().expect("initial state");
+
+    for task in ["t1", "t2", "t3"] {
+        state = product
+            .source_steps(&state)
+            .expect("source transitions")
+            .into_iter()
+            .find(|step| {
+                step.activations
+                    .iter()
+                    .any(|activation| activation.task == task)
+            })
+            .expect("the task release is enabled")
+            .state;
+    }
+    let take_action = |state: &mut TaskProductState, action: TaskTransitionAction, task: &str| {
+        let step = product
+            .scheduler_steps(state)
+            .into_iter()
+            .find(|step| step.identity.action == action && step.identity.task == task)
+            .expect("the expected scheduler action is enabled");
+        *state = step.state;
+    };
+
+    take_action(&mut state, TaskTransitionAction::Dispatch, "t1");
+    state = product
+        .delay(&state, &crate::zone_search::exact(1, 1))
+        .expect("source admits time")
+        .expect("t1 reaches its completion boundary at 1");
+    take_action(&mut state, TaskTransitionAction::Complete, "t1");
+    take_action(&mut state, TaskTransitionAction::Dispatch, "t2");
+    state = product
+        .delay(&state, &crate::zone_search::exact(2, 1))
+        .expect("source admits time")
+        .expect("t2 reaches its completion boundary at 3");
+    take_action(&mut state, TaskTransitionAction::Complete, "t2");
+    take_action(&mut state, TaskTransitionAction::Dispatch, "t3");
+    assert_eq!(state.now(), &crate::zone_search::exact(3, 1));
+
+    state = product
+        .delay(&state, &crate::zone_search::exact(1, 1))
+        .expect("source admits time")
+        .expect("stop at t1's next periodic release at 4");
+    assert_eq!(state.now(), &crate::zone_search::exact(4, 1));
+    state = product
+        .source_steps(&state)
+        .expect("source transitions")
+        .into_iter()
+        .find(|step| {
+            step.activations
+                .iter()
+                .any(|activation| activation.task == "t1")
+        })
+        .expect("t1 releases its next job at 4")
+        .state;
+    take_action(&mut state, TaskTransitionAction::Preempt, "t3");
+    take_action(&mut state, TaskTransitionAction::Dispatch, "t1");
+    state = product
+        .delay(&state, &crate::zone_search::exact(1, 1))
+        .expect("source admits time")
+        .expect("t1's second job completes at 5");
+    take_action(&mut state, TaskTransitionAction::Complete, "t1");
+    take_action(&mut state, TaskTransitionAction::Resume, "t3");
+    state = product
+        .delay(&state, &crate::zone_search::exact(1, 1))
+        .expect("source admits time")
+        .expect("reach t2's next release at 6");
+    state = product
+        .source_steps(&state)
+        .expect("source transitions")
+        .into_iter()
+        .find(|step| {
+            step.activations
+                .iter()
+                .any(|activation| activation.task == "t2")
+        })
+        .expect("t2 releases its next job at 6")
+        .state;
+    take_action(&mut state, TaskTransitionAction::Preempt, "t3");
+    take_action(&mut state, TaskTransitionAction::Dispatch, "t2");
+    state = product
+        .delay(&state, &crate::zone_search::exact(2, 1))
+        .expect("source admits time")
+        .expect("t2's second job completes at 8");
+    take_action(&mut state, TaskTransitionAction::Complete, "t2");
+    state = product
+        .source_steps(&state)
+        .expect("source transitions")
+        .into_iter()
+        .find(|step| {
+            step.activations
+                .iter()
+                .any(|activation| activation.task == "t1")
+        })
+        .expect("t1 releases its third job at 8")
+        .state;
+    take_action(&mut state, TaskTransitionAction::Dispatch, "t1");
+    state = product
+        .delay(&state, &crate::zone_search::exact(1, 1))
+        .expect("source admits time")
+        .expect("t1's third job completes at 9");
+    take_action(&mut state, TaskTransitionAction::Complete, "t1");
+    take_action(&mut state, TaskTransitionAction::Resume, "t3");
+    state = product
+        .delay(&state, &crate::zone_search::exact(1, 1))
+        .expect("source admits time")
+        .expect("reach t3's first deadline at 10");
+    state = product
+        .source_steps(&state)
+        .expect("source transitions")
+        .into_iter()
+        .find(|step| {
+            step.activations
+                .iter()
+                .any(|activation| activation.task == "t3")
+        })
+        .expect("t3 releases its next job at 10")
+        .state;
+    let miss = product
+        .scheduler_steps(&state)
+        .into_iter()
+        .find(|step| step.identity.action == TaskTransitionAction::DeadlineMiss)
+        .expect("t3's first missed deadline is explicit");
+    assert_eq!((miss.identity.task.as_str(), miss.identity.job), ("t3", 0));
+    assert_eq!(
+        miss.state.jobs()[0].service,
+        crate::zone_search::exact(3, 1)
+    );
+}
+
 fn rational(value: &Value) -> (String, String) {
     (
         value["numerator"].as_str().unwrap_or("-").to_owned(),
@@ -80,7 +229,7 @@ fn whole(value: i64) -> (String, String) {
 
 #[trace("TC-3008", "FR-249-AC-7")]
 #[test]
-#[ignore = "QSL-2240: lowering a task automaton to an EN-6 subject carrying its task timing not implemented yet"]
+#[ignore = "QSL-2240: proved needs the FR-418 task-product certificate reader (not built)"]
 fn a_two_task_set_lowers_with_its_declared_periods_and_deadlines() {
     let declarations = format!("{PAIR}{}", sources("Pair", &["a", "b"]));
     let run = run(
@@ -158,7 +307,7 @@ fn run_bare() -> Value {
 
 #[trace("TC-3008", "FR-249-AC-8")]
 #[test]
-#[ignore = "QSL-2240: EN-6 deciding a task automaton, agreeing with EN-7's response-time verdict, not implemented yet"]
+#[ignore = "QSL-2240: proved needs the FR-418 task-product certificate reader (not built)"]
 fn the_zone_verdict_equals_the_response_time_verdict_on_task_set_b() {
     let items = json!([
         {"claim": "BFp"}, {"claim": "BFp", "backend": "en-6"},
@@ -186,7 +335,6 @@ fn the_zone_verdict_equals_the_response_time_verdict_on_task_set_b() {
 
 #[trace("TC-3008", "FR-249-AC-9")]
 #[test]
-#[ignore = "QSL-2240: a replayed task-derived counterexample naming its first deadline miss not implemented yet"]
 fn an_unschedulable_set_refutes_with_its_first_missed_deadline() {
     let run = run(
         "task-set-b-miss",
@@ -197,7 +345,12 @@ fn an_unschedulable_set_refutes_with_its_first_missed_deadline() {
     let item = run.item(0);
     assert_eq!(label(&item), "refuted", "{item}");
     assert_eq!(item["replay"]["reproduced"], true);
-    let prefix = item["counterexample"]["prefix"]
+    let counterexample = &item["counterexample"]["counterexample"];
+    let loop_steps = counterexample["loop"]
+        .as_array()
+        .expect("a time-divergent continuation is carried");
+    assert!(!loop_steps.is_empty(), "the miss alone is not a refutation");
+    let prefix = counterexample["prefix"]
         .as_array()
         .cloned()
         .unwrap_or_default();
@@ -209,9 +362,74 @@ fn an_unschedulable_set_refutes_with_its_first_missed_deadline() {
         })
         .collect();
     let first = misses.first().expect("a deadline-miss step");
-    assert_eq!(first["task"], "t3");
+    let miss_position = prefix
+        .iter()
+        .position(|step| {
+            let identity = &step["transition"];
+            identity["type"] == "task-transition" && identity["action"] == "deadline-miss"
+        })
+        .expect("the prefix carries the first missed deadline");
+    assert_eq!(counterexample["trace_position"], json!(miss_position));
+    assert_eq!(misses.len(), 1, "the first miss is latched across the loop");
+    let timeline: Vec<_> = prefix
+        .iter()
+        .map(|step| {
+            format!(
+                "{}:{}@{}",
+                step["transition"]["action"].as_str().unwrap_or("source"),
+                step["transition"]["task"].as_str().unwrap_or("-"),
+                step["delay"]["numerator"].as_str().unwrap_or("0")
+            )
+        })
+        .collect();
+    assert_eq!(first["task"], "t3", "timeline={timeline:?}");
+    let completed: Vec<_> = prefix
+        .iter()
+        .map(|step| &step["transition"])
+        .filter(|identity| {
+            identity["type"] == "task-transition" && identity["action"] == "complete"
+        })
+        .map(|identity| identity["task"].as_str().unwrap_or("-"))
+        .collect();
+    assert_eq!(
+        completed.iter().take(2).copied().collect::<Vec<_>>(),
+        ["t1", "t2"],
+        "the scheduler must stop at t1's completion before source@4, then finish t2 before t3's first miss; timeline={timeline:?}"
+    );
+    let t1_second_release = prefix
+        .iter()
+        .position(|step| {
+            let identity = &step["transition"];
+            identity["type"] == "task-transition"
+                && identity["action"] == "activate"
+                && identity["task"] == "t1"
+                && identity["job"] == 1
+        })
+        .expect("source@4 releases t1's second job");
+    let t2_first_completion = prefix
+        .iter()
+        .position(|step| {
+            let identity = &step["transition"];
+            identity["type"] == "task-transition"
+                && identity["action"] == "complete"
+                && identity["task"] == "t2"
+                && identity["job"] == 0
+        })
+        .expect("t2 completes its first job");
+    assert!(
+        t2_first_completion < t1_second_release,
+        "t2's first job must complete before source@4: {timeline:?}"
+    );
     assert_eq!(first["job"], 0);
     assert_eq!(rational(&first["demand"]), whole(4));
+    let last_transition = &prefix.last().expect("non-empty counterexample")["transition"];
+    assert_eq!(
+        last_transition["action"], "activate",
+        "timeline={timeline:?}, trace_position={}",
+        counterexample["trace_position"]
+    );
+    assert_eq!(last_transition["task"], "t3");
+    assert_eq!(last_transition["job"], 1);
     // Least-delay concretisation: every task activates at 0, so t3's
     // absolute deadline is 10.
     assert_eq!(
@@ -220,6 +438,21 @@ fn an_unschedulable_set_refutes_with_its_first_missed_deadline() {
         "{}",
         item["counterexample"]
     );
+    let loop_delay_sum: i64 = loop_steps
+        .iter()
+        .map(|step| {
+            assert_eq!(rational(&step["delay"]).1, "1");
+            rational(&step["delay"])
+                .0
+                .parse::<i64>()
+                .expect("fixture delays are exact integers")
+        })
+        .sum();
+    assert_eq!(loop_delay_sum, 60, "the queue repeats after 60 ms");
+    assert!(loop_steps.iter().all(|step| {
+        let identity = &step["transition"];
+        identity["type"] != "task-transition" || identity["action"] != "deadline-miss"
+    }));
     // The earliest miss of the product, whatever order the search explores:
     // declaring the sources in reverse reports the same miss.
     let reversed = format!(
@@ -234,7 +467,8 @@ fn an_unschedulable_set_refutes_with_its_first_missed_deadline() {
         json!([{"claim": "BFp", "backend": "en-6"}]),
     )
     .item(0);
-    let miss = again["counterexample"]["prefix"]
+    let again_counterexample = &again["counterexample"]["counterexample"];
+    let miss = again_counterexample["prefix"]
         .as_array()
         .and_then(|prefix| {
             prefix
@@ -245,6 +479,111 @@ fn an_unschedulable_set_refutes_with_its_first_missed_deadline() {
         .unwrap_or(Value::Null);
     assert_eq!((&miss["task"], &miss["job"]), (&json!("t3"), &json!(0)));
     assert_eq!(rational(&miss["deadline"]), whole(10), "{again}");
+    let reversed_loop: i64 = again_counterexample["loop"]
+        .as_array()
+        .expect("reversed declarations retain the loop")
+        .iter()
+        .map(|step| {
+            assert_eq!(rational(&step["delay"]).1, "1");
+            rational(&step["delay"])
+                .0
+                .parse::<i64>()
+                .expect("fixture delays are exact integers")
+        })
+        .sum();
+    assert_eq!(reversed_loop, loop_delay_sum);
+}
+
+/// FR-249-AC-11/FR-237: a one-shot release settles through a replayed
+/// positive-delay terminal-stutter loop after the missed job completes.
+#[trace("TC-704", "FR-249-AC-11")]
+#[test]
+fn one_shot_miss_refutes_with_terminal_stutter_replay() {
+    let run = run_once(
+        "task-product-terminal-stutter",
+        json!([{"claim": "OnceFp", "backend": "en-6"}]),
+    );
+    let item = run.item(0);
+    assert_eq!(label(&item), "refuted", "{item}");
+    assert_eq!(item["replay"]["reproduced"], true, "{item}");
+    let counterexample = &item["counterexample"]["counterexample"];
+    let prefix = counterexample["prefix"].as_array().expect("prefix");
+    assert_eq!(
+        prefix.last().expect("completion step")["transition"]["action"],
+        "complete"
+    );
+    assert_eq!(counterexample["trace_position"], 2);
+    let looped = counterexample["loop"].as_array().expect("terminal loop");
+    assert_eq!(looped.len(), 1);
+    assert_eq!(looped[0]["transition"]["type"], "terminal-stutter");
+    assert!(
+        rational(&looped[0]["delay"])
+            .0
+            .parse::<i64>()
+            .unwrap_or_default()
+            > 0
+    );
+}
+
+const BAD_SET: &str =
+    "taskset Bad { task command periodic 4 ms deadline 1 ms bcet 2 ms wcet 2 ms priority 1 lo; }\n\
+     schedulable BadFp on Bad under fixed_priority;\n";
+
+/// FR-249-AC-2: a periodic overrun (period 4, deadline 1, wcet 2) misses in
+/// every period, so the product closes a positive-delay lasso and the miss
+/// settles `refuted` with that replayed loop, never a bare prefix.
+#[trace("FR-249-AC-2")]
+#[test]
+fn a_periodic_overrun_settles_refuted_with_its_replayed_lasso() {
+    let declarations = format!("{BAD_SET}{}", sources("Bad", &["command"]));
+    let run = run(
+        "task-product-periodic-overrun",
+        &["command"],
+        &declarations,
+        json!([{"claim": "BadFp", "backend": "en-6"}]),
+    );
+    let item = run.item(0);
+    assert_eq!(label(&item), "refuted", "{item}");
+    let counterexample = &item["counterexample"]["counterexample"];
+    assert!(
+        counterexample["loop"]
+            .as_array()
+            .is_some_and(|steps| !steps.is_empty()),
+        "the refutation carries its lasso: {item}"
+    );
+    assert!(
+        counterexample["prefix"]
+            .as_array()
+            .is_some_and(|steps| steps
+                .iter()
+                .any(|step| step["transition"]["action"] == "deadline-miss")),
+        "{item}"
+    );
+}
+
+/// FR-249-AC-2: a miss prefix whose search stops before any loop closes is not
+/// a settled refutation; it stays `incomplete` with the work limit as cause.
+#[trace("FR-249-AC-2")]
+#[test]
+fn a_miss_prefix_with_no_closed_loop_stays_incomplete() {
+    let declarations = format!("{BAD_SET}{}", sources("Bad", &["command"]));
+    let run = run(
+        "task-product-open-miss",
+        &["command"],
+        &declarations,
+        json!([{
+            "claim": "BadFp",
+            "backend": "en-6",
+            "temporal": {"limits": {"max_task_product_work": 1}}
+        }]),
+    );
+    let item = run.item(0);
+    assert_eq!(label(&item), "incomplete", "{item}");
+    assert_eq!(item["counterexample"], Value::Null, "{item}");
+    assert_eq!(
+        item["record"]["cause"]["limit"], "max_task_product_work",
+        "{item}"
+    );
 }
 
 /// FR-246-AC-5, FR-075-AC-23, FR-962-AC-6: a release makes the `schedulable`
@@ -254,7 +593,6 @@ fn an_unschedulable_set_refutes_with_its_first_missed_deadline() {
 #[trace("TC-3009", "FR-075-AC-23")]
 #[trace("TC-3009", "FR-962-AC-6")]
 #[test]
-#[ignore = "QSL-2240: the release-backed marker and EN-6's task-product candidacy not implemented yet"]
 fn a_release_backed_claim_routes_to_en_6_only_when_named() {
     let backed = format!("{PAIR}{}", sources("Pair", &["a", "b"]));
     let items = json!([{"claim": "PairFp"}, {"claim": "PairFp", "backend": "en-6"}]);
@@ -278,4 +616,251 @@ fn a_release_backed_claim_routes_to_en_6_only_when_named() {
         json!(["en-7"])
     );
     assert_eq!(label(&without.item(1)), "unsupported");
+}
+
+/// FR-249-AC-12: a work budget one short of what the refutation needs stops
+/// the search; the item settles `incomplete` with `limit-reached` for
+/// `max_task_product_work` and FR-331 `task_search` evidence that holds the
+/// missed deadline, and never refutes.
+#[trace("TC-704", "FR-249-AC-12")]
+#[test]
+fn a_work_limit_stop_settles_incomplete_with_task_search_evidence() {
+    let at = |work: u64| {
+        run_once(
+            &format!("task-product-work-{work}"),
+            json!([{
+                "claim": "OnceFp",
+                "backend": "en-6",
+                "temporal": {"limits": {"max_task_product_work": work}}
+            }]),
+        )
+        .item(0)
+    };
+    // The smallest budget that still refutes is read from the runs themselves.
+    let (mut low, mut high) = (1_u64, 4096_u64);
+    assert_eq!(label(&at(high)), "refuted", "{}", at(high));
+    while low < high {
+        let middle = low + (high - low) / 2;
+        if label(&at(middle)) == "refuted" {
+            high = middle;
+        } else {
+            low = middle + 1;
+        }
+    }
+    assert!(low > 1, "the refutation needs more than one expansion");
+    let stopped = at(low - 1);
+    assert_eq!(label(&stopped), "incomplete", "{stopped}");
+    assert_eq!(stopped["counterexample"], Value::Null, "{stopped}");
+    let cause = &stopped["record"]["cause"];
+    assert_eq!(cause["kind"], "limit-reached", "{stopped}");
+    assert_eq!(cause["limit"], "max_task_product_work", "{stopped}");
+    assert_eq!(cause["value"], json!(low - 1), "{stopped}");
+    let evidence = &stopped["record"]["task_search"];
+    assert_eq!(evidence["type"], "task-search-frontier", "{stopped}");
+    assert_eq!(evidence["limit"]["value"], json!(low - 1), "{stopped}");
+    assert!(
+        evidence["frontier"]
+            .as_array()
+            .is_some_and(|rows| rows.iter().any(|row| row["reason"] == "work-limit")),
+        "{stopped}"
+    );
+    assert!(
+        evidence["edges"].as_array().is_some_and(|edges| edges
+            .iter()
+            .any(|edge| edge["transition"]["action"] == "deadline-miss")),
+        "the evidence holds the missed deadline: {stopped}"
+    );
+}
+
+/// FR-249-AC-4: a mixed-criticality product with unequal budgets is outside
+/// the exact gate, so a bounded run never settles `proved`, and when its work
+/// limit is reached it settles `incomplete` with `task_search` evidence.
+#[trace("TC-704", "FR-249-AC-4")]
+#[test]
+fn an_unequal_budget_product_never_proves_and_stops_with_task_search_evidence() {
+    let declarations = format!(
+        "taskset Mixed {{ task h periodic 10 ms deadline 10 ms bcet 3 ms wcet 2 ms priority 1 hi wcet_hi 3 ms; }}\n\
+         schedulable MixedFp on Mixed under fixed_priority;\n{}",
+        sources("Mixed", &["h"])
+    );
+    let run = run(
+        "task-product-unequal-budgets",
+        &["h"],
+        &declarations,
+        json!([
+            {"claim": "MixedFp", "backend": "en-6"},
+            {
+                "claim": "MixedFp",
+                "backend": "en-6",
+                "temporal": {"limits": {"max_task_product_work": 2}}
+            }
+        ]),
+    );
+    let unlimited = run.item(0);
+    assert_ne!(label(&unlimited), "proved", "{unlimited}");
+    let limited = run.item(1);
+    assert_eq!(label(&limited), "incomplete", "{limited}");
+    assert_eq!(
+        limited["record"]["cause"]["kind"], "limit-reached",
+        "{limited}"
+    );
+    assert_eq!(
+        limited["record"]["task_search"]["type"], "task-search-frontier",
+        "{limited}"
+    );
+}
+
+/// FR-249-AC-11's `Once` model: a `time dense` model whose one operation `go`
+/// is enabled until it fires, releasing the one-shot task `s` whose demand
+/// exceeds its deadline.
+fn run_once(name: &str, items: Value) -> Run {
+    use crate::timed_world::{document, unit_text, DENSE, PACKAGE};
+    let body = format!(
+        "{DENSE}\
+         pre GoReady using v on M::Call::go {{ self.phase = 0 }}\n\
+         post GoFired using v on M::Call::go {{ self.phase = 1 }}\n\
+         taskset Once {{ task s sporadic 10 ms deadline 2 ms bcet 3 ms wcet 3 ms priority 1 lo; }}\n\
+         release Once.s on M::Call::go;\n\
+         schedulable OnceFp on Once under fixed_priority;\n"
+    );
+    let ws = Workspace::new(name);
+    analyze(&request_over(
+        &ws,
+        &unit_text(PACKAGE, crate::zone_search::TIMED, &body),
+        &document(&[], &[("go", &["phase"])]),
+        &[rpc_snapshot()],
+        json!({"items": items}),
+    ))
+}
+
+/// FSpec FR-331: the `task_search` evidence EN-6 writes is read, unchanged, by
+/// the planner's result-entry reader (state keys are unpadded base64url).
+#[trace("TC-704", "FR-249-AC-12")]
+#[test]
+fn the_written_task_search_evidence_round_trips_through_the_planner_reader() {
+    let declarations = format!("{BAD_SET}{}", sources("Bad", &["command"]));
+    let run = run(
+        "task-product-evidence-round-trip",
+        &["command"],
+        &declarations,
+        json!([{
+            "claim": "BadFp",
+            "backend": "en-6",
+            "temporal": {"limits": {"max_task_product_work": 1}}
+        }]),
+    );
+    let item = run.item(0);
+    let record = &item["record"];
+    assert!(record["task_search"].is_object(), "{item}");
+    let read = fsl_replay::planner::read_result_entry(
+        &planner_entry(record),
+        0,
+        fsl_replay::planner::EntryOrigin::FirstParty,
+    )
+    .unwrap_or_else(|refusal| panic!("the planner reader refused {refusal:?}: {item}"));
+    let evidence = read.task_search.expect("the evidence is retained");
+    assert_eq!(
+        evidence.nodes.len(),
+        record["task_search"]["nodes"]
+            .as_array()
+            .map_or(0, Vec::len)
+    );
+    assert!(evidence
+        .frontier
+        .iter()
+        .any(|row| row.reason == "work-limit"));
+}
+
+/// FSpec FR-331: a stop at a full job queue settles `incomplete` with
+/// `bounded-search-incomplete{reason: unresolved-dynamics}` and `task_search`
+/// evidence that carries no limit and an `unresolved-choice` frontier row.
+#[trace("TC-704", "FR-249-AC-5")]
+#[test]
+fn a_queue_overflow_stop_settles_unresolved_dynamics_with_task_search_evidence() {
+    let declarations = format!(
+        "taskset Over {{ task t periodic 1 ms deadline 1 ms bcet 2 ms wcet 2 ms priority 1 lo; }}\n\
+         schedulable OverFp on Over under fixed_priority;\n{}",
+        sources("Over", &["t"])
+    );
+    let run = run(
+        "task-product-queue-overflow",
+        &["t"],
+        &declarations,
+        json!([{"claim": "OverFp", "backend": "en-6"}]),
+    );
+    let item = run.item(0);
+    assert_eq!(label(&item), "incomplete", "{item}");
+    assert_eq!(item["counterexample"], Value::Null, "{item}");
+    let cause = &item["record"]["cause"];
+    assert_eq!(cause["kind"], "bounded-search-incomplete", "{item}");
+    assert_eq!(cause["reason"], "unresolved-dynamics", "{item}");
+    let evidence = &item["record"]["task_search"];
+    assert_eq!(evidence["type"], "task-search-frontier", "{item}");
+    assert!(evidence.get("limit").is_none(), "{item}");
+    assert!(
+        evidence["frontier"]
+            .as_array()
+            .is_some_and(|rows| rows.iter().any(|row| row["reason"] == "unresolved-choice")),
+        "{item}"
+    );
+    let read = fsl_replay::planner::read_result_entry(
+        &planner_entry(&item["record"]),
+        0,
+        fsl_replay::planner::EntryOrigin::FirstParty,
+    )
+    .unwrap_or_else(|refusal| panic!("the planner reader refused {refusal:?}: {item}"));
+    assert!(read.task_search.is_some_and(|found| found.limit.is_none()));
+}
+
+/// The FSpec FR-331 result entry of an analyze item `record`: its cause under
+/// the entry's `type` spelling and its `task_search` member as written.
+fn planner_entry(record: &Value) -> Value {
+    let mut cause = record["cause"].clone();
+    let kind = cause
+        .as_object_mut()
+        .and_then(|members| members.remove("kind"))
+        .expect("the cause names its kind");
+    cause["type"] = kind;
+    json!({
+        "request_index": 0,
+        "backend": record["backend"],
+        "kind": "schedulability",
+        "result": "incomplete",
+        "cause": cause,
+        "task_search": record["task_search"],
+    })
+}
+
+/// FR-249: a closed task-product search with no accepted FR-418 certificate
+/// settles `incomplete` with `bounded-search-incomplete{reason:
+/// certificate-unchecked}` and no `task_search` evidence, never a limit.
+#[trace("TC-704", "FR-249-AC-8")]
+#[test]
+fn a_closed_search_without_a_certificate_settles_certificate_unchecked() {
+    let declarations = format!(
+        "taskset Calm {{ task t periodic 10 ms deadline 10 ms bcet 1 ms wcet 1 ms priority 1 lo; }}\n\
+         schedulable CalmFp on Calm under fixed_priority;\n{}",
+        sources("Calm", &["t"])
+    );
+    let run = run(
+        "task-product-certificate-unchecked",
+        &["t"],
+        &declarations,
+        json!([{"claim": "CalmFp", "backend": "en-6"}]),
+    );
+    let item = run.item(0);
+    assert_eq!(label(&item), "incomplete", "{item}");
+    let cause = &item["record"]["cause"];
+    assert_eq!(cause["kind"], "bounded-search-incomplete", "{item}");
+    assert_eq!(cause["reason"], "certificate-unchecked", "{item}");
+    assert!(item["record"].get("task_search").is_none(), "{item}");
+    let mut entry = planner_entry(&item["record"]);
+    entry.as_object_mut().expect("entry").remove("task_search");
+    let read = fsl_replay::planner::read_result_entry(
+        &entry,
+        0,
+        fsl_replay::planner::EntryOrigin::FirstParty,
+    )
+    .unwrap_or_else(|refusal| panic!("the planner reader refused {refusal:?}: {item}"));
+    assert!(read.task_search.is_none());
 }

@@ -470,7 +470,8 @@ fn the_divergence_terminal_stutter_and_pair_lassos_replay() {
         payload.lasso,
         Some(Lasso {
             entry: 1,
-            terminal_stutter: true
+            terminal_stutter: true,
+            terminal_stutter_delay: None,
         })
     );
     let (failure, positions) = reproduced(replay(&subject, &payload));
@@ -592,6 +593,7 @@ fn drifting_lasso(world: &AuxWorld<'_>) -> TemporalCounterexample {
         lasso: Some(Lasso {
             entry: 1,
             terminal_stutter: false,
+            terminal_stutter_delay: None,
         }),
         refinement: Some(RefinementFailure::AbstractUnfair {
             constraint: world
@@ -747,6 +749,7 @@ fn handmade(
         lasso: Some(Lasso {
             entry,
             terminal_stutter,
+            terminal_stutter_delay: None,
         }),
         refinement: Some(failure),
         blocked: Vec::new(),

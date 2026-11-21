@@ -199,6 +199,18 @@ pub enum ModelTraceRefusal {
         /// The node that carries it.
         node: fsl_package::CheckedNodeId,
     },
+    /// A typed counterexample over the model transition alphabet names a
+    /// release-backed schedulability item, whose trace is over the task
+    /// alphabet: a task item's `ModelTransition` payload holds only the
+    /// source projection of a task trace, so it is refused before any step
+    /// replays (FR-237 "Typed forms").
+    #[error("invalid_runtime_input/invalid-value: the item requires the {required} trace alphabet; the counterexample supplies the {supplied} alphabet")]
+    TraceAlphabet {
+        /// The alphabet the resolved item requires.
+        required: &'static str,
+        /// The alphabet the supplied counterexample is written over.
+        supplied: &'static str,
+    },
     /// A step carries a `delay`, or the counterexample a `final_delay`, over
     /// a subject this replay reads untimed: the delays are not checked here
     /// (FR-237 replays a timed subject's), so they are refused rather than
@@ -565,7 +577,8 @@ impl ModelTraceRefusal {
             | Self::HyperUnmatched { .. }
             | Self::HyperUnfair { .. }
             | Self::UnfairProtocolLasso { .. }
-            | Self::UnknownFairnessOperation { .. } => Code::InvalidRuntimeInput,
+            | Self::UnknownFairnessOperation { .. }
+            | Self::TraceAlphabet { .. } => Code::InvalidRuntimeInput,
         }
     }
 
@@ -618,7 +631,8 @@ impl ModelTraceRefusal {
             | Self::HyperUnmatched { .. }
             | Self::HyperUnfair { .. }
             | Self::UnfairProtocolLasso { .. }
-            | Self::UnknownFairnessOperation { .. } => "invalid-value",
+            | Self::UnknownFairnessOperation { .. }
+            | Self::TraceAlphabet { .. } => "invalid-value",
         }
     }
 }
@@ -963,6 +977,12 @@ pub fn replay_model_trace_with_temporal_selections(
         temporal_selections,
         replay_limits,
         |package, simulation, meter| {
+            if names_task_product_item(package.0, envelope.occurrence_key()) {
+                return Err(refused(ModelTraceRefusal::TraceAlphabet {
+                    required: "task",
+                    supplied: "model",
+                }));
+            }
             if let Some(clause) = resolve_invariant(envelope, package.0)? {
                 let system =
                     ModelSystem::new(simulation(subject)).map_err(ReplayRefusal::Admission)?;
@@ -1296,8 +1316,8 @@ impl ProtocolReplay<'_> {
         let Some((positions, steps)) = replayed else {
             return Ok(no_value());
         };
-        if let Some(lasso) = payload.lasso {
-            close_loop(system, &positions, lasso)?;
+        if let Some(lasso) = payload.lasso.as_ref() {
+            close_loop(system, &positions, lasso.clone())?;
         }
         Ok(match (&payload.kind, self.clause) {
             (CounterexampleKind::Deadlock, _) => deadlock(system, payload, &positions, &steps)?,
@@ -1345,7 +1365,8 @@ impl ProtocolReplay<'_> {
                     meter: self.meter,
                 };
                 check_formula(system, payload, &positions, &formula, |lasso| {
-                    let Some(states) = loop_states_of(system, payload, &positions, lasso)? else {
+                    let Some(states) = loop_states_of(system, payload, &positions, lasso.clone())?
+                    else {
                         return Ok(Err(no_value()));
                     };
                     if let Some(constraint) = unfair_member(system, &states, lasso, &fairness)? {
@@ -1438,6 +1459,24 @@ enum DerivedAnchors<'a> {
     Model,
     /// A protocol subject: the named protocol's `protocol_clause` node.
     Protocol(&'a str),
+}
+
+/// Whether `occurrence` is the claim occurrence of a release-backed
+/// schedulability claim, the item EN-6 settles over the task alphabet.
+fn names_task_product_item(package: &CheckedPackage, occurrence: &OccurrenceKey) -> bool {
+    let task_sets = package.graph().task_sets();
+    task_sets.claims().iter().any(|claim| {
+        matches!(
+            claim.claim,
+            fsl_semantics::check::ScheduleClaim::Schedulable(_)
+        ) && claim.occurrence().as_ref() == Some(occurrence)
+            && task_sets.task_set_of(claim).is_some_and(|set| {
+                task_sets
+                    .releases()
+                    .iter()
+                    .any(|r| r.task_set() == set.name)
+            })
+    })
 }
 
 fn resolve_item<'p, T: SubjectTransition>(
@@ -1784,8 +1823,8 @@ fn settle(
     let Some((positions, steps)) = replay_prefix(system, payload, &MODEL_STEPS)? else {
         return Ok((no_value(), Vec::new()));
     };
-    if let Some(lasso) = payload.lasso {
-        close_loop(system, &positions, lasso)?;
+    if let Some(lasso) = payload.lasso.as_ref() {
+        close_loop(system, &positions, lasso.clone())?;
     }
     match (&payload.kind, formula) {
         (CounterexampleKind::Race(_), _) => Err(refused(ModelTraceRefusal::RaceOverModel)),
@@ -1807,7 +1846,8 @@ fn settle(
         (CounterexampleKind::Formula, Some(formula)) => {
             let (settlement, loop_states) =
                 check_formula(system, payload, &positions, &formula, |lasso| {
-                    let Some(states) = loop_states_of(system, payload, &positions, lasso)? else {
+                    let Some(states) = loop_states_of(system, payload, &positions, lasso.clone())?
+                    else {
                         return Ok(Err(no_value()));
                     };
                     if let Some(constraint) =
@@ -1980,9 +2020,10 @@ fn replay_prefix_stopped_with_mismatch_explanation<S: SubjectSystem>(
             return Err(refused(refusal));
         }
         let Some((next, replayed)) = reached else {
-            if let Some(refusal) = explain_mismatch(index, &current.state, &step.transition) {
-                return Err(refused(refusal));
-            }
+            // The transition identity is enabled at this pre-state, but none
+            // of its replayed successors has the recorded key. This is a
+            // stale post-state even when the subject can explain an absent
+            // transition identity as a different refusal.
             return Err(refused(ModelTraceRefusal::PostState {
                 step: index,
                 recorded: step.post_state.clone(),
@@ -2177,13 +2218,13 @@ fn check_formula<S: SubjectSystem>(
     let mut letters = replayed_letters(system, payload, positions, formula.letters)?;
     let mut meter = Meter::new(formula.meter);
     let mut loop_states = Vec::new();
-    let trace = match payload.lasso {
+    let trace = match payload.lasso.as_ref() {
         Some(lasso) => {
-            match fair_loop(lasso)? {
+            match fair_loop(lasso.clone())? {
                 Ok(states) => loop_states = states,
                 Err(settlement) => return Ok((settlement, Vec::new())),
             }
-            trace_of(lasso, positions.len())
+            trace_of(lasso.clone(), positions.len())
         }
         None => TemporalTrace::Finite {
             len: position_of(positions.len()),
@@ -2289,7 +2330,7 @@ pub fn evaluate_model_trace(
         Ok((positions, _)) => positions,
         Err(stop) => return Ok(ModelTraceEnd::Stopped(stop)),
     };
-    let trace = match payload.lasso {
+    let trace = match payload.lasso.as_ref() {
         Some(lasso) => {
             if lasso.terminal_stutter {
                 // `close_loop` reads a stopped expansion as a non-terminal
@@ -2300,16 +2341,17 @@ pub fn evaluate_model_trace(
                     }
                 }
             }
-            close_loop(system, &positions, lasso)?;
-            let states = match loop_states_stopped(system, payload, &positions, lasso)? {
+            close_loop(system, &positions, lasso.clone())?;
+            let states = match loop_states_stopped(system, payload, &positions, lasso.clone())? {
                 Ok(states) => states,
                 Err(stop) => return Ok(ModelTraceEnd::Stopped(stop)),
             };
-            if let Some(constraint) = unfair_constraint(system, &states, lasso, clause.fairness())?
+            if let Some(constraint) =
+                unfair_constraint(system, &states, lasso.clone(), clause.fairness())?
             {
                 return Err(ReplayRefusal::UnfairLasso { constraint });
             }
-            trace_of(lasso, positions.len())
+            trace_of(lasso.clone(), positions.len())
         }
         None => TemporalTrace::Finite {
             len: position_of(positions.len()),
@@ -2559,7 +2601,7 @@ fn replayed_letters<'a, S: SubjectSystem>(
         instance,
         positions,
         prefix: &payload.prefix,
-        loop_edge_counts: match payload.lasso {
+        loop_edge_counts: match payload.lasso.as_ref() {
             Some(lasso) if !lasso.terminal_stutter => payload
                 .prefix
                 .last()
@@ -2598,8 +2640,8 @@ fn undefined_letter<S: SubjectSystem>(
 ) -> Result<LetterRead, ReplayRefusal> {
     let mut letters = replayed_letters(system, payload, positions, formula.letters)?;
     let mut meter = Meter::new(formula.meter);
-    let trace = match payload.lasso {
-        Some(lasso) => trace_of(lasso, positions.len()),
+    let trace = match payload.lasso.as_ref() {
+        Some(lasso) => trace_of(lasso.clone(), positions.len()),
         None => TemporalTrace::Finite {
             len: position_of(positions.len()),
         },

@@ -180,6 +180,9 @@ pub struct CheckedClockGuard {
     pub operation: CheckedNodeId,
     /// The nonempty disjunction of parts.
     pub parts: Vec<CheckedGuardPart>,
+    /// The point-qualified `operation_anchor` of a point-bound guard, its
+    /// final `point_anchor` binding (FSpec FR-322-AC-454, FR-342-AC-13).
+    pub point_anchor: Option<CheckedNodeId>,
 }
 
 /// One `time_invariant`.
@@ -303,6 +306,9 @@ pub struct CheckedClockReset {
     pub value: String,
     /// Quantity type, which is the selected unit node.
     pub value_type: CheckedNodeId,
+    /// The point-qualified `operation_anchor` of a point-bound reset, its
+    /// final `point_anchor` binding (FSpec FR-322-AC-454, FR-342-AC-13).
+    pub point_anchor: Option<CheckedNodeId>,
 }
 
 /// A data-predicate or operation urgency.
@@ -671,13 +677,19 @@ fn write_reset(reset: &CheckedClockReset, types: &TimedLiteralTypes) -> CheckedS
             binding_term("binders", reference_terms(binders)),
             binding_term("condition", reference_term(condition)),
             value,
-        ],
+        ]
+        .into_iter()
+        .chain(point_anchor_term(reset.point_anchor.as_ref()))
+        .collect(),
         CheckedResetTarget::Parameter { parameter } => vec![
             binding_term("kind", text_literal(&types.text, "parameter")),
             operation,
             binding_term("parameter", text_literal(&types.text, parameter)),
             value,
-        ],
+        ]
+        .into_iter()
+        .chain(point_anchor_term(reset.point_anchor.as_ref()))
+        .collect(),
     };
     reset.metadata.node("clock_reset", aggregate_term(members))
 }
@@ -699,11 +711,22 @@ fn write_guard(guard: &CheckedClockGuard) -> CheckedSemanticNodeV2 {
         .collect();
     guard.metadata.node(
         "clock_guard",
-        aggregate_term(vec![
-            binding_term("operation", reference_term(&guard.operation)),
-            binding_term("parts", aggregate_term(parts)),
-        ]),
+        aggregate_term(
+            [
+                binding_term("operation", reference_term(&guard.operation)),
+                binding_term("parts", aggregate_term(parts)),
+            ]
+            .into_iter()
+            .chain(point_anchor_term(guard.point_anchor.as_ref()))
+            .collect(),
+        ),
     )
+}
+
+/// FSpec FR-322-AC-454: the final `point_anchor` binding of a point-bound
+/// `clock_guard` or `clock_reset`, none for a point-free one.
+fn point_anchor_term(anchor: Option<&CheckedNodeId>) -> Option<CheckedTerm> {
+    anchor.map(|anchor| binding_term("point_anchor", reference_term(anchor)))
 }
 
 fn write_invariant(invariant: &CheckedTimeInvariant) -> CheckedSemanticNodeV2 {
@@ -1086,6 +1109,9 @@ fn project_reset(node: &CheckedSemanticNodeV2) -> Result<CheckedClockReset, &'st
         target,
         value: normalized_rational(literal_string(binding(body, "value")?)?)?,
         value_type: literal_type(binding(body, "value")?)?,
+        point_anchor: optional_binding(body, "point_anchor")
+            .map(reference)
+            .transpose()?,
     })
 }
 
@@ -1130,6 +1156,9 @@ fn project_guard(node: &CheckedSemanticNodeV2) -> Result<CheckedClockGuard, &'st
         metadata: TimedNodeMetadata::from_node(node),
         operation: reference(binding(body, "operation")?)?,
         parts,
+        point_anchor: optional_binding(body, "point_anchor")
+            .map(reference)
+            .transpose()?,
     })
 }
 

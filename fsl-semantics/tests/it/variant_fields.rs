@@ -991,12 +991,17 @@ fn unknown_record_and_model_fields_name_their_owner_and_keep_type_mismatches() {
     );
     assert!(object.location.path().is_empty());
 
-    assert!(
-        refusals.iter().any(|refusal| {
-            refusal.cause.code() == fsl_foundation::diagnostic::Code::IllTyped
-                && refusal.cause.cause() == Some("type-mismatch")
-        }),
-        "1 + \"a\" remains ill_typed/type-mismatch: {refusals:?}"
+    let arithmetic = refusals
+        .iter()
+        .find(|refusal| {
+            matches!(&refusal.location.origin,
+                filament_semantic_value::location::ExpressionOwner::Body { function, .. } if function == "arithmetic")
+        })
+        .expect("the arithmetic body is refused");
+    assert_eq!(
+        (arithmetic.cause.code(), arithmetic.cause.cause()),
+        (fsl_foundation::diagnostic::Code::IllTyped, Some("type-mismatch")),
+        "1 + \"a\" remains ill_typed/type-mismatch: {arithmetic:?}"
     );
 }
 

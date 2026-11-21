@@ -86,6 +86,7 @@ fn a_positive_delay_loop_that_never_takes_an_enabled_abstract_class_refutes() {
         Some(Lasso {
             entry: 0,
             terminal_stutter: false,
+            terminal_stutter_delay: None,
         })
     );
     let loop_steps: Vec<(bool, Option<Rational>)> = counterexample
@@ -344,7 +345,7 @@ fn a_loop_fair_to_a_concrete_constraint_refutes() {
          assume fair weak M::Call::tick;\nensure fair weak A::Call::send;",
     );
     let counterexample = violation(check(&world));
-    let entry = counterexample.lasso.expect("a lasso").entry;
+    let entry = counterexample.lasso.as_ref().expect("a lasso").entry;
     assert!(names(&counterexample)[entry..].contains(&"tick".to_owned()));
     assert!(matches!(
         counterexample.refinement,
@@ -424,6 +425,7 @@ fn a_lasso_is_rolled_back_to_its_shortest_stem() {
         Some(Lasso {
             entry: 1,
             terminal_stutter: false,
+            terminal_stutter_delay: None,
         })
     );
     assert!(matches!(
@@ -458,6 +460,7 @@ fn an_idle_tail_that_never_takes_an_enabled_class_refutes() {
         Some(Lasso {
             entry: 0,
             terminal_stutter: true,
+            terminal_stutter_delay: None,
         })
     );
     assert!(matches!(
@@ -578,7 +581,7 @@ fn a_tick_source_refutes_by_a_loop_of_ticks() {
         "step M::Call::tick -> stutter;\nensure fair weak A::Call::send;",
     );
     let counterexample = violation(check(&world));
-    let entry = counterexample.lasso.expect("a lasso").entry;
+    let entry = counterexample.lasso.as_ref().expect("a lasso").entry;
     assert!(names(&counterexample)[entry..]
         .iter()
         .all(|name| name == "tick"));

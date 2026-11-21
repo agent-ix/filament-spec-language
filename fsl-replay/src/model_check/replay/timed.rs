@@ -83,7 +83,7 @@ pub(super) fn settle(
 ) -> Result<(ModelTraceSettlement, Vec<StrongFairnessHint>), ReplayRefusal> {
     // FR-236: `final_delay` belongs to a time-lock alone, and a time-lock is
     // a finite prefix.
-    match (&payload.kind, &payload.final_delay, payload.lasso) {
+    match (&payload.kind, &payload.final_delay, payload.lasso.as_ref()) {
         (CounterexampleKind::TimeLock, _, Some(_)) => {
             return Err(refused(ModelTraceRefusal::TimeLockLasso))
         }
@@ -101,13 +101,13 @@ pub(super) fn settle(
         positions.push(Position { state, state_key });
     }
     let mut behaviour = None;
-    if let Some(lasso) = payload.lasso {
-        close_loop(timed, &replayed, &positions, lasso)?;
+    if let Some(lasso) = payload.lasso.as_ref() {
+        close_loop(timed, &replayed, &positions, lasso.clone())?;
         let Some(built) = behaviour_of(timed, &replayed) else {
             return Ok((no_value(), Vec::new()));
         };
         if let Some(formula) = &formula {
-            match unfair(timed, &built, lasso, formula.clause.fairness())? {
+            match unfair(timed, &built, lasso.clone(), formula.clause.fairness())? {
                 Fairness::Fair => {}
                 Fairness::Unfair(constraint) => {
                     return Err(ReplayRefusal::UnfairLasso { constraint })
@@ -115,7 +115,7 @@ pub(super) fn settle(
                 Fairness::NoValue => return Ok((no_value(), Vec::new())),
             }
         }
-        behaviour = Some((built, lasso));
+        behaviour = Some((built, lasso.clone()));
     }
     let last = replayed.last().ok_or_else(|| fault("a-position-exists"))?;
     let settlement = match (&payload.kind, formula) {
@@ -390,8 +390,8 @@ pub(crate) fn timed_prefix(
         states.push(position.state.clone());
     }
     // A lasso's loop closes over time (FR-237 "Lasso").
-    if let Some(lasso) = payload.lasso {
-        close_loop(timed, &replayed, &positions, lasso)?;
+    if let Some(lasso) = payload.lasso.as_ref() {
+        close_loop(timed, &replayed, &positions, lasso.clone())?;
     }
     Ok(Some((positions, states)))
 }
@@ -610,7 +610,7 @@ fn trace_of(
     let stamps = |positions: &[TimedPosition]| -> Vec<Rational> {
         positions.iter().map(|p| p.stamp.clone()).collect()
     };
-    match payload.lasso {
+    match payload.lasso.as_ref() {
         None => Ok((TimedTrace::new(stamps(replayed))?, replayed.len())),
         Some(lasso) if lasso.terminal_stutter => {
             let delay = stutter_delay(timed);

@@ -813,6 +813,7 @@ impl Product<'_, '_> {
                 Lasso {
                     entry,
                     terminal_stutter: true,
+                    terminal_stutter_delay: None,
                 },
             )));
         }
@@ -870,6 +871,7 @@ impl Product<'_, '_> {
                     Lasso {
                         entry,
                         terminal_stutter: false,
+                        terminal_stutter_delay: None,
                     },
                 )
             }))

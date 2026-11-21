@@ -19,14 +19,14 @@ use filament_exact::{Cancel, ValueType};
 use filament_semantic_value::catalog::InternalFault;
 use filament_semantic_value::fairness::PropertyForm;
 use fsl_eval::automaton::{
-    bounded_shape, translate, translate_counted, AutomatonError, AutomatonKind, BoundedTranslation,
-    BuchiStates, ContextBinding, PropertyAutomaton, SafetyTranslation, StateContext, SubjectKind,
-    TranslationRefusal, MAX_ATOMS,
+    closure_shape, translate, translate_counted, AutomatonError, AutomatonKind, BoundedTranslation,
+    BuchiStates, ContextBinding, NotTranslated, PropertyAutomaton, SafetyTranslation, StateContext,
+    SubjectKind, TranslationRefusal, MAX_ATOMS,
 };
 use fsl_eval::model_subject::{ModelInstance, ModelLetters, ModelSubject};
 use fsl_eval::simulation::model::ModelSystem;
 use fsl_eval::simulation::NotSimulated;
-use fsl_semantics::check::{CheckedStateClause, CheckedTemporalClause};
+use fsl_semantics::check::{Activation, CheckedStateClause, CheckedTemporalClause};
 
 use crate::model_check::identity::{ClauseIdentity, ClauseRootRefusal};
 
@@ -316,7 +316,16 @@ impl ModelCheckItem<'_> {
                         };
                         let context =
                             StateContext::clause(clause, identity.occurrence().clone(), binding);
-                        let translation = if bounded_shape(clause).is_some() {
+                        let translation = if closure_shape(clause).is_some() {
+                            // FR-338: a protocol subject's steps do not all
+                            // count, so its bounded `on each` has no
+                            // canonical translation (the producer refuses it
+                            // too); its `Idle` key is no state there.
+                            if matches!(clause.activation(), Activation::Each { .. })
+                                && tp4.is_some_and(|tp4| tp4.subject_kind == SubjectKind::Protocol)
+                            {
+                                return Err(TranslationRefusal::NotTranslated(NotTranslated).into());
+                            }
                             Translation::Bounded(BoundedTranslation::clause(clause, &context)?)
                         } else if let Some(tp4) =
                             tp4.filter(|_| clause.property_form() == Some(PropertyForm::Liveness))
