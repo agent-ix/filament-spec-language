@@ -83,7 +83,7 @@
 
 mod divergence;
 mod wire;
-pub use wire::ZoneCertificateWireError;
+pub use wire::{ZoneCertificateReferenceError, ZoneCertificateWireError};
 mod product;
 pub use task_check::{
     explore_task_product, recomputed_member, QuotientEdge, QuotientIdentity, QuotientInitial,
