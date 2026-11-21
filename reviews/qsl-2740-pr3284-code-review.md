@@ -46,3 +46,12 @@ The new `require_complete_population` helper at lines 2409–2426 repeats the co
 The `source_aggregates_group_reservations_and_duplicate_refunds_by_order` fixture has refund keys `r1`, `r2`, and `r3` with order and amount fields only. It does not represent a repeated delivery receipt or a separate business-effect identity. TC-173 requires both a duplicate receipt and a distinct second effect; the current test can pass even if repeat receipts are counted as extra effects.
 
 The supplied focused runner evidence is for the exact frozen head: `workflow_population_aggregates::` 3 passed and `run_value_spellings::` 12 passed, 0 failures, 3 existing ignored. No local Cargo gate was run.
+
+## Dispositions
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | The completeness decision is now centralized in `Machine::require_complete_population(objects, population)`. Both the explicit function-query path and `named_members` pass their selected observation to that shared check. |
+| FND-002 | still-open | The fixture now contains duplicate receipt rows and distinct refund identities, but `UNIT::refundTotal` and `recovered` never read `DELIVERY_RECEIPTS`; the call still supplies only the refund population, so the completed outcome is unchanged if duplicate receipts are mishandled. |
+| FND-001 | fixed | Rechecked at head `d21084f99f4de4375c15d02b3df0db6e294c90ce`; both explicit-query evaluation and `named_members` call the shared helper over their selected observation. |
+| FND-002 | fixed | The workflow query now accepts `receipts`, joins each refund to receipt effects by refund identity, and the request supplies the receipt population; the duplicate r1 receipt contributes one effect while distinct r2 contributes separately. |
