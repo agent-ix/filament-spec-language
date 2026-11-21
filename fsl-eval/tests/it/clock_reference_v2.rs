@@ -109,7 +109,7 @@ fn fixture(remove_x: bool) -> Checked {
          }}\n\
          invariant Stored using m on C::Call at current {{ self.r = ref(self.{selected}) }}\n\
          function stored using m(c: Reference<C::Call>): Reference<Clock> pure {{ deref(c).r }}\n\
-         function maybe_stored using m(c: Reference<C::Call>): Reference<Clock> pure {{ value(deref(c).maybe) }}\n\
+         function maybe_stored using m(c: Reference<C::Call>): Reference<Clock> pure {{ if present(deref(c).maybe) then value(deref(c).maybe) else deref(c).r }}\n\
          function has_maybe using m(c: Reference<C::Call>): Boolean pure {{ present(deref(c).maybe) }}\n\
          function stored_refs using m(c: Reference<C::Call>): Sequence<Reference<Clock>>[0, 3] pure {{ deref(c).refs }}",
         clock_refinement(&format!(

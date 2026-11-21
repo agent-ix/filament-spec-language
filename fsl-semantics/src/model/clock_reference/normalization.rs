@@ -514,6 +514,19 @@ impl SourceDeclarations {
                     }
                 }
             }
+            if original.is_none() {
+                // Emitted rows carry the full original declaration URI rather
+                // than its transient structural handle. Resolve that URI
+                // against authenticated metadata, then retain every matching
+                // original owner/name fact; distinct origins still refuse.
+                if let Some(scope) = self.row_scope(declaring)? {
+                    for (node, origin) in &self.original_nodes {
+                        if self.node_scopes.get(node) == Some(&scope) {
+                            retain_original(&mut original, origin)?;
+                        }
+                    }
+                }
+            }
             match original {
                 Some(OriginalClockMemberOrigin::Source {
                     owner,
