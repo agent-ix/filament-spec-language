@@ -83,7 +83,6 @@ fn state_core_refuses_each_division_as_one_function_declaration() {
 
 #[test]
 #[trace("FR-495-AC-4")]
-#[ignore = "QSL-2722: strict operator-locus oracle; state-core refusal currently covers the whole expression"]
 fn state_core_locates_live_and_dead_division_in_each_state_clause() {
     let packages = fsl_semantics::model::intake::package_input(std::iter::empty::<&[u8]>())
         .expect("the object is declared in the unit");

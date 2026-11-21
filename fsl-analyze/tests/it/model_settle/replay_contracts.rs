@@ -165,3 +165,37 @@ fn returned_undefined_and_actual_state_limit_runs_settle_without_invented_outcom
     assert_eq!(settled.truth, Truth::Unavailable);
     assert_eq!(settled.counterexample, None);
 }
+
+/// `inc` may add one or two, so its one transition identity has two
+/// successors from value 1: the recorded post-state key selects among them.
+const CHOOSING_INC: &str = "pre CanInc using v on M::Counter::inc { self.value < 3 }\n\
+     post Inc using v on M::Counter::inc { self.value - pre(self.value) = 1 or self.value - pre(self.value) = 2 }\n";
+
+#[trace("FR-128-AC-3")]
+#[test]
+fn a_recorded_post_state_selects_among_the_successors_of_one_transition_identity() {
+    let case = case(CHOOSING_INC, &[1]);
+    let returned = counterexample(&case);
+    let system = ModelSystem::new(case.request().subject.simulation).expect("the model admits");
+    let expansion = system
+        .successors(&system.initial()[0])
+        .expect("the enabled state expands");
+    assert_eq!(
+        expansion.successors.len(),
+        2,
+        "one identity, two successors"
+    );
+    assert_eq!(expansion.successors[0].0, expansion.successors[1].0);
+    let taken = replay(&case, returned.clone()).expect("the recorded successor replays");
+
+    let other = expansion
+        .successors
+        .iter()
+        .map(|(_, state)| StateKey::from_canonical_bytes(system.state_key(state).expect("a key").0))
+        .find(|key| *key != returned.prefix[0].post_state)
+        .expect("a second successor");
+    let mut chosen = returned;
+    chosen.prefix[0].post_state = other;
+    let result = replay(&case, chosen).expect("the other recorded successor is chosen");
+    assert_ne!(result.settlement, taken.settlement);
+}

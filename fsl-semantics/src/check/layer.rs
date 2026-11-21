@@ -243,9 +243,11 @@ impl<'a> LayerAdmission<'a> {
         whole: Span,
     ) -> Option<AssemblyError> {
         let mut found = None;
-        visit_located(body, spans, whole, |node, span| {
+        visit_located_operators(body, spans, whole, |node, span, operator| {
             let form = expression_form(node, self.predicates).filter(|form| self.refuses(*form))?;
-            found = Some(self.refusal(form, span));
+            // A binary operator is the construct refused: it is located at
+            // its own token, not at the whole expression it forms.
+            found = Some(self.refusal(form, operator.unwrap_or(span)));
             Some(())
         });
         found
@@ -309,10 +311,22 @@ pub(super) fn visit_located(
     whole: Span,
     mut visit: impl FnMut(&ExprNode, Span) -> Option<()>,
 ) {
+    visit_located_operators(body, spans, whole, |node, span, _| visit(node, span));
+}
+
+/// [`visit_located`] that also passes the operator token of a binary
+/// expression read from source.
+pub(super) fn visit_located_operators(
+    body: &Expression,
+    spans: &ExpressionSpans,
+    whole: Span,
+    mut visit: impl FnMut(&ExprNode, Span, Option<Span>) -> Option<()>,
+) {
     let mut pending = vec![(body.root(), Some(spans.root()))];
     while let Some((node, located)) = pending.pop() {
         let span = located.and_then(|id| spans.span(id)).unwrap_or(whole);
-        if visit(node.node(), span).is_some() {
+        let operator = located.and_then(|id| spans.operator_span(id));
+        if visit(node.node(), span, operator).is_some() {
             return;
         }
         // Source order: the first child is popped first.

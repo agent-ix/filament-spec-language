@@ -1527,7 +1527,6 @@ fn a_host_that_loses_the_checked_model_input_reaches_a_real_internal_fault() {
 }
 
 #[test]
-#[ignore = "QSL-2693: command erases unknown capability classification"]
 #[trace("FR-111", "FR-660")]
 fn an_unknown_request_capability_keeps_the_required_feature_classification() {
     // FR-111 Behavior/capability inventory: a capability outside the closed
