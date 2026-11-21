@@ -1194,6 +1194,31 @@ pub fn run_value_json(
     ))
 }
 
+/// Write a borrowed run value through the shared typed projection, admitting
+/// every visit, identity copy, decimal conversion and buffer reservation
+/// before work. No retained encoding tree is constructed first.
+///
+/// # Errors
+/// The original caller work/storage/cancellation refusal, a physical
+/// allocation failure, or an unencodable admitted value.
+pub fn run_value_bytes(
+    value: &Value,
+    types: &TypeEnvironment,
+    enums: &[EnumBinding],
+    variants: &[VariantTypeDeclaration],
+    identity: fsl_foundation::IdentityLimits,
+    budget: &mut dyn super::ModelKeyBudget,
+    cancel: &filament_exact::Cancel,
+) -> Result<Vec<u8>, super::ModelKeyError> {
+    bounded::value_bytes(
+        value,
+        Typing::with_variants(types, variants).with_enums(enums),
+        identity,
+        budget,
+        cancel,
+    )
+}
+
 /// The canonical declaration name of an admitted run type's structural key.
 pub fn run_declaration_name(key: &NodeKey) -> Option<String> {
     DeclarationRecord::of_node(key)?
