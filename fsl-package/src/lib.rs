@@ -28,6 +28,13 @@ pub const CATALOG_PAIRS: &[fsl_foundation::diagnostic::CatalogCode] = &[
 #[cfg(feature = "std")]
 mod analysis_view;
 #[cfg(feature = "std")]
+mod composition_view;
+#[cfg(feature = "std")]
+pub use composition_view::{
+    CompositionMember, CompositionMemberValue, CompositionView, CompositionViewRefusal,
+    OwnedNodeRef,
+};
+#[cfg(feature = "std")]
 pub mod occurrence_source;
 #[cfg(feature = "std")]
 pub use analysis_view::{AnalysisView, ClaimOccurrence, DependencyClosure};

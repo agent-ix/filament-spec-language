@@ -28,6 +28,9 @@ use super::*;
 )]
 mod fixture;
 
+#[path = "composition_view.rs"]
+mod view_tests;
+
 const MODEL_HEADER: &str = "language \"ix:native\" edition \"1-draft\";\n\
      profile v = \"filament.model.complete/v1\";\n\
      profile t = \"filament.temporal.infinite-trace/v1\";\n\
@@ -729,9 +732,7 @@ fn composition_declaration_and_canonical_members_keep_their_authored_regions() {
         environment Alpha by \"scheduler\" fair weak each M::Producer::send; }}"
     );
     let source = unit(&declaration);
-    let package = world
-        .compile(&declaration)
-        .expect("the source checks");
+    let package = world.compile(&declaration).expect("the source checks");
     let emission = emit_checked(&package).expect("the composition emits");
     assert!(emission.omitted().is_empty());
     let document = serde_json::to_vec(&fixture::document()).expect("model document");
@@ -1086,9 +1087,7 @@ fn composition_empty_arrays_and_region_refusal_precedence_are_preserved() {
         "interface",
         "environment Sched by \"scheduler\" fair weak each M::Producer::send; ",
     );
-    let package = world
-        .compile(&declaration)
-        .expect("the source checks");
+    let package = world.compile(&declaration).expect("the source checks");
     let emission = emit_checked(&package).expect("the source emits");
     let document = serde_json::to_vec(&fixture::document()).expect("model document");
     let models = fsl_semantics::model::intake::package_input([document.as_slice()])

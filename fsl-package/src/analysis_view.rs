@@ -68,6 +68,15 @@ pub trait AnalysisView: sealed::Sealed {
     /// reader keeps nonempty (FR-940 `identity`).
     fn identity(&self) -> &LibraryName;
 
+    /// Read one admitted composition and its owner-bound member references.
+    /// The node is a document-held declaration ID from this package.
+    fn composition(
+        &self,
+        node: &CheckedNodeId,
+    ) -> Result<crate::CompositionView<'_>, crate::CompositionViewRefusal> {
+        crate::composition_view::composition_view(self.package(), node)
+    }
+
     /// Resolve an explicitly selected occurrence against this owning package.
     /// An ambiguous multi-region occurrence requires an exact region selector.
     fn occurrence_source(
