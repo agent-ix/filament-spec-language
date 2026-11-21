@@ -5,6 +5,8 @@ use filament_exact::{NodeKey, ObjectId, ObjectReference, Value};
 
 /// Route-neutral declared clock identity and its canonical text grammar.
 pub mod identity;
+/// Authenticated source declaration spelling shared by emission and clock ids.
+pub mod normalization;
 
 /// Whether the target type is the native clock reference's exact target.
 pub fn is_clock_type(target: &filament_exact::EffectiveId) -> bool {
