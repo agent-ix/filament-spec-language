@@ -2703,6 +2703,7 @@ fn until_avoidance_cannot_cross_an_already_reached_target() {
         action: None,
         draw: None,
         probability: ratio(1, 1),
+        elapsed: ratio(0, 1),
         rewards: Vec::new(),
     };
     let product = ProbProduct {

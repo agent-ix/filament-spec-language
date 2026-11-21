@@ -155,6 +155,8 @@ fn semantic_mutations_cannot_obtain_a_reproduced_token() {
     let mut changed = witness.clone();
     changed.paths[0].steps[0]
         .action
+        .as_mut()
+        .unwrap()
         .operation
         .push_str("-disabled");
     assert!(matches!(
@@ -162,7 +164,7 @@ fn semantic_mutations_cannot_obtain_a_reproduced_token() {
         Err(ProbabilityWitnessError::Refused)
     ));
     let mut changed = witness.clone();
-    changed.paths[0].steps[0].draw = vec![Value::Integer(Integer::from(7_i64))];
+    changed.paths[0].steps[0].draw = Some(vec![Value::Integer(Integer::from(7_i64))]);
     assert!(matches!(
         replay(&world, &changed, &limits, &Cancel::new()),
         Err(ProbabilityWitnessError::Refused)
@@ -174,14 +176,15 @@ fn semantic_mutations_cannot_obtain_a_reproduced_token() {
         Err(ProbabilityWitnessError::Refused)
     ));
     let mut changed = witness.clone();
-    changed.paths[0].steps[0].transition =
+    changed.paths[0].steps[0].transition = Some(
         filament_semantic_value::model_transition::ModelTransition::new(
             "\"disabled\"".to_owned(),
             None,
             vec![],
             quire_canonical::Limits::new(1024),
         )
-        .expect("canonical syntax with a disabled semantic identity");
+        .expect("canonical syntax with a disabled semantic identity"),
+    );
     assert!(matches!(
         replay(&world, &changed, &limits, &Cancel::new()),
         Err(ProbabilityWitnessError::Refused)
@@ -199,7 +202,7 @@ fn semantic_mutations_cannot_obtain_a_reproduced_token() {
         Err(ProbabilityWitnessError::Refused)
     ));
     let mut changed = witness.clone();
-    changed.scheduler[0].1.operation.push_str("-disabled");
+    changed.scheduler[0].1 = fsl_replay::ProductAction::TerminalStutter;
     assert!(matches!(
         replay(&world, &changed, &limits, &Cancel::new()),
         Err(ProbabilityWitnessError::Refused)
@@ -492,6 +495,8 @@ fn replay_parity_and_refusal_settle_inconclusive_without_evidence() {
                 } else {
                     witness.paths[0].steps[0]
                         .action
+                        .as_mut()
+                        .unwrap()
                         .operation
                         .push_str("-disabled");
                 }
@@ -669,10 +674,11 @@ fn merged_draws_expand_into_actual_vectors_with_a_witness_storage_limit() {
         )),
         ratio(1, 1)
     );
-    assert!(!fsl_eval::simulation::model::same_values(
-        &witness.paths[0].steps[0].draw,
-        &witness.paths[1].steps[0].draw
-    ));
+    assert!(witness.paths[0].steps[0]
+        .draw
+        .as_deref()
+        .zip(witness.paths[1].steps[0].draw.as_deref())
+        .is_some_and(|(left, right)| !fsl_eval::simulation::model::same_values(left, right)));
     let engines = Engines::fsl().unwrap();
     let mut request = world.request("TooMuch", ModelCheckLimits::default());
     request.limits.max_witness_paths = 1;

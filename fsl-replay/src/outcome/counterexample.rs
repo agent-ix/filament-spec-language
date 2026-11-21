@@ -1995,10 +1995,16 @@ pub fn probabilistic_wire(
             path.steps
                 .iter()
                 .map(|step| {
+                    let transition = step.transition.as_ref().map(model_transition).transpose()?;
+                    let random = step
+                        .draw
+                        .as_ref()
+                        .map(|draw| draw.iter().map(typed).collect::<Result<Vec<_>, _>>())
+                        .transpose()?;
                     let mut written = json!({
-                        "transition": model_transition(&step.transition)?,
+                        "transition": transition,
                         "post_state": key(&step.post)?,
-                        "random": step.draw.iter().map(typed).collect::<Result<Vec<_>, _>>()?,
+                        "random": random,
                     });
                     if step.elapsed != Rational::from_integer(filament_exact::Integer::from(0_i64))
                     {

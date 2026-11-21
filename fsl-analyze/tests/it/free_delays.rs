@@ -292,7 +292,6 @@ fn a_later_guard_leaves_the_tie_as_the_maximum() {
 /// distribution applied, never refused `DelayDistribution`.
 #[trace("TC-642", "FR-204-AC-7")]
 #[test]
-#[ignore = "QSL-2156: delay distributions over every scheduler not implemented yet"]
 fn a_later_guard_is_decided_under_every_scheduler() {
     let world = later_guard_race();
     let built = build(&world, "Every");

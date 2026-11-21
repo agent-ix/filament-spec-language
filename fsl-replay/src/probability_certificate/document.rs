@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! FR-201's closed probability document profiles and strict JCS codec.
 
-use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine;
+use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use serde::{Deserialize, Serialize};
 
 use super::*;
@@ -14,27 +14,28 @@ mod key;
 mod mdp;
 #[cfg(feature = "test-support")]
 pub use mdp::{
-    check_cyclic_mdp_probability_certificate_observing,
-    check_cyclic_mdp_probability_certificate_with_identity, CyclicMdpProbabilityPhase,
+    CyclicMdpProbabilityPhase, check_cyclic_mdp_probability_certificate_observing,
+    check_cyclic_mdp_probability_certificate_with_identity,
 };
 pub use mdp::{
-    cyclic_mdp_probability_certificate_document,
+    ProbabilityProofDocument, cyclic_mdp_probability_certificate_document,
     cyclic_mdp_reward_probability_certificate_document, probability_proof_document,
-    read_probability_proof_document, write_probability_proof_document, ProbabilityProofDocument,
+    read_probability_proof_document, write_probability_proof_document,
 };
 mod long_run;
-#[cfg(feature = "test-support")]
 pub use long_run::{
-    check_long_run_probability_certificate_observing,
-    check_long_run_probability_certificate_with_identity, LongRunProbabilityPhase,
-};
-pub use long_run::{
+    LongRunProbabilityComponent, LongRunProbabilityDocument, WeightedLongRunProbabilityDocument,
     long_run_probability_certificate_document, read_long_run_probability_certificate,
     read_weighted_long_run_probability_certificate,
     weighted_long_run_probability_certificate_document, write_long_run_probability_certificate,
-    write_weighted_long_run_probability_certificate, LongRunProbabilityComponent,
-    LongRunProbabilityDocument, WeightedLongRunProbabilityDocument,
+    write_weighted_long_run_probability_certificate,
 };
+#[cfg(feature = "test-support")]
+pub use long_run::{
+    LongRunProbabilityPhase, check_long_run_probability_certificate_observing,
+    check_long_run_probability_certificate_with_identity,
+};
+mod timed;
 mod unit;
 mod writer;
 pub(super) use key::{
@@ -50,6 +51,7 @@ const CYCLIC_MDP_PROFILE: &str = "filament.probability-objective/cyclic-mdp-even
 const CYCLIC_MDP_REWARD_PROFILE: &str =
     "filament.probability-objective/cyclic-mdp-expected-reward/v1";
 const BOUNDED_FAIR_PROFILE: &str = "filament.probability-objective/bounded-fair-eventual/v1";
+const TIMED_PROFILE: &str = "filament.probability-objective/timed-product/v1";
 const MAX_COUNT: u64 = 9_007_199_254_740_991;
 
 /// Caller-owned byte and working-storage ceilings for certificate transport.
@@ -135,11 +137,55 @@ pub struct ProbabilityCertificateDocument {
     pub reward: Option<ProbabilityRewardObjective>,
     /// Operator selected by the checked claim.
     pub optimization: ProbabilityObjective,
+    /// FR-920's timed-product route, unit, scale and form when this is a timed
+    /// certificate.
+    pub timed: Option<TimedProbabilityObjective>,
     /// Exact values, covering every reachable product state.
     pub values: Vec<ExactProbabilityValue>,
     /// Progress ranks for every reachable state. Cyclic reward requires progress
     /// for every non-target state, including states whose reward value is zero.
     pub ranking: Vec<(ProbabilityProductKey, u64)>,
+}
+
+/// The checked timed route emitted in a timed-product certificate.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum TimedProbabilityRoute {
+    /// The closed integer-scale clock product.
+    Digital,
+    /// The fractional clock-region product.
+    Region,
+}
+
+/// The checked temporal form represented by a timed-product certificate.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum TimedProbabilityForm {
+    /// Unbounded reachability.
+    Reach,
+    /// Unbounded until.
+    Until,
+    /// Unbounded always.
+    Always,
+    /// A bounded deadline event.
+    Deadline,
+    /// A bounded-window monitor.
+    BoundedWindow,
+    /// Expected elapsed time.
+    ExpectedElapsed,
+    /// An elapsed-time quantile transform.
+    ElapsedQuantile,
+}
+
+/// FR-920's checker-compared timed objective metadata.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TimedProbabilityObjective {
+    /// The required digital or region semantics.
+    pub route: TimedProbabilityRoute,
+    /// The checked time unit's existing NodeId.
+    pub unit: filament_exact::NodeKey,
+    /// FR-204's least common denominator, before region subdivision.
+    pub scale: u64,
+    /// The timed formula shape.
+    pub form: TimedProbabilityForm,
 }
 
 /// FR-196's actual model-scoped reward identity and checked comparison unit.
@@ -220,7 +266,9 @@ pub enum ProbabilityDocumentError {
     #[error("probability certificate arithmetic stopped: {0:?}")]
     Accounting(Box<filament_exact::Incomplete>),
     /// Decimal text proves that an integer exceeds the bit ceiling before parsing it.
-    #[error("exact_prob.max_rational_bits exhausted: {decimal_digits} decimal digits exceed the {bit_bound}-bit ceiling")]
+    #[error(
+        "exact_prob.max_rational_bits exhausted: {decimal_digits} decimal digits exceed the {bit_bound}-bit ceiling"
+    )]
     IntegerText {
         /// Configured numerator/denominator bit ceiling.
         bit_bound: u64,
@@ -289,6 +337,60 @@ struct WireObjective {
     unit: Option<Box<serde_json::value::RawValue>>,
     optimization: String,
     fairness: Vec<Box<serde_json::value::RawValue>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    timed: Option<WireTimedObjective>,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct WireTimedObjective {
+    route: String,
+    unit: Box<serde_json::value::RawValue>,
+    scale: String,
+    form: String,
+}
+
+fn read_timed_objective(
+    wire: WireTimedObjective,
+) -> Result<TimedProbabilityObjective, ProbabilityDocumentError> {
+    let route = match wire.route.as_str() {
+        "digital" => TimedProbabilityRoute::Digital,
+        "region" => TimedProbabilityRoute::Region,
+        _ => return Err(ProbabilityDocumentError::MalformedMember("objective")),
+    };
+    let scale = wire
+        .scale
+        .parse::<u64>()
+        .ok()
+        .filter(|scale| *scale > 0)
+        .filter(|scale| scale.to_string() == wire.scale)
+        .ok_or(ProbabilityDocumentError::MalformedMember("objective"))?;
+    let form = match wire.form.as_str() {
+        "reach" => TimedProbabilityForm::Reach,
+        "until" => TimedProbabilityForm::Until,
+        "always" => TimedProbabilityForm::Always,
+        "deadline" => TimedProbabilityForm::Deadline,
+        "bounded-window" => TimedProbabilityForm::BoundedWindow,
+        "expected-elapsed" => TimedProbabilityForm::ExpectedElapsed,
+        "elapsed-quantile" => TimedProbabilityForm::ElapsedQuantile,
+        _ => return Err(ProbabilityDocumentError::MalformedMember("objective")),
+    };
+    let unit: Value = serde_json::from_str(wire.unit.get())
+        .map_err(|_| ProbabilityDocumentError::MalformedMember("objective"))?;
+    let Some(parts) = unit.as_array().filter(|parts| parts.len() == 2) else {
+        return Err(ProbabilityDocumentError::MalformedMember("objective"));
+    };
+    if parts[0] != "declared" {
+        return Err(ProbabilityDocumentError::MalformedMember("objective"));
+    }
+    let unit = fsl_foundation::node_wire::node_key_from_json(&parts[1])
+        .map_err(|_| ProbabilityDocumentError::MalformedMember("objective"))?;
+    Ok(TimedProbabilityObjective {
+        route,
+        unit,
+        scale,
+        form,
+    })
 }
 
 fn present_unit<'de, D: serde::Deserializer<'de>>(
@@ -331,6 +433,7 @@ fn poll(cancel: &Cancel) -> Result<(), ProbabilityDocumentError> {
 #[derive(Clone, Copy, Eq, PartialEq)]
 enum ProfileDispatch {
     Exact,
+    Timed,
     LongRun,
     CyclicMdp,
     CyclicMdpReward,
@@ -370,6 +473,7 @@ fn profile_dispatch(
             Some(quire_canonical::Node::String(profile)) if long_run::is_profile(profile) => {
                 ProfileDispatch::LongRun
             }
+            Some(quire_canonical::Node::String(TIMED_PROFILE)) => ProfileDispatch::Timed,
             Some(quire_canonical::Node::String(CYCLIC_MDP_PROFILE)) => ProfileDispatch::CyclicMdp,
             Some(quire_canonical::Node::String(CYCLIC_MDP_REWARD_PROFILE)) => {
                 ProfileDispatch::CyclicMdpReward
@@ -646,7 +750,7 @@ fn read_document_profile(
     let root = parsed.root();
     let objective = root.get("objective");
     let outside_profile = matches!(root.get("kind").map(|node| node.node()), Some(quire_canonical::Node::String(kind)) if kind != "exact")
-        || matches!(objective.and_then(|node| node.get("profile")).map(|node| node.node()), Some(quire_canonical::Node::String(profile)) if if cyclic_mdp { !matches!(profile, CYCLIC_MDP_PROFILE | CYCLIC_MDP_REWARD_PROFILE) } else { !(allow_fair && profile == BOUNDED_FAIR_PROFILE) && profile != PROFILE && profile != STATE_PROFILE && profile != REWARD_PROFILE && profile != CYCLIC_PROFILE && profile != CYCLIC_REWARD_PROFILE })
+        || matches!(objective.and_then(|node| node.get("profile")).map(|node| node.node()), Some(quire_canonical::Node::String(profile)) if if cyclic_mdp { !matches!(profile, CYCLIC_MDP_PROFILE | CYCLIC_MDP_REWARD_PROFILE) } else { !(allow_fair && profile == BOUNDED_FAIR_PROFILE) && profile != PROFILE && profile != STATE_PROFILE && profile != REWARD_PROFILE && profile != CYCLIC_PROFILE && profile != CYCLIC_REWARD_PROFILE && profile != TIMED_PROFILE })
         || matches!(objective.and_then(|node| node.get("event")).map(|node| node.node()), Some(quire_canonical::Node::String(event)) if !matches!(event, "until" | "always"))
         || matches!(objective.and_then(|node| node.get("optimization")).map(|node| node.node()), Some(quire_canonical::Node::String(operator)) if !matches!(operator, "minimum" | "maximum" | "workload"))
         || match objective
@@ -744,7 +848,12 @@ fn read_document_profile(
         } else {
             !matches!(
                 wire.objective.profile.as_str(),
-                PROFILE | STATE_PROFILE | REWARD_PROFILE | CYCLIC_PROFILE | CYCLIC_REWARD_PROFILE
+                PROFILE
+                    | STATE_PROFILE
+                    | REWARD_PROFILE
+                    | CYCLIC_PROFILE
+                    | CYCLIC_REWARD_PROFILE
+                    | TIMED_PROFILE
             ) && !(allow_fair && wire.objective.profile == BOUNDED_FAIR_PROFILE)
         }
         || !wire.objective.fairness.is_empty() && wire.objective.profile != BOUNDED_FAIR_PROFILE
@@ -759,6 +868,7 @@ fn read_document_profile(
         }
     }
     let state_profile = wire.objective.profile == STATE_PROFILE;
+    let timed_profile = wire.objective.profile == TIMED_PROFILE;
     let reward_profile = matches!(
         wire.objective.profile.as_str(),
         REWARD_PROFILE | CYCLIC_REWARD_PROFILE | CYCLIC_MDP_REWARD_PROFILE
@@ -767,9 +877,14 @@ fn read_document_profile(
         || state_profile != wire.objective.failures.is_some()
         || reward_profile != wire.objective.reward.is_some()
         || reward_profile != wire.objective.unit.is_some()
+        || timed_profile != wire.objective.timed.is_some()
     {
         return Err(ProbabilityDocumentError::Malformed);
     }
+    let timed = wire.objective.timed.map(read_timed_objective).transpose()?;
+    let extended_timed_value_profile = timed
+        .as_ref()
+        .is_some_and(|objective| objective.form == TimedProbabilityForm::ExpectedElapsed);
     let reward = match (wire.objective.reward, wire.objective.unit) {
         (Some((model, name)), Some(unit)) => Some(ProbabilityRewardObjective {
             model: fsl_foundation::node_wire::node_key_from_text(model.get())
@@ -824,7 +939,13 @@ fn read_document_profile(
         poll(cancel)?;
         values.push(ExactProbabilityValue {
             state: decode_key(&row.state, limits)?,
-            value: reward_ratio(row.value, limits.scalar_bits, reward_profile, meter, cancel)?,
+            value: reward_ratio(
+                row.value,
+                limits.scalar_bits,
+                reward_profile || extended_timed_value_profile,
+                meter,
+                cancel,
+            )?,
         });
     }
     ordered(values.iter().map(|row| row.state.clone())).map_err(|error| {
@@ -861,6 +982,7 @@ fn read_document_profile(
         failures,
         reward,
         optimization,
+        timed,
         values,
         ranking,
     })
@@ -1412,6 +1534,7 @@ fn construct_document(
         failures,
         reward: reward.map(|reward| reward.objective),
         optimization,
+        timed: None,
         values: certificate
             .values
             .iter()
@@ -1508,13 +1631,14 @@ fn check_document_with_control(
     fair_control: &fairness::Control<'_>,
 ) -> Result<ExactProbabilityCertificateCheck, ProbabilityDocumentError> {
     match profile_dispatch(bytes, limits, cancel)? {
+        ProfileDispatch::Timed => return timed::check(system, claims, item, bytes, limits, cancel),
         ProfileDispatch::LongRun => {
-            return long_run::check(system, claims, item, bytes, limits, cancel)
+            return long_run::check(system, claims, item, bytes, limits, cancel);
         }
         ProfileDispatch::CyclicMdp | ProfileDispatch::CyclicMdpReward => {
             return mdp::check_with_reward_control(
                 system, claims, item, bytes, limits, cancel, control,
-            )
+            );
         }
         ProfileDispatch::Exact | ProfileDispatch::BoundedFair => {}
     }
@@ -1593,7 +1717,7 @@ fn check_document_with_control(
     let values = match certificate_values(&graph, &certificate, cancel)? {
         CertificateValues::Complete(values) => values,
         CertificateValues::Rejected(rejection) => {
-            return Ok(ExactProbabilityCertificateCheck::Rejected(rejection))
+            return Ok(ExactProbabilityCertificateCheck::Rejected(rejection));
         }
     };
     for (key, state) in &graph.states {
@@ -1849,7 +1973,7 @@ fn check_document_equalities(
                             ProbabilityObjective::Minimum => previous.min(sum),
                             ProbabilityObjective::Maximum => previous.max(sum),
                             ProbabilityObjective::Workload => {
-                                return Err(ProbabilityDocumentError::Unsupported)
+                                return Err(ProbabilityDocumentError::Unsupported);
                             }
                         },
                     });
@@ -2069,6 +2193,7 @@ mod tests {
             event: None,
             failures: Vec::new(),
             optimization: ProbabilityObjective::Minimum,
+            timed: None,
             values: vec![ExactProbabilityValue {
                 state: key.clone(),
                 value: rational(1),

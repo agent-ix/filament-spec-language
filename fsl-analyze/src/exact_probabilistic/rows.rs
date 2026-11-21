@@ -172,6 +172,7 @@ impl<'p> Evaluation<'p> {
                     draw: None,
                     to: node,
                     probability: mass.clone(),
+                    elapsed: Rational::from_integer(0_i64.into()),
                     rewards: Vec::new(),
                 });
                 for (_, choice_edges) in row {

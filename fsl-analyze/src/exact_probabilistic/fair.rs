@@ -10,11 +10,11 @@ use fsl_semantics::check::Bound;
 
 use super::rows::Evaluation;
 use super::unbounded::{
-    decide_expected_reward, decide_reachability, decide_until, maximal_end_components,
-    maximal_end_components_from, optimize_mec_fraction, policy_iteration, Choice, ComponentValue,
-    ExtRational, GainBias, Graph, LongRunResult, UnboundedError, UnboundedObjective,
+    Choice, ComponentValue, ExtRational, GainBias, Graph, LongRunResult, UnboundedError,
+    UnboundedObjective, decide_expected_reward, decide_reachability, decide_until,
+    maximal_end_components, maximal_end_components_from, optimize_mec_fraction, policy_iteration,
 };
-use super::{decide_bounded_event, FhError, FhResult, ProbProduct, ProbStateId, ProductKind};
+use super::{FhError, FhResult, ProbProduct, ProbStateId, ProductKind, decide_bounded_event};
 
 /// One maximal fair end component and the scheduled identities that keep it
 /// closed. The action list is empty for a terminal-stutter-only component,
@@ -901,6 +901,7 @@ fn stutter_edge(state: ProbStateId) -> super::ProbEdge {
         draw: None,
         to: state,
         probability: one(),
+        elapsed: Rational::from_integer(0_i64.into()),
         rewards: Vec::new(),
     }
 }

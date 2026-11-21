@@ -36,50 +36,66 @@ mod settle;
 mod unbounded;
 mod witness;
 
-pub use build::build_product;
 #[cfg(not(feature = "test-support"))]
 pub(crate) use build::BudgetedProductError;
+pub use build::build_product;
 #[cfg(feature = "test-support")]
-pub use build::{build_product_with_key_budget, BudgetedProductError};
+pub use build::{BudgetedProductError, build_product_with_key_budget};
 pub(crate) use build::{build_retaining_monitor, build_retaining_monitor_with_budget};
+pub(crate) use digital::ELAPSED_REWARD;
 pub(crate) use digital::model_constraints;
 pub use fair::{
+    ActionChoice, FairBoundedResult, FairEndComponent, FairExpectedRewardResult, FairLongRunResult,
+    FairProductError, FairRandomizedWitness, FairUnboundedResult, SchedulerChoice,
     decide_fair_bounded_event, decide_fair_expected_reward, decide_fair_long_run_mdp,
-    decide_fair_reachability, maximal_fair_end_components, ActionChoice, FairBoundedResult,
-    FairEndComponent, FairExpectedRewardResult, FairLongRunResult, FairProductError,
-    FairRandomizedWitness, FairUnboundedResult, SchedulerChoice,
+    decide_fair_reachability, maximal_fair_end_components,
 };
 pub use finite_horizon::{
-    backward_induction, decide_bounded_event, Dyadic, FhError, FhObjective, FhResult,
+    Dyadic, FhError, FhObjective, FhResult, backward_induction, decide_bounded_event,
 };
 pub use fsl_replay::FreeDelayRow;
 pub use rows::free_delays_choice;
 pub use settle::settle_product_refusal;
 pub use unbounded::{
-    decide_always, decide_expected_reward, decide_long_run_mdp, decide_long_run_workload,
-    decide_reachability, decide_reachability_threshold, decide_until, decide_until_threshold,
     ComponentValue, ExtRational, GainBias, LongRunResult, UnboundedError, UnboundedObjective,
-    UnboundedOutcome, UnboundedResult,
+    UnboundedOutcome, UnboundedResult, decide_always, decide_expected_reward, decide_long_run_mdp,
+    decide_long_run_workload, decide_reachability, decide_reachability_threshold, decide_until,
+    decide_until_threshold,
 };
 pub use witness::{
-    action_steps, entry_choice, policy_action, produce_witness, witness_scheduler, EntryChoice,
-    ProducedPath, ProducedStep, ProducedWitness, WitnessError, WitnessScope,
+    EntryChoice, ProducedPath, ProducedStep, ProducedWitness, WitnessError, WitnessScope,
+    action_steps, entry_choice, policy_action, produce_witness, witness_scheduler,
 };
-pub(crate) use witness::{produce_witness_stopping, WitnessWork};
+pub(crate) use witness::{WitnessWork, produce_witness_stopping};
+
+pub(crate) fn timed_region_route(
+    timed: &fsl_eval::simulation::model::TimedSystem<'_, '_>,
+    claim: &CheckedProbabilisticClaim,
+) -> bool {
+    digital::region_route(timed, claim)
+}
+
+pub(crate) fn timed_certificate_scale(
+    system: &fsl_eval::simulation::model::ModelSystem<'_>,
+    timed: &fsl_eval::simulation::model::TimedSystem<'_, '_>,
+    claim: &CheckedProbabilisticClaim,
+) -> Result<u64, ProductRefusal> {
+    digital::certificate_scale(system, timed, claim)
+}
 
 use filament_exact::{CancelCause, Rational, Value};
 use filament_semantic_value::catalog::InternalFault;
 use fsl_eval::automaton::{AutomatonError, StateId};
 use fsl_eval::model_subject::{ModelInstance, ModelSubject};
+use fsl_eval::simulation::StateKey;
 use fsl_eval::simulation::model::{ClauseOutcome, ScheduledIdentity};
 use fsl_eval::simulation::model::{NotMarkov, UndecidedSuccessor};
-use fsl_eval::simulation::StateKey;
 use fsl_eval::simulation::{ExpansionStop, NotSimulated};
 use fsl_eval::temporal::UndefinedCause;
-use fsl_foundation::source::provenance::OccurrenceKey;
 use fsl_foundation::Span;
+use fsl_foundation::source::provenance::OccurrenceKey;
 pub use fsl_replay::ExactProbLimits;
-use fsl_replay::ModelCheckLimit;
+use fsl_replay::{ModelCheckLimit, ProbabilityProductKey};
 use fsl_semantics::check::{CheckedProbabilisticClaim, FormulaNodeId};
 use fsl_semantics::model::observation::AdmissionFailure;
 use std::cmp::Ordering;
@@ -311,6 +327,9 @@ pub struct ProbKey {
     pub accumulator: Option<Accumulator>,
     /// The draw awaiting resolution; `None` at a model-position state.
     pub pending: Option<Pending>,
+    /// The independently checkable canonical timed key, when this is a timed
+    /// digital or region product state.
+    pub certificate_state: Option<ProbabilityProductKey>,
 }
 
 impl ProbKey {
@@ -553,6 +572,9 @@ pub struct ProbEdge {
     /// (summed over draws merged into the edge) over every scheduler, and 1
     /// at a resolution.
     pub probability: Rational,
+    /// Exact elapsed time on this edge in the subject's declared time unit.
+    /// Untimed edges carry zero.
+    pub elapsed: Rational,
     /// Every reward of the model for the step, in ascending name order. A
     /// resolution edge carries each reward at 0: the draw's rewards are on the
     /// edge that took the draw, once.
