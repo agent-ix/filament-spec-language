@@ -77,7 +77,7 @@ fn selected_unit_declarations(
     let built = fsl_forms::build_unit(&parsed).expect("S2 builds the unit");
     let models = admit_unit(
         &built.selections().models,
-        &packages,
+        packages,
         ModelNormalizationLimits::default(),
     )
     .map_err(|refusal| format!("{refusal:?}"))?;
