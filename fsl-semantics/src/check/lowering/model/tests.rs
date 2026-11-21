@@ -1162,6 +1162,7 @@ mod quantities {
                 owner: key("UnusedChoice"),
                 case: "Measured".to_owned(),
                 payload_type: Some(ValueTypeRef::Unit("metre".to_owned())),
+                position: 0,
             }),
         ]);
         assert_normalized_model_unit_root(package);

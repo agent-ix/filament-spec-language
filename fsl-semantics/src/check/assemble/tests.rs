@@ -1955,6 +1955,7 @@ fn option_type_projects_through_signature_alias_sequence_map_tuple_variant_unit_
             owner: variant_key.clone(),
             case: "Ok".to_owned(),
             payload_type: Some(ValueTypeRef::Package(option_key.clone())),
+            position: 0,
         }),
         DomainPackageRecord::RecordValueType(RecordValueTypeRecord {
             key: record_key.clone(),

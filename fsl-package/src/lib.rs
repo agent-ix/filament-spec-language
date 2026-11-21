@@ -204,7 +204,8 @@ pub use filament_contract_model::{
     CheckedOccurrenceRole, CheckedOperationInterval, CheckedOperationRational, CheckedPackageV2,
     CheckedSelection, CheckedSourceMapEntry, ClockConfiguration, ClockExactNumber,
     ExactTypeProjection, ExactTypeProjectionError, ExactTypeProjectionErrorCode, NativeJoinBudget,
-    SelectedExactIdentities, TemporalBinding, CHECKED_PACKAGE_V2,
+    SelectedExactIdentities, SelectedModelUnionPayload, SelectedModelUnionRow, TemporalBinding,
+    CHECKED_PACKAGE_V2,
 };
 
 // The FR-105-AC-6 fault-injection seam. Public only under

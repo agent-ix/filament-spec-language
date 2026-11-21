@@ -1322,12 +1322,63 @@ fn source_aliases_are_not_model_step_order_authority() {
 #[trace("TC-1331", "FR-531-AC-30")]
 #[test]
 fn budgeted_converted_model_enum_shapes_are_joined_by_the_native_monitor_closure() {
+    reach_model_type(ReachedModelType::Enum);
+}
+
+/// The public final-emission union rows (case ranks, authored positions, the
+/// Clock and data payload facts) are the real producer rows the native monitor
+/// closure joins for an admitted model payload union.
+#[trace("TC-1331", "FR-531-AC-30")]
+#[test]
+fn emission_model_union_rows_are_joined_by_the_native_monitor_closure() {
+    reach_model_type(ReachedModelType::Union);
+}
+
+/// The same reached union with no row supplied is refused, so the accepted
+/// join above depends on the emission's rows.
+#[trace("TC-1331", "FR-531-AC-30")]
+#[test]
+fn a_reached_model_union_without_its_row_is_refused_by_the_native_monitor_closure() {
+    reach_model_type(ReachedModelType::UnionWithoutRows);
+}
+
+/// Which authored model type the monitor's typed input reaches and, for the
+/// union, which selected union rows the closure is given.
+#[derive(Clone, Copy)]
+enum ReachedModelType {
+    /// A payload-free model enum.
+    Enum,
+    /// A payload union (`Armed(Clock)`, `Circle(Integer)`, `Idle`) joined with
+    /// the rows of the emission's public accessor.
+    Union,
+    /// The same union joined with no union rows.
+    UnionWithoutRows,
+}
+
+/// Emits a monitor plan whose typed input reaches one model-owned type, then
+/// joins that type through the native selected monitor closure.
+fn reach_model_type(reached: ReachedModelType) {
     use filament_contract_model::{NativeJoinBudget, SelectedMonitorClosureRows};
     use serde_json::json;
 
+    let union = !matches!(reached, ReachedModelType::Enum);
+    let (type_name, field_name) = if union {
+        ("Mode", "mode")
+    } else {
+        ("Tier", "tier")
+    };
+    let cases: &[(&str, Option<&str>)] = if union {
+        &[
+            ("Idle", None),
+            ("Circle", Some("ix://filament/native/Integer")),
+            ("Armed", Some("ix://filament/native/Clock")),
+        ]
+    } else {
+        &[("Gold", None), ("Standard", None)]
+    };
     let domain = Domain::config_version();
     let mut document: serde_json::Value = serde_json::from_slice(&domain.document).unwrap();
-    let tier = format!("ix://{}/Tier", domain.package);
+    let tier = format!("ix://{}/{type_name}", domain.package);
     document["constructs"].as_array_mut().unwrap().push(json!({
         "kind": {"module": domain.package, "name": "tier"},
         "moduleVersion": "1.0.0",
@@ -1337,25 +1388,32 @@ fn budgeted_converted_model_enum_shapes_are_joined_by_the_native_monitor_closure
     }));
     let mut declaration = document["types"][0].clone();
     declaration["identity"] = json!(tier);
-    declaration["displayName"] = json!("Tier");
+    declaration["displayName"] = json!(type_name);
     declaration["kind"]["name"] = json!("tier");
     declaration.as_object_mut().unwrap().remove("scalar");
     declaration["constraints"] = json!([]);
-    declaration["variants"] = ["Gold", "Standard"]
-        .into_iter()
-        .map(|case| {
-            json!({
-                "identity": format!("ix://{}/variant/Tier-{case}", domain.package),
+    declaration["variants"] = cases
+        .iter()
+        .map(|(case, payload)| {
+            let mut variant = json!({
+                "identity": format!("ix://{}/variant/{type_name}-{case}", domain.package),
                 "name": case,
                 "origin": {"source": {"sourceIdentity": document["source"]["identity"],
                     "path": "fixture.fspec", "startLine": 1, "startColumn": 1}}
-            })
+            });
+            if let Some(payload) = payload {
+                variant["payloadType"] = json!(payload);
+            }
+            variant
         })
         .collect();
     document["types"].as_array_mut().unwrap().push(declaration);
     let mut field = document["types"][1]["fields"][0].clone();
-    field["identity"] = json!(format!("ix://{}/ConfigVersion/tier", domain.package));
-    field["name"] = json!("tier");
+    field["identity"] = json!(format!(
+        "ix://{}/ConfigVersion/{field_name}",
+        domain.package
+    ));
+    field["name"] = json!(field_name);
     field["typeRef"] = json!(tier);
     document["types"][1]["fields"]
         .as_array_mut()
@@ -1363,12 +1421,17 @@ fn budgeted_converted_model_enum_shapes_are_joined_by_the_native_monitor_closure
         .push(field);
     let bytes = serde_json::to_vec(&document).unwrap();
     let packages = fsl_semantics::model::intake::package_input([bytes.as_slice()]).unwrap();
-    let unit = unit_source(
-        "always holds(is_gold(c.tier))",
-        "function is_gold using v(tier: M::Tier): Boolean pure { tier = M::Tier::Gold }",
-        true,
-        "on origin",
-    );
+    let function = if union {
+        format!("function reads using v({field_name}: M::{type_name}): Boolean pure {{ true }}")
+    } else {
+        "function is_gold using v(tier: M::Tier): Boolean pure { tier = M::Tier::Gold }".to_owned()
+    };
+    let formula = if union {
+        format!("always holds(reads(c.{field_name}))")
+    } else {
+        "always holds(is_gold(c.tier))".to_owned()
+    };
+    let unit = unit_source(&formula, &function, true, "on origin");
     let source = SourceIdentity::new("agent-ix", "monitor-root");
     let name = LibraryName::new("fixture").unwrap();
     let root = emit_plan_root(
@@ -1396,7 +1459,7 @@ fn budgeted_converted_model_enum_shapes_are_joined_by_the_native_monitor_closure
     use fsl_replay::spine::{check, parse, select, DependencyInput, ParseRequest};
     let mut spec = spec_from_plan(root.plan()).unwrap();
     spec.clause = Some(ClauseSource {
-        parameters: vec![("tier".to_owned(), "M::Tier".to_owned())],
+        parameters: vec![(field_name.to_owned(), format!("M::{type_name}"))],
         atoms: spec
             .atoms
             .iter()
@@ -1499,8 +1562,8 @@ fn budgeted_converted_model_enum_shapes_are_joined_by_the_native_monitor_closure
         .expect("model enum adapter");
     assert_eq!(
         model_shapes.len(),
-        1,
-        "the reached snapshot input retains the field's original Tier type"
+        usize::from(!union),
+        "only the enum case reaches an original model enum shape"
     );
     let collections: Vec<_> = emission
         .selected_source_collection_rows()
@@ -1551,29 +1614,75 @@ fn budgeted_converted_model_enum_shapes_are_joined_by_the_native_monitor_closure
         association,
     )
     .expect("a claim row with both admitted values");
-    let closure = plan
-        .project_selected_type_closure(
-            SelectedMonitorClosureRows {
-                declarations: identities.declarations(),
-                fields: identities.fields(),
-                model_tuples: emission.selected_tuple_declaration_rows(),
-                model_unions: &[],
-                source_units: emission.selected_source_unit_rows(),
-                model_enum_declarations: emission.selected_model_enum_declaration_rows(),
-                model_enum_members: emission.selected_model_enum_member_rows(),
-                model_enum_shapes: &model_shapes,
-                source_records: identities.source_records(),
-                source_tuples: emission.selected_source_tuple_rows(),
-                source_unions: identities.source_unions(),
-                source_enums: &enums,
-                source_collections: &collections,
-                equality_applications: equality.applications(),
-                equality_facts: equality.facts(),
-                authority: &authority,
-            },
-            &mut budget,
-        )
-        .expect("IR admits and projects converted authentic model shapes");
+    let union_rows: &[filament_contract_model::SelectedModelUnionRow] = match reached {
+        ReachedModelType::Union => emission.selected_model_union_rows(),
+        ReachedModelType::Enum | ReachedModelType::UnionWithoutRows => &[],
+    };
+    let closure = plan.project_selected_type_closure(
+        SelectedMonitorClosureRows {
+            declarations: identities.declarations(),
+            fields: identities.fields(),
+            model_tuples: emission.selected_tuple_declaration_rows(),
+            model_unions: union_rows,
+            source_units: emission.selected_source_unit_rows(),
+            model_enum_declarations: emission.selected_model_enum_declaration_rows(),
+            model_enum_members: emission.selected_model_enum_member_rows(),
+            model_enum_shapes: &model_shapes,
+            source_records: identities.source_records(),
+            source_tuples: emission.selected_source_tuple_rows(),
+            source_unions: identities.source_unions(),
+            source_enums: &enums,
+            source_collections: &collections,
+            equality_applications: equality.applications(),
+            equality_facts: equality.facts(),
+            authority: &authority,
+        },
+        &mut budget,
+    );
+    if matches!(reached, ReachedModelType::UnionWithoutRows) {
+        assert!(
+            !emission.selected_model_union_rows().is_empty(),
+            "the emission produced the union row this control withholds"
+        );
+        let refusal = closure.expect_err("a reached union with no row is refused");
+        assert!(
+            matches!(
+                refusal.code,
+                filament_contract_model::SelectedMonitorTypeClosureErrorCode::Exact(_)
+            ),
+            "{refusal:?}"
+        );
+        return;
+    }
+    let closure = closure.expect("IR admits and projects converted authentic model shapes");
+    if union {
+        let [row] = union_rows else {
+            panic!("the reached union has exactly one producer row: {union_rows:?}");
+        };
+        use filament_contract_model::SelectedModelUnionPayload as Payload;
+        assert_eq!(row.selected_document.as_ref(), domain.package.as_str());
+        let cases: Vec<_> = row
+            .cases
+            .iter()
+            .map(|case| (case.rank, case.position, case.name.as_ref(), &case.payload))
+            .collect();
+        assert!(matches!(
+            cases.as_slice(),
+            [
+                (0, 2, "Armed", Payload::Clock { .. }),
+                (1, 1, "Circle", Payload::Data { .. }),
+                (2, 0, "Idle", Payload::None),
+            ]
+        ));
+        let projected = package
+            .project_exact_type(&row.structural_node, closure.identities(), &mut budget)
+            .expect("the joined authentic model union projects through native IR");
+        assert!(matches!(
+            projected.value_type(),
+            filament_exact::ValueType::Union(_)
+        ));
+        return;
+    }
     assert_eq!(closure.model_enums(), model_shapes.as_slice());
     let projected = package
         .project_exact_type(

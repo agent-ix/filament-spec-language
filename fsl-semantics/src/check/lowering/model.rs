@@ -444,6 +444,45 @@ pub struct SelectedModelEnumDeclaration {
     pub shape: filament_exact::EnumShape,
 }
 
+/// How one case of a selected model union carries its payload.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum SelectedModelUnionPayload {
+    /// A nullary case.
+    None,
+    /// A `Clock` payload: a clock place, never a data position.
+    Clock,
+    /// A data payload: its lowered type node and its original value type.
+    Data {
+        /// The lowered node of the payload type.
+        node: NodeKey,
+        /// The payload type as the checked type environment holds it.
+        original_type: ValueType,
+    },
+}
+
+/// One case of a [`SelectedModelUnion`].
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SelectedModelUnionCase {
+    /// The case name.
+    pub name: Box<str>,
+    /// The case's authored index among the selected document's variants.
+    pub position: usize,
+    /// The original case identity in the selected document.
+    pub original_identity: Box<str>,
+    /// How the case carries its payload.
+    pub payload: SelectedModelUnionPayload,
+}
+
+/// Selected model facts retained for one lowered payload-bearing variant type
+/// (a union): its document and its cases in canonical (case-name byte) order.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SelectedModelUnion {
+    /// The selected domain document identity.
+    pub selected_document: Box<str>,
+    /// The cases, in ascending UTF-8 byte order of name.
+    pub cases: Vec<SelectedModelUnionCase>,
+}
+
 /// Selected model member facts retained for one lowered enum case node.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct SelectedModelEnumMember {
@@ -2827,8 +2866,9 @@ impl<'a> Lowering<'a> {
         Ok((owner, model))
     }
 
-    /// The selected model record, tuple value type or event type whose model
-    /// node key is `handle`; `None` when `handle` is a source composite.
+    /// The selected model record, tuple value type, event type or payload
+    /// variant type (a union) whose model node key is `handle`; `None` when
+    /// `handle` is a source composite.
     pub(super) fn model_record_declaration(
         &mut self,
         handle: NodeKey,
@@ -2844,6 +2884,7 @@ impl<'a> Lowering<'a> {
                     DomainPackageRecord::RecordValueType(_)
                         | DomainPackageRecord::TupleValueType(_)
                         | DomainPackageRecord::EventType(_)
+                        | DomainPackageRecord::Enum(_)
                 ) {
                     continue;
                 }
@@ -2855,6 +2896,94 @@ impl<'a> Lowering<'a> {
             }
         }
         Ok(None)
+    }
+
+    /// Lower the payload types of the selected payload-bearing variant type
+    /// `declaration` (a union), whose model node is `node` and whose checked
+    /// composite is `handle`, and retain the case facts the IR union witness
+    /// joins. A `Clock` payload is a clock place and has no data position, so
+    /// it lowers no node. The cases keep the canonical byte order of the
+    /// checked composite.
+    pub(super) fn model_union_payloads(
+        &mut self,
+        declaration: &DeclarationKey,
+        handle: &NodeKey,
+        node: &NodeKey,
+        alias: &str,
+        location: &Location,
+    ) -> Result<(), CheckRefusal> {
+        let models: &'a [AdmittedModel] = self.models;
+        let Some(model) = models
+            .iter()
+            .find(|model| model.selection.identity == declaration.package)
+        else {
+            return Ok(());
+        };
+        if !matches!(
+            model.records.get(declaration),
+            Some(DomainPackageRecord::Enum(_))
+        ) {
+            return Ok(());
+        }
+        let scope: &'a crate::check::Scope = self.scope;
+        let Some(composite) = scope.types().composite(handle.clone()) else {
+            return Err(fault(
+                location,
+                KeyFault::UnknownDeclaration(declaration.clone()),
+            ));
+        };
+        let filament_semantic_value::declaration::CompositeShape::Union(members) =
+            composite.shape()
+        else {
+            return Ok(());
+        };
+        let site = type_declaration(alias);
+        let mut cases = Vec::with_capacity(members.len());
+        for member in members {
+            let case = member.identifier();
+            let record = model
+                .records
+                .values()
+                .find_map(|record| match record {
+                    DomainPackageRecord::Variant(variant)
+                        if &variant.owner == declaration && variant.case == case =>
+                    {
+                        Some(variant)
+                    }
+                    _ => None,
+                })
+                .ok_or_else(|| {
+                    fault(location, KeyFault::UnknownDeclaration(declaration.clone()))
+                })?;
+            let payload = match (&record.payload_type, member.positions()) {
+                (None, _) => SelectedModelUnionPayload::None,
+                (Some(_), []) => SelectedModelUnionPayload::Clock,
+                (Some(_), [original_type]) => SelectedModelUnionPayload::Data {
+                    node: self.type_node(original_type, &site)?,
+                    original_type: original_type.clone(),
+                },
+                (Some(_), _) => {
+                    return Err(fault(
+                        location,
+                        KeyFault::UnknownDeclaration(declaration.clone()),
+                    ))
+                }
+            };
+            cases.push(SelectedModelUnionCase {
+                name: case.into(),
+                position: record.position,
+                original_identity: record.key.node.as_str().into(),
+                payload,
+            });
+        }
+        self.graph.select_model_union(
+            node.clone(),
+            SelectedModelUnion {
+                selected_document: model.selection.identity.as_str().into(),
+                cases,
+            },
+        );
+        Ok(())
     }
 
     /// FR-322: the model declaration node of the object type at the end of

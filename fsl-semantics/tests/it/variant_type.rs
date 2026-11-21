@@ -318,7 +318,36 @@ fn a_variant_type_is_admitted_as_one_enum_and_one_variant_per_case() {
 fn reordering_the_cases_changes_no_key_export_or_ordering() {
     let gold_first = admitted(&tiers(&["Gold", "Standard"]));
     let standard_first = admitted(&tiers(&["Standard", "Gold"]));
-    assert_eq!(gold_first.records, standard_first.records);
+    // The authored position is the one fact that follows the document order;
+    // every key and export stays equal.
+    let unplaced = |package: &DomainPackage| -> Vec<DomainPackageRecord> {
+        package
+            .records
+            .iter()
+            .cloned()
+            .map(|mut record| {
+                if let DomainPackageRecord::Variant(variant) = &mut record {
+                    variant.position = 0;
+                }
+                record
+            })
+            .collect()
+    };
+    assert_eq!(unplaced(&gold_first), unplaced(&standard_first));
+    let positions = |package: &DomainPackage| -> Vec<(String, usize)> {
+        variants_of(package, "Tier")
+            .iter()
+            .map(|variant| (variant.case.clone(), variant.position))
+            .collect()
+    };
+    assert_eq!(
+        positions(&gold_first),
+        [("Gold".to_owned(), 0), ("Standard".to_owned(), 1)]
+    );
+    assert_eq!(
+        positions(&standard_first),
+        [("Gold".to_owned(), 1), ("Standard".to_owned(), 0)]
+    );
     assert_eq!(
         enum_of(&standard_first, "Tier").members,
         ["Gold", "Standard"]

@@ -1333,12 +1333,14 @@ fn model_with_tier() -> DomainPackage {
             owner: key("Tier"),
             case: "Gold".to_owned(),
             payload_type: None,
+            position: 0,
         }),
         DomainPackageRecord::Variant(VariantRecord {
             key: key("Tier/Standard"),
             owner: key("Tier"),
             case: "Standard".to_owned(),
             payload_type: None,
+            position: 1,
         }),
     ]);
     package

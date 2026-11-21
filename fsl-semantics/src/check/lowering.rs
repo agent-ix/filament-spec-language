@@ -109,8 +109,8 @@ pub(crate) use model::{
 };
 pub use model::{
     collection_kind, model_root_key, AdmittedModel, CollectionShape, ForeignView, ModelClause,
-    PlaceRow, PlaceStep, SelectedModelEnumDeclaration, SelectedModelEnumMember,
-    SelectedOperationMember,
+    PlaceRow, PlaceStep, SelectedModelEnumDeclaration, SelectedModelEnumMember, SelectedModelUnion,
+    SelectedModelUnionCase, SelectedModelUnionPayload, SelectedOperationMember,
 };
 pub(crate) use model::{model_node_content, population_node_content};
 pub(crate) use protocol::{
@@ -623,6 +623,9 @@ pub struct SemanticGraph {
     selected_model_enum_declarations: BTreeMap<NodeKey, SelectedModelEnumDeclaration>,
     /// Selected model enum members keyed by their lowered member node.
     selected_model_enum_members: BTreeMap<NodeKey, SelectedModelEnumMember>,
+    /// Selected model unions (payload-bearing variant types) keyed by their
+    /// lowered declaration.
+    selected_model_unions: BTreeMap<NodeKey, SelectedModelUnion>,
     /// Source-owned enum declarations keyed by their lowered declaration.
     source_enum_declarations: BTreeMap<NodeKey, SourceEnumDeclaration>,
     /// Source-owned enum members keyed by their lowered member node.
@@ -721,6 +724,19 @@ impl SemanticGraph {
         selected: SelectedModelEnumMember,
     ) {
         self.selected_model_enum_members.insert(member, selected);
+    }
+
+    /// The selected model unions associated with lowered declaration nodes.
+    pub fn selected_model_unions(&self) -> impl Iterator<Item = (&NodeKey, &SelectedModelUnion)> {
+        self.selected_model_unions.iter()
+    }
+
+    pub(crate) fn select_model_union(
+        &mut self,
+        declaration: NodeKey,
+        selected: SelectedModelUnion,
+    ) {
+        self.selected_model_unions.insert(declaration, selected);
     }
 
     /// The source-owned enum declarations associated with lowered nodes
@@ -3305,8 +3321,16 @@ impl<'a> Lowering<'a> {
                 OccurrenceRole::Generated,
                 type_declaration(&alias),
             );
+            let model_node_key = key.clone();
             let key = NodeRef::Admitted(key);
-            self.composites.insert(declaration, key.clone());
+            self.composites.insert(declaration.clone(), key.clone());
+            self.model_union_payloads(
+                &model_record,
+                &declaration,
+                &model_node_key,
+                &alias,
+                location,
+            )?;
             return Ok(OpenComposite::Built(key));
         }
         let scope: &'a Scope = self.scope;
