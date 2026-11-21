@@ -427,7 +427,7 @@ impl RelationshipSelection {
     }
 
     /// The admitted Producer bundle used to qualify every resolver relationship.
-    pub(crate) fn producer(&self) -> &AdmittedStaticBundle {
+    pub fn producer(&self) -> &AdmittedStaticBundle {
         &self.producer
     }
 

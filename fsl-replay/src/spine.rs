@@ -63,7 +63,7 @@ pub use crate::spine_eval_api::{
     SpineEvalTemporalOutcome as TemporalOutcome, SpineEvalTemporalRefusal as TemporalRefusal,
     SpineEvalValueInvariantEvaluation as ValueInvariantEvaluation,
 };
-pub(crate) use call::relationship_call_outcome;
+pub use call::relationship_call_outcome;
 pub(crate) use clocks::ClockLocator;
 pub use clocks::{InvalidClock, RequestClocks};
 pub use fsl_package::checked_views::{

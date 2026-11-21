@@ -4514,7 +4514,7 @@ fn prepare_complete_run(
         })
         .collect::<Result<Vec<(&wire::RunLibrary, FormalSource)>>>()?;
     // FR-660: the same request-owned catalog is available to run compilation.
-    let extension_catalog = Some(extension_catalog(&request.extensions, intake)?);
+    let extension_catalog = extension_catalog(&request.extensions, intake)?;
     let dependencies =
         fsl_replay::spine::DependencyInput::new(libraries.iter().map(|(library, read)| {
             fsl_replay::spine::SuppliedLibrary {
@@ -4615,7 +4615,7 @@ fn prepare_complete_run(
             libraries: libraries.into_iter().map(|(_, source)| source).collect(),
             packages,
             dependencies,
-            extension_catalog,
+            extension_catalog: Some(extension_catalog),
             limits: stage_limits,
             call: spine_call,
             integer_division,

@@ -1359,7 +1359,8 @@ fn relationship_package_selection(
     ))
 }
 
-pub(crate) fn relationship_call_outcome(
+/// Converts the relationship resolver's typed outcome into the native-run call outcome.
+pub fn relationship_call_outcome(
     outcome: filament_observation::AdmissionOutcome,
     producer: &filament_observation::AdmittedStaticBundle,
 ) -> Option<CallOutcome> {
