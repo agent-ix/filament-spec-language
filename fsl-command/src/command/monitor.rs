@@ -751,12 +751,30 @@ fn drive(
                         // emission is remembered so the provider request reads
                         // these bytes; an emission the selections refuse leaves
                         // the provider items `package-not-emitted` (FSpec FR-331).
-                        let _ = fsl_package::emit_dependency_with_temporal_selections_and_cancel(
-                            checked.package(),
-                            selections,
-                            settle.cancel,
-                            routed.limits.emit,
-                        );
+                        let emitted =
+                            fsl_package::emit_dependency_with_temporal_selections_and_cancel(
+                                checked.package(),
+                                selections,
+                                settle.cancel,
+                                routed.limits.emit,
+                            );
+                        // FR-644: a stream cancelled before the items settle
+                        // settles them `incomplete`, and each item still
+                        // writes its node ids against this package's graph
+                        // (FR-621 "Node ids in an item"). A cancelled
+                        // emission remembers nothing, and the analyze read
+                        // would then emit without the clock selections, so
+                        // the emission is made again under a handle the
+                        // cancellation does not reach.
+                        if matches!(emitted, Err(fsl_package::EmitRefusal::Cancelled { .. })) {
+                            let _ =
+                                fsl_package::emit_dependency_with_temporal_selections_and_cancel(
+                                    checked.package(),
+                                    selections,
+                                    &Cancel::new(),
+                                    routed.limits.emit,
+                                );
+                        }
                         super::analyze::settle_items(
                             checked.package(),
                             &packages,
