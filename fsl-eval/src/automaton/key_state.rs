@@ -769,13 +769,12 @@ fn same_facts(
     max_bytes: u64,
 ) -> Result<bool, KeyRefusal> {
     let facts = |branch: &Configuration| -> Result<Vec<u8>, KeyRefusal> {
-        let enc = branch.enc(max_bytes)?;
-        let Enc::Array(mut members) = enc else {
+        let mut enc = branch.enc(max_bytes)?;
+        let Enc::Array(members) = &mut enc else {
             return Err(KeyRefusal::Encoding);
         };
         members.remove(0);
-        quire_canonical::to_vec(&Enc::Array(members), Limits::new(max_bytes))
-            .map_err(|_| KeyRefusal::Encoding)
+        quire_canonical::to_vec(&enc, Limits::new(max_bytes)).map_err(|_| KeyRefusal::Encoding)
     };
     Ok(facts(left)? == facts(right)?)
 }

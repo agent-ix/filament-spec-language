@@ -529,10 +529,7 @@ impl Lowering<'_> {
             }
             Err(other) => return Err(other),
         };
-        let mut unemitted = protocol.unemitted();
-        if self.fifo_key_unstable(protocol, &location)? {
-            unemitted.push(ProtocolConstruct::ChannelKeyNotEqualityStable);
-        }
+        let unemitted = protocol.unemitted();
         if let Some(first) = unemitted.first() {
             self.set_protocol_key(index, ProtocolKey::NotEmitted(*first));
             return Ok(unemitted
@@ -694,84 +691,6 @@ impl Lowering<'_> {
             .iter()
             .any(|model| model.object_types().any(|(_, object)| object == *context))
             .then_some(context.clone())
-    }
-
-    /// Whether a FIFO channel of `protocol` is keyed by a type IR's reader
-    /// does not take as equality-stable (FR-465 "Channel": the key's type
-    /// must be). The reader's rule, over the key type's node: every node
-    /// reached is a Boolean, Integer, Rational, Decimal, Text, String, UUID,
-    /// Timestamp or enum scalar, a `reference`, or a composite whose
-    /// children are such; a bounded domain, a quantity, a float or a
-    /// model-owned node is not.
-    fn fifo_key_unstable(
-        &mut self,
-        protocol: &ProtocolInput<'_>,
-        location: &Location,
-    ) -> Result<bool, CheckRefusal> {
-        for channel in &protocol.checked.channels {
-            let CheckedOrdering::Fifo { key, .. } = &channel.ordering else {
-                continue;
-            };
-            let node = self.type_node(key.root().value_type(), location)?;
-            if !self.equality_stable(node) {
-                return Ok(true);
-            }
-        }
-        Ok(false)
-    }
-
-    /// The reader's `equality_stable` over the type node `key`.
-    fn equality_stable(&self, key: NodeKey) -> bool {
-        let mut pending = vec![key];
-        let mut visited = std::collections::BTreeSet::new();
-        while let Some(key) = pending.pop() {
-            if !visited.insert(key.clone()) {
-                continue;
-            }
-            // A nominal enum is keyed by its declaration node, which is
-            // written with the declarations and not by this type: a scalar
-            // `enum` the reader compares.
-            let Some(node) = self.graph.nodes.get(&key) else {
-                continue;
-            };
-            let content = &node.content;
-            match (content.node_tag, content.semantic_form) {
-                (
-                    NodeTag::ScalarType,
-                    "boolean" | "integer" | "rational" | "decimal" | "text" | "string" | "uuid"
-                    | "timestamp" | "enum",
-                )
-                | (NodeTag::CompositeType, "reference") => {}
-                (NodeTag::CompositeType, _) => {
-                    if content
-                        .body
-                        .for_each_key(&mut |child| pending.push(child))
-                        .is_err()
-                    {
-                        return false;
-                    }
-                }
-                (
-                    NodeTag::ScalarType
-                    | NodeTag::BoundedDomain
-                    | NodeTag::Value
-                    | NodeTag::Expression
-                    | NodeTag::Function
-                    | NodeTag::Model
-                    | NodeTag::Relation
-                    | NodeTag::State
-                    | NodeTag::Temporal
-                    | NodeTag::Protocol
-                    | NodeTag::Claim
-                    | NodeTag::Correspondence
-                    | NodeTag::Hybrid
-                    | NodeTag::TimedModel
-                    | NodeTag::Extension,
-                    _,
-                ) => return false,
-            }
-        }
-        true
     }
 
     /// The `value`/`parameter` node of `binder`, at `level`, and the scope

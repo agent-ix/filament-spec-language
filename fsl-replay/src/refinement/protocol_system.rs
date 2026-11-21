@@ -284,7 +284,7 @@ impl<'a> AbstractProtocolSystem<'a> {
             candidate: fn(ProtocolState<M>) -> ProtocolCandidate,
         ) -> Result<Option<(ExpandedAndClassified, Cut)>, ExpansionStop> {
             let (expansion, cut) = system.successors_bounded(state)?;
-            let terminal = SubjectSystem::terminal_class(system, state, &expansion, cut)?;
+            let terminal = SubjectSystem::terminal_class(system, state, &expansion, cut.clone())?;
             Ok(Some((
                 (
                     Expansion {

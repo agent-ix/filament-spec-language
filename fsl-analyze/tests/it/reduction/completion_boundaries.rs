@@ -114,7 +114,6 @@ fn an_initial_boundary_never_becomes_a_deadlock_or_a_safety_stutter() {
 
 #[trace("FR-158-AC-2", "FR-158-AC-3")]
 #[test]
-#[ignore = "QSL-2713: state constraints refuse liveness before reading the initial boundary"]
 fn a_liveness_initial_boundary_never_gains_a_stutter_lasso() {
     let world = constrained_count(&[
         infinite("always holds(x.v <= 3)"),
@@ -128,13 +127,13 @@ fn a_liveness_initial_boundary_never_gains_a_stutter_lasso() {
             None,
             ModelCheckLimits {
                 limits: Limits {
-                    max_states: 1,
+                    max_states: 3,
                     ..Limits::default()
                 },
                 ..ModelCheckLimits::default()
             },
         )
-        .expect("one initial boundary fits exactly");
+        .expect("one initial boundary per binding fits exactly");
     assert_eq!(
         actual,
         ModelCheckOutcome::Reduction {
@@ -142,9 +141,39 @@ fn a_liveness_initial_boundary_never_gains_a_stutter_lasso() {
             stats: actual.stats(),
         }
     );
-    assert_eq!(actual.stats().product_states, 1);
+    assert_eq!(actual.stats().product_states, 3);
     assert_eq!(actual.stats().product_edges, 0);
     assert_eq!(actual.stats().stutter_edges, 0);
+
+    // FR-126 "Bindings and ranking": the three `Counter` bindings share the
+    // run's `max_states` and `product_states` is the sum over them, so a
+    // budget of one stops the run on the state limit.
+    let stopped = world
+        .run(
+            Some(1),
+            vec![atom(|v| Some(v == 3))],
+            constraint("Started"),
+            None,
+            ModelCheckLimits {
+                limits: Limits {
+                    max_states: 1,
+                    ..Limits::default()
+                },
+                ..ModelCheckLimits::default()
+            },
+        )
+        .expect("the run stops rather than refuses");
+    assert_eq!(
+        stopped,
+        ModelCheckOutcome::Stopped {
+            cause: IncompleteCause::ResourceExhausted,
+            limit: Some(ReachedLimit {
+                limit: ModelCheckLimit::MaxStates,
+                value: 1,
+            }),
+            stats: stopped.stats(),
+        }
+    );
 }
 
 #[trace("FR-158-AC-1", "FR-158-AC-3")]
@@ -168,5 +197,63 @@ fn a_false_initial_letter_refutes_before_the_initial_constraint_cuts() {
             .settle_clause(0, vec![atom(|v| Some(v == 1))], &outcome)
             .value,
         TerminalValue::Refuted
+    );
+}
+
+#[trace("FR-158-AC-2")]
+#[test]
+fn a_liveness_claim_under_a_constraint_settles_constraint_reached_never_holds() {
+    let world = constrained_count(&[
+        infinite("always holds(x.v <= 3)"),
+        infinite("eventually holds(x.v = 3)"),
+    ]);
+    let actual = world
+        .run(
+            Some(1),
+            vec![atom(|v| Some(v == 3))],
+            constraint("Low"),
+            None,
+            ModelCheckLimits::default(),
+        )
+        .expect("the constrained liveness run admits");
+    // The unconstrained run holds (FR-158-AC-2); under `Low` no boundary
+    // state is stutter-extended, so no lasso forms and the cut is reported.
+    assert_eq!(
+        actual,
+        ModelCheckOutcome::Reduction {
+            cause: ReductionCause::ConstraintReached {
+                boundary_states: 12
+            },
+            stats: actual.stats(),
+        }
+    );
+    assert_eq!(actual.stats().stutter_edges, 0);
+}
+
+#[trace("FR-158-AC-2")]
+#[test]
+fn a_model_only_boundary_state_with_an_undefined_letter_refutes_instead_of_cutting() {
+    let world = constrained_count(&[infinite("eventually holds(x.v = 3)")]);
+    // The atom holds at the initial position, so the negation automaton has no
+    // move there and the model-only pass reads the rest of the model. Value 2
+    // is a `Low` boundary state (FR-158: boundary states are read) whose
+    // letter is undefined (FR-126: every model-only letter is read).
+    let actual = world
+        .run(
+            Some(0),
+            vec![atom(|v| match v {
+                0 => Some(true),
+                2 => None,
+                _ => Some(false),
+            })],
+            constraint("Low"),
+            None,
+            ModelCheckLimits::default(),
+        )
+        .expect("the constrained liveness run admits");
+    let evidence = violation(&actual);
+    assert!(
+        matches!(evidence.kind, CounterexampleKind::UndefinedEvaluation(_)),
+        "{evidence:?}"
     );
 }

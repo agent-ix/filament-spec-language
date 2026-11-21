@@ -321,11 +321,8 @@ impl<'a> PackageDeadlockSubject<'a> {
         let fault =
             |cause: &'static str| ReplayRefusal::Fault(InternalFault::new("analyze", cause));
         let target = derived_target().ok_or_else(|| fault("derived-target"))?;
-        let package = fsl_replay::ReplayPackage::read(
-            self.package_bytes,
-            fsl_replay::ReplayLimits::default().input_bytes,
-        )
-        .map_err(|_| fault("package-bytes"))?;
+        let package =
+            super::clause_item::read_package(self.package_bytes, &self.limits)?;
         let (wire, envelope) = request_and_envelope(
             WireParts {
                 package,
@@ -357,7 +354,7 @@ impl<'a> PackageDeadlockSubject<'a> {
             },
             &envelope,
             &NoLetters,
-            fsl_replay::ReplayLimits::default(),
+            self.limits.replay,
         )
     }
 }

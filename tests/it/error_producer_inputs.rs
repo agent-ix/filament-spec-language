@@ -1236,7 +1236,6 @@ fn an_original_call_request_reaches_unsupplied_execution_capability() {
 }
 
 #[test]
-#[ignore = "QSL-2692: public observation inputs omit source-declared models"]
 #[trace("FR-569-AC-9")]
 fn an_admitted_complete_population_distinguishes_dangling_protocol_seeds() {
     use fsl_semantics::model::accounting::ModelNormalizationLimits;

@@ -21,7 +21,7 @@ use fsl_package::CheckedPackage;
 use fsl_replay::{
     replay_protocol_trace_with_temporal_selections, DeclineCode, ModelCheckItem,
     ModelTraceReplayResult, ModelTraceSubject, ProofRefusalCause, ProtocolCertificateRequest,
-    ProtocolTraceSubject, ReplayLimits, ReplayRefusal, ReplayTargetMembers, RequestTargetWire,
+    ProtocolTraceSubject, ReplayRefusal, ReplayTargetMembers, RequestTargetWire,
     TemporalCounterexample,
 };
 use fsl_route::request::ItemKind;
@@ -400,6 +400,6 @@ fn replay_protocol(
         &envelope,
         letters,
         &[],
-        ReplayLimits::default(),
+        inputs.limits.replay,
     )
 }

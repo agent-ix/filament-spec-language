@@ -161,16 +161,16 @@ pub fn prepare_analyze(
     limits: RunLimits,
 ) -> std::result::Result<PreparedAnalyze, Box<RunError>> {
     super::with_request_limits(path, limits.request_bytes, |directory, bytes| {
-        prepare_bytes(directory, bytes, limits.dependent_bytes)
+        prepare_bytes(directory, bytes, limits)
     })
 }
 
 fn prepare_bytes(
     directory: &Path,
     bytes: &[u8],
-    dependent_bytes: usize,
+    limits: RunLimits,
 ) -> Result<PreparedAnalyze> {
-    match read(directory, bytes, dependent_bytes)? {
+    match read(directory, bytes, limits)? {
         Readout::Source(input, _) => Ok(PreparedAnalyze {
             input: Box::new(input),
         }),
@@ -307,7 +307,9 @@ fn run_package(
 
 /// The request's inputs and the intake that read them, which still charges
 /// the libraries and domain packages compilation reads.
-fn read<'d>(directory: &'d Path, bytes: &[u8], dependent_bytes: usize) -> Result<Readout<'d>> {
+fn read<'d>(directory: &'d Path, bytes: &[u8], limits: RunLimits) -> Result<Readout<'d>> {
+    let dependent_bytes = limits.dependent_bytes;
+    let replay = fsl_replay::ReplayLimits::default().with_input_bytes(limits.replay_input_bytes);
     let mut request: wire::AnalyzeRequest = request(bytes).map_err(|cause| match cause {
         RunCause::Json(error) => invalid("request", error.to_string()),
         cause => cause,
@@ -316,7 +318,7 @@ fn read<'d>(directory: &'d Path, bytes: &[u8], dependent_bytes: usize) -> Result
     if let Some(package) = &request.package {
         let (admitted, mut intake) = admit_package(directory, dependent_bytes, &request, package)?;
         let memory = read_memory(&request.memory)?;
-        let members = Box::new(read_run_members(&request, &mut intake)?);
+        let members = Box::new(read_run_members(&request, &mut intake, replay)?);
         return Ok(Readout::Package(PackageSelection {
             admitted,
             members,
@@ -346,7 +348,7 @@ fn read<'d>(directory: &'d Path, bytes: &[u8], dependent_bytes: usize) -> Result
         documents,
         mut subject,
         limits,
-    } = read_run_members(&request, &mut intake)?;
+    } = read_run_members(&request, &mut intake, replay)?;
     subject.memory.clone_from(&memory);
     let compile = wire::CompileRequest {
         models: Some(request.models),
@@ -461,7 +463,7 @@ pub fn analyze_with_providers_and_limits(
     cancel: &Cancel,
 ) -> std::result::Result<RunResult, Box<RunError>> {
     super::with_request_limits(path, limits.request_bytes, |directory, bytes| {
-        let (input, mut intake) = match read(directory, bytes, limits.dependent_bytes)? {
+        let (input, mut intake) = match read(directory, bytes, limits)? {
             Readout::Source(input, intake) => (input, intake),
             Readout::Package(selection) => {
                 return run_package(selection, negotiate, providers, options, cancel);
@@ -1030,9 +1032,11 @@ struct RunMembers {
 fn read_run_members(
     request: &wire::AnalyzeRequest,
     intake: &mut super::Intake<'_>,
+    replay: fsl_replay::ReplayLimits,
 ) -> Result<RunMembers> {
     let documents = read_documents(intake, &request.documents, request.items.as_deref())?;
-    let limits = analyze_limits(&request.limits, request.deadline_ms);
+    let mut limits = analyze_limits(&request.limits, request.deadline_ms);
+    limits.replay = replay;
     let subject = read_subject(request.subject.clone(), &documents)?;
     Ok(RunMembers {
         documents,

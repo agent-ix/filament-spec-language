@@ -85,7 +85,8 @@ use fsl_semantics::model::observation::AdmissionFailure;
 use serde::{ser::SerializeStruct, Serialize, Serializer};
 
 use crate::certificate::check::{
-    admit, admit_read_identities, expansion_halt, finish, poll, stopped, widen, Budgets, Checker, Halt, Step,
+    admit, admit_read_identities, expansion_halt, finish, poll, stopped, widen, Budgets, Checker,
+    Halt, Step,
 };
 use crate::certificate::recording::Recording;
 use crate::certificate::scc::{check_partition, Component, ComponentCertificate};
@@ -1677,7 +1678,7 @@ impl<S: SubjectSystem> Check<'_, S> {
                     TerminalClass::NotTerminal
                 } else {
                     self.system
-                        .terminal_class(&state, &expansion, cut)
+                        .terminal_class(&state, &expansion, cut.clone())
                         .map_err(|stop| self.expansion_stop(stop))?
                 };
                 let holds = match class {

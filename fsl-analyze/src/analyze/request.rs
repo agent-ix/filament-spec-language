@@ -840,6 +840,7 @@ fn work<'a>(
                                         recording_identity,
                                         Some(recording),
                                         item.options.population.clone(),
+                                        limits.replay,
                                     )
                                 }
                                 None => {

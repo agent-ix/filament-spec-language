@@ -62,6 +62,9 @@ pub struct RunLimits {
     pub request_bytes: usize,
     /// Maximum aggregate bytes in selected dependent files.
     pub dependent_bytes: usize,
+    /// `replay.input_bytes` (FR-255): the bound on each replay read an
+    /// analyze run starts (FR-940-AC-22).
+    pub replay_input_bytes: u64,
 }
 
 impl Default for RunLimits {
@@ -69,6 +72,7 @@ impl Default for RunLimits {
         Self {
             request_bytes: REQUEST_BYTES,
             dependent_bytes: TOTAL_BYTES,
+            replay_input_bytes: fsl_replay::DEFAULT_REPLAY_INPUT_BYTES,
         }
     }
 }

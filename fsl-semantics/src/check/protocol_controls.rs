@@ -32,7 +32,6 @@ use fsl_forms::{
 };
 use fsl_foundation::Span;
 
-use super::check::holds_float;
 use super::ir::CheckedBody;
 use super::lowering::{protocol_location, ProtocolSite};
 use super::protocol_obligation::{
@@ -545,7 +544,9 @@ fn check_fifo(
         return None;
     }
     let key_type = body.root().value_type().clone();
-    if holds_float(&key_type) || keys.declarations.scope.reaches_event(&key_type) {
+    if keys.declarations.scope.reaches_float(&key_type)
+        || keys.declarations.scope.reaches_event(&key_type)
+    {
         let span = span_of(key, &Location::root(Origin::Expression));
         refusals.push((
             span,

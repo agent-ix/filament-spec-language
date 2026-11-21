@@ -582,6 +582,7 @@ fn provider_run_accepts_run_limits_and_request_overrides() {
     let limits = command::RunLimits {
         request_bytes,
         dependent_bytes,
+        ..command::RunLimits::default()
     };
     let clocks = serde_json::value::RawValue::from_string("{}".to_owned()).unwrap();
     let overrides = command::RequestOverrides {
@@ -613,6 +614,7 @@ fn provider_run_accepts_run_limits_and_request_overrides() {
     let below_request_size = command::RunLimits {
         request_bytes: request_bytes - 1,
         dependent_bytes,
+        ..command::RunLimits::default()
     };
     let error = command::run_with_providers_and_limits_and_overrides(
         &request,
@@ -637,6 +639,7 @@ fn provider_run_accepts_run_limits_and_request_overrides() {
     let below_dependent_size = command::RunLimits {
         request_bytes,
         dependent_bytes: dependent_bytes - 1,
+        ..command::RunLimits::default()
     };
     let error = command::run_with_providers_and_limits_and_overrides(
         &request,
