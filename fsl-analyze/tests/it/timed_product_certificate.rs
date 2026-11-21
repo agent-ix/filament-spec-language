@@ -836,12 +836,12 @@ fn reset_loop_is_nonprogressive_without_a_deadline_clock() {
     assert!(proved_value_of(&tampered).is_none());
 }
 
-/// FR-923: a workload resolves a state by its weights, so an operation it does
-/// not weigh cannot be dropped from the checker's product.
+/// FR-923: a workload resolves a state by its weights, so an operation it weighs at zero
+/// cannot be dropped from the checker's product.
 #[trace("TC-2492", "FR-923-AC-3")]
 #[test]
-fn a_workload_that_leaves_an_enabled_operation_unweighted_is_not_proved() {
-    let claim = "probabilistic Unweighted using ev on M over (c: M::Call) under One on origin \
+fn a_workload_that_gives_an_enabled_operation_no_weight_is_not_proved() {
+    let claim = "probabilistic ZeroWeight using ev on M over (c: M::Call) under One on origin \
          { probability >= 0.01 [ eventually[0 ms, 5 ms] holds(c.retried) ] }\n";
     let world = retx_with(
         &[("send", &["late", "x"]), ("tick", &["retried"])],
@@ -850,10 +850,10 @@ fn a_workload_that_leaves_an_enabled_operation_unweighted_is_not_proved() {
         "delay M::Call::send ~ discrete { 2 ms: 1 };\n\
          pre Tick using v on M::Call::tick { not self.late and not self.retried and self.x >= 2 ms }\n\
          post Ticked using v on M::Call::tick { self.retried = true }\n\
-         workload One on M { weight Call::send = 1; }\n",
+         workload One on M { weight Call::send = 1; weight Call::tick = 0; }\n",
         claim,
     );
-    assert!(proved_value_of(&settle(&world, "Unweighted")).is_none());
+    assert!(proved_value_of(&settle(&world, "ZeroWeight")).is_none());
 }
 
 /// The exact value of a `proved` record, when it is one.
