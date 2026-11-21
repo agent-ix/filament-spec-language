@@ -745,6 +745,15 @@ impl ModelSystem<'_> {
         self.shared_accounting
             .store(true, std::sync::atomic::Ordering::Relaxed);
     }
+    /// Native replay has its own evaluation allowance even after the search
+    /// was cancelled. Its engine still enforces the independent replay bound.
+    pub fn begin_plan_replay(&self, limits: ScalarLimits) {
+        *self
+            .request_cancel
+            .lock()
+            .expect("request cancellation lock") = None;
+        self.share_evaluation_meter(limits);
+    }
     /// Whether optional fresh-meter optimizations must defer to enumeration.
     pub fn shares_evaluation_meter(&self) -> bool {
         self.shared_accounting

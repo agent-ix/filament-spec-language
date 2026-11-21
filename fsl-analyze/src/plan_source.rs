@@ -835,6 +835,6 @@ impl PlanRules for SourcePlan<'_> {
     }
 
     fn begin_replay(&mut self) {
-        self.system.share_evaluation_meter(self.limits);
+        self.system.begin_plan_replay(self.limits);
     }
 }
