@@ -38,6 +38,7 @@ pub enum PolicyState {
 }
 
 /// Borrowed checked identity and actual binding for a policy instance.
+#[derive(Clone, Copy)]
 pub struct PolicyContext<'a> {
     /// Authored clause node.
     pub node: &'a NodeKey,
@@ -340,7 +341,6 @@ fn key(
         writer.end_array()?;
         writer.finish().map(|_| ())
     })();
-    drop(writer);
     if let Some(error) = budget.stopped.borrow_mut().take() {
         return Err(error);
     }

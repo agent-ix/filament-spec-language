@@ -419,6 +419,14 @@ pub trait PlanRules {
     /// The number of policy clauses, in the request's `policy` order.
     fn policy_count(&self) -> usize;
 
+    /// Retain an independent copy of policy-state vectors on the caller's ledger.
+    ///
+    /// # Errors
+    /// [`RuleStop`] before any denied representation allocation.
+    fn copy_policy_states(&mut self, monitors: &[Vec<u8>]) -> Result<Vec<Vec<u8>>, RuleStop> {
+        Ok(monitors.to_vec())
+    }
+
     /// Policy `policy`'s monitor after reading the initial state.
     ///
     /// # Errors
@@ -777,6 +785,18 @@ pub(crate) struct NodeKey {
     pub(crate) prefix: Option<usize>,
 }
 
+impl NodeKey {
+    pub(crate) fn with_monitors(&self, monitors: Vec<Vec<u8>>) -> Self {
+        Self {
+            state: self.state.clone(),
+            monitors,
+            depth: self.depth,
+            accumulated: self.accumulated.clone(),
+            prefix: self.prefix,
+        }
+    }
+}
+
 /// One admitted search node.
 #[derive(Clone, Debug)]
 pub(crate) struct Node<K> {
@@ -1007,12 +1027,15 @@ impl<R: PlanRules> Search<'_, '_, R> {
         }
         let key = NodeKey {
             state: self.state_key(&start)?,
-            monitors: monitors.clone(),
+            monitors: self.rules.copy_policy_states(&monitors)?,
             depth: 0,
             accumulated: (!self.dominance && self.kind == ObjectiveKind::StepSum).then(zero),
             prefix: (!self.rules.merges_prefixes()).then_some(0),
         };
-        self.index.insert(key.clone(), 0);
+        self.index.insert(
+            key.with_monitors(self.rules.copy_policy_states(&key.monitors)?),
+            0,
+        );
         self.nodes.push(Node {
             key,
             state: start,
@@ -1235,7 +1258,11 @@ impl<R: PlanRules> Search<'_, '_, R> {
         let mut rejected = false;
         for policy in 0..self.rules.policy_count() {
             self.charge(PlanLimit::MaxWork)?;
-            let previous = self.nodes[parent].monitors[policy].clone();
+            let previous = self
+                .rules
+                .copy_policy_states(std::slice::from_ref(&self.nodes[parent].monitors[policy]))?
+                .pop()
+                .ok_or(Stop::Error(PlanSearchError::StateKey))?;
             match self.rules.policy_advance(policy, &previous, &state)? {
                 MonitorStep::Continue(monitor) => monitors.push(monitor),
                 MonitorStep::Reject => {
@@ -1275,7 +1302,7 @@ impl<R: PlanRules> Search<'_, '_, R> {
         };
         let key = NodeKey {
             state: self.state_key(&state)?,
-            monitors: monitors.clone(),
+            monitors: self.rules.copy_policy_states(&monitors)?,
             depth,
             accumulated: (!self.dominance && self.kind == ObjectiveKind::StepSum)
                 .then(|| accumulated.value.clone()),
@@ -1306,7 +1333,10 @@ impl<R: PlanRules> Search<'_, '_, R> {
         }
         self.charge(PlanLimit::MaxStates)?;
         let index = self.nodes.len();
-        self.index.insert(key.clone(), index);
+        self.index.insert(
+            key.with_monitors(self.rules.copy_policy_states(&key.monitors)?),
+            index,
+        );
         self.nodes.push(Node {
             key,
             state,
@@ -1375,7 +1405,7 @@ impl<R: PlanRules> Search<'_, '_, R> {
         if !self.rules.goal(&view)? {
             return Ok(false);
         }
-        let monitors = self.nodes[index].monitors.clone();
+        let monitors = self.rules.copy_policy_states(&self.nodes[index].monitors)?;
         for (policy, monitor) in monitors.iter().enumerate() {
             if !self
                 .rules

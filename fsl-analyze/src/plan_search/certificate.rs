@@ -191,10 +191,18 @@ pub(crate) fn write<R: PlanRules>(
         .iter()
         .map(|&index| {
             let node = &search.nodes[index];
-            Entry {
-                key: node.key.clone(),
+            Ok(Entry {
+                key: node.key.with_monitors(
+                    search
+                        .rules
+                        .copy_policy_states(&node.key.monitors)
+                        .map_err(super::stop_cause)?,
+                ),
                 state: node.state.clone(),
-                monitors: node.monitors.clone(),
+                monitors: search
+                    .rules
+                    .copy_policy_states(&node.monitors)
+                    .map_err(super::stop_cause)?,
                 parent: node
                     .parent
                     .as_ref()
@@ -208,9 +216,9 @@ pub(crate) fn write<R: PlanRules>(
                     .iter()
                     .map(|(step, target, _)| (step.clone(), position[*target]))
                     .collect(),
-            }
+            })
         })
-        .collect();
+        .collect::<Result<_, PlanStopCause>>()?;
     Ok(Certificate {
         kind,
         objective: search.kind,

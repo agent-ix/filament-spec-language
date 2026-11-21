@@ -1123,6 +1123,37 @@ impl PlanRules for SourcePlan<'_> {
         Some(self.native_operations.clone())
     }
 
+    fn copy_policy_states(&mut self, monitors: &[Vec<u8>]) -> Result<Vec<Vec<u8>>, RuleStop> {
+        if !self.positive_policies || monitors.is_empty() {
+            return Ok(monitors.to_vec());
+        }
+        use filament_exact::{Charge, ChargePoint};
+        let bytes = monitors.iter().try_fold(
+            monitors
+                .len()
+                .checked_mul(std::mem::size_of::<Vec<u8>>())
+                .ok_or(RuleStop::Cancelled(filament_exact::CancelCause::Requested))?,
+            |total, monitor| {
+                total
+                    .checked_add(monitor.len())
+                    .ok_or(RuleStop::Cancelled(filament_exact::CancelCause::Requested))
+            },
+        )?;
+        self.system
+            .evaluation_meter()
+            .charge(
+                Charge::new(ChargePoint::ModelCandidate)
+                    .work(Integer::from(bytes))
+                    .results(u64::try_from(bytes).map_err(|_| {
+                        RuleStop::Cancelled(filament_exact::CancelCause::Requested)
+                    })?),
+            )
+            .map_err(|incomplete| {
+                self.evaluation_stop(incomplete.limit_kind.as_str(), incomplete.limit)
+            })?;
+        Ok(monitors.to_vec())
+    }
+
     fn policy_count(&self) -> usize {
         self.policies.len()
     }
