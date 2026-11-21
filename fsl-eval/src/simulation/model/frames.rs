@@ -35,8 +35,7 @@ use super::footprints::ReadCheck;
 use super::walk::{stop, Applied, Budget, ContractFinding, FindingCase, Row, Selected, Walk};
 use super::{
     handler_anchor, identity_limits, state_document, Application, ClauseInfo, ClauseOutcome,
-    FieldChange, ModelFinding, ModelSimState, ModelSystem, StepEffect, WrittenSlots, BROKEN,
-    EXHAUSTED,
+    FieldChange, ModelFinding, ModelSystem, StepEffect, WrittenSlots, BROKEN, EXHAUSTED,
 };
 use crate::simulation::expansion::ExpansionStop;
 use crate::simulation::footprint::Footprint;
@@ -1802,11 +1801,11 @@ impl Run<'_, '_, '_> {
                         .transpose()?;
                     successors.push(Applied {
                         transition: self.transition.clone(),
-                        state: ModelSimState {
-                            state: candidate,
-                            anchor: handler_anchor(&self.application.text),
-                            reached_by: Some(effect),
-                        },
+                        state: self.walk.state.reached(
+                            candidate,
+                            handler_anchor(&self.application.text),
+                            effect,
+                        ),
                         receiver: self.row.reference.clone(),
                         arguments: self.args.iter().map(|(_, value)| value.clone()).collect(),
                         result,

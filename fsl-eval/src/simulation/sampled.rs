@@ -322,6 +322,7 @@ impl<'s, 'a> ProbabilisticSampler<'s, 'a> {
         reason = "FR-188 pins SampleStop::NotMarkov(NotMarkov), whose scheduled identity carries a receiver reference"
     )]
     pub fn position(&self, state: ModelSimState) -> Result<SampledPosition, SampleStop> {
+        state.required_anchor()?;
         let key = self
             .system
             .canonical_state_key(&state)
