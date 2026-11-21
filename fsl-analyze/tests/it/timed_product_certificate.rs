@@ -642,33 +642,33 @@ fn a_forged_decided_target_is_neither_counted_nor_reported() {
         .expect("the refutation carries its witness");
     let paths = honest_witness.evidence().paths.len();
     assert!(paths >= 2, "the forgery needs a second honest path");
-    let forged = settle_witness_tampered(&world, "Strict", |witness| {
-        // The longest path ends at a decided state its last source has no
-        // outcome to once that end is replaced by the shortest path's end.
-        let shortest = (0..witness.paths.len())
-            .min_by_key(|index| witness.paths[*index].steps.len())
-            .expect("a path");
-        let longest = (0..witness.paths.len())
-            .max_by_key(|index| witness.paths[*index].steps.len())
-            .expect("a path");
-        let other = witness.paths[shortest]
-            .steps
-            .last()
-            .expect("a step")
-            .post_key
-            .clone();
-        witness.paths[longest]
-            .steps
-            .last_mut()
-            .expect("a step")
-            .post_key = other;
-    });
-    let reproduced = forged
-        .probabilistic_counterexample
-        .as_ref()
-        .expect("the genuine paths still refute");
-    assert_eq!(reproduced.mass(), honest_witness.mass());
-    assert!(reproduced.evidence().paths.len() < paths, "{} vs {paths}; lens {:?}", reproduced.evidence().paths.len(), honest_witness.evidence().paths.iter().map(|p| p.steps.len()).collect::<Vec<_>>());
+    // Replace the decided end of one honest path by the decided end of another.
+    // Where the new end is no outcome of the chosen choice the path leaves the
+    // evidence; wherever the witness still refutes, the mass is the honest one.
+    let mut dropped_one = false;
+    for victim in 0..paths {
+        for source in 0..paths {
+            let forged = settle_witness_tampered(&world, "Strict", |witness| {
+                let other = witness.paths[source]
+                    .steps
+                    .last()
+                    .expect("a step")
+                    .post_key
+                    .clone();
+                witness.paths[victim]
+                    .steps
+                    .last_mut()
+                    .expect("a step")
+                    .post_key = other;
+            });
+            if let Some(reproduced) = forged.probabilistic_counterexample.as_ref() {
+                assert_eq!(reproduced.mass(), honest_witness.mass());
+                assert!(reproduced.evidence().paths.len() <= paths);
+                dropped_one |= reproduced.evidence().paths.len() < paths;
+            }
+        }
+    }
+    assert!(dropped_one, "some forged end must leave the evidence");
 }
 
 /// FR-923-AC-3: a witness that takes the tie's NON-failing ordering does not
