@@ -44,7 +44,10 @@
 #![forbid(unsafe_code)]
 
 mod admitted;
+mod reference_budget;
+pub use reference_budget::NormalizationReferenceBudget;
 mod reference_codec;
+pub use reference_codec::admit_native_value_bytes;
 pub use reference_codec::{ReferenceCodec, ReferenceCodecError, ReferenceFailure, ReferenceScope};
 mod application;
 mod axes;
@@ -402,10 +405,10 @@ pub use refinement::{
     open_protocol_systems, open_systems, protocol_observation_label, protocol_transition_class,
     step_history, step_view_over, AbstractClass, AbstractInitial, AbstractProtocolSystem,
     AssumptionIdentity, AssumptionOrigin, AssumptionSelectedMember, AssumptionSide,
-    AssumptionTarget, CandidateFairHop, CandidateFairState, CandidateFairStep, CandidateLivenessError, ConcreteStep,
-    EvalFailure, HiddenSlot, HistoryValues, LivenessHalf, MappedState, MappingFailure,
-    MappingRowRef, MappingUndetermined, ObjectKey, ObservationField, ObservationLabel,
-    PairedAssumptionPath, PairedAssumptionStep, ProtocolAssumptionFairness,
+    AssumptionTarget, CandidateFairHop, CandidateFairState, CandidateFairStep,
+    CandidateLivenessError, ConcreteStep, EvalFailure, HiddenSlot, HistoryValues, LivenessHalf,
+    MappedState, MappingFailure, MappingRowRef, MappingUndetermined, ObjectKey, ObservationField,
+    ObservationLabel, PairedAssumptionPath, PairedAssumptionStep, ProtocolAssumptionFairness,
     ProtocolAssumptionReason, ProtocolAssumptionWitness, ProtocolCandidate, ProtocolRelationError,
     ProtocolStateRelation, ProtocolStep, ProtocolStepView, ProtocolSteps, ProtocolSystemsRefusal,
     ProtocolTrace, RefinementFailure, RefinementOutcome, RefinementPosition, RefinementSystems,
