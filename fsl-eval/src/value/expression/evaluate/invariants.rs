@@ -312,9 +312,14 @@ fn checked_dispatch_package() -> fsl_package::CheckedPackage {
 fn set_values(machine: &mut CheckedMachine<'_, '_>, values: Vec<Value>) {
     machine.values = values;
     machine.value_guard_provenance = vec![false; machine.values.len()];
+    machine.value_reference_origins = vec![Vec::new(); machine.values.len()];
 }
 
 fn set_frames(machine: &mut CheckedMachine<'_, '_>, frames: Vec<Vec<Option<Value>>>) {
+    machine.frame_reference_origins = frames
+        .iter()
+        .map(|frame| vec![Vec::new(); frame.len()])
+        .collect();
     machine.frame_guard_provenance = frames
         .iter()
         .map(|frame| vec![false; frame.len()])
