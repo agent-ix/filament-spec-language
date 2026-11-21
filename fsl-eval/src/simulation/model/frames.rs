@@ -94,7 +94,33 @@ fn argument_domains(
     application: &Application,
 ) -> Result<Vec<Domain>, ExpansionStop> {
     let system = walk.system;
-    let references = walk.references();
+    let mut references = walk.references();
+    if walk.candidate_visitor.is_some() {
+        // Planning uses the complete typed reference identity order, which
+        // may differ from population row order or canonical JSON text order.
+        for at in 1..references.len() {
+            let mut next = at;
+            while next > 0 {
+                walk.meter()
+                    .charge(filament_exact::Charge::new(
+                        filament_exact::ChargePoint::CollectionVisit,
+                    ))
+                    .map_err(|incomplete| {
+                        super::walk::exhausted(
+                            crate::simulation::expansion::ExpansionLimit::EvaluationMeter(
+                                incomplete.limit_kind,
+                            ),
+                        )
+                    })?;
+                if references[next - 1] <= references[next] {
+                    break;
+                }
+                references.swap(next - 1, next);
+                next -= 1;
+            }
+        }
+        references.dedup();
+    }
     application
         .declaration
         .parameters()
@@ -189,9 +215,11 @@ pub(super) fn apply(
         let args = arguments_of(application, &domains, &digits)?;
         apply_argument(
             walk,
-            row,
-            application,
-            clauses,
+            ApplicationContext {
+                row,
+                application,
+                clauses,
+            },
             args,
             &frames,
             budget,
@@ -209,26 +237,36 @@ pub(super) fn apply(
     Ok(())
 }
 
+/// The receiver, operation and selected clauses shared by its argument vectors.
+struct ApplicationContext<'a, 'c> {
+    row: &'a Row,
+    application: &'a Application,
+    clauses: &'a Selected<'c>,
+}
+
 /// Apply one typed argument vector through the same native relation used by
 /// every model caller. Enumeration and source-plan cursors share this path.
 fn apply_argument(
     walk: &Walk<'_, '_>,
-    row: &Row,
-    application: &Application,
-    clauses: &Selected<'_>,
+    context: ApplicationContext<'_, '_>,
     args: Vec<(String, Value)>,
     frames: &ArgumentFrames,
     budget: &mut Budget,
     outputs: Outputs<'_>,
 ) -> Result<(), ExpansionStop> {
+    let ApplicationContext {
+        row,
+        application,
+        clauses,
+    } = context;
     let Outputs {
         contract,
         successors,
-        mut enabled,
-        mut enabled_transitions,
-        mut recommendations,
+        enabled,
+        enabled_transitions,
+        recommendations,
         selected_transitions,
-        mut charged,
+        charged,
     } = outputs;
     let system = walk.system;
     let preconditions = &clauses.preconditions;
@@ -299,7 +337,7 @@ fn apply_argument(
         }
     }
 
-    if let Some(recommendations) = recommendations.as_deref_mut() {
+    if let Some(recommendations) = recommendations {
         recommendations.push(super::application::RecommendedApplication {
             operation: application.text.clone(),
             receiver: row.reference.clone(),
@@ -325,10 +363,10 @@ fn apply_argument(
     // completes when no attempt constraint reads a completed result. Keep
     // the transition only if at least one candidate post-state succeeds.
     let before = budget.used();
-    if let Some(transitions) = enabled_transitions.as_deref_mut() {
+    if let Some(transitions) = enabled_transitions {
         let mut first_successor = Vec::new();
         let completes = application_run.first_candidate(budget, contract, &mut first_successor)?;
-        if let Some(charged) = charged.as_deref_mut() {
+        if let Some(charged) = charged {
             charged.push((transition.clone(), budget.used() - before));
         }
         if completes {
@@ -339,10 +377,10 @@ fn apply_argument(
 
     let first = successors.len();
     application_run.candidates(budget, contract, successors)?;
-    if let Some(charged) = charged.as_deref_mut() {
+    if let Some(charged) = charged {
         charged.push((transition.clone(), budget.used() - before));
     }
-    if let Some(enabled) = enabled.as_deref_mut() {
+    if let Some(enabled) = enabled {
         enabled.push(EnabledVector {
             transition,
             receiver: row.reference.clone(),
@@ -402,7 +440,15 @@ pub(super) fn visit_operation(
             .declaration
             .parameters()
             .iter()
-            .any(|(_, value_type)| !matches!(value_type, ValueType::Boolean | ValueType::Int(_)))
+            .any(|(_, value_type)| {
+                !matches!(
+                    value_type,
+                    ValueType::Boolean
+                        | ValueType::Int(_)
+                        | ValueType::Reference(_)
+                        | ValueType::Enum(_)
+                )
+            })
         {
             return Err(stop(BROKEN));
         }
@@ -428,9 +474,11 @@ pub(super) fn visit_operation(
             let mut successors = Vec::new();
             apply_argument(
                 walk,
-                row,
-                application,
-                &clauses,
+                ApplicationContext {
+                    row,
+                    application,
+                    clauses: &clauses,
+                },
                 args,
                 &frames,
                 budget,
@@ -524,6 +572,8 @@ pub(super) fn visit_operation(
                     .map_err(|_| stop(BROKEN))?;
                 walk.visit(super::NativeCandidateEvent::Completed {
                     transition: &applied.transition,
+                    receiver: &applied.receiver,
+                    arguments: &applied.arguments,
                     state: &applied.state,
                     outcome,
                 })?;
@@ -2149,7 +2199,10 @@ impl Run<'_, '_, '_> {
 /// outcomes count until deduplication, so sorting cannot hide retained memory.
 fn retain_outcome(walk: &Walk<'_, '_>, next: &Applied) -> Result<(), ExpansionStop> {
     let occurrences = |applied: &Applied| {
-        let mut count = filament_exact::Integer::one();
+        let mut count = filament_exact::Integer::from(2_i64);
+        for argument in &applied.arguments {
+            count = count.add(&argument.occ());
+        }
         for objects in applied.state.state.populations.values() {
             count = count.add(&filament_exact::Integer::one());
             for object in objects.values() {

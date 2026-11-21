@@ -1528,6 +1528,38 @@ impl AdmittedModel {
             .collect()
     }
 
+    /// Authored parameter positions for planning refusals, keyed by the
+    /// declared operation and parameter rather than the selecting grammar.
+    pub(crate) fn plan_parameter_origins(
+        &self,
+    ) -> Vec<((EffectiveId, String, String), serde_json::Value)> {
+        let package = self.index.package();
+        let mut origins = Vec::new();
+        for record in &package.records {
+            let DomainPackageRecord::OperationMember(operation) = record else {
+                continue;
+            };
+            let Some((declaring, name)) = self.operation_anchor_declaration(&operation.key) else {
+                continue;
+            };
+            for parameter in &operation.parameters {
+                let Some(parameter_name) = crate::model::intake::member_identity_name(
+                    &operation.key.node,
+                    &parameter.key.node,
+                ) else {
+                    continue;
+                };
+                if let Some(original) = package.original(&parameter.key) {
+                    origins.push((
+                        (declaring.clone(), name.clone(), parameter_name.to_owned()),
+                        original.origin.clone(),
+                    ));
+                }
+            }
+        }
+        origins
+    }
+
     /// Every object type of this package: its declaration key and its
     /// effective identity.
     pub(crate) fn object_types(&self) -> impl Iterator<Item = (&DeclarationKey, EffectiveId)> {

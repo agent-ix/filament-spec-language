@@ -71,4 +71,7 @@ pub use request_index::RequestIndex;
 pub use setting::{
     AccountingSetting, Setting, SettingLimits, SettingName, UsageCause, UsageRefusal,
 };
-pub use source::{LocatedSpan, Position, Source, SourceIdentity, SourceLabel, Span, Spanned};
+pub use source::{
+    LocatedSpan, Position, Source, SourceCoordinates, SourceIdentity, SourceLabel, SourcePoint,
+    Span, Spanned,
+};

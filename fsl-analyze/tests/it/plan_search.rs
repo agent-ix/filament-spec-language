@@ -101,6 +101,8 @@ struct Counter<'w> {
     trip: Option<Cancel>,
     found: bool,
     native: Option<std::sync::Arc<[(filament_exact::EffectiveId, String)]>>,
+    /// Observe an actual retained payload at the library adapter boundary.
+    on_native_payload: Option<Box<dyn FnMut(&PlanStep)>>,
 }
 
 impl<'w> Counter<'w> {
@@ -122,6 +124,7 @@ impl<'w> Counter<'w> {
             trip: None,
             found: false,
             native: None,
+            on_native_payload: None,
         }
     }
 
@@ -168,13 +171,19 @@ impl PlanRules for Counter<'_> {
     }
 
     /// FSpec FR-804: `inc` is declared before `double`.
-    fn step_key(&self, step: &ModelTransition) -> Self::StepKey {
+    fn step_key(
+        &mut self,
+        step: &fsl_analyze::plan_search::PlanStep,
+    ) -> Result<Self::StepKey, RuleStop> {
+        if let Some(observe) = &mut self.on_native_payload {
+            observe(step);
+        }
         let order = match self.operation(step) {
             "inc" => 0,
             "double" => 1,
             _ => 2,
         };
-        (order, step.arguments().to_vec())
+        Ok((order, step.arguments().to_vec()))
     }
 
     fn policy_count(&self) -> usize {
@@ -1263,6 +1272,868 @@ fn native_plan_world(model: &str, contracts: &str, start: &[(&str, serde_json::V
     )
 }
 
+fn finite_argument_world(
+    model: &str,
+    grammar: &'static str,
+    population: &'static str,
+    body: &str,
+    populations: &[(&str, &str, &[(&str, serde_json::Value)])],
+) -> World {
+    let source = fsl_cst::diagnostic::read_source(
+        fsl_foundation::SourceIdentity::new("test", "finite-arguments-model"),
+        "finite-arguments-model.fsl",
+        model.as_bytes(),
+        fsl_cst::Limits::default().source_bytes,
+    )
+    .expect("the authored finite model source admits");
+    let packages =
+        fsl_semantics::model::intake::package_input_from_sources([("test/native-plan", &source)])
+            .expect("the authored finite model compiles");
+    World::with_populations(
+        Domain {
+            package: "test/native-plan",
+            object: grammar,
+            population,
+            document: packages["test/native-plan"].clone(),
+        },
+        body,
+        model_world::INFINITE,
+        populations,
+    )
+}
+
+const DRAIN_MODEL: &str = r#"language "ix:native" edition "1-draft";
+domain "test/native-plan";
+object Server {
+  drained: Boolean;
+  operation drain(s: Server) modifies self.drained {
+    pre Ready { s = self and not self.drained };
+    post Drained { self.drained };
+  }
+}
+population servers: Server;
+"#;
+
+/// The authored drain example exercises the actual native reference values,
+/// source argument fields and independently checked potential certificate.
+#[test]
+#[trace("FSpec-FR-800-AC-1", "FSpec-FR-804-AC-3")]
+fn finite_reference_arguments_drain_two_servers_and_survive_replay() {
+    use filament_exact::Value;
+    use fsl_analyze::plan_search::replay;
+    use fsl_analyze::plan_source::SourcePlan;
+    let servers = [
+        ("n2", json!({"drained":{"boolean":false}})),
+        ("n1", json!({"drained":{"boolean":false}})),
+    ];
+    let world = finite_argument_world(
+        DRAIN_MODEL,
+        "Server",
+        "servers",
+        "type Lengths = Int[0,2]; synthesis Reach using t grammar M::Server domain Lengths satisfies { Reach.length = 2 and forall(s in Reach.final.servers: s.drained) and forall(s in Reach.steps: present(s.arguments.s) and forall(t in Reach.steps: present(t.arguments.s) and (s.index != t.index implies value(s.arguments.s) != value(t.arguments.s)))) };",
+        &[("servers", "Server", &servers)],
+    );
+    let system = ModelSystem::new(
+        world
+            .subject_populations(&[("servers", &["n1", "n2"])], UNLIMITED)
+            .simulation,
+    )
+    .expect("the real servers admit");
+    let mut rules = SourcePlan::new(
+        &world.package,
+        &world.package.graph().syntheses()[0],
+        &system,
+        vec![],
+        UNLIMITED,
+    )
+    .expect("the finite source plan admits");
+    let result = search(
+        &system,
+        &mut rules,
+        PlanSearchRequest {
+            lengths: PlanLengths::new(0, 2).unwrap(),
+            limits: PlanSearchLimits::default(),
+            cancel: &Cancel::new(),
+            fault: None,
+        },
+    )
+    .expect("the native plan is replayed");
+    assert_eq!(result.status, PlanStatus::Optimal);
+    assert!(result.certified);
+    assert_eq!(result.objective, Some(integer(2)));
+    let plan = result.plan.expect("two drains reach the goal");
+    let mut receivers = Vec::new();
+    for step in &plan.steps {
+        let (receiver, arguments) = step
+            .native_values()
+            .expect("the actual runtime values are retained");
+        assert!(matches!(arguments, [Value::Reference(argument)] if argument == receiver));
+        receivers.push(receiver.object().as_str().to_owned());
+    }
+    assert_eq!(receivers, ["n1", "n2"]);
+    assert_eq!(plan.states.len(), 3);
+    rules.begin_replay();
+    assert_eq!(
+        fsl_analyze::plan_search::replay::replay(
+            &system,
+            &mut rules,
+            &plan,
+            PlanLengths::new(0, 2).unwrap(),
+            ObjectiveKind::StepSum
+        )
+        .unwrap(),
+        integer(2)
+    );
+
+    let mut identities = plan.clone();
+    for step in &mut identities.steps {
+        *step = PlanStep::new(step.invocation().clone(), step.outcome_ordinal());
+    }
+    rules.begin_replay();
+    assert_eq!(
+        replay::replay(
+            &system,
+            &mut rules,
+            &identities,
+            PlanLengths::new(0, 2).unwrap(),
+            ObjectiveKind::StepSum
+        )
+        .unwrap(),
+        integer(2),
+        "replay reconstructs typed values from native invocation identities"
+    );
+    let forged = ModelTransition::new(
+        plan.steps[0].operation().to_owned(),
+        plan.steps[0].receiver().map(str::to_owned),
+        plan.steps[1].arguments().to_vec(),
+        quire_canonical::Limits::new(4096),
+    )
+    .unwrap();
+    let mut inconsistent = plan.clone();
+    inconsistent.steps[0] = PlanStep::new(forged, plan.steps[0].outcome_ordinal());
+    rules.begin_replay();
+    assert!(replay::replay(&system, &mut rules, &inconsistent, PlanLengths::new(0, 2).unwrap(), ObjectiveKind::StepSum).is_err(),
+        "another server argument violates drain's receiver-equality contract and the recorded transition");
+}
+
+/// Canonical argument order is parameter-major, using the enum's admitted
+/// ranks rather than the order of cases in its unordered authored spelling.
+#[test]
+#[trace("FSpec-FR-804-AC-3", "FSpec-FR-804-AC-4")]
+fn finite_reference_and_enum_arguments_follow_typed_product_order() {
+    use filament_exact::Value;
+    use fsl_analyze::plan_source::SourcePlan;
+    use fsl_eval::simulation::model::{
+        NativeCandidateControl as Control, NativeCandidateEvent as Event,
+    };
+    let robots = [("b", json!({})), ("a", json!({}))];
+    let world = finite_argument_world(
+        "language \"ix:native\" edition \"1-draft\"; domain \"test/native-plan\"; enum Cell { c1, c0 } object Robot { operation move(r: Robot, c: Cell); } population robots: Robot;",
+        "Robot",
+        "robots",
+        "type Lengths = Int[1,1]; synthesis Reach using t grammar M::Robot domain Lengths satisfies { forall(s in Reach.steps: present(s.arguments.r) and present(s.arguments.c) and value(s.arguments.c) = M::Cell::c0) };",
+        &[("robots", "Robot", &robots)],
+    );
+    let system = ModelSystem::new(
+        world
+            .subject_populations(&[("robots", &["a", "b"])], UNLIMITED)
+            .simulation,
+    )
+    .unwrap();
+    let mut rows = Vec::new();
+    system
+        .visit_plan_candidates(
+            &system.initial()[0],
+            &native_order(&system, &["move"]),
+            None,
+            &mut |event| {
+                if let Event::Completed {
+                    receiver,
+                    arguments,
+                    ..
+                } = event
+                {
+                    let [Value::Reference(target), Value::Enum(cell)] = arguments else {
+                        panic!("native values retain both declared types");
+                    };
+                    rows.push((
+                        receiver.object().as_str().to_owned(),
+                        target.object().as_str().to_owned(),
+                        cell.rank(),
+                    ));
+                }
+                Control::Continue
+            },
+        )
+        .unwrap();
+    assert_eq!(
+        rows,
+        [
+            ("a".to_owned(), "a".to_owned(), 0),
+            ("a".to_owned(), "a".to_owned(), 1),
+            ("a".to_owned(), "b".to_owned(), 0),
+            ("a".to_owned(), "b".to_owned(), 1),
+            ("b".to_owned(), "a".to_owned(), 0),
+            ("b".to_owned(), "a".to_owned(), 1),
+            ("b".to_owned(), "b".to_owned(), 0),
+            ("b".to_owned(), "b".to_owned(), 1),
+        ]
+    );
+    for _ in 0..2 {
+        let mut rules = SourcePlan::new(
+            &world.package,
+            &world.package.graph().syntheses()[0],
+            &system,
+            vec![],
+            UNLIMITED,
+        )
+        .unwrap();
+        let result = search(
+            &system,
+            &mut rules,
+            PlanSearchRequest {
+                lengths: PlanLengths::new(1, 1).unwrap(),
+                limits: PlanSearchLimits::default(),
+                cancel: &Cancel::new(),
+                fault: None,
+            },
+        )
+        .unwrap();
+        assert_eq!(result.status, PlanStatus::Optimal);
+        assert!(result.certified);
+        let step = &result.plan.as_ref().unwrap().steps[0];
+        let (receiver, arguments) = step.native_values().unwrap();
+        assert_eq!(receiver.object().as_str(), "a");
+        assert!(
+            matches!(&arguments[0], Value::Reference(reference) if reference.object().as_str() == "a")
+        );
+        assert!(matches!(&arguments[1], Value::Enum(member) if member.rank() == 0));
+    }
+}
+
+#[test]
+#[trace("FSpec-FR-800-AC-1", "FSpec-FR-804-AC-3")]
+fn finite_arguments_keep_mixed_receiver_types_and_source_union_cases() {
+    use fsl_analyze::plan_source::SourcePlan;
+    let model = DRAIN_MODEL.replace("population servers", "object Router { active: Boolean; operation drain(s: Server) modifies self.active { pre Idle { not self.active }; post Routed { self.active }; } } population routers: Router;\npopulation servers");
+    let servers = [
+        ("n1", json!({"drained":{"boolean":false}})),
+        ("n2", json!({"drained":{"boolean":false}})),
+    ];
+    let routers = [("r", json!({"active":{"boolean":false}}))];
+    let world = finite_argument_world(
+        &model,
+        "Server",
+        "servers",
+        "type Lengths = Int[3,3]; synthesis Reach using t grammar M::Server domain Lengths satisfies { forall(s in Reach.final.servers: s.drained) and forall(r in Reach.final.routers: r.active) and forall(s in Reach.steps: s.receiver = s.receiver and present(s.arguments.s)) };",
+        &[
+            ("routers", "Router", &routers),
+            ("servers", "Server", &servers),
+        ],
+    );
+    let system = ModelSystem::new(
+        world
+            .subject_populations(
+                &[("servers", &["n1", "n2"]), ("routers", &["r"])],
+                UNLIMITED,
+            )
+            .simulation,
+    )
+    .unwrap();
+    let synthesis = &world.package.graph().syntheses()[0];
+    assert_eq!(synthesis.plan().unwrap().shape().receiver_cases.len(), 2);
+    let mut rules = SourcePlan::new(&world.package, synthesis, &system, vec![], UNLIMITED).unwrap();
+    let result = search(
+        &system,
+        &mut rules,
+        PlanSearchRequest {
+            lengths: PlanLengths::new(3, 3).unwrap(),
+            limits: PlanSearchLimits::default(),
+            cancel: &Cancel::new(),
+            fault: None,
+        },
+    )
+    .unwrap();
+    assert_eq!(result.status, PlanStatus::Optimal);
+    assert!(result.certified);
+    let plan = result.plan.unwrap();
+    let names: Vec<_> = plan
+        .steps
+        .iter()
+        .map(|step| rules.operation_name(step).unwrap())
+        .collect();
+    assert_eq!(names, ["drain", "drain", "drain"]);
+    assert_ne!(
+        rules.operation(&plan.steps[0]).unwrap().declaring,
+        rules.operation(&plan.steps[2]).unwrap().declaring,
+        "the declaring type keeps equal operation basenames distinct"
+    );
+    let receivers: Vec<_> = plan
+        .steps
+        .iter()
+        .map(|step| step.native_values().unwrap().0.object_type().clone())
+        .collect();
+    assert_ne!(receivers[0], receivers[2]);
+}
+
+/// An empty but admitted target population has a genuinely empty invocation
+/// product. Its one-step plan space is infeasible, with no missing argument.
+#[test]
+#[trace("FSpec-FR-800", "FSpec-FR-806-AC-5")]
+fn finite_reference_arguments_over_an_empty_population_have_no_invocations() {
+    use fsl_analyze::plan_source::SourcePlan;
+    use fsl_eval::simulation::model::{
+        NativeCandidateControl as Control, NativeCandidateEvent as Event,
+    };
+    let robots = [("r", json!({}))];
+    let world = finite_argument_world(
+        "language \"ix:native\" edition \"1-draft\"; domain \"test/native-plan\"; object Server {} object Robot { operation choose(s: Server); } population servers: Server; population robots: Robot;",
+        "Robot", "robots", "bound EmptyServers on M::servers [0]\ntype Lengths = Int[1,1]; synthesis Reach using t grammar M::Robot domain Lengths satisfies { true };",
+        &[("servers","Server",&[]),("robots","Robot",&robots)]);
+    let system = ModelSystem::new(
+        world
+            .subject_populations(&[("servers", &[]), ("robots", &["r"])], UNLIMITED)
+            .simulation,
+    )
+    .expect("the complete empty target population admits");
+    let mut began = 0;
+    system
+        .visit_plan_candidates(
+            &system.initial()[0],
+            &native_order(&system, &["choose"]),
+            None,
+            &mut |event| {
+                if let Event::Begin(_) = event {
+                    began += 1;
+                }
+                Control::Continue
+            },
+        )
+        .unwrap();
+    assert_eq!(began, 0);
+    let mut rules = SourcePlan::new(
+        &world.package,
+        &world.package.graph().syntheses()[0],
+        &system,
+        vec![],
+        UNLIMITED,
+    )
+    .unwrap();
+    let result = search(
+        &system,
+        &mut rules,
+        PlanSearchRequest {
+            lengths: PlanLengths::new(1, 1).unwrap(),
+            limits: PlanSearchLimits::default(),
+            cancel: &Cancel::new(),
+            fault: None,
+        },
+    )
+    .unwrap();
+    assert_eq!(result.status, PlanStatus::Infeasible);
+    assert!(result.certified);
+    assert!(result.plan.is_none());
+}
+
+/// Runtime conformance preserves most-specific type identity and uses the
+/// full typed reference order instead of identity-first canonical JSON.
+#[test]
+#[trace("FSpec-FR-800", "FSpec-FR-804-AC-3")]
+fn finite_reference_arguments_preserve_subtypes_and_canonical_identity_order() {
+    use filament_exact::Value;
+    use fsl_eval::simulation::model::{
+        NativeCandidateControl as Control, NativeCandidateEvent as Event,
+    };
+    let bases = [("z", json!({}))];
+    let children = [("a", json!({}))];
+    let foreign = [("q", json!({}))];
+    let world = finite_argument_world(
+        "language \"ix:native\" edition \"1-draft\"; domain \"test/native-plan\"; object Base { operation select(target: Base); } object Child extends Base {} object Foreign {} population children: Child; population foreign: Foreign; population bases: Base;",
+        "Base","bases","", &[("children","Child",&children),("foreign","Foreign",&foreign),("bases","Base",&bases)]);
+    let system = ModelSystem::new(
+        world
+            .subject_populations(
+                &[("children", &["a"]), ("foreign", &["q"]), ("bases", &["z"])],
+                UNLIMITED,
+            )
+            .simulation,
+    )
+    .unwrap();
+    let mut values = Vec::new();
+    system
+        .visit_plan_candidates(
+            &system.initial()[0],
+            &native_order(&system, &["select"]),
+            None,
+            &mut |event| {
+                if let Event::Completed {
+                    receiver,
+                    arguments,
+                    ..
+                } = event
+                {
+                    let [Value::Reference(target)] = arguments else {
+                        panic!("one admitted reference argument");
+                    };
+                    values.push((receiver.clone(), target.clone()));
+                }
+                Control::Continue
+            },
+        )
+        .unwrap();
+    assert_eq!(
+        values.len(),
+        4,
+        "both conforming receivers and both conforming targets"
+    );
+    let mut expected: Vec<_> = system
+        .invocation_receivers(&system.initial()[0])
+        .unwrap()
+        .into_iter()
+        .map(|(_, reference)| reference)
+        .filter(|reference| reference.object().as_str() != "q")
+        .collect();
+    expected.sort();
+    let expected_pairs: Vec<_> = expected
+        .iter()
+        .flat_map(|receiver| {
+            expected
+                .iter()
+                .map(move |target| (receiver.clone(), target.clone()))
+        })
+        .collect();
+    assert_eq!(values, expected_pairs);
+    assert_ne!(expected[0].object_type(), expected[1].object_type());
+    let mut lexical = expected.clone();
+    lexical.sort_by_key(|reference| {
+        fsl_eval::simulation::model::reference_canonical_text(reference).unwrap()
+    });
+    assert_ne!(
+        lexical, expected,
+        "the fixture must distinguish JSON identity-first order from typed reference order"
+    );
+}
+
+/// The later reference domain follows the admitted post-state, while a
+/// value captured from an earlier invocation keeps its historical identity.
+#[test]
+#[trace("FSpec-FR-800")]
+fn finite_reference_arguments_exclude_objects_deleted_by_an_earlier_step() {
+    use filament_exact::Value;
+    use fsl_eval::simulation::model::{
+        NativeCandidateControl as Control, NativeCandidateEvent as Event,
+    };
+    let model = DRAIN_MODEL.replace("population servers", "object Controller { operation remove() deletes Server; operation choose(s: Server); } population controllers: Controller;\npopulation servers");
+    let servers = [
+        ("n1", json!({"drained":{"boolean":false}})),
+        ("n2", json!({"drained":{"boolean":false}})),
+    ];
+    let controllers = [("c", json!({}))];
+    let world = finite_argument_world(
+        &model,
+        "Controller",
+        "controllers",
+        "",
+        &[
+            ("servers", "Server", &servers),
+            ("controllers", "Controller", &controllers),
+        ],
+    );
+    let system = ModelSystem::new(
+        world
+            .subject_populations(
+                &[("servers", &["n1", "n2"]), ("controllers", &["c"])],
+                UNLIMITED,
+            )
+            .simulation,
+    )
+    .unwrap();
+    let initial = system.initial()[0].clone();
+    let mut historical = None;
+    system.visit_plan_candidates(&initial,&native_order(&system,&["choose"]),None,&mut |event| {
+        if let Event::Completed { arguments, .. }=event {
+            if matches!(&arguments[0],Value::Reference(reference) if reference.object().as_str()=="n2") { historical=Some(arguments[0].clone()); }
+        }
+        Control::Continue
+    }).unwrap();
+    let mut removed = None;
+    system
+        .visit_plan_candidates(
+            &initial,
+            &native_order(&system, &["remove"]),
+            None,
+            &mut |event| {
+                if let Event::Completed { state, .. } = event {
+                    let servers = &state.state().populations[&world.domain.key("servers")];
+                    if servers.contains_key("n1") && !servers.contains_key("n2") {
+                        removed = Some(state.clone());
+                    }
+                }
+                Control::Continue
+            },
+        )
+        .unwrap();
+    let removed = removed.expect("the native delete relation admits removing n2");
+    let mut targets = Vec::new();
+    system
+        .visit_plan_candidates(
+            &removed,
+            &native_order(&system, &["choose"]),
+            None,
+            &mut |event| {
+                if let Event::Completed { arguments, .. } = event {
+                    let [Value::Reference(reference)] = arguments else {
+                        panic!("one typed reference");
+                    };
+                    targets.push(reference.object().as_str().to_owned());
+                }
+                Control::Continue
+            },
+        )
+        .unwrap();
+    assert_eq!(targets, ["n1"]);
+    assert!(
+        matches!(historical,Some(Value::Reference(reference)) if reference.object().as_str()=="n2")
+    );
+}
+
+/// The first retained outcome has seven semantic occurrences: the outcome
+/// collection, step, receiver, two arguments, population and object.
+#[test]
+#[trace("FSpec-FR-801-AC-2", "FSpec-FR-804")]
+fn finite_argument_retention_denies_the_exact_named_occurrence_bound() {
+    use filament_exact::LimitKind;
+    use fsl_analyze::plan_source::SourcePlan;
+    use fsl_eval::simulation::model::{
+        NativeCandidateControl as Control, NativeCandidateEvent as Event,
+    };
+    use fsl_eval::simulation::ExpansionLimit;
+    let robots = [("a", json!({}))];
+    let world=finite_argument_world("language \"ix:native\" edition \"1-draft\"; domain \"test/native-plan\"; enum Cell { c0, c1 } object Robot { operation move(r: Robot, c: Cell); } population robots: Robot;",
+        "Robot","robots","type Lengths = Int[1,1]; synthesis Reach using t grammar M::Robot domain Lengths satisfies { true };",&[("robots","Robot",&robots)]);
+    let system = ModelSystem::new(
+        world
+            .subject_populations(&[("robots", &["a"])], UNLIMITED)
+            .simulation,
+    )
+    .unwrap();
+    let limits = ScalarLimits {
+        value_occurrences: 6,
+        ..UNLIMITED
+    };
+    system.share_evaluation_meter(limits);
+    let mut began = 0;
+    let mut completed = 0;
+    let stop = system
+        .visit_plan_candidates(
+            &system.initial()[0],
+            &native_order(&system, &["move"]),
+            None,
+            &mut |event| {
+                match event {
+                    Event::Begin(_) => began += 1,
+                    Event::Completed { .. } => completed += 1,
+                    _ => {}
+                }
+                Control::Continue
+            },
+        )
+        .expect_err("a six-occurrence budget cannot retain the seven-occurrence outcome");
+    assert_eq!((began, completed), (1, 0));
+    assert_eq!(
+        stop.limit,
+        Some(ExpansionLimit::EvaluationMeter(LimitKind::ValueOccurrences))
+    );
+    let mut rules = SourcePlan::new(
+        &world.package,
+        &world.package.graph().syntheses()[0],
+        &system,
+        vec![],
+        limits,
+    )
+    .unwrap();
+    let result = search(
+        &system,
+        &mut rules,
+        PlanSearchRequest {
+            lengths: PlanLengths::new(1, 1).unwrap(),
+            limits: PlanSearchLimits::default(),
+            cancel: &Cancel::new(),
+            fault: None,
+        },
+    )
+    .unwrap();
+    assert_eq!(result.status, PlanStatus::Incomplete);
+    assert!(result.plan.is_none());
+    assert!(
+        matches!(result.cause,Some(PlanStopCause::LimitReached {ref setting,value:6,..}) if setting=="accounting.value_occurrences")
+    );
+}
+
+fn finite_payload_world() -> World {
+    native_plan_world(
+        "language \"ix:native\" edition \"1-draft\"; domain \"test/native-plan\"; type ValueRange = Int[0,0]; enum Cell { c0 } object Counter { number: ValueRange; operation move(r: Counter, c: Cell); } population counters: Counter;",
+        "", &[("c",json!({"number":{"integer":"0"}}))],
+    )
+}
+
+fn finite_payload_rules<'a>(world: &'a World, system: &ModelSystem<'_>) -> Counter<'a> {
+    let mut rules = Counter::new(world, system, 0);
+    rules.value_field = "number";
+    rules.native = Some(native_order(system, &["move"]).into());
+    rules
+}
+
+fn finite_payload_observer() -> (Cancel, std::sync::Arc<std::sync::atomic::AtomicUsize>) {
+    let polls = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let observed = polls.clone();
+    let cancel = Cancel::observing(move || {
+        observed.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    });
+    (cancel, polls)
+}
+
+fn finite_payload_cancel_at(
+    target: usize,
+    cause: CancelCause,
+) -> (Cancel, std::sync::Arc<std::sync::Mutex<Option<Cancel>>>) {
+    let slot = std::sync::Arc::new(std::sync::Mutex::new(None::<Cancel>));
+    let weak = std::sync::Arc::downgrade(&slot);
+    let polls = std::sync::atomic::AtomicUsize::new(0);
+    let cancel = Cancel::observing(move || {
+        if polls.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1 == target {
+            if let Some(slot) = weak.upgrade() {
+                if let Some(cancel) = slot.lock().unwrap().as_ref() {
+                    cancel.cancel(cause);
+                }
+            }
+        }
+    });
+    *slot.lock().unwrap() = Some(cancel.clone());
+    (cancel, slot)
+}
+
+/// Applied retention is seven result units; the separate retained invocation
+/// payload is four. A ten-unit request admits Completed but denies the payload.
+#[test]
+#[trace("FR-1012", "FSpec-FR-801", "FSpec-FR-804")]
+fn finite_payload_retention_stops_after_a_real_completed_invocation() {
+    use filament_exact::LimitKind;
+    use fsl_eval::simulation::model::{
+        NativeCandidateControl as Control, NativeCandidateEvent as Event,
+    };
+    let world = finite_payload_world();
+    let system = world_system(&world);
+    let limits = ScalarLimits {
+        result_units: 10,
+        ..UNLIMITED
+    };
+    system.begin_plan_replay(limits);
+    let mut completed = 0;
+    system.visit_plan_candidates(&system.initial()[0],&native_order(&system,&["move"]),None,&mut|event| {
+        if let Event::Completed { receiver,arguments,.. }=event {
+            assert!(matches!(arguments,[filament_exact::Value::Reference(target),filament_exact::Value::Enum(case)] if target==receiver && case.rank()==0));
+            completed+=1;
+        }
+        Control::Continue
+    }).unwrap();
+    assert_eq!(completed, 1);
+    assert_eq!(
+        system.evaluation_meter().consumed(LimitKind::ResultUnits),
+        7
+    );
+    system.begin_plan_replay(limits);
+    let mut rules = finite_payload_rules(&world, &system);
+    let result = run(
+        &mut rules,
+        &system,
+        (1, 1),
+        PlanSearchLimits::default(),
+        None,
+    )
+    .unwrap();
+    assert_eq!(result.status, PlanStatus::Incomplete);
+    assert!(result.plan.is_none() && result.certificate.is_none() && !result.certified);
+    assert!(
+        matches!(result.cause,Some(PlanStopCause::LimitReached{ref setting,value:10,..}) if setting=="accounting.result_units")
+    );
+    assert_eq!(
+        system.evaluation_meter().consumed(LimitKind::ResultUnits),
+        7,
+        "payload denial retains no invalid candidate"
+    );
+}
+
+/// Native replay and the independent checker rederive the real payload and
+/// preserve its shared-meter accounting and cancellation causes.
+#[test]
+#[trace("FR-1012", "FSpec-FR-650", "FSpec-FR-801")]
+fn finite_payload_replay_and_checker_preserve_retention_stops() {
+    use filament_exact::LimitKind;
+    use fsl_eval::simulation::model::{
+        NativeCandidateControl as Control, NativeCandidateEvent as Event,
+    };
+    use std::sync::{atomic::Ordering, Arc, Mutex};
+    let world = finite_payload_world();
+    let system = world_system(&world);
+    system.begin_plan_replay(UNLIMITED);
+    let (cancel, polls) = finite_payload_observer();
+    system.cancel_plan_with(&cancel);
+    let checkpoints = Arc::new(Mutex::new(Vec::new()));
+    let observed = checkpoints.clone();
+    let counted = polls.clone();
+    let mut rules = finite_payload_rules(&world, &system);
+    rules.on_native_payload = Some(Box::new(move |step| {
+        assert!(step.native_values().is_some());
+        observed
+            .lock()
+            .unwrap()
+            .push(counted.load(Ordering::Relaxed));
+    }));
+    let result = run_with(
+        &mut rules,
+        &system,
+        (1, 1),
+        PlanSearchLimits::default(),
+        None,
+        &cancel,
+    )
+    .unwrap();
+    assert_eq!(result.status, PlanStatus::Optimal);
+    assert!(result.certified);
+    let plan = result.plan.unwrap();
+    let checkpoints = checkpoints.lock().unwrap().clone();
+    assert_eq!(
+        checkpoints.len(),
+        2,
+        "search and independent checker each retain one payload"
+    );
+    assert_eq!(
+        system.evaluation_meter().consumed(LimitKind::ResultUnits),
+        33,
+        "search, checker and replay each retain seven native plus four payload units"
+    );
+
+    // The checker gets its own actual Completed event after the search's eleven
+    // units. At twenty-one units only its separate payload retention is denied.
+    system.begin_plan_replay(ScalarLimits {
+        result_units: 21,
+        ..UNLIMITED
+    });
+    let mut rules = finite_payload_rules(&world, &system);
+    let checked = run(
+        &mut rules,
+        &system,
+        (1, 1),
+        PlanSearchLimits::default(),
+        None,
+    )
+    .unwrap();
+    assert_eq!(checked.status, PlanStatus::Incomplete);
+    assert!(!checked.certified && checked.certificate.is_none());
+    assert!(
+        rules.found,
+        "the one-step search goal was found before independent checking stopped"
+    );
+    assert!(
+        matches!(checked.cause,Some(PlanStopCause::LimitReached{ref setting,value:21,..}) if setting=="accounting.result_units")
+    );
+    assert_eq!(
+        system.evaluation_meter().consumed(LimitKind::ResultUnits),
+        18
+    );
+
+    system.begin_plan_replay(ScalarLimits {
+        result_units: 10,
+        ..UNLIMITED
+    });
+    let mut rules = finite_payload_rules(&world, &system);
+    let replayed = fsl_analyze::plan_search::replay::replay(
+        &system,
+        &mut rules,
+        &plan,
+        PlanLengths::new(1, 1).unwrap(),
+        ObjectiveKind::StepSum,
+    );
+    assert!(matches!(
+        replayed,
+        Err(PlanSearchError::RuleStopped(RuleStop::Accounting {
+            counter: "result_units",
+            value: 10
+        }))
+    ));
+    assert_eq!(
+        system.evaluation_meter().consumed(LimitKind::ResultUnits),
+        7
+    );
+
+    system.begin_plan_replay(UNLIMITED);
+    let (native_cancel, native_polls) = finite_payload_observer();
+    system.cancel_plan_with(&native_cancel);
+    let mut completed_at = None;
+    system
+        .visit_plan_candidates(
+            &system.initial()[0],
+            &native_order(&system, &["move"]),
+            None,
+            &mut |event| {
+                if let Event::Completed { .. } = event {
+                    completed_at = Some(native_polls.load(Ordering::Relaxed));
+                }
+                Control::Continue
+            },
+        )
+        .unwrap();
+    let completed_at = completed_at.unwrap();
+    assert_eq!(
+        native_polls.load(Ordering::Relaxed),
+        completed_at,
+        "the next charge after Completed belongs to plan payload retention"
+    );
+    for cause in [CancelCause::Requested, CancelCause::Deadline] {
+        system.begin_plan_replay(UNLIMITED);
+        let (cancel, _keep_slot) = finite_payload_cancel_at(completed_at + 1, cause);
+        system.cancel_plan_with(&cancel);
+        let mut rules = finite_payload_rules(&world, &system);
+        let replayed = fsl_analyze::plan_search::replay::replay(
+            &system,
+            &mut rules,
+            &plan,
+            PlanLengths::new(1, 1).unwrap(),
+            ObjectiveKind::StepSum,
+        );
+        assert!(
+            matches!(replayed,Err(PlanSearchError::RuleStopped(RuleStop::Cancelled(found))) if found==cause)
+        );
+        assert_eq!(
+            system.evaluation_meter().consumed(LimitKind::ResultUnits),
+            7
+        );
+
+        system.begin_plan_replay(UNLIMITED);
+        let (cancel, _keep_slot) = finite_payload_cancel_at(checkpoints[1], cause);
+        system.cancel_plan_with(&cancel);
+        let mut rules = finite_payload_rules(&world, &system);
+        let checked = run_with(
+            &mut rules,
+            &system,
+            (1, 1),
+            PlanSearchLimits::default(),
+            None,
+            &cancel,
+        )
+        .unwrap();
+        assert_eq!(checked.status, PlanStatus::Incomplete);
+        assert!(!checked.certified && checked.certificate.is_none());
+        assert!(matches!(checked.cause,Some(PlanStopCause::Cancelled(found)) if found==cause));
+        assert_eq!(
+            system.evaluation_meter().consumed(LimitKind::ResultUnits),
+            18,
+            "the checker completed native retention before its payload stop"
+        );
+    }
+}
+
 fn native_order(
     system: &ModelSystem<'_>,
     names: &[&str],
@@ -1765,7 +2636,7 @@ impl<'a> PlanRules for CancelPotentialAdd<'a, '_> {
     fn merges_prefixes(&self) -> bool {
         self.source.merges_prefixes()
     }
-    fn step_key(&self, step: &ModelTransition) -> Self::StepKey {
+    fn step_key(&mut self, step: &PlanStep) -> Result<Self::StepKey, RuleStop> {
         self.source.step_key(step)
     }
     fn native_operations(&self) -> Option<std::sync::Arc<[(filament_exact::EffectiveId, String)]>> {

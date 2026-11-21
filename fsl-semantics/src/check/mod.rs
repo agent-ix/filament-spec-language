@@ -194,6 +194,7 @@ pub use source_model::{
     object_types_of_source_rows, package_of_source_rows, source_identity, source_type_node_key,
     SourceRowObject, SourceRowOperation, SourceRowParameter,
 };
+mod finite_domain;
 mod plan_value;
 pub(crate) mod state_clause;
 mod state_graph_claim;
@@ -594,12 +595,12 @@ pub use refusal::{
     CheckingLimitKind, CheckingStage, ClockSelectionFault, DispatchFunctionRole, DispatchLinkCause,
     DispatchSubtypeFailure, ExcludedClauseForm, ExecutionPointRefusal, IdentityForm, IdentityNode,
     IdentityObserving, InvalidDispatchDeclaration, JoinFault, KeyFault, MeasureObligation,
-    MemberCandidate, NavigationBound, Obligation, ObservationReason, OperandText, PredicateRole,
-    ProtocolAnchorCause, ProtocolCheckRefusal, ProtocolConstruct, ProtocolReferenceCause,
-    ProvedInterval, QualifiedCandidate, RefusedProtocolDependency, RelatedEnd, ReservedSlotName,
-    ShadowedDeclaration, SlotKind, SlotTag, StageLimitCause, StateGraphCause, TaskSetDefect,
-    TaskTimeMember, TemporalCause, TimeUnitCause, TimedConstruct, TimedOmission,
-    UnwrittenTimedMember,
+    MemberCandidate, NavigationBound, Obligation, ObservationReason, OperandText,
+    PlanParameterOrigin, PredicateRole, ProtocolAnchorCause, ProtocolCheckRefusal,
+    ProtocolConstruct, ProtocolReferenceCause, ProvedInterval, QualifiedCandidate,
+    RefusedProtocolDependency, RelatedEnd, ReservedSlotName, ShadowedDeclaration, SlotKind,
+    SlotTag, StageLimitCause, StateGraphCause, TaskSetDefect, TaskTimeMember, TemporalCause,
+    TimeUnitCause, TimedConstruct, TimedOmission, UnwrittenTimedMember,
 };
 pub use state_graph_claim::{
     state_graph_predicate_site, CheckedPredicateBody, CheckedStateGraphClaim,

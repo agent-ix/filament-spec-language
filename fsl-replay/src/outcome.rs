@@ -38,6 +38,7 @@ pub use counterexample::{
 };
 
 use crate::hybrid::{BoundDimension, SolverHorizon};
+pub use crate::spine::{read_outcome_diagnostics, OutcomeDiagnosticRead};
 use filament_exact::{CancelCause, Integer, NodeKey};
 use filament_semantic_value::catalog::Category;
 use filament_semantic_value::location::ExpressionLocation;
@@ -2259,6 +2260,17 @@ pub enum OutcomeLocus {
         /// The region's span.
         span: LocatedSpan,
     },
+    /// Imported source coordinates, whose origin supplies no byte offsets.
+    #[serde(rename = "located")]
+    ImportedLocated {
+        /// Exact authored path.
+        file: String,
+        /// Exact admitted FCD source identity, without native labels.
+        #[serde(rename = "sourceIdentity")]
+        source_identity: String,
+        /// Authored coordinates with no asserted byte offsets.
+        span: fsl_foundation::SourceCoordinates,
+    },
     /// A kernel occurrence key, as its display form.
     Occurrence {
         /// The occurrence key's display form.
@@ -2510,6 +2522,13 @@ impl OutcomeDiagnostic {
                 .map(|region| OutcomeLocus::from(&Locus::Region(region.clone()))),
             refusal.to_string(),
         );
+        if let Some(origin) = refusal.unbounded_parameter_origin() {
+            diagnostic.locus = origin.map(|origin| OutcomeLocus::ImportedLocated {
+                file: origin.path.clone(),
+                source_identity: origin.artifact.clone(),
+                span: origin.span,
+            });
+        }
         if let CompileRefusal::Forms { failure, .. } = refusal {
             match &failure.cause {
                 fsl_forms::FormsCause::NoDispatchEntry {

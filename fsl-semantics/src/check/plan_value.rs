@@ -147,10 +147,25 @@ fn key(path: &[&str]) -> Option<NodeKey> {
 }
 
 /// Whether a step's `arguments` record can carry a parameter of
-/// `value_type`: a value a step's canonical argument text reads back to
-/// without an object environment.
+/// `value_type`, preserving the native runtime's admitted value.
 fn carried(value_type: &ValueType) -> bool {
-    matches!(value_type, ValueType::Boolean | ValueType::Int(_))
+    matches!(
+        value_type,
+        ValueType::Boolean | ValueType::Int(_) | ValueType::Reference(_) | ValueType::Enum(_)
+    )
+}
+
+/// Find unbounded argument components without treating a state-relative
+/// reference domain as an unbounded value-synthesis population.
+fn unbounded_parameter(
+    types: &filament_semantic_value::declaration::TypeEnvironment,
+    value_type: &ValueType,
+) -> Option<String> {
+    super::finite_domain::first_unbounded_component(
+        types,
+        value_type,
+        super::finite_domain::DomainContext::PlanParameter,
+    )
 }
 
 fn argument_fields(operations: &[PlanOperation]) -> Vec<(String, ValueType)> {
@@ -321,10 +336,15 @@ pub(crate) fn declare(
                 arguments_seen.get(parameter)
             {
                 if first_type != value_type || *first_optional != optional {
-                    return Err(CheckRefusal { location: location.clone(), cause: CheckCause::PlanUnsupported {
-                        form: format!("parameter {parameter} has conflicting types or declared presence in operations {first_operation} and {name}"),
-                        span: form.grammar.span,
-                    } });
+                    return Err(CheckRefusal {
+                        location: location.clone(),
+                        cause: CheckCause::PlanUnsupported {
+                            form: format!(
+                                "parameter {parameter} has conflicting types or declared presence in operations {first_operation} and {name}"
+                            ),
+                            span: form.grammar.span,
+                        },
+                    });
                 }
             } else {
                 arguments_seen.insert(
@@ -345,13 +365,46 @@ pub(crate) fn declare(
             .find(|operation| operation.name() == name)
             .ok_or_else(|| unsupported(location))?;
         for (position, (parameter, value_type)) in operation.parameters().iter().enumerate() {
+            if let Some(component) = unbounded_parameter(scope.types(), value_type) {
+                let origin = named
+                    .plan_parameter_origins
+                    .get(&(declaring.clone(), name.clone(), parameter.clone()))
+                    .and_then(|origin| {
+                        let source = origin.get("source")?;
+                        let path = source.get("path")?.as_str()?;
+                        let artifact = source.get("sourceIdentity")?.as_str()?;
+                        let point = |line, column| {
+                            Some(fsl_foundation::SourcePoint {
+                                line: core::num::NonZeroU64::new(source.get(line)?.as_u64()?)?,
+                                column: core::num::NonZeroU64::new(source.get(column)?.as_u64()?)?,
+                            })
+                        };
+                        let start = point("startLine", "startColumn")?;
+                        let end = point("endLine", "endColumn").unwrap_or(start);
+                        Some(Box::new(super::refusal::PlanParameterOrigin {
+                            artifact: artifact.to_owned(),
+                            path: path.to_owned(),
+                            span: fsl_foundation::SourceCoordinates { start, end },
+                            original: origin.clone(),
+                        }))
+                    });
+                return Err(CheckRefusal {
+                    location: location.clone(),
+                    cause: CheckCause::PlanUnboundedParameter {
+                        operation: name.clone(),
+                        parameter: parameter.clone(),
+                        component,
+                        origin,
+                    },
+                });
+            }
             let reason = if operation.parameter_is_optional(position) {
                 Some(format!(
                     "optional parameter {parameter} of operation {name}"
                 ))
             } else if !carried(value_type) {
                 Some(format!(
-                    "operation {name} parameter {parameter} of type {value_type:?}; source planning currently carries only Boolean and finite Int parameters"
+                    "operation {name} parameter {parameter} of type {value_type:?}; source planning currently carries Boolean, finite Int, Reference and enum parameters"
                 ))
             } else {
                 None

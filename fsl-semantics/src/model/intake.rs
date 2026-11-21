@@ -1411,6 +1411,11 @@ pub(crate) fn origin_locus(origin: &Value) -> (Option<String>, Option<LocatedSpa
     (artifact, span)
 }
 
+/// Whether a source URI obeys the admitted FCD semantic-identity grammar.
+pub fn is_source_identity_uri(value: &str) -> bool {
+    agent_ix_semantic_ir::diag::is_semantic_identity(value)
+}
+
 /// Validates a parsed [`PackageDocument`] against `agent-ix-semantic-ir`'s
 /// own independent reader before [`read_records`] walks a single node. That
 /// crate decides `conformance/schema/input-bundle.schema.json` by wrapping
@@ -6885,6 +6890,35 @@ pub fn read_domain_package(
                                     member_name: Some(name.to_owned()),
                                 },
                             );
+                            if members == "operations" {
+                                for (position, parameter) in member
+                                    .get("params")
+                                    .and_then(Value::as_array)
+                                    .into_iter()
+                                    .flatten()
+                                    .enumerate()
+                                {
+                                    let parameter_ctx = NodeCtx::new(
+                                        parameter,
+                                        format!("{member_at}.params[{position}]"),
+                                    );
+                                    if let Some(origin) = parameter.get("origin") {
+                                        originals.insert(
+                                            declaration_key(
+                                                &selection.identity,
+                                                parameter_ctx.str_field("identity")?,
+                                            ),
+                                            OriginalDeclaration {
+                                                meaning: None,
+                                                origin: origin.clone(),
+                                                member_name: Some(
+                                                    parameter_ctx.str_field("name")?.to_owned(),
+                                                ),
+                                            },
+                                        );
+                                    }
+                                }
+                            }
                         }
                     }
                     Ok::<_, ModelRefusal>(())

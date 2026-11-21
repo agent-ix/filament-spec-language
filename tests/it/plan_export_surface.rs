@@ -143,6 +143,241 @@ fn plan_in(
     )
 }
 
+/// Real authored enum/reference invocations reach the ordinary native-run
+/// adapter, retaining canonical typed wire values and deterministic results.
+#[test]
+#[trace(
+    "FSpec-FR-800-AC-1",
+    "FSpec-FR-804-AC-3",
+    "FSpec-FR-804-AC-4",
+    "FR-1012"
+)]
+fn finite_arguments_render_typed_reference_and_enum_values_deterministically() {
+    let directory = tempfile::tempdir().unwrap();
+    let model = r#"language "ix:native" edition "1-draft";
+domain "example/config-version";
+enum Cell { c1, c0 }
+object Robot { operation move(r: Robot, c: Cell); }
+population robots: Robot;
+"#;
+    std::fs::write(
+        directory.path().join("finite-model.json"),
+        crate::support::plan_model::compile(model),
+    )
+    .unwrap();
+    let snapshot = json!({
+        "format":"filament.state.snapshot/v1", "identity":{"authority":"test","identity":"finite-start"},
+        "observation":"current", "model":{"identity":"example/config-version"}, "anchor":{"kind":"initialization","name":"start"},
+        "populations":[{"population":"ix://example/config-version/robots", "complete":true,
+        "objects":[{"key":"b","type":"ix://example/config-version/Robot","fields":{}},{"key":"a","type":"ix://example/config-version/Robot","fields":{}}]}]
+    });
+    std::fs::write(
+        directory.path().join("finite-start.json"),
+        serde_json::to_vec(&snapshot).unwrap(),
+    )
+    .unwrap();
+    let unit = r#"language "ix:native" edition "1-draft";
+profile v = "filament.temporal.infinite-trace/v1";
+model M = "example/config-version";
+type Lengths = Int[1,1];
+synthesis Reach using v grammar M::Robot domain Lengths satisfies { forall(s in Reach.steps: present(s.arguments.r) and present(s.arguments.c)) };
+"#;
+    let (exit, first) = plan_in(
+        directory.path(),
+        unit,
+        "finite-model.json",
+        "finite-start.json",
+        json!({}),
+    );
+    assert_eq!(exit, 0, "{first}");
+    let outcome = &first["synthesis"];
+    assert_eq!(outcome["status"], "optimal", "{first}");
+    assert_eq!(outcome["certification"], "certified", "{first}");
+    assert_eq!(outcome["replay"]["outcome"], "reproduced", "{first}");
+    let steps = outcome["plan"]["steps"].as_array().unwrap();
+    assert_eq!(steps.len(), 1, "{first}");
+    assert_eq!(steps[0]["receiver"]["type"], "reference", "{first}");
+    assert_eq!(steps[0]["receiver"]["identity"], "a", "{first}");
+    assert_eq!(steps[0]["arguments"][0]["parameter"], "r", "{first}");
+    assert_eq!(
+        steps[0]["arguments"][0]["value"], steps[0]["receiver"],
+        "{first}"
+    );
+    assert_eq!(steps[0]["arguments"][1]["parameter"], "c", "{first}");
+    assert_eq!(steps[0]["arguments"][1]["value"]["type"], "enum", "{first}");
+    assert_eq!(steps[0]["arguments"][1]["value"]["member"], "c0", "{first}");
+    let (exit, second) = plan_in(
+        directory.path(),
+        unit,
+        "finite-model.json",
+        "finite-start.json",
+        json!({}),
+    );
+    assert_eq!(exit, 0, "{second}");
+    assert_eq!(first.to_string(), second.to_string());
+    let limited = json!({"limits":{"max_work":1}});
+    let (_, first) = plan_in(
+        directory.path(),
+        unit,
+        "finite-model.json",
+        "finite-start.json",
+        limited.clone(),
+    );
+    let (_, second) = plan_in(
+        directory.path(),
+        unit,
+        "finite-model.json",
+        "finite-start.json",
+        limited,
+    );
+    assert_eq!(first["synthesis"]["status"], "incomplete", "{first}");
+    assert_eq!(first.to_string(), second.to_string());
+}
+
+fn finite_parameter_model() -> Value {
+    serde_json::from_slice(&crate::support::plan_model::compile(
+        "language \"ix:native\" edition \"1-draft\";\ndomain \"example/config-version\";\nobject Robot {\n  operation move(n: Integer);\n}\npopulation robots: Robot;\n",
+    )).unwrap()
+}
+
+fn finite_parameter(document: &mut Value) -> &mut Value {
+    &mut document["types"]
+        .as_array_mut()
+        .unwrap()
+        .iter_mut()
+        .find(|ty| ty.get("operations").is_some())
+        .unwrap()["operations"][0]["params"][0]
+}
+
+/// Exercise both public command adapters before any synthesis input is read.
+fn finite_parameter_refusals(model: &Value, label: &str) -> Vec<(Value, Value, Option<Value>)> {
+    let directory = tempfile::tempdir().unwrap();
+    std::fs::write(
+        directory.path().join("finite-model.json"),
+        serde_json::to_vec(model).unwrap(),
+    )
+    .unwrap();
+    std::fs::write(directory.path().join("unit.native"),
+        "language \"ix:native\" edition \"1-draft\"; profile v = \"filament.temporal.infinite-trace/v1\"; model M = \"example/config-version\"; type Lengths = Int[0,1]; synthesis Reach using v grammar M::Robot domain Lengths satisfies { true };").unwrap();
+    [false, true].into_iter().map(|running| {
+        let mut program = source("unit.native");
+        program["identity"] = json!(label);
+        let mut request = json!({"format": if running { "native-run/1" } else { "native-compile/1" },
+            "request":{"models":[{"format":"semantic-ir/2.0.0","source":source("finite-model.json")}],"program":{"source":program}}});
+        if running { request["request"]["synthesis"] = json!({"declaration":"Reach","initial":"not-read.json"}); }
+        let path = directory.path().join("request.json");
+        std::fs::write(&path, serde_json::to_vec(&request).unwrap()).unwrap();
+        let failure = if running {
+            fsl_command::command::run(&path, &crate::negotiation::Fr290).map(|_| ()).unwrap_err()
+        } else {
+            fsl_command::command::compile_outcome(&path).map(|_| ()).unwrap_err()
+        };
+        assert_eq!(failure.category().exit_code(),20,"{failure}");
+        let native = failure.value().unwrap();
+        assert_eq!(native["stage"],"check","{native}");
+        assert_eq!(native["code"],"unsupported_projection","{native}");
+        assert_eq!(native["cause"],"unbounded-extent","{native}");
+        assert!(native.get("synthesis").is_none(),"{native}");
+        names(&native,"parameter n");
+        let canonical: Value = serde_json::from_slice(&failure.outcome_document(fsl_replay::Operation::Check).to_bytes().unwrap()).unwrap();
+        let diagnostics = fsl_replay::read_outcome_diagnostics(&serde_json::to_vec(&canonical).unwrap(),fsl_replay::spine::NativeRunLimits::UNBOUNDED).unwrap();
+        assert_eq!(diagnostics[0].code(),"unsupported_projection");
+        assert_eq!(diagnostics[0].cause(),Some("unbounded-extent"));
+        assert!(matches!(fsl_replay::spine::read_native_run_result(&serde_json::to_vec(&native).unwrap()).unwrap(),fsl_replay::spine::NativeRunResult::CommandError(_)));
+        let fsl_command::command::RunCause::Spine(failure) = &failure.cause else { panic!("the parameter is refused during compilation") };
+        let origin = failure.refusal.unbounded_parameter_origin().expect("the parameter refusal remains typed").map(|origin| origin.original.clone());
+        (native, canonical, origin)
+    }).collect()
+}
+
+#[test]
+#[trace(
+    "TC-1746",
+    "TC-3081",
+    "FR-663-AC-4",
+    "FR-267-AC-33",
+    "FSpec-FR-806-AC-1"
+)]
+fn finite_imported_parameter_origins_preserve_uri_endpoints_and_flat_details() {
+    let original = finite_parameter(&mut finite_parameter_model())["origin"].clone();
+    let mut complete = json!({"source":{"sourceIdentity":"ix://example/Invoice:Model_V1","path":"Invoice.model","startLine":17,"startColumn":9,"endLine":21,"endColumn":14}});
+    for vector in 0..4 {
+        let origin = match vector {
+            0 => original.clone(),
+            1 => complete.clone(),
+            2 => {
+                let mut partial = complete.clone();
+                partial["source"]
+                    .as_object_mut()
+                    .unwrap()
+                    .remove("endColumn");
+                partial
+            }
+            _ => {
+                complete["source"]["sourceIdentity"] = json!("ix://example/invoice:model_v1");
+                complete.clone()
+            }
+        };
+        let coordinates = &origin["source"];
+        let start = json!({"line":coordinates["startLine"],"column":coordinates["startColumn"]});
+        let end = if coordinates.get("endLine").is_some() && coordinates.get("endColumn").is_some()
+        {
+            json!({"line":coordinates["endLine"],"column":coordinates["endColumn"]})
+        } else {
+            start.clone()
+        };
+        let span = json!({"start":start,"end":end});
+        let expected = json!({"kind":"located","file":coordinates["path"],"sourceIdentity":coordinates["sourceIdentity"],"span":span});
+        let mut model = finite_parameter_model();
+        finite_parameter(&mut model)["origin"] = origin.clone();
+        for label in ["program-A", "program-B"] {
+            for (native, canonical, retained) in finite_parameter_refusals(&model, label) {
+                assert_eq!(
+                    retained,
+                    Some(origin.clone()),
+                    "partial origin remains retained"
+                );
+                assert_eq!(
+                    canonical["diagnostics"][0]["locus"], expected,
+                    "{canonical}"
+                );
+                assert_eq!(
+                    native["details"],
+                    json!({"path":coordinates["path"],"sourceIdentity":coordinates["sourceIdentity"],"span":span}),
+                    "{native}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+#[trace("TC-1746", "FR-663-AC-4", "FSpec-FR-806-AC-1")]
+fn finite_missing_parameter_origins_remain_unavailable() {
+    let mut model = finite_parameter_model();
+    // The fixture generator consumes the actual parameter's original model
+    // source artifact, while supplying no source coordinates of its own.
+    let input = finite_parameter(&mut model)["origin"]["source"]["sourceIdentity"].clone();
+    assert!(
+        input.is_string(),
+        "the native parameter retains its actual input artifact"
+    );
+    finite_parameter(&mut model)["origin"] = json!({"generated":{
+        "generatorIdentity":"ix://example/generated-parameter",
+        "generatorVersion":"1.0.0","inputIdentities":[input]
+    }});
+    for (native, canonical, retained) in
+        finite_parameter_refusals(&model, "program-with-native-labels")
+    {
+        assert!(retained.is_none());
+        assert!(
+            canonical["diagnostics"][0]["locus"].is_null(),
+            "operation/program origins cannot replace the parameter origin: {canonical}"
+        );
+        assert!(native["details"].is_null(), "{native}");
+    }
+}
+
 // ---- QSL-1978: planner and optimizer ------------------------------------
 
 /// FR-1010-AC-1 and FSpec FR-805-AC-1: an optimal plan writes the
