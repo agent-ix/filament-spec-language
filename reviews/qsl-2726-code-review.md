@@ -51,3 +51,31 @@ Note: while this review ran, the worktree had uncommitted edits by another sessi
 ## Gate follow-up
 
 `locked-build.sh <target> cargo clippy -p fsl-eval -p fsl-package -p fsl-semantics -p fsl-replay -p fsl-command -- --cap-lints warn`: exit 0, 881 warnings in total. Filtered to lines changed against d84ed5685b, the only hits are the 9 `result_large_err` warnings in FND-008. No `too_many_arguments`, `len_zero` or other lint class falls on a changed line.
+
+## Dispositions
+
+### Round 1
+
+Disposition handoff from the original Claude reviewer to Codex at frozen head `d62ec234d7af5b5b896b06875b4bf7f9a2e1fe6e`: fix rounds through `2cd7c7af67`, current-main reconciliation `f4b0b359e7`, and the sequence-type borrow correction `d62ec234d7`. This pass checks both fix rounds against the original findings; it does not replace the original review. No aggregate gate, local Cargo run, or fresh repository-wide audit was performed in this pass, under the owner's focused-check policy.
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | `PackageLowered::Reported` and `Observation::Reported` carry the original clause report to `output::clause_report`. `behaviours` preserves admission refusals as `TlSubject` and reports every other disposition instead of formatting it as an internal fault, matching source `execute_lowering`. |
+| FND-002 | fixed | `trace` now calls `run_package_valuation`; sample admission and valuation stops produce boxed clause reports, which the command route writes through the same output function. The added refused-sample regression compares the full source/package documents and exit codes. |
+| FND-003 | fixed | `run_package_sampled` converts the retained refused condition through `convert_outcome_resolving`, preserves its node locus and position, and reports the same catalog code and cause. The original alias/function/sequence fixture remains, and its missing collection-sequence projection is repaired rather than removed from the test. |
+| FND-004 | fixed | Lasso fixtures now have distinct prefix and loop slots and explicit opposite `Settles`/`Recurs` exit-code oracles. Supported closed-past `Prev`/`PrevZero` clauses exercise cross-evaluation. Original future `Safe`/`Hits` clauses remain as full-document unsupported-parity checks: their former red was the source-success assertion, before the package request, not a package-only failure. |
+| FND-005 | fixed | Both adapters use the shared `represented_slot`, `keep_first_undefined`, and refusal-reading helpers. Unused public `PackagePositions`, including its never-constructed object arm, was removed. The remaining package adapter holds evaluator/key provenance that differs from the source graph adapter; the duplicated lasso and earliest-undefined algorithms named by this finding are gone. |
+| FND-006 | fixed | Source and package routes share `initial_subject(&DocumentProvision, max_steps)`. The package route calls `initial` before looking up the clause. The incomplete-population-plus-missing-clause regression asserts the full refusal document equals the source route. |
+| FND-007 | fixed | Source `horizon` and package `package_horizon` now share `greatest_reach`; the latter retains overflow as a typed `Horizon(LimitExceeded)` instead of an arena error. The originally alleged same-source overflow output divergence was not established: source TC-836 refuses the overflowing clause at S3, before that source can emit a checked package. This disposition does not claim end-to-end overflow-wire parity for independently constructed packages. |
+| FND-008 | accepted-no-change | Lead decision: retain command-layer signatures using the pre-existing shared `RunCause` enum. Its `result_large_err` debt is already tracked on main by QSL-2678; boxing the command error API is outside this bounded parity slice. The newly introduced replay return was boxed. No full-Clippy-clean claim is made, and no lint gate or warning policy was weakened. |
+
+## Disposition evidence
+
+- Original finding rows and original check results above are unchanged.
+- `a_horizon_past_u64_is_a_work_budget_limit_at_the_overflowing_operator` checks source refusal at S3 for `eventually[0,18446744073709551615] eventually[0,1] holds(c.level = 3)`; such a source emits no package, so it cannot establish a source-versus-its-emitted-package discrepancy.
+- The main merge retains both package temporal exports and `read_anchor_letter`; the package evaluator uses the same `run_seeking` inactive result as the source evaluator, and `run_package_sampled` maps it to `TemporalVerdict::Inactive`.
+- The narrow diagnostic before the main merge reported one lasso test passing and the retained refused-condition fixture failing with missing `filament.op.collection.sequence` projection. The latter is addressed by the new reader projection. Verification of `f4b0b359e7` then failed compilation with E0507/E0509 before running tests; `d62ec234d7` borrows the collection type and clones its descriptor instead of moving out of a `Drop` type. The final Draco eight-test request for `d62ec234d7` is pending; no passing final-head result is claimed here.
+
+## Disposition verdict
+
+Review cleared: all eight original code findings have explicit closed dispositions, no new finding was established, and the final type-borrow correction was inspected. The PR is mergeable from review once the required Draco focused tests pass on the final code head. This verdict does not authorize merging on the earlier compile-red result.

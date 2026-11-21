@@ -40,3 +40,27 @@ The positive halves of both ACs are now built and pass with full-document equali
 - Stubs: none on a live path. Several forms refuse with typed "not implemented over a selected checked package yet" refusals (FND-002).
 - Semantic review: skipped (not requested).
 - Plan completion: not assessed
+
+## Dispositions
+
+### Round 1
+
+Disposition handoff at frozen head `d62ec234d7af5b5b896b06875b4bf7f9a2e1fe6e` checks the four original findings against both fix rounds and the architecture ruling that the remaining package clause selections stay on QSL-2726 for the Draco-owned follow-up slice. This is a disposition pass, not a fresh repository-wide gap audit; the original matrix evidence above remains historical evidence.
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | The initial cross-evaluation test now runs the exact same request through both `{file}` and `{file, equality}` selections and asserts exit 20, `invalid-request`, and `requires: directory`, including the max_steps 2 case. |
+| FND-002 | rejected | FR-1039 Outputs already owns source-equivalent results for the `clause` member; absence of a dedicated clause AC does not make that behavior unspecified. The test now traces to FR-1039 rather than the lowering-only AC-6. The explicit architecture-approved PR split retains observations, model, timed, progressed/timestamped/ledger and other clause forms on QSL-2726 and the Draco-owned remaining-selections branch; this PR does not claim the whole ticket complete. |
+| FND-003 | fixed | The clause parity test now checks both `{file}` and `{file, equality}` and asserts the exact `clause` requires-directory refusal. |
+| FND-004 | fixed | The clause parity test now has `#[trace("TC-3019", "FR-1039")]`; it no longer claims coverage of lowering-only FR-1039-AC-6. |
+
+## Disposition evidence
+
+- Original findings and original coverage rollup above are unchanged.
+- Corrected bindings: `a_lasso_cross_evaluation_over_a_handoff_directory_returns_the_source_record` to FR-931-AC-18; `an_initial_cross_evaluation_over_a_handoff_directory_returns_the_source_record` to FR-1039-AC-6; `a_clause_run_over_a_handoff_directory_returns_the_source_result` to FR-1039 Outputs.
+- Plan completion: not assessed.
+- Final-head Draco verification is pending: six request-surface tests plus two analyzer tests are requested. The earlier main-merge head was compile-red and ran zero tests; no passing final-head result is claimed.
+
+## Disposition verdict
+
+Review cleared: all four original gap findings have explicit closed dispositions. The clause behavior is owned by FR-1039, the corrected tests make the intended claims, and remaining selections remain planned work on QSL-2726. Merge remains conditional on the required focused verification; the ticket must remain open for its remaining slice.
