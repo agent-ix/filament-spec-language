@@ -163,7 +163,6 @@ fn aggregate_candidates(
                 && region.start() >= declaration.start()
                 && region.end() <= declaration.end()
         })
-        .cloned()
         .collect::<Vec<_>>();
     assert_eq!(candidates.len(), expected_uses, "actual caller regions");
     (atoms, candidates, declaration)
@@ -186,8 +185,8 @@ fn monitor_samples(
     let samples = [filament_exact::from_admitted_slots(
         sample_type.clone(),
         vec![
-            FieldValue::Present(Value::Integer(0.into())),
-            FieldValue::Present(Value::Integer(1.into())),
+            FieldValue::Present(Value::Integer(0_i64.into())),
+            FieldValue::Present(Value::Integer(1_i64.into())),
         ]
         .into_boxed_slice(),
     )];
@@ -425,7 +424,9 @@ fn canonical_aggregate_names_never_replace_missing_or_invalid_caller_sources() {
         valid,
         1 << 20,
     )
-    .expect("the wrong-reference caller source is valid UTF-8")]);
+    .unwrap_or_else(|refusal| {
+        panic!("valid caller source reads: {}", refusal.error.message)
+    })]);
     for region in candidates.into_iter().chain(std::iter::once(declaration)) {
         let start = usize::try_from(region.start()).expect("fixture start fits usize");
         let end = usize::try_from(region.end()).expect("fixture end fits usize");
@@ -435,11 +436,15 @@ fn canonical_aggregate_names_never_replace_missing_or_invalid_caller_sources() {
             &valid[..end - 1],
             1 << 20,
         )
-        .expect("the shortened caller source is valid UTF-8")]);
+        .unwrap_or_else(|refusal| {
+            panic!("valid caller source reads: {}", refusal.error.message)
+        })]);
         let mut split = valid.to_vec();
         split[start - 1..=start].copy_from_slice("é".as_bytes());
         invalid_sources.push(vec![Source::read_typed(identity(), PATH, &split, 1 << 20)
-            .expect("the replacement is valid UTF-8 but the region starts inside it")]);
+            .unwrap_or_else(|refusal| {
+                panic!("valid caller source reads: {}", refusal.error.message)
+            })]);
         let mut split_end = valid.to_vec();
         split_end[end - 1..=end].copy_from_slice("é".as_bytes());
         invalid_sources.push(vec![Source::read_typed(
@@ -448,7 +453,9 @@ fn canonical_aggregate_names_never_replace_missing_or_invalid_caller_sources() {
             &split_end,
             1 << 20,
         )
-        .expect("the replacement is valid UTF-8 but the region ends inside it")]);
+        .unwrap_or_else(|refusal| {
+            panic!("valid caller source reads: {}", refusal.error.message)
+        })]);
     }
     for sources in invalid_sources {
         let Err(StageFailure::Refused(MonitorRefusal::SourceNotSupplied { clause, source })) =
