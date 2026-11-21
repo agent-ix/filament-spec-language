@@ -795,7 +795,7 @@ fn a_flowpipe_jump_step_carries_the_guarded_part_and_its_jump_times() {
     let check = |name: &str, claim: &str, jump_time: (&str, &str)| {
         first_item(
             name,
-            unit,
+            &unit,
             named(claim, "hybrid-fixture"),
             json!({}),
             vec![hybrid_fixture(
@@ -890,7 +890,7 @@ fn a_trace_cut_by_end_replays_to_its_bad_prefix() {
         });
         first_item(
             name,
-            &unit,
+            unit,
             named("TooSlow", "hybrid-fixture"),
             json!({}),
             vec![fixture],
