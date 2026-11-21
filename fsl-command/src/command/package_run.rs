@@ -964,19 +964,19 @@ pub(super) fn execute(prepared: PreparedPackageRun) -> Result<RunResult> {
             return Ok(result);
         }
     };
-    let objects = if let Some(snapshot) = &call.snapshot {
+    let (objects, snapshot_views) = if let Some(snapshot) = &call.snapshot {
         let provision = std::collections::BTreeMap::from([(
             snapshot.observation.reference.clone(),
             snapshot.observation.bytes.clone(),
         )]);
-        bare.admit_call_snapshot(
+        bare.admit_call_snapshot_with_views(
             &packages,
             model_limits,
             &provision,
             &snapshot.observation.reference,
             snapshot.limits,
         )
-        .map(|(objects, _)| objects)
+        .map(|(objects, _, views)| (objects, Some(views)))
         .map_err(|failure| {
             use fsl_semantics::model::observation::AdmissionFailure;
             match failure {
@@ -991,15 +991,20 @@ pub(super) fn execute(prepared: PreparedPackageRun) -> Result<RunResult> {
             }
         })?
     } else {
-        fsl_semantics::model::object_environment::ObjectEnvironment::default()
+        (
+            fsl_semantics::model::object_environment::ObjectEnvironment::default(),
+            None,
+        )
     };
-    let called = fsl_replay::spine::run_package_with_sources(
-        &bare,
-        &call,
-        &objects,
-        &sources,
-        &filament_exact::Cancel::new(),
-    );
+    let cancel = filament_exact::Cancel::new();
+    let called = match &snapshot_views {
+        Some(views) => fsl_replay::spine::run_package_with_snapshot_views(
+            &bare, &call, &objects, views, &sources, &cancel,
+        ),
+        None => {
+            fsl_replay::spine::run_package_with_sources(&bare, &call, &objects, &sources, &cancel)
+        }
+    };
     let outcome = called
         .outcome
         .map_err(|refusal| RunCause::SpineRun(Box::new(*refusal)))?;
