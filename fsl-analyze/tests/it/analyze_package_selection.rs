@@ -1258,3 +1258,61 @@ fn package_default_items_equal_the_source_defaults_over_every_claim_form() {
         source.document()
     );
 }
+
+/// FR-940-AC-22 (QSL-2698): with the run's `replay.input_bytes` below the
+/// length of the package's emission, a replay refused by the bound settles
+/// only the replaying item `inconclusive` `replay_refused` carrying
+/// `stage_limit_exceeded`, on the source route and on the package route, for
+/// a refuted temporal clause and for the evidence replay of a state-graph
+/// claim; the other item settles as without the setting, and the document is
+/// no fault.
+#[trace("TC-2958", "FR-940-AC-22")]
+#[test]
+fn a_replay_over_the_input_bytes_bound_settles_replay_refused_on_both_routes() {
+    let unit = crate::counter::unit_text(&format!(
+        "{}{}{}",
+        bounded(),
+        at_most_two(),
+        reach_three()
+    ));
+    let items = json!([{"claim": "Bounded"}, {"claim": "AtMostTwo"}, {"claim": "ReachThree"}]);
+    let ws = Workspace::new("replay-input-bytes");
+    let path = crate::analyze_cli_support::request_over(
+        &ws,
+        &unit,
+        &crate::counter::document(false),
+        &[crate::analyze_cli_support::counter_snapshot(&[("a", 0)])],
+        json!({ "items": items }),
+    );
+    let (members, package) = package_selection(&ws, &request_of(&path));
+    let package_path = ws.write(
+        "analyze-package.json",
+        json!({"format": "native-analyze/1", "request": members})
+            .to_string()
+            .as_bytes(),
+    );
+    let below = u64::try_from(package.len() / 2).expect("a length");
+    for (route, request) in [("source", &path), ("package", &package_path)] {
+        let unset = analyze(request);
+        assert_eq!(label(&unset.item(1)), "refuted", "{route}: {}", unset.document());
+        let run = crate::analyze_cli_support::analyze_under_replay_bytes(request, below);
+        let document = run.document();
+        assert_eq!(label(&run.item(0)), "proved", "{route}: {document}");
+        for index in [1, 2] {
+            let item = run.item(index);
+            assert_eq!(label(&item), "inconclusive", "{route} {index}: {document}");
+            assert_eq!(
+                item["record"]["cause"]["kind"],
+                "replay-refused",
+                "{route} {index}: {item}"
+            );
+            assert_eq!(
+                item["record"]["cause"]["code"],
+                "stage_limit_exceeded",
+                "{route} {index}: {item}"
+            );
+        }
+        assert_eq!(document["category"], "inconclusive", "{route}: {document}");
+        assert_ne!(run.exit, 30, "{route}: {document}");
+    }
+}

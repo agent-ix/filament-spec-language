@@ -652,6 +652,9 @@ pub struct AnalyzeLimits {
     /// The ceiling on the canonical bytes of each package emission the
     /// analysis makes (`emit.output_bytes`, FR-264 Behavior 5).
     pub emit: fsl_package::EmitLimits,
+    /// The bound on each replay read the analysis starts
+    /// (`replay.input_bytes`, FR-255; FR-940-AC-22).
+    pub replay: fsl_replay::ReplayLimits,
 }
 
 impl AnalyzeLimits {
@@ -674,6 +677,7 @@ impl AnalyzeLimits {
             normalization: ModelNormalizationLimits::default(),
             deadline: DeadlineSupply::Unbounded,
             emit: fsl_package::EmitLimits::new(fsl_replay::spine::EMIT_OUTPUT_BYTES_DEFAULT),
+            replay: fsl_replay::ReplayLimits::default(),
         }
     }
 }

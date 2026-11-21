@@ -433,8 +433,32 @@ pub(super) fn replay_over(
         },
         &envelope,
         letters,
-        ReplayLimits::default(),
+        inputs.limits.replay,
     )
+}
+
+/// The replay's read of the package `bytes` under the run's
+/// `replay.input_bytes` (FR-940-AC-22): bytes over the bound refuse as the
+/// replay request's `stage_limit_exceeded`/`input-bytes-exceeded`, which
+/// settles the item `inconclusive` `replay_refused`. A read that fails for
+/// another reason is the internal fault `analyze`/`fault_cause`.
+pub(super) fn read_package(
+    bytes: &[u8],
+    limits: &AnalyzeLimits,
+    fault_cause: &'static str,
+) -> Result<ReplayPackage, ReplayRefusal> {
+    let bound = limits.replay.input_bytes;
+    let actual = bytes.len() as u128;
+    if actual > u128::from(bound) {
+        return Err(ReplayRefusal::Request(
+            fsl_replay::ReplayRequestRefusal::BoundExceeded(fsl_replay::BoundExceeded {
+                bound,
+                actual,
+            }),
+        ));
+    }
+    ReplayPackage::read(bytes, bound)
+        .map_err(|_| ReplayRefusal::Fault(InternalFault::new("analyze", fault_cause)))
 }
 
 /// The clock selections of the declarations of `package` over a model
@@ -469,11 +493,11 @@ pub(super) fn replay_wire<T: Clone + fsl_eval::simulation::SubjectTransition>(
         inputs.limits.emit,
     )
     .map_err(|_| fault("package-emission"))?;
-    let package = ReplayPackage::read(
+    let package = read_package(
         emission.package().bytes(),
-        ReplayLimits::default().input_bytes,
-    )
-    .map_err(|_| fault("package-emission"))?;
+        inputs.limits,
+        "package-emission",
+    )?;
     request_and_envelope(
         WireParts {
             package,
@@ -619,11 +643,11 @@ pub(crate) fn replay_protocol_over(
             inputs.limits.emit,
         )
         .map_err(|_| fault("package-emission"))?;
-    let package = ReplayPackage::read(
+    let package = read_package(
         emission.package().bytes(),
-        ReplayLimits::default().input_bytes,
-    )
-    .map_err(|_| fault("package-emission"))?;
+        inputs.limits,
+        "package-emission",
+    )?;
     let transcript = || Witness::parse(text).map_err(|_| fault("transcript"));
     let wire = ReplayRequestWire {
         certificate: None,
@@ -671,7 +695,7 @@ pub(crate) fn replay_protocol_over(
         &inputs.subject,
         &envelope,
         letters,
-        ReplayLimits::default(),
+        inputs.limits.replay,
     )
 }
 
@@ -893,8 +917,7 @@ impl<'a> PackageClauseSubject<'a> {
         let fault =
             |cause: &'static str| ReplayRefusal::Fault(InternalFault::new("analyze", cause));
         let name = named(&self.clause).map_err(|_| fault("clause-name"))?;
-        let package = ReplayPackage::read(self.package_bytes, ReplayLimits::default().input_bytes)
-            .map_err(|_| fault("package-bytes"))?;
+        let package = read_package(self.package_bytes, &self.limits, "package-bytes")?;
         let (wire, envelope) = request_and_envelope(
             WireParts {
                 package,
@@ -926,7 +949,7 @@ impl<'a> PackageClauseSubject<'a> {
             },
             &envelope,
             letters,
-            ReplayLimits::default(),
+            self.limits.replay,
         )
     }
 }

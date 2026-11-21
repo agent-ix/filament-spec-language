@@ -246,6 +246,7 @@ fn native_run_intake_accepts_exact_byte_limits_and_returns_incomplete_above_them
     let exact = RunLimits {
         request_bytes: bytes.len(),
         dependent_bytes: text.len(),
+        ..RunLimits::default()
     };
     let result = command::run_with_limits(&path, exact, &crate::negotiation::Fr290).unwrap();
     assert_eq!(result.exit_code, 0, "{}", result.value);

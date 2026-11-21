@@ -25,7 +25,7 @@ use fsl_package::{CheckedPackage, ObligationIdentity};
 use fsl_replay::{
     CertificateCheckLimits, CertificateChecker, CertificateRule, CertifiedItem, GraphEvidence,
     GraphEvidenceEnvelope, GraphReplayResult, GraphReplaySettlement, ModelTraceSubject,
-    ProfileSelection, ReplayLimits, ReplayPackage, ReplayRefusal, ReplayRequestWire, ReplayResult,
+    ProfileSelection, ReplayRefusal, ReplayRequestWire, ReplayResult,
     ReplaySource, RequestTargetWire, StateGraphCertificateForm, StateGraphInstanceOutcome,
     StateGraphOutcome, StateGraphPropertyForm, StateGraphRecord, TerminalValue, TrapClosure,
     WitnessPath, ZoneCertificateRequest, ZoneCertificateVerdict,
@@ -1469,8 +1469,8 @@ fn replay_instance(
         }
         Source::Bytes { package_bytes, .. } => (package_bytes.to_vec(), Vec::new(), Vec::new()),
     };
-    let package = ReplayPackage::read(&bytes, ReplayLimits::default().input_bytes)
-        .map_err(|_| fault("package-emission"))?;
+    let package = super::clause_item::read_package(&bytes, &read.limits, "package-emission")
+        .map_err(Box::new)?;
     let obligation = ObligationIdentity::new(node.clone(), None, 0);
     let mut envelope = GraphEvidenceEnvelope::new(
         obligation.clone(),
@@ -1531,13 +1531,13 @@ fn replay_instance(
     };
     let replayed = match read.source {
         Source::Checked { .. } => {
-            fsl_replay::replay_model_graph(wire, &subject, ReplayLimits::default())
+            fsl_replay::replay_model_graph(wire, &subject, read.limits.replay)
         }
         Source::Bytes { supply, .. } => fsl_replay::replay_model_graph_from_package(
             wire,
             supply,
             &subject,
-            ReplayLimits::default(),
+            read.limits.replay,
         ),
     };
     match replayed.map_err(Box::new)? {
