@@ -1105,7 +1105,7 @@ fn over_utilised() -> World {
 /// A reachable deadline miss is `bad-state` when its node is not locked
 /// (the `here.missed` rule), and `certificate-unchecked` when the node is
 /// locked on a real miss node.
-#[trace("TC-371", "FR-418-AC-13")]
+#[trace("TC-371", "FR-418-AC-2")]
 #[test]
 fn a_reachable_deadline_miss_is_bad_state_or_unchecked_when_locked() {
     let world = over_utilised();
@@ -1183,7 +1183,7 @@ fn zeno_with(park: bool) -> World {
 /// (the Zeno `tick` cycle) is not an `admitted` witness: the rule is the
 /// ordinary checker's `advancing_cycle`, not any quotient cycle through a
 /// positive delay.
-#[trace("TC-371", "FR-418-AC-13")]
+#[trace("TC-371", "FR-418-AC-2")]
 #[test]
 fn a_zeno_region_cycle_is_not_an_admitted_witness() {
     let world = zeno();
@@ -1227,6 +1227,26 @@ fn a_reachable_release_is_the_only_defect_of_a_no_release_closure() {
     let bound = releasable();
     let accepted = no_release_certificate(&free, "NFp");
     let mut refused = no_release_certificate(&bound, "NFp");
+    // The release operation's own source edge, covering its successor (the
+    // same node), so that no ordinary rule can reject the certificate.
+    let donor = build(&solo(), "SFp").certificate;
+    let mut template =
+        donor.edges[template_edge(&donor, fsl_replay::TaskTransitionAction::Activate)].clone();
+    let release = template
+        .task_transition
+        .as_ref()
+        .expect("a template")
+        .release
+        .clone();
+    refused.edges.push(CertEdge {
+        from: 0,
+        transition: Some(release),
+        task_transition: None,
+        part: Some(0),
+        horizon: None,
+        to: 0,
+        silent: None,
+    });
     assert_eq!(
         verdict(&free, "NFp", &accepted, CertificateCheckLimits::default()),
         Ok(ZoneCertificateVerdict::Accepted)
@@ -1243,26 +1263,22 @@ fn a_reachable_release_is_the_only_defect_of_a_no_release_closure() {
         )),
         (CertificateRule::SuccessorMissing, node_at(0))
     );
-    // Adding the release edge the source has does not repair it: a
-    // task-transition edge is not part of this method.
-    let donor = build(&solo(), "SFp").certificate;
-    let mut template =
-        donor.edges[template_edge(&donor, fsl_replay::TaskTransitionAction::Activate)].clone();
+    // A task-transition edge is not part of this method.
     template.from = 0;
     template.to = 0;
-    refused.edges.push(template);
-    let (rule, _) = rejected(verdict(
-        &bound,
-        "NFp",
-        &refused,
-        CertificateCheckLimits::default(),
-    ));
-    assert!(
-        matches!(
-            rule,
-            CertificateRule::Malformed | CertificateRule::SuccessorMissing
-        ),
-        "{rule:?}"
+    let mut with_template = accepted.clone();
+    with_template.edges.push(template);
+    assert_eq!(
+        rejected(verdict(
+            &free,
+            "NFp",
+            &with_template,
+            CertificateCheckLimits::default()
+        )),
+        (
+            CertificateRule::Malformed,
+            CertificateLocus::CertificateMember(CertificateMember::Edges)
+        )
     );
 }
 
@@ -1295,7 +1311,6 @@ fn a_no_release_closure_refuses_scheduler_clock_metadata() {
 
 /// The certificate edge and byte budgets bound the finite-product route as
 /// they bound the ordinary one, and a cancelled check settles cancelled.
-#[trace("TC-371", "FR-418-AC-20")]
 #[test]
 fn the_certificate_budgets_and_cancellation_stop_the_task_product_check() {
     let world = solo();
@@ -1517,5 +1532,51 @@ fn a_hand_written_certificate_for_one_periodic_task_is_accepted() {
             CertificateCheckLimits::default(),
         )),
         (CertificateRule::SuccessorMissing, node_at(2))
+    );
+}
+
+/// A node must be closed under delay within its key: narrowed to the one
+/// region the discrete edges enter, only its delay successors escape, and
+/// the node itself (not a predecessor) is `successor-missing`.
+#[trace("TC-371", "FR-418-AC-2")]
+#[test]
+fn a_node_not_closed_under_delay_is_successor_missing_at_itself() {
+    let world = solo();
+    let built = build(&world, "SFp");
+    let quotient = &built.quotient;
+    let (node, entry) = built
+        .certificate
+        .nodes
+        .iter()
+        .enumerate()
+        .find_map(|(node, certified)| {
+            let mut entries: Vec<usize> = quotient
+                .discrete
+                .iter()
+                .map(|edge| edge.to)
+                .chain(
+                    quotient
+                        .initials
+                        .iter()
+                        .flat_map(|initial| initial.vertices.iter().copied()),
+                )
+                .filter(|&vertex| quotient.vertices[vertex].key == certified.state_key)
+                .collect();
+            entries.sort_unstable();
+            entries.dedup();
+            let regions = quotient
+                .vertices
+                .iter()
+                .filter(|vertex| vertex.key == certified.state_key)
+                .count();
+            (entries.len() == 1 && regions > 1).then(|| (node, entries[0]))
+        })
+        .expect("a node with one entry region and delay successors");
+    let narrowed = edit(&world, "SFp", |c| {
+        c.nodes[node].zone = quotient.vertices[entry].zone.clone();
+    });
+    assert_eq!(
+        rejected(narrowed),
+        (CertificateRule::SuccessorMissing, node_at(node))
     );
 }
