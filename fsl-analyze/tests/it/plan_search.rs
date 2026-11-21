@@ -1361,7 +1361,7 @@ fn finite_reference_arguments_drain_two_servers_and_survive_replay() {
         let (receiver, arguments) = step
             .native_values()
             .expect("the actual runtime values are retained");
-        assert_eq!(arguments, &[Value::Reference(receiver.clone())]);
+        assert!(matches!(arguments, [Value::Reference(argument)] if argument == receiver));
         receivers.push(receiver.object().as_str().to_owned());
     }
     assert_eq!(receivers, ["n1", "n2"]);
