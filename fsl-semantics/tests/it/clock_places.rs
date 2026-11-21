@@ -6,15 +6,15 @@ use filament_semantic_value::checking::CheckMode;
 use filament_semantic_value::declaration::CompositeShape;
 use fsl_foundation::diagnostic::Code;
 use fsl_semantics::check::{
-    BindingValue, BodyTerm, ClockOp, CollectionShape, LeafTerm, LiteralValue, MemberTerm, NodeRef,
-    NodeTag, PlaceStep, SlotRef,
+    BindingValue, BodyTerm, CheckedGraph, ClockOp, CollectionShape, LeafTerm, LiteralValue,
+    MemberTerm, NodeRef, NodeTag, PlaceStep, SlotRef,
 };
 use ix_trace_rs::trace;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use crate::model_operations::{version_number_value_type, wire_construct, wire_field, wire_type};
 use crate::timed_model::{
-    call, check, exact, field, refused, rpc_document_with, shown_parts, timed, PACKAGE, UNITS,
+    PACKAGE, UNITS, call, check, exact, field, refused, rpc_document_with, shown_parts, timed,
 };
 use fsl_semantics::model::intake::meaning;
 
@@ -2116,6 +2116,17 @@ fn option_clock_document() -> Vec<u8> {
     serde_json::to_vec(&document).expect("JSON")
 }
 
+/// The `Call` model with a self-reference used to exercise a clock place
+/// whose owner is read through another object reference.
+fn option_clock_peer_document() -> Vec<u8> {
+    let mut document: Value = serde_json::from_slice(&option_clock_document()).expect("JSON");
+    document["types"][1]["fields"]
+        .as_array_mut()
+        .expect("Call fields")
+        .push(field("peer", &package("Call")));
+    serde_json::to_vec(&document).expect("JSON")
+}
+
 /// FR-230-AC-12 and FR-230-AC-39 (TC-685), S3's part: over `v:
 /// Option<Clock>`, the place `v` holds a presence bit. The guard
 /// `present(self.v) and value(self.v) >= 1 ms` checks to one convex part
@@ -2212,12 +2223,7 @@ fn an_option_clock_reads_its_presence_bit() {
 /// `Reference<Call>` itself. Keep the binder term as the second operand of
 /// the clock place's `presence_read`; lowering an object dereference here
 /// would give each place two encodings.
-#[trace(
-    "TC-685",
-    "FR-829-AC-3",
-    "FR-1040-AC-4",
-    "FSpec-FR-322-AC-455"
-)]
+#[trace("TC-685", "FR-829-AC-3", "FR-1040-AC-4", "FSpec-FR-322-AC-455")]
 #[test]
 fn a_population_clock_presence_read_uses_the_visited_reference() {
     let document = option_clock_document();
@@ -2252,7 +2258,12 @@ fn a_population_clock_presence_read_uses_the_visited_reference() {
         panic!("presence_read has the template then the owner term: {read:?}");
     };
     let place = semantic_graph
-        .node(place.admitted().expect("place template is admitted").clone())
+        .node(
+            place
+                .admitted()
+                .expect("place template is admitted")
+                .clone(),
+        )
         .expect("place template node exists");
     assert_eq!(place.semantic_form(), "clock_place");
     let owner = semantic_graph
@@ -2275,6 +2286,150 @@ fn a_population_clock_presence_read_uses_the_visited_reference() {
         panic!("the owner parameter's name is text");
     };
     assert_eq!(owner_name, "c");
+}
+
+/// The arguments of every application of `identity` in `graph`.
+fn applications_of(graph: &CheckedGraph, identity: &str) -> Vec<Vec<MemberTerm>> {
+    graph
+        .semantic_graph()
+        .nodes()
+        .filter_map(|node| match node.body() {
+            BodyTerm::Application(application) if application.operation.identity() == identity => {
+                Some(application.arguments.clone())
+            }
+            _ => None,
+        })
+        .collect()
+}
+
+/// The semantic form of the node a leaf reference `member` names.
+fn form_of(graph: &CheckedGraph, member: &MemberTerm) -> String {
+    let MemberTerm::Leaf(LeafTerm::Reference { target }) = member else {
+        panic!("expected a node reference: {member:?}");
+    };
+    graph
+        .semantic_graph()
+        .node(target.admitted().expect("admitted reference").clone())
+        .expect("referenced node exists")
+        .semantic_form()
+        .to_owned()
+}
+
+/// The name of the `parameter` node a leaf reference `member` names.
+fn parameter_name(graph: &CheckedGraph, member: &MemberTerm) -> String {
+    assert_eq!(form_of(graph, member), "parameter", "{member:?}");
+    let MemberTerm::Leaf(LeafTerm::Reference { target }) = member else {
+        panic!("expected a node reference: {member:?}");
+    };
+    let node = graph
+        .semantic_graph()
+        .node(target.admitted().expect("admitted reference").clone())
+        .expect("parameter node exists");
+    let BodyTerm::Aggregate(body) = node.body() else {
+        panic!("a parameter is an aggregate: {node:?}");
+    };
+    let Some(MemberTerm::Binding(name)) = body.members.first() else {
+        panic!("a parameter begins with its name: {node:?}");
+    };
+    let BindingValue::Leaf(LeafTerm::Literal {
+        value: LiteralValue::Text(name),
+        ..
+    }) = &name.value
+    else {
+        panic!("a parameter name is text: {node:?}");
+    };
+    name.clone()
+}
+
+/// FR-1040-AC-4: `count` and `sum` over a population lower each presence read
+/// of `c.v` to a `presence_read` over the place template whose owner term is
+/// the binder `c` itself.
+#[trace("TC-3084", "FR-1040-AC-4")]
+#[test]
+fn population_presence_in_count_and_sum_lowers_with_the_binder_as_owner() {
+    let document = option_clock_document();
+    for predicate in [
+        "count(c in Config::calls where present(c.v)) >= 0",
+        "sum(c in Config::calls: if present(c.v) then 1 else 0) >= 0",
+    ] {
+        let graph = check(
+            &document,
+            &format!(
+                "{UNITS}{DENSE}time invariant Crowd when {{ {predicate} }} \
+                 {{ self.x <= 1 ms }}\n"
+            ),
+        )
+        .unwrap_or_else(|refusals| panic!("{predicate}: {refusals:?}"));
+        let reads = applications_of(&graph, "filament.op.option.present");
+        let [read] = reads.as_slice() else {
+            panic!("{predicate}: one presence read: {reads:?}");
+        };
+        let [place, owner] = read.as_slice() else {
+            panic!("{predicate}: the template then the owner: {read:?}");
+        };
+        assert_eq!(form_of(&graph, place), "clock_place", "{predicate}");
+        assert_eq!(parameter_name(&graph, owner), "c", "{predicate}");
+    }
+}
+
+/// FR-1040-AC-4: a presence read in a state clause checks, with a binder
+/// owner, whether or not the clause also constrains a clock.
+#[trace("TC-3084", "FR-1040-AC-4")]
+#[test]
+fn a_state_clause_can_read_population_clock_presence() {
+    let document = option_clock_document();
+    check(
+        &document,
+        &format!(
+            "{UNITS}{DENSE}pre Named using v on Config::Call::reply {{ \
+             count(c in Config::calls where present(c.v)) >= 0 }}\n"
+        ),
+    )
+    .unwrap_or_else(|refusals| panic!("state-clause population presence checks: {refusals:?}"));
+}
+
+/// FR-1040-AC-2: `present(self.peer.v)` in a guard that also constrains a
+/// clock lowers to a `presence_read` over the template whose owner term is the
+/// `peer` field read itself, with no `deref`.
+#[trace("TC-3084", "FR-1040-AC-2")]
+#[test]
+fn a_state_clause_can_read_clock_presence_through_a_reference() {
+    let document = option_clock_peer_document();
+    let graph = check(
+        &document,
+        &format!(
+            "{UNITS}{DENSE}pre Named using v on Config::Call::reply {{ \
+             present(self.peer.v) and self.x >= 1 ms }}\n"
+        ),
+    )
+    .unwrap_or_else(|refusals| panic!("reference-owner presence checks: {refusals:?}"));
+    let reads = applications_of(&graph, "filament.op.option.present");
+    let [read] = reads.as_slice() else {
+        panic!("one reference-owner presence read: {reads:?}");
+    };
+    let [place, owner] = read.as_slice() else {
+        panic!("the presence read carries the template then the owner: {read:?}");
+    };
+    assert_eq!(form_of(&graph, place), "clock_place");
+    let MemberTerm::Leaf(LeafTerm::Reference { target }) = owner else {
+        panic!("the owner is a node reference: {owner:?}");
+    };
+    let owner = graph
+        .semantic_graph()
+        .node(target.admitted().expect("owner is admitted").clone())
+        .expect("owner term exists");
+    let BodyTerm::Application(owner_read) = owner.body() else {
+        panic!("the owner is the peer field read itself: {owner:?}");
+    };
+    assert_eq!(
+        owner_read.operation.identity(),
+        "filament.op.record.project"
+    );
+    let Some(fsl_semantics::value::Member::Field { name, .. }) = owner_read.operation.member()
+    else {
+        panic!("the owner read selects a field: {owner_read:?}");
+    };
+    assert_eq!(name.as_str(), "peer");
 }
 
 /// The STD-493 ruling on FR-230 "Presence bit" (TC-685): `absent` is an
@@ -2517,9 +2672,12 @@ fn absent_lowers_to_the_none_literal_of_its_option() {
         Some(ty),
         function.semantic_type().map(NodeRef::Admitted).as_ref()
     );
-    assert!(nodes
-        .iter()
-        .any(|node| node.semantic_form() == "option" && node.node_tag() == NodeTag::CompositeType));
+    assert!(
+        nodes
+            .iter()
+            .any(|node| node.semantic_form() == "option"
+                && node.node_tag() == NodeTag::CompositeType)
+    );
 }
 
 /// FR-230 "Presence bit" (TC-685), part of FR-230-AC-39: a top-level
@@ -2800,6 +2958,19 @@ fn quantified_presence_over_an_option_sequence_is_a_data_predicate() {
         .expect("Call fields");
     fields.push(q);
     fields.push(field("peer", &package("Call")));
+    // A model whose clocks no operation writes is not emitted whole, so
+    // `bump` and `send` write `q`.
+    for operation in document["types"][1]["operations"]
+        .as_array_mut()
+        .expect("operations")
+    {
+        if matches!(operation["name"].as_str(), Some("send" | "bump")) {
+            operation["frame"]["modifies"]
+                .as_array_mut()
+                .expect("frame")
+                .push(json!(call("q")));
+        }
+    }
     let document = serde_json::to_vec(&document).expect("JSON");
     for body in [
         "time invariant All when { forall(e in self.q : present(e)) } { self.x <= 5 ms }\n",
@@ -2822,11 +2993,171 @@ fn quantified_presence_over_an_option_sequence_is_a_data_predicate() {
     };
     assert!(part.data().is_some());
     assert_eq!(part.clocks().len(), 1);
-    assert!(check(
+    let slot_graph = check(
         &document,
-        &format!("{UNITS}{DENSE}urgent U when {{ present(self.q) }};\n"),
+        &format!(
+            "{UNITS}{DENSE}time invariant P when {{ \
+             all(c in Config::calls where exists(e in c.q : present(e))) }} {{ self.x <= 5 ms }}\n"
+        ),
     )
-    .is_err());
+    .unwrap_or_else(|refusals| panic!("slot presence lowers: {refusals:?}"));
+    let semantic_graph = slot_graph.semantic_graph();
+    let slots: Vec<_> = semantic_graph
+        .nodes()
+        .filter_map(|node| match node.body() {
+            BodyTerm::Application(application)
+                if application.operation.identity() == "filament.op.option.slots" =>
+            {
+                Some((node, application))
+            }
+            _ => None,
+        })
+        .collect();
+    let [(slots_node, slots_app)] = slots.as_slice() else {
+        panic!(
+            "one option.slots domain: {:?} {:?}",
+            timed(&slot_graph).invariants(),
+            semantic_graph
+                .nodes()
+                .map(|node| (
+                    node.semantic_form(),
+                    format!("{:?}", node.body())
+                        .chars()
+                        .take(160)
+                        .collect::<String>()
+                ))
+                .collect::<Vec<_>>()
+        );
+    };
+    assert_eq!(slots_node.semantic_form(), "presence_read");
+    let reference_key = |member: &MemberTerm| {
+        let MemberTerm::Leaf(LeafTerm::Reference { target }) = member else {
+            panic!("expected a direct reference operand: {member:?}");
+        };
+        target
+            .admitted()
+            .expect("lowered references have admitted keys")
+            .clone()
+    };
+    let [slot_place, slot_owner] = slots_app.arguments.as_slice() else {
+        panic!("option.slots takes place then owner: {slots_app:?}");
+    };
+    let slot_place_key = reference_key(slot_place);
+    let slot_owner_key = reference_key(slot_owner);
+    let place_node = semantic_graph
+        .node(slot_place_key.clone())
+        .expect("slot domain place exists");
+    assert_eq!(place_node.semantic_form(), "clock_place");
+    let owner_node = semantic_graph
+        .node(slot_owner_key.clone())
+        .expect("slot domain owner exists");
+    assert_eq!(owner_node.semantic_form(), "parameter");
+    let BodyTerm::Aggregate(owner_body) = owner_node.body() else {
+        panic!("the population owner is a parameter: {owner_node:?}");
+    };
+    let Some(MemberTerm::Binding(owner_name)) = owner_body.members.first() else {
+        panic!("the owner parameter binds its name: {owner_node:?}");
+    };
+    let BindingValue::Leaf(LeafTerm::Literal {
+        value: LiteralValue::Text(owner_name),
+        ..
+    }) = &owner_name.value
+    else {
+        panic!("the owner parameter name is text: {owner_node:?}");
+    };
+    assert_eq!(owner_name, "c");
+    let presence_reads: Vec<_> = semantic_graph
+        .nodes()
+        .filter_map(|node| match node.body() {
+            BodyTerm::Application(application)
+                if application.operation.identity() == "filament.op.option.present" =>
+            {
+                Some((node, application))
+            }
+            _ => None,
+        })
+        .collect();
+    let [(presence_node, presence)] = presence_reads.as_slice() else {
+        panic!("one slot presence read: {presence_reads:?}");
+    };
+    let [presence_place, presence_owner, presence_selector] = presence.arguments.as_slice() else {
+        panic!("presence read takes place, owner, and selector: {presence:?}");
+    };
+    assert_eq!(reference_key(presence_place), slot_place_key);
+    assert_eq!(reference_key(presence_owner), slot_owner_key);
+    let selector_key = reference_key(presence_selector);
+    let selector = semantic_graph
+        .node(selector_key)
+        .expect("presence selector parameter exists");
+    assert_eq!(selector.semantic_form(), "parameter");
+    let BodyTerm::Aggregate(selector_body) = selector.body() else {
+        panic!("the slot selector is a parameter: {selector:?}");
+    };
+    let Some(MemberTerm::Binding(selector_name)) = selector_body.members.first() else {
+        panic!("the selector parameter binds its name: {selector:?}");
+    };
+    let BindingValue::Leaf(LeafTerm::Literal {
+        value: LiteralValue::Text(selector_name),
+        ..
+    }) = &selector_name.value
+    else {
+        panic!("the selector parameter name is text: {selector:?}");
+    };
+    assert_eq!(selector_name, "slot");
+
+    let quantifier = |identity: &str| {
+        let found: Vec<_> = semantic_graph
+            .nodes()
+            .filter_map(|node| match node.body() {
+                BodyTerm::Application(application)
+                    if application.operation.identity() == identity =>
+                {
+                    Some((node, application))
+                }
+                _ => None,
+            })
+            .collect();
+        let [(node, application)] = found.as_slice() else {
+            panic!("one {identity} quantifier: {found:?}");
+        };
+        (*node, *application)
+    };
+    let (outer_forall, outer_application) = quantifier("filament.op.collection.forall");
+    let (inner_exists, inner_application) = quantifier("filament.op.collection.exists");
+    assert_eq!(outer_forall.semantic_form(), "quantify");
+    assert_eq!(inner_exists.semantic_form(), "quantify");
+    let [_, outer_body] = outer_application.arguments.as_slice() else {
+        panic!("population forall takes source and body: {outer_application:?}");
+    };
+    let MemberTerm::Binding(outer_binding) = outer_body else {
+        panic!("population forall binds its body: {outer_body:?}");
+    };
+    let BindingValue::Leaf(LeafTerm::Reference { target: outer_body }) = &outer_binding.value
+    else {
+        panic!("population forall body is the inner quantifier: {outer_binding:?}");
+    };
+    assert_eq!(outer_binding.name, "c");
+    assert_eq!(outer_body.admitted().cloned(), Some(inner_exists.key()));
+    let [inner_domain, inner_body] = inner_application.arguments.as_slice() else {
+        panic!("slot exists takes domain and body: {inner_application:?}");
+    };
+    assert_eq!(reference_key(inner_domain), slots_node.key());
+    let MemberTerm::Binding(inner_binding) = inner_body else {
+        panic!("slot exists binds its body: {inner_body:?}");
+    };
+    let BindingValue::Leaf(LeafTerm::Reference { target: inner_body }) = &inner_binding.value
+    else {
+        panic!("slot exists body is the presence read: {inner_binding:?}");
+    };
+    assert_eq!(inner_binding.name, "slot");
+    assert_eq!(inner_body.admitted().cloned(), Some(presence_node.key()));
+    assert!(
+        check(
+            &document,
+            &format!("{UNITS}{DENSE}urgent U when {{ present(self.q) }};\n"),
+        )
+        .is_err()
+    );
 }
 
 /// SR-1763001 FND-003 (TC-685, STD-526 PR-03): over `q:
@@ -2922,18 +3253,55 @@ fn a_clock_parameter_reset_ranging_over_the_place_writes_it() {
     assert_eq!(names, ["v", "x"]);
 }
 
-/// The `ref` term's typing, interim: `ref(p)` takes a clock place of the
-/// owner it names, so a field that is no place refuses
-/// `ill_typed`/`type-mismatch` at the `ref`. A `ref` of a clock place, or of a
-/// longer path that may pass through a reference field (`ref(self.r.x)`),
-/// needs a downstream term for the place descriptor, which this lowering
-/// does not provide yet, and is refused `unsupported-feature` at the `ref`.
-/// FR-230-AC-24 and FR-230-AC-62 are not met by this slice and are not tagged.
+/// A clock-place reference lowers to the place template and its owner; a
+/// field that is no place still refuses `ill_typed`/`type-mismatch` at `ref`.
 #[trace("TC-685")]
 #[test]
 fn a_ref_names_a_clock_place_of_its_owner() {
     use fsl_semantics::check::CheckCause;
     let document = rpc_document_with(&["x"], false);
+    let body = |term: &str| {
+        format!(
+            "{UNITS}{DENSE}function accept using v(r: Reference<Clock>): Boolean pure {{ true }}\n\
+             pre Named using v on Config::Call::reply {{ accept({term}) }}\n"
+        )
+    };
+    let graph = check(&document, &body("ref(self.x)"))
+        .unwrap_or_else(|refusals| panic!("clock-place references check: {refusals:?}"));
+    let reads: Vec<_> = graph
+        .semantic_graph()
+        .nodes()
+        .filter_map(|node| match node.body() {
+            BodyTerm::Application(application)
+                if application.operation.identity() == "filament.op.clock_reference.ref" =>
+            {
+                Some(application)
+            }
+            _ => None,
+        })
+        .collect();
+    assert_eq!(reads.len(), 1, "one shared place-reference node");
+    let [
+        MemberTerm::Leaf(LeafTerm::Reference { target: place }),
+        MemberTerm::Leaf(LeafTerm::Reference { target: owner }),
+    ] = reads[0].arguments.as_slice()
+    else {
+        panic!(
+            "place reference carries template then owner: {:?}",
+            reads[0]
+        );
+    };
+    let place = graph
+        .semantic_graph()
+        .node(place.admitted().expect("place key is admitted").clone())
+        .expect("place template exists");
+    assert_eq!(place.semantic_form(), "clock_place");
+    let owner = graph
+        .semantic_graph()
+        .node(owner.admitted().expect("owner key is admitted").clone())
+        .expect("owner node exists");
+    assert_eq!(owner.semantic_form(), "parameter");
+
     let refusal = |term: &str| {
         let body = format!(
             "{UNITS}{DENSE}pre Named using v on Config::Call::reply {{ {term} = {term} }}\n"
@@ -2958,22 +3326,143 @@ fn a_ref_names_a_clock_place_of_its_owner() {
         "{missing:?}"
     );
     at_ref(&missing);
-    for term in ["ref(self.x)", "ref(self.nothing.x)"] {
+    for term in ["ref(self.nothing)", "ref(self.nothing.x)"] {
         let named = refusal(term);
         assert!(
-            matches!(&named.cause, CheckCause::UnsupportedFeature { .. }),
+            matches!(
+                &named.cause,
+                CheckCause::IllTyped(filament_exact::IllTypedCause::TypeMismatch)
+            ),
             "{term}: {named:?}"
         );
         at_ref(&named);
     }
 }
 
-/// `Reference<Clock>` has no lowering or IR type yet. The source type form
-/// does not resolve it: `Clock` as a `Reference` argument is an unresolved
-/// type name in every position, a refusal and no internal fault.
+/// FR-1040-AC-7: `Reference<Clock>` is a first-class pure function type, and
+/// its arguments lower through the native clock-reference scalar type.
+#[trace("TC-3084", "FR-1040-AC-7")]
+#[test]
+fn clock_references_are_function_values() {
+    let document = timer_sequence_and_map();
+    let body = format!(
+        "{UNITS}{DENSE}function same using v(a: Reference<Clock>, b: Reference<Clock>): Boolean pure {{ a = b }}\n\
+         pre Named using v on Config::Call::reply {{ size(self.ts) >= 2 and \
+         same(ref(self.ts[0].x), ref(self.ts[1].x)) }}\n"
+    );
+    let graph = check(&document, &body)
+        .unwrap_or_else(|refusals| panic!("clock references flow through functions: {refusals:?}"));
+    let semantic = graph.semantic_graph();
+    let place_references = semantic
+        .nodes()
+        .filter(|node| {
+            matches!(
+                node.body(),
+                BodyTerm::Application(application)
+                    if application.operation.identity() == "filament.op.clock_reference.ref"
+            )
+        })
+        .count();
+    assert_eq!(place_references, 2);
+    assert!(semantic.nodes().any(|node| {
+        node.node_tag() == NodeTag::ScalarType && node.semantic_form() == "clock_reference"
+    }));
+}
+
+/// FR-1040-AC-2: after `self.peer`, the reference field itself is the place
+/// owner; the remaining `x` path resolves against its target object type.
+#[trace("TC-3084", "FR-1040-AC-2")]
+#[test]
+fn a_ref_crosses_an_object_reference_field() {
+    let mut document: Value =
+        serde_json::from_slice(&rpc_document_with(&["x"], false)).expect("JSON");
+    document["types"][1]["fields"]
+        .as_array_mut()
+        .expect("Call fields")
+        .push(field("peer", &package("Call")));
+    let document = serde_json::to_vec(&document).expect("JSON");
+    let body = format!(
+        "{UNITS}{DENSE}function accept using v(r: Reference<Clock>): Boolean pure {{ true }}\n\
+         pre Named using v on Config::Call::reply {{ accept(ref(self.peer.x)) }}\n"
+    );
+    let graph = check(&document, &body)
+        .unwrap_or_else(|refusals| panic!("reference-owner place checks: {refusals:?}"));
+    let reads: Vec<_> = graph
+        .semantic_graph()
+        .nodes()
+        .filter_map(|node| match node.body() {
+            BodyTerm::Application(application)
+                if application.operation.identity() == "filament.op.clock_reference.ref" =>
+            {
+                Some(application)
+            }
+            _ => None,
+        })
+        .collect();
+    assert_eq!(reads.len(), 1, "equal place-reference terms share one node");
+    let [
+        MemberTerm::Leaf(LeafTerm::Reference { target: place }),
+        MemberTerm::Leaf(LeafTerm::Reference { target: owner }),
+    ] = reads[0].arguments.as_slice()
+    else {
+        panic!(
+            "place reference carries template then owner: {:?}",
+            reads[0]
+        );
+    };
+    assert_eq!(
+        graph
+            .semantic_graph()
+            .node(place.admitted().expect("place is admitted").clone())
+            .expect("place template exists")
+            .semantic_form(),
+        "clock_place"
+    );
+    let owner = graph
+        .semantic_graph()
+        .node(owner.admitted().expect("owner is admitted").clone())
+        .expect("owner term exists");
+    let BodyTerm::Application(owner_read) = owner.body() else {
+        panic!("the owner is the peer field read itself: {owner:?}");
+    };
+    assert_eq!(
+        owner_read.operation.identity(),
+        "filament.op.record.project"
+    );
+    let Some(fsl_semantics::value::Member::Field { name, .. }) = owner_read.operation.member()
+    else {
+        panic!("owner read selects a field: {owner_read:?}");
+    };
+    assert_eq!(name.as_str(), "peer");
+
+    let mut wrong_receiver: Value =
+        serde_json::from_slice(&rpc_document_with(&["x"], false)).expect("JSON");
+    wrong_receiver["types"][1]["fields"]
+        .as_array_mut()
+        .expect("Call fields")
+        .push(field("peer", "ix://filament/native/Boolean"));
+    let wrong_receiver = serde_json::to_vec(&wrong_receiver).expect("JSON");
+    let source = format!(
+        "{UNITS}{DENSE}pre Named using v on Config::Call::reply {{ \
+         ref(self.peer.x) = ref(self.peer.x) }}\n"
+    );
+    let refusals = check(&wrong_receiver, &source)
+        .expect_err("a non-reference peer cannot own the target's clock place");
+    let [refusal] = refusals.as_slice() else {
+        panic!("one wrong receiver refusal: {refusals:?}");
+    };
+    assert!(matches!(
+        &refusal.cause,
+        fsl_semantics::check::CheckCause::IllTyped(filament_exact::IllTypedCause::TypeMismatch)
+    ));
+    assert_eq!(refusal.location.path(), vec![0], "refusal is at the ref");
+}
+
+/// `Reference<Clock>` uses the native `clock_reference` scalar type in every
+/// source type position.
 #[trace("TC-685")]
 #[test]
-fn a_reference_to_clock_is_refused_in_every_type_position() {
+fn a_reference_to_clock_is_admitted_in_every_type_position() {
     let document = rpc_document_with(&["x"], false);
     for (position, declaration) in [
         (
@@ -2982,7 +3471,7 @@ fn a_reference_to_clock_is_refused_in_every_type_position() {
         ),
         (
             "result",
-            "function f using v(b: Boolean): Reference<Clock> pure { b }",
+            "function f using v(r: Reference<Clock>): Reference<Clock> pure { r }",
         ),
         ("tuple component", "tuple Pair(Reference<Clock>, Boolean);"),
         (
@@ -2995,27 +3484,25 @@ fn a_reference_to_clock_is_refused_in_every_type_position() {
         ),
     ] {
         let body = format!("{UNITS}{DENSE}{declaration}\n");
-        let refused = match crate::model_operations::admit_and_assemble_with_profiles(
+        let checked = match crate::model_operations::admit_and_assemble_with_profiles(
             &document,
             crate::timed_model::TEMPORAL,
             &body,
         ) {
-            Err(error) => format!("{error:?}"),
-            Ok(declarations) => format!(
-                "{:?}",
-                declarations
-                    .check(
-                        CheckMode::Linked,
-                        filament_semantic_value::checking::CheckingLimits::default(),
-                        &crate::reward_evaluator::ZeroRewardEvaluator
-                    )
-                    .expect_err("Reference<Clock> is refused")
-            ),
+            Err(error) => panic!("{position}: Reference<Clock> intake: {error:?}"),
+            Ok(declarations) => declarations
+                .check(
+                    CheckMode::Linked,
+                    filament_semantic_value::checking::CheckingLimits::default(),
+                    &crate::reward_evaluator::ZeroRewardEvaluator,
+                )
+                .unwrap_or_else(|refusals| {
+                    panic!("{position}: Reference<Clock> checks: {refusals:?}")
+                }),
         };
-        assert!(
-            refused.contains("UnresolvedTypeName"),
-            "{position}: {refused}"
-        );
+        assert!(checked.semantic_graph().nodes().any(|node| {
+            node.node_tag() == NodeTag::ScalarType && node.semantic_form() == "clock_reference"
+        }));
     }
 }
 
@@ -3039,13 +3526,58 @@ fn timer_sequence_and_map() -> Vec<u8> {
     })
 }
 
+/// A `Call` with `q: Sequence<Clock>[0, 2]` for direct slot-reference
+/// definedness checks.
+fn timer_clock_sequence() -> Vec<u8> {
+    timer_document(|document: &mut Value| {
+        let mut q = field("q", "ix://filament/native/Clock");
+        q["multiplicity"] = json!({"lower": 0, "upper": 2, "ordered": true, "unique": false});
+        document["types"][1]["fields"]
+            .as_array_mut()
+            .expect("Call fields")
+            .push(q);
+        for operation in document["types"][1]["operations"]
+            .as_array_mut()
+            .expect("operations")
+        {
+            if matches!(operation["name"].as_str(), Some("send" | "bump")) {
+                operation["frame"]["modifies"]
+                    .as_array_mut()
+                    .expect("frame")
+                    .push(json!(call("q")));
+            }
+        }
+    })
+}
+
+/// A `Call` with `mo: Map<Text, Clock>[0, 2]` to exercise the
+/// map-key domain of a slot-presence quantifier. Map membership itself is
+/// the optional presence of each clock place.
+fn timer_map_clock_document() -> Vec<u8> {
+    timer_document(|document: &mut Value| {
+        let map = package("ClockMap");
+        let mut map_type = wire_type(
+            &map,
+            "unused",
+            json!({
+                "keys": "ix://filament/native/Text",
+                "values": "ix://filament/native/Clock",
+                "bound": {"lower": 0, "upper": 2},
+            }),
+        );
+        map_type["kind"] = json!("map");
+        let types = document["types"].as_array_mut().expect("types");
+        types.push(map_type);
+        types[1]["fields"]
+            .as_array_mut()
+            .expect("Call fields")
+            .push(field("mo", &map));
+    })
+}
+
 /// The selectors of a `ref`'s place (FR-230 "Selection"): a `Sequence` slot
-/// takes an `Integer` index, so `ref(self.ts[0].x)` is a place whose id the
-/// checker cannot carry yet (`unsupported-feature` at the `ref`) and a `Text`
-/// index is `type-mismatch` at the selector; a place under a `Map` value has no
-/// place id, so `ref(self.m["a"].x)` is `type-mismatch` at the `ref`
-/// (FR-230-AC-62's `ref` half; the snapshot half and the other halves of
-/// AC-24 and AC-43 are not met, so none is tagged).
+/// takes an `Integer` index and requires the selected slot to be live; a place
+/// under a `Map` value has no place id.
 #[trace("TC-685")]
 #[test]
 fn a_ref_selects_a_slot_by_index_and_no_map_place_has_an_id() {
@@ -3062,12 +3594,12 @@ fn a_ref_selects_a_slot_by_index_and_no_map_place_has_an_id() {
         };
         refusal.clone()
     };
-    let slot = refusal("ref(self.ts[0].x)");
-    assert!(
-        matches!(&slot.cause, CheckCause::UnsupportedFeature { .. }),
-        "{slot:?}"
+    let body = format!(
+        "{UNITS}{DENSE}function accept using v(r: Reference<Clock>): Boolean pure {{ true }}\n\
+         pre Named using v on Config::Call::reply {{ size(self.ts) >= 1 and accept(ref(self.ts[0].x)) }}\n"
     );
-    assert_eq!(slot.location.path(), vec![0]);
+    check(&document, &body)
+        .unwrap_or_else(|refusals| panic!("sequence place reference checks: {refusals:?}"));
     let text_index = refusal("ref(self.ts[\"a\"].x)");
     assert_eq!(
         text_index.cause,
@@ -3080,24 +3612,788 @@ fn a_ref_selects_a_slot_by_index_and_no_map_place_has_an_id() {
         CheckCause::IllTyped(IllTypedCause::TypeMismatch)
     );
     assert_eq!(keyed.location.path(), vec![0]);
-    // A longer path that names no place may pass through a reference field,
-    // with or without a selector: `ref(self.ts[0])` and `ref(self.r.ts[0].x)`.
+    // A longer path that names no place is a type mismatch even when it
+    // passes through a reference field or sequence selector.
     for term in ["ref(self.ts[0])", "ref(self.r.ts[0].x)", "ref(self.r.x)"] {
         let longer = refusal(term);
         assert!(
-            matches!(&longer.cause, CheckCause::UnsupportedFeature { .. }),
+            matches!(
+                &longer.cause,
+                CheckCause::IllTyped(IllTypedCause::TypeMismatch)
+            ),
             "{term}: {longer:?}"
         );
         assert_eq!(longer.location.path(), vec![0], "{term}");
     }
 }
 
-/// A selector outside a `ref` is part of a clock place expression that is not
-/// checked yet: in a clause of a timed model (a guard read, a reset by
-/// selection, a data read) it refuses `not-yet-implemented` at the selector,
-/// and in a function body `unsupported-feature` at the selector, never
-/// `type-mismatch` or a clock read outside a constraint.
+/// FR-1040-AC-5: a clock-place reference through a possibly empty sequence
+/// requires the selected slot to be present, located at its selector.
+#[trace("TC-3084", "FR-1040-AC-1", "FR-1040-AC-3", "FR-1040-AC-5")]
+#[test]
+fn a_ref_sequence_selector_requires_a_presence_proof() {
+    use fsl_semantics::check::{CheckCause, Obligation};
+    let document = timer_sequence_and_map();
+    let body = format!(
+        "{UNITS}{DENSE}function accept using v(r: Reference<Clock>): Boolean pure {{ true }}\n\
+         pre Named using v on Config::Call::reply {{ accept(ref(self.ts[0].x)) }}\n"
+    );
+    let refusals = check(&document, &body).expect_err("the selected sequence slot may be absent");
+    let [refusal] = refusals.as_slice() else {
+        panic!("one selector refusal: {refusals:?}");
+    };
+    assert!(
+        matches!(refusal.cause, CheckCause::Unproved(Obligation::Presence)),
+        "{refusal:?}"
+    );
+    assert_eq!(refusal.location.path(), vec![0, 0, 0, 1], "{refusal:?}");
+
+    let guarded = body.replace(
+        "accept(ref(self.ts[0].x))",
+        "size(self.ts) >= 1 and accept(ref(self.ts[0].x))",
+    );
+    check(&document, &guarded).expect("the size premise proves slot zero is live");
+
+    let direct_sequence = timer_clock_sequence();
+    let population = format!(
+        "{UNITS}{DENSE}function accept using v(r: Reference<Clock>): Boolean pure {{ true }}\n\
+         pre Named using v on Config::Call::reply {{ forall(c in Config::calls : \
+         size(c.q) >= 1 implies accept(ref(c.q[0]))) }}\n"
+    );
+    check(&direct_sequence, &population).unwrap_or_else(|refusals| {
+        panic!("the population size premise proves its slot: {refusals:?}")
+    });
+    let unguarded_population = population.replace("size(c.q) >= 1 implies ", "");
+    let refusals = check(&direct_sequence, &unguarded_population)
+        .expect_err("the population slot has no size proof");
+    assert!(
+        refusals
+            .iter()
+            .any(|refusal| matches!(refusal.cause, CheckCause::Unproved(Obligation::Presence))),
+        "the population selector carries its presence obligation: {refusals:?}"
+    );
+
+    let optional = option_clock_document();
+    let optional_reference = format!(
+        "{UNITS}{DENSE}function accept using v(r: Reference<Clock>): Boolean pure {{ true }}\n\
+         pre Named using v on Config::Call::reply {{ accept(ref(self.v)) }}\n"
+    );
+    check(&optional, &optional_reference)
+        .expect("a reference to the optional clock place needs no presence proof");
+
+    let direct_sequence = timer_clock_sequence();
+    let direct = format!(
+        "{UNITS}{DENSE}function accept using v(r: Reference<Clock>): Boolean pure {{ true }}\n\
+         pre Named using v on Config::Call::reply {{ accept(ref(self.q[0])) }}\n"
+    );
+    let refusals = check(&direct_sequence, &direct)
+        .expect_err("the direct selected sequence slot may be absent");
+    let [refusal] = refusals.as_slice() else {
+        panic!("one direct selector refusal: {refusals:?}");
+    };
+    assert!(
+        matches!(refusal.cause, CheckCause::Unproved(Obligation::Presence)),
+        "{refusal:?}"
+    );
+    let positive = direct.replace(
+        "accept(ref(self.q[0]))",
+        "size(self.q) >= 1 and accept(ref(self.q[0]))",
+    );
+    check(&direct_sequence, &positive)
+        .expect("the size premise proves the direct sequence slot is live");
+}
+
+/// `document` with the operation `pick` of `Call`, taking `parameters`
+/// (name, type reference) and writing nothing.
+fn with_pick(document: &[u8], parameters: &[(&str, &str)]) -> Vec<u8> {
+    let mut document: Value = serde_json::from_slice(document).expect("JSON");
+    let mut pick = crate::timed_model::call_operation("pick", &[]);
+    pick["params"] = Value::Array(
+        parameters
+            .iter()
+            .map(|(name, type_ref)| {
+                let mut parameter =
+                    crate::model_operations::operation_parameter("pick", name, type_ref);
+                let identity = call(&format!("pick/{name}"));
+                parameter["origin"]["generated"]["generatorIdentity"] = json!(identity);
+                parameter["origin"]["generated"]["inputIdentities"] = json!([identity]);
+                parameter["identity"] = json!(identity);
+                parameter
+            })
+            .collect(),
+    );
+    document["types"][1]["operations"]
+        .as_array_mut()
+        .expect("operations")
+        .push(pick);
+    serde_json::to_vec(&document).expect("JSON")
+}
+
+/// [`timer_clock_sequence`] with `pick(i)` of a bounded `VersionNumber`.
+fn timer_clock_sequence_with_pick() -> Vec<u8> {
+    let (_, _, number) = version_number_value_type();
+    with_pick(&timer_clock_sequence(), &[("i", &number)])
+}
+
+/// FR-1040-AC-5, population half: a clock reference selected by an operation
+/// parameter through a population binder needs `i < size(c.q)` in the same
+/// `where`, and refuses `unproved-presence` at the selector without it.
+#[trace("TC-3084", "FR-1040-AC-5")]
+#[test]
+fn a_population_ref_selected_by_a_parameter_requires_the_size_premise() {
+    use fsl_semantics::check::{CheckCause, Obligation};
+    let document = timer_clock_sequence_with_pick();
+    let body = |premise: &str| {
+        format!(
+            "{UNITS}{DENSE}function accept using v(r: Reference<Clock>): Boolean pure {{ true }}\n\
+             pre P using v on Config::Call::pick {{ count(c in Config::calls where \
+             {premise}accept(ref(c.q[i]))) >= 0 }}\n"
+        )
+    };
+    check(&document, &body("i < size(c.q) and "))
+        .unwrap_or_else(|refusals| panic!("the size premise proves the slot: {refusals:?}"));
+    let refusals = check(&document, &body("")).expect_err("the slot may be absent");
+    let [refusal] = refusals.as_slice() else {
+        panic!("one selector refusal: {refusals:?}");
+    };
+    assert!(
+        matches!(refusal.cause, CheckCause::Unproved(Obligation::Presence)),
+        "{refusal:?}"
+    );
+    assert_eq!(
+        refusal.location.path().last(),
+        Some(&1),
+        "located at the selector `i`, the index operand of the selection: {refusal:?}"
+    );
+}
+
+/// A declared type is checked whole: a set of maps is no admitted collection
+/// element, whatever its leaves are.
 #[trace("TC-685")]
+#[test]
+fn a_set_of_maps_is_refused_as_a_declared_type() {
+    use filament_exact::IllTypedCause;
+    use fsl_semantics::check::CheckCause;
+    let body = format!(
+        "{UNITS}{DENSE}function f using v(s: Set<Map<Text[0, 8; nfc], Float64>[0, 2]>[0, 2]): Boolean pure {{ true }}\n"
+    );
+    let refusals = check(&timer_document(|_| {}), &body).expect_err("Set<Map<..>> is refused");
+    assert!(
+        refusals.iter().any(|refusal| matches!(
+            refusal.cause,
+            CheckCause::IllTyped(IllTypedCause::OperatorIneligible)
+        )),
+        "{refusals:?}"
+    );
+}
+
+/// FR-1040-AC-3: a population `count` and `only` over `ref(c.x)` check in a
+/// precondition and in a state invariant, and lower with the binder `c`
+/// itself as the owner term of the `clock_reference.ref` application.
+#[trace("TC-3084", "FR-1040-AC-3")]
+#[test]
+fn a_population_ref_lowers_with_the_binder_as_owner() {
+    let document = timer_sequence_and_map();
+    let predicates = [
+        "count(c in Config::calls where ref(c.x) = ref(self.x)) >= 0",
+        "only(c in Config::calls where c.n = 2: ref(c.x)) = ref(self.x)",
+    ];
+    let clauses = [
+        "pre P using v on Config::Call::reply { PRED }\n",
+        "invariant I using v on Config::Call at current { PRED }\n",
+    ];
+    for clause in clauses {
+        for predicate in predicates {
+            let body = format!("{UNITS}{DENSE}{}", clause.replace("PRED", predicate));
+            let graph = check(&document, &body)
+                .unwrap_or_else(|refusals| panic!("{predicate}: {refusals:?}"));
+            let refs = applications_of(&graph, "filament.op.clock_reference.ref");
+            assert!(
+                refs.iter().any(|arguments| {
+                    matches!(arguments.as_slice(), [_, owner, ..]
+                        if form_of(&graph, owner) == "parameter"
+                            && parameter_name(&graph, owner) == "c")
+                }),
+                "{predicate}: a ref owned by the binder c in {refs:?}"
+            );
+        }
+    }
+}
+
+/// FR-1040-AC-6: the negative population forms. A clock read as the summand
+/// or the `only` result is outside a constraint; a reference summed, a
+/// selection through a map value, and an ordering of two references are
+/// ill-typed.
+#[trace("TC-3084", "FR-1040-AC-6")]
+#[test]
+fn population_clock_reads_and_ill_typed_refs_are_refused() {
+    use filament_exact::IllTypedCause;
+    use fsl_semantics::check::{CheckCause, TemporalCause};
+    let document = with_pick(&timer_sequence_and_map(), &[]);
+    let refusals_of = |clause: &str| {
+        let body = format!(
+            "{UNITS}{DENSE}function accept using v(r: Reference<Clock>): Boolean pure {{ true }}\n\
+             pre P using v on Config::Call::pick {{ {clause} }}\n"
+        );
+        check(&document, &body).expect_err(clause)
+    };
+    for clause in [
+        "sum(c in Config::calls: c.x) >= 0",
+        "only(c in Config::calls: c.x) >= 1 ms",
+    ] {
+        let refusals = refusals_of(clause);
+        assert!(
+            refusals.iter().any(|refusal| matches!(
+                &refusal.cause,
+                CheckCause::Temporal(cause)
+                    if matches!(**cause, TemporalCause::ClockReadOutsideConstraint { .. })
+            )),
+            "{clause}: {refusals:?}"
+        );
+    }
+    for (clause, cause) in [
+        (
+            "sum(c in Config::calls: ref(c.x)) >= 0",
+            IllTypedCause::TypeMismatch,
+        ),
+        (
+            "count(c in Config::calls where accept(ref(c.m[\"a\"].x))) >= 0",
+            IllTypedCause::TypeMismatch,
+        ),
+        (
+            "count(c in Config::calls where ref(c.x) < ref(c.t.x)) >= 0",
+            IllTypedCause::OperatorIneligible,
+        ),
+    ] {
+        let refusals = refusals_of(clause);
+        assert!(
+            refusals.iter().any(
+                |refusal| matches!(&refusal.cause, CheckCause::IllTyped(found) if *found == cause)
+            ),
+            "{clause}: {refusals:?}"
+        );
+    }
+}
+
+/// A clock read inside a `ref` selector is no place path: `c.x` there is read
+/// as a field of `c`, which a clock is not, so the typer refuses it as an
+/// unknown field before any clock constraint is looked for.
+#[trace("TC-3084", "FR-1040-AC-6")]
+#[test]
+fn a_clock_read_in_a_ref_selector_is_an_unknown_field() {
+    use fsl_semantics::check::CheckCause;
+    let document = timer_clock_sequence();
+    let body = format!(
+        "{UNITS}{DENSE}function accept using v(r: Reference<Clock>): Boolean pure {{ true }}\n\
+         pre P using v on Config::Call::reply {{ count(c in Config::calls where \
+         accept(ref(c.q[if c.x >= 1 ms then 0 else 1]))) >= 0 }}\n"
+    );
+    let refusals = check(&document, &body).expect_err("the selector reads a clock");
+    let [refusal] = refusals.as_slice() else {
+        panic!("one refusal: {refusals:?}");
+    };
+    let CheckCause::StateModel(model) = &refusal.cause else {
+        panic!("a state-model refusal: {refusal:?}");
+    };
+    assert!(
+        matches!(&model.cause, CheckCause::UnknownField { owner, field, .. }
+            if owner.ends_with("Call") && field.ends_with("x")),
+        "{refusal:?}"
+    );
+    assert_eq!(refusal.location.path().len(), 7, "{refusal:?}");
+}
+
+/// FR-125-AC-17: a value-family function reads no field through a reference,
+/// neither as an intermediate field of a `ref` path nor as the clock
+/// collection under `size`.
+#[trace("TC-1031", "FR-125-AC-17")]
+#[test]
+fn a_function_body_reads_no_reference_field_through_ref_or_size() {
+    use filament_exact::IllTypedCause;
+    use fsl_semantics::check::CheckCause;
+    let mut peer: Value = serde_json::from_slice(&rpc_document_with(&["x"], false)).expect("JSON");
+    peer["types"][1]["fields"]
+        .as_array_mut()
+        .expect("Call fields")
+        .push(field("peer", &package("Call")));
+    let peer = serde_json::to_vec(&peer).expect("JSON");
+    for (document, function) in [
+        (
+            peer,
+            "function g using v(o: Reference<Config::Call>): Reference<Clock> pure { ref(o.peer.x) }",
+        ),
+        (
+            timer_clock_sequence(),
+            "function h using v(o: Reference<Config::Call>): Integer pure { size(o.q) }",
+        ),
+    ] {
+        let refusals = check(&document, &format!("{UNITS}{DENSE}{function}\n"))
+            .expect_err("a bare field read through a reference");
+        assert!(
+            refusals.iter().any(|refusal| matches!(
+                refusal.cause,
+                CheckCause::IllTyped(IllTypedCause::TypeMismatch)
+            )),
+            "{function}: {refusals:?}"
+        );
+    }
+}
+
+/// `ref` names its place by the template of that place: with the places `x`,
+/// `ts[..].x` and `m[..].x` in one model, each reference carries the template
+/// of its own path.
+#[trace("TC-3084", "FR-1040-AC-1")]
+#[test]
+fn a_ref_names_the_template_of_its_own_place() {
+    let document = timer_sequence_and_map();
+    let body = format!(
+        "{UNITS}{DENSE}function same using v(a: Reference<Clock>, b: Reference<Clock>): Boolean pure {{ a = b }}\n\
+         pre Named using v on Config::Call::reply {{ size(self.ts) >= 1 and \
+         same(ref(self.ts[0].x), ref(self.x)) }}\n"
+    );
+    let graph = check(&document, &body).unwrap_or_else(|refusals| panic!("{refusals:?}"));
+    let refs = applications_of(&graph, "filament.op.clock_reference.ref");
+    assert_eq!(refs.len(), 2, "{refs:?}");
+    for arguments in refs {
+        let MemberTerm::Leaf(LeafTerm::Reference { target }) = &arguments[0] else {
+            panic!("the template comes first: {arguments:?}");
+        };
+        let place = graph
+            .semantic_graph()
+            .node(target.admitted().expect("admitted template").clone())
+            .expect("template node exists");
+        let BodyTerm::Aggregate(body) = place.body() else {
+            panic!("a clock place is an aggregate: {place:?}");
+        };
+        let path_steps = body
+            .members
+            .iter()
+            .find_map(|member| match member {
+                MemberTerm::Binding(binding) if binding.name == "path" => match &binding.value {
+                    BindingValue::Tuple(tuple) => Some(tuple.members.len()),
+                    _ => None,
+                },
+                _ => None,
+            })
+            .expect("the place carries its path");
+        // `ts[..].x` is the field, its slot and the clock; `x` the clock alone,
+        // and only a selected place carries a slot selector argument.
+        match arguments.len() {
+            3 => assert_eq!(path_steps, 3, "{arguments:?}"),
+            2 => assert_eq!(path_steps, 1, "{arguments:?}"),
+            other => panic!("{other} arguments: {arguments:?}"),
+        }
+    }
+}
+
+/// `size` of a clock collection is the size of its slot domain: the
+/// `option.slots` application over the place template and the owner, not a
+/// record projection.
+#[trace("TC-3084", "FR-1040-AC-5")]
+#[test]
+fn size_of_a_clock_collection_lowers_to_its_slot_domain() {
+    let document = timer_clock_sequence();
+    let body = format!(
+        "{UNITS}{DENSE}function accept using v(r: Reference<Clock>): Boolean pure {{ true }}\n\
+         pre Named using v on Config::Call::reply {{ size(self.q) >= 1 and \
+         accept(ref(self.q[0])) }}\n"
+    );
+    let graph = check(&document, &body).unwrap_or_else(|refusals| panic!("{refusals:?}"));
+    let domains = applications_of(&graph, "filament.op.option.slots");
+    let [domain] = domains.as_slice() else {
+        panic!("one slot domain: {domains:?}");
+    };
+    let [place, _owner] = domain.as_slice() else {
+        panic!("the template then the owner: {domain:?}");
+    };
+    assert_eq!(form_of(&graph, place), "clock_place");
+    assert!(
+        applications_of(&graph, "filament.op.record.project")
+            .iter()
+            .all(|arguments| arguments.iter().all(|member| !matches!(
+                member,
+                MemberTerm::Leaf(LeafTerm::Reference { target })
+                    if graph
+                        .semantic_graph()
+                        .node(target.admitted().expect("admitted").clone())
+                        .is_some_and(|node| node.semantic_form() == "clock_place")
+            ))),
+        "the clock collection is projected as no record field"
+    );
+}
+
+/// FR-953-AC-2: two quantifiers over `self.q` share one slot-domain node,
+/// and one over `r` adds a second.
+#[trace("TC-2663", "FR-953-AC-2")]
+#[test]
+fn quantifiers_over_one_collection_share_a_slot_domain() {
+    let mut document: Value =
+        serde_json::from_slice(&rpc_document_with(&["x"], false)).expect("JSON");
+    for name in ["q", "r"] {
+        let mut place = field(name, "ix://filament/native/Clock");
+        place["presence"] = json!("optional");
+        place["multiplicity"] = json!({"lower": 0, "upper": 2, "ordered": true, "unique": false});
+        document["types"][1]["fields"]
+            .as_array_mut()
+            .expect("Call fields")
+            .push(place);
+    }
+    for operation in document["types"][1]["operations"]
+        .as_array_mut()
+        .expect("operations")
+    {
+        if matches!(operation["name"].as_str(), Some("send" | "bump")) {
+            for name in ["q", "r"] {
+                operation["frame"]["modifies"]
+                    .as_array_mut()
+                    .expect("frame")
+                    .push(json!(call(name)));
+            }
+        }
+    }
+    let document = serde_json::to_vec(&document).expect("JSON");
+    let graph = check(
+        &document,
+        &format!(
+            "{UNITS}{DENSE}time invariant Shared when {{ forall(e in self.q : present(e)) and \
+             exists(e in self.q : present(e)) and forall(e in self.r : present(e)) }} \
+             {{ self.x <= 5 ms }}\n"
+        ),
+    )
+    .unwrap_or_else(|refusals| panic!("{refusals:?}"));
+    let domains = applications_of(&graph, "filament.op.option.slots");
+    assert_eq!(domains.len(), 2, "{domains:?}");
+}
+
+/// FR-1040-AC-4: `exists` over the population of a `forall` over the slots
+/// lowers its slot domain at the binder.
+#[trace("TC-3084", "FR-1040-AC-4")]
+#[test]
+fn a_population_exists_over_slot_forall_lowers_at_the_binder() {
+    let mut document: Value =
+        serde_json::from_slice(&rpc_document_with(&["x"], false)).expect("JSON");
+    let mut q = field("q", "ix://filament/native/Clock");
+    q["presence"] = json!("optional");
+    q["multiplicity"] = json!({"lower": 0, "upper": 2, "ordered": true, "unique": false});
+    document["types"][1]["fields"]
+        .as_array_mut()
+        .expect("Call fields")
+        .push(q);
+    for operation in document["types"][1]["operations"]
+        .as_array_mut()
+        .expect("operations")
+    {
+        if matches!(operation["name"].as_str(), Some("send" | "bump")) {
+            operation["frame"]["modifies"]
+                .as_array_mut()
+                .expect("frame")
+                .push(json!(call("q")));
+        }
+    }
+    let document = serde_json::to_vec(&document).expect("JSON");
+    let graph = check(
+        &document,
+        &format!(
+            "{UNITS}{DENSE}time invariant Crowd when {{ \
+             exists(c in Config::calls : forall(e in c.q : present(e))) }} {{ self.x <= 5 ms }}\n"
+        ),
+    )
+    .unwrap_or_else(|refusals| panic!("{refusals:?}"));
+    let domains = applications_of(&graph, "filament.op.option.slots");
+    let [domain] = domains.as_slice() else {
+        panic!("one slot domain: {domains:?}");
+    };
+    assert_eq!(parameter_name(&graph, &domain[1]), "c");
+}
+
+/// FR-1040-AC-1: `ref(self.x)` in a postcondition checks, and its
+/// `clock_reference.ref` application is typed by the native `clock_reference`
+/// scalar. (A `Reference<Clock>` field has no domain-package type reference,
+/// so the write `self.r = ref(self.x)` is not expressible.)
+#[trace("TC-3084", "FR-1040-AC-1")]
+#[test]
+fn a_ref_in_a_postcondition_is_typed_by_the_clock_reference_scalar() {
+    let document = timer_clock_sequence();
+    let body = format!(
+        "{UNITS}{DENSE}function accept using v(r: Reference<Clock>): Boolean pure {{ true }}\n\
+         post W using v on Config::Call::bump {{ accept(ref(self.x)) }}\n"
+    );
+    let graph = check(&document, &body).unwrap_or_else(|refusals| panic!("{refusals:?}"));
+    let semantic = graph.semantic_graph();
+    let typed: Vec<_> = semantic
+        .nodes()
+        .filter(|node| {
+            matches!(
+                node.body(),
+                BodyTerm::Application(application)
+                    if application.operation.identity() == "filament.op.clock_reference.ref"
+            )
+        })
+        .collect();
+    let [reference] = typed.as_slice() else {
+        panic!("one place reference: {typed:?}");
+    };
+    let result = semantic
+        .node(reference.semantic_type().expect("a typed application"))
+        .expect("result type node");
+    assert_eq!(result.node_tag(), NodeTag::ScalarType);
+    assert_eq!(result.semantic_form(), "clock_reference");
+}
+
+/// FR-1040-AC-2: through an `Option<Reference<Call>>` field the place path is
+/// refused `type-mismatch` at the `ref`; `value(self.peer)` under
+/// `present(self.peer)` is the owner; and a selection below `self.peer`
+/// checks under its size premise.
+#[trace("TC-3084", "FR-1040-AC-2")]
+#[test]
+fn a_ref_through_an_optional_reference_needs_value() {
+    use filament_exact::IllTypedCause;
+    use fsl_semantics::check::CheckCause;
+    let mut document: Value = serde_json::from_slice(&timer_sequence_and_map()).expect("JSON");
+    let mut peer = field("peer", &package("Call"));
+    peer["presence"] = json!("optional");
+    document["types"][1]["fields"]
+        .as_array_mut()
+        .expect("Call fields")
+        .push(peer);
+    let document = serde_json::to_vec(&document).expect("JSON");
+    let clause = |predicate: &str| {
+        format!(
+            "{UNITS}{DENSE}function accept using v(r: Reference<Clock>): Boolean pure {{ true }}\n\
+             pre Named using v on Config::Call::reply {{ {predicate} }}\n"
+        )
+    };
+    let refusals = check(&document, &clause("accept(ref(self.peer.x))"))
+        .expect_err("an optional reference has no place");
+    let [refusal] = refusals.as_slice() else {
+        panic!("one refusal: {refusals:?}");
+    };
+    assert_eq!(
+        refusal.cause,
+        CheckCause::IllTyped(IllTypedCause::TypeMismatch)
+    );
+    assert_eq!(refusal.location.path(), vec![0], "{refusal:?}");
+    check(
+        &document,
+        &clause("present(self.peer) and accept(ref(value(self.peer).x))"),
+    )
+    .unwrap_or_else(|refusals| panic!("value(self.peer) under present: {refusals:?}"));
+}
+
+/// FR-1040-AC-2: a selection below an object reference checks under the
+/// size premise read through that reference.
+#[trace("TC-3084", "FR-1040-AC-2")]
+#[test]
+fn a_ref_selects_a_slot_below_an_object_reference() {
+    let mut document: Value = serde_json::from_slice(&timer_sequence_and_map()).expect("JSON");
+    document["types"][1]["fields"]
+        .as_array_mut()
+        .expect("Call fields")
+        .push(field("peer", &package("Call")));
+    let document = serde_json::to_vec(&document).expect("JSON");
+    let body = format!(
+        "{UNITS}{DENSE}function accept using v(r: Reference<Clock>): Boolean pure {{ true }}\n\
+         pre Named using v on Config::Call::reply {{ size(self.peer.ts) >= 1 and \
+         accept(ref(self.peer.ts[0].x)) }}\n"
+    );
+    check(&document, &body).unwrap_or_else(|refusals| panic!("{refusals:?}"));
+}
+
+/// FR-1040-AC-7: the parameters of a function over `Reference<Clock>` are
+/// typed by the `clock_reference` scalar, and a body made ill-typed is refused
+/// once, at the body, not at the call.
+#[trace("TC-3084", "FR-1040-AC-7")]
+#[test]
+fn a_clock_reference_function_has_typed_parameters_and_refuses_at_its_body() {
+    let document = timer_sequence_and_map();
+    let call = "pre Named using v on Config::Call::reply {{ size(self.ts) >= 2 and \
+                same(ref(self.ts[0].x), ref(self.ts[1].x)) }}\n";
+    let body = |expression: &str| {
+        format!(
+            "{UNITS}{DENSE}function same using v(a: Reference<Clock>, b: Reference<Clock>): \
+             Boolean pure {{ {expression} }}\n{}",
+            call.replace("{{", "{").replace("}}", "}")
+        )
+    };
+    let graph = check(&document, &body("a = b")).unwrap_or_else(|refusals| panic!("{refusals:?}"));
+    let semantic = graph.semantic_graph();
+    let typed_parameters = semantic
+        .nodes()
+        .filter(|node| node.semantic_form() == "parameter")
+        .filter(|node| {
+            node.semantic_type()
+                .and_then(|ty| semantic.node(ty))
+                .is_some_and(|ty| ty.semantic_form() == "clock_reference")
+        })
+        .count();
+    assert!(
+        typed_parameters >= 2,
+        "both parameters are typed by clock_reference"
+    );
+    let refusals = check(&document, &body("a = 1")).expect_err("the body is ill-typed");
+    assert_eq!(refusals.len(), 1, "{refusals:?}");
+    assert!(
+        format!("{:?}", refusals[0].location).contains("Body { function: \"same\""),
+        "refused at the function body: {refusals:?}"
+    );
+}
+
+/// FR-1040-AC-6: a call to a clock-reading function over a population
+/// binder's clock is outside a constraint.
+#[trace("TC-3084", "FR-1040-AC-6")]
+#[test]
+fn a_clock_reading_call_over_a_population_clock_is_refused() {
+    use fsl_semantics::check::{CheckCause, TemporalCause};
+    let body = format!(
+        "{UNITS}{DENSE}predicate late using v(t: Clock): Boolean {{ t >= 1 ms }}\n\
+         pre P using v on Config::Call::reply {{ count(c in Config::calls where late(c.x)) >= 0 }}\n"
+    );
+    let refusals = check(&timer_sequence_and_map(), &body).expect_err("the clock is read");
+    assert!(
+        refusals.iter().any(|refusal| matches!(
+            &refusal.cause,
+            CheckCause::Temporal(cause)
+                if matches!(**cause, TemporalCause::ClockReadOutsideConstraint { .. })
+        )),
+        "{refusals:?}"
+    );
+}
+
+/// FR-953: a map slot-presence quantifier ranges over the map's key type.
+#[trace("TC-3084", "FR-953-AC-1")]
+#[test]
+fn quantified_presence_over_a_clock_map_uses_its_key_domain() {
+    let document = timer_map_clock_document();
+    let graph = check(
+        &document,
+        &format!(
+            "{UNITS}{DENSE}time invariant P when {{ \
+             exists(k in self.mo : present(k)) }} {{ self.x <= 5 ms }}\n"
+        ),
+    )
+    .unwrap_or_else(|refusals| panic!("Map<Text, Clock> slot presence: {refusals:?}"));
+    let semantic_graph = graph.semantic_graph();
+    let slots: Vec<_> = semantic_graph
+        .nodes()
+        .filter_map(|node| match node.body() {
+            BodyTerm::Application(application)
+                if application.operation.identity() == "filament.op.option.slots" =>
+            {
+                Some((node, application))
+            }
+            _ => None,
+        })
+        .collect();
+    let [(slots_node, slots_application)] = slots.as_slice() else {
+        panic!("one map slot domain: {slots:?}");
+    };
+    let slots_type = semantic_graph
+        .node(
+            slots_node
+                .semantic_type()
+                .expect("typed option.slots domain"),
+        )
+        .expect("option.slots domain type exists");
+    assert_eq!(slots_type.semantic_form(), "collection_bounds");
+    let set_type = semantic_graph
+        .node(slots_type.semantic_type().expect("bounded Set<Text> base"))
+        .expect("Set<Text> type exists");
+    assert_eq!(set_type.semantic_form(), "set");
+    let BodyTerm::Aggregate(set_body) = set_type.body() else {
+        panic!("the map slot domain is Set<Text>: {set_type:?}");
+    };
+    let [MemberTerm::Leaf(LeafTerm::Reference { target })] = set_body.members.as_slice() else {
+        panic!("Set<Text> has its Text element type: {set_body:?}");
+    };
+    let text_type = semantic_graph
+        .node(target.admitted().expect("admitted Text type").clone())
+        .expect("Text type exists");
+    assert_eq!(text_type.semantic_form(), "text");
+
+    let presence: Vec<_> = semantic_graph
+        .nodes()
+        .filter_map(|node| match node.body() {
+            BodyTerm::Application(application)
+                if application.operation.identity() == "filament.op.option.present" =>
+            {
+                Some(application)
+            }
+            _ => None,
+        })
+        .collect();
+    let [presence] = presence.as_slice() else {
+        panic!("one slot presence application: {presence:?}");
+    };
+    let [_, _, selector] = presence.arguments.as_slice() else {
+        panic!("option.present has a selector argument: {presence:?}");
+    };
+    let MemberTerm::Leaf(LeafTerm::Reference { target }) = selector else {
+        panic!("option.present selector is a parameter reference: {selector:?}");
+    };
+    let selector = semantic_graph
+        .node(
+            target
+                .admitted()
+                .expect("admitted selector parameter")
+                .clone(),
+        )
+        .expect("selector parameter exists");
+    assert_eq!(selector.semantic_form(), "parameter");
+    let selector_type = semantic_graph
+        .node(selector.semantic_type().expect("typed map selector"))
+        .expect("map selector type exists");
+    assert_eq!(selector_type.semantic_form(), "text");
+}
+
+/// Native clock presence belongs to the map slot, so wrapping its value in
+/// `Option<Clock>` is an invalid model declaration at the option's `inner`.
+#[trace("TC-3084", "FR-953-AC-1")]
+#[test]
+fn an_option_clock_map_value_is_refused_at_intake() {
+    let mut document: Value = serde_json::from_slice(&timer_map_clock_document()).expect("JSON");
+    let option = package("OptionalClock");
+    let mut option_type = wire_type(
+        &option,
+        "option",
+        json!({"inner": "ix://filament/native/Clock"}),
+    );
+    option_type["kind"] = json!("option");
+    document["types"]
+        .as_array_mut()
+        .expect("types")
+        .push(option_type);
+    let map = document["types"]
+        .as_array_mut()
+        .expect("types")
+        .iter_mut()
+        .find(|ty| ty["kind"] == "map")
+        .expect("clock map");
+    map["values"] = json!(option);
+    let document = serde_json::to_vec(&document).expect("JSON");
+
+    let refusal = crate::model_operations::admit(&document)
+        .expect_err("Option<Clock> is not a valid map value type");
+    assert_eq!(
+        refusal.cause.code(),
+        Code::InvalidModelBinding,
+        "{refusal:?}"
+    );
+    assert_eq!(
+        refusal.cause.cause(),
+        Some("malformed-declaration"),
+        "{refusal:?}"
+    );
+    let detail = format!("{refusal:?}");
+    assert!(detail.contains("INVALID_OPTION_INNER"), "{detail}");
+    assert!(detail.contains("TypeDefinition.inner"), "{detail}");
+}
+
+/// A selector outside a `ref` is part of a clock place expression that is not
+/// checked yet: clock reads and resets in a timed clause refuse
+/// `not-yet-implemented` at the selector, and a data read there is refused as
+/// not a timed place. In a function body a clock selector refuses
+/// `unsupported-feature`, while a bounded ordinary data read remains valid.
+#[trace("TC-685", "FR-1040-AC-6")]
 #[test]
 fn a_selector_outside_a_ref_is_not_checked_yet() {
     use fsl_semantics::check::{CheckCause, TemporalCause};
@@ -3106,7 +4402,8 @@ fn a_selector_outside_a_ref_is_not_checked_yet() {
         "pre Read using v on Config::Call::reply { self.ts[0].x >= 1 ms }",
         "post Reset using v on Config::Call::send { self.ts[1].x = 0 ms }",
         "post Keyed using v on Config::Call::send { self.m[\"k\"].x = 0 ms }",
-        "pre Data using v on Config::Call::reply { self.ts[0].n = 1 }",
+        "pre Data using v on Config::Call::reply { \
+         size(self.ts) >= 1 and self.ts[0].n = 1 }",
     ] {
         let body = format!("{UNITS}{DENSE}{clause}\n");
         let refusals = check(&document, &body).expect_err("the selector is refused");
@@ -3130,15 +4427,44 @@ fn a_selector_outside_a_ref_is_not_checked_yet() {
             &text[span.start..span.end]
         );
     }
-    // A function body is no timed clause: the typer refuses at the selector.
+
+    // A function body reading a clock place through a collection selector is
+    // refused at the selector until place selection is implemented there.
     let body = format!(
-        "{UNITS}{DENSE}function f using v(o: Reference<Config::Call>): Boolean pure {{ o.ts[0].n = 1 }}\n"
+        "{UNITS}{DENSE}function f using v(o: Reference<Config::Call>): Boolean pure {{ o.ts[0].x >= 1 ms }}\n"
     );
     let refusals = check(&document, &body).expect_err("the selector is refused");
     assert!(
         refusals
             .iter()
             .any(|refusal| matches!(refusal.cause, CheckCause::UnsupportedFeature { .. })),
+        "{refusals:?}"
+    );
+
+    let document = timer_document(|document: &mut Value| {
+        let mut ticks = wire_type(
+            &package("Ticks"),
+            "unused",
+            json!({"items": "ix://filament/native/Clock"}),
+        );
+        ticks["kind"] = json!("sequence");
+        document["types"].as_array_mut().expect("types").push(ticks);
+        document["types"][1]["fields"]
+            .as_array_mut()
+            .expect("Call fields")
+            .push(field("ks", &package("Ticks")));
+    });
+    let body = format!(
+        "{UNITS}{DENSE}function f using v(o: Reference<Config::Call>): Clock pure {{ o.ks[0] }}\n"
+    );
+    let refusals =
+        check(&document, &body).expect_err("an indexed Clock value is outside a constraint");
+    assert!(
+        refusals.iter().any(|refusal| matches!(
+            &refusal.cause,
+            CheckCause::Temporal(cause)
+                if matches!(**cause, TemporalCause::NotAPlaceExpression { .. })
+        )),
         "{refusals:?}"
     );
 }

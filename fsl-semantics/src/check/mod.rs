@@ -343,6 +343,36 @@ pub fn structural_node_key(
     filament_exact::NodeKey::new(package_name.to_owned(), path, ordinal)
 }
 
+/// The structural identity S3 assigns to the `ordinal`th clock-place
+/// template in a package (FSpec FR-322 "Timed-model nodes").
+pub(crate) fn clock_place_node_key(
+    package_name: &str,
+    ordinal: u64,
+) -> Result<filament_exact::NodeKey, filament_exact::InvalidNodeKey> {
+    filament_exact::NodeKey::new(
+        package_name.to_owned(),
+        vec![
+            filament_exact::PathSegment::Text("timed_model".to_owned()),
+            filament_exact::PathSegment::Text("clock_place".to_owned()),
+        ],
+        ordinal,
+    )
+}
+
+/// Kernel identity used by `Reference<Clock>` (FR-1040). The checked IR
+/// represents references by effective identity, so the native clock type
+/// uses its canonical native identity here.
+pub(crate) fn clock_reference_type() -> filament_exact::ValueType {
+    filament_exact::ValueType::Reference(clock_reference_target())
+}
+
+pub(crate) fn clock_reference_target() -> filament_exact::EffectiveId {
+    filament_exact::EffectiveId::new(
+        None,
+        filament_exact::OriginalDeclarationKey::new("filament/native", "Clock"),
+    )
+}
+
 /// Mint a derived node under FSpec FR-322's non-group path rule:
 /// `[node_tag, semantic_form, ...operands]` in the containing package.
 /// Recursion-group members use their producer-chosen path instead.
@@ -2865,6 +2895,7 @@ impl PackageDeclarations {
         .with_decimal_literal_limits(self.decimal_literal_limits)
         .with_known_populations(refinement::population_names(&self.models))
         .with_clock_places(&self.models)
+        .with_clock_place_keys(&self.models, &self.time_sources, &self.package_name)
         .with_clock_reading(
             self.clock_reading
                 .iter()

@@ -904,11 +904,9 @@ what each such position means.
   constraint and clock bound on a selected or quantified element place is
   written, and the unwritten-member cause for a quantified clause
   (`UnwrittenTimedMember::QuantifiedClause`) has no case left and is deleted.
-  The causes `UnwrittenTimedMember::ElementPresence` (a guard, time-invariant
-  or urgency predicate that reads an element's presence) and
-  `UnwrittenTimedMember::PointQualifiedClause` (a clock-reading clause bound
-  to an execution point, FR-230-AC-50) remain until their own forms
-  (FR-230-AC-66, FR-230-AC-50) are written.
+  The cause `UnwrittenTimedMember::PointQualifiedClause` (a clock-reading
+  clause bound to an execution point, FR-230-AC-50) remains until its form
+  is written.
 - **Resets by selection.** The checker SHALL check `p[i].x = c`, `p[k].x = c`, `p[i] = literal`,
   `p[k] = literal` and `forall(e in p: P(e) implies e.x = c)` (`P` a data predicate over `e`'s
   data part, or absent) as resets of the selected places to exact non-negative rational time

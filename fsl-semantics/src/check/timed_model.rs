@@ -815,23 +815,33 @@ fn bit_path(path: &[PlaceStep]) -> bool {
     match path {
         [PlaceStep::Field(_)] => true,
         [PlaceStep::Field(_), PlaceStep::Slot(shape)] => {
-            shape.ordered && !shape.unique && shape.max.is_some()
+            (shape.ordered && !shape.unique || shape.map) && shape.max.is_some()
         }
         _ => false,
     }
 }
 
+fn slot_presence_path(path: &[PlaceStep]) -> bool {
+    matches!(
+        path,
+        [PlaceStep::Field(_), PlaceStep::Slot(shape)]
+            if (shape.ordered && !shape.unique || shape.map) && shape.max.is_some()
+    )
+}
+
 /// The guarded places of `clocks` a predicate names `r.f` or `r.f.c`:
 /// an `Option<Clock>` field of the object, or a clock case of its union
 /// field.
-fn presence_places(clocks: &[ClockField]) -> Vec<PresencePlace> {
+pub(crate) fn presence_places(clocks: &[ClockField]) -> Vec<PresencePlace> {
     clocks
         .iter()
         .filter(|clock| clock.guarded)
         .filter_map(|clock| {
             let (field, case, slot) = match clock.path.as_slice() {
                 [PlaceStep::Field(field)] if clock.bit => (field.clone(), None, false),
-                [PlaceStep::Field(field), PlaceStep::Slot(_)] if clock.bit => {
+                [PlaceStep::Field(field), PlaceStep::Slot(_)]
+                    if clock.bit || slot_presence_path(&clock.path) =>
+                {
                     (field.clone(), None, true)
                 }
                 _ => {
@@ -1490,13 +1500,6 @@ impl TimedModel {
                 if !part.elements.is_empty() || !part.families.is_empty() {
                     return Some((Unwritten(Member::QuantifiedClause), guard.span));
                 }
-                if part
-                    .data
-                    .as_ref()
-                    .is_some_and(|data| data.checked_body().reads_slot_presence())
-                {
-                    return Some((Unwritten(Member::ElementPresence), guard.span));
-                }
                 if part.clocks.is_empty() && !guard.covered() && !part.empty_collection_branch {
                     // Located at the disjunct: its data predicate's site.
                     let site = guard_part_site(&self.model, at, index);
@@ -1563,13 +1566,6 @@ impl TimedModel {
                         .is_some_and(|binding| invariant.binders.contains(binding))
             }) {
                 return Some((Unwritten(Member::QuantifiedClause), invariant.span));
-            }
-            if invariant
-                .alternatives
-                .iter()
-                .any(|alternative| alternative.predicate.checked_body().reads_slot_presence())
-            {
-                return Some((Unwritten(Member::ElementPresence), invariant.span));
             }
         }
         self.urgency
@@ -1908,7 +1904,8 @@ impl Clocks<'_> {
     }
 
     /// Whether `source` of `form` is `r.q`, `q` a `Sequence<Option<Clock>>`
-    /// field of some object type of the model.
+    /// or a bounded `Map<K, Clock>` field of some object type of the model:
+    /// a map's membership supplies the presence of its slots.
     fn bit_slots(&self, form: &ExpressionForm, source: ExprId) -> bool {
         let Some(ExprNode::Field { field, .. }) =
             form.expression.get(source).map(|node| node.node())
@@ -1916,9 +1913,9 @@ impl Clocks<'_> {
             return false;
         };
         self.fields.iter().any(|clock| {
-            clock.bit
-                && matches!(clock.path.as_slice(),
-                    [PlaceStep::Field(name), PlaceStep::Slot(_)] if name == field)
+            matches!(clock.path.as_slice(),
+                [PlaceStep::Field(name), PlaceStep::Slot(shape)]
+                    if name == field && (clock.bit || shape.map && shape.max.is_some()))
         })
     }
 
@@ -2145,7 +2142,7 @@ pub(crate) fn clock_fields(model: &AdmittedModel) -> Vec<ClockField> {
             path: place.path.clone(),
             aliases: place.aliases.clone(),
             bit: place.bit,
-            guarded: place.bit || place.case,
+            guarded: place.bit || place.case || slot_presence_path(&place.path),
             rows: place.rows(),
         })
         .collect()
@@ -2365,6 +2362,25 @@ impl<'f> Located<'f> {
                 }
             }
         }
+        // The place path of a `ref(p)` operand names a place and reads no
+        // clock; a selector inside it is an ordinary expression.
+        let mut under_ref = BTreeSet::new();
+        for node in form.expression.iter() {
+            let ExprNode::Ref(operand) = node.node() else {
+                continue;
+            };
+            let mut at = Some(*operand);
+            while let Some(id) = at.take() {
+                under_ref.insert(id);
+                at = match form.expression.get(id).map(|node| node.node()) {
+                    Some(ExprNode::Field { operand, .. } | ExprNode::Index { operand, .. }) => {
+                        Some(*operand)
+                    }
+                    Some(ExprNode::Select { place, .. }) => Some(*place),
+                    _ => None,
+                };
+            }
+        }
         // Children precede their parents, so each child is final when its
         // parent is reached.
         for node in form.expression.iter() {
@@ -2547,7 +2563,10 @@ impl<'f> Located<'f> {
             }
             // A clock read through another path is a read, though no
             // constraint can take it.
-            if clocks.foreign(form, id, context, &parents) {
+            if !under_ref.contains(&id)
+                && !traversed(form, id, &parents)
+                && clocks.foreign(form, id, context, &parents)
+            {
                 first[id.index()] = spans.get(id.index()).copied();
                 continue;
             }
@@ -4904,7 +4923,12 @@ fn check_part(
                 presence_places: checking.presence_places,
                 body: &form.expression,
             };
-            let (predicate, used) = typed_in(&view, form, declarations, cx, None)?;
+            // FR-391: a data predicate cut from a timed state-clause guard
+            // retains the same selected-model population names as the
+            // clause body. Without this scope, a `count`/quantifier over
+            // `Config::calls` is re-read as an unresolved segment here.
+            let named = NamedScope::of(declarations.models, declarations.scope, declarations.unit);
+            let (predicate, used) = typed_in(&view, form, declarations, cx, Some(named))?;
             *nodes_used = (*nodes_used).max(used);
             Some(predicate)
         }
@@ -5107,14 +5131,7 @@ pub(crate) fn check(
                         )?);
                     }
                     let alternatives = typed;
-                    // A presence read of a quantified element has no
-                    // producer form in this slice.
-                    let written = alternatives
-                        .iter()
-                        .all(|alternative| {
-                            !alternative.predicate.checked_body().reads_slot_presence()
-                        })
-                        .then_some(UrgencyPredicate { sites, node: None });
+                    let written = Some(UrgencyPredicate { sites, node: None });
                     (
                         Urgency::When {
                             name,

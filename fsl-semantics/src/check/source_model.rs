@@ -835,6 +835,11 @@ fn scalar_type(
             let [target] = form.arguments.as_slice() else {
                 return Err(unsupported());
             };
+            if super::type_form::is_clock_type_form(target) {
+                return Ok(ValueTypeRef::Resolved(Box::new(
+                    crate::check::clock_reference_type(),
+                )));
+            }
             let TypeFormHead::Name(name) = &target.head else {
                 return Err(unsupported());
             };

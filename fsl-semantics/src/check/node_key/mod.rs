@@ -1712,6 +1712,10 @@ pub enum Operator {
     Value,
     /// `deref`.
     Deref,
+    /// `place_ref`: a reference to a timed model's clock place.
+    PlaceRef,
+    /// `slots`: the domain of a clock collection's slots.
+    Slots,
     /// `reaches`.
     Reaches,
     /// `temporal`: the body root of a `temporal`/`temporal_clause` node
@@ -1752,6 +1756,8 @@ impl Operator {
             Self::Present => "present",
             Self::Value => "value",
             Self::Deref => "deref",
+            Self::PlaceRef => "place_ref",
+            Self::Slots => "slots",
             Self::Reaches => "reaches",
             Self::Temporal => "temporal",
             Self::TemporalFormula => "temporal_formula",
@@ -1781,6 +1787,8 @@ impl Operator {
             Self::Present => "presence_read",
             Self::Value => "value_read",
             Self::Deref => "deref",
+            Self::PlaceRef => "place_reference",
+            Self::Slots => "presence_read",
             Self::Reaches => "reachability",
             Self::Temporal => "temporal_clause",
             Self::TemporalFormula => "formula",

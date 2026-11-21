@@ -1037,7 +1037,7 @@ impl<'e, 'f, 'c> Expansion<'e, 'f, 'c> {
                     return Ok(None);
                 }
                 budget.unfold(self.located.span(id))?;
-                let environment = self.site_arguments(declaration, arguments, budget)?;
+                let environment = self.site_arguments(declaration, arguments, id, budget)?;
                 let body = Body::of(declaration);
                 let frame = Frame {
                     body: &body,
@@ -1070,7 +1070,7 @@ impl<'e, 'f, 'c> Expansion<'e, 'f, 'c> {
             return Ok(None);
         }
         budget.unfold(self.located.span(id))?;
-        let environment = self.site_arguments(declaration, arguments, budget)?;
+        let environment = self.site_arguments(declaration, arguments, id, budget)?;
         let body = Body::of(declaration);
         let frame = Frame {
             body: &body,
@@ -1087,6 +1087,7 @@ impl<'e, 'f, 'c> Expansion<'e, 'f, 'c> {
         &self,
         declaration: &ClockReadingDeclaration,
         arguments: &[ExprId],
+        call: ExprId,
         budget: &mut PartBudget,
     ) -> Result<BTreeMap<String, Argument>, CheckCause> {
         let mut bound = BTreeMap::new();
@@ -1101,6 +1102,11 @@ impl<'e, 'f, 'c> Expansion<'e, 'f, 'c> {
             let read = match slot {
                 ClockSlot::Clock => match self.site_places(argument, budget)? {
                     Some(places) => Argument::Places(places),
+                    // A clock of another object, read through a binder, is a
+                    // clock read outside a constraint, at the call.
+                    None if self.located.reads_clock(argument) => {
+                        return Err(timed(self.located.outside(call)));
+                    }
                     None => {
                         return Err(timed(TemporalCause::NotAPlaceExpression { span }));
                     }

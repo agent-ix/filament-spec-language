@@ -654,6 +654,17 @@ impl Lowering<'_> {
         let Some(PlaceStep::Field(field)) = clock.path().first() else {
             return keys;
         };
+        // A map-valued clock field is no ordinary attribute of its object:
+        // its key type comes from the model's own record of the place.
+        if let [_, PlaceStep::Slot(shape)] = clock.path() {
+            if shape.map {
+                keys[1] = self
+                    .models
+                    .iter()
+                    .find_map(|model| model.clock_map_key_type(clock.owner().clone(), field));
+                return keys;
+            }
+        }
         let Some(mut current) = types.object_type(clock.owner()).and_then(|object| {
             object
                 .attributes()
@@ -887,6 +898,29 @@ impl Lowering<'_> {
                     )
             })
             .map(|place| place.node.clone())
+    }
+
+    /// The slot place and its final collection shape for a guarded clock
+    /// collection field.
+    pub(super) fn timed_place_slot(
+        &self,
+        owner: EffectiveId,
+        field: &str,
+    ) -> Option<(NodeKey, super::CollectionShape)> {
+        self.timed_places.iter().find_map(|place| {
+            if !self
+                .scope
+                .types()
+                .conforms(owner.clone(), place.owner.clone())
+                || !matches!(place.path.first(), Some(PlaceStep::Field(name)) if name == field)
+            {
+                return None;
+            }
+            let Some(PlaceStep::Slot(shape)) = place.path.last() else {
+                return None;
+            };
+            Some((place.node.clone(), *shape))
+        })
     }
 
     /// The `presence_read` of the place `place` at the owner term `owner`

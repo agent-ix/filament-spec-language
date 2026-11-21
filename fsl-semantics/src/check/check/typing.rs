@@ -246,8 +246,8 @@ struct ClockRefFrame<'e> {
     location: Location,
     /// The typed owner, once seen.
     owner: Option<Node>,
-    /// The types of the selectors typed so far.
-    selectors: Vec<ValueType>,
+    /// The selector nodes typed so far.
+    selectors: Vec<Node>,
 }
 
 /// One step of the place `ref` names: a field, or a selector `[s]` with the
@@ -920,6 +920,136 @@ impl<'a> Typer<'a> {
         self.scope.alias_declaration(written)
     }
 
+    /// The value type expected for one selector in a `ref` path, resolved
+    /// from its typed owner and the admitted model/record declarations.
+    fn clock_selector_type(
+        &self,
+        owner: &Node,
+        path: &[RefStep<'_>],
+        selector_index: usize,
+    ) -> Option<ValueType> {
+        let mut value_type = owner.value_type.clone();
+        let mut selection = 0;
+        for step in path {
+            match step {
+                RefStep::Field(name) => {
+                    value_type = match &value_type {
+                        ValueType::Reference(object) => self
+                            .scope
+                            .types
+                            .attribute(object.clone(), name)?
+                            .field()
+                            .value_type()
+                            .clone(),
+                        ValueType::Composite(declaration) => {
+                            let declaration = self.scope.types().composite(declaration.clone())?;
+                            match declaration.shape() {
+                                filament_semantic_value::declaration::CompositeShape::Record(
+                                    fields,
+                                ) => fields
+                                    .iter()
+                                    .find(|field| field.name() == *name)?
+                                    .value_type()
+                                    .clone(),
+                                filament_semantic_value::declaration::CompositeShape::Tuple(
+                                    positions,
+                                ) => positions.get(name.parse::<usize>().ok()?)?.clone(),
+                                filament_semantic_value::declaration::CompositeShape::Union(_) => {
+                                    return None;
+                                }
+                            }
+                        }
+                        _ => return None,
+                    };
+                }
+                RefStep::Select(_, _) => {
+                    let (selector_type, element_type) = match &value_type {
+                        ValueType::Collection(collection) => {
+                            (ValueType::Integer, collection.element().clone())
+                        }
+                        ValueType::Map(map) => (map.key().clone(), map.values().clone()),
+                        _ => return None,
+                    };
+                    if selection == selector_index {
+                        return Some(selector_type);
+                    }
+                    selection += 1;
+                    value_type = element_type;
+                }
+            }
+        }
+        None
+    }
+
+    /// Whether an indexed clock-collection element is read as a clock place
+    /// outside a timed state clause, and how many field steps lead back to
+    /// its selector. Ordinary data fields of the same element remain value
+    /// reads (FR-230).
+    fn indexed_clock_place_selector_depth(&self, expression: ExprRef<'_>) -> Option<usize> {
+        let mut current = expression;
+        let mut suffix = Vec::new();
+        loop {
+            match current.node() {
+                ExprNode::Field { operand, field, .. } => {
+                    suffix.push(field.as_str());
+                    current = current.at(*operand);
+                }
+                ExprNode::Index { operand, .. } => {
+                    let collection = current.at(*operand);
+                    let ExprNode::Field {
+                        operand: receiver,
+                        field,
+                        ..
+                    } = collection.node()
+                    else {
+                        return None;
+                    };
+                    let ExprNode::Name(name) = collection.at(*receiver).node() else {
+                        return None;
+                    };
+                    if name.segments.len() != 1 {
+                        return None;
+                    }
+                    let ValueType::Reference(object) = &self.local(&name.name)?.value_type else {
+                        return None;
+                    };
+                    let suffix = suffix.iter().rev().copied().collect::<Vec<_>>();
+                    return self
+                        .scope
+                        .clock_places
+                        .iter()
+                        .any(|(owner, path, _)| {
+                            if !self.scope.types.conforms(object.clone(), owner.clone()) {
+                                return false;
+                            }
+                            let Some((
+                                super::super::lowering::PlaceStep::Field(place_field),
+                                steps,
+                            )) = path.split_first()
+                            else {
+                                return false;
+                            };
+                            place_field == field
+                                && matches!(
+                                    steps.first(),
+                                    Some(super::super::lowering::PlaceStep::Slot(_))
+                                )
+                                && steps.len() == suffix.len() + 1
+                                && steps.iter().skip(1).zip(&suffix).all(|(step, field)| {
+                                    matches!(
+                                        step,
+                                        super::super::lowering::PlaceStep::Field(place_field)
+                                            if place_field.as_str() == *field
+                                    )
+                                })
+                        })
+                        .then_some(suffix.len());
+                }
+                _ => return None,
+            }
+        }
+    }
+
     /// Type `expression` where `required` is expected. A conditional or `let`
     /// passes the requirement into its branches or body.
     pub(crate) fn check_as(
@@ -1013,6 +1143,34 @@ impl<'a> Typer<'a> {
             location.clone(),
         ))?;
         Ok(std::mem::take(&mut self.body).finish(root))
+    }
+
+    /// `size(r.q)` for a clock collection place is a proof about the place's
+    /// slot domain. Type its field-shaped path only for this size operation;
+    /// the underlying clock collection is not an ordinary value read.
+    fn clock_collection_operand(
+        &mut self,
+        expression: ExprRef<'_>,
+        location: &Location,
+    ) -> Result<Option<Node>, CheckRefusal> {
+        let ExprNode::Field { operand, field, .. } = expression.node() else {
+            return Ok(None);
+        };
+        let owner_expression = expression.at(*operand);
+        let owner = match owner_expression.node() {
+            ExprNode::SelfRef => self.self_reference(location).ok(),
+            ExprNode::Name(name) => self.name(&name.name, None, location).ok(),
+            _ => None,
+        };
+        let Some(owner) = owner else {
+            return Ok(None);
+        };
+        // The synthetic field of a clock collection is a field read through
+        // a reference, so it follows the same family rule as any other.
+        if !self.in_state_clause() && !self.model_family {
+            return Ok(None);
+        }
+        self.clock_collection_field(owner, field, location)
     }
 
     /// The loop: descend into the next goal, or hand the node just typed to
@@ -1215,8 +1373,16 @@ impl<'a> Typer<'a> {
             })
             .nth(frame.selectors.len());
         if let Some((selector, at)) = next {
+            let expected = frame.owner.as_ref().and_then(|owner| {
+                self.clock_selector_type(owner, &frame.path, frame.selectors.len())
+            });
             frames.push(Frame::ClockRef(frame));
-            return Ok(Step::Descend(Goal::Infer(selector, None, at)));
+            return Ok(Step::Descend(match expected {
+                Some(expected) => {
+                    Goal::Expect(selector, Expected::Checked(Cow::Owned(expected)), at)
+                }
+                None => Goal::Infer(selector, None, at),
+            }));
         }
         let ClockRefFrame {
             path,
@@ -1659,6 +1825,19 @@ impl<'a> Typer<'a> {
                 field,
                 member_span,
             } => {
+                if !self.in_state_clause() {
+                    if let Some(depth) = self.indexed_clock_place_selector_depth(expression) {
+                        let selector = (0..depth)
+                            .fold(location.clone(), |at, _| at.child(0))
+                            .child(1);
+                        return Err(refuse(
+                            &selector,
+                            CheckCause::UnsupportedFeature {
+                                loci: vec![selector.clone()],
+                            },
+                        ));
+                    }
+                }
                 let operand = expression.at(*operand);
                 let operand_location = location.child(0);
                 // FR-180: an HP-1 execution variable is a typed root, not a
@@ -2128,6 +2307,15 @@ impl<'a> Typer<'a> {
                     .is_some_and(|value_type| !is_integer(value_type))
                 {
                     return Err(mismatch(&location));
+                }
+                if let Some(operand) =
+                    self.clock_collection_operand(expression.at(*operand), &location.child(0))?
+                {
+                    frames.push(Frame::Unary(Box::new(UnaryFrame {
+                        form: Unary::Size(target),
+                        location,
+                    })));
+                    return Ok(Step::Typed(operand));
                 }
                 let goal = Goal::Infer(expression.at(*operand), None, location.child(0));
                 return Ok(Self::unary(Unary::Size(target), goal, location, frames));
@@ -3056,7 +3244,7 @@ impl<'a> Typer<'a> {
                     return self.next_selector(frame, frames);
                 };
                 frame.owner = Some(owner);
-                frame.selectors.push(typed.value_type);
+                frame.selectors.push(typed);
                 self.next_selector(frame, frames)
             }
             Frame::PlacePresence(field, case, location) => self
@@ -3303,17 +3491,19 @@ impl<'a> Typer<'a> {
                     Branches::Expected(expected) => expected.into_type(),
                     Branches::Inferred(_) => body.value_type.clone(),
                 };
-                Ok(Step::Typed(node(
-                    NodeKind::Let {
-                        slot,
-                        name: self.slot_name(slot, &location)?,
-                        value: self.push(value),
-                        body: self.push(body),
-                    },
-                    value_type,
-                    &location,
-                )
-                .with_binder_annotation(annotation)))
+                Ok(Step::Typed(
+                    node(
+                        NodeKind::Let {
+                            slot,
+                            name: self.slot_name(slot, &location)?,
+                            value: self.push(value),
+                            body: self.push(body),
+                        },
+                        value_type,
+                        &location,
+                    )
+                    .with_binder_annotation(annotation),
+                ))
             }
         }
     }
@@ -4387,20 +4577,12 @@ impl<'a> Typer<'a> {
                 };
                 tally(self, Visit::Count, value_type, source, condition)
             }
-            PopulationForm::Exists => tally(
-                self,
-                Visit::Exists,
-                ValueType::Boolean,
-                source,
-                condition,
-            ),
-            PopulationForm::All => tally(
-                self,
-                Visit::Forall,
-                ValueType::Boolean,
-                source,
-                condition,
-            ),
+            PopulationForm::Exists => {
+                tally(self, Visit::Exists, ValueType::Boolean, source, condition)
+            }
+            PopulationForm::All => {
+                tally(self, Visit::Forall, ValueType::Boolean, source, condition)
+            }
             PopulationForm::Sum | PopulationForm::Only => {
                 let body = body.ok_or_else(|| mismatch(location))?;
                 // A `sum` folds its condition into the summand, so each object
@@ -4493,8 +4675,12 @@ impl<'a> Typer<'a> {
                     (self.static_range(&low), self.static_range(&typed)),
                     &frame.location,
                 )?;
-                let slot =
-                    self.bind(frame.binder, binder_type.clone(), &frame.location, LocalKind::Bound)?;
+                let slot = self.bind(
+                    frame.binder,
+                    binder_type.clone(),
+                    &frame.location,
+                    LocalKind::Bound,
+                )?;
                 let body = frame.body;
                 let body_location = frame.location.child(2);
                 frame.stage = SeqStage::Body {
@@ -4525,18 +4711,20 @@ impl<'a> Typer<'a> {
                     bound,
                 ));
                 self.check_declared_type(&value_type, &location)?;
-                Ok(Step::Typed(node(
-                    NodeKind::Seq {
-                        slot,
-                        name: self.slot_name(slot, &location)?,
-                        low: self.push(*low),
-                        high: self.push(*high),
-                        body: self.push(typed),
-                    },
-                    value_type,
-                    &location,
-                )
-                .with_binder_annotation(Some(binder_type))))
+                Ok(Step::Typed(
+                    node(
+                        NodeKind::Seq {
+                            slot,
+                            name: self.slot_name(slot, &location)?,
+                            low: self.push(*low),
+                            high: self.push(*high),
+                            body: self.push(typed),
+                        },
+                        value_type,
+                        &location,
+                    )
+                    .with_binder_annotation(Some(binder_type)),
+                ))
             }
         }
     }
