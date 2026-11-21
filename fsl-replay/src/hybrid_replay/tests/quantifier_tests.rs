@@ -819,7 +819,7 @@ fn cad_actual_trace_zero_divisor_retains_the_undefined_cause_and_locus() {
     assert_eq!(at.state, 0);
     assert_eq!(at.time, ExactReal::Rational(n(0)));
     assert_eq!(at.time_interval, None);
-    assert_eq!(at.locus.site, ExpressionSite::Atom { atom: 0 });
+    assert_eq!(at.locus.site, ExpressionSite::ClaimAtom { atom: 0 });
     assert_eq!(
         at.locus.term,
         TermLocus {
@@ -827,4 +827,129 @@ fn cad_actual_trace_zero_divisor_retains_the_undefined_cause_and_locus() {
             body: vec![]
         }
     );
+}
+
+fn coupled_solver_result(trace: &HybridTrace) -> crate::hybrid::SolverResult {
+    crate::hybrid::SolverResult {
+        method: crate::hybrid::SolverMethod::FlowpipeOutwardRounded,
+        outcome: crate::hybrid::SolverOutcome::Unknown(Some(Box::new(trace.clone()))),
+        coverage: crate::hybrid::SolverCoverage::Inductive,
+    }
+}
+
+#[trace("FR-450-AC-20")]
+#[test]
+fn cad_replay_work_boundary_is_deterministic_and_both_provider_paths_settle_incomplete() {
+    use crate::hybrid::HybridSettlement;
+    use crate::model_check::ModelCheckLimit;
+    use crate::proof_result::{IncompleteCause, TerminalValue};
+    let unit = nonlinear_coupled(
+        "v * w <= 1/2",
+        "true",
+        "v >= v and w >= v",
+        false,
+        "always holds(h.v >= 1)",
+    );
+    let lasso = nonlinear_lasso(false);
+    let checked = claim(&unit, "Weak");
+    let replay = |bound| {
+        let mut meter = HybridReplayMeter::new(bound);
+        let found = super::super::exact_replay(&unit, checked, &lasso, &mut meter);
+        (found, meter.consumed())
+    };
+    let (found, work) = replay(u64::MAX);
+    assert_eq!(found, Ok(reproduced_formula(&lasso)));
+    assert!(work > 0);
+    assert_eq!(replay(u64::MAX), (found.clone(), work));
+    assert_eq!(replay(work), (found, work));
+    assert_eq!(
+        replay(work - 1).0,
+        Err(HybridReplayRefusal::ResourceExhausted {
+            counter: filament_exact::LimitKind::WorkUnits
+        })
+    );
+    let expected = TerminalValue::Incomplete(IncompleteCause::LimitReached {
+        limit: ModelCheckLimit::EvaluationMeter {
+            counter: filament_exact::LimitKind::WorkUnits,
+        },
+        value: work - 1,
+    });
+    let claimed = HybridCounterexample {
+        kind: HybridCounterexampleKind::Formula,
+        trace: lasso.clone(),
+    };
+    let provider = HybridSettlement::from_provider_counterexample(
+        &unit,
+        checked,
+        claimed,
+        &mut HybridReplayMeter::new(work - 1),
+    )
+    .unwrap();
+    let solver = coupled_solver_result(&lasso)
+        .settle(&unit, checked, &mut HybridReplayMeter::new(work - 1))
+        .unwrap();
+    for settled in [provider, solver] {
+        assert_eq!(settled.value, expected);
+        assert_eq!(settled.counterexample, None);
+        let TerminalValue::Incomplete(IncompleteCause::LimitReached { limit, value }) =
+            settled.value
+        else {
+            panic!("typed incomplete only");
+        };
+        assert_eq!(limit.setting(), "accounting.work_units");
+        assert_eq!(value, work - 1);
+    }
+    eprintln!("nonlinear Weak exact work W={work}");
+}
+
+/// Both settlement paths preserve the exact reproduced undefined kind,
+/// position, point time, cause and source division locus.
+#[trace("FR-450-AC-19")]
+#[test]
+fn cad_actual_undefined_trace_settles_refuted_through_both_provider_paths() {
+    use crate::hybrid::HybridSettlement;
+    use crate::proof_result::TerminalValue;
+    let unit = nonlinear_coupled(
+        "v * w <= 1/2",
+        "true",
+        "v >= v and w >= v",
+        false,
+        "always holds(1 / (h.v - h.w) > 0)",
+    );
+    let lasso = nonlinear_lasso(false);
+    let checked = claim(&unit, "Weak");
+    let ExactReplay::Reproduced(found) = exact_replay(&unit, checked, &lasso).unwrap() else {
+        panic!("actual undefined division");
+    };
+    let HybridCounterexampleKind::UndefinedEvaluation { at, cause } = &found.kind else {
+        panic!("undefined kind");
+    };
+    assert_eq!(*cause, UndefinedCause::DivisionByZero);
+    assert_eq!(at.state, 0);
+    assert_eq!(at.time, ExactReal::Rational(n(0)));
+    assert_eq!(at.time_interval, None);
+    assert_eq!(
+        at.locus,
+        ExpressionLocus {
+            site: ExpressionSite::ClaimAtom { atom: 0 },
+            term: TermLocus {
+                term: vec![0],
+                body: vec![]
+            }
+        }
+    );
+    let provider = HybridSettlement::from_provider_counterexample(
+        &unit,
+        checked,
+        (*found).clone(),
+        &mut HybridReplayMeter::new(u64::MAX),
+    )
+    .unwrap();
+    let solver = coupled_solver_result(&lasso)
+        .settle(&unit, checked, &mut HybridReplayMeter::new(u64::MAX))
+        .unwrap();
+    for settled in [provider, solver] {
+        assert_eq!(settled.value, TerminalValue::Refuted);
+        assert_eq!(settled.counterexample, Some((*found).clone()));
+    }
 }
