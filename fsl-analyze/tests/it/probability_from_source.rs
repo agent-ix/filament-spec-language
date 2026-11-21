@@ -1203,6 +1203,18 @@ fn native_probability_items_share_work_across_expansions_and_start_fresh_per_ite
     assert_eq!(items[2]["request"]["probabilistic"]["workers"], 4);
 }
 
+fn charged_link_rewards(source: &str) -> String {
+    source
+        .replace(
+            "reward cost on Msg::send_a = 1;",
+            "reward cost on Msg::send_a = 1 + 0;",
+        )
+        .replace(
+            "reward cost on Msg::send_b = 1;",
+            "reward cost on Msg::send_b = 1 + 0;",
+        )
+}
+
 #[trace("TC-2066", "FR-120-AC-35", "FR-192-AC-1", "FR-203-AC-13")]
 #[test]
 fn native_probability_reward_admission_preserves_accounting_stop() {
@@ -1213,7 +1225,11 @@ fn native_probability_reward_admission_preserves_accounting_stop() {
     let mut one_model = prob_world::link(&claims);
     one_model.body = one_model
         .body
-        .replace("reward cost on Msg::send_b = 1;\n", "");
+        .replace("reward cost on Msg::send_b = 1;\n", "")
+        .replace(
+            "reward cost on Msg::send_a = 1;",
+            "reward cost on Msg::send_a = 1 + 0;",
+        );
     let one = World::new(&one_model);
     let request = one.subject().simulation;
     let scope = filament_exact::WorkScope::new(request.meter);
@@ -1221,7 +1237,10 @@ fn native_probability_reward_admission_preserves_accounting_stop() {
         .expect("the first reward's vectors admit");
     let prefix = scope.consumed_work();
     assert!(prefix > 0);
-    let world = World::new(&prob_world::link(&claims));
+    let mut model = prob_world::link(&claims);
+    model.body = charged_link_rewards(&model.body);
+    let world = World::new(&model);
+    let source = charged_link_rewards(&unit(&claims));
     for bound in [0, prefix] {
         let mut subject = world.subject();
         subject.simulation.meter.work_units = bound;
@@ -1268,7 +1287,7 @@ fn native_probability_reward_admission_preserves_accounting_stop() {
         let ws = Workspace::new(&format!("probability-reward-admission-{bound}"));
         let request = request_over(
             &ws,
-            &unit(&claims),
+            &source,
             LINK_MODEL,
             &[LINK_START.to_vec()],
             json!({
@@ -1312,7 +1331,9 @@ fn native_probability_reward_admission_cancellation_keeps_its_cause() {
     use fsl_replay::statistical::{StatisticalLimits, StatisticalMethod};
     use fsl_replay::{IncompleteCause, TerminalValue};
     use std::sync::{Arc, OnceLock};
-    let world = World::new(&prob_world::link(&format!("{DELIVERED}\n{EVENTUALLY}")));
+    let mut model = prob_world::link(&format!("{DELIVERED}\n{EVENTUALLY}"));
+    model.body = charged_link_rewards(&model.body);
+    let world = World::new(&model);
     let engines = Engines::fsl().unwrap();
     for exact in [false, true] {
         let slot = Arc::new(OnceLock::<Cancel>::new());

@@ -15,10 +15,21 @@ use crate::simulation::model::ModelSimState;
 use crate::simulation::sampled::world::{self, field, initial, World};
 use crate::simulation::TransitionSystem;
 
+/// The probability ports exercise contracts, predicates and rewards. Terminal
+/// declarations belong to the separate terminal-classification API.
+fn probability_link_fixture() -> world::Model {
+    let mut model = world::link();
+    model.body = model.body.replace(
+        "terminal Stop using v on M when { self.delivered or self.attempts = 2 };\n",
+        "",
+    );
+    model
+}
+
 #[trace("FR-120-AC-35", "FR-120-AC-36")]
 #[test]
 fn probability_work_scope_accumulates_real_expansions_on_source_and_package_routes() {
-    let world = World::new(&world::link());
+    let world = World::new(&probability_link_fixture());
     let exercise = |mut system: super::ModelSystem<'_>| {
         let ample = filament_exact::WorkScope::new(system.meter_limits());
         system.probability_work = Some(ample.clone());
@@ -65,7 +76,7 @@ fn probability_clause_factory_shares_work_but_keeps_other_counters_fresh() {
     use crate::value::ClauseSetOutcome;
     use filament_eval::FamilyOutcome;
     use filament_exact::{LimitKind, Outcome, WorkScope};
-    let mut model = world::link();
+    let mut model = probability_link_fixture();
     model.body.push_str("invariant A using v on M::Msg at current { self.attempts >= 0 }\ninvariant B using v on M::Msg at current { self.attempts >= 0 }\n");
     let world = World::new(&model);
     let exercise = |system: super::ModelSystem<'_>| {
@@ -228,8 +239,8 @@ fn probability_candidate_then_claim_predicate_and_reward_use_the_same_allowance(
     use super::super::PredicateReading;
     use filament_exact::{LimitKind, WorkScope};
     use fsl_semantics::check::{ProbForm, ReachTarget};
-    let mut model = world::link();
-    model.body.push_str("reward cost on Msg::send_a = 1;\nprobabilistic Check using inf on M over (m: M::Msg) under every scheduler on origin { probability >= 0.5 [ eventually holds(m.delivered) ] }\n");
+    let mut model = probability_link_fixture();
+    model.body.push_str("reward cost on Msg::send_a = 1 + 0;\nprobabilistic Check using inf on M over (m: M::Msg) under every scheduler on origin { probability >= 0.5 [ eventually holds(m.delivered) ] }\n");
     let world = World::with_profiles(&model, &[("inf", "filament.temporal.infinite-trace/v1")]);
     let ProbForm::Reach {
         target: ReachTarget::Eventually(predicate),
@@ -366,7 +377,7 @@ fn probability_reward_admission_preserves_owner_incomplete_and_cancellation() {
     let mut model = world::link();
     model.operations.truncate(1);
     model.operations[0].parameters.clear();
-    model.body = "reward alpha on Msg::send_a = 1;\n".to_owned();
+    model.body = "reward alpha on Msg::send_a = 1 + 0;\n".to_owned();
     let one = World::new(&model);
     let limits = one.system().meter_limits();
     let scope = WorkScope::new(limits);
@@ -375,10 +386,10 @@ fn probability_reward_admission_preserves_owner_incomplete_and_cancellation() {
         scope.clone(),
         &Cancel::new(),
     )
-    .expect("one valid constant reward admits");
+    .expect("one valid arithmetic reward admits");
     let prefix = scope.consumed_work();
     assert!(prefix > 0);
-    model.body.push_str("reward beta on Msg::send_a = 1;\n");
+    model.body.push_str("reward beta on Msg::send_a = 1 + 0;\n");
     let two = World::new(&model);
     let exercise = |input: ModelCheckInput<'_>| {
         let mut first_denial = None;
