@@ -577,8 +577,11 @@ fn p95_quantity_ratio_is_accepted_from_its_emitted_package_and_two_ms_refutes() 
     assert_eq!(numerator["objective"]["measure"]["kind"], "accumulate");
     assert_eq!(numerator["objective"]["measure"]["reward"][1], "duration");
     assert!(!numerator["objective"]["measure"]["unit"].is_null());
-    let emitted =
-        fsl_package::emit_checked(&world.package, fsl_package::EmitLimits::default()).unwrap();
+    let emitted = fsl_package::emit_checked(
+        &world.package,
+        fsl_replay::spine::SpineLimits::default().package.emit(),
+    )
+    .unwrap();
     let simulation = world.subject().simulation;
     let mut documents = vec![model.document(false)];
     documents.extend(simulation.snapshots.values().cloned());
