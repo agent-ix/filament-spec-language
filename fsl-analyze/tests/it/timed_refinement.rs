@@ -480,12 +480,12 @@ fn a_violated_safety_half_is_reported_with_no_liveness_half() {
     assert!(outcome.liveness.is_none(), "{:?}", outcome.liveness);
 }
 
-/// The default timed profile supplies the selector bound for concrete
-/// ClockRef data, and a hidden abstract field no longer refuses the check.
+/// Concrete ClockRef data is refused at model construction as
+/// `clock-reference-enumeration` (FR-106 "Clock-reference domain enumeration is
+/// also deferred"), before any selector bound or refinement gate applies.
 #[trace("TC-3084", "FR-1040-AC-8")]
 #[test]
-fn clock_reference_selectors_use_the_timed_profile_before_refinement_gates() {
-    const ZONE_BYTES: u64 = 4 << 20;
+fn clock_reference_data_is_refused_before_timed_refinement_gates() {
     let mut concrete: Json =
         serde_json::from_slice(&document(&["x", "q"], &[("send", &["inflight", "r"])]))
             .expect("JSON");
@@ -533,44 +533,26 @@ fn clock_reference_selectors_use_the_timed_profile_before_refinement_gates() {
     snapshot["populations"][0]["objects"][0]["fields"]["r"] = json!({"absent": {}});
     *initial = serde_json::to_vec(&snapshot).expect("snapshot JSON");
     concrete_request.snapshots = &snapshots;
-    let systems = open_systems(
+    let Err(fsl_replay::SubjectRefusal::Admission(failure)) = open_systems(
         the_refinement(&world),
         &concrete_request,
         &world.package,
         world.abstract_initials.clone(),
-    )
-    .expect("subjects open");
-    assert!(
-        matches!(
-            fsl_eval::simulation::model::check_model_bounds(
-                &systems.concrete,
-                fsl_eval::simulation::BOUND_POSITIONS
-            ),
-            Err(fsl_eval::simulation::NotSimulated::RequiresBound(_)),
-        ),
-        "the generic subject has no clock-profile selector bound"
+    ) else {
+        panic!("a concrete Clock-reference data member has an explicit typed boundary");
+    };
+    let fsl_semantics::model::observation::AdmissionFailure::Refused(record) = *failure else {
+        panic!("the boundary is a typed refusal record");
+    };
+    assert_eq!(record.catalog.code(), "unknown_required_feature");
+    assert_eq!(record.catalog.cause(), "unsupported-feature");
+    assert_eq!(
+        record.fields.get("reason").map(String::as_str),
+        Some("clock-reference-enumeration")
     );
-    let mut request = safety_request(&world);
-    request.concrete = concrete_request;
-    // The hidden abstract field no longer refuses, and the timed
-    // constructor's default selector bound is applied (no `RequiresBound`
-    // refusal). The product of this fixture grows past any small zone budget,
-    // so a low explicit limit makes the run end at exactly that limit.
-    request.limits.max_zone_bytes = ZONE_BYTES;
-    let outcome = check_timed_refinement(request, &Cancel::new())
-        .expect("the hidden abstract field and the selector bound are both admitted");
-    assert!(
-        matches!(
-            &outcome.safety,
-            TimedSafetyOutcome::Stopped {
-                cause: TimedRefinementStop::Zone(ZoneStop::LimitReached(
-                    ZoneCheckLimit::MaxZoneBytes(ZONE_BYTES)
-                )),
-                ..
-            }
-        ),
-        "the run stops at the explicit zone budget: {:?}",
-        outcome.safety
+    assert_eq!(
+        record.fields.get("member").map(String::as_str),
+        Some(ident("Call/r").as_str())
     );
 }
 
