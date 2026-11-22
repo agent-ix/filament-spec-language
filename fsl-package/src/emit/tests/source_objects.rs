@@ -375,7 +375,7 @@ fn source_object_identity_rows_roundtrip_through_qc30_intake() {
     let identity_json: Value = serde_json::from_slice(&bytes).expect("identity JSON parses");
     assert_eq!(
         identity_json["format"],
-        "filament.checked-handoff.identities/4"
+        "filament.checked-handoff.identities/5"
     );
     let objects_json = identity_json["source_objects"].as_array().expect("rows");
     assert_eq!(objects_json.len(), 1);
