@@ -814,7 +814,7 @@ fn tc_1784_a_recorded_mode_that_differs_from_the_recompile_is_refused() {
     let recorded = quire_canonical::read(original, u64::MAX).expect("JSON");
     check_recorded_modes(
         &recorded,
-        compiled.emitted.emission(),
+        compiled.emitted_unit.emission(),
         fsl_package::EmitLimits::new(u64::MAX),
     )
     .expect("matching modes pass");
@@ -824,7 +824,7 @@ fn tc_1784_a_recorded_mode_that_differs_from_the_recompile_is_refused() {
     let edited = quire_canonical::read(edited.as_bytes(), u64::MAX).expect("JSON");
     let refusal = check_recorded_modes(
         &edited,
-        compiled.emitted.emission(),
+        compiled.emitted_unit.emission(),
         fsl_package::EmitLimits::new(u64::MAX),
     )
     .expect_err("g records kernel but recompiles linked");
