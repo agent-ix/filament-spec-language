@@ -3574,9 +3574,21 @@ fn x05_ieee_arithmetic_records_flags_and_float_ordering_composes() {
         CheckMode::Kernel,
     )
     .is_ok());
+    let width_mismatch = cause(&package, &operation(BinaryOperator::Less, "f", "h"));
     assert_eq!(
-        cause(&package, &operation(BinaryOperator::Less, "f", "h")),
-        ill(IllTypedCause::TypeMismatch)
+        width_mismatch,
+        CheckCause::OperandTypeMismatch {
+            operator: BinaryOperator::Less,
+            left_type: Box::new(double.clone()),
+            right_type: Box::new(ValueType::Float(FloatType::exact(IeeeWidth::Binary32))),
+        }
+    );
+    assert_eq!(
+        width_mismatch.catalog_code(),
+        Some(filament_semantic_value::catalog::CatalogCode::new(
+            "ill_typed",
+            "type-mismatch",
+        ))
     );
     // FR-397-AC-14: an admitted IEEE profile makes unary negation valid;
     // it flips the sign bit without recording a loss.

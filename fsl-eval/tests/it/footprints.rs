@@ -973,6 +973,15 @@ const BOOLEAN: &str = "ix://filament/native/Boolean";
 /// through a rewritable reference and a `result` that ranges over the
 /// post-state.
 fn gates_subject() -> Subject {
+    gates_subject_with_spares(object_type_extending(
+        "SpareCell",
+        &["Cell"],
+        vec![],
+        vec![],
+    ))
+}
+
+fn gates_subject_with_spares(spare_type: Json) -> Subject {
     let cell = ident("Cell");
     let gate_frame = |entry: &str| frame(&json!({"modifies_receiver": [ident(entry)]}));
     subject(
@@ -990,7 +999,7 @@ fn gates_subject() -> Subject {
                         &frame(&json!({"modifies_receiver": [ident("Cell/v")]})),
                     )],
                 ),
-                object_type_extending("SpareCell", &["Cell"], vec![], vec![]),
+                spare_type,
                 object_type(
                     "Gate",
                     vec![
@@ -1216,7 +1225,11 @@ fn a_guard_in_a_postcondition_and_a_navigated_reference_are_in_the_enabling_foot
 #[trace("TC-589")]
 #[test]
 fn a_postcondition_reading_through_result_reads_the_result_populations() {
-    let mut subject = gates_subject();
+    let mut subject = gates_subject_with_spares(object_type(
+        "SpareCell",
+        vec![field("SpareCell", "v", &ident("Bit"), "required")],
+        vec![],
+    ));
     let start = gates_start(&mut subject);
     let system = subject.system(
         start,
