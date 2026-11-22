@@ -89,7 +89,7 @@ fn run_with_invocation_model(directory: &Path) -> Output {
             source("spine-model.semantic-ir.json", "SpineModel")}],
         "program": {"source": source("spine-unit.native", "SpineUnit")},
         "clause": {
-            "selection": {"clause": {"name": "VersionUnchanged", "observation": "invocation"}},
+            "selection": {"clause": {"name": "VersionAdvances", "observation": "invocation"}},
             "observations": {
                 "pre": "spine-pre-snapshot.json", "post": "spine-post-snapshot.json",
                 "invocation": "spine-invocation.json"

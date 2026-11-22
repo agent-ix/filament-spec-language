@@ -839,6 +839,40 @@ fn function_selection_admits_an_identity_reference() {
     assert_eq!(document["disposition"]["truth"], true, "{document}");
 }
 
+/// Function selections still require a current snapshot; FR-652's item
+/// admission of pre/post snapshots does not change FR-312's function reader.
+#[test]
+#[trace("FR-312-AC-4")]
+fn function_selection_requires_a_current_snapshot() {
+    let directory = tempfile::tempdir().unwrap();
+    spine::write(directory.path(), Case::Healthy).unwrap();
+    spine::write(directory.path(), Case::Unchanged).unwrap();
+    extend_unit(
+        directory.path(),
+        "function snapshotControl using v(): Boolean pure { true }\n",
+    );
+    for (key, file) in [
+        ("current", "spine-snapshot.json"),
+        ("pre", "spine-pre-snapshot.json"),
+        ("post", "spine-post-snapshot.json"),
+        ("invocation", "spine-invocation.json"),
+    ] {
+        let output = request(
+            directory.path(),
+            "clause",
+            json!({"observations": {key: file}, "selection": {"function": {
+                "name": "snapshotControl", "snapshot": key, "arguments": []}}}),
+        );
+        if key == "current" {
+            assert_eq!(output.status.code(), Some(0), "{output:?}");
+            let document: Value = serde_json::from_slice(&output.stdout).unwrap();
+            assert_eq!(document["disposition"]["truth"], true, "{document}");
+        } else {
+            assert_request_refusal(&output, "snapshot");
+        }
+    }
+}
+
 /// FR-651-AC-4: the most severe item decides the exit, and an item's budget
 /// is its own.
 #[test]

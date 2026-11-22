@@ -2577,10 +2577,12 @@ fn a_broken_initial_mapping_refutes_the_refinement_premise_not_the_transfer() {
 #[test]
 #[trace("TC-2921", "FR-1031-AC-5")]
 fn a_protocol_abstract_subject_is_refused_not_settled_as_a_model() {
-    let steps: String = ["beginA", "beginB", "commitA", "commitB", "retryA", "retryB", "peek"]
-        .iter()
-        .map(|step| format!("step Impl::Counter::{step} -> stutter;\n"))
-        .collect();
+    let steps: String = [
+        "beginA", "beginB", "commitA", "commitB", "retryA", "retryB", "peek",
+    ]
+    .iter()
+    .map(|step| format!("step Impl::Counter::{step} -> stutter;\n"))
+    .collect();
     let declarations = format!(
         "profile p = \"filament.protocol.finite-global/v1\";\n{}\
          protocol Twice using p over (c: Spec::Counter) on origin {{\n\
@@ -2620,14 +2622,14 @@ fn a_protocol_abstract_subject_is_refused_not_settled_as_a_model() {
 #[trace("TC-2920", "FR-1030-AC-3")]
 fn supplied_refinement_transfer_premises_are_consumed_once() {
     let seed = transfer_member("ThirdRefinesSpec", ("Spec", "Third"), &["PrevSafe"]);
-    let (_, seed_value) = transfer_run(&[("refinement_transfer", seed.clone())], true);
+    let (_, seed_value) = transfer_run_over(&[("refinement_transfer", seed.clone())], true, true);
     let premises = &transfer(&seed_value, "PrevSafe")["transfer"]["premises"];
     let refinement = transfer_premise(&premises[0]["identity"], "proved");
     let claim = transfer_premise(&premises[1]["identity"], "proved");
 
     let mut supplied = seed;
     supplied["premises"] = json!({"refinement": refinement, "claims": {"PrevSafe": claim}});
-    let (exit, value) = transfer_run(&[("refinement_transfer", supplied.clone())], true);
+    let (exit, value) = transfer_run_over(&[("refinement_transfer", supplied.clone())], true, true);
     assert_eq!(exit, 0, "{value}");
     assert_eq!(transfer(&value, "PrevSafe")["value"], "proved", "{value}");
     assert_eq!(
@@ -2638,7 +2640,7 @@ fn supplied_refinement_transfer_premises_are_consumed_once() {
 
     let refuted = transfer_premise(&premises[1]["identity"], "refuted");
     supplied["premises"]["claims"]["PrevSafe"] = refuted;
-    let (exit, value) = transfer_run(&[("refinement_transfer", supplied)], true);
+    let (exit, value) = transfer_run_over(&[("refinement_transfer", supplied)], true, true);
     assert_eq!(exit, 22, "{value}");
     let result = transfer(&value, "PrevSafe");
     assert_eq!(result["value"], "inconclusive", "{value}");
@@ -2652,7 +2654,7 @@ fn supplied_refinement_transfer_premises_are_consumed_once() {
     let mut supplied = transfer_member("ThirdRefinesSpec", ("Spec", "Third"), &["PrevSafe"]);
     supplied["premises"] =
         json!({"refinement": transfer_premise(&premises[0]["identity"], "refuted")});
-    let (exit, value) = transfer_run(&[("refinement_transfer", supplied)], true);
+    let (exit, value) = transfer_run_over(&[("refinement_transfer", supplied)], true, true);
     assert_eq!(exit, 22, "{value}");
     let result = transfer(&value, "PrevSafe");
     assert_eq!(result["cause"]["type"], "premise-unproved", "{value}");
@@ -2665,11 +2667,12 @@ fn supplied_refinement_transfer_premises_are_consumed_once() {
 #[test]
 #[trace("TC-2920", "FR-1030-AC-4")]
 fn a_liveness_clause_transfers_over_the_abstract_stutter_closure() {
-    let (exit, value) = transfer_run(
+    let (exit, value) = transfer_run_over(
         &[(
             "refinement_transfer",
             transfer_member("CasRefinesCounter", ("Spec", "Impl"), &["EventuallyTwo"]),
         )],
+        true,
         true,
     );
     assert_eq!(exit, 0, "{value}");
@@ -2694,11 +2697,12 @@ fn a_liveness_clause_transfers_over_the_abstract_stutter_closure() {
 #[test]
 #[trace("FSpec-TC-2000", "FSpec-FR-820-AC-4")]
 fn an_unimplied_clause_fairness_is_not_preserving() {
-    let (exit, value) = transfer_run(
+    let (exit, value) = transfer_run_over(
         &[(
             "refinement_transfer",
             transfer_member("ThirdRefinesSpec", ("Spec", "Third"), &["EventuallyTwo"]),
         )],
+        true,
         true,
     );
     assert_eq!(exit, 22, "{value}");
@@ -2718,11 +2722,12 @@ fn an_unimplied_clause_fairness_is_not_preserving() {
 #[trace("TC-2870", "FR-1020-AC-2")]
 #[trace("FSpec-TC-2000", "FSpec-FR-820-AC-2")]
 fn an_any_arm_refinement_is_not_step_for_step() {
-    let (exit, value) = transfer_run(
+    let (exit, value) = transfer_run_over(
         &[(
             "refinement_transfer",
             transfer_member("ThirdAnyRefinesSpec", ("Spec", "Third"), &["PrevSafe"]),
         )],
+        true,
         true,
     );
     assert_eq!(exit, 22, "{value}");
@@ -2795,7 +2800,7 @@ fn a_closure_violation_after_a_real_step_refutes_its_premise() {
 #[trace("FSpec-TC-2000", "FSpec-FR-820-AC-4")]
 fn a_supplied_maximal_liveness_premise_is_not_preserving() {
     let seed = transfer_member("CasRefinesCounter", ("Spec", "Impl"), &["EventuallyTwo"]);
-    let (_, seed_value) = transfer_run(&[("refinement_transfer", seed.clone())], true);
+    let (_, seed_value) = transfer_run_over(&[("refinement_transfer", seed.clone())], true, true);
     let premises = &transfer(&seed_value, "EventuallyTwo")["transfer"]["premises"];
     let mut claim = transfer_premise(&premises[1]["identity"], "proved");
     claim["request"]["temporal"]
@@ -2805,7 +2810,7 @@ fn a_supplied_maximal_liveness_premise_is_not_preserving() {
 
     let mut supplied = seed;
     supplied["premises"] = json!({"claims": {"EventuallyTwo": claim}});
-    let (exit, value) = transfer_run(&[("refinement_transfer", supplied)], true);
+    let (exit, value) = transfer_run_over(&[("refinement_transfer", supplied)], true, true);
     assert_eq!(exit, 22, "{value}");
     let result = transfer(&value, "EventuallyTwo");
     assert_eq!(result["value"], "inconclusive", "{value}");
@@ -2965,14 +2970,14 @@ fn a_refinement_transfer_request_is_refused_by_stage() {
 #[trace("TC-2921", "FR-1031-AC-4")]
 fn an_inadmissible_snapshot_or_supplied_premise_is_refused_at_admit() {
     let seed = transfer_member("ThirdRefinesSpec", ("Spec", "Third"), &["PrevSafe"]);
-    let (_, seed_value) = transfer_run(&[("refinement_transfer", seed.clone())], true);
+    let (_, seed_value) = transfer_run_over(&[("refinement_transfer", seed.clone())], true, true);
     let premises = &transfer(&seed_value, "PrevSafe")["transfer"]["premises"];
 
     // The refinement's identity is not the claim slot's.
     let mut supplied = seed.clone();
     supplied["premises"] =
         json!({"claims": {"PrevSafe": transfer_premise(&premises[0]["identity"], "proved")}});
-    let (exit, value) = transfer_run(&[("refinement_transfer", supplied)], true);
+    let (exit, value) = transfer_run_over(&[("refinement_transfer", supplied)], true, true);
     assert_eq!(exit, 20, "{value}");
     names(&value, "admit");
     names(&value, "invalid-value");
@@ -2982,7 +2987,7 @@ fn an_inadmissible_snapshot_or_supplied_premise_is_refused_at_admit() {
     // The abstract model's snapshot is the third model's.
     let mut wrong = seed;
     wrong["observations"]["spec-0"] = json!("third-0.json");
-    let (exit, value) = transfer_run(&[("refinement_transfer", wrong)], true);
+    let (exit, value) = transfer_run_over(&[("refinement_transfer", wrong)], true, true);
     assert_eq!(exit, 20, "{value}");
     names(&value, "admit");
     names(&value, "/refinement_transfer/abstract/initial/0");

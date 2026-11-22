@@ -77,16 +77,11 @@ fn an_empty_align_skip_reaches_s3_and_refuses_at_the_list() {
         Ok(_) => panic!("S3 refuses the empty align-skip list"),
         Err(error) => error,
     };
-    let outcome: Value = serde_json::from_slice(
-        &error
-            .outcome_document(Operation::Package)
-            .to_bytes()
-            .unwrap(),
-    )
-    .unwrap();
+    let document = error.outcome_document(Operation::Package);
+    assert_eq!(document.category().exit_code(), 21, "{document:?}");
+    let outcome: Value = serde_json::from_slice(&document.to_bytes().unwrap()).unwrap();
     assert_eq!(outcome["last_stage"], "S3", "{outcome}");
     assert_eq!(outcome["category"], "unsupported", "{outcome}");
-    assert_eq!(outcome["exit_code"], 21, "{outcome}");
     let diagnostics = outcome["diagnostics"].as_array().expect("diagnostics");
     assert_eq!(diagnostics.len(), 1, "{outcome}");
     assert_eq!(diagnostics[0]["code"], "unsupported_construct", "{outcome}");

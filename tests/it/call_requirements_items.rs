@@ -343,8 +343,10 @@ fn recursive_predicate_cycles_without_measures_refuse_on_the_spine() {
         &DependencyInput::default(),
     )
     .expect_err("both recursive SCCs require measures");
-    let fsl_replay::spine::CompileRefusal::Check { refusals, .. } = *refusal else {
-        panic!("recursive predicates must refuse at check, got {refusal:?}");
+    let refusals = match refusal.as_ref() {
+        fsl_replay::spine::CompileRefusal::Check { refusals, .. }
+        | fsl_replay::spine::CompileRefusal::CheckDiagnostics { refusals, .. } => refusals,
+        _ => panic!("recursive predicates must refuse at check, got {refusal:?}"),
     };
     let cycles: Vec<_> = refusals
         .iter()

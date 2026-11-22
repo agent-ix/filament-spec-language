@@ -52,6 +52,7 @@ fn document_value(document: &OutcomeDocument) -> Value {
 #[test]
 #[trace("TC-012", "FR-002-AC-1", "FR-002-AC-7")]
 #[trace("TC-015", "FR-010-AC-1")]
+#[trace("FR-663-AC-1")]
 fn the_fixture_parses_to_an_admissible_source_and_a_success_document() {
     let identity = SourceIdentity::new("agent-ix", "test:parent");
     let (result, document) = parse_with(
@@ -62,6 +63,7 @@ fn the_fixture_parses_to_an_admissible_source_and_a_success_document() {
     );
     let parsed = result.as_ref().expect("the fixture parses");
     let syntax = parsed.value().syntax();
+    let limits = Limits::default();
     assert!(syntax.is_admissible(), "{:?}", syntax.diagnostics());
     assert!(syntax.diagnostics().is_empty());
     assert_eq!(parsed.value().source().text().as_bytes(), FIXTURE);
@@ -72,16 +74,33 @@ fn the_fixture_parses_to_an_admissible_source_and_a_success_document() {
         json!({
             "format": "filament-outcome/1", "operation": "parse", "last_stage": "S2",
             "category": "success", "items": [], "diagnostics": [], "artifacts": [],
-            "result": null
+            "result": {
+                "kind": "parsed",
+                "source": {"authority": "agent-ix", "identity": "test:parent"},
+                "path": "tests/fixtures/spine-compile.native",
+                "bytes": FIXTURE.len().to_string(),
+                "usage": [
+                    {"setting": "s1.input_bytes", "bound": limits.source_bytes.to_string(),
+                        "used": FIXTURE.len().to_string()},
+                    {"setting": "s1.tokens", "bound": limits.tokens.to_string(),
+                        "used": syntax.cst().tokens().len().to_string()},
+                    {"setting": "s1.nodes", "bound": limits.nodes.to_string(),
+                        "used": syntax.cst().nodes().len().to_string()},
+                    {"setting": "s1.work_units", "bound": limits.work_units.to_string(),
+                        "used": parsed.work().s1.to_string()},
+                ],
+            }
         })
     );
 }
 
 /// FR-010-AC-2, AC-9 (TC-015): a source S1 refuses as malformed exits 20 at
 /// S1 with `invalid_syntax`; a construct S1 recognizes and the profile does
-/// not support exits 21 at S2 with `unsupported_construct`.
+/// not support exits 21 at S1 with `unsupported_construct`. The unselected
+/// extension form is FR-354-AC-4's parser refusal.
 #[test]
 #[trace("TC-015", "FR-010-AC-2", "FR-010-AC-9")]
+#[trace("FR-354-AC-4", "FR-660-AC-6")]
 fn malformed_syntax_exits_20_and_an_unsupported_construct_exits_21() {
     let identity = SourceIdentity::new("agent-ix", "test:refused");
     for (declaration, exit, category, stage, code) in [
@@ -93,10 +112,10 @@ fn malformed_syntax_exits_20_and_an_unsupported_construct_exits_21() {
             "invalid_syntax",
         ),
         (
-            "function f using v(): Boolean pure { null }",
+            "retention Audit { subject: \"audit\", days: 30 }",
             21,
             "unsupported",
-            "S2",
+            "S1",
             "unsupported_construct",
         ),
     ] {

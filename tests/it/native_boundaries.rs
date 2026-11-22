@@ -462,8 +462,9 @@ fn format_refuses_a_recovering_or_diagnosed_parse_without_output() {
 #[test]
 fn only_runtime_invariant_exits_as_tool_failure() {
     assert_eq!(Code::RuntimeInvariant.category().exit_code(), 30);
+    assert_eq!(Code::OutputFailure.category().exit_code(), 30);
     for &code in Code::all() {
-        if code != Code::RuntimeInvariant {
+        if !matches!(code, Code::RuntimeInvariant | Code::OutputFailure) {
             assert!(matches!(code.category().exit_code(), 20..=22), "{code}");
         }
     }
@@ -506,7 +507,7 @@ fn native_diagnostic_propagates_as_an_error_and_codes_roundtrip() {
         );
         assert_eq!(
             code.category().exit_code() == 30,
-            code == Code::RuntimeInvariant,
+            matches!(code, Code::RuntimeInvariant | Code::OutputFailure),
             "{code}"
         );
     }
