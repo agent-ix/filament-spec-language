@@ -101,6 +101,7 @@ mod package_enum;
 mod package_forms;
 mod package_model_relation;
 mod package_step_relation_parity;
+mod package_simulation_loop_probe;
 mod package_probabilistic_source;
 mod package_recommendation_bridge;
 mod package_refusal_route;
