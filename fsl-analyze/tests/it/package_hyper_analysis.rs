@@ -265,8 +265,10 @@ fn check_universal_atoms_and_certificate<'a>(
         &Cancel::new(),
     )
     .expect("package product runs");
-    let HyperOutcome::Holds { certificates, .. } = outcome else {
-        panic!("holding universal product: {outcome:?}");
+    let certificates = match outcome {
+        HyperOutcome::Holds { certificates, .. }
+        | HyperOutcome::HoldsReduced { certificates, .. } => certificates,
+        outcome => panic!("holding universal product: {outcome:?}"),
     };
     assert!(!certificates.is_empty());
     for certificate in certificates {

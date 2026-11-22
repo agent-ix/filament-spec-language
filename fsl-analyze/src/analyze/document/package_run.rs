@@ -1897,53 +1897,14 @@ impl<'r, 'a: 'r> ClaimReads<'r, 'a> {
         package
             .hyper_reference_literals(&clause)
             .map_err(|_| pending("hyper-reference-bindings"))?;
-        use filament_contract_model::{
-            CapabilityKind, DomainKey as WireDomain, DomainKind as WireKind, RequirementExtent,
-        };
-        use fsl_foundation::bound::{DomainKey, DomainKind};
-        let requirement = package
-            .package()
-            .requirement_items()
-            .iter()
-            .find(|row| {
-                row.claim == *declaration
-                    && row.occurrence.ordinal == ordinal
-                    && row.occurrence.role == filament_contract_model::CheckedOccurrenceRole::Claim
-                    && row.kind == CapabilityKind::TemporalSatisfaction
-            })
-            .ok_or_else(fault)?;
-        let RequirementExtent::Unbounded(wire_domains) = &requirement.extent else {
-            return Err(fault());
-        };
-        let mut domains = BTreeMap::new();
-        for (domain, kind) in wire_domains {
-            let domain = match domain {
-                WireDomain::Node { node, path } => DomainKey::Node {
-                    node: package.node_key(node).ok_or_else(fault)?,
-                    path: path.clone(),
-                },
-                WireDomain::Population {
-                    member_type,
-                    ordinal,
-                } => DomainKey::Population {
-                    member_type: package.node_key(member_type).ok_or_else(fault)?,
-                    ordinal: *ordinal,
-                },
-            };
-            let kind = match kind {
-                WireKind::Collection => DomainKind::Collection,
-                WireKind::Population => DomainKind::Population,
-                WireKind::Integer => DomainKind::Integer,
-                WireKind::Recursive => DomainKind::Recursive,
-                WireKind::Loop => DomainKind::Loop,
-                WireKind::InfiniteTrace => DomainKind::InfiniteTrace,
-                WireKind::Quantity => DomainKind::Quantity,
-            };
-            domains.insert(domain, kind);
-        }
+        // Hyper requirements are reconstructed from the authenticated form.
+        // requirement_items currently carries HP-1 rows only. Every admitted
+        // object parameter is a Reference (a bounded type position); the
+        // universal infinite-trace clause itself is the unbounded domain.
         let requirements = clause
             .claim()
-            .requirements_over(fsl_semantics::family::ClaimExtent::from_domains(domains));
+            .requirements(key, &[], &[], &[])
+            .map_err(|_| fault())?;
         let own_subject = self.own_subject(index, selection)?;
         let temporal = selection.temporal.clone().unwrap_or_default();
         let mut settings = temporal_settings(&temporal);
