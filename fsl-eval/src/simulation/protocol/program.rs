@@ -1021,6 +1021,7 @@ impl<'a> Program<'a> {
     pub(super) fn new_package(
         model: &ModelSystem<'_>,
         package: &super::PackageProtocolProgram<'a>,
+        capacities: &super::Capacities,
     ) -> Result<Self, ProtocolRefusal> {
         // A control's text includes each structural branch or case label,
         // which the package's declaration path omits.
@@ -1222,22 +1223,29 @@ impl<'a> Program<'a> {
         let channels = package
             .channels
             .iter()
-            .map(|channel| Channel {
-                name: channel.name.clone(),
-                capacity: usize::try_from(channel.capacity).unwrap_or(usize::MAX),
-                overflow: channel.overflow,
-                delivery: channel.delivery,
-                send_ordered: channel.key.is_none()
-                    && matches!(
-                        channel.overflow,
-                        ChannelOverflow::Loss(LossSelector::Head | LossSelector::Tail)
-                    ),
-                key: channel.key.as_ref().map(|key| ChannelKey::Package {
-                    binder: key.binder.clone(),
-                    slot: key.slot.clone(),
-                }),
+            .map(|channel| {
+                Ok(Channel {
+                    name: channel.name.clone(),
+                    capacity: usize::try_from(
+                        capacities
+                            .resolve(&channel.capacity)
+                            .map_err(ProtocolRefusal::Capacity)?,
+                    )
+                    .unwrap_or(usize::MAX),
+                    overflow: channel.overflow,
+                    delivery: channel.delivery,
+                    send_ordered: channel.key.is_none()
+                        && matches!(
+                            channel.overflow,
+                            ChannelOverflow::Loss(LossSelector::Head | LossSelector::Tail)
+                        ),
+                    key: channel.key.as_ref().map(|key| ChannelKey::Package {
+                        binder: key.binder.clone(),
+                        slot: key.slot.clone(),
+                    }),
+                })
             })
-            .collect();
+            .collect::<Result<Vec<_>, ProtocolRefusal>>()?;
         let mut messages = BTreeMap::new();
         for control in package.controls.values().filter(|control| {
             matches!(

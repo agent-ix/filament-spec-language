@@ -10,7 +10,7 @@ use fsl_semantics::check::{ChannelCapacity, CheckedProtocol};
 
 use super::ProtocolRefusal;
 use crate::model_subject::CapacityBinding;
-use crate::simulation::model::ProtocolDefinition;
+use crate::simulation::model::{ModelCheckInput, ProtocolDefinition};
 
 /// Why a capacity binding was refused (FSpec FR-785 "Admission"), each
 /// `invalid_runtime_input`.
@@ -151,6 +151,54 @@ impl Capacities {
             }
         }
         Self::bind(names, bindings).map_err(ProtocolRefusal::Capacity)
+    }
+
+    /// Admit a subject's bindings using the selected input's protocol definition.
+    /// Package channel lists use their admitted declaration source regions to
+    /// report shared capacity users in declaration order, without source bytes.
+    ///
+    /// # Errors
+    /// Returns the same binding refusals as [`Self::admit_definition`], or an
+    /// unknown-protocol refusal when the requested declaration is absent.
+    pub fn admit_input(
+        input: &ModelCheckInput<'_>,
+        protocol: &str,
+        bindings: &[CapacityBinding],
+    ) -> Result<Self, ProtocolRefusal> {
+        let definition = input.protocol_definition(protocol).ok_or_else(|| {
+            ProtocolRefusal::UnknownProtocol {
+                protocol: protocol.to_owned(),
+            }
+        })?;
+        let mut capacities = Self::admit_definition(&definition, bindings)?;
+        if let ProtocolDefinition::Package(form) = definition {
+            let admitted = input
+                .admitted_package()
+                .ok_or_else(|| ProtocolRefusal::fault("a-package-protocol-has-admitted-nodes"))?;
+            let positions: BTreeMap<_, _> = form
+                .channels
+                .iter()
+                .filter_map(|channel| {
+                    let name = channel.declaration.as_ref()?.qualified_name.get(2)?;
+                    let region = admitted
+                        .source_map()
+                        .iter()
+                        .find(|row| {
+                            row.node_id == channel.node_id
+                                && row.role == fsl_package::CheckedOccurrenceRole::Declaration
+                        })?
+                        .regions
+                        .first()?;
+                    Some((format!("{}::{name}", form.name), region.start))
+                })
+                .collect();
+            for unbound in &mut capacities.unbound {
+                unbound
+                    .channels
+                    .sort_by_key(|channel| positions.get(channel).copied());
+            }
+        }
+        Ok(capacities)
     }
 
     fn bind(

@@ -460,7 +460,18 @@ fn load_buffering_warnings(
             let reference = model
                 .bound_reference(object_type.clone(), &subject.over)
                 .map_err(|_| None)?;
-            package_load_buffering_shapes(&model, &package, &Value::Reference(reference))
+            let capacities = fsl_eval::simulation::protocol::Capacities::admit_input(
+                input,
+                &subject.protocol,
+                &subject.capacities,
+            )
+            .map_err(|_| None)?;
+            package_load_buffering_shapes(
+                &model,
+                &package,
+                &Value::Reference(reference),
+                &capacities,
+            )
         }
     }
     .map_err(|refusal| match refusal {

@@ -915,14 +915,69 @@ pub fn check_protocol_bounds(
     position_limit: u64,
 ) -> Result<(), NotSimulated> {
     let domains = subject_domains(model, protocol, evaluator);
-    let with_capacities = |refusal| match refusal {
+    check_protocol_root_bounds(model, &domains, capacities, position_limit)?;
+    check_attempt_types(model, protocol, evaluator)
+        .map_err(|refusal| with_unbound_capacities(refusal, capacities))?;
+    check_capacity_bounds(capacities)
+}
+
+/// Classify the native package protocol's ranged binders and model roots,
+/// retaining every unbound symbolic capacity in the same requires-bound.
+///
+/// # Errors
+/// Returns the same typed root and capacity refusals as [`check_protocol_bounds`].
+pub fn check_package_protocol_bounds(
+    model: &ModelSystem<'_>,
+    program: &PackageProtocolProgram<'_>,
+    capacities: &Capacities,
+    position_limit: u64,
+) -> Result<(), NotSimulated> {
+    use fsl_package::protocol_view::ControlOperation;
+    let mut domains = model.rooted_domains();
+    for control in program.controls.values().filter(|control| {
+        matches!(
+            control.operation,
+            ControlOperation::Event | ControlOperation::Send | ControlOperation::Receive
+        )
+    }) {
+        if let Some((key, value_type)) = control
+            .binder_key
+            .as_ref()
+            .zip(control.binder_type.as_ref())
+        {
+            domains.push((
+                key.clone(),
+                Vec::new(),
+                super::model::root_classification_type(value_type),
+            ));
+        }
+    }
+    domains.push((
+        program.finish_binder_key.clone(),
+        Vec::new(),
+        super::model::root_classification_type(&program.finish_binder_type),
+    ));
+    check_protocol_root_bounds(model, &domains, capacities, position_limit)?;
+    check_capacity_bounds(capacities)
+}
+
+fn with_unbound_capacities(refusal: NotSimulated, capacities: &Capacities) -> NotSimulated {
+    match refusal {
         NotSimulated::RequiresBound(mut bound) => {
             bound.capacities = capacities.unbound().to_vec();
             NotSimulated::RequiresBound(bound)
         }
         other => other,
-    };
-    let ordinary = match check_requires_bound(&roots(&domains), model.types(), position_limit) {
+    }
+}
+
+fn check_protocol_root_bounds(
+    model: &ModelSystem<'_>,
+    domains: &[(NodeKey, Vec<u32>, ValueType)],
+    capacities: &Capacities,
+    position_limit: u64,
+) -> Result<(), NotSimulated> {
+    let ordinary = match check_requires_bound(&roots(domains), model.types(), position_limit) {
         Ok(()) => None,
         Err(NotSimulated::RequiresBound(bound)) => bound.domains,
         Err(other) => return Err(other),
@@ -930,17 +985,21 @@ pub fn check_protocol_bounds(
     // Retain the complete generic list before collecting the clock sites.
     // Extent/resource failures above remain immediate; this pass neither
     // reclassifies the generic roots nor spends another position ceiling.
-    let clock_references = super::model::clock_reference_domains(model, &domains, None);
+    let clock_references = super::model::clock_reference_domains(model, domains, None);
     if ordinary.is_some() || !clock_references.is_empty() {
-        return Err(with_capacities(NotSimulated::RequiresBound(
-            RequiresBound {
+        return Err(with_unbound_capacities(
+            NotSimulated::RequiresBound(RequiresBound {
                 domains: ordinary,
                 capacities: Vec::new(),
                 clock_references,
-            },
-        )));
+            }),
+            capacities,
+        ));
     }
-    check_attempt_types(model, protocol, evaluator).map_err(with_capacities)?;
+    Ok(())
+}
+
+fn check_capacity_bounds(capacities: &Capacities) -> Result<(), NotSimulated> {
     if capacities.unbound().is_empty() {
         Ok(())
     } else {
@@ -1142,11 +1201,12 @@ pub fn classify_package_accesses(
     program: &PackageProtocolProgram<'_>,
     over: &Value,
     potential: bool,
+    capacities: &Capacities,
 ) -> Result<WeakAccesses, ProtocolRefusal> {
     let governing = program
         .governing_models()
         .map_err(ProtocolRefusal::Memory)?;
-    let runtime = Program::new_package(model, program)?;
+    let runtime = Program::new_package(model, program, capacities)?;
     access::classify_package(
         model,
         &runtime,
@@ -1168,6 +1228,7 @@ pub fn package_load_buffering_shapes(
     model: &ModelSystem<'_>,
     program: &PackageProtocolProgram<'_>,
     over: &Value,
+    capacities: &Capacities,
 ) -> Result<Vec<LoadBufferingShape>, ProtocolRefusal> {
     let governing = program
         .governing_models()
@@ -1178,7 +1239,7 @@ pub fn package_load_buffering_shapes(
     {
         return Ok(Vec::new());
     }
-    let runtime = Program::new_package(model, program)?;
+    let runtime = Program::new_package(model, program, capacities)?;
     let accesses = access::classify_package(
         model,
         &runtime,
@@ -1617,40 +1678,9 @@ impl<'a, M: MemoryModel> ProtocolSystem<'a, M> {
             .ok_or_else(|| ProtocolRefusal::UnknownProtocol {
                 protocol: subject.protocol.clone(),
             })?;
+        let capacities = Capacities::admit_input(input, &subject.protocol, &subject.capacities)?;
         let package = PackageProtocolProgram::with_memory(input, *form, subject.memory.clone())
-            .map_err(|refusal| match refusal {
-                PackageProgramRefusal::Memory(refusal) => ProtocolRefusal::Memory(refusal),
-                PackageProgramRefusal::Unsupported(operation) => {
-                    ProtocolRefusal::Unsupported(Unsupported::PackageControl(operation))
-                }
-                PackageProgramRefusal::Correlation { .. } => {
-                    ProtocolRefusal::Unsupported(Unsupported::PackageCorrelation)
-                }
-                PackageProgramRefusal::CorrelationProvenance(cause) => {
-                    ProtocolRefusal::Unsupported(Unsupported::PackageCorrelationProvenance(cause))
-                }
-                PackageProgramRefusal::RepeatProof { .. } => {
-                    ProtocolRefusal::Unsupported(Unsupported::PackageRepeatProof)
-                }
-                PackageProgramRefusal::RoleLifetime { .. } => {
-                    ProtocolRefusal::Unsupported(Unsupported::PackageRoleLifetime)
-                }
-                PackageProgramRefusal::ParameterType {
-                    package,
-                    node,
-                    failure,
-                } => ProtocolRefusal::PackageParameterType {
-                    package,
-                    node,
-                    failure,
-                },
-                _ => ProtocolRefusal::fault("a-selected-package-protocol-builds"),
-            })?;
-        if let Some(binding) = subject.capacities.first() {
-            return Err(ProtocolRefusal::Capacity(CapacityRefusal::UnknownName {
-                name: binding.name.clone(),
-            }));
-        }
+            .map_err(PackageProgramRefusal::into_protocol)?;
         let mut roles = Vec::new();
         for role in package.roles.iter().filter(|role| !role.replicated) {
             let binding = subject
@@ -1715,12 +1745,24 @@ impl<'a, M: MemoryModel> ProtocolSystem<'a, M> {
         {
             return Err(ProtocolRefusal::Unsupported(Unsupported::WeakMemory));
         }
-        let program = Program::new_package(&model, &package)?;
+        let program = Program::new_package(&model, &package, &capacities)?;
         let mut enabled = WeakAccesses::default();
         let mut weak = WeakAccesses::default();
         for over in &over_values {
-            enabled.extend(classify_package_accesses(&model, &package, over, false)?);
-            weak.extend(classify_package_accesses(&model, &package, over, true)?);
+            enabled.extend(classify_package_accesses(
+                &model,
+                &package,
+                over,
+                false,
+                &capacities,
+            )?);
+            weak.extend(classify_package_accesses(
+                &model,
+                &package,
+                over,
+                true,
+                &capacities,
+            )?);
         }
         let weak_ancestors = access::weak_ancestors(&program, &governing)?;
         let mut weak_parallel_paths = BTreeSet::new();
@@ -3425,6 +3467,41 @@ fn undetermined(node: &str, outcome: crate::simulation::model::ClauseOutcome) ->
     ModelFinding::ProtocolExpressionUndetermined {
         node: node.to_owned(),
         evaluation: outcome,
+    }
+}
+
+impl PackageProgramRefusal {
+    /// Retain the protocol runtime's named capability boundaries and typed
+    /// parameter refusals when admitting a native execution program.
+    pub fn into_protocol(self) -> ProtocolRefusal {
+        match self {
+            PackageProgramRefusal::Memory(refusal) => ProtocolRefusal::Memory(refusal),
+            PackageProgramRefusal::Unsupported(operation) => {
+                ProtocolRefusal::Unsupported(Unsupported::PackageControl(operation))
+            }
+            PackageProgramRefusal::Correlation { .. } => {
+                ProtocolRefusal::Unsupported(Unsupported::PackageCorrelation)
+            }
+            PackageProgramRefusal::CorrelationProvenance(cause) => {
+                ProtocolRefusal::Unsupported(Unsupported::PackageCorrelationProvenance(cause))
+            }
+            PackageProgramRefusal::RepeatProof { .. } => {
+                ProtocolRefusal::Unsupported(Unsupported::PackageRepeatProof)
+            }
+            PackageProgramRefusal::RoleLifetime { .. } => {
+                ProtocolRefusal::Unsupported(Unsupported::PackageRoleLifetime)
+            }
+            PackageProgramRefusal::ParameterType {
+                package,
+                node,
+                failure,
+            } => ProtocolRefusal::PackageParameterType {
+                package,
+                node,
+                failure,
+            },
+            _ => ProtocolRefusal::fault("a-selected-package-protocol-builds"),
+        }
     }
 }
 

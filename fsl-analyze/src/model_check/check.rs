@@ -87,15 +87,16 @@ use fsl_eval::fairness::{EdgeLabel, Vertex};
 use fsl_eval::model_subject::{
     AtomStop, ModelInstance, ModelLetters, ModelSubject, ProtocolSubject,
 };
-use fsl_eval::simulation::StateKey;
 use fsl_eval::simulation::model::{
-    ClauseOutcome, ModelFinding, ModelSimState, ModelSystem, TerminalClass, check_model_bounds,
+    check_model_bounds, ClauseOutcome, ModelFinding, ModelSimState, ModelSystem, TerminalClass,
 };
 use fsl_eval::simulation::protocol::{
-    Capacities, DataRace, MemoryModel, ProtocolFairnessError, ProtocolRefusal, ProtocolState,
-    ProtocolSystem, ProtocolTransition, Sc, SubjectMemory, UnboundCapacity, WeakAccessShape,
-    activates_on_each, check_protocol_bounds, live_instance_bound,
+    activates_on_each, check_package_protocol_bounds, check_protocol_bounds, live_instance_bound,
+    Capacities, DataRace, MemoryModel, PackageProtocolProgram, ProtocolFairnessError,
+    ProtocolRefusal, ProtocolState, ProtocolSystem, ProtocolTransition, Sc, SubjectMemory,
+    UnboundCapacity, WeakAccessShape,
 };
+use fsl_eval::simulation::StateKey;
 use fsl_eval::simulation::{
     ConstraintValue, Cut, EncodingRefusal, Expansion, ExpansionLimit, ExpansionStop, FairLoop,
     Location, NotSimulated, Permutation, RequiresBound, SubjectSystem, SubjectTransition,
@@ -816,9 +817,13 @@ pub fn check_protocol_constrained(
         fsl_eval::simulation::model::ProtocolDefinition::Source(protocol) => Some(*protocol),
         fsl_eval::simulation::model::ProtocolDefinition::Package(_) => None,
     };
+    let capacities = Capacities::admit_input(
+        &subject.model.simulation.input,
+        &subject.protocol,
+        &subject.capacities,
+    )
+    .map_err(ModelCheckRefusal::Protocol)?;
     if let Some(protocol) = source_protocol {
-        let capacities = Capacities::admit(protocol, &subject.capacities)
-            .map_err(|refusal| ModelCheckRefusal::Protocol(ProtocolRefusal::Capacity(refusal)))?;
         check_protocol_bounds(
             &model,
             protocol,
@@ -827,6 +832,15 @@ pub fn check_protocol_constrained(
             BOUND_POSITIONS,
         )
         .map_err(not_simulated)?;
+    } else if let fsl_eval::simulation::model::ProtocolDefinition::Package(form) = definition {
+        let program = PackageProtocolProgram::with_memory(
+            &subject.model.simulation.input,
+            *form,
+            subject.memory.clone(),
+        )
+        .map_err(|refusal| ModelCheckRefusal::Protocol(refusal.into_protocol()))?;
+        check_package_protocol_bounds(&model, &program, &capacities, BOUND_POSITIONS)
+            .map_err(not_simulated)?;
     }
     let live_instances = live_instance_bound(request.max_live_instances);
     let instance_bound = source_protocol
@@ -1038,13 +1052,17 @@ fn check_protocol_liveness(
                 protocol: subject.protocol.clone(),
             })
         })?;
-    let source_protocol = match definition {
-        fsl_eval::simulation::model::ProtocolDefinition::Source(protocol) => Some(protocol),
+    let source_protocol = match &definition {
+        fsl_eval::simulation::model::ProtocolDefinition::Source(protocol) => Some(*protocol),
         fsl_eval::simulation::model::ProtocolDefinition::Package(_) => None,
     };
+    let capacities = Capacities::admit_input(
+        &subject.model.simulation.input,
+        &subject.protocol,
+        &subject.capacities,
+    )
+    .map_err(ModelCheckRefusal::Protocol)?;
     if let Some(protocol) = source_protocol {
-        let capacities = Capacities::admit(protocol, &subject.capacities)
-            .map_err(|refusal| ModelCheckRefusal::Protocol(ProtocolRefusal::Capacity(refusal)))?;
         check_protocol_bounds(
             &model,
             protocol,
@@ -1053,6 +1071,15 @@ fn check_protocol_liveness(
             BOUND_POSITIONS,
         )
         .map_err(not_simulated)?;
+    } else if let fsl_eval::simulation::model::ProtocolDefinition::Package(form) = definition {
+        let program = PackageProtocolProgram::with_memory(
+            &subject.model.simulation.input,
+            *form,
+            subject.memory.clone(),
+        )
+        .map_err(|refusal| ModelCheckRefusal::Protocol(refusal.into_protocol()))?;
+        check_package_protocol_bounds(&model, &program, &capacities, BOUND_POSITIONS)
+            .map_err(not_simulated)?;
     }
     let memory = SubjectMemory::of(
         &subject.memory,
