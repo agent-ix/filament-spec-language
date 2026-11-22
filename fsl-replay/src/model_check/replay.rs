@@ -1056,7 +1056,7 @@ pub fn replay_model_trace_from_package(
         ModelSystem::new(admission)
     }
     .map_err(ReplayRefusal::Admission)?;
-    if let Some(entry) = input.input().state_clause_at(envelope.clause_node()) {
+    if let Some(entry) = input.state_clause_at(envelope.clause_node()) {
         if entry.invariant {
             // FR-128, FR-951: an `invariant` state clause is read from the
             // package's own clause row by its `claim_names` occurrence.
