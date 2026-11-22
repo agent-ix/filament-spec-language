@@ -1129,7 +1129,7 @@ pub fn replay_model_trace_from_package(
                 },
             })
         })?;
-    let identity = super::identity::ClauseIdentity::of_admitted(&admitted, &clause)
+    let identity = super::identity::ClauseIdentity::of_admitted(&bare, &clause)
         .map_err(|_| fault("package-clause-identity"))?;
     let expected = OccurrenceKey::new(
         envelope.clause_node().clone(),
@@ -1665,7 +1665,7 @@ pub fn replay_protocol_trace_from_package(
                     },
                 })
             })?;
-        let identity = super::identity::ClauseIdentity::of_admitted(&admitted, &clause)
+        let identity = super::identity::ClauseIdentity::of_admitted(&bare, &clause)
             .map_err(|_| fault("package-clause-identity"))?;
         let expected = OccurrenceKey::new(
             envelope.clause_node().clone(),

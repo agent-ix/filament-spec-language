@@ -25,6 +25,7 @@ struct PublicApi {
     imports: BTreeMap<String, String>,
     members: BTreeSet<(String, String, String)>,
     wildcard_imports: Vec<(String, String, String, bool)>,
+    external_crates: BTreeSet<String>,
 }
 
 /// Run the facade contract check over the committed bindings and pinned inventory.
@@ -407,14 +408,17 @@ fn crate_roots(workspace_root: &Path) -> Result<BTreeMap<String, PathBuf>> {
 }
 
 fn public_api(crate_name: &str, root: &Path) -> PublicApi {
-    let mut api = PublicApi::default();
+    let mut api = PublicApi {
+        external_crates: dependency_crates(root),
+        ..PublicApi::default()
+    };
     let mut visited = BTreeSet::new();
     scan_module(crate_name, root, String::new(), &mut api, &mut visited);
     loop {
         let mut additions = BTreeMap::new();
         let mut private_additions = BTreeMap::new();
         for (owner, destination, source, public) in &api.wildcard_imports {
-            let source = resolve_use_path(crate_name, owner, source);
+            let source = resolve_use_path(crate_name, owner, source, &api.external_crates);
             let Some(source) = resolve_internal_path(&api, &source, &mut BTreeSet::new()) else {
                 continue;
             };
@@ -455,6 +459,38 @@ fn public_api(crate_name: &str, root: &Path) -> PublicApi {
         })
         .collect();
     api
+}
+
+// External items are compiler-resolved at a declared dependency boundary. A
+// named public re-export is reachable there even though this scan owns only
+// the facade crate's sources, not its dependencies' source trees.
+fn dependency_crates(root: &Path) -> BTreeSet<String> {
+    let mut names: BTreeSet<String> = ["core", "std", "alloc"].map(str::to_owned).into();
+    let Some(manifest) = root
+        .ancestors()
+        .skip(1)
+        .map(|directory| directory.join("Cargo.toml"))
+        .find(|manifest| manifest.is_file())
+    else {
+        return names;
+    };
+    let Some(cargo) = fs::read_to_string(manifest)
+        .ok()
+        .and_then(|source| toml::from_str::<toml::Value>(&source).ok())
+    else {
+        return names;
+    };
+    if let Some(dependencies) = cargo.get("dependencies").and_then(toml::Value::as_table) {
+        names.extend(dependencies.keys().map(|name| name.replace('-', "_")));
+    }
+    if let Some(targets) = cargo.get("target").and_then(toml::Value::as_table) {
+        for target in targets.values() {
+            if let Some(dependencies) = target.get("dependencies").and_then(toml::Value::as_table) {
+                names.extend(dependencies.keys().map(|name| name.replace('-', "_")));
+            }
+        }
+    }
+    names
 }
 
 fn scan_module(
@@ -577,15 +613,14 @@ fn scan_item(crate_name: &str, module: &str, item: Item, api: &mut PublicApi) {
                         public,
                     ));
                 } else {
+                    let source =
+                        resolve_use_path(crate_name, module, &source, &api.external_crates);
                     let imports = if public {
                         &mut api.reexports
                     } else {
                         &mut api.imports
                     };
-                    imports.insert(
-                        format!("{module}::{alias}"),
-                        resolve_use_path(crate_name, module, &source),
-                    );
+                    imports.insert(format!("{module}::{alias}"), source);
                 }
             }
         }
@@ -600,7 +635,7 @@ fn scan_item(crate_name: &str, module: &str, item: Item, api: &mut PublicApi) {
                 .map(|segment| segment.ident.to_string())
                 .collect::<Vec<_>>()
                 .join("::");
-            let type_path = resolve_use_path(crate_name, module, &type_path);
+            let type_path = resolve_use_path(crate_name, module, &type_path, &api.external_crates);
             let Some((type_module, type_name)) = type_path.rsplit_once("::") else {
                 return;
             };
@@ -728,7 +763,7 @@ fn resolve_public_path(api: &PublicApi, path: &str) -> Option<String> {
     } else {
         let source = api.reexports.get(&binding)?;
         let target = resolve_internal_path(api, source, &mut BTreeSet::new())?;
-        api.paths.contains(&target).then_some(target)
+        (api.paths.contains(&target) || is_external_path(api, &target)).then_some(target)
     }
 }
 
@@ -740,7 +775,7 @@ fn resolve_internal_path(
     if !visited.insert(path.to_owned()) {
         return None;
     }
-    if api.paths.contains(path) || api.modules.contains(path) {
+    if api.paths.contains(path) || api.modules.contains(path) || is_external_path(api, path) {
         return Some(path.to_owned());
     }
     if let Some(source) = api.reexports.get(path).or_else(|| api.imports.get(path)) {
@@ -751,7 +786,24 @@ fn resolve_internal_path(
     resolve_internal_path(api, &format!("{parent}::{name}"), visited)
 }
 
-fn resolve_use_path(crate_name: &str, owner: &str, source: &str) -> String {
+fn is_external_path(api: &PublicApi, path: &str) -> bool {
+    path.split_once("::")
+        .is_some_and(|(crate_name, _)| api.external_crates.contains(crate_name))
+}
+
+fn resolve_use_path(
+    crate_name: &str,
+    owner: &str,
+    source: &str,
+    external_crates: &BTreeSet<String>,
+) -> String {
+    if source
+        .split("::")
+        .next()
+        .is_some_and(|crate_name| external_crates.contains(crate_name))
+    {
+        return source.to_owned();
+    }
     let mut path: Vec<_> = owner.split("::").collect();
     for segment in source.split("::") {
         match segment {
@@ -772,6 +824,32 @@ fn resolve_use_path(crate_name: &str, owner: &str, source: &str) -> String {
 mod tests {
     use super::*;
     use ix_trace_rs::trace;
+
+    #[test]
+    #[trace("TC-2145", "FR-761-AC-1", "FR-761-AC-2")]
+    fn named_external_reexports_resolve_only_declared_dependencies() {
+        let directory = tempfile::tempdir().expect("fixture directory");
+        let root = directory.path().join("lib.rs");
+        fs::write(
+            directory.path().join("Cargo.toml"),
+            "[package]\nname='sample'\nversion='0.1.0'\n[dependencies]\nexternal-dep='1'\n",
+        )
+        .expect("write manifest fixture");
+        fs::write(
+            &root,
+            "pub use external_dep::Known as Export;\n\
+             pub use absent_dep::Unknown as MissingDependency;\n\
+             pub use crate::missing::Unknown as MissingLocal;\n\
+             use external_dep::Private;\n",
+        )
+        .expect("write source fixture");
+        let api = public_api("sample", &root);
+        assert!(accessor_resolves(&api, "sample", "Export"));
+        assert!(!accessor_resolves(&api, "sample", "MissingDependency"));
+        assert!(!accessor_resolves(&api, "sample", "MissingLocal"));
+        assert!(!accessor_resolves(&api, "sample", "Private"));
+        assert!(!accessor_resolves(&api, "sample", "Export::unknown"));
+    }
 
     #[test]
     #[trace("TC-2145", "FR-761-AC-2")]

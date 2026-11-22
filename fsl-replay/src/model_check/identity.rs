@@ -63,9 +63,10 @@ impl ClauseIdentity {
     /// [`ClauseRootRefusal::Undeclared`] when no single name row names the
     /// clause; as [`Self::resolve`] when the lookup does not find its root.
     pub fn of_admitted(
-        package: &fsl_package::CheckedPackageV2,
+        package: &fsl_package::BarePackage<'_>,
         clause: &CheckedTemporalClause,
     ) -> Result<Self, ClauseRootRefusal> {
+        let package = package.package();
         let undeclared = || ClauseRootRefusal::Undeclared {
             name: clause.name().to_owned(),
         };

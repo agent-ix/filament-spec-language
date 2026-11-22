@@ -441,7 +441,7 @@ pub struct PackageDeclarations {
     /// The names of the unit's own `type Name = T;` aliases.
     pub unit_alias_names: std::collections::BTreeSet<String>,
     /// Each model alias type by its `alias::T` name, with its declaration.
-    pub model_type_aliases: BTreeMap<String, crate::value::TypeArgumentAlias>,
+    pub model_type_aliases: BTreeMap<String, crate::value::member::TypeArgumentAlias>,
     /// Each package-owned type name's spelling under a further `model`
     /// alias of the same package (FR-480 "Selections and imports").
     pub(crate) model_spellings: super::model_spelling::ModelSpellings,
@@ -1136,7 +1136,7 @@ pub struct Scope {
     /// The names of the unit's own `type Name = T;` aliases.
     own_aliases: BTreeSet<String>,
     /// Each model alias type by its `alias::T` name, with its declaration.
-    model_aliases: BTreeMap<String, crate::value::TypeArgumentAlias>,
+    model_aliases: BTreeMap<String, crate::value::member::TypeArgumentAlias>,
     /// Admitted systems-model ports by their package identity and source
     /// artifact name, with the exact declaration and owning object type
     /// used by a role.
@@ -1823,7 +1823,7 @@ impl Scope {
     pub(crate) fn with_type_argument_aliases(
         mut self,
         own: BTreeSet<String>,
-        model: BTreeMap<String, crate::value::TypeArgumentAlias>,
+        model: BTreeMap<String, crate::value::member::TypeArgumentAlias>,
     ) -> Self {
         self.own_aliases = own;
         self.model_aliases = model;
@@ -1887,7 +1887,7 @@ impl Scope {
     pub(crate) fn alias_declaration(
         &self,
         written: &str,
-    ) -> Option<crate::value::TypeArgumentAlias> {
+    ) -> Option<crate::value::member::TypeArgumentAlias> {
         if let Some(alias) = self.model_aliases.get(written) {
             return Some(alias.clone());
         }
@@ -1900,7 +1900,7 @@ impl Scope {
             .or(self.primary_source.as_ref())?
             .identity();
         let path = written.split("::").collect::<Vec<_>>().join("/");
-        Some(crate::value::TypeArgumentAlias {
+        Some(crate::value::member::TypeArgumentAlias {
             package: identity.to_owned(),
             node: format!("ix://{identity}/{path}"),
         })
@@ -6849,7 +6849,7 @@ mod source_scope_tests {
     #[trace("FR-931-AC-16")]
     #[test]
     fn a_type_argument_alias_is_the_unit_s_or_a_model_alias_types_never_a_model_scalars() {
-        let model_alias = crate::value::TypeArgumentAlias {
+        let model_alias = crate::value::member::TypeArgumentAlias {
             package: "ix://domain".to_owned(),
             node: "ix://domain/Total".to_owned(),
         };

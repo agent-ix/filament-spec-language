@@ -32,6 +32,7 @@ fn crate_roots() -> Vec<PathBuf> {
         "fsl-cst/src",
         "fsl-command/src",
         "tools/fsl-probability-check/src",
+        "tools/fsl-hybrid-test-provider/src",
         "fsl-source/src",
         "fsl-forms/src",
         "fsl-semantics/src",
@@ -47,6 +48,7 @@ fn crate_roots() -> Vec<PathBuf> {
         "fsl-string-edge/src",
         "tests/fixtures/checked-closure-consumer/src",
         "tests/fixtures/hyper-query-consumer/src",
+        "tests/fixtures/facade-contract-consumer/src",
     ]
     .into_iter()
     .map(PathBuf::from)

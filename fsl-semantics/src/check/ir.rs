@@ -84,7 +84,7 @@ pub struct Node {
     /// The type alias the source wrote as an aggregate's type argument,
     /// retained beside its structural checked type for canonical expression
     /// labels; `None` when the source wrote a structural or declared type.
-    pub(in crate::check) type_argument: Option<crate::value::TypeArgumentAlias>,
+    pub(in crate::check) type_argument: Option<crate::value::member::TypeArgumentAlias>,
     /// The annotation an annotated `let` writes, the type its binder is
     /// declared at; `None` on every other node and on an unannotated `let`.
     pub(in crate::check) binder_annotation: Option<ValueType>,
@@ -101,7 +101,7 @@ impl Node {
 
     pub(in crate::check) fn with_type_argument(
         mut self,
-        alias: Option<crate::value::TypeArgumentAlias>,
+        alias: Option<crate::value::member::TypeArgumentAlias>,
     ) -> Self {
         self.type_argument = alias;
         self
@@ -699,7 +699,7 @@ impl<'a> CheckedNode<'a> {
     }
 
     /// The type alias the source wrote as an aggregate's type argument.
-    pub fn type_argument(self) -> Option<&'a crate::value::TypeArgumentAlias> {
+    pub fn type_argument(self) -> Option<&'a crate::value::member::TypeArgumentAlias> {
         self.node().type_argument.as_ref()
     }
 

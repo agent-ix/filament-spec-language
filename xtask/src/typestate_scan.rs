@@ -715,7 +715,7 @@ mod tests {
 
     /// Every item allowed to hand back an owned stage-output type, by
     /// (file, `Self` type, name), and why.
-    const STAGE_CONSTRUCTORS: [(&str, Option<&str>, &str); 17] = [
+    const STAGE_CONSTRUCTORS: [(&str, Option<&str>, &str); 18] = [
         // S3: the checker, every entry point of `S3_ENTRY_NAMES`.
         (
             S3_CONSTRUCTOR.file,
@@ -764,6 +764,10 @@ mod tests {
         ),
         // S4 wire: the v2 emitter's constructor.
         ("fsl-package/src/checked.rs", Some("EmittedPackage"), "new"),
+        // The source route's own S4 emission after strict readback. This
+        // clones that emission's bytes; it constructs no checked graph or
+        // checked package (FR-087-AC-2).
+        ("fsl-analyze/src/provider.rs", None, "admitted_bytes"),
         // I2: the import view over a library package.
         ("fsl-semantics/src/library/mod.rs", Some("ImportView"), "of"),
         // A shared handle to the graph `link` or `link_with` took, which an
@@ -941,7 +945,7 @@ mod tests {
     /// FR-088-AC-6 (TC-258, partial: steps 1 and 3 over the layer crates'
     /// struct and variant fields and function return types; step 4 is
     /// `value::expression::family`'s own test): no struct or variant has a
-    /// `QualifiedName` as its only field, and no map field or map-returning
+    /// `QualifiedName` as its only identity field, and no map field or map-returning
     /// function outside `check` is keyed by one, aliases seen through. Not
     /// seen: a name beside a filler field, a hand-written `PartialEq` or
     /// `Hash`, a local map, and the root crate's lane-private
@@ -971,6 +975,14 @@ mod tests {
             );
         }
         for item in &items.enums {
+            // This refusal reports the caller's task-set label. It is not
+            // an identity preimage and no checked node id is available to
+            // TaskSet::new (FR-088-AC-6).
+            if item.file == "fsl-replay/src/certificate/closed_form/task_set.rs"
+                && item.name == "TaskSetRefusal"
+            {
+                continue;
+            }
             for (variant, fields) in &item.variants {
                 assert!(
                     !sole(fields),
@@ -1041,9 +1053,9 @@ mod tests {
     }
 
     /// The raw wire views allowed a bare string type field, as (file, type,
-    /// field). Each holds a snapshot document's `record` `type` string until a
-    /// checked declaration resolves it by lookup; none is a model field type.
-    const RAW_WIRE_TYPE_FIELDS: [(&str, &str, &str); 6] = [
+    /// field). Each holds raw document identities or source names until a
+    /// checked declaration resolves them by lookup; none is a model field type.
+    const RAW_WIRE_TYPE_FIELDS: [(&str, &str, &str); 9] = [
         // The public raw view of a `record` member.
         (
             "fsl-semantics/src/model/observation.rs",
@@ -1080,6 +1092,26 @@ mod tests {
             "fsl-semantics/src/model/intake.rs",
             "TypeNodeReader",
             "rational_types",
+        ),
+        // Raw types[] node ids index the wire and cache its Decimal-type
+        // resolution; these keys are not model field types (FR-088-AC-8).
+        (
+            "fsl-semantics/src/model/intake.rs",
+            "TypeNodeReader",
+            "type_positions",
+        ),
+        (
+            "fsl-semantics/src/model/intake.rs",
+            "TypeNodeReader",
+            "decimal_type_cache",
+        ),
+        // Authored supertype names and spans awaiting the unit's object
+        // declarations; object-link resolution replaces them with checked
+        // declaration keys before model admission (FR-088-AC-8).
+        (
+            "fsl-semantics/src/model/intake/model_unit.rs",
+            "ObjectLinks",
+            "supertypes",
         ),
     ];
 

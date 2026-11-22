@@ -141,7 +141,7 @@ pub struct SeamLocation {
 ///   `#[deny(clippy::wildcard_enum_match_arm)]` before this ticket (the
 ///   FR-063-AC-7 lint, satisfied in advance of the probe variant that makes
 ///   it a real seam).
-/// - S3: `Machine::apply` (`fsl-eval/src/value/expression/evaluate.rs`),
+/// - S3: `Machine::apply_as` (`fsl-eval/src/value/expression/evaluate.rs`),
 ///   the evaluator's own exhaustive dispatch over `NodeKind`; and
 ///   `Lowering::lower_node` (`fsl-semantics/src/check/lowering.rs`, also
 ///   already `#[deny(clippy::wildcard_enum_match_arm)]`), the FR-093
@@ -220,7 +220,7 @@ pub fn checked_in_locations() -> BTreeSet<SeamLocation> {
         },
         SeamLocation {
             file: "fsl-eval/src/value/expression/evaluate.rs".to_owned(),
-            item: "Machine::apply".to_owned(),
+            item: "Machine::apply_as".to_owned(),
         },
         SeamLocation {
             file: "fsl-semantics/src/check/lowering.rs".to_owned(),
@@ -242,10 +242,10 @@ pub fn checked_in_locations() -> BTreeSet<SeamLocation> {
         // `FamilyOutcome`, mirroring `execute::replay`'s above.
         SeamLocation {
             file: "fsl-replay/src/spine/call.rs".to_owned(),
-            item: "convert_outcome".to_owned(),
+            item: "convert_outcome_resolving".to_owned(),
         },
         // FR-043-AC-17: the decisive-atom reader's `match` over
-        // `FamilyOutcome` (`decisive_over`), mirroring `convert_outcome`'s
+        // `FamilyOutcome` (`decisive_over`), mirroring `convert_outcome_resolving`'s
         // above.
         SeamLocation {
             file: "fsl-replay/src/spine/clause/temporal.rs".to_owned(),
@@ -1038,6 +1038,7 @@ impl<'ast> Visit<'ast> for ModelArms<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ix_trace_rs::trace;
 
     /// Records the qualified name of every function that holds a `match`
     /// expression in one parsed file (the naming [`EnclosingItem`] uses).
@@ -1185,7 +1186,7 @@ mod tests {
         // S3: evaluator and lowering.
         assert!(has(
             "fsl-eval/src/value/expression/evaluate.rs",
-            "Machine::apply"
+            "Machine::apply_as"
         ));
         assert!(has(
             "fsl-semantics/src/check/lowering.rs",
@@ -1471,19 +1472,16 @@ mod tests {
     /// FR-063-AC-3: nothing outside `xtask seam-probe`'s own build
     /// invocation can set the `seam_probe` cfg -- no `[features]` table
     /// entry, no `build.rs`, no `.cargo/config.toml` `rustflags` key, and no
-    /// line mentioning `seam_probe` in the Makefile or a CI workflow. A
+    /// cfg flag or Rust-flag setting in the Makefile or a CI workflow. A
     /// grep-shaped check over those specific files (this criterion's own
     /// text), not a proof that no code path anywhere could set the cfg: a
     /// `build.rs` added later, for instance, would need this check re-run,
     /// not exempt it from the pattern it greps for.
     ///
-    /// Matches the bare `seam_probe` token rather than a specific
-    /// `RUSTFLAGS=` spelling (PR #434 review, MED-1): the earlier version
-    /// only matched `RUSTFLAGS=`/`rustflags=`, missing `RUSTFLAGS :=`,
-    /// `?=`, `+=`, `export RUSTFLAGS` and the dotted `build.rustflags` key.
-    /// Since the only way any of those forms could inject the cfg is by
-    /// naming it, a bare-token search over non-comment lines catches every
-    /// assignment spelling at once. `.cargo/config.toml` additionally bans
+    /// Recognizes assignment spellings including `RUSTFLAGS :=`, `?=`,
+    /// `+=`, `export RUSTFLAGS` and the dotted `build.rustflags` key.
+    /// A test-name filter containing `seam_probe` sets no compiler cfg.
+    /// `.cargo/config.toml` additionally bans
     /// any `rustflags` key at all, case-insensitively, whether or not it
     /// mentions `seam_probe` by name, matching this criterion's stronger
     /// "no rustflags key" rule for that one file.
@@ -1561,25 +1559,20 @@ mod tests {
             }
         }
 
-        // The Makefile: no non-comment line mentions `seam_probe` outside
-        // this module's own doc/comments about it.
+        // The Makefile: no cfg flag or Rust-flag setting outside the
+        // probe's own build invocation. A named test filter is harmless.
         let makefile = workspace_root.join("Makefile");
         let source =
             fs::read_to_string(&makefile).unwrap_or_else(|error| panic!("{makefile:?}: {error}"));
-        for line in source.lines() {
-            let trimmed = line.trim_start();
-            if trimmed.starts_with('#') {
-                continue;
-            }
-            assert!(
-                !trimmed.contains("seam_probe"),
-                "{} mentions seam_probe outside xtask's own build invocation \
-                 (FR-063-AC-3): {line}",
-                makefile.display()
-            );
-        }
+        let settings = probe_cfg_settings(&source, CommandFile::Makefile);
+        assert!(
+            settings.is_empty(),
+            "{} sets probe cfg outside xtask's own build invocation \
+             (FR-063-AC-3): {settings:?}",
+            makefile.display()
+        );
 
-        // Every CI workflow: no non-comment line mentions `seam_probe`.
+        // Every CI workflow: no cfg flag or Rust-flag setting.
         let workflows_dir = workspace_root.join(".github/workflows");
         let entries = fs::read_dir(&workflows_dir)
             .unwrap_or_else(|error| panic!("{workflows_dir:?}: {error}"));
@@ -1595,17 +1588,243 @@ mod tests {
             }
             let source =
                 fs::read_to_string(&path).unwrap_or_else(|error| panic!("{path:?}: {error}"));
-            for line in source.lines() {
-                let trimmed = line.trim_start();
-                if trimmed.starts_with('#') {
+            let settings = probe_cfg_settings(&source, CommandFile::Workflow);
+            assert!(
+                settings.is_empty(),
+                "{} sets probe cfg (FR-063-AC-3): {settings:?}",
+                path.display()
+            );
+        }
+    }
+
+    #[derive(Clone, Copy)]
+    enum CommandFile {
+        Makefile,
+        Workflow,
+    }
+
+    fn probe_cfg_settings(source: &str, kind: CommandFile) -> Vec<String> {
+        let source = match kind {
+            CommandFile::Makefile => source.to_owned(),
+            CommandFile::Workflow => fold_yaml_commands(source),
+        };
+        let mut commands = Vec::new();
+        let mut command = String::new();
+        for line in source.lines() {
+            if command.is_empty() && line.trim_start().starts_with('#') {
+                continue;
+            }
+            let continued = line.chars().rev().take_while(|c| *c == '\\').count() % 2 == 1;
+            command.push_str(if continued {
+                &line[..line.len() - 1]
+            } else {
+                line
+            });
+            if !continued {
+                if has_probe_cfg_setting(&command) {
+                    commands.push(std::mem::take(&mut command));
+                }
+                command.clear();
+            }
+        }
+        if has_probe_cfg_setting(&command) {
+            commands.push(command);
+        }
+        commands
+    }
+
+    // Fold YAML's block, plain and quoted scalar paragraphs before applying
+    // shell continuation. Literal `|` scalars retain their command newlines.
+    fn fold_yaml_commands(source: &str) -> String {
+        let mut folded = String::new();
+        let mut lines = source.lines().peekable();
+        while let Some(line) = lines.next() {
+            let trimmed = line.trim_start();
+            folded.push_str(line);
+            folded.push('\n');
+            if trimmed.starts_with('#') {
+                continue;
+            }
+            let Some((_, value)) = trimmed.split_once(':') else {
+                continue;
+            };
+            let value = value.trim_start();
+            if value.is_empty() {
+                continue;
+            }
+            let block_scalar = value.starts_with('>') || value.starts_with('|');
+            let folds_lines = !value.starts_with('|');
+            let quoted_escape = value.starts_with('"');
+            if !block_scalar {
+                folded.pop();
+            }
+            let header_indent = line.len() - trimmed.len();
+            let mut body = Vec::new();
+            while lines.peek().is_some_and(|line| {
+                line.trim().is_empty() || line.len() - line.trim_start().len() > header_indent
+            }) {
+                if let Some(line) = lines.next() {
+                    body.push(line);
+                }
+            }
+            let base_indent = body
+                .iter()
+                .filter(|line| !line.trim().is_empty())
+                .map(|line| line.len() - line.trim_start().len())
+                .min()
+                .unwrap_or(0);
+            let mut previous_more_indented = false;
+            for line in body {
+                if line.trim().is_empty() {
+                    folded.push('\n');
+                    previous_more_indented = false;
                     continue;
                 }
-                assert!(
-                    !trimmed.contains("seam_probe"),
-                    "{} mentions seam_probe (FR-063-AC-3): {line}",
-                    path.display()
-                );
+                let more_indented =
+                    block_scalar && line.len() - line.trim_start().len() > base_indent;
+                let escaped_break = quoted_escape
+                    && folded.chars().rev().take_while(|c| *c == '\\').count() % 2 == 1;
+                if escaped_break {
+                    folded.pop();
+                } else if !folded.ends_with('\n') {
+                    folded.push(
+                        if folds_lines && !previous_more_indented && !more_indented {
+                            ' '
+                        } else {
+                            '\n'
+                        },
+                    );
+                }
+                folded.push_str(line.get(base_indent..).unwrap_or(line));
+                previous_more_indented = more_indented;
             }
+            if !folded.ends_with('\n') {
+                folded.push('\n');
+            }
+        }
+        folded
+    }
+
+    fn has_probe_cfg_setting(line: &str) -> bool {
+        let normalized = line.replace(|c| c == '\'' || c == '"', "");
+        let words: Vec<_> = normalized.split_whitespace().collect();
+        let assignment_operator = |text: &str| {
+            ["=", ":", "?=", "+="]
+                .into_iter()
+                .any(|operator| text.starts_with(operator))
+        };
+        words.iter().enumerate().any(|(index, word)| {
+            let word = word.trim_end_matches([';', '\\']);
+            if word == "--cfg=seam_probe"
+                || (word == "--cfg"
+                    && words
+                        .get(index + 1)
+                        .is_some_and(|next| next.trim_end_matches([';', '\\']) == "seam_probe"))
+            {
+                return true;
+            }
+            let lower = word.to_ascii_lowercase();
+            ["rustflags", "build.rustflags", "cargo_encoded_rustflags"]
+                .into_iter()
+                .any(|key| {
+                    let Some(assignment) = lower.strip_prefix(key) else {
+                        return false;
+                    };
+                    if assignment_operator(assignment) {
+                        return true;
+                    }
+                    assignment.is_empty()
+                        && (words
+                            .get(index + 1)
+                            .is_some_and(|next| assignment_operator(next))
+                            || index > 0 && words[index - 1] == "export")
+                })
+        })
+    }
+
+    #[trace("TC-161", "FR-063-AC-3")]
+    #[test]
+    fn cfg_setting_scan_distinguishes_flags_from_named_test_filters() {
+        for setting in [
+            "RUSTFLAGS := '--cfg seam_probe'",
+            "export RUSTFLAGS",
+            "RUSTFLAGS?=anything",
+            "rustflags: ['anything']",
+            "build.rustflags = ['anything']",
+            "CARGO_ENCODED_RUSTFLAGS=anything",
+            "rustc --cfg seam_probe src/lib.rs",
+            "rustc --cfg=seam_probe src/lib.rs",
+        ] {
+            assert!(has_probe_cfg_setting(setting), "{setting}");
+        }
+        assert!(!has_probe_cfg_setting(
+            "cargo test --locked --package xtask --lib seam_probe::tests::checked_in_locations_name_functions_that_hold_a_match"
+        ));
+        assert!(!has_probe_cfg_setting("cargo xtask seam-probe"));
+    }
+
+    #[trace("TC-161", "FR-063-AC-3")]
+    #[test]
+    fn cfg_setting_scan_joins_continued_and_folded_commands() {
+        for (kind, source) in [
+            (
+                CommandFile::Makefile,
+                "check:\n\trustc --cfg \\\n\t  seam_probe src/lib.rs\n",
+            ),
+            (
+                CommandFile::Makefile,
+                "check:\n\trustc \\\n\t  --cfg \\\n\t  seam_probe src/lib.rs\n",
+            ),
+            (
+                CommandFile::Workflow,
+                "steps:\n  - run: >-\n      rustc --cfg\n      seam_probe src/lib.rs\n",
+            ),
+            (
+                CommandFile::Workflow,
+                "steps:\n  - run: rustc --cfg\n      seam_probe src/lib.rs\n",
+            ),
+            (
+                CommandFile::Workflow,
+                "steps:\n  - run: \"rustc --cfg\n      seam_probe src/lib.rs\"\n",
+            ),
+            (
+                CommandFile::Workflow,
+                "steps:\n  - run: \"rustc --cfg \\\n      seam_probe src/lib.rs\"\n",
+            ),
+            (
+                CommandFile::Workflow,
+                "steps:\n  - run: |\n      rustc --cfg \\\n        seam_probe src/lib.rs\n",
+            ),
+            (
+                CommandFile::Workflow,
+                "steps:\n  - run: >\n      rustc --cfg \\\n        seam_probe src/lib.rs\n",
+            ),
+            (
+                CommandFile::Workflow,
+                "env:\n  RUSTFLAGS: >\n    --cfg\n    seam_probe\n",
+            ),
+        ] {
+            assert!(!probe_cfg_settings(source, kind).is_empty(), "{source}");
+        }
+        for (kind, source) in [
+            (
+                CommandFile::Makefile,
+                "check:\n\tcargo test --locked --package xtask --lib \\\n\t  seam_probe::tests::checked_in_locations_name_functions_that_hold_a_match\n",
+            ),
+            (
+                CommandFile::Workflow,
+                "steps:\n  - run: >\n      cargo test --locked --package xtask --lib\n      seam_probe::tests::checked_in_locations_name_functions_that_hold_a_match\n",
+            ),
+            (
+                CommandFile::Workflow,
+                "steps:\n  - run: >\n      echo --cfg\n\n      seam_probe\n",
+            ),
+            (
+                CommandFile::Workflow,
+                "steps:\n  - run: |\n      echo --cfg\n      seam_probe\n",
+            ),
+        ] {
+            assert!(probe_cfg_settings(source, kind).is_empty(), "{source}");
         }
     }
 

@@ -191,7 +191,9 @@ pub(super) fn check(
             cancel,
             simulation.emit,
         ),
-        (None, Some(admitted)) => ClauseIdentity::of_admitted(admitted, clause),
+        (None, Some(admitted)) => {
+            ClauseIdentity::of_admitted(&fsl_package::BarePackage::new(admitted), clause)
+        }
         (None, None) => return Err(fault("liveness-reads-a-package")),
     };
     let root_cancelled = match identity {

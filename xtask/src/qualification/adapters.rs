@@ -682,12 +682,16 @@ fn run(
             }
         }
     }
-    let call = spine::Call::new(
+    let mut call = spine::Call::new(
         function.to_owned(),
         arguments,
         accounting.0,
         Default::default(),
     );
+    // FR-350 compares the public entry's typed result; FR-100/FR-650
+    // require FR-181 canonical completed values. Keep the corpus input
+    // adapter above separate from the runtime owner's result writer.
+    call.canonical_values = true;
     let result = spine::run(
         source_identity,
         "qualification".to_owned(),

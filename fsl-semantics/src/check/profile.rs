@@ -243,7 +243,7 @@ pub fn resolve_integer_division(
             }
         } else {
             selected = Some(
-                crate::value::admit_integer_division(&[role.reference()], None)
+                crate::value::definition::admit_integer_division(&[role.reference()], None)
                     .map_err(|_| refusal(ProfileCause::UnsupportedSelection, role.reference()))?,
             );
         }
