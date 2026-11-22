@@ -327,6 +327,44 @@ pub struct StateModel {
 }
 
 impl StateModel {
+    /// Restore the complete data declarations of dense models from this
+    /// model's existing admitted views. Each source has already been joined
+    /// to its actual selected object node and source declaration region.
+    /// Clock places remain outside the data environment. No model is
+    /// re-normalized and the admitted views and their allowances are retained.
+    pub fn read_dense_data_types(
+        &mut self,
+        sources: &[crate::check::ModelTimeSource],
+        units: &BTreeMap<String, filament_exact::UnitId>,
+    ) -> Result<&TypeEnvironment, crate::check::AssemblyRefusal> {
+        let mut types = self.types.clone();
+        for source in sources {
+            let view = self.views.iter().find(|view| {
+                !view.is_source()
+                    && view.view.domain_package().model_selection.identity == source.model
+                    && crate::check::lowering::AdmittedModel::from_view(&view.view)
+                        .object_type_model_node_keys()
+                        .as_slice()
+                        == [source.model_node.clone()]
+            });
+            let Some(view) = view else {
+                return Err(crate::check::AssemblyRefusal {
+                    errors: vec![crate::check::AssemblyError {
+                        span: source.span,
+                        cause: crate::check::AssemblyCause::ModelType {
+                            alias: source.model.clone(),
+                            node: source.model_node.to_string(),
+                        },
+                    }],
+                });
+            };
+            types =
+                crate::check::dense_model_data_environment(&view.view, source.span, &types, units)?;
+        }
+        self.types = types;
+        Ok(&self.types)
+    }
+
     /// Reconstruct a clause-free dense timed model from the selected domain
     /// package whose actual object node is `node`. Returns no model for an
     /// ambiguous selection or a clock place outside required direct fields.

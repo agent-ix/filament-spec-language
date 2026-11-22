@@ -5,7 +5,9 @@ use std::collections::VecDeque;
 
 use filament_exact::{Cancel, ObjectReference};
 use fsl_eval::simulation::model::{ModelSystem, PredicateReading};
-use fsl_semantics::check::{CheckedStateGraphClaim, CheckedStatePredicate, StateGraphForm};
+use fsl_semantics::check::{
+    CheckedStateGraphClaim, CheckedStatePredicate, PredicateRole, StateGraphForm,
+};
 
 use super::search::{TimedStateGraph, ZoneCheckRefusal};
 
@@ -58,7 +60,17 @@ pub fn decide_timed_state_graph(
     let p = graph
         .nodes
         .iter()
-        .map(|node| predicate(system, target, &node.state, over, cancel))
+        .map(|node| {
+            predicate(
+                system,
+                target,
+                claim,
+                PredicateRole::Target,
+                &node.state,
+                over,
+                cancel,
+            )
+        })
         .collect::<Result<Vec<_>, _>>()?;
     let ef_nodes = predecessors_of(graph, &p);
     match claim.form() {
@@ -84,7 +96,17 @@ pub fn decide_timed_state_graph(
             let q = graph
                 .nodes
                 .iter()
-                .map(|node| predicate(system, from, &node.state, over, cancel))
+                .map(|node| {
+                    predicate(
+                        system,
+                        from,
+                        claim,
+                        PredicateRole::From,
+                        &node.state,
+                        over,
+                        cancel,
+                    )
+                })
                 .collect::<Result<Vec<_>, _>>()?;
             for (node, (is_from, can_reach)) in q.iter().zip(&ef_nodes).enumerate() {
                 if *is_from && !*can_reach {
@@ -118,12 +140,32 @@ fn decide_unique_path(
     let x = graph
         .nodes
         .iter()
-        .map(|node| predicate(system, from, &node.state, over, cancel))
+        .map(|node| {
+            predicate(
+                system,
+                from,
+                claim,
+                PredicateRole::From,
+                &node.state,
+                over,
+                cancel,
+            )
+        })
         .collect::<Result<Vec<_>, _>>()?;
     let y = graph
         .nodes
         .iter()
-        .map(|node| predicate(system, to, &node.state, over, cancel))
+        .map(|node| {
+            predicate(
+                system,
+                to,
+                claim,
+                PredicateRole::Target,
+                &node.state,
+                over,
+                cancel,
+            )
+        })
         .collect::<Result<Vec<_>, _>>()?;
     for (node, _) in x.iter().enumerate().filter(|(_, is_from)| **is_from) {
         let dfa = determinize(graph, node, &y);
@@ -301,6 +343,8 @@ fn path_for_word(
 fn predicate(
     system: &ModelSystem<'_>,
     predicate: &CheckedStatePredicate,
+    claim: &CheckedStateGraphClaim,
+    role: PredicateRole,
     state: &fsl_eval::simulation::model::ModelSimState,
     over: Option<&ObjectReference>,
     cancel: &Cancel,
@@ -308,12 +352,12 @@ fn predicate(
     if predicate.is_constant_true() {
         return Ok(true);
     }
-    let body = predicate
-        .predicate_body()
-        .ok_or(ZoneCheckRefusal::Fault("state-graph-predicate-body"))?;
-    let readings = system
-        .state_predicates_with_cancel(state, &[(body, over)], cancel)
-        .map_err(|stop| ZoneCheckRefusal::Atom(format!("{stop:?}")))?;
+    let readings = if let Some(body) = predicate.predicate_body() {
+        system.state_predicates_with_cancel(state, &[(body, over)], cancel)
+    } else {
+        system.state_graph_predicates(state, &[(claim, role, over)])
+    }
+    .map_err(|stop| ZoneCheckRefusal::Atom(format!("{stop:?}")))?;
     match readings.as_slice() {
         [PredicateReading::True] => Ok(true),
         [PredicateReading::False] => Ok(false),

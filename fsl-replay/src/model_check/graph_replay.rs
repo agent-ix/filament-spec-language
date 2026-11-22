@@ -17,7 +17,8 @@ use fsl_semantics::check::{
 
 use crate::bounds::ReplayLimits;
 use crate::certificate::zone_certificate::{
-    CertificateItem, CertifiedItem, ZoneCertificateRequest, ZoneCertificateVerdict,
+    check_state_graph_certificate, CertificateItem, CertifiedItem, StateGraphCertificateDecision,
+    ZoneCertificateRequest,
 };
 use crate::execute::{recompile_with_temporal_selections, request_limits, ReplayRefusal};
 use crate::model_check::counterexample::ModelStep;
@@ -212,7 +213,7 @@ pub fn replay_model_graph_with_cancel_and_temporal_selections(
                     member: "timed_subject",
                 })?;
             let over = graph_over(&system, claim, envelope.family_payload())?;
-            let verdict = crate::check_zone_certificate(
+            let (_, decision) = check_state_graph_certificate(
                 ZoneCertificateRequest {
                     simulation,
                     model: &reading.model,
@@ -236,18 +237,9 @@ pub fn replay_model_graph_with_cancel_and_temporal_selections(
             .map_err(|_| ReplayRefusal::ModelGraphMismatch {
                 member: "zone_certificate",
             })?;
-            match verdict {
-                ZoneCertificateVerdict::Accepted => Some(true),
-                ZoneCertificateVerdict::Rejected(rejection)
-                    if matches!(
-                        rejection.rule,
-                        crate::CertificateRule::InitialMissing
-                            | crate::CertificateRule::SuccessorMissing
-                            | crate::CertificateRule::CountBroken
-                    ) =>
-                {
-                    Some(false)
-                }
+            match decision {
+                Some(StateGraphCertificateDecision::Holds) => Some(true),
+                Some(StateGraphCertificateDecision::Violated) => Some(false),
                 _ => {
                     return Err(ReplayRefusal::ModelGraphMismatch {
                         member: "zone_certificate",
@@ -447,7 +439,7 @@ pub fn replay_model_graph_from_package(
             .ok_or(ReplayRefusal::ModelGraphMismatch {
                 member: "zone_certificate",
             })?;
-        let verdict = crate::check_zone_certificate(
+        let (_, decision) = check_state_graph_certificate(
             ZoneCertificateRequest {
                 simulation,
                 model: &timing.model,
@@ -471,18 +463,9 @@ pub fn replay_model_graph_from_package(
         .map_err(|_| ReplayRefusal::ModelGraphMismatch {
             member: "zone_certificate",
         })?;
-        match verdict {
-            ZoneCertificateVerdict::Accepted => Some(true),
-            ZoneCertificateVerdict::Rejected(rejection)
-                if matches!(
-                    rejection.rule,
-                    crate::CertificateRule::InitialMissing
-                        | crate::CertificateRule::SuccessorMissing
-                        | crate::CertificateRule::CountBroken
-                ) =>
-            {
-                Some(false)
-            }
+        match decision {
+            Some(StateGraphCertificateDecision::Holds) => Some(true),
+            Some(StateGraphCertificateDecision::Violated) => Some(false),
             _ => {
                 return Err(ReplayRefusal::ModelGraphMismatch {
                     member: "zone_certificate",

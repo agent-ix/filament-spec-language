@@ -900,7 +900,65 @@ pub fn check_zone_certificate<O: Clone + Eq>(
         limits,
         cancel,
         false,
+        &mut None,
     )
+}
+
+fn package_state_graph_identity(
+    input: &fsl_eval::simulation::model::ModelCheckInput<'_>,
+    claim: &CheckedStateGraphClaim,
+) -> ItemIdentity {
+    let Some(occurrence) = claim.occurrence() else {
+        return ItemIdentity::Other;
+    };
+    let Some(admitted) = input.admitted_package() else {
+        return ItemIdentity::Other;
+    };
+    let Ok(Ok(root)) = fsl_package::resolve_state_graph_root(admitted, occurrence) else {
+        return ItemIdentity::Other;
+    };
+    let Some(form) = input.evaluator.package_state_graph_form(root.occurrence()) else {
+        return ItemIdentity::Other;
+    };
+    let Ok(own) = CheckedStateGraphClaim::of_package_form(
+        form,
+        input.types,
+        filament_semantic_value::checking::CheckingLimits::default().nodes(),
+    ) else {
+        return ItemIdentity::Other;
+    };
+    let same_predicate =
+        |left: &fsl_semantics::check::CheckedStatePredicate,
+         right: &fsl_semantics::check::CheckedStatePredicate| {
+            match (left, right) {
+                (
+                    fsl_semantics::check::CheckedStatePredicate::ConstantTrue,
+                    fsl_semantics::check::CheckedStatePredicate::ConstantTrue,
+                ) => true,
+                (
+                    fsl_semantics::check::CheckedStatePredicate::Package(left),
+                    fsl_semantics::check::CheckedStatePredicate::Package(right),
+                ) => left == right,
+                _ => false,
+            }
+        };
+    let (own_from, own_target) = own.node_predicates();
+    let (from, target) = claim.node_predicates();
+    let same_from = match (own_from, from) {
+        (None, None) => true,
+        (Some(left), Some(right)) => same_predicate(left, right),
+        _ => false,
+    };
+    if own.name() != claim.name()
+        || own.span() != claim.span()
+        || own.over() != claim.over()
+        || std::mem::discriminant(own.form()) != std::mem::discriminant(claim.form())
+        || !same_from
+        || !same_predicate(own_target, target)
+    {
+        return ItemIdentity::Other;
+    }
+    ItemIdentity::StateGraph(root.occurrence().clone())
 }
 
 /// FR-245: check a refinement certificate whose concrete subject admits
@@ -921,7 +979,46 @@ pub fn check_free_delay_zone_certificate<O: Clone + Eq>(
         limits,
         cancel,
         true,
+        &mut None,
     )
+}
+
+/// A state-graph decision reached after all structural, initial and
+/// successor-coverage checks have completed successfully.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum StateGraphCertificateDecision {
+    Holds,
+    Violated,
+}
+
+/// Preserve the state-graph decision separately from rejection codes shared
+/// by graph-coverage checks. An invalid or unfinished certificate has no decision.
+pub(crate) fn check_state_graph_certificate<O: Clone + Eq>(
+    request: ZoneCertificateRequest<'_>,
+    item: &O,
+    item_of: impl Fn(&O) -> CertificateItem<'_>,
+    certificate: &ZoneCertificate<O>,
+    limits: CertificateCheckLimits,
+    cancel: &Cancel,
+) -> Result<
+    (
+        ZoneCertificateVerdict,
+        Option<StateGraphCertificateDecision>,
+    ),
+    ZoneCertificateRefusal<O>,
+> {
+    let mut decision = None;
+    let verdict = check_zone_certificate_with_time_source(
+        request,
+        item,
+        item_of,
+        certificate,
+        limits,
+        cancel,
+        false,
+        &mut decision,
+    )?;
+    Ok((verdict, decision))
 }
 
 fn check_zone_certificate_with_time_source<O: Clone + Eq>(
@@ -932,6 +1029,7 @@ fn check_zone_certificate_with_time_source<O: Clone + Eq>(
     limits: CertificateCheckLimits,
     cancel: &Cancel,
     free_delay: bool,
+    decision: &mut Option<StateGraphCertificateDecision>,
 ) -> Result<ZoneCertificateVerdict, ZoneCertificateRefusal<O>> {
     if certificate.task_product.is_some()
         && !matches!(request.item, CertifiedItem::Schedulability { .. })
@@ -946,50 +1044,53 @@ fn check_zone_certificate_with_time_source<O: Clone + Eq>(
     if certificate.obligation != *item {
         return Err(mismatch());
     }
-    let source = request
-        .simulation
-        .source_package()
-        .ok_or(ZoneCertificateRefusal::Fault(CheckerFault::SourceForms))?;
+    let source = request.simulation.source_package();
     // The recompiled item's identity (FR-245): a clause's `claim`
     // occurrence in the package, or the derived item's kind.
     let named = ItemIdentity::from(item_of(&certificate.obligation));
-    let recompiled = match request.item {
-        CertifiedItem::Clause { clause, .. } => source
-            .graph()
-            .temporal_clauses()
-            .iter()
-            .find(|node| node.clause() == clause)
-            .map_or(ItemIdentity::UnlistedClause, |node| {
-                ItemIdentity::Clause(node_occurrence(node))
-            }),
-        CertifiedItem::DeadlockFreedom => ItemIdentity::DeadlockFreedom,
-        CertifiedItem::TimeLockFreedom => ItemIdentity::TimeLockFreedom,
-        CertifiedItem::Refinement {
-            refinement,
-            abstract_initial,
-            ..
-        } => refinement
-            .requirement_occurrence()
-            .map_or(ItemIdentity::Other, |occurrence| ItemIdentity::Refinement {
-                occurrence: occurrence.clone(),
-                abstract_initial: abstract_initial.iter().cloned().collect(),
-            }),
-        CertifiedItem::StateGraph { claim, .. } => source
-            .graph()
-            .state_graph_claim(claim.name())
-            .filter(|own| own.occurrence() == claim.occurrence())
-            .and_then(|own| own.occurrence())
-            .map_or(ItemIdentity::Other, |occurrence| {
-                ItemIdentity::StateGraph(occurrence.clone())
-            }),
-        CertifiedItem::Schedulability { claim } => source
-            .graph()
-            .task_sets()
-            .claims()
-            .iter()
-            .find(|own| own.name == claim.name && own.occurrence() == claim.occurrence())
-            .and_then(|own| own.occurrence())
-            .map_or(ItemIdentity::Other, ItemIdentity::Schedulability),
+    let recompiled = if let Some(source) = source {
+        match request.item {
+            CertifiedItem::Clause { clause, .. } => source
+                .graph()
+                .temporal_clauses()
+                .iter()
+                .find(|node| node.clause() == clause)
+                .map_or(ItemIdentity::UnlistedClause, |node| {
+                    ItemIdentity::Clause(node_occurrence(node))
+                }),
+            CertifiedItem::DeadlockFreedom => ItemIdentity::DeadlockFreedom,
+            CertifiedItem::TimeLockFreedom => ItemIdentity::TimeLockFreedom,
+            CertifiedItem::Refinement {
+                refinement,
+                abstract_initial,
+                ..
+            } => refinement
+                .requirement_occurrence()
+                .map_or(ItemIdentity::Other, |occurrence| ItemIdentity::Refinement {
+                    occurrence: occurrence.clone(),
+                    abstract_initial: abstract_initial.iter().cloned().collect(),
+                }),
+            CertifiedItem::StateGraph { claim, .. } => source
+                .graph()
+                .state_graph_claim(claim.name())
+                .filter(|own| own.occurrence() == claim.occurrence())
+                .and_then(|own| own.occurrence())
+                .map_or(ItemIdentity::Other, |occurrence| {
+                    ItemIdentity::StateGraph(occurrence.clone())
+                }),
+            CertifiedItem::Schedulability { claim } => source
+                .graph()
+                .task_sets()
+                .claims()
+                .iter()
+                .find(|own| own.name == claim.name && own.occurrence() == claim.occurrence())
+                .and_then(|own| own.occurrence())
+                .map_or(ItemIdentity::Other, ItemIdentity::Schedulability),
+        }
+    } else if let CertifiedItem::StateGraph { claim, .. } = request.item {
+        package_state_graph_identity(&request.simulation.input, claim)
+    } else {
+        return Err(ZoneCertificateRefusal::Fault(CheckerFault::SourceForms));
     };
     if named != recompiled || recompiled == ItemIdentity::Other {
         return Err(ZoneCertificateRefusal::IdentityMismatch {
@@ -1007,6 +1108,7 @@ fn check_zone_certificate_with_time_source<O: Clone + Eq>(
             abstract_package,
             abstract_initial,
         } => {
+            let source = source.ok_or(ZoneCertificateRefusal::Fault(CheckerFault::SourceForms))?;
             let Some(part) = &certificate.refinement else {
                 return Ok(malformed_verdict(CertificateMember::Refinement));
             };
@@ -1232,7 +1334,7 @@ fn check_zone_certificate_with_time_source<O: Clone + Eq>(
         max_edges: limits.max_certificate_edges,
         max_automaton_states: limits.max_automaton_states,
     };
-    match checker.verify(limits) {
+    match checker.verify(limits, decision) {
         Ok(()) => Ok(ZoneCertificateVerdict::Accepted),
         Err(Halt::Verdict(verdict)) => Ok(verdict),
         Err(Halt::Refusal(refusal)) => Err(refusal),
@@ -1421,7 +1523,11 @@ struct StateGraphClaim<'a> {
 impl<O> Checker<'_, '_, O> {
     // Not named `check`: CK-1's checked-input gate reads any `.check(..)`
     // call in a stage crate as the S3 stage constructor (TC-745).
-    fn verify(&mut self, limits: CertificateCheckLimits) -> Step<(), O> {
+    fn verify(
+        &mut self,
+        limits: CertificateCheckLimits,
+        decision: &mut Option<StateGraphCertificateDecision>,
+    ) -> Step<(), O> {
         self.poll()?;
         self.budgets(limits)?;
         self.members()?;
@@ -1465,7 +1571,22 @@ impl<O> Checker<'_, '_, O> {
             self.divergence_part()?;
         }
         if self.state_graph.is_some() {
-            self.state_graph()
+            let result = self.state_graph();
+            match &result {
+                Ok(()) => *decision = Some(StateGraphCertificateDecision::Holds),
+                Err(Halt::Verdict(ZoneCertificateVerdict::Rejected(rejection)))
+                    if matches!(
+                        rejection.rule,
+                        CertificateRule::InitialMissing
+                            | CertificateRule::SuccessorMissing
+                            | CertificateRule::CountBroken
+                    ) =>
+                {
+                    *decision = Some(StateGraphCertificateDecision::Violated);
+                }
+                _ => {}
+            }
+            result
         } else {
             self.admitted()
         }
@@ -3475,7 +3596,11 @@ impl<O> Checker<'_, '_, O> {
             StateGraphForm::AlwaysPossible { from, target } => (target, Some(from)),
             StateGraphForm::UniquePath { from, to } => (to, Some(from)),
         };
-        let target_values = self.predicate_values(target, state_graph.over)?;
+        let target_values = self.predicate_values(
+            target,
+            fsl_semantics::check::PredicateRole::Target,
+            state_graph.over,
+        )?;
         let ef = self.ef_nodes(&target_values);
         match claim.form() {
             StateGraphForm::Possible { .. } => {
@@ -3501,7 +3626,11 @@ impl<O> Checker<'_, '_, O> {
                     return reject(CertificateRule::RankBroken, at_node(0));
                 }
                 let from = from.ok_or_else(|| fault(CheckerFault::Automaton))?;
-                let from_values = self.predicate_values(from, state_graph.over)?;
+                let from_values = self.predicate_values(
+                    from,
+                    fsl_semantics::check::PredicateRole::From,
+                    state_graph.over,
+                )?;
                 if self
                     .states
                     .iter()
@@ -3515,7 +3644,11 @@ impl<O> Checker<'_, '_, O> {
             }
             StateGraphForm::UniquePath { .. } => {
                 let from = from.ok_or_else(|| fault(CheckerFault::Automaton))?;
-                let from_values = self.predicate_values(from, state_graph.over)?;
+                let from_values = self.predicate_values(
+                    from,
+                    fsl_semantics::check::PredicateRole::From,
+                    state_graph.over,
+                )?;
                 for (node, state) in self.states.iter().enumerate() {
                     if state.is_some()
                         && from_values[node]
@@ -3532,14 +3665,12 @@ impl<O> Checker<'_, '_, O> {
     fn predicate_values(
         &self,
         predicate: &fsl_semantics::check::CheckedStatePredicate,
+        role: fsl_semantics::check::PredicateRole,
         over: Option<&filament_exact::ObjectReference>,
     ) -> Step<Vec<bool>, O> {
         if predicate.is_constant_true() {
             return Ok(self.states.iter().map(Option::is_some).collect());
         }
-        let body = predicate
-            .predicate_body()
-            .ok_or(Halt::Refusal(ZoneCertificateRefusal::Undecided))?;
         self.states
             .iter()
             .enumerate()
@@ -3547,11 +3678,18 @@ impl<O> Checker<'_, '_, O> {
                 let Some(state) = state else {
                     return Ok(false);
                 };
-                let readings = self
-                    .timed
-                    .system()
-                    .state_predicates_with_cancel(state, &[(body, over)], self.cancel)
-                    .map_err(|_| Halt::Refusal(ZoneCertificateRefusal::Undecided))?;
+                self.poll()?;
+                let system = self.timed.system();
+                let readings = if let Some(body) = predicate.predicate_body() {
+                    system.state_predicates_with_cancel(state, &[(body, over)], self.cancel)
+                } else {
+                    let claim = self
+                        .state_graph
+                        .as_ref()
+                        .ok_or(Halt::Refusal(ZoneCertificateRefusal::Undecided))?;
+                    system.state_graph_predicates(state, &[(claim.claim, role, over)])
+                }
+                .map_err(|_| Halt::Refusal(ZoneCertificateRefusal::Undecided))?;
                 match readings.as_slice() {
                     [fsl_eval::simulation::model::PredicateReading::True] => Ok(true),
                     [fsl_eval::simulation::model::PredicateReading::False] => Ok(false),

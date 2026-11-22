@@ -483,6 +483,7 @@ pub use ir::{
     EqualityUnitIdentityFact, EqualityUnitOperandRole, EqualityUnitTypeFact, Node, NodeId, Slot,
 };
 
+pub(crate) use assemble::dense_model_data_environment;
 pub use assemble::model_operation_table;
 #[cfg(any(test, feature = "test-support"))]
 pub use assemble::model_type_environment;

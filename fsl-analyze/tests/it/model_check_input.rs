@@ -195,6 +195,213 @@ fn package_direct_dense_model_items_match_source_cli_results() {
     assert_eq!(bytes.exit, source.exit);
 }
 
+/// Missing graph coverage cannot become a false-claim replay decision.
+#[trace("FR-940-AC-6", "FR-170-AC-4", "FR-245-AC-7")]
+#[test]
+fn dense_replay_rejects_incomplete_certificate_coverage() {
+    use filament_exact::{Cancel, Integer};
+    use fsl_analyze::zone_check::{explore_timed_state_graph, ZoneCheckLimits};
+    use fsl_eval::simulation::model::{TimedSystem, DEFAULT_MAX_CLOCKS};
+    use fsl_replay::{GraphEvidence, ModelPath, ReplayRefusal, TrapClosure};
+    use fsl_route::deadlock::{ItemObligation, ObligationKind};
+    let world = crate::timed_world::world(
+        &crate::timed_world::document(&["x"], &[("send", &["phase"])]),
+        "",
+        &format!(
+            "{DIRECT_DENSE}\
+            pre Enabled using v on M::Call::send {{ self.phase = 0 }}\n\
+            post SetPhase using v on M::Call::send {{ self.phase = 1 }}\n\
+            possible Reach using v over (c: M::Call) {{ c.phase = 1 }}\n\
+            possible Never using v over (c: M::Call) {{ c.phase = 2 }}\n"
+        ),
+    );
+    let request = world.request();
+    let system = world.system();
+    let timed = TimedSystem::new(&system, "M").expect("timed source");
+    let graph = explore_timed_state_graph(&timed, ZoneCheckLimits::default(), &Cancel::new())
+        .expect("closed graph");
+    assert_eq!(graph.nodes.len(), 2, "phase 0 and phase 1");
+    assert_eq!(graph.edges.len(), 1, "the actual phase-changing operation");
+    let instance = fsl_eval::model_subject::ModelInstance {
+        population: request.universes[0].population.clone(),
+        key: "c".to_owned(),
+    };
+    let nodes = graph
+        .nodes
+        .iter()
+        .map(|node| fsl_replay::CertNode {
+            state_key: fsl_eval::simulation::StateKey::from_canonical_bytes(
+                system.state_key(&node.state).expect("state key").0,
+            ),
+            automaton_state: 0,
+            zone: fsl_replay::Zone::universe(2),
+            locked: false,
+            product: None,
+        })
+        .collect::<Vec<_>>();
+    let edges = graph
+        .edges
+        .iter()
+        .map(|edge| fsl_replay::CertEdge {
+            from: edge.from,
+            to: edge.to,
+            transition: Some(edge.transition.clone()),
+            part: Some(edge.part_index),
+            task_transition: None,
+            horizon: None,
+            silent: None,
+        })
+        .collect::<Vec<_>>();
+    let certificate =
+        |claim: &fsl_semantics::check::CheckedStateGraphClaim| fsl_replay::ZoneCertificate {
+            obligation: ItemObligation {
+                subject: (),
+                kind: ObligationKind::StateGraphAuthored(
+                    claim.occurrence().expect("occurrence").clone(),
+                ),
+                reductions: Default::default(),
+            },
+            scale: Integer::one(),
+            lu_bounds: fsl_replay::LuBounds {
+                lower: vec![None],
+                upper: vec![None],
+            },
+            nodes: nodes.clone(),
+            edges: edges.clone(),
+            initials: graph.initials.clone(),
+            components: None,
+            non_zeno: None,
+            divergence: None,
+            admitted: None,
+            state_graph: None,
+            refinement: None,
+            task_product: None,
+        };
+    let replay = |claim: &fsl_semantics::check::CheckedStateGraphClaim, certificate| {
+        let occurrence = claim.occurrence().expect("occurrence").clone();
+        let obligation = fsl_package::ObligationIdentity::new(occurrence.node().clone(), None, 0);
+        let envelope = fsl_replay::GraphEvidenceEnvelope::new(
+            obligation.clone(),
+            occurrence.clone(),
+            occurrence.node().clone(),
+            Vec::new(),
+            request.meter,
+            Vec::new(),
+            fsl_foundation::BackendId::new("en-1"),
+            GraphEvidence::Trap {
+                stem: ModelPath {
+                    initial: 0,
+                    steps: Vec::new(),
+                },
+                closure: TrapClosure::StateGraph,
+                over: Some(instance.clone()),
+            },
+        )
+        .with_zone_certificate(certificate);
+        let mut wire = crate::model_settle::request(
+            &world.package,
+            &[],
+            &world.document,
+            world.snapshots.iter(),
+            &world.unit,
+        );
+        wire.replay_target = fsl_replay::RequestTargetWire::default();
+        wire.obligation_identity = obligation;
+        wire.backend = "en-1".to_owned();
+        wire.accounting_limits = request.meter;
+        wire.source = fsl_replay::ReplaySource::ModelGraph(Box::new(envelope));
+        fsl_replay::replay_model_graph(
+            wire,
+            &fsl_replay::ModelTraceSubject {
+                timed: Some(fsl_replay::TimedReplay {
+                    model: "M".to_owned(),
+                    exploration: Default::default(),
+                    max_clocks: DEFAULT_MAX_CLOCKS,
+                    digital: false,
+                }),
+                initial: request.initial.clone(),
+                universes: request.universes.clone(),
+                expansion: request.expansion,
+                stutter_closure: false,
+            },
+            fsl_replay::ReplayLimits::default(),
+        )
+    };
+    let reach = world
+        .package
+        .graph()
+        .state_graph_claim("Reach")
+        .expect("Reach");
+    let valid = certificate(reach);
+    let over = system
+        .bound_reference(reach.over().expect("over").object.clone(), &instance)
+        .expect("bound c");
+    assert_eq!(
+        fsl_replay::check_zone_certificate(
+            fsl_replay::ZoneCertificateRequest {
+                simulation: request.clone(),
+                model: "M",
+                max_clocks: DEFAULT_MAX_CLOCKS,
+                item: fsl_replay::CertifiedItem::StateGraph {
+                    claim: reach,
+                    over: Some(&over)
+                },
+            },
+            &valid.obligation,
+            |obligation| match &obligation.kind {
+                ObligationKind::StateGraphAuthored(occurrence) =>
+                    fsl_replay::CertificateItem::StateGraph(occurrence),
+                _ => fsl_replay::CertificateItem::Other,
+            },
+            &valid,
+            fsl_replay::CertificateCheckLimits::default(),
+            &Cancel::new()
+        )
+        .expect("valid certificate checked"),
+        fsl_replay::ZoneCertificateVerdict::Accepted
+    );
+    let fsl_replay::ReplayResult::ModelGraph(actual) =
+        replay(reach, valid.clone()).expect("intact coverage admits")
+    else {
+        panic!("graph result");
+    };
+    assert_ne!(
+        actual.settlement,
+        fsl_replay::GraphReplaySettlement::Reproduced,
+        "the reachable phase-1 target defeats the forged trap"
+    );
+    let mut missing_initial = valid.clone();
+    missing_initial.initials = vec![graph.edges[0].to];
+    let mut missing_successor = valid;
+    missing_successor.edges.clear();
+    for tampered in [missing_initial, missing_successor] {
+        assert!(
+            matches!(
+                replay(reach, tampered),
+                Err(ReplayRefusal::ModelGraphMismatch {
+                    member: "zone_certificate"
+                })
+            ),
+            "coverage failure must refuse before deciding the claim"
+        );
+    }
+    let never = world
+        .package
+        .graph()
+        .state_graph_claim("Never")
+        .expect("Never");
+    let fsl_replay::ReplayResult::ModelGraph(actual) =
+        replay(never, certificate(never)).expect("complete false-claim certificate admits")
+    else {
+        panic!("graph result");
+    };
+    assert_eq!(
+        actual.settlement,
+        fsl_replay::GraphReplaySettlement::Reproduced,
+        "complete graph coverage still replays a genuine false claim"
+    );
+}
+
 /// The Counter domain package with no operation.
 fn still_document() -> Vec<u8> {
     crate::model_world::still_counter().document

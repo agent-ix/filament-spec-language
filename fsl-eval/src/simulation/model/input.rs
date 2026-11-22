@@ -427,6 +427,7 @@ struct ProbabilisticParts {
     model_selections: Vec<DomainPackageRef>,
     operations: OperationTable,
     probabilistic: CheckedProbabilisticModel,
+    unit_names: std::collections::BTreeMap<String, filament_exact::UnitId>,
 }
 
 impl ProbabilisticParts {
@@ -518,6 +519,7 @@ impl ProbabilisticParts {
             model_selections,
             operations,
             probabilistic,
+            unit_names,
         })
     }
 }
@@ -646,11 +648,12 @@ impl<'p> PackageModelInput<'p> {
             });
         }
         let ProbabilisticParts {
-            world,
-            model,
+            mut world,
+            mut model,
             model_selections,
             operations,
             probabilistic,
+            unit_names,
         } = ProbabilisticParts::read(package, packages, normalization, false)?;
         let (timed_models, time_sources) = if timed_trace {
             (Vec::new(), Vec::new())
@@ -662,6 +665,9 @@ impl<'p> PackageModelInput<'p> {
                     node,
                 })?
         };
+        world
+            .read_dense_model_data(&mut model, &time_sources, &unit_names)
+            .map_err(PendingPackageForm::Operations)?;
         let rewards = PackageRewards::of(package, world.clone(), &probabilistic)?;
         // FR-940: the state clauses by their `claim_names` rows (FSpec
         // FR-322), in source order, as the source route lists them.
@@ -981,6 +987,16 @@ const PACKAGE_FORM: InternalFault = InternalFault::new("FR-940", "package-form-o
 /// route, the package route through [`CheckedPackageEvaluation`] over the
 /// package's forms.
 pub trait ModelEvaluator: sealed::Sealed + Sync {
+    /// The actual admitted package form of a state-graph occurrence, when
+    /// this evaluator owns package forms. Used to authenticate a certificate's
+    /// claim against its root and declaration metadata before evaluating it.
+    fn package_state_graph_form(
+        &self,
+        _claim: &fsl_foundation::source::provenance::OccurrenceKey,
+    ) -> Option<fsl_semantics::check::PackageStateGraphForm> {
+        None
+    }
+
     /// FR-107: one state clause, by name, over its admitted observations.
     ///
     /// # Errors
@@ -2104,6 +2120,13 @@ const NO_SOURCE_FOOTPRINT: FootprintRefusal = FootprintRefusal::Unresolved {
 };
 
 impl ModelEvaluator for BarePackage<'_> {
+    fn package_state_graph_form(
+        &self,
+        claim: &fsl_foundation::source::provenance::OccurrenceKey,
+    ) -> Option<fsl_semantics::check::PackageStateGraphForm> {
+        self.state_graph_claim_form(claim).ok()
+    }
+
     fn package_protocol_observation(
         &self,
         model: &DomainPackageRef,
