@@ -1319,8 +1319,6 @@ pub fn replay_with_cancel_and_temporal_selections(
     replay_limits: ReplayLimits,
     cancel: &Cancel,
 ) -> Result<ReplayResult, ReplayRefusal> {
-    #[cfg(test)]
-    tphase("replay-begin");
     let request = ReplayRequest::decode(wire, replay_limits)?;
     if matches!(request.source(), ReplaySource::ProtocolAnalysis(_)) {
         return Err(ReplayRefusal::WrongProtocolAnalysisEntry);
@@ -1336,8 +1334,6 @@ pub fn replay_with_cancel_and_temporal_selections(
         }
         ReplaySource::Hybrid(_) => None,
     };
-    #[cfg(test)]
-    tphase("decoded+target");
     let caller = request_limits(
         request.stage_limits(),
         request.accounting_limits(),
@@ -1351,8 +1347,6 @@ pub fn replay_with_cancel_and_temporal_selections(
         let counterexample = (**counterexample).clone();
         return replay_hybrid(request, &compiled, &counterexample);
     }
-    #[cfg(test)]
-    tphase("recompiled");
     let (function, owner) = function.ok_or_else(|| {
         ReplayRefusal::Fault(InternalFault::new(
             "replay",
@@ -1366,11 +1360,7 @@ pub fn replay_with_cancel_and_temporal_selections(
     let replay_target = request
         .replay_target()
         .ok_or(ReplayRefusal::WrongModelGraphEntry)?;
-    #[cfg(test)]
-    tphase("declaring");
     let claim = function_claim(declaring, function, replay_target)?;
-    #[cfg(test)]
-    tphase("function_claim");
     let call = select(declaring, function, claim.kind())?;
     let joined = arguments(
         &call,
@@ -1384,8 +1374,6 @@ pub fn replay_with_cancel_and_temporal_selections(
     {
         return Err(ReplayRefusal::UnusedObjectEnvironment);
     }
-    #[cfg(test)]
-    tphase("arguments-joined");
     let limits = request.accounting_limits();
     let mut run = SuppliedRun::new(request.supplied_limits(), cancel.clone())
         .map_err(ReplayRefusal::Supplied)?;
@@ -1415,8 +1403,6 @@ pub fn replay_with_cancel_and_temporal_selections(
     } else {
         ObjectEnvironment::default().with_unresolved_references()
     };
-    #[cfg(test)]
-    tphase("converted");
     let mut meter = Meter::new(limits).with_cancel(cancel.clone());
     let evaluation = match package.call_supplied(
         &call.name,
@@ -1430,8 +1416,6 @@ pub fn replay_with_cancel_and_temporal_selections(
         // checked call gave it; anything else is the call's own failure.
         Err(failure) => return after_call_failure(&request, &run, failure),
     };
-    #[cfg(test)]
-    tphase("called");
     if let Some(cause) = cancel.tripped() {
         return Err(ReplayRefusal::Cancelled(cause));
     }
@@ -2048,8 +2032,6 @@ pub(crate) fn run_spine_with_temporal_selections_and_execution_points(
     )
     .map_err(refusal)?
     .into_value();
-    #[cfg(test)]
-    tphase("spine-pre-emit");
     let emitted = spine::package_with_temporal_selections(
         &checked,
         temporal_selections,
@@ -2220,8 +2202,6 @@ pub(crate) fn recompile_with_temporal_selections(
             locate_refinement_internals(request, failure),
         )
     })?;
-    #[cfg(test)]
-    tphase("run_spine_units-returned");
     // Rule 6: every entry names a selection of the recompiled closure.
     let selections = compiled.checked.package().dependency_selections();
     for entry in request.dependencies() {
@@ -2233,14 +2213,10 @@ pub(crate) fn recompile_with_temporal_selections(
             ));
         }
     }
-    #[cfg(test)]
-    tphase("rule6");
     check_recorded_modes(
         request.package().document(),
         compiled.emitted.package().bytes(),
     )?;
-    #[cfg(test)]
-    tphase("check_recorded_modes");
     request
         .package()
         .admit(&evidence, limits.spine.imports.for_ir())
@@ -2254,8 +2230,6 @@ pub(crate) fn recompile_with_temporal_selections(
                 .ok()
             }),
         })?;
-    #[cfg(test)]
-    tphase("package-admit");
     request.check_external_package_bytes(
         compiled
             .checked
@@ -2565,8 +2539,6 @@ fn run_spine_units(
             Err(fault) => ReplayRefusal::Fault(fault),
         },
     };
-    #[cfg(test)]
-    tphase("spine-begin");
     let requests = units
         .iter()
         .map(|(identity, path, bytes)| ParseRequest {
@@ -2589,21 +2561,15 @@ fn run_spine_units(
                 .map_err(&refusal)
         })
         .collect::<Result<Vec<_>, _>>()?;
-    #[cfg(test)]
-    tphase("spine-parsed");
     let admitted = spine::admit_parsed_unit_list(parsed, dependencies).map_err(|refusal| {
         ReplayRefusal::Recompile {
             refusal,
             pointer: None,
         }
     })?;
-    #[cfg(test)]
-    tphase("spine-admitted");
     let models = spine::select_units(&admitted, packages, limits.model, limits.source, &cancel)
         .map_err(&refusal)?
         .into_value();
-    #[cfg(test)]
-    tphase("spine-selected");
     let check_selections: Vec<_> = match clocks {
         RecompileClocks::Explicit(selections) => selections.to_vec(),
         RecompileClocks::ByName(clocks) => admitted
@@ -2638,8 +2604,6 @@ fn run_spine_units(
     )
     .map_err(&refusal)?
     .into_value();
-    #[cfg(test)]
-    tphase("spine-checked");
     let checked = checked.into_iter().next().ok_or_else(|| {
         ReplayRefusal::Fault(InternalFault::new(
             "replay",
@@ -2666,8 +2630,6 @@ fn run_spine_units(
     )
     .map_err(&refusal)?
     .into_value();
-    #[cfg(test)]
-    tphase("spine-emitted");
     let evidence = spine::admission_evidence(
         &models,
         &checked,
@@ -2676,8 +2638,6 @@ fn run_spine_units(
         limits.package.emit(),
     )
     .map_err(ReplayRefusal::PackageEvidence)?;
-    #[cfg(test)]
-    tphase("spine-evidence");
     Ok((
         Recompiled {
             checked,
@@ -3312,17 +3272,4 @@ mod carried_quantity_tests {
             }))
         ));
     }
-}
-
-/// TEMPORARY (QSL-2825): phase timing.
-#[cfg(test)]
-pub(crate) fn tphase(label: &str) {
-    use std::sync::Mutex;
-    use std::time::Instant;
-    static LAST: Mutex<Option<Instant>> = Mutex::new(None);
-    let mut last = LAST.lock().unwrap();
-    let now = Instant::now();
-    let dt = last.map_or(0, |at| now.duration_since(at).as_millis());
-    *last = Some(now);
-    eprintln!("TIME label={label} dt_ms={dt}");
 }
