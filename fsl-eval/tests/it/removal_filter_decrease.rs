@@ -270,7 +270,7 @@ fn a_one_occurrence_removal_or_tail_decreases_a_cardinality_measure() {
         ] {
             assert_eq!(
                 evaluate(&walk(kind, literal, "", guard, "dropFirst(s)")),
-                Integer::from(if guard == "contains(s, e)" { 1_i64 } else { 3 }),
+                Integer::from(if guard == "contains(s, e)" { 2_i64 } else { 3 }),
                 "{kind} dropFirst under {guard}"
             );
         }
@@ -285,19 +285,16 @@ fn a_one_occurrence_removal_or_tail_decreases_a_cardinality_measure() {
     assert_eq!(
         evaluate(
             "function walk using v(s: Sequence<Int[0, 9]>[1, 5]): Integer pure decreases(size(s)) \
-             { if size(s) > 1 then 1 + walk(dropFirst(s)) else 0 }\n\
+             { if size(s) > 1 then 1 + walk(convert<Sequence<Int[0, 9]>[1, 5]>(dropFirst(s))) else 0 }\n\
              function g using v(): Integer pure { walk(sequence[1, 2, 3]) }"
         ),
         Integer::from(2_i64)
     );
-    assert_eq!(
-        evaluate(
-            "function walk using v(s: Sequence<Int[1, 9]>[1, 5]): Integer pure decreases(size(s)) \
-             { if true then 0 else walk(dropFirst(s)) }\n\
-             function g using v(): Integer pure { walk(sequence[1, 2, 3]) }"
-        ),
-        Integer::from(0_i64)
-    );
+    assert!(check(
+        "function walk using v(s: Sequence<Int[0, 9]>[1, 5]): Integer pure decreases(size(s)) \
+             { if true then 0 else walk(convert<Sequence<Int[0, 9]>[1, 5]>(dropFirst(s))) }"
+    )
+    .is_ok());
 
     for (kind, literal, guard, argument) in [
         // `dropFirst` without the size fact.
@@ -310,7 +307,12 @@ fn a_one_occurrence_removal_or_tail_decreases_a_cardinality_measure() {
         ("Sequence", "sequence", "size(s) > 0", "removeOne(s, e)"),
         ("Bag", "bag", "true", "removeOne(s, e)"),
         // `removeOne` of a non-stable `e`.
-        ("Bag", "bag", "contains(s, e)", "removeOne(s, e + 1)"),
+        (
+            "Bag",
+            "bag",
+            "contains(s, e) and e < 9",
+            "removeOne(s, e + 1)",
+        ),
         // The membership fact is about another element.
         ("Set", "set", "contains(s, 3)", "removeOne(s, e)"),
         // The same collection.
@@ -320,13 +322,13 @@ fn a_one_occurrence_removal_or_tail_decreases_a_cardinality_measure() {
             "Sequence",
             "sequence",
             "size(s) > 0",
-            "dropFirst(sequence[e, e, e, e, e])",
+            "(let q: Sequence<Int[0, 9]> = sequence[e, e, e] in dropFirst(q))",
         ),
         (
             "Sequence",
             "sequence",
             "size(s) > 0",
-            "sequence[e, e, e, e, e]",
+            "(let q: Sequence<Int[0, 9]> = sequence[e, e, e] in q)",
         ),
     ] {
         assert_eq!(

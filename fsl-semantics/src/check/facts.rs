@@ -35,7 +35,7 @@ use super::refusal::{
 };
 use crate::model::clause_observation::Observation;
 use filament_exact::{ArithmeticOperator, OrderingOperator};
-use filament_exact::{CollectionType, MapType, QuantityCarrier, Value, ValueType};
+use filament_exact::{CollectionKind, CollectionType, MapType, QuantityCarrier, Value, ValueType};
 use filament_exact::{
     DecimalType, Integer, IntegerInterval, NonZeroInteger, Rational, RationalDomain,
 };
