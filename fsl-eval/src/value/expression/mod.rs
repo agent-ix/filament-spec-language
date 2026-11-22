@@ -751,7 +751,13 @@ pub fn evaluate_operation_contract(
         meter,
         package.graph().dispatch_tables(),
     )
-    .run(clause.body(), clause.slots(), bindings)
+    .run(
+        clause
+            .body()
+            .ok_or_else(|| InternalFault::new("FR-702", "operation-contract-has-checked-body"))?,
+        clause.slots(),
+        bindings,
+    )
 }
 
 /// [`evaluate_state_predicate`] for an `on each` activation's `when` guard,
