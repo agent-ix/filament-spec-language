@@ -1081,22 +1081,17 @@ fn bounded_step_intervals_settle_from_bytes_as_from_source() {
 /// FR-940 "Package forms of the source-checked evaluators" (QSL-2406,
 /// QSL-2432): a request whose item names a family the package route has
 /// no form of yet is refused whole, typed and naming the family, never
-/// settled from source or `unsupported`: a clause with a fairness set (naming
-/// the fact and its node) and the default items. A model alias settles its
-/// own item `model-alias` instead (FR-850-AC-9).
+/// settled from source or `unsupported`: a claimless simulation item after
+/// a supported clause. A model alias settles its own item `model-alias`
+/// instead (FR-850-AC-9).
 #[trace("TC-2958", "FR-940-AC-6")]
 #[test]
 fn a_pending_package_family_refuses_typed_naming_it() {
-    let fair = clause(
-        "Fair",
-        "fair weak M::Counter::inc;",
-        "eventually holds(c.value = 3)",
-    );
-    let unit = crate::counter::unit_text(&format!("{}{fair}", bounded()));
+    let unit = crate::counter::unit_text(&bounded());
     {
         let (items, expected) = (
-            json!([{"claim": "Bounded"}, {"claim": "Fair"}]),
-            "items[1] names a temporal clause whose fairness has no package form yet at",
+            json!([{"claim": "Bounded"}, {"kind": "simulation"}]),
+            "items[1] names the simulation family, which has no package form yet",
         );
         let (_, package) = both_routes(
             "package-route-pending",
@@ -1105,6 +1100,8 @@ fn a_pending_package_family_refuses_typed_naming_it() {
             &items,
         );
         let diagnostic = first_diagnostic(&package);
+        assert_eq!(package.exit, 21, "{}", package.document());
+        assert_eq!(diagnostic["code"], "unsupported_construct", "{diagnostic}");
         assert_eq!(diagnostic["cause"], "not-yet-implemented", "{diagnostic}");
         assert!(
             diagnostic["message"]

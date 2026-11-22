@@ -178,7 +178,8 @@ impl Forms<'_> {
                 IeeeWidth::Binary32 => "float32",
                 IeeeWidth::Binary64 => "float64",
             },
-            ValueType::Text(_) | ValueType::String => "text",
+            ValueType::Text(_) => "text",
+            ValueType::String => "string",
             ValueType::Bytes => "bytes",
             ValueType::JsonObject => "json_object",
             ValueType::Uuid => "uuid",
@@ -254,9 +255,15 @@ impl Forms<'_> {
                 Ok(json!({"kind": kind, "text": object["value"]}))
             }
             ValueType::Bytes | ValueType::JsonObject => {
-                closed(object, &["type", "text"], path)?;
-                string_member(object, "text", path)?;
-                Ok(native_form(object, wanted))
+                closed(object, &["type", "value"], path)?;
+                let text = string_member(object, "value", path)?;
+                if matches!(declared, ValueType::JsonObject)
+                    && !JsonObject::from_json_text(text)
+                        .is_ok_and(|value| value.canonical_text() == text)
+                {
+                    return Err(defect(Code::InvalidRuntimeInput, "invalid-value", path));
+                }
+                Ok(json!({"kind": wanted, "text": object["value"]}))
             }
             ValueType::Timestamp => {
                 closed(object, &["type", "nanoseconds"], path)?;

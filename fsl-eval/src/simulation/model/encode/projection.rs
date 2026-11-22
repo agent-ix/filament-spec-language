@@ -1072,14 +1072,14 @@ pub(super) fn project_value<'a, S: ValueSink>(
                 sink.scalar(Scalar::Text(value.retained()))
             }),
             Value::Bytes(value) => tagged(sink, "bytes", |sink| {
-                sink.name("text")?;
+                sink.name("value")?;
                 sink.scalar(Scalar::Bytes(value))
             }),
             Value::JsonObject(value) => tagged(sink, "json_object", |sink| {
-                sink.name("text")?;
+                sink.name("value")?;
                 sink.scalar(Scalar::Text(value.canonical_text()))
             }),
-            Value::String(value) => tagged(sink, "text", |sink| {
+            Value::String(value) => tagged(sink, "string", |sink| {
                 sink.name("value")?;
                 sink.scalar(Scalar::Text(value.as_str()))
             }),
@@ -1290,14 +1290,21 @@ mod tests {
         }
     }
 
-    #[trace("FR-106-AC-61")]
+    #[trace("FR-106-AC-61", "FSpec-FR-181-AC-22", "FSpec-FR-181-AC-26")]
     #[test]
     fn native_bytes_and_json_use_their_admitted_run_forms() {
+        let string = Value::String("ready".to_owned());
+        let string = retained(|sink| project_value(sink, &string, Typing::none(), None, false));
+        assert_eq!(
+            string,
+            Enc::tagged("string", vec![("value", Enc::text("ready"))])
+        );
+
         let bytes = Value::Bytes(vec![0, 255]);
         let bytes = retained(|sink| project_value(sink, &bytes, Typing::none(), None, false));
         assert_eq!(
             bytes,
-            Enc::tagged("bytes", vec![("text", Enc::text("00ff"))])
+            Enc::tagged("bytes", vec![("value", Enc::text("00ff"))])
         );
 
         let json = Value::JsonObject(
@@ -1308,7 +1315,7 @@ mod tests {
             json,
             Enc::tagged(
                 "json_object",
-                vec![("text", Enc::text("{\"a\":1,\"b\":2}"))]
+                vec![("value", Enc::text("{\"a\":1,\"b\":2}"))]
             )
         );
     }

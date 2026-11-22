@@ -893,10 +893,10 @@ impl<'c, 'm, 'r> ReferenceCodec<'c, 'm, 'r> {
         }
         let fields: &[&str] = match kind {
             "null" => &["type"],
-            "boolean" | "integer" | "text" | "option" | "uuid" => &["type", "value"],
+            "boolean" | "integer" | "text" | "string" | "option" | "uuid" | "bytes"
+            | "json_object" => &["type", "value"],
             "timestamp" => &["type", "nanoseconds"],
             "float32" | "float64" => &["type", "bits"],
-            "bytes" | "json_object" => &["type", "text"],
             "set" | "bag" | "sequence" | "ordered-set" => &["type", "elements"],
             "map" => &["type", "entries"],
             "record" => &["type", "name", "fields"],
