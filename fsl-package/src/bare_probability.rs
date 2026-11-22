@@ -54,7 +54,7 @@ impl BarePackage<'_> {
     }
 
     /// Read one exact, untimed `eventually` claim with an origin activation
-    /// and a declared workload. Unsupported probability forms remain typed
+    /// and an admitted scheduler. Unsupported probability forms remain typed
     /// pending selections; this never reconstructs a source checked body.
     ///
     /// # Errors
@@ -93,8 +93,18 @@ impl BarePackage<'_> {
                 return Err(pending("missing-claim-profile"));
             }
         };
-        let ProbabilisticScheduler::Workload(workload) = &read.scheduler else {
-            return Err(pending("probabilistic-exact-eventual-form"));
+        let scheduler = match &read.scheduler {
+            ProbabilisticScheduler::Workload(workload) => {
+                let workload = self.node_key(workload).ok_or_else(malformed)?;
+                let workload = self.node_by_key(&workload)?
+                    .and_then(|node| group_member(&node.body, "name"))
+                    .and_then(text).ok_or_else(malformed)?.to_owned();
+                fsl_semantics::check::ProbScheduler::Workload(workload)
+            }
+            ProbabilisticScheduler::Every if read.fairness.is_empty() => {
+                fsl_semantics::check::ProbScheduler::Every
+            }
+            ProbabilisticScheduler::Every => return Err(pending("probabilistic-exact-eventual-form")),
         };
         if !matches!(read.activation, ProbabilisticActivation::Origin)
             || !read.rewards.is_empty()
@@ -110,13 +120,6 @@ impl BarePackage<'_> {
         let definition = TemporalProfile::InfiniteTrace.definition();
         let profile = DefinitionRef::new(definition.authority, definition.identity)
             .map_err(|_| malformed())?;
-        let workload = self.node_key(workload).ok_or_else(malformed)?;
-        let workload = self
-            .node_by_key(&workload)?
-            .and_then(|node| group_member(&node.body, "name"))
-            .and_then(text)
-            .ok_or_else(malformed)?
-            .to_owned();
         let subject = self.node_key(&read.subject).ok_or_else(malformed)?;
         let subject = self
             .model_selections()
@@ -178,7 +181,7 @@ impl BarePackage<'_> {
                 package: subject,
             },
             profile,
-            workload,
+            scheduler,
             over,
             over_node: read
                 .over

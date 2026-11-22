@@ -550,8 +550,8 @@ pub struct PackageProbabilityClaimForm {
     pub subject: ModelSubjectRef,
     /// The selected infinite-trace temporal profile.
     pub profile: DefinitionRef,
-    /// The declared workload.
-    pub workload: String,
+    /// The selected scheduler.
+    pub scheduler: ProbScheduler,
     /// The over binder and its admitted effective object type.
     pub over: Option<(String, EffectiveId)>,
     /// The admitted parameter node that declares the over binder.
@@ -576,7 +576,7 @@ impl CheckedProbabilisticClaim {
             declaration_index,
             subject,
             profile,
-            workload,
+            scheduler,
             over,
             over_node,
             predicate,
@@ -597,7 +597,7 @@ impl CheckedProbabilisticClaim {
             span,
             subject,
             profile,
-            scheduler: ProbScheduler::Workload(workload),
+            scheduler,
             fairness: Vec::new(),
             fairness_declaring: Vec::new(),
             activation: ClaimActivation::Origin,
