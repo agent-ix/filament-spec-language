@@ -3,7 +3,7 @@ id: SR-967175026302197768900474181941935084700
 title: "Code and Rust review of QSL-2812 stage and outcome test corrections"
 type: SpecReview
 analysis: code-review
-scope: "agent-ix/filament-spec-language; QSL-2812; PR 3467; tests/it/call_requirements_items.rs, compile_command.rs, diagnostic_golden.rs, native_boundaries.rs, observation_model_header.rs, parse_operation.rs, plan_export_surface.rs, refinement_remaining_source_routes.rs, value_invariants_run.rs"
+scope: "agent-ix/filament-spec-language; QSL-2812; PR 3467; tests/it/call_requirements_items.rs, compile_command.rs, diagnostic_golden.rs, native_boundaries.rs, observation_model_header.rs, parse_operation.rs, plan_export_surface.rs, refinement_remaining_source_routes.rs, value_invariants_run.rs; fix disposition: fsl-command/src/command/items.rs and clause.rs, tests/it/run_items.rs, tests/support/mod.rs"
 review_set: subset
 ---
 
@@ -166,3 +166,28 @@ Quoin 0.36.8 and Quire 0.52.0 (engine 0.62.2) supplied the installed SpecReview 
 | ID | Severity | Summary | Refs |
 | --- | --- | --- | --- |
 | FND-001 | low | No findings (placeholder) | - |
+
+## Disposition pass 1 — scoped fix commit
+
+This section records the later production fix, separately from the original test-only review above. The inspected delta is the one fix round from 24a0382a4d to 9f4272343398320cb921822f55ae9503314fb54c. The original Findings table is unchanged; it contained no real findings to disposition.
+
+**PASS for the scoped fix disposition.** No new source/Rust defect was found in the fix delta. Arch reports that all eight tests owned by this change now pass on titan at the frozen fix head. The ninth requested test, run_items::function_selection_admits_an_identity_reference, failed in the canonical-value reader/test area owned by QSL-2810 and PR 3470; arch explicitly excluded that reader/test from this PR. Neither was changed or bypassed here. The final workspace gate and merge remain arch-owned.
+
+### Additional scope examined
+
+- fsl-command/src/command/clause.rs: ObservationInputs, read_observation_inputs and the delegation from read_with_source.
+- fsl-command/src/command/items.rs: actual value-invariant preparation, shared source/program compilation and batch dispatch, including format/key checks, bounded intake, accounting/observation overrides and preservation of raw observation roles and identities.
+- tests/it/compile_command.rs: the S4 workload refusal, exit 21 and exact declaration-span assertion; tests/support/mod.rs and diagnostic_golden.rs share the one existing model builder.
+- tests/it/run_items.rs: the new current/pre/post/invocation function-reader control; tests/it/value_invariants_run.rs: the retained invocation-parameter violation plus explicit pre-snapshot item stage/cause.
+- FR-652 Behavior requires a pre/post snapshot of the correct document format to reach FR-106, then refuse wrong_snapshot/wrong-observation at admit; FR-652-AC-3 requires the invocation-parameter violation and one item for the pre-snapshot refusal without invariant/path. FR-106-AC-48 owns the actual no-clause admission. FR-312/FR-109 retain the function selection's current-snapshot rule.
+
+### Fix evidence
+
+- The emit-stage fixture now selects the actual unrelated-type model and mixed-owner workload already used by the declaration-locus test. It reaches the genuine emitter refusal instead of relying on a type declaration the emitter now supports. Exact S4, unsupported_construct, exit 21, empty stdout and whole workload-region checks remain.
+- Value-invariant items no longer synthesize a function selection. Their actual ValueInvariantsBatchRequest uses the shared model/library/observation reader and existing bounded Intake, preserving caller source identity, path, bytes, document references and roles. FR-106's admit_value_invariant_selection remains the admission authority.
+- The shared clause reader's existing model, dependency, observation and override semantics are retained. The function-reader role check in fsl-replay/src/spine/request.rs is byte-unchanged across the fix delta. No dummy function name, role mutation, fabricated current snapshot or compatibility bypass is used.
+- Source inspection checked missing observation keys, snapshot/invocation format separation, request/override observation-limit conflict, original accounting override behavior, file-count/dependent-byte admission and batch compilation identity. No new panic path, incomplete adapter, meaningful unowned behavior or test stub was found in the changed surface.
+- Arch-reported passing exact tests: compile_command::each_spine_stage_refusal_reports_its_stage_and_code; value_invariants_run::value_invariants_selection_checks_invocation_parameters; diagnostic_golden::random_parameter_refusal_has_its_recorded_declaration_locus; run_items::function_selection_requires_a_current_snapshot; run_items::mixed_call_and_value_invariants_share_one_items_request; run_items::malformed_context_and_value_invariant_selections_refuse; run_items::value_invariants_selection_is_an_items_selection; value_invariants_run::a_false_type_invariant_is_a_violation_through_run.
+- This reviewer ran no builds or tests. git diff --check over the fix delta passed. Newly applicable gap-analysis is recorded separately as SR-967175026302197768900474181941935084710, including the evidence-backed matrix refusal and documented static fallback.
+
+The later metadata-only commit 4fd8d974ae99f3060cc2532d298c6401014226c6 changes only the new control's trace attribute to the minted FR-312-AC-4 criterion. The test body and all production source are byte-unchanged from the eight-green behavioral head. Gap FND-001 is now explicitly fixed in its own artifact; no code-review finding or extra source fix round was introduced.
