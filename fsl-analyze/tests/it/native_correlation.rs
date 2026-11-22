@@ -8,7 +8,7 @@ use fsl_eval::model_subject::ProtocolSubject;
 use fsl_eval::simulation::model::{ModelSystem, PackageModelInput};
 use fsl_eval::simulation::protocol::{
     MemorySelection, PackageProgramRefusal, PackageProtocolProgram, ProtocolSystem,
-    ProtocolTransition, ResolvedMemory, Sc, StepKind,
+    ProtocolTransition, Ra, ResolvedMemory, Sc, StepKind, Tso,
 };
 use fsl_eval::simulation::{SubjectSystem, TransitionSystem};
 use fsl_foundation::MemoryModelName;
@@ -636,6 +636,103 @@ fn correlated_recommend_remains_named_unsupported() {
             Err(PackageProgramRefusal::Correlation { .. })
         ));
     });
+}
+
+fn weak_correlation_parity<M: fill::Explored + Default>(memory: &str, inside: bool) {
+    let correlated = controls("related by Owns (k, k)", "related by Owns (k, k)");
+    let branch = if inside {
+        correlated.as_str()
+    } else {
+        "check OK using v { true };"
+    };
+    let prefix = if inside { "" } else { correlated.as_str() };
+    let run = format!(
+        "{prefix} parallel Background memory {memory} {{
+            branch idle sequence Idle {{ {branch} }}
+            branch other sequence Other {{ check AlsoOK using v {{ true }}; }}
+        }} join all [idle, other];"
+    );
+    let fixture = Fixture::new("", &run, true);
+    fixture.with_routes(true, |source, native| {
+        let workers = std::num::NonZeroUsize::new(1).expect("one worker");
+        let source = ProtocolSystem::new(
+            ModelSystem::new(source.model.simulation.clone()).expect("source model"),
+            source,
+            M::default(),
+        )
+        .expect("source weak correlation");
+        let source = fill::reachable_with_workers(&source, workers).0;
+        for kind in [StepKind::Send, StepKind::Receive] {
+            assert!(
+                source
+                    .iter()
+                    .flat_map(|state| &state.steps)
+                    .any(|(step, _)| step.kind() == kind),
+                "Source enables {kind:?} with a real relationship extent under {memory}"
+            );
+        }
+        let native = ProtocolSystem::new_package(
+            ModelSystem::new(native.model.simulation.clone()).expect("native model"),
+            native,
+            M::default(),
+        )
+        .expect("package must execute the same weak correlation as Source");
+        let native = fill::reachable_with_workers(&native, workers).0;
+        let canonical = |graph: &[Reached<M>]| {
+            let mut rows: Vec<_> = graph
+                .iter()
+                .map(|state| {
+                    let mut steps: Vec<_> = state
+                        .steps
+                        .iter()
+                        .map(|(step, next)| {
+                            (
+                                quire_canonical::to_vec(
+                                    step,
+                                    quire_canonical::Limits::new(u64::MAX),
+                                )
+                                .expect("step"),
+                                graph[*next].key.as_bytes().to_vec(),
+                            )
+                        })
+                        .collect();
+                    steps.sort();
+                    (state.key.as_bytes().to_vec(), steps)
+                })
+                .collect();
+            rows.sort();
+            rows
+        };
+        assert_eq!(
+            canonical(&native),
+            canonical(&source),
+            "all model, memory, queue, binder and transition values agree"
+        );
+    });
+}
+
+#[trace("FR-731-AC-1", "FR-940-AC-6", "FR-219-AC-2")]
+#[test]
+fn tso_correlation_outside_parallel_matches_source() {
+    weak_correlation_parity::<Tso>("tso", false);
+}
+
+#[trace("FR-731-AC-1", "FR-940-AC-6", "FR-219-AC-2")]
+#[test]
+fn ra_correlation_outside_parallel_matches_source() {
+    weak_correlation_parity::<Ra>("ra", false);
+}
+
+#[trace("FR-731-AC-1", "FR-940-AC-6", "FR-219-AC-2")]
+#[test]
+fn tso_correlation_inside_parallel_matches_source() {
+    weak_correlation_parity::<Tso>("tso", true);
+}
+
+#[trace("FR-731-AC-1", "FR-940-AC-6", "FR-219-AC-2")]
+#[test]
+fn ra_correlation_inside_parallel_matches_source() {
+    weak_correlation_parity::<Ra>("ra", true);
 }
 
 #[trace("FR-940-AC-6", "FR-731-AC-1")]
