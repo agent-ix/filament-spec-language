@@ -205,6 +205,16 @@ fn child() -> Value {
     json!({"population": population(), "key": "child"})
 }
 
+fn canonical_child() -> Value {
+    let declaration = json!({
+        "package": spine::PACKAGE_IDENTITY,
+        "path": ["model", "object_type", format!("ix://{}/ConfigVersion", spine::PACKAGE_IDENTITY)],
+        "ordinal": 0
+    });
+    json!({"type": "reference", "universe": declaration.clone(),
+        "object_type": declaration, "identity": "6368696c64"})
+}
+
 /// A native-run/1 request over the spine files carrying `body` as its
 /// selection member (`call`, `clause` or `items`).
 fn request(directory: &Path, member: &str, body: Value) -> Output {
@@ -749,7 +759,7 @@ fn reference_argument_without_a_snapshot_refuses() {
     extend_unit(directory.path(), SAME);
     let call = |snapshot: Option<&str>| {
         let mut call = json!({"function": "same", "arguments": [
-            {"parameter": "r", "value": {"reference": child()}}]});
+            {"parameter": "r", "value": canonical_child()}]});
         if let Some(snapshot) = snapshot {
             call["snapshot"] = json!(snapshot);
         }
@@ -758,7 +768,7 @@ fn reference_argument_without_a_snapshot_refuses() {
     let output = request(directory.path(), "call", call(Some("spine-snapshot.json")));
     assert_eq!(output.status.code(), Some(0), "{output:?}");
     let document: Value = serde_json::from_slice(&output.stdout).unwrap();
-    assert!(document["outcome"]["value"]["reference"]["object_identity"].is_string());
+    assert!(document["outcome"]["value"]["identity"].is_string());
     let output = request(directory.path(), "call", call(None));
     assert_eq!(output.status.code(), Some(20), "{output:?}");
     let failure: Value = serde_json::from_slice(&output.stderr).unwrap();
@@ -808,13 +818,16 @@ fn reference_result_passes_back_as_an_argument() {
     let directory = tempfile::tempdir().unwrap();
     write_cases(directory.path());
     extend_unit(directory.path(), SAME);
-    let first = same_of(directory.path(), json!({"reference": child()}));
-    let triple = &first["reference"];
+    let first = same_of(directory.path(), canonical_child());
+    let triple = &first;
     assert!(triple["universe"]["package"].is_string(), "{first}");
     assert!(triple["universe"]["path"].is_array(), "{first}");
     assert!(triple["universe"]["ordinal"].is_u64(), "{first}");
-    assert!(triple["type"]["original"]["node"].is_string(), "{first}");
-    assert!(triple["object_identity"].is_string(), "{first}");
+    assert!(triple["object_type"]["package"].is_string(), "{first}");
+    assert!(triple["object_type"]["path"].is_array(), "{first}");
+    assert!(triple["object_type"]["ordinal"].is_u64(), "{first}");
+    assert!(triple["identity"].is_string(), "{first}");
+    assert_eq!(triple["identity"], "6368696c64");
     assert_eq!(same_of(directory.path(), first.clone()), first);
 }
 
@@ -825,14 +838,14 @@ fn function_selection_admits_an_identity_reference() {
     let directory = tempfile::tempdir().unwrap();
     write_cases(directory.path());
     extend_unit(directory.path(), SAME);
-    let identity = same_of(directory.path(), json!({"reference": child()}));
+    let identity = same_of(directory.path(), canonical_child());
     let output = request(
         directory.path(),
         "clause",
         json!({"observations": observations(), "selection": {"function": {
             "name": "sameIdentity", "snapshot": "current", "arguments": [
                 {"parameter": "a", "value": identity},
-                {"parameter": "b", "value": {"reference": child()}}]}}}),
+                {"parameter": "b", "value": canonical_child()}]}}}),
     );
     assert_eq!(output.status.code(), Some(0), "{output:?}");
     let document: Value = serde_json::from_slice(&output.stdout).unwrap();
@@ -1095,7 +1108,7 @@ fn call_item_settles_requirements_from_its_shared_compilation() {
         "items",
         json!({"observations": observations(), "selections": [
             {"call": {"function": "sq", "arguments": [
-                {"parameter": "x", "value": 3}
+                {"parameter": "x", "value": {"type": "integer", "value": "3"}}
             ], "requirements": {}}}
         ]}),
     );

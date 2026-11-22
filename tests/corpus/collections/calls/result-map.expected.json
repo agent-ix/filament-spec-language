@@ -1,1 +1,1 @@
-{"verb":"run","exit_code":0,"category":"success","last_stage":"S6a","result":{"map":[{"key":{"integer":"1"},"value":{"boolean":true}},{"key":{"integer":"2"},"value":{"boolean":false}}]}}
+{"verb":"run","exit_code":0,"category":"success","last_stage":"S6a","result":{"type":"map","entries":[{"key":{"type":"integer","value":"1"},"value":{"type":"boolean","value":true}},{"key":{"type":"integer","value":"2"},"value":{"type":"boolean","value":false}}]}}

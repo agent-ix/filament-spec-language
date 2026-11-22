@@ -403,7 +403,7 @@ fn an_equality_function_runs_over_a_file_with_its_equality_file() {
     let unit = "language \"ix:native\" edition \"1-draft\";\n\
                 profile v = \"filament.value.complete/v1\";\n\
                 function Even using v(n: Integer): Boolean pure { n * 2 - n = n }\n";
-    let call = json!({"function": "Even", "arguments": [{"parameter": "n", "value": 4}]});
+    let call = json!({"function": "Even", "arguments": [{"parameter": "n", "value": {"type": "integer", "value": "4"}}]});
     let with_source = tempfile::tempdir().unwrap();
     std::fs::write(with_source.path().join("unit.native"), unit).unwrap();
     let (source_exit, from_source) = run(

@@ -150,7 +150,7 @@ fn assert_ieee_boolean(body: &str, expected: bool) {
     let document: Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(
         document["outcome"],
-        json!({"kind": "completed", "value": {"boolean": expected}}),
+        json!({"kind": "completed", "value": {"type": "boolean", "value": expected}}),
         "{body}: {document}"
     );
 }
@@ -223,12 +223,12 @@ fn matching_map_key_guards_evaluate_present_and_absent_keys() {
         );
         for (entries, expected) in [
             (
-                json!([{ "key": {"integer":"1"}, "value": {"integer":"8"}}]),
+                json!([{ "key": {"type":"integer","value":"1"}, "value": {"type":"integer","value":"8"}}]),
                 "8",
             ),
             (json!([]), "-1"),
             (
-                json!([{ "key": {"integer":"2"}, "value": {"integer":"9"}}]),
+                json!([{ "key": {"type":"integer","value":"2"}, "value": {"type":"integer","value":"9"}}]),
                 "-1",
             ),
         ] {
@@ -239,8 +239,8 @@ fn matching_map_key_guards_evaluate_present_and_absent_keys() {
                 call(
                     "f",
                     json!([
-                        {"parameter":"m", "value":{"map":entries}},
-                        {"parameter":"k", "value":{"integer":"1"}}
+                        {"parameter":"m", "value":{"type":"map","entries":entries}},
+                        {"parameter":"k", "value":{"type":"integer","value":"1"}}
                     ]),
                 ),
             );
@@ -249,7 +249,7 @@ fn matching_map_key_guards_evaluate_present_and_absent_keys() {
             let value: Value = serde_json::from_slice(&output.stdout).unwrap();
             assert_eq!(
                 value["outcome"],
-                json!({"kind":"completed", "value":{"integer":expected}}),
+                json!({"kind":"completed", "value":{"type":"integer","value":expected}}),
                 "{body}: {value}"
             );
         }
@@ -388,7 +388,7 @@ fn tc_450_step_1_seven_completes_through_the_spine() {
     assert_eq!(document["function"], "seven");
     assert_eq!(
         document["outcome"],
-        json!({"kind": "completed", "value": {"integer": "7"}})
+        json!({"kind": "completed", "value": {"type": "integer", "value": "7"}})
     );
     // FND-008: the whole document, not only its members individually --
     // catches a stray extra member the per-field assertions above would
@@ -403,7 +403,7 @@ fn tc_450_step_1_seven_completes_through_the_spine() {
                 "path": "program.native",
             },
             "function": "seven",
-            "outcome": {"kind": "completed", "value": {"integer": "7"}},
+            "outcome": {"kind": "completed", "value": {"type": "integer", "value": "7"}},
         })
     );
 }
@@ -603,7 +603,7 @@ fn tc_451_step_1_arguments_bind_by_declared_name() {
         &program,
         call(
             "lt",
-            json!([{"parameter":"b","value":3}, {"parameter":"a","value":5}]),
+            json!([{"parameter":"b","value":{"type":"integer","value":"3"}}, {"parameter":"a","value":{"type":"integer","value":"5"}}]),
         ),
     );
     let output = run(directory.path());
@@ -616,7 +616,7 @@ fn tc_451_step_1_arguments_bind_by_declared_name() {
     let document: Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(
         document["outcome"],
-        json!({"kind": "completed", "value": {"boolean": false}})
+        json!({"kind": "completed", "value": {"type": "boolean", "value": false}})
     );
 
     // FND-008: CLI-level coverage for `flag` and `id`, not only `lt`.
@@ -624,28 +624,28 @@ fn tc_451_step_1_arguments_bind_by_declared_name() {
     spine_run_request(
         directory.path(),
         &program,
-        call("flag", json!([{"parameter": "b", "value": 1}])),
+        call("flag", json!([{"parameter": "b", "value": {"type": "boolean", "value": true}}])),
     );
     let output = run(directory.path());
     assert_eq!(output.status.code(), Some(0));
     let document: Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(
         document["outcome"],
-        json!({"kind": "completed", "value": {"boolean": true}})
+        json!({"kind": "completed", "value": {"type": "boolean", "value": true}})
     );
 
     let directory = tempfile::tempdir().unwrap();
     spine_run_request(
         directory.path(),
         &program,
-        call("id", json!([{"parameter": "x", "value": 4}])),
+        call("id", json!([{"parameter": "x", "value": {"type": "integer", "value": "4"}}])),
     );
     let output = run(directory.path());
     assert_eq!(output.status.code(), Some(0));
     let document: Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(
         document["outcome"],
-        json!({"kind": "completed", "value": {"integer": "4"}})
+        json!({"kind": "completed", "value": {"type": "integer", "value": "4"}})
     );
 }
 
@@ -657,9 +657,9 @@ fn tc_451_step_1_arguments_bind_by_declared_name() {
 fn tc_451_step_2_wrong_value_kind_refuses_at_call() {
     let program = std::fs::read(RUN_FIXTURE).unwrap();
     for (function, arguments) in [
-        ("flag", json!([{"parameter": "b", "value": 2}])),
-        ("id", json!([{"parameter": "x", "value": 12}])),
-        ("px", json!([{"parameter": "p", "value": 1}])),
+        ("flag", json!([{"parameter": "b", "value": {"type": "integer", "value": "2"}}])),
+        ("id", json!([{"parameter": "x", "value": {"type": "integer", "value": "12"}}])),
+        ("px", json!([{"parameter": "p", "value": {"type": "integer", "value": "1"}}])),
     ] {
         let directory = tempfile::tempdir().unwrap();
         spine_run_request(directory.path(), &program, call(function, arguments));
@@ -684,9 +684,9 @@ fn tc_451_step_2_wrong_value_kind_refuses_at_call() {
 fn tc_451_step_3_argument_binding_names_the_parameter() {
     let program = std::fs::read(RUN_FIXTURE).unwrap();
     for (arguments, parameter) in [
-        (json!([{"parameter": "y", "value": 4}]), "y"),
+        (json!([{"parameter": "y", "value": {"type": "integer", "value": "4"}}]), "y"),
         (
-            json!([{"parameter": "x", "value": 1}, {"parameter": "x", "value": 2}]),
+            json!([{"parameter": "x", "value": {"type": "integer", "value": "1"}}, {"parameter": "x", "value": {"type": "integer", "value": "2"}}]),
             "x",
         ),
         (json!([]), "x"),
@@ -731,7 +731,7 @@ fn tc_451_step_6_compile_refusals_carry_their_own_stage() {
         spine_run_request(
             directory.path(),
             &program,
-            call(function, json!([{"parameter": "x", "value": 1}])),
+            call(function, json!([{"parameter": "x", "value": {"type": "integer", "value": "1"}}])),
         );
         let output = run(directory.path());
         assert_eq!(
@@ -766,8 +766,9 @@ fn tc_451_step_5_function_shape_and_lookup_refusals() {
         assert_eq!(failure["details"]["function"], name, "{name}: {failure}");
     }
     let directory = tempfile::tempdir().unwrap();
-    let record = json!({"record": {"type": "Point", "fields": {
-        "x": {"integer": "3"}, "y": {"integer": "4"}}}});
+    let record = json!({"type": "record", "name": r#"{"node":"Point","package":"test:spine-run"}"#, "fields": [
+        {"name": "x", "value": {"type": "integer", "value": "3"}},
+        {"name": "y", "value": {"type": "integer", "value": "4"}}]});
     spine_run_request(
         directory.path(),
         &program,
@@ -910,7 +911,7 @@ fn native_run_integer_bits_limit_reaches_evaluation() {
     let literal_document: Value = serde_json::from_slice(&literal_output.stdout).unwrap();
     assert_eq!(
         literal_document["outcome"],
-        json!({"kind": "completed", "value": {"integer": "7"}})
+        json!({"kind": "completed", "value": {"type": "integer", "value": "7"}})
     );
 
     let program = fixture.replace(
@@ -1067,7 +1068,7 @@ fn tc_450_step_6_libraries_and_models_both_present_runs() {
     let document: Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(
         document["outcome"],
-        json!({"kind": "completed", "value": {"integer": "7"}})
+        json!({"kind": "completed", "value": {"type": "integer", "value": "7"}})
     );
 }
 
@@ -1100,7 +1101,7 @@ fn tc_786_run_exit_statuses_come_from_the_exit_function() {
             Value::Array(
                 arguments
                     .iter()
-                    .map(|argument| json!({"parameter": argument.parameter, "value": value}))
+                    .map(|argument| json!({"parameter": argument.parameter, "value": {"type": "integer", "value": value.to_string()}}))
                     .collect(),
             ),
         );
@@ -1212,7 +1213,7 @@ fn child_result_is_read_under_single_threaded_libtest() {
     spine_run_request(directory.path(), &program, call("seven", json!([])));
     let single = run_child(directory.path(), "request.json", Some("1"));
     assert!(single.starts_with("child-result 0 "), "{single}");
-    assert!(single.contains("\"integer\":\"7\""), "{single}");
+    assert!(single.contains("\"type\":\"integer\",\"value\":\"7\""), "{single}");
     assert_eq!(run_child(directory.path(), "request.json", None), single);
 }
 
@@ -1250,7 +1251,7 @@ fn run_outcome_is_independent_of_working_directory() {
             from_request_directory.starts_with("child-result 0 "),
             "{from_request_directory}"
         );
-        assert!(from_request_directory.contains("\"integer\":\"7\""));
+        assert!(from_request_directory.contains("\"type\":\"integer\",\"value\":\"7\""));
         assert_eq!(
             run_from(root.path(), &format!("req/{name}")),
             from_request_directory
@@ -1276,7 +1277,7 @@ const RECURSION: &str = "language \"ix:native\" edition \"1-draft\";\n\
 /// stdout and stderr as JSON (`Value::Null` when empty).
 fn run_recursion(n: i64, members: Value) -> (Option<i32>, Value, Value) {
     let directory = tempfile::tempdir().unwrap();
-    let mut request = call("d", json!([{"parameter": "n", "value": n}]));
+    let mut request = call("d", json!([{"parameter": "n", "value": {"type": "integer", "value": n.to_string()}}]));
     for (member, value) in members.as_object().expect("an object") {
         request[member] = value.clone();
     }
@@ -1312,7 +1313,7 @@ fn native_run_live_occurrence_limit_stops_deep_recursion() {
     assert_eq!(code, Some(0), "{stderr}");
     assert_eq!(
         document["outcome"],
-        json!({"kind": "completed", "value": {"integer": ZERO}})
+        json!({"kind": "completed", "value": {"type": "integer", "value": ZERO}})
     );
 }
 
@@ -1325,7 +1326,7 @@ fn native_run_live_occurrence_limit_defaults_and_refusals() {
     assert_eq!(code, Some(0), "{stderr}");
     assert_eq!(
         document["outcome"],
-        json!({"kind": "completed", "value": {"integer": ZERO}})
+        json!({"kind": "completed", "value": {"type": "integer", "value": ZERO}})
     );
     let (code, document, _) = run_recursion(1000, json!({"evaluation": {"live_occurrences": 0}}));
     assert_eq!(code, Some(22));
@@ -1372,11 +1373,11 @@ fn native_run_live_occurrence_limit_default_and_zero_are_accepted() {
     assert_eq!(code, Some(0), "{stderr}");
     assert_eq!(
         document["outcome"],
-        json!({"kind": "completed", "value": {"integer": ZERO}})
+        json!({"kind": "completed", "value": {"type": "integer", "value": ZERO}})
     );
 
     let directory = tempfile::tempdir().unwrap();
-    let mut selected = call("d", json!([{"parameter": "n", "value": 1}]));
+    let mut selected = call("d", json!([{"parameter": "n", "value": {"type": "integer", "value": "1"}}]));
     selected["evaluation"] = json!({"live_occurrences": 0});
     spine_run_request(directory.path(), RECURSION.as_bytes(), selected);
     let prepared = fsl_command::command::prepare_run(

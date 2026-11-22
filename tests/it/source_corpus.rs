@@ -1029,7 +1029,7 @@ fn two_path_guard_runtime() {
     let directory = tempfile::tempdir().unwrap();
     let source = include_bytes!("../corpus/collections/fact-guard-sum-2var.native");
     std::fs::write(directory.path().join("program.native"), source).unwrap();
-    for (x, y, expected) in [(4, 5, "9"), (6, 5, "0")] {
+    for (x, y, expected) in [(4_i64, 5_i64, "9"), (6_i64, 5_i64, "0")] {
         let request = json!({"format":"native-run/1", "request": {
             "models": [],
             "program": {"source": {
@@ -1038,8 +1038,8 @@ fn two_path_guard_runtime() {
                 "formal_revision": 1
             }},
             "call": {"function": "f", "arguments": [
-                {"parameter": "x", "value": x},
-                {"parameter": "y", "value": y}
+                {"parameter": "x", "value": {"type": "integer", "value": x.to_string()}},
+                {"parameter": "y", "value": {"type": "integer", "value": y.to_string()}}
             ]}
         }});
         let request_path = directory.path().join("request.json");
@@ -1049,7 +1049,7 @@ fn two_path_guard_runtime() {
         let value: Value = serde_json::from_slice(&output.stdout).unwrap();
         assert_eq!(
             value["outcome"],
-            json!({"kind": "completed", "value": {"integer": expected}}),
+            json!({"kind": "completed", "value": {"type": "integer", "value": expected}}),
             "x={x}, y={y}: {value}"
         );
     }

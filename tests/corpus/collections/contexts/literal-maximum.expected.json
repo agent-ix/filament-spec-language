@@ -1,1 +1,1 @@
-{"verb":"run","exit_code":0,"category":"success","last_stage":"S6a","result":{"sequence":[{"integer":"1"}]}}
+{"verb":"run","exit_code":0,"category":"success","last_stage":"S6a","result":{"type":"sequence","elements":[{"type":"integer","value":"1"}]}}
