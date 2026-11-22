@@ -92,7 +92,7 @@ fn an_mitl_claim_proves_certified_and_refutes_with_exact_delays() {
             (
                 delay["numerator"].as_str().unwrap_or("-").to_owned(),
                 delay["denominator"].as_str().unwrap_or("-").to_owned(),
-                step["transition"]["operation"]["node"]
+                step["transition"]["operation"]
                     .as_str()
                     .and_then(|node| node.rsplit('/').next())
                     .unwrap_or("-")
@@ -353,7 +353,7 @@ fn head(item: &Value) -> Vec<(String, String, String)> {
             (
                 delay["numerator"].as_str().unwrap_or("-").to_owned(),
                 delay["denominator"].as_str().unwrap_or("-").to_owned(),
-                step["transition"]["operation"]["node"]
+                step["transition"]["operation"]
                     .as_str()
                     .and_then(|node| node.rsplit('/').next())
                     .unwrap_or("-")

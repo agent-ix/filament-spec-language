@@ -2571,7 +2571,7 @@ fn native_outcome_collection_names_its_retained_value_limit() {
     let world = native_plan_world(
         "language \"ix:native\" edition \"1-draft\"; domain \"test/native-plan\"; type ValueRange = Int[0,1]; object Counter { number: ValueRange; operation choose(): Boolean modifies self.number; } population counters: Counter;",
         "", &[("c",json!({"number":{"integer":"0"}}))]);
-    for bound in [6, 21] {
+    let collect = |bound| {
         let system = world_system(&world);
         system.share_evaluation_meter(ScalarLimits {
             value_occurrences: bound,
@@ -2597,9 +2597,31 @@ fn native_outcome_collection_names_its_retained_value_limit() {
                 NativeCandidateControl::Continue
             },
         );
+        let consumed = system
+            .evaluation_meter()
+            .consumed(LimitKind::ValueOccurrences);
+        (visit, began, outcomes, consumed)
+    };
+    // Calibrate the real walk before exercising its exact boundary. This count
+    // includes source evaluation as well as the retained outcome collection.
+    let (visit, began, outcomes, complete_value_occurrences) = collect(UNLIMITED.value_occurrences);
+    assert_eq!(began, 1);
+    assert_eq!(
+        visit.expect("the unlimited walk completes"),
+        NativeCandidateVisit::Complete
+    );
+    let expected = [(Some(0), 0), (Some(1), 1), (Some(2), 0), (Some(3), 1)];
+    assert_eq!(outcomes, expected);
+    assert!(
+        complete_value_occurrences > 1,
+        "the four outcomes consume value occurrences"
+    );
+    eprintln!("native outcome collection value_occurrences = {complete_value_occurrences}");
+    for bound in [complete_value_occurrences - 1, complete_value_occurrences] {
+        let (visit, began, outcomes, consumed) = collect(bound);
         assert_eq!(began, 1);
-        if bound == 6 {
-            let stop = visit.expect_err("the second retained outcome exceeds the named size");
+        if bound < complete_value_occurrences {
+            let stop = visit.expect_err("one fewer value occurrence refuses the full collection");
             assert_eq!(stop.cause.code(), "resource_exhausted");
             assert_eq!(stop.cause.cause(), "insufficient-next-charge");
             assert_eq!(
@@ -2616,10 +2638,8 @@ fn native_outcome_collection_names_its_retained_value_limit() {
                 visit.expect("the exact total size admits all outcomes"),
                 NativeCandidateVisit::Complete
             );
-            assert_eq!(
-                outcomes,
-                [(Some(0), 0), (Some(1), 1), (Some(2), 0), (Some(3), 1)]
-            );
+            assert_eq!(outcomes, expected);
+            assert_eq!(consumed, bound, "the exact measured boundary is sufficient");
         }
     }
 }

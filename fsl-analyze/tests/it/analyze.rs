@@ -604,7 +604,7 @@ fn cancel_after_charges(charges_before_cancel: usize, cause: CancelCause) -> Can
 
 /// The `analyze` half of FR-280-AC-5 (TC-761 step 4); FR-280-AC-2 stays
 /// open for EN-1, which has no provider entry yet: over
-/// `Service`, whose checked package S4 refuses to emit, the record `analyze`
+/// `Service`, whose checked package S4 emits, the record `analyze`
 /// settles for the `2 ms` claim (EN-4, `statistical`, Okamoto, seed 7,
 /// `max_witnesses` 3) is `measured` and rejected with its three witnesses,
 /// and equals the record the provider entry returns for the same item,
@@ -612,6 +612,7 @@ fn cancel_after_charges(charges_before_cancel: usize, cause: CancelCause) -> Can
 /// settlement; the witnesses replay `Reproduced` in
 /// `statistical_witness_replay`.
 #[trace("TC-761", "FR-280-AC-5")]
+#[trace("FR-185-AC-7")]
 #[test]
 fn analyze_and_the_provider_entry_settle_one_record_for_one_en4_item() {
     use crate::prob_world::{self, World};
@@ -622,8 +623,9 @@ fn analyze_and_the_provider_entry_settle_one_record_for_one_en4_item() {
          { quantile 0.95 of (accumulate duration from holds(s.phase = 1) \
          until holds(s.phase = 2) within 10) <= 2 }\n";
     let world = World::new(&prob_world::service(claim));
-    fsl_package::emit_checked(&world.package, fsl_package::EmitLimits::fixture())
-        .expect_err("S4 refuses Service");
+    let before = fsl_package::emit_checked(&world.package, fsl_package::EmitLimits::fixture())
+        .expect("S4 emits Service with its random parameters, reward and workload");
+    assert!(!before.package().bytes().is_empty());
 
     let engines = Engines::fsl().expect("they register");
     let limits = AnalyzeLimits {
@@ -671,8 +673,9 @@ fn analyze_and_the_provider_entry_settle_one_record_for_one_en4_item() {
             fsl_replay::statistical::SampledWitnessReplay::Reproduced
         );
     }
-    fsl_package::emit_checked(&world.package, fsl_package::EmitLimits::fixture())
-        .expect_err("S4 still refuses Service");
+    let after = fsl_package::emit_checked(&world.package, fsl_package::EmitLimits::fixture())
+        .expect("Service still emits after both provider entries settle");
+    assert_eq!(after.package().bytes(), before.package().bytes());
 }
 
 /// FR-280-AC-6 (TC-761 step 5): a provider binding that omits a required

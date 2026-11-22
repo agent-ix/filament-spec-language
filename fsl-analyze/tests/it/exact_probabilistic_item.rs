@@ -1174,7 +1174,7 @@ fn undefined_replay_stops_at_decisions_with_matching_claim_keys() {
     );
 }
 
-#[trace("FR-201")]
+#[trace("FR-201", "FR-202")]
 #[test]
 fn defined_always_items_keep_their_prior_unsupported_disposition() {
     let claims = "probabilistic True using ev on M over (c: M::Coin) under Even on origin { probability >= 0.5 [ always[0,0] holds(c.v = 0) ] }\n\
@@ -1184,15 +1184,69 @@ fn defined_always_items_keep_their_prior_unsupported_disposition() {
         .body
         .push_str("\npre Never using v on M::Coin::drop { false }\n");
     let world = World::new(&model);
-    for name in ["True", "False"] {
-        let record = settle(&world, name, ModelCheckLimits::default());
-        assert!(
-            record.terminal().is_none(),
-            "defined always must retain its existing unsupported disposition: {record:?}"
-        );
-        assert!(record.exact_probabilistic.is_none());
-        assert!(record.probabilistic_counterexample.is_none());
-    }
+    let proved = settle(&world, "True", ModelCheckLimits::default());
+    let terminal = proved.terminal().expect("the bounded always claim settles");
+    let TerminalValue::Proved {
+        basis: ProofBasis::ExactValue { value, .. },
+        certification: Certification::Certified,
+    } = terminal.value()
+    else {
+        panic!("the initially true horizon-zero claim proves: {proved:?}");
+    };
+    assert_eq!(value.value(), &ratio(1, 1));
+    let certificate = proved
+        .exact_probabilistic
+        .as_ref()
+        .expect("accepted evidence");
+    assert_eq!(certificate.value, ratio(1, 1));
+    let system = ModelSystem::new(world.subject().simulation).unwrap();
+    let identity = fsl_replay::probabilistic_claim_identity(world.claim("True")).unwrap();
+    let checked = fsl_replay::check_probability_certificate_document(
+        &system,
+        world.package.graph().probabilistic_model().claims(),
+        &identity,
+        terminal
+            .exact_certificate_document()
+            .expect("the exact document"),
+        fsl_replay::ProbabilityDocumentLimits {
+            accounting: prob_world::UNLIMITED,
+            ..fsl_replay::ProbabilityDocumentLimits::default()
+        },
+        &Cancel::new(),
+    )
+    .expect("the independent checker reads bounded always evidence");
+    let ExactProbabilityCertificateCheck::Accepted(accepted) = checked else {
+        panic!("the genuine exact certificate accepts: {checked:?}");
+    };
+    assert_eq!(accepted.value(), &ratio(1, 1));
+    assert_eq!(accepted.certificate(), &certificate.certificate);
+    assert!(proved.probabilistic_counterexample.is_none());
+
+    let refuted = settle(&world, "False", ModelCheckLimits::default());
+    assert_eq!(
+        refuted.terminal().expect("the false claim settles").value(),
+        &TerminalValue::Refuted
+    );
+    assert!(refuted.exact_probabilistic.is_none());
+    let witness = refuted
+        .probabilistic_counterexample
+        .as_ref()
+        .expect("reproduced evidence")
+        .evidence();
+    let replayed = fsl_replay::replay_probabilistic_witness(
+        &world.package,
+        &system,
+        &witness.item,
+        witness,
+        &world.request("False", ModelCheckLimits::default()).limits,
+        &Cancel::new(),
+    )
+    .expect("the false horizon-zero claim replays");
+    let fsl_replay::ProbabilityWitnessReplay::Reproduced(token) = replayed else {
+        panic!("the counterexample reproduces the refutation");
+    };
+    assert_eq!(token.mass(), &ratio(1, 1));
+    assert_eq!(token.evidence(), witness);
 }
 
 fn external_always_world(bound: &str) -> World {
@@ -1273,13 +1327,29 @@ fn external_always_probability_certificate_remains_unsupported() {
         limits,
         &Cancel::new(),
     );
-    assert!(
-        matches!(
-            checked,
-            Err(fsl_replay::ProbabilityDocumentError::Unsupported)
+    let ExactProbabilityCertificateCheck::Accepted(accepted) =
+        checked.expect("the bounded always document is admitted")
+    else {
+        panic!("the genuine horizon-zero certificate accepts");
+    };
+    assert_eq!(accepted.value(), &ratio(1, 1));
+    assert_eq!(accepted.certificate().values, document.values);
+    assert_eq!(accepted.document(), Some(bytes.as_slice()));
+    let mut tampered = document;
+    tampered.values[0].value = ratio(0, 1);
+    let tampered =
+        fsl_replay::write_probability_certificate(&tampered, limits, &Cancel::new()).unwrap();
+    assert!(matches!(
+        fsl_replay::check_probability_certificate_document(
+            &system,
+            world.package.graph().probabilistic_model().claims(),
+            &identity,
+            &tampered,
+            limits,
+            &Cancel::new(),
         ),
-        "defined always must refuse admission: {checked:?}"
-    );
+        Ok(ExactProbabilityCertificateCheck::Rejected(_))
+    ));
 }
 
 #[trace("FR-202")]
@@ -1302,17 +1372,18 @@ fn external_always_path_set_remains_unsupported() {
     let limits = world
         .request("External", ModelCheckLimits::default())
         .limits;
-    assert!(matches!(
-        fsl_replay::replay_probabilistic_witness(
-            &world.package,
-            &system,
-            &identity,
-            &witness,
-            &limits,
-            &Cancel::new()
-        ),
-        Err(fsl_replay::ProbabilityWitnessError::Graph(
-            ExactProbabilityGraphError::UnsupportedClaimForm
-        ))
-    ));
+    let replay = fsl_replay::replay_probabilistic_witness(
+        &world.package,
+        &system,
+        &identity,
+        &witness,
+        &limits,
+        &Cancel::new(),
+    )
+    .expect("the bounded always path set replays");
+    let fsl_replay::ProbabilityWitnessReplay::Reproduced(token) = replay else {
+        panic!("the initial accepting cylinder refutes the upper bound");
+    };
+    assert_eq!(token.mass(), &ratio(1, 1));
+    assert_eq!(token.evidence(), &witness);
 }

@@ -1385,22 +1385,17 @@ fn package_default_items_equal_the_source_defaults() {
     let source = analyze(&path);
     let (members, _) = package_selection(&ws, &document["request"]);
     let package = analyze_members(&ws, "analyze-package-defaults.json", &members);
-    // The source route writes the task-set claim after every other claim; the
-    // package route names the same default item and refuses the run typed,
-    // as it refuses a named schedulability claim, for it has no package form
-    // of that family yet.
+    // The source and package routes select and settle the same default
+    // task-set claim, preserving its complete result and process exit.
     assert_eq!(
         item_heads(&source),
         vec![(json!("CtlFp"), json!("schedulability"))],
         "{}",
         source.document()
     );
-    let diagnostic = first_diagnostic(&package);
-    assert_eq!(diagnostic["cause"], "not-yet-implemented", "{diagnostic}");
-    assert!(
-        diagnostic.to_string().contains("declaration"),
-        "{diagnostic}"
-    );
+    assert_eq!(item_heads(&package), item_heads(&source));
+    assert_eq!(package.document()["items"], source.document()["items"]);
+    assert_eq!(package.exit, source.exit);
 }
 
 /// FR-620 (QSL-2726): the Counter's temporal clauses, `invariant` and

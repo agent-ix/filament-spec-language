@@ -188,7 +188,7 @@ fn a_claim_that_takes_a_modulus_by_zero_settles_refuted_with_a_replayed_undefine
     };
     let wire = found_one.wire.clone().expect("the envelope is spelled");
     assert_eq!(wire["kind"]["type"], "undefined-evaluation");
-    assert_eq!(wire["kind"]["cause"], "division-by-zero");
+    assert_eq!(wire["kind"]["cause"]["cause"], "division-by-zero");
     assert_eq!(wire["kind"]["where"]["position"], 0);
     assert!(wire["kind"]["where"]["state_key"]["key"].is_string());
     assert!(wire["kind"]["where"]["locus"]["node"].is_object());
