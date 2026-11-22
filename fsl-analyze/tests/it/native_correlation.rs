@@ -939,7 +939,7 @@ fn weak_attempt_candidates<M: fill::Explored + Default>(memory: &str) {
     for result in [true, false] {
         let (_, next) = attempts
             .iter()
-            .find(|(step, _)| step.binder_record() == Some(&filament_exact::Value::Boolean(result)))
+            .find(|(step, _)| matches!(step.binder_record(), Some(filament_exact::Value::Boolean(found)) if *found == result))
             .expect("both candidate result frames execute");
         assert_eq!(
             fill::v(graph[*next].state.model(), "c"),
