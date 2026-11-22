@@ -158,6 +158,24 @@ pub(super) fn reference(key: &str) -> Value {
     json!({"population": RECORDS, "key": key})
 }
 
+fn canonical_argument_reference(type_identity: &str, key: &str) -> Value {
+    let identity = key
+        .as_bytes()
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<String>();
+    json!({
+        "type": "reference",
+        "universe": {
+            "package": PACKAGE,
+            "path": ["model", "object_type", type_identity],
+            "ordinal": 0
+        },
+        "object_type": {"package": PACKAGE, "node": type_identity},
+        "identity": identity
+    })
+}
+
 pub(super) fn instance(source: &str, target: &str) -> Value {
     json!({"source": reference(source), "target": reference(target)})
 }
@@ -218,7 +236,10 @@ pub(super) fn run_selected(
     .unwrap();
     let mut call = json!({"function": function, "snapshot": "snapshot.json", "arguments": [
         {"parameter": if function == "providerOrders" { "provider" } else { "order" },
-            "value": {"reference": {"population": RECORDS, "key": input_key}}}
+            "value": canonical_argument_reference(
+                if function == "providerOrders" { PROVIDER } else { ORDER },
+                input_key,
+            )}
     ]});
     if let Some(selection) = selection {
         call["relationships"] = selection;
