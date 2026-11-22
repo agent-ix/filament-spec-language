@@ -288,7 +288,13 @@ pub(super) fn conjunction(
     let evaluation = walk
         .system
         .evaluator()
-        .evaluate_clause_set(&set, walk.system.meter, walk.cancel.as_ref())
+        .evaluate_clause_set(&set, &mut || {
+            let meter = walk.system.fresh_meter();
+            match &walk.cancel {
+                Some(cancel) => meter.with_cancel(cancel.clone()),
+                None => meter,
+            }
+        })
         .map_err(|_| stop(BROKEN))?;
     match evaluation.outcome {
         ClauseSetOutcome::Incomplete => {

@@ -1153,7 +1153,13 @@ impl Run<'_, '_, '_> {
             let found = self.walk.system.evaluator().evaluate_post_targets(
                 &info.qualified,
                 &observations,
-                &mut || filament_exact::Meter::new(self.walk.system.meter),
+                &mut || {
+                    let meter = self.walk.system.fresh_meter();
+                    match &self.walk.cancel {
+                        Some(cancel) => meter.with_cancel(cancel.clone()),
+                        None => meter,
+                    }
+                },
             );
             let Ok(found) = found else {
                 return Ok(None);

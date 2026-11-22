@@ -15,9 +15,7 @@
 use std::collections::BTreeSet;
 
 use filament_eval::{CallFailure, Evaluation};
-use filament_exact::{
-    EffectiveId, Meter, NodeKey, ObjectReference, ScalarLimits, Value, ValueType,
-};
+use filament_exact::{EffectiveId, Meter, NodeKey, ObjectReference, Value, ValueType};
 use filament_semantic_value::catalog::InternalFault;
 use filament_semantic_value::declaration::TypeEnvironment;
 use fsl_package::{
@@ -980,7 +978,7 @@ pub trait ModelEvaluator: sealed::Sealed + Sync {
     ) -> Result<ClauseEvaluation, CallFailure>;
 
     /// FR-107 "Clause sets": the state clauses of one invocation, object or
-    /// state, each with a fresh meter of `limits`, polling `cancel`.
+    /// state, each with an ordinary fresh meter supplied by the owning run.
     ///
     /// # Errors
     ///
@@ -988,8 +986,7 @@ pub trait ModelEvaluator: sealed::Sealed + Sync {
     fn evaluate_clause_set(
         &self,
         clauses: &[(QualifiedName, &AdmittedObservations)],
-        limits: ScalarLimits,
-        cancel: Option<&filament_exact::Cancel>,
+        fresh_meter: &mut dyn FnMut() -> Meter,
     ) -> Result<ClauseSetEvaluation, CallFailure>;
 
     /// FR-940: the `holds` atom `atom` of a temporal clause, keyed by the
@@ -1600,10 +1597,9 @@ impl ModelEvaluator for CheckedPackage {
     fn evaluate_clause_set(
         &self,
         clauses: &[(QualifiedName, &AdmittedObservations)],
-        limits: ScalarLimits,
-        cancel: Option<&filament_exact::Cancel>,
+        fresh_meter: &mut dyn FnMut() -> Meter,
     ) -> Result<ClauseSetEvaluation, CallFailure> {
-        crate::value::evaluate_clause_set_with_cancel(self, clauses, limits, cancel)
+        crate::value::evaluate_clause_set_with_meter_factory(self, clauses, fresh_meter)
     }
 
     fn evaluate_holds(
@@ -2118,10 +2114,9 @@ impl ModelEvaluator for BarePackage<'_> {
     fn evaluate_clause_set(
         &self,
         clauses: &[(QualifiedName, &AdmittedObservations)],
-        limits: ScalarLimits,
-        _cancel: Option<&filament_exact::Cancel>,
+        fresh_meter: &mut dyn FnMut() -> Meter,
     ) -> Result<ClauseSetEvaluation, CallFailure> {
-        CheckedPackageEvaluation::evaluate_clause_set(self, clauses, limits)
+        crate::value::evaluate_clause_set_with_meter_factory(self, clauses, fresh_meter)
     }
 
     fn evaluate_holds(

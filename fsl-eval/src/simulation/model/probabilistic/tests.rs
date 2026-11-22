@@ -15,6 +15,610 @@ use crate::simulation::model::ModelSimState;
 use crate::simulation::sampled::world::{self, field, initial, World};
 use crate::simulation::TransitionSystem;
 
+/// The probability ports exercise contracts, predicates and rewards. Terminal
+/// declarations belong to the separate terminal-classification API.
+fn probability_link_fixture() -> world::Model {
+    let mut model = world::link();
+    model.body = model.body.replace(
+        "terminal Stop using v on M when { self.delivered or self.attempts = 2 };\n",
+        "",
+    );
+    model
+}
+
+/// Probability postconditions read equality decisions as well as identities.
+/// Both supplies are materialized and admitted by their existing package owner.
+fn through_probability_wire<T>(
+    world: &World,
+    use_input: impl FnOnce(crate::simulation::model::ModelCheckInput<'_>) -> T,
+) -> T {
+    with_bare_witnesses(world, EqualitySupply::Emitted, |bare| {
+        let input = crate::simulation::model::PackageModelInput::of(
+            bare,
+            world.packages(),
+            fsl_semantics::model::accounting::ModelNormalizationLimits::default(),
+        )
+        .unwrap_or_else(|pending| panic!("the equality-supplied package input admits: {pending}"));
+        use_input(input.input())
+    })
+}
+
+#[trace("FR-120-AC-35", "FR-120-AC-36")]
+#[test]
+fn probability_work_scope_accumulates_real_expansions_on_source_and_package_routes() {
+    let world = World::new(&probability_link_fixture());
+    let exercise = |route: &str, mut system: super::ModelSystem<'_>| {
+        let ample = filament_exact::WorkScope::new(system.meter_limits());
+        system.probability_work = Some(ample.clone());
+        let start = initial(&system);
+        let first = system
+            .actions(&start)
+            .unwrap_or_else(|stop| {
+                panic!(
+                    "{route}: initial ample expansion stopped: {stop:?}; work={}/{}",
+                    ample.consumed_work(),
+                    system.meter_limits().work_units
+                )
+            })
+            .unwrap_or_else(|undecided| {
+                panic!(
+                    "{route}: initial ample expansion undecided: {undecided:?}; work={}",
+                    ample.consumed_work()
+                )
+            });
+        assert_eq!(first.len(), 2);
+        let work = ample.consumed_work();
+        assert!(work > 1);
+        let mut limits = system.meter_limits();
+        limits.work_units = work * 2 - 1;
+        let scope = filament_exact::WorkScope::new(limits);
+        system.probability_work = Some(scope.clone());
+        let paid = system.actions(&start).unwrap_or_else(|stop| panic!("{route}: first bounded expansion stopped: {stop:?}; work={}/{}, ample_expansion={work}", scope.consumed_work(), limits.work_units)).unwrap_or_else(|undecided| panic!("{route}: first bounded expansion undecided: {undecided:?}; work={}", scope.consumed_work()));
+        assert_eq!(paid.len(), 2);
+        let stopped = system.actions(&start).expect_err(&format!(
+            "{route}: second expansion must stop; work={}/{}, ample_expansion={work}",
+            scope.consumed_work(),
+            limits.work_units
+        ));
+        assert_eq!(
+            stopped.limit,
+            Some(crate::simulation::ExpansionLimit::EvaluationMeter(
+                filament_exact::LimitKind::WorkUnits
+            )),
+            "{route}: actual stop={stopped:?}; work={}/{}, ample_expansion={work}",
+            scope.consumed_work(),
+            limits.work_units
+        );
+        assert!(scope.consumed_work() >= work);
+        assert!(scope.consumed_work() <= limits.work_units);
+        assert!(
+            !system.shares_evaluation_meter(),
+            "probability preserves narrowing"
+        );
+        system.probability_work = Some(filament_exact::WorkScope::new(limits));
+        assert_eq!(
+            system.actions(&start).unwrap().unwrap().len(),
+            2,
+            "a new item starts fresh"
+        );
+    };
+    exercise("source", world.system());
+    through_probability_wire(&world, |input| {
+        exercise("package", world.admit_input(input, 1_000_000).unwrap())
+    });
+}
+
+#[trace("FR-120-AC-35")]
+#[test]
+fn probability_clause_factory_shares_work_but_keeps_other_counters_fresh() {
+    use super::super::{contracts, walk, ClauseOutcome};
+    use crate::value::ClauseSetOutcome;
+    use filament_eval::FamilyOutcome;
+    use filament_exact::{LimitKind, Outcome, WorkScope};
+    let mut model = probability_link_fixture();
+    model.body.push_str("invariant A using v on M::Msg at current { self.attempts >= 0 }\ninvariant B using v on M::Msg at current { self.attempts >= 0 }\n");
+    let world = World::new(&model);
+    let exercise = |system: super::ModelSystem<'_>| {
+        let start = initial(&system);
+        let walk = walk::walk_of(&system, &start, None).unwrap();
+        let clauses = &system.clauses.invariants;
+        assert_eq!(clauses.len(), 2);
+        let observations: Vec<_> = clauses
+            .iter()
+            .map(|clause| contracts::invariant_observations(&walk, clause, 0))
+            .collect();
+        let set: Vec<_> = clauses
+            .iter()
+            .zip(&observations)
+            .map(|(clause, observation)| (clause.qualified.clone(), observation))
+            .collect();
+        let probe = WorkScope::new(system.meter_limits());
+        let mut first_meter = probe.meter();
+        let one = system
+            .evaluator()
+            .evaluate_clause(&set[0].0, set[0].1, &mut first_meter)
+            .unwrap();
+        assert!(matches!(
+            one.evaluation.outcome,
+            FamilyOutcome::Evaluated(Outcome::Completed(Value::Boolean(true)))
+        ));
+        let work = probe.consumed_work();
+        assert!(work > 0);
+        let mut limits = system.meter_limits();
+        limits.work_units = work * 2 - 1;
+        let scope = WorkScope::new(limits);
+        let evaluated = system
+            .evaluator()
+            .evaluate_clause_set(&set, &mut || scope.meter())
+            .unwrap();
+        assert_eq!(evaluated.outcome, ClauseSetOutcome::Incomplete);
+        assert_eq!(evaluated.results.len(), 2);
+        let contracts::Verdict::Undecided(ClauseOutcome::Incomplete(denied)) =
+            contracts::verdict(&evaluated.results[1].evaluation.evaluation.outcome)
+        else {
+            panic!("the second clause is unpaid")
+        };
+        assert_eq!(denied.limit_kind, LimitKind::WorkUnits);
+        assert_eq!(denied.limit, limits.work_units);
+        assert_eq!(denied.consumed, scope.consumed_work());
+        // Set each additive non-work counter to one clause's actual prefix.
+        // Both clauses still fit because each factory invocation is fresh.
+        for kind in [LimitKind::ValueOccurrences, LimitKind::ResultUnits] {
+            match kind {
+                LimitKind::ValueOccurrences => {
+                    limits.value_occurrences = first_meter.consumed(kind)
+                }
+                LimitKind::ResultUnits => limits.result_units = first_meter.consumed(kind),
+                _ => unreachable!(),
+            }
+        }
+        limits.work_units = work * 2;
+        let fresh = WorkScope::new(limits);
+        let complete = system
+            .evaluator()
+            .evaluate_clause_set(&set, &mut || fresh.meter())
+            .unwrap();
+        assert_eq!(complete.outcome, ClauseSetOutcome::True);
+        assert_eq!(fresh.consumed_work(), work * 2);
+        let cancel = filament_exact::Cancel::new();
+        let prefix = WorkScope::new(limits);
+        let mut calls = 0;
+        let cancelled = system
+            .evaluator()
+            .evaluate_clause_set(&set, &mut || {
+                calls += 1;
+                if calls == 2 {
+                    cancel.cancel(filament_exact::CancelCause::Requested);
+                }
+                prefix.meter().with_cancel(cancel.clone())
+            })
+            .unwrap();
+        assert_eq!(cancelled.outcome, ClauseSetOutcome::Incomplete);
+        assert_eq!(
+            prefix.consumed_work(),
+            work,
+            "cancellation preserves the admitted first clause"
+        );
+    };
+    exercise(world.system());
+    through_the_wire(&world, |input| {
+        exercise(world.admit_input(input, 1_000_000).unwrap())
+    });
+}
+
+#[trace("FR-120-AC-36")]
+#[test]
+fn probability_candidate_local_denial_precedes_shared_work_and_commits_only_admissions() {
+    use crate::simulation::ExpansionLimit;
+    use filament_exact::{LimitKind, WorkScope};
+    let world = World::new(&world::link());
+    let mut system = world.system_within(1);
+    let mut limits = system.meter_limits();
+    limits.work_units = 1;
+    let scope = WorkScope::new(limits);
+    system.probability_work = Some(scope.clone());
+    let mut budget = system.budget();
+    budget.charge().unwrap();
+    assert_eq!(scope.consumed_work(), 1);
+    assert_eq!(
+        budget.charge().unwrap_err().limit,
+        Some(ExpansionLimit::MaxCandidates)
+    );
+    assert_eq!(scope.consumed_work(), 1);
+    assert_eq!(budget.used(), 1);
+    let mut another = system.budget();
+    assert_eq!(
+        another.charge().unwrap_err().limit,
+        Some(ExpansionLimit::EvaluationMeter(LimitKind::WorkUnits))
+    );
+    assert_eq!(another.used(), 0);
+}
+
+#[trace("FR-120-AC-36", "FR-120-AC-29")]
+#[test]
+fn probability_candidate_work_counts_argument_candidate_and_only_real_result_pairs() {
+    use filament_exact::WorkScope;
+    let mut model = world::link();
+    model.body.clear();
+    model.operations = vec![world::Operation {
+        name: "noop",
+        parameters: Vec::new(),
+        modifies: Vec::new(),
+    }];
+    for result in [false, true] {
+        let world = if result {
+            World::with_queries(&model, &[("noop", world::BOOLEAN)])
+        } else {
+            World::new(&model)
+        };
+        let exercise = |mut system: super::ModelSystem<'_>| {
+            let scope = WorkScope::new(system.meter_limits());
+            system.probability_work = Some(scope.clone());
+            let start = initial(&system);
+            let actions = system.actions(&start).unwrap().unwrap();
+            assert_eq!(actions.len(), 1);
+            assert_eq!(actions[0].draws.len(), 1);
+            assert_eq!(actions[0].draws[0].successors.len(), 1);
+            assert_eq!(
+                scope.consumed_work(),
+                if result { 3 } else { 2 },
+                "argument + unchanged candidate + first evaluated result only"
+            );
+        };
+        exercise(world.system());
+        through_the_wire(&world, |input| {
+            exercise(world.admit_input(input, 1_000_000).unwrap())
+        });
+    }
+}
+
+#[trace("FR-120-AC-35")]
+#[test]
+fn probability_candidate_then_claim_predicate_and_reward_use_the_same_allowance() {
+    use super::super::PredicateReading;
+    use filament_exact::{LimitKind, WorkScope};
+    use fsl_semantics::check::{ProbForm, ReachTarget};
+    let mut model = probability_link_fixture();
+    model.body.push_str("reward cost on Msg::send_a = 1 + 0;\nprobabilistic Check using inf on M over (m: M::Msg) under every scheduler on origin { probability >= 0.5 [ eventually holds(m.delivered) ] }\n");
+    let world = World::with_profiles(&model, &[("inf", "filament.temporal.infinite-trace/v1")]);
+    let ProbForm::Reach {
+        target: ReachTarget::Eventually(predicate),
+        ..
+    } = &world
+        .package
+        .graph()
+        .probabilistic_model()
+        .claim("Check")
+        .unwrap()
+        .form
+    else {
+        panic!("eventually")
+    };
+    let exercise = |route: &str, mut system: super::ModelSystem<'_>| {
+        let start = initial(&system);
+        let scope = WorkScope::new(system.meter_limits());
+        system.probability_work = Some(scope.clone());
+        system
+            .actions(&start)
+            .unwrap_or_else(|stop| {
+                panic!(
+                    "{route}: initial ample expansion stopped: {stop:?}; work={}/{}",
+                    scope.consumed_work(),
+                    system.meter_limits().work_units
+                )
+            })
+            .unwrap_or_else(|undecided| {
+                panic!(
+                    "{route}: initial ample expansion undecided: {undecided:?}; work={}",
+                    scope.consumed_work()
+                )
+            });
+        let expansion = scope.consumed_work();
+        let walk = super::super::walk::walk_of(&system, &start, None).unwrap();
+        let binding = walk.rows[0].reference.clone();
+        drop(walk);
+        assert_eq!(
+            system
+                .state_predicates(&start, &[(predicate, Some(&binding))])
+                .unwrap(),
+            vec![PredicateReading::False]
+        );
+        assert!(scope.consumed_work() > expansion);
+        let mut limits = system.meter_limits();
+        limits.work_units = expansion;
+        let stopped = WorkScope::new(limits);
+        system.probability_work = Some(stopped.clone());
+        system
+            .actions(&start)
+            .unwrap_or_else(|stop| {
+                panic!(
+                    "{route}: repeated bounded expansion stopped: {stop:?}; work={}/{expansion}",
+                    stopped.consumed_work()
+                )
+            })
+            .unwrap_or_else(|undecided| {
+                panic!(
+                    "{route}: repeated bounded expansion undecided: {undecided:?}; work={}",
+                    stopped.consumed_work()
+                )
+            });
+        assert_eq!(stopped.consumed_work(), expansion);
+        assert_eq!(
+            system
+                .state_predicates(&start, &[(predicate, Some(&binding))])
+                .unwrap_err()
+                .limit,
+            Some(crate::simulation::ExpansionLimit::EvaluationMeter(
+                LimitKind::WorkUnits
+            ))
+        );
+        let reward = system.declared_rewards().next().unwrap();
+        assert!(
+            system
+                .reward_value_with_cancel(reward, vec![Value::Boolean(false)], None)
+                .is_err(),
+            "the reward cannot obtain a fresh allowance after candidates"
+        );
+        assert_eq!(stopped.consumed_work(), expansion);
+    };
+    exercise("source", world.system());
+}
+
+/// Both model ports support current clauses; source-body probability claims
+/// additionally run through the source-only predicate port tested above.
+#[trace("FR-120-AC-35")]
+#[test]
+fn probability_candidate_then_current_clause_and_reward_share_scope_on_both_routes() {
+    use super::super::{contracts, walk, ClauseOutcome};
+    use crate::value::ClauseSetOutcome;
+    use filament_exact::{LimitKind, WorkScope};
+    let mut model = probability_link_fixture();
+    model.body.push_str("invariant Valid using v on M::Msg at current { self.attempts >= 0 }\nreward cost on Msg::send_a = 1 + 0;\n");
+    let world = World::new(&model);
+    let exercise = |route: &str, mut system: super::ModelSystem<'_>| {
+        let start = initial(&system);
+        let ample = WorkScope::new(system.meter_limits());
+        system.probability_work = Some(ample.clone());
+        let actions = system
+            .actions(&start)
+            .unwrap_or_else(|stop| {
+                panic!(
+                    "{route}: paid candidate expansion stopped: {stop:?}; work={}",
+                    ample.consumed_work()
+                )
+            })
+            .expect("the actual clauses decide");
+        assert_eq!(actions.len(), 2);
+        let expansion = ample.consumed_work();
+        let (name, observation) = {
+            let walk = walk::walk_of(&system, &start, None).unwrap();
+            let [clause] = system.clauses.invariants.as_slice() else {
+                panic!("one actual current clause")
+            };
+            (
+                clause.qualified.clone(),
+                contracts::invariant_observations(&walk, clause, 0),
+            )
+        };
+        let set = [(name, &observation)];
+        let control = system
+            .evaluator()
+            .evaluate_clause_set(&set, &mut || system.fresh_meter())
+            .expect("the real clause port evaluates");
+        assert_eq!(control.outcome, ClauseSetOutcome::True);
+        assert!(
+            ample.consumed_work() > expansion,
+            "{route}: the current clause performs real work after candidates"
+        );
+        let mut limits = system.meter_limits();
+        limits.work_units = expansion;
+        let scope = WorkScope::new(limits);
+        system.probability_work = Some(scope.clone());
+        let actions = system
+            .actions(&start)
+            .expect("one expansion fits B")
+            .expect("all clauses decide");
+        assert_eq!(actions.len(), 2);
+        assert_eq!(scope.consumed_work(), expansion);
+        let unpaid = system
+            .evaluator()
+            .evaluate_clause_set(&set, &mut || system.fresh_meter())
+            .expect("the unpaid clause retains its typed evaluation");
+        assert_eq!(unpaid.outcome, ClauseSetOutcome::Incomplete);
+        let [entry] = unpaid.results.as_slice() else {
+            panic!("one unpaid clause")
+        };
+        let contracts::Verdict::Undecided(ClauseOutcome::Incomplete(denied)) =
+            contracts::verdict(&entry.evaluation.evaluation.outcome)
+        else {
+            panic!("{route}: expected the original scalar stop")
+        };
+        assert_eq!(denied.limit_kind, LimitKind::WorkUnits);
+        assert_eq!(denied.limit, expansion);
+        assert_eq!(denied.consumed, expansion);
+        assert!(denied.next_charge > Integer::from(0_u64));
+        let reward = system.declared_rewards().next().unwrap();
+        let stopped = system
+            .reward_value_with_cancel(reward, vec![Value::Boolean(false)], None)
+            .expect_err("the reward shares the same spent allowance");
+        assert_eq!(
+            stopped.limit,
+            Some(crate::simulation::ExpansionLimit::EvaluationMeter(
+                LimitKind::WorkUnits
+            ))
+        );
+        assert_eq!(
+            scope.consumed_work(),
+            expansion,
+            "{route}: denied clause and reward add no work"
+        );
+    };
+    exercise("source", world.system());
+    through_probability_wire(&world, |input| {
+        exercise("package", world.admit_input(input, 1_000_000).unwrap())
+    });
+}
+
+#[trace("FR-120-AC-35")]
+#[test]
+fn probability_clause_factory_preserves_precondition_short_circuit_and_whole_set_refusal() {
+    use super::super::{contracts, walk};
+    use crate::value::ClauseSetOutcome;
+    let mut model = world::link();
+    model.body = "pre A using v on M::Msg::send_a { false }\npre B using v on M::Msg::send_a { self.attempts >= 0 }\n".to_owned();
+    let world = World::new(&model);
+    let exercise = |system: super::ModelSystem<'_>| {
+        let start = initial(&system);
+        let walk = walk::walk_of(&system, &start, None).unwrap();
+        let clauses = &system.clauses.preconditions;
+        assert_eq!(clauses.len(), 2);
+        let observations: Vec<_> = clauses
+            .iter()
+            .map(|clause| {
+                let mut observations = contracts::invariant_observations(&walk, clause, 0);
+                observations.pre = observations.current.take();
+                observations.parameters = vec![("lost".to_owned(), Value::Boolean(false))];
+                observations
+            })
+            .collect();
+        let set: Vec<_> = clauses
+            .iter()
+            .zip(&observations)
+            .rev()
+            .map(|(clause, observations)| (clause.qualified.clone(), observations))
+            .collect();
+        let scope = filament_exact::WorkScope::new(system.meter_limits());
+        let mut calls = 0;
+        let evaluated = system
+            .evaluator()
+            .evaluate_clause_set(&set, &mut || {
+                calls += 1;
+                scope.meter()
+            })
+            .unwrap();
+        assert_eq!(evaluated.outcome, ClauseSetOutcome::False);
+        assert_eq!(
+            calls, 1,
+            "canonical A stops the reversed input set before B gets a meter"
+        );
+        assert_eq!(evaluated.results.len(), 1);
+        assert_eq!(evaluated.results[0].name, clauses[0].qualified);
+        let prefix = scope.consumed_work();
+        calls = 0;
+        let duplicates = vec![set[0].clone(), set[0].clone()];
+        assert!(system
+            .evaluator()
+            .evaluate_clause_set(&duplicates, &mut || {
+                calls += 1;
+                scope.meter()
+            })
+            .is_err());
+        assert_eq!(calls, 0);
+        assert_eq!(
+            scope.consumed_work(),
+            prefix,
+            "a malformed set is refused whole"
+        );
+    };
+    exercise(world.system());
+    through_the_wire(&world, |input| {
+        exercise(world.admit_input(input, 1_000_000).unwrap())
+    });
+}
+
+#[trace("FR-120-AC-35", "FR-120-AC-36")]
+#[test]
+fn probability_reward_admission_preserves_owner_incomplete_and_cancellation() {
+    use super::super::{ModelCheckInput, ModelSystem, ProbabilityAdmissionFailure};
+    use filament_exact::{Cancel, CancelCause, LimitKind, WorkScope};
+    use std::sync::{Arc, OnceLock};
+    let mut model = world::link();
+    model.operations.truncate(1);
+    model.operations[0].parameters.clear();
+    model.body = "reward alpha on Msg::send_a = 1 + 0;\n".to_owned();
+    let one = World::new(&model);
+    let limits = one.system().meter_limits();
+    let scope = WorkScope::new(limits);
+    ModelSystem::new_with_work_scope(
+        one.request_input(ModelCheckInput::source(&one.package), 1_000_000),
+        scope.clone(),
+        &Cancel::new(),
+    )
+    .expect("one valid arithmetic reward admits");
+    let prefix = scope.consumed_work();
+    assert!(prefix > 0);
+    model.body.push_str("reward beta on Msg::send_a = 1 + 0;\n");
+    let two = World::new(&model);
+    let exercise = |input: ModelCheckInput<'_>| {
+        let mut first_denial = None;
+        for bound in [0, prefix] {
+            let mut request = two.request_input(input.clone(), 1_000_000);
+            request.meter.work_units = bound;
+            let scope = WorkScope::new(request.meter);
+            let failed = ModelSystem::new_with_work_scope(request, scope.clone(), &Cancel::new());
+            let ProbabilityAdmissionFailure::Evaluation(denied) =
+                failed.err().expect("reward admission stops")
+            else {
+                panic!("the scalar stop must retain its typed owner record")
+            };
+            assert_eq!(denied.limit_kind, LimitKind::WorkUnits);
+            assert_eq!(denied.limit, bound);
+            assert_eq!(denied.consumed, bound);
+            assert_eq!(scope.consumed_work(), bound);
+            assert!(denied.next_charge > Integer::from(0_u64));
+            if let Some((point, amount)) = &first_denial {
+                assert_eq!(
+                    denied.charge_point, *point,
+                    "the next reward reaches the same real charge point"
+                );
+                assert_eq!(&denied.next_charge, amount);
+            } else {
+                first_denial = Some((denied.charge_point, denied.next_charge));
+            }
+        }
+        let request = two.request_input(input.clone(), 1_000_000);
+        let scope = WorkScope::new(request.meter);
+        let observed = scope.clone();
+        let slot = Arc::new(OnceLock::<Cancel>::new());
+        let weak = Arc::downgrade(&slot);
+        let cancel = Cancel::observing(move || {
+            if observed.consumed_work() >= prefix {
+                weak.upgrade()
+                    .unwrap()
+                    .get()
+                    .unwrap()
+                    .cancel(CancelCause::Requested);
+            }
+        });
+        slot.set(cancel.clone()).unwrap();
+        let failed = ModelSystem::new_with_work_scope(request, scope.clone(), &cancel);
+        let ProbabilityAdmissionFailure::Evaluation(denied) =
+            failed.err().expect("cancelled reward admission stops")
+        else {
+            panic!("typed cancellation prefix")
+        };
+        assert_eq!(cancel.tripped(), Some(CancelCause::Requested));
+        assert_eq!(denied.limit_kind, LimitKind::WorkUnits);
+        assert_eq!(denied.consumed, prefix);
+        assert_eq!(
+            denied.limit, prefix,
+            "owner cancellation records the admitted prefix"
+        );
+        assert_eq!(scope.consumed_work(), prefix);
+        let mut ordinary = two.request_input(input, 1_000_000);
+        ordinary.meter.work_units = 0;
+        assert!(
+            matches!(
+                ModelSystem::new(ordinary),
+                Err(AdmissionFailure::Incomplete(_))
+            ),
+            "ordinary unscoped admission retains its original failure type"
+        );
+    };
+    exercise(ModelCheckInput::source(&two.package));
+    through_the_wire(&two, exercise);
+}
+
 #[trace("TC-636", "FR-201-AC-22", "FR-202-AC-22", "FR-282-AC-17")]
 #[test]
 fn caller_cancellation_enters_qualified_contract_and_state_predicate_meters() {
@@ -1135,6 +1739,19 @@ fn the_package_route_rebuilds_the_probabilistic_model_of_the_emitted_package() {
 /// `use_bare` over `world`'s package emitted and read back from the wire
 /// bytes.
 fn with_bare<T>(world: &World, use_bare: impl FnOnce(&fsl_package::BarePackage<'_>) -> T) -> T {
+    with_bare_witnesses(world, EqualitySupply::Absent, use_bare)
+}
+
+enum EqualitySupply {
+    Absent,
+    Emitted,
+}
+
+fn with_bare_witnesses<T>(
+    world: &World,
+    equality_supply: EqualitySupply,
+    use_bare: impl FnOnce(&fsl_package::BarePackage<'_>) -> T,
+) -> T {
     let read = fsl_package::read_evaluation_package(
         &world.package,
         fsl_semantics::library::LibraryName::new("fixture").expect("a library name"),
@@ -1149,12 +1766,18 @@ fn with_bare<T>(world: &World, use_bare: impl FnOnce(&fsl_package::BarePackage<'
         .emission()
         .identity_rows(admitted, &mut rows_budget)
         .expect("the identity rows join the package");
+    let equality = matches!(equality_supply, EqualitySupply::Emitted).then(|| {
+        let mut equality_budget = fsl_package::V2ReadLimits::fixture().native_join_budget();
+        read.emission()
+            .equality_witness(admitted, &mut equality_budget)
+            .expect("the emitted equality witness joins the package")
+    });
     let mut join_budget = fsl_package::V2ReadLimits::fixture().native_join_budget();
     let bare = fsl_package::BarePackage::new(admitted)
         .with_supply(
             fsl_package::BareSupply {
                 identities: &rows,
-                equality: None,
+                equality: equality.as_ref(),
             },
             &mut join_budget,
         )

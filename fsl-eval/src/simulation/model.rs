@@ -783,6 +783,24 @@ pub enum NativeCandidateVisit {
     Stopped,
 }
 
+/// A probability system's structural admission failure or original scalar
+/// stop while checking the rewards against its run allowance (FR-120).
+#[derive(Debug, thiserror::Error)]
+pub enum ProbabilityAdmissionFailure {
+    /// The ordinary structural or reward-sign admission failure.
+    #[error("model admission failed: {0:?}")]
+    Admission(AdmissionFailure),
+    /// The owner's unchanged scalar stop while admitting a scoped reward.
+    #[error("probability reward accounting stopped: {0:?}")]
+    Evaluation(filament_exact::Incomplete),
+}
+
+impl From<AdmissionFailure> for ProbabilityAdmissionFailure {
+    fn from(failure: AdmissionFailure) -> Self {
+        Self::Admission(failure)
+    }
+}
+
 /// FR-120: the transition system of a checked package's state family.
 pub struct ModelSystem<'a> {
     /// The identity of the one domain package this system is over, when it
@@ -804,6 +822,8 @@ pub struct ModelSystem<'a> {
     populations: Vec<fsl_semantics::model::state::StatePopulation>,
     limits: ExpansionLimits,
     meter: ScalarLimits,
+    probability_work: Option<filament_exact::WorkScope>,
+    probability_cancel: Option<filament_exact::Cancel>,
     shared_meter: std::sync::Arc<std::sync::Mutex<filament_exact::Meter>>,
     shared_accounting: std::sync::atomic::AtomicBool,
     shared_limits: std::sync::Mutex<ScalarLimits>,
@@ -978,7 +998,20 @@ impl ModelSystem<'_> {
         if self.shares_evaluation_meter() {
             EvaluationMeter::Shared(self.shared_meter.lock().expect("evaluation meter lock"))
         } else {
-            EvaluationMeter::Local(Box::new(filament_exact::Meter::new(self.meter)))
+            EvaluationMeter::Local(Box::new(self.fresh_meter()))
+        }
+    }
+
+    /// A fresh evaluation meter, sharing only the probability item's work
+    /// allowance when this system belongs to such an item.
+    pub fn fresh_meter(&self) -> filament_exact::Meter {
+        let meter = match &self.probability_work {
+            Some(scope) => scope.meter(),
+            None => filament_exact::Meter::new(self.meter),
+        };
+        match &self.probability_cancel {
+            Some(cancel) => meter.with_cancel(cancel.clone()),
+            None => meter,
         }
     }
 }
@@ -1181,6 +1214,37 @@ impl<'a> ModelSystem<'a> {
         Self::over(request, selections, Some(cancel), &[])
     }
 
+    /// Admit a probability item's system with its work scope already attached,
+    /// including reward admission before any initial-state or claim reads.
+    ///
+    /// # Errors
+    /// Ordinary admission failures, or the original scalar stop from a
+    /// reward read admitted against the probability item's work scope.
+    pub fn new_with_work_scope(
+        request: ModelSimulationRequest<'a>,
+        scope: filament_exact::WorkScope,
+        cancel: &filament_exact::Cancel,
+    ) -> Result<Self, ProbabilityAdmissionFailure> {
+        let selections = request.input.model_inputs();
+        let system = Self::over_scoped(request, selections, Some(cancel), &[], Some(scope))?;
+        system.check_rewards_metered(Some(cancel))?;
+        Ok(system)
+    }
+
+    /// Validate the shared structural binding of an all-probability request.
+    /// Reward evaluation belongs to each item's scoped constructor, so this
+    /// preflight neither evaluates rewards nor returns an executable system.
+    ///
+    /// # Errors
+    /// The structural admission failures of [`Self::new`]. Each item must
+    /// still admit its rewards through [`Self::new_with_work_scope`].
+    pub fn validate_probability_binding(
+        request: ModelSimulationRequest<'a>,
+    ) -> Result<(), AdmissionFailure> {
+        let selections = request.input.model_inputs();
+        Self::over_scoped(request, selections, None, &[], None).map(|_| ())
+    }
+
     /// The model system's selected populations in ascending declaration-key
     /// order. This preserves a checked clause's population ordinal when a
     /// replay reconstructs an object-parameter binding.
@@ -1288,6 +1352,18 @@ impl<'a> ModelSystem<'a> {
         selections: fsl_semantics::model::observation::ModelSelections<'_>,
         cancel: Option<&filament_exact::Cancel>,
         other_models: &[DeclarationKey],
+    ) -> Result<Self, AdmissionFailure> {
+        let system = Self::over_scoped(request, selections, cancel, other_models, None)?;
+        system.check_rewards_with_cancel(cancel)?;
+        Ok(system)
+    }
+
+    fn over_scoped(
+        request: ModelSimulationRequest<'a>,
+        selections: fsl_semantics::model::observation::ModelSelections<'_>,
+        cancel: Option<&filament_exact::Cancel>,
+        other_models: &[DeclarationKey],
+        probability_work: Option<filament_exact::WorkScope>,
     ) -> Result<Self, AdmissionFailure> {
         let input = request.input;
         let types = input.types;
@@ -1576,6 +1652,8 @@ impl<'a> ModelSystem<'a> {
             populations,
             limits: request.expansion,
             meter: request.meter,
+            probability_cancel: probability_work.as_ref().and(cancel.cloned()),
+            probability_work,
             shared_meter: std::sync::Arc::new(std::sync::Mutex::new(filament_exact::Meter::new(
                 request.meter,
             ))),
@@ -1601,7 +1679,6 @@ impl<'a> ModelSystem<'a> {
         // population beside each clock-owner candidate. Refuse those actual
         // data domains before reward or frame probing can enumerate them.
         system.check_clock_reference_enumeration()?;
-        system.check_rewards_with_cancel(cancel)?;
         Ok(system)
     }
 

@@ -151,7 +151,7 @@ impl<'a> ModelSystem<'a> {
 
     /// The candidate budget of one expansion (FR-120 "Post-states").
     pub(crate) fn budget(&self) -> Budget {
-        Budget::new(self.limits.max_candidates)
+        Budget::scoped(self.limits.max_candidates, self)
     }
 
     /// FR-120's synthesized observation of `state` (FR-120 "Frame and

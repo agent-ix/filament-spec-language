@@ -346,8 +346,13 @@ fn direct_swap_reads_both_pre_values_and_observes_the_candidate_budget_boundary(
     let post = "self.a = pre(self.b) and self.b = pre(self.a)";
     let solved = cell_with_bounds(post, false, 99, 3, 5, &[]);
     let general = cell_with_bounds(post, true, 99, 3, 5, &[]);
-    let solved_system = solved.system();
-    let general_system = general.system();
+    let mut solved_system = solved.system();
+    let mut general_system = general.system();
+    solved_system.probability_work =
+        Some(filament_exact::WorkScope::new(solved_system.meter_limits()));
+    general_system.probability_work = Some(filament_exact::WorkScope::new(
+        general_system.meter_limits(),
+    ));
     let (fast, fast_charge) = apply(&solved_system, "set");
     let (full, full_charge) = apply(&general_system, "set");
     assert_eq!(fast_charge, 2);
@@ -363,7 +368,8 @@ fn direct_swap_reads_both_pre_values_and_observes_the_candidate_budget_boundary(
     assert!(fast.findings.is_empty());
     assert!(full.findings.is_empty());
     for (budget, completes) in [(1, false), (2, true)] {
-        let system = solved.system_within(budget);
+        let mut system = solved.system_within(budget);
+        system.probability_work = Some(filament_exact::WorkScope::new(system.meter_limits()));
         let expansion = system.successors(&initial(&system));
         if completes {
             assert_eq!(
@@ -396,8 +402,13 @@ fn guarded_partial_assignment_preserves_unsolved_values_effects_and_charges() {
 }
 
 fn assert_partial_assignment(solved: World, general: World) {
-    let solved_system = solved.system();
-    let general_system = general.system();
+    let mut solved_system = solved.system();
+    let mut general_system = general.system();
+    solved_system.probability_work =
+        Some(filament_exact::WorkScope::new(solved_system.meter_limits()));
+    general_system.probability_work = Some(filament_exact::WorkScope::new(
+        general_system.meter_limits(),
+    ));
     let (fast, fast_charge) = apply(&solved_system, "set");
     let (full, full_charge) = apply(&general_system, "set");
     assert_eq!(fast_charge, 101);

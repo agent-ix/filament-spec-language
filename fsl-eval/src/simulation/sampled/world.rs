@@ -371,7 +371,16 @@ impl World {
         input: crate::simulation::model::ModelCheckInput<'a>,
         max_candidates: u64,
     ) -> Result<ModelSystem<'a>, AdmissionFailure> {
-        ModelSystem::new(ModelSimulationRequest {
+        ModelSystem::new(self.request_input(input, max_candidates))
+    }
+
+    /// The real source or package request, before constructor admission.
+    pub(crate) fn request_input<'a>(
+        &'a self,
+        input: crate::simulation::model::ModelCheckInput<'a>,
+        max_candidates: u64,
+    ) -> ModelSimulationRequest<'a> {
+        ModelSimulationRequest {
             emit: fsl_package::EmitLimits::fixture(),
             input,
             packages: &self.packages,
@@ -382,7 +391,7 @@ impl World {
             observation: ObservationLimits::default(),
             expansion: ExpansionLimits { max_candidates },
             meter: UNLIMITED,
-        })
+        }
     }
 
     /// The system over this world.
