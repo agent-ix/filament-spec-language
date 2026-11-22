@@ -1053,8 +1053,11 @@ fn deep_projection(
                     &fsl_semantics::check::test_support::ZeroRewardEvaluator,
                 )
                 .expect("the deep unit checks");
+            crate::checked_v2::mem_phase("checked");
             let package = CheckedPackage::link(graph);
             let emission = emit_checked(&package).expect("the deep unit emits");
+            crate::checked_v2::mem_phase("emitted");
+            eprintln!("MEMORY bytes={}", emission.package.bytes().len());
             let name = emission.package.name().to_owned();
             let limits = V2ReadLimits {
                 artifact_bytes: emission.package.bytes().len(),
@@ -1075,6 +1078,7 @@ fn deep_projection(
                 crate::SourceWitnessSupplier::new(&emission),
             )
             .expect("the I2 reader admits the deep package");
+            crate::checked_v2::mem_phase("read-returned");
             let view = read.evaluation_view().expect("the deep view is created");
             let slots = view.reader_slots().expect("a reader-backed view");
             let Some(crate::ReaderSlot::Projected(projection)) =
@@ -1082,6 +1086,7 @@ fn deep_projection(
             else {
                 panic!("the deep control is projected");
             };
+            crate::checked_v2::mem_phase("view-returned");
             check(projection);
         })
         .expect("the worker thread starts")

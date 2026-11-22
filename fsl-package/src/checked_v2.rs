@@ -822,7 +822,12 @@ pub(crate) fn read_checked_package_v2_at(
             u128::try_from(bytes.len()).unwrap_or(u128::MAX),
         )));
     }
-    match read_checked_package(bytes, limits.for_ir(), evidence) {
+    #[cfg(test)]
+    mem_phase("ir-read-begin");
+    let ir_result = read_checked_package(bytes, limits.for_ir(), evidence);
+    #[cfg(test)]
+    mem_phase("ir-read-returned");
+    match ir_result {
         CheckedPackageDispatchResult::AdmittedV2(package) => {
             if package.name() != identity.as_str() {
                 return refused(V2ReadRefusal::IdentityMismatch {
@@ -851,6 +856,8 @@ pub(crate) fn read_checked_package_v2_at(
                     return refused(V2ReadRefusal::Fault(InternalFault::new("I2", invariant)));
                 }
             };
+            #[cfg(test)]
+            mem_phase("timed-models-done");
             let graph = match wire_graph(&package) {
                 Ok(graph) => graph,
                 Err(_) => {
@@ -873,6 +880,8 @@ pub(crate) fn read_checked_package_v2_at(
                     .join("::");
                 exports.push((name, key.clone()));
             }
+            #[cfg(test)]
+            mem_phase("exports-done");
             let source_map = match package_source_map(&graph, package.source_map()) {
                 Ok(source_map) => source_map,
                 Err(defect) => return refused(defect.into()),
@@ -1059,6 +1068,8 @@ pub fn read_import_view(
     limits: V2ReadLimits,
     emit: EmitLimits,
 ) -> Result<ImportView, ImportViewRefusal> {
+    #[cfg(test)]
+    mem_phase("read-begin");
     let mut held = BTreeMap::new();
     hold_closure(package, &mut held);
     let mut reader = ClosureReader {
@@ -1219,6 +1230,8 @@ pub fn read_evaluation_emission<'package>(
         emit,
     };
     let read = reader.read_emitted(package, emission, identity.clone())?;
+    #[cfg(test)]
+    mem_phase("read-emitted-done");
     let mut closure = reader.admitted;
     closure.insert(identity.clone(), Arc::clone(&read.admitted));
     let reader_nodes = reader_node_keys(&read.admitted).map_err(|_| ImportViewRefusal::Read {
@@ -1228,6 +1241,8 @@ pub fn read_evaluation_emission<'package>(
             "admitted-reader-graph-has-structural-keys",
         ))),
     })?;
+    #[cfg(test)]
+    mem_phase("reader-node-keys-done");
     let admitted_identity = LibraryName::of_package(&read.admitted);
     Ok(AdmittedPackageRead {
         source: package,
@@ -1358,6 +1373,8 @@ impl AdmittedPackageRead<'_> {
                 ),
             ))
         };
+        #[cfg(test)]
+        mem_phase("view-begin");
         let supplied = match self.witnesses.supply(&self.read.admitted, &mut budget) {
             Ok(supplied) => supplied,
             Err(WitnessSupplyFailure::Exhausted(native)) => {
@@ -1395,6 +1412,8 @@ impl AdmittedPackageRead<'_> {
                     Code::UnsupportedExactType => fault(),
                 }
             })?;
+        #[cfg(test)]
+        mem_phase("view-identities-validated");
         let mut held = BTreeMap::new();
         hold_closure(self.source, &mut held);
         let dependencies = held
@@ -1405,6 +1424,8 @@ impl AdmittedPackageRead<'_> {
                 Ok((admitted, emission))
             })
             .collect::<Result<Vec<_>, ViewFailure>>()?;
+        #[cfg(test)]
+        mem_phase("view-before-project");
         let slots = project_package(
             &self.read.admitted,
             &self.emission,
@@ -1424,6 +1445,8 @@ impl AdmittedPackageRead<'_> {
                 }
             }
         })?;
+        #[cfg(test)]
+        mem_phase("view-projected");
         Ok(crate::evaluation_view::AdmittedEvaluationView::reader(
             self, slots,
         ))
@@ -1683,4 +1706,23 @@ impl ClosureReader<'_> {
         }
         Ok(())
     }
+}
+
+/// TEMPORARY (QSL-2825): phase memory sampling.
+#[cfg(test)]
+pub(crate) fn mem_phase(phase: &str) {
+    let status = std::fs::read_to_string("/proc/self/status").unwrap_or_default();
+    let field = |name: &str| {
+        status
+            .lines()
+            .find(|line| line.starts_with(name))
+            .and_then(|line| line.split_whitespace().nth(1))
+            .unwrap_or("0")
+            .to_owned()
+    };
+    eprintln!(
+        "MEMORY context=deep100k phase={phase} rss_kib={} process_peak_kib={}",
+        field("VmRSS:"),
+        field("VmHWM:")
+    );
 }
