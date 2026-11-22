@@ -371,3 +371,69 @@ fn derived_items_over_a_subject_reading_both_models_settle_unsupported_as_the_so
     }
     assert_equal(&source, &package);
 }
+
+/// FSpec FR-368-AC-22, FR-124-AC-12: an untimed subject derives neither a
+/// time-lock nor a race item, so those kinds settle `inapplicable-kind` on both
+/// routes whether the unit selects one model or two and whichever model the
+/// item names, with no request item; beside them the deadlock item of the read
+/// model still runs.
+#[trace("TC-519", "FR-124-AC-12")]
+#[trace("TC-2410", "FR-850-AC-2")]
+#[test]
+fn untimed_derived_kinds_settle_inapplicable_as_the_source_route() {
+    for (name, reads, target) in [
+        ("package-derived-one-race", Reads::One, PACKAGE),
+        ("package-derived-first-own", Reads::First, PACKAGE),
+        ("package-derived-first-other", Reads::First, OTHER),
+    ] {
+        let (source, package) = both_routes(
+            name,
+            Vault::Terminal,
+            reads,
+            "terminal Halt using v on V any;\n",
+            &json!([
+                derived_item(target, "time-lock-freedom"),
+                derived_item(target, "race-freedom"),
+                deadlock_item(target)
+            ]),
+        );
+        for index in 0..3 {
+            assert_eq!(
+                source.item(index)["record"]["diagnostic"]["cause"],
+                "inapplicable-kind",
+                "{name} item {index}: {}",
+                source.document()
+            );
+            assert!(
+                source.item(index)["request"].is_null(),
+                "{name} item {index}: {}",
+                source.document()
+            );
+        }
+        assert_equal(&source, &package);
+    }
+}
+
+/// FSpec FR-368-AC-20: a derived item of any kind that carries `max_depth` is
+/// `invalid-request` before the anchor or the kind is considered, on both routes.
+#[trace("TC-519", "FR-124-AC-12")]
+#[trace("TC-2410", "FR-850-AC-2")]
+#[test]
+fn a_derived_item_with_max_depth_is_invalid_before_kind_as_the_source_route() {
+    let mut item = derived_item(PACKAGE, "time-lock-freedom");
+    item["temporal"]["max_depth"] = json!(3);
+    let (source, package) = both_routes(
+        "package-derived-max-depth",
+        Vault::Terminal,
+        Reads::Both,
+        "",
+        &json!([item]),
+    );
+    assert_eq!(
+        source.item(0)["record"]["diagnostic"]["cause"],
+        "invalid-value",
+        "{}",
+        source.document()
+    );
+    assert_equal(&source, &package);
+}

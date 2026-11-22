@@ -269,9 +269,11 @@ enum Named<'s> {
         claim: OccurrenceKey,
         selection: &'s ItemSelection,
     },
+    /// A derived item of the model selection `name`.
     Deadlock {
         index: RequestIndex,
         name: &'s str,
+        kind: ItemKind,
         selection: &'s ItemSelection,
     },
     ProtocolFreedom {
@@ -502,8 +504,9 @@ pub fn settle_package_run(
             Named::Deadlock {
                 index,
                 name,
+                kind,
                 selection,
-            } => match reads.deadlock(index, name, selection)? {
+            } => match reads.deadlock(index, name, kind, selection)? {
                 Resolution::Settled(settled) => resolved.push(settled),
                 Resolution::Claim(claim, ()) => {
                     routes.insert(index, Route::Deadlock);
@@ -1133,9 +1136,18 @@ fn resolve_names<'s>(
             if derived {
                 let selected = models.iter().any(|identity| identity == name);
                 return match (item_kind, selected, models.len()) {
-                    (Some(ItemKind::DeadlockFreedom), true, _) => Ok(Named::Deadlock {
+                    (
+                        Some(
+                            kind @ (ItemKind::DeadlockFreedom
+                            | ItemKind::TimeLockFreedom
+                            | ItemKind::RaceFreedom),
+                        ),
+                        true,
+                        _,
+                    ) => Ok(Named::Deadlock {
                         index,
                         name,
+                        kind,
                         selection,
                     }),
                     (_, true, _) => Err(pending(PendingFamily::Derived)),
@@ -2141,7 +2153,8 @@ impl<'r, 'a: 'r> ClaimReads<'r, 'a> {
         ))
     }
 
-    /// FR-626's derived deadlock-freedom item over the one model selection the subject reads,
+    /// FR-626's derived item (`deadlock-freedom`, or a kind the untimed subject does
+    /// not derive) over the one model selection the subject reads,
     /// whose identity `name` is, as the source route's `resolve_derived`
     /// resolves it: at the selection's `model_root` anchor with the
     /// `generated` occurrence 0.
@@ -2149,6 +2162,7 @@ impl<'r, 'a: 'r> ClaimReads<'r, 'a> {
         &self,
         index: RequestIndex,
         name: &str,
+        kind: ItemKind,
         selection: &ItemSelection,
     ) -> Result<Resolution<()>, PackageRunError> {
         let temporal = selection.temporal.clone().unwrap_or_default();
@@ -2199,6 +2213,15 @@ impl<'r, 'a: 'r> ClaimReads<'r, 'a> {
             read
         };
         match read.as_slice() {
+            // The package route's subject is untimed (a timed model is refused
+            // with the model input), so it derives no time-lock or race item.
+            [_] if kind != ItemKind::DeadlockFreedom => {
+                return Ok(Resolution::Settled(invalid_kind(
+                    index,
+                    Some(name),
+                    "inapplicable-kind",
+                )));
+            }
             [only] if *only == name => {
                 // FR-124: a model the subject reads that declares `terminal any`
                 // opts out of the item, so the source route writes none and
