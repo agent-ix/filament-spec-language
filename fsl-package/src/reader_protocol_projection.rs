@@ -1082,6 +1082,20 @@ impl<'wire> WireIndex<'wire> {
         self.nodes.get(id).copied()
     }
 
+    /// The members of the union whose declaration node is `declared`.
+    fn union_members(&self, declared: &CheckedNodeId) -> Option<UnionMembers<'_>> {
+        let node = self.node(declared)?;
+        if has_form(node, WireTag::CompositeType, WireForm::Union) {
+            let CheckedTerm::Aggregate { members } = &node.body else {
+                return None;
+            };
+            return Some(UnionMembers::Source(members));
+        }
+        self.identities
+            .model_union_row(declared)
+            .map(UnionMembers::Model)
+    }
+
     /// The admitted equality decision of application `id`: from the
     /// emission's producer rows on the source route, from the handoff's
     /// equality file on the bytes route (FR-531 "The equality file").
@@ -2454,17 +2468,10 @@ impl<'wire> ReaderBuilder<'_, 'wire> {
             return Err(fault("reader-union-value-has-declaration-key").into());
         };
         let union_key = union_key.clone();
-        let union_node = self
+        let union_members = self
             .index
-            .node(&node.semantic_type)
-            .filter(|candidate| has_form(candidate, WireTag::CompositeType, WireForm::Union))
+            .union_members(&node.semantic_type)
             .ok_or_else(|| fault("reader-union-value-type-is-union"))?;
-        let CheckedTerm::Aggregate {
-            members: union_members,
-        } = &union_node.body
-        else {
-            return Err(fault("reader-union-declaration-has-checked-members").into());
-        };
         let [CheckedTerm::Binding { name, value, .. }] = members else {
             return Err(fault("reader-union-value-has-one-member").into());
         };
@@ -2472,7 +2479,8 @@ impl<'wire> ReaderBuilder<'_, 'wire> {
         else {
             return Err(fault("reader-union-value-has-member-name").into());
         };
-        let member = member_position(union_members, member_name)
+        let member = union_members
+            .position(member_name)
             .ok_or_else(|| fault("reader-union-value-member-is-declared"))?;
         let CheckedTerm::Aggregate { members } = value.as_ref() else {
             return Err(fault("reader-union-value-has-payload-list").into());
@@ -3310,18 +3318,11 @@ impl<'wire> ReaderBuilder<'_, 'wire> {
             return Err(fault("reader-union-case-scrutinee-has-union-type").into());
         };
         let declaration = declaration.clone();
-        let union_node = self
+        let union_members = self
             .index
             .node(scrutinee_id)
-            .and_then(|scrutinee| self.index.node(&scrutinee.semantic_type))
-            .filter(|candidate| has_form(candidate, WireTag::CompositeType, WireForm::Union))
+            .and_then(|scrutinee| self.index.union_members(&scrutinee.semantic_type))
             .ok_or_else(|| fault("reader-union-case-declaration-is-admitted"))?;
-        let CheckedTerm::Aggregate {
-            members: union_members,
-        } = &union_node.body
-        else {
-            return Err(fault("reader-union-declaration-has-checked-members").into());
-        };
         let mut arms = Vec::with_capacity(arguments.len().saturating_sub(1));
         let mut children = vec![scrutinee];
         let first_free = match context {
@@ -3345,7 +3346,8 @@ impl<'wire> ReaderBuilder<'_, 'wire> {
             else {
                 return Err(fault("reader-union-case-arm-has-member-name").into());
             };
-            let member = member_position(union_members, member_name)
+            let member = union_members
+                .position(member_name)
                 .ok_or_else(|| fault("reader-union-case-arm-is-declared"))?;
             let CheckedTerm::Aggregate { members } = value.as_ref() else {
                 return Err(fault("reader-union-case-arm-has-body").into());
@@ -4426,6 +4428,27 @@ fn member_position(members: &[CheckedTerm], wanted: &str) -> Option<usize> {
         ),
         _ => false,
     })
+}
+
+/// The members of the union a node is typed by: a source union's checked
+/// bindings, or a selected model union's joined row. A member's position is
+/// its place in the declaration the value type carries: declaration order for
+/// a source union, canonical case-name rank for a model union.
+enum UnionMembers<'a> {
+    Source(&'a [CheckedTerm]),
+    Model(&'a filament_contract_model::SelectedModelUnionRow),
+}
+
+impl UnionMembers<'_> {
+    fn position(&self, wanted: &str) -> Option<usize> {
+        match self {
+            Self::Source(members) => member_position(members, wanted),
+            Self::Model(row) => row
+                .cases
+                .iter()
+                .position(|case| case.name.as_ref() == wanted),
+        }
+    }
 }
 
 /// A wire location as the evaluator's `Location`; `None` for an ordinal no

@@ -27,6 +27,7 @@ use crate::checked_v2::wire_graph;
 
 mod carried;
 mod model_enum;
+mod model_union;
 mod observation;
 use crate::equality_file::OriginalValueType;
 use carried::{SourceRecordJson, SourceTupleJson, SourceUnionJson};
@@ -644,6 +645,7 @@ pub struct ReadIdentityRows {
     model_enum_declarations: Vec<filament_contract_model::SelectedModelEnumDeclarationRow>,
     model_enum_members: Vec<filament_contract_model::SelectedModelEnumMemberRow>,
     model_enum_shapes: Vec<filament_contract_model::SelectedModelEnumShapeRow>,
+    model_unions: Vec<filament_contract_model::SelectedModelUnionRow>,
 }
 
 /// Why an identity file was not read: a closed set, naming what it found.
@@ -716,6 +718,9 @@ pub enum IdentityMember {
     /// The selected model enum declaration, member and shape channels.
     #[error("model enum rows")]
     ModelEnums,
+    /// The selected model union channel.
+    #[error("model union rows")]
+    ModelUnions,
     /// A declaration row's `form`.
     #[error("`form`")]
     Form,
@@ -746,6 +751,7 @@ struct File {
     model_enum_declarations: Vec<model_enum::DeclarationJson>,
     model_enum_members: Vec<model_enum::MemberJson>,
     model_enum_shapes: Vec<model_enum::ShapeJson>,
+    model_unions: Vec<model_union::ModelUnionJson>,
 }
 
 #[derive(Deserialize, Serialize)]
@@ -1164,6 +1170,7 @@ impl<'de> serde::de::Visitor<'de> for TopVisitor<'_> {
         let mut model_enum_declarations: Option<Vec<model_enum::DeclarationJson>> = None;
         let mut model_enum_members: Option<Vec<model_enum::MemberJson>> = None;
         let mut model_enum_shapes: Option<Vec<model_enum::ShapeJson>> = None;
+        let mut model_unions: Option<Vec<model_union::ModelUnionJson>> = None;
         while let Some(key) = map.next_key::<String>()? {
             match key.as_str() {
                 "format" => {
@@ -1259,6 +1266,14 @@ impl<'de> serde::de::Visitor<'de> for TopVisitor<'_> {
                         self.problem.set(Some(IdentityMember::ModelEnums));
                     })?);
                 }
+                "model_unions" => {
+                    if model_unions.is_some() {
+                        return Err(self.fail(IdentityMember::Repeated("model_unions")));
+                    }
+                    model_unions = Some(map.next_value().inspect_err(|_: &A::Error| {
+                        self.problem.set(Some(IdentityMember::ModelUnions));
+                    })?);
+                }
                 other => return Err(self.fail(IdentityMember::Unknown(other.to_owned()))),
             }
         }
@@ -1269,6 +1284,7 @@ impl<'de> serde::de::Visitor<'de> for TopVisitor<'_> {
             model_enum_members.ok_or_else(|| self.fail(IdentityMember::ModelEnums))?;
         let model_enum_shapes =
             model_enum_shapes.ok_or_else(|| self.fail(IdentityMember::ModelEnums))?;
+        let model_unions = model_unions.ok_or_else(|| self.fail(IdentityMember::ModelUnions))?;
         match (
             format,
             declarations,
@@ -1298,6 +1314,7 @@ impl<'de> serde::de::Visitor<'de> for TopVisitor<'_> {
                 model_enum_declarations,
                 model_enum_members,
                 model_enum_shapes,
+                model_unions,
             }),
             (None, _, _, _, _, _, _) => Err(self.fail(IdentityMember::Format)),
             (_, None, _, _, _, _, _) => Err(self.fail(IdentityMember::Declarations)),
@@ -1420,7 +1437,7 @@ impl ReadIdentityRows {
         package: &CheckedPackageV2,
         budget: &mut NativeJoinBudget,
     ) -> Result<SelectedExactIdentities, ExactTypeProjectionError> {
-        SelectedExactIdentities::from_stage_rows(
+        let identities = SelectedExactIdentities::from_stage_rows(
             package,
             self.declarations.iter().cloned(),
             self.fields.iter().cloned(),
@@ -1436,6 +1453,18 @@ impl ReadIdentityRows {
                 members: &self.model_enum_members,
                 shapes: &self.model_enum_shapes,
             },
+            budget,
+        )?;
+        // A package selecting no union has no union row to join; the join
+        // also owns model-tuple coverage, which this carrier does not supply.
+        if self.model_unions.is_empty() {
+            return Ok(identities);
+        }
+        identities.with_model_union_rows(
+            package,
+            &[],
+            &self.model_unions,
+            filament_contract_model::ModelUnionScope::Full,
             budget,
         )
     }
@@ -1463,6 +1492,11 @@ impl ReadIdentityRows {
     /// Original source-tuple rows, in declaration and positional order.
     pub fn source_tuples(&self) -> &[filament_contract_model::SelectedSourceTupleRow] {
         &self.source_tuples
+    }
+
+    /// Selected model union rows, in structural order.
+    pub fn model_unions(&self) -> &[filament_contract_model::SelectedModelUnionRow] {
+        &self.model_unions
     }
 
     /// Original source-union producer rows, in declaration and payload order.
@@ -1701,6 +1735,11 @@ impl ReadIdentityRows {
                 .into_iter()
                 .map(model_enum::ShapeJson::row)
                 .collect::<Result<_, _>>()?,
+            model_unions: file
+                .model_unions
+                .into_iter()
+                .map(model_union::ModelUnionJson::row)
+                .collect::<Result<_, _>>()?,
         };
         rows.join(package, budget)
             .map_err(|error| IdentityFileRefusal::Native(Box::new(error)))?;
@@ -1766,6 +1805,7 @@ impl ReadIdentityRows {
             model_enum_declarations: Vec::new(),
             model_enum_members: Vec::new(),
             model_enum_shapes: Vec::new(),
+            model_unions: Vec::new(),
         }
     }
 
@@ -1786,6 +1826,14 @@ impl ReadIdentityRows {
         self.model_enum_declarations = declarations;
         self.model_enum_members = members;
         self.model_enum_shapes = shapes;
+        self
+    }
+
+    pub(crate) fn with_model_unions(
+        mut self,
+        unions: Vec<filament_contract_model::SelectedModelUnionRow>,
+    ) -> Self {
+        self.model_unions = unions;
         self
     }
 
@@ -1938,6 +1986,11 @@ impl ReadIdentityRows {
                 .model_enum_shapes
                 .iter()
                 .map(model_enum::ShapeJson::of)
+                .collect::<Result<_, _>>()?,
+            model_unions: self
+                .model_unions
+                .iter()
+                .map(model_union::ModelUnionJson::of)
                 .collect::<Result<_, _>>()?,
         };
         let mut bytes =
