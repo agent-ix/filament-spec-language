@@ -2,7 +2,8 @@
 //! FR-1045: native-run relationship selection request admission.
 
 use crate::workflow_relationship_navigation::{
-    instance, relationship_row, run_selected, ORDER, PAYMENTS, SHIPMENT, SHIPMENTS,
+    canonical_reference, instance, relationship_row, run_selected, ORDER, PAYMENTS,
+    PAYMENT_ATTEMPT, SHIPMENT, SHIPMENTS,
 };
 use filament_observation::{
     ProducerConfiguration, ProducerDigest, RelationshipDeclaration,
@@ -987,8 +988,8 @@ fn relationship_identity_is_optional_without_correlation() {
     assert_eq!(output.status.code(), Some(0), "{document}");
     assert_eq!(document["outcome"]["kind"], "completed", "{document}");
     assert_eq!(
-        document["outcome"]["value"]["reference"]["object_identity"],
-        "p1"
+        document["outcome"]["value"],
+        canonical_reference(PAYMENT_ATTEMPT, "p1")
     );
 }
 

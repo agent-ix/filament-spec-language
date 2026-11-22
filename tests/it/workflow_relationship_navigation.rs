@@ -304,7 +304,7 @@ fn assert_value(function: &str, input_key: &str, expected: Value) {
     assert_eq!(document["outcome"]["value"], expected, "{document}");
 }
 
-fn canonical_reference(type_identity: &str, object_identity: &str) -> Value {
+pub(super) fn canonical_reference(type_identity: &str, object_identity: &str) -> Value {
     json!({"reference": {
         "universe": {
             "package": PACKAGE,
