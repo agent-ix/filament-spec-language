@@ -630,7 +630,7 @@ fn model_population_fixture() -> Fixture {
     );
     fixture.file("population", "inputs/population.json", &serde_json::to_vec(&json!({
         "format":"filament.state.snapshot/v1", "identity":{"authority":"fixture", "identity":"current"}, "observation":"current",
-        "model":{"identity":"acme/orders", "version":"1.0.0"},
+        "model":{"identity":"acme/orders"},
         "populations":[{"population":"ix://acme/orders/Fleet", "complete":true,
             "objects":[{"key":"g1", "type":"ix://acme/orders/Gadget", "fields":{"code":{"integer":"7"}}}]}]
     })).unwrap());

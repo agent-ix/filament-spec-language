@@ -720,8 +720,14 @@ fn real_workspace_decisions_keep_every_package_whose_compile_changes() {
         verdict("filament-spec-language"),
         &Verdict::Run(KeepReason::OwnFeatures)
     );
-    // Its extraction feature is already enabled by the default consumers.
-    assert_eq!(verdict("fsl-source"), &Verdict::Skip);
+    // Its own extraction feature agrees, but the all-features generator
+    // graph resolves a different getrandom compile unit below it.
+    assert_eq!(
+        verdict("fsl-source"),
+        &Verdict::Run(KeepReason::DependencyResolvesDifferently {
+            dependency: "getrandom".to_owned(),
+        })
+    );
     // The benchmark's counters feature is enabled only by the all-features lane.
     assert_eq!(verdict("fsl-bench"), &Verdict::Run(KeepReason::OwnFeatures));
 }
