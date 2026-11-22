@@ -2085,13 +2085,13 @@ fn a_relationship_end_of_the_wrong_object_type_refuses_as_on_the_source_route() 
 }
 
 /// FR-533-AC-22 (variant): over a copy of fixture E-P's model that adds one
-/// variant type no slot reads, `with_supply` succeeds, `Refund.trigger.guard`
-/// evaluates to the source route's value and charge log, and the bare
-/// admission refuses `missing-type-representation` where the source route
-/// admits the same snapshot.
+/// payload-free variant type no slot reads, `with_supply` succeeds,
+/// `Refund.trigger.guard` evaluates to the source route's value and charge
+/// log, and the bare admission admits the snapshot as the source route does:
+/// the model enum channels carry the unread type (FR-531).
 #[trace("FR-533-AC-22", "TC-1333")]
 #[test]
-fn an_unread_variant_type_refuses_admission_but_not_the_slots_that_ignore_it() {
+fn an_unread_payload_free_variant_type_is_admitted_and_the_slots_that_ignore_it_evaluate() {
     use fsl_semantics::model::intake::meaning;
     let mut document = document_ep();
     document["constructs"]
@@ -2144,39 +2144,28 @@ fn an_unread_variant_type_refuses_admission_but_not_the_slots_that_ignore_it() {
         ep_snapshot(Some((true, &["ghost", "option-1"])), true, None, None, &[]);
     let model_ref = package.graph().model_selections()[0].clone();
     let limits = fsl_semantics::model::accounting::ModelNormalizationLimits::default();
-    assert!(matches!(
-        package.evaluation_view().admit_protocol_observation(
-            &model_ref,
-            &packages,
-            limits,
-            &snapshots,
-            &selected,
-            ObservationLimits::default(),
-        ),
-        ObservationAdmission::Admitted(_)
-    ));
-    let ObservationAdmission::Refused(record) = bare.admit_protocol_observation(
+    let from_source = package.evaluation_view().admit_protocol_observation(
         &model_ref,
         &packages,
         limits,
         &snapshots,
         &selected,
         ObservationLimits::default(),
-    ) else {
-        panic!("the bare route refuses, not faults")
-    };
-    assert_eq!(
-        (record.catalog.code(), record.catalog.cause()),
-        ("unknown_required_feature", "unsupported-feature")
     );
-    assert_eq!(
-        record.fields.get("package").map(String::as_str),
-        Some(routes.read.admitted().name())
+    let from_bytes = bare.admit_protocol_observation(
+        &model_ref,
+        &packages,
+        limits,
+        &snapshots,
+        &selected,
+        ObservationLimits::default(),
     );
-    assert_eq!(
-        record.fields.get("reason").map(String::as_str),
-        Some("missing-type-representation")
+    assert!(matches!(from_source, ObservationAdmission::Admitted(_)));
+    assert!(
+        matches!(from_bytes, ObservationAdmission::Admitted(_)),
+        "{from_bytes:?}"
     );
+    assert_eq!(format!("{from_source:?}"), format!("{from_bytes:?}"));
 }
 
 /// FR-533 "Observation admission", step 4: where the caller's documents
