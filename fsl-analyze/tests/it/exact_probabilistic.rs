@@ -2708,6 +2708,10 @@ fn untimed_exact_counts_distinct_pending_keys_and_reuses_full_state_capacity() {
         deletes: false,
     });
     model.body.push_str("\npost Other using v on M::Node::other { self.healthy = false }\nrandom Node::other(fault) ~ { true: 1, false: 1 };\n");
+    model.body = model.body.replace(
+        "workload Steady on M { weight Node::tick = 1; }",
+        "workload Steady on M { weight Node::tick = 1; weight Node::other = 1; }",
+    );
     let world = World::new(&model);
     let mut limits = ModelCheckLimits::default();
     limits.limits.max_states = 2;

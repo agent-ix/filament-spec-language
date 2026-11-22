@@ -1231,6 +1231,20 @@ impl<'a> ModelSystem<'a> {
         Ok(system)
     }
 
+    /// Validate the shared structural binding of an all-probability request.
+    /// Reward evaluation belongs to each item's scoped constructor, so this
+    /// preflight neither evaluates rewards nor returns an executable system.
+    ///
+    /// # Errors
+    /// The structural admission failures of [`Self::new`]. Each item must
+    /// still admit its rewards through [`Self::new_with_work_scope`].
+    pub fn validate_probability_binding(
+        request: ModelSimulationRequest<'a>,
+    ) -> Result<(), AdmissionFailure> {
+        let selections = request.input.model_inputs();
+        Self::over_scoped(request, selections, None, &[], None).map(|_| ())
+    }
+
     /// The model system's selected populations in ascending declaration-key
     /// order. This preserves a checked clause's population ordinal when a
     /// replay reconstructs an object-parameter binding.
