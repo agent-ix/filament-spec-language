@@ -100,3 +100,79 @@ fn the_recompile_mode_is_the_recorded_function_mode() {
     );
     assert_eq!(package("[]").check_mode(), CheckMode::Linked);
 }
+
+/// A package keeps the members replay reads after the read and the facts of
+/// its function nodes, not its semantic graph: the descriptor and the
+/// function modes read the same as from the whole document, and a root that
+/// is not an object is still refused by the descriptor.
+#[trace("TC-1784", "FR-098-AC-34")]
+#[test]
+fn a_package_keeps_the_replay_members_and_the_function_facts_only() {
+    let bytes = br#"{"name":"p","lock":{"sources":[{"authority":"a","identity":"i"}]},
+        "semantic_graph":{"nodes":[
+          {"node_tag":"function","node_id":{"path":[1]},"declaration":{"qualified_name":["f"]},"check_mode":"kernel"},
+          {"node_tag":"expression","body":{"term":"literal","value":1.0}}]},
+        "extra":[1,2,3]}"#;
+    let package = ReplayPackage::read(bytes, u64::MAX).expect("JSON");
+    let (name, sources) = package.name_and_sources().expect("the descriptor");
+    assert_eq!((name.as_str(), sources.len()), ("p", 1));
+    assert_eq!(package.functions().len(), 1);
+    assert_eq!(package.functions()[0].position, 0);
+    assert_eq!(package.functions()[0].name.as_deref(), Some("f"));
+    assert_eq!(package.functions()[0].mode.as_deref(), Some("kernel"));
+    assert_eq!(package.bytes(), &bytes[..]);
+    assert!(super::member(package.document.root(), "semantic_graph").is_none());
+    assert!(super::member(package.document.root(), "extra").is_none());
+
+    let not_an_object = ReplayPackage::read(b"[1]", u64::MAX).expect("JSON");
+    assert!(not_an_object.name_and_sources().is_err());
+}
+
+/// The clock members a package keeps answer exactly what the whole document
+/// would: the program rows, the dependency rows, their refusal pointers and
+/// the program-source test, while the semantic graph and any other root
+/// member are not held.
+#[trace("TC-2182", "FR-640-AC-8")]
+#[test]
+fn a_package_keeps_the_clock_and_lock_members_it_reads() {
+    use filament_contract_model::ClockConfiguration;
+    use fsl_package::ClockSelectionCause;
+    let bytes = br#"{"name":"p",
+        "temporal_bindings":[{"declaration":"a","occurrence":0,"clock_name":"plant-ms",
+            "clock":{"kind":"timestamped_event","timestamp_unit":"ms"}}],
+        "lock":{"sources":[{"authority":"a","identity":"i"}],
+            "dependency_clock_selections":[{"clock_name":"dep-ms",
+                "clock":{"kind":"timestamped_event","timestamp_unit":"s"}}]},
+        "semantic_graph":{"nodes":[{"node_tag":"expression"}]},
+        "extra":[1,2,3]}"#;
+    let package = ReplayPackage::read(bytes, u64::MAX).expect("JSON");
+    let clock = |unit: &str| ClockConfiguration::TimestampedEvent {
+        timestamp_unit: unit.into(),
+    };
+    let expected = crate::spine::RequestClocks::for_replay(
+        ("a".to_owned(), "i".to_owned()),
+        std::collections::BTreeMap::from([("plant-ms".to_owned(), clock("ms"))]),
+        std::collections::BTreeMap::from([("dep-ms".to_owned(), clock("s"))]),
+    )
+    .expect("the rows are valid");
+    assert_eq!(package.clocks().expect("well-formed rows"), expected);
+    let root = "/package/lock/dependency_clock_selections";
+    assert_eq!(
+        package.dependency_clock_pointer("dep-ms", ClockSelectionCause::ClockKindMismatch),
+        Some(format!("{root}/0/clock/kind"))
+    );
+    assert_eq!(
+        package.dependency_clock_pointer("dep-ms", ClockSelectionCause::UnusedClockSelection),
+        Some(format!("{root}/0"))
+    );
+    assert_eq!(
+        package.dependency_clock_pointer("other", ClockSelectionCause::MissingClockSelection),
+        Some(root.to_owned())
+    );
+    let program =
+        fsl_foundation::source::provenance::RawSourceRef::new("a".to_owned(), "i".to_owned())
+            .expect("a source");
+    assert!(package.is_program_source(&program));
+    assert!(super::member(package.document.root(), "semantic_graph").is_none());
+    assert!(super::member(package.document.root(), "extra").is_none());
+}

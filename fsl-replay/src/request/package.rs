@@ -12,11 +12,17 @@ use quire_canonical::{Document, Node, NodeRef, ReadError};
 
 /// A complete raw checked-package document, without an admission claim.
 ///
-/// The shared JSON document has flat ownership. Original bytes are retained
-/// unchanged so native admission still sees noncanonical numbers and spellings.
+/// The package is read as one JSON document, but only what replay reads
+/// outside admission stays in memory: the `name`, `lock` and
+/// `temporal_bindings` members and the facts of each `function` node.
+/// Original bytes are retained unchanged so native admission still sees
+/// noncanonical numbers and spellings.
 #[derive(Clone)]
 pub struct ReplayPackage {
+    /// The root members replay reads; the semantic graph is not held.
     document: Document,
+    /// Every `function` node of the semantic graph, read once.
+    functions: Vec<FunctionRecord>,
     bytes: Vec<u8>,
 }
 
@@ -41,7 +47,10 @@ impl ReplayPackage {
     /// Read one complete raw JSON document under the caller's byte ceiling.
     /// This checks JSON syntax only, not the checked-package contract.
     pub fn read(bytes: &[u8], max_input_bytes: u64) -> Result<Self, ReadError> {
-        let document = quire_canonical::read(bytes, max_input_bytes)?;
+        let full = quire_canonical::read(bytes, max_input_bytes)?;
+        let functions = Self::function_records(&full);
+        let document = retained_members(&full, bytes.len())?;
+        drop(full);
         let mut retained = Vec::new();
         retained
             .try_reserve(bytes.len())
@@ -51,14 +60,14 @@ impl ReplayPackage {
         retained.extend_from_slice(bytes);
         Ok(Self {
             document,
+            functions,
             bytes: retained,
         })
     }
 
-    /// The entire original document, including every graph and sidecar member.
-    #[must_use]
-    pub fn document(&self) -> &Document {
-        &self.document
+    /// The `function` nodes of the package's semantic graph, in node order.
+    pub(crate) fn functions(&self) -> &[FunctionRecord] {
+        &self.functions
     }
 
     /// The original bytes passed to the native checked-package reader.
@@ -293,15 +302,15 @@ impl ReplayPackage {
         &self,
     ) -> std::collections::BTreeMap<String, filament_semantic_value::checking::CheckMode> {
         use filament_semantic_value::checking::CheckMode;
-        Self::function_records(&self.document)
-            .into_iter()
+        self.functions
+            .iter()
             .filter_map(|record| {
                 let mode = match record.mode.as_deref()? {
                     "linked" => CheckMode::Linked,
                     "kernel" => CheckMode::Kernel,
                     _ => return None,
                 };
-                Some((record.name?, mode))
+                Some((record.name.clone()?, mode))
             })
             .collect()
     }
@@ -320,23 +329,10 @@ impl ReplayPackage {
     /// reader refuses it at admission (FR-952-AC-4), after the recompile.
     pub(crate) fn check_mode(&self) -> filament_semantic_value::checking::CheckMode {
         use filament_semantic_value::checking::CheckMode;
-        let nodes = member(self.document.root(), "semantic_graph")
-            .and_then(|graph| member(graph, "nodes"))
-            .and_then(|nodes| match nodes.node() {
-                Node::Array(items) => Some(items),
-                _ => None,
-            });
-        let kernel = nodes.is_some_and(|nodes| {
-            nodes.into_iter().any(|node| {
-                matches!(
-                    member(node, "node_tag").map(|tag| tag.node()),
-                    Some(Node::String("function"))
-                ) && matches!(
-                    member(node, "check_mode").map(|mode| mode.node()),
-                    Some(Node::String("kernel"))
-                )
-            })
-        });
+        let kernel = self
+            .functions
+            .iter()
+            .any(|record| record.mode.as_deref() == Some("kernel"));
         if kernel {
             CheckMode::Kernel
         } else {
@@ -595,4 +591,35 @@ pub(crate) struct FunctionRecord {
     pub(crate) name: Option<String>,
     /// The recorded `check_mode` spelling, when present.
     pub(crate) mode: Option<String>,
+}
+
+/// A document holding only the root members of `full` that replay reads after
+/// the read: `lock`, `name` and `temporal_bindings`, each as it stands. A
+/// root that is not an object stays a non-object, which those readers refuse
+/// as they did before. Numbers are re-spelled canonically, which no reader of
+/// these members observes (`json_value` reads a number as null).
+fn retained_members(full: &Document, input_len: usize) -> Result<Document, ReadError> {
+    let allocation = |_| ReadError::Allocation {
+        requested: input_len,
+    };
+    let root = full.root();
+    if !matches!(root.node(), Node::Object(_)) {
+        return quire_canonical::read(b"null", u64::MAX);
+    }
+    let mut bytes = vec![b'{'];
+    for key in ["lock", "name", "temporal_bindings"] {
+        let Some(value) = member(root, key) else {
+            continue;
+        };
+        if bytes.len() > 1 {
+            bytes.push(b',');
+        }
+        bytes.extend_from_slice(format!("\"{key}\":").as_bytes());
+        bytes.extend(
+            quire_canonical::to_vec(&value, quire_canonical::Limits::new(u64::MAX))
+                .map_err(allocation)?,
+        );
+    }
+    bytes.push(b'}');
+    quire_canonical::read(&bytes, u64::MAX)
 }
