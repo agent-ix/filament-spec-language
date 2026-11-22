@@ -1169,7 +1169,7 @@ impl<'a> ModelSystem<'a> {
     /// FR-106's [`AdmissionFailure`]: `Refused` or `Incomplete`, one record.
     pub fn new(request: ModelSimulationRequest<'a>) -> Result<Self, AdmissionFailure> {
         let selections = request.input.model_inputs();
-        Self::over(request, selections, None, &[])
+        Self::over(request, selections, None, None)
     }
 
     /// [`Self::new`] over the `model_selections` rows the subject reads: those
@@ -1202,7 +1202,7 @@ impl<'a> ModelSystem<'a> {
             return Self::new(request);
         }
         let sources = request.input.source_packages;
-        Self::over(request, ModelSelections::new(&read, sources), None, &[])
+        Self::over(request, ModelSelections::new(&read, sources), None, None)
     }
 
     /// [`Self::new`] with the caller's cancellation shared by qualified
@@ -1216,7 +1216,7 @@ impl<'a> ModelSystem<'a> {
         cancel: &filament_exact::Cancel,
     ) -> Result<Self, AdmissionFailure> {
         let selections = request.input.model_inputs();
-        Self::over(request, selections, Some(cancel), &[])
+        Self::over(request, selections, Some(cancel), None)
     }
 
     /// Admit a probability item's system with its work scope already attached,
@@ -1231,7 +1231,7 @@ impl<'a> ModelSystem<'a> {
         cancel: &filament_exact::Cancel,
     ) -> Result<Self, ProbabilityAdmissionFailure> {
         let selections = request.input.model_inputs();
-        let system = Self::over_scoped(request, selections, Some(cancel), &[], Some(scope))?;
+        let system = Self::over_scoped(request, selections, Some(cancel), None, Some(scope))?;
         system.check_rewards_metered(Some(cancel))?;
         Ok(system)
     }
@@ -1247,7 +1247,7 @@ impl<'a> ModelSystem<'a> {
         request: ModelSimulationRequest<'a>,
     ) -> Result<(), AdmissionFailure> {
         let selections = request.input.model_inputs();
-        Self::over_scoped(request, selections, None, &[], None).map(|_| ())
+        Self::over_scoped(request, selections, None, None, None).map(|_| ())
     }
 
     /// The model system's selected populations in ascending declaration-key
@@ -1290,8 +1290,9 @@ impl<'a> ModelSystem<'a> {
     }
 
     /// Select an HP-1 subject by its admitted domain identity on either route.
-    /// Unlike an alias lookup, this needs no source graph. Other models'
-    /// universes are skipped as they are for a source hyper subject.
+    /// Unlike an alias lookup, this needs no source graph. Other selected
+    /// models' universes and snapshot populations are scoped out as for a
+    /// source hyper subject; undeclared populations still refuse admission.
     ///
     /// # Errors
     ///
@@ -1348,25 +1349,20 @@ impl<'a> ModelSystem<'a> {
         }
         let sources = request.input.source_packages;
         let others = if skip_other_models {
-            let every = StateModel::new(
+            Some(StateModel::new(
                 request.input.model_inputs(),
                 request.input.types,
                 request.packages,
                 request.normalization,
-            )?;
-            every
-                .populations()
-                .iter()
-                .map(|population| population.key.clone())
-                .collect()
+            )?)
         } else {
-            Vec::new()
+            None
         };
         Self::over(
             request,
             fsl_semantics::model::observation::ModelSelections::new(&selected, sources),
             None,
-            &others,
+            others.as_ref(),
         )
     }
 
@@ -1374,7 +1370,7 @@ impl<'a> ModelSystem<'a> {
         request: ModelSimulationRequest<'a>,
         selections: fsl_semantics::model::observation::ModelSelections<'_>,
         cancel: Option<&filament_exact::Cancel>,
-        other_models: &[DeclarationKey],
+        other_models: Option<&StateModel>,
     ) -> Result<Self, AdmissionFailure> {
         let system = Self::over_scoped(request, selections, cancel, other_models, None)?;
         system.check_rewards_with_cancel(cancel)?;
@@ -1385,7 +1381,7 @@ impl<'a> ModelSystem<'a> {
         request: ModelSimulationRequest<'a>,
         selections: fsl_semantics::model::observation::ModelSelections<'_>,
         cancel: Option<&filament_exact::Cancel>,
-        other_models: &[DeclarationKey],
+        other_models: Option<&StateModel>,
         probability_work: Option<filament_exact::WorkScope>,
     ) -> Result<Self, AdmissionFailure> {
         let input = request.input;
@@ -1398,6 +1394,9 @@ impl<'a> ModelSystem<'a> {
             request.normalization,
         )?;
         let populations = model.populations();
+        let other_populations = other_models
+            .map(StateModel::populations)
+            .unwrap_or_default();
 
         let mut universes = BTreeMap::new();
         for universe in request.universes {
@@ -1405,7 +1404,10 @@ impl<'a> ModelSystem<'a> {
                 .iter()
                 .any(|population| population.key == universe.population)
             {
-                if other_models.contains(&universe.population) {
+                if other_populations
+                    .iter()
+                    .any(|population| population.key == universe.population)
+                {
                     continue;
                 }
                 return Err(refused(
@@ -1454,8 +1456,15 @@ impl<'a> ModelSystem<'a> {
 
         let mut initial = Vec::new();
         for document in &request.initial {
-            let (state, anchor) =
-                model.admit_initial(request.snapshots, document, request.observation)?;
+            let (state, anchor) = match other_models {
+                Some(all_models) => model.admit_initial_scoped(
+                    all_models,
+                    request.snapshots,
+                    document,
+                    request.observation,
+                ),
+                None => model.admit_initial(request.snapshots, document, request.observation),
+            }?;
             for population in universes.keys() {
                 if !state.populations.contains_key(population) {
                     return Err(AdmissionFailure::Incomplete(Box::new(record(

@@ -59,8 +59,36 @@ fn assert_tuple_evaluator_parity(
 
     let compiled = fsl_command::checked_handoff::compile(&ws.path(HANDOFF))
         .expect("source handoff compiles for evaluator comparison");
-    let model = std::fs::read(ws.path("model.json")).expect("model fixture");
-    let (packages, snapshots, initial) = initial_world(&model);
+    let request: Value =
+        serde_json::from_slice(&std::fs::read(ws.path("analyze.json")).expect("fixture request"))
+            .expect("request JSON");
+    let model_documents: Vec<_> = request["request"]["models"]
+        .as_array()
+        .expect("models")
+        .iter()
+        .map(|model| {
+            std::fs::read(ws.path(model["source"]["file"].as_str().expect("model file")))
+                .expect("model fixture")
+        })
+        .collect();
+    let packages =
+        fsl_semantics::model::intake::package_input(model_documents.iter().map(Vec::as_slice))
+            .expect("model fixtures admit");
+    let snapshots: fsl_semantics::model::observation::DocumentProvision = request["request"]
+        ["documents"]
+        .as_array()
+        .expect("documents")
+        .iter()
+        .map(|document| {
+            let bytes = std::fs::read(ws.path(document["file"].as_str().expect("snapshot file")))
+                .expect("snapshot fixture");
+            (
+                fsl_semantics::model::observation::document_reference(&bytes)
+                    .expect("snapshot identity"),
+                bytes,
+            )
+        })
+        .collect();
     let limits = fsl_package::V2ReadLimits::bounded(1 << 24);
     let admitted = fsl_package::admit_checked_package(bytes, &packages, limits)
         .expect("the evaluator package admits");
@@ -92,14 +120,26 @@ fn assert_tuple_evaluator_parity(
         .expect("package relation form");
     let package_descriptor =
         ModelRelationDescriptor::of_package(&bare, &form).expect("package descriptor");
-    let subject =
-        crate::relation_claims::subjects(source, &packages, &snapshots, &initial).remove(0);
+    let selection = fsl_analyze::analyze::document::SubjectSelection::default_over(&snapshots);
+    let binding = selection.binding(&packages, &snapshots);
+    let simulation = ModelSimulationRequest {
+        input: fsl_eval::simulation::model::ModelCheckInput::source(source),
+        packages: &packages,
+        normalization: ModelNormalizationLimits::default(),
+        snapshots: &snapshots,
+        initial: binding.initial,
+        universes: binding.universes,
+        observation: ObservationLimits::default(),
+        expansion: ExpansionLimits {
+            max_candidates: 1_000_000,
+        },
+        meter: UNLIMITED,
+        emit: fsl_package::EmitLimits::fixture(),
+    };
     let systems: Vec<_> = descriptor
         .execution_aliases()
         .iter()
-        .map(|alias| {
-            ModelSystem::for_alias(subject.simulation.clone(), alias).expect("execution system")
-        })
+        .map(|alias| ModelSystem::for_alias(simulation.clone(), alias).expect("execution system"))
         .collect();
     assert_eq!(systems.len(), 2, "the fixture has two labelled executions");
     let edges: Vec<Vec<_>> = systems
@@ -467,10 +507,18 @@ fn ordered_handoff(
     ws: &Workspace,
     separate_models: bool,
 ) -> (Value, Vec<u8>, fsl_semantics::model::intake::PackageInput) {
-    let declarations = "post OtherStep using v on N::Vault::step { self.l = i }\nrelation Ordered using v over (y: N::Vault::step, x: V::Vault::step) { pre(x.self.h) = pre(x.self.h) and pre(y.self.h) = pre(y.self.h) and x.self.l = x.i and y.self.l = y.i }\ninvariant Sibling using v on V::Vault at current { true }";
+    ordered_handoff_with_body(ws, separate_models, "pre(x.self.h) = pre(x.self.h) and pre(y.self.h) = pre(y.self.h) and x.self.l = x.i and y.self.l = y.i")
+}
+
+fn ordered_handoff_with_body(
+    ws: &Workspace,
+    separate_models: bool,
+    body: &str,
+) -> (Value, Vec<u8>, fsl_semantics::model::intake::PackageInput) {
+    let declarations = format!("post OtherStep using v on N::Vault::step {{ self.l = i }}\nrelation Ordered using v over (y: N::Vault::step, x: V::Vault::step) {{ {body} }}\ninvariant Sibling using v on V::Vault at current {{ true }}");
     let (unit, model, other, snapshots, extra) = if separate_models {
         let (unit, model, other, snapshot) =
-            hyper_world::two_model_request_files((0, 0), declarations);
+            hyper_world::two_model_request_files((0, 0), &declarations);
         ws.write("other.json", &other);
         let mut models = request_members(None)["models"].clone();
         models.as_array_mut().expect("model selections").push(json!({"format": "semantic-ir/2.0.0", "source": {"file": "other.json", "authority": "test", "identity": "vault-other-model", "document": "VaultOther", "formal_revision": 1}}));
@@ -483,7 +531,7 @@ fn ordered_handoff(
         )
     } else {
         let (unit, model, snapshots) =
-            request_files_over_starts(Vault::Secure, false, &STARTS, declarations);
+            request_files_over_starts(Vault::Secure, false, &STARTS, &declarations);
         let unit = unit.replace(
             "function Noop",
             &format!("model N = \"{}\";\nfunction Noop", hyper_world::PACKAGE),
@@ -514,9 +562,255 @@ fn hp1_package_forms_preserve_declaration_order_and_distinct_aliases() {
 
 #[trace("FR-940-AC-23", "FR-940-AC-27")]
 #[test]
-#[ignore = "QSL-2128 remainder: source relation route lacks per-model snapshot provisions; source Ordered refuses wrong-role-mapping on ix://test/vault-other/vaults before package comparison"]
 fn hp1_package_forms_preserve_declaration_order_across_separate_models() {
     assert_declaration_order_and_distinct_aliases(true);
+}
+
+#[trace("FR-940-AC-24", "FR-179-AC-2")]
+#[test]
+fn hp1_package_separate_models_counterexample_replays() {
+    let ws = Workspace::new("hp1-package-model-scope-replay");
+    let (members, bytes, _) = ordered_handoff_with_body(&ws, true, "x.i = y.i");
+    let source = analyze(&ws.path("analyze.json"));
+    assert_eq!(label(&source.item(0)), "refuted", "{}", source.document());
+    assert_eq!(
+        source.item(0)["replay"]["reproduced"],
+        true,
+        "{}",
+        source.document()
+    );
+    let outcomes = assert_tuple_evaluator_parity(&ws, &bytes, false, false);
+    assert!(
+        outcomes[0] && outcomes[1],
+        "distinct models retain both matching and conflicting result tuples"
+    );
+    forget_source(&ws);
+    let package = analyze_package(&ws, "model-scope-replay.json", &members);
+    for member in ["record", "counterexample", "replay"] {
+        assert_eq!(
+            package.item(0)[member],
+            source.item(0)[member],
+            "{member}: {}",
+            package.document()
+        );
+    }
+}
+
+/// Scoping may exclude another selected model's populations, never an
+/// undeclared population, even when it shares a selected model's prefix.
+#[trace("FR-940-AC-23", "FR-940-AC-24", "FR-179-AC-1")]
+#[test]
+fn hp1_package_model_scope_keeps_unselected_population_refusals() {
+    for foreign in ["ix://outside/vaults", "ix://test/vault/not-declared"] {
+        let ws = Workspace::new("hp1-package-model-scope-refusal");
+        let (mut members, _, _) = ordered_handoff(&ws, true);
+        let mut request: Value = serde_json::from_slice(
+            &std::fs::read(ws.path("analyze.json")).expect("source request"),
+        )
+        .expect("request JSON");
+        let mut initial: Value =
+            serde_json::from_slice(&std::fs::read(ws.path("snapshot-0.json")).expect("snapshot"))
+                .expect("snapshot JSON");
+        // Keep the universe clean so the foreign population is checked by
+        // snapshot admission, rather than rejected as a universe mapping.
+        let mut universe = initial.clone();
+        universe["identity"]["identity"] = json!("scope-universe");
+        ws.write("scope-universe.json", universe.to_string().as_bytes());
+        let mut extra = initial["populations"][0].clone();
+        extra["population"] = json!(foreign);
+        initial["populations"]
+            .as_array_mut()
+            .expect("populations")
+            .push(extra);
+        ws.write("snapshot-0.json", initial.to_string().as_bytes());
+        let subject = json!({
+            "initial_states": [{"authority": "test", "identity": "s0"}],
+            "universes": [{"authority": "test", "identity": "scope-universe"}],
+            "proof_bounds": []
+        });
+        request["request"]["documents"]
+            .as_array_mut()
+            .expect("documents")
+            .push(json!({"file": "scope-universe.json"}));
+        request["request"]["subject"] = subject.clone();
+        request["request"]["items"] = json!([{"claim": "Ordered"}]);
+        members["documents"] = request["request"]["documents"].clone();
+        members["subject"] = subject;
+        members["items"] = request["request"]["items"].clone();
+        let source = analyze(&ws.write("foreign-source.json", request.to_string().as_bytes()));
+        forget_source(&ws);
+        let package = analyze_package(&ws, "foreign-package.json", &members);
+        for run in [&source, &package] {
+            let document = run.document();
+            assert_eq!(document["category"], "refusal", "{document}");
+            // Source preflight can refuse before any items are created;
+            // an item-local refusal uses FR-621's singular `detail` member.
+            // Require exactly the same native refusal at either boundary.
+            let diagnostics: Vec<_> = document["diagnostics"]
+                .as_array()
+                .expect("diagnostics")
+                .iter()
+                .chain(
+                    document["items"]
+                        .as_array()
+                        .expect("items")
+                        .iter()
+                        .filter_map(|item| item["record"].get("diagnostic")),
+                )
+                .collect();
+            assert_eq!(diagnostics.len(), 1, "{document}");
+            let diagnostic = diagnostics[0];
+            assert_eq!(
+                diagnostic["code"],
+                "invalid_runtime_input",
+                "{}",
+                run.document()
+            );
+            assert_eq!(
+                diagnostic["cause"],
+                "wrong-role-mapping",
+                "{}",
+                run.document()
+            );
+            assert_eq!(
+                diagnostic
+                    .get("detail")
+                    .or_else(|| diagnostic.get("details"))
+                    .expect("native diagnostic payload")["population"],
+                foreign,
+                "{}",
+                run.document()
+            );
+        }
+    }
+}
+
+/// Projection must preserve the native reader's refusal on original bytes,
+/// including duplicate members and work hidden in another model's portion.
+#[trace("FR-940-AC-23", "FR-179-AC-1", "FR-106-AC-3")]
+#[test]
+fn hp1_package_model_scope_preserves_original_document_refusals() {
+    use fsl_eval::simulation::model::{ModelCheckInput, ModelSystem};
+    use fsl_semantics::model::observation::{AdmissionFailure, DocumentProvision};
+    use fsl_semantics::model::state::StateModel;
+
+    let ws = Workspace::new("hp1-package-original-read-refusals");
+    let (_, _, packages) = ordered_handoff(&ws, true);
+    let compiled =
+        fsl_command::checked_handoff::compile(&ws.path(HANDOFF)).expect("source compiles");
+    let input = ModelCheckInput::source(compiled.checked());
+    let whole = StateModel::new(
+        input.model_inputs(),
+        input.types,
+        &packages,
+        ModelNormalizationLimits::default(),
+    )
+    .expect("selected models normalize");
+    let original = std::fs::read(ws.path("snapshot-0.json")).expect("original snapshot");
+    let reference =
+        fsl_semantics::model::observation::document_reference(&original).expect("identity");
+    let clean = DocumentProvision::from([(reference.clone(), original.clone())]);
+    let selection = fsl_analyze::analyze::document::SubjectSelection::default_over(&clean);
+    let binding = selection.binding(&packages, &clean);
+    let text = std::str::from_utf8(&original).expect("fixture UTF-8");
+    let duplicate = text
+        .replacen(
+            "\"observation\":\"current\"",
+            "\"observation\":\"pre\",\"observation\":\"current\"",
+            1,
+        )
+        .into_bytes();
+    assert_ne!(
+        duplicate, original,
+        "fixture really contains a duplicate member"
+    );
+    let mut padded = original.clone();
+    padded.extend(std::iter::repeat_n(b' ', 4096));
+    let mut cases = vec![
+        (
+            "duplicate",
+            duplicate,
+            ObservationLimits::default(),
+            "invalid-value",
+        ),
+        (
+            "bytes",
+            padded,
+            ObservationLimits {
+                document_bytes: u64::try_from(original.len()).expect("fixture length") + 2048,
+                ..ObservationLimits::default()
+            },
+            "input-bytes-exceeded",
+        ),
+        (
+            "objects",
+            original.clone(),
+            ObservationLimits {
+                objects_per_document: 1,
+                ..ObservationLimits::default()
+            },
+            "node-count-exceeded",
+        ),
+    ];
+    for foreign in ["ix://outside/vaults", "ix://test/vault/not-declared"] {
+        let mut snapshot: Value = serde_json::from_slice(&original).expect("fixture snapshot");
+        let mut population = snapshot["populations"][0].clone();
+        population["population"] = json!(foreign);
+        snapshot["populations"]
+            .as_array_mut()
+            .expect("populations")
+            .push(population);
+        cases.push((
+            foreign,
+            serde_json::to_vec(&snapshot).expect("foreign fixture"),
+            ObservationLimits::default(),
+            "wrong-role-mapping",
+        ));
+    }
+    for (case, bytes, limits, cause) in cases {
+        let provision = DocumentProvision::from([(reference.clone(), bytes)]);
+        let expected = whole
+            .admit_initial(&provision, &reference, limits)
+            .expect_err("original document must refuse");
+        let AdmissionFailure::Refused(record) = &expected else {
+            panic!("{case}: expected refusal: {expected:?}");
+        };
+        assert_eq!(
+            record.catalog.cause(),
+            cause,
+            "{case}: native oracle reaches the intended refusal"
+        );
+        assert_eq!(input.model_selections.len(), 2);
+        for identity in input
+            .model_selections
+            .iter()
+            .map(|model| model.identity.as_str())
+        {
+            let actual = ModelSystem::for_model_identity(
+                ModelSimulationRequest {
+                    input: input.clone(),
+                    packages: &packages,
+                    normalization: ModelNormalizationLimits::default(),
+                    snapshots: &provision,
+                    initial: vec![reference.clone()],
+                    universes: binding.universes.clone(),
+                    observation: limits,
+                    expansion: ExpansionLimits {
+                        max_candidates: 1_000_000,
+                    },
+                    meter: UNLIMITED,
+                    emit: fsl_package::EmitLimits::fixture(),
+                },
+                identity,
+            )
+            .err()
+            .expect("scoped admission must refuse");
+            assert_eq!(
+                actual, expected,
+                "{case}, {identity}: preserve the full native refusal"
+            );
+        }
+    }
 }
 
 fn assert_declaration_order_and_distinct_aliases(separate_models: bool) {
@@ -609,9 +903,7 @@ fn assert_declaration_order_and_distinct_aliases(separate_models: bool) {
         package.subjects()[0].identity == package.subjects()[1].identity,
         !separate_models
     );
-    if !separate_models {
-        assert_tuple_evaluator_parity(&ws, &bytes, true, false);
-    }
+    assert_tuple_evaluator_parity(&ws, &bytes, true, false);
     drop(source_read);
     drop(compiled);
     forget_source(&ws);

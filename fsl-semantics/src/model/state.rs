@@ -819,6 +819,31 @@ impl StateModel {
         )
     }
 
+    /// Admit a multi-model initial snapshot for this model's subject.
+    /// Original bytes pass native read, duplicate-member and resource checks
+    /// before another selected model's declared populations are excluded.
+    /// Unknown populations remain subject to ordinary admission.
+    ///
+    /// # Errors
+    /// The same ordered admission failures as [`Self::admit_initial`].
+    pub fn admit_initial_scoped(
+        &self,
+        all_models: &Self,
+        provision: &BTreeMap<DocumentRef, Vec<u8>>,
+        selected: &DocumentRef,
+        limits: ObservationLimits,
+    ) -> Result<(ModelState, SelectedAnchor), AdmissionFailure> {
+        crate::model::observation::admit_initial_state_scoped(
+            &self.views,
+            Some(&all_models.views),
+            &self.types,
+            provision,
+            selected,
+            limits,
+            self.limits.ancestor_steps,
+        )
+    }
+
     /// The `min`/`max` bounds on the quantities each member of the
     /// selected models holds (the `member_bounds` of its views).
     pub fn member_bounds(&self) -> Vec<MemberBound> {
