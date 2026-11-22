@@ -2232,13 +2232,6 @@ pub(crate) fn recompile_with_temporal_selections(
                 .ok()
             }),
         })?;
-    request.check_external_package_bytes(
-        compiled
-            .checked
-            .shared_library_packages()
-            .values()
-            .map(|package| package.bytes().len()),
-    )?;
     Ok(compiled)
 }
 
@@ -2501,26 +2494,31 @@ struct SpineUnitRun<'a> {
 }
 
 /// A library-package charge that crossed `replay.input_bytes` is the
-/// request's [`BoundExceeded`] refusal, the one the after-the-fact check
-/// reports, not a recompile refusal.
+/// request's [`BoundExceeded`] refusal, not a recompile refusal.
 fn external_package_bound(refusal: ReplayRefusal) -> ReplayRefusal {
+    let ReplayRefusal::Recompile {
+        refusal: compile, ..
+    } = &refusal
+    else {
+        return refusal;
+    };
+    match replay_input_limit(compile) {
+        Some(limit) => ReplayRequestRefusal::BoundExceeded(BoundExceeded {
+            bound: limit.configured_bound(),
+            actual: limit.actual(),
+        })
+        .into(),
+        None => refusal,
+    }
+}
+
+/// The `replay.input_bytes` limit `refusal` reports, seen through a library
+/// path that wraps it.
+fn replay_input_limit(refusal: &CompileRefusal) -> Option<&fsl_foundation::diagnostic::LimitExceeded> {
     match refusal {
-        ReplayRefusal::Recompile {
-            refusal: compile, ..
-        } => match *compile {
-            CompileRefusal::Limit(limit) if limit.setting() == Setting::ReplayInputBytes => {
-                ReplayRequestRefusal::BoundExceeded(BoundExceeded {
-                    bound: limit.configured_bound(),
-                    actual: limit.actual(),
-                })
-                .into()
-            }
-            compile => ReplayRefusal::Recompile {
-                refusal: Box::new(compile),
-                pointer: None,
-            },
-        },
-        other => other,
+        CompileRefusal::Limit(limit) if limit.setting() == Setting::ReplayInputBytes => Some(limit),
+        CompileRefusal::Dependency { refusal, .. } => replay_input_limit(refusal),
+        _ => None,
     }
 }
 
@@ -3321,5 +3319,55 @@ mod carried_quantity_tests {
                 parameter: 3
             }))
         ));
+    }
+}
+
+#[cfg(test)]
+mod external_package_bound_tests {
+    use super::{external_package_bound, CompileRefusal, ReplayRefusal, ReplayRequestRefusal};
+    use crate::bounds::BoundExceeded;
+    use fsl_foundation::diagnostic::LimitExceeded;
+    use fsl_foundation::Setting;
+    use fsl_semantics::library::LibraryName;
+
+    fn crossing() -> LimitExceeded {
+        LimitExceeded::new(Setting::ReplayInputBytes, 10, 25)
+    }
+
+    fn expected() -> BoundExceeded {
+        BoundExceeded {
+            bound: 10,
+            actual: 25,
+        }
+    }
+
+    /// QSL-2849, FR-255-AC-1: the library-package charge that crosses
+    /// `replay.input_bytes` surfaces as the request's `BoundExceeded`, with the
+    /// same message, whether or not a library path wraps it.
+    #[test]
+    fn a_library_package_charge_surfaces_as_the_request_bound_refusal() {
+        let direct = ReplayRefusal::Recompile {
+            refusal: Box::new(CompileRefusal::Limit(crossing())),
+            pointer: None,
+        };
+        let nested = ReplayRefusal::Recompile {
+            refusal: Box::new(CompileRefusal::Dependency {
+                path: vec![LibraryName::new("test/z").expect("a library name")],
+                refusal: Box::new(CompileRefusal::Limit(crossing())),
+            }),
+            pointer: None,
+        };
+        for refusal in [direct, nested] {
+            let mapped = external_package_bound(refusal);
+            assert_eq!(
+                mapped.to_string(),
+                ReplayRequestRefusal::BoundExceeded(expected()).to_string()
+            );
+            assert!(matches!(
+                mapped,
+                ReplayRefusal::Request(ReplayRequestRefusal::BoundExceeded(found))
+                    if found == expected()
+            ));
+        }
     }
 }

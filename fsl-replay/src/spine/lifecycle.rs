@@ -3801,6 +3801,14 @@ pub(crate) fn compose_in_mode(
 
 #[cfg(test)]
 thread_local! {
+    /// How many units (libraries and the importing unit) this thread has
+    /// compiled to a checked package; a test reads it to prove a refusal
+    /// arrived before a later unit's compile.
+    pub(crate) static UNIT_FINISHES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+#[cfg(test)]
+thread_local! {
     /// The `declaration` occurrence of each function of each composed
     /// package, by the callable's own node key: the key a `function` replay
     /// request carries for the predicate claim (FR-098).
@@ -4240,6 +4248,8 @@ impl<'a> Resolution<'a> {
         &mut self,
         frame: &mut Frame,
     ) -> Result<pkg::CheckedPackage, Box<CompileRefusal>> {
+        #[cfg(test)]
+        UNIT_FINISHES.with(|finishes| finishes.set(finishes.get() + 1));
         let limits = self.limits;
         let raw = frame.raw.clone();
         let unit = frame.unit.clone();

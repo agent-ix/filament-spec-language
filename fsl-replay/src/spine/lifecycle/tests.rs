@@ -4869,17 +4869,24 @@ fn library_packages_are_charged_as_each_is_emitted() {
             &cancel,
         )
     };
+    super::UNIT_FINISHES.with(|finishes| finishes.set(0));
     let unbounded = run(None).expect("the closure compiles").into_value();
     let lengths: BTreeMap<String, usize> = unbounded[0]
         .shared_library_packages()
         .iter()
         .map(|(name, package)| (name.as_str().to_owned(), package.bytes().len()))
         .collect();
+    assert_eq!(
+        super::UNIT_FINISHES.with(std::cell::Cell::get),
+        3,
+        "the closure compiles two libraries and the importing unit"
+    );
     assert_eq!(lengths.len(), 2);
     let first = lengths["test/geometry"];
     let total: usize = lengths.values().sum();
     assert!(first < total);
 
+    super::UNIT_FINISHES.with(|finishes| finishes.set(0));
     let Err(StageFailure::Limit(limit)) =
         run(Some(super::ExternalPackageBytes { spent: 0, bound: 0 }))
     else {
@@ -4888,6 +4895,11 @@ fn library_packages_are_charged_as_each_is_emitted() {
     assert_eq!(limit.setting(), Setting::ReplayInputBytes);
     assert_eq!(limit.configured_bound(), 0);
     assert_eq!(limit.actual(), first as u128, "the second library never ran");
+    assert_eq!(
+        super::UNIT_FINISHES.with(std::cell::Cell::get),
+        1,
+        "only the first library compiled: the second library and the importing unit never did"
+    );
 
     // Room for exactly the closure's packages admits it.
     run(Some(super::ExternalPackageBytes {
