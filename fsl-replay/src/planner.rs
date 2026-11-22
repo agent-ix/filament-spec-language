@@ -40,6 +40,8 @@ use request::read_declared;
 use settle::settle_declared;
 
 #[cfg(test)]
+mod admitted_fixture;
+#[cfg(test)]
 mod composition_tests;
 #[cfg(test)]
 mod tests;
