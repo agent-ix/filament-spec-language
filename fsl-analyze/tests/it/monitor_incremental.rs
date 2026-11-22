@@ -645,8 +645,8 @@ fn a_regressing_stamp_is_refused_and_the_ledger_equals_the_batch_run() {
         .expect("the clause's ledger binding");
     assert_eq!(
         entry.covered().count(),
-        6,
-        "all historical facts remain across five observations"
+        5,
+        "all historical facts remain across five observations: the position re-delivered at stamp 6 is the identity covered at stamp 7, held once (FR-502: membership uses the identity only)"
     );
 }
 
