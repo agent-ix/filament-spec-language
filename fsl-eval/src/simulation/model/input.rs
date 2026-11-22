@@ -235,7 +235,7 @@ impl<'a> ModelCheckInput<'a> {
                         )
                     }),
                     observation: clause.observation(),
-                    invariant: clause.kind() == fsl_forms::StateClauseKind::Invariant,
+                    invariant: clause.kind() == fsl_semantics::check::StateClauseKind::Invariant,
                 })
                 .collect(),
             terminals: fsl_package::resolve_terminals(package).map(|terminals| {

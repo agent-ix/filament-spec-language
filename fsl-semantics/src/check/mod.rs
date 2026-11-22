@@ -535,10 +535,10 @@ pub use type_form::{I128Limit, IntegerOutsideI128, IntegerSite, TypeFormFault};
 // conversion does, and both are `check`-core call sites of one canonical
 // function rather than two.
 pub use field_refinement::RefinementObligation;
-/// The premises a [`CheckedChannel`] records exactly as written (FR-218
-/// "Channels"), which its readers match on.
+/// Checked declaration discriminants and channel premises read by later layers.
 pub use fsl_forms::{
-    AccessOrdering, ChannelCapacity, ChannelDelivery, ChannelOverflow, LossSelector, QuantifierKind,
+    AccessOrdering, ChannelCapacity, ChannelDelivery, ChannelOverflow, LossSelector,
+    ProtocolNodeKind, QuantifierKind, StateClauseKind,
 };
 pub use hybrid::{
     hybrid_horizon, ArithmeticOp, CaptureIndex, CheckedFunctionRef, CheckedHybridClaim,

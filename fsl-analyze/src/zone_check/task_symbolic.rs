@@ -885,7 +885,7 @@ impl<'t, 's, 'a, 'c> Explorer<'t, 's, 'a, 'c> {
 
 fn template_of(template: &TaskTemplate) -> TaskTransitionTemplate {
     TaskTransitionTemplate {
-        action: template.action,
+        action: template.action.into(),
         task_set: template.task_set.clone(),
         task: template.task.clone(),
         job_rank: template.job_rank,

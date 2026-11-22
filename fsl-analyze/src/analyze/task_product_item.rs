@@ -68,9 +68,8 @@ pub struct TaskProductReport {
     /// FSpec FR-331 `task_search` frontier evidence of a bounded stop, without
     /// its `identity`; present only for a stop that retained a frontier.
     pub task_search: Option<serde_json::Value>,
-    pub(crate) temporal_counterexample: Option<
-        Box<fsl_replay::TemporalCounterexample<fsl_eval::simulation::model::TaskProductTransition>>,
-    >,
+    pub(crate) temporal_counterexample:
+        Option<Box<fsl_replay::TemporalCounterexample<fsl_replay::TaskProductTransition>>>,
 }
 
 /// Build EN-6's task-product item when `claim` names a release-backed
@@ -226,10 +225,10 @@ fn task_counterexample(
     trace: &fsl_eval::simulation::model::TaskProductTrace,
     claim: &OccurrenceKey,
 ) -> Option<(
-    fsl_replay::TemporalCounterexample<fsl_eval::simulation::model::TaskProductTransition>,
+    fsl_replay::TemporalCounterexample<fsl_replay::TaskProductTransition>,
     serde_json::Value,
 )> {
-    use fsl_eval::simulation::model::TaskProductTransition;
+    use fsl_replay::TaskProductTransition;
     use fsl_replay::{CounterexampleKind, Lasso, ModelStep, TemporalCounterexample};
 
     // A finite missed-deadline prefix is useful search evidence, but FR-249
@@ -258,7 +257,7 @@ fn task_counterexample(
                 product.state_key(state).ok()?,
             );
             Some(ModelStep {
-                transition: step.transition.clone(),
+                transition: step.transition.clone().into(),
                 post_state,
                 delay: Some(step.delay.clone()),
             })
@@ -303,9 +302,7 @@ fn task_counterexample(
 
 fn readmit_task_counterexample(
     product: &fsl_eval::simulation::model::TaskProductSystem<'_, '_>,
-    counterexample: &fsl_replay::TemporalCounterexample<
-        fsl_eval::simulation::model::TaskProductTransition,
-    >,
+    counterexample: &fsl_replay::TemporalCounterexample<fsl_replay::TaskProductTransition>,
 ) -> Result<bool, fsl_replay::TemporalCounterexampleReadRefusal> {
     let Some(lasso_entry) = counterexample.lasso.as_ref().map(|lasso| lasso.entry) else {
         return Ok(false);
@@ -315,9 +312,8 @@ fn readmit_task_counterexample(
         .iter()
         .enumerate()
         .filter_map(|(index, step)| match &step.transition {
-            fsl_eval::simulation::model::TaskProductTransition::Task(identity)
-                if identity.action
-                    == fsl_eval::simulation::model::TaskTransitionAction::DeadlineMiss =>
+            fsl_replay::TaskProductTransition::Task(identity)
+                if identity.action == fsl_replay::TaskTransitionAction::DeadlineMiss =>
             {
                 Some(index)
             }
@@ -420,7 +416,8 @@ fn task_search_evidence(
             let depth = u64::try_from(index + 1).ok()?;
             // The path ends at the open node, which is not expanded.
             let next = add(states.get(index + 1)?, depth, index + 1 < total)?;
-            let transition = fsl_replay::task_product_transition_wire(&step.transition).ok()?;
+            let transition: fsl_replay::TaskProductTransition = step.transition.clone().into();
+            let transition = fsl_replay::task_product_transition_wire(&transition).ok()?;
             let edge = json!({"node": previous, "transition": transition, "target": next});
             // Frontier paths share prefixes; each edge is written once.
             if !edges.contains(&edge) {

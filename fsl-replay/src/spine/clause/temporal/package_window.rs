@@ -4,7 +4,7 @@
 use std::collections::BTreeMap;
 
 use filament_exact::{Meter, NodeKey, Origin, Role};
-use fsl_eval::temporal::{HoldsStop, PackagePositions, TimestampedTrace, WindowEvaluation};
+use fsl_eval::temporal::{HoldsStop, PackagePositions, TimestampedTrace};
 use fsl_foundation::source::provenance::{OccurrenceKey, RawSourceRef, SourceRegion};
 use fsl_foundation::{Source, SourceIdentity, Span};
 use fsl_package::occurrence_source::OccurrenceSourceRefusal;
@@ -27,7 +27,7 @@ pub struct PackageAtomAttributionFailure {
     /// The original budget denial, when the owning reader supplied one.
     pub budget_context: Option<fsl_foundation::diagnostic::BudgetDenial>,
     /// The original finite-window result, before any label was rendered.
-    pub original_window: Option<Box<WindowEvaluation>>,
+    pub original_window: Option<Box<crate::PackageWindowEvaluation>>,
     /// The original condition refusal, before any locus was rendered.
     pub original_refusal: Option<super::super::CallOutcome>,
 }
@@ -44,7 +44,7 @@ pub(super) struct Context<'a, 'p> {
 }
 
 impl<'a, 'p> Context<'a, 'p> {
-    pub fn new(
+    pub(super) fn new(
         package: &'a fsl_package::BarePackage<'p>,
         evaluator: &'a dyn fsl_eval::simulation::model::ModelEvaluator,
         clause: &'a CheckedTemporalClause,
@@ -306,7 +306,7 @@ impl<'a, 'p> Context<'a, 'p> {
         }
     }
 
-    pub fn evaluate(
+    pub(super) fn evaluate(
         &self,
         positions: PackagePositions<'_>,
         trace: &TimestampedTrace,
@@ -390,7 +390,7 @@ impl<'a, 'p> Context<'a, 'p> {
                 }
                 Err(mut failure) => {
                     if let PackageSelectionNotRead::Attribution(attribution) = &mut failure {
-                        attribution.original_window = Some(Box::new(evaluation));
+                        attribution.original_window = Some(Box::new(evaluation.into()));
                     }
                     return Err(failure);
                 }

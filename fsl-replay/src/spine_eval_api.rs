@@ -1,13 +1,37 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-//! Names for evaluator-owned types at the replay facade boundary.
+//! Temporal values exposed at the replay facade boundary.
 //!
-//! The spine exposes these through its own module so its public syntax does
-//! not depend on `fsl_eval` paths (FR-100-AC-8).
+//! The spine exposes replay-owned valuations alongside its temporal value
+//! names, keeping evaluator paths outside the spine surface (FR-100-AC-8).
 
 /// A single atom's temporal reading.
 pub type SpineEvalAtomReading = fsl_eval::temporal::AtomReading;
 /// A valuation observed over a trace.
-pub type SpineEvalObservedValuation = fsl_eval::temporal::ObservedValuation;
+#[derive(Debug)]
+pub struct SpineEvalObservedValuation {
+    /// The clause's atoms in arena order.
+    pub atoms: Vec<fsl_semantics::check::FormulaNodeId>,
+    /// The atom readings at each represented position.
+    pub readings: Vec<Vec<SpineEvalAtomReading>>,
+    /// Each activation and its native outcome.
+    pub activations: Vec<(
+        fsl_eval::temporal::TemporalPosition,
+        SpineEvalTemporalOutcome,
+    )>,
+    /// The finite or lasso trace represented by the readings.
+    pub trace: fsl_eval::temporal::TemporalTrace,
+}
+
+impl From<fsl_eval::temporal::ObservedValuation> for SpineEvalObservedValuation {
+    fn from(value: fsl_eval::temporal::ObservedValuation) -> Self {
+        Self {
+            atoms: value.atoms,
+            readings: value.readings,
+            activations: value.activations,
+            trace: value.trace,
+        }
+    }
+}
 /// The result of evaluating a temporal clause.
 pub type SpineEvalTemporalOutcome = fsl_eval::temporal::TemporalOutcome;
 /// A refusal produced while evaluating a temporal clause.

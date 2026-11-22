@@ -81,7 +81,7 @@ pub struct PackageControl {
     /// The admitted send selected by a receive's `of` member.
     pub(super) from: Option<ProtocolNodeId>,
     /// The attempt's explicit memory ordering.
-    pub ordering: Option<fsl_forms::AccessOrdering>,
+    pub ordering: Option<fsl_semantics::check::AccessOrdering>,
     /// The state clauses selected by the operation call's `contracts` member.
     pub contracts: Vec<fsl_package::CheckedNodeId>,
     /// The FR-531 identities of the selected state clauses.
@@ -147,7 +147,7 @@ pub struct PackageAttemptContext {
     /// The branch label within that parallel.
     pub branch: String,
     /// The attempt's explicit ordering.
-    pub ordering: Option<fsl_forms::AccessOrdering>,
+    pub ordering: Option<fsl_semantics::check::AccessOrdering>,
 }
 
 /// The package-native protocol program needed by selection and execution.

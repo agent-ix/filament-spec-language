@@ -2972,11 +2972,7 @@ pub fn evaluate_model_trace(
             {
                 return Err(ReplayRefusal::UnfairLasso { constraint });
             }
-            trace_of(
-                lasso.clone(),
-                false,
-                positions.len(),
-            )
+            trace_of(lasso.clone(), false, positions.len())
         }
         None => TemporalTrace::Finite {
             len: position_of(positions.len()),
@@ -3038,7 +3034,7 @@ pub fn evaluate_model_trace(
 #[derive(Debug)]
 pub struct BehaviourValuations {
     /// One valuation per trace.
-    pub traces: Vec<fsl_eval::temporal::ObservedValuation>,
+    pub traces: Vec<crate::spine::ObservedValuation>,
     /// Whether every behaviour was read, or the work budget or an expansion
     /// stopped the enumeration first.
     pub end: BehaviourValuationEnd,
@@ -3131,7 +3127,7 @@ pub fn behaviour_valuations(
                                 )),
                             ),
                             None => {
-                                traces.push(valuation);
+                                traces.push(valuation.into());
                                 std::ops::ControlFlow::Continue(())
                             }
                         }

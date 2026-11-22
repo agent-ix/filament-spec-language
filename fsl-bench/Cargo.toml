@@ -45,9 +45,12 @@ nix = { version = "0.31.3", default-features = false, features = ["resource"] }
 # Off by default: the workload counters of `src/counters.rs`.
 [features]
 counters = []
-property-generators = ["dep:proptest", "fsl-cst/test-support"]
+property-generators = ["dep:proptest"]
 
 [dev-dependencies]
+# Grammar derivations are consumed only by the property-generator acceptance
+# tests; production generator features do not activate parser test support.
+fsl-cst = { path = "../fsl-cst", features = ["test-support"] }
 # Default features off: no rayon, no plotters. `cargo_bench_support` is the
 # one feature `cargo bench` needs.
 criterion = { version = "0.8.2", default-features = false, features = ["cargo_bench_support"] }

@@ -418,7 +418,7 @@ pub(super) fn run_behaviours(
 /// [`run_package_behaviours`] reads.
 pub struct PackageBehaviours<'a> {
     /// The package route's model-check input.
-    pub input: fsl_eval::simulation::model::ModelCheckInput<'a>,
+    pub input: crate::PackageModelCheckInput<'a>,
     /// The package form of the temporal clause.
     pub clause: &'a fsl_semantics::check::CheckedTemporalClause,
     /// The clause node's key.
@@ -473,7 +473,7 @@ pub fn run_package_behaviours(
         universe.keys.sort();
     }
     let system = ModelSystem::new(ModelSimulationRequest {
-        input,
+        input: input.into_inner(),
         packages,
         normalization: model_limits,
         snapshots,

@@ -243,11 +243,9 @@ impl ReferenceBindings {
             let slots = &protocol.slots;
             for body in &slots.bodies {
                 collect_literals(graph, body.body.root(), &mut literals);
-                if protocol
-                    .controls
-                    .control(body.node)
-                    .is_some_and(|control| control.kind == fsl_forms::ProtocolNodeKind::Check)
-                {
+                if protocol.controls.control(body.node).is_some_and(|control| {
+                    control.kind == fsl_semantics::check::ProtocolNodeKind::Check
+                }) {
                     collect_literals(graph, body.body.root(), &mut barred);
                 }
             }
