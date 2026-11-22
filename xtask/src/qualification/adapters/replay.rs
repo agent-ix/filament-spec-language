@@ -6,6 +6,7 @@
 use std::path::{Component, Path};
 
 use fsl_foundation::{SettingLimits, SettingName};
+use fsl_replay::{OutcomeDiagnostic, OutcomeLocus, ReplayRefusal};
 use serde_json::Value;
 
 use super::{document, from_document, Execution, Failure, InputKind, Inputs};
@@ -23,7 +24,7 @@ pub(super) fn execute(
     overrides: &[String],
     schema: &jsonschema::JSONSchema,
 ) -> Result<Execution, Failure> {
-    let (_, bytes) = inputs.one(InputKind::ReplayRequest)?;
+    let (request_file, bytes) = inputs.one(InputKind::ReplayRequest)?;
     drop(super::super::DeepValue::new(document(bytes, schema)?));
     let documents = inputs
         .files
@@ -74,7 +75,31 @@ pub(super) fn execute(
         }
     }
     let result = fsl_replay::replay(request, limits.replay);
-    let actual = result.as_ref().ok().map(replay_value).transpose()?;
+    let actual = match &result {
+        Ok(result) => Some(replay_value(result)?),
+        Err(refusal @ (ReplayRefusal::Package(_) | ReplayRefusal::PackageWithIdentity { .. })) => {
+            // Corpus diagnostics locate the embedded package in its request;
+            // the retained operation bytes keep the native artifact locus.
+            let locus = refusal.pointer().map(|pointer| OutcomeLocus::Document {
+                document: None,
+                path: Some(request_file.path.clone()),
+                pointer: pointer.into_owned(),
+                object: None,
+                member: None,
+            });
+            let diagnostic = OutcomeDiagnostic::new(
+                refusal.cause(),
+                refusal.code().as_str(),
+                locus,
+                refusal.to_string(),
+            );
+            Some(
+                serde_json::to_value(diagnostic)
+                    .map_err(|error| Failure::decode("", error.to_string()))?,
+            )
+        }
+        Err(_) => None,
+    };
     let mut execution = from_document(fsl_replay::OutcomeDocument::from_replay(&result), actual)?;
     if result.as_ref().is_ok_and(|result| {
         result.limit().is_some()
