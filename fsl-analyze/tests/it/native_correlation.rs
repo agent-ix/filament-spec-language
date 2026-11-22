@@ -915,6 +915,59 @@ fn weak_correlation_preserves_false_undefined_and_live_binder_premises() {
     weak_premises::<Ra>("ra");
 }
 
+fn weak_attempt_candidates<M: fill::Explored + Default>(memory: &str) {
+    let fixture = Fixture::with_prelude(
+        "capture saved: Reference<M::Cell> = k;",
+        "",
+        &inside_weak(
+            memory,
+            &attempt(
+                "related by Owns ((if worked then saved else k), saved)",
+                "true",
+            ),
+        ),
+        true,
+        FLAG_RESULT_POSTSTATES,
+        filament_semantic_value::checking::CheckMode::Linked,
+    );
+    let graph = fixture.graph_under::<M>();
+    let attempts: Vec<_> = graph
+        .iter()
+        .flat_map(|state| &state.steps)
+        .filter(|(step, _)| step.kind() == StepKind::Attempt)
+        .collect();
+    for result in [true, false] {
+        let (_, next) = attempts
+            .iter()
+            .find(|(step, _)| step.binder_record() == Some(&filament_exact::Value::Boolean(result)))
+            .expect("both candidate result frames execute");
+        assert_eq!(
+            fill::v(graph[*next].state.model(), "c"),
+            if result { 1 } else { 2 }
+        );
+    }
+    let absent = Fixture::with_prelude(
+        "",
+        "",
+        &inside_weak(memory, &attempt("related by Owns (k, k)", "true")),
+        false,
+        FLAG_RESULT_POSTSTATES,
+        filament_semantic_value::checking::CheckMode::Linked,
+    )
+    .graph_under::<M>();
+    assert!(!absent
+        .iter()
+        .flat_map(|state| &state.steps)
+        .any(|(step, _)| step.kind() == StepKind::Attempt));
+}
+
+#[trace("FR-731-AC-1", "FR-940-AC-6")]
+#[test]
+fn weak_correlation_attempt_preserves_candidate_frames_and_poststates() {
+    weak_attempt_candidates::<Tso>("tso");
+    weak_attempt_candidates::<Ra>("ra");
+}
+
 #[trace("FR-940-AC-6", "FR-731-AC-1")]
 #[test]
 fn weak_package_profile_admits_correlation_outside_parallel_and_sc_override_executes() {
