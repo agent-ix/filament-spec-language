@@ -96,15 +96,20 @@ impl BarePackage<'_> {
         let scheduler = match &read.scheduler {
             ProbabilisticScheduler::Workload(workload) => {
                 let workload = self.node_key(workload).ok_or_else(malformed)?;
-                let workload = self.node_by_key(&workload)?
+                let workload = self
+                    .node_by_key(&workload)?
                     .and_then(|node| group_member(&node.body, "name"))
-                    .and_then(text).ok_or_else(malformed)?.to_owned();
+                    .and_then(text)
+                    .ok_or_else(malformed)?
+                    .to_owned();
                 fsl_semantics::check::ProbScheduler::Workload(workload)
             }
             ProbabilisticScheduler::Every if read.fairness.is_empty() => {
                 fsl_semantics::check::ProbScheduler::Every
             }
-            ProbabilisticScheduler::Every => return Err(pending("probabilistic-exact-eventual-form")),
+            ProbabilisticScheduler::Every => {
+                return Err(pending("probabilistic-exact-eventual-form"));
+            }
         };
         if !matches!(read.activation, ProbabilisticActivation::Origin)
             || !read.rewards.is_empty()
