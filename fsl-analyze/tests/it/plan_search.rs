@@ -3139,6 +3139,33 @@ fn imported_operation_contracts_enforce_preconditions_and_exact_poststates() {
         assert_eq!(ordinary, expected, "ordinary model relation at {before}");
     }
     assert_eq!(seen.into_iter().collect::<Vec<_>>(), [0, 1, 2, 3, 4]);
+    // This ordinary expansion reaches an inline precondition before any
+    // post-state trial; it must retain the native evaluation stop.
+    system.share_evaluation_meter(ScalarLimits {
+        work_units: 0,
+        ..UNLIMITED
+    });
+    let stopped = system.successors(&system.initial()[0]).unwrap_err();
+    assert_eq!(
+        stopped.limit,
+        Some(fsl_eval::simulation::ExpansionLimit::EvaluationMeter(
+            filament_exact::LimitKind::WorkUnits
+        ))
+    );
+    for cause in [CancelCause::Requested, CancelCause::Deadline] {
+        system.begin_plan_replay(UNLIMITED);
+        let cancel = Cancel::new();
+        system.cancel_plan_with(&cancel);
+        cancel.cancel(cause);
+        let stopped = system.successors(&system.initial()[0]).unwrap_err();
+        assert_eq!(
+            stopped.limit,
+            Some(fsl_eval::simulation::ExpansionLimit::EvaluationMeter(
+                filament_exact::LimitKind::WorkUnits
+            ))
+        );
+        assert_eq!(system.plan_cancel_cause(), Some(cause));
+    }
 }
 
 /// An inherited operation uses its actual declaring owner and typed receiver,
