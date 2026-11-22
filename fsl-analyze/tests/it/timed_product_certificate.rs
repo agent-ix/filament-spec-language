@@ -1317,7 +1317,7 @@ fn elapsed_quantile_altered_transform_value_is_rejected() {
 /// FR-877-AC-2: `<= 1 ms` is refuted.
 #[trace("TC-2494", "FR-877-AC-2")]
 #[trace("FSpec-TC-1820", "FSpec-FR-753-AC-4")]
-#[ignore = "QSL-2156: refutation needs the timed witness replay"]
+#[ignore = "QSL-2889: refutation needs the timed witness replay"]
 #[test]
 fn elapsed_quantile_at_most_refutes() {
     let world = quantiles();
@@ -1376,7 +1376,7 @@ fn elapsed_quantile_altered_upper_value_is_rejected() {
 /// FR-877-AC-4: at a transform maximum of exactly 0 the tight search reaches
 /// the activated initial state, so the claim is refuted, never proved.
 #[trace("TC-2494", "FR-877-AC-4")]
-#[ignore = "QSL-2156: a refutation needs the timed witness replay (draco/qsl-2156-cycles)"]
+#[ignore = "QSL-2889: a refutation needs the timed witness replay (draco/qsl-2156-cycles)"]
 #[test]
 fn elapsed_quantile_tight_search_refutes() {
     let world = quantiles();

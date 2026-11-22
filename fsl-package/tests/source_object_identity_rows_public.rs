@@ -143,7 +143,7 @@ fn public_source_object_rows_constructor_serializes_nonempty_member_facts() {
 /// `{identity, query}`. Runs once the reader admits source `operation_bodies`.
 #[trace("FR-531-AC-8", "FR-569-AC-16", "TC-1408")]
 #[test]
-#[ignore = "QSL-2347: the reader admits source operation_bodies rows; not implemented yet"]
+#[ignore = "QSL-2890: the reader admits source operation_bodies rows; not implemented yet"]
 fn public_source_object_rows_constructor_serializes_own_operations() {
     let identities = serialized_identities(
         &format!(

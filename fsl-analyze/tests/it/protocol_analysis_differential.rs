@@ -61,7 +61,7 @@ fn root() -> serde_json::Value {
 /// no payload; bound to 1 it settles as the literal capacity 1 does.
 #[trace("TC-2523", "FR-891-AC-2", "FSpec-FR-785-AC-6")]
 #[test]
-#[ignore = "QSL-2212 completed; current blocker has no assigned owner: the Flow claim is refused invalid_runtime_input/missing-member `temporal.profile` before the capacities binding is read"]
+#[ignore = "QSL-2885: the Flow claim is refused invalid_runtime_input/missing-member `temporal.profile` before the capacities binding is read"]
 fn a_symbolic_capacity_settles_from_the_capacities_binding() {
     let root = json!({"observation": {"authority": "test", "identity": "protocol-claim"},
         "subject": {"tag": "object", "universe": "u", "type": "e", "object_identity": "flow-1"}});
