@@ -1,6 +1,9 @@
 # QSL-2760 caller override focused receipts
 
-Changed crate: `fsl-command`. Base: `5b51a5d55`.
+Changed crate: `fsl-command`. Focused-test base: `5b51a5d55`.
+After those commands exited, the branch rebased cleanly once onto the owner's
+repair main `3415ccde2ceea376b44ea49a0504ed3ed52fc628`. Accepted tests were
+not repeated for that integration.
 Only the two new acceptance names ran. Commands used the populated shared
 CARGO_HOME, this worktree's retained target, debug=0, incremental=0 and
 parallelism derived from actual CPU/load/available memory.
@@ -24,5 +27,5 @@ its existing Call.accounting. This API accepts a borrow of that fully resolved
 ScalarLimits. No additional caller-owned non-accounting Call resource override
 was present at that callsite. Actual driver adoption remains separate.
 
-No whole-crate/whole-integration/workspace test, final check, review or main
-rebase ran here. The arch-owned fairness initializer repair is untouched.
+No whole-crate/whole-integration/workspace test, final check or review ran here.
+The arch-owned fairness initializer repair is inherited without modification.
