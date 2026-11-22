@@ -5225,7 +5225,7 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
                             .population_binding(identity)
                             .is_some_and(|binding| binding.universe() == reference.universe())
                 })
-                .ok_or_else(|| invariant("missing-object-has-admitted-population"))?;
+                .ok_or_else(|| invariant("attribute-slot-unresolved"))?;
             return Err(Halt::Family(FamilyResult::Undefined(Box::new(
                 StateModelUndefined::AbsentKey {
                     binding: binding.clone(),
