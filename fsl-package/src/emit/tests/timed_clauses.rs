@@ -923,7 +923,7 @@ fn unsupported_unbounded_family_guard_shapes_keep_their_refusals() {
     let (data_only, span) = excluded(
         &document,
         "pre NoClock using v on Config::ConfigVersion::attemptUpdate { \
-         forall(e in self.us: e.n > 0) }\n",
+         forall(e in self.us: e.n > 0) or forall(f in self.us: f.x < 5 ms) }\n",
     );
     assert_eq!(
         data_only,
@@ -934,7 +934,7 @@ fn unsupported_unbounded_family_guard_shapes_keep_their_refusals() {
     let (_, checked) = checked(
         &document,
         "pre Nested using v on Config::ConfigVersion::attemptUpdate { \
-         forall(e in self.us: forall(f in self.us: f.x < 5 ms) and e.x < 6 ms) }\n",
+         forall(e in self.us: forall(f in self.us: f.n > 0) and e.x < 6 ms) }\n",
     );
     let refusals = checked.expect_err("nested family templates remain refused");
     assert!(
