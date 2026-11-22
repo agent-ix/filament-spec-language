@@ -821,3 +821,21 @@ fn an_enumeration_argument_and_result_run_from_a_package_as_from_source() {
     assert_eq!(source.status.code(), Some(20), "{source:?}");
     assert_eq!(route_free(&package, "unknown case package"), route_free(&source, "unknown case source"));
 }
+
+#[test]
+fn zz_baseline_probe() {
+    let directory = spine_dir(SAME);
+    compile_spine_package(directory.path());
+    let source = spine_call(
+        directory.path(),
+        "same",
+        json!([{"parameter": "r", "value": {"reference": child()}}]),
+    );
+    let package = package_call(
+        directory.path(),
+        json!({"function": "same", "snapshot": "spine-snapshot.json",
+            "arguments": [{"parameter": "r", "value": {"reference": child()}}]}),
+    );
+    eprintln!("PROBE source={:?} package={:?}", source.status, package.status);
+    assert_eq!(package.status.code(), Some(0), "{}", String::from_utf8_lossy(&package.stderr));
+}
