@@ -153,29 +153,26 @@ fn a_package_value_clause_over_an_enum_parameter_equals_the_source() {
     assert!(limited.get("counterexample").is_none(), "{limited}");
 }
 
-/// Mixed source enum/model observation admission retains its existing shared
-/// type-projector boundary until the normal Contract IR reader supports it.
+/// The authenticated source enum remains available beside a selected model,
+/// with the source route's counterexample identity and replay.
 #[trace("TC-2410", "FR-940-AC-13")]
 #[test]
-fn a_package_source_enum_beside_a_model_refuses_missing_type_representation() {
-    let (_, _, package, exit) = both(
-        "package-value-enum-model-refusal",
+fn a_package_source_enum_beside_a_model_equals_the_source() {
+    let item = assert_parity(
+        "package-value-enum-model-parity",
         ENUM,
-        &json!([{"claim": "Ready", "kind": "value-validity"}]),
-    );
-    assert_eq!(exit, 20, "{package}");
-    assert_eq!(package["items"], json!([]), "{package}");
-    assert_eq!(
-        package["diagnostics"][0]["code"], "unknown_required_feature",
-        "{package}"
+        json!([{"claim": "Ready", "kind": "value-validity"}]),
     );
     assert_eq!(
-        package["diagnostics"][0]["cause"], "unsupported-feature",
-        "{package}"
+        item["request"]["candidates"]["backends"],
+        json!([fsl_analyze::value_check::manifest::BACKEND_ID]),
+        "{item}"
     );
-    assert!(
-        package.to_string().contains("missing-type-representation"),
-        "{package}"
+    assert_eq!(label(&item), "refuted", "{item}");
+    assert_eq!(item["replay"]["reproduced"], true, "{item}");
+    assert_eq!(
+        item["counterexample"]["values"][0]["value"]["member"], "ZED",
+        "{item}"
     );
 }
 
