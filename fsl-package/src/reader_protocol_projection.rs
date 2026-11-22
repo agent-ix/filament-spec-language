@@ -1606,10 +1606,16 @@ impl<'wire> BareWalker<'wire> {
             return Err(fault("reader-function-body-has-checked-identity"));
         };
         let node = self.index.key(target)?;
-        let occurrences = self
+        let body_node = self
             .index
             .node(target)
-            .ok_or_else(|| fault("reader-function-body-is-admitted"))?
+            .ok_or_else(|| fault("reader-function-body-is-admitted"))?;
+        let semantic_type = if body_node.semantic_type == body_node.node_id {
+            None
+        } else {
+            Some(self.index.key(&body_node.semantic_type)?)
+        };
+        let occurrences = body_node
             .occurrences
             .iter()
             .map(|occurrence| {
@@ -1624,7 +1630,11 @@ impl<'wire> BareWalker<'wire> {
                 )
             })
             .collect();
-        Ok(Some(ReaderFunctionBody { node, occurrences }))
+        Ok(Some(ReaderFunctionBody {
+            node,
+            semantic_type,
+            occurrences,
+        }))
     }
 
     /// Project the named pure function and every function its body reaches.
@@ -1839,6 +1849,9 @@ impl<'wire> BareWalker<'wire> {
 pub struct ReaderFunctionBody {
     /// The body node.
     pub node: NodeKey,
+    /// The body node's semantic type, `None` for a self-typed node: the
+    /// `result_bound` of the body's clause item.
+    pub semantic_type: Option<NodeKey>,
     /// Every occurrence of the body node, in the package's order.
     pub occurrences: Vec<fsl_foundation::source::provenance::OccurrenceKey>,
 }

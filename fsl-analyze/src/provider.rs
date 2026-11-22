@@ -242,6 +242,68 @@ impl Default for ProviderLimits {
     }
 }
 
+/// The v2 bytes of the package a provider request carries and the name they
+/// declare: those of the unit's own S4 emission that the strict reader admitted
+/// back, or, on the package route, the admitted bytes the request selected.
+#[derive(Clone, Copy, Debug)]
+pub struct PackageBytes<'r> {
+    bytes: &'r [u8],
+    name: &'r str,
+}
+
+impl<'r> PackageBytes<'r> {
+    fn of(emitted: &'r EmittedPackage) -> Self {
+        Self {
+            bytes: emitted.bytes(),
+            name: emitted.name(),
+        }
+    }
+
+    /// The package's `filament.checked-package/v2` bytes.
+    pub const fn bytes(&self) -> &'r [u8] {
+        self.bytes
+    }
+
+    /// The package name these bytes declare.
+    pub const fn name(&self) -> &'r str {
+        self.name
+    }
+}
+
+/// A package the package route holds only as its admitted bytes (FR-850,
+/// FR-940), with its dependency closure: all a provider request is built from
+/// when no checked package exists.
+#[derive(Debug)]
+pub(crate) struct AdmittedPackage {
+    /// The package name its bytes declare.
+    pub(crate) name: String,
+    /// The admitted v2 bytes.
+    pub(crate) bytes: Vec<u8>,
+    /// The dependency closure by identity, each after its own dependencies.
+    pub(crate) dependencies: Vec<fsl_replay::HybridProcessDependency>,
+}
+
+/// The package a provider item's request is built from.
+#[derive(Clone)]
+enum WorkPackage<'a> {
+    /// The checked package of the source route: its bytes are emitted and
+    /// admitted back when the request is built.
+    Checked(&'a CheckedPackage),
+    /// The admitted bytes of the package route.
+    Admitted(std::sync::Arc<AdmittedPackage>),
+}
+
+impl WorkPackage<'_> {
+    /// Whether `other` is the same package, so one request carries both.
+    fn same(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Self::Checked(left), Self::Checked(right)) => std::ptr::eq(*left, *right),
+            (Self::Admitted(left), Self::Admitted(right)) => std::sync::Arc::ptr_eq(left, right),
+            (Self::Checked(_), Self::Admitted(_)) | (Self::Admitted(_), Self::Checked(_)) => false,
+        }
+    }
+}
+
 /// The FSpec FR-331 provider request `analyze` builds for the items it
 /// negotiated to one external provider (FR-635 "How a process provider runs
 /// an item"). It is a typed mirror of FR-331's `request` member and
@@ -254,7 +316,7 @@ impl Default for ProviderLimits {
 /// limit set, and each item's claim target: what a linked provider reads to
 /// build its query, and what a reported counterexample is replayed at.
 pub struct ProviderRequest<'r> {
-    package: &'r EmittedPackage,
+    package: PackageBytes<'r>,
     items: Vec<RequirementItem>,
     targets: Vec<ProviderTarget<'r>>,
     manifest: Vec<&'r BackendDescriptor>,
@@ -278,7 +340,7 @@ impl<'r> ProviderRequest<'r> {
 
     /// The package's v2 bytes: those of the unit's own S4 emission that the
     /// strict reader admitted back (FR-331 `request.package`).
-    pub fn package(&self) -> &'r EmittedPackage {
+    pub fn package(&self) -> PackageBytes<'r> {
         self.package
     }
 
@@ -769,6 +831,31 @@ pub fn routed_item<'d>(
     ))
 }
 
+/// The FR-331 request item of the Boolean value clause at `claim` over a
+/// package held only as its admitted bytes: [`routed_item`]'s clause item
+/// from the `extent` of the function's parameters and the `result_bound`
+/// the package's rows give, with the same candidates. `None` when the
+/// registrations do not form a registry.
+pub(crate) fn routed_package_clause_item<'d>(
+    registrations: impl IntoIterator<Item = &'d BackendDescriptor>,
+    index: RequestIndex,
+    claim: &OccurrenceKey,
+    (extent, result_bound): (&fsl_semantics::family::ClaimExtent, NodeKey),
+    named: Option<&BackendId>,
+) -> Option<RequirementItem> {
+    let mut registry = Registry::new();
+    for descriptor in registrations {
+        registry.register(descriptor.clone()).ok()?;
+    }
+    Some(RequirementItem::value_clause(
+        index,
+        claim.clone(),
+        extent,
+        result_bound,
+        registry.candidates(Capability::ValueValidity, named),
+    ))
+}
+
 /// The FR-331 request item for an operation-contract claim, with candidates
 /// computed from the current provider registrations (FR-968).
 pub(crate) fn routed_contract_item<'d>(
@@ -829,7 +916,7 @@ pub struct ProviderItemInput<'a> {
 /// A provider item's members, held by its [`AnalyzeItem`] until
 /// [`settle_items`] sends its request.
 pub(crate) struct ProviderWork<'a> {
-    package: &'a CheckedPackage,
+    package: WorkPackage<'a>,
     shared: Option<Shared<'a>>,
     packages: &'a PackageInput,
     routed: Option<RequirementItem>,
@@ -897,7 +984,7 @@ pub(crate) fn provider_item_over<'a>(
         Capability::ValueValidity,
         backend.as_str(),
         ProviderWork {
-            package: input.package,
+            package: WorkPackage::Checked(input.package),
             shared,
             packages: input.packages,
             routed: input.routed,
@@ -905,6 +992,42 @@ pub(crate) fn provider_item_over<'a>(
             selection: ProviderSelection::Value(input.selection),
         },
     )
+}
+
+/// The `value-validity` item at `claim` over a package the package route
+/// holds only as its admitted bytes, which `backend` decides in the
+/// `unbounded` mode: [`provider_item_over`] without a checked package. The
+/// request carries the admitted bytes and `dependencies`; `family` is the
+/// claim's declaration family the caller read from the package.
+pub(crate) fn package_provider_item<'a>(
+    index: RequestIndex,
+    backend: &BackendId,
+    admitted: std::sync::Arc<AdmittedPackage>,
+    input: PackageProviderInput<'a>,
+) -> AnalyzeItem<'a> {
+    AnalyzeItem::new_with_provider(
+        index,
+        input.family,
+        Capability::ValueValidity,
+        backend.as_str(),
+        ProviderWork {
+            package: WorkPackage::Admitted(admitted),
+            shared: None,
+            packages: input.packages,
+            routed: input.routed,
+            emit: input.emit,
+            selection: ProviderSelection::Value(Ok(input.target)),
+        },
+    )
+}
+
+/// What [`package_provider_item`] builds an item from.
+pub(crate) struct PackageProviderInput<'a> {
+    pub(crate) family: Option<fsl_semantics::check::DeclarationFamily>,
+    pub(crate) packages: &'a PackageInput,
+    pub(crate) routed: Option<RequirementItem>,
+    pub(crate) emit: EmitLimits,
+    pub(crate) target: ValueTarget<'a>,
 }
 
 /// An `operation-contract` item at `claim` for an external provider. The
@@ -934,7 +1057,7 @@ pub(crate) fn contract_provider_item_over<'a>(
         Capability::OperationContract,
         backend.as_str(),
         ProviderWork {
-            package,
+            package: WorkPackage::Checked(package),
             shared,
             packages,
             routed,
@@ -963,7 +1086,7 @@ pub(crate) fn composition_provider_item_over<'a>(
         Capability::Composition,
         backend.as_str(),
         ProviderWork {
-            package,
+            package: WorkPackage::Checked(package),
             shared,
             packages,
             routed,
@@ -1086,7 +1209,7 @@ impl<'r> Shared<'r> {
 /// The provider items of one backend over one package, in request order.
 type Group<'g, 'w> = (
     &'g Engine,
-    &'g CheckedPackage,
+    &'g WorkPackage<'w>,
     Vec<(RequestIndex, &'g ProviderWork<'w>)>,
 );
 
@@ -1109,12 +1232,12 @@ pub(crate) fn settle_items(
         if work.selection.is_err() {
             continue;
         }
-        let same = |group: &&mut (&Engine, &CheckedPackage, _)| {
-            group.0.id() == engine.id() && std::ptr::eq(group.1, work.package)
+        let same = |group: &&mut (&Engine, &WorkPackage<'_>, _)| {
+            group.0.id() == engine.id() && group.1.same(&work.package)
         };
         match groups.iter_mut().find(same) {
             Some(group) => group.2.push((index, work)),
-            None => groups.push((engine, work.package, vec![(index, work)])),
+            None => groups.push((engine, &work.package, vec![(index, work)])),
         }
     }
     for (engine, package, members) in groups {
@@ -1149,20 +1272,35 @@ pub(crate) fn settle_items(
             continue;
         };
         let owned;
-        let bytes = match first.shared {
-            Some(shared) => shared.emitted,
-            None => match admitted_bytes(package, first.packages, first.emit) {
-                Ok(bytes) => {
-                    owned = bytes;
-                    &owned
-                }
-                Err(_) => {
-                    for index in indices {
-                        settled.insert(index, Err(Refusal::NotEmitted));
-                    }
-                    continue;
-                }
-            },
+        let (bytes, dependencies) = match package {
+            WorkPackage::Admitted(admitted) => (
+                PackageBytes {
+                    bytes: &admitted.bytes,
+                    name: &admitted.name,
+                },
+                Some(admitted.dependencies.clone()),
+            ),
+            WorkPackage::Checked(package) => {
+                let bytes = match first.shared {
+                    Some(shared) => PackageBytes::of(shared.emitted),
+                    None => match admitted_bytes(package, first.packages, first.emit) {
+                        Ok(bytes) => {
+                            owned = bytes;
+                            PackageBytes::of(&owned)
+                        }
+                        Err(_) => {
+                            for index in indices {
+                                settled.insert(index, Err(Refusal::NotEmitted));
+                            }
+                            continue;
+                        }
+                    },
+                };
+                (
+                    bytes,
+                    crate::analyze::dependency_packages(package, first.emit),
+                )
+            }
         };
         let Ok(graph) = WireGraph::of_package_bytes(bytes.bytes()) else {
             for index in indices {
@@ -1170,7 +1308,7 @@ pub(crate) fn settle_items(
             }
             continue;
         };
-        let Some(dependencies) = crate::analyze::dependency_packages(package, first.emit) else {
+        let Some(dependencies) = dependencies else {
             for index in indices {
                 settled.insert(index, Err(Refusal::NotEmitted));
             }
@@ -1211,13 +1349,15 @@ pub(crate) fn finish(
 ) -> EngineReport {
     let composition = matches!(work.selection, ProviderSelection::Composition(_));
     let declared = match &work.selection {
-        ProviderSelection::Composition(target) => work
-            .package
-            .graph()
-            .compositions()
-            .iter()
-            .find(|composition| composition.node() == target.claim().node())
-            .and_then(interface_mismatch),
+        ProviderSelection::Composition(target) => match &work.package {
+            WorkPackage::Checked(package) => package
+                .graph()
+                .compositions()
+                .iter()
+                .find(|composition| composition.node() == target.claim().node())
+                .and_then(interface_mismatch),
+            WorkPackage::Admitted(_) => None,
+        },
         _ => None,
     };
     let target = match work.selection {
