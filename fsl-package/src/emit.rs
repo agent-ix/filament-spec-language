@@ -7561,7 +7561,7 @@ fn emit_package_inner(
         &mut source_map,
     )?;
     let value_validity_records =
-        value_validity_requirements::append(ids, graph, &mut nodes, &mut source_map)?;
+        value_validity_requirements::append(ids, graph, &mut nodes, &mut source_map, &regions)?;
     let (mut profile_selections, mut laws) = split_laws(&order);
     for refinement in emitted_refinements {
         let selection = CheckedSelection {
