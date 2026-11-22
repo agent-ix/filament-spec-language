@@ -639,7 +639,12 @@ pub(crate) fn evaluate_state_graph_predicate(
     {
         return Err(fault("state-graph-parameters-take-their-slots-in-order"));
     }
-    let mut machine = Machine::from_bare_package(&world, objects, meter);
+    // The source route evaluates a state-graph predicate as a state-clause
+    // body (`Machine::with_pre`, no observations of its own), so its field
+    // reads carry FR-107's model-read charge; the same family here.
+    let reads = std::collections::BTreeMap::new();
+    let mut machine =
+        Machine::with_world(World::Bytes(&world), objects, None, Some(&reads), meter, &[]);
     let mut bindings = Vec::new();
     match over {
         StateGraphOver::None => {}
