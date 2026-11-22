@@ -223,15 +223,34 @@ fn package_request(source: &str) -> Value {
 #[trace("TC-2065", "FR-282-AC-20")]
 #[test]
 fn an_analyze_certificate_is_accepted_later_over_the_emitted_package() {
-    let later = package_request(&package_source());
-    let (code, output) = run(&later);
-    assert_eq!(code, 0, "{output}");
-
-    let altered = mutate(&later, |doc| {
-        doc["values"][0]["value"] = json!({"numerator": "1", "denominator": "7"});
-    });
-    let (code, output) = run(&altered);
-    assert_ne!(code, 0, "an altered certificate is rejected: {output}");
+    for source in [
+        package_source(),
+        likely(
+            "ev",
+            "Even",
+            "probability >= rational(2,9) [ always[0,2] holds(not m.delivered) ]",
+        ),
+    ] {
+        let original = certified(&source, ExactProbLimits::default());
+        let later = package_request(&source);
+        assert_eq!(later["certificate"], original["certificate"]);
+        let (source_code, source_output) = run(&original);
+        let (code, output) = run(&later);
+        assert_eq!(source_code, 0, "{source_output}");
+        assert_eq!(code, 0, "{output}");
+        assert_eq!(output, source_output);
+        let altered = mutate(&later, |doc| {
+            doc["values"][0]["value"] = json!({"numerator": "1", "denominator": "7"});
+        });
+        let (code, output) = run(&altered);
+        assert_ne!(code, 0, "an altered certificate is rejected: {output}");
+        let mut absent_source = later;
+        absent_source["byte_provision"] = json!([]);
+        refused_package(
+            &absent_source,
+            "conflicting_identity: probability certificate source",
+        );
+    }
 }
 
 /// A request the package route must refuse, never accept.

@@ -121,13 +121,14 @@ pub struct AtomSymmetry<'a> {
 
 impl PropertyAutomaton {
     /// Every generated state of this exact shape has a satisfying suffix:
-    /// the next observed atom discharges its one deadline (or the state is
-    /// already settled). No horizon-sized cycle search is needed.
-    pub(super) fn bounded_eventually_viability(
+    /// an eventuality can discharge its deadline on the next observation,
+    /// and an always obligation can keep its atom true through its extent.
+    /// No horizon-sized cycle search is needed.
+    pub(super) fn bounded_atom_viability(
         &self,
         state: StateId,
     ) -> Result<Option<bool>, AutomatonError> {
-        if !self.is_origin_bounded_eventually()? {
+        if self.origin_bounded_kind()?.is_none() {
             return Ok(None);
         }
         let config = self
@@ -141,29 +142,31 @@ impl PropertyAutomaton {
     }
 
     /// Whether the actual lowered root is an origin-activated, step-counted
-    /// bounded eventuality over one letter atom.
-    pub(super) fn is_origin_bounded_eventually(&self) -> Result<bool, AutomatonError> {
+    /// bounded eventuality or always over one letter atom.
+    pub(super) fn origin_bounded_kind(&self) -> Result<Option<super::BoundedKind>, AutomatonError> {
         if self.kind != AutomatonKind::Bounded
             || self.when.is_some()
             || self.live.is_some()
             || self.uncounted.is_some()
             || self.initial.must.len() != 1
         {
-            return Ok(false);
+            return Ok(None);
         }
         let Some(root) = self.initial.must.first() else {
-            return Ok(false);
+            return Ok(None);
         };
         Ok(match self.translator.ir.node(*root)? {
             Node::Future {
-                kind: FutureKind::Eventually,
+                kind,
                 window: Window::Closed { lower: 0, .. },
                 left: None,
                 right,
-            } => {
-                matches!(self.translator.ir.node(right)?, Node::Atom(_))
-            }
-            _ => false,
+            } if matches!(self.translator.ir.node(right)?, Node::Atom(_)) => match kind {
+                FutureKind::Eventually => Some(super::BoundedKind::Eventually),
+                FutureKind::Always => Some(super::BoundedKind::Always),
+                FutureKind::Until | FutureKind::Release => None,
+            },
+            _ => None,
         })
     }
 
