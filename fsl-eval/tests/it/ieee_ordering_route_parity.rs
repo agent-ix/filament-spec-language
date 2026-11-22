@@ -706,3 +706,82 @@ fn a_denied_charge_in_a_body_is_located_alike_on_both_routes() {
         "{located:?}"
     );
 }
+
+/// The source object unit of QSL-2701 item 1: `Order::measure` carries a
+/// precondition holding two `sqrt` terms, so its clause function has body
+/// location rows on the package route.
+const SOURCE_OBJECT_UNIT: &str = "language \"ix:native\" edition \"1-draft\";\n\
+    profile v = \"filament.model.complete/v1\";\n\
+    object Order { total: Int[0, 9]; operation measure(n: Integer): Integer; }\n\
+    pre sqrtPre using v on Order::measure { \
+    filament::value::ieee::sqrt(float64(bits: 0x4000000000000000)) <= \
+    filament::value::ieee::sqrt(float64(bits: 0x4000000000000000)) }\n";
+
+/// QSL-2701 item 1 (FSpec FR-322): a source model's clause function is named
+/// under its owning source's identity on the source route (the checked graph's
+/// function name) and on the package route (the name its body location rows
+/// carry), and the two names are equal.
+#[trace("FSpec-TC-196")]
+#[test]
+fn a_source_models_clause_function_is_named_alike_on_both_routes() {
+    let packages = package_input(std::iter::empty::<&[u8]>()).expect("source-only input");
+    let parsed = fsl_cst::parse(
+        fsl_foundation::SourceIdentity::new("a", "u"),
+        "unit.native",
+        SOURCE_OBJECT_UNIT.as_bytes(),
+        fsl_cst::Limits::default(),
+    )
+    .expect("S1 reads the unit");
+    let unit = fsl_forms::build_unit(&parsed).expect("S2 builds the unit");
+    let models = fsl_semantics::model::intake::admit_unit(
+        &unit.selections().models,
+        &packages,
+        fsl_semantics::model::accounting::ModelNormalizationLimits::default(),
+    )
+    .expect("intake admits the unit");
+    let mut declarations = PackageDeclarations::assemble(
+        parsed.source().reference().clone(),
+        "fixture".to_owned(),
+        unit,
+        models,
+        Vec::new(),
+    )
+    .expect("the assembler admits the unit");
+    declarations.ieee_profile =
+        Some(admit_ieee_profile(&[DefinitionRole::IeeeProfile.reference()], &[]).unwrap());
+    declarations
+        .link_dispatch(Default::default())
+        .expect("dispatch links");
+    let graph = declarations
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &fsl_eval::value::S6aRewardEvaluator,
+        )
+        .unwrap_or_else(|refusal| panic!("{refusal:?}"));
+    let mut source_names = Vec::new();
+    let mut index = 0;
+    while let Some(state) = graph.function_state(index) {
+        if state.name.ends_with("/Order/measure.precondition") {
+            source_names.push(state.name.to_owned());
+        }
+        index += 1;
+    }
+    let package = CheckedPackage::link(graph);
+    let emission = fsl_package::emit_checked(&package, fsl_package::EmitLimits::fixture())
+        .expect("the checked package emits");
+    let wire: serde_json::Value =
+        serde_json::from_slice(emission.package().bytes()).expect("the package is JSON");
+    let mut package_names: Vec<String> = wire["checked_term_data"]["body_locations"]
+        .as_array()
+        .expect("the body location rows")
+        .iter()
+        .filter_map(|row| row["location"]["origin"]["name"].as_str())
+        .filter(|name| name.ends_with("/Order/measure.precondition"))
+        .map(str::to_owned)
+        .collect();
+    package_names.dedup();
+    let expected = "ix://a:u/Order/measure.precondition";
+    assert_eq!(source_names, [expected]);
+    assert_eq!(package_names, source_names);
+}
