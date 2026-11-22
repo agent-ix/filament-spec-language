@@ -583,6 +583,9 @@ fn replay_probabilistic_witness_impl(
                 .ok_or(ProbabilityWitnessError::Refused)?,
         ),
     };
+    if workload.is_some() && !witness.scheduler.is_empty() {
+        return Err(ProbabilityWitnessError::Refused);
+    }
     let mut scheduler = BTreeMap::new();
     let mut previous = None;
     for (key, entry) in &witness.scheduler {
@@ -621,6 +624,10 @@ fn replay_probabilistic_witness_impl(
                 )?;
             }
             ProbabilisticSchedulerChoice::Randomized(distribution) => {
+                // Randomized policies belong to claims with a fairness set (FR-202).
+                if claim.fairness.is_empty() {
+                    return Err(ProbabilityWitnessError::Refused);
+                }
                 validate_randomized_entry(distribution, &enabled_actions)?;
                 for (action, _) in distribution {
                     let bytes = action
