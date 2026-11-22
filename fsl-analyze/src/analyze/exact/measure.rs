@@ -652,7 +652,10 @@ fn refute_mean(
             };
             let mut spelled = Vec::new();
             for (key, action) in &token.evidence().scheduler {
-                let fsl_replay::ProductAction::Identity(schedule) = action else {
+                let fsl_replay::ProbabilisticSchedulerChoice::Deterministic(
+                    fsl_replay::ProductAction::Identity(schedule),
+                ) = action
+                else {
                     continue;
                 };
                 let Some(state) = product.ids().find(|state| {
