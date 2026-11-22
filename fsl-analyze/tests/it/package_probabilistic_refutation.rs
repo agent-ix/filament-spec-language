@@ -201,3 +201,183 @@ fn a_package_refutation_preserves_the_negative_witness_replay_and_charges() {
     assert_eq!(package.item(0)["replay"]["reproduced"], true);
     assert_eq!(package.stdout, source.stdout, "whole serialized result");
 }
+
+/// Replaying the real negative witness requires its actual bare execution
+/// owner. Equal package bytes do not authorize mixed tables or another owner.
+#[trace("FR-940-AC-6", "FR-202-AC-10", "FR-203-AC-8")]
+#[test]
+fn package_negative_replay_authenticates_the_owner_and_complete_claim_occurrence() {
+    use filament_exact::Cancel;
+    use fsl_analyze::analyze::{analyze_items, exact_probabilistic_item, Engines};
+    use fsl_eval::simulation::model::{ModelCheckInput, ModelSystem, PackageModelInput};
+    use fsl_foundation::RequestIndex;
+    use fsl_replay::{
+        replay_probabilistic_witness, replay_probabilistic_witness_from_package,
+        ModelCheckLimits, ProbabilityWitnessError, ProbabilityWitnessReplay, TerminalValue,
+    };
+
+    let world = crate::prob_world::World::new(&crate::prob_world::link(TOO_LIKELY));
+    let record = analyze_items(
+        &Engines::fsl().expect("linked engines"),
+        vec![exact_probabilistic_item(
+            RequestIndex::new(0),
+            world.request("TooLikely", ModelCheckLimits::default()),
+        )],
+        &Cancel::new(),
+    )
+    .remove(0);
+    assert_eq!(
+        record.terminal().expect("the negative source settles").value(),
+        &TerminalValue::Refuted
+    );
+    let found = record
+        .probabilistic_counterexample
+        .expect("the negative source carries independently replayed evidence");
+    let witness = found.evidence();
+    assert!(!witness.paths.is_empty());
+    let simulation = world.subject().simulation;
+    let emission =
+        fsl_package::emit_checked(&world.package, fsl_package::EmitLimits::fixture())
+            .expect("the same checked owner emits");
+    let limits = fsl_package::V2ReadLimits::bounded(1 << 24);
+    let admitted = fsl_package::admit_checked_package(
+        emission.package().bytes(),
+        simulation.packages,
+        limits,
+    )
+    .expect("the real bytes admit");
+    let mut budget = limits.native_join_limits().budget();
+    let identities = emission
+        .identity_rows(&admitted, &mut budget)
+        .expect("the actual identity rows join");
+    let equality = emission
+        .equality_witness(&admitted, &mut budget)
+        .expect("the actual equality rows join");
+    let bare = BarePackage::new(&admitted)
+        .with_supply(
+            BareSupply {
+                identities: &identities,
+                equality: Some(&equality),
+            },
+            &mut budget,
+        )
+        .expect("the real supply joins");
+    let owner = PackageModelInput::of(&bare, simulation.packages, simulation.normalization)
+        .expect("the real owner reads all eventuality facts");
+    let other_owner = PackageModelInput::of(&bare, simulation.packages, simulation.normalization)
+        .expect("a distinct reader of the same bytes");
+    let system = ModelSystem::new(fsl_eval::simulation::model::ModelSimulationRequest {
+        input: owner.input(),
+        ..simulation.clone()
+    })
+    .expect("the package system admits");
+    let replay_limits = fsl_analyze::exact_probabilistic::ExactProbLimits::default();
+    let replay = |owner, item, witness| {
+        replay_probabilistic_witness_from_package(
+            owner,
+            &system,
+            item,
+            witness,
+            &replay_limits,
+            &Cancel::new(),
+        )
+    };
+    let ProbabilityWitnessReplay::Reproduced(reproduced) =
+        replay(&owner, &witness.item, witness).expect("the actual bare owner replays")
+    else {
+        panic!("the same negative evidence must reproduce");
+    };
+    assert_eq!(reproduced.mass(), found.mass());
+    assert!(matches!(
+        replay(&other_owner, &witness.item, witness),
+        Err(ProbabilityWitnessError::Refused)
+    ));
+    let mut mixed = owner.input();
+    mixed.model_selections = other_owner.input().model_selections;
+    let mixed_system = ModelSystem::new(fsl_eval::simulation::model::ModelSimulationRequest {
+        input: mixed,
+        ..simulation.clone()
+    })
+    .expect("semantically equal model selections still admit");
+    assert!(matches!(
+        replay_probabilistic_witness_from_package(
+            &owner,
+            &mixed_system,
+            &witness.item,
+            witness,
+            &replay_limits,
+            &Cancel::new(),
+        ),
+        Err(ProbabilityWitnessError::Refused)
+    ));
+    assert!(matches!(
+        replay_probabilistic_witness(
+            &world.package,
+            &system,
+            &witness.item,
+            witness,
+            &replay_limits,
+            &Cancel::new(),
+        ),
+        Err(ProbabilityWitnessError::Refused)
+    ));
+    let source_system = ModelSystem::new(simulation.clone()).expect("the source system admits");
+    let foreign = crate::prob_world::World::new(&crate::prob_world::link(TOO_LIKELY));
+    assert!(matches!(
+        replay_probabilistic_witness(
+            &foreign.package,
+            &source_system,
+            &witness.item,
+            witness,
+            &replay_limits,
+            &Cancel::new(),
+        ),
+        Err(ProbabilityWitnessError::Refused)
+    ));
+    let mut wrong_ordinal = witness.clone();
+    wrong_ordinal.item = fsl_package::ObligationIdentity::new(
+        witness.item.node().clone(),
+        witness.item.model().cloned(),
+        witness.item.ordinal().checked_add(1).expect("fixture ordinal"),
+    );
+    assert!(matches!(
+        replay(&owner, &wrong_ordinal.item, &wrong_ordinal),
+        Err(ProbabilityWitnessError::Refused)
+    ));
+    let mut wrong_model = witness.clone();
+    wrong_model.item = fsl_package::ObligationIdentity::new(
+        witness.item.node().clone(),
+        Some(fsl_package::ModelIdentity::new("foreign/model")),
+        witness.item.ordinal(),
+    );
+    assert!(matches!(
+        replay(&owner, &wrong_model.item, &wrong_model),
+        Err(ProbabilityWitnessError::Refused)
+    ));
+
+    let source = ModelCheckInput::source(&world.package);
+    for tamper in 0..10 {
+        let mut mixed = owner.input();
+        match tamper {
+            0 => mixed.probabilistic = source.probabilistic,
+            1 => mixed.types = source.types,
+            2 => mixed.operations = source.operations,
+            3 => mixed.model_selections = source.model_selections,
+            4 => mixed.read_rewards = None,
+            5 => mixed.evaluator = source.evaluator,
+            6 => mixed.admitted = None,
+            7 => mixed.source = Some(&world.package),
+            8 => mixed.enum_members = None,
+            9 => mixed.terminals = Ok(Vec::new()),
+            _ => unreachable!("the controls are exhaustive"),
+        }
+        assert!(
+            mixed.package_owner().is_none(),
+            "mixed execution input {tamper} must have no authenticated owner"
+        );
+    }
+    assert!(std::ptr::eq(
+        owner.input().package_owner().expect("intact owner"),
+        &owner
+    ));
+}

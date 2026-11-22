@@ -7,8 +7,8 @@ use crate::{ExactProbLimits, ModelCheckLimit};
 use filament_exact::Value as SemanticValue;
 use filament_semantic_value::model_transition::ModelTransition;
 use fsl_eval::simulation::model::{
-    same_values, PredicateReading, ScheduledIdentity, TimedSubjectRefusal, TimedSystem,
-    TransitionId,
+    same_values, PackageModelInput, PredicateReading, ScheduledIdentity, TimedSubjectRefusal,
+    TimedSystem, TransitionId,
 };
 use fsl_package::CheckedPackage;
 
@@ -235,8 +235,9 @@ pub fn replay_probabilistic_witness(
     limits: &ExactProbLimits,
     cancel: &Cancel,
 ) -> Result<ProbabilityWitnessReplay, ProbabilityWitnessError> {
+    authenticate_source(package, system, cancel)?;
     replay_probabilistic_witness_impl(
-        package,
+        package.graph().probabilistic_model(),
         system,
         item,
         witness,
@@ -259,12 +260,73 @@ pub fn replay_probabilistic_witness_observing(
     cancel: &Cancel,
     observe: &mut impl FnMut(ProbabilityWitnessSemanticPhase),
 ) -> Result<ProbabilityWitnessReplay, ProbabilityWitnessError> {
-    replay_probabilistic_witness_impl(package, system, item, witness, limits, cancel, observe)
+    authenticate_source(package, system, cancel)?;
+    replay_probabilistic_witness_impl(
+        package.graph().probabilistic_model(),
+        system,
+        item,
+        witness,
+        limits,
+        cancel,
+        observe,
+    )
+}
+
+fn authenticate_source(
+    package: &CheckedPackage,
+    system: &ModelSystem<'_>,
+    cancel: &Cancel,
+) -> Result<(), ProbabilityWitnessError> {
+    poll_cancel(cancel)?;
+    if !system
+        .source_package()
+        .is_some_and(|own| std::ptr::eq(package, own))
+    {
+        return Err(ProbabilityWitnessError::Refused);
+    }
+    Ok(())
+}
+
+/// Replay a negative witness through the exact bare owner of the admitted
+/// system. All execution tables and the evaluator must still belong to this
+/// owner. Claims bind by their complete package occurrence and ordinal;
+/// predicates and workloads are read through that same owner's tables.
+///
+/// # Errors
+/// Refuses a foreign or mixed owner and otherwise preserves the source
+/// entry's semantic, cancellation, resource and parity results.
+#[allow(clippy::too_many_arguments)]
+pub fn replay_probabilistic_witness_from_package(
+    owner: &PackageModelInput<'_>,
+    system: &ModelSystem<'_>,
+    item: &ObligationIdentity,
+    witness: &ProbabilisticCounterexample,
+    limits: &ExactProbLimits,
+    cancel: &Cancel,
+) -> Result<ProbabilityWitnessReplay, ProbabilityWitnessError> {
+    poll_cancel(cancel)?;
+    if !system
+        .input()
+        .package_owner()
+        .is_some_and(|actual| std::ptr::eq(owner, actual))
+    {
+        return Err(ProbabilityWitnessError::Refused);
+    }
+    replay_probabilistic_witness_impl(
+        system.input().probabilistic,
+        system,
+        item,
+        witness,
+        limits,
+        cancel,
+        #[cfg(feature = "test-support")]
+        &mut |_| {},
+    )
 }
 
 #[allow(clippy::too_many_arguments)]
 fn replay_probabilistic_witness_impl(
-    package: &CheckedPackage,
+    probabilistic: &fsl_semantics::check::CheckedProbabilisticModel,
     system: &ModelSystem<'_>,
     item: &ObligationIdentity,
     witness: &ProbabilisticCounterexample,
@@ -273,19 +335,13 @@ fn replay_probabilistic_witness_impl(
     #[cfg(feature = "test-support")] observe: &mut dyn FnMut(ProbabilityWitnessSemanticPhase),
 ) -> Result<ProbabilityWitnessReplay, ProbabilityWitnessError> {
     poll_cancel(cancel)?;
-    if !system
-        .source_package()
-        .is_some_and(|own| std::ptr::eq(package, own))
-        || item != &witness.item
-    {
+    if item != &witness.item {
         return Err(ProbabilityWitnessError::Refused);
     }
-    let claim = bind_claim(package.graph().probabilistic_model().claims(), item, cancel).map_err(
-        |error| match error {
-            ExactProbabilityGraphError::ClaimNotBound => ProbabilityWitnessError::Refused,
-            _ => ProbabilityWitnessError::Graph(error),
-        },
-    )?;
+    let claim = bind_claim(probabilistic.claims(), item, cancel).map_err(|error| match error {
+        ExactProbabilityGraphError::ClaimNotBound => ProbabilityWitnessError::Refused,
+        _ => ProbabilityWitnessError::Graph(error),
+    })?;
     if witness.subsystem.is_some() {
         return measure::replay_subsystem(system, claim, witness, limits, cancel);
     }
@@ -419,9 +475,7 @@ fn replay_probabilistic_witness_impl(
     let workload = match &claim.scheduler {
         ProbScheduler::Every => None,
         ProbScheduler::Workload(name) => Some(
-            package
-                .graph()
-                .probabilistic_model()
+            probabilistic
                 .workload(name)
                 .ok_or(ProbabilityWitnessError::Refused)?,
         ),

@@ -191,6 +191,8 @@ pub struct ModelCheckInput<'a> {
     /// The admitted package the tables were read from on the package route;
     /// `None` on the source route (FR-940).
     pub admitted: Option<&'a fsl_package::CheckedPackageV2>,
+    /// Retain the constructor's owner so replay can reject mixed public tables.
+    package_owner: Option<&'a PackageModelInput<'a>>,
 }
 
 /// A protocol definition in the form the selected analysis route reads.
@@ -258,6 +260,7 @@ impl<'a> ModelCheckInput<'a> {
             evaluator: package,
             source: Some(package),
             admitted: None,
+            package_owner: None,
         }
     }
 
@@ -347,6 +350,12 @@ impl<'a> ModelCheckInput<'a> {
     /// source route.
     pub fn admitted_package(&self) -> Option<&'a fsl_package::CheckedPackageV2> {
         self.admitted
+    }
+
+    /// The bare owner of this input, only while all execution tables and the
+    /// evaluator still belong to that owner. Modified or mixed inputs refuse.
+    pub fn package_owner(&self) -> Option<&'a PackageModelInput<'a>> {
+        self.package_owner.filter(|owner| owner.owns_input(self))
     }
 }
 
@@ -954,6 +963,49 @@ impl<'p> PackageModelInput<'p> {
         self.package
     }
 
+    fn owns_input(&self, input: &ModelCheckInput<'_>) -> bool {
+        input.source.is_none()
+            && input
+                .admitted
+                .is_some_and(|package| std::ptr::eq(package, self.package.package()))
+            && std::ptr::eq(input.types, self.world.types())
+            && input.variant_types.is_empty()
+            && input.enums.is_empty()
+            && input
+                .enum_members
+                .is_some_and(|members| std::ptr::eq(members, self.world.enum_members()))
+            && std::ptr::eq(input.operations, &self.operations)
+            && std::ptr::eq(input.model_selections, self.model_selections.as_slice())
+            && input.source_packages.is_empty()
+            && std::ptr::eq(input.timed_models, self.timed_models.as_slice())
+            && std::ptr::eq(input.time_sources, self.time_sources.as_slice())
+            && std::ptr::eq(input.probabilistic, &self.probabilistic)
+            && input
+                .read_rewards
+                .is_some_and(|rewards| std::ptr::eq(rewards, &self.rewards))
+            && std::ptr::addr_eq(input.evaluator, self.package as &dyn ModelEvaluator)
+            && input.state_clauses == self.state_clauses
+            && input.terminals.as_ref().is_ok_and(|terminals| {
+                terminals.len() == self.terminals.len()
+                    && terminals.iter().zip(&self.terminals).all(|(actual, owned)| {
+                        actual.model.identity() == owned.model
+                            && actual.model.ordinal() == owned.ordinal
+                            && actual.node == owned.node
+                            && match (&actual.declaration, &owned.declaration) {
+                                (
+                                    ModelTerminalDeclaration::Any,
+                                    fsl_package::BareTerminalDeclaration::Any,
+                                ) => true,
+                                (
+                                    ModelTerminalDeclaration::When(TerminalWhen::Package(actual)),
+                                    fsl_package::BareTerminalDeclaration::When(owned),
+                                ) => std::ptr::eq(*actual, owned),
+                                _ => false,
+                            }
+                    })
+            })
+    }
+
     /// The input this package lends.
     pub fn input(&self) -> ModelCheckInput<'_> {
         ModelCheckInput {
@@ -990,6 +1042,7 @@ impl<'p> PackageModelInput<'p> {
             evaluator: self.package,
             source: None,
             admitted: Some(self.package.package()),
+            package_owner: Some(self),
         }
     }
 }
