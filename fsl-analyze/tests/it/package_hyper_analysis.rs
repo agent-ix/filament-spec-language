@@ -63,6 +63,7 @@ fn universal_parity(bound: u64, expected: &str) {
         rebuilt.form(),
         Some(&fsl_semantics::check::HyperForm::Universal)
     );
+    check_universal_atoms_and_certificate(&ws, &bare, &models, &rebuilt, expected == "proved");
     ws.write("program.fsl", b"not a native unit");
     std::fs::remove_dir_all(ws.path(&format!("{HANDOFF}/sources")))
         .expect("remove retained sources");
@@ -92,6 +93,196 @@ fn universal_parity(bound: u64, expected: &str) {
         );
     } else {
         assert_eq!(package.item(0)["replay"]["reproduced"], true, "{document}");
+    }
+}
+
+// Both evaluator ports read every pair of reachable Counter values. Equal
+// verdicts alone would miss evaluator-family and slot-root charging defects.
+fn check_universal_atoms_and_certificate<'a>(
+    ws: &Workspace,
+    bare: &'a BarePackage<'a>,
+    packages: &'a [fsl_semantics::model::domain_package::DomainPackage],
+    clause: &fsl_semantics::check::CheckedHyperClause,
+    holds: bool,
+) {
+    use crate::counter::UNLIMITED;
+    use filament_exact::{Cancel, Meter, ValueType};
+    use fsl_analyze::model_check::{check_hyper, HyperCheckRequest};
+    use fsl_eval::hyper::{CheckedHyperLetters, CheckedStepMatch, HyperLetters, ParameterBinding};
+    use fsl_eval::model_subject::ModelSubject;
+    use fsl_eval::simulation::model::{
+        ExpansionLimits, ModelCheckInput, ModelSimulationRequest, ModelSystem, PackageModelInput,
+    };
+    use fsl_eval::simulation::TransitionSystem;
+    use fsl_replay::{
+        check_package_hyper_closure, HyperOutcome, ModelCheckLimits, PackageHyperClosureRequest,
+        ProductClosure, ProductClosureCheck,
+    };
+    use fsl_semantics::model::accounting::ModelNormalizationLimits;
+    use fsl_semantics::model::observation::ObservationLimits;
+
+    let compiled = fsl_command::checked_handoff::compile(&ws.path(HANDOFF))
+        .expect("source oracle compiles before source deletion");
+    let source = compiled.checked();
+    let source_clause = &source.graph().hyper_clauses()[0];
+    let snapshot = std::fs::read(ws.path("start.json")).expect("snapshot");
+    let snapshots = [(
+        fsl_semantics::model::observation::document_reference(&snapshot)
+            .expect("snapshot identity"),
+        snapshot,
+    )]
+    .into_iter()
+    .collect();
+    let selected = fsl_analyze::analyze::document::SubjectSelection::default_over(&snapshots);
+    let binding = selected.binding(packages, &snapshots);
+    let input = PackageModelInput::of(bare, packages, ModelNormalizationLimits::default())
+        .expect("source-free input");
+    let simulation = ModelSimulationRequest {
+        input: input.input(),
+        packages,
+        normalization: ModelNormalizationLimits::default(),
+        snapshots: &snapshots,
+        initial: binding.initial,
+        universes: binding.universes,
+        observation: ObservationLimits::default(),
+        expansion: ExpansionLimits {
+            max_candidates: 1_000_000,
+        },
+        meter: UNLIMITED,
+        emit: fsl_package::EmitLimits::fixture(),
+    };
+    let package_system = ModelSystem::new(simulation.clone()).expect("package system");
+    let mut source_simulation = simulation.clone();
+    source_simulation.input = ModelCheckInput::source(source);
+    let source_system = ModelSystem::new(source_simulation).expect("source system");
+    let package_letters =
+        CheckedHyperLetters::for_evaluator(bare, clause, vec![&package_system, &package_system])
+            .expect("package letters");
+    let source_letters =
+        CheckedHyperLetters::new(source, source_clause, vec![&source_system, &source_system])
+            .expect("source letters");
+    let parameter = &clause.parameters()[0];
+    let instance = package_system
+        .instances(&ValueType::Reference(parameter.population.object()))
+        .expect("instances")
+        .into_iter()
+        .next()
+        .expect("one Counter");
+    let instance = [ParameterBinding {
+        parameter: parameter.name.clone(),
+        instance,
+    }];
+    let initial = package_system
+        .initial()
+        .into_iter()
+        .next()
+        .expect("initial state");
+    let states: Vec<_> = package_system
+        .relation_successors(&initial, &Cancel::new())
+        .expect("reachable Counter successors")
+        .successors
+        .into_iter()
+        .map(|(_, state)| state)
+        .collect();
+    assert_eq!(states.len(), 4, "all four Counter values are exercised");
+    let mut evaluated = 0;
+    for left in &states {
+        for right in &states {
+            for (index, formula) in clause.body().nodes().iter().enumerate() {
+                if !matches!(formula, fsl_semantics::check::FormulaNode::Holds { .. }) {
+                    continue;
+                }
+                let atom = fsl_semantics::check::FormulaNodeId::from_arena_index(index);
+                let mut source_meter = Meter::new(UNLIMITED);
+                let mut package_meter = Meter::new(UNLIMITED);
+                let expected = source_letters
+                    .atom(atom, &instance, &[left, right], &mut source_meter)
+                    .expect("source atom");
+                let actual = package_letters
+                    .atom(atom, &instance, &[left, right], &mut package_meter)
+                    .expect("package atom");
+                assert_eq!(actual, expected);
+                assert!(!source_meter.charge_log_truncated());
+                assert!(!package_meter.charge_log_truncated());
+                assert!(!source_meter.admitted_charges().is_empty());
+                assert_eq!(
+                    package_meter.admitted_charges(),
+                    source_meter.admitted_charges()
+                );
+                evaluated += 1;
+            }
+        }
+    }
+    assert!(evaluated >= 16);
+    if !holds {
+        return;
+    }
+    let subjects = vec![ModelSubject {
+        simulation,
+        proof_bounds: Vec::new(),
+    }];
+    let original = PackageHyperClosureRequest::new(
+        bare,
+        clause.assembled_occurrence().expect("occurrence"),
+        &subjects,
+        UNLIMITED,
+        10_000,
+    )
+    .expect("checker independently rebuilds package clause");
+    let matcher = CheckedStepMatch::for_evaluator(bare, clause);
+    let outcome = check_hyper(
+        HyperCheckRequest {
+            clause,
+            subjects: subjects
+                .iter()
+                .map(|subject| ModelSubject {
+                    simulation: subject.simulation.clone(),
+                    proof_bounds: subject.proof_bounds.clone(),
+                })
+                .collect(),
+            letters: &package_letters,
+            matcher: &matcher,
+            limits: ModelCheckLimits::default(),
+            max_depth: None,
+            meter: UNLIMITED,
+            reductions: fsl_route::reductions::Reductions::default(),
+        },
+        &Cancel::new(),
+    )
+    .expect("package product runs");
+    let HyperOutcome::Holds { certificates, .. } = outcome else {
+        panic!("holding universal product: {outcome:?}");
+    };
+    assert!(!certificates.is_empty());
+    for certificate in certificates {
+        assert_eq!(
+            check_package_hyper_closure(
+                &original,
+                &certificate,
+                &ModelCheckLimits::default(),
+                &Cancel::new()
+            )
+            .expect("independent check"),
+            ProductClosureCheck::Accepted
+        );
+        let mut tampered = certificate.clone();
+        let ProductClosure::Product(states) = &mut tampered.closure else {
+            panic!("product closure");
+        };
+        assert!(!states.is_empty());
+        states.remove(0);
+        assert!(
+            matches!(
+                check_package_hyper_closure(
+                    &original,
+                    &tampered,
+                    &ModelCheckLimits::default(),
+                    &Cancel::new()
+                ),
+                Ok(ProductClosureCheck::Rejected(_))
+            ),
+            "removing a retained product state cannot prove the claim"
+        );
     }
 }
 

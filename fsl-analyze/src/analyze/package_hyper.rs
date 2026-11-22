@@ -112,7 +112,12 @@ impl<'a> PackageHyperSubject<'a> {
                 Err(failure) => return EngineReport::Refused(admission(&failure)),
             }
         }
-        let slot_of = |name: &str| clause.aliases().iter().position(|alias| alias == name);
+        let slot_of = |name: &str| {
+            clause
+                .aliases()
+                .iter()
+                .position(|alias| alias.as_str() == name)
+        };
         let systems: Vec<_> = match clause
             .quantifiers()
             .iter()
