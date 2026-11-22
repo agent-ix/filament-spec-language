@@ -327,6 +327,7 @@ impl ModelSystem<'_> {
                 transition: &transition,
                 transition_bytes: &transition_bytes,
                 postconditions: &postconditions,
+                operation_postconditions: &[],
                 footprint: None,
                 references: super::reference_arguments(&args),
                 frames: &frames,
