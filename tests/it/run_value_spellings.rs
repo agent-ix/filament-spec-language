@@ -343,6 +343,74 @@ fn a_map_round_trips_in_key_order() {
     }
 }
 
+const SCALAR_UNIT: &str = r#"language "ix:native" edition "1-draft";
+profile v = "filament.value.complete/v1";
+type T = Text[0, 8; nfc];
+function id_string using v(a: String): String pure { a }
+function id_text using v(a: T): T pure { a }
+function id_bytes using v(a: Bytes): Bytes pure { a }
+function id_json using v(a: JsonObject): JsonObject pure { a }
+"#;
+
+#[test]
+#[trace("FR-650-AC-1", "FSpec-FR-181-AC-22", "FSpec-FR-181-AC-26")]
+fn native_scalar_canonical_forms_round_trip_without_legacy_spellings() {
+    for (function, tag, values) in [
+        ("id_string", "string", vec!["", "ready", "é", "e\u{0301}"]),
+        ("id_bytes", "bytes", vec!["", "00ff"]),
+        (
+            "id_json",
+            "json_object",
+            vec!["{\"a\":1,\"b\":[true,null]}", "\"x\"", "[]"],
+        ),
+    ] {
+        for value in values {
+            let form = json!({"type": tag, "value": value});
+            assert_eq!(
+                completed(&run_unit(SCALAR_UNIT, function, form.clone())),
+                form
+            );
+        }
+    }
+    for (function, form) in [
+        ("id_string", json!({"type": "text", "value": "abc"})),
+        ("id_text", json!({"type": "string", "value": "abc"})),
+        ("id_bytes", json!({"type": "string", "value": "00ff"})),
+        ("id_json", json!({"type": "bytes", "value": "00ff"})),
+        ("id_bytes", json!({"type": "json_object", "value": "[]"})),
+    ] {
+        assert_call_refusal(
+            &run_unit(SCALAR_UNIT, function, form),
+            "invalid_runtime_input",
+            "wrong-value-kind",
+            "",
+        );
+    }
+    for (function, tag, values) in [
+        ("id_bytes", "bytes", vec!["0", "00FF", "0g", "0x00"]),
+        (
+            "id_json",
+            "json_object",
+            vec!["{\"b\":1,\"a\":2}", "{\"a\": 1}", "{\"a\":1.0}", "", "{"],
+        ),
+    ] {
+        for value in values {
+            assert_call_refusal(
+                &run_unit(SCALAR_UNIT, function, json!({"type": tag, "value": value})),
+                "invalid_runtime_input",
+                "invalid-value",
+                "",
+            );
+        }
+        assert_call_refusal(
+            &run_unit(SCALAR_UNIT, function, json!({"type": tag, "text": ""})),
+            "invalid_runtime_input",
+            "unknown-member",
+            "/text",
+        );
+    }
+}
+
 /// The spine model with a variant type `Tier` and a record value type
 /// `Stamp` added.
 fn extend_model(directory: &Path) {

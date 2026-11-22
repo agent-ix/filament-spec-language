@@ -178,7 +178,8 @@ impl Forms<'_> {
                 IeeeWidth::Binary32 => "float32",
                 IeeeWidth::Binary64 => "float64",
             },
-            ValueType::Text(_) | ValueType::String => "text",
+            ValueType::Text(_) => "text",
+            ValueType::String => "string",
             ValueType::Bytes => "bytes",
             ValueType::JsonObject => "json_object",
             ValueType::Uuid => "uuid",
@@ -254,9 +255,12 @@ impl Forms<'_> {
                 Ok(json!({"kind": kind, "text": object["value"]}))
             }
             ValueType::Bytes | ValueType::JsonObject => {
-                closed(object, &["type", "text"], path)?;
-                string_member(object, "text", path)?;
-                Ok(native_form(object, wanted))
+                closed(object, &["type", "value"], path)?;
+                let text = string_member(object, "value", path)?;
+                if matches!(declared, ValueType::JsonObject) {
+                    canonical_json_result(text, JsonObject::from_json_text(text), path)?;
+                }
+                Ok(json!({"kind": wanted, "text": object["value"]}))
             }
             ValueType::Timestamp => {
                 closed(object, &["type", "nanoseconds"], path)?;
@@ -638,6 +642,22 @@ impl Forms<'_> {
     }
 }
 
+fn canonical_json_result(
+    text: &str,
+    parsed: Result<JsonObject, filament_exact::JsonObjectError>,
+    path: &Path,
+) -> Result<(), ReadStop> {
+    match parsed {
+        Ok(value) if value.canonical_text() == text => Ok(()),
+        Ok(_) | Err(filament_exact::JsonObjectError::InvalidJson) => {
+            Err(defect(Code::InvalidRuntimeInput, "invalid-value", path))
+        }
+        Err(filament_exact::JsonObjectError::Allocation) => {
+            Err(ReadStop::Fault("canonical-json-storage"))
+        }
+    }
+}
+
 fn closed(object: &Map<String, Json>, members: &[&str], path: &Path) -> Result<(), ReadStop> {
     identity_form::closed_object(object, members, path)
 }
@@ -736,4 +756,37 @@ fn canonical_pointer(mut canonical: &Json, mut native: &Json, pointer: &str) -> 
             .unwrap_or(&Json::Null);
     }
     path.pointer()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ix_trace_rs::trace;
+
+    #[test]
+    #[trace("FR-650-AC-1", "FSpec-FR-181-AC-26")]
+    fn canonical_json_storage_failure_is_not_an_input_defect() {
+        let path = Path::new();
+        assert!(
+            canonical_json_result("[]", JsonObject::from_json_text("[]"), &path).is_ok()
+        );
+        for text in ["{", "{\"a\": 1}"] {
+            let Err(ReadStop::Defect(error)) =
+                canonical_json_result(text, JsonObject::from_json_text(text), &path)
+            else {
+                panic!("malformed or noncanonical text must be an input defect");
+            };
+            assert_eq!(error.code, Code::InvalidRuntimeInput);
+            assert_eq!(error.cause, "invalid-value");
+            assert_eq!(error.path, "");
+        }
+        assert!(matches!(
+            canonical_json_result(
+                "[]",
+                Err(filament_exact::JsonObjectError::Allocation),
+                &path
+            ),
+            Err(ReadStop::Fault("canonical-json-storage"))
+        ));
+    }
 }

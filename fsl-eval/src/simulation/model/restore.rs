@@ -383,7 +383,7 @@ impl Restore<'_, '_, '_> {
                                 _ => return Err(bad()),
                             })
                         }
-                        ValueType::String if tag == "text" => {
+                        ValueType::String if tag == "string" => {
                             Value::String(text(member(node, "value")?)?.to_owned())
                         }
                         ValueType::Text(declared) if tag == "text" => {
@@ -397,7 +397,7 @@ impl Restore<'_, '_, '_> {
                             ))?)
                         }
                         ValueType::Bytes if tag == "bytes" => {
-                            let encoded = text(member(node, "text")?)?;
+                            let encoded = text(member(node, "value")?)?;
                             let (pairs, remainder) = encoded.as_bytes().as_chunks::<2>();
                             if !remainder.is_empty() {
                                 return Err(bad());
@@ -415,7 +415,7 @@ impl Restore<'_, '_, '_> {
                         }
                         ValueType::JsonObject if tag == "json_object" => Value::JsonObject(
                             filament_exact::JsonObject::from_json_text(text(member(
-                                node, "text",
+                                node, "value",
                             )?)?)
                             .map_err(|_| bad())?,
                         ),
