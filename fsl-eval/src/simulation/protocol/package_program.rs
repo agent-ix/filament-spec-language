@@ -725,16 +725,6 @@ impl<'a> PackageProtocolProgram<'a> {
                         control.node.node_id.clone(),
                     ));
                 };
-                if !members.is_empty()
-                    && memory
-                        .parallels()
-                        .iter()
-                        .any(|parallel| parallel.model.is_weak())
-                {
-                    return Err(PackageProgramRefusal::Correlation {
-                        node: control.node.node_id.clone(),
-                    });
-                }
                 let clauses = admitted
                     .protocol_correlation_clauses(&control.node.node_id)
                     .map_err(|failure| match failure {

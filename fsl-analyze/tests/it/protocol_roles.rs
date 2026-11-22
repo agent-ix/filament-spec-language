@@ -2504,6 +2504,7 @@ fn no_required_construct_settles_unsupported() {
             }
             Unsupported::PackageControl(_)
             | Unsupported::PackageCorrelation
+            | Unsupported::WeakCorrelationModelRead
             | Unsupported::PackageCorrelationProvenance(_)
             | Unsupported::PackageRepeatProof
             | Unsupported::PackageReplicatedRole

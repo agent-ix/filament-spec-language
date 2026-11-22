@@ -222,13 +222,22 @@ impl Fixture {
     }
 
     fn graph(&self) -> Vec<Reached> {
+        self.graph_under::<Sc>()
+    }
+
+    fn graph_under<M: fill::Explored + Default>(&self) -> Vec<Reached<M>> {
         let mut result = None;
         self.with_routes(true, |source, native| {
-            let source = fill::sc_system(source);
+            let source = ProtocolSystem::new(
+                ModelSystem::new(source.model.simulation.clone()).expect("source model"),
+                source,
+                M::default(),
+            )
+            .expect("source correlation");
             let native = ProtocolSystem::new_package(
                 ModelSystem::new(native.model.simulation.clone()).expect("native model"),
                 native,
-                Sc,
+                M::default(),
             )
             .expect("native correlation");
             assert_eq!(
@@ -238,7 +247,7 @@ impl Fixture {
             let workers = std::num::NonZeroUsize::new(1).expect("one worker");
             let source = fill::reachable_with_workers(&source, workers).0;
             let native = fill::reachable_with_workers(&native, workers).0;
-            let canonical = |graph: &[Reached]| {
+            let canonical = |graph: &[Reached<M>]| {
                 let mut rows: Vec<_> = graph
                     .iter()
                     .map(|state| {
@@ -791,9 +800,124 @@ fn has_weak_store(graph: &[Reached<Tso>]) -> bool {
         })
 }
 
+fn inside_weak(memory: &str, control: &str) -> String {
+    format!("parallel Background memory {memory} {{ branch idle sequence Idle {{ {control} }} branch other sequence Other {{ check AlsoOK using v {{ true }}; }} }} join all [idle, other];")
+}
+
+fn weak_model_read_refusal<M: fill::Explored + Default>(memory: &str) {
+    let ends = "related by Owns ((if k.v = 0 then k else k), k)";
+    for control in [
+        controls(ends, ""),
+        controls("", ends),
+        format!("attempt Tx by w on M::Cell::touch contracts [] as (worked: Boolean) {ends} {{ true }};"),
+    ] {
+        let fixture = Fixture::new("", &inside_weak(memory, &control), true);
+        fixture.with_routes(true, |source, native| {
+            let source = ProtocolSystem::new(
+                ModelSystem::new(source.model.simulation.clone()).expect("source model"),
+                source,
+                M::default(),
+            ).err().expect("Source refuses the missing weak observation load");
+            let native = ProtocolSystem::new_package(
+                ModelSystem::new(native.model.simulation.clone()).expect("native model"),
+                native,
+                M::default(),
+            ).err().expect("package refuses the same missing weak observation load");
+            for refusal in [source, native] {
+                assert!(matches!(refusal, fsl_eval::simulation::protocol::ProtocolRefusal::Unsupported(
+                    fsl_eval::simulation::protocol::Unsupported::WeakCorrelationModelRead
+                )), "{refusal:?}");
+            }
+        });
+    }
+}
+
+#[trace("FR-731-AC-1", "FR-940-AC-6", "FSpec-FR-741-AC-3")]
+#[test]
+fn weak_model_read_correlation_has_the_same_named_refusal_on_both_routes() {
+    weak_model_read_refusal::<Tso>("tso");
+    weak_model_read_refusal::<Ra>("ra");
+    let control = controls("related by Owns ((if k.v = 0 then k else k), k)", "");
+    let outside = Fixture::new(
+        "",
+        &format!(
+            "{control} {}",
+            inside_weak("tso", "check OK using v { true };")
+        ),
+        true,
+    );
+    assert!(
+        outside
+            .graph_under::<Tso>()
+            .iter()
+            .flat_map(|state| &state.steps)
+            .any(|(step, _)| step.kind() == StepKind::Send),
+        "an SC-governed model read outside a weak parallel still executes"
+    );
+    let sc = Fixture::new("", &inside_weak("sc", &control), true);
+    assert!(has_step(&sc.graph(), StepKind::Send));
+}
+
+fn weak_premises<M: fill::Explored + Default>(memory: &str) {
+    let false_extent = Fixture::new(
+        "",
+        &inside_weak(memory, &controls("related by Owns (k, k)", "")),
+        false,
+    )
+    .graph_under::<M>();
+    assert!(!false_extent
+        .iter()
+        .flat_map(|state| &state.steps)
+        .any(|(step, _)| step.kind() == StepKind::Send));
+    let live = Fixture::with_channels(
+        "capture saved: Reference<M::Cell> = k;",
+        "channel spare from w to w carries Boolean ordering unordered delivery exactly-once-premise capacity 1 overflow block;",
+        &format!("send First via spare as (prior: Boolean) {{ prior }}; check Between using v {{ true }}; {}", inside_weak(memory, &controls("related by Owns ((if prior then saved else k), saved)", "related by Owns (saved, (if prior then saved else k))"))),
+        true,
+    ).graph_under::<M>();
+    assert!(live
+        .iter()
+        .flat_map(|state| &state.steps)
+        .any(|(step, _)| step.kind() == StepKind::Receive));
+    let undefined = Fixture::with_prelude(
+        "",
+        "",
+        &inside_weak(
+            memory,
+            &controls(
+                "related by Owns ((if q(if tx then 0 else 1) >= 0 then k else k), k)",
+                "",
+            ),
+        ),
+        true,
+        "function q using v(x: Integer): Integer pure { 6 mod x }\n",
+        filament_semantic_value::checking::CheckMode::Kernel,
+    );
+    let graph = undefined.graph_under::<M>();
+    assert!(!graph
+        .iter()
+        .flat_map(|state| &state.steps)
+        .any(|(step, _)| step.kind() == StepKind::Send));
+    undefined.with_routes(true, |source, native| {
+        let source = ProtocolSystem::new(ModelSystem::new(source.model.simulation.clone()).expect("source model"), source, M::default()).expect("source");
+        let native = ProtocolSystem::new_package(ModelSystem::new(native.model.simulation.clone()).expect("native model"), native, M::default()).expect("native");
+        for system in [&source, &native] {
+            let graph = fill::reachable_with_workers(system, std::num::NonZeroUsize::new(1).expect("one worker")).0;
+            assert!(graph.iter().any(|state| system.successors_bounded(&state.state).expect("expansion").0.findings.iter().any(|finding| matches!(finding, fsl_eval::simulation::model::ModelFinding::ProtocolExpressionUndetermined { node, .. } if node.ends_with("/Tx")))), "undefined correlation retains its finding");
+        }
+    });
+}
+
+#[trace("FR-731-AC-1", "FR-940-AC-6")]
+#[test]
+fn weak_correlation_preserves_false_undefined_and_live_binder_premises() {
+    weak_premises::<Tso>("tso");
+    weak_premises::<Ra>("ra");
+}
+
 #[trace("FR-940-AC-6", "FR-731-AC-1")]
 #[test]
-fn weak_package_profile_refuses_correlation_outside_parallel_and_sc_override_executes() {
+fn weak_package_profile_admits_correlation_outside_parallel_and_sc_override_executes() {
     for control in [controls("related by Owns (k, k)", ""), "attempt Tx by w on M::Cell::touch contracts [] as (worked: Boolean) related by Owns (k, k) { true };".to_owned()] {
     let run = format!("{control} parallel Background memory sc {{ branch idle sequence Idle {{ check OK using v {{ true }}; }} branch other sequence Other {{ check AlsoOK using v {{ true }}; }} }} join all [idle, other];");
     let fixture = Fixture::new("", &run, true);
@@ -812,10 +936,7 @@ fn weak_package_profile_refuses_correlation_outside_parallel_and_sc_override_exe
                 parallel: "P::Main::Background".to_owned(),
                 model,
             }];
-            assert!(matches!(
-                PackageProtocolProgram::new(&native.model.simulation.input, "P", &selection),
-                Err(PackageProgramRefusal::Correlation { .. })
-            ));
+            assert!(PackageProtocolProgram::new(&native.model.simulation.input, "P", &selection).is_ok());
         }
         let sc = ResolvedMemory::resolve_package(
             &form,
@@ -1000,9 +1121,32 @@ fn sc_attempt_replay_preserves_authored_alias_order_and_failure_precedence() {
 #[trace("FR-731-AC-1", "FR-940-AC-6")]
 #[test]
 fn sc_attempt_package_analysis_executes_after_source_removal() {
-    use crate::analyze_cli_support::{analyze, label, package_selection, request_over, Workspace};
     let fixture = attempt_fixture("", &attempt("related by Owns (k, k)", "true"), true);
-    let ws = Workspace::new("attempt-correlation-source-absent");
+    package_analysis_without_source(&fixture, "attempt-correlation-source-absent");
+}
+
+#[trace("FR-731-AC-1", "FR-940-AC-6", "FSpec-FR-439")]
+#[test]
+fn weak_correlation_package_analysis_preserves_whole_result_without_source() {
+    for memory in ["tso", "ra"] {
+        let fixture = Fixture::new(
+            "",
+            &inside_weak(
+                memory,
+                &controls("related by Owns (k, k)", "related by Owns (k, k)"),
+            ),
+            true,
+        );
+        package_analysis_without_source(
+            &fixture,
+            &format!("weak-correlation-source-absent-{memory}"),
+        );
+    }
+}
+
+fn package_analysis_without_source(fixture: &Fixture, name: &str) {
+    use crate::analyze_cli_support::{analyze, label, package_selection, request_over, Workspace};
+    let ws = Workspace::new(name);
     let request = request_over(
         &ws,
         &fill::unit_text_with("", &fixture.body),
@@ -1038,6 +1182,49 @@ fn sc_attempt_package_analysis_executes_after_source_removal() {
     let native = analyze(&request);
     assert_eq!(native.exit, source.exit);
     assert_eq!(label(&native.item(0)), "refuted");
+    assert_eq!(
+        native.stdout, source.stdout,
+        "whole result including state/step/message witness and replay"
+    );
+    assert_eq!(native.item(0)["replay"]["reproduced"], true);
+}
+
+#[trace("FR-731-AC-2", "FR-731-AC-3", "FR-940-AC-6")]
+#[test]
+fn weak_correlation_replay_preserves_alias_order_and_constraint_precedence() {
+    for memory in ["tso", "ra"] {
+        let background = inside_weak(memory, "check OK using v { true };");
+        let control = controls(
+            "related by owns (k, k) related by Owns (k, k) related by owns (k, k)",
+            "related by Owns (k, k)",
+        );
+        let passing = Fixture::new("", &format!("{control} {background}"), true);
+        let valid = witness(&passing);
+        assert_eq!(valid.prefix[0].transition.kind(), StepKind::Send);
+        replay_both(&passing, valid.clone(), ReplayExpectation::Reproduced);
+        for (control, owns, expected) in [
+            (control.clone(), false, ReplayExpectation::Related("owns")),
+            (
+                controls(
+                    "related by owns (k, k) related by Other (k, k) related by owns (k, k)",
+                    "",
+                ),
+                true,
+                ReplayExpectation::Related("Other"),
+            ),
+            (
+                control.replace("{ tx }", "{ false }"),
+                false,
+                ReplayExpectation::NotEnabled,
+            ),
+        ] {
+            let fixture = Fixture::new("", &format!("{control} {background}"), owns);
+            let mut forged = witness(&fixture);
+            assert!(forged.prefix.is_empty());
+            forged.prefix.push(valid.prefix[0].clone());
+            replay_both(&fixture, forged, expected);
+        }
+    }
 }
 
 #[trace("FR-731-AC-2", "FR-731-AC-3", "FR-940-AC-6", "FSpec-FR-831")]

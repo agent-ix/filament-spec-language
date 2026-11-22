@@ -128,6 +128,9 @@ pub enum Unsupported {
     PackageControl(fsl_package::protocol_view::ControlOperation),
     /// A package control's correlation premises have no executable form yet.
     PackageCorrelation,
+    /// A weak-governed correlation end reads model state without an executable
+    /// observation load at this control kind.
+    WeakCorrelationModelRead,
     /// Authored clause order is unavailable for a nonempty correlation group.
     PackageCorrelationProvenance(fsl_package::UnavailableCorrelationProvenance),
     /// A package repeat's loop proof has no executable package form yet.
@@ -147,6 +150,7 @@ impl Unsupported {
             Self::UnenumerableRecord => "step binder of an unenumerable record type",
             Self::PackageControl(_) => "package protocol control",
             Self::PackageCorrelation => "package protocol correlation",
+            Self::WeakCorrelationModelRead => "weak correlation model read",
             Self::PackageCorrelationProvenance(cause) => cause.as_str(),
             Self::PackageRepeatProof => "package repeat proof",
             Self::PackageReplicatedRole => "package replicated role",

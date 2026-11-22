@@ -29,7 +29,7 @@ use fsl_semantics::check::AccessOrdering;
 use fsl_semantics::check::{AccessClass, CheckedProtocol, ControlStep, ProtocolNodeId};
 
 use super::identity::ThreadPath;
-use super::program::Program;
+use super::program::{Program, RelatedEnds};
 use super::ProtocolRefusal;
 use crate::simulation::expansion::ExpansionStop;
 use crate::simulation::footprint::Location;
@@ -638,6 +638,77 @@ enum ClassificationSource<'a> {
     },
 }
 
+/// Read correlation ends through the selected route's expression authority.
+fn related_reads(
+    model: &ModelSystem<'_>,
+    path: &str,
+    parameters: &[(String, ValueType)],
+    ends: &RelatedEnds<'_>,
+    package_over: Option<&filament_exact::NodeKey>,
+    over: Option<&filament_exact::ObjectReference>,
+) -> Result<BTreeSet<Location>, ProtocolRefusal> {
+    let mut reads = BTreeSet::new();
+    match ends {
+        RelatedEnds::Source(ends) => {
+            for end in ends {
+                reads.extend(
+                    model
+                        .node_reads(path, parameters, end, over)
+                        .map_err(|error| match error {
+                            FootprintError::Refused(refusal) => ProtocolRefusal::NodeFootprint {
+                                node: path.to_owned(),
+                                refusal,
+                            },
+                            FootprintError::UnknownTransition
+                            | FootprintError::UnknownConstraint => {
+                                ProtocolRefusal::fault("a-correlation-end-has-a-footprint")
+                            }
+                        })?
+                        .ok_or_else(|| {
+                            ProtocolRefusal::fault("a-correlation-read-has-a-reference-over-input")
+                        })?,
+                );
+            }
+        }
+        RelatedEnds::Package(ends) => {
+            let over_key = package_over
+                .ok_or_else(|| ProtocolRefusal::fault("a-package-correlation-has-an-over-key"))?;
+            let package = model
+                .input()
+                .admitted_package()
+                .ok_or_else(|| {
+                    ProtocolRefusal::fault("a-package-footprint-has-an-admitted-package")
+                })?
+                .name();
+            for end in ends {
+                reads.extend(
+                    model
+                        .package_node_reads(path, end, over_key, over)
+                        .map_err(|error| match error {
+                            crate::simulation::model::ProtocolNodeReadError::Selection(failure) => {
+                                ProtocolRefusal::PackageNodeFootprint {
+                                    package: package.to_owned(),
+                                    node: path.to_owned(),
+                                    failure,
+                                }
+                            }
+                            crate::simulation::model::ProtocolNodeReadError::Footprint(refusal) => {
+                                ProtocolRefusal::NodeFootprint {
+                                    node: path.to_owned(),
+                                    refusal,
+                                }
+                            }
+                        })?
+                        .ok_or_else(|| {
+                            ProtocolRefusal::fault("a-correlation-read-has-a-reference-over-input")
+                        })?,
+                );
+            }
+        }
+    }
+    Ok(reads)
+}
+
 fn classify_with(
     model: &ModelSystem<'_>,
     source: ClassificationSource<'_>,
@@ -688,6 +759,34 @@ fn classify_with(
         .flat_map(|protocol| protocol.slots.binders.iter())
         .map(|binder| (binder.name.clone(), binder.value_type.clone()))
         .collect();
+    for (node, clauses) in &program.related {
+        if chain_of(*node)?.is_none() || clauses.is_empty() {
+            continue;
+        }
+        if !program.messages.contains_key(node) && !program.attempts.contains_key(node) {
+            continue;
+        }
+        let over = match over {
+            Value::Reference(over) => Some(over),
+            _ => None,
+        };
+        let path = program.text(*node)?;
+        for clause in clauses {
+            let reads = related_reads(
+                model,
+                path,
+                &parameters,
+                &clause.ends,
+                package_constraints.map(|(over, _)| over),
+                over,
+            )?;
+            if !reads.is_empty() {
+                return Err(ProtocolRefusal::Unsupported(
+                    super::Unsupported::WeakCorrelationModelRead,
+                ));
+            }
+        }
+    }
     let constraints = program
         .events
         .iter()
