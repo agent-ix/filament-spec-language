@@ -21,12 +21,7 @@ fn read(
 ) -> Result<Vec<bool>, ProbabilityWitnessError> {
     let inputs = predicates
         .iter()
-        .map(|(key, action)| {
-                        (
-                            key,
-                            super::ProbabilisticSchedulerChoice::Deterministic(action),
-                        )
-                    })|predicate| (*predicate, binding))
+        .map(|predicate| (*predicate, binding))
         .collect::<Vec<_>>();
     system
         .state_predicates_with_cancel(state, &inputs, cancel)
@@ -1018,7 +1013,12 @@ pub(super) fn replay_subsystem(
             {
                 evidence.scheduler = policy
                     .into_iter()
-                    .map(|(key, action)| (key, super::ProbabilisticSchedulerChoice::Deterministic(action)))
+                    .map(|(key, action)| {
+                        (
+                            key,
+                            super::ProbabilisticSchedulerChoice::Deterministic(action),
+                        )
+                    })
                     .collect();
             }
             poll_cancel(cancel)?;
