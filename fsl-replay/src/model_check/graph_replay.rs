@@ -408,7 +408,7 @@ pub fn replay_model_graph_from_package(
             member: "claim_identity",
         })?;
     let documents = request.byte_provision().snapshots();
-    let system = ModelSystem::new(ModelSimulationRequest {
+    let simulation = ModelSimulationRequest {
         input: input.input(),
         packages: &packages,
         normalization: caller.spine.model,
@@ -419,13 +419,82 @@ pub fn replay_model_graph_from_package(
         expansion: subject.expansion,
         meter: request.accounting_limits(),
         emit: caller.spine.package.emit(),
-    })
-    .map_err(ReplayRefusal::Admission)?;
+    };
+    let system = ModelSystem::new(simulation.clone()).map_err(ReplayRefusal::Admission)?;
+    let timed = subject
+        .timed
+        .as_ref()
+        .map(|timing| {
+            if timing.digital {
+                return Err(ReplayRefusal::ModelGraphMismatch { member: "timing" });
+            }
+            TimedSystem::with_max_clocks(&system, &timing.model, timing.max_clocks).map_err(|_| {
+                ReplayRefusal::ModelGraphMismatch {
+                    member: "timed_model",
+                }
+            })
+        })
+        .transpose()?;
+    if timed.is_some() != !input.input().time_sources.is_empty() {
+        return Err(ReplayRefusal::ModelGraphMismatch { member: "timing" });
+    }
+    let state_graph_truth = if let Some(timing) = subject.timed.as_ref() {
+        let over = graph_over(&system, &claim, envelope.family_payload())?;
+        let certificate = envelope
+            .zone_certificate()
+            .ok_or(ReplayRefusal::ModelGraphMismatch {
+                member: "zone_certificate",
+            })?;
+        let verdict = crate::check_zone_certificate(
+            ZoneCertificateRequest {
+                simulation,
+                model: &timing.model,
+                max_clocks: timing.max_clocks,
+                item: CertifiedItem::StateGraph {
+                    claim: &claim,
+                    over: over.as_ref(),
+                },
+            },
+            &certificate.obligation,
+            |obligation| match &obligation.kind {
+                fsl_route::deadlock::ObligationKind::StateGraphAuthored(occurrence) => {
+                    CertificateItem::StateGraph(occurrence)
+                }
+                _ => CertificateItem::Other,
+            },
+            certificate,
+            crate::CertificateCheckLimits::default(),
+            &Cancel::new(),
+        )
+        .map_err(|_| ReplayRefusal::ModelGraphMismatch {
+            member: "zone_certificate",
+        })?;
+        match verdict {
+            ZoneCertificateVerdict::Accepted => Some(true),
+            ZoneCertificateVerdict::Rejected(rejection)
+                if matches!(
+                    rejection.rule,
+                    crate::CertificateRule::InitialMissing
+                        | crate::CertificateRule::SuccessorMissing
+                        | crate::CertificateRule::CountBroken
+                ) =>
+            {
+                Some(false)
+            }
+            _ => {
+                return Err(ReplayRefusal::ModelGraphMismatch {
+                    member: "zone_certificate",
+                })
+            }
+        }
+    } else {
+        None
+    };
     let model_limits = caller.engines.model_check;
     Ok(crate::result::ReplayResult::ModelGraph(replay_evidence(
         &system,
-        None,
-        None,
+        timed.as_ref(),
+        state_graph_truth,
         Loci::Package(&input),
         &claim,
         envelope.family_payload(),
