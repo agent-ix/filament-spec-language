@@ -3577,7 +3577,7 @@ impl<'c, 'a> Checker<'c, 'a> {
                 None
             }
             Err(refusal) => {
-                match super::region::span_at(&expression.spans, &refusal.location)
+                match expression.spans.span_at(&refusal.location)
                     .or_else(|| expression.spans.at(&[]))
                 {
                     Some(span) => self

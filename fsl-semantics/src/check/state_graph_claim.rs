@@ -525,7 +525,7 @@ fn location_span(operand: &ExpressionForm, path: &[usize]) -> Option<Span> {
 
 /// The span of the node `location` reaches in `operand`.
 fn span_at(operand: &ExpressionForm, location: &Location) -> Option<Span> {
-    location_span(operand, &location.path())
+    operand.spans.span_at(location)
 }
 
 /// The view the clause checker reads of a predicate operand under the claim's

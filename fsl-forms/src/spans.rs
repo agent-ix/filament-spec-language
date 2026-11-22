@@ -10,10 +10,12 @@
 //! The arena is flat, so building, walking and dropping it never recurse,
 //! however deep the tree.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fmt;
+use std::sync::Mutex;
 
 use fsl_foundation::Span;
+use filament_semantic_value::location::ExpressionLocation as Location;
 
 #[cfg(doc)]
 use super::ExprNode;
@@ -39,7 +41,50 @@ struct SpanNode {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ExpressionSpans {
     nodes: Vec<SpanNode>,
+    /// The node each location link reached, so resolving every location of
+    /// a deep body costs the body's size, not its size times its depth. It is
+    /// derived, never content: a clone starts empty and equality ignores it.
+    reach: ReachCache,
 }
+
+/// The span node each location link reached, by the address of the link. A
+/// node's span is its parent's child, so a located arena resolves each node
+/// in constant time, never by walking its whole path again. It keeps a clone
+/// of every location it remembered a link of, so no remembered address is
+/// freed and reused by another chain while the cache lives.
+#[derive(Default)]
+struct ReachCache {
+    state: Mutex<ReachState>,
+}
+
+#[derive(Default)]
+struct ReachState {
+    reached: HashMap<usize, Option<SpanId>>,
+    held: Vec<Location>,
+    /// The ancestry links visited, so a test can bound the work.
+    #[cfg(test)]
+    visited: usize,
+}
+
+impl Clone for ReachCache {
+    fn clone(&self) -> Self {
+        Self::default()
+    }
+}
+
+impl fmt::Debug for ReachCache {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("ReachCache")
+    }
+}
+
+impl PartialEq for ReachCache {
+    fn eq(&self, _: &Self) -> bool {
+        true
+    }
+}
+
+impl Eq for ReachCache {}
 
 /// Why a span could not be added to an [`ExpressionSpans`] arena.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -101,6 +146,7 @@ impl ExpressionSpans {
                 binders: Vec::new(),
                 children: Vec::new(),
             }],
+            reach: ReachCache::default(),
         })
     }
 
@@ -145,6 +191,8 @@ impl ExpressionSpans {
             binders: Vec::new(),
             children: Vec::new(),
         });
+        // A link that reached no child may reach this one now.
+        self.reach = ReachCache::default();
         Ok(id)
     }
 
@@ -336,6 +384,59 @@ impl ExpressionSpans {
         }
     }
 
+    /// The node `location`'s path reaches from the root, each step `i` moving
+    /// to child `i`: the one resolution of a location to a span node. Each
+    /// link of a location chain is reached once for the life of this tree,
+    /// whatever the order of the locations asked about.
+    pub fn locate(&self, location: &Location) -> Option<SpanId> {
+        let mut state = self
+            .reach
+            .state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let state = &mut *state;
+        // The unresolved links from the tip up to a link already reached.
+        let mut pending: Vec<(usize, usize)> = Vec::new();
+        let mut node = self.root();
+        for (address, index) in location.ancestry() {
+            #[cfg(test)]
+            {
+                state.visited += 1;
+            }
+            if let Some(known) = state.reached.get(&address) {
+                node = (*known)?;
+                break;
+            }
+            pending.push((address, index));
+        }
+        if !pending.is_empty() {
+            state.held.push(location.clone());
+        }
+        for (address, index) in pending.into_iter().rev() {
+            let next = self.child(node, index);
+            state.reached.insert(address, next);
+            node = next?;
+        }
+        Some(node)
+    }
+
+    /// The span of the node `location` reaches ([`Self::locate`]).
+    pub fn span_at(&self, location: &Location) -> Option<Span> {
+        self.span(self.locate(location)?)
+    }
+
+    /// The operator token span of the node `location` reaches.
+    pub fn operator_span_at(&self, location: &Location) -> Option<Span> {
+        self.operator_span(self.locate(location)?)
+    }
+
+    /// The `ordinal`th binder name token of the node `location` reaches.
+    pub fn binder_span_at(&self, location: &Location, ordinal: usize) -> Option<Span> {
+        self.binder_spans(self.locate(location)?)
+            .get(ordinal)
+            .copied()
+    }
+
     /// The `index`th child of `node`, numbered as [`ExprNode::children`]
     /// numbers it.
     pub fn child(&self, node: SpanId, index: usize) -> Option<SpanId> {
@@ -458,6 +559,42 @@ impl std::error::Error for SpansMismatch {}
 #[cfg(test)]
 mod tests {
     use super::*;
+    use filament_semantic_value::location::ExpressionOwner as Origin;
+
+    /// FR-096-AC-1: one tree resolves every location of a deep body in work
+    /// linear in the body's size. Walking each location's ancestry afresh
+    /// would visit about `DEPTH * DEPTH / 2` links.
+    #[test]
+    fn a_tree_visits_each_ancestry_link_once_across_a_deep_body() {
+        const DEPTH: usize = 2_000;
+        let mut spans = ExpressionSpans::new(Span { start: 0, end: 1 }).unwrap();
+        let mut node = spans.root();
+        let mut location = Location::root(Origin::Expression);
+        let mut locations = Vec::new();
+        for _ in 0..DEPTH {
+            node = spans.push_child(node, Span { start: 0, end: 1 }).unwrap();
+            location = location.child(0);
+            locations.push(location.clone());
+        }
+        for location in &locations {
+            assert_eq!(spans.span_at(location), Some(Span { start: 0, end: 1 }));
+        }
+        let visited = spans.reach.state.lock().unwrap().visited;
+        assert!(
+            visited <= 2 * DEPTH,
+            "{visited} links visited for {DEPTH} nested locations"
+        );
+        let separately: usize = locations
+            .iter()
+            .map(|location| {
+                let each = spans.clone();
+                each.span_at(location);
+                let visited = each.reach.state.lock().unwrap().visited;
+                visited
+            })
+            .sum();
+        assert!(separately > 100 * DEPTH, "{separately}");
+    }
 
     fn span(start: usize, end: usize) -> Span {
         Span { start, end }

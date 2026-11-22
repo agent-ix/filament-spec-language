@@ -5083,7 +5083,7 @@ fn typed_in(
     .map_err(|refused| {
         let located = form
             .spans
-            .at(&refused.location.path())
+            .span_at(&refused.location)
             .or_else(|| form.spans.span(form.spans.root()))
             .unwrap_or(Span { start: 0, end: 0 });
         // A population name that names nothing is located at its second
