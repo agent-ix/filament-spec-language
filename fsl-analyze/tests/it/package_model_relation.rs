@@ -639,9 +639,25 @@ fn hp1_package_model_scope_keeps_unselected_population_refusals() {
         forget_source(&ws);
         let package = analyze_package(&ws, "foreign-package.json", &members);
         for run in [&source, &package] {
-            assert!(!run.item(0).is_null(), "{foreign}: {}", run.document());
-            assert_eq!(label(&run.item(0)), "declined", "{}", run.document());
-            let diagnostic = &run.item(0)["record"]["diagnostic"];
+            let document = run.document();
+            assert_eq!(document["category"], "refusal", "{document}");
+            // Source preflight can refuse before any items are created;
+            // an item-local refusal uses FR-621's singular `detail` member.
+            // Require exactly the same native refusal at either boundary.
+            let diagnostics: Vec<_> = document["diagnostics"]
+                .as_array()
+                .expect("diagnostics")
+                .iter()
+                .chain(
+                    document["items"]
+                        .as_array()
+                        .expect("items")
+                        .iter()
+                        .filter_map(|item| item["record"].get("diagnostic")),
+                )
+                .collect();
+            assert_eq!(diagnostics.len(), 1, "{document}");
+            let diagnostic = diagnostics[0];
             assert_eq!(
                 diagnostic["code"],
                 "invalid_runtime_input",
@@ -655,7 +671,10 @@ fn hp1_package_model_scope_keeps_unselected_population_refusals() {
                 run.document()
             );
             assert_eq!(
-                diagnostic["detail"]["population"],
+                diagnostic
+                    .get("detail")
+                    .or_else(|| diagnostic.get("details"))
+                    .expect("native diagnostic payload")["population"],
                 foreign,
                 "{}",
                 run.document()
@@ -705,7 +724,7 @@ fn hp1_package_model_scope_preserves_original_document_refusals() {
     );
     let mut padded = original.clone();
     padded.extend(std::iter::repeat_n(b' ', 4096));
-    for (case, bytes, limits, cause) in [
+    let mut cases = vec![
         (
             "duplicate",
             duplicate,
@@ -730,7 +749,23 @@ fn hp1_package_model_scope_preserves_original_document_refusals() {
             },
             "node-count-exceeded",
         ),
-    ] {
+    ];
+    for foreign in ["ix://outside/vaults", "ix://test/vault/not-declared"] {
+        let mut snapshot: Value = serde_json::from_slice(&original).expect("fixture snapshot");
+        let mut population = snapshot["populations"][0].clone();
+        population["population"] = json!(foreign);
+        snapshot["populations"]
+            .as_array_mut()
+            .expect("populations")
+            .push(population);
+        cases.push((
+            foreign,
+            serde_json::to_vec(&snapshot).expect("foreign fixture"),
+            ObservationLimits::default(),
+            "wrong-role-mapping",
+        ));
+    }
+    for (case, bytes, limits, cause) in cases {
         let provision = DocumentProvision::from([(reference.clone(), bytes)]);
         let expected = whole
             .admit_initial(&provision, &reference, limits)
