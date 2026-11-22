@@ -176,3 +176,38 @@ weak_package_profile_refuses_correlation_outside_parallel_and_sc_override_execut
 Original finding rows and Pass 1/2 history are preserved. Reviewer ran no Cargo, tests, services, relay or tracker writes, and made no branch changes.
 
 Bounded verdict: NOT MERGEABLE — Code FND-001 remains open for the two fixture preconditions and complete required runtime qualification is red. No full FR-731, weak correlation, Effect/Event or POR claim is made.
+
+### Pass 4
+
+Actual FIX3 authorized Terra-local receipt at unchanged frozen head 6fc61f3830c0e1a404e2ac43312e60a71a6f8679: exit 0, 2 passed / 0 failed / 0 ignored, 2796 filtered out, test runtime 0.28s; normal cold code generation finished in 8m 20s. Log: /home/peter/.cache/handoff/protocol-batch-2-native-correlation-fix3-local-runtime.log. Both previously outstanding tests passed: correlation_only_capture_and_prior_binder_reads_remain_live_after_an_earlier_step and false_send_and_receive_premises_disable_only_their_candidate. The reviewer read the actual result and frozen head; the reviewer ran no Cargo or runtime.
+
+Both original gap findings remain fixed from Pass 1. The mixed-canonical/repeated-alias/replay runtime evidence passed in FIX1 and its test body remains unchanged. The invalid FR-216 trace stays removed and valid criterion tags remain. No prior-open gap finding requires another disposition row; no new findings.
+
+| Receipt / head | Selected result | Qualification established |
+| --- | --- | --- |
+| initial e88d82f | 0 passed / 7 failed, exit 101 | Initial fixture failures only; retained history. |
+| FIX1 8fed227 | 4 passed / 3 failed, exit 101 | Positive SC graph/queue/binder parity; missing-carrier and empty-legacy behavior; Attempt/Recommend guards; mixed-canonical/repeated-alias/replay test. |
+| FIX2 99eb9f0 | 1 passed / 2 failed, exit 101 | Whole-protocol Tso/Ra correlation refusal and SC override. |
+| FIX3 6fc61f3 | 2 passed / 0 failed, exit 0 | Prior-binder/capture liveness and footprint; genuine false-premise/queued-message cases and undefined-end retained findings. |
+
+These receipts cover all seven unique bounded SC/correlation test functions across successive heads, not one seven-test suite on the final head. The five previously passing test bodies, model and production implementation are retained; FIX3 only changes the two outstanding test bodies plus fixture-helper plumbing. The helper retains exactly the Linked default, original declarations/input/linking path, identity and bytes construction, check limits and S6aRewardEvaluator. Empty prelude is the default. Only the undefined subcase selects the existing Kernel remainder fixture pattern. The targeted static review found no new defect.
+
+Fixed-head focused compile supplied by the lead: exit 0 in 25.67s; /home/peter/.cache/handoff/protocol-batch-2-native-correlation-fix3-check.log, same wrapper and DEBUG=0/INCREMENTAL=0 environment. git diff --check exit 0 during targeted static review. Production code and admitted protocol profile are unchanged in this fix round. Branch remains read-only to this reviewer.
+
+#### Additional examined scope in Pass 4
+
+```yaml
+scope:
+- id: fsl-analyze/tests/it/fill.rs::package_over_with_mode
+  path: fsl-analyze/tests/it/fill.rs
+  role: examined
+  excerpt: package_over_with_mode(document, package_name, profiles, body, CheckMode::Linked)
+- id: fsl-analyze/tests/it/native_correlation.rs::with_prelude
+  path: fsl-analyze/tests/it/native_correlation.rs
+  role: examined
+  excerpt: 'function q using v(x: Integer): Integer pure { 6 mod x }'
+```
+
+Current bounded verdict: PASS — all three original findings now have fixed latest outcomes. Bounded review is mergeable subject to the lead committing these exact final SRs and completing its mandatory current-main exact-head final compile/gate before the matched-head merge. This review does not assert a single full-suite final-head run, repository-wide assurance, general weak correlation, relationship-aware POR, Effect/Event support, full FR-731 support, or QSL-2271 parent completion.
+
+Original findings and all previous dispositions, receipts and diagnosis clarifications remain unchanged.
