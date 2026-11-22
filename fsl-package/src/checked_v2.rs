@@ -1221,8 +1221,6 @@ pub fn read_evaluation_emission<'package>(
     let read = reader.read_emitted(package, emission, identity.clone())?;
     let mut closure = reader.admitted;
     closure.insert(identity.clone(), Arc::clone(&read.admitted));
-    #[cfg(test)]
-    tphase("read-emitted-done");
     let reader_nodes = reader_node_keys(&read.admitted).map_err(|_| ImportViewRefusal::Read {
         package: identity,
         refusal: Box::new(StageFailure::Fault(InternalFault::new(
@@ -1254,7 +1252,7 @@ pub struct AdmittedPackageRead<'package> {
     witnesses: Box<dyn EvaluationWitnessSupplier + 'package>,
     read: V2Read,
     dependencies: AdmittedPackages,
-    reader_nodes: BTreeSet<NodeKey>,
+    reader_nodes: std::collections::HashSet<NodeKey>,
     /// The admitted package's identity, read from its `name()` and never
     /// from the source package (FR-940 `identity`).
     identity: LibraryName,
@@ -1486,7 +1484,9 @@ impl AdmittedPackageRead<'_> {
     }
 }
 
-fn reader_node_keys(package: &CheckedPackageV2) -> Result<BTreeSet<NodeKey>, WireIdError> {
+fn reader_node_keys(
+    package: &CheckedPackageV2,
+) -> Result<std::collections::HashSet<NodeKey>, WireIdError> {
     let graph = wire_graph(package)?;
     package
         .resolved_graph()
@@ -1685,17 +1685,4 @@ impl ClosureReader<'_> {
         }
         Ok(())
     }
-}
-
-/// TEMPORARY (QSL-2825): phase timing.
-#[cfg(test)]
-pub(crate) fn tphase(label: &str) {
-    use std::sync::Mutex;
-    use std::time::Instant;
-    static LAST: Mutex<Option<Instant>> = Mutex::new(None);
-    let mut last = LAST.lock().unwrap();
-    let now = Instant::now();
-    let dt = last.map_or(0, |at| now.duration_since(at).as_millis());
-    *last = Some(now);
-    eprintln!("TIME label={label} dt_ms={dt}");
 }
