@@ -61,6 +61,24 @@ fn both_views_read_equal_facts_for_the_counter_package() {
     };
     assert_eq!(names(source), names(bytes));
     assert_eq!(source.activation_relation(), bytes.activation_relation());
+    assert_eq!(source.requirement_items(), bytes.requirement_items());
+    assert_eq!(
+        source.requirement_items().len(),
+        package.graph().requirements().len()
+    );
+    for ((claim, record), row) in package
+        .graph()
+        .requirements()
+        .iter()
+        .zip(source.requirement_items())
+    {
+        assert_eq!(bare.node_key(&row.claim).as_ref(), Some(claim.node()));
+        assert_eq!(row.occurrence.ordinal, claim.origin().ordinal());
+        assert_eq!(
+            serde_json::to_value(row.kind).unwrap(),
+            serde_json::json!(record.requirements().kind().to_wire())
+        );
+    }
     assert_eq!(source.clause_names(), bytes.clause_names());
     let mut clause_names: Vec<&str> = bytes
         .clause_names()
