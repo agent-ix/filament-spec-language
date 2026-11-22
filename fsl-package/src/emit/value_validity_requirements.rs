@@ -214,7 +214,7 @@ pub(super) fn append(
             schema_version: GRAPH_V2.into(),
             node_tag: "claim".into(),
             semantic_form: "value_validity".into(),
-            semantic_type: boolean,
+            semantic_type: boolean.clone(),
             dependencies: body_reference_targets(&body),
             occurrences: vec![occurrence.clone()],
             recursion_group: None,
