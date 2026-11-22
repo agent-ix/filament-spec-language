@@ -98,7 +98,7 @@ impl ProbabilitySubsystemCertificate {
 }
 
 /// One scheduler choice at a product state.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum ProbabilisticSchedulerChoice {
     /// A deterministic product action.
     Deterministic(ProductAction),

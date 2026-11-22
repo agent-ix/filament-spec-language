@@ -1284,7 +1284,7 @@ fn every_scheduler_exact_mean_witness_attains_the_deciding_extremum() {
             .unwrap();
         assert_eq!(
             selected.1,
-            fsl_replay::ProductAction::Identity(fsl_replay::Schedule::of(&system, action).unwrap())
+            fsl_replay::ProbabilisticSchedulerChoice::Deterministic(fsl_replay::ProductAction::Identity(fsl_replay::Schedule::of(&system, action).unwrap()))
         );
     }
     let baseline = settle(&world, "MinNo", ModelCheckLimits::default());
@@ -1306,10 +1306,11 @@ fn every_scheduler_exact_mean_witness_attains_the_deciding_extremum() {
         .find(|(key, _)| key == &changed.initial_key)
         .unwrap();
     assert_ne!(
-        row.1, fast,
+        row.1,
+        fsl_replay::ProbabilisticSchedulerChoice::Deterministic(fast.clone()),
         "the adverse action must differ from the actual minimizing policy"
     );
-    row.1 = fast;
+    row.1 = fsl_replay::ProbabilisticSchedulerChoice::Deterministic(fast);
     let replay = fsl_replay::replay_probabilistic_witness(
         &world.package,
         &system,
@@ -1371,7 +1372,7 @@ fn mean_bound(
                     if !states.contains(&state) {
                         return None;
                     }
-                    let fsl_replay::ProductAction::Identity(schedule) = action else {
+                    let fsl_replay::ProbabilisticSchedulerChoice::Deterministic(fsl_replay::ProductAction::Identity(schedule)) = action else {
                         return None;
                     };
                     let transition = schedule
@@ -1775,7 +1776,12 @@ fn mean_bound_policy_hints_constrain_search_and_absence_reconstructs_internal_ch
             .evidence()
             .scheduler
             .iter()
-            .any(|(_, action)| matches!(action, fsl_replay::ProductAction::TerminalStutter)),
+            .any(|(_, action)| matches!(
+                action,
+                fsl_replay::ProbabilisticSchedulerChoice::Deterministic(
+                    fsl_replay::ProductAction::TerminalStutter
+                )
+            )),
         "terminal-only choices must be inferred"
     );
 
@@ -1813,7 +1819,10 @@ fn mean_bound_policy_hints_constrain_search_and_absence_reconstructs_internal_ch
             .evidence()
             .scheduler
             .iter()
-            .any(|(_, action)| matches!(action, fsl_replay::ProductAction::PostState(_))),
+            .any(|(_, action)| matches!(
+            action,
+            fsl_replay::ProbabilisticSchedulerChoice::Deterministic(fsl_replay::ProductAction::PostState(_))
+        )),
         "genuine residual post-state choices must be inferred"
     );
     // Both residual outcomes contribute zero when the final departing source
@@ -1824,7 +1833,7 @@ fn mean_bound_policy_hints_constrain_search_and_absence_reconstructs_internal_ch
         if source[7].is_null() || source[5][1] != "1" || source[6][1] != "0" {
             continue;
         }
-        let fsl_replay::ProductAction::PostState(target) = action else {
+        let fsl_replay::ProbabilisticSchedulerChoice::Deterministic(fsl_replay::ProductAction::PostState(target)) = action else {
             continue;
         };
         let target_json: Value = serde_json::from_slice(target.as_bytes()).unwrap();
@@ -2048,7 +2057,10 @@ fn residual_measure_paths_replay_one_positive_physical_draw_and_reject_wrong_pos
             && path.steps[0].transition.is_some()));
         assert!(witness.scheduler.iter().any(|(key, action)| {
             let state: Value = serde_json::from_slice(key.as_bytes()).unwrap();
-            !state[7].is_null() && matches!(action, fsl_replay::ProductAction::PostState(_))
+            !state[7].is_null() && matches!(
+            action,
+            fsl_replay::ProbabilisticSchedulerChoice::Deterministic(fsl_replay::ProductAction::PostState(_))
+        )
         }));
         let replay = |offered: &fsl_replay::ProbabilisticCounterexample| {
             fsl_replay::replay_probabilistic_witness(
@@ -2072,9 +2084,12 @@ fn residual_measure_paths_replay_one_positive_physical_draw_and_reject_wrong_pos
         forged
             .scheduler
             .iter_mut()
-            .find(|(_, action)| matches!(action, fsl_replay::ProductAction::PostState(_)))
+            .find(|(_, action)| matches!(
+            action,
+            fsl_replay::ProbabilisticSchedulerChoice::Deterministic(fsl_replay::ProductAction::PostState(_))
+        ))
             .unwrap()
-            .1 = fsl_replay::ProductAction::PostState(witness.initial_key.clone());
+            .1 = fsl_replay::ProbabilisticSchedulerChoice::Deterministic(fsl_replay::ProductAction::PostState(witness.initial_key.clone()));
         let rejected = replay(&forged);
         assert!(
             !matches!(
@@ -2133,7 +2148,10 @@ fn a_residual_undefined_measure_keeps_its_pending_policy_and_unadvanced_control(
         .path
         .scheduler
         .iter()
-        .any(|(_, action)| matches!(action, fsl_replay::ProductAction::PostState(_))));
+        .any(|(_, action)| matches!(
+            action,
+            fsl_replay::ProbabilisticSchedulerChoice::Deterministic(fsl_replay::ProductAction::PostState(_))
+        )));
     let system = ModelSystem::new(world.subject().simulation).unwrap();
     let replay = |offered: &fsl_replay::ProbabilityUndefinedWitness| {
         fsl_replay::replay_probabilistic_undefined(
@@ -2158,9 +2176,12 @@ fn a_residual_undefined_measure_keeps_its_pending_policy_and_unadvanced_control(
         .path
         .scheduler
         .iter_mut()
-        .find(|(_, action)| matches!(action, fsl_replay::ProductAction::PostState(_)))
+        .find(|(_, action)| matches!(
+            action,
+            fsl_replay::ProbabilisticSchedulerChoice::Deterministic(fsl_replay::ProductAction::PostState(_))
+        ))
         .unwrap()
-        .1 = fsl_replay::ProductAction::PostState(wrong.path.initial_key.clone());
+        .1 = fsl_replay::ProbabilisticSchedulerChoice::Deterministic(fsl_replay::ProductAction::PostState(wrong.path.initial_key.clone()));
     let rejected = replay(&wrong);
     assert!(
         !matches!(
@@ -2634,7 +2655,12 @@ fn terminal_initial_undecided_fraction_synthesizes_stutter_without_a_hint() {
         .scheduler
         .iter()
         .any(|(key, action)| key == &witness.initial_key
-            && matches!(action, fsl_replay::ProductAction::TerminalStutter)));
+            && matches!(
+                action,
+                fsl_replay::ProbabilisticSchedulerChoice::Deterministic(
+                    fsl_replay::ProductAction::TerminalStutter
+                )
+            )));
 
     // Lower(Maximum)=0 satisfies every local inequality/rank condition. At
     // an admitted positive threshold it cannot strictly refute the claim.
@@ -2980,7 +3006,10 @@ fn partial_lower_restores_detached_terminal_undecided_and_pending_rows() {
                     .find(|(key, _)| key.as_bytes() == detached_key)
                     .expect("the independently checked detached state's selection is retained");
                 if residual {
-                    assert!(matches!(action, fsl_replay::ProductAction::PostState(_)));
+                    assert!(matches!(
+            action,
+            fsl_replay::ProbabilisticSchedulerChoice::Deterministic(fsl_replay::ProductAction::PostState(_))
+        ));
                 }
             }
             for mutation in 0..if residual { 3 } else { 2 } {

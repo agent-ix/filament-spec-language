@@ -202,7 +202,8 @@ fn semantic_mutations_cannot_obtain_a_reproduced_token() {
         Err(ProbabilityWitnessError::Refused)
     ));
     let mut changed = witness.clone();
-    changed.scheduler[0].1 = fsl_replay::ProductAction::TerminalStutter;
+    changed.scheduler[0].1 =
+        fsl_replay::ProbabilisticSchedulerChoice::Deterministic(fsl_replay::ProductAction::TerminalStutter);
     assert!(matches!(
         replay(&world, &changed, &limits, &Cancel::new()),
         Err(ProbabilityWitnessError::Refused)

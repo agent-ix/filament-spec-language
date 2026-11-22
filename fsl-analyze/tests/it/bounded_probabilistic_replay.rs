@@ -417,7 +417,15 @@ fn rekey(world: &World, name: &str, witness: &mut ProbabilisticCounterexample) {
             previous = step.post_key.clone();
         }
     }
-    witness.scheduler = scheduler.into_iter().collect();
+    witness.scheduler = scheduler
+        .into_iter()
+        .map(|(key, action)| {
+            (
+                key,
+                fsl_replay::ProbabilisticSchedulerChoice::Deterministic(action),
+            )
+        })
+        .collect();
 }
 
 #[trace("TC-637", "FR-202-AC-16")]
