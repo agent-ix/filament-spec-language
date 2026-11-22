@@ -56,6 +56,8 @@ pub(super) enum CompositionCase {
     Acyclic,
     /// A mutual dependency between two distinct declared components.
     Cyclic,
+    /// An actual interface-rule cycle, refused as non-local before cycle refusal.
+    InterfaceCyclic,
     /// A genuine supplied operation with no clause fairness on that operation.
     UnusedSupply,
     /// A source-admitted step-bounded clause in the composition.
@@ -253,7 +255,9 @@ impl AdmittedCompositionFixture {
             | CompositionCase::StepBounded
             | CompositionCase::MissingInterface
             | CompositionCase::MissingSupply => "",
-            CompositionCase::Cyclic => "depends Producer::Sends on Consumer::Done;",
+            CompositionCase::Cyclic | CompositionCase::InterfaceCyclic => {
+                "depends Producer::Sends on Consumer::Done;"
+            }
         };
         let unused_supply = if matches!(case, CompositionCase::UnusedSupply) {
             "supplies fair strong whole M::Consumer::receive;"
@@ -270,6 +274,11 @@ impl AdmittedCompositionFixture {
         } else {
             "supplies fair weak each M::Producer::send;"
         };
+        let rule = if matches!(case, CompositionCase::InterfaceCyclic) {
+            "interface"
+        } else {
+            "assume-guarantee"
+        };
         let source_text = format!(
             "language \"ix:native\" edition \"1-draft\";
 profile v = \"filament.model.complete/v1\";
@@ -277,7 +286,7 @@ profile q = \"filament.value.complete/v1\";
 import \"test/producer\" as P;
 import \"test/consumer\" as Q;
 function marker using q(): Boolean pure {{ true }}
-compose Sys rule assume-guarantee {{
+compose Sys rule {rule} {{
  component Producer from P using M; component Consumer from Q using M;
  guarantee Consumer::Shared; guarantee Producer::Shared;
  guarantee Consumer::Done; {sends_guarantee}
