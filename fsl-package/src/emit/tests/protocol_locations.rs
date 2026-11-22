@@ -1344,24 +1344,3 @@ fn supplied_identities_are_validated_against_the_admitted_package() {
         UnsupportedReason::UnknownIdentityWitness
     );
 }
-
-/// TEMPORARY (QSL-2825): scaling probe.
-#[test]
-fn zz_qsl_2825_scaling_probe() {
-    for terms in [5_000_usize, 10_000, 20_000] {
-        let started = std::time::Instant::now();
-        let function = format!(
-            "function f using v(x: Integer): Integer pure {{ {}x }}\n",
-            "x + ".repeat(terms - 1)
-        );
-        deep_projection(
-            with_deep_control(&function, "f(dm.count + 1) >= 1"),
-            512 * 1024,
-            move |projection| {
-                let f = projection.function(0).expect("f");
-                assert_eq!(left_depth(projection, f.body), terms - 1);
-            },
-        );
-        eprintln!("TIME terms={terms} total_ms={}", started.elapsed().as_millis());
-    }
-}
