@@ -4786,16 +4786,17 @@ fn execute_prepared(prepared: PreparedRun, settle: &settle::Settle<'_>) -> Resul
         PreparedRun::RefinementTransfer(prepared) => {
             return transfer::execute(*prepared, settle);
         }
-        PreparedRun::Clause(request) => {
+        PreparedRun::Clause(prepared) => {
+            let PreparedClauseRun { request, sources } = *prepared;
             let selection = request.selection.clone();
-            let report =
-                fsl_replay::spine::run_clause(*request.into_request()).map_err(|error| {
-                    RunCause::ClauseRequest {
-                        member: "clause".to_owned(),
-                        reason: error.to_string(),
-                    }
+            let (report, source_map) = fsl_replay::spine::run_clause_with_source_map(*request)
+                .map_err(|error| RunCause::ClauseRequest {
+                    member: "clause".to_owned(),
+                    reason: error.to_string(),
                 })?;
-            return output::clause_report(report, &selection);
+            let mut result = output::clause_report(report, &selection)?;
+            result.sources = sources.with_source_map(source_map);
+            return Ok(result);
         }
     };
     let prepared = *prepared.data;
