@@ -121,8 +121,10 @@ impl Clone for NormalizationOwner {
 /// retained with the meter that produced them, without a source-unit alias.
 #[derive(Debug)]
 pub struct NormalizedModel {
-    view: EffectiveView,
+    pub(crate) data: crate::model::observation::ModelViewData,
     provenance: NormalizedModelProvenance,
+    pub(crate) clock_places: std::sync::Arc<crate::model::clock_reference::DeclaredClockPlaces>,
+    pub(crate) source: bool,
 }
 
 #[derive(Debug)]
@@ -132,13 +134,33 @@ pub(crate) struct NormalizedModelProvenance {
 }
 
 impl NormalizedModel {
-    pub(crate) fn from_parts(view: EffectiveView, provenance: NormalizedModelProvenance) -> Self {
-        Self { view, provenance }
+    pub(crate) fn from_parts(
+        data: crate::model::observation::ModelViewData,
+        provenance: NormalizedModelProvenance,
+        clock_places: std::sync::Arc<crate::model::clock_reference::DeclaredClockPlaces>,
+        source: bool,
+    ) -> Self {
+        Self {
+            data,
+            provenance,
+            clock_places,
+            source,
+        }
     }
 
     /// The actual effective view used by snapshot admission.
     pub fn view(&self) -> &EffectiveView {
-        &self.view
+        &self.data.view
+    }
+
+    pub(crate) fn normalization_limits(&self) -> ModelNormalizationLimits {
+        *self
+            .provenance
+            .meter
+            .0
+            .lock()
+            .expect("normalization owner operations do not unwind")
+            .limits()
     }
 
     /// Declaration identities produced from this model's normalized records.
