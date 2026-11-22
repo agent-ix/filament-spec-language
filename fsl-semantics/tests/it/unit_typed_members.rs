@@ -426,7 +426,7 @@ fn source_model_alias_names_preserve_nominal_units_and_member_bounds() {
 /// quantity value type, IR-1051), and the initial-state and successor
 /// checks end to end, which wait on FR-106's Quantity snapshot form and on
 /// EN-1 writing a quantity field.
-#[trace("TC-685")]
+#[trace("TC-685", "FR-230-AC-26")]
 #[test]
 fn unit_bounds_bound_the_members_of_their_unit_or_alias() {
     use fsl_semantics::model::intake::UnitIntakeCause;
