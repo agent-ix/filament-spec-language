@@ -200,7 +200,15 @@ impl Forms<'_> {
             },
             ValueType::Population(_) => return Err(ReadStop::Fault("population-already-read")),
         };
-        if tag != wanted {
+        // FSpec FR-181-AC-20: a Quantity is also read from its decimal form.
+        let quantity_decimal = tag == "decimal"
+            && matches!(
+                declared,
+                ValueType::Quantity(_)
+                    | ValueType::BoundedQuantity(_)
+                    | ValueType::CarriedQuantity(_)
+            );
+        if tag != wanted && !quantity_decimal {
             return Err(wrong_kind(path));
         }
         match declared {
@@ -317,6 +325,17 @@ impl Forms<'_> {
             ValueType::Quantity(_)
             | ValueType::BoundedQuantity(_)
             | ValueType::CarriedQuantity(_) => {
+                if quantity_decimal {
+                    closed(object, &["type", "coefficient", "scale", "unit"], path)?;
+                    integer_text(&object["coefficient"], path, "coefficient")?;
+                    integer_text(&object["scale"], path, "scale")?;
+                    let unit = string_member(object, "unit", path)?;
+                    let unit = crate::id_text::unit_from_text(unit)
+                        .and_then(|unit| self.unit_name(&unit))
+                        .ok_or_else(|| wrong_kind_at(path, "unit"))?;
+                    return Ok(json!({"kind": "quantity", "unit": unit,
+                        "magnitude": {"kind": "decimal", "coefficient": object["coefficient"], "scale": object["scale"]}}));
+                }
                 closed(object, &["type", "numerator", "denominator", "unit"], path)?;
                 let unit = string_member(object, "unit", path)?;
                 let unit = crate::id_text::unit_from_text(unit)
