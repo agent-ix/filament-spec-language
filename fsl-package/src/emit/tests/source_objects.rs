@@ -372,10 +372,7 @@ fn source_object_identity_rows_roundtrip_through_qc30_intake() {
     // local row decoder would allow a reduced encoder and decoder to agree
     // on the same non-normative schema.
     let identity_json: Value = serde_json::from_slice(&bytes).expect("identity JSON parses");
-    assert_eq!(
-        identity_json["format"],
-        "filament.checked-handoff.identities/5"
-    );
+    assert_eq!(identity_json["format"], crate::IDENTITIES_FORMAT);
     let objects_json = identity_json["source_objects"].as_array().expect("rows");
     assert_eq!(objects_json.len(), 1);
     let by_identity = |name: &str| {
