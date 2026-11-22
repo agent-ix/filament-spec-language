@@ -2390,26 +2390,41 @@ fn finish_replay(
         Ok(ProbabilityWitnessReplay::Reproduced(token)) => {
             let input = system.input();
             let quantile_bound;
-            let wire = fsl_replay::probabilistic_wire(
-                witness,
-                match &claim.form {
-                    ProbForm::Reach { bound, .. }
-                    | ProbForm::Probability { bound, .. }
-                    | ProbForm::MeanOfFraction { bound, .. } => bound,
-                    ProbForm::Quantile { q, threshold, .. } => {
-                        quantile_bound = match threshold {
-                            Bound::AtMost(_) => Bound::AtLeast(q.clone()),
-                            Bound::AtLeast(_) => Bound::AtMost(q.clone()),
-                        };
-                        &quantile_bound
-                    }
-                    _ => return not_yet(),
-                },
-                input.types,
-                input.variant_types,
-                &|state| system.state_key(state).ok().map(|(_, key)| key),
-                spelled_scheduler,
-            );
+            let bound = match &claim.form {
+                ProbForm::Reach { bound, .. }
+                | ProbForm::Probability { bound, .. }
+                | ProbForm::MeanOfFraction { bound, .. } => bound,
+                ProbForm::Quantile { q, threshold, .. } => {
+                    quantile_bound = match threshold {
+                        Bound::AtMost(_) => Bound::AtLeast(q.clone()),
+                        Bound::AtLeast(_) => Bound::AtMost(q.clone()),
+                    };
+                    &quantile_bound
+                }
+                _ => return not_yet(),
+            };
+            let state_key = |state: &fsl_eval::simulation::model::ModelSimState| {
+                system.state_key(state).ok().map(|(_, key)| key)
+            };
+            let wire = match input.enum_members {
+                Some(enum_members) => fsl_replay::probabilistic_wire_with_enum_members(
+                    witness,
+                    bound,
+                    input.types,
+                    input.variant_types,
+                    enum_members,
+                    &state_key,
+                    spelled_scheduler,
+                ),
+                None => fsl_replay::probabilistic_wire(
+                    witness,
+                    bound,
+                    input.types,
+                    input.variant_types,
+                    &state_key,
+                    spelled_scheduler,
+                ),
+            };
             EngineReport::Exact(Box::new(ExactReport::Refuted(token, Box::new(wire))))
         }
         Ok(ProbabilityWitnessReplay::Parity) => {

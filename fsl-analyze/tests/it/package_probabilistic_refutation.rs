@@ -32,11 +32,106 @@ const TOO_LIKELY: &str =
 #[trace("FR-940-AC-6", "FR-741-AC-3", "FR-203-AC-8")]
 #[test]
 fn a_package_refutation_preserves_the_negative_witness_replay_and_charges() {
-    let ws = Workspace::new("probabilistic-package-refutation-parity");
+    refutation_parity(
+        "probabilistic-package-refutation-parity",
+        LINK_UNIT,
+        LINK_MODEL,
+    );
+}
+
+/// The authenticated enum index spells both random draws and scheduled
+/// non-random arguments after the source files have been removed.
+#[trace("FR-940-AC-6", "FR-741-AC-3", "FR-203-AC-8")]
+#[test]
+fn enum_draws_and_arguments_preserve_package_refutation_witness_parity() {
+    let mut model: serde_json::Value = serde_json::from_slice(LINK_MODEL).expect("Link model JSON");
+    let enum_type = "ix://test/link/Loss";
+    model["constructs"]
+        .as_array_mut()
+        .expect("constructs")
+        .push(json!({
+            "kind": {"module": "test/link", "name": "variant_type"},
+            "moduleVersion": "1.0.0",
+            "construct": {"identity": "none", "shape": "enumeration",
+                "members": {"variants": "required"},
+                "meaning": fsl_semantics::model::intake::meaning::VARIANT_TYPE}
+        }));
+    let origin = |identity: &str| {
+        json!({"generated": {
+            "generatorIdentity": identity, "generatorVersion": "1.0.0",
+            "inputIdentities": [identity]
+        }})
+    };
+    let variants: Vec<_> = ["Lost", "Delivered"]
+        .iter()
+        .map(|name| {
+            let identity = format!("{enum_type}/{name}");
+            json!({"identity": identity, "name": name, "origin": origin(&identity)})
+        })
+        .collect();
+    model["types"].as_array_mut().expect("types").push(json!({
+        "identity": enum_type, "displayName": enum_type,
+        "kind": {"module": "test/link", "name": "variant_type"},
+        "origin": origin(enum_type), "roles": [], "constraints": [],
+        "extensions": [], "unknownPolicy": "reject", "variants": variants
+    }));
+    for operation in model["types"][1]["operations"]
+        .as_array_mut()
+        .expect("message operations")
+    {
+        operation["params"][0]["typeRef"] = json!(enum_type);
+        let mut argument = operation["params"][0].clone();
+        let identity = format!(
+            "{}/tag",
+            operation["identity"].as_str().expect("operation identity")
+        );
+        argument["identity"] = json!(identity);
+        argument["name"] = json!("tag");
+        argument["origin"] = origin(&identity);
+        operation["params"]
+            .as_array_mut()
+            .expect("parameters")
+            .push(argument);
+    }
+    let unit = LINK_UNIT
+        .replace(
+            "(not lost)",
+            "(lost = M::Loss::Delivered) and tag = M::Loss::Delivered",
+        )
+        .replace("true: 1, false: 9", "M::Loss::Lost: 1, M::Loss::Delivered: 9")
+        .replace("true: 1, false: 4", "M::Loss::Lost: 1, M::Loss::Delivered: 4");
+    let item = refutation_parity(
+        "probabilistic-package-enum-refutation-parity",
+        &unit,
+        &serde_json::to_vec(&model).expect("enum model JSON"),
+    );
+    let witness = &item["counterexample"];
+    let paths = witness["evidence"]["paths"].as_array().expect("path set");
+    assert!(
+        paths.iter().any(|path| path.as_array().is_some_and(|steps| {
+            steps.iter().any(|step| step["random"]
+                .as_array()
+                .is_some_and(|draw| draw.iter().any(|value| value["type"] == "enum")))
+        })),
+        "{witness}"
+    );
+    let entries = witness["scheduler"]["entries"]
+        .as_array()
+        .expect("scheduler entries");
+    assert!(
+        entries.iter().any(|entry| entry["choice"]["arguments"]
+            .as_array()
+            .is_some_and(|arguments| arguments.iter().any(|value| value["type"] == "enum"))),
+        "{witness}"
+    );
+}
+
+fn refutation_parity(name: &str, unit: &str, model: &[u8]) -> serde_json::Value {
+    let ws = Workspace::new(name);
     let source_path = request_over(
         &ws,
-        &format!("{LINK_UNIT}\n{TOO_LIKELY}\n"),
-        LINK_MODEL,
+        &format!("{unit}\n{TOO_LIKELY}\n"),
+        model,
         &[LINK_START.to_vec()],
         json!({"items": [{"claim": "TooLikely", "kind": "probabilistic-satisfaction",
             "probabilistic": {"evidence": "exact"}}]}),
@@ -72,7 +167,7 @@ fn a_package_refutation_preserves_the_negative_witness_replay_and_charges() {
     let compiled = fsl_command::checked_handoff::compile(&ws.path(HANDOFF))
         .expect("source handoff compiles for evaluator comparison");
     let packages =
-        fsl_semantics::model::intake::package_input([LINK_MODEL]).expect("the Link model admits");
+        fsl_semantics::model::intake::package_input([model]).expect("the Link model admits");
     let limits = fsl_package::V2ReadLimits::bounded(1 << 24);
     let admitted = fsl_package::admit_checked_package(&bytes, &packages, limits)
         .expect("the actual producer package admits");
@@ -200,6 +295,7 @@ fn a_package_refutation_preserves_the_negative_witness_replay_and_charges() {
     assert_eq!(package.item(0)["replay"], source_item["replay"]);
     assert_eq!(package.item(0)["replay"]["reproduced"], true);
     assert_eq!(package.stdout, source.stdout, "whole serialized result");
+    source_item
 }
 
 /// Replaying the real negative witness requires its actual bare execution
