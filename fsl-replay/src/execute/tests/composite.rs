@@ -13,6 +13,36 @@ use ix_trace_rs::trace;
 use super::*;
 use crate::witness::{QuantityMagnitude, WitnessBinding, WitnessField, WitnessSlot};
 
+/// Diagnostic process samples, never an additional qualification limit.
+/// VmHWM is process-wide (and cumulative across sequential families); VmRSS
+/// records what is resident at this boundary. Missing procfs is non-fatal.
+fn memory_phase(context: &str, phase: &str) {
+    #[cfg(target_os = "linux")]
+    {
+        let status = std::fs::read_to_string("/proc/self/status").ok();
+        let kib = |field: &str| {
+            status.as_deref().and_then(|status| {
+                let mut words = status
+                    .lines()
+                    .find(|line| line.starts_with(field))?
+                    .split_whitespace();
+                words.next()?;
+                let value = words.next()?.parse::<u64>().ok()?;
+                (words.next()? == "kB").then_some(value)
+            })
+        };
+        eprintln!(
+            "MEMORY context={context} phase={phase} rss_kib={:?} process_peak_kib={:?}",
+            kib("VmRSS:"),
+            kib("VmHWM:")
+        );
+    }
+    #[cfg(not(target_os = "linux"))]
+    eprintln!(
+        "MEMORY context={context} phase={phase} rss_kib=unavailable process_peak_kib=unavailable"
+    );
+}
+
 /// A compiled unit under test.
 struct Fixture {
     source: String,
@@ -715,12 +745,16 @@ fn list(declaration: NodeKey, depth: usize) -> WitnessValue {
 fn tc_736_a_100000_term_source_and_list_replay_to_the_proving_verdict() {
     on_small_stack(|| {
         const TERMS: usize = 100_000;
+        const CONTEXT: &str = "tc_736_source_and_list";
+        memory_phase(CONTEXT, "START");
         let sum = vec!["l.head"; TERMS].join(" + ");
         let fixture = fixture_with_raised_limits(&format!(
             "record List {{ head: Int[0, 9]; tail: List?; }}\n\
              function small using v(l: List): Boolean pure {{ {sum} < 5 }}\n"
         ));
+        memory_phase(CONTEXT, "EMITTED");
         let value = list(fixture.record_id("List"), TERMS);
+        memory_phase(CONTEXT, "VALUE");
         let raised = ReplayLimits::default().with_input_bytes(1 << 29);
         let limits: BTreeMap<String, u64> = BTreeMap::from(
             [
@@ -754,16 +788,22 @@ fn tc_736_a_100000_term_source_and_list_replay_to_the_proving_verdict() {
         };
         // Step 2: the default limits stop the recompile at a named stage.
         let refused = replay(witness(&fixture, &BTreeMap::new()), raised);
+        memory_phase(CONTEXT, "DEFAULT_STAGE_REFUSAL");
         assert!(
             matches!(refused, Err(ReplayRefusal::Recompile { .. })),
             "{refused:?}"
         );
         // The raised settings replay, from the witness and from the input.
         let wire = witness(&fixture, &limits);
+        eprintln!("REQUEST context={CONTEXT} package_bytes={} source_bytes={} replay_source_bytes={} provision_bytes={}", wire.package.bytes().len(), fixture.source.len(), wire.source.measured_bytes(), wire.byte_provision.iter().map(|(_, _, bytes)| bytes.len()).sum::<usize>());
+        memory_phase(CONTEXT, "WITNESS_REQUEST");
         assert_reproduced(replay(wire, raised));
+        memory_phase(CONTEXT, "WITNESS_REPLAYED");
         let mut input = fixture.input("small", value.clone());
         input.stage_limits = limits;
+        memory_phase(CONTEXT, "INPUT_REQUEST");
         assert_reproduced(replay(input, raised));
+        memory_phase(CONTEXT, "INPUT_REPLAYED");
     });
 }
 

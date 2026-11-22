@@ -1041,6 +1041,8 @@ fn deep_projection(
         .name("deep-projection".to_owned())
         .stack_size(stack)
         .spawn(move || {
+            let context = format!("protocol_locations source_bytes={}", source.len());
+            super::memory_phase(&context, "START");
             let packages =
                 fsl_semantics::model::intake::package_input([domain().as_slice()]).unwrap();
             let graph = assemble_with_models(source.as_bytes(), &packages)
@@ -1054,7 +1056,9 @@ fn deep_projection(
                 )
                 .expect("the deep unit checks");
             let package = CheckedPackage::link(graph);
+            super::memory_phase(&context, "CHECKED");
             let emission = emit_checked(&package).expect("the deep unit emits");
+            super::memory_phase(&context, "EMITTED");
             let name = emission.package.name().to_owned();
             let limits = V2ReadLimits {
                 artifact_bytes: emission.package.bytes().len(),
@@ -1075,14 +1079,18 @@ fn deep_projection(
                 crate::SourceWitnessSupplier::new(&emission),
             )
             .expect("the I2 reader admits the deep package");
+            super::memory_phase(&context, "READ");
             let view = read.evaluation_view().expect("the deep view is created");
+            super::memory_phase(&context, "VIEW");
             let slots = view.reader_slots().expect("a reader-backed view");
             let Some(crate::ReaderSlot::Projected(projection)) =
                 slots.slot_named(&composed("Deep"))
             else {
                 panic!("the deep control is projected");
             };
+            super::memory_phase(&context, "PROJECTED");
             check(projection);
+            super::memory_phase(&context, "MEASURED");
         })
         .expect("the worker thread starts")
         .join()
