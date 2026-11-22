@@ -1128,16 +1128,25 @@ impl ProtocolTransition {
 
     pub(crate) fn identifying_message(mut self, message: MessageOccurrence) -> Self {
         self.message = Some(message);
+        if matches!(&self.members, Members::Record { .. }) {
+            self.members = Members::Control;
+        }
         self
     }
 
     pub(crate) fn identifying_delivery(mut self, delivery: DeliveryIdentity) -> Self {
         self.delivery = Some(delivery);
+        if matches!(&self.members, Members::Record { .. }) {
+            self.members = Members::Control;
+        }
         self
     }
 
     pub(crate) fn identifying_business_effect(mut self, effect: BusinessEffectOccurrence) -> Self {
         self.business_effect = Some(effect);
+        if matches!(&self.members, Members::Record { .. }) {
+            self.members = Members::Control;
+        }
         self
     }
 
@@ -1877,12 +1886,16 @@ impl ProtocolTransition {
             Members::Record {
                 record,
                 recovery_summary,
-            } => {
+            } if self.message.is_none()
+                && self.delivery.is_none()
+                && self.business_effect.is_none() =>
+            {
                 members.push(("record", record.clone()));
                 if let Some(summary) = recovery_summary {
                     members.push(("recovery_summary", Enc::text(summary.clone())));
                 }
             }
+            Members::Record { .. } => {}
             Members::Channel {
                 name,
                 instance,

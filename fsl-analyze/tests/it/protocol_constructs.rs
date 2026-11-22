@@ -77,6 +77,14 @@ fn identity(system: &ProtocolSystem<'_, Sc>, transition: &ProtocolTransition) ->
     json_of(&system.transition_key(transition).expect("an identity"))
 }
 
+/// The actual bound record, separate from the step's occurrence identity.
+fn binder_record(system: &ProtocolSystem<'_, Sc>, transition: &ProtocolTransition) -> Json {
+    system
+        .binder_record_json(transition)
+        .expect("a bound record encodes")
+        .expect("the transition binds a record")
+}
+
 /// The JSON of the send record a `send` step carries (ADR-027 ST-3, PX-1).
 fn send_record(transition: &ProtocolTransition) -> Json {
     let record = transition.send_record().expect("a send carries its record");
@@ -271,7 +279,7 @@ fn channel_premises_admit_exactly_their_queue_steps() {
         let records: Vec<Json> = reached[at]
             .steps
             .iter()
-            .map(|(transition, _)| identity(&system, transition)["record"]["value"].clone())
+            .map(|(transition, _)| binder_record(&system, transition)["value"].clone())
             .collect();
         (records, queues(&system, &reached[at].state)[0].1.clone())
     };
@@ -320,9 +328,10 @@ fn two_protocols_declaring_one_channel_name_keep_their_queues_apart() {
     }
 }
 
-/// FR-126-AC-8 (TC-536): unknown delivery allows a duplicate/lose
-/// loop that keeps producing distinct states. The public checker stops at
-/// the caller's state budget and names the limit it reached.
+/// FR-126-AC-8 (TC-536): a bounded repeat's counter keeps its iterations
+/// distinct while unknown delivery permits duplicate/lose cycles. Unread
+/// delivery labels coalesce under FR-205, but the repeat counter remains in
+/// the state key. The public checker stops at the caller's state budget.
 #[trace("TC-536", "FR-126-AC-8")]
 #[test]
 fn unknown_delivery_loop_stops_at_the_fr126_state_limit() {
@@ -330,7 +339,8 @@ fn unknown_delivery_loop_stops_at_the_fr126_state_limit() {
         "Pay",
         "ordering fifo by (m: Boolean) { true } delivery unknown capacity 2 overflow block",
     );
-    let run = "sequence Main { send S1 via Pay as (s1: Boolean) { s1 }; }";
+    let run = "sequence Main { repeat Loop by w visible () max 128 while { true } \
+               send S1 via Pay as (s1: Boolean) { s1 }; exhausted sequence Out { } }";
     let unit = contracts("self.v = 0") + &protocol("Pipeline", &members, run, "d");
     let case = Case::new(&unit, &[0]);
     let limits = ModelCheckLimits {
@@ -357,17 +367,20 @@ fn unknown_delivery_loop_stops_at_the_fr126_state_limit() {
     )
     .expect("the bounded protocol request is admitted");
 
-    assert!(matches!(
-        outcome,
-        ModelCheckOutcome::Stopped {
-            cause: IncompleteCause::ResourceExhausted,
-            limit: Some(ReachedLimit {
-                limit: ModelCheckLimit::MaxStates,
-                value: 64,
-            }),
-            stats,
-        } if stats.product_states == 64
-    ));
+    assert!(
+        matches!(
+            &outcome,
+            ModelCheckOutcome::Stopped {
+                cause: IncompleteCause::ResourceExhausted,
+                limit: Some(ReachedLimit {
+                    limit: ModelCheckLimit::MaxStates,
+                    value: 64,
+                }),
+                stats,
+            } if stats.product_states == 64
+        ),
+        "{outcome:?}"
+    );
 }
 
 /// FR-206-AC-7 (TC-651, ADR-027 ST-3, PX-1): over a `fifo` channel `ch` of
@@ -388,8 +401,10 @@ fn a_send_binds_its_send_record() {
                send P2 via ch as (p2: Boolean) { not p2 }; \
                send N via ch as (n: Boolean) { n and p1 }; }";
     let entry = |send: &str, value: bool| {
-        json!({"type": "queue-entry", "send": send,
-            "thread": {"type": "thread-path", "instance": "0", "steps": []},
+        json!({"type": "queue-entry",
+            "message": {"type": "message-occurrence", "instance": "0", "node": send,
+                "path": {"type": "thread-path", "instance": "0", "steps": []}, "ordinal": "0"},
+            "delivery": "0",
             "payload": {"type": "boolean", "value": value}})
     };
     let cases = [
@@ -429,9 +444,14 @@ fn a_send_binds_its_send_record() {
                 "payload": {"type": "boolean", "value": true}, "displaced": null}),
             "{overflow}"
         );
-        // The identity's record and the binder are the payload alone.
+        // The binder is the payload; occurrence identity stays separate.
         let payload = json!({"type": "boolean", "value": true});
-        assert_eq!(identity(&system, first)["record"], payload);
+        assert_eq!(binder_record(&system, first), payload);
+        assert_eq!(
+            identity(&system, first)["message"],
+            entry("Main/P1", true)["message"]
+        );
+        assert!(identity(&system, first).get("record").is_none());
         let observed = key(&system, &reached[*sent].state)["observations"]["entries"].clone();
         let [held] = observed.as_array().expect("observations").as_slice() else {
             panic!("`N` reads `p1`, so it is held: {observed}");
@@ -447,7 +467,8 @@ fn a_send_binds_its_send_record() {
                 "payload": {"type": "boolean", "value": true}, "displaced": displaced}),
             "{overflow}"
         );
-        assert_eq!(identity(&system, third)["record"], payload);
+        assert_eq!(binder_record(&system, third), payload);
+        assert!(identity(&system, third).get("record").is_none());
         assert_eq!(
             queues(&system, &reached[*after].state)[0].1,
             queued,
@@ -466,8 +487,10 @@ fn a_send_binds_its_send_record() {
 #[test]
 fn an_unordered_channel_with_a_loss_selector_displaces_by_send_order() {
     let entry = |send: &str, value: bool| {
-        json!({"type": "queue-entry", "send": send,
-            "thread": {"type": "thread-path", "instance": "0", "steps": []},
+        json!({"type": "queue-entry",
+            "message": {"type": "message-occurrence", "instance": "0", "node": send,
+                "path": {"type": "thread-path", "instance": "0", "steps": []}, "ordinal": "0"},
+            "delivery": "0",
             "payload": {"type": "boolean", "value": value}})
     };
     // `P1` carries `true` and `P2` `false`, sent in either order.
