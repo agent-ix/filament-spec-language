@@ -186,7 +186,8 @@ pub struct HyperCheckRequest<'a> {
     /// (ADR-023 HV-3): a lasso of more joint steps for an HP-2 or HP-3 item,
     /// more moves for an HP-6 item.
     pub max_depth: Option<usize>,
-    /// The evaluation meter budget of each atom and each `μ_U` evaluation.
+    /// The evaluation meter budget of each atom and each `μ_U` evaluation,
+    /// and of the finite graph pass's traversal/canonicalization work.
     pub meter: ScalarLimits,
     /// The reductions the request selects. Copy-swap is not among them: the
     /// compiler applies it when the clause has the symmetry (FR-174).
@@ -198,7 +199,9 @@ pub struct HyperCheckRequest<'a> {
 #[derive(Debug, thiserror::Error)]
 pub enum HyperRefusal {
     /// The clause is not an HP-2, HP-3 or HP-6 clause.
-    #[error("EN-1 decides a universal (HP-2), forall-exists safety (HP-3) or projection-aligned (HP-6) hyperproperty here, not {form:?}")]
+    #[error(
+        "EN-1 decides a universal (HP-2), forall-exists safety (HP-3) or projection-aligned (HP-6) hyperproperty here, not {form:?}"
+    )]
     FormNotDecided {
         /// The clause's form.
         form: Option<HyperForm>,
@@ -345,8 +348,8 @@ pub fn check_hyper(
     run.decide(&instances)
 }
 
-/// Whether the clause is decided by enumerating closed finite executions,
-/// rather than by the lockstep product that executes selected reductions.
+/// Whether the clause is decided over closed finite execution tuples rather
+/// than an infinite lockstep product. Both execute eligible HP-2 reductions.
 fn uses_closed_executions(clause: &CheckedHyperClause) -> bool {
     clause.profile() == fsl_semantics::check::TemporalProfile::EventPositionFalseExtension
 }
@@ -840,8 +843,6 @@ impl<'a> Run<'_, 'a> {
             });
         }
         if uses_closed_executions(self.request.clause) {
-            // Selected reductions have already settled before admission:
-            // closed enumeration does not execute product reductions.
             return self.decide_closed(instances, totals);
         }
         if let Some(outcome) = self.precheck(&totals)? {
@@ -1303,6 +1304,7 @@ impl<'a> Run<'_, 'a> {
             } else {
                 HyperOutcome::HoldsReduced {
                     certificates: self.certificates(explored)?,
+                    scope: fsl_replay::HyperReducedScope::Product,
                     reductions,
                     stats: totals.stats(),
                 }
@@ -1443,7 +1445,7 @@ impl<'a> Run<'_, 'a> {
             ),
             Halt::AutomatonKey(error) => return Err(HyperRefusal::Automaton(error).into()),
             Halt::ConstraintUndefined(cause) => {
-                return Err(HyperRefusal::ConstraintUndefined { cause }.into())
+                return Err(HyperRefusal::ConstraintUndefined { cause }.into());
             }
             Halt::Atom(stop) => return Err(atom_halt(stop)),
             Halt::Encoding(refusal) => return Err(ModelCheckRefusal::Encoding(refusal)),
@@ -1528,7 +1530,7 @@ impl<'a> Run<'_, 'a> {
                     ModelCheckLimit::MaxAutomatonStates,
                     limit,
                     totals,
-                )))
+                )));
             }
             Err(other) => return Err(HyperRefusal::Automaton(other).into()),
         };
