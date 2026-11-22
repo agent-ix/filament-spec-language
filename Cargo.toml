@@ -27,7 +27,7 @@ filament-checked = { git = "https://github.com/agent-ix/filament-eval", rev = "7
 # its own repository so RT and CG depend on it without the FSL repo.
 filament-eval = { git = "https://github.com/agent-ix/filament-eval", rev = "79b8c42b60f43c936e8e50a7fc6519da030c978d" }
 # IR-owned staged identity, operation-member, and model-enum witness joins.
-filament-contract-model = { git = "https://github.com/agent-ix/filament-contract-ir", rev = "f0354357b423dfb0f72d373529c3fbcc33516848" }
+filament-contract-model = { git = "https://github.com/agent-ix/filament-contract-ir", rev = "0e41bcda99c0a3317055f9989d60ff0eb4529bc6" }
 # Observation's checked-value vocabulary aligned to the same exact/semantic-value revisions.
 filament-observation = { git = "https://github.com/agent-ix/filament-observation", rev = "004c7c4f934d15022d2a80b98c451d436109b44b" }
 
