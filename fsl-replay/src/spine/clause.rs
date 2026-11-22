@@ -40,8 +40,8 @@ mod trace_refusal;
 mod trace_subject;
 pub use clause_state::{
     assertion_json, assertion_of, incomplete_json, incomplete_of, pending_report, AdmittedPosition,
-    AdmittedValue, Advance, ClauseLimits, ClauseMark, ClauseOpen, ClauseRefusal, ClauseState,
-    ClauseTraceKind, CLAUSE_STATE_FORMAT,
+    AdmittedValue, Advance, ClauseLimits, ClauseMark, ClauseOpen, ClauseProgress, ClauseRefusal,
+    ClauseState, ClauseTraceKind, CLAUSE_STATE_FORMAT,
 };
 pub(crate) use correction::run_correction;
 pub use correction::{
