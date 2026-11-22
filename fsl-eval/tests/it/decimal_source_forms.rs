@@ -514,7 +514,26 @@ fn the_six_d25_expressions_check_or_refuse_as_the_criterion_states() {
     );
     assert!(compile(&case("p: P", "P", "p + decimal(15, 1)")).is_ok());
     assert_eq!(refusal(&case("p: P, r: R", "P", "p + r")), mismatch());
-    assert!(compile(&case("p: P, r: R", "P", "p + convert<P>(r)")).is_ok());
+    let Err(refusals) = compile(&case("p: P, r: R", "P", "p + convert<P>(r)")) else {
+        panic!("the unproved narrowing is refused");
+    };
+    let [refusal] = refusals.as_slice() else {
+        panic!("one refusal at the conversion, got {refusals:?}");
+    };
+    assert_eq!(refusal.cause.code().as_str(), "undefined_expression");
+    assert_eq!(refusal.cause.cause(), Some("unproved-range"));
+    assert!(matches!(
+        &refusal.location.origin,
+        filament_semantic_value::location::ExpressionOwner::Body { function, .. }
+            if function == "f"
+    ));
+    assert_eq!(refusal.location.path(), vec![1]);
+    compile(&case(
+        "p: P, r: Decimal[0, 100; 1, 1; exact]",
+        "P",
+        "p + convert<P>(r)",
+    ))
+    .unwrap_or_else(|refusals| panic!("the declared subrange proves membership: {refusals:?}"));
     assert!(compile(&case("", "P", "decimal(15, 1) + decimal(225, 2)")).is_ok());
 }
 

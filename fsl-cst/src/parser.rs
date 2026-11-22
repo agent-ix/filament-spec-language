@@ -603,11 +603,7 @@ fn parse_with_declaration_recovery(
                         .filter(|_| declaration_form)
                         .map(|token| format!("`{}` begins no declaration form", token.spelling))
                         .unwrap_or_else(|| {
-                            derived_form(
-                                &tokens,
-                                &Failure::expected(failure.position, expected.clone()),
-                            )
-                            .map_or_else(
+                            derived_form(&tokens, &failure).map_or_else(
                                 || {
                                     format_expected(
                                         &tokens,
@@ -708,11 +704,7 @@ fn parse_with_declaration_recovery(
                             .cloned()
                             .collect::<Vec<_>>()
                             .join(" or ");
-                        let message = derived_form(
-                            &tokens,
-                            &Failure::expected(failure.position, expected.clone()),
-                        )
-                        .map_or_else(
+                        let message = derived_form(&tokens, &failure).map_or_else(
                             // Explain query type arguments at the parser's
                             // failure point before falling back to grammar details.
                             // `count<T>` and `sum<T>` accept declared names.
@@ -766,10 +758,7 @@ fn parse_with_declaration_recovery(
                         .cloned()
                         .collect::<Vec<_>>()
                         .join(" or ");
-                    let message = derived_form(
-                        &tokens,
-                        &Failure::expected(failure.position, expected.clone()),
-                    )
+                    let message = derived_form(&tokens, &failure)
                     .or_else(|| {
                         declared_type_name_hint(
                             &tokens,
