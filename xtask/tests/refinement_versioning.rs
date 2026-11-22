@@ -749,30 +749,18 @@ fn the_recipe_commands_generate_then_gate_with_exit_zero() {
 /// FR-343-AC-5 (unsupported half): an unsupported superseding compile and an
 /// unsupported prior compile are each `unresolved (unsupported)`, exit 21.
 #[test]
-#[trace("TC-865", "FR-343-AC-5")]
+#[trace("TC-865", "FR-343-AC-5", "FR-341-AC-7")]
 fn an_unsupported_compile_on_either_side_is_unresolved() {
-    let observed: Vec<_> = [
+    for (side, prior, superseding) in [
         ("superseding", unit(), unsupported()),
         ("prior", unsupported(), unit()),
-    ]
-    .into_iter()
-    .map(|(side, prior, superseding)| {
+    ] {
         let corpus = corpus(&[(
             "pair",
             Pair::new(prior, superseding, vec![clause_case("healthy-parent")])
                 .with_mixed_workload(),
         )]);
         let report = versioning::run(corpus.path(), &repository());
-        // Temporary X20 probe: retain both public reports before either
-        // side's unchanged classification assertions can stop this test.
-        eprintln!(
-            "X20 {side} unsupported-side public report:\n{}\n{report:#?}",
-            report.to_json().expect("the full public report serializes")
-        );
-        (side, report)
-    })
-    .collect();
-    for (side, report) in observed {
         assert_eq!(
             results(&report),
             [triple(
