@@ -1406,6 +1406,15 @@ pub enum IdentityJoinFailure {
 }
 
 impl ReadIdentityRows {
+    /// Whether the selected model enumeration declared at `node` has its
+    /// complete shape row: the declaration is a payload-free enumeration
+    /// whose declaration and cases the package reads (FR-531).
+    pub(crate) fn holds_model_enum(&self, node: &CheckedNodeId) -> bool {
+        self.model_enum_shapes
+            .iter()
+            .any(|row| &row.structural_node == node)
+    }
+
     /// The identity witness these rows give `package`, joined by IR's
     /// `SelectedExactIdentities` projection and charged to `budget`.
     ///
