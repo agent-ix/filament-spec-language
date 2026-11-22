@@ -431,11 +431,12 @@ pub use filament_contract_model::{std001_code, Std001Code};
 pub use fsl_foundation::{BackendId, Code, RequestIndex};
 pub use outcome::undefined_reason;
 pub use outcome::{
-    assignments_wire, certificate_identity_wire, claim_locus_wire, graph_evidence_wire,
-    hyper_counterexample_wire, omitted_witnesses, probabilistic_undefined_wire, probabilistic_wire,
-    protocol_temporal_wire, read_outcome_diagnostics, read_task_temporal_counterexample,
-    read_task_temporal_document, read_temporal_counterexample, replay_model_trace_document,
-    replay_task_product_trace, sampled_witness_wire, state_key_wire, task_product_transition_wire,
+    assignments_wire, assignments_wire_with_enum_members, certificate_identity_wire,
+    claim_locus_wire, graph_evidence_wire, hyper_counterexample_wire, omitted_witnesses,
+    probabilistic_undefined_wire, probabilistic_wire, protocol_temporal_wire,
+    read_outcome_diagnostics, read_task_temporal_counterexample, read_task_temporal_document,
+    read_temporal_counterexample, replay_model_trace_document, replay_task_product_trace,
+    sampled_witness_wire, state_key_wire, task_product_transition_wire,
     task_source_transition_wire, task_temporal_wire, task_temporal_wire_with_queue_growth,
     task_transition_wire, temporal_wire, ClauseRunNotAnItem, ConformanceClosureOutput,
     ConformanceGlobalOutput, ConformanceMessageBoundOutput, ConformanceObligationOutput,

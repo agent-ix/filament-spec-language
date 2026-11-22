@@ -1197,16 +1197,27 @@ pub fn typed_value_json(
     canonical_json(&typed_value_enc(value, types, variants))
 }
 
+/// A typed value with both model variants and an authenticated enum index.
+/// `None` when the value has no canonical form in those declarations.
+pub fn typed_value_json_with_enum_members(
+    value: &Value,
+    types: &TypeEnvironment,
+    variants: &[VariantTypeDeclaration],
+    enum_members: &filament_semantic_value::enumeration::EnumMemberIndex,
+) -> Option<serde_json::Value> {
+    canonical_json(&value_enc(
+        value,
+        Typing::with_variants(types, variants).with_enum_members(Some(enum_members)),
+    ))
+}
+
 /// A typed value with enum identities read from an admitted package.
 pub fn package_value_json(
     value: &Value,
     types: &TypeEnvironment,
     enum_members: &filament_semantic_value::enumeration::EnumMemberIndex,
 ) -> Option<serde_json::Value> {
-    canonical_json(&value_enc(
-        value,
-        Typing::with_variants(types, &[]).with_enum_members(Some(enum_members)),
-    ))
+    typed_value_json_with_enum_members(value, types, &[], enum_members)
 }
 
 /// Write a borrowed run value through the shared typed projection, admitting

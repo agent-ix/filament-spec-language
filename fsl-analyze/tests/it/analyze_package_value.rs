@@ -163,7 +163,7 @@ fn a_package_source_enum_beside_a_model_refuses_missing_type_representation() {
         ENUM,
         &json!([{"claim": "Ready", "kind": "value-validity"}]),
     );
-    assert_eq!(exit, 21, "{package}");
+    assert_eq!(exit, 20, "{package}");
     assert_eq!(package["items"], json!([]), "{package}");
     assert_eq!(
         package["diagnostics"][0]["code"], "unknown_required_feature",

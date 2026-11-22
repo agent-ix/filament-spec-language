@@ -2366,11 +2366,12 @@ impl AnalyzeRecord {
                 });
             };
             let scope = package.graph().scope();
-            return Some(fsl_replay::assignments_wire(
+            return Some(fsl_replay::assignments_wire_with_enum_members(
                 &found.parameters,
                 found.reproduced.assignment(),
                 scope.types(),
                 scope.variant_types(),
+                scope.enum_member_index(),
             ));
         }
         if let Some(found) = &self.contract_check {

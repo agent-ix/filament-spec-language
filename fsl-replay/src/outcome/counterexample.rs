@@ -1934,6 +1934,38 @@ pub fn assignments_wire(
     types: &filament_semantic_value::declaration::TypeEnvironment,
     variants: &[fsl_semantics::check::VariantTypeDeclaration],
 ) -> Result<Json, CounterexampleWireError> {
+    assignments_wire_using(parameters, values, |value| {
+        fsl_eval::simulation::model::typed_value_json(value, types, variants)
+    })
+}
+
+/// Assignment spelling with Source enum identities as well as model variants.
+///
+/// # Errors
+///
+/// As [`assignments_wire`], retaining its parameter order and arity checks.
+pub fn assignments_wire_with_enum_members(
+    parameters: &[filament_exact::NodeKey],
+    values: &[Value],
+    types: &filament_semantic_value::declaration::TypeEnvironment,
+    variants: &[fsl_semantics::check::VariantTypeDeclaration],
+    enum_members: &filament_semantic_value::enumeration::EnumMemberIndex,
+) -> Result<Json, CounterexampleWireError> {
+    assignments_wire_using(parameters, values, |value| {
+        fsl_eval::simulation::model::typed_value_json_with_enum_members(
+            value,
+            types,
+            variants,
+            enum_members,
+        )
+    })
+}
+
+fn assignments_wire_using(
+    parameters: &[filament_exact::NodeKey],
+    values: &[Value],
+    encode: impl Fn(&Value) -> Option<Json>,
+) -> Result<Json, CounterexampleWireError> {
     if parameters.len() != values.len() {
         return Err(CounterexampleWireError::Unspelled("assignment arity"));
     }
@@ -1944,7 +1976,7 @@ pub fn assignments_wire(
             Ok(json!({
                 "parameter": node_key_to_json(parameter)
                     .map_err(|_| CounterexampleWireError::Unspelled("parameter"))?,
-                "value": fsl_eval::simulation::model::typed_value_json(value, types, variants)
+                "value": encode(value)
                     .ok_or(CounterexampleWireError::Unspelled("assignment value"))?,
             }))
         })
