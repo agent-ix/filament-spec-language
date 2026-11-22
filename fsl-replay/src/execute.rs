@@ -2214,7 +2214,7 @@ pub(crate) fn recompile_with_temporal_selections(
         }
     }
     check_recorded_modes(
-        request.package().document(),
+        request.package().functions(),
         compiled.emitted.emission(),
         limits.spine.package.emit(),
     )?;
@@ -3201,7 +3201,7 @@ fn charges(consumed: impl IntoIterator<Item = (LimitKind, u64)>) -> ScalarLimits
 /// emitted bytes spell it, the form `function_records` reads from the
 /// proving package.
 fn check_recorded_modes(
-    recorded: &quire_canonical::Document,
+    recorded: &[crate::request::FunctionRecord],
     recompiled: &fsl_package::Emission,
     limits: fsl_package::EmitLimits,
 ) -> Result<(), ReplayRefusal> {
@@ -3228,10 +3228,10 @@ fn check_recorded_modes(
 /// another mode, or none, is refused at its node. `recompiled_modes` is the
 /// recompile's recorded mode by canonical node id.
 fn verify_recorded_modes(
-    recorded: &quire_canonical::Document,
+    recorded: &[crate::request::FunctionRecord],
     recompiled_modes: &std::collections::BTreeMap<Vec<u8>, Option<String>>,
 ) -> Result<(), ReplayRefusal> {
-    for record in crate::ReplayPackage::function_records(recorded) {
+    for record in recorded {
         if recompiled_modes.get(&record.node_id) != Some(&record.mode) {
             return Err(ReplayRefusal::Request(
                 crate::ReplayRequestRefusal::PackageMember {
