@@ -279,7 +279,12 @@ fn rpc_checks_to_its_clocks_guards_resets_and_invariants() {
         panic!("reply's guard has one convex part");
     };
     assert_eq!(
-        attributes(part.data().expect("the part keeps `self.inflight`").body()),
+        attributes(
+            part.data()
+                .expect("the part keeps `self.inflight`")
+                .body()
+                .expect("the checked source guard retains its body")
+        ),
         ["inflight"]
     );
     let [constraint] = part.clocks() else {
@@ -431,7 +436,8 @@ fn timed_predicates_name_the_models_own_population() {
         let [alternative] = alternatives else {
             panic!("one alternative");
         };
-        let nodes = descendants(alternative.predicate().body());
+        let nodes = descendants(alternative.predicate().body()
+            .expect("the checked source alternative retains its body"));
         let reads: Vec<_> = nodes
             .iter()
             .filter_map(|node| match node.kind() {
@@ -662,7 +668,12 @@ fn a_disjunctive_guard_splits_into_convex_parts() {
                 panic!("one constraint per part");
             };
             (
-                attributes(part.data().expect("a data predicate").body()),
+                attributes(
+                    part.data()
+                        .expect("a data predicate")
+                        .body()
+                        .expect("the checked source predicate retains its body"),
+                ),
                 constraint.op(),
                 constraint.bound().clone(),
             )
@@ -900,7 +911,12 @@ fn parts(model: &TimedModel, guard: usize) -> Vec<(Vec<String>, Vec<Bound>)> {
         .map(|part| {
             (
                 part.data()
-                    .map(|data| attributes(data.body()))
+                    .map(|data| {
+                        attributes(
+                            data.body()
+                                .expect("the checked source predicate retains its body"),
+                        )
+                    })
                     .unwrap_or_default(),
                 part.clocks()
                     .iter()
@@ -1138,7 +1154,12 @@ pub(super) fn shown_parts(model: &TimedModel, guard: usize) -> Vec<(Option<Strin
         .iter()
         .map(|part| {
             (
-                part.data().map(|data| shown(data.body())),
+                part.data().map(|data| {
+                    shown(
+                        data.body()
+                            .expect("the checked source predicate retains its body"),
+                    )
+                }),
                 part.clocks()
                     .iter()
                     .map(|constraint| {

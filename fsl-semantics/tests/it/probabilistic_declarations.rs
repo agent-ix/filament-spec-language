@@ -2680,7 +2680,12 @@ fn the_normal_form_binds_what_the_claim_asserts() {
     let event = format!("probability >= 0.999 [ always[0,1000] holds({IDLE}) ]");
     let form = |header: &str, scheduler: &str, confidence: &str, body: &str| {
         let graph = checked(&source("C", header, scheduler, confidence, body));
-        claim_of(&graph).normal_form.as_bytes().to_vec()
+        claim_of(&graph)
+            .normal_form
+            .as_ref()
+            .expect("source normal form")
+            .as_bytes()
+            .to_vec()
     };
     let base = form("ev", "Steady", WITH, &event);
     let variants = [
@@ -2799,6 +2804,8 @@ fn the_normal_form_binds_what_the_claim_asserts() {
             .claim("Renamed")
             .expect("Renamed")
             .normal_form
+            .as_ref()
+            .expect("source normal form")
             .as_bytes(),
         &base[..]
     );
@@ -2811,7 +2818,12 @@ fn the_normal_form_binds_what_the_claim_asserts() {
                 "{{ long_run_fraction holds({predicate}) >= 0.999 }}"
             )),
         ));
-        claim_of(&graph).normal_form.as_bytes().to_vec()
+        claim_of(&graph)
+            .normal_form
+            .as_ref()
+            .expect("source normal form")
+            .as_bytes()
+            .to_vec()
     };
     assert_eq!(commuted(IDLE), commuted("Service::Phase::Idle = s.phase"));
     assert_ne!(commuted(IDLE), commuted("s.phase = Service::Phase::Busy"));
@@ -2823,7 +2835,11 @@ fn the_normal_form_binds_what_the_claim_asserts() {
          >= 0.999 }",
     ));
     assert_eq!(
-        claim_of(&renamed_binder).normal_form.as_bytes(),
+        claim_of(&renamed_binder)
+            .normal_form
+            .as_ref()
+            .expect("source normal form")
+            .as_bytes(),
         commuted(IDLE).as_slice()
     );
     // The order a workload's weights are written in is not content.
@@ -2835,7 +2851,12 @@ fn the_normal_form_binds_what_the_claim_asserts() {
                  on origin {{ long_run_fraction holds({IDLE}) >= 0.999 }}"
             ),
         ));
-        claim_of(&graph).normal_form.as_bytes().to_vec()
+        claim_of(&graph)
+            .normal_form
+            .as_ref()
+            .expect("source normal form")
+            .as_bytes()
+            .to_vec()
     };
     assert_eq!(burst(BURST), burst(BURST_REORDERED));
     assert_ne!(
@@ -2855,7 +2876,12 @@ fn the_normal_form_binds_what_the_claim_asserts() {
         .replace("random Server::", "random Service::Server::")
         .replace("on Server::attempt =", "on Service::Server::attempt =");
         let graph = checked(&format!("{selection}\n{declarations}"));
-        claim_of(&graph).normal_form.as_bytes().to_vec()
+        claim_of(&graph)
+            .normal_form
+            .as_ref()
+            .expect("source normal form")
+            .as_bytes()
+            .to_vec()
     };
     assert_ne!(subject("Service"), subject("Other"));
     let over = |binding: &str| {
@@ -2866,7 +2892,12 @@ fn the_normal_form_binds_what_the_claim_asserts() {
                  {{ probability >= 0.9 [ holds(true) ] }}"
             ),
         ));
-        claim_of(&graph).normal_form.as_bytes().to_vec()
+        claim_of(&graph)
+            .normal_form
+            .as_ref()
+            .expect("source normal form")
+            .as_bytes()
+            .to_vec()
     };
     assert_ne!(over(OVER), over(""));
 }
@@ -2880,7 +2911,12 @@ fn the_normal_form_binds_what_the_claim_asserts() {
 fn the_normal_form_ignores_declaration_order_and_binds_the_over_type() {
     let normal_form = |extra: &str, body: &str| {
         let graph = checked(&service(None, &format!("{extra}\n{body}")));
-        claim_of(&graph).normal_form.as_bytes().to_vec()
+        claim_of(&graph)
+            .normal_form
+            .as_ref()
+            .expect("source normal form")
+            .as_bytes()
+            .to_vec()
     };
     let fair = |fairness: &str| {
         normal_form(

@@ -117,10 +117,7 @@ fn build_configured(
     } = request;
     let limits_all = limits;
     let limits = limits_all.model;
-    let package = subject
-        .simulation
-        .source_package()
-        .ok_or_else(|| fault("the-product-reads-source-forms"))?;
+    let probabilistic = subject.simulation.input.probabilistic;
     let scope = filament_exact::WorkScope::new(subject.simulation.meter);
     let system =
         ModelSystem::new_with_work_scope(subject.simulation, scope, cancel).map_err(|failure| {
@@ -172,9 +169,7 @@ fn build_configured(
     }
     let (kind, workload) = match &claim.scheduler {
         fsl_semantics::check::ProbScheduler::Workload(name) => {
-            let workload = package
-                .graph()
-                .probabilistic_model()
+            let workload = probabilistic
                 .workload(name)
                 .ok_or_else(|| fault("claim-workload-is-declared"))?;
             (ProductKind::Dtmc, Some(workload))

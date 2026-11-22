@@ -455,6 +455,13 @@ impl CheckedProbabilisticModel {
         &self.claims
     }
 
+    /// Retain an admitted package eventuality in this model so every product
+    /// and independent certificate check reads the same owning claim slice.
+    pub fn push_package_claim(&mut self, form: super::claim::PackageProbabilityClaimForm) {
+        self.claims
+            .push(CheckedProbabilisticClaim::of_package_eventual(form));
+    }
+
     /// The checked claims, to assemble into a package (FR-498).
     pub(crate) fn claims_mut(&mut self) -> &mut [CheckedProbabilisticClaim] {
         &mut self.claims

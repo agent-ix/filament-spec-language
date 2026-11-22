@@ -215,10 +215,11 @@ pub use probabilistic::{
     Bound, BoundedMeasure, CheckedPredicate, CheckedProbabilisticClaim, CheckedProbabilisticModel,
     CheckedTemporalFormula, ClaimActivation, ClaimMemberPath, ClaimNormalForm, ClaimReadFault,
     ClaimReads, Confidence, ConfidenceFault, Delay, DelayDistribution, DelayFault, Event,
-    FairnessRead, FractionMeasure, ModelSubjectRef, OverBinding, PreconditionSite, ProbForm,
-    ProbScheduler, ProbabilisticCause, ProbabilisticDeclaration, ProbabilisticFeature,
-    ProbabilisticOperation, QualitativeForm, RandomParameter, ReachTarget, Reward, SchedulerRead,
-    Statement, SupportValue, TimeTypeMismatchReason, WeightOwner, Weighting, Workload,
+    FairnessRead, FractionMeasure, ModelSubjectRef, OverBinding, PackageProbabilityClaimForm,
+    PreconditionSite, ProbForm, ProbScheduler, ProbabilisticCause, ProbabilisticDeclaration,
+    ProbabilisticFeature, ProbabilisticOperation, QualitativeForm, RandomParameter, ReachTarget,
+    Reward, SchedulerRead, Statement, SupportValue, TimeTypeMismatchReason, WeightOwner, Weighting,
+    Workload,
 };
 pub use probabilistic::{
     PackageDelay, PackageDelayFamily, PackageLiteral, PackageProbabilistic,

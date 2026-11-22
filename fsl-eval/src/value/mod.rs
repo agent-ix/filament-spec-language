@@ -102,9 +102,10 @@ pub use expression::{
 pub use expression::{bare_evaluate_frame, PackageOperations, ProjectedReward};
 pub use expression::{bare_evaluate_selected_protocol_slot, evaluate_bare_expression};
 pub(crate) use expression::{
-    bare_post_targets, evaluate_bare_state_graph_predicate, evaluate_bare_terminal_predicate,
-    package_constraint_reads, package_guard_reads, package_node_reads, package_operation_footprint,
-    package_term_reads, source_post_targets, ProjectedClause, StateGraphOver,
+    bare_post_targets, evaluate_bare_probability_predicate, evaluate_bare_state_graph_predicate,
+    evaluate_bare_terminal_predicate, package_constraint_reads, package_guard_reads,
+    package_node_reads, package_operation_footprint, package_term_reads, source_post_targets,
+    ProjectedClause, StateGraphOver,
 };
 
 #[cfg(test)]

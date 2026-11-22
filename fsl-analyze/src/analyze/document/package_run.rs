@@ -38,6 +38,7 @@ use super::super::{
     ItemOptions, NegotiatedItem, PackageClauseSubject, PackageDeadlockSubject,
     PackageInvariantSubject, PackageItemInputs, PackageStateGraphSubject, SubjectBinding,
 };
+mod probability;
 mod schedule;
 
 use super::{
@@ -101,6 +102,10 @@ impl PendingPackageFamily {
             ),
             (Some(index), PendingFamily::ClauseFact(fact)) => format!(
                 ": items[{}] names a temporal clause whose {fact} has no package form yet{at}",
+                index.get()
+            ),
+            (Some(index), PendingFamily::ProbabilityForm(fact)) => format!(
+                ": items[{}] names a probabilistic claim whose {fact} has no package form yet{at}",
                 index.get()
             ),
             (Some(index), PendingFamily::OperationContractRequirementRecord) => format!(
@@ -191,6 +196,8 @@ pub enum PendingFamily {
     /// A probabilistic claim over a source-object model whose probabilistic
     /// model does not rebuild from the package's rows.
     ProbabilisticClaimUnresolved,
+    /// An admitted probabilistic claim has a form outside the package route.
+    ProbabilityForm(&'static str),
 }
 
 impl PendingFamily {
@@ -213,6 +220,7 @@ impl PendingFamily {
             Self::ModelForm(_) => "model-form",
             Self::ProbabilisticSourceModel => "probabilistic-source-model",
             Self::ProbabilisticClaimUnresolved => "probabilistic-claim-unresolved",
+            Self::ProbabilityForm(fact) => fact,
         }
     }
 }
@@ -264,6 +272,13 @@ pub struct PackageRun<'a> {
 enum Named<'s> {
     Simulation(super::super::SimulationItem),
     Hyper {
+        index: RequestIndex,
+        name: &'s str,
+        declaration: CheckedNodeId,
+        ordinal: u64,
+        selection: &'s ItemSelection,
+    },
+    Probability {
         index: RequestIndex,
         name: &'s str,
         declaration: CheckedNodeId,
@@ -335,6 +350,7 @@ enum Named<'s> {
 
 /// How a resolved package-route claim item runs.
 enum Route<'a> {
+    Probability,
     Clause {
         subject: Box<PackageClauseSubject<'a>>,
         protocol: Option<ProtocolBinding>,
@@ -521,6 +537,7 @@ fn settle_package_run_inner(
     let mut hyper_claims: Vec<OccurrenceKey> = Vec::new();
     let mut relation_claims: Vec<OccurrenceKey> = Vec::new();
     let mut schedule_claims: Vec<OccurrenceKey> = Vec::new();
+    let mut probability_claims: Vec<OccurrenceKey> = Vec::new();
     for item in named {
         match item {
             Named::Simulation(item) => resolved.push(ResolvedItem::Simulation(Box::new(item))),
@@ -535,6 +552,20 @@ fn settle_package_run_inner(
                 Resolution::Claim(claim, subject) => {
                     hyper_claims.push(claim.item.claim.clone());
                     routes.insert(index, Route::Hyper(subject));
+                    resolved.push(ResolvedItem::Claim(claim));
+                }
+            },
+            Named::Probability {
+                index,
+                name,
+                declaration,
+                ordinal,
+                selection,
+            } => match reads.probability(index, name, &declaration, ordinal, selection)? {
+                Resolution::Settled(settled) => resolved.push(settled),
+                Resolution::Claim(claim, ()) => {
+                    probability_claims.push(claim.item.claim.clone());
+                    routes.insert(index, Route::Probability);
                     resolved.push(ResolvedItem::Claim(claim));
                 }
             },
@@ -695,6 +726,9 @@ fn settle_package_run_inner(
             .unwrap_or_else(|| sole_model(package))
     };
     let family = |kind: ItemKind, claim: &OccurrenceKey| match kind {
+        ItemKind::Formula if probability_claims.contains(claim) => {
+            Some(DeclarationFamily::Probabilistic)
+        }
         ItemKind::Formula if protocol_claims.contains(claim) => Some(DeclarationFamily::Protocol),
         ItemKind::Formula if value_claims.contains(claim) => Some(DeclarationFamily::Value),
         ItemKind::Formula if schedule_claims.contains(claim) => Some(DeclarationFamily::RealTime),
@@ -1152,6 +1186,18 @@ fn resolve_names<'s>(
             if let Some(found) = view.claim_name(name) {
                 if derived {
                     return Err(pending(PendingFamily::Derived));
+                }
+                if view.package().resolved_graph().nodes.iter().any(|node| {
+                    node.node_id == found.declaration
+                        && node.semantic_form.as_ref() == "probabilistic_claim"
+                }) {
+                    return Ok(Named::Probability {
+                        index,
+                        name,
+                        declaration: found.declaration,
+                        ordinal: found.occurrence.ordinal,
+                        selection,
+                    });
                 }
                 if view.package().resolved_graph().nodes.iter().any(|node| {
                     node.node_id == found.declaration && node.step_relation_body().is_some()
@@ -2965,6 +3011,11 @@ impl<'a> WorkInputs<'_, 'a> {
         };
         let family = (self.family)(temporal_kind, &item.claim);
         let mut built = match (&item.form, route) {
+            (Some(ItemForm::Probabilistic(form)), Some(Route::Probability))
+                if item.kind == Capability::ProbabilisticSatisfaction =>
+            {
+                probability::item(self.input, self.binding, &self.limits, item, form)
+            }
             (_, Some(Route::ProtocolAnalysis)) => super::super::request::protocol_analysis_item(
                 Box::new(self.input.package().package().clone()),
                 &self.input.input(),
@@ -3146,12 +3197,15 @@ impl<'a> WorkInputs<'_, 'a> {
                 Some(crate::zone_check::manifest::BACKEND_ID)
             }
             Some(ItemForm::Temporal(_)) => Some(crate::model_check::manifest::BACKEND_ID),
-            Some(
-                ItemForm::FiniteHyper(_)
-                | ItemForm::Probabilistic(_)
-                | ItemForm::Hybrid(_)
-                | ItemForm::Composition(_),
-            )
+            Some(ItemForm::Probabilistic(form)) => match form.evidence {
+                fsl_route::EvidenceKind::Exact => {
+                    Some(crate::exact_probabilistic::manifest::BACKEND_ID)
+                }
+                fsl_route::EvidenceKind::Statistical => {
+                    Some(crate::statistical::manifest::BACKEND_ID)
+                }
+            },
+            Some(ItemForm::FiniteHyper(_) | ItemForm::Hybrid(_) | ItemForm::Composition(_))
             | None => None,
         };
         if let (Some(expected), fsl_route::routing::Disposition::Supported(candidate)) =

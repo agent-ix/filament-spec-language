@@ -30,8 +30,8 @@ use std::collections::BTreeMap;
 
 use filament_checked::key::DeclarationKey;
 use filament_exact::{
-    DecimalType, Identifier, IllTypedCause, Integer, IntegerInterval, Meter, NodeKey, Quantity,
-    Rational, RationalDomain, RoundingMode, UnitId, Value, ValueType,
+    DecimalType, EffectiveId, Identifier, IllTypedCause, Integer, IntegerInterval, Meter, NodeKey,
+    Quantity, Rational, RationalDomain, RoundingMode, UnitId, Value, ValueType,
 };
 use filament_semantic_value::fairness::{
     FairnessConstraint, FairnessGranularity, FairnessKind, FairnessOperation,
@@ -136,19 +136,44 @@ impl Bound {
 /// parameter as an invariant body is (FR-104).
 #[derive(Debug)]
 pub struct CheckedPredicate {
-    body: CheckedBody,
+    body: PredicateBody,
     slots: usize,
     /// The name each evaluation slot was bound under.
     slot_names: Vec<String>,
     /// The predicate's normal form (FR-174), which the claim's normal form
     /// binds.
-    normal_form: Vec<u8>,
+    normal_form: Option<Vec<u8>>,
+}
+
+#[derive(Debug)]
+enum PredicateBody {
+    Source(CheckedBody),
+    Package { claim: OccurrenceKey, node: NodeKey },
 }
 
 impl CheckedPredicate {
-    /// The checked Boolean body.
-    pub fn body(&self) -> CheckedNode<'_> {
-        self.body.root()
+    /// The source-checked Boolean body, absent for an admitted package predicate.
+    pub fn body(&self) -> Option<CheckedNode<'_>> {
+        match &self.body {
+            PredicateBody::Source(body) => Some(body.root()),
+            PredicateBody::Package { .. } => None,
+        }
+    }
+
+    /// The admitted node of a package predicate, absent for a source body.
+    pub fn package_node(&self) -> Option<&NodeKey> {
+        match &self.body {
+            PredicateBody::Package { node, .. } => Some(node),
+            PredicateBody::Source(_) => None,
+        }
+    }
+
+    /// The admitted occurrence that owns a package predicate.
+    pub fn package_claim(&self) -> Option<&OccurrenceKey> {
+        match &self.body {
+            PredicateBody::Package { claim, .. } => Some(claim),
+            PredicateBody::Source(_) => None,
+        }
     }
 
     /// The evaluation slot count: the `over` parameter's slot and every
@@ -161,11 +186,21 @@ impl CheckedPredicate {
     pub(crate) fn slot_names(&self) -> &[String] {
         &self.slot_names
     }
+
+    fn normal_form_bytes(&self) -> Result<Vec<u8>, CheckRefusal> {
+        self.normal_form
+            .clone()
+            .ok_or_else(|| broken("a-package-predicate-has-no-source-normal-form"))
+    }
 }
 
 impl StatePredicate for CheckedPredicate {
-    fn body(&self) -> CheckedNode<'_> {
+    fn body(&self) -> Option<CheckedNode<'_>> {
         Self::body(self)
+    }
+
+    fn package_claim(&self) -> Option<&OccurrenceKey> {
+        Self::package_claim(self)
     }
 
     fn slots(&self) -> usize {
@@ -456,13 +491,14 @@ pub struct CheckedProbabilisticClaim {
     pub confidence: Option<Confidence>,
     /// The `over` binding, when the claim states one.
     pub over: Option<OverBinding>,
-    /// The claim's normal form.
-    pub normal_form: ClaimNormalForm,
+    /// The source claim's normal form. An admitted package claim retains its
+    /// structural occurrence instead of fabricating source-only content.
+    pub normal_form: Option<ClaimNormalForm>,
     /// The declaration's source order, as [`Reward`](super::Reward)'s.
     pub(super) declared: usize,
     /// The claim's written content, which ranks claims sharing its name
     /// (FR-498).
-    pub(crate) content: fsl_forms::SignificantContent,
+    pub(crate) content: Option<fsl_forms::SignificantContent>,
     /// The `claim` occurrence of the claim's `claim`/`probabilistic_claim`
     /// node, set when a package is assembled (FR-498 "Outputs").
     pub(crate) occurrence: Option<OccurrenceKey>,
@@ -497,7 +533,93 @@ pub enum ClaimActivation {
     },
 }
 
+/// The admitted facts of an untimed, origin-activated exact eventuality.
+/// Its predicate is identified by its package node and owning claim, not by
+/// a reconstructed source body.
+#[derive(Debug)]
+pub struct PackageProbabilityClaimForm {
+    /// The owning claim's recorded occurrence.
+    pub occurrence: OccurrenceKey,
+    /// The recorded declaration name.
+    pub name: String,
+    /// The recorded declaration region.
+    pub span: Span,
+    /// Its position among all probabilistic declarations in source order.
+    pub declaration_index: usize,
+    /// The model alias and selected domain package.
+    pub subject: ModelSubjectRef,
+    /// The selected infinite-trace temporal profile.
+    pub profile: DefinitionRef,
+    /// The declared workload.
+    pub workload: String,
+    /// The over binder and its admitted effective object type.
+    pub over: Option<(String, EffectiveId)>,
+    /// The admitted parameter node that declares the over binder.
+    pub over_node: Option<NodeKey>,
+    /// The admitted predicate expression node.
+    pub predicate: NodeKey,
+    /// The predicate's evaluation slots.
+    pub slots: usize,
+    /// The exact probability comparison.
+    pub bound: Bound,
+}
+
 impl CheckedProbabilisticClaim {
+    /// Read an admitted exact eventuality without constructing a source body
+    /// or checked graph. The caller supplies facts from the strict package
+    /// reader and retains this claim in its owning probabilistic model.
+    pub fn of_package_eventual(form: PackageProbabilityClaimForm) -> Self {
+        let PackageProbabilityClaimForm {
+            occurrence,
+            name,
+            span,
+            declaration_index,
+            subject,
+            profile,
+            workload,
+            over,
+            over_node,
+            predicate,
+            slots,
+            bound,
+        } = form;
+        let target = CheckedPredicate {
+            body: PredicateBody::Package {
+                claim: occurrence.clone(),
+                node: predicate,
+            },
+            slots,
+            slot_names: Vec::new(),
+            normal_form: None,
+        };
+        Self {
+            name,
+            span,
+            subject,
+            profile,
+            scheduler: ProbScheduler::Workload(workload),
+            fairness: Vec::new(),
+            fairness_declaring: Vec::new(),
+            activation: ClaimActivation::Origin,
+            form: ProbForm::Reach {
+                bound,
+                target: ReachTarget::Eventually(target),
+            },
+            confidence: None,
+            over: over.map(|(name, object)| OverBinding {
+                name,
+                value_type: ValueType::Reference(object),
+                node: over_node,
+            }),
+            normal_form: None,
+            declared: declaration_index,
+            content: None,
+            occurrence: Some(occurrence),
+            time_unit: None,
+            statement: None,
+        }
+    }
+
     /// Whether the claim consumes the shared bounded measure/fraction control.
     pub fn bounded_measure(&self) -> bool {
         matches!(
@@ -929,9 +1051,9 @@ impl Pass<'_, '_> {
             form: form_checked,
             confidence,
             over,
-            normal_form,
+            normal_form: Some(normal_form),
             declared: index,
-            content: form.content.clone(),
+            content: Some(form.content.clone()),
             occurrence: None,
             time_unit,
             statement: None,
@@ -2074,10 +2196,10 @@ impl Pass<'_, '_> {
         .with_observations(&observations)
         .check(body.root())?;
         Ok(CheckedPredicate {
-            body,
+            body: PredicateBody::Source(body),
             slots,
             slot_names,
-            normal_form: encode_predicate(&expression.expression, claim.binder()),
+            normal_form: Some(encode_predicate(&expression.expression, claim.binder())),
         })
     }
 
@@ -2332,7 +2454,7 @@ impl Pass<'_, '_> {
                 node_bytes(b"fairness", &fairness),
                 over,
                 activation,
-                self.form_bytes(&claim.subject.alias, form),
+                self.form_bytes(&claim.subject.alias, form)?,
                 confidence,
             ],
         )))
@@ -2448,23 +2570,31 @@ impl Pass<'_, '_> {
         }
     }
 
-    fn fraction_bytes(&self, subject: &str, fraction: &FractionMeasure) -> Vec<u8> {
+    fn fraction_bytes(
+        &self,
+        subject: &str,
+        fraction: &FractionMeasure,
+    ) -> Result<Vec<u8>, CheckRefusal> {
         let window = fraction.timed_window.as_ref().map_or_else(
             || node_bytes(b"steps", &[fraction.window.to_be_bytes().to_vec()]),
             |time| node_bytes(b"time", &[rational_bytes(time)]),
         );
-        node_bytes(
+        Ok(node_bytes(
             b"fraction",
             &[
-                fraction.predicate.normal_form.clone(),
+                fraction.predicate.normal_form_bytes()?,
                 window,
                 self.weight_bytes(subject, fraction.weight.as_ref()),
             ],
-        )
+        ))
     }
 
-    fn measure_bytes(&self, subject: &str, measure: &BoundedMeasure) -> Vec<u8> {
-        match measure {
+    fn measure_bytes(
+        &self,
+        subject: &str,
+        measure: &BoundedMeasure,
+    ) -> Result<Vec<u8>, CheckRefusal> {
+        Ok(match measure {
             BoundedMeasure::Accumulate {
                 reward,
                 from,
@@ -2475,8 +2605,8 @@ impl Pass<'_, '_> {
                 b"accumulate",
                 &[
                     self.reward_bytes(subject, reward),
-                    from.normal_form.clone(),
-                    until.normal_form.clone(),
+                    from.normal_form_bytes()?,
+                    until.normal_form_bytes()?,
                     timed_within.as_ref().map_or_else(
                         || node_bytes(b"steps", &[within.to_be_bytes().to_vec()]),
                         |time| node_bytes(b"time", &[rational_bytes(time)]),
@@ -2491,8 +2621,8 @@ impl Pass<'_, '_> {
             } => node_bytes(
                 b"steps",
                 &[
-                    from.normal_form.clone(),
-                    until.normal_form.clone(),
+                    from.normal_form_bytes()?,
+                    until.normal_form_bytes()?,
                     timed_within.as_ref().map_or_else(
                         || node_bytes(b"steps", &[within.to_be_bytes().to_vec()]),
                         |time| node_bytes(b"time", &[rational_bytes(time)]),
@@ -2507,17 +2637,17 @@ impl Pass<'_, '_> {
             } => node_bytes(
                 b"elapsed",
                 &[
-                    from.normal_form.clone(),
-                    until.normal_form.clone(),
+                    from.normal_form_bytes()?,
+                    until.normal_form_bytes()?,
                     rational_bytes(within),
                 ],
             ),
-            BoundedMeasure::Fraction(fraction) => self.fraction_bytes(subject, fraction),
-        }
+            BoundedMeasure::Fraction(fraction) => self.fraction_bytes(subject, fraction)?,
+        })
     }
 
-    fn form_bytes(&self, subject: &str, form: &ProbForm) -> Vec<u8> {
-        match form {
+    fn form_bytes(&self, subject: &str, form: &ProbForm) -> Result<Vec<u8>, CheckRefusal> {
+        Ok(match form {
             ProbForm::Probability { bound, event } => {
                 let event = match event {
                     Event::Formula {
@@ -2528,7 +2658,7 @@ impl Pass<'_, '_> {
                     ),
                     Event::Compare { measure, bound } => node_bytes(
                         b"compare",
-                        &[self.measure_bytes(subject, measure), bound.bytes()],
+                        &[self.measure_bytes(subject, measure)?, bound.bytes()],
                     ),
                 };
                 node_bytes(b"probability", &[bound.bytes(), event])
@@ -2541,13 +2671,13 @@ impl Pass<'_, '_> {
                 b"quantile",
                 &[
                     rational_bytes(q),
-                    self.measure_bytes(subject, measure),
+                    self.measure_bytes(subject, measure)?,
                     threshold.bytes(),
                 ],
             ),
             ProbForm::MeanOfFraction { bound, fraction } => node_bytes(
                 b"mean-of-fraction",
-                &[bound.bytes(), self.fraction_bytes(subject, fraction)],
+                &[bound.bytes(), self.fraction_bytes(subject, fraction)?],
             ),
             ProbForm::LongRunFraction {
                 bound,
@@ -2557,21 +2687,21 @@ impl Pass<'_, '_> {
                 b"long-run-fraction",
                 &[
                     bound.bytes(),
-                    predicate.normal_form.clone(),
+                    predicate.normal_form_bytes()?,
                     self.weight_bytes(subject, weight.as_ref()),
                 ],
             ),
             ProbForm::Reach { bound, target } => {
                 let target = match target {
                     ReachTarget::Eventually(target) => {
-                        node_bytes(b"eventually", std::slice::from_ref(&target.normal_form))
+                        node_bytes(b"eventually", &[target.normal_form_bytes()?])
                     }
                     ReachTarget::Until(left, right) => node_bytes(
                         b"until",
-                        &[left.normal_form.clone(), right.normal_form.clone()],
+                        &[left.normal_form_bytes()?, right.normal_form_bytes()?],
                     ),
                     ReachTarget::Always(target) => {
-                        node_bytes(b"always", std::slice::from_ref(&target.normal_form))
+                        node_bytes(b"always", &[target.normal_form_bytes()?])
                     }
                 };
                 node_bytes(b"reach", &[bound.bytes(), target])
@@ -2585,13 +2715,13 @@ impl Pass<'_, '_> {
                 &[
                     bound.bytes(),
                     self.reward_bytes(subject, reward),
-                    until.normal_form.clone(),
+                    until.normal_form_bytes()?,
                 ],
             ),
             ProbForm::MeanTime { bound, until } => {
-                node_bytes(b"mean-time", &[bound.bytes(), until.normal_form.clone()])
+                node_bytes(b"mean-time", &[bound.bytes(), until.normal_form_bytes()?])
             }
-        }
+        })
     }
 }
 

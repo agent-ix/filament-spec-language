@@ -353,8 +353,8 @@ impl CheckedTimedPredicate {
 }
 
 impl StatePredicate for CheckedTimedPredicate {
-    fn body(&self) -> CheckedNode<'_> {
-        self.body.root()
+    fn body(&self) -> Option<CheckedNode<'_>> {
+        Some(self.body.root())
     }
 
     fn slots(&self) -> usize {

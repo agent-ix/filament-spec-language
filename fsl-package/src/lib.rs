@@ -73,6 +73,8 @@ pub use clock_authority::{ClockDeclarationTableError, ClockDeclarations};
 #[cfg(feature = "std")]
 mod bare_slot;
 #[cfg(feature = "std")]
+mod bare_probability;
+#[cfg(feature = "std")]
 mod bare_state_graph;
 #[cfg(feature = "std")]
 mod bare_synthesis;

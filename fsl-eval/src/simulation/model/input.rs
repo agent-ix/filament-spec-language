@@ -654,9 +654,36 @@ impl<'p> PackageModelInput<'p> {
             mut model,
             model_selections,
             operations,
-            probabilistic,
+            mut probabilistic,
             unit_names,
         } = ProbabilisticParts::read(package, packages, normalization, false)?;
+        for row in package.package().claim_names().unwrap_or_default() {
+            if !package.package().resolved_graph().nodes.iter().any(|node| {
+                node.node_id == row.declaration
+                    && node.semantic_form.as_ref() == "probabilistic_claim"
+            }) {
+                continue;
+            }
+            let node = package.node_key(&row.declaration).ok_or_else(|| {
+                PendingPackageForm::ProbabilisticNodes(fsl_package::ProbabilisticReadFault(
+                    "claim-node-has-a-structural-key",
+                ))
+            })?;
+            let occurrence = fsl_foundation::source::provenance::OccurrenceKey::new(
+                node,
+                filament_exact::Origin::new(
+                    filament_exact::Role::new("claim"),
+                    row.occurrence.ordinal,
+                ),
+            );
+            match package.probability_claim_form(&occurrence) {
+                Ok(form) => probabilistic.push_package_claim(form),
+                Err(fsl_package::BareClauseRefusal::Pending { .. }) => {}
+                Err(fsl_package::BareClauseRefusal::Selection(failure)) => {
+                    return Err(PendingPackageForm::World(failure));
+                }
+            }
+        }
         let (timed_models, time_sources) = if timed_trace {
             (Vec::new(), Vec::new())
         } else {
@@ -993,6 +1020,20 @@ const PACKAGE_FORM: InternalFault = InternalFault::new("FR-940", "package-form-o
 /// route, the package route through [`CheckedPackageEvaluation`] over the
 /// package's forms.
 pub trait ModelEvaluator: sealed::Sealed + Sync {
+    /// Evaluate an exact eventuality's predicate at its authenticated claim
+    /// occurrence, reading a source body or an admitted package projection.
+    ///
+    /// # Errors
+    ///
+    /// An unresolved claim or an inconsistent predicate projection.
+    fn evaluate_probability_predicate(
+        &self,
+        claim: &fsl_foundation::source::provenance::OccurrenceKey,
+        objects: &ObjectEnvironment,
+        over: Option<ObjectReference>,
+        meter: &mut Meter,
+    ) -> Result<Evaluation, InternalFault>;
+
     /// The actual admitted package form of a state-graph occurrence, when
     /// this evaluator owns package forms. Used to authenticate a certificate's
     /// claim against its root and declaration metadata before evaluating it.
@@ -1680,6 +1721,30 @@ pub trait ModelEvaluator: sealed::Sealed + Sync {
 }
 
 impl ModelEvaluator for CheckedPackage {
+    fn evaluate_probability_predicate(
+        &self,
+        claim: &fsl_foundation::source::provenance::OccurrenceKey,
+        objects: &ObjectEnvironment,
+        over: Option<ObjectReference>,
+        meter: &mut Meter,
+    ) -> Result<Evaluation, InternalFault> {
+        let found = self
+            .graph()
+            .probabilistic_model()
+            .claims()
+            .iter()
+            .find(|found| found.occurrence() == Some(claim))
+            .ok_or_else(|| InternalFault::new("FR-940", "probability-claim-resolves"))?;
+        let fsl_semantics::check::ProbForm::Reach {
+            target: fsl_semantics::check::ReachTarget::Eventually(predicate),
+            ..
+        } = &found.form
+        else {
+            return Err(PACKAGE_FORM);
+        };
+        crate::value::evaluate_state_predicate(self, predicate, objects, over, meter)
+    }
+
     fn evaluate_model_relation(
         &self,
         relation: &super::ModelRelationDescriptor,
@@ -2247,6 +2312,16 @@ const NO_SOURCE_FOOTPRINT: FootprintRefusal = FootprintRefusal::Unresolved {
 };
 
 impl ModelEvaluator for BarePackage<'_> {
+    fn evaluate_probability_predicate(
+        &self,
+        claim: &fsl_foundation::source::provenance::OccurrenceKey,
+        objects: &ObjectEnvironment,
+        over: Option<ObjectReference>,
+        meter: &mut Meter,
+    ) -> Result<Evaluation, InternalFault> {
+        crate::value::evaluate_bare_probability_predicate(self, claim, objects, over, meter)
+    }
+
     fn package_state_graph_form(
         &self,
         claim: &fsl_foundation::source::provenance::OccurrenceKey,

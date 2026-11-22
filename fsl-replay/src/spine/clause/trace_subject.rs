@@ -989,8 +989,8 @@ struct Predicate<'a> {
 }
 
 impl StatePredicate for Predicate<'_> {
-    fn body(&self) -> CheckedNode<'_> {
-        self.body
+    fn body(&self) -> Option<CheckedNode<'_>> {
+        Some(self.body)
     }
     fn slots(&self) -> usize {
         self.slots

@@ -41,6 +41,7 @@ pub use bare::evaluate_selected_protocol_slot as bare_evaluate_selected_protocol
 pub(crate) use bare::post_targets as bare_post_targets;
 pub use bare::{evaluate_frame as bare_evaluate_frame, PackageOperations, ProjectedReward};
 pub(crate) use bare::{
+    evaluate_probability_predicate as evaluate_bare_probability_predicate,
     evaluate_state_graph_predicate as evaluate_bare_state_graph_predicate,
     evaluate_terminal_predicate as evaluate_bare_terminal_predicate, StateGraphOver,
 };
@@ -678,7 +679,9 @@ pub(crate) fn evaluate_state_predicate_with_reference_bindings(
         None => machine,
     };
     machine.run(
-        predicate.body(),
+        predicate
+            .body()
+            .ok_or_else(|| InternalFault::new("FR-940", "source-predicate-has-checked-body"))?,
         predicate.slots(),
         over.map(Value::Reference)
             .into_iter()
@@ -748,7 +751,13 @@ pub fn evaluate_operation_contract(
         meter,
         package.graph().dispatch_tables(),
     )
-    .run(clause.body(), clause.slots(), bindings)
+    .run(
+        clause
+            .body()
+            .ok_or_else(|| InternalFault::new("FR-702", "operation-contract-has-checked-body"))?,
+        clause.slots(),
+        bindings,
+    )
 }
 
 /// [`evaluate_state_predicate`] for an `on each` activation's `when` guard,
@@ -773,7 +782,9 @@ pub fn evaluate_activation_guard(
         package.graph().dispatch_tables(),
     )
     .run(
-        guard.body(),
+        guard
+            .body()
+            .ok_or_else(|| InternalFault::new("FR-940", "source-guard-has-checked-body"))?,
         guard.slots(),
         vec![Value::Reference(bound.clone()), Value::Reference(bound)],
     )
@@ -951,7 +962,13 @@ pub fn evaluate_capture(
         Some((slots, binding)) => machine.with_absent_parameters(slots, binding),
         None => machine,
     };
-    machine.run(capture.body(), capture.slots(), bindings)
+    machine.run(
+        capture
+            .body()
+            .ok_or_else(|| InternalFault::new("FR-940", "source-capture-has-checked-body"))?,
+        capture.slots(),
+        bindings,
+    )
 }
 
 /// [`evaluate_activation_guard`] for an instance whose key holds no object
@@ -978,7 +995,9 @@ pub fn evaluate_activation_guard_at_absent_key(
     )
     .with_absent_parameters(vec![0, 1], binding)
     .run(
-        guard.body(),
+        guard
+            .body()
+            .ok_or_else(|| InternalFault::new("FR-940", "source-guard-has-checked-body"))?,
         guard.slots(),
         vec![Value::Reference(key.clone()), Value::Reference(key)],
     )
@@ -1031,7 +1050,9 @@ pub(crate) fn evaluate_state_predicate_at_absent_key_with_reference_bindings(
         None => machine,
     };
     machine.with_absent_parameter(0, binding).run(
-        predicate.body(),
+        predicate
+            .body()
+            .ok_or_else(|| InternalFault::new("FR-940", "source-predicate-has-checked-body"))?,
         predicate.slots(),
         vec![Value::Reference(key)],
     )

@@ -824,6 +824,10 @@ fn run_timed_mean(
     checked_report(checked, certificate, binding, extremum, subject)
 }
 
+pub(super) fn run_package_exact(request: ProductRequest<'_>, cancel: &Cancel) -> EngineReport {
+    run(request, cancel, None, None)
+}
+
 fn run(
     mut request: ProductRequest<'_>,
     cancel: &Cancel,
@@ -862,9 +866,7 @@ fn run(
     }
     let claim = request.claim;
     let simulation = request.subject.simulation.clone();
-    let Some(package) = simulation.source_package() else {
-        return not_yet();
-    };
+    let probabilistic = simulation.input.probabilistic;
     let limits = request.limits;
     let meter = simulation.meter;
     let subject = SubjectLimits {
@@ -923,7 +925,7 @@ fn run(
         };
         if let Err(error) = fsl_replay::admit_expected_reward_certificate_subject(
             &system,
-            package.graph().probabilistic_model().claims(),
+            probabilistic.claims(),
             &item,
             document_limits,
             cancel,
@@ -1253,7 +1255,7 @@ fn run(
         tamper(&mut certificate);
     }
     let checked = (|| {
-        let claims = package.graph().probabilistic_model().claims();
+        let claims = probabilistic.claims();
         let document = probability_proof_document(
             &system,
             claims,

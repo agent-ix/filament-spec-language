@@ -104,6 +104,7 @@ mod package_model_relation;
 mod package_simulation;
 mod package_step_relation_parity;
 mod package_probabilistic_source;
+mod package_probabilistic_parity;
 mod package_recommendation_bridge;
 mod package_refusal_route;
 mod partial_order;

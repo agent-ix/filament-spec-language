@@ -25,8 +25,8 @@ pub(super) struct Expression<'n> {
 }
 
 impl StatePredicate for Expression<'_> {
-    fn body(&self) -> CheckedNode<'_> {
-        self.body
+    fn body(&self) -> Option<CheckedNode<'_>> {
+        Some(self.body)
     }
 
     fn slots(&self) -> usize {
