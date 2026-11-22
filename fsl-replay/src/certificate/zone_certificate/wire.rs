@@ -138,6 +138,7 @@ fn zone_wire(zone: &Zone) -> Result<Value, ZoneCertificateWireError> {
     Ok(Value::Array(rows))
 }
 
+#[cfg(test)]
 fn read_zone(value: &Value, pointer: &str) -> Result<Zone, ZoneCertificateWireError> {
     read_zone_with(value, pointer, &mut read::Native)
 }
