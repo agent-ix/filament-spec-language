@@ -198,10 +198,18 @@ fn bare_admission_retains_equality_and_reports_its_denial_after_projection() {
     assert_eq!(exact.consumed(), full);
     // One short of the whole pass is denied by the declaration projection.
     for (work, storage) in [(full.work - 1, full.storage), (full.work, full.storage - 1)] {
+        let mut budget = NativeJoinBudget::new(work, storage);
         let error = BarePackage::new(&admitted)
-            .with_supply(supply, &mut NativeJoinBudget::new(work, storage))
+            .with_supply(supply, &mut budget)
             .expect_err("one short in the declarations");
-        assert!(matches!(error.native(), NativeJoinFailure::Projection(_)));
+        assert!(
+            matches!(error.native(), NativeJoinFailure::Projection(_)),
+            "native={:?}, limit={:?}, ceilings=({work}, {storage}), consumed={:?}, first_unpaid={:?}",
+            error.native(),
+            error.limit(),
+            budget.consumed(),
+            budget.first_unpaid(),
+        );
     }
     for (work, storage, kind, code) in [
         (
