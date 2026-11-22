@@ -262,6 +262,58 @@ pub(super) enum Conjunction {
     Undecided(Vec<(String, ClauseOutcome)>),
 }
 
+/// Read imported operation clauses after the ordinary unit clause group,
+/// retaining authored positions and each clause's operation-scoped origin.
+pub(super) fn operation_conjunction(
+    walk: &Walk<'_, '_>,
+    clauses: &[&fsl_semantics::check::CheckedOperationClause],
+    observations: &fsl_semantics::model::observation::OperationContractObservations,
+    mut combined: Conjunction,
+) -> Result<Conjunction, ExpansionStop> {
+    use filament_semantic_value::location::OperationClauseKind;
+
+    let Some(package) = walk.system.source_package() else {
+        return if clauses.is_empty() {
+            Ok(combined)
+        } else {
+            Err(stop(BROKEN))
+        };
+    };
+    for clause in clauses {
+        let precondition = clause.kind() == OperationClauseKind::Requires;
+        if precondition && !matches!(combined, Conjunction::True) {
+            break;
+        }
+        let evaluation = crate::value::evaluate_operation_contract(
+            package,
+            clause,
+            observations,
+            &mut walk.meter(),
+        )
+        .map_err(|_| stop(BROKEN))?;
+        let name = || format!("{:?} {:?}", clause.operation(), clause.member());
+        match verdict(&evaluation.outcome) {
+            Verdict::True => {}
+            Verdict::False => {
+                if !matches!(combined, Conjunction::False(_)) {
+                    combined = Conjunction::False(name());
+                }
+            }
+            Verdict::Undecided(ClauseOutcome::Incomplete(incomplete)) => {
+                return Err(exhausted(ExpansionLimit::EvaluationMeter(
+                    incomplete.limit_kind,
+                )));
+            }
+            Verdict::Undecided(outcome) => match &mut combined {
+                Conjunction::True => combined = Conjunction::Undecided(vec![(name(), outcome)]),
+                Conjunction::Undecided(undecided) => undecided.push((name(), outcome)),
+                Conjunction::False(_) => {}
+            },
+        }
+    }
+    Ok(combined)
+}
+
 /// Evaluate `clauses`, each over the observations `observe` builds for it,
 /// each with a fresh meter and in the order given (ascending name).
 ///

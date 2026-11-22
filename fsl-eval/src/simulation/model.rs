@@ -709,6 +709,7 @@ pub enum ModelShrinkError {
 /// One operation of an object type's effective view, with the texts and keys
 /// that name it.
 struct Application {
+    key: DeclarationKey,
     name: String,
     declaring: EffectiveId,
     declaration: OperationDeclaration,
@@ -1963,6 +1964,7 @@ impl<'a> ModelSystem<'a> {
             let text = declaration_text(&key, CanonicalLimits::new(u64::MAX))
                 .map_err(|_| fault("operation-identity-text"))?;
             applications.push(Application {
+                key,
                 name,
                 declaring,
                 declaration: operation.clone(),

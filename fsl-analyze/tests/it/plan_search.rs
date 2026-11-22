@@ -3034,9 +3034,7 @@ object Counter {
 population counters: Counter;
 "#;
 
-// Native planning consumes these unit-level clauses. The identical embedded
-// model clauses remain annotations until the imported-operation execution path
-// is connected to native contract selection.
+// A mixed unit/imported case retains the existing unit-contract regression.
 const POLICY_DIAMOND_CONTRACTS: &str = r#"
 pre RightStart using v on M::Counter::right { self.number = 0 }
 post RightNext using v on M::Counter::right { self.number = 1 }
@@ -3049,10 +3047,227 @@ post SettleNext using v on M::Counter::settle { self.number = 4 }
 "#;
 
 fn positive_policy_world(formula: &str) -> World {
+    policy_diamond_world(formula, true)
+}
+
+fn policy_diamond_world(formula: &str, unit_contracts: bool) -> World {
+    let contracts = if unit_contracts {
+        POLICY_DIAMOND_CONTRACTS
+    } else {
+        ""
+    };
     native_plan_world_with_clauses(POLICY_DIAMOND_MODEL,
-        &format!("{POLICY_DIAMOND_CONTRACTS}\ntype Lengths = Int[0,3]; synthesis Reach using t grammar M::Counter domain Lengths satisfies {{ forall(c in Reach.final.counters: c.number = 4) }};\n"),
+        &format!("{contracts}\ntype Lengths = Int[0,3]; synthesis Reach using t grammar M::Counter domain Lengths satisfies {{ forall(c in Reach.final.counters: c.number = 4) }};\n"),
         &[model_world::Clause { activation: "on origin", formula }],
         &[("c", json!({"number":{"integer":"0"}}))])
+}
+
+/// Inline requires disable operations before their states, and inline ensures
+/// admit only their exact post-states, independently of the synthesis goal.
+#[test]
+#[trace("FR-103", "FR-1011")]
+fn imported_operation_contracts_enforce_preconditions_and_exact_poststates() {
+    use fsl_eval::simulation::model::{
+        NativeCandidateControl as Control, NativeCandidateEvent as Event,
+    };
+    let world = policy_diamond_world("always holds(c.number >= 0)", false);
+    let system = world_system(&world);
+    let order = native_order(&system, &["right", "left", "combine", "settle"]);
+    let operations = system.operations();
+    let mut pending = vec![system.initial()[0].clone()];
+    let mut seen = std::collections::BTreeSet::new();
+    while let Some(state) = pending.pop() {
+        let before = world.domain.integer(&state, "c", "number");
+        if !seen.insert(before) {
+            continue;
+        }
+        let mut completed = Vec::new();
+        let mut disabled = Vec::new();
+        let name = |transition: &ModelTransition| {
+            operations
+                .iter()
+                .find(|(_, _, text)| *text == transition.operation())
+                .unwrap()
+                .1
+                .to_owned()
+        };
+        system
+            .visit_plan_candidates(&state, &order, None, &mut |event| {
+                match event {
+                    Event::Completed {
+                        transition, state, ..
+                    } => {
+                        completed
+                            .push((name(transition), world.domain.integer(state, "c", "number")));
+                        pending.push(state.clone());
+                    }
+                    Event::Disabled(transition) => disabled.push(name(transition)),
+                    Event::Undetermined { outcome, .. } => {
+                        panic!("inline scalar contract must decide: {outcome:?}")
+                    }
+                    Event::Begin(_) => {}
+                }
+                Control::Continue
+            })
+            .unwrap();
+        completed.sort();
+        disabled.sort();
+        let expected = match before {
+            0 => vec![("left".to_owned(), 2), ("right".to_owned(), 1)],
+            1 | 2 => vec![("combine".to_owned(), 3)],
+            3 => vec![("settle".to_owned(), 4)],
+            4 => vec![],
+            other => panic!("unexpected inline post-state {other}"),
+        };
+        assert_eq!(completed, expected, "pre-state {before}");
+        let expected_disabled: Vec<_> = ["combine", "left", "right", "settle"]
+            .into_iter()
+            .filter(|operation| !expected.iter().any(|(name, _)| name == operation))
+            .map(str::to_owned)
+            .collect();
+        assert_eq!(disabled, expected_disabled, "pre-state {before}");
+    }
+    assert_eq!(seen.into_iter().collect::<Vec<_>>(), [0, 1, 2, 3, 4]);
+    // The imported-contract relation retains the native request's budget
+    // and cancellation stops, rather than reporting an empty relation.
+    system.share_evaluation_meter(ScalarLimits {
+        work_units: 0,
+        ..UNLIMITED
+    });
+    let stopped = system
+        .visit_plan_candidates(&system.initial()[0], &order, None, &mut |_| {
+            Control::Continue
+        })
+        .unwrap_err();
+    assert_eq!(
+        stopped.limit,
+        Some(fsl_eval::simulation::ExpansionLimit::EvaluationMeter(
+            filament_exact::LimitKind::WorkUnits
+        ))
+    );
+    for cause in [CancelCause::Requested, CancelCause::Deadline] {
+        system.begin_plan_replay(UNLIMITED);
+        let cancel = Cancel::new();
+        system.cancel_plan_with(&cancel);
+        cancel.cancel(cause);
+        let stopped = system
+            .visit_plan_candidates(&system.initial()[0], &order, Some(&cancel), &mut |_| {
+                Control::Continue
+            })
+            .unwrap_err();
+        assert_eq!(
+            stopped.limit,
+            Some(fsl_eval::simulation::ExpansionLimit::EvaluationMeter(
+                filament_exact::LimitKind::WorkUnits
+            ))
+        );
+        assert_eq!(system.plan_cancel_cause(), Some(cause));
+    }
+}
+
+/// An inherited operation uses its actual declaring owner and typed receiver,
+/// reference/integer arguments and result, alongside ordinary unit contracts.
+#[test]
+#[trace("FR-103", "FR-1011", "FSpec-FR-800")]
+fn imported_operation_contracts_bind_inherited_arguments_and_result() {
+    use filament_exact::Value;
+    use fsl_eval::simulation::model::{
+        NativeCandidateControl as Control, NativeCandidateEvent as Event,
+    };
+    let world = finite_argument_world(r#"language "ix:native" edition "1-draft";
+domain "test/native-plan";
+type Amount = Int[0,1];
+object Base {
+  number: Int[0,1];
+  operation choose(target: Base, amount: Amount): Boolean modifies self.number {
+    pre Start { target = self and amount = 1 and self.number = 0 };
+    post Next { self.number = amount and pre(self.number) = 0 and result };
+  }
+}
+object Counter extends Base {
+  operation stay(target: Base, amount: Amount): Boolean modifies self.number {
+    pre Start { target = self and amount = 0 and self.number = 0 };
+    post Next { self.number = amount and not result };
+  }
+}
+population counters: Counter;
+"#, "Counter", "counters",
+        "pre UnitArgument using v on M::Counter::choose { amount >= 0 }\npost UnitResult using v on M::Counter::choose { result }",
+        &[("counters", "Counter", &[("c", json!({"number":{"integer":"0"}})),
+            ("d", json!({"number":{"integer":"0"}}))])]);
+    let system = ModelSystem::new(
+        world
+            .subject_populations(&[("counters", &["c", "d"])], UNLIMITED)
+            .simulation,
+    )
+    .unwrap();
+    let operations = system.operations();
+    let mut completed = Vec::new();
+    system
+        .visit_plan_candidates(
+            &system.initial()[0],
+            &native_order(&system, &["choose", "stay"]),
+            None,
+            &mut |event| {
+                match event {
+                    Event::Completed {
+                        transition,
+                        receiver,
+                        arguments,
+                        state,
+                        ..
+                    } => {
+                        let operation = operations
+                            .iter()
+                            .find(|(_, _, text)| *text == transition.operation())
+                            .unwrap()
+                            .1;
+                        let [Value::Reference(target), Value::Integer(amount)] = arguments else {
+                            panic!("actual admitted reference and integer arguments");
+                        };
+                        assert_eq!(target, receiver);
+                        let expected: i64 = if operation == "choose" { 1 } else { 0 };
+                        assert_eq!(amount.to_string(), expected.to_string());
+                        let object = state
+                            .state()
+                            .populations
+                            .values()
+                            .find_map(|objects| objects.get(receiver.object().as_str()))
+                            .unwrap();
+                        let Some(Value::Integer(number)) = object.fields.values().next() else {
+                            panic!("the inherited integer field is present");
+                        };
+                        assert_eq!(number.to_string(), expected.to_string());
+                        assert_eq!(
+                            state.reached_by().unwrap().result.as_deref(),
+                            Some(if operation == "choose" {
+                                r#"{"type":"boolean","value":true}"#
+                            } else {
+                                r#"{"type":"boolean","value":false}"#
+                            })
+                        );
+                        completed
+                            .push((operation.to_owned(), receiver.object().as_str().to_owned()));
+                    }
+                    Event::Undetermined { outcome, .. } => {
+                        panic!("typed operation contract must decide: {outcome:?}")
+                    }
+                    Event::Begin(_) | Event::Disabled(_) => {}
+                }
+                Control::Continue
+            },
+        )
+        .unwrap();
+    completed.sort();
+    assert_eq!(
+        completed,
+        [
+            ("choose".to_owned(), "c".to_owned()),
+            ("choose".to_owned(), "d".to_owned()),
+            ("stay".to_owned(), "c".to_owned()),
+            ("stay".to_owned(), "d".to_owned())
+        ]
+    );
 }
 
 /// Different past witnesses survive a native diamond; equal obligations merge
@@ -3060,13 +3275,28 @@ fn positive_policy_world(formula: &str) -> World {
 #[test]
 #[trace("FR-1012", "FR-1011", "FSpec-FR-803-AC-3")]
 fn positive_source_policies_preserve_witnesses_and_canonical_native_order() {
+    assert_policy_diamond(true);
+}
+
+/// Inline contracts alone preserve exact branches, states and independent proof.
+#[test]
+#[trace("FR-103", "FR-1012", "FR-1011", "FSpec-FR-803-AC-3")]
+fn imported_operation_contracts_preserve_diamond_witnesses_and_proof() {
+    assert_policy_diamond(false);
+}
+
+fn assert_policy_diamond(unit_contracts: bool) {
     use fsl_analyze::plan_source::SourcePlan;
     for (formula, expected) in [
         ("eventually[0,3] holds(c.number = 2)", "left"),
         ("always holds(c.number >= 0)", "right"),
         ("always[0,5] holds(c.number <= 4)", "right"),
     ] {
-        let world = positive_policy_world(formula);
+        let world = policy_diamond_world(formula, unit_contracts);
+        if !unit_contracts {
+            assert!(world.package.graph().state_clauses().is_empty());
+            assert_eq!(world.package.graph().operation_clauses().len(), 8);
+        }
         let types = world.package.graph().scope().types();
         let counter = types
             .object_types()
@@ -3129,6 +3359,18 @@ fn positive_source_policies_preserve_witnesses_and_canonical_native_order() {
                 .map(|state| world.domain.integer(state, "c", "number"))
                 .collect();
             assert_eq!(numbers, [0, if expected == "left" { 2 } else { 1 }, 3, 4]);
+            rules.begin_replay();
+            assert_eq!(
+                fsl_analyze::plan_search::replay::replay(
+                    &system,
+                    &mut rules,
+                    plan,
+                    PlanLengths::new(0, 3).unwrap(),
+                    ObjectiveKind::StepSum,
+                )
+                .unwrap(),
+                integer(3)
+            );
             assert_eq!(
                 fsl_eval::simulation::model::read_clause(
                     &system,
@@ -3155,8 +3397,19 @@ fn positive_source_policies_preserve_witnesses_and_canonical_native_order() {
 #[test]
 #[trace("FR-1012", "FSpec-FR-803-AC-5")]
 fn positive_source_policies_refuse_broken_safety_and_forged_certificates() {
+    assert_policy_diamond_forgery(true);
+}
+
+/// Inline-only contracts reject missing successors and substituted proof states.
+#[test]
+#[trace("FR-103", "FR-1012", "FSpec-FR-803-AC-5")]
+fn imported_operation_contracts_reject_safety_and_forged_certificates() {
+    assert_policy_diamond_forgery(false);
+}
+
+fn assert_policy_diamond_forgery(unit_contracts: bool) {
     use fsl_analyze::plan_source::SourcePlan;
-    let world = positive_policy_world("always holds(c.number != 4)");
+    let world = policy_diamond_world("always holds(c.number != 4)", unit_contracts);
     let system = world_system(&world);
     let mut rules = SourcePlan::new(
         &world.package,
@@ -3183,7 +3436,7 @@ fn positive_source_policies_refuse_broken_safety_and_forged_certificates() {
         result.certificate.unwrap().outcome,
         CertificateOutcome::Accepted
     );
-    let world = positive_policy_world("always holds(c.number >= 0)");
+    let world = policy_diamond_world("always holds(c.number >= 0)", unit_contracts);
     let system = world_system(&world);
     for fault in [
         PlanFault::DropSuccessor {
