@@ -523,6 +523,7 @@ mod tests {
     struct Fixture {
         emission: crate::Emission,
         admitted: CheckedPackageV2,
+        checked: crate::CheckedPackage,
     }
 
     fn fixture(body: &str, model: bool) -> Fixture {
@@ -585,6 +586,7 @@ mod tests {
         Fixture {
             emission,
             admitted: *admitted,
+            checked,
         }
     }
 
@@ -860,7 +862,7 @@ mod tests {
     #[test]
     fn source_enum_catalog_generated_scope_keeps_genuine_context_after_catalog_drop() {
         let fixture = fixture(
-            "type Lengths = Int[0,1];\nsynthesis Reach using v grammar M::Account domain Lengths minimizes Reach.length satisfies { true };\n",
+            "type Lengths = Int[0,1];\nsynthesis Reach using v grammar M::Account domain Lengths minimize Reach.length satisfies { true };\n",
             true,
         );
         let mut budget = NativeJoinBudget::new(u64::MAX, u64::MAX);
@@ -872,6 +874,20 @@ mod tests {
             .iter()
             .find(|row| row.declaration.qualified_declaration.len() > 1)
             .expect("the real plan synthesis emits its qualified operation enum");
+        let operation_enum = &fixture
+            .checked
+            .graph()
+            .syntheses()
+            .iter()
+            .find_map(|synthesis| synthesis.plan())
+            .expect("the checked source has its real plan synthesis")
+            .shape()
+            .operation_enum;
+        assert_eq!(operation_enum.name, "M::Op");
+        assert_eq!(
+            operation_enum.declaration.key(),
+            generated.declaration.node_key
+        );
         assert_eq!(
             generated
                 .declaration
