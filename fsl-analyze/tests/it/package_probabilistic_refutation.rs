@@ -46,36 +46,55 @@ fn a_package_refutation_preserves_the_negative_witness_replay_and_charges() {
 #[test]
 fn enum_draws_and_arguments_preserve_package_refutation_witness_parity() {
     let mut model: serde_json::Value = serde_json::from_slice(LINK_MODEL).expect("Link model JSON");
-    let enum_type = "ix://test/link/Loss";
+    let enum_source = b"language \"ix:native\" edition \"1-draft\";\n\
+                        domain \"test/link\";\n\
+                        enum Loss { Lost, Delivered }\n";
+    let parsed = fsl_cst::parse(
+        fsl_foundation::SourceIdentity::new("test", "link/spec"),
+        "spec.fspec",
+        enum_source,
+        fsl_cst::Limits::default(),
+    )
+    .expect("the enum model source parses");
+    let compiled = fsl_semantics::model::intake::compile_model_unit(
+        &parsed,
+        ModelNormalizationLimits::default(),
+    )
+    .expect("the enum model unit compiles");
+    let enum_document: serde_json::Value =
+        serde_json::from_slice(compiled.bytes()).expect("compiled enum model JSON");
+    let enum_declaration = enum_document["types"]
+        .as_array()
+        .expect("compiled types")
+        .iter()
+        .find(|declaration| declaration["displayName"] == "Loss")
+        .expect("the actual enum declaration")
+        .clone();
+    let enum_type = enum_declaration["identity"]
+        .as_str()
+        .expect("the compiled enum identity")
+        .to_owned();
+    let enum_construct = enum_document["constructs"]
+        .as_array()
+        .expect("compiled constructs")
+        .iter()
+        .find(|construct| construct["kind"]["name"] == "variant_type")
+        .expect("the actual enum construct")
+        .clone();
     model["constructs"]
         .as_array_mut()
         .expect("constructs")
-        .push(json!({
-            "kind": {"module": "test/link", "name": "variant_type"},
-            "moduleVersion": "1.0.0",
-            "construct": {"identity": "none", "shape": "enumeration",
-                "members": {"variants": "required"},
-                "meaning": fsl_semantics::model::intake::meaning::VARIANT_TYPE}
-        }));
+        .push(enum_construct);
+    model["types"]
+        .as_array_mut()
+        .expect("types")
+        .push(enum_declaration);
     let origin = |identity: &str| {
         json!({"generated": {
             "generatorIdentity": identity, "generatorVersion": "1.0.0",
             "inputIdentities": [identity]
         }})
     };
-    let variants: Vec<_> = ["Lost", "Delivered"]
-        .iter()
-        .map(|name| {
-            let identity = format!("{enum_type}/{name}");
-            json!({"identity": identity, "name": name, "origin": origin(&identity)})
-        })
-        .collect();
-    model["types"].as_array_mut().expect("types").push(json!({
-        "identity": enum_type, "displayName": enum_type,
-        "kind": {"module": "test/link", "name": "variant_type"},
-        "origin": origin(enum_type), "roles": [], "constraints": [],
-        "extensions": [], "unknownPolicy": "reject", "variants": variants
-    }));
     for operation in model["types"][1]["operations"]
         .as_array_mut()
         .expect("message operations")
