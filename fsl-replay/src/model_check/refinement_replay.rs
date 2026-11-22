@@ -46,6 +46,7 @@ use crate::model_check::replay::{
     close_loop, disagreement, fault, loop_states_of, no_value_cause, reexecute, refused,
     timed_prefix, unfair_constraint, ModelTraceRefusal, Position,
 };
+use crate::refinement::RefinementRead;
 use crate::refinement::{
     abstract_classes, candidate_lasso_has_fair_run, check_initial, check_protocol_initial,
     check_protocol_state_relations, check_protocol_step, check_step, initial_history,
@@ -57,7 +58,6 @@ use crate::refinement::{
 };
 use crate::result::DisagreementCause;
 use crate::timed::explore::{explore, widen, Closure};
-use fsl_semantics::check::CheckedRefinement;
 
 /// FR-145's settlement of a refinement counterexample's replay.
 #[derive(Clone, Debug)]
@@ -102,7 +102,7 @@ fn protocol_undetermined_locus(locus: &str) -> Option<&str> {
 /// closes, and rechecks the checked predicate locus for a finite
 /// undetermined-relation witness.
 pub fn replay_protocol_assumption_witness(
-    refinement: &CheckedRefinement,
+    refinement: &dyn RefinementRead,
     systems: &RefinementSystems<'_>,
     witness: &ProtocolAssumptionWitness,
 ) -> Result<ProtocolAssumptionReplaySettlement, ReplayRefusal> {
@@ -341,7 +341,7 @@ pub fn replay_protocol_assumption_witness(
 }
 
 fn assumption_sources_match(
-    refinement: &CheckedRefinement,
+    refinement: &dyn RefinementRead,
     protocol: &crate::refinement::AbstractProtocolSystem<'_>,
     identities: &[crate::refinement::AssumptionIdentity],
 ) -> Result<bool, ReplayRefusal> {
@@ -430,7 +430,7 @@ type InitialClosure = (
 );
 
 fn protocol_initial_closure(
-    refinement: &CheckedRefinement,
+    refinement: &dyn RefinementRead,
     systems: &RefinementSystems<'_>,
     protocol: &crate::refinement::AbstractProtocolSystem<'_>,
     concrete: &fsl_eval::simulation::model::ModelSimState,
@@ -453,10 +453,9 @@ fn protocol_initial_closure(
         for object in objects.values_mut() {
             if let Some(row) = refinement
                 .objects()
-                .iter()
-                .find(|row| row.abstract_type == object.type_identity)
+                .find(|row| row.abstract_type() == &object.type_identity)
             {
-                for field in &row.hidden {
+                for field in row.hidden() {
                     object.fields.remove(field);
                 }
             }
@@ -482,10 +481,9 @@ fn protocol_initial_closure(
             for object in objects.values_mut() {
                 if let Some(row) = refinement
                     .objects()
-                    .iter()
-                    .find(|row| row.abstract_type == object.type_identity)
+                    .find(|row| row.abstract_type() == &object.type_identity)
                 {
-                    for field in &row.hidden {
+                    for field in row.hidden() {
                         object.fields.remove(field);
                     }
                 }
@@ -561,7 +559,7 @@ struct AssumptionLasso<'a> {
 }
 
 fn assumption_lasso_matches(
-    refinement: &CheckedRefinement,
+    refinement: &dyn RefinementRead,
     systems: &RefinementSystems<'_>,
     protocol: &crate::refinement::AbstractProtocolSystem<'_>,
     lasso: AssumptionLasso<'_>,
@@ -722,7 +720,7 @@ enum Found {
 /// end of its loop from its entry, a lasso is unfair under `F_C`, or an
 /// internal fault occurs.
 pub fn replay_refinement_trace(
-    refinement: &CheckedRefinement,
+    refinement: &dyn RefinementRead,
     systems: &RefinementSystems<'_>,
     payload: &TemporalCounterexample,
 ) -> Result<RefinementTraceSettlement, ReplayRefusal> {
@@ -760,7 +758,7 @@ pub fn replay_refinement_trace(
 /// lasso's history or candidates drift, it is unfair under `F_C`, or an
 /// internal fault occurs.
 pub fn replay_timed_refinement_trace(
-    refinement: &CheckedRefinement,
+    refinement: &dyn RefinementRead,
     systems: &RefinementSystems<'_>,
     payload: &TemporalCounterexample,
     exploration: &Limits,
@@ -774,7 +772,7 @@ pub fn replay_timed_refinement_trace(
 /// model, whose arbitrary delays are shared with the abstract model's
 /// derived clocks. The concrete time source has zero clock placements.
 pub fn replay_free_delay_refinement_trace(
-    refinement: &CheckedRefinement,
+    refinement: &dyn RefinementRead,
     systems: &RefinementSystems<'_>,
     payload: &TemporalCounterexample,
     exploration: &Limits,
@@ -788,7 +786,7 @@ pub fn replay_free_delay_refinement_trace(
 }
 
 fn replay_refinement_trace_with_time_source(
-    refinement: &CheckedRefinement,
+    refinement: &dyn RefinementRead,
     systems: &RefinementSystems<'_>,
     payload: &TemporalCounterexample,
     exploration: &Limits,
@@ -888,7 +886,7 @@ fn invariant_reading(
 
 /// Replay FR-900's derived abstract clocks along the mapped discrete path.
 fn replay_abstract_timed_failure(
-    refinement: &CheckedRefinement,
+    refinement: &dyn RefinementRead,
     systems: &RefinementSystems<'_>,
     payload: &TemporalCounterexample,
     positions: &[Position],
@@ -1094,7 +1092,7 @@ fn replay_abstract_timed_failure(
 /// The settlement of `payload` along its re-executed `positions`: the
 /// checks run at each position, stopping at the first failure.
 fn settle_positions(
-    refinement: &CheckedRefinement,
+    refinement: &dyn RefinementRead,
     systems: &RefinementSystems<'_>,
     payload: &TemporalCounterexample,
     recorded: &RefinementFailure,
@@ -1332,7 +1330,7 @@ fn settle_positions(
 /// one replay position. The product checker only runs these relations after
 /// every outgoing step rule has passed, so replay applies the same ordering.
 fn protocol_relation_edges(
-    refinement: &CheckedRefinement,
+    refinement: &dyn RefinementRead,
     systems: &RefinementSystems<'_>,
     position: &RefinementPosition,
     concrete_state: &fsl_eval::simulation::model::ModelSimState,
@@ -1413,7 +1411,7 @@ struct Walk<'p> {
 /// The settlement of a lasso whose prefix and loop `check_step` has run along:
 /// `found` is what the checks found, `walk` what they recomputed.
 fn replay_lasso(
-    refinement: &CheckedRefinement,
+    refinement: &dyn RefinementRead,
     systems: &RefinementSystems<'_>,
     payload: &TemporalCounterexample,
     lasso: Lasso,
@@ -1895,7 +1893,7 @@ enum TimedLoop {
 /// (FR-899 "Timed subjects"), replay's own reading of its enabledness over
 /// the instants of the loop.
 fn timed_loop_segments(
-    refinement: &CheckedRefinement,
+    refinement: &dyn RefinementRead,
     systems: &RefinementSystems<'_>,
     payload: &TemporalCounterexample,
     lasso: &Lasso,
@@ -1945,7 +1943,7 @@ fn timed_loop_segments(
 /// Replay FR-148's fairness-independent observable divergence check over the
 /// same protocol candidate sets and the concrete lasso.
 fn replay_protocol_divergence(
-    _refinement: &CheckedRefinement,
+    _refinement: &dyn RefinementRead,
     systems: &RefinementSystems<'_>,
     payload: &TemporalCounterexample,
     lasso: Lasso,

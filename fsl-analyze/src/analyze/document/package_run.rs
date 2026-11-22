@@ -32,6 +32,7 @@ use serde_json::{json, Map};
 
 use super::super::hyper_route::PackageRelationSubject;
 use super::super::package_hyper::PackageHyperSubject;
+use super::super::refinement_item::PackageRefinementSubject;
 use super::super::request::ProtocolBinding;
 use super::super::{
     AnalyzeItem, AnalyzeLimits, ClaimItem, ClauseItemRefusal, ClauseLimits, Engines, ItemForm,
@@ -156,6 +157,8 @@ fn node_words(node: &CheckedNodeId) -> String {
 /// What a pending package-route item names.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum PendingFamily {
+    /// A refinement fact outside the supported byte-backed execution subset.
+    RefinementFact(&'static str),
     /// A claimless `simulation` item (FR-634).
     Simulation,
     /// A schedulability item an EN-6 task-product engine decides: the package
@@ -205,6 +208,7 @@ impl PendingFamily {
     #[must_use]
     pub const fn name(self) -> &'static str {
         match self {
+            Self::RefinementFact(fact) => fact,
             Self::Simulation => "simulation",
             Self::TaskProduct => "task-product",
             Self::Derived => "derived",
@@ -285,6 +289,12 @@ enum Named<'s> {
         ordinal: u64,
         selection: &'s ItemSelection,
     },
+    Refinement {
+        index: RequestIndex,
+        name: &'s str,
+        declaration: CheckedNodeId,
+        selection: &'s ItemSelection,
+    },
     Relation {
         index: RequestIndex,
         name: &'s str,
@@ -351,6 +361,7 @@ enum Named<'s> {
 /// How a resolved package-route claim item runs.
 enum Route<'a> {
     Probability,
+    Refinement(Box<PackageRefinementSubject<'a>>),
     Clause {
         subject: Box<PackageClauseSubject<'a>>,
         protocol: Option<ProtocolBinding>,
@@ -566,6 +577,19 @@ fn settle_package_run_inner(
                 Resolution::Claim(claim, ()) => {
                     probability_claims.push(claim.item.claim.clone());
                     routes.insert(index, Route::Probability);
+                    resolved.push(ResolvedItem::Claim(claim));
+                }
+            },
+            Named::Refinement {
+                index,
+                name,
+                declaration,
+                selection,
+            } => match reads.refinement(index, name, &declaration, selection)? {
+                Resolution::Settled(settled) => resolved.push(settled),
+                Resolution::Claim(claim, subject) => {
+                    relation_claims.push(claim.item.claim.clone());
+                    routes.insert(index, Route::Refinement(subject));
                     resolved.push(ResolvedItem::Claim(claim));
                 }
             },
@@ -1194,6 +1218,17 @@ fn resolve_names<'s>(
             // row. An `invariant` state clause runs over the package route's
             // input; a claim of another family has no package form yet.
             if let Some(found) = view.claim_name(name) {
+                if matches!(
+                    view.package().term(&found.declaration),
+                    Some(filament_contract_model::CheckedTerm::Refinement { .. })
+                ) {
+                    return Ok(Named::Refinement {
+                        index,
+                        name,
+                        declaration: found.declaration,
+                        selection,
+                    });
+                }
                 if derived {
                     return Err(pending(PendingFamily::Derived));
                 }
@@ -1495,6 +1530,145 @@ struct ClaimReads<'r, 'a> {
 }
 
 impl<'r, 'a: 'r> ClaimReads<'r, 'a> {
+    fn refinement(
+        &self,
+        index: RequestIndex,
+        name: &str,
+        declaration: &CheckedNodeId,
+        selection: &ItemSelection,
+    ) -> Result<Resolution<Box<PackageRefinementSubject<'r>>>, PackageRunError> {
+        use filament_contract_model::{
+            CapabilityKind, DomainKey as WireDomain, DomainKind as WireKind, RequirementExtent,
+        };
+        use fsl_foundation::bound::{DomainKey, DomainKind};
+        use fsl_semantics::family::{ClaimExtent, Requirements};
+        let fault = || PackageRunError::Document(AnalyzeDocumentError::Fault);
+        let pending = |fact| {
+            PackageRunError::Pending(PendingPackageFamily {
+                request_index: Some(index),
+                family: PendingFamily::RefinementFact(fact),
+                node: Some(declaration.clone()),
+                note: None,
+            })
+        };
+        let input = self.input.ok_or_else(fault)?;
+        let package = input.package();
+        let key = package.node_key(declaration).ok_or_else(fault)?;
+        let claim = OccurrenceKey::declaration(key.clone());
+        let recorded = package
+            .package()
+            .requirement_items()
+            .iter()
+            .find(|row| {
+                row.claim == *declaration
+                    && row.occurrence.role
+                        == filament_contract_model::CheckedOccurrenceRole::Declaration
+                    && row.occurrence.ordinal == 0
+                    && row.kind == CapabilityKind::TemporalSatisfaction
+            })
+            .ok_or_else(|| pending("refinement requirement record"))?;
+        let extent = match &recorded.extent {
+            RequirementExtent::Unbounded(domains)
+                if matches!(domains.as_slice(),
+                [(WireDomain::Node { node, path }, WireKind::InfiniteTrace)] if node == declaration && path.is_empty()) =>
+            {
+                ClaimExtent::from_domains(
+                    [(
+                        DomainKey::Node {
+                            node: key.clone(),
+                            path: Vec::new(),
+                        },
+                        DomainKind::InfiniteTrace,
+                    )]
+                    .into_iter()
+                    .collect(),
+                )
+            }
+            _ => return Err(pending("refinement requirement extent")),
+        };
+        let subject = PackageRefinementSubject::new(
+            input,
+            declaration,
+            self.binding.clone(),
+            self.limits,
+            claim.clone(),
+        )
+        .map_err(|refusal| refusal.pending_fact().map_or_else(fault, pending))?;
+        let kind = match selection.kind.as_deref() {
+            Some("refinement") | None => Capability::TemporalSatisfaction,
+            Some(label) => match Capability::from_wire(label) {
+                Ok(kind) => kind,
+                Err(_) => {
+                    return Ok(Resolution::Settled(invalid_kind(
+                        index,
+                        Some(name),
+                        "unknown-kind",
+                    )))
+                }
+            },
+        };
+        let named = selection.backend.as_deref().map(BackendId::new);
+        let backend_options = selection.options.clone().unwrap_or_default();
+        if let Some(refusal) = unknown_option(
+            index,
+            Some(name),
+            self.registry,
+            named.as_ref(),
+            &backend_options,
+        ) {
+            return Ok(Resolution::Settled(refusal));
+        }
+        let requirements = Requirements::new(Capability::TemporalSatisfaction, extent)
+            .over_model_subject()
+            .with_property_form(
+                filament_semantic_value::fairness::PropertyForm::Refinement { liveness: false },
+            );
+        let candidates = self.registry.restrict_to_timing(
+            if kind == Capability::TemporalSatisfaction {
+                fsl_route::request::requirement_candidates(
+                    &requirements,
+                    self.registry,
+                    named.as_ref(),
+                )
+            } else {
+                self.registry.candidates(kind, named.as_ref())
+            },
+            false,
+        );
+        let temporal = selection.temporal.clone().unwrap_or_default();
+        let mut form = temporal_settings(&temporal);
+        form.pending_reductions.clone_from(&selection.reductions);
+        let own_subject = self.own_subject(index, selection)?;
+        let item = ClaimItem {
+            request_index: index,
+            claim,
+            kind,
+            extent: ExtentClassification::Unbounded {
+                finite_bound_available: false,
+            },
+            backend: named,
+            candidates: candidate_list(&candidates),
+            options: options(selection, backend_options),
+            form: (kind == Capability::TemporalSatisfaction).then_some(ItemForm::Temporal(form)),
+        };
+        let unrouted = selection.unrouted()
+            || reads_no_clocks(selection)
+            || temporal
+                .limits
+                .is_some_and(|limits| limits.sets_memory_limits())
+            || !own_subject.same_model(self.subject);
+        Ok(Resolution::Claim(
+            Box::new(ResolvedClaim {
+                item,
+                claim_name: name.to_owned(),
+                candidates,
+                subject: own_subject,
+                unrouted,
+            }),
+            Box::new(subject),
+        ))
+    }
+
     /// The item's own subject over the request's, including a protocol
     /// subject selected by this item.
     fn own_subject(
@@ -3101,6 +3275,11 @@ impl<'a> WorkInputs<'_, 'a> {
                 if item.kind == Capability::ProbabilisticSatisfaction =>
             {
                 probability::item(self.input, self.binding, &self.limits, item, form)
+            }
+            (Some(ItemForm::Temporal(form)), Some(Route::Refinement(subject)))
+                if item.kind == Capability::TemporalSatisfaction =>
+            {
+                subject.configured(form.clone()).item(item.request_index)
             }
             (_, Some(Route::ProtocolAnalysis)) => super::super::request::protocol_analysis_item(
                 Box::new(self.input.package().package().clone()),

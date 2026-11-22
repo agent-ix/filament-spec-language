@@ -49,7 +49,6 @@ use fsl_eval::model_subject::{CapacityBinding, ModelInstance, ModelSubject};
 use fsl_eval::simulation::model::{check_model_bounds, ModelFinding, ModelSimState, ModelSystem};
 use fsl_eval::simulation::protocol::{ProtocolRefusal, ProtocolTarget};
 use fsl_eval::simulation::{ExpansionLimit, ExpansionStop, TransitionSystem};
-use fsl_package::CheckedPackage;
 use fsl_replay::{
     abstract_classes, candidate_lasso_has_fair_run, check_initial, check_protocol_initial,
     check_protocol_state_relations, check_protocol_step, check_step, open_protocol_systems,
@@ -61,7 +60,6 @@ use fsl_replay::{
     SafetyOutcome, SafetyUndecided, SimulationCertificate, StepResult, StepVerdict, SubjectRefusal,
     Taken, TemporalCounterexample, UndecidedCause, UndefinedEvaluation, Undetermined,
 };
-use fsl_semantics::check::CheckedRefinement;
 
 use super::check::{fault, not_simulated, widen, ModelCheckRefusal, BOUND_POSITIONS};
 use super::fair_summary::{
@@ -75,12 +73,12 @@ use super::fair_walk::{fairness_constraints, FairModel};
 /// One refinement safety run (FR-142 Inputs).
 pub struct RefinementCheckRequest<'a> {
     /// The checked refinement (FR-135).
-    pub refinement: &'a CheckedRefinement,
+    pub refinement: &'a dyn fsl_replay::RefinementRead,
     /// The concrete subject (FR-125), a model subject.
     pub concrete: ModelSubject<'a>,
     /// The package that holds the abstract model: the declaring package, or
     /// a dependency (ADR-020 RM-1).
-    pub abstract_package: &'a CheckedPackage,
+    pub abstract_package: &'a dyn fsl_replay::RefinementWorld,
     /// The abstract subject's initial states: its FR-106 snapshots, or the
     /// mapping's image of the concrete initial states.
     pub abstract_initial: fsl_replay::AbstractInitial,
@@ -462,7 +460,7 @@ fn open_refusal(refusal: ProtocolSystemsRefusal) -> ModelCheckRefusal {
 }
 
 struct Run<'r, 'a> {
-    refinement: &'r CheckedRefinement,
+    refinement: &'r dyn fsl_replay::RefinementRead,
     concrete: &'r ModelSystem<'a>,
     abstract_system: &'r ModelSystem<'a>,
     abstract_protocol: Option<&'r AbstractProtocolSystem<'a>>,
@@ -2609,8 +2607,7 @@ impl Run<'_, '_> {
             || self
                 .refinement
                 .objects()
-                .iter()
-                .any(|object| !object.hidden.is_empty())
+                .any(|object| !object.hidden().is_empty())
         {
             return self.hidden_candidate_liveness(
                 &candidate_enabled,
@@ -3362,8 +3359,7 @@ impl Run<'_, '_> {
         let has_hidden = self
             .refinement
             .objects()
-            .iter()
-            .any(|object| !object.hidden.is_empty());
+            .any(|object| !object.hidden().is_empty());
         let failure = if has_hidden {
             RefinementFailure::HiddenUnfair { constraint }
         } else if self.abstract_protocol.is_some() {

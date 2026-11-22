@@ -100,7 +100,9 @@ pub use expression::{
     ValueInvariantResult, ValuePathStep, ValuePathSubject, WitnessClaim, BINDER_ACCOUNTING_VERSION,
 };
 pub use expression::{bare_evaluate_frame, PackageOperations, ProjectedReward};
-pub use expression::{bare_evaluate_selected_protocol_slot, evaluate_bare_expression};
+pub use expression::{
+    bare_evaluate_selected_protocol_slot, evaluate_bare_expression, evaluate_bare_refinement_row,
+};
 pub(crate) use expression::{
     bare_post_targets, evaluate_bare_probability_predicate, evaluate_bare_state_graph_predicate,
     evaluate_bare_terminal_predicate, package_constraint_reads, package_guard_reads,

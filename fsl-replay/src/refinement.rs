@@ -13,8 +13,10 @@ mod history;
 mod liveness;
 mod map;
 mod outcome;
+mod package;
 mod protocol_system;
 mod protocol_witness;
+mod read;
 mod step;
 mod step_view;
 mod subject;
@@ -38,6 +40,7 @@ pub use map::{
     MappingUndetermined, ObjectKey, StepArgument,
 };
 pub use outcome::{LivenessHalf, RefinementOutcome, SafetyOutcome, SafetyUndecided};
+pub use package::{PackageRefinement, PackageRefinementRefusal};
 pub use protocol_system::{
     AbstractProtocolSystem, ProtocolAssumptionFairness, ProtocolCandidate, RequiredTemporalFairness,
 };
@@ -56,6 +59,10 @@ pub fn protocol_transition_class(
     step::protocol_class(system, transition)
 }
 pub use protocol_witness::{RefinementWitness, RefinementWitnessError};
+pub use read::{
+    FieldMapping, MappingExpression, MappingTarget, ObjectMapping, PopulationMapping,
+    RefinementRead, RefinementWorld, StepMapping,
+};
 pub use step_view::{
     step_view_over, ProtocolStep, ProtocolStepView, ProtocolSteps, StateIndex, StepViewRefusal,
     UnsteppedConstruct,

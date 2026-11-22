@@ -46,15 +46,19 @@ mod composition_context;
 pub use composition_context::{CompositionModelContext, CompositionModelContextRefusal};
 #[cfg(feature = "std")]
 mod composition_view;
+mod refinement_view;
 #[cfg(feature = "std")]
 pub use composition_view::{
     CompositionMember, CompositionMemberValue, CompositionView, CompositionViewRefusal,
     OwnedNodeRef,
 };
-#[cfg(feature = "std")]
-pub mod occurrence_source;
+pub use refinement_view::{
+    RefinementRowRefusal, RefinementView, RefinementViewCode, RefinementViewRefusal,
+};
 #[cfg(feature = "std")]
 mod model_relation_form;
+#[cfg(feature = "std")]
+pub mod occurrence_source;
 #[cfg(feature = "std")]
 pub use analysis_view::{AnalysisView, ClaimOccurrence, DependencyClosure};
 #[cfg(feature = "std")]
