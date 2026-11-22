@@ -1333,7 +1333,12 @@ fn unbounded_clock_reference_document() -> Json {
 #[trace("TC-3084")]
 #[test]
 fn clock_reference_enumeration_refuses_both_model_routes() {
-    fn refusal<'a>(world: &'a World, input: fsl_eval::simulation::model::ModelCheckInput<'a>) {
+    fn refusal<'a>(
+        world: &'a World,
+        input: fsl_eval::simulation::model::ModelCheckInput<'a>,
+        reason: &str,
+        member: Option<&str>,
+    ) {
         let result = ModelSystem::new(ModelSimulationRequest {
             emit: fsl_package::EmitLimits::fixture(),
             input,
@@ -1362,9 +1367,9 @@ fn clock_reference_enumeration_refuses_both_model_routes() {
         assert_eq!(record.catalog.cause(), "unsupported-feature");
         assert_eq!(
             record.fields.get("reason").map(String::as_str),
-            Some("clock-reference-enumeration")
+            Some(reason)
         );
-        assert_eq!(record.fields.get("member"), Some(&ident("Call/r")));
+        assert_eq!(record.fields.get("member").map(String::as_str), member);
     }
     for document in [
         serde_json::from_slice(&clocked_document(true, &["y"])).expect("JSON"),
@@ -1374,6 +1379,8 @@ fn clock_reference_enumeration_refuses_both_model_routes() {
         refusal(
             &world,
             fsl_eval::simulation::model::ModelCheckInput::source(&world.package),
+            "clock-reference-enumeration",
+            Some(&ident("Call/r")),
         );
         let read = fsl_package::read_evaluation_package(
             &world.package,
@@ -1414,7 +1421,7 @@ fn clock_reference_enumeration_refuses_both_model_routes() {
             ModelNormalizationLimits::default(),
         )
         .expect("actual bare model input");
-        refusal(&world, input.input());
+        refusal(&world, input.input(), "missing-type-representation", None);
     }
 }
 
@@ -3591,7 +3598,46 @@ fn a_granted_field_ranges_over_its_finite_domain_or_stops() {
         else {
             panic!("h, ds and count require a bound");
         };
-        assert_eq!(format!("{:?}", bound.domains).matches("Node {").count(), 3);
+        use fsl_foundation::bound::{DomainKey, DomainKind};
+        let node = fsl_semantics::model::key::object_type_node_key(&clock_fixture_key("Call"))
+            .expect("the actual model owner");
+        let domains = bound.domains.expect("the granted data has unbounded domains");
+        assert_eq!(
+            domains
+                .iter()
+                .map(|(key, kind)| (key.clone(), kind))
+                .collect::<Vec<_>>(),
+            vec![
+                (
+                    DomainKey::Node {
+                        node: node.clone(),
+                        path: vec![0, 0],
+                    },
+                    DomainKind::Integer,
+                ),
+                (
+                    DomainKey::Node {
+                        node: node.clone(),
+                        path: vec![0, 1],
+                    },
+                    DomainKind::Collection,
+                ),
+                (
+                    DomainKey::Node {
+                        node: node.clone(),
+                        path: vec![0, 1, 0],
+                    },
+                    DomainKind::Quantity,
+                ),
+                (
+                    DomainKey::Node {
+                        node,
+                        path: vec![0, 2, 0],
+                    },
+                    DomainKind::Integer,
+                ),
+            ]
+        );
         // A timed subject is built only to be expanded, so it refuses too.
         assert!(matches!(
             TimedSystem::new(&held, "M"),
@@ -5064,14 +5110,8 @@ fn clock_case(world: &World, case: &str) -> filament_exact::Value {
     .expect("the case has no data payload")
 }
 
-fn clock_fixture_state(
-    world: &World,
-    held: &ModelSystem<'_>,
-    timed: &TimedSystem<'_, '_>,
-    extra: Vec<(&str, filament_exact::Value)>,
-) -> TimedState {
+fn clock_base_fields(world: &World) -> BTreeMap<DeclarationKey, filament_exact::Value> {
     use filament_exact::{FieldValue, Value};
-    use fsl_semantics::model::state::{ModelState, StateObject};
     let types = world.package.graph().scope().types();
     let timer = types
         .record(
@@ -5082,6 +5122,25 @@ fn clock_fixture_state(
             )],
         )
         .expect("admitted timer data");
+    BTreeMap::from([
+        (
+            clock_fixture_key("Call/phase"),
+            Value::Integer(Integer::from(0_i64)),
+        ),
+        (clock_fixture_key("Call/inflight"), Value::Boolean(false)),
+        (clock_fixture_key("Call/late"), Value::Boolean(false)),
+        (clock_fixture_key("Call/t"), timer),
+    ])
+}
+
+fn clock_fixture_state(
+    world: &World,
+    held: &ModelSystem<'_>,
+    timed: &TimedSystem<'_, '_>,
+    extra: Vec<(&str, filament_exact::Value)>,
+) -> TimedState {
+    use filament_exact::FieldValue;
+    let types = world.package.graph().scope().types();
     let idle = clock_case(world, "Idle");
     let choice = idle.clone();
     let wrap = types
@@ -5093,14 +5152,8 @@ fn clock_fixture_state(
     let nested = types
         .tuple(clock_composite(world, "NestedSlot"), vec![idle])
         .expect("required NestedSlot field");
-    let mut fields = BTreeMap::from([
-        (
-            clock_fixture_key("Call/phase"),
-            Value::Integer(Integer::from(0_i64)),
-        ),
-        (clock_fixture_key("Call/inflight"), Value::Boolean(false)),
-        (clock_fixture_key("Call/late"), Value::Boolean(false)),
-        (clock_fixture_key("Call/t"), timer),
+    let mut fields = clock_base_fields(world);
+    fields.extend([
         (clock_fixture_key("Call/choice"), choice),
         (clock_fixture_key("Call/wrap"), wrap),
         (clock_fixture_key("Call/nested"), nested),
@@ -5108,6 +5161,15 @@ fn clock_fixture_state(
     for (name, value) in extra {
         fields.insert(clock_fixture_key(&format!("Call/{name}")), value);
     }
+    clock_state(held, timed, fields)
+}
+
+fn clock_state(
+    held: &ModelSystem<'_>,
+    timed: &TimedSystem<'_, '_>,
+    fields: BTreeMap<DeclarationKey, filament_exact::Value>,
+) -> TimedState {
+    use fsl_semantics::model::state::{ModelState, StateObject};
     let state = ModelState {
         populations: BTreeMap::from([(
             clock_fixture_key("calls"),
@@ -5385,7 +5447,12 @@ fn a_model_tuple_clock_keeps_the_authored_data_position_at_run_time() {
             vec![filament_exact::Value::Integer(Integer::from(1_i64))],
         )
         .expect("the typed data part");
-    let state = clock_fixture_state(&world, &held, &timed, vec![("slot", value)]);
+    let state_with_slot = |slot| {
+        let mut fields = clock_base_fields(&world);
+        fields.insert(clock_fixture_key("Call/slot"), slot);
+        clock_state(&held, &timed, fields)
+    };
+    let state = state_with_slot(value);
     assert_eq!(
         timed
             .steps(&state)
@@ -5410,7 +5477,7 @@ fn a_model_tuple_clock_keeps_the_authored_data_position_at_run_time() {
             vec![filament_exact::Value::Integer(Integer::from(0_i64))],
         )
         .expect("zero data");
-    let zero = clock_fixture_state(&world, &held, &timed, vec![("slot", zero)]);
+    let zero = state_with_slot(zero);
     assert!(timed
         .steps(&zero)
         .expect("the data guard is checked")

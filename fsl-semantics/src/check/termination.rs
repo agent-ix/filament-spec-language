@@ -47,6 +47,7 @@ fn unwrap_coerce(node: CheckedNode<'_>) -> CheckedNode<'_> {
 
 /// The measure elements, `None` at a position that is not an element.
 fn elements(member: &TerminationSubject<'_>, measure: CheckedNode<'_>) -> Vec<Option<Element>> {
+    let measure = unwrap_coerce(measure);
     let parts: Vec<CheckedNode<'_>> = match measure.kind() {
         NodeKind::Tuple { arguments, .. } => arguments.iter().map(|id| measure.at(*id)).collect(),
         _ => vec![measure],
