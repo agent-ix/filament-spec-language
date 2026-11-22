@@ -72,8 +72,6 @@ fn nominal_declaration_name(origin: &str) -> Option<&str> {
         .or_else(|| probabilistic_declaration_name(origin))
 }
 
-/// The region `location` names, given each function's and each state
-/// clause's form spans by declaration index.
 /// The span of the node `location` reaches in `spans`, or the `binder`th binder
 /// name token that node declares.
 fn at(binder: Option<usize>, spans: &ExpressionSpans, location: &Location) -> Option<Span> {
@@ -83,6 +81,8 @@ fn at(binder: Option<usize>, spans: &ExpressionSpans, location: &Location) -> Op
     }
 }
 
+/// The region `location` names, given each function's and each state
+/// clause's form spans by declaration index.
 fn resolve<'s>(
     binder: Option<usize>,
     document: Document<'_>,

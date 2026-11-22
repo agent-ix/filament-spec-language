@@ -14,8 +14,8 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fmt;
 use std::sync::Mutex;
 
-use fsl_foundation::Span;
 use filament_semantic_value::location::ExpressionLocation as Location;
+use fsl_foundation::Span;
 
 #[cfg(doc)]
 use super::ExprNode;
@@ -560,10 +560,12 @@ impl std::error::Error for SpansMismatch {}
 mod tests {
     use super::*;
     use filament_semantic_value::location::ExpressionOwner as Origin;
+    use ix_trace_rs::trace;
 
     /// FR-096-AC-1: one tree resolves every location of a deep body in work
     /// linear in the body's size. Walking each location's ancestry afresh
     /// would visit about `DEPTH * DEPTH / 2` links.
+    #[trace("FR-096-AC-1")]
     #[test]
     fn a_tree_visits_each_ancestry_link_once_across_a_deep_body() {
         const DEPTH: usize = 2_000;
