@@ -102,6 +102,7 @@ mod reserved_slot;
 mod retained_rows;
 mod schedulability_claims;
 mod selected_model_rows;
+mod source_enum_carrier;
 mod source_enum_rows;
 mod source_map_debug;
 mod source_objects;

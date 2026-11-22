@@ -241,8 +241,8 @@ pub(crate) use call::{run_reading, run_reading_with_integer_division};
 pub(crate) use identity_form::is_effective_form;
 pub use identity_form::{effective_form, node_key_form, universe_form};
 pub use package_call::{
-    run_package, run_package_with_snapshot_views, run_package_with_sources, PackageCallResult,
-    PackageSourceAttributionFailure,
+    run_package, run_package_with_snapshot_views, run_package_with_sources,
+    run_package_with_sources_and_budget, PackageCallResult, PackageSourceAttributionFailure,
 };
 pub use run_value::ArgumentDefect;
 
