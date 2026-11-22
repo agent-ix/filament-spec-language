@@ -1529,3 +1529,100 @@ fn proved_value_of(record: &AnalyzeRecord) -> Option<Rational> {
         _ => None,
     }
 }
+
+// --- QSL-2850: a limit or a cancel is never `not-yet-implemented` ----------
+
+/// The record of `claim` with the exact-rational budget set to `bits`.
+fn settle_with_rational_bits(world: &World, claim: &str, bits: u64) -> AnalyzeRecord {
+    let engines = Engines::fsl().expect("the linked engines are admitted");
+    let mut request = request(world, claim);
+    request.limits.max_rational_bits = bits;
+    let item = exact_probabilistic_item(RequestIndex::new(0), request);
+    analyze_items(&engines, vec![item], &Cancel::new()).remove(0)
+}
+
+/// FR-281 "Engine refusals": a timed bounded claim whose values outgrow
+/// `max_rational_bits` is `incomplete` naming that limit, not
+/// `unsupported`/`not-yet-implemented`.
+#[trace("TC-2489", "FR-281-AC-6")]
+#[test]
+fn a_timed_deadline_past_the_rational_budget_settles_incomplete_naming_the_limit() {
+    let world = retx(GUARD, true, "", &every_deadlines());
+    let record = settle_with_rational_bits(&world, "Strict", 4);
+    assert_eq!(
+        record.terminal().expect("a terminal record").value(),
+        &TerminalValue::Incomplete(fsl_replay::IncompleteCause::LimitReached {
+            limit: fsl_replay::ModelCheckLimit::ExactProbMaxRationalBits,
+            value: 4,
+        }),
+        "{record:#?}"
+    );
+}
+
+/// FR-281 "Engine refusals": a timed bound that equals the exact value stays
+/// inside the interval at every precision, which is `incomplete` with the
+/// precision budget, not `unsupported`/`not-yet-implemented`.
+#[trace("TC-2489", "FR-281-AC-6")]
+#[test]
+fn a_timed_deadline_at_its_exact_value_past_the_rational_budget_settles_precision_budget() {
+    let world = retx(GUARD, true, "", &every_deadlines());
+    let record = settle_with_rational_bits(&world, "Deadline", 4);
+    assert!(
+        matches!(
+            record.terminal().expect("a terminal record").value(),
+            TerminalValue::Incomplete(fsl_replay::IncompleteCause::PrecisionBudget { .. })
+        ),
+        "{record:#?}"
+    );
+}
+
+/// FR-281 "Engine refusals": cancelling a timed refutation at any poll
+/// settles `incomplete` with the cancel's source, or finishes `refuted`; no
+/// poll turns it into `unsupported`/`not-yet-implemented`.
+#[trace("TC-2492", "FR-281-AC-6")]
+#[test]
+fn cancelling_a_timed_refutation_at_any_poll_is_cancelled_never_unsupported() {
+    use std::sync::atomic::{AtomicU32, Ordering};
+    use std::sync::{Arc, OnceLock};
+
+    let world = retx(GUARD, true, TWO_DELAYS, &every_deadlines());
+    let engines = Engines::fsl().expect("the linked engines are admitted");
+    let run = |cancel: &Cancel| {
+        let item = exact_probabilistic_item(RequestIndex::new(0), request(&world, "Strict"));
+        analyze_items(&engines, vec![item], cancel).remove(0)
+    };
+    let live = Cancel::new();
+    let _counting = live.count_charges();
+    assert!(is_refuted(&run(&live)), "the positive control refutes");
+    let total = live.charges();
+    assert!(total > 0);
+    let cause = filament_exact::CancelCause::Requested;
+    let mut cancelled = 0_u32;
+    let stride = (total / 150).max(1);
+    for at in (1..=total).step_by(stride as usize) {
+        let slot = Arc::new(OnceLock::<Cancel>::new());
+        let weak = Arc::downgrade(&slot);
+        let polls = Arc::new(AtomicU32::new(0));
+        let seen = Arc::clone(&polls);
+        let cancel = Cancel::observing(move || {
+            if seen.fetch_add(1, Ordering::Relaxed) + 1 == at {
+                weak.upgrade()
+                    .expect("the run owns the slot")
+                    .get()
+                    .expect("the slot is initialized")
+                    .cancel(cause);
+            }
+        });
+        slot.set(cancel.clone()).expect("initialized once");
+        let record = run(&cancel);
+        match record.terminal().expect("a terminal record").value() {
+            TerminalValue::Refuted => {}
+            TerminalValue::Incomplete(fsl_replay::IncompleteCause::Cancelled { source }) => {
+                assert_eq!(*source, cause);
+                cancelled += 1;
+            }
+            other => panic!("cancel at poll {at} of {total} settled {other:?}"),
+        }
+    }
+    assert!(cancelled > 0, "some poll must land inside the run");
+}
