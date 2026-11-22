@@ -134,9 +134,6 @@ fn node_words(node: &CheckedNodeId) -> String {
 pub enum PendingFamily {
     /// A claimless `simulation` item (FR-634).
     Simulation,
-    /// An item an external provider decides: the package route has no
-    /// provider request over an admitted package yet.
-    Provider,
     /// A derived item other than a model subject's deadlock-freedom item
     /// (FSpec FR-368).
     Derived,
@@ -174,7 +171,6 @@ impl PendingFamily {
     pub const fn name(self) -> &'static str {
         match self {
             Self::Simulation => "simulation",
-            Self::Provider => "provider",
             Self::Derived => "derived",
             Self::LoopInvariant => "loop-invariant",
             Self::LoopTermination => "loop-termination",
@@ -290,7 +286,14 @@ enum Route<'a> {
     Deadlock,
     StateClause,
     StateGraph(Box<PackageStateGraphSubject<'a>>),
-    Value(Box<ValueTarget<'a>>),
+    Value(Box<PackageValue<'a>>),
+}
+
+/// A Boolean value clause's target over the package and the semantic type of
+/// its body, which is the `result_bound` of the clause's provider request item.
+struct PackageValue<'a> {
+    target: ValueTarget<'a>,
+    result_bound: Option<filament_exact::NodeKey>,
 }
 
 /// An authored clause and the optional protocol subject it runs over.
@@ -577,24 +580,33 @@ pub fn settle_package_run(
         .map_err(|failure| {
             AnalyzeDocumentError::Refused(super::super::AnalyzeRefusal::Binding(failure))
         })?;
-        // A provider decides no value item over an admitted package yet.
-        for item in &negotiated {
-            let provider = matches!(routes.get(&item.item.request_index), Some(Route::Value(_)))
+        // A provider's request over the package carries the admitted bytes
+        // and their dependency closure, read once for every item it decides.
+        let provider_decides = |item: &NegotiatedItem| {
+            matches!(routes.get(&item.item.request_index), Some(Route::Value(_)))
                 && item.disposition.target().is_some_and(|backend| {
                     engines
                         .get(backend.id())
                         .is_some_and(|engine| engine.provider().is_some())
-                });
-            if provider {
-                return Err(PackageRunError::Pending(PendingPackageFamily {
-                    request_index: Some(item.item.request_index),
-                    note: None,
-                    family: PendingFamily::Provider,
-                    node: None,
-                }));
-            }
-        }
+                })
+        };
+        let admitted = negotiated.iter().any(provider_decides).then(|| {
+            std::sync::Arc::new(crate::provider::AdmittedPackage {
+                name: input.package().package().name().to_owned(),
+                bytes: package_bytes.to_vec(),
+                dependencies: supply
+                    .dependencies
+                    .iter()
+                    .map(|dependency| fsl_replay::HybridProcessDependency {
+                        identity: dependency.identity.clone(),
+                        package: dependency.bytes.to_vec(),
+                    })
+                    .collect(),
+            })
+        });
         let work = WorkInputs {
+            engines,
+            admitted,
             input,
             package_bytes,
             supply,
@@ -1302,7 +1314,7 @@ impl<'r, 'a: 'r> ClaimReads<'r, 'a> {
         index: RequestIndex,
         name: &str,
         selection: &ItemSelection,
-    ) -> Result<Resolution<ValueTarget<'a>>, PackageRunError> {
+    ) -> Result<Resolution<PackageValue<'a>>, PackageRunError> {
         let pending = || {
             PackageRunError::Pending(PendingPackageFamily {
                 request_index: Some(index),
@@ -1386,7 +1398,10 @@ impl<'r, 'a: 'r> ClaimReads<'r, 'a> {
                 subject: own_subject,
                 unrouted,
             }),
-            target,
+            PackageValue {
+                target,
+                result_bound: body.semantic_type.clone(),
+            },
         ))
     }
 
@@ -2079,6 +2094,10 @@ fn tie(
 
 /// What every package-route analysis item reads.
 struct WorkInputs<'w, 'a> {
+    engines: &'w Engines,
+    /// The admitted bytes a provider's request carries, held when a provider
+    /// decides an item.
+    admitted: Option<std::sync::Arc<crate::provider::AdmittedPackage>>,
     input: &'a PackageModelInput<'a>,
     package_bytes: &'a [u8],
     supply: fsl_replay::HandoffSupply<'a>,
@@ -2203,11 +2222,49 @@ impl<'a> WorkInputs<'_, 'a> {
                     |subject| subject.item(item.request_index),
                 )
             }
-            (_, Some(Route::Value(target)))
+            (_, Some(Route::Value(value)))
                 if item.kind == Capability::ValueValidity =>
             {
-                let target = (*target)
-                    .with_limits(fsl_replay::AccountingLimits(self.limits.accounting));
+                let PackageValue {
+                    target,
+                    result_bound,
+                } = *value;
+                let target =
+                    target.with_limits(fsl_replay::AccountingLimits(self.limits.accounting));
+                let backend = negotiated.disposition.target().filter(|backend| {
+                    self.engines
+                        .get(backend.id())
+                        .is_some_and(|engine| engine.provider().is_some())
+                });
+                if let (Some(backend), Some(admitted)) = (backend, &self.admitted) {
+                    // FR-644-AC-8: the provider is sent the request the
+                    // source route sends, over the admitted bytes.
+                    let routed = target
+                        .clause_extent()
+                        .zip(result_bound)
+                        .and_then(|bounds| {
+                            crate::provider::routed_package_clause_item(
+                                self.engines.registrations(),
+                                item.request_index,
+                                &item.claim,
+                                bounds,
+                                item.backend.as_ref(),
+                            )
+                        })
+                        .map(|routed| routed.with_options(item.options.backend_options.clone()));
+                    crate::provider::package_provider_item(
+                        item.request_index,
+                        backend.id(),
+                        std::sync::Arc::clone(admitted),
+                        crate::provider::PackageProviderInput {
+                            family,
+                            packages: self.binding.packages,
+                            routed,
+                            emit: self.limits.emit,
+                            target,
+                        },
+                    )
+                } else {
                 crate::value_check::value_item_in(
                     item.request_index,
                     family,
@@ -2217,6 +2274,7 @@ impl<'a> WorkInputs<'_, 'a> {
                         reported: None,
                     }),
                 )
+                }
             }
             _ => AnalyzeItem::unadapted(item.request_index, item.kind, family),
         };

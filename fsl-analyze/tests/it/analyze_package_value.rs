@@ -167,11 +167,11 @@ fn malformed_package_bytes_refuse_a_value_item_typed() {
 #[test]
 fn a_package_value_clause_with_an_undefined_evaluation_equals_the_source() {
     let declarations =
-        "function Quotient using v(a: Int[0, 9], b: Int[0, 3]): Boolean pure { a div b >= 0 }\n";
+        "function Modulus using v(n: Int[0, 3]): Boolean pure { 6 mod (2 - n) >= 0 }\n";
     let item = assert_parity(
         "package-value-undefined",
         declarations,
-        json!([{"claim": "Quotient", "kind": "value-validity"}]),
+        json!([{"claim": "Modulus", "kind": "value-validity"}]),
     );
     assert_eq!(label(&item), "refuted", "{item}");
 }
