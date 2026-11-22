@@ -544,7 +544,6 @@ fn reversed_prefix_hyper_clauses_emit_their_own_trace_rows() {
 /// FR-488-AC-26: the two clauses' `body` references one wrapper.
 #[trace("TC-3000", "FR-488-AC-26", "FSpec-TC-2027", "FSpec-FR-322-AC-463")]
 #[test]
-#[ignore = "QSL-2400 completed; current blocker has no assigned owner: the two compiled hyper clauses have distinct body wrapper references where the assertion requires one shared wrapper"]
 fn reversed_prefix_hyper_clauses_share_one_body_wrapper() {
     let package = reversed_prefix_package();
     let nodes = hyper_nodes(&package);
