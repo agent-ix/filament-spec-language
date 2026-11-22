@@ -1760,6 +1760,12 @@ pub(crate) enum EngineReport {
     ),
     /// EN-4's record, settled by FR-192's map.
     Statistical(Box<StatisticalRecord>),
+    /// A genuine statistical result with its successful full FR-410 verdict,
+    /// already written under the live runtime owner. Never a counterexample.
+    StatisticalWithVerdict {
+        record: Box<StatisticalRecord>,
+        verdict: Box<serde_json::Value>,
+    },
     /// The value-validity arm's finding.
     Value(Box<value_check::ValueReport>),
     /// The operation-contract arm's finding.
@@ -2105,6 +2111,8 @@ pub struct AnalyzeRecord {
     /// External carrier already built under the producer's original resource
     /// owner. Consuming result output moves it without cloning its subtree.
     pub(crate) spelled_counterexample: Option<Box<serde_json::Value>>,
+    /// Successful full FR-410 verdict retained before its runtime drops.
+    pub(crate) spelled_statistical_verdict: Option<Box<serde_json::Value>>,
     /// EN-1's hyperproperty record, retaining a reproduced trace tuple.
     pub hyper_check: Option<Box<fsl_replay::HyperRecord>>,
     /// The item's request index.
@@ -2200,6 +2208,7 @@ impl AnalyzeRecord {
         Self {
             request_index,
             spelled_counterexample: None,
+            spelled_statistical_verdict: None,
             hyper_check: None,
             claim: None,
             settlement,
@@ -2479,6 +2488,7 @@ impl AnalyzeRecord {
         mut self,
         package: &CheckedPackage,
     ) -> Option<Result<OutcomeItem, OutcomeItemError>> {
+        let verdict = self.spelled_statistical_verdict.take().map(|wire| *wire);
         let wire = self
             .spelled_counterexample
             .take()
@@ -2496,7 +2506,9 @@ impl AnalyzeRecord {
         let undefined = undefined_cause(kind, self.value_check.as_deref());
         let item = wire
             .map_err(OutcomeItemError::from)
-            .and_then(|wire| OutcomeItem::from_analyze(terminal, wire, undefined));
+            .and_then(|wire| {
+                OutcomeItem::from_analyze_with_statistical_verdict(terminal, wire, undefined, verdict)
+            });
         Some(item.map(|item| match self.protocol_conformance.take() {
             Some(output) => item.with_protocol_conformance(output),
             None => item,
@@ -3064,6 +3076,14 @@ fn settle(
         }
         EngineReport::Statistical(statistical) => {
             record(terminal(statistical.into_terminal(index, backend)), None)
+        }
+        EngineReport::StatisticalWithVerdict {
+            record: statistical,
+            verdict,
+        } => {
+            let mut settled = record(terminal(statistical.into_terminal(index, backend)), None);
+            settled.spelled_statistical_verdict = Some(verdict);
+            settled
         }
         EngineReport::FiniteReplay(report) => {
             use crate::protocol_analysis::FiniteReplayReport;

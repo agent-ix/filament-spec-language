@@ -1326,6 +1326,13 @@ impl OutcomeItem {
     /// The item an FR-331 terminal record settles. A vacuous proof is
     /// `inconclusive` with its vacuity cause, never `proved`.
     pub fn from_terminal(record: &TerminalRecord) -> Self {
+        Self::from_terminal_with_statistical_verdict(record, None)
+    }
+
+    fn from_terminal_with_statistical_verdict(
+        record: &TerminalRecord,
+        verdict: Option<serde_json::Value>,
+    ) -> Self {
         let value = record.value();
         let result = ItemLabel::of(value);
         let cause = match value {
@@ -1509,7 +1516,7 @@ impl OutcomeItem {
         // failure of the item, never a document with the member missing.
         let (verdict, result, cause, category) = match value {
             TerminalValue::Measured(measured_verdict) => {
-                match statistical_verdict_wire(measured_verdict) {
+                match verdict.map(Ok).unwrap_or_else(|| statistical_verdict_wire(measured_verdict)) {
                     Ok(wire) => (Some(wire), result, cause, value.category()),
                     Err(_) => (
                         None,
@@ -1579,11 +1586,26 @@ impl OutcomeItem {
         counterexample: Option<serde_json::Value>,
         undefined: Option<(String, String)>,
     ) -> Result<Self, OutcomeItemError> {
+        Self::from_analyze_with_statistical_verdict(record, counterexample, undefined, None)
+    }
+
+    /// Consume a successful full FR-410 verdict written under its genuine live
+    /// runtime owner. Only a measured terminal uses it; absent retention keeps
+    /// the existing unscoped serialization semantics and typed error handling.
+    ///
+    /// # Errors
+    /// As [`Self::from_analyze`]. Failed writes must not be supplied as verdicts.
+    pub fn from_analyze_with_statistical_verdict(
+        record: &TerminalRecord,
+        counterexample: Option<serde_json::Value>,
+        undefined: Option<(String, String)>,
+        verdict: Option<serde_json::Value>,
+    ) -> Result<Self, OutcomeItemError> {
         let mut item = match undefined {
             Some((at, cause)) if matches!(record.value(), TerminalValue::Refuted) => {
                 Self::undefined_evaluation(record.request_index(), at, cause)
             }
-            _ => Self::from_terminal(record),
+            _ => Self::from_terminal_with_statistical_verdict(record, verdict),
         };
         if item.label == ItemLabel::Refuted {
             item.counterexample =
