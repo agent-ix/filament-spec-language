@@ -83,6 +83,8 @@ fn ceilings(
 }
 
 fn qualify(family: Family, count: usize, require_default_denial: bool) {
+    let context = format!("explicit_limit family={family:?} count={count}");
+    super::super::memory_phase(&context, "START");
     let text = source(family, count);
     // Source-derived finite S1/S3 ceilings are fixed before checking, too.
     let input = u64::try_from(text.len()).unwrap();
@@ -96,6 +98,7 @@ fn qualify(family: Family, count: usize, require_default_denial: bool) {
         )
         .unwrap_or_else(|errors| panic!("{family:?}: checking failed ({} refusals)", errors.len()));
     let package = CheckedPackage::link(graph);
+    super::super::memory_phase(&context, "CHECKED");
     let body = package.graph().function_state(0).unwrap().body.body();
     let mut pending = vec![body.root()];
     let mut terms = Vec::with_capacity(count);
@@ -163,6 +166,7 @@ fn qualify(family: Family, count: usize, require_default_denial: bool) {
         edges,
     );
     eprintln!("PREDECLARED family={family:?} count={count} source_bytes={} body_nodes={} edges={edges} shape={} bytes={} read_work={} storage={} location_work={}", text.len(), body.len(), limits.shape, limits.bytes, limits.read_work, limits.storage, limits.locations);
+    super::super::memory_phase(&context, "PREDECLARED");
     let emission = crate::emit::emit_checked(&package, crate::EmitLimits::new(limits.bytes))
         .unwrap_or_else(|failure| {
             panic!("{family:?}: emission failed with code {:?}", failure.code())
@@ -170,6 +174,7 @@ fn qualify(family: Family, count: usize, require_default_denial: bool) {
     let actual_bytes = emission.package().bytes().len();
     assert!(u64::try_from(actual_bytes).unwrap() <= limits.bytes);
     eprintln!("EMITTED family={family:?} bytes={actual_bytes}");
+    super::super::memory_phase(&context, "EMITTED");
     let mut budget = NativeJoinBudget::new(limits.read_work, limits.storage)
         .with_read_storage_limit(limits.storage);
     let read_limits = CheckedPackageReadLimits {
@@ -204,6 +209,7 @@ fn qualify(family: Family, count: usize, require_default_denial: bool) {
             panic!("{family:?}: catalog unavailable")
         }
     };
+    super::super::memory_phase(&context, "READ");
     let charged = budget.consumed();
     let read_storage = budget.read_storage_consumed();
     assert!(charged.work <= limits.read_work && charged.storage <= limits.storage);
@@ -290,9 +296,11 @@ fn qualify(family: Family, count: usize, require_default_denial: bool) {
     let location_work = cursor.work_consumed();
     assert!(location_work <= limits.locations);
     eprintln!("MEASURED family={family:?} count={count} bytes={actual_bytes} rows={} relative_entries={entries} strict_work={} strict_read_storage={read_storage} logical_storage={} location_work={location_work}", rows.len(), charged.work, charged.storage);
+    super::super::memory_phase(&context, "MEASURED");
     drop(cursor);
     drop(admitted);
     drop(emission);
+    super::super::memory_phase(&context, "RELEASED_READ_AND_WIRE");
     if require_default_denial {
         const DEFAULT: u64 = 16_777_216;
         let failure = match crate::emit::emit_checked(&package, crate::EmitLimits::new(DEFAULT)) {
@@ -305,6 +313,7 @@ fn qualify(family: Family, count: usize, require_default_denial: bool) {
         assert_eq!(limit.setting(), fsl_foundation::Setting::EmitOutputBytes);
         assert_eq!(limit.configured_bound(), DEFAULT);
         assert_eq!(limit.actual(), u128::from(DEFAULT) + 1);
+        super::super::memory_phase(&context, "DEFAULT_DENIAL");
         eprintln!(
             "DEFAULT_DENIAL family={family:?} configured={DEFAULT} first_unpaid={}",
             limit.actual()

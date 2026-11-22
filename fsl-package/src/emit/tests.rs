@@ -32,6 +32,36 @@ use serde_json::{json, Value};
 
 use super::*;
 
+/// Diagnostic process samples, never an additional qualification limit.
+/// VmHWM is process-wide (and cumulative across sequential families); VmRSS
+/// records what is resident at this boundary. Missing procfs is non-fatal.
+fn memory_phase(context: &str, phase: &str) {
+    #[cfg(target_os = "linux")]
+    {
+        let status = std::fs::read_to_string("/proc/self/status").ok();
+        let kib = |field: &str| {
+            status.as_deref().and_then(|status| {
+                let mut words = status
+                    .lines()
+                    .find(|line| line.starts_with(field))?
+                    .split_whitespace();
+                words.next()?;
+                let value = words.next()?.parse::<u64>().ok()?;
+                (words.next()? == "kB").then_some(value)
+            })
+        };
+        eprintln!(
+            "MEMORY context={context} phase={phase} rss_kib={:?} process_peak_kib={:?}",
+            kib("VmRSS:"),
+            kib("VmHWM:")
+        );
+    }
+    #[cfg(not(target_os = "linux"))]
+    eprintln!(
+        "MEMORY context={context} phase={phase} rss_kib=unavailable process_peak_kib=unavailable"
+    );
+}
+
 /// [`super::node_id`] for a test's one id.
 fn node_id(key: impl std::borrow::Borrow<NodeKey>) -> CheckedNodeId {
     fsl_semantics::check::wire_id::structural_id(key.borrow())
