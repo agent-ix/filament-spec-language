@@ -1221,6 +1221,8 @@ pub fn read_evaluation_emission<'package>(
     let read = reader.read_emitted(package, emission, identity.clone())?;
     let mut closure = reader.admitted;
     closure.insert(identity.clone(), Arc::clone(&read.admitted));
+    #[cfg(test)]
+    tphase("read-emitted-done");
     let reader_nodes = reader_node_keys(&read.admitted).map_err(|_| ImportViewRefusal::Read {
         package: identity,
         refusal: Box::new(StageFailure::Fault(InternalFault::new(
@@ -1683,4 +1685,17 @@ impl ClosureReader<'_> {
         }
         Ok(())
     }
+}
+
+/// TEMPORARY (QSL-2825): phase timing.
+#[cfg(test)]
+pub(crate) fn tphase(label: &str) {
+    use std::sync::Mutex;
+    use std::time::Instant;
+    static LAST: Mutex<Option<Instant>> = Mutex::new(None);
+    let mut last = LAST.lock().unwrap();
+    let now = Instant::now();
+    let dt = last.map_or(0, |at| now.duration_since(at).as_millis());
+    *last = Some(now);
+    eprintln!("TIME label={label} dt_ms={dt}");
 }

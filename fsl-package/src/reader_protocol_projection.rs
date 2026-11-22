@@ -307,6 +307,8 @@ impl ReaderProtocolProjection {
                 function.clone()
             })
             .collect();
+        #[cfg(test)]
+        crate::checked_v2::tphase("loc-has_rows");
         let mut body_roots = BTreeMap::new();
         for row in &data.body_locations {
             let CheckedBodyLocationOrigin::FunctionBody {
@@ -329,6 +331,8 @@ impl ReaderProtocolProjection {
                 return Err(fault("function-body-origin-is-consistent"));
             }
         }
+        #[cfg(test)]
+        crate::checked_v2::tphase("loc-body_roots");
         for function in &mut self.functions {
             if let Some(root) = body_roots.get(&function.node) {
                 function.body_location = Some(root.clone());
@@ -348,6 +352,8 @@ impl ReaderProtocolProjection {
                 reconstructed_body_locations(admitted, function, work_limit)?,
             );
         }
+        #[cfg(test)]
+        crate::checked_v2::tphase("loc-reconstructed");
         let mut located = Vec::new();
         for function in &self.functions {
             let Some(applications) = rows.get(&function.node) else {
@@ -385,6 +391,8 @@ impl ReaderProtocolProjection {
                 }
             }
         }
+        #[cfg(test)]
+        crate::checked_v2::tphase("loc-walk-located");
         for (position, location, occurrence) in located {
             if let Some(node) = self.nodes.get_mut(position) {
                 node.location = Some(location);
@@ -846,7 +854,11 @@ pub(crate) fn project_package(
     budget: &mut filament_contract_model::NativeJoinBudget,
 ) -> Result<ReaderProtocolSlots, PackageRefusal> {
     use crate::checked_v2::EvaluationWitnessSupplier;
+    #[cfg(test)]
+    crate::checked_v2::tphase("project_package-begin");
     let mut index = source_index(admitted, emission, identities, budget)?;
+    #[cfg(test)]
+    crate::checked_v2::tphase("source_index-done");
     for (admitted, emission) in dependencies {
         let supplied = crate::checked_v2::SourceWitnessSupplier::new(emission)
             .supply(admitted, budget)
@@ -872,7 +884,12 @@ pub(crate) fn project_package(
             .dependencies
             .push(source_index(admitted, emission, identities, budget)?);
     }
-    project_index(&index, admitted, package, requests)
+    #[cfg(test)]
+    crate::checked_v2::tphase("dependencies-done");
+    let projected = project_index(&index, admitted, package, requests);
+    #[cfg(test)]
+    crate::checked_v2::tphase("project_index-done");
+    projected
 }
 
 fn source_index<'wire>(
@@ -891,9 +908,13 @@ fn source_index<'wire>(
         }
         projections.insert(node.node_id.clone(), projection);
     }
+    #[cfg(test)]
+    crate::checked_v2::tphase("source_index-projections-done");
     let equality =
         admit_equality_decisions(admitted, ProjectionSource::Source { emission }, budget)
             .map_err(PackageRefusal::Exhausted)?;
+    #[cfg(test)]
+    crate::checked_v2::tphase("source_index-equality-done");
     WireIndex::new(
         std::borrow::Cow::Owned(equality),
         std::borrow::Cow::Owned(identities),
@@ -911,11 +932,19 @@ fn project_index(
 ) -> Result<ReaderProtocolSlots, PackageRefusal> {
     let rows = OriginRows::new(admitted);
     let mut slots = BTreeMap::new();
+    #[cfg(test)]
+    crate::checked_v2::tphase("origin-rows-done");
     let mut refusal: Option<UnsupportedView> = None;
     for request in requests {
+        #[cfg(test)]
+        crate::checked_v2::tphase("slot-begin");
         let slot = match index.project_slot(&request) {
             Ok(mut projection) => {
+                #[cfg(test)]
+                crate::checked_v2::tphase("slot-projected");
                 let found = rows.pair(&mut projection, &request.origin, package, index)?;
+                #[cfg(test)]
+                crate::checked_v2::tphase("slot-paired");
                 refusal = first_refusal(refusal, found);
                 ReaderSlot::Projected(projection)
             }
