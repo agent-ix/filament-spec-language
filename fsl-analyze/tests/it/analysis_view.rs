@@ -171,7 +171,7 @@ fn value_record_views_and_native_charges_equal_the_source() {
             fsl_replay::value_check::ClaimForm::ScalarOperation
         );
         for flag in [false, true] {
-            let assignment = [Value::Integer(3.into()), Value::Boolean(flag)];
+            let assignment = [Value::Integer(3_i64.into()), Value::Boolean(flag)];
             assert_eq!(
                 package_target
                     .evaluate(&assignment, &Cancel::new())
@@ -204,11 +204,11 @@ fn value_record_views_and_native_charges_equal_the_source() {
     for (name, arguments) in [
         (
             "Guarded",
-            vec![Value::Integer(3.into()), Value::Boolean(false)],
+            vec![Value::Integer(3_i64.into()), Value::Boolean(false)],
         ),
         (
             "Guarded",
-            vec![Value::Integer(3.into()), Value::Boolean(true)],
+            vec![Value::Integer(3_i64.into()), Value::Boolean(true)],
         ),
         ("Ready", vec![enums[0].clone()]),
     ] {
