@@ -320,6 +320,14 @@ pub enum EmitRefusal {
         /// The native construct without a checked-package/v2 literal form.
         construct: &'static str,
     },
+    /// A genuine requirement names a node outside the emitted package form.
+    #[error("requirement kind {kind} has unsupported package shape {shape}")]
+    RequirementNotEmitted {
+        /// The record's capability spelling.
+        kind: &'static str,
+        /// The source fact that has no emitted representation.
+        shape: &'static str,
+    },
     /// A temporal declaration whose selected profile requires a clock
     /// configuration has no exact producer selection.
     #[error(
@@ -510,7 +518,9 @@ impl EmitRefusal {
             Self::ProbabilisticModelNotEmitted { .. } | Self::TimedModelNotEmitted { .. } => {
                 Code::UnsupportedConstruct
             }
-            Self::NativeLiteralNotEmitted { .. } => Code::UnsupportedConstruct,
+            Self::NativeLiteralNotEmitted { .. } | Self::RequirementNotEmitted { .. } => {
+                Code::UnsupportedConstruct
+            }
             Self::MonitorPlanAmbiguous { .. } => Code::InvalidProjectionCorrespondence,
             Self::MonitorBaseRefused(read) => read.code(),
             Self::ClockSelection(_) => Code::InvalidRequest,
@@ -573,7 +583,9 @@ impl EmitRefusal {
             | Self::UnresolvedNodeReference
             | Self::OperandNotInGraph { .. }
             | Self::MissingEqualityIdentityContext { .. } => None,
-            Self::NativeLiteralNotEmitted { .. } => Some("not-yet-implemented"),
+            Self::NativeLiteralNotEmitted { .. } | Self::RequirementNotEmitted { .. } => {
+                Some("not-yet-implemented")
+            }
             Self::MissingTemporalClockSelection { .. } => Some("missing-selection"),
             Self::SurplusTemporalClockSelection { .. }
             | Self::DuplicateTemporalClockSelection { .. }
@@ -7739,18 +7751,13 @@ fn emit_package_inner(
         source_object_rows(graph, &emitted_node_ids)?;
     let selected_source_operation_rows = source_operation_rows(graph, &emitted_node_ids)?;
     let selected_source_tuple_rows = source_tuple_rows(graph, &emitted_node_ids)?;
-    let mut requirement_rows = model_relation_requirements::rows(graph, &emitted_node_ids)?;
-    requirement_rows.extend(value_validity_requirements::rows(
+    let relation_rows = model_relation_requirements::rows(graph, &emitted_node_ids)?;
+    let requirement_rows = value_validity_requirements::rows(
         graph,
         &emitted_node_ids,
         &value_validity_records,
-    )?);
-    let requirement_keys: BTreeMap<_, _> =
-        emitted_node_ids.iter().map(|(key, id)| (id, key)).collect();
-    requirement_rows.sort_by(|left, right| {
-        (requirement_keys.get(&left.claim), &left.occurrence)
-            .cmp(&(requirement_keys.get(&right.claim), &right.occurrence))
-    });
+        &relation_rows,
+    )?;
     let selected_source_collection_rows = source_collection_rows(graph, &emitted_node_ids)?;
     let operation_effects = graph
         .operation_effects()

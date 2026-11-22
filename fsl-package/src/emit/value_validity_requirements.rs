@@ -235,6 +235,7 @@ pub(super) fn rows(
     graph: &CheckedGraph,
     emitted: &HashMap<NodeKey, CheckedNodeId>,
     records: &[(OccurrenceKey, ValueValidityRecord)],
+    existing: &[RequirementItemRow],
 ) -> Result<Vec<RequirementItemRow>, EmitRefusal> {
     let remap = |id: &CheckedNodeId| -> Result<CheckedNodeId, EmitRefusal> {
         emitted
@@ -242,12 +243,42 @@ pub(super) fn rows(
             .cloned()
             .ok_or(EmitRefusal::SourceMapInvariant)
     };
-    let mut rows = Vec::with_capacity(records.len());
-    for (claim, record) in records {
-        let source = graph
-            .requirements()
-            .get(claim)
-            .ok_or(EmitRefusal::SourceMapInvariant)?;
+    let mut rows = Vec::new();
+    for (claim, source) in graph.requirements().iter() {
+        let kind = match source.requirements().kind() {
+            Capability::ValueValidity => CapabilityKind::ValueValidity,
+            Capability::OperationContract => CapabilityKind::OperationContract,
+            Capability::FiniteReplay => CapabilityKind::FiniteReplay,
+            Capability::TemporalSatisfaction => CapabilityKind::TemporalSatisfaction,
+            Capability::GlobalConformance => CapabilityKind::GlobalConformance,
+            Capability::Monitorability => CapabilityKind::Monitorability,
+            Capability::LocalProjection => CapabilityKind::LocalProjection,
+            Capability::Refinement => CapabilityKind::Refinement,
+            Capability::Realizability => CapabilityKind::Realizability,
+            Capability::Composition => CapabilityKind::Composition,
+            Capability::ProbabilisticSatisfaction => CapabilityKind::ProbabilisticSatisfaction,
+            Capability::Schedulability => CapabilityKind::Schedulability,
+        };
+        let claim_id =
+            emitted
+                .get(claim.node())
+                .cloned()
+                .ok_or(EmitRefusal::RequirementNotEmitted {
+                    kind: source.requirements().kind().to_wire(),
+                    shape: "claim-node",
+                })?;
+        let occurrence =
+            checked_occurrence(claim.origin()).ok_or(EmitRefusal::RequirementNotEmitted {
+                kind: source.requirements().kind().to_wire(),
+                shape: "claim-occurrence",
+            })?;
+        if let Some(row) = existing
+            .iter()
+            .find(|row| row.claim == claim_id && row.occurrence == occurrence && row.kind == kind)
+        {
+            rows.push(row.clone());
+            continue;
+        }
         let extent = match source.requirements().extent() {
             ClaimExtent::Bounded => RequirementExtent::Bounded,
             ClaimExtent::Unbounded(domains) => RequirementExtent::Unbounded(
@@ -291,46 +322,55 @@ pub(super) fn rows(
                     .collect::<Result<_, EmitRefusal>>()?,
             ),
         };
-        let record = ValueValidityRecord {
-            node: remap(&record.node)?,
-            owner: remap(&record.owner)?,
-            application: remap(&record.application)?,
-            occurrence: record.occurrence,
-            result_bound: remap(&record.result_bound)?,
-            conversion: record
-                .conversion
-                .as_ref()
-                .map(|(node, ordinal)| -> Result<_, EmitRefusal> { Ok((remap(node)?, *ordinal)) })
-                .transpose()?,
-            path_condition: record
-                .path_condition
+        let record = if kind == CapabilityKind::ValueValidity {
+            let (_, record) = records
                 .iter()
-                .map(|guard| {
-                    Ok(RequirementGuard {
-                        guard: remap(&guard.guard)?,
-                        occurrence: guard.occurrence,
-                        holds: guard.holds,
+                .find(|(key, _)| key == claim)
+                .ok_or(EmitRefusal::SourceMapInvariant)?;
+            Some(ValueValidityRecord {
+                node: remap(&record.node)?,
+                owner: remap(&record.owner)?,
+                application: remap(&record.application)?,
+                occurrence: record.occurrence,
+                result_bound: remap(&record.result_bound)?,
+                conversion: record
+                    .conversion
+                    .as_ref()
+                    .map(|(node, ordinal)| -> Result<_, EmitRefusal> {
+                        Ok((remap(node)?, *ordinal))
                     })
-                })
-                .collect::<Result<_, EmitRefusal>>()?,
-            extent_roots: record
-                .extent_roots
-                .iter()
-                .map(&remap)
-                .collect::<Result<_, _>>()?,
-            objects: record
-                .objects
-                .iter()
-                .map(&remap)
-                .collect::<Result<_, _>>()?,
+                    .transpose()?,
+                path_condition: record
+                    .path_condition
+                    .iter()
+                    .map(|guard| {
+                        Ok(RequirementGuard {
+                            guard: remap(&guard.guard)?,
+                            occurrence: guard.occurrence,
+                            holds: guard.holds,
+                        })
+                    })
+                    .collect::<Result<_, EmitRefusal>>()?,
+                extent_roots: record
+                    .extent_roots
+                    .iter()
+                    .map(&remap)
+                    .collect::<Result<_, _>>()?,
+                objects: record
+                    .objects
+                    .iter()
+                    .map(&remap)
+                    .collect::<Result<_, _>>()?,
+            })
+        } else {
+            None
         };
         rows.push(RequirementItemRow {
-            claim: record.application.clone(),
-            occurrence: checked_occurrence(claim.origin())
-                .ok_or(EmitRefusal::SourceMapInvariant)?,
-            kind: CapabilityKind::ValueValidity,
+            claim: claim_id,
+            occurrence,
+            kind,
             extent,
-            record: Some(record),
+            record,
         });
     }
     Ok(rows)
