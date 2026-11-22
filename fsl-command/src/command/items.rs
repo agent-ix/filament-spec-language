@@ -482,7 +482,9 @@ pub(super) fn run_bytes(
                     {
                         package.bind_population_argument(parameter, selected_object(object)?)?;
                     }
-                    ItemExecution::Run(Box::new(super::package_run::execute(*package)))
+                    ItemExecution::Run(Box::new(super::package_run::execute_with_settle(
+                        *package, settle,
+                    )))
                 }
                 Ok(super::PreparedRun::Package(_)) => {
                     return Err(refused(

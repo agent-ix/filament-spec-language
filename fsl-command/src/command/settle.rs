@@ -145,6 +145,21 @@ fn resolve_held_claims<'a>(
         AnalyzeLimits::unbounded().emit,
     )
     .map_err(|refusal| RunCause::AnalyzeRefused(Box::new(refusal)))?;
+    resolve_held_claims_in(&graph, selection)
+}
+
+/// Resolve document-held selection claims against their admitted artifact's graph.
+pub(super) fn resolve_held_claims_in<'a>(
+    graph: &fsl_semantics::check::wire_id::WireGraph,
+    selection: &'a Requirements,
+) -> Result<std::borrow::Cow<'a, Requirements>> {
+    if selection
+        .items
+        .iter()
+        .all(|entry| index_segments(&entry.claim).is_empty())
+    {
+        return Ok(std::borrow::Cow::Borrowed(selection));
+    }
     let mut resolved = selection.clone();
     for (position, entry) in resolved.items.iter_mut().enumerate() {
         if index_segments(&entry.claim).is_empty() {

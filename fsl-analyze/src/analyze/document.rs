@@ -1688,12 +1688,14 @@ pub fn resolve_items(
 mod composition_item;
 mod held_identity;
 mod package_run;
+pub(crate) mod package_value;
 
 pub use composition_item::CompositionClaim;
 pub use held_identity::HeldIdentityError;
 
 pub use package_run::{
-    settle_package_run, PackageRun, PackageRunError, PendingFamily, PendingPackageFamily,
+    settle_package_call, settle_package_run, PackageRun, PackageRunError, PendingFamily,
+    PendingPackageFamily,
 };
 
 /// One requirement item of a run call (FR-395 "Item of the call") with the

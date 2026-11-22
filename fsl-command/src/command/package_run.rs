@@ -42,7 +42,10 @@ pub struct PreparedPackageRun {
 /// What a package run does once the package is admitted.
 enum Work {
     /// FR-945: call a function the package names.
-    Call(Box<fsl_replay::spine::Call>),
+    Call(
+        Box<fsl_replay::spine::Call>,
+        Option<super::requirements::Requirements>,
+    ),
     /// FR-1039: lower a temporal clause the package names (FR-931). The
     /// bytes are the `cross_evaluate.initial` snapshot.
     Lowering(super::tl::TlLowering, Option<Vec<u8>>),
@@ -95,7 +98,7 @@ impl PreparedPackageRun {
         parameter: &str,
         object: fsl_semantics::model::observation::SelectedObject,
     ) -> Result<()> {
-        let Work::Call(call) = &mut self.work else {
+        let Work::Call(call, _) = &mut self.work else {
             return Err(invalid(
                 "call",
                 "a population argument belongs to a call selection",
@@ -246,12 +249,11 @@ pub(super) fn prepare(
     let Some(call) = &request.call else {
         return Err(invalid("call", "a package run names its call"));
     };
-    if call.requirements.is_some() {
-        return Err(invalid(
-            "call.requirements",
-            "checked-package requirement items need the V2 requirement record from QSL-2543",
-        ));
-    }
+    let requirements = call
+        .requirements
+        .as_ref()
+        .map(|value| super::requirements::read(value, "/call/requirements"))
+        .transpose()?;
     let mut spine_call = super::read_call(call, request)?;
     let admitted = admit(
         directory,
@@ -285,7 +287,7 @@ pub(super) fn prepare(
         budget: admitted.budget,
         packages: admitted.packages,
         model_limits: admitted.model_limits,
-        work: Work::Call(Box::new(spine_call)),
+        work: Work::Call(Box::new(spine_call), requirements),
         selection: admitted.selection,
         models: admitted.models,
         sources: admitted.sources,
@@ -935,6 +937,20 @@ fn read_equality_file(
 /// admitted bytes and its witness rows, call the function and render the
 /// result as the source route renders it.
 pub(super) fn execute(prepared: PreparedPackageRun) -> Result<RunResult> {
+    execute_inner(prepared, None)
+}
+
+pub(super) fn execute_with_settle(
+    prepared: PreparedPackageRun,
+    settle: &super::settle::Settle<'_>,
+) -> Result<RunResult> {
+    execute_inner(prepared, Some(settle))
+}
+
+fn execute_inner(
+    prepared: PreparedPackageRun,
+    settle: Option<&super::settle::Settle<'_>>,
+) -> Result<RunResult> {
     let PreparedPackageRun {
         package,
         package_bytes,
@@ -985,8 +1001,8 @@ pub(super) fn execute(prepared: PreparedPackageRun) -> Result<RunResult> {
                 message: format!("stage_limit_exceeded: {setting}: {failure:?}"),
             }
         })?;
-    let call = match work {
-        Work::Call(call) => *call,
+    let (call, requirements) = match work {
+        Work::Call(call, requirements) => (*call, requirements),
         Work::Clause(work) => {
             let mut result = execute_clause(&bare, &packages, model_limits, &sources, *work)?;
             result.sources = crate::Sources::from_sources(models.into_iter().chain(sources));
@@ -1165,7 +1181,161 @@ pub(super) fn execute(prepared: PreparedPackageRun) -> Result<RunResult> {
     let outcome = called
         .outcome
         .map_err(|refusal| RunCause::SpineRun(Box::new(*refusal)))?;
-    let mut result = output::spine_run_result_for_package(&selection, &call.function, outcome)?;
+    let settled = if let Some(requirements) = &requirements {
+        let settle = settle.ok_or_else(|| {
+            invalid(
+                "call.requirements",
+                "prepared requirement settlement needs the run registry",
+            )
+        })?;
+        Some(settle_value_call(
+            &bare,
+            &package_bytes,
+            &dependencies,
+            &identities,
+            &packages,
+            &call.function,
+            requirements,
+            settle,
+        )?)
+    } else {
+        None
+    };
+    let mut result = output::spine_run_result_for_package_with_items(
+        &selection,
+        &call.function,
+        outcome,
+        settled,
+    )?;
     result.sources = crate::Sources::from_sources(models.into_iter().chain(sources));
     Ok(result)
+}
+
+fn settle_value_call(
+    bare: &fsl_package::BarePackage<'_>,
+    bytes: &[u8],
+    dependencies: &[fsl_package::DependencyArtifact],
+    identities: &fsl_package::ReadIdentityRows,
+    packages: &fsl_semantics::model::intake::PackageInput,
+    function: &str,
+    requirements: &super::requirements::Requirements,
+    settle: &super::settle::Settle<'_>,
+) -> Result<fsl_analyze::analyze::document::SettledRun> {
+    use fsl_analyze::analyze::document::{CallItem, ItemSelection, PackageRun, SubjectSelection};
+    use fsl_package::AnalysisView;
+    let graph = fsl_analyze::analyze::DocumentGraphs::of_bytes(bytes)
+        .map_err(|_| RunCause::AnalyzeFault)?;
+    let resolved = super::settle::resolve_held_claims_in(&graph, requirements)?;
+    let original = requirements;
+    let requirements = resolved.as_ref();
+    let declarations = bare.declared_names();
+    let owners = declarations
+        .iter()
+        .filter(|(name, _)| name == function)
+        .collect::<Vec<_>>();
+    let [(_, owner)] = owners.as_slice() else {
+        return Err(RunCause::AnalyzeFault);
+    };
+    if bare.value_validity_records_of(owner).is_empty() {
+        return Err(RunCause::AnalyzePackage {
+            code: fsl_foundation::Code::UnsupportedConstruct,
+            cause: Some("not-yet-implemented".to_owned()),
+            pointer: Some("/call/requirements".to_owned()),
+            message: "value-validity-record-unavailable: scalar requirement emission awaits authoritative document-held requirement references in Contract IR".to_owned(),
+        });
+    }
+    let mut items = Vec::new();
+    let mut selections = Vec::new();
+    let mut claims = Vec::new();
+    for &position in bare.value_validity_records_of(owner) {
+        let row = bare
+            .requirement_items()
+            .get(position)
+            .ok_or(RunCause::AnalyzeFault)?;
+        if row.kind != filament_contract_model::CapabilityKind::ValueValidity {
+            return Err(invalid(
+                "call.requirements",
+                format!("unsupported requirement kind: {:?}", row.kind),
+            ));
+        }
+        let claim = fsl_foundation::source::provenance::OccurrenceKey::new(
+            bare.node_key(&row.claim).ok_or_else(|| RunCause::AnalyzePackage {
+                code: fsl_foundation::Code::UnsupportedConstruct,
+                cause: Some("not-yet-implemented".to_owned()),
+                pointer: Some("/call/requirements".to_owned()),
+                message: "value-validity-record-unresolved-holder: typed requirement references have no document-held identity".to_owned(),
+            })?,
+            filament_exact::Origin::new(
+                filament_exact::Role::new("expression"),
+                row.occurrence.ordinal,
+            ),
+        );
+        let wire = fsl_replay::claim_locus_wire(&claim).map_err(|_| RunCause::AnalyzeFault)?;
+        let named = requirements.named_for(&wire);
+        items.push(CallItem {
+            claim,
+            request_index: fsl_foundation::RequestIndex::new(position),
+            backend: named.backend.clone(),
+            options: named.options.clone(),
+        });
+        selections.push(ItemSelection {
+            claim: Some(function.to_owned()),
+            kind: Some("value-validity".to_owned()),
+            backend: named
+                .backend
+                .as_ref()
+                .map(|backend| backend.as_str().to_owned()),
+            options: Some(named.options.clone()),
+            ..ItemSelection::default()
+        });
+        claims.push(wire);
+    }
+    if let Some(position) = requirements
+        .items
+        .iter()
+        .position(|entry| !claims.contains(&entry.claim))
+    {
+        return Err(RunCause::UnknownRequirementClaim {
+            claim: original.items[position].claim.clone(),
+        });
+    }
+    let documents = fsl_semantics::model::observation::DocumentProvision::new();
+    let subject = SubjectSelection::default_over(&documents);
+    let identity_bytes = identities
+        .to_bytes(bare.package())
+        .map_err(|_| RunCause::AnalyzeFault)?;
+    fsl_analyze::analyze::document::settle_package_call(
+        PackageRun {
+            package: bare,
+            package_bytes: bytes,
+            supply: fsl_replay::HandoffSupply {
+                dependencies,
+                identities: &identity_bytes,
+                equality: None,
+            },
+            binding: subject.binding(packages, &documents),
+            subject,
+            items: Some(&selections),
+            engines: settle.engines,
+            limits: fsl_analyze::analyze::AnalyzeLimits::unbounded(),
+        },
+        function,
+        &items,
+        settle.negotiate,
+        settle.cancel,
+    )
+    .map_err(|error| match error {
+        fsl_analyze::analyze::document::PackageRunError::Document(
+            fsl_analyze::analyze::document::AnalyzeDocumentError::Refused(refusal),
+        ) => RunCause::AnalyzeRefused(Box::new(refusal)),
+        other @ fsl_analyze::analyze::document::PackageRunError::Pending(_) => {
+            RunCause::AnalyzePackage {
+                code: fsl_foundation::Code::UnsupportedConstruct,
+                cause: Some("not-yet-implemented".to_owned()),
+                pointer: Some("/call/requirements".to_owned()),
+                message: other.to_string(),
+            }
+        }
+        other => invalid("call.requirements", other.to_string()),
+    })
 }

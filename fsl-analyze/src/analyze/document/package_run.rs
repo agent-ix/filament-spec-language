@@ -108,6 +108,10 @@ impl PendingPackageFamily {
                 index.get(),
                 self.note.as_deref().unwrap_or_default()
             ),
+            (Some(index), PendingFamily::ValueShape) => format!(
+                ": items[{}] value-validity has unsupported shape {}{at}",
+                index.get(), self.note.as_deref().unwrap_or("unavailable-type")
+            ),
             (Some(index), PendingFamily::CompositionOwningWorkPermission) => format!(
                 ": items[{}] composition owning execution is pending missing native before-work permission{at}",
                 index.get()
@@ -161,6 +165,8 @@ pub enum PendingFamily {
     LoopTermination,
     /// A named declaration.
     Declaration,
+    /// A value-validity parameter or body form has no package evaluator form.
+    ValueShape,
     /// A selected operation contract needs the source requirement record,
     /// whose operation-contract form the package wire contract does not carry.
     OperationContractRequirementRecord,
@@ -198,6 +204,7 @@ impl PendingFamily {
             Self::LoopInvariant => "loop-invariant",
             Self::LoopTermination => "loop-termination",
             Self::Declaration => "declaration",
+            Self::ValueShape => "value-validity-shape",
             Self::OperationContractRequirementRecord => "operation-contract-requirement-record",
             Self::UnnamedClaim => "unnamed-claim",
             Self::Composition => "composition",
@@ -314,6 +321,7 @@ enum Named<'s> {
         index: RequestIndex,
         name: &'s str,
         selection: &'s ItemSelection,
+        claim: Option<OccurrenceKey>,
     },
     /// A `schedulability` item over a task-set claim (FR-246, FR-633).
     Schedule {
@@ -347,6 +355,7 @@ enum Route<'a> {
 struct PackageValue<'a> {
     target: ValueTarget<'a>,
     result_bound: Option<filament_exact::NodeKey>,
+    record: Option<fsl_route::request::RequirementItem>,
 }
 
 /// An authored clause and the optional protocol subject it runs over.
@@ -367,6 +376,27 @@ struct ClauseRoute<'a> {
 /// [`PackageRunError::Document`] as [`super::settle_run`] refuses or faults.
 pub fn settle_package_run(
     run: PackageRun<'_>,
+    negotiate: &dyn Negotiate,
+    cancel: &Cancel,
+) -> Result<SettledRun, PackageRunError> {
+    settle_package_run_inner(run, None, negotiate, cancel)
+}
+
+/// Settle the value-validity records owned by a package call (FR-961).
+/// Each call item retains its admitted row index and expression occurrence.
+pub fn settle_package_call(
+    run: PackageRun<'_>,
+    function: &str,
+    call_items: &[super::CallItem],
+    negotiate: &dyn Negotiate,
+    cancel: &Cancel,
+) -> Result<SettledRun, PackageRunError> {
+    settle_package_run_inner(run, Some((function, call_items)), negotiate, cancel)
+}
+
+fn settle_package_run_inner(
+    run: PackageRun<'_>,
+    call: Option<(&str, &[super::CallItem])>,
     negotiate: &dyn Negotiate,
     cancel: &Cancel,
 ) -> Result<SettledRun, PackageRunError> {
@@ -401,7 +431,23 @@ pub fn settle_package_run(
     {
         return Err(PackageRunError::Pending(refusal));
     }
-    let named = resolve_names(package, items)?;
+    let named = if let Some((function, call_items)) = call {
+        if call_items.len() != items.len() {
+            return Err(AnalyzeDocumentError::Fault.into());
+        }
+        call_items
+            .iter()
+            .zip(items)
+            .map(|(item, selection)| Named::Value {
+                index: item.request_index,
+                name: function,
+                selection,
+                claim: Some(item.claim.clone()),
+            })
+            .collect()
+    } else {
+        resolve_names(package, items)?
+    };
     let runnable = named
         .iter()
         .any(|named| !matches!(named, Named::Settled(_)));
@@ -579,11 +625,14 @@ pub fn settle_package_run(
                 index,
                 name,
                 selection,
-            } => match reads.value(index, name, selection)? {
+                claim,
+            } => match reads.value(index, name, selection, claim.as_ref())? {
                 Resolution::Settled(settled) => resolved.push(settled),
                 Resolution::Claim(claim, target) => {
-                    value_claims.push(claim.item.claim.clone());
-                    routes.insert(index, Route::Value(Box::new(target)));
+                    if let Some(target) = target {
+                        value_claims.push(claim.item.claim.clone());
+                        routes.insert(index, Route::Value(Box::new(target)));
+                    }
                     resolved.push(ResolvedItem::Claim(claim));
                 }
             },
@@ -1168,6 +1217,7 @@ fn resolve_names<'s>(
                         index,
                         name,
                         selection,
+                        claim: None,
                     });
                 }
                 return Err(pending(declaration_pending_family(view, declaration)));
@@ -1520,18 +1570,16 @@ impl<'r, 'a: 'r> ClaimReads<'r, 'a> {
         ))
     }
 
-    /// A `value-validity` item over the Boolean value clause the function
-    /// `name` is, as the source route's `resolve_one` resolves it: the
-    /// function body's `claim` occurrence, its extent from the parameter
-    /// domains, the arm's candidates. A function the package form does not
-    /// read (a non-Boolean one, or one whose types or body have no evaluator
-    /// form) refuses the request whole, typed.
+    /// A Boolean value clause or an explicitly selected scalar record.
+    /// Non-Boolean function names retain their declaration's inapplicable
+    /// family; unsupported parameter shapes keep their typed refusal.
     fn value(
         &self,
         index: RequestIndex,
         name: &str,
         selection: &ItemSelection,
-    ) -> Result<Resolution<PackageValue<'a>>, PackageRunError> {
+        selected_claim: Option<&OccurrenceKey>,
+    ) -> Result<Resolution<Option<PackageValue<'a>>>, PackageRunError> {
         let pending = || {
             PackageRunError::Pending(PendingPackageFamily {
                 request_index: Some(index),
@@ -1540,6 +1588,79 @@ impl<'r, 'a: 'r> ClaimReads<'r, 'a> {
                 node: None,
             })
         };
+        let functions = self
+            .package
+            .package()
+            .resolved_graph()
+            .nodes
+            .iter()
+            .filter(|node| {
+                node.node_tag.as_ref() == "function"
+                    && node.semantic_form.as_ref() == "pure_function"
+                    && node.declaration.as_ref().is_some_and(|declared| {
+                        declared.qualified_name.len() == 1
+                            && declared.qualified_name[0].as_ref() == name
+                    })
+            })
+            .collect::<Vec<_>>();
+        let [function] = functions.as_slice() else {
+            return Err(pending());
+        };
+        let inapplicable = || {
+            let declarations = function
+                .occurrences
+                .iter()
+                .filter(|occurrence| {
+                    occurrence.role == filament_contract_model::CheckedOccurrenceRole::Declaration
+                })
+                .collect::<Vec<_>>();
+            let [occurrence] = declarations.as_slice() else {
+                return Err(pending());
+            };
+            let claim = OccurrenceKey::new(
+                self.package
+                    .node_key(&function.node_id)
+                    .ok_or_else(pending)?,
+                filament_exact::Origin::new(
+                    filament_exact::Role::new("declaration"),
+                    occurrence.ordinal,
+                ),
+            );
+            let kind = Capability::ValueValidity;
+            let named = selection.backend.as_deref().map(BackendId::new);
+            let candidates = tie(
+                self.registry.candidates(kind, named.as_ref()),
+                kind,
+                named.as_ref(),
+            );
+            Ok(Resolution::Claim(
+                Box::new(ResolvedClaim {
+                    item: ClaimItem {
+                        request_index: index,
+                        claim,
+                        kind,
+                        extent: ExtentClassification::Bounded,
+                        backend: named,
+                        candidates: candidate_list(&candidates),
+                        options: options(selection, selection.options.clone().unwrap_or_default()),
+                        form: None,
+                    },
+                    claim_name: name.to_owned(),
+                    candidates,
+                    subject: self.own_subject(index, selection)?,
+                    unrouted: selection.unrouted(),
+                }),
+                None,
+            ))
+        };
+        if selected_claim.is_none()
+            && self.package.package().node_kind(&function.semantic_type)
+                != Some(filament_contract_model::CheckedNodeKind::ScalarType(
+                    filament_contract_model::ScalarTypeForm::Boolean,
+                ))
+        {
+            return inapplicable();
+        }
         let body = self
             .package
             .function_body(name)
@@ -1554,19 +1675,62 @@ impl<'r, 'a: 'r> ClaimReads<'r, 'a> {
             })
             .collect();
         clauses.sort();
-        let claim = clauses.first().copied().ok_or_else(pending)?;
-        let target =
-            ValueTarget::select_package(self.package, name, claim).map_err(|_| pending())?;
-        // The package form spells Boolean and integer parameters only.
+        let claim = selected_claim
+            .or_else(|| clauses.first().copied())
+            .ok_or_else(pending)?;
+        let target = match ValueTarget::select_package(self.package, name, claim) {
+            Ok(target) => target,
+            Err(fsl_replay::value_check::PackageSelection::Selection(
+                fsl_replay::value_check::Selection::NoForm,
+            )) if selected_claim.is_none() => {
+                return inapplicable();
+            }
+            Err(refusal) => {
+                return Err(PackageRunError::Pending(PendingPackageFamily {
+                    request_index: Some(index),
+                    note: Some(format!("{refusal:?}")),
+                    family: PendingFamily::ValueShape,
+                    node: None,
+                }));
+            }
+        };
+        // Enum values use the admitted world's complete member identities.
         if !target.parameters().iter().all(|parameter| {
             matches!(
                 parameter.domain(),
                 fsl_replay::value_check::ParameterDomain::Boolean
                     | fsl_replay::value_check::ParameterDomain::Integers(_)
                     | fsl_replay::value_check::ParameterDomain::Unbounded
+                    | fsl_replay::value_check::ParameterDomain::Values(_)
             )
         }) {
-            return Err(pending());
+            let shape = target
+                .parameters()
+                .iter()
+                .find_map(|parameter| match parameter.domain() {
+                    fsl_replay::value_check::ParameterDomain::Union(_) => Some("union".to_owned()),
+                    fsl_replay::value_check::ParameterDomain::Unsupported(_) => {
+                        let nodes = &self.package.package().resolved_graph().nodes;
+                        nodes
+                            .iter()
+                            .find(|node| {
+                                self.package.node_key(&node.node_id).as_ref()
+                                    == Some(&parameter.node())
+                            })
+                            .and_then(|node| {
+                                nodes.iter().find(|ty| ty.node_id == node.semantic_type)
+                            })
+                            .map(|ty| ty.semantic_form.to_string())
+                    }
+                    _ => None,
+                })
+                .unwrap_or_else(|| "unavailable-type".to_owned());
+            return Err(PackageRunError::Pending(PendingPackageFamily {
+                request_index: Some(index),
+                note: Some(shape),
+                family: PendingFamily::ValueShape,
+                node: None,
+            }));
         }
         let kind = Capability::ValueValidity;
         let named = selection.backend.as_deref().map(BackendId::new);
@@ -1582,9 +1746,39 @@ impl<'r, 'a: 'r> ClaimReads<'r, 'a> {
                 return Ok(Resolution::Settled(refused));
             }
         }
-        let extent = target
-            .clause_extent()
-            .map_or(ExtentClassification::Bounded, ExtentClassification::of);
+        let record = if selected_claim.is_some() {
+            let rows = self
+                .package
+                .requirement_items()
+                .iter()
+                .filter(|row| {
+                    super::package_value::occurrence(self.package, row).as_ref() == Some(claim)
+                })
+                .collect::<Vec<_>>();
+            let [row] = rows.as_slice() else {
+                return Err(pending());
+            };
+            Some(
+                super::package_value::requirement_item(
+                    self.package,
+                    row,
+                    index,
+                    self.registry,
+                    named.as_ref(),
+                )
+                .map_err(|_| pending())?,
+            )
+        } else {
+            None
+        };
+        let extent = record.as_ref().map_or_else(
+            || {
+                target
+                    .clause_extent()
+                    .map_or(ExtentClassification::Bounded, ExtentClassification::of)
+            },
+            |record| record.extent(),
+        );
         let candidates = tie(
             self.registry.candidates(kind, named.as_ref()),
             kind,
@@ -1617,10 +1811,11 @@ impl<'r, 'a: 'r> ClaimReads<'r, 'a> {
                 subject: own_subject,
                 unrouted,
             }),
-            PackageValue {
+            Some(PackageValue {
                 target,
                 result_bound: body.semantic_type.clone(),
-            },
+                record,
+            }),
         ))
     }
 
@@ -2884,6 +3079,7 @@ impl<'a> WorkInputs<'_, 'a> {
                 let PackageValue {
                     target,
                     result_bound,
+                    record,
                 } = *value;
                 let target =
                     target.with_limits(fsl_replay::AccountingLimits(self.limits.accounting));
@@ -2895,17 +3091,17 @@ impl<'a> WorkInputs<'_, 'a> {
                 if let (Some(backend), Some(admitted)) = (backend, &self.admitted) {
                     // FR-644-AC-8: the provider is sent the request the
                     // source route sends, over the admitted bytes.
-                    let routed = target
-                        .clause_extent()
-                        .zip(result_bound)
-                        .and_then(|bounds| {
-                            crate::provider::routed_package_clause_item(
-                                self.engines.registrations(),
-                                item.request_index,
-                                &item.claim,
-                                bounds,
-                                item.backend.as_ref(),
-                            )
+                    let routed = record
+                        .or_else(|| {
+                            target.clause_extent().zip(result_bound).and_then(|bounds| {
+                                crate::provider::routed_package_clause_item(
+                                    self.engines.registrations(),
+                                    item.request_index,
+                                    &item.claim,
+                                    bounds,
+                                    item.backend.as_ref(),
+                                )
+                            })
                         })
                         .map(|routed| routed.with_options(item.options.backend_options.clone()));
                     crate::provider::package_provider_item(

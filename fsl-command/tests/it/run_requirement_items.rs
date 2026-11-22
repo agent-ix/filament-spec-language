@@ -70,6 +70,17 @@ fn documents(result: &command::RunResult) -> (Value, Value) {
     (value, outcome)
 }
 
+fn compile_handoff(directory: &Path) -> Vec<u8> {
+    let request = json!({"format":"native-compile/1", "request": {
+        "models": [], "program": {"source": source()},
+        "handoff": {"directory":"handoff", "package_name":"test:requirements",
+            "native_join": {"work_units":1_u64 << 40, "storage":1_u64 << 24}}
+    }});
+    let path = directory.join("compile.json");
+    std::fs::write(&path, request.to_string()).unwrap();
+    command::compile(&path).expect("the requirement package emits")
+}
+
 fn entries(document: &Value) -> Vec<Value> {
     document["requirements"]
         .as_array()
@@ -305,6 +316,12 @@ struct Seen {
     max_frame_bytes: u64,
     /// The FR-331 `options` of every request item the provider received.
     options: Vec<Value>,
+    requests: Vec<Value>,
+    facts: Vec<(
+        filament_exact::NodeKey,
+        Option<fsl_replay::OccurrenceKey>,
+        Vec<fsl_semantics::check::PathGuard>,
+    )>,
 }
 
 /// A process provider that records each request and answers every item
@@ -326,6 +343,14 @@ impl fsl_analyze::provider::ExternalProvider for Recording {
         seen.deadline_ms = request.deadline_ms();
         seen.max_frame_bytes = request.limits().max_frame_bytes;
         let wire = serde_json::to_value(request).expect("the request serializes");
+        seen.requests.push(wire.clone());
+        seen.facts.extend(request.items().iter().map(|item| {
+            (
+                item.result_bound().clone(),
+                item.conversion_context().cloned(),
+                item.path_condition().to_vec(),
+            )
+        }));
         seen.options.extend(
             wire["items"]
                 .as_array()
@@ -344,6 +369,377 @@ fn recording_provider(
     verdict: fsl_analyze::provider::ProviderVerdict,
 ) -> fsl_analyze::analyze::Engine {
     publishing_provider(seen, verdict, &[])
+}
+
+/// The real run requirement consumer reads scalar records from admitted bytes,
+/// retaining guards, bounds, row indices, candidate order and provider requests.
+#[trace("FR-940-AC-13", "FR-961-AC-1")]
+#[test]
+#[ignore = "FR-940 scalar settlement awaits the normal-pinned Contract IR repair of unscoped requirement-row holder references"]
+fn package_scalar_requirement_records_equal_the_source_run() {
+    use fsl_analyze::provider::ProviderVerdict;
+    let unit = "language \"ix:native\" edition \"1-draft\";\nprofile v = \"filament.value.complete/v1\";\nfunction Guarded using v(x: Int[0, 9], p: Boolean): Integer pure { if p then x + 1 else x * 2 }\nfunction Other using v(x: Int[0, 9]): Integer pure { x + 1 }\n";
+    for provider in [false, true] {
+        let directory = tempfile::tempdir().unwrap();
+        let requirements = if provider {
+            json!({"backend": PROVIDER})
+        } else {
+            json!({})
+        };
+        let path = write(
+            directory.path(),
+            "Guarded",
+            json!([
+                {"parameter": "x", "value": {"type": "integer", "value": "3"}},
+                {"parameter": "p", "value": {"type": "boolean", "value": true}}
+            ]),
+            Some(requirements),
+        );
+        std::fs::write(directory.path().join("unit.native"), unit).unwrap();
+        let seen = Arc::new(Mutex::new(Seen::default()));
+        let execute = |path: &Path| {
+            if provider {
+                command::run_with_providers(
+                    path,
+                    &Fr290,
+                    vec![recording_provider(&seen, ProviderVerdict::Proved)],
+                    &fsl_analyze::provider::ProviderOptions::default(),
+                    &filament_exact::Cancel::new(),
+                )
+                .unwrap()
+            } else {
+                command::run(path, &Fr290).unwrap()
+            }
+        };
+        let source_run = execute(&path);
+        let source_requests = std::mem::take(&mut seen.lock().unwrap().requests);
+        let source_facts = std::mem::take(&mut seen.lock().unwrap().facts);
+        let compile = json!({"format": "native-compile/1", "request": {
+            "models": [], "program": {"source": source()},
+            "handoff": {"directory": "handoff", "package_name": "test:requirements",
+                "native_join": {"work_units": 1_u64 << 40, "storage": 1_u64 << 24}}
+        }});
+        let compile_path = directory.path().join("compile.json");
+        std::fs::write(&compile_path, compile.to_string()).unwrap();
+        command::compile(&compile_path).unwrap();
+        let mut request: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        request["request"]
+            .as_object_mut()
+            .unwrap()
+            .remove("program");
+        request["request"]["package"] = json!({"directory": "handoff"});
+        std::fs::write(&path, request.to_string()).unwrap();
+        std::fs::remove_file(directory.path().join("unit.native")).unwrap();
+        let package = execute(&path);
+        let (source_value, source_outcome) = documents(&source_run);
+        let (package_value, package_outcome) = documents(&package);
+        assert_eq!(
+            package_value["requirements"], source_value["requirements"],
+            "{package_value}"
+        );
+        assert_eq!(
+            package_value["registry"], source_value["registry"],
+            "{package_value}"
+        );
+        assert_eq!(
+            package_value["outcome"], source_value["outcome"],
+            "{package_value}"
+        );
+        assert_eq!(
+            package_outcome["items"], source_outcome["items"],
+            "{package_outcome}"
+        );
+        assert_eq!(package.exit_code, source_run.exit_code);
+        let items = entries(&package_value);
+        assert_eq!(
+            items.len(),
+            2,
+            "only Guarded's two scalar operations: {items:?}"
+        );
+        assert!(
+            items
+                .iter()
+                .all(|item| item["request"]["claim"]["occurrence"]["role"] == "expression"),
+            "{items:?}"
+        );
+        if provider {
+            let seen = seen.lock().unwrap();
+            assert_eq!(seen.requests, source_requests);
+            assert_eq!(seen.requests.len(), 1);
+            assert_eq!(seen.requests[0]["items"].as_array().map(Vec::len), Some(2));
+            assert_eq!(seen.facts, source_facts);
+            assert_eq!(seen.facts.len(), 2);
+            assert!(
+                seen.facts.iter().all(|(_, _, guards)| guards.len() == 1),
+                "{:?}",
+                seen.facts
+            );
+        }
+    }
+}
+
+/// Held aliases retain per-item selection and diagnostics; invalid calls
+/// refuse before any external provider receives requirement work.
+#[trace("FR-940-AC-13", "FR-961-AC-1", "FR-960-AC-4")]
+#[test]
+#[ignore = "FR-940 scalar held-claim settlement awaits the normal-pinned Contract IR repair of unscoped requirement-row holder references"]
+fn package_scalar_held_claims_and_bad_calls_preserve_admission() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = sq(directory.path(), Some(json!({})));
+    let baseline = command::run(&path, &Fr290).unwrap();
+    let held = entries(&documents(&baseline).0)[0]["request"]["claim"].clone();
+    let bytes = compile_handoff(directory.path());
+    let graph = fsl_semantics::check::wire_id::WireGraph::of_package_bytes(&bytes).unwrap();
+    let mut structural = held.clone();
+    structural["node"] = graph.structural_value(&held["node"]).unwrap();
+    assert_ne!(structural, held, "the fixture must exercise a held operand");
+    let original: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    let paired = |call: Value, provider: bool| {
+        let seen = Arc::new(Mutex::new(Seen::default()));
+        let run = |path: &Path| {
+            if provider {
+                command::run_with_providers(
+                    path,
+                    &Fr290,
+                    vec![recording_provider(
+                        &seen,
+                        fsl_analyze::provider::ProviderVerdict::Proved,
+                    )],
+                    &fsl_analyze::provider::ProviderOptions::default(),
+                    &filament_exact::Cancel::new(),
+                )
+            } else {
+                command::run(path, &Fr290)
+            }
+        };
+        let mut request = original.clone();
+        request["request"]["call"] = call;
+        std::fs::write(directory.path().join("unit.native"), SQ).unwrap();
+        std::fs::write(&path, request.to_string()).unwrap();
+        let source_run = run(&path);
+        request["request"]
+            .as_object_mut()
+            .unwrap()
+            .remove("program");
+        request["request"]["package"] = json!({"directory":"handoff"});
+        std::fs::write(&path, request.to_string()).unwrap();
+        std::fs::remove_file(directory.path().join("unit.native")).unwrap();
+        let package_run = run(&path);
+        let provider_calls = seen.lock().unwrap().settle_calls;
+        (source_run, package_run, provider_calls)
+    };
+    for claim in [&held, &structural] {
+        let mut call = original["request"]["call"].clone();
+        call["requirements"] = json!({"backend":"missing-backend", "items":[{"claim":claim,"backend":"value-checker"}]});
+        let (source_run, package_run, _) = paired(call, false);
+        let source_run = source_run.unwrap();
+        let package_run = package_run.unwrap();
+        assert_eq!(
+            documents(&package_run).0["requirements"],
+            documents(&source_run).0["requirements"]
+        );
+        assert_eq!(package_run.exit_code, source_run.exit_code);
+    }
+    let mut invalid = held.clone();
+    let segment = invalid["node"]["path"]
+        .as_array_mut()
+        .unwrap()
+        .iter_mut()
+        .find(|segment| segment.get("node").is_some())
+        .unwrap();
+    segment["node"] = json!(u64::MAX);
+    for (requirements, expected_pointer) in [
+        (
+            json!({"items":[{"claim":held},{"claim":structural}]}),
+            "/call/requirements/items/1",
+        ),
+        (
+            json!({"items":[{"claim":invalid}]}),
+            "/call/requirements/items/0/claim/node/path/",
+        ),
+    ] {
+        let mut call = original["request"]["call"].clone();
+        call["requirements"] = requirements;
+        let (source_run, package_run, calls) = paired(call, true);
+        let source_error = source_run.expect_err("source rejects malformed claim");
+        let package_error = package_run.expect_err("package rejects malformed claim");
+        assert_eq!(package_error.cause.code(), source_error.cause.code());
+        let command::RunCause::ClauseRequest {
+            member: source_member,
+            ..
+        } = &source_error.cause
+        else {
+            panic!("{source_error}")
+        };
+        let command::RunCause::ClauseRequest {
+            member: package_member,
+            ..
+        } = &package_error.cause
+        else {
+            panic!("{package_error}")
+        };
+        assert_eq!(package_member, source_member);
+        assert!(package_member.starts_with(expected_pointer));
+        assert_eq!(calls, 0);
+    }
+    for (function, arguments) in [
+        ("Missing", json!([])),
+        (
+            "sq",
+            json!([{"parameter":"x","value":{"type":"boolean","value":true}}]),
+        ),
+    ] {
+        let call = json!({"function":function, "arguments":arguments, "requirements":{"backend":PROVIDER}});
+        let (source_run, package_run, calls) = paired(call, true);
+        let source_error = source_run.expect_err("source rejects the call");
+        let package_error = package_run.expect_err("package rejects the call");
+        assert_eq!(
+            package_error.cause.code(),
+            source_error.cause.code(),
+            "{package_error}"
+        );
+        assert_eq!(
+            package_error.category().exit_code(),
+            source_error.category().exit_code()
+        );
+        assert_eq!(calls, 0, "no provider sees a call that did not admit");
+    }
+}
+
+/// Unavailable scalar records never become an internal fault or a provider
+/// request. Source calls retain their existing settlement path.
+#[trace("FR-940-AC-13", "FR-961-AC-1")]
+#[test]
+fn package_scalar_unavailable_record_refuses_typed_without_provider_work() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = sq(directory.path(), Some(json!({})));
+    let source_run = command::run(&path, &Fr290).expect("Source settlement remains available");
+    assert_eq!(entries(&documents(&source_run).0).len(), 3);
+    let bytes = compile_handoff(directory.path());
+    let artifact: Value = serde_json::from_slice(&bytes).unwrap();
+    assert!(artifact["requirement_items"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .all(|row| row.get("record").is_none()));
+    let mut request: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    request["request"]
+        .as_object_mut()
+        .unwrap()
+        .remove("program");
+    request["request"]["package"] = json!({"directory":"handoff"});
+    request["request"]["call"]["requirements"] = json!({"backend":PROVIDER});
+    std::fs::write(&path, request.to_string()).unwrap();
+    std::fs::remove_file(directory.path().join("unit.native")).unwrap();
+    let seen = Arc::new(Mutex::new(Seen::default()));
+    let error = command::run_with_providers(
+        &path,
+        &Fr290,
+        vec![recording_provider(
+            &seen,
+            fsl_analyze::provider::ProviderVerdict::Proved,
+        )],
+        &fsl_analyze::provider::ProviderOptions::default(),
+        &filament_exact::Cancel::new(),
+    )
+    .expect_err("the holder refusal precedes provider execution");
+    assert_eq!(
+        error.cause.code(),
+        fsl_foundation::Code::UnsupportedConstruct
+    );
+    assert_eq!(error.category().exit_code(), 21);
+    assert!(
+        error
+            .to_string()
+            .contains("value-validity-record-unavailable"),
+        "{error}"
+    );
+    assert_eq!(seen.lock().unwrap().settle_calls, 0);
+    let held = entries(&documents(&source_run).0)[0]["request"]["claim"].clone();
+    let graph = fsl_semantics::check::wire_id::WireGraph::of_package_bytes(&bytes).unwrap();
+    let mut structural = held.clone();
+    structural["node"] = graph.structural_value(&held["node"]).unwrap();
+    assert_ne!(held, structural);
+    let mut invalid = held.clone();
+    invalid["node"]["path"]
+        .as_array_mut()
+        .unwrap()
+        .iter_mut()
+        .find(|segment| segment.get("node").is_some())
+        .unwrap()["node"] = json!(u64::MAX);
+    let mut duplicate_call = request["request"]["call"].clone();
+    duplicate_call["requirements"] = json!({"items":[{"claim":held},{"claim":structural}]});
+    let mut invalid_call = request["request"]["call"].clone();
+    invalid_call["requirements"] = json!({"items":[{"claim":invalid}]});
+    for (call, pointer) in [
+        (
+            json!({"function":"Missing","arguments":[],"requirements":{"backend":PROVIDER}}),
+            None,
+        ),
+        (
+            json!({"function":"sq","arguments":[{"parameter":"x","value":{"type":"boolean","value":true}}],"requirements":{"backend":PROVIDER}}),
+            None,
+        ),
+        (duplicate_call, Some("/call/requirements/items/1")),
+        (
+            invalid_call,
+            Some("/call/requirements/items/0/claim/node/path/"),
+        ),
+    ] {
+        request["request"]["call"] = call;
+        let run = |path: &Path| {
+            command::run_with_providers(
+                path,
+                &Fr290,
+                vec![recording_provider(
+                    &seen,
+                    fsl_analyze::provider::ProviderVerdict::Proved,
+                )],
+                &fsl_analyze::provider::ProviderOptions::default(),
+                &filament_exact::Cancel::new(),
+            )
+        };
+        let mut source_request = request.clone();
+        source_request["request"]
+            .as_object_mut()
+            .unwrap()
+            .remove("package");
+        source_request["request"]["program"] = json!({"source":source()});
+        std::fs::write(directory.path().join("unit.native"), SQ).unwrap();
+        std::fs::write(&path, source_request.to_string()).unwrap();
+        let source_error = run(&path).expect_err("the Source call does not admit");
+        std::fs::remove_file(directory.path().join("unit.native")).unwrap();
+        std::fs::write(&path, request.to_string()).unwrap();
+        let package_error = run(&path).expect_err("the package call does not admit");
+        assert_eq!(
+            package_error.cause.code(),
+            source_error.cause.code(),
+            "{package_error}"
+        );
+        assert_eq!(
+            package_error.category().exit_code(),
+            source_error.category().exit_code()
+        );
+        if let Some(pointer) = pointer {
+            let command::RunCause::ClauseRequest {
+                member: source_member,
+                ..
+            } = &source_error.cause
+            else {
+                panic!("{source_error}")
+            };
+            let command::RunCause::ClauseRequest {
+                member: package_member,
+                ..
+            } = &package_error.cause
+            else {
+                panic!("{package_error}")
+            };
+            assert_eq!(package_member, source_member);
+            assert!(package_member.starts_with(pointer));
+        }
+        assert_eq!(seen.lock().unwrap().settle_calls, 0);
+    }
 }
 
 /// The recording provider whose manifest publishes the option `published`.
@@ -1058,8 +1454,8 @@ fn settled(directory: &Path, requirements: Value) -> Vec<Value> {
 
 /// The refusal envelope of `sq` run with `requirements`.
 fn refusal(directory: &Path, requirements: Value) -> (Value, u8) {
-    let error = command::run(&sq(directory, Some(requirements)), &Fr290)
-        .expect_err("the request refuses");
+    let error =
+        command::run(&sq(directory, Some(requirements)), &Fr290).expect_err("the request refuses");
     (
         error.value().expect("refusal envelope").clone(),
         error.category().exit_code(),
@@ -1077,7 +1473,11 @@ fn a_claim_written_by_a_result_names_its_item_when_supplied_back() {
         directory.path(),
         json!({"backend": "fsl.absent", "items": [{"claim": claim, "backend": "value-checker"}]}),
     );
-    assert_eq!(items[0]["record"]["backend"], "value-checker", "{}", items[0]);
+    assert_eq!(
+        items[0]["record"]["backend"], "value-checker",
+        "{}",
+        items[0]
+    );
     assert_eq!(items[0]["record"]["result"], "proved", "{}", items[0]);
 }
 
@@ -1092,8 +1492,16 @@ fn a_structural_claim_names_its_item() {
         directory.path(),
         json!({"backend": "fsl.absent", "items": [{"claim": claim, "backend": "value-checker"}]}),
     );
-    assert_eq!(items[0]["record"]["backend"], "value-checker", "{}", items[0]);
-    assert!(items[1].to_string().contains("unknown-backend"), "{}", items[1]);
+    assert_eq!(
+        items[0]["record"]["backend"], "value-checker",
+        "{}",
+        items[0]
+    );
+    assert!(
+        items[1].to_string().contains("unknown-backend"),
+        "{}",
+        items[1]
+    );
 }
 
 /// FR-960 "Inputs": a held entry and a structural entry naming two different
@@ -1110,9 +1518,21 @@ fn a_held_entry_and_a_structural_entry_name_their_own_items() {
             {"claim": claims[0], "backend": "value-checker"},
             {"claim": second, "backend": "value-checker"}]}),
     );
-    assert_eq!(items[0]["record"]["backend"], "value-checker", "{}", items[0]);
-    assert_eq!(items[1]["record"]["backend"], "value-checker", "{}", items[1]);
-    assert!(items[2].to_string().contains("unknown-backend"), "{}", items[2]);
+    assert_eq!(
+        items[0]["record"]["backend"], "value-checker",
+        "{}",
+        items[0]
+    );
+    assert_eq!(
+        items[1]["record"]["backend"], "value-checker",
+        "{}",
+        items[1]
+    );
+    assert!(
+        items[2].to_string().contains("unknown-backend"),
+        "{}",
+        items[2]
+    );
 }
 
 /// FR-960 "Refusals before the call": one claim written in both forms is two

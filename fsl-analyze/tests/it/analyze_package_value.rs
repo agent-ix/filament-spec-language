@@ -18,6 +18,7 @@ const SMALL: &str = "function Small using v(n: Int[0, 9]): Boolean pure { n <= 9
 const LOW: &str = "function Low using v(n: Int[0, 9]): Boolean pure { n < 5 }\n";
 /// A scalar operation that stays inside its result bound everywhere.
 const WIDE: &str = "function Wide using v(x: Int[0, 9]): Int[0, 10] pure { x + 1 }\n";
+const ENUM: &str = "ordered enum Status { ZED, ALPHA, MID }\nfunction Ready using v(s: Status): Boolean pure { s = Status::MID }\n";
 
 /// The source route's document for `items` over `declarations`, the
 /// package route's document for the same request, and the package bytes.
@@ -38,11 +39,42 @@ fn both(name: &str, declarations: &str, items: &Value) -> (Value, i32, Value, i3
 
 /// The package route's items and exit equal the source route's.
 fn assert_parity(name: &str, declarations: &str, items: Value) -> Value {
-    let (source, source_exit, package, package_exit) = both(name, declarations, &items);
+    assert_result_parity(both(name, declarations, &items))
+}
+
+fn assert_result_parity(
+    (source, source_exit, package, package_exit): (Value, i32, Value, i32),
+) -> Value {
     assert_eq!(package["items"], source["items"], "{package}");
     assert_eq!(package["registry"], source["registry"], "{package}");
+    assert_eq!(package["aggregate"], source["aggregate"], "{package}");
     assert_eq!(package_exit, source_exit, "{package}");
     package["items"][0].clone()
+}
+
+/// A genuine function-only request has no model or observation provision.
+fn function_only_both(name: &str, declarations: &str, items: Value) -> (Value, i32, Value, i32) {
+    let ws = Workspace::new(name);
+    let unit = format!(
+        "language \"ix:native\" edition \"1-draft\";\nprofile v = \"filament.value.complete/v1\";\n{declarations}"
+    );
+    ws.write("program.fsl", unit.as_bytes());
+    let members = json!({"models": [],
+        "program": {"source": {"file": "program.fsl", "authority": "test",
+            "identity": "analyze-unit", "document": "AnalyzeUnit", "formal_revision": 1}},
+        "items": items});
+    let document = json!({"format": "native-analyze/1", "request": members});
+    let source = analyze(&ws.write("analyze.json", document.to_string().as_bytes()));
+    let (members, _) = package_selection(&ws, &members);
+    std::fs::remove_file(ws.path("program.fsl")).expect("the package needs no source");
+    let document = json!({"format": "native-analyze/1", "request": members});
+    let package = analyze(&ws.write("analyze-package.json", document.to_string().as_bytes()));
+    (
+        source.document(),
+        source.exit,
+        package.document(),
+        package.exit,
+    )
 }
 
 /// FR-940-AC-13: a Boolean value clause that holds settles `proved` over
@@ -72,28 +104,108 @@ fn a_package_value_clause_refutation_equals_the_source() {
     assert_eq!(item["replay"]["reproduced"], true, "{item}");
 }
 
-/// FR-940: a value item over a function that is no Boolean value clause has
-/// no package form yet: the request is refused whole, typed
-/// `not-yet-implemented`, and no item settles `unsupported`.
+/// A non-Boolean function declaration is inapplicable on both routes;
+/// its owned scalar operation records are distinct claims.
 #[trace("TC-2410", "FR-940-AC-13")]
 #[test]
-fn a_package_value_item_over_a_scalar_function_is_refused_typed() {
-    let body = format!("{WIDE}{}", bounded());
-    let ws = Workspace::new("package-value-scalar-refused");
-    let items = json!([{"claim": "Wide", "kind": "value-validity"}]);
-    let _ = counter_request(&ws, &body, items.clone());
-    let (members, _) = package_selection(&ws, &request_members(Some(items)));
-    let document = json!({"format": "native-analyze/1", "request": members});
-    let run = analyze(&ws.write("analyze-package.json", document.to_string().as_bytes()));
-    let document = run.document();
-    assert_eq!(document["items"], json!([]), "{document}");
-    assert_eq!(
-        document["diagnostics"][0]["code"], "unsupported_construct",
-        "{document}"
+fn a_package_value_item_over_a_scalar_function_is_inapplicable() {
+    let item = assert_parity(
+        "package-value-scalar-inapplicable",
+        WIDE,
+        json!([{"claim": "Wide", "kind": "value-validity"}]),
     );
     assert_eq!(
-        document["diagnostics"][0]["cause"], "not-yet-implemented",
-        "{document}"
+        item["record"]["diagnostic"]["cause"], "inapplicable-kind",
+        "{item}"
+    );
+}
+
+/// An enum parameter enumerates and spells the same first counterexample
+/// from authenticated package identities, including canonical member order.
+#[trace("TC-2410", "FR-940-AC-13")]
+#[test]
+fn a_package_value_clause_over_an_enum_parameter_equals_the_source() {
+    let item = assert_result_parity(function_only_both(
+        "package-value-enum-parameter",
+        ENUM,
+        json!([{"claim": "Ready", "kind": "value-validity"}]),
+    ));
+    assert_eq!(
+        item["request"]["candidates"]["backends"],
+        json!([fsl_analyze::value_check::manifest::BACKEND_ID]),
+        "{item}"
+    );
+    assert_eq!(label(&item), "refuted", "{item}");
+    assert_eq!(item["replay"]["reproduced"], true, "{item}");
+    assert_eq!(
+        item["counterexample"]["values"][0]["value"]["member"], "ZED",
+        "{item}"
+    );
+    // One assignment consumes the entire budget before a body can run.
+    // Both routes must retain that charge boundary and withhold a witness.
+    let limited = assert_result_parity(function_only_both(
+        "package-value-enum-one-case",
+        ENUM,
+        json!([{"claim": "Ready", "kind": "value-validity",
+            "check": {"limits": {"max_cases": 1}}}]),
+    ));
+    assert_eq!(label(&limited), "incomplete", "{limited}");
+    assert!(limited.get("counterexample").is_none(), "{limited}");
+}
+
+/// Mixed source enum/model observation admission retains its existing shared
+/// type-projector boundary until the normal Contract IR reader supports it.
+#[trace("TC-2410", "FR-940-AC-13")]
+#[test]
+fn a_package_source_enum_beside_a_model_refuses_missing_type_representation() {
+    let (_, _, package, exit) = both(
+        "package-value-enum-model-refusal",
+        ENUM,
+        &json!([{"claim": "Ready", "kind": "value-validity"}]),
+    );
+    assert_eq!(exit, 20, "{package}");
+    assert_eq!(package["items"], json!([]), "{package}");
+    assert_eq!(
+        package["diagnostics"][0]["code"], "unknown_required_feature",
+        "{package}"
+    );
+    assert_eq!(
+        package["diagnostics"][0]["cause"], "unsupported-feature",
+        "{package}"
+    );
+    assert!(
+        package.to_string().contains("missing-type-representation"),
+        "{package}"
+    );
+}
+
+/// Source unions retain the model input's actual form-specific variant gate.
+#[trace("TC-2410", "FR-940-AC-13")]
+#[test]
+fn a_package_value_union_parameter_refusal_names_the_variant_gate() {
+    let declarations = "union Shape { Empty, Circle(Boolean) }\nfunction Same using v(s: Shape): Boolean pure { s = s }\n";
+    let (_, _, package, _) = both(
+        "package-value-union-shape",
+        declarations,
+        &json!([{"claim":"Same","kind":"value-validity"}]),
+    );
+    assert_eq!(package["items"], json!([]), "{package}");
+    assert_eq!(
+        package["diagnostics"][0]["code"], "unsupported_construct",
+        "{package}"
+    );
+    assert_eq!(
+        package["diagnostics"][0]["cause"], "not-yet-implemented",
+        "{package}"
+    );
+    assert!(
+        package["diagnostics"][0]["message"]
+            .as_str()
+            .unwrap()
+            .contains(
+                "the package's variant form has no package form in the model-check input yet"
+            ),
+        "{package}"
     );
 }
 
@@ -159,7 +271,6 @@ fn malformed_package_bytes_refuse_a_value_item_typed() {
         assert_eq!(run.exit, 20, "{name}");
     }
 }
-
 
 /// FR-940-AC-13: a Boolean parameter's counterexample is spelled and
 /// replayed as the source route does.

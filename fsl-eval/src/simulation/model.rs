@@ -119,9 +119,9 @@ pub use contract::{
 pub(crate) use contracts::{verdict, Verdict};
 use encode::declaration_text;
 pub use encode::{
-    canonical_json, declaration_identity_text, encode_reference, reference_canonical_text,
-    run_declaration_name, run_value_bytes, typed_value_json, value_json, ModelKey, RunValueBudget,
-    SingleOwnerRunBudget,
+    canonical_json, declaration_identity_text, encode_reference, package_value_json,
+    reference_canonical_text, run_declaration_name, run_value_bytes, typed_value_json,
+    typed_value_json_with_enum_members, value_json, ModelKey, RunValueBudget, SingleOwnerRunBudget,
 };
 pub use footprints::{FootprintError, FootprintViolation, WithinStop};
 pub use frames::judge::{

@@ -2341,6 +2341,9 @@ impl AnalyzeRecord {
             return Some(Ok(found.clone()));
         }
         if let Some(found) = &self.value_check {
+            if let Some(wire) = found.reproduced.package_wire() {
+                return Some(wire.clone());
+            }
             let Some(package) = package else {
                 // The package route (FR-850) holds no checked graph; a
                 // Boolean or integer assignment needs no declared type to
@@ -2363,11 +2366,12 @@ impl AnalyzeRecord {
                 });
             };
             let scope = package.graph().scope();
-            return Some(fsl_replay::assignments_wire(
+            return Some(fsl_replay::assignments_wire_with_enum_members(
                 &found.parameters,
                 found.reproduced.assignment(),
                 scope.types(),
                 scope.variant_types(),
+                scope.enum_member_index(),
             ));
         }
         if let Some(found) = &self.contract_check {
