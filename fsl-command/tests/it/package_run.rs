@@ -23,10 +23,14 @@ fn source(file: &str) -> Value {
 /// Compiles `unit` in `directory` to `package.json` and the `handoff`
 /// directory, then removes the source.
 fn compile(directory: &Path, unit: &str) {
+    compile_named(directory, unit, "package-run-unit");
+}
+
+fn compile_named(directory: &Path, unit: &str, package_name: &str) {
     std::fs::write(directory.join("unit.native"), unit).unwrap();
     let request = json!({"models": [], "program": {"source": source("unit.native")},
         "output": {"package": "package.json"},
-        "handoff": {"directory": "handoff", "package_name": "package-run-unit",
+        "handoff": {"directory": "handoff", "package_name": package_name,
             "native_join": {"work_units": 1_u64 << 40, "storage": 1_u64 << 24}}});
     let path = directory.join("compile.json");
     std::fs::write(
@@ -523,7 +527,16 @@ fn source_enum_package_calls_match_source_canonical_values_without_source() {
     }
     assert_eq!(expected[1].1, expected[0].1);
     assert_eq!(expected[2].1, json!({"type":"boolean", "value":true}));
-    compile(directory.path(), UNIT);
+    let selected_source = source("unit.native");
+    // The source command compiles under its actual identity label. Select
+    // that same package for the handoff instead of this file's other fixture name.
+    compile_named(
+        directory.path(),
+        UNIT,
+        selected_source["identity"]
+            .as_str()
+            .expect("source identity label"),
+    );
     assert!(!directory.path().join("unit.native").exists());
     for (call, canonical) in expected {
         let (exit, value) = run(
