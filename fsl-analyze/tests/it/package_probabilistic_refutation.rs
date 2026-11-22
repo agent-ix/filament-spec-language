@@ -587,7 +587,7 @@ fn refutation_parity(name: &str, unit: &str, model: &[u8], claim: &str) -> serde
 /// owner. Equal package bytes do not authorize mixed tables or another owner.
 #[trace("FR-940-AC-6", "FR-202-AC-10", "FR-203-AC-8")]
 #[test]
-fn package_negative_replay_authenticates_the_owner_and_complete_claim_occurrence() {
+fn every_scheduler_package_replay_authenticates_owner_ordinal_model_and_slice() {
     use filament_exact::Cancel;
     use fsl_analyze::analyze::{analyze_items, exact_probabilistic_item, Engines};
     use fsl_eval::simulation::model::{ModelCheckInput, ModelSystem, PackageModelInput};
