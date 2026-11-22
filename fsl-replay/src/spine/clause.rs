@@ -1571,7 +1571,11 @@ impl ClauseRunReport {
                     | TemporalVerdict::ProgressLimitReached(_)
                     | TemporalVerdict::ExpansionLimitReached(_)
                     | TemporalVerdict::ActivationIncomplete { .. }
-            ) | ClauseDisposition::Evaluate(CallOutcome::Incomplete(_))
+            ) | ClauseDisposition::Evaluate(
+                CallOutcome::Incomplete(_)
+                    | CallOutcome::RelationshipIncomplete(_)
+                    | CallOutcome::RelationshipLimit(_)
+            )
         );
         let execution = match (&self.finite_window, activation) {
             (Some(window), _) => Some(match window.premises.assessment {
@@ -2338,6 +2342,7 @@ fn run_program_batch_with_compile(
                         model_limits: compiled.model_limits,
                     },
                     &call,
+                    &compiled.program.emitted,
                     &fsl_semantics::model::object_environment::ObjectEnvironment::default(),
                     &fsl_eval::execution::SuppliedBackends::default(),
                     &fsl_eval::execution::PrepareLimits::default(),

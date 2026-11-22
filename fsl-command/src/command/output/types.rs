@@ -230,6 +230,14 @@ pub(super) enum SpineOutcome {
     Incomplete {
         limit: &'static str,
     },
+    #[serde(rename = "incomplete")]
+    IncompleteReasons {
+        reasons: Vec<serde_json::Value>,
+    },
+    #[serde(rename = "incomplete")]
+    IncompleteLimit {
+        limit: &'static str,
+    },
 }
 
 /// The `spine-run-result/1` outcome document (FR-100).

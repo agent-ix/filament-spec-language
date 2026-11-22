@@ -105,6 +105,15 @@ pub struct CallSnapshot {
     pub observation: super::SuppliedObservation,
     /// FR-106's admission limits.
     pub limits: fsl_semantics::model::observation::ObservationLimits,
+    /// FR-1045's caller-selected correlation request, when present.
+    pub relationship_selection: Option<serde_json::Value>,
+    /// The original snapshot relationship extents, before identity stripping
+    /// for ordinary FR-106 snapshot admission.
+    pub relationship_extents: Option<serde_json::Value>,
+    /// Navigation relationships in the selected package's admitted model
+    /// views. Snapshot entries are checked against these after FR-106 admits
+    /// the snapshot.
+    pub relationship_navigation: Option<std::collections::BTreeSet<String>>,
 }
 
 impl std::fmt::Debug for CallSnapshot {
@@ -276,6 +285,11 @@ pub enum CallOutcome {
     },
     /// `Outcome::Incomplete(i)`: `incomplete`, exit 22.
     Incomplete(CallIncomplete),
+    /// FR-1045: relationship admission was incomplete, retaining the exact
+    /// resolver reason documents and carrying no call value.
+    RelationshipIncomplete(Vec<serde_json::Value>),
+    /// FR-1045: relationship admission exceeded one of its named limits.
+    RelationshipLimit(&'static str),
 }
 
 /// FR-277's accounting-limit outcome for `execute`: the counter that could
@@ -336,7 +350,9 @@ impl CallOutcome {
             Self::Completed(_) => Category::Success,
             Self::Refused(refusal) => refusal.category(),
             Self::Undefined { .. } => Category::Undefined,
-            Self::Incomplete(_) => Category::Incomplete,
+            Self::Incomplete(_) | Self::RelationshipIncomplete(_) | Self::RelationshipLimit(_) => {
+                Category::Incomplete
+            }
         }
     }
 }
@@ -456,6 +472,13 @@ pub enum RunRefusal {
         /// The selected temporal clause, when rendering one of its atoms.
         clause: Option<String>,
     },
+    /// A snapshot relationship names no navigation declaration in the
+    /// selected package, discovered after FR-106 snapshot admission.
+    #[error("snapshot relationship at {member} is not declared by the selected package")]
+    RelationshipRequest {
+        /// The snapshot relationship JSON Pointer.
+        member: String,
+    },
     /// The caller's [`Cancel`] stopped the run at one of its stages or at
     /// S6a (ADR-029 LC-3): category incomplete, exit 22, no call outcome.
     #[error("the run was cancelled: {0:?}")]
@@ -530,6 +553,7 @@ impl RunRefusal {
             | Self::PrepareLimit(_)
             | Self::SourceNotSupplied { .. }
             | Self::Fault(_) => "call",
+            Self::RelationshipRequest { .. } => "request",
             Self::Cancelled(_) => return None,
         })
     }
@@ -567,6 +591,7 @@ impl RunRefusal {
             | Self::Unsupported(_)
             | Self::PrepareLimit(_)
             | Self::SourceNotSupplied { .. }
+            | Self::RelationshipRequest { .. }
             | Self::Fault(_) => None,
         }
     }
@@ -578,6 +603,7 @@ impl RunRefusal {
             Self::ReferenceCatalog(error) => super::run_value::catalog_error_code(error),
             Self::Reference(error) => super::run_value::reference_error_code(error),
             Self::Compile(refusal) => refusal.code(),
+            Self::RelationshipRequest { .. } => Code::InvalidRequest,
             Self::MissingDeclaration { .. } => Code::MissingDeclaration,
             Self::UnsupportedResult { .. } | Self::UnsupportedParameter { .. } => {
                 Code::UnknownRequiredFeature
@@ -625,6 +651,7 @@ impl RunRefusal {
             Self::Reference(error) => {
                 object(json!({"path": super::run_value::reference_error_pointer(error)}))
             }
+            Self::RelationshipRequest { member } => object(json!({"path": member})),
             Self::MissingDeclaration { function } | Self::UnsupportedResult { function } => {
                 object(json!({"function": function}))
             }
@@ -1003,6 +1030,7 @@ pub(crate) fn run_reading_with_integer_division<T>(
             model_limits: limits.model,
         },
         call,
+        &emitted,
         objects,
         backends,
         prepare,
@@ -1031,6 +1059,7 @@ pub(crate) fn run_compiled(
     models: &super::AdmittedModels,
     sources: CallSources<'_>,
     call: &Call,
+    emitted: &super::EmittedUnit,
     objects: &ObjectEnvironment,
     backends: &SuppliedBackends<'_>,
     prepare: &PrepareLimits,
@@ -1049,11 +1078,77 @@ pub(crate) fn run_compiled(
     let admitted_world;
     let objects = match &call.snapshot {
         Some(snapshot) => {
-            admitted_world = admit_call_snapshot(package, packages, model_limits, snapshot)?;
+            admitted_world = match admit_call_snapshot(package, packages, model_limits, snapshot) {
+                Ok(objects) => objects,
+                Err(refusal) => {
+                    if let (
+                        Some(navigation),
+                        Some(extents),
+                        RunRefusal::ObjectEnvironment(record),
+                    ) = (
+                        snapshot.relationship_navigation.as_ref(),
+                        snapshot.relationship_extents.as_ref(),
+                        refusal.as_ref(),
+                    ) {
+                        if record.catalog.cause() == "wrong-role-mapping" {
+                            if let Some(relationship) = record.fields.get("relationship") {
+                                if !navigation.contains(relationship) {
+                                    if let Some(member) =
+                                        super::relationships::snapshot_relationship_member(
+                                            Some(extents),
+                                            relationship,
+                                        )
+                                    {
+                                        return Err(Box::new(RunRefusal::RelationshipRequest {
+                                            member,
+                                        }));
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    return Err(refusal);
+                }
+            };
             &admitted_world
         }
         None => objects,
     };
+    if let Some(snapshot) = call.snapshot.as_ref() {
+        if let Some(selection_value) = snapshot.relationship_selection.as_ref() {
+            if let Some(navigation) = snapshot.relationship_navigation.as_ref() {
+                if let Some(member) = super::relationships::unknown_snapshot_relationship(
+                    snapshot.relationship_extents.as_ref(),
+                    navigation,
+                ) {
+                    return Err(Box::new(RunRefusal::RelationshipRequest { member }));
+                }
+            }
+            let selection = super::relationships::RelationshipSelection::read(selection_value)
+                .map_err(|_| {
+                    Box::new(RunRefusal::Fault(InternalFault::new(
+                        "relationship-admission",
+                        "preflighted-selection-remains-well-formed",
+                    )))
+                })?;
+            if let Some(member) = super::relationships::invalid_snapshot_relationship_identity(
+                snapshot.relationship_extents.as_ref(),
+                &selection,
+            ) {
+                return Err(Box::new(RunRefusal::RelationshipRequest { member }));
+            }
+            let producer = selection.producer().clone();
+            let package_selection = relationship_package_selection(emitted)?;
+            let admission = selection.admit(
+                package_selection,
+                snapshot.relationship_extents.as_ref(),
+                objects,
+            );
+            if let Some(outcome) = relationship_call_outcome(admission, &producer) {
+                return Ok(outcome);
+            }
+        }
+    }
     let bound_world;
     let objects = if call.snapshot.is_some() {
         bound_world = bind_snapshot_populations(
@@ -1239,6 +1334,325 @@ pub(crate) fn run_compiled(
         _ => convert_outcome(evaluation, package.graph(), &sources)?,
     };
     Ok(outcome)
+}
+
+fn relationship_package_selection(
+    emitted: &super::EmittedUnit,
+) -> Result<filament_observation::PackageSelection, Box<RunRefusal>> {
+    let package = emitted.package();
+    let value: serde_json::Value = serde_json::from_slice(package.bytes()).map_err(|_| {
+        Box::new(RunRefusal::Fault(InternalFault::new(
+            "relationship-admission",
+            "emitted-package-bytes-are-json",
+        )))
+    })?;
+    let digest =
+        quire_canonical::sha256(&value, quire_canonical::Limits::new(u64::MAX)).map_err(|_| {
+            Box::new(RunRefusal::Fault(InternalFault::new(
+                "relationship-admission",
+                "emitted-package-canonical-digest-is-available",
+            )))
+        })?;
+    Ok(super::relationships::package_selection(
+        package.name().to_owned(),
+        *digest.as_bytes(),
+    ))
+}
+
+/// Converts the relationship resolver's typed outcome into the native-run call outcome.
+pub fn relationship_call_outcome(
+    outcome: filament_observation::AdmissionOutcome,
+    producer: &filament_observation::AdmittedStaticBundle,
+) -> Option<CallOutcome> {
+    use filament_observation::{AdmissionOutcome, RefusalCause, ResourceKind};
+
+    match outcome {
+        AdmissionOutcome::Available { .. } => None,
+        AdmissionOutcome::Incomplete { reasons } => Some(CallOutcome::RelationshipIncomplete(
+            reasons
+                .iter()
+                .map(|reason| relationship_incomplete_reason(reason, producer))
+                .collect(),
+        )),
+        AdmissionOutcome::Refused {
+            cause: RefusalCause::ResourceLimit { limit },
+        } => Some(CallOutcome::RelationshipLimit(match limit {
+            ResourceKind::Records => "max_records",
+            ResourceKind::Members => "max_members",
+            ResourceKind::Relationships => "max_relationships",
+            ResourceKind::RequiredRelationships => "max_required_relationships",
+        })),
+        AdmissionOutcome::Refused { cause } => {
+            let (cause_name, fields) = relationship_refusal(&cause, producer);
+            Some(CallOutcome::Refused(CallRefusal::Record {
+                code: CatalogCode::new("invalid_runtime_input", cause_name),
+                fields,
+                locus: None,
+                location: None,
+            }))
+        }
+    }
+}
+
+fn relationship_incomplete_reason(
+    reason: &filament_observation::IncompleteReason,
+    producer: &filament_observation::AdmittedStaticBundle,
+) -> serde_json::Value {
+    use filament_observation::IncompleteReason;
+
+    let (code, fields) = match reason {
+        IncompleteReason::MissingValuation { record } => (
+            "missing-valuation",
+            serde_json::json!({"record": record.as_str()}),
+        ),
+        IncompleteReason::MissingMembership => ("missing-membership", serde_json::json!({})),
+        IncompleteReason::MissingRelationship { required } => (
+            "missing-relationship",
+            serde_json::json!({"required": required_relationship_json(required, producer)}),
+        ),
+        IncompleteReason::IncompleteRelationshipExtent { required } => (
+            "incomplete-relationship-extent",
+            serde_json::json!({"required": required_relationship_json(required, producer)}),
+        ),
+        IncompleteReason::MissingClosure => ("missing-closure", serde_json::json!({})),
+    };
+    serde_json::json!({"code": code, "fields": fields})
+}
+
+fn required_relationship_json(
+    required: &filament_observation::RequiredRelationship,
+    producer: &filament_observation::AdmittedStaticBundle,
+) -> String {
+    #[derive(serde::Serialize)]
+    struct Revision {
+        namespace: String,
+        value: String,
+    }
+    #[derive(serde::Serialize)]
+    struct Digest {
+        label: String,
+        value: String,
+    }
+    #[derive(serde::Serialize)]
+    struct Authority {
+        bundle_identity: String,
+        bundle_revision: Revision,
+        digest: Digest,
+    }
+    #[derive(serde::Serialize)]
+    struct Subject {
+        authority: Authority,
+        subject_kind: String,
+        authority_local_object_identity: String,
+    }
+    #[derive(serde::Serialize)]
+    struct Slot {
+        declaration_identity: String,
+        authority: Authority,
+        interface_version: String,
+        source: Subject,
+        target: Subject,
+    }
+
+    let subject = |subject: &filament_observation::QualifiedSubject| {
+        let key = subject.authority();
+        Subject {
+            authority: Authority {
+                bundle_identity: key.bundle_identity.clone(),
+                bundle_revision: Revision {
+                    namespace: key.bundle_revision.namespace.clone(),
+                    value: key.bundle_revision.value.clone(),
+                },
+                digest: Digest {
+                    label: key.digest.label.clone(),
+                    value: key.digest.value.clone(),
+                },
+            },
+            subject_kind: std::str::from_utf8(subject.kind().as_bytes())
+                .expect("request subject kinds were decoded from UTF-8 text")
+                .to_owned(),
+            authority_local_object_identity: lower_hex(subject.identity().as_bytes()),
+        }
+    };
+    let value = Slot {
+        declaration_identity: required.declaration_identity().to_owned(),
+        authority: {
+            let key = producer.key();
+            Authority {
+                bundle_identity: key.bundle_identity.clone(),
+                bundle_revision: Revision {
+                    namespace: key.bundle_revision.namespace.clone(),
+                    value: key.bundle_revision.value.clone(),
+                },
+                digest: Digest {
+                    label: key.digest.label.clone(),
+                    value: key.digest.value.clone(),
+                },
+            }
+        },
+        interface_version: producer.interface_version().to_owned(),
+        source: subject(required.source()),
+        target: subject(required.target()),
+    };
+    serde_json::to_string(&value).expect("string-only required-slot JSON serialization succeeds")
+}
+
+fn lower_hex(bytes: &[u8]) -> String {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let mut result = String::with_capacity(bytes.len().saturating_mul(2));
+    for byte in bytes {
+        result.push(char::from(HEX[usize::from(byte >> 4)]));
+        result.push(char::from(HEX[usize::from(byte & 0x0f)]));
+    }
+    result
+}
+
+fn relationship_refusal(
+    refusal: &filament_observation::RefusalCause,
+    producer: &filament_observation::AdmittedStaticBundle,
+) -> (&'static str, BTreeMap<&'static str, String>) {
+    use filament_observation::{ReferenceRefusal, RefusalCause};
+    let no_fields = BTreeMap::new();
+    match refusal {
+        RefusalCause::InvalidSelection(field) => (
+            "invalid-selection",
+            BTreeMap::from([("selection", selection_field(*field).to_owned())]),
+        ),
+        RefusalCause::ProducerVersion => ("producer-version", no_fields),
+        RefusalCause::BindingMismatch { record, field } => (
+            "binding-mismatch",
+            BTreeMap::from([
+                ("record", record.as_str().to_owned()),
+                ("field", binding_field(*field).to_owned()),
+            ]),
+        ),
+        RefusalCause::SubjectMismatch { record } => (
+            "subject-mismatch",
+            BTreeMap::from([("record", record.as_str().to_owned())]),
+        ),
+        RefusalCause::InvalidReference(reference) => match reference {
+            ReferenceRefusal::Empty(component) => (
+                "invalid-reference-empty",
+                BTreeMap::from([("component", reference_component(*component).to_owned())]),
+            ),
+            ReferenceRefusal::ForeignAuthority => {
+                ("invalid-reference-foreign-authority", no_fields)
+            }
+            ReferenceRefusal::WrongSubjectKind => {
+                ("invalid-reference-wrong-subject-kind", no_fields)
+            }
+            ReferenceRefusal::UnknownRelationshipDeclaration { identity } => (
+                "invalid-reference-unknown-relationship-declaration",
+                BTreeMap::from([("identity", identity.clone())]),
+            ),
+            ReferenceRefusal::ReversedEndpoints => {
+                ("invalid-reference-reversed-endpoints", no_fields)
+            }
+            ReferenceRefusal::WrongEndpointKind { endpoint } => (
+                "invalid-reference-wrong-endpoint-kind",
+                BTreeMap::from([(
+                    "endpoint",
+                    match endpoint {
+                        filament_observation::EndpointSide::Source => "source",
+                        filament_observation::EndpointSide::Target => "target",
+                    }
+                    .to_owned(),
+                )]),
+            ),
+        },
+        RefusalCause::RelationshipIdentityContradiction { identity } => (
+            "relationship-identity-contradiction",
+            BTreeMap::from([("identity", lower_hex(identity.as_bytes()))]),
+        ),
+        RefusalCause::RelationshipConflict { required } => (
+            "relationship-conflict",
+            BTreeMap::from([("required", required_relationship_json(required, producer))]),
+        ),
+        RefusalCause::AmbiguousRelationship { required } => (
+            "ambiguous-relationship",
+            BTreeMap::from([("required", required_relationship_json(required, producer))]),
+        ),
+        RefusalCause::ClockMismatch { record } => (
+            "clock-mismatch",
+            BTreeMap::from([("record", record.as_str().to_owned())]),
+        ),
+        RefusalCause::InvalidWindow => ("invalid-window", no_fields),
+        RefusalCause::DuplicateRecord { record } => (
+            "duplicate-record",
+            BTreeMap::from([("record", record.as_str().to_owned())]),
+        ),
+        RefusalCause::DuplicateMember { record } => (
+            "duplicate-member",
+            BTreeMap::from([("record", record.as_str().to_owned())]),
+        ),
+        RefusalCause::MemberRecordMismatch { member, record } => (
+            "member-record-mismatch",
+            BTreeMap::from([
+                ("member", member.as_str().to_owned()),
+                ("record", record.as_str().to_owned()),
+            ]),
+        ),
+        RefusalCause::DerivedIdentityMismatch { artifact } => (
+            "derived-identity-mismatch",
+            BTreeMap::from([("artifact", owner_artifact(*artifact).to_owned())]),
+        ),
+        RefusalCause::ResourceLimit { .. } => ("resource-limit", no_fields),
+    }
+}
+
+fn selection_field(value: filament_observation::SelectionField) -> &'static str {
+    use filament_observation::SelectionField::*;
+    match value {
+        PackageFormat => "package-format",
+        PackageIdentity => "package-identity",
+        BindingIdentity => "binding-identity",
+        BindingSourceIdentity => "binding-source-identity",
+        BindingSchemaIdentity => "binding-schema-identity",
+        BindingSignalIdentity => "binding-signal-identity",
+        BindingTriggerIdentity => "binding-trigger-identity",
+        BindingUnit => "binding-unit",
+        PopulationIdentity => "population-identity",
+        Closure => "closure",
+        Scope => "scope",
+        RecordIdentity => "record-identity",
+        MemberIdentity => "member-identity",
+        RelationshipExtent => "relationship-extent",
+    }
+}
+
+fn binding_field(value: filament_observation::BindingField) -> &'static str {
+    use filament_observation::BindingField::*;
+    match value {
+        Binding => "binding",
+        Source => "source",
+        Schema => "schema",
+        Signal => "signal",
+        Trigger => "trigger",
+        Unit => "unit",
+    }
+}
+
+fn reference_component(value: filament_observation::ReferenceComponent) -> &'static str {
+    use filament_observation::ReferenceComponent::*;
+    match value {
+        SubjectKind => "subject-kind",
+        SubjectIdentity => "subject-identity",
+        RelationshipIdentity => "relationship-identity",
+        RelationshipDeclaration => "relationship-declaration",
+    }
+}
+
+fn owner_artifact(value: filament_observation::OwnerArtifact) -> &'static str {
+    use filament_observation::OwnerArtifact::*;
+    match value {
+        Membership => "membership",
+        MembershipDocument => "membership-document",
+        Population => "population",
+        MembershipPopulation => "membership-population",
+        ObservationSources => "observation-sources",
+        Observation => "observation",
+        CausalRelationship => "causal-relationship",
+    }
 }
 
 /// FR-650 "Population argument": FR-084 admission binds each population the

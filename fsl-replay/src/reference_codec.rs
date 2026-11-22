@@ -2089,6 +2089,7 @@ mod tests {
                 model_limits: limits.model,
             },
             &call,
+            &compiled.emitted_unit,
             &objects,
             &SuppliedBackends::default(),
             &PrepareLimits::default(),

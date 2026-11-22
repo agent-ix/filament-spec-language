@@ -25,6 +25,7 @@ const CONTRACT_VERSION: &str = "filament.checked-package/v2";
 pub struct PreparedPackageRun {
     dependencies: Vec<fsl_package::DependencyArtifact>,
     package: filament_contract_model::CheckedPackageV2,
+    package_bytes: Vec<u8>,
     identities: Option<fsl_package::ReadIdentityRows>,
     equality: Option<fsl_package::ReadEqualityRows>,
     budget: filament_contract_model::NativeJoinBudget,
@@ -73,11 +74,13 @@ struct ClauseWork {
 pub(super) struct AdmittedPackage {
     pub(super) dependencies: Vec<fsl_package::DependencyArtifact>,
     pub(super) package: filament_contract_model::CheckedPackageV2,
+    pub(super) package_bytes: Vec<u8>,
     pub(super) identities: Option<fsl_package::ReadIdentityRows>,
     pub(super) equality: Option<fsl_package::ReadEqualityRows>,
     pub(super) budget: filament_contract_model::NativeJoinBudget,
     pub(super) packages: fsl_semantics::model::intake::PackageInput,
     pub(super) model_limits: fsl_semantics::model::accounting::ModelNormalizationLimits,
+    pub(super) relationship_navigation: Option<std::collections::BTreeSet<String>>,
     pub(super) snapshot: Option<Vec<u8>>,
     /// The observation files [`admit_files`] read, in the order it was given.
     pub(super) observations: Vec<Vec<u8>>,
@@ -250,16 +253,22 @@ pub(super) fn prepare(
     if let Some(bytes) = &admitted.snapshot {
         let limits = fsl_replay::spine::ObservationLimitsWire::resolve(None)
             .map_err(|error| invalid(&error.member, error.reason))?;
+        let (snapshot_bytes, relationship_extents) =
+            super::relationships::snapshot_document(bytes, call.relationships.as_ref())?;
         let observation =
-            fsl_replay::spine::SuppliedObservation::from_document("snapshot", bytes.clone())
+            fsl_replay::spine::SuppliedObservation::from_document("snapshot", snapshot_bytes)
                 .map_err(|error| invalid(&error.member, error.reason))?;
         spine_call.snapshot = Some(fsl_replay::spine::CallSnapshot {
             observation,
             limits,
+            relationship_selection: call.relationships.clone(),
+            relationship_extents,
+            relationship_navigation: admitted.relationship_navigation.clone(),
         });
     }
     Ok(PreparedPackageRun {
         package: admitted.package,
+        package_bytes: admitted.package_bytes,
         dependencies: admitted.dependencies,
         identities: admitted.identities,
         equality: admitted.equality,
@@ -416,6 +425,7 @@ fn prepare_clause(
     };
     Ok(PreparedPackageRun {
         package: admitted.package,
+        package_bytes: admitted.package_bytes,
         dependencies: admitted.dependencies,
         identities: admitted.identities,
         equality: admitted.equality,
@@ -568,6 +578,7 @@ fn prepare_lowering(
     let admitted = admit(directory, request, package, dependent_bytes, initial)?;
     Ok(PreparedPackageRun {
         package: admitted.package,
+        package_bytes: admitted.package_bytes,
         dependencies: admitted.dependencies,
         identities: admitted.identities,
         equality: admitted.equality,
@@ -711,6 +722,7 @@ pub(super) fn admit_files(
         }
         Selected::File(_) => intake.file(&package_path, intake.remaining)?,
     };
+    let package_bytes = bytes.clone();
     require_contract_version(&bytes)?;
     let documents = request
         .models
@@ -775,6 +787,19 @@ pub(super) fn admit_files(
                 .map(|source| source.source().clone())
         })
         .collect::<Result<Vec<_>>>()?;
+    let relationship_navigation = if let Some(selection) = request
+        .call
+        .as_ref()
+        .and_then(|call| call.relationships.as_ref())
+    {
+        Some(super::relationships::validate_package_mappings(
+            selection,
+            admitted.selected_model_packages().map(ToOwned::to_owned),
+            &supplied,
+        )?)
+    } else {
+        None
+    };
     let observations = files
         .iter()
         .map(|file| intake.file(file, intake.remaining))
@@ -782,11 +807,13 @@ pub(super) fn admit_files(
     Ok(AdmittedPackage {
         dependencies,
         package: admitted,
+        package_bytes,
         identities,
         equality,
         budget,
         packages: supplied,
         model_limits: fsl_semantics::model::accounting::ModelNormalizationLimits::default(),
+        relationship_navigation,
         snapshot: None,
         observations,
         selection,
@@ -900,6 +927,7 @@ fn read_equality_file(
 pub(super) fn execute(prepared: PreparedPackageRun) -> Result<RunResult> {
     let PreparedPackageRun {
         package,
+        package_bytes,
         identities,
         equality,
         mut budget,
@@ -1000,11 +1028,37 @@ pub(super) fn execute(prepared: PreparedPackageRun) -> Result<RunResult> {
         .map_err(|failure| {
             use fsl_semantics::model::observation::AdmissionFailure;
             match failure {
-                AdmissionFailure::Refused(record) | AdmissionFailure::Incomplete(record) => {
+                AdmissionFailure::Refused(record) => {
+                    if record.catalog.cause() == "wrong-role-mapping" {
+                        if let (Some(navigation), Some(extents)) = (
+                            snapshot.relationship_navigation.as_ref(),
+                            snapshot.relationship_extents.as_ref(),
+                        ) {
+                            if let Some(relationship) = record.fields.get("relationship") {
+                                if !navigation.contains(relationship) {
+                                    if let Some(member) =
+                                        fsl_replay::spine::snapshot_relationship_member(
+                                            Some(extents),
+                                            relationship,
+                                        )
+                                    {
+                                        return RunCause::SpineRun(Box::new(
+                                            fsl_replay::spine::RunRefusal::RelationshipRequest {
+                                                member,
+                                            },
+                                        ));
+                                    }
+                                }
+                            }
+                        }
+                    }
                     RunCause::SpineRun(Box::new(fsl_replay::spine::RunRefusal::ObjectEnvironment(
                         record,
                     )))
                 }
+                AdmissionFailure::Incomplete(record) => RunCause::SpineRun(Box::new(
+                    fsl_replay::spine::RunRefusal::ObjectEnvironment(record),
+                )),
                 AdmissionFailure::Fault(fault) => {
                     RunCause::SpineRun(Box::new(fsl_replay::spine::RunRefusal::Fault(fault)))
                 }
@@ -1016,6 +1070,68 @@ pub(super) fn execute(prepared: PreparedPackageRun) -> Result<RunResult> {
             None,
         )
     };
+    if let Some(snapshot) = call.snapshot.as_ref() {
+        if let Some(selection_value) = snapshot.relationship_selection.as_ref() {
+            if let Some(navigation) = snapshot.relationship_navigation.as_ref() {
+                if let Some(member) = fsl_replay::spine::unknown_snapshot_relationship(
+                    snapshot.relationship_extents.as_ref(),
+                    navigation,
+                ) {
+                    return Err(RunCause::SpineRun(Box::new(
+                        fsl_replay::spine::RunRefusal::RelationshipRequest { member },
+                    )));
+                }
+            }
+            let relationship_selection =
+                fsl_replay::spine::RelationshipSelection::read(selection_value)
+                    .map_err(|error| invalid(&error.path, error.reason))?;
+            if let Some(member) = fsl_replay::spine::invalid_snapshot_relationship_identity(
+                snapshot.relationship_extents.as_ref(),
+                &relationship_selection,
+            ) {
+                return Err(RunCause::SpineRun(Box::new(
+                    fsl_replay::spine::RunRefusal::RelationshipRequest { member },
+                )));
+            }
+            let producer = relationship_selection.producer().clone();
+            let package_document: serde_json::Value = serde_json::from_slice(&package_bytes)
+                .map_err(|_| {
+                    RunCause::SpineRun(Box::new(fsl_replay::spine::RunRefusal::Fault(
+                        filament_semantic_value::catalog::InternalFault::new(
+                            "relationship-admission",
+                            "admitted-package-bytes-are-json",
+                        ),
+                    )))
+                })?;
+            let digest =
+                quire_canonical::sha256(&package_document, quire_canonical::Limits::new(u64::MAX))
+                    .map_err(|_| {
+                        RunCause::SpineRun(Box::new(fsl_replay::spine::RunRefusal::Fault(
+                            filament_semantic_value::catalog::InternalFault::new(
+                                "relationship-admission",
+                                "admitted-package-canonical-digest-is-available",
+                            ),
+                        )))
+                    })?;
+            let package_selection = fsl_replay::spine::relationship_package_selection(
+                package.name().to_owned(),
+                *digest.as_bytes(),
+            );
+            let admission = relationship_selection.admit(
+                package_selection,
+                snapshot.relationship_extents.as_ref(),
+                &objects,
+            );
+            if let Some(outcome) =
+                fsl_replay::spine::relationship_call_outcome(admission, &producer)
+            {
+                let mut result =
+                    output::spine_run_result_for_package(&selection, &call.function, outcome)?;
+                result.sources = crate::Sources::from_sources(models.into_iter().chain(sources));
+                return Ok(result);
+            }
+        }
+    }
     let cancel = filament_exact::Cancel::new();
     let called = match &snapshot_views {
         Some(views) => fsl_replay::spine::run_package_with_snapshot_views(

@@ -2189,6 +2189,9 @@ fn clause_run_cause(report: &ClauseRunReport, clause: &str) -> Option<ItemCause>
                 Some("resource_exhausted"),
             ))
         }
+        ClauseDisposition::Evaluate(
+            CallOutcome::RelationshipIncomplete(_) | CallOutcome::RelationshipLimit(_),
+        ) => Some(ItemCause::kind("incomplete")),
         ClauseDisposition::Evaluate(CallOutcome::Refused(refusal)) => {
             let (CallRefusal::Record { code, .. } | CallRefusal::Family { code, .. }) = refusal;
             Some(catalog(code.code(), code.cause()))
@@ -2658,6 +2661,18 @@ pub enum ExecuteResult {
     Incomplete {
         /// The exhausted limit.
         limit: ResultLimit,
+    },
+    /// A typed relationship-correlation incompleteness (FR-1045).
+    #[serde(rename = "incomplete")]
+    IncompleteReasons {
+        /// Every exact resolver reason and payload, in resolver order.
+        reasons: Vec<serde_json::Value>,
+    },
+    /// A relationship resolver resource limit (FR-1045).
+    #[serde(rename = "incomplete")]
+    IncompleteLimit {
+        /// Exact exhausted resolver limit.
+        limit: &'static str,
     },
 }
 
@@ -3331,7 +3346,10 @@ impl OutcomeDocument {
     pub fn from_call(outcome: &CallOutcome) -> Self {
         let mut document = Self::new(
             Operation::Execute,
-            Some(OutcomeStage::S6a),
+            match outcome {
+                CallOutcome::RelationshipIncomplete(_) | CallOutcome::RelationshipLimit(_) => None,
+                _ => Some(OutcomeStage::S6a),
+            },
             outcome.category(),
         );
         match outcome {
@@ -3349,6 +3367,16 @@ impl OutcomeDocument {
             CallOutcome::Incomplete(incomplete) => {
                 document.result = Some(OutcomeResult::Execute(ExecuteResult::Incomplete {
                     limit: ResultLimit::from(incomplete),
+                }));
+            }
+            CallOutcome::RelationshipIncomplete(reasons) => {
+                document.result = Some(OutcomeResult::Execute(ExecuteResult::IncompleteReasons {
+                    reasons: reasons.clone(),
+                }));
+            }
+            CallOutcome::RelationshipLimit(limit) => {
+                document.result = Some(OutcomeResult::Execute(ExecuteResult::IncompleteLimit {
+                    limit,
                 }));
             }
         }
@@ -3382,6 +3410,16 @@ impl OutcomeDocument {
 
     fn run_refusal_document(operation: Operation, refusal: &RunRefusal) -> Self {
         match refusal {
+            RunRefusal::RelationshipRequest { .. } => {
+                Self::new(operation, None, refusal.category()).with_diagnostics(vec![
+                    OutcomeDiagnostic::new(
+                        None,
+                        refusal.code().as_str(),
+                        None,
+                        refusal.to_string(),
+                    ),
+                ])
+            }
             RunRefusal::Compile(compile) => {
                 Self::new(operation, Some(compile.stage().into()), refusal.category())
                     .with_diagnostics(
@@ -3731,6 +3769,24 @@ mod tests {
         let replay = OutcomeDocument::from_replay(&Err(replay_refusal));
         let replay_message = replay.diagnostics()[0].message();
         assert!(replay_message.contains("stage_limits"), "{replay_message}");
+    }
+
+    #[trace("FR-1045-AC-6", "FR-100-AC-6")]
+    #[test]
+    fn post_snapshot_relationship_request_refusal_has_request_path_and_no_result() {
+        let refusal = RunRefusal::RelationshipRequest {
+            member: "/call/snapshot/relationships/1/relationship".to_owned(),
+        };
+        let document = OutcomeDocument::from_run_refusal(Operation::Execute, &refusal);
+        let wire = json_of(&document);
+        assert_eq!(wire["format"], "filament-outcome/1");
+        assert_eq!(wire["category"], "refusal");
+        assert!(wire.get("result").is_none(), "{wire}");
+        assert_eq!(wire["diagnostics"][0]["code"], "invalid-request");
+        assert_eq!(
+            wire["diagnostics"][0]["details"]["path"],
+            "/call/snapshot/relationships/1/relationship"
+        );
     }
 
     #[test]
@@ -4895,6 +4951,32 @@ mod tests {
                 "artifacts": [],
                 "result": {"kind": "undefined", "reason": "sum-out-of-domain"},
             })
+        );
+    }
+
+    #[trace("FR-100-AC-24", "FR-1045-AC-5")]
+    #[test]
+    fn relationship_incomplete_call_preserves_reasons_without_a_stage() {
+        let reasons = vec![json!({
+            "code": "missing-relationship",
+            "fields": {"required": "{\"declarationIdentity\":\"ix://test/R\"}"}
+        })];
+        let document =
+            OutcomeDocument::from_call(&CallOutcome::RelationshipIncomplete(reasons.clone()));
+        let value = json_of(&document);
+        assert_eq!(value["last_stage"], Value::Null);
+        assert_eq!(value["category"], "incomplete");
+        assert_eq!(
+            value["result"],
+            json!({"kind": "incomplete", "reasons": reasons})
+        );
+
+        let limited = OutcomeDocument::from_call(&CallOutcome::RelationshipLimit("max_records"));
+        let limited = json_of(&limited);
+        assert_eq!(limited["category"], "incomplete");
+        assert_eq!(
+            limited["result"],
+            json!({"kind": "incomplete", "limit": "max_records"})
         );
     }
 
