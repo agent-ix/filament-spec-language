@@ -189,6 +189,18 @@ impl SourceEnumCatalog {
             native_row::items(budget, at, row.members.len())?;
             for member in &row.members {
                 work(budget, at)?;
+                if !node_equal(
+                    member.variant.owner(),
+                    &row.declaration.node_key,
+                    budget,
+                    at,
+                )? || !text_equal(member.variant.case(), &member.case, budget, at)?
+                {
+                    return Err(SourceEnumCatalogError::InvalidJoinedInvariant {
+                        row_kind: SourceEnumRowKind::Source,
+                        index: sources.len(),
+                    });
+                }
                 native_row::enum_member(budget, at, member)?;
             }
             // Reserve before cloning the row, including its owned member vector.
@@ -675,6 +687,81 @@ mod tests {
                 catalog.classify_shape(&wrong, &mut budget).unwrap(),
                 EnumScope::Missing
             ));
+        }
+    }
+
+    #[trace("TC-1331", "FR-531-AC-50", "FR-531-AC-43")]
+    #[test]
+    fn source_enum_catalog_refuses_paired_variant_identity_changes_accepted_by_native_join() {
+        let fixture = fixture(ENUMS, false);
+        let mut budget = NativeJoinBudget::new(u64::MAX, u64::MAX);
+        let original = fixture
+            .emission
+            .identity_rows(&fixture.admitted, &mut budget)
+            .unwrap();
+        let bytes = original.to_bytes(&fixture.admitted).unwrap();
+        let file: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(file["format"], "filament.checked-handoff.identities/6");
+        let rows = file["source_enums"]
+            .as_array()
+            .expect("real source enum carrier");
+        assert_eq!(rows.len(), 2);
+        let target = rows
+            .iter()
+            .position(|row| {
+                row["declaration"]["qualified_declaration"] == serde_json::json!(["Status"])
+            })
+            .expect("real Status declaration");
+        let other = rows
+            .iter()
+            .position(|row| {
+                row["declaration"]["qualified_declaration"] == serde_json::json!(["Level"])
+            })
+            .expect("another actual admitted enum key");
+        let target_node = rows[target]["declaration"]["structural_node"].clone();
+        for (field, replacement) in [
+            ("owner", rows[other]["declaration"]["node_key"].clone()),
+            ("case", serde_json::json!("FRESH_CASE_2765")),
+        ] {
+            let mut changed = file.clone();
+            let row = &mut changed["source_enums"][target];
+            row["declaration"]["shape"]["variants"][0][field] = replacement.clone();
+            row["members"][0]["variant"][field] = replacement;
+            let bytes = serde_json::to_vec(&changed).unwrap();
+            let mut ledger = NativeJoinBudget::new(u64::MAX, u64::MAX);
+            let reread = crate::ReadIdentityRows::read(&bytes, &fixture.admitted, &mut ledger)
+                .expect("paired claims still satisfy the pinned IR structural join");
+            let joined = reread
+                .selected(&fixture.admitted, &mut ledger)
+                .expect("the real native join accepts the paired shape/member mutation");
+            let (index, row) = joined
+                .source_enum_rows()
+                .enumerate()
+                .find(|(_, row)| {
+                    serde_json::to_value(&row.declaration.structural_node).unwrap() == target_node
+                })
+                .expect("mutated original declaration remains joined");
+            let variant = row.declaration.shape.variants().next().unwrap();
+            assert_eq!(variant, &row.members[0].variant);
+            match field {
+                "owner" => assert_ne!(variant.owner(), &row.declaration.node_key),
+                "case" => assert_ne!(variant.case(), row.members[0].case.as_ref()),
+                _ => unreachable!(),
+            }
+            assert!(
+                matches!(
+                    SourceEnumCatalog::from_joined(&joined, &[], &mut ledger),
+                    Err(SourceEnumCatalogError::InvalidJoinedInvariant {
+                        row_kind: SourceEnumRowKind::Source, index: refused,
+                    }) if refused == index
+                ),
+                "the catalog must refuse instead of substituting a different VariantId for {field}"
+            );
+            assert_eq!(
+                ledger.first_unpaid(),
+                None,
+                "semantic inconsistency is not exhaustion"
+            );
         }
     }
 
