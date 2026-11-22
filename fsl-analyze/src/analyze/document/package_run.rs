@@ -2360,7 +2360,7 @@ impl<'r, 'a: 'r> ClaimReads<'r, 'a> {
                 let native_invariant = clause.invariant
                     && model_subject
                     && matches!(set.candidates(), [candidate] if candidate.id().as_str() == crate::model_check::manifest::BACKEND_ID);
-                if !set.candidates().is_empty() && !native_invariant {
+                if matches!(set.candidates(), [_]) && !native_invariant {
                     return Err(PackageRunError::Pending(PendingPackageFamily {
                         request_index: Some(index),
                         family: PendingFamily::OperationContractRequirementRecord,

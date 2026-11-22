@@ -274,16 +274,51 @@ fn contract_package_refuses_missing_operation_contract_requirement_record() {
             if let Some(backend) = backend {
                 selection["backend"] = json!(backend);
             }
+            let engines = if backend == Some(SMT) {
+                vec![engine]
+            } else {
+                vec![]
+            };
             let run = contract_package(
                 &format!("pkg-contract-{name}-{}", backend.unwrap_or("default")),
                 &bounded(),
                 json!([selection]),
-                vec![engine],
+                engines,
             );
             assert_contract_record_refusal(&run, 0, name);
             assert!(seen.lock().expect("the provider log").is_empty());
         }
     }
+}
+
+/// Trace: FR-962-AC-1, FR-950-AC-1.
+/// A matching external contract provider leaves two candidates after EN-1 is
+/// excluded. Negotiation must report the ambiguity before requesting a form.
+#[trace("TC-2410", "FR-940-AC-13")]
+#[test]
+fn contract_package_keeps_ambiguous_contract_candidates() {
+    let (engine, seen) = spy_for(
+        ProviderVerdict::Proved,
+        fsl_semantics::check::Capability::OperationContract,
+    );
+    let run = contract_package(
+        "pkg-contract-ambiguous",
+        &bounded(),
+        json!([{"claim": "Inc", "kind": "operation-contract"}]),
+        vec![engine],
+    );
+    let item = run.item(0);
+    assert_eq!(
+        item["request"]["candidates"]["backends"],
+        json!(["contract-checker", SMT]),
+        "{item}"
+    );
+    assert!(item.to_string().contains("ambiguous-backend"), "{item}");
+    assert!(!run
+        .document()
+        .to_string()
+        .contains("operation-contract requirement record"));
+    assert!(seen.lock().expect("the provider log").is_empty());
 }
 
 /// Trace: FR-621-AC-1, FR-950-AC-2, FR-968-AC-3.
