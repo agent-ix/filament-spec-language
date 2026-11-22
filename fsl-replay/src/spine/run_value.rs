@@ -18,12 +18,15 @@ use filament_exact::{
 };
 use filament_semantic_value::declaration::{CompositeShape, TypeEnvironment};
 use fsl_foundation::diagnostic::Code;
+use fsl_package::{EnumScope, SourceEnumCatalog, SourceEnumCatalogError};
 use fsl_semantics::check::EnumBinding;
 use fsl_semantics::model::object_environment::ObjectEnvironment;
 use serde_json::{json, Map, Value as Json};
 
 #[cfg(test)]
 mod accounting_tests;
+#[cfg(test)]
+mod admitted_enum_forms_tests;
 mod canonical;
 mod references;
 pub(crate) use crate::NormalizationReferenceBudget;
@@ -73,12 +76,27 @@ pub(crate) enum WriteStop {
 #[derive(Clone, Copy)]
 pub(crate) struct Forms<'a> {
     types: &'a TypeEnvironment,
-    enums: &'a [EnumBinding],
+    enums: EnumBacking<'a>,
     /// The package string the unit's own declarations live in.
     own_package: &'a str,
     /// The call's object world, when the call names a snapshot.
     world: Option<&'a World<'a>>,
     canonical_writer: Option<&'a dyn Fn(&Value) -> Result<Json, WriteStop>>,
+}
+
+#[derive(Clone, Copy)]
+enum EnumBacking<'a> {
+    Checked(&'a [EnumBinding]),
+    Admitted {
+        catalog: &'a SourceEnumCatalog,
+        budget: &'a std::cell::RefCell<Option<&'a mut filament_contract_model::NativeJoinBudget>>,
+    },
+}
+
+#[derive(Clone, Copy)]
+enum EnumQuery<'a> {
+    Shape(&'a filament_exact::EnumShape),
+    Variant(&'a filament_exact::VariantId),
 }
 
 /// The object world of a call (FR-650 "Arguments"): the admitted snapshot's
@@ -117,7 +135,21 @@ impl<'a> Forms<'a> {
     pub(crate) fn new(types: &'a TypeEnvironment, enums: &'a [EnumBinding]) -> Self {
         Self {
             types,
-            enums,
+            enums: EnumBacking::Checked(enums),
+            own_package: "",
+            world: None,
+            canonical_writer: None,
+        }
+    }
+
+    pub(crate) fn from_admitted(
+        types: &'a TypeEnvironment,
+        catalog: &'a SourceEnumCatalog,
+        budget: &'a std::cell::RefCell<Option<&'a mut filament_contract_model::NativeJoinBudget>>,
+    ) -> Self {
+        Self {
+            types,
+            enums: EnumBacking::Admitted { catalog, budget },
             own_package: "",
             world: None,
             canonical_writer: None,
@@ -142,7 +174,15 @@ impl<'a> Forms<'a> {
 
     /// Whether a value of `value_type` has a run value form.
     pub(crate) fn has_form(&self, value_type: &ValueType) -> bool {
-        self.has_form_visiting(value_type, true, &mut BTreeSet::new())
+        self.has_form_visiting(value_type, true, &mut BTreeSet::new(), false)
+            .expect("form inspection without enum admission cannot refuse")
+    }
+
+    pub(crate) fn has_form_scoped(
+        &self,
+        value_type: &ValueType,
+    ) -> Result<bool, Box<super::RunRefusal>> {
+        self.has_form_visiting(value_type, true, &mut BTreeSet::new(), true)
     }
 
     /// One exhaustive mapping from the checked type to its form: a
@@ -152,8 +192,9 @@ impl<'a> Forms<'a> {
         value_type: &ValueType,
         top: bool,
         seen: &mut BTreeSet<NodeKey>,
-    ) -> bool {
-        match value_type {
+        check_enums: bool,
+    ) -> Result<bool, Box<super::RunRefusal>> {
+        Ok(match value_type {
             ValueType::Boolean
             | ValueType::Integer
             | ValueType::Int(_)
@@ -165,36 +206,62 @@ impl<'a> Forms<'a> {
             | ValueType::Bytes
             | ValueType::JsonObject
             | ValueType::Uuid
-            | ValueType::Timestamp
-            | ValueType::Enum(_) => true,
-            ValueType::Option(payload) => self.has_form_visiting(payload, false, seen),
+            | ValueType::Timestamp => true,
+            ValueType::Enum(shape) => {
+                if check_enums {
+                    self.source_enum_name(EnumQuery::Shape(shape))?;
+                }
+                true
+            }
+            ValueType::Option(payload) => {
+                self.has_form_visiting(payload, false, seen, check_enums)?
+            }
             ValueType::Collection(collection) => {
-                self.has_form_visiting(collection.element(), false, seen)
+                self.has_form_visiting(collection.element(), false, seen, check_enums)?
             }
             ValueType::Map(map) => {
-                self.has_form_visiting(map.key(), false, seen)
-                    && self.has_form_visiting(map.values(), false, seen)
+                self.has_form_visiting(map.key(), false, seen, check_enums)?
+                    && self.has_form_visiting(map.values(), false, seen, check_enums)?
             }
             ValueType::Composite(key) => {
                 if !seen.insert(key.clone()) {
-                    return true;
+                    return Ok(true);
                 }
                 let Some(declaration) = self.types.composite(key.clone()) else {
-                    return false;
+                    return Ok(false);
                 };
                 match declaration.shape() {
-                    CompositeShape::Record(fields) => fields
-                        .iter()
-                        .all(|field| self.has_form_visiting(field.value_type(), false, seen)),
-                    CompositeShape::Tuple(positions) => positions
-                        .iter()
-                        .all(|position| self.has_form_visiting(position, false, seen)),
-                    CompositeShape::Union(members) => members.iter().all(|member| {
-                        member
-                            .positions()
-                            .iter()
-                            .all(|position| self.has_form_visiting(position, false, seen))
-                    }),
+                    CompositeShape::Record(fields) => {
+                        for field in fields {
+                            if !self.has_form_visiting(
+                                field.value_type(),
+                                false,
+                                seen,
+                                check_enums,
+                            )? {
+                                return Ok(false);
+                            }
+                        }
+                        true
+                    }
+                    CompositeShape::Tuple(positions) => {
+                        for position in positions {
+                            if !self.has_form_visiting(position, false, seen, check_enums)? {
+                                return Ok(false);
+                            }
+                        }
+                        true
+                    }
+                    CompositeShape::Union(members) => {
+                        for member in members {
+                            for position in member.positions() {
+                                if !self.has_form_visiting(position, false, seen, check_enums)? {
+                                    return Ok(false);
+                                }
+                            }
+                        }
+                        true
+                    }
                 }
             }
             ValueType::Quantity(_)
@@ -202,7 +269,7 @@ impl<'a> Forms<'a> {
             | ValueType::CarriedQuantity(_)
             | ValueType::Reference(_) => true,
             ValueType::Population(_) => top,
-        }
+        })
     }
 
     /// The Boolean-or-integer argument a bare JSON integer binds.
@@ -702,9 +769,10 @@ impl<'a> Forms<'a> {
             return Err(wrong_kind_at2(path, "variant", "type"));
         }
         let case = string_member_of(payload, "case", path, "variant")?;
-        let position = variants
-            .iter()
-            .position(|variant| variant.case() == case)
+        let (position, variant) = variants
+            .variants()
+            .enumerate()
+            .find(|(_, variant)| variant.case() == case)
             .ok_or_else(|| invalid_at2(path, "variant", "case"))?;
         if payload.len() != 2 {
             return Err(unknown_member_at(
@@ -715,35 +783,69 @@ impl<'a> Forms<'a> {
             ));
         }
         let rank = u32::try_from(position).map_err(|_| ReadStop::Fault("enum-rank"))?;
-        Ok(Value::Enum(EnumMember::new(
-            variants[position].clone(),
-            rank,
-        )))
+        Ok(Value::Enum(EnumMember::new(variant.clone(), rank)))
     }
 
     /// The declared name and the variants, in rank order, of the enum `shape`:
     /// the unit's own enum by its declared name, else a model enum by the
     /// `ix://` identity of its declaration.
-    fn enum_cases(
-        &self,
-        shape: &filament_exact::EnumShape,
-    ) -> Result<(String, Vec<filament_exact::VariantId>), ReadStop> {
-        if let Some(binding) = self.enums.iter().find(|binding| binding.shape() == *shape) {
-            return Ok((
-                binding.name.clone(),
-                binding
-                    .members
-                    .iter()
-                    .map(|member| member.variant().clone())
-                    .collect(),
-            ));
-        }
-        let variants = shape.variants().cloned().collect::<Vec<_>>();
-        let name = variants
-            .first()
-            .and_then(|variant| model_declaration_name(variant.owner()))
+    fn enum_cases<'s>(
+        &'s self,
+        shape: &'s filament_exact::EnumShape,
+    ) -> Result<(&str, &'s filament_exact::EnumShape), ReadStop> {
+        let name = self
+            .source_enum_name(EnumQuery::Shape(shape))
+            .map_err(ReadStop::Refusal)?;
+        let name = name
+            .or_else(|| {
+                shape
+                    .variants()
+                    .next()
+                    .and_then(|variant| borrowed_model_declaration_name(variant.owner()))
+            })
             .ok_or(ReadStop::Fault("enum-shape-has-a-declaration"))?;
-        Ok((name, variants))
+        Ok((name, shape))
+    }
+
+    /// Source names are available only from the construction-selected backing.
+    /// A model fallback is permitted only after the admitted catalog proves it.
+    fn source_enum_name(
+        &self,
+        query: EnumQuery<'_>,
+    ) -> Result<Option<&str>, Box<super::RunRefusal>> {
+        match self.enums {
+            EnumBacking::Checked(bindings) => Ok(bindings
+                .iter()
+                .find(|binding| match query {
+                    EnumQuery::Shape(shape) => binding.shape() == *shape,
+                    EnumQuery::Variant(variant) => binding
+                        .members
+                        .iter()
+                        .any(|member| member.variant() == *variant),
+                })
+                .map(|binding| binding.name.as_str())),
+            EnumBacking::Admitted { catalog, budget } => {
+                let mut borrowed = budget.borrow_mut();
+                let budget = borrowed.as_deref_mut().ok_or_else(|| {
+                    source_enum_refusal(SourceEnumCatalogError::MissingNativePermission)
+                })?;
+                let scope = match query {
+                    EnumQuery::Shape(shape) => catalog.classify_shape(shape, budget),
+                    EnumQuery::Variant(variant) => catalog.classify_variant(variant, budget),
+                }
+                .map_err(source_enum_refusal)?;
+                match scope {
+                    EnumScope::NamedSource { name } => Ok(Some(name)),
+                    EnumScope::Model { name } => Ok(Some(name)),
+                    EnumScope::Missing => Err(source_enum_refusal(
+                        SourceEnumCatalogError::MissingIdentityWitness,
+                    )),
+                    EnumScope::UnsupportedSourceScope { index, .. } => Err(source_enum_refusal(
+                        catalog.unsupported_scope_refusal(index, budget),
+                    )),
+                }
+            }
+        }
     }
 
     fn read_composite(
@@ -1037,16 +1139,9 @@ impl<'a> Forms<'a> {
             }
             Value::Enum(member) => {
                 let name = self
-                    .enums
-                    .iter()
-                    .find(|binding| {
-                        binding
-                            .members
-                            .iter()
-                            .any(|candidate| candidate.variant() == *member.variant())
-                    })
-                    .map(|binding| binding.name.clone())
-                    .or_else(|| model_declaration_name(member.variant().owner()))
+                    .source_enum_name(EnumQuery::Variant(member.variant()))
+                    .map_err(WriteStop::Refusal)?
+                    .or_else(|| borrowed_model_declaration_name(member.variant().owner()))
                     .ok_or(WriteStop::Fault("enum-member-has-a-declaration"))?;
                 json!({"variant": {"type": name, "case": member.variant().case()}})
             }
@@ -1227,18 +1322,31 @@ fn declaration_name(
 /// declares: the node string of its structural node id (FR-650 "Declaration
 /// names").
 fn model_declaration_name(owner: &NodeKey) -> Option<String> {
-    let segments = owner
-        .view()
-        .path()
-        .map(|segment| match segment {
-            filament_exact::PathSegmentView::Text(text) => Some(text),
-            filament_exact::PathSegmentView::Node(_) => None,
-        })
-        .collect::<Option<Vec<_>>>()?;
-    match segments.as_slice() {
-        [_, _, node] if node.starts_with("ix://") => Some((*node).to_owned()),
+    borrowed_model_declaration_name(owner).map(str::to_owned)
+}
+
+fn borrowed_model_declaration_name(owner: &NodeKey) -> Option<&str> {
+    use filament_exact::PathSegmentView;
+    let view = owner.view();
+    let mut segments = view.path();
+    match (
+        segments.next(),
+        segments.next(),
+        segments.next(),
+        segments.next(),
+    ) {
+        (
+            Some(PathSegmentView::Text(_)),
+            Some(PathSegmentView::Text(_)),
+            Some(PathSegmentView::Text(node)),
+            None,
+        ) if node.starts_with("ix://") => Some(node),
         _ => None,
     }
+}
+
+fn source_enum_refusal(error: SourceEnumCatalogError) -> Box<super::RunRefusal> {
+    Box::new(super::RunRefusal::SourceEnum(Box::new(error)))
 }
 
 /// A Reference result in the identity-reference form: the returned

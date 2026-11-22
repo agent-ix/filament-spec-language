@@ -3430,6 +3430,16 @@ impl OutcomeDocument {
             }
             RunRefusal::Cancelled(cause) => Self::cancelled(operation, *cause),
             RunRefusal::Fault(fault) => Self::faulted(operation, fault),
+            RunRefusal::SourceEnum(error) => {
+                Self::new(operation, Some(OutcomeStage::S6a), refusal.category()).with_diagnostics(
+                    vec![OutcomeDiagnostic::new(
+                        RunRefusal::source_enum_cause(error),
+                        refusal.code().as_str(),
+                        None,
+                        error.to_string(),
+                    )],
+                )
+            }
             RunRefusal::ReferenceCatalog(error) => {
                 Self::new(operation, Some(OutcomeStage::S6a), refusal.category()).with_diagnostics(
                     vec![OutcomeDiagnostic::new(
