@@ -1531,19 +1531,22 @@ fn the_package_default_items_refuse_a_composition() {
     );
 }
 
-/// FR-1044 "Current system behavior" (QSL-2739): a named composition remains
-/// a pending declaration; a name no package row carries remains an unnamed
-/// claim. Neither selection settles `unknown-claim`.
+/// FR-1044 "Current system behavior" (QSL-2739): an authenticated named
+/// composition names the missing owning-work permission; an unresolved name
+/// remains an unnamed claim. Neither selection settles `unknown-claim`.
 #[test]
 fn a_package_item_naming_a_composition_is_refused() {
     // Each compile writes its own handoff directory, so each name gets its
     // own workspace.
-    for (name, family) in [("Sys", "declaration"), ("Typo", "unnamed-claim")] {
+    for (name, detail) in [
+        ("Sys", "items[0] composition owning execution is pending missing native before-work permission"),
+        ("Typo", "items[0] names the unnamed-claim family, which has no package form yet"),
+    ] {
         let ws = Workspace::new(&format!("compose-package-named-{name}"));
         let path = request_for(&ws, &system(), BOUNDED, Some(json!([composition(name)])));
         assert_package_pending(
             &analyze(&package_handoff(&ws, &path)),
-            &format!("items[0] names the {family} family, which has no package form yet"),
+            detail,
         );
     }
 }
