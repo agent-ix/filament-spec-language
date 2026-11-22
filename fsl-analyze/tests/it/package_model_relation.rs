@@ -639,6 +639,7 @@ fn hp1_package_model_scope_keeps_unselected_population_refusals() {
         forget_source(&ws);
         let package = analyze_package(&ws, "foreign-package.json", &members);
         for run in [&source, &package] {
+            assert!(!run.item(0).is_null(), "{foreign}: {}", run.document());
             assert_eq!(label(&run.item(0)), "declined", "{}", run.document());
             let diagnostic = &run.item(0)["record"]["diagnostic"];
             assert_eq!(
@@ -658,6 +659,118 @@ fn hp1_package_model_scope_keeps_unselected_population_refusals() {
                 foreign,
                 "{}",
                 run.document()
+            );
+        }
+    }
+}
+
+/// Projection must preserve the native reader's refusal on original bytes,
+/// including duplicate members and work hidden in another model's portion.
+#[trace("FR-940-AC-23", "FR-179-AC-1", "FR-106-AC-3")]
+#[test]
+fn hp1_package_model_scope_preserves_original_document_refusals() {
+    use fsl_eval::simulation::model::{ModelCheckInput, ModelSystem};
+    use fsl_semantics::model::observation::{AdmissionFailure, DocumentProvision};
+    use fsl_semantics::model::state::StateModel;
+
+    let ws = Workspace::new("hp1-package-original-read-refusals");
+    let (_, _, packages) = ordered_handoff(&ws, true);
+    let compiled =
+        fsl_command::checked_handoff::compile(&ws.path(HANDOFF)).expect("source compiles");
+    let input = ModelCheckInput::source(compiled.checked());
+    let whole = StateModel::new(
+        input.model_inputs(),
+        input.types,
+        &packages,
+        ModelNormalizationLimits::default(),
+    )
+    .expect("selected models normalize");
+    let original = std::fs::read(ws.path("snapshot-0.json")).expect("original snapshot");
+    let reference =
+        fsl_semantics::model::observation::document_reference(&original).expect("identity");
+    let clean = DocumentProvision::from([(reference.clone(), original.clone())]);
+    let selection = fsl_analyze::analyze::document::SubjectSelection::default_over(&clean);
+    let binding = selection.binding(&packages, &clean);
+    let text = std::str::from_utf8(&original).expect("fixture UTF-8");
+    let duplicate = text
+        .replacen(
+            "\"observation\":\"current\"",
+            "\"observation\":\"pre\",\"observation\":\"current\"",
+            1,
+        )
+        .into_bytes();
+    assert_ne!(
+        duplicate, original,
+        "fixture really contains a duplicate member"
+    );
+    let mut padded = original.clone();
+    padded.extend(std::iter::repeat_n(b' ', 4096));
+    for (case, bytes, limits, cause) in [
+        (
+            "duplicate",
+            duplicate,
+            ObservationLimits::default(),
+            "invalid-value",
+        ),
+        (
+            "bytes",
+            padded,
+            ObservationLimits {
+                document_bytes: u64::try_from(original.len()).expect("fixture length") + 2048,
+                ..ObservationLimits::default()
+            },
+            "input-bytes-exceeded",
+        ),
+        (
+            "objects",
+            original.clone(),
+            ObservationLimits {
+                objects_per_document: 1,
+                ..ObservationLimits::default()
+            },
+            "node-count-exceeded",
+        ),
+    ] {
+        let provision = DocumentProvision::from([(reference.clone(), bytes)]);
+        let expected = whole
+            .admit_initial(&provision, &reference, limits)
+            .expect_err("original document must refuse");
+        let AdmissionFailure::Refused(record) = &expected else {
+            panic!("{case}: expected refusal: {expected:?}");
+        };
+        assert_eq!(
+            record.catalog.cause(),
+            cause,
+            "{case}: native oracle reaches the intended refusal"
+        );
+        assert_eq!(input.model_selections.len(), 2);
+        for identity in input
+            .model_selections
+            .iter()
+            .map(|model| model.identity.as_str())
+        {
+            let actual = ModelSystem::for_model_identity(
+                ModelSimulationRequest {
+                    input: input.clone(),
+                    packages: &packages,
+                    normalization: ModelNormalizationLimits::default(),
+                    snapshots: &provision,
+                    initial: vec![reference.clone()],
+                    universes: binding.universes.clone(),
+                    observation: limits,
+                    expansion: ExpansionLimits {
+                        max_candidates: 1_000_000,
+                    },
+                    meter: UNLIMITED,
+                    emit: fsl_package::EmitLimits::fixture(),
+                },
+                identity,
+            )
+            .err()
+            .expect("scoped admission must refuse");
+            assert_eq!(
+                actual, expected,
+                "{case}, {identity}: preserve the full native refusal"
             );
         }
     }

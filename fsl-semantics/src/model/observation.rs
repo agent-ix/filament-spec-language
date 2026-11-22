@@ -3067,7 +3067,9 @@ pub use extents::{
     BundleKey, BundlePart, BundleRefusal, Keyed, ObservationOrigin, PopulationEnumerationFailure,
     PopulationManifest, RelationshipExtents, ResolveBundle,
 };
-pub(crate) use initial::{admit_initial_state, observe_state, state_fields, state_reference};
+pub(crate) use initial::{
+    admit_initial_state, admit_initial_state_scoped, observe_state, state_fields, state_reference,
+};
 
 /// A simulator's closed state with the same population catalog and recursive
 /// reference closure that protocol snapshot admission retains.

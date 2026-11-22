@@ -317,6 +317,13 @@ impl ReadDocument {
         }
     }
 
+    pub(super) fn as_snapshot_mut(&mut self) -> Option<&mut SnapshotDocument> {
+        match &mut self.body {
+            Body::Snapshot(snapshot) => Some(snapshot.as_mut()),
+            Body::Invocation(_) | Body::InvocationCall(_) => None,
+        }
+    }
+
     pub(super) fn as_invocation(&self) -> Option<&InvocationDocument> {
         match &self.body {
             Body::Invocation(invocation) => Some(invocation),
@@ -1028,7 +1035,7 @@ struct PopulationInfo {
     member_types: Vec<DeclarationKey>,
 }
 
-fn find_population<'v>(
+pub(super) fn find_population<'v>(
     views: &'v [ModelView],
     identity: &str,
 ) -> Option<(&'v ModelView, PopulationInfo)> {
