@@ -1681,62 +1681,69 @@ mod tests {
     #[test]
     fn relationship_extent_states_and_conflict_precedence_reach_resolver() {
         let no_extents = valid_relationship_request(None, &objects());
+        let outcome = filament_observation::admit(no_extents);
         assert!(matches!(
-            filament_observation::admit(no_extents),
+            &outcome,
             filament_observation::AdmissionOutcome::Incomplete { reasons }
                 if matches!(reasons.as_slice(), [filament_observation::IncompleteReason::MissingRelationship { .. }])
-        ));
+        ), "no extents: {outcome:?}");
 
         let complete_empty = extent(true, Vec::new());
         let request = valid_relationship_request(Some(&complete_empty), &objects());
+        let outcome = filament_observation::admit(request);
         assert!(matches!(
-            filament_observation::admit(request),
+            &outcome,
             filament_observation::AdmissionOutcome::Incomplete { reasons }
                 if matches!(reasons.as_slice(), [filament_observation::IncompleteReason::MissingRelationship { .. }])
-        ));
+        ), "complete empty extent: {outcome:?}");
 
         let incomplete_with_match = extent(false, vec![candidate("01", "s1")]);
         let request = valid_relationship_request(Some(&incomplete_with_match), &objects());
+        let outcome = filament_observation::admit(request);
         assert!(matches!(
-            filament_observation::admit(request),
+            &outcome,
             filament_observation::AdmissionOutcome::Incomplete { reasons }
                 if matches!(reasons.as_slice(), [filament_observation::IncompleteReason::IncompleteRelationshipExtent { .. }])
-        ));
+        ), "incomplete matching extent: {outcome:?}");
 
         let exact_replay = extent(true, vec![candidate("01", "s1"), candidate("01", "s1")]);
         let request = valid_relationship_request(Some(&exact_replay), &objects());
+        let outcome = filament_observation::admit(request);
         assert!(matches!(
-            filament_observation::admit(request),
+            &outcome,
             filament_observation::AdmissionOutcome::Available { .. }
-        ));
+        ), "exact replay: {outcome:?}");
 
         let ambiguous = extent(true, vec![candidate("01", "s1"), candidate("02", "s1")]);
         let request = valid_relationship_request(Some(&ambiguous), &objects());
+        let outcome = filament_observation::admit(request);
         assert!(matches!(
-            filament_observation::admit(request),
+            &outcome,
             filament_observation::AdmissionOutcome::Refused {
                 cause: filament_observation::RefusalCause::AmbiguousRelationship { .. }
             }
-        ));
+        ), "ambiguous relationship: {outcome:?}");
 
         let conflict = extent(true, vec![candidate("01", "s1"), candidate("02", "s2")]);
         let request = valid_relationship_request(Some(&conflict), &objects_with_second_shipment());
+        let outcome = filament_observation::admit(request);
         assert!(matches!(
-            filament_observation::admit(request),
+            &outcome,
             filament_observation::AdmissionOutcome::Refused {
                 cause: filament_observation::RefusalCause::RelationshipConflict { .. }
             }
-        ));
+        ), "conflicting relationship: {outcome:?}");
 
         let contradicted = extent(true, vec![candidate("01", "s1"), candidate("01", "s2")]);
         let request =
             valid_relationship_request(Some(&contradicted), &objects_with_second_shipment());
+        let outcome = filament_observation::admit(request);
         assert!(matches!(
-            filament_observation::admit(request),
+            &outcome,
             filament_observation::AdmissionOutcome::Refused {
                 cause: filament_observation::RefusalCause::RelationshipIdentityContradiction { .. }
             }
-        ));
+        ), "contradictory identity: {outcome:?}");
     }
 
     #[trace("FR-1045-AC-2")]
@@ -1744,10 +1751,11 @@ mod tests {
     fn relationship_identity_defines_exact_replay() {
         let replayed = extent(true, vec![candidate("00ff", "s1"), candidate("00ff", "s1")]);
         let request = valid_relationship_request(Some(&replayed), &objects());
+        let outcome = filament_observation::admit(request);
         assert!(matches!(
-            filament_observation::admit(request),
+            &outcome,
             filament_observation::AdmissionOutcome::Available { .. }
-        ));
+        ), "exact replay identity: {outcome:?}");
     }
 
     #[trace("FR-1045-AC-4")]
@@ -1758,30 +1766,33 @@ mod tests {
         let repeated = duplicated.required_relationships[0].clone();
         duplicated.required_relationships.push(repeated.clone());
         duplicated.limits.max_required_relationships = 1;
+        let outcome = filament_observation::admit(duplicated);
         assert!(matches!(
-            filament_observation::admit(duplicated),
+            &outcome,
             filament_observation::AdmissionOutcome::Refused {
                 cause: filament_observation::RefusalCause::ResourceLimit {
                     limit: filament_observation::ResourceKind::RequiredRelationships
                 }
             }
-        ));
+        ), "raw required relationship count: {outcome:?}");
 
         let mut deduplicated = valid_relationship_request(Some(&matching), &objects());
         let repeated = deduplicated.required_relationships[0].clone();
         deduplicated.required_relationships.push(repeated);
         deduplicated.limits.max_required_relationships = 2;
+        let outcome = filament_observation::admit(deduplicated);
         assert!(matches!(
-            filament_observation::admit(deduplicated),
+            &outcome,
             filament_observation::AdmissionOutcome::Available { .. }
-        ));
+        ), "deduplicated required relationships: {outcome:?}");
 
         let mut no_slots = valid_relationship_request(Some(&matching), &objects());
         no_slots.required_relationships.clear();
+        let outcome = filament_observation::admit(no_slots);
         assert!(matches!(
-            filament_observation::admit(no_slots),
+            &outcome,
             filament_observation::AdmissionOutcome::Available { .. }
-        ));
+        ), "no required slots: {outcome:?}");
     }
 
     #[trace("FR-1045-AC-4")]
@@ -1804,10 +1815,11 @@ mod tests {
         let matching = extent(true, vec![candidate("01", "s1")]);
         let mut request = valid_relationship_request(Some(&matching), &objects());
         request.required_relationships.clear();
+        let outcome = filament_observation::admit(request);
         assert!(matches!(
-            filament_observation::admit(request),
+            &outcome,
             filament_observation::AdmissionOutcome::Available { .. }
-        ));
+        ), "candidate without required slots: {outcome:?}");
     }
 
     #[trace("FR-1045-AC-12")]
@@ -1893,12 +1905,13 @@ mod tests {
             limits,
         )
         .expect("population identities derive");
+        let outcome = filament_observation::admit(request);
         assert!(matches!(
-            filament_observation::admit(request),
+            &outcome,
             filament_observation::AdmissionOutcome::Refused {
                 cause: filament_observation::RefusalCause::RelationshipConflict { .. }
             }
-        ));
+        ), "slot conflict: {outcome:?}");
     }
 
     #[trace("FR-1045-AC-3", "FR-1045-AC-4")]
