@@ -50,6 +50,103 @@ workload Even on M {{ weight Msg::slow = 1; weight Msg::fast = 1; }}
         initial: serde_json::json!({"delivered": {"boolean": false}}),
     }
 }
+
+fn health(terminal_fault: bool) -> Model {
+    let mut fixture = model(
+        "probabilistic Min using ev on M over (m: M::Msg) under Even on origin
+         { probability >= 0.9 [ always[0,2] holds(not m.delivered) ] }
+         probabilistic Max using ev on M over (m: M::Msg) under Even on origin
+         { probability <= 0.8 [ always[0,2] holds(not m.delivered) ] }",
+    );
+    fixture.body = fixture
+        .body
+        .replace("true: 1, false: 1", "true: 9, false: 1")
+        .replace("true: 1, false: 3", "true: 9, false: 1")
+        .replace(
+            "pre Ready_fast using v on M::Msg::fast { not self.delivered }",
+            "pre Ready_fast using v on M::Msg::fast { false }",
+        );
+    if terminal_fault {
+        fixture
+            .body
+            .push_str("terminal Stop using v on M when { self.delivered };\n");
+    }
+    fixture
+}
+
+#[trace("TC-637", "FR-202-AC-23", "FR-201-AC-56")]
+#[test]
+fn bounded_always_health_replays_exact_rejecting_and_accepting_cylinders() {
+    for scheduler in ["Even", "every scheduler"] {
+        for terminal_fault in [false, true] {
+            let mut fixture = health(terminal_fault);
+            fixture.body = fixture
+                .body
+                .replace("under Even", &format!("under {scheduler}"));
+            let world = World::new(&fixture);
+            let rejecting = evidence(&world, "Min");
+            assert_eq!(mass(&world, &rejecting), ratio(19, 100));
+            assert_eq!(rejecting.scheduler.is_empty(), scheduler == "Even");
+            let mut by_length = std::collections::BTreeMap::new();
+            for path in &rejecting.paths {
+                *by_length.entry(path.steps.len()).or_insert(0) += 1;
+            }
+            assert_eq!(by_length, [(1, 1), (2, 1)].into_iter().collect());
+            let accepting = evidence(&world, "Max");
+            assert_eq!(mass(&world, &accepting), ratio(81, 100));
+            assert!(accepting.paths.iter().all(|path| path.steps.len() == 2));
+            let mut equal = rejecting.clone();
+            equal.paths.retain(|path| path.steps.len() == 1);
+            equal.scheduler.retain(|(key, _)| key == &equal.initial_key);
+            assert!(matches!(
+                replay(&world, &equal, &ExactProbLimits::default(), &Cancel::new()),
+                Ok(ProbabilityWitnessReplay::Parity)
+            ));
+            let mut model_only = rejecting.clone();
+            let system = ModelSystem::new(world.subject().simulation).unwrap();
+            model_only.initial_key = ProbabilityProductKey::for_model_state(
+                model_only.binding.as_ref(),
+                &system.state_key(&model_only.initial).unwrap().0,
+            )
+            .unwrap();
+            no_token(&world, &model_only);
+            let mut continued = rejecting.clone();
+            let first = continued
+                .paths
+                .iter_mut()
+                .find(|path| path.steps.len() == 1)
+                .unwrap();
+            first.steps.push(accepting.paths[0].steps[1].clone());
+            no_token(&world, &continued);
+        }
+    }
+}
+
+#[trace("TC-637", "FR-202-AC-14", "FR-202-AC-16")]
+#[test]
+fn bounded_always_zero_and_terminal_closure_replay_without_fabricated_steps() {
+    for (horizon, initial, terminal, comparison) in [
+        (0, false, false, "<="),
+        (0, true, false, ">="),
+        (2, false, true, ">="),
+    ] {
+        let claim = format!("probabilistic Zero using ev on M over (m: M::Msg) under every scheduler on origin {{ probability {comparison} 0.5 [ always[0,{horizon}] holds(not m.delivered) ] }}");
+        let mut fixture = model(&claim);
+        fixture.initial["delivered"] = serde_json::json!({"boolean":initial});
+        if terminal {
+            fixture.body = fixture.body.replace("not self.delivered", "false");
+            fixture
+                .body
+                .push_str("terminal Stop using v on M when { true };\n");
+        }
+        let world = World::new(&fixture);
+        let witness = evidence(&world, "Zero");
+        assert_eq!(mass(&world, &witness), ratio(1, 1));
+        assert_eq!(witness.paths.len(), 1);
+        assert!(witness.paths[0].steps.is_empty());
+        assert!(witness.scheduler.is_empty());
+    }
+}
 fn ratio(a: i64, b: i64) -> Rational {
     Rational::new(Integer::from(a), Integer::from(b)).unwrap()
 }
@@ -328,52 +425,54 @@ fn rekey(world: &World, name: &str, witness: &mut ProbabilisticCounterexample) {
 fn cancellation_and_configured_native_limits_never_return_a_token() {
     use filament_exact::CancelCause;
     use fsl_replay::{ExactProbabilityGraphError, ModelCheckLimit};
-    let world = World::new(&model(CLAIMS));
-    let witness = evidence(&world, "Min");
-    let cancel = Cancel::new();
-    cancel.cancel(CancelCause::Requested);
-    assert!(matches!(
-        replay(&world, &witness, &ExactProbLimits::default(), &cancel),
-        Err(ProbabilityWitnessError::Graph(
-            ExactProbabilityGraphError::Cancelled(CancelCause::Requested)
-        ))
-    ));
-    let mut limits = ExactProbLimits::default();
-    limits.model.limits.max_states = 0;
-    assert!(matches!(
-        replay(&world, &witness, &limits, &Cancel::new()),
-        Err(ProbabilityWitnessError::Graph(
-            ExactProbabilityGraphError::LimitReached
-        ))
-    ));
-    let mut limits = ExactProbLimits::default();
-    limits.model.limits.max_transitions = 0;
-    assert!(matches!(
-        replay(&world, &witness, &limits, &Cancel::new()),
-        Err(ProbabilityWitnessError::Graph(
-            ExactProbabilityGraphError::EdgeLimitReached
-        ))
-    ));
-    let mut limits = ExactProbLimits::default();
-    limits.document.storage_bytes = 0;
-    assert!(matches!(
-        replay(&world, &witness, &limits, &Cancel::new()),
-        Err(ProbabilityWitnessError::Limit {
-            limit: ModelCheckLimit::CertificateMaxWorkingBytes,
-            ..
-        })
-    ));
-    let limits = ExactProbLimits {
-        max_rational_bits: 1,
-        ..ExactProbLimits::default()
-    };
-    assert!(matches!(
-        replay(&world, &witness, &limits, &Cancel::new()),
-        Err(ProbabilityWitnessError::Limit {
-            limit: ModelCheckLimit::ExactProbMaxRationalBits,
-            ..
-        })
-    ));
+    for fixture in [model(CLAIMS), health(false)] {
+        let world = World::new(&fixture);
+        let witness = evidence(&world, "Min");
+        let cancel = Cancel::new();
+        cancel.cancel(CancelCause::Requested);
+        assert!(matches!(
+            replay(&world, &witness, &ExactProbLimits::default(), &cancel),
+            Err(ProbabilityWitnessError::Graph(
+                ExactProbabilityGraphError::Cancelled(CancelCause::Requested)
+            ))
+        ));
+        let mut limits = ExactProbLimits::default();
+        limits.model.limits.max_states = 0;
+        assert!(matches!(
+            replay(&world, &witness, &limits, &Cancel::new()),
+            Err(ProbabilityWitnessError::Graph(
+                ExactProbabilityGraphError::LimitReached
+            ))
+        ));
+        let mut limits = ExactProbLimits::default();
+        limits.model.limits.max_transitions = 0;
+        assert!(matches!(
+            replay(&world, &witness, &limits, &Cancel::new()),
+            Err(ProbabilityWitnessError::Graph(
+                ExactProbabilityGraphError::EdgeLimitReached
+            ))
+        ));
+        let mut limits = ExactProbLimits::default();
+        limits.document.storage_bytes = 0;
+        assert!(matches!(
+            replay(&world, &witness, &limits, &Cancel::new()),
+            Err(ProbabilityWitnessError::Limit {
+                limit: ModelCheckLimit::CertificateMaxWorkingBytes,
+                ..
+            })
+        ));
+        let limits = ExactProbLimits {
+            max_rational_bits: 1,
+            ..ExactProbLimits::default()
+        };
+        assert!(matches!(
+            replay(&world, &witness, &limits, &Cancel::new()),
+            Err(ProbabilityWitnessError::Limit {
+                limit: ModelCheckLimit::ExactProbMaxRationalBits,
+                ..
+            })
+        ));
+    }
 }
 
 #[trace("TC-637", "FR-202-AC-16")]
@@ -382,36 +481,38 @@ fn final_acceptance_cancellation_has_no_truth_or_evidence() {
     use filament_exact::CancelCause;
     use std::sync::atomic::{AtomicU32, Ordering};
     use std::sync::{Arc, OnceLock};
-    let world = World::new(&model(CLAIMS));
-    let witness = evidence(&world, "Min");
-    let live = Cancel::new();
-    let _count = live.count_charges();
-    assert!(matches!(
-        replay(&world, &witness, &ExactProbLimits::default(), &live),
-        Ok(ProbabilityWitnessReplay::Reproduced(_))
-    ));
-    let final_poll = live.charges();
-    let slot = Arc::new(OnceLock::<Cancel>::new());
-    let weak = Arc::downgrade(&slot);
-    let count = Arc::new(AtomicU32::new(0));
-    let seen = Arc::clone(&count);
-    let cancel = Cancel::observing(move || {
-        if seen.fetch_add(1, Ordering::Relaxed) + 1 == final_poll {
-            weak.upgrade()
-                .unwrap()
-                .get()
-                .unwrap()
-                .cancel(CancelCause::Requested);
-        }
-    });
-    slot.set(cancel.clone()).unwrap();
-    assert!(matches!(
-        replay(&world, &witness, &ExactProbLimits::default(), &cancel),
-        Err(ProbabilityWitnessError::Graph(
-            fsl_replay::ExactProbabilityGraphError::Cancelled(CancelCause::Requested)
-        ))
-    ));
-    assert_eq!(count.load(Ordering::Relaxed), final_poll);
+    for fixture in [model(CLAIMS), health(false)] {
+        let world = World::new(&fixture);
+        let witness = evidence(&world, "Min");
+        let live = Cancel::new();
+        let _count = live.count_charges();
+        assert!(matches!(
+            replay(&world, &witness, &ExactProbLimits::default(), &live),
+            Ok(ProbabilityWitnessReplay::Reproduced(_))
+        ));
+        let final_poll = live.charges();
+        let slot = Arc::new(OnceLock::<Cancel>::new());
+        let weak = Arc::downgrade(&slot);
+        let count = Arc::new(AtomicU32::new(0));
+        let seen = Arc::clone(&count);
+        let cancel = Cancel::observing(move || {
+            if seen.fetch_add(1, Ordering::Relaxed) + 1 == final_poll {
+                weak.upgrade()
+                    .unwrap()
+                    .get()
+                    .unwrap()
+                    .cancel(CancelCause::Requested);
+            }
+        });
+        slot.set(cancel.clone()).unwrap();
+        assert!(matches!(
+            replay(&world, &witness, &ExactProbLimits::default(), &cancel),
+            Err(ProbabilityWitnessError::Graph(
+                fsl_replay::ExactProbabilityGraphError::Cancelled(CancelCause::Requested)
+            ))
+        ));
+        assert_eq!(count.load(Ordering::Relaxed), final_poll);
+    }
 }
 
 #[trace("TC-637", "FR-202-AC-12", "FR-202-AC-15")]
@@ -498,42 +599,44 @@ fn all_workload_first_hit_cylinders_have_exact_mass_fifty_five_over_sixty_four()
 #[test]
 fn adapter_exhaustion_preserves_incomplete_without_accepted_evidence() {
     use fsl_replay::IncompleteCause;
-    let world = World::new(&model(CLAIMS));
-    for budget in [
-        "paths",
-        "states",
-        "transitions",
-        "work",
-        "storage",
-        "expansion",
-    ] {
-        let mut request = world.request("Min", ModelCheckLimits::default());
-        match budget {
-            "paths" => request.limits.max_witness_paths = 0,
-            "states" => request.limits.model.limits.max_states = 0,
-            "transitions" => request.limits.model.limits.max_transitions = 0,
-            "work" => request.subject.simulation.meter.work_units = 0,
-            "storage" => request.limits.document.storage_bytes = 0,
-            "expansion" => request.subject.simulation.expansion.max_candidates = 0,
-            _ => unreachable!(),
+    for fixture in [model(CLAIMS), health(false)] {
+        let world = World::new(&fixture);
+        for budget in [
+            "paths",
+            "states",
+            "transitions",
+            "work",
+            "storage",
+            "expansion",
+        ] {
+            let mut request = world.request("Min", ModelCheckLimits::default());
+            match budget {
+                "paths" => request.limits.max_witness_paths = 0,
+                "states" => request.limits.model.limits.max_states = 0,
+                "transitions" => request.limits.model.limits.max_transitions = 0,
+                "work" => request.subject.simulation.meter.work_units = 0,
+                "storage" => request.limits.document.storage_bytes = 0,
+                "expansion" => request.subject.simulation.expansion.max_candidates = 0,
+                _ => unreachable!(),
+            }
+            let record = analyze_items(
+                &Engines::fsl().unwrap(),
+                vec![exact_probabilistic_item(RequestIndex::new(0), request)],
+                &Cancel::new(),
+            )
+            .remove(0);
+            assert!(record.terminal().is_some(), "{budget}: {record:?}");
+            assert!(
+                matches!(
+                    record.terminal().unwrap().value(),
+                    TerminalValue::Incomplete(IncompleteCause::LimitReached { .. })
+                ),
+                "{budget}: {:?}",
+                record.terminal().unwrap().value()
+            );
+            assert!(record.probabilistic_counterexample.is_none(), "{budget}");
+            assert!(record.exact_probabilistic.is_none(), "{budget}");
         }
-        let record = analyze_items(
-            &Engines::fsl().unwrap(),
-            vec![exact_probabilistic_item(RequestIndex::new(0), request)],
-            &Cancel::new(),
-        )
-        .remove(0);
-        assert!(record.terminal().is_some(), "{budget}: {record:?}");
-        assert!(
-            matches!(
-                record.terminal().unwrap().value(),
-                TerminalValue::Incomplete(IncompleteCause::LimitReached { .. })
-            ),
-            "{budget}: {:?}",
-            record.terminal().unwrap().value()
-        );
-        assert!(record.probabilistic_counterexample.is_none(), "{budget}");
-        assert!(record.exact_probabilistic.is_none(), "{budget}");
     }
 }
 
@@ -599,33 +702,35 @@ fn a_decided_initial_path_cannot_continue_and_policy_keys_keep_horizons_distinct
 #[trace("TC-637", "FR-202-AC-16")]
 #[test]
 fn interval_bounds_and_precision_budget_cannot_be_cast_into_bounded_refutations() {
-    let world = World::new(&model(CLAIMS));
-    for precision_budget in [false, true] {
-        let mut request = world.request("Min", ModelCheckLimits::default());
-        request.limits.max_rational_bits = 1;
-        if precision_budget {
-            request.limits.precision_bits = 1;
-            request.limits.max_precision_bits = 1;
+    for fixture in [model(CLAIMS), health(false)] {
+        let world = World::new(&fixture);
+        for precision_budget in [false, true] {
+            let mut request = world.request("Min", ModelCheckLimits::default());
+            request.limits.max_rational_bits = 1;
+            if precision_budget {
+                request.limits.precision_bits = 1;
+                request.limits.max_precision_bits = 1;
+            }
+            let record = analyze_items(
+                &Engines::fsl().unwrap(),
+                vec![exact_probabilistic_item(RequestIndex::new(0), request)],
+                &Cancel::new(),
+            )
+            .remove(0);
+            if precision_budget {
+                assert!(matches!(
+                    record.terminal().unwrap().value(),
+                    TerminalValue::Incomplete(fsl_replay::IncompleteCause::PrecisionBudget { .. })
+                ));
+            } else {
+                assert!(
+                    record.terminal().is_none(),
+                    "a mere Bounds result stays unsupported"
+                );
+            }
+            assert!(record.probabilistic_counterexample.is_none());
+            assert!(record.exact_probabilistic.is_none());
         }
-        let record = analyze_items(
-            &Engines::fsl().unwrap(),
-            vec![exact_probabilistic_item(RequestIndex::new(0), request)],
-            &Cancel::new(),
-        )
-        .remove(0);
-        if precision_budget {
-            assert!(matches!(
-                record.terminal().unwrap().value(),
-                TerminalValue::Incomplete(fsl_replay::IncompleteCause::PrecisionBudget { .. })
-            ));
-        } else {
-            assert!(
-                record.terminal().is_none(),
-                "a mere Bounds result stays unsupported"
-            );
-        }
-        assert!(record.probabilistic_counterexample.is_none());
-        assert!(record.exact_probabilistic.is_none());
     }
 }
 

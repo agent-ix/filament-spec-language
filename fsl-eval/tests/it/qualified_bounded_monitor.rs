@@ -151,6 +151,108 @@ fn qualified_bounded_monitor_preserves_context_and_refuses_other_forms() {
         &context(&fixture.clause, 0),
         100
     )
+    .is_ok());
+}
+
+#[trace("TC-636", "FR-201-AC-13", "FR-201-AC-56", "FR-338-AC-4")]
+#[test]
+fn qualified_bounded_always_reads_both_endpoints_and_absorbs_first_decision() {
+    for horizon in [0, 2] {
+        let fixture = fixture(
+            EVENT,
+            "c: Counter",
+            "on origin",
+            &format!("always[0,{horizon}] holds(true)"),
+        );
+        let context = context(&fixture.clause, 0);
+        let mut monitor =
+            QualifiedBoundedMonitor::new(fixture.clause.formula(), &context, 100).unwrap();
+        let rejected = monitor.start(false).unwrap();
+        assert_eq!(monitor.state(rejected).unwrap(), BoundedState::Reject);
+        assert_eq!(monitor.rank(rejected).unwrap(), 0);
+        let after_rejection = monitor.step(rejected, true).unwrap();
+        assert_eq!(
+            monitor.key(after_rejection).unwrap(),
+            monitor.decision_key(false).unwrap()
+        );
+        let mut state = monitor.start(true).unwrap();
+        for remaining in (1..=horizon).rev() {
+            assert_eq!(
+                monitor.state(state).unwrap(),
+                BoundedState::Open { remaining }
+            );
+            assert_eq!(monitor.rank(state).unwrap(), remaining);
+            assert_eq!(monitor.terminal(state).unwrap(), BoundedState::Reject);
+            let failure = monitor.step(state, false).unwrap();
+            assert_eq!(monitor.state(failure).unwrap(), BoundedState::Reject);
+            let next = monitor.step(state, true).unwrap();
+            assert_ne!(monitor.key(state).unwrap(), monitor.key(next).unwrap());
+            state = next;
+        }
+        assert_eq!(monitor.state(state).unwrap(), BoundedState::Accept);
+        assert_eq!(monitor.rank(state).unwrap(), 0);
+        assert_eq!(monitor.terminal(state).unwrap(), BoundedState::Accept);
+        let after_acceptance = monitor.step(state, false).unwrap();
+        assert_eq!(
+            monitor.key(after_acceptance).unwrap(),
+            monitor.decision_key(true).unwrap()
+        );
+    }
+}
+
+#[trace("TC-636", "FR-201-AC-13", "FR-201-AC-14")]
+#[test]
+fn qualified_bounded_always_stays_lazy_and_retains_only_matching_producer_context() {
+    let fixture = fixture(
+        EVENT,
+        "c: Counter",
+        "on origin",
+        &format!("always[0,{}] holds(true)", u64::MAX),
+    );
+    let own = context(&fixture.clause, 0);
+    let automaton = translate_body(fixture.clause.formula(), fixture.clause.profile(), 8).unwrap();
+    let mut producer = Monitor::bad_prefix(automaton, 8).unwrap();
+    let initial = producer.initial().unwrap();
+    let origin = producer.step(initial, Letter::from_bits(1)).unwrap();
+    let mut retained =
+        QualifiedBoundedMonitor::from_monitor(fixture.clause.formula(), &own, producer, 8).unwrap();
+    assert_eq!(retained.rank(origin).unwrap(), u64::MAX);
+    let next = retained.step(origin, true).unwrap();
+    assert_eq!(retained.rank(next).unwrap(), u64::MAX - 1);
+    assert_eq!(retained.terminal(next).unwrap(), BoundedState::Reject);
+    let other =
+        crate::temporal_trace::fixture(EVENT, "c: Counter", "on origin", "always[0,2] holds(true)");
+    let automaton = translate_body(other.clause.formula(), other.clause.profile(), 8).unwrap();
+    assert!(QualifiedBoundedMonitor::from_monitor(
+        fixture.clause.formula(),
+        &own,
+        Monitor::bad_prefix(automaton, 8).unwrap(),
+        8,
+    )
+    .is_err());
+    for (activation, formula) in [
+        ("on origin", "always[1,2] holds(true)"),
+        ("on each (q: Counter)", "always[0,2] holds(true)"),
+    ] {
+        let unsupported = crate::temporal_trace::fixture(EVENT, "c: Counter", activation, formula);
+        assert!(QualifiedBoundedMonitor::new(
+            unsupported.clause.formula(),
+            &context(&unsupported.clause, 0),
+            100,
+        )
+        .is_err());
+    }
+    let unsupported = crate::temporal_trace::fixture(
+        crate::temporal_trace::INFINITE,
+        "c: Counter",
+        "on origin",
+        "always[0,2] holds(true)",
+    );
+    assert!(QualifiedBoundedMonitor::new(
+        unsupported.clause.formula(),
+        &context(&unsupported.clause, 0),
+        100,
+    )
     .is_err());
 }
 
