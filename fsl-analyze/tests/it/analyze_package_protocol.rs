@@ -1886,7 +1886,7 @@ fn symbolic_capacity_request(
     second: bool,
 ) -> std::path::PathBuf {
     let sends = |channel: &str, suffix: &str| {
-        format!("send First{suffix} via {channel} as (first{suffix}: M::Attempt) {{ first{suffix}.n = 0 }};
+        format!("send First{suffix} via {channel} as (sent_a{suffix}: M::Attempt) {{ sent_a{suffix}.n = 0 }};
                  send Second{suffix} via {channel} as (second{suffix}: M::Attempt) {{ second{suffix}.n = 1 }};")
     };
     let receives = |channel: &str, suffix: &str| {
