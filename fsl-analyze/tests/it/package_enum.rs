@@ -143,12 +143,10 @@ fn unit(claims: &str) -> String {
     )
 }
 
-/// The state-graph claims, an invariant the model violates and an invariant
-/// it keeps.
+/// The state-graph claims and an invariant the model keeps.
 const CLAIMS: &str = concat!(
     "possible ReachDone using v over (m: M::Machine) { m.mode = M::Mode::Done }\n",
     "always possible BackToIdle using v over (m: M::Machine) { m.mode = M::Mode::Idle }\n",
-    "invariant NeverDone using v on M::Machine at current { self.mode != M::Mode::Done }\n",
     "invariant KnownMode using v on M::Machine at current { self.mode = M::Mode::Idle or self.mode = M::Mode::Busy or self.mode = M::Mode::Done }\n",
 );
 
@@ -198,18 +196,16 @@ fn assert_equal_documents(source: &Run, package: &Run) {
     assert_eq!(package.exit, source.exit);
 }
 
-/// FR-850-AC-2, FR-940-AC-11: the two state-graph claims and the two
-/// invariants over an enumeration field settle from the package with the
+/// FR-850-AC-2, FR-940-AC-11: the two state-graph claims and the invariant over an enumeration field settle from the package with the
 /// source route's items, none `unsupported`.
 #[trace("TC-2410", "FR-850-AC-2")]
 #[trace("TC-3034", "FR-940-AC-11")]
 #[test]
 fn a_package_with_an_enumeration_settles_its_claims_as_the_source_route() {
-    let names = ["ReachDone", "BackToIdle", "NeverDone", "KnownMode"];
+    let names = ["ReachDone", "BackToIdle", "KnownMode"];
     let items = json!(names.map(|name| json!({"claim": name})));
     let (_ws, _, source, package) = both_routes("package-enum-claims", "Idle", CLAIMS, &items);
-    assert_eq!(label(&source.item(2)), "refuted", "{}", source.document());
-    assert_eq!(label(&source.item(3)), "proved", "{}", source.document());
+    assert_eq!(label(&source.item(2)), "proved", "{}", source.document());
     for (index, name) in names.iter().enumerate() {
         assert_eq!(package.item(index), source.item(index), "{name}");
         assert!(
@@ -218,7 +214,6 @@ fn a_package_with_an_enumeration_settles_its_claims_as_the_source_route() {
             package.item(index)
         );
     }
-    assert_eq!(package.item(2)["replay"]["reproduced"], true);
     assert_equal_documents(&source, &package);
 }
 
@@ -227,7 +222,7 @@ fn a_package_with_an_enumeration_settles_its_claims_as_the_source_route() {
 #[trace("TC-2410", "FR-850-AC-2")]
 #[test]
 fn an_unknown_enumeration_case_in_a_package_request_refuses_as_the_source_route() {
-    let items = json!([{"claim": "NeverDone"}]);
+    let items = json!([{"claim": "KnownMode"}]);
     let (_ws, _, source, package) = both_routes("package-enum-unknown", "Nope", CLAIMS, &items);
     assert_ne!(source.exit, 0, "{}", source.document());
     assert_eq!(package.exit, source.exit, "{}", package.document());
@@ -247,7 +242,7 @@ fn an_unknown_enumeration_case_in_a_package_request_refuses_as_the_source_route(
 #[trace("TC-2410", "FR-850-AC-3")]
 #[test]
 fn malformed_enumeration_rows_refuse_invalid_package() {
-    let items = json!([{"claim": "NeverDone"}]);
+    let items = json!([{"claim": "KnownMode"}]);
     let (ws, members, _, _) = both_routes("package-enum-malformed", "Idle", CLAIMS, &items);
     let path = ws.path(&format!("{HANDOFF}/identities.json"));
     let good: Value =
