@@ -247,6 +247,7 @@ fn value_record_views_and_native_charges_equal_the_source() {
             "Guarded",
             vec![Value::Integer(3_i64.into()), Value::Boolean(true)],
         ),
+        ("Other", vec![Value::Integer(3_i64.into())]),
         ("Ready", vec![enums[0].clone()]),
     ] {
         let name = QualifiedName::unqualified(name).unwrap();

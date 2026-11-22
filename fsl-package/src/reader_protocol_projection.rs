@@ -255,6 +255,7 @@ impl ReaderProtocolProjection {
             name: &function.name,
             node: &function.key,
             body: function.body,
+            body_location: function.body_location.as_ref(),
             slots: function.slots,
             parameters: &function.parameters,
             result_type: function.result_type.as_ref()?,
@@ -306,6 +307,33 @@ impl ReaderProtocolProjection {
                 function.clone()
             })
             .collect();
+        let mut body_roots = BTreeMap::new();
+        for row in &data.body_locations {
+            let CheckedBodyLocationOrigin::FunctionBody {
+                function,
+                name,
+                index,
+            } = &row.location.origin;
+            let index = usize::try_from(*index).map_err(|_| fault("body-index-fits"))?;
+            let root = Location::at(
+                Origin::Body {
+                    function: name.to_string(),
+                    index,
+                },
+                &[],
+            );
+            if body_roots
+                .insert(function.clone(), root.clone())
+                .is_some_and(|previous| previous != root)
+            {
+                return Err(fault("function-body-origin-is-consistent"));
+            }
+        }
+        for function in &mut self.functions {
+            if let Some(root) = body_roots.get(&function.node) {
+                function.body_location = Some(root.clone());
+            }
+        }
         let mut rows: BTreeMap<CheckedNodeId, BTreeMap<CheckedNodeId, Vec<CapturedBodyLocation>>> =
             BTreeMap::new();
         for projected in &self.functions {
@@ -503,6 +531,11 @@ pub struct ReaderProtocolFunction<'a> {
     pub node: &'a NodeKey,
     /// Function body node index.
     pub body: usize,
+    /// Body-root location reconstructed from admitted body-origin metadata,
+    /// when this function has at least one body-location row. This supports
+    /// top-level call accounting when the root is a control form without its
+    /// own term-location row.
+    pub body_location: Option<&'a Location>,
     /// Number of checked parameter slots.
     pub slots: usize,
     /// The checked parameters, in declaration order.
@@ -2093,6 +2126,7 @@ impl<'wire> ReaderBuilder<'_, 'wire> {
                     .ok_or_else(|| fault("reader-function-name-is-admitted"))?,
                 key: self.index.key(id)?,
                 body: usize::MAX,
+                body_location: None,
                 slots: parameter_ids.len(),
                 parameters: projected,
                 result_type: None,
@@ -5009,6 +5043,7 @@ struct ReaderFunction {
     name: String,
     key: NodeKey,
     body: usize,
+    body_location: Option<Location>,
     slots: usize,
     parameters: Vec<ReaderProtocolParameter>,
     result_type: Option<ValueType>,

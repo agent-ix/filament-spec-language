@@ -413,6 +413,11 @@ fn package_scalar_requirement_records_equal_the_source_run() {
         let source_run = execute(&path);
         let source_requests = std::mem::take(&mut seen.lock().unwrap().requests);
         let source_facts = std::mem::take(&mut seen.lock().unwrap().facts);
+        assert!(
+            source_requests.is_empty(),
+            "Guarded's bounded items settle on the linked value-checker"
+        );
+        assert!(source_facts.is_empty());
         let compile = json!({"format": "native-compile/1", "request": {
             "models": [], "program": {"source": source()},
             "handoff": {"directory": "handoff", "package_name": "test:requirements",
@@ -461,20 +466,93 @@ fn package_scalar_requirement_records_equal_the_source_run() {
                 .all(|item| item["request"]["claim"]["occurrence"]["role"] == "expression"),
             "{items:?}"
         );
-        if provider {
-            let seen = seen.lock().unwrap();
-            assert_eq!(seen.requests, source_requests);
-            assert_eq!(seen.requests.len(), 1);
-            assert_eq!(seen.requests[0]["items"].as_array().map(Vec::len), Some(2));
-            assert_eq!(seen.facts, source_facts);
-            assert_eq!(seen.facts.len(), 2);
-            assert!(
-                seen.facts.iter().all(|(_, _, guards)| guards.len() == 1),
-                "{:?}",
-                seen.facts
-            );
-        }
+        assert!(
+            items.iter().all(|item| {
+                item["request"]["candidates"]["backends"] == json!(["value-checker"])
+                    && item["record"]["backend"] == "value-checker"
+            }),
+            "{items:?}"
+        );
+        let seen = seen.lock().unwrap();
+        assert!(seen.requests.is_empty());
+        assert!(seen.facts.is_empty());
     }
+
+    // FR-961-AC-1's unbounded Even item is the provider-routed case. Preserve
+    // one complete source/package provider request and its requirement facts.
+    let directory = tempfile::tempdir().unwrap();
+    let path = write(
+        directory.path(),
+        "Even",
+        json!([{"parameter": "n", "value": {"type": "integer", "value": "4"}}]),
+        Some(json!({"backend": PROVIDER})),
+    );
+    let seen = Arc::new(Mutex::new(Seen::default()));
+    let mut options = fsl_analyze::provider::ProviderOptions::default();
+    options.provider_limits.deadline_ms = 250;
+    let execute = |path: &Path| {
+        command::run_with_providers(
+            path,
+            &Fr290,
+            vec![recording_provider(&seen, ProviderVerdict::Proved)],
+            &options,
+            &filament_exact::Cancel::new(),
+        )
+        .unwrap()
+    };
+    let source_run = execute(&path);
+    let source_requests = std::mem::take(&mut seen.lock().unwrap().requests);
+    let source_facts = std::mem::take(&mut seen.lock().unwrap().facts);
+    let source_value = documents(&source_run).0;
+    let source_items = entries(&source_value);
+    assert_eq!(source_requests.len(), 1);
+    assert_eq!(
+        source_requests[0]["items"].as_array().map(Vec::len),
+        Some(source_items.len())
+    );
+    assert_eq!(source_facts.len(), source_items.len());
+    {
+        let seen = seen.lock().unwrap();
+        assert_eq!(seen.settle_calls, 1);
+        assert_eq!(seen.deadline_ms, 250);
+    }
+
+    let compile = json!({"format": "native-compile/1", "request": {
+        "models": [], "program": {"source": source()},
+        "handoff": {"directory": "handoff", "package_name": "test:requirements",
+            "native_join": {"work_units": 1_u64 << 40, "storage": 1_u64 << 24}}
+    }});
+    let compile_path = directory.path().join("compile.json");
+    std::fs::write(&compile_path, compile.to_string()).unwrap();
+    command::compile(&compile_path).unwrap();
+    let mut request: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    request["request"]
+        .as_object_mut()
+        .unwrap()
+        .remove("program");
+    request["request"]["package"] = json!({"directory": "handoff"});
+    std::fs::write(&path, request.to_string()).unwrap();
+    std::fs::remove_file(directory.path().join("unit.native")).unwrap();
+    let package = execute(&path);
+    let (package_value, package_outcome) = documents(&package);
+    let (_, source_outcome) = documents(&source_run);
+    assert_eq!(package_value["requirements"], source_value["requirements"]);
+    assert_eq!(package_value["registry"], source_value["registry"]);
+    assert_eq!(package_value["outcome"], source_value["outcome"]);
+    assert_eq!(package_outcome["items"], source_outcome["items"]);
+    assert_eq!(package.exit_code, source_run.exit_code);
+    let package_items = entries(&package_value);
+    let seen = seen.lock().unwrap();
+    assert_eq!(seen.requests, source_requests);
+    assert_eq!(seen.requests.len(), 1);
+    assert_eq!(seen.settle_calls, 2);
+    assert_eq!(seen.deadline_ms, 250);
+    assert_eq!(
+        seen.requests[0]["items"].as_array().map(Vec::len),
+        Some(package_items.len())
+    );
+    assert_eq!(seen.facts, source_facts);
+    assert_eq!(seen.facts.len(), package_items.len());
 }
 
 /// Held aliases retain per-item selection and diagnostics; invalid calls
