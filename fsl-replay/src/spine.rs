@@ -99,7 +99,7 @@ pub use lifecycle::{
 };
 pub(crate) use lifecycle::{
     check_for_continuation, check_units_with_options, parse_for_continuation, ContinuationInputs,
-    UnitCheckOptions,
+    ExternalPackageBytes, UnitCheckOptions,
 };
 pub use protocol_structure::{
     arena_names, replay_protocol_analysis, ProtocolReplayRefusal, StructureError,

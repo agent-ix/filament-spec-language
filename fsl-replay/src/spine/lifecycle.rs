@@ -2046,8 +2046,23 @@ pub fn check_units_with_refinement_internals(
     )
 }
 
+/// The `replay.input_bytes` allowance left for the packages the closure's
+/// libraries emit. Each library package is charged as it is emitted, so a
+/// closure that exceeds the bound stops at the library that crosses it and
+/// compiles no later library or the importing unit.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct ExternalPackageBytes {
+    /// The bytes the request already holds against the bound.
+    pub(crate) spent: u128,
+    /// The configured `replay.input_bytes`.
+    pub(crate) bound: u64,
+}
+
 #[derive(Clone, Copy, Default)]
 pub(crate) struct UnitCheckOptions<'a> {
+    /// The allowance for the libraries' emitted packages, or `None` for a
+    /// caller that charges them itself afterwards.
+    pub(crate) external_package_bytes: Option<ExternalPackageBytes>,
     pub(crate) integer_division: Option<crate::AdmittedIntegerDivision>,
     pub(crate) temporal_selections: &'a [fsl_package::TemporalClockSelection],
     pub(crate) clocks: Option<&'a super::RequestClocks>,
@@ -2108,6 +2123,7 @@ pub(crate) fn check_units_with_options(
             check_mode: options.check_mode.unwrap_or(CheckMode::Linked),
             function_modes: options.function_modes,
             extension_catalog: options.extension_catalog,
+            external_package_bytes: options.external_package_bytes,
             active: Vec::new(),
             compiled: BTreeMap::new(),
             import_edges: 0,
@@ -2523,6 +2539,7 @@ fn check_with_context_and_temporal_selections(
             clocks,
             integer_division,
             extension_catalog,
+            external_package_bytes: None,
             check_mode: check_mode.unwrap_or(CheckMode::Linked),
             function_modes,
             active: Vec::new(),
@@ -3887,6 +3904,9 @@ struct Resolution<'a> {
     /// The catalog that holds the extensions a unit or library selects
     /// (FR-354); `None` holds none.
     extension_catalog: Option<ProfileCatalogInput<'a>>,
+    /// The allowance still open for library packages, charged as each is
+    /// emitted; `None` charges nothing.
+    external_package_bytes: Option<ExternalPackageBytes>,
     /// The libraries whose compile is in progress, outermost first.
     active: Vec<LibraryName>,
     /// Each library whose compile completed. A library is compiled at most
@@ -4042,6 +4062,29 @@ fn unwind(libraries: &[Library], refusal: Box<CompileRefusal>) -> Box<CompileRef
 }
 
 impl<'a> Resolution<'a> {
+    /// Charge one library's emitted package against the `replay.input_bytes`
+    /// allowance, refusing before the package is read back and before any
+    /// later library or the importing unit is compiled.
+    fn charge_external_package(&mut self, length: usize) -> Result<(), Box<CompileRefusal>> {
+        let Some(allowance) = self.external_package_bytes.as_mut() else {
+            return Ok(());
+        };
+        allowance.spent = allowance
+            .spent
+            .saturating_add(u128::try_from(length).unwrap_or(u128::MAX));
+        if allowance.spent > u128::from(allowance.bound) {
+            return Err(Box::new(CompileRefusal::Import {
+                refusal: ImportRefusal::Limit(LimitExceeded::new(
+                    Setting::ReplayInputBytes,
+                    allowance.bound,
+                    allowance.spent,
+                )),
+                region: None,
+            }));
+        }
+        Ok(())
+    }
+
     /// Compile supplied libraries with their own internal-list input even
     /// when the unit does not import them, so a malformed supplied value is
     /// located at its source owner and refuses the whole compile (FR-147-AC-10).
@@ -4518,6 +4561,8 @@ impl<'a> Resolution<'a> {
                 return Ok(package);
             };
             self.active.pop();
+            self.charge_external_package(emission.package().bytes().len())
+                .map_err(|refusal| unwind(&libraries, refusal))?;
             // 5. View, in the importing unit's context.
             let parent = current(&mut root, &mut libraries);
             let at_import = parent

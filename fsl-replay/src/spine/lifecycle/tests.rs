@@ -2342,6 +2342,7 @@ fn check_units_continues_past_a_protocol_refusal_only_when_asked() {
                 check_mode: None,
                 function_modes: None,
                 extension_catalog: None,
+                external_package_bytes: None,
             },
             SpineLimits::default(),
             &cancel,
@@ -4810,4 +4811,88 @@ fn the_recompile_checks_under_the_given_check_mode() {
         checked[0].package().graph().function_check_mode(0),
         Some(CheckMode::Kernel)
     );
+}
+
+/// QSL-2849: the `replay.input_bytes` allowance for library packages is
+/// charged as each package is emitted. With no room left, the closure stops
+/// at the first library it emits: the refusal's counter is that one package's
+/// length, which a second library compiled before the check would have
+/// raised, and the importing unit is never compiled.
+#[test]
+fn library_packages_are_charged_as_each_is_emitted() {
+    let shapes = SuppliedLibrary {
+        identity: "test/shapes".to_owned(),
+        source: SourceIdentity::new("a", "shapes"),
+        path: "shapes.native".to_owned(),
+        bytes: format!(
+            "{HEADER}function g using v(x: Int[0, 9]): Boolean pure {{ x < 7 }}\n\
+             function k using v(x: Int[0, 9]): Boolean pure {{ x < 8 }}\n"
+        )
+        .into_bytes(),
+    };
+    let dependencies = DependencyInput::new(vec![geometry(), shapes]).expect("admissible");
+    let unit = format!(
+        "{HEADER}import \"test/geometry\" as g;\nimport \"test/shapes\" as s;\n\
+         function h using v(): Boolean pure {{ true }}\n"
+    );
+    let cancel = Cancel::new();
+    let packages = fsl_semantics::model::intake::package_input([]).expect("no model packages");
+    let run = |external_package_bytes| {
+        let parsed = super::parse_for_continuation(
+            &request(unit.as_bytes()),
+            SourceLimits::default(),
+            &cancel,
+        )
+        .expect("the unit parses")
+        .into_value();
+        let admitted =
+            admit_parsed_unit_list(vec![parsed], &dependencies).expect("the unit is admitted");
+        let models = super::select_units(
+            &admitted,
+            &packages,
+            ModelNormalizationLimits::default(),
+            SourceLimits::default(),
+            &cancel,
+        )
+        .expect("no model is selected")
+        .into_value();
+        check_units_with_options(
+            &admitted,
+            "fixture".to_owned(),
+            &models,
+            &dependencies,
+            UnitCheckOptions {
+                external_package_bytes,
+                ..UnitCheckOptions::default()
+            },
+            SpineLimits::default(),
+            &cancel,
+        )
+    };
+    let unbounded = run(None).expect("the closure compiles").into_value();
+    let lengths: BTreeMap<String, usize> = unbounded[0]
+        .shared_library_packages()
+        .iter()
+        .map(|(name, package)| (name.as_str().to_owned(), package.bytes().len()))
+        .collect();
+    assert_eq!(lengths.len(), 2);
+    let first = lengths["test/geometry"];
+    let total: usize = lengths.values().sum();
+    assert!(first < total);
+
+    let Err(StageFailure::Limit(limit)) =
+        run(Some(super::ExternalPackageBytes { spent: 0, bound: 0 }))
+    else {
+        panic!("the allowance refuses the first library package");
+    };
+    assert_eq!(limit.setting(), Setting::ReplayInputBytes);
+    assert_eq!(limit.configured_bound(), 0);
+    assert_eq!(limit.actual(), first as u128, "the second library never ran");
+
+    // Room for exactly the closure's packages admits it.
+    run(Some(super::ExternalPackageBytes {
+        spent: 0,
+        bound: total as u64,
+    }))
+    .expect("an allowance equal to the packages admits the closure");
 }

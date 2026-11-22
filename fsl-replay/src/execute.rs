@@ -45,7 +45,7 @@ use fsl_semantics::model::intake::package_input;
 use fsl_semantics::model::object_environment::ObjectEnvironment;
 use fsl_semantics::value::environment_stage::{membership_failure_cause, membership_failure_code};
 
-use crate::bounds::ReplayLimits;
+use crate::bounds::{BoundExceeded, ReplayLimits};
 use crate::hybrid_replay::{
     exact_replay, static_replay, ExactGap, ExactRecord, ExactReplay, HybridCounterexample,
     HybridCounterexampleKind, HybridReplayMeter, HybridReplayRefusal, ReplayRecord, TraceRefusal,
@@ -2195,6 +2195,7 @@ pub(crate) fn recompile_with_temporal_selections(
         refinement_internals: request.refinement_internals(),
         check_mode: request.package().check_mode(),
         function_modes: &request.package().function_modes(),
+        external_package_bytes: request.external_package_allowance(),
     })
     .map_err(|failure| {
         locate_dependency_clock_refusal(
@@ -2494,6 +2495,33 @@ struct SpineUnitRun<'a> {
     check_mode: filament_semantic_value::checking::CheckMode,
     function_modes:
         &'a std::collections::BTreeMap<String, filament_semantic_value::checking::CheckMode>,
+    /// The `replay.input_bytes` allowance the closure's library packages are
+    /// charged against as each is emitted.
+    external_package_bytes: spine::ExternalPackageBytes,
+}
+
+/// A library-package charge that crossed `replay.input_bytes` is the
+/// request's [`BoundExceeded`] refusal, the one the after-the-fact check
+/// reports, not a recompile refusal.
+fn external_package_bound(refusal: ReplayRefusal) -> ReplayRefusal {
+    match refusal {
+        ReplayRefusal::Recompile {
+            refusal: compile, ..
+        } => match *compile {
+            CompileRefusal::Limit(limit) if limit.setting() == Setting::ReplayInputBytes => {
+                ReplayRequestRefusal::BoundExceeded(BoundExceeded {
+                    bound: limit.configured_bound(),
+                    actual: limit.actual(),
+                })
+                .into()
+            }
+            compile => ReplayRefusal::Recompile {
+                refusal: Box::new(compile),
+                pointer: None,
+            },
+        },
+        other => other,
+    }
 }
 
 fn run_spine_units(
@@ -2509,6 +2537,7 @@ fn run_spine_units(
         refinement_internals,
         check_mode,
         function_modes,
+        external_package_bytes,
     } = input;
     #[cfg(test)]
     SPINE_RUNS.with(|runs| runs.set(runs.get() + 1));
@@ -2599,11 +2628,13 @@ fn run_spine_units(
             check_mode: Some(check_mode),
             function_modes: Some(function_modes),
             extension_catalog: None,
+            external_package_bytes: Some(external_package_bytes),
         },
         limits,
         &cancel,
     )
-    .map_err(&refusal)?
+    .map_err(&refusal)
+    .map_err(external_package_bound)?
     .into_value();
     let checked = checked.into_iter().next().ok_or_else(|| {
         ReplayRefusal::Fault(InternalFault::new(
