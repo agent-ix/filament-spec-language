@@ -101,7 +101,7 @@ fn universal_parity(bound: u64, expected: &str) {
 fn check_universal_atoms_and_certificate<'a>(
     ws: &Workspace,
     bare: &'a BarePackage<'a>,
-    packages: &'a [fsl_semantics::model::domain_package::DomainPackage],
+    packages: &'a fsl_semantics::model::intake::PackageInput,
     clause: &fsl_semantics::check::CheckedHyperClause,
     holds: bool,
 ) {
@@ -113,7 +113,7 @@ fn check_universal_atoms_and_certificate<'a>(
     use fsl_eval::simulation::model::{
         ExpansionLimits, ModelCheckInput, ModelSimulationRequest, ModelSystem, PackageModelInput,
     };
-    use fsl_eval::simulation::TransitionSystem;
+    use fsl_eval::simulation::{SubjectSystem, TransitionSystem};
     use fsl_replay::{
         check_package_hyper_closure, HyperOutcome, ModelCheckLimits, PackageHyperClosureRequest,
         ProductClosure, ProductClosureCheck,
@@ -177,13 +177,28 @@ fn check_universal_atoms_and_certificate<'a>(
         .into_iter()
         .next()
         .expect("initial state");
-    let states: Vec<_> = package_system
-        .relation_successors(&initial, &Cancel::new())
-        .expect("reachable Counter successors")
-        .successors
-        .into_iter()
-        .map(|(_, state)| state)
-        .collect();
+    let mut seen = std::collections::BTreeSet::from([package_system
+        .canonical_state_key(&initial)
+        .expect("initial key")]);
+    let mut states = vec![initial];
+    let mut cursor = 0;
+    while let Some(state) = states.get(cursor).cloned() {
+        for (_, next) in package_system
+            .relation_successors(&state, &Cancel::new())
+            .expect("reachable Counter successors")
+            .successors
+        {
+            if seen.insert(
+                package_system
+                    .canonical_state_key(&next)
+                    .expect("state key"),
+            ) {
+                assert!(states.len() < 4, "the bounded Counter has only four states");
+                states.push(next);
+            }
+        }
+        cursor += 1;
+    }
     assert_eq!(states.len(), 4, "all four Counter values are exercised");
     let mut evaluated = 0;
     for left in &states {

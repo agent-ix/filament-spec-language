@@ -266,7 +266,6 @@ impl<'a> PackageHyperClosureRequest<'a> {
         meter: ScalarLimits,
         position_limit: u64,
     ) -> Result<Self, ProductClosureRefusal> {
-        use fsl_package::AnalysisView;
         if package.model_selections().len() != 1 {
             return Err(ProductClosureRefusal::Input("package-hyper-model-scope"));
         }

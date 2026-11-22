@@ -121,7 +121,7 @@ impl<'a> PackageHyperSubject<'a> {
         let systems: Vec<_> = match clause
             .quantifiers()
             .iter()
-            .map(|quantifier| slot_of(&quantifier.alias).and_then(|slot| owned.get(slot)))
+            .map(|quantifier| slot_of(quantifier.alias.as_str()).and_then(|slot| owned.get(slot)))
             .collect::<Option<Vec<_>>>()
         {
             Some(systems) => systems,
@@ -178,7 +178,7 @@ impl<'a> PackageHyperSubject<'a> {
                         .iter()
                         .find(|(name, _)| name == &parameter.name)
                         .map(|(_, key)| key);
-                    let system = slot_of(&parameter.alias)
+                    let system = slot_of(parameter.alias.as_str())
                         .and_then(|slot| owned.get(slot))
                         .ok_or_else(|| fault("parameter-alias"))?;
                     let admitted = system
