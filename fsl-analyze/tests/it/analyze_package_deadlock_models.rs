@@ -103,6 +103,11 @@ fn a_reachable_deadlock_over_one_of_two_models_refutes_as_the_source_route() {
             reads,
             &json!([deadlock_item(identity)]),
         );
+        assert!(
+            source.document()["items"][0].is_object(),
+            "{identity}: {}",
+            source.document()
+        );
         assert_eq!(label(&source.item(0)), "refuted", "{}", source.document());
         assert_eq!(label(&package.item(0)), "refuted", "{}", package.document());
         assert_eq!(package.item(0)["replay"]["reproduced"], true);
