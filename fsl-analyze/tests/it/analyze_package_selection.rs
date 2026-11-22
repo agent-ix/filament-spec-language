@@ -965,6 +965,106 @@ fn a_package_request_settles_temporal_and_deadlock_items_as_the_source_route() {
     assert_eq!(package.exit, source.exit);
 }
 
+/// Bounded past and future operators retain their closed step endpoints on
+/// both routes. The Counter advances 0, 1, 2, 3 and then stutters at 3.
+/// The package run has neither the authored source nor handoff source files.
+#[trace("TC-2410", "FR-850-AC-2")]
+#[trace("TC-2958", "FR-940-AC-6")]
+#[test]
+fn bounded_step_intervals_settle_from_bytes_as_from_source() {
+    let cases = [
+        (
+            "OnceEndpoint",
+            "always (holds(c.value = 2) implies once[2,2] holds(c.value = 0))",
+            "proved",
+        ),
+        (
+            "OnceOutside",
+            "always (holds(c.value = 2) implies once[1,1] holds(c.value = 0))",
+            "refuted",
+        ),
+        (
+            "HistoricallyInside",
+            "always (holds(c.value = 2) implies historically[1,2] holds(c.value <= 1))",
+            "proved",
+        ),
+        (
+            "HistoricallyEndpoint",
+            "always (holds(c.value = 2) implies historically[1,2] holds(c.value < 1))",
+            "refuted",
+        ),
+        (
+            "EventuallyEndpoint",
+            "eventually[1,3] holds(c.value = 3)",
+            "proved",
+        ),
+        (
+            "EventuallyOutside",
+            "eventually[1,2] holds(c.value = 3)",
+            "refuted",
+        ),
+        (
+            "AlwaysInside",
+            "always[1,2] holds(c.value >= 1 and c.value <= 2)",
+            "proved",
+        ),
+        (
+            "AlwaysEndpoint",
+            "always[1,3] holds(c.value <= 2)",
+            "refuted",
+        ),
+        (
+            "SharedFutureCore",
+            "eventually[0,2] holds(c.value = 2) and eventually[1,3] holds(c.value = 2)",
+            "proved",
+        ),
+    ];
+    let body: String = cases
+        .iter()
+        .map(|(name, formula, _)| clause(name, "", formula))
+        .collect();
+    let items: Vec<_> = cases
+        .iter()
+        .map(|(name, _, _)| json!({"claim": name}))
+        .collect();
+    let ws = Workspace::new("package-bounded-step-intervals");
+    let path = counter_request(&ws, &body, json!(items));
+    let source = analyze(&path);
+    let (members, _) = package_selection(&ws, &request_of(&path));
+    std::fs::remove_file(ws.path("program.fsl")).expect("remove authored source");
+    std::fs::remove_dir_all(ws.path(&handoff_file("sources")))
+        .expect("remove the handoff source directory");
+    let package = analyze_members(&ws, "analyze-package.json", &members);
+    for (index, (name, _, expected)) in cases.iter().enumerate() {
+        for run in [&source, &package] {
+            assert_eq!(
+                label(&run.item(index)),
+                *expected,
+                "{name}: {}",
+                run.document()
+            );
+            if *expected == "proved" {
+                assert_eq!(
+                    run.item(index)["record"]["certification"],
+                    "certified",
+                    "{name}: {}",
+                    run.document()
+                );
+            }
+        }
+    }
+    for member in ["items", "aggregate", "last_stage", "category", "registry"] {
+        assert_eq!(
+            package.document()[member],
+            source.document()[member],
+            "{member}: {}",
+            package.document()
+        );
+    }
+    assert_eq!(source.exit, 10, "{}", source.document());
+    assert_eq!(package.exit, source.exit, "{}", package.document());
+}
+
 /// FR-940 "Package forms of the source-checked evaluators" (QSL-2406,
 /// QSL-2432): a request whose item names a family the package route has
 /// no form of yet is refused whole, typed and naming the family, never
