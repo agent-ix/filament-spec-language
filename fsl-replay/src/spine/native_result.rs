@@ -3622,7 +3622,12 @@ impl Disposition {
                             | crate::reference_codec::ReferenceCodecError::Universe { .. }
                             | crate::reference_codec::ReferenceCodecError::Transition { .. }
                             | crate::reference_codec::ReferenceCodecError::Refused { .. }
-                            | crate::reference_codec::ReferenceCodecError::Key { .. } => {
+                            | crate::reference_codec::ReferenceCodecError::Key { .. }
+                            | crate::reference_codec::ReferenceCodecError::IntegerParse {
+                                ..
+                            }
+                            | crate::reference_codec::ReferenceCodecError::Carrier { .. }
+                            | crate::reference_codec::ReferenceCodecError::Decimal { .. } => {
                                 BTreeMap::new()
                             }
                         };

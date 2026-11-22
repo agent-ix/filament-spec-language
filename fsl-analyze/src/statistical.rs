@@ -53,8 +53,8 @@ pub use claim::{
     QuantileComparison, StatisticalClaim,
 };
 pub use model::{
-    check_statistical, witness_reader, witness_reader_with_timed_sampling, ModelWitnessReader,
-    StatisticalRequest,
+    check_statistical, check_statistical_with_output, witness_reader,
+    witness_reader_with_timed_sampling, ModelWitnessReader, StatisticalRequest,
 };
 
 use bounds::{int, normal_quantile_upper, quotient, QuantileFailure};

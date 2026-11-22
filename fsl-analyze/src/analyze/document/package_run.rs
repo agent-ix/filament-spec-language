@@ -545,7 +545,7 @@ pub fn settle_package_run(
             analyzed.push(work.item(route, item));
         }
     }
-    let records = super::super::analyze_items(engines, analyzed, cancel);
+    let mut records = super::super::analyze_items(engines, analyzed, cancel);
     let details = records.iter().map(super::super::ItemDetail::of).collect();
     let protocol_conformance = records
         .iter()
@@ -556,10 +556,20 @@ pub fn settle_package_run(
                 .map(|output| (record.request_index, output))
         })
         .collect();
+    let statistical_verdicts = records
+        .iter_mut()
+        .filter_map(|record| {
+            record
+                .spelled_statistical_verdict
+                .take()
+                .map(|verdict| (record.request_index, verdict))
+        })
+        .collect();
     let (records, counterexamples) = super::super::split_records_over(records, None);
     let (targets, item_routes) = negotiated_routes(&negotiated, &unrouted_items, engines);
     Ok(write_run(
         SettledParts {
+            statistical_verdicts,
             records,
             counterexamples,
             details,

@@ -1329,13 +1329,99 @@ fn a_verdict_spells_its_bindings_and_instances() {
             "seed": "7", "max_witnesses": 8}}]),
     );
     let verdict = &document["items"][0]["verdict"];
+    assert_eq!(label(&document["items"][0]), "measured", "{document}");
     let tests = verdict["provenance"]["tests"].as_array().expect("tests");
     assert!(!tests.is_empty(), "{verdict}");
     for test in tests {
         assert!(test["binding"].is_object(), "{test}");
+        let binding = &test["binding"];
+        assert_eq!(binding["type"], "reference", "{test}");
+        let identity = binding["identity"]
+            .as_str()
+            .expect("real reference identity");
+        assert!(!identity.is_empty() && identity.len() % 2 == 0, "{binding}");
+        assert!(
+            identity
+                .bytes()
+                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte)),
+            "{binding}"
+        );
+        assert!(binding["object_type"]["ordinal"].is_u64(), "{binding}");
+        assert!(binding["object_type"]["path"].is_array(), "{binding}");
         assert!(test["instance"].is_null(), "{test}");
     }
     assert_eq!(verdict["witnesses"], json!([]), "{verdict}");
+}
+
+/// The result converter shares the admission's real cumulative meter. Give a
+/// fresh source request only the work its genuine checking stage consumed;
+/// catalog/result work cannot replace that owner with another allowance.
+#[trace("TC-2066", "FR-741-AC-1")]
+#[test]
+fn statistical_verdict_preserves_the_original_normalization_denial() {
+    use fsl_semantics::model::accounting::LimitKind;
+    let limits = fsl_replay::spine::SpineLimits::default();
+    let cancel = filament_exact::Cancel::new();
+    let source = fsl_foundation::SourceIdentity::new("test", "statistical-reference-budget");
+    let text = unit(DELIVERED);
+    let packages = fsl_semantics::model::intake::package_input([LINK_MODEL])
+        .expect("actual source model input");
+    let parsed = fsl_replay::spine::parse(
+        &fsl_replay::spine::ParseRequest {
+            source: &source,
+            path: "statistical-reference.native",
+            bytes: text.as_bytes(),
+        },
+        limits.source,
+        &cancel,
+    )
+    .expect("actual source parse")
+    .into_value();
+    let selected = fsl_replay::spine::select(&parsed, &packages, limits.model, &cancel)
+        .expect("actual model-stage selection")
+        .into_value();
+    let checked = fsl_replay::spine::check(
+        &parsed,
+        "analyze-unit".to_owned(),
+        &selected,
+        &fsl_replay::spine::DependencyInput::default(),
+        limits,
+        &cancel,
+    )
+    .expect("actual checking stage")
+    .into_value()
+    .retain_model_admission(selected);
+    let consumed = checked
+        .model_admission_owner()
+        .expect("original model admission")
+        .consumed(LimitKind::WorkUnits);
+    assert!(consumed > 0);
+    let ws = Workspace::new("statistical-reference-normalization-denial");
+    let request = request_over(
+        &ws,
+        &text,
+        LINK_MODEL,
+        &[LINK_START.to_vec()],
+        json!({
+            "items": [{"claim": "Delivered", "probabilistic": {
+                "evidence": "statistical", "method": {"type": "okamoto"}, "seed": "7"}}],
+            "limits": {"normalization": {"work_units": consumed}}
+        }),
+    );
+    let run = analyze(&request);
+    let document = run.document();
+    let item = &document["items"][0];
+    assert_eq!(label(item), "declined", "{document}");
+    assert!(item.get("verdict").is_none(), "{item}");
+    let diagnostic = &item["record"]["diagnostic"];
+    assert_eq!(diagnostic["code"], "resource_exhausted", "{item}");
+    assert_eq!(diagnostic["cause"], "insufficient-next-charge", "{item}");
+    let detail = &diagnostic["detail"];
+    assert_eq!(detail["charge_point"], "reference.catalog", "{item}");
+    assert_eq!(detail["setting"], "model.work_units", "{item}");
+    assert_eq!(detail["limit"], consumed.to_string(), "{item}");
+    assert_eq!(detail["consumed"], consumed.to_string(), "{item}");
+    assert_eq!(detail["next_charge"], "1", "{item}");
 }
 
 /// FR-741 request members and FR-203 budgets: an exact item's

@@ -118,6 +118,19 @@ pub fn check_statistical(
     request: StatisticalRequest<'_>,
     cancel: &Cancel,
 ) -> Result<StatisticalOutcome, StatisticalRefusal> {
+    check_statistical_with_output(request, cancel, |_, _| ()).map(|(outcome, ())| outcome)
+}
+
+/// Observe the engine outcome while its genuine admitted runtime is alive.
+/// The callback does not alter sampling or the statistical settlement.
+///
+/// # Errors
+/// Returns the original admission, sampling or statistical refusal.
+pub fn check_statistical_with_output<T>(
+    request: StatisticalRequest<'_>,
+    cancel: &Cancel,
+    output: impl FnOnce(&ModelSystem<'_>, &StatisticalOutcome) -> T,
+) -> Result<(StatisticalOutcome, T), StatisticalRefusal> {
     let StatisticalRequest {
         subject,
         claim,
@@ -170,7 +183,7 @@ pub fn check_statistical(
         shared: Rc::new(RefCell::new(shared)),
     };
     let clause_meter = filament_exact::Meter::new(scalar_limits).with_cancel(cancel.clone());
-    check_sampled_with_meter(
+    let outcome = check_sampled_with_meter(
         SampledRequest {
             claim: &statistical,
             tests: &tests,
@@ -184,7 +197,9 @@ pub fn check_statistical(
         &mut model,
         cancel,
         clause_meter,
-    )
+    )?;
+    let output = output(&system, &outcome);
+    Ok((outcome, output))
 }
 
 /// The sampler state over an admitted `system`, and the claim's tests in

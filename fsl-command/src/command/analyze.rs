@@ -941,7 +941,10 @@ fn run_input(
         intake,
         sources,
         false,
-        fsl_replay::spine::SpineLimits::default(),
+        fsl_replay::spine::SpineLimits {
+            model: routed.limits.normalization,
+            ..fsl_replay::spine::SpineLimits::default()
+        },
         integer_division,
         None,
         |_intake, checked, selections, _, packages, libraries, _, _, _, _| {

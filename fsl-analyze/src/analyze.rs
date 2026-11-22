@@ -757,6 +757,8 @@ pub struct AnalyzeRequest<'a> {
 /// item in request order.
 #[derive(Debug)]
 pub struct AnalyzeOutcome {
+    /// Full statistical verdicts already written under the original live runtime.
+    pub statistical_verdicts: std::collections::BTreeMap<RequestIndex, Box<serde_json::Value>>,
     /// The per-item outcomes.
     pub records: Vec<TerminalRecord>,
     /// Exactly the counterexamples whose native replay reproduced a refutation.
@@ -1271,6 +1273,19 @@ pub(crate) fn refusal_document(
 }
 
 impl AnalyzeOutcome {
+    /// Consume the prepared source verdicts before the terminal wire builder.
+    ///
+    /// # Errors
+    /// Preserves the existing outcome item validation errors.
+    pub fn into_document(self) -> Result<OutcomeDocument, OutcomeItemError> {
+        analyze_document_routed_with_verdicts(
+            &self.records,
+            &self.counterexamples,
+            &std::collections::BTreeMap::new(),
+            &self.protocol_conformance,
+            self.statistical_verdicts,
+        )
+    }
     /// The FR-286 `analyze` document of these records: one item per record in
     /// request order (FR-286-AC-3), a `refuted` item carrying its one
     /// counterexample.
@@ -1345,10 +1360,34 @@ fn analyze_document_routed_with_conformance(
     routes: &std::collections::BTreeMap<RequestIndex, ItemRoute>,
     conformance: &std::collections::BTreeMap<RequestIndex, fsl_replay::ProtocolConformanceOutput>,
 ) -> Result<OutcomeDocument, OutcomeItemError> {
+    analyze_document_routed_with_verdicts(
+        records,
+        counterexamples,
+        routes,
+        conformance,
+        std::collections::BTreeMap::new(),
+    )
+}
+
+fn analyze_document_routed_with_verdicts(
+    records: &[TerminalRecord],
+    counterexamples: &[ItemCounterexample],
+    routes: &std::collections::BTreeMap<RequestIndex, ItemRoute>,
+    conformance: &std::collections::BTreeMap<RequestIndex, fsl_replay::ProtocolConformanceOutput>,
+    mut verdicts: std::collections::BTreeMap<RequestIndex, Box<serde_json::Value>>,
+) -> Result<OutcomeDocument, OutcomeItemError> {
     let items = records
         .iter()
         .map(|record| {
-            let item = analyze_item(record, counterexamples)?;
+            let item = match verdicts.remove(&record.request_index()) {
+                Some(verdict) => OutcomeItem::from_analyze_with_statistical_verdict(
+                    record,
+                    None,
+                    None,
+                    Some(*verdict),
+                )?,
+                None => analyze_item(record, counterexamples)?,
+            };
             Ok::<_, OutcomeItemError>(match conformance.get(&record.request_index()) {
                 Some(output) => item.with_protocol_conformance(output.clone()),
                 None => item,
@@ -2566,11 +2605,9 @@ impl AnalyzeRecord {
                     .map(|counterexample| &counterexample.kind)
             });
         let undefined = undefined_cause(kind, self.value_check.as_deref());
-        let item = wire
-            .map_err(OutcomeItemError::from)
-            .and_then(|wire| {
-                OutcomeItem::from_analyze_with_statistical_verdict(terminal, wire, undefined, verdict)
-            });
+        let item = wire.map_err(OutcomeItemError::from).and_then(|wire| {
+            OutcomeItem::from_analyze_with_statistical_verdict(terminal, wire, undefined, verdict)
+        });
         Some(item.map(|item| match self.protocol_conformance.take() {
             Some(output) => item.with_protocol_conformance(output),
             None => item,

@@ -3862,6 +3862,7 @@ pub fn settle_run(
     }
     write_run(
         SettledParts {
+            statistical_verdicts: outcome.statistical_verdicts,
             records: outcome.records,
             counterexamples: outcome.counterexamples,
             details: outcome.details,
@@ -4260,6 +4261,7 @@ fn negotiated_routes(
 
 /// What the engines settled for a run's negotiated items.
 struct SettledParts {
+    statistical_verdicts: BTreeMap<RequestIndex, Box<Value>>,
     records: Vec<TerminalRecord>,
     counterexamples: Vec<super::ItemCounterexample>,
     details: Vec<super::ItemDetail>,
@@ -4283,8 +4285,14 @@ fn write_run(
     let mut records: Vec<TerminalRecord> = outcome.records;
     records.extend(settled.values().map(|(_, record)| record.clone()));
     records.sort_by_key(TerminalRecord::request_index);
-    let base = super::analyze_document_routed(&records, &outcome.counterexamples, routes)
-        .map_err(|_| AnalyzeDocumentError::Fault)?;
+    let base = super::analyze_document_routed_with_verdicts(
+        &records,
+        &outcome.counterexamples,
+        routes,
+        &BTreeMap::new(),
+        outcome.statistical_verdicts,
+    )
+    .map_err(|_| AnalyzeDocumentError::Fault)?;
     let mut document = serde_json::to_value(&base).map_err(|_| AnalyzeDocumentError::Fault)?;
     let written: Vec<Value> = document["items"].as_array().cloned().unwrap_or_default();
     let mut items = Vec::with_capacity(records.len());

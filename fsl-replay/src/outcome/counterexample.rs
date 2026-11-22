@@ -1093,24 +1093,6 @@ fn undefined(
     }))
 }
 
-/// The FR-410 `where` of an undefined sample: its test, trace, position and
-/// state. FR-364's `locus` is not here: the verdict does not hold the claim.
-pub(super) fn sampled_undefined_wire(
-    undefined: &crate::statistical::SampledUndefined,
-) -> Result<Json, CounterexampleWireError> {
-    let site = &undefined.evaluation.site;
-    Ok(json!({
-        "type": "undefined-evaluation",
-        "where": {
-            "position": site.position,
-            "state_key": state(&site.state_key)?,
-            "test": undefined.test,
-            "trace_index": undefined.trace.to_string(),
-        },
-        "cause": undefined_reason(&undefined.evaluation.cause),
-    }))
-}
-
 /// A `binding` member (FSpec FR-410): the typed reference, or `null`.
 pub(super) fn binding_wire(
     binding: Option<&ObjectReference>,

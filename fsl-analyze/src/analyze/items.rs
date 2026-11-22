@@ -36,7 +36,7 @@ use crate::model_check::{
     check_model_with_stutter_closure, check_protocol_constrained, manifest as en1, HyperRefusal,
     LivenessRefusal, ModelCheckRefusal, ModelCheckRequest, ProtocolCheckRequest,
 };
-use crate::statistical::{check_statistical, manifest as en4, StatisticalRequest};
+use crate::statistical::{manifest as en4, StatisticalRequest};
 use crate::zone_check::{
     certificate_item, check_timed_model, check_timed_refinement, manifest as en6,
     settle_timed_refinement, settle_zone_check, TimedLivenessHalf, TimedRefinementOutcome,
@@ -379,6 +379,14 @@ pub fn statistical_item<'a>(
     index: RequestIndex,
     request: StatisticalRequest<'a>,
 ) -> AnalyzeItem<'a> {
+    statistical_item_with_owner(index, request, None)
+}
+
+pub(super) fn statistical_item_with_owner<'a>(
+    index: RequestIndex,
+    request: StatisticalRequest<'a>,
+    owner: Option<&'a fsl_semantics::model::intake::SelectedModels>,
+) -> AnalyzeItem<'a> {
     AnalyzeItem::new(
         index,
         Capability::ProbabilisticSatisfaction,
@@ -389,14 +397,49 @@ pub fn statistical_item<'a>(
             let simulation = &request.subject.simulation;
             let expansion = simulation.expansion;
             let meter = simulation.meter;
-            match check_statistical(request, cancel) {
-                Ok(outcome) => EngineReport::Statistical(Box::new(settle_statistical(
-                    &outcome,
-                    SubjectLimits {
-                        expansion,
-                        meter: &meter,
-                    },
-                ))),
+            let output = crate::statistical::check_statistical_with_output(
+                request,
+                cancel,
+                |system, outcome| {
+                    let Some(owner) = owner else {
+                        return Ok(None);
+                    };
+                    let fsl_replay::statistical::StatisticalOutcome::Completed(verdict) = outcome
+                    else {
+                        return Ok(None);
+                    };
+                    super::reference_output::with_source(
+                        system,
+                        Some(owner),
+                        cancel,
+                        |references| {
+                            references
+                                .at_pointer("/verdict", |references| {
+                                    references.statistical_verdict_wire(verdict)
+                                })
+                                .map(Some)
+                        },
+                    )
+                },
+            );
+            match output {
+                Ok((outcome, Ok(verdict))) => {
+                    let record = Box::new(settle_statistical(
+                        &outcome,
+                        SubjectLimits {
+                            expansion,
+                            meter: &meter,
+                        },
+                    ));
+                    match verdict {
+                        Some(verdict) => EngineReport::StatisticalWithVerdict {
+                            record,
+                            verdict: Box::new(verdict),
+                        },
+                        None => EngineReport::Statistical(record),
+                    }
+                }
+                Ok((_, Err(refusal))) => EngineReport::Refused(refusal),
                 Err(refusal) => statistical_refusal(&refusal),
             }
         },

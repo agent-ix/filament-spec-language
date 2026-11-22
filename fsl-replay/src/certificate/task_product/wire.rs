@@ -102,20 +102,6 @@ pub enum TaskProductReferenceError {
     Reference(#[from] crate::ReferenceCodecError),
 }
 
-/// A task-product carrier failure retaining its reference/resource cause.
-#[derive(Debug, thiserror::Error)]
-pub enum TaskProductReferenceError {
-    /// Closed certificate metadata was refused.
-    #[error(transparent)]
-    Shape(#[from] TaskProductShapeRefusal),
-    /// The native certificate has no wire spelling.
-    #[error(transparent)]
-    Wire(#[from] TaskProductWireError),
-    /// Canonical conversion stopped under the original caller's resources.
-    #[error(transparent)]
-    Reference(#[from] crate::ReferenceCodecError),
-}
-
 pub(crate) fn refuse<T>(
     pointer: &str,
     reason: TaskProductShapeReason,

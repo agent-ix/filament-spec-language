@@ -590,7 +590,7 @@ pub(crate) fn analyze_bound<'a>(
         .iter()
         .map(super::AnalyzeItem::requirement)
         .collect::<Vec<_>>();
-    let settled = super::analyze_items(engines, items, cancel);
+    let mut settled = super::analyze_items(engines, items, cancel);
     let aggregate = super::aggregate(&requirements, &settled);
     let details = settled.iter().map(super::ItemDetail::of).collect();
     let protocol_conformance = settled
@@ -611,8 +611,18 @@ pub(crate) fn analyze_bound<'a>(
                 .map(|outcome| (record.request_index, outcome.clone()))
         })
         .collect();
+    let statistical_verdicts = settled
+        .iter_mut()
+        .filter_map(|record| {
+            record
+                .spelled_statistical_verdict
+                .take()
+                .map(|verdict| (record.request_index, verdict))
+        })
+        .collect();
     let (records, counterexamples) = super::split_records(settled, package);
     Ok(Staged::new(super::AnalyzeOutcome {
+        statistical_verdicts,
         records,
         counterexamples,
         aggregate,
@@ -1302,7 +1312,11 @@ fn work<'a>(
                     )
                 }
                 Some(ProbabilityWork::Statistical(request)) => {
-                    super::statistical_item(item.request_index, request)
+                    super::items::statistical_item_with_owner(
+                        item.request_index,
+                        request,
+                        provision.normalization_owner(),
+                    )
                 }
                 None => absent(),
             }

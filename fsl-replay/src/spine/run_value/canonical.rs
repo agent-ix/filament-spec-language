@@ -375,7 +375,17 @@ impl Forms<'_> {
             if let ReadStop::Refusal(ref mut refusal) = error {
                 if let super::super::RunRefusal::Reference(ref mut reference) = **refusal {
                     let pointer = match reference.as_mut() {
-                        crate::reference_codec::ReferenceCodecError::IdentityCopy {
+                        crate::reference_codec::ReferenceCodecError::IntegerParse {
+                            pointer,
+                            ..
+                        }
+                        | crate::reference_codec::ReferenceCodecError::Carrier {
+                            pointer, ..
+                        }
+                        | crate::reference_codec::ReferenceCodecError::Decimal {
+                            pointer, ..
+                        }
+                        | crate::reference_codec::ReferenceCodecError::IdentityCopy {
                             pointer,
                             ..
                         }

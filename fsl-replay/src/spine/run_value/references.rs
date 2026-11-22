@@ -198,6 +198,12 @@ pub(crate) fn take_normalization_refusal(
 pub(crate) fn reference_error_code(error: &ReferenceCodecError) -> Code {
     use fsl_semantics::model::observation::AdmissionFailure;
     match error {
+        ReferenceCodecError::IntegerParse { cause, .. } => match cause {
+            filament_exact::IntegerParseError::NonCanonical(_) => Code::InvalidRuntimeInput,
+            filament_exact::IntegerParseError::Reserve(_) => Code::ResourceExhausted,
+        },
+        ReferenceCodecError::Carrier { .. } => Code::InvalidRuntimeInput,
+        ReferenceCodecError::Decimal { .. } => Code::ResourceExhausted,
         ReferenceCodecError::IdentityCopy { cause, .. } => match cause {
             filament_exact::IdentityCopyError::Policy(source) => key_code(source),
             filament_exact::IdentityCopyError::Allocation { .. }
@@ -247,7 +253,10 @@ fn key_code(error: &ModelKeyError) -> Code {
 
 pub(crate) fn reference_error_pointer(error: &ReferenceCodecError) -> &str {
     match error {
-        ReferenceCodecError::Normalization { pointer, .. }
+        ReferenceCodecError::IntegerParse { pointer, .. }
+        | ReferenceCodecError::Carrier { pointer, .. }
+        | ReferenceCodecError::Decimal { pointer, .. }
+        | ReferenceCodecError::Normalization { pointer, .. }
         | ReferenceCodecError::IdentityCopy { pointer, .. }
         | ReferenceCodecError::Universe { pointer, .. }
         | ReferenceCodecError::Native { pointer, .. }
@@ -260,6 +269,11 @@ pub(crate) fn reference_error_pointer(error: &ReferenceCodecError) -> &str {
 pub(crate) fn reference_error_cause(error: &ReferenceCodecError) -> Option<&'static str> {
     use fsl_semantics::model::observation::AdmissionFailure;
     match error {
+        ReferenceCodecError::IntegerParse { cause, .. } => match cause {
+            filament_exact::IntegerParseError::NonCanonical(_) => Some("invalid-value"),
+            filament_exact::IntegerParseError::Reserve(_) => None,
+        },
+        ReferenceCodecError::Carrier { .. } | ReferenceCodecError::Decimal { .. } => None,
         ReferenceCodecError::Normalization { .. } => Some("normalization-limit"),
         ReferenceCodecError::Native { cause, .. } => match cause {
             AdmissionFailure::Refused(record) | AdmissionFailure::Incomplete(record) => {
@@ -297,7 +311,10 @@ pub(crate) fn reference_cancel_cause(
             cause: filament_exact::IdentityCopyError::Policy(ModelKeyError::Cancelled(cause)),
             ..
         } => Some(*cause),
-        ReferenceCodecError::Normalization { .. }
+        ReferenceCodecError::IntegerParse { .. }
+        | ReferenceCodecError::Carrier { .. }
+        | ReferenceCodecError::Decimal { .. }
+        | ReferenceCodecError::Normalization { .. }
         | ReferenceCodecError::IdentityCopy { .. }
         | ReferenceCodecError::Universe { .. }
         | ReferenceCodecError::Key { .. }
