@@ -213,3 +213,15 @@ CONDITIONAL: no scoped findings. Required named titan runtime evidence remains p
 | ID | Severity | Summary | Refs |
 | --- | --- | --- | --- |
 | FND-001 | low | No findings (placeholder) | - |
+
+## Fix-commit disposition — round 1
+
+CONDITIONAL: no remaining scoped finding found in the confined delta `f11f8fd554609c447b3677f0b88061d62a3118c0..cee01a2176443872658839217ad11171b75a670a`. This disposition examines only the two changed test source files and initial review-artifact custody. Product fixes are untouched. The original Findings table above remains unchanged; its sole placeholder is not a finding and there are no finding dispositions to enumerate.
+
+The parse-outcome fixture now explicitly types the matched tuple as `(&CompileRefusal, Option<&fsl_replay::spine::ParseReport>)`. `StageFailure::RefusedWithPayload` contains `Box<C>` while `Refused` contains `C`; the additional `.as_ref()` in the payload arm reaches the same borrowed `CompileRefusal` as the non-payload arm. The S1/S2 carrier handling, source cases, code/stage/category/exit assertions, original refusal locus and complete document/report comparisons are unchanged. This addresses the lead-reported E0308 at lines 159–162 by type coercion, not by weakening an oracle. No remaining defect was found in that source change; compilation and all 16 previously blocked integration cases still need the lead's titan result.
+
+The large 100000-term replay test was restored exactly to `origin/main`, including the original 256 MiB setting. Its file SHA-256 is `c99d6a72d2856f28537bbd2d7eab9a15cad64d3ee36dfd6624ce62ab0f8558a8` on both sides. Arch's ruling removes the earlier limit change from #3476 after a 12 GB watchdog kill. R11/OOM-S2 remains a known main red owned by QSL-2825, outside this PR; it is not resolved or waived by this review. The source/list size, assertions and execution are not shrunk, ignored or retuned, and this case must not be rerun for #3476. The original review's discussion of the 512 MiB change records its historical candidate only; it does not describe the current head.
+
+Lead-supplied titan evidence, not independently executed by this reviewer: CST 4 PASS; compile facade 3 PASS; dispatch 2 PASS; library 5 PASS; doctests 2 PASS. The 16 integration cases were blocked by E0308 before their assertions could run. Their corrected rerun remains pending. The large case's watchdog kill is not a PASS. No repository build, test, scanner or job was run or queued by this reviewer. `git diff --check` for the confined delta passed. The original native-matrix size refusal/static-matrix caveats remain; no matrix or full audit was repeated.
+
+Initial SR artifacts were copied unchanged into the frozen candidate by the coder. These appended scratchpad dispositions retain the same IDs and original findings, for the lead to copy later. Both original review methods retain a CONDITIONAL verdict pending the 16 named titan checks, with QSL-2825 explicitly outside #3476 scope. No new findings or additional review methods were added.
