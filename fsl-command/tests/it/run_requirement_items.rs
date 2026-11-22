@@ -606,26 +606,22 @@ fn package_scalar_held_claims_and_bad_calls_preserve_admission() {
     }
 }
 
-/// An unavailable authoritative holder never becomes an internal fault or
-/// a provider request. Source calls retain their existing settlement path.
+/// Unavailable scalar records never become an internal fault or a provider
+/// request. Source calls retain their existing settlement path.
 #[trace("FR-940-AC-13", "FR-961-AC-1")]
 #[test]
-fn package_scalar_unresolved_holder_refuses_typed_without_provider_work() {
+fn package_scalar_unavailable_record_refuses_typed_without_provider_work() {
     let directory = tempfile::tempdir().unwrap();
     let path = sq(directory.path(), Some(json!({})));
     let source_run = command::run(&path, &Fr290).expect("Source settlement remains available");
     assert_eq!(entries(&documents(&source_run).0).len(), 3);
     let bytes = compile_handoff(directory.path());
     let artifact: Value = serde_json::from_slice(&bytes).unwrap();
-    assert!(
-        artifact["requirement_items"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .filter(|row| row.get("record").is_some())
-            .count()
-            >= 3
-    );
+    assert!(artifact["requirement_items"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .all(|row| row.get("record").is_none()));
     let mut request: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
     request["request"]
         .as_object_mut()
@@ -655,7 +651,7 @@ fn package_scalar_unresolved_holder_refuses_typed_without_provider_work() {
     assert!(
         error
             .to_string()
-            .contains("value-validity-record-unresolved-holder"),
+            .contains("value-validity-record-unavailable"),
         "{error}"
     );
     assert_eq!(seen.lock().unwrap().settle_calls, 0);

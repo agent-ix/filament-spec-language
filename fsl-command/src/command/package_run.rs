@@ -1236,6 +1236,14 @@ fn settle_value_call(
     let [(_, owner)] = owners.as_slice() else {
         return Err(RunCause::AnalyzeFault);
     };
+    if bare.value_validity_records_of(owner).is_empty() {
+        return Err(RunCause::AnalyzePackage {
+            code: fsl_foundation::Code::UnsupportedConstruct,
+            cause: Some("not-yet-implemented".to_owned()),
+            pointer: Some("/call/requirements".to_owned()),
+            message: "value-validity-record-unavailable: scalar requirement emission awaits authoritative document-held requirement references in Contract IR".to_owned(),
+        });
+    }
     let mut items = Vec::new();
     let mut selections = Vec::new();
     let mut claims = Vec::new();

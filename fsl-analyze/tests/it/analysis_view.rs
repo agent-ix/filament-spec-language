@@ -62,22 +62,6 @@ fn both_views_read_equal_facts_for_the_counter_package() {
     assert_eq!(names(source), names(bytes));
     assert_eq!(source.activation_relation(), bytes.activation_relation());
     assert_eq!(source.requirement_items(), bytes.requirement_items());
-    assert_eq!(
-        source.requirement_items().len(),
-        package.graph().requirements().len()
-    );
-    for ((claim, record), row) in package
-        .graph()
-        .requirements()
-        .iter()
-        .zip(source.requirement_items())
-    {
-        assert_eq!(row.occurrence.ordinal, claim.origin().ordinal());
-        assert_eq!(
-            serde_json::to_value(row.kind).unwrap(),
-            serde_json::json!(record.requirements().kind().to_wire())
-        );
-    }
     assert_eq!(source.clause_names(), bytes.clause_names());
     let mut clause_names: Vec<&str> = bytes
         .clause_names()
@@ -112,6 +96,42 @@ fn value_record_views_and_native_charges_equal_the_source() {
     use filament_exact::{Cancel, Meter, Value};
     use fsl_eval::value::{ApplicationObservationOptions, CheckedPackageEvaluation, QualifiedName};
     use fsl_package::BareSupply;
+    // Mixed requirement kinds must keep the Source map's absolute row order.
+    let model = document(false);
+    let (package, _) = package_with_clauses(
+        &model,
+        CONTRACT,
+        &[
+            ("Bounded", "", "always holds(c.value <= 3)"),
+            ("BelowThree", "", "always holds(c.value <= 2)"),
+            ("AtMostTwo", "", "always holds(c.value <= 2)"),
+        ],
+    );
+    let domain = fsl_semantics::model::intake::package_input([model.as_slice()]).unwrap();
+    let mixed = fsl_package::read_evaluation_package(
+        &package,
+        fsl_semantics::library::LibraryName::new(UNIT).unwrap(),
+        &domain,
+        V2ReadLimits::fixture(),
+        EmitLimits::fixture(),
+    )
+    .unwrap();
+    assert_eq!(
+        mixed.requirement_items().len(),
+        package.graph().requirements().len()
+    );
+    for ((claim, record), row) in package
+        .graph()
+        .requirements()
+        .iter()
+        .zip(mixed.requirement_items())
+    {
+        assert_eq!(row.occurrence.ordinal, claim.origin().ordinal());
+        assert_eq!(
+            serde_json::to_value(row.kind).unwrap(),
+            serde_json::json!(record.requirements().kind().to_wire())
+        );
+    }
     let source = crate::value_validity::package_of(
         "ordered enum Status { ZED, ALPHA, MID }\n\
          function Guarded using v(x: Int[0, 9], p: Boolean): Integer pure { if p then x + 1 else x * 2 }\n\
