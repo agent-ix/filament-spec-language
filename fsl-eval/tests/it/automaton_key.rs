@@ -1379,6 +1379,60 @@ fn reached_tp3_monitor_states_resolve_to_fr338_keys() {
     }
 }
 
+/// FR-338 "Unguarded `on each` TP-1 and TP-3 clause": the synthetic `always`
+/// an `on each` activation is wrapped in stands for no source occurrence, so
+/// every state the clause's monitor reaches still resolves to a
+/// context-admitted `["safety", branches]` key whose branches hold only the
+/// body's own obligations, windows and past memory, and the rejecting state is
+/// the empty branch set. A body with no live fact reaches the one
+/// obligation-free configuration.
+#[trace("TC-525", "FR-338-AC-30")]
+#[test]
+fn reached_on_each_tp3_monitor_states_resolve_to_fr338_keys() {
+    for body in [
+        "holds(p) implies once[1,1] holds(q)",
+        "holds(p) implies eventually[0,2] holds(q)",
+    ] {
+        let fixture = fixture(INFINITE, "c: Counter", "on each (t: Counter)", body);
+        let context = StateContext::clause(&fixture.clause, occurrence(0), Vec::new());
+        let keys = SafetyStates::clause(&fixture.clause, &context, SubjectKind::Ordinary)
+            .expect("the TP-3 key context translates");
+        let automaton =
+            fsl_eval::automaton::translate(&fixture.clause, 256).expect("the clause translates");
+        let mut monitor = Monitor::bad_prefix(automaton, 256).expect("a safety automaton");
+        let initial = monitor.initial().expect("initial state fits");
+        let mut reached = BTreeSet::new();
+        let mut distinct = BTreeSet::new();
+        let mut pending: Vec<_> = (0..4)
+            .map(|bits| monitor.step(initial, Letter::from_bits(bits)).expect("steps"))
+            .collect();
+        while let Some(from) = pending.pop() {
+            if !reached.insert(from) {
+                continue;
+            }
+            let configurations = monitor
+                .configurations(from, keys.max_key_bytes())
+                .unwrap_or_else(|error| panic!("{body}: the activation wrapper is no obligation: {error:?}"));
+            let key = keys
+                .key(&configurations)
+                .unwrap_or_else(|error| panic!("{body} state {configurations:?}: {error}"));
+            keys.admit(key.as_bytes()).expect("the key admits back");
+            assert_eq!(
+                configurations.is_empty(),
+                monitor.is_rejecting(from).expect("a monitor state"),
+                "{body}"
+            );
+            distinct.insert(key.as_bytes().to_vec());
+            for bits in 0..4 {
+                pending.push(monitor.step(from, Letter::from_bits(bits)).expect("steps"));
+            }
+        }
+        assert!(distinct.len() > 1, "{body} reaches {} keys", distinct.len());
+        let rejecting = keys.key(&[]).expect("the rejecting state encodes");
+        assert!(distinct.contains(rejecting.as_bytes()), "{body}");
+    }
+}
+
 /// The key of the monitor state `body`'s bad-prefix monitor reaches by
 /// reading, from its initial state, one letter for each of `positions`: the
 /// atoms (by index) that hold at that position.

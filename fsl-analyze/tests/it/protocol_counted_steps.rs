@@ -886,6 +886,19 @@ fn closure_check_with(
     certificate: &ClosureCertificate,
     limits: &ModelCheckLimits,
 ) -> TemporalCertificateCheck {
+    closure_check_bounded(case, protocol, letters, certificate, limits, (None, None, None))
+}
+
+/// [`closure_check_with`] under the request bounds `(max_store_buffer,
+/// max_messages, max_live_instances)`.
+fn closure_check_bounded(
+    case: &Case,
+    protocol: &str,
+    letters: &dyn ModelLetters,
+    certificate: &ClosureCertificate,
+    limits: &ModelCheckLimits,
+    (max_store_buffer, max_messages, max_live_instances): (Option<u64>, Option<u64>, Option<u64>),
+) -> TemporalCertificateCheck {
     check_protocol_closure(
         &ProtocolCertificateRequest {
             temporal_clock_selections: &case.temporal_clock_selections,
@@ -894,9 +907,9 @@ fn closure_check_with(
                 clause: case.clause(),
                 letters,
             },
-            max_store_buffer: None,
-            max_messages: None,
-            max_live_instances: None,
+            max_store_buffer,
+            max_messages,
+            max_live_instances,
         },
         certificate,
         limits,
@@ -1374,6 +1387,83 @@ fn walked_before_violation(
     )
 }
 
+/// The canonical protocol keys of every state `system` reaches, under the
+/// cycle keys the checker writes.
+fn reachable_keys(
+    system: &ProtocolSystem<'_, Sc>,
+) -> std::collections::BTreeSet<fsl_eval::simulation::StateKey> {
+    let mut seen = std::collections::BTreeSet::new();
+    let mut frontier = system.initial();
+    while let Some(state) = frontier.pop() {
+        let (key, _) = system.state_key(&state).expect("encodes");
+        if !seen.insert(fsl_eval::simulation::StateKey::from_canonical_bytes(key)) {
+            continue;
+        }
+        frontier.extend(
+            system
+                .successors(&state)
+                .expect("expansion")
+                .successors
+                .into_iter()
+                .map(|(_, next)| next),
+        );
+    }
+    seen
+}
+
+/// FR-338-AC-31 (bounds): a request whose `max_store_buffer`, `max_messages`
+/// or `max_live_instances` differs from the run's is checked as FR-338-AC-21
+/// and AC-22 state. The certificate of the repaired `Fill` TP-3 clause is
+/// accepted under a request that carries the defaults explicitly (4, 4 and 3,
+/// the run's own), every model state it holds is a canonical cycle key of a
+/// reached state, and under a request carrying one live instance it is
+/// rejected `SuccessorMissing`, not refused.
+#[trace("TC-525", "FR-338-AC-31")]
+#[trace("TC-1230", "FR-338-AC-22")]
+#[test]
+fn a_tp3_certificate_is_checked_under_the_request_bounds() {
+    let case = repaired_tp3(
+        "on origin",
+        "always (holds(k.v = 0) implies eventually[0,2] holds(k.v >= 2))",
+    );
+    let letters = CellAtoms::of(case.clause(), &[is_zero, at_least_two]);
+    let outcome = case.check("Fill", &letters);
+    let ModelCheckOutcome::Holds {
+        certificate: ProofCertificate::Closure(certificate),
+        ..
+    } = &outcome
+    else {
+        panic!("{:?}", outcome.stats());
+    };
+    let subject = case.subject("Fill");
+    let system = sc_system(&subject).with_cycle_keys(std::collections::BTreeSet::new());
+    let held: std::collections::BTreeSet<_> = certificate
+        .states
+        .iter()
+        .map(|state| state.model_state.clone())
+        .collect();
+    assert_eq!(held, reachable_keys(&system));
+
+    let limits = ModelCheckLimits::default();
+    let check = |bounds| closure_check_bounded(&case, "Fill", &letters, certificate, &limits, bounds);
+    assert_eq!(check((None, None, None)), TemporalCertificateCheck::Accepted);
+    assert_eq!(
+        check((Some(4), Some(4), Some(3))),
+        TemporalCertificateCheck::Accepted
+    );
+    assert!(
+        matches!(
+            check((None, None, Some(1))),
+            TemporalCertificateCheck::Rejected(CertificateRejection {
+                rule: CertificateRule::SuccessorMissing,
+                ..
+            })
+        ),
+        "{:?}",
+        check((None, None, Some(1)))
+    );
+}
+
 fn repaired_tp3(activation: &str, formula: &str) -> Case {
     Case::new(&(fill_unit("self.v <= 1", "") + &tp3(activation, formula)))
 }
@@ -1387,9 +1477,9 @@ fn repaired_tp3(activation: &str, formula: &str) -> Case {
 /// before it (an uncounted step keeps every bucket distance), the bucket
 /// distances the keys carry are `[]` before an attempt, `[0]` after one and
 /// `[0, 1]` after two (a counted step raises each by one and adds a
-/// distance-zero bucket), and the certificate with the key after the second
-/// `attempt` replaced by the key after the first is rejected `SuccessorMissing`
-/// at the reached state. `max_states` one below the closure's product states
+/// distance-zero bucket), and the certificate with the key after an `attempt`
+/// replaced by the key before it is rejected `SuccessorMissing` at the reached
+/// state. `max_states` one below the closure's product states
 /// stops `LimitReached{MaxStates, ..}`, settled `incomplete`.
 #[trace("TC-525", "FR-338-AC-31")]
 #[trace("TC-525", "FR-127-AC-1")]
@@ -1440,29 +1530,29 @@ fn a_past_tp3_clause_over_the_repaired_fill_keys_distance_history() {
     assert_eq!((at_origin.len(), at_fork.len()), (1, 1));
     assert_eq!(at_origin[0].automaton_state, at_fork[0].automaton_state);
 
-    let one_attempt = certificate
+    let before_attempt = certificate
+        .states
+        .iter()
+        .find(|state| bucket_distances(state).is_empty())
+        .expect("a state before an attempt")
+        .clone();
+    let after_attempt = certificate
         .states
         .iter()
         .find(|state| bucket_distances(state) == [0])
         .expect("a state after one attempt")
         .clone();
-    let two_attempts = certificate
-        .states
-        .iter()
-        .find(|state| bucket_distances(state) == [0, 1])
-        .expect("a state after two attempts")
-        .clone();
     let mut replaced = certificate.clone();
     for state in &mut replaced.states {
-        if *state == two_attempts {
-            state.automaton_state = one_attempt.automaton_state.clone();
+        if *state == after_attempt {
+            state.automaton_state = before_attempt.automaton_state.clone();
         }
     }
     assert_eq!(
         closure_check_over(&case, "Fill", &letters, &replaced),
         TemporalCertificateCheck::Rejected(CertificateRejection {
             rule: CertificateRule::SuccessorMissing,
-            at: CertificateLocus::ProductState(two_attempts),
+            at: CertificateLocus::ProductState(after_attempt),
         })
     );
 

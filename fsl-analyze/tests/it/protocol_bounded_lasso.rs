@@ -550,7 +550,7 @@ fn echo_infinite(scheduling: &str, formula: &str) -> Case {
 const ECHO_RUN: &str = "sequence Main { send Snd via ch as (s: Boolean) { s }; \
                        receive Rcv via ch of Snd as (r: Boolean) { r }; }";
 
-fn echo_body(scheduling: &str) -> String {
+pub(crate) fn echo_body(scheduling: &str) -> String {
     let members = format!(
         "channel ch from w to w carries Boolean ordering fifo by (m: Boolean) \
                    {{ true }} delivery unknown capacity 2 overflow block; {scheduling}"

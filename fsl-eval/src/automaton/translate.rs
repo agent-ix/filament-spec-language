@@ -922,6 +922,9 @@ fn translate_formula(
         },
         accept_counted_intervals: kind == AutomatonKind::Liveness && uncounted.is_some(),
         activation_root,
+        synthetic_root: (kind == AutomatonKind::Safety
+            && matches!(activation, Activation::Each { .. }))
+        .then_some(target),
         activation_guarded: match activation {
             Activation::Origin => None,
             Activation::Each { guarded } => Some(guarded),
@@ -1164,6 +1167,11 @@ struct Translator {
     /// activation, if present.
     activation_root: Option<NodeId>,
     activation_guarded: Option<bool>,
+    /// The synthetic outer `always` an `on each` safety clause is wrapped in
+    /// (guard-or-body at every position). It stands for no source
+    /// occurrence, so a configuration key projects it away: the obligations
+    /// that remain are the clause body's own.
+    synthetic_root: Option<NodeId>,
 }
 
 impl Translator {
@@ -1208,7 +1216,7 @@ impl Translator {
         let mut branch = Configuration::default();
 
         for node in &config.must {
-            if Some(*node) == self.activation_root {
+            if Some(*node) == self.activation_root || Some(*node) == self.synthetic_root {
                 continue;
             }
             let occurrences = self

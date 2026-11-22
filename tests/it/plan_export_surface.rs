@@ -2464,18 +2464,41 @@ fn an_on_each_previous_and_interval_clause_transfers_certified() {
         true,
     );
     assert_eq!(exit, 0, "{value}");
+    // The refinement identity is the one the same refinement's plain-safety
+    // transfer names in slot 0.
+    let (_, seed_value) = transfer_run(
+        &[(
+            "refinement_transfer",
+            transfer_member("ThirdRefinesSpec", ("Spec", "Third"), &["PrevSafe"]),
+        )],
+        true,
+    );
+    let seed = &transfer(&seed_value, "PrevSafe")["transfer"]["premises"];
+    let refinement_identity = seed[0]["identity"].clone();
+    let seed_claim_identity = seed[1]["identity"].clone();
+    let mut claim_identities = std::collections::BTreeSet::new();
     for clause in ["PrevSafeEach", "SoonTwoEach", "PrevSafeWhen"] {
         let result = transfer(&value, clause);
         assert_eq!(result["value"], "proved", "{value}");
         assert_eq!(result["basis"], "decisive-witness", "{value}");
         assert_eq!(result["slots"][1]["value"], "proved", "{value}");
         assert_eq!(result["slots"][1]["certification"], "certified", "{value}");
-        assert_eq!(
-            result["transfer"]["premises"].as_array().map(Vec::len),
-            Some(2),
-            "{value}"
+        let premises = &result["transfer"]["premises"];
+        assert_eq!(premises.as_array().map(Vec::len), Some(2), "{value}");
+        assert_eq!(premises[0]["slot"], 0, "{value}");
+        assert_eq!(premises[1]["slot"], 1, "{value}");
+        assert_eq!(premises[0]["identity"], refinement_identity, "{value}");
+        assert_ne!(premises[1]["identity"], refinement_identity, "{value}");
+        assert!(
+            claim_identities.insert(premises[1]["identity"].to_string()),
+            "each clause names its own claim identity: {value}"
         );
     }
+    // The claim identity is the clause's, not the plain-safety seed's.
+    assert!(
+        !claim_identities.contains(&seed_claim_identity.to_string()),
+        "{value}"
+    );
 }
 
 /// FR-1030-AC-9 (TC-2920 step 9): `PrevJumpEach` is violated at position 2,
@@ -2533,7 +2556,13 @@ fn a_broken_initial_mapping_refutes_the_refinement_premise_not_the_transfer() {
     assert_eq!(result["cause"]["type"], "premise-unproved", "{value}");
     assert_eq!(result["cause"]["premise"], 0, "{value}");
     assert_eq!(result["cause"]["result"], "refuted", "{value}");
-    assert_eq!(result["slots"][0]["value"], "refuted", "{value}");
+    // The transfer record carries each slot's label only; the refinement
+    // item's failure kind is not part of that record.
+    assert_eq!(
+        result["slots"][0],
+        json!({"slot": 0, "value": "refuted"}),
+        "{value}"
+    );
 }
 
 /// FR-1031-AC-5 (TC-2921 step 5): a request whose `refinement` declares a
@@ -2567,13 +2596,11 @@ fn a_protocol_abstract_subject_is_refused_not_settled_as_a_model() {
     names(&value, "select");
     names(&value, "invalid-value");
     names(&value, "/refinement_transfer/abstract/model");
-    let details = if value["details"].is_object() {
-        &value["details"]
-    } else {
-        &value["error"]["details"]
-    };
-    assert_eq!(details["declared"], "Spec::Twice", "{value}");
-    assert_eq!(details["given"], "Spec", "{value}");
+    assert_eq!(
+        value["details"],
+        json!({"declared": "Spec::Twice", "given": "Spec"}),
+        "{value}"
+    );
     assert!(value.get("refinement_transfer").is_none(), "{value}");
 }
 

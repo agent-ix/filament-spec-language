@@ -24,7 +24,7 @@ Verify the `refinement_transfer` request member and its outcome. Scope: FR-1030-
 8. Declare `PrevSafeEach`, `SoonTwoEach`, `PrevSafeWhen`, `PrevJumpEach`, `PrevStutterEach` and `OlderDebtEach` as FR-1030-AC-8 and AC-9 give them, and run `PrevSafeEach`, `SoonTwoEach` and `PrevSafeWhen` through `ThirdRefinesSpec` with no `premises`.
 9. Run `PrevJumpEach`, `PrevStutterEach` and `OlderDebtEach` through `ThirdRefinesSpec` with no `premises`.
 10. Run `PrevSafeEach` through `ThirdRefinesSpec` with `abstract.initial` naming a snapshot of `value` 1.
-11. Settle `PrevSafeEach`'s abstract claim from the checked package S4 emits for the unit, and settle its transfer through `planner::settle` over that package; then offer a package that does not hold the clause root.
+11. Settle `PrevSafeEach`'s abstract claim from the checked package S4 emits for the unit, and settle its transfer through `settle_transfer` over `TransferSettlement::from_settled_facts` with the package-read claim, the source-checked refinement facts of the same emission and an in-process `Certified` refinement premise (mixed provenance); then offer a package that does not hold the clause root.
 
 ## Expected Results
 

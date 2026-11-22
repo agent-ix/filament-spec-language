@@ -12,6 +12,8 @@ use fsl_eval::automaton::{Atom, AutomatonStateKey};
 use fsl_eval::model_subject::ModelInstance;
 use fsl_eval::temporal::{AtomReading, UndefinedCause};
 use fsl_replay::CounterexampleKind;
+use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::{Arc, OnceLock};
 
 use super::*;
 use crate::counter::package_with_activated_clause;
@@ -85,7 +87,9 @@ impl ModelLetters for ValueLetters {
         state: &ModelSimState,
         _meter: &mut filament_exact::Meter,
     ) -> Result<AtomReading, fsl_eval::model_subject::AtomStop> {
-        let guard = self.guard.expect("only a guarded clause reads its condition");
+        let guard = self
+            .guard
+            .expect("only a guarded clause reads its condition");
         Ok(reading(guard(crate::counter::value(state, &instance.key))))
     }
 
@@ -129,8 +133,13 @@ fn claim(
     reads: Vec<Reading>,
     guard: Option<Reading>,
 ) -> Invariant {
-    let (package, clause) =
-        package_with_activated_clause(&world.documents.document, &world.body, "C", activation, formula);
+    let (package, clause) = package_with_activated_clause(
+        &world.documents.document,
+        &world.body,
+        "C",
+        activation,
+        formula,
+    );
     let letters = ValueLetters::of(&clause, reads, guard);
     world.declared_with(package, clause, Box::new(letters))
 }
@@ -239,13 +248,7 @@ fn an_unguarded_on_each_tp3_proof_carries_monitor_keys_the_core_accepts() {
         assert_eq!(key[2][0], "safety", "{key}");
     }
 
-    let origin = claim(
-        &world,
-        "on origin",
-        PRIOR_ZERO,
-        pair(is(1), is(0)),
-        None,
-    );
+    let origin = claim(&world, "on origin", PRIOR_ZERO, pair(is(1), is(0)), None);
     let on_origin = certificate(&origin.run(&world));
     for state in &on_origin.states {
         assert!(
@@ -301,18 +304,18 @@ fn a_violated_on_each_tp3_clause_is_rejected_bad_state_under_its_own_context() {
     let world = world(CONTRACT, &[("c", 0)]);
     let object = world.objects().remove(0);
 
-    let jump = claim(
-        &world,
-        EACH,
-        PRIOR_ZERO_AT_TWO,
-        pair(is(2), is(0)),
-        None,
-    );
-    assert!(matches!(jump.run(&world), ModelCheckOutcome::Violated { .. }));
+    let jump = claim(&world, EACH, PRIOR_ZERO_AT_TWO, pair(is(2), is(0)), None);
+    assert!(matches!(
+        jump.run(&world),
+        ModelCheckOutcome::Violated { .. }
+    ));
     let prefix = walked_before_violation(&world, &jump, &object, &[0, 1], &[is(2), is(0)], None);
     assert_eq!(
         check(&jump.request(&world, UNLIMITED), &prefix),
-        rejected(CertificateRule::BadState, jump.rejecting(&world, &object, 2))
+        rejected(
+            CertificateRule::BadState,
+            jump.rejecting(&world, &object, 2)
+        )
     );
 
     let stutter = claim(&world, EACH, STUTTER_PRIOR, pair(is(3), is(2)), None);
@@ -336,14 +339,11 @@ fn a_violated_on_each_tp3_clause_is_rejected_bad_state_under_its_own_context() {
         )
     );
 
-    let older = claim(
-        &world,
-        EACH,
-        OLD_DEADLINE,
-        pair(at_most_one, is(3)),
-        None,
-    );
-    assert!(matches!(older.run(&world), ModelCheckOutcome::Violated { .. }));
+    let older = claim(&world, EACH, OLD_DEADLINE, pair(at_most_one, is(3)), None);
+    assert!(matches!(
+        older.run(&world),
+        ModelCheckOutcome::Violated { .. }
+    ));
     let prefix = walked_before_violation(
         &world,
         &older,
@@ -447,11 +447,31 @@ fn an_on_each_tp3_check_stops_or_rejects_an_undefined_atom_with_typed_results() 
         })
     );
 
-    let cancel = Cancel::new();
-    cancel.cancel(CancelCause::Requested);
+    // Cancelled by the first charge the check makes, not before the call.
+    let polls = Arc::new(AtomicU32::new(0));
+    let handle: Arc<OnceLock<Cancel>> = Arc::new(OnceLock::new());
+    let (seen, target) = (Arc::clone(&polls), Arc::clone(&handle));
+    let cancel = Cancel::observing(move || {
+        if seen.fetch_add(1, Ordering::Relaxed) == 0 {
+            if let Some(cancel) = target.get() {
+                cancel.cancel(CancelCause::Requested);
+            }
+        }
+    });
+    assert!(handle.set(cancel.clone()).is_ok());
+    assert_eq!(cancel.cause(), None, "not cancelled before the check");
+    let cancelled_record = settle_model_check(
+        &outcome,
+        &ModelCheckLimits::default(),
+        &request,
+        &cancel,
+        |_| panic!("a proof replays nothing"),
+    );
+    assert!(polls.load(Ordering::Relaxed) >= 1, "the check polled");
+    assert_eq!(cancel.cause(), Some(CancelCause::Requested));
     assert_eq!(
-        check_closure(&request, &full, &ModelCheckLimits::default(), &cancel).expect("checked"),
-        TemporalCertificateCheck::Stopped(IncompleteCause::Cancelled {
+        cancelled_record.value,
+        TerminalValue::Incomplete(IncompleteCause::Cancelled {
             source: CancelCause::Requested
         })
     );
@@ -467,10 +487,10 @@ fn an_on_each_tp3_check_stops_or_rejects_an_undefined_atom_with_typed_results() 
     let ModelCheckOutcome::Violated { counterexample, .. } = undefined.run(&world) else {
         panic!("an undefined atom ends the run");
     };
-    assert!(matches!(
-        counterexample.kind,
-        CounterexampleKind::UndefinedEvaluation(_)
-    ));
+    let CounterexampleKind::UndefinedEvaluation(evaluation) = &counterexample.kind else {
+        panic!("an undefined atom ends the run");
+    };
+    assert_eq!(evaluation.site.position, 2);
     let prefix = walked_before_violation(
         &world,
         &undefined,
@@ -486,4 +506,55 @@ fn an_on_each_tp3_check_stops_or_rejects_an_undefined_atom_with_typed_results() 
             undefined.rejecting(&world, &object, 2)
         )
     );
+}
+
+/// FR-1030-AC-11 (clause-root half) for an `on each` clause: a request whose
+/// clause root the request's package does not declare has no root. The core
+/// refuses it with the unresolved-root refusal, it never rejects a
+/// certificate, and the settlement is `Failed`, not `Certified` and not
+/// `Inconclusive`; the accepted `on each` certificate alone is no proof of it.
+#[trace("TC-2920", "FR-1030-AC-11")]
+#[test]
+fn an_on_each_clause_the_package_does_not_declare_settles_failed() {
+    let world = world(CONTRACT, &[("c", 0)]);
+    let each = prior_zero(&world, EACH, None);
+    let outcome = each.run(&world);
+    let full = certificate(&outcome);
+    assert_eq!(
+        check(&each.request(&world, UNLIMITED), &full),
+        TemporalCertificateCheck::Accepted
+    );
+    // The same clause under another name is declared by a package of its
+    // own, not by the request's.
+    let (_, other) = package_with_activated_clause(
+        &world.documents.document,
+        &world.body,
+        "Other",
+        EACH,
+        PRIOR_ZERO,
+    );
+    let foreign = ModelCheckItem::Clause {
+        clause: &other,
+        letters: &*each.letters,
+    };
+    let request = each.request_with(&world, foreign, UNLIMITED);
+    match check_closure(
+        &request,
+        &full,
+        &ModelCheckLimits::default(),
+        &Cancel::new(),
+    ) {
+        Err(ClosureRefusal::Item(ItemRefusal::ClauseRoot(ClauseRootRefusal::Undeclared {
+            name,
+        }))) => assert_eq!(name, "Other"),
+        other => panic!("expected the clause-root-unresolved refusal, got {other:?}"),
+    }
+    let record = settle_model_check(
+        &outcome,
+        &ModelCheckLimits::default(),
+        &request,
+        &Cancel::new(),
+        |_| panic!("a proof replays nothing"),
+    );
+    assert_eq!(record.value, TerminalValue::Failed);
 }
