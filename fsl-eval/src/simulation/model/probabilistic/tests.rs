@@ -26,62 +26,21 @@ fn probability_link_fixture() -> world::Model {
     model
 }
 
-/// Diagnose an already failed Link expansion through its actual lower ports.
-/// These independent meters do not change the failed run's work prefix.
-fn probability_expansion_diagnostics(
-    system: &mut super::ModelSystem<'_>,
-    state: &ModelSimState,
-) -> String {
-    let scope = system.probability_work.take();
-    let ordinary = match system.actions(state) {
-        Ok(Ok(actions)) => format!("completed({} actions)", actions.len()),
-        Ok(Err(undecided)) => format!("undecided({undecided:?})"),
-        Err(stop) => format!("stopped({stop:?})"),
-    };
-    system.probability_work = scope;
-    let walk = super::super::walk::walk_of(system, state, None)
-        .expect("the failed expansion's observation");
-    let mut ports = Vec::new();
-    for info in system
-        .clauses
-        .preconditions
-        .iter()
-        .chain(&system.clauses.postconditions)
-    {
-        let mut observations = super::super::contracts::invariant_observations(&walk, info, 0);
-        observations.pre = observations.current.take();
-        observations.parameters = vec![("lost".to_owned(), Value::Boolean(false))];
-        let precondition = system
-            .clauses
-            .preconditions
-            .iter()
-            .any(|pre| pre.identity == info.identity);
-        if precondition {
-            let result = system.evaluator().evaluate_clause(
-                &info.qualified,
-                &observations,
-                &mut filament_exact::Meter::new(system.meter_limits()),
-            );
-            ports.push(format!("pre {}: {result:?}", info.name));
-        } else {
-            observations.post = Some(walk.observation.clone());
-            let result = system.evaluator().evaluate_post_targets(
-                &info.qualified,
-                &observations,
-                &mut || filament_exact::Meter::new(system.meter_limits()),
-            );
-            ports.push(match result {
-                Ok(found) => format!(
-                    "post-target {}: completed({} targets, names_result={})",
-                    info.name,
-                    found.targets.len(),
-                    found.names_result
-                ),
-                Err(failure) => format!("post-target {}: {failure:?}", info.name),
-            });
-        }
-    }
-    format!("ordinary_same_input={ordinary}; {}", ports.join("; "))
+/// Probability postconditions read equality decisions as well as identities.
+/// Both supplies are materialized and admitted by their existing package owner.
+fn through_probability_wire<T>(
+    world: &World,
+    use_input: impl FnOnce(crate::simulation::model::ModelCheckInput<'_>) -> T,
+) -> T {
+    with_bare_witnesses(world, EqualitySupply::Emitted, |bare| {
+        let input = crate::simulation::model::PackageModelInput::of(
+            bare,
+            world.packages(),
+            fsl_semantics::model::accounting::ModelNormalizationLimits::default(),
+        )
+        .unwrap_or_else(|pending| panic!("the equality-supplied package input admits: {pending}"));
+        use_input(input.input())
+    })
 }
 
 #[trace("FR-120-AC-35", "FR-120-AC-36")]
@@ -95,9 +54,8 @@ fn probability_work_scope_accumulates_real_expansions_on_source_and_package_rout
         let first = system
             .actions(&start)
             .unwrap_or_else(|stop| {
-                let diagnostic = probability_expansion_diagnostics(&mut system, &start);
                 panic!(
-                    "{route}: initial ample expansion stopped: {stop:?}; work={}/{}; {diagnostic}",
+                    "{route}: initial ample expansion stopped: {stop:?}; work={}/{}",
                     ample.consumed_work(),
                     system.meter_limits().work_units
                 )
@@ -145,7 +103,7 @@ fn probability_work_scope_accumulates_real_expansions_on_source_and_package_rout
         );
     };
     exercise("source", world.system());
-    through_the_wire(&world, |input| {
+    through_probability_wire(&world, |input| {
         exercise("package", world.admit_input(input, 1_000_000).unwrap())
     });
 }
@@ -343,9 +301,8 @@ fn probability_candidate_then_claim_predicate_and_reward_use_the_same_allowance(
         system
             .actions(&start)
             .unwrap_or_else(|stop| {
-                let diagnostic = probability_expansion_diagnostics(&mut system, &start);
                 panic!(
-                    "{route}: initial ample expansion stopped: {stop:?}; work={}/{}; {diagnostic}",
+                    "{route}: initial ample expansion stopped: {stop:?}; work={}/{}",
                     scope.consumed_work(),
                     system.meter_limits().work_units
                 )
@@ -405,7 +362,7 @@ fn probability_candidate_then_claim_predicate_and_reward_use_the_same_allowance(
         assert_eq!(stopped.consumed_work(), expansion);
     };
     exercise("source", world.system());
-    through_the_wire(&world, |input| {
+    through_probability_wire(&world, |input| {
         exercise("package", world.admit_input(input, 1_000_000).unwrap())
     });
 }
@@ -1690,6 +1647,19 @@ fn the_package_route_rebuilds_the_probabilistic_model_of_the_emitted_package() {
 /// `use_bare` over `world`'s package emitted and read back from the wire
 /// bytes.
 fn with_bare<T>(world: &World, use_bare: impl FnOnce(&fsl_package::BarePackage<'_>) -> T) -> T {
+    with_bare_witnesses(world, EqualitySupply::Absent, use_bare)
+}
+
+enum EqualitySupply {
+    Absent,
+    Emitted,
+}
+
+fn with_bare_witnesses<T>(
+    world: &World,
+    equality_supply: EqualitySupply,
+    use_bare: impl FnOnce(&fsl_package::BarePackage<'_>) -> T,
+) -> T {
     let read = fsl_package::read_evaluation_package(
         &world.package,
         fsl_semantics::library::LibraryName::new("fixture").expect("a library name"),
@@ -1704,12 +1674,18 @@ fn with_bare<T>(world: &World, use_bare: impl FnOnce(&fsl_package::BarePackage<'
         .emission()
         .identity_rows(admitted, &mut rows_budget)
         .expect("the identity rows join the package");
+    let equality = matches!(equality_supply, EqualitySupply::Emitted).then(|| {
+        let mut equality_budget = fsl_package::V2ReadLimits::fixture().native_join_budget();
+        read.emission()
+            .equality_witness(admitted, &mut equality_budget)
+            .expect("the emitted equality witness joins the package")
+    });
     let mut join_budget = fsl_package::V2ReadLimits::fixture().native_join_budget();
     let bare = fsl_package::BarePackage::new(admitted)
         .with_supply(
             fsl_package::BareSupply {
                 identities: &rows,
-                equality: None,
+                equality: equality.as_ref(),
             },
             &mut join_budget,
         )
