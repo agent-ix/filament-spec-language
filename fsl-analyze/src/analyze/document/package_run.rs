@@ -104,6 +104,10 @@ impl PendingPackageFamily {
                 ": items[{}] names a temporal clause whose {fact} has no package form yet{at}",
                 index.get()
             ),
+            (Some(index), PendingFamily::ProbabilityForm(fact)) => format!(
+                ": items[{}] names a probabilistic claim whose {fact} has no package form yet{at}",
+                index.get()
+            ),
             (Some(index), PendingFamily::OperationContractRequirementRecord) => format!(
                 ": items[{}] names the operation-contract claim {}, whose operation-contract requirement record has no package form yet{at}",
                 index.get(),
@@ -192,6 +196,8 @@ pub enum PendingFamily {
     /// A probabilistic claim over a source-object model whose probabilistic
     /// model does not rebuild from the package's rows.
     ProbabilisticClaimUnresolved,
+    /// An admitted probabilistic claim has a form outside the package route.
+    ProbabilityForm(&'static str),
 }
 
 impl PendingFamily {
@@ -214,6 +220,7 @@ impl PendingFamily {
             Self::ModelForm(_) => "model-form",
             Self::ProbabilisticSourceModel => "probabilistic-source-model",
             Self::ProbabilisticClaimUnresolved => "probabilistic-claim-unresolved",
+            Self::ProbabilityForm(fact) => fact,
         }
     }
 }

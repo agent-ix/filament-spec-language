@@ -34,7 +34,7 @@ impl<'r, 'a: 'r> ClaimReads<'r, 'a> {
                 fsl_package::BareClauseRefusal::Pending { fact, node } => {
                     PackageRunError::Pending(super::PendingPackageFamily {
                         request_index: Some(index),
-                        family: super::PendingFamily::ClauseFact(fact),
+                        family: super::PendingFamily::ProbabilityForm(fact),
                         node: Some(node),
                         note: None,
                     })
