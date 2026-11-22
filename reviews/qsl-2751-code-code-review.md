@@ -54,3 +54,28 @@ No `type: AssuranceProfile` document applies under `spec/`. This is a direct del
 | FND-005 | medium | Several FR-338-AC-31 branches are untested or tested in a different form. Requests whose `max_store_buffer`, `max_messages` or `max_live_instances` differs from the run's (AC-21 and AC-22) are untested. The Echo `on each` clause has no package-route parity test. The 'protocol components are cycle keys' claim is not asserted: the helpers use `with_cycle_keys(BTreeSet::new())`. The stated post-attempt-to-pre-attempt `SuccessorMissing` tamper is replaced by a two-attempt-to-one-attempt tamper (protocol_counted_steps.rs:1455-1467). | fsl-analyze/tests/it/protocol_counted_steps.rs:1455 |
 | FND-006 | low | FR-1030-AC-8 requires each transfer to carry both premise identities, but the test asserts only that `transfer.premises` has length 2, never which identities it holds. | tests/it/plan_export_surface.rs:2475 |
 | FND-007 | low | The FR-1031-AC-5 test accepts `details` from either `value.details` or `value.error.details`, so it does not pin the refusal's wire location. A move of the member between the two locations would pass unnoticed. | tests/it/plan_export_surface.rs:2570 |
+
+## Dispositions
+
+Round 1 is a blocker-only pass at frozen head bf991901a04c7652c6fd5153eb90a7beed953346, under the latest user policy (one review and one fix round; only a wrong result, wrong refusal, unsound proof or broken build blocks). FND-002..007 are non-blocking and sit in the PR body's single follow-up list, so they are not re-audited here.
+
+The fix in `fsl-eval/src/automaton/translate.rs` is projection-only. It does not change transitions, acceptance or `owes_eventuality`, so it cannot make the producer or checker accept a behaviour the automaton rejects. It makes three changes:
+
+- `synthetic_root` skips only the one synthetic `on each` safety `always` wrapper (`target`, set only for `AutomatonKind::Safety` with `Activation::Each`). Every reachable configuration carries that wrapper, so dropping it merges no two keys, and every other occurrence-less node still faults.
+- `shifted_cores` relabels a positive-lower core's counter as `offsets`.
+- `protocol_safety_debts` adds the finite `F`/`U` acceptance members, only for protocol safety.
+
+Both of the last two are injective functions of the configuration, and the producer and checker share the one projection.
+
+Runtime evidence was read as data:
+
+- the wrapper regression `automaton_key::reached_on_each_tp3_monitor_states_resolve_to_fr338_keys` passed at 3030396f and fe4ed0f2;
+- ordinary `on each` source and package parity passed at fe4ed0f2;
+- the positive `on each` certified transfer passed at c5aa8d21;
+- at c5aa8d21, PrevJumpEach and OlderDebtEach are refuted and PrevStutterEach is inconclusive, with every transfer premise-unproved, so there is no false proof.
+
+At review time the bf991901 runs of EVAL2 (the protocol normal-form and positive-lower keys) and Echo2 were still pending. They must pass before merge.
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | The synthetic `on each` safety wrapper is projected away, so producer and checker keys resolve (translate.rs:937-939, 1236). No new blocker was found statically. Runtime qualification at bf991901 is pending. |
