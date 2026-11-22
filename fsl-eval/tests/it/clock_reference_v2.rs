@@ -1391,7 +1391,15 @@ fn source_generates_clock_references_from_ordinary_admitted_owners() {
         "profile p = \"filament.protocol.finite-global/v1\";\n",
         &body,
     )
-    .unwrap_or_else(|refusals| panic!("the ordinary-owner fixture checks: {refusals:?}"));
+    .unwrap_or_else(|refusals| {
+        panic!(
+            "the ordinary-owner fixture checks: {:?}",
+            refusals
+                .iter()
+                .map(|refusal| (&refusal.refusal, refusal.at.as_str()))
+                .collect::<Vec<_>>()
+        )
+    });
     let package = CheckedPackage::link(checked.graph);
     let objects: Vec<_> = [("c1", "1"), ("c2", "2")].into_iter().map(|(key, n)| json!({
         "key":key, "type":node(CLOCKS,"Call"), "fields":{"n":{"integer":n},"d":{"integer":"0"}}
