@@ -76,7 +76,11 @@ and by every relationship end navigable from `T` under that role. It resolves
 to the one candidate; otherwise:
 
 - no candidate: `ill_typed`/`type-mismatch` at the form, the refusal an
-  undeclared record field and an undeclared object field both get (FR-300);
+  undeclared record field and an undeclared object field both get (FR-300).
+  When a record or model field is absent, the refusal SHALL retain the
+  declared owner's qualified type name, the authored field spelling and the
+  exact authored field-token span, with model-field refusals keeping their
+  `StateModel` attribution and `ill_typed`/`type-mismatch` pair (FR-300).
 - two or more candidates (a field and an end, or two ends):
   `ambiguous_declaration`/`ambiguous-name` at the form, naming every
   candidate.
