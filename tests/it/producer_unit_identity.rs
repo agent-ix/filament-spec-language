@@ -40,6 +40,15 @@ fn source(roots: usize, expose_roots: bool) -> String {
 }
 
 fn compile(package_name: String, roots: usize, expose_roots: bool) -> AdmittedCompilation {
+    compile_with_limits(package_name, roots, expose_roots, StageLimits::default())
+}
+
+fn compile_with_limits(
+    package_name: String,
+    roots: usize,
+    expose_roots: bool,
+    limits: StageLimits,
+) -> AdmittedCompilation {
     let source = source(roots, expose_roots);
     fsl_replay::compile_admitted(
         CompileUnit {
@@ -50,7 +59,7 @@ fn compile(package_name: String, roots: usize, expose_roots: bool) -> AdmittedCo
         },
         [],
         &fsl_replay::spine::DependencyInput::default(),
-        StageLimits::default(),
+        limits,
         ReplayLimits::default(),
     )
     .expect("the authentic root-unit source compiles")
@@ -295,5 +304,11 @@ fn small_admitted_root_family_completes_exact_handoff() {
 #[test]
 fn long_admitted_package_name_reaches_actual_handoff_identity_refusal() {
     let package_name = "p".repeat(16_777_216 / ROOTS);
-    conversion_handoff(&compile(package_name, ROOTS, false), true);
+    let limits = StageLimits::default()
+        .with_named("emit.output_bytes", 1_073_741_824)
+        .expect("the emitter ceiling is a stage limit");
+    conversion_handoff(
+        &compile_with_limits(package_name, ROOTS, false, limits),
+        true,
+    );
 }

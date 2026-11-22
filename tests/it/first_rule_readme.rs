@@ -8,7 +8,7 @@ const README: &str = include_str!("../../README.md");
 const CONFIG_VERSION_MODEL: &str =
     include_str!("../../examples/config-version/model.semantic-ir.json");
 
-/// The bare FSL code fence under the README's "A first rule" heading.
+/// The FSL code fence under the README's "A first rule" heading.
 fn first_rule_source() -> String {
     let section = README
         .split_once("## A first rule\n")
@@ -18,7 +18,7 @@ fn first_rule_source() -> String {
         .map(|(section, _)| section)
         .expect("README first-rule section has a following section");
     let (_, after_open) = section
-        .split_once("```\n")
+        .split_once("```fsl stage=parse\n")
         .expect("README first-rule section has a code fence");
     let (source, _) = after_open
         .split_once("\n```")

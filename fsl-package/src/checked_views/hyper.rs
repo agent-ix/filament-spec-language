@@ -237,7 +237,7 @@ impl BarePackage<'_> {
             }
             quantifiers.push(PackageHyperQuantifier {
                 variable: variable.to_owned(),
-                kind: fsl_forms::QuantifierKind::Forall,
+                kind: fsl_semantics::check::QuantifierKind::Forall,
                 alias: alias.to_owned(),
                 fairness: Vec::new(),
             });

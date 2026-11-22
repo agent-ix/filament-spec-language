@@ -2716,9 +2716,19 @@ fn inherited_members_resolve_through_a_second_alias() {
     object_types.sort();
     assert_eq!(
         object_types,
-        ["History::ConfigVersion", "History::Sub"],
-        "each object type is declared once, under the first alias"
+        ["ClockReference", "History::ConfigVersion", "History::Sub"],
+        "domain object types are declared once under the first alias, beside the native clock target"
     );
+    let native_clock = filament_exact::EffectiveId::new(
+        None,
+        filament_exact::OriginalDeclarationKey::new("filament/native", "Clock"),
+    );
+    let clock_type = declarations
+        .types
+        .object_type(native_clock.clone())
+        .expect("the synthetic clock target uses its canonical native identity");
+    assert_eq!(clock_type.name(), "ClockReference");
+    assert_eq!(clock_type.key(), native_clock);
     let checked = declarations
         .check(
             CheckMode::Linked,

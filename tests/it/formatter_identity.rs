@@ -987,7 +987,7 @@ fn both_evaluator_name_variants_keep_format_identity() {
 #[test]
 fn evaluator_enum_and_predicate_units_keep_format_identity() {
     let fixture = include_str!("../../fsl-eval/tests/it/source_call.rs");
-    let template = function_literal(fixture, "package_of", "language ");
+    let template = function_literal(fixture, "package_of_with_mode", "language ");
     let declarations = literal_fixture_arguments(fixture, &["package_of"]);
     assert_eq!(
         declarations.len(),

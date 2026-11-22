@@ -37,8 +37,8 @@ fn metadata(no_deps: bool) -> Value {
     serde_json::from_slice(&output.stdout).expect("cargo metadata writes JSON")
 }
 
-/// The version and tag of the pinned standard package.
-fn pinned_standard() -> (String, String) {
+/// The version and optional release tag of the pinned standard package.
+fn pinned_standard() -> (String, Option<String>) {
     let metadata = metadata(false);
     let package = metadata["packages"]
         .as_array()
@@ -48,16 +48,27 @@ fn pinned_standard() -> (String, String) {
         .unwrap_or_else(|| panic!("{STANDARD_PACKAGE} is not a dependency of the workspace"));
     let source = package["source"].as_str().expect("a non-path source");
     assert!(
-        source.starts_with(STANDARD_GIT) && source.contains("?tag=v"),
-        "the standard is not pinned by a release tag: {source}"
+        source.starts_with(STANDARD_GIT),
+        "the standard source is {source}"
     );
     let version = package["version"].as_str().expect("version").to_owned();
-    let tag = source
-        .split("?tag=")
-        .nth(1)
-        .and_then(|rest| rest.split('#').next())
-        .expect("a tag source")
-        .to_owned();
+    let selector = source
+        .split_once('?')
+        .map(|(_, selector)| selector.split('#').next().expect("a source selector"))
+        .expect("the standard is pinned by a tag or full-sha rev");
+    let tag = if let Some(tag) = selector.strip_prefix("tag=") {
+        assert!(tag.starts_with('v'), "a versioned release tag: {source}");
+        Some(tag.to_owned())
+    } else {
+        let revision = selector
+            .strip_prefix("rev=")
+            .expect("the standard is pinned by a tag or full-sha rev");
+        assert!(
+            revision.len() == 40 && revision.bytes().all(|byte| byte.is_ascii_hexdigit()),
+            "the standard revision is a full SHA: {source}"
+        );
+        None
+    };
     (version, tag)
 }
 
@@ -230,14 +241,16 @@ fn markdown_files(directory: &Path, out: &mut Vec<PathBuf>) {
 }
 
 #[test]
-#[trace("FSpec-TC-1640", "FSpec-FR-660-AC-1")]
+#[trace("FR-760-AC-1", "FSpec-TC-1640", "FSpec-FR-660-AC-1")]
 fn the_pinned_standard_version_equals_its_tag_and_exposes_published_files() {
     let (version, tag) = pinned_standard();
-    assert_eq!(
-        format!("v{version}"),
-        tag,
-        "the package version is the tag without its v"
-    );
+    if let Some(tag) = tag {
+        assert_eq!(
+            format!("v{version}"),
+            tag,
+            "the package version is the tag without its v"
+        );
+    }
     assert!(
         filament_specification::published_file(FIXTURE).is_some(),
         "published_file resolves the fixture from the pinned package"
@@ -250,17 +263,20 @@ fn the_pinned_standard_version_equals_its_tag_and_exposes_published_files() {
 }
 
 #[test]
-#[trace("FSpec-TC-1644", "FSpec-FR-660-AC-5")]
+#[trace("FR-760-AC-1", "FSpec-TC-1644", "FSpec-FR-660-AC-5")]
 fn the_resolved_standard_carries_a_semantic_version_promise() {
-    // Offline Cargo metadata refuses a source that is not a tagged git source
-    // of the standard; a `branch` source fails here, naming the package.
+    // The resolved package is pinned by a release tag or full-sha revision;
+    // its own version retains the semantic version promise for either source.
     let (version, tag) = pinned_standard();
     let (major, minor, patch) = semver(&version);
-    assert_eq!(
-        tag,
-        format!("v{major}.{minor}.{patch}"),
-        "the resolved version {version} equals its tag {tag}"
-    );
+    assert_eq!(version, format!("{major}.{minor}.{patch}"));
+    if let Some(tag) = tag {
+        assert_eq!(
+            tag,
+            format!("v{major}.{minor}.{patch}"),
+            "the resolved version {version} equals its tag {tag}"
+        );
+    }
 }
 
 #[test]

@@ -470,13 +470,16 @@ fn no_crate_below_layer_three_depends_on_the_check_core() {
             );
         }
         if crate_name == "fsl-eval" {
-            // Layer 5: "4, 3, F, K". The whole shipped table is
-            // fixed: the four layer crates, `thiserror` for its error types,
+            // Layer 5: "4, 3, F, C, E, SV, K". The whole shipped table is
+            // fixed: those layer crates, `thiserror` for its error types,
             // and `quire-canonical`/`serde`/`serde_json` for the FR-101 simulation state
             // key and the pinned sampler's draw preimage (ADR-011
             // X-8). `ix-trace-rs` (ADR-012 section 9) owns the
             // `#[string_edge]` marker and is exempt from the layer order
-            // below (FR-064).
+            // below (FR-064). X-8 / FR-861 adds `filament-observation` as
+            // the observation-authority owner. ADR-011 section 6.1 excludes
+            // third-party crates from layer edges; `sha2` and
+            // `unicode-normalization` are explicit members of this exact table.
             let mut normal: Vec<&str> = package.normal.iter().map(String::as_str).collect();
             normal.sort_unstable();
             assert_eq!(
@@ -485,6 +488,7 @@ fn no_crate_below_layer_three_depends_on_the_check_core() {
                     "filament-checked",
                     "filament-eval",
                     "filament-exact",
+                    "filament-observation",
                     "filament-semantic-value",
                     "fsl-foundation",
                     "fsl-package",
@@ -493,7 +497,9 @@ fn no_crate_below_layer_three_depends_on_the_check_core() {
                     "quire-canonical",
                     "serde",
                     "serde_json",
-                    "thiserror"
+                    "sha2",
+                    "thiserror",
+                    "unicode-normalization"
                 ],
                 "{crate_name}'s [dependencies]"
             );
@@ -591,7 +597,7 @@ fn no_crate_below_layer_three_depends_on_the_check_core() {
 }
 
 /// The FCD crates `fsl-semantics` depends on are named by
-/// `fsl-semantics/src/model/intake.rs` and by no other file of that crate
+/// `fsl-semantics/src/model/intake.rs` and its child modules only
 /// (ADR-011 §6.1: FCD from `model::intake` only). A plain text search for
 /// each crate's Rust name, so a `use`, an inline path and a macro argument
 /// are all caught.
@@ -619,10 +625,17 @@ fn fcd_is_named_by_model_intake_only(dependencies: &[String]) {
             }
         }
     }
-    assert_eq!(
-        naming.into_iter().collect::<Vec<_>>(),
-        ["model/intake.rs"],
-        "files of fsl-semantics naming an FCD crate"
+    assert!(
+        !naming.is_empty(),
+        "the source scan finds no model intake use of an FCD crate"
+    );
+    let outside_intake: Vec<_> = naming
+        .iter()
+        .filter(|path| path.as_str() != "model/intake.rs" && !path.starts_with("model/intake/"))
+        .collect();
+    assert!(
+        outside_intake.is_empty(),
+        "files outside model::intake name an FCD crate: {outside_intake:?}"
     );
 }
 

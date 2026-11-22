@@ -220,7 +220,7 @@ fn the_zero_draft_front_end_is_absent() {
     let src = workspace.join("src");
 
     // Positive control: the same directory scan finds the retained modules.
-    for retained in ["complete", "emit_checked_v2"] {
+    for retained in ["complete", "population_fixtures"] {
         assert!(
             !entries_named(&src, retained).is_empty(),
             "the scan finds no retained src/{retained}: the by-absence check is vacuous"
