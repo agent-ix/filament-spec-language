@@ -2699,7 +2699,7 @@ fn untimed_exact_counts_distinct_pending_keys_and_reuses_full_state_capacity() {
     use fsl_analyze::exact_probabilistic::{
         product_construction_counts, reset_product_construction_counts,
     };
-    let extra = "probabilistic Reuse using inf on M over (n: M::Node) under every scheduler on origin { probability >= 0 [ eventually holds(n.healthy) ] }";
+    let extra = "probabilistic Reuse using inf on M over (n: M::Node) under every scheduler on origin { probability >= 0.5 [ eventually holds(n.healthy) ] }";
     let mut model = prob_world::health("self.healthy = false", "true: 1, false: 1", false, extra);
     model.operations.push(prob_world::Operation {
         name: "other",
