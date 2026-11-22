@@ -348,6 +348,36 @@ fn a_completed_members_request_settles_replay_parity() {
     assert_eq!(record.backend(), Some(&plugin()));
 }
 
+/// The public Linked entry retains the same request when safe R exhausts
+/// the call's work budget before completing q.
+#[trace("TC-1173", "FR-404-AC-3")]
+#[test]
+fn an_incomplete_public_calls_request_equals_the_completed_calls_request() {
+    let source = unit("");
+    let incomplete = run(
+        &source,
+        &call("q", integer(3), 0),
+        CallerLimits::default(),
+        &Cancel::new(),
+    )
+    .expect("the public call returns its incomplete outcome and context");
+    let CallOutcome::Incomplete(stopped) = incomplete.outcome() else {
+        panic!("the zero-work call is incomplete: {:?}", incomplete.outcome());
+    };
+    assert_eq!(stopped.limits_field(), "work_units");
+    let completed = run_q(&source);
+    assert!(matches!(
+        completed.outcome(),
+        CallOutcome::Completed(fsl_replay::CallValue::Integer(value)) if *value == Integer::from(4_i64)
+    ));
+    let expected = member_request(&source, &completed, "q", 9);
+    let built = member_request(&source, &incomplete, "q", 9);
+    assert_eq!(built.package, expected.package);
+    assert_eq!(built.obligation_identity, expected.obligation_identity);
+    assert_eq!(built.replay_target, expected.replay_target);
+    assert_eq!(built.byte_provision, expected.byte_provision);
+}
+
 /// The public Linked entry rejects RK before it can return a replay context.
 /// Its Kernel runtime controls live at the existing internal coordinator seam.
 #[trace("TC-1173", "FR-404-AC-3")]
