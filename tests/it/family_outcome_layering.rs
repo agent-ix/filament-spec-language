@@ -470,13 +470,16 @@ fn no_crate_below_layer_three_depends_on_the_check_core() {
             );
         }
         if crate_name == "fsl-eval" {
-            // Layer 5: "4, 3, F, K". The whole shipped table is
-            // fixed: the four layer crates, `thiserror` for its error types,
+            // Layer 5: "4, 3, F, C, E, SV, K". The whole shipped table is
+            // fixed: those layer crates, `thiserror` for its error types,
             // and `quire-canonical`/`serde`/`serde_json` for the FR-101 simulation state
             // key and the pinned sampler's draw preimage (ADR-011
             // X-8). `ix-trace-rs` (ADR-012 section 9) owns the
             // `#[string_edge]` marker and is exempt from the layer order
-            // below (FR-064).
+            // below (FR-064). X-8 / FR-861 adds `filament-observation` as
+            // the observation-authority owner. ADR-011 section 6.1 excludes
+            // third-party crates from layer edges; `sha2` and
+            // `unicode-normalization` are explicit members of this exact table.
             let mut normal: Vec<&str> = package.normal.iter().map(String::as_str).collect();
             normal.sort_unstable();
             assert_eq!(
@@ -485,6 +488,7 @@ fn no_crate_below_layer_three_depends_on_the_check_core() {
                     "filament-checked",
                     "filament-eval",
                     "filament-exact",
+                    "filament-observation",
                     "filament-semantic-value",
                     "fsl-foundation",
                     "fsl-package",
@@ -493,7 +497,9 @@ fn no_crate_below_layer_three_depends_on_the_check_core() {
                     "quire-canonical",
                     "serde",
                     "serde_json",
-                    "thiserror"
+                    "sha2",
+                    "thiserror",
+                    "unicode-normalization"
                 ],
                 "{crate_name}'s [dependencies]"
             );
