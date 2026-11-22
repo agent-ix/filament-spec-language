@@ -62,7 +62,7 @@ fn spy(verdict: ProviderVerdict) -> (Engine, Arc<Mutex<Vec<Json>>>) {
         fsl_route::Candidate::new(fsl_foundation::BackendId::new(SMT)),
         fsl_route::ProviderOrigin::Linked,
         [(
-            Some(fsl_route::Capability::ValueValidity.to_wire()),
+            Some(fsl_semantics::check::Capability::ValueValidity.to_wire()),
             Some(Mode::Unbounded.to_wire()),
         )],
         members,
