@@ -191,7 +191,7 @@ fn value_record_views_and_native_charges_equal_the_source() {
                 .unwrap()
                 .occurrences
                 .iter()
-                .find(|key| key.origin().role().as_str() == "claim")
+                .find(|key| matches!(key.origin().role().as_str(), "claim" | "declaration"))
                 .unwrap(),
         )
         .unwrap()
