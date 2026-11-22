@@ -73,7 +73,10 @@ pub use key::{
     ClaimKind, Correspondence, CorrespondenceRole, ExtentClass, FairnessKey, ItemKey, KeyWireError,
     LocalKey, OperationRef, PremiseKey, SlotKey, TemporalItemKind, TemporalKey,
 };
-pub use mismatch::{interface_mismatch, InterfaceMismatch, MismatchReason};
+pub use mismatch::{
+    interface_mismatch, interface_mismatch_over, InterfaceMismatch, MismatchClauseFairness,
+    MismatchFacts, MismatchNeed, MismatchReason, MismatchRefusal, MismatchSupply,
+};
 pub use request::{
     dependency_graphs, read_settlement_request, DependencyGraphs, DependencyGraphsRefusal,
     Discharge, Discharger, EnvironmentRecord, ItemRef, PremiseResult, ReadLimits, RecordSupplies,
