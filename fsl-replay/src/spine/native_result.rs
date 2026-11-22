@@ -3590,20 +3590,49 @@ impl Disposition {
                 };
                 let mut record = RefusalWire::new(refusal.code().as_str(), cause);
                 match refusal.as_ref() {
-                    super::RunRefusal::SourceEnum(_) => {
-                        if let Some(details) = refusal.details() {
-                            record = record.fields(
-                                details
-                                    .into_iter()
-                                    .map(|(name, value)| {
-                                        let text = match value {
-                                            serde_json::Value::String(text) => text,
-                                            other => other.to_string(),
-                                        };
-                                        (name, text)
-                                    })
-                                    .collect(),
-                            );
+                    super::RunRefusal::SourceEnum(error) => {
+                        let fields: BTreeMap<&'static str, String> = match error.as_ref() {
+                            fsl_package::SourceEnumCatalogError::Native(error) => {
+                                let mut fields = BTreeMap::new();
+                                if let Some(denied) = error.denied() {
+                                    fields.insert("kind", format!("{:?}", denied.kind));
+                                    fields.insert("amount", denied.amount.to_string());
+                                }
+                                if let Some(bound) = error.configured_bound() {
+                                    fields.insert("configured_bound", bound.to_string());
+                                }
+                                if let Some(locus) = error.locus() {
+                                    fields.insert("locus", format!("{locus:?}"));
+                                }
+                                fields
+                            }
+                            fsl_package::SourceEnumCatalogError::UnsupportedSourceScope(scope) => {
+                                BTreeMap::from([
+                                    (
+                                        "declaration",
+                                        serde_json::to_string(scope.declaration()).expect(
+                                            "admitted enum declaration metadata serializes",
+                                        ),
+                                    ),
+                                    (
+                                        "qualified_declaration",
+                                        serde_json::to_string(scope.qualified_declaration())
+                                            .expect("qualified enum declaration text serializes"),
+                                    ),
+                                ])
+                            }
+                            fsl_package::SourceEnumCatalogError::Allocation
+                            | fsl_package::SourceEnumCatalogError::InvalidJoinedInvariant {
+                                ..
+                            }
+                            | fsl_package::SourceEnumCatalogError::ConflictingMember { .. }
+                            | fsl_package::SourceEnumCatalogError::MissingNativePermission
+                            | fsl_package::SourceEnumCatalogError::MissingIdentityWitness => {
+                                BTreeMap::new()
+                            }
+                        };
+                        if !fields.is_empty() {
+                            record = record.fields(fields);
                         }
                     }
                     super::RunRefusal::ReferenceCatalog(error) => {
