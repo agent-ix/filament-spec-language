@@ -237,8 +237,7 @@ impl<'a> Protocol<'a> {
             match &control.body {
                 ControlBody::Send { channel, .. } | ControlBody::Receive { channel, .. } => {
                     let channel_node = program.form.channels.iter().find(|candidate| &candidate.node_id == *channel)?;
-                    let (_, path) = protocol_view::declaration(channel_node).ok()?;
-                    vias.push(check::CheckedVia { node, channel: path.iter().map(AsRef::as_ref).collect::<Vec<_>>().join("::") });
+                    vias.push(check::CheckedVia { node, channel: channel_name(channel_node)? });
                     let endpoints = protocol_view::channel_endpoints(channel_node).ok()?;
                     let owner = if matches!(control.body, ControlBody::Send { .. }) { endpoints.sender } else { endpoints.receiver };
                     owners.push(check::CheckedOwner { node, role: program.roles.iter().position(|role| &role.node == owner)? });
@@ -272,7 +271,7 @@ impl<'a> Protocol<'a> {
                 protocol_view::Overflow::Block => check::ChannelOverflow::Block,
                 _ => return None,
             };
-            channels.push(Channel { name: protocol_view::declaration(channel).ok()?.1.iter().map(AsRef::as_ref).collect::<Vec<_>>().join("::"), ordering: Ordering::Unordered, delivery, capacity: check::ChannelCapacity::Literal(capacity), overflow });
+            channels.push(Channel { name: channel_name(channel)?, ordering: Ordering::Unordered, delivery, capacity: check::ChannelCapacity::Literal(capacity), overflow });
         }
         Some(Self {
             name: name.to_owned(), on_each: false, obligations: Obligations { compensations: Vec::new() },
@@ -283,6 +282,11 @@ impl<'a> Protocol<'a> {
             channels, requirements: Vec::new(), awaits: Vec::new(), parallels: Vec::new(),
         })
     }
+}
+
+fn channel_name(channel: &filament_contract_model::CheckedSemanticNodeV2) -> Option<String> {
+    let (_, path) = protocol_view::declaration(channel).ok()?;
+    path.last().map(ToString::to_string)
 }
 
 fn member<'a>(term: &'a fsl_package::CheckedTerm, name: &str) -> Option<&'a fsl_package::CheckedTerm> {
