@@ -523,9 +523,16 @@ pub fn classify_refusal(refusal: &CompileRefusal) -> Classification {
     let causes = refusal.causes();
     let group = group(refusal);
     let holds = |code: Code| causes.iter().any(|cause| cause.code == code);
+    let unsupported_emit_or_link = group == Group::Projection
+        && (holds(Code::UnsupportedProjection)
+            || (holds(Code::UnsupportedConstruct)
+                && causes.iter().any(|cause| {
+                    cause.code == Code::UnsupportedConstruct
+                        && cause.cause == Some("not-yet-implemented")
+                })));
     let class = if holds(Code::RuntimeInvariant)
         || group == Group::Setup
-        || (group == Group::Projection && !holds(Code::UnsupportedProjection))
+        || (group == Group::Projection && !unsupported_emit_or_link)
     {
         RefinementClass::ToolFailure
     } else if group == Group::Content && causes.iter().any(|cause| is_typed_refusal(cause.code)) {

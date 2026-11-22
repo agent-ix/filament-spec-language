@@ -73,6 +73,32 @@ fn a_partial_order_counterexample_is_concrete() {
     assert_eq!(run.exit, 10);
 }
 
+/// FSpec FR-383's pure-call reads preserve the verdict and concrete replay
+/// for a genuine admitted atom. QSL-2829 implements the missing atom rule.
+#[trace("TC-1583", "FR-623-AC-1")]
+#[test]
+#[ignore = "QSL-2829: partial-order reduction has no atom footprint for function calls yet"]
+fn an_atom_pure_call_preserves_the_verdict_and_replayed_refutations() {
+    let ws = Workspace::new("pure-call-por");
+    let body = "function same_truth using v(x: Boolean): Boolean pure { x }\n".to_owned()
+        + &clause("Fails", "", "always holds(same_truth(c.value <= 2))");
+    let run = analyze(&request(
+        &ws,
+        &body,
+        json!([
+            {"claim": "Fails"},
+            {"claim": "Fails", "reductions": {"partial_order": true}}
+        ]),
+        true,
+    ));
+    for index in [0, 1] {
+        let item = run.item(index);
+        assert_eq!(label(&item), "refuted");
+        assert_eq!(item["replay"]["reproduced"], true);
+    }
+    assert_eq!(run.exit, 10);
+}
+
 /// Each-fairness liveness under symmetry agrees with the unreduced verdict.
 #[trace("TC-1583", "FR-623-AC-1")]
 #[test]

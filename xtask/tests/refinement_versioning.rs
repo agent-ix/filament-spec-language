@@ -21,6 +21,7 @@ const AUTHORITY: &str = "agent-ix";
 const IDENTITY: &str = "ix://example/config-version/spine/unit";
 /// The ConfigVersion domain package, named in place by its repository path.
 const PACKAGE: &str = "repo:examples/config-version/model.semantic-ir.json";
+const MIXED_WORKLOAD_PACKAGE: &str = "repo:fsl-conformance/cases/mixed-workload-package.json";
 const POPULATION: &str = "ix://example/config-version/config_history";
 const PARENT_ORDER: &str = "deref(value(self.parent)).versionNumber < self.versionNumber";
 
@@ -70,17 +71,16 @@ fn broken() -> String {
     broken
 }
 
-/// The unit with a timed-profile clause on a `model-steps` clock. S2 reads
-/// it, but S3 refuses any clock role but `model-time` as not yet implemented
-/// (FR-234).
+/// The unit with a workload over two unrelated operation owners, which S4
+/// refuses without changing the ConfigVersion clauses (TC-865 step 1).
 fn unsupported() -> String {
     unit().replace(
-        "profile v = \"filament.model.complete/v1\";\n",
-        "profile v = \"filament.model.complete/v1\";\n\
-             profile t = \"filament.temporal.timed/v1\";\n",
-    ) + "temporal Unemitted using t over (c: Config::ConfigVersion) \
-           clock \"model-steps\" on origin { eventually[0 ms, 3 ms] \
-           holds(c.versionNumber <= 1000) }\n"
+        &format!("model Config = {:?};\n", config_version::PACKAGE_IDENTITY),
+        &format!(
+            "model Config = {:?};\nmodel Unemittable = \"test/mixed-workload\";\n",
+            config_version::PACKAGE_IDENTITY,
+        ),
+    ) + "workload Both on Unemittable { weight A::step = 1; weight B::step = 1; }\n"
 }
 
 /// The unit with more work in `ParentOrder` and the same meaning.
@@ -179,6 +179,7 @@ struct Pair<'a> {
     superseding: String,
     identity: &'a str,
     cases: Vec<Value>,
+    packages: Vec<&'static str>,
 }
 
 impl<'a> Pair<'a> {
@@ -188,7 +189,13 @@ impl<'a> Pair<'a> {
             superseding,
             identity: IDENTITY,
             cases,
+            packages: vec![PACKAGE],
         }
+    }
+
+    fn with_mixed_workload(mut self) -> Self {
+        self.packages.push(MIXED_WORKLOAD_PACKAGE);
+        self
     }
 
     fn json(&self) -> Value {
@@ -197,7 +204,7 @@ impl<'a> Pair<'a> {
         json!({
             "prior": source("prior.native"),
             "superseding": source("superseding.native"),
-            "packages": [PACKAGE],
+            "packages": self.packages,
             "dependencies": [],
             "cases": self.cases,
         })
@@ -742,7 +749,7 @@ fn the_recipe_commands_generate_then_gate_with_exit_zero() {
 /// FR-343-AC-5 (unsupported half): an unsupported superseding compile and an
 /// unsupported prior compile are each `unresolved (unsupported)`, exit 21.
 #[test]
-#[trace("TC-865", "FR-343-AC-5")]
+#[trace("TC-865", "FR-343-AC-5", "FR-341-AC-7")]
 fn an_unsupported_compile_on_either_side_is_unresolved() {
     for (side, prior, superseding) in [
         ("superseding", unit(), unsupported()),
@@ -750,7 +757,8 @@ fn an_unsupported_compile_on_either_side_is_unresolved() {
     ] {
         let corpus = corpus(&[(
             "pair",
-            Pair::new(prior, superseding, vec![clause_case("healthy-parent")]),
+            Pair::new(prior, superseding, vec![clause_case("healthy-parent")])
+                .with_mixed_workload(),
         )]);
         let report = versioning::run(corpus.path(), &repository());
         assert_eq!(

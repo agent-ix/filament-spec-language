@@ -10,7 +10,9 @@
 //! product counts come from `check_model`, which runs every instance of the
 //! claim.
 
-use filament_exact::Cancel;
+use filament_exact::{
+    Cancel, EffectiveId, ObjectId, ObjectReference, OriginalDeclarationKey, UniverseId,
+};
 use filament_semantic_value::catalog::Category;
 use filament_semantic_value::model_transition::ModelTransition;
 use fsl_analyze::model_check::{retain_reduced, Ample, Atoms, Choice, ModelCheckRefusal, Por};
@@ -1350,28 +1352,88 @@ fn a_state_constraint_makes_the_transitions_it_reads_visible() {
     assert_eq!(constrained(true), constrained(false));
 }
 
-/// ADR-021 §7.6's operation with no footprint rule: `spin()` calls a function
-/// in its precondition. The unreduced run refutes the claim; partial-order
-/// reduction refuses before it expands a state, naming the clause, instead of
-/// stopping an expansion as a broken invariant.
+/// FSpec FR-383's pure-call rule reads the arguments and callee body. `Noop`
+/// has neither arguments nor reads, so `spin` has only its receiver membership
+/// and postcondition read of `g`. Both runs refute and replay the same claim.
 #[trace("TC-587")]
 #[test]
-fn an_operation_with_no_footprint_rule_refuses_partial_order_reduction() {
+fn a_read_free_pure_call_preserves_the_footprint_and_replayed_refutation() {
     let fixture = por_world::call_in_a_precondition();
     let plain = fixture
         .run(Some(0), por_world::no_f(), Reductions::default())
         .expect("checks");
     assert!(matches!(plain, ModelCheckOutcome::Violated { .. }));
-    let refused = fixture
+    let reduced = fixture
         .run(Some(0), por_world::no_f(), reduced())
-        .expect_err("a footprint-less operation refuses");
+        .expect("the pure call has a footprint");
+    let ModelCheckOutcome::Violated {
+        counterexample: plain,
+        ..
+    } = plain
+    else {
+        unreachable!("the unreduced run refutes")
+    };
+    let ModelCheckOutcome::Violated {
+        counterexample: reduced,
+        ..
+    } = reduced
+    else {
+        panic!("the reduced run refutes: {reduced:?}")
+    };
+    for counterexample in [plain, reduced] {
+        assert!(matches!(
+            fixture.replay(Some(0), por_world::no_f(), *counterexample),
+            ModelTraceSettlement::Reproduced {
+                value: fsl_replay::ModelTraceValue::Truth(false),
+                ..
+            }
+        ));
+    }
+    let system = fixture.system();
+    let spin = named(&system, &fixture.start(), "spin");
+    let receiver: serde_json::Value =
+        serde_json::from_str(spin.receiver().expect("spin has a receiver"))
+            .expect("the selected transition's canonical receiver");
+    assert_eq!(receiver["type"], "reference");
+    let object_type = &receiver["object_type"];
     assert!(
-        matches!(
-            refused,
-            ModelCheckRefusal::Footprint(fsl_eval::simulation::model::FootprintError::Refused(_))
-        ),
-        "{refused:?}"
+        object_type["owner_effective_type"].is_null(),
+        "Maker is top-level"
     );
+    let original = &object_type["original"];
+    let object = ObjectReference::new(
+        UniverseId::new(
+            fsl_foundation::node_wire::node_key_from_json(&receiver["universe"])
+                .expect("the receiver's actual universe"),
+        ),
+        EffectiveId::new(
+            None,
+            OriginalDeclarationKey::new(
+                original["package"].as_str().expect("the receiver's package"),
+                original["node"].as_str().expect("the receiver's type"),
+            ),
+        ),
+        ObjectId::new(receiver["identity"].as_str().expect("the receiver's identity"))
+            .expect("the receiver's object id"),
+    );
+    let footprint = system.footprint(&spin).expect("the actual spin footprint");
+    let field = Location::Field {
+        object: object.clone(),
+        field: por_world::key("Maker/g"),
+    };
+    assert_eq!(footprint.writes, [field.clone()].into());
+    assert_eq!(
+        footprint.reads,
+        [
+            field,
+            Location::Membership {
+                population: por_world::key("makers"),
+                object,
+            },
+        ]
+        .into()
+    );
+    assert_eq!(footprint.enabling, footprint.reads);
 }
 
 /// FR-162's absent objects, end to end: reduced and unreduced runs agree on
