@@ -196,12 +196,36 @@ fn bare_admission_retains_equality_and_reports_its_denial_after_projection() {
         &expected
     );
     assert_eq!(exact.consumed(), full);
-    // One short of the whole pass is denied by the declaration projection.
-    for (work, storage) in [(full.work - 1, full.storage), (full.work, full.storage - 1)] {
+    for (work, storage, kind) in [
+        (full.work - 1, full.storage, NativeJoinChargeKind::Work),
+        (full.work, full.storage - 1, NativeJoinChargeKind::Storage),
+    ] {
         let mut budget = NativeJoinBudget::new(work, storage);
         let error = BarePackage::new(&admitted)
             .with_supply(supply, &mut budget)
-            .expect_err("one short in the declarations");
+            .expect_err("one short of the complete admission pass");
+        if kind == NativeJoinChargeKind::Work {
+            let NativeJoinFailure::Rows(native) = error.native() else {
+                panic!("source enum index owns the work denial: {error:?}")
+            };
+            assert_eq!(native.code(), crate::NativeRowErrorCode::WorkLimit);
+            assert_eq!(native.configured_bound(), Some(work));
+            assert_eq!(native.denied(), budget.first_unpaid());
+            assert_eq!(native.locus(), budget.first_unpaid_locus());
+            let locus = native.locus().expect("original source enum index locus");
+            assert_eq!(
+                locus.source,
+                filament_contract_model::NativeJoinLocusSource::AdapterRow(0)
+            );
+            assert_eq!(locus.form, "source_enum_catalog_index");
+            let unpaid = budget.first_unpaid().expect("original unpaid work");
+            assert_eq!(unpaid.kind, NativeJoinChargeKind::Work);
+            assert_eq!(unpaid.amount, 1);
+            let diagnostic = error.limit().expect("original limit diagnostic");
+            assert_eq!(diagnostic.configured_bound(), work);
+            assert_eq!(diagnostic.actual(), u128::from(budget.consumed().work) + unpaid.amount);
+            continue;
+        }
         assert!(
             matches!(error.native(), NativeJoinFailure::Projection(_)),
             "native={:?}, limit={:?}, ceilings=({work}, {storage}), consumed={:?}, first_unpaid={:?}",
