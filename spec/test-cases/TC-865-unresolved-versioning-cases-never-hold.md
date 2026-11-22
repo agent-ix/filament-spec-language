@@ -20,9 +20,16 @@ Scope: FR-343-AC-5, FR-344-AC-4.
 
 ## Test Procedure
 
-1. A pair whose `superseding` unit adds a construct S3 has no checker for
-   (refused `unsupported_construct`/`not-yet-implemented`), with the
-   healthy-parent case. Run the gate.
+1. A pair whose `superseding` unit supplements the original ConfigVersion
+   unit with `model Unemittable = "test/mixed-workload";` before its
+   declarations and `workload Both on Unemittable { weight A::step = 1;
+   weight B::step = 1; }` afterward. Supply the genuine
+   `fsl-conformance/cases/mixed-workload-package.json` beside the original
+   ConfigVersion package. The supplement checks at S3; S4 refuses the
+   workload over unrelated object types as
+   `unsupported_construct`/`not-yet-implemented`, naming `Both`
+   (FR-185-AC-12). Keep the original healthy-parent clause and case
+   unchanged. The `prior` unit has no supplement. Run the gate.
 2. A pair whose `superseding` clause adds conjuncts to the prior's, so its
    evaluation charges more work. Run the healthy-parent case once with
    default limits and read each run's evaluation charge from its usage.
@@ -30,22 +37,26 @@ Scope: FR-343-AC-5, FR-344-AC-4.
    run the gate.
 3. The same pair with the case's work budget set to one unit less than the
    prior run's charge. Run the gate.
-4. A pair whose `prior` unit holds the protocol `compensate` construct of
-   step 1 and whose `superseding` unit does not, with the healthy-parent
-   case. Run the gate.
+4. Move step 1's model selection and workload supplement to the `prior`
+   unit; the `superseding` unit is the original ConfigVersion unit. Supply
+   the same genuine package documents and unchanged healthy-parent case.
+   Run the gate.
 
 Each expected result is a literal in the test. Tag the tests
 `#[trace("TC-865", "<AC>")]`.
 
 ## Expected Results
 
-- Step 1: the case is `unresolved (unsupported)`; verdict unsupported,
-  exit 21.
+- Step 1: prior `admitted`, superseding `unsupported` at `compile`, with
+  code `unsupported_construct` and cause `not-yet-implemented`; the case
+  is `unresolved (unsupported)`; verdict unsupported, exit 21.
 - Step 2: prior `admitted`, superseding `incomplete`; the case is
   `unresolved (incomplete)`, its entry naming `work_units`, the budget's
   value and the member `accounting`; verdict incomplete, exit 22.
 - Step 3: prior `incomplete` at `evaluate`; the case is `unresolved
   (incomplete)`, not `not applicable`.
 - Step 4: prior `unsupported` at `compile`; the case is `unresolved
-  (unsupported)`, not `tool failure`; verdict unsupported, exit 21.
+  (unsupported)`, not `tool failure`; its code is `unsupported_construct`
+  and cause `not-yet-implemented`, and the superseding run is `admitted`;
+  verdict unsupported, exit 21.
 - No case is `holds`.
