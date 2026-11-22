@@ -43,7 +43,7 @@ use filament_semantic_value::declaration::{CompositeShape, TypeEnvironment};
 use filament_semantic_value::location::ExpressionLocation as Location;
 use fsl_eval::value::{ApplicationObservationOptions, CheckedPackageEvaluation, QualifiedName};
 use fsl_foundation::source::provenance::OccurrenceKey;
-use fsl_package::{BarePackage, BareSelectionFailure, CheckedPackage};
+use fsl_package::{AnalysisView, BarePackage, BareSelectionFailure, CheckedPackage};
 use fsl_semantics::check::{Capability, NodeTag};
 use fsl_semantics::model::object_environment::ObjectEnvironment;
 
@@ -205,6 +205,7 @@ pub enum Verdict {
 pub struct ReproducedViolation {
     assignment: Assignment,
     violation: Violation,
+    package_wire: Option<Result<serde_json::Value, crate::CounterexampleWireError>>,
 }
 
 impl ReproducedViolation {
@@ -216,6 +217,13 @@ impl ReproducedViolation {
     /// The violation the replay reproduced.
     pub fn violation(&self) -> &Violation {
         &self.violation
+    }
+
+    /// The assignment encoded with package-authenticated declarations, when replayed from bytes.
+    pub fn package_wire(
+        &self,
+    ) -> Option<&Result<serde_json::Value, crate::CounterexampleWireError>> {
+        self.package_wire.as_ref()
     }
 }
 
@@ -402,9 +410,25 @@ impl<'p> ValueTarget<'p> {
         let is_clause_key = *claim.node() == body.node
             && ["declaration", "claim"].contains(&claim.origin().role().as_str())
             && body.occurrences.contains(claim);
-        if !is_clause_key || *selected.result_type != ValueType::Boolean {
+        let record = package.requirement_items().iter().find(|row| {
+            package.node_key(&row.claim).as_ref() == Some(claim.node())
+                && row.occurrence.role == filament_contract_model::CheckedOccurrenceRole::Expression
+                && row.occurrence.ordinal == claim.origin().ordinal()
+                && row.kind == filament_contract_model::CapabilityKind::ValueValidity
+                && row.record.as_ref().is_some_and(|record| {
+                    package.node_key(&record.owner).as_ref() == Some(selected.node)
+                })
+        });
+        let form = if is_clause_key {
+            if *selected.result_type != ValueType::Boolean {
+                return Err(PackageSelection::Selection(Selection::NoForm));
+            }
+            ClaimForm::Clause
+        } else if record.is_some() {
+            ClaimForm::ScalarOperation
+        } else {
             return Err(PackageSelection::Selection(Selection::NoForm));
-        }
+        };
         let world = package.world().map_err(|_| fault("package-world-reads"))?;
         let parameters = selected
             .parameters
@@ -419,12 +443,27 @@ impl<'p> ValueTarget<'p> {
             .iter()
             .map(|parameter| (parameter.node.clone(), &parameter.value_type))
             .collect();
-        let extent = fsl_semantics::family::requirements::classify_extent(
-            &roots,
-            world.types(),
-            u64::MAX,
-        )
-        .ok();
+        let extent =
+            fsl_semantics::family::requirements::classify_extent(&roots, world.types(), u64::MAX)
+                .ok();
+        let result_bound = record
+            .and_then(|row| row.record.as_ref())
+            .map(|record| {
+                package
+                    .exact_type_projections()
+                    .get(&record.result_bound)
+                    .and_then(|projection| projection.as_ref().ok())
+                    .map(|projection| projection.value_type().clone())
+                    .ok_or_else(|| fault("record-result-bound-has-exact-type"))
+            })
+            .transpose()?;
+        let claim_location = projection
+            .located_applications()
+            .find(|(_, occurrence)| *occurrence == claim)
+            .map(|(location, _)| location.clone());
+        if form == ClaimForm::ScalarOperation && claim_location.is_none() {
+            return Err(PackageSelection::Selection(Selection::MissingNode));
+        }
         let expression = Role::new("expression");
         let loci = projection
             .located_applications()
@@ -435,10 +474,10 @@ impl<'p> ValueTarget<'p> {
             evaluator: Evaluator::Package(package),
             loci: Loci::Package(loci),
             name,
-            form: ClaimForm::Clause,
+            form,
             claim: claim.clone(),
-            claim_location: None,
-            result_bound: None,
+            claim_location,
+            result_bound,
             extent,
             parameters,
             limits: AccountingLimits::default(),
@@ -498,6 +537,31 @@ impl<'p> ValueTarget<'p> {
     /// The function's parameters, in declared order.
     pub fn parameters(&self) -> &[TargetParameter] {
         &self.parameters
+    }
+
+    /// Encode an assignment using the admitted package's authentic enum identities.
+    /// Source targets defer to their checked scope at settlement.
+    pub fn package_assignment_wire(
+        &self,
+        assignment: &[Value],
+    ) -> Option<Result<serde_json::Value, crate::CounterexampleWireError>> {
+        let Evaluator::Package(package) = self.evaluator else {
+            return None;
+        };
+        Some((|| {
+            let world = package
+                .world()
+                .map_err(|_| crate::CounterexampleWireError::Unspelled("value-check scope"))?;
+            let values = self.parameters.iter().zip(assignment).map(|(parameter, value)| {
+                Ok(serde_json::json!({
+                    "parameter": fsl_foundation::node_wire::node_key_to_json(&parameter.node)
+                        .map_err(|_| crate::CounterexampleWireError::Unspelled("parameter"))?,
+                    "value": fsl_eval::simulation::model::package_value_json(value, world.types(), world.enum_members())
+                        .ok_or(crate::CounterexampleWireError::Unspelled("assignment value"))?,
+                }))
+            }).collect::<Result<Vec<_>, crate::CounterexampleWireError>>()?;
+            Ok(serde_json::json!({"type": "assignments", "values": values}))
+        })())
     }
 
     /// Evaluate the claim at `assignment`.
@@ -753,6 +817,7 @@ impl<'p> ValueTarget<'p> {
                 Verdict::Violated(found) if found == *expected => Some(ReproducedViolation {
                     assignment: assignment.to_vec(),
                     violation: found,
+                    package_wire: self.package_assignment_wire(assignment),
                 }),
                 Verdict::Violated(_)
                 | Verdict::Holds

@@ -1197,6 +1197,18 @@ pub fn typed_value_json(
     canonical_json(&typed_value_enc(value, types, variants))
 }
 
+/// A typed value with enum identities read from an admitted package.
+pub fn package_value_json(
+    value: &Value,
+    types: &TypeEnvironment,
+    enum_members: &filament_semantic_value::enumeration::EnumMemberIndex,
+) -> Option<serde_json::Value> {
+    canonical_json(&value_enc(
+        value,
+        Typing::with_variants(types, &[]).with_enum_members(Some(enum_members)),
+    ))
+}
+
 /// Write a borrowed run value through the shared typed projection, admitting
 /// every visit, identity copy, decimal conversion and buffer reservation
 /// before work. No retained encoding tree is constructed first.

@@ -227,6 +227,16 @@ pub trait AnalysisView: sealed::Sealed {
         self.package().claim_names().unwrap_or_default()
     }
 
+    /// Typed requirement records in admitted package order (FR-940).
+    fn requirement_items(&self) -> &[filament_contract_model::RequirementItemRow] {
+        self.package().requirement_items()
+    }
+
+    /// Indices of the value-validity records owned by this function node.
+    fn value_validity_records_of(&self, owner: &CheckedNodeId) -> &[usize] {
+        self.package().value_validity_records_of(owner)
+    }
+
     /// FR-940 "Claim names": the occurrence a request's claim `name` names,
     /// resolved against the rows of both name tables (FSpec FR-322 "One claim
     /// namespace"). A temporal clause is reached by its bare name; any other

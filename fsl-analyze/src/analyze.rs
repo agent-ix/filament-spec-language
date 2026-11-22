@@ -2341,6 +2341,9 @@ impl AnalyzeRecord {
             return Some(Ok(found.clone()));
         }
         if let Some(found) = &self.value_check {
+            if let Some(wire) = found.reproduced.package_wire() {
+                return Some(wire.clone());
+            }
             let Some(package) = package else {
                 // The package route (FR-850) holds no checked graph; a
                 // Boolean or integer assignment needs no declared type to

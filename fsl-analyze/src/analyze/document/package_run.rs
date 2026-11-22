@@ -1546,6 +1546,24 @@ impl<'r, 'a: 'r> ClaimReads<'r, 'a> {
             .ok()
             .flatten()
             .ok_or_else(pending)?;
+        if let Err(fsl_replay::value_check::PackageSelection::Selection(
+            fsl_replay::value_check::Selection::NoForm,
+        )) = body
+            .occurrences
+            .iter()
+            .find(|occurrence| {
+                matches!(occurrence.origin().role().as_str(), "claim" | "declaration")
+            })
+            .map_or(Ok(None), |claim| {
+                ValueTarget::select_package(self.package, name, claim).map(Some)
+            })
+        {
+            return Ok(Resolution::Settled(invalid_kind(
+                index,
+                Some(name),
+                "inapplicable-kind",
+            )));
+        }
         let mut clauses: Vec<&OccurrenceKey> = body
             .occurrences
             .iter()
@@ -1564,6 +1582,7 @@ impl<'r, 'a: 'r> ClaimReads<'r, 'a> {
                 fsl_replay::value_check::ParameterDomain::Boolean
                     | fsl_replay::value_check::ParameterDomain::Integers(_)
                     | fsl_replay::value_check::ParameterDomain::Unbounded
+                    | fsl_replay::value_check::ParameterDomain::Values(_)
             )
         }) {
             return Err(pending());
