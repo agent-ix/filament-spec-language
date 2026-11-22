@@ -75,7 +75,8 @@ fn clause(formula: &str) -> String {
 fn timestamped_clause(formula: &str) -> String {
     format!(
         "dimension Time;\n\
-         unit ms : Time = rational(1, 1000);\n\
+         unit s : Time = rational(1, 1);\n\
+         unit ms : Time = rational(1, 1000) * s;\n\
          record Reading {{ k: Int[0, 9]; ok: Boolean; done: Boolean; }}\n\
          temporal T using ev over (s: Reading) clock \"events\" on origin {{ {formula} }}"
     )

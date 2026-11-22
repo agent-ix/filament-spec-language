@@ -34,7 +34,7 @@ fn first_rule() -> &'static str {
         .expect("the README has a first-rule section")
         .1;
     let rule = section
-        .split_once("```\n")
+        .split_once("```fsl stage=parse\n")
         .expect("the first rule starts in a code fence")
         .1
         .split_once("```")

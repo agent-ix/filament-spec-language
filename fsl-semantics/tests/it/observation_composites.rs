@@ -13,6 +13,7 @@ use fsl_foundation::diagnostic::Code;
 use fsl_semantics::model::accounting::ModelNormalizationLimits;
 use fsl_semantics::model::observation::*;
 use fsl_semantics::model::operation::OperationDeclaration;
+use ix_trace_rs::trace;
 use serde_json::json;
 
 use crate::model_operations::{
@@ -1093,8 +1094,10 @@ fn bounds_refuse_before_any_element_is_read() {
     }
 }
 
-/// FR-106 set, bag and ordered-set values: a form of another kind, a payload that is no array, a member
-/// beside the tag and a counted pair are all `wrong-value-kind`.
+/// FR-106 set, bag and ordered-set values: a form of another kind, a payload
+/// that is no array and a counted pair are `wrong-value-kind`; an extra envelope member is
+/// `unknown-member` and retains its exact name and parameter path.
+#[trace("FR-106-AC-68")]
 #[test]
 fn forms_of_another_kind_and_unreadable_forms_refuse_as_wrong_value_kind() {
     for (declared_kind, supplied_kind) in [
@@ -1113,7 +1116,6 @@ fn forms_of_another_kind_and_unreadable_forms_refuse_as_wrong_value_kind() {
     let bag = collection_of(CollectionKind::Bag, int9(), None);
     for (declared, wire) in [
         (set.clone(), json!({"set": {}})),
-        (set, json!({"set": [{"integer": "1"}], "count": "1"})),
         (
             bag,
             json!({"bag": [{"element": {"integer": "1"}, "count": "2"}]}),
@@ -1128,6 +1130,28 @@ fn forms_of_another_kind_and_unreadable_forms_refuse_as_wrong_value_kind() {
             Some("arg"),
         );
     }
+    let record = assert_refused(
+        Case::new(
+            set,
+            SnapshotValue::absent(),
+            json!({"set": [{"integer": "1"}], "count": "1"}),
+        ),
+        Code::InvalidRuntimeInput,
+        "unknown-member",
+        Some("arg"),
+    );
+    assert_eq!(
+        record.fields.get("member").map(String::as_str),
+        Some("count")
+    );
+    assert_eq!(
+        record.fields.get("path").map(String::as_str),
+        Some("/parameters/arg/count")
+    );
+    assert!(
+        record.path.is_empty(),
+        "the envelope is the parameter value"
+    );
 }
 
 /// FR-106 set, bag and ordered-set values: a set of UUIDs decides duplicates

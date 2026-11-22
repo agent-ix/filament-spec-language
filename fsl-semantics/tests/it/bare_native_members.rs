@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! FR-056-AC-43 / FR-505-AC-6 (TC-897 step 8, TC-1300): bare native Text,
-//! Rational and Decimal members are admitted with no checked type and refused
-//! where used.
+//! Rational members are admitted with no checked type and refused where used;
+//! native Decimal members carrying a policy have their checked Decimal type.
 
 use filament_semantic_value::checking::CheckMode;
 use filament_semantic_value::checking::CheckingLimits;
@@ -21,19 +21,16 @@ fn identity(path: &str) -> String {
 /// `ConfigVersion` as FR-056-AC-43's `Note`: `memo`, `ratio`, `amount`,
 /// `amounts` (`[0, 3]`) and `count`, the operations `scale(by): Integer`,
 /// `peek(): Text` and `touch()` modifying `memo`.
-fn note_document(rational: bool) -> Vec<u8> {
-    note_document_with(rational, Vec::new(), &[])
+fn note_document() -> Vec<u8> {
+    note_document_with(Vec::new(), &[])
 }
 
 /// [`note_document`] also declaring `types` and the required fields `fields`
 /// (`(name, typeRef)`).
-fn note_document_with(rational: bool, types: Vec<Value>, fields: &[(&str, &str)]) -> Vec<u8> {
-    // The validator pinned at I1 (`agent-ix-semantic-ir`) names no native
-    // `Rational`: the fixture then stands a `Decimal` in its place.
-    let ratio = if rational { "Rational" } else { "Decimal" };
+fn note_document_with(types: Vec<Value>, fields: &[(&str, &str)]) -> Vec<u8> {
     let natives = [
         ("memo", "Text", 1, 1),
-        ("ratio", ratio, 1, 1),
+        ("ratio", "Rational", 1, 1),
         ("amount", "Decimal", 1, 1),
         ("amounts", "Decimal", 0, 3),
         ("count", "Integer", 1, 1),
@@ -75,10 +72,7 @@ fn note_document_with(rational: bool, types: Vec<Value>, fields: &[(&str, &str)]
         );
         owner["fields"].as_array_mut().expect("fields").push(field);
     }
-    let mut by = operation_parameter("scale", "by", &format!("ix://filament/native/{ratio}"));
-    if !rational {
-        by["decimal"] = json!({"precision": 5, "scale": 2});
-    }
+    let by = operation_parameter("scale", "by", "ix://filament/native/Rational");
     let mut scale = operation(
         "scale",
         json!([by]),
@@ -100,10 +94,7 @@ fn note_document_with(rational: bool, types: Vec<Value>, fields: &[(&str, &str)]
     );
     let operations = owner["operations"].as_array_mut().expect("operations");
     // `adjust(qty)`: a clause can name `qty`, which `by` (a keyword) cannot.
-    let mut qty = operation_parameter("adjust", "qty", &format!("ix://filament/native/{ratio}"));
-    if !rational {
-        qty["decimal"] = json!({"precision": 5, "scale": 2});
-    }
+    let qty = operation_parameter("adjust", "qty", "ix://filament/native/Rational");
     let adjust = operation("adjust", json!([qty]), None, empty_frame());
     operations.extend([scale, peek, touch, adjust]);
     serde_json::to_vec(&value).expect("fixture encoding")
@@ -180,17 +171,17 @@ fn invariant(clause: &str) -> String {
 #[trace("TC-897")]
 #[test]
 fn a_package_of_bare_native_members_is_admitted_by_a_unit_naming_none() {
-    assert!(assembled(&note_document(false), "").is_ok());
+    assert!(assembled(&note_document(), "").is_ok());
 }
 
 /// FR-056-AC-43 (TC-897 step 8): each use of a bare native field refuses
 /// `ill_typed`/`operator-ineligible` at the projection, naming the owner and
-/// `Field.typeRef`; `count` is still checked.
+/// `Field.typeRef`; policy-bearing Decimal and Integer members are checked.
 #[trace("TC-897")]
 #[test]
 fn a_clause_using_a_bare_native_field_refuses_at_the_projection() {
-    let document = note_document(false);
-    for member in ["memo", "ratio", "amount", "amounts"] {
+    let document = note_document();
+    for member in ["memo", "ratio"] {
         assert_eq!(
             untyped(
                 &document,
@@ -200,7 +191,16 @@ fn a_clause_using_a_bare_native_field_refuses_at_the_projection() {
             "{member}"
         );
     }
-    assert!(assembled(&document, &invariant("self.count = self.count")).is_ok());
+    for member in ["amount", "amounts", "count"] {
+        assert!(
+            assembled(
+                &document,
+                &invariant(&format!("self.{member} = self.{member}"))
+            )
+            .is_ok(),
+            "{member} has a checked type"
+        );
+    }
 }
 
 /// FR-056-AC-43 (TC-897 step 8): a call of `scale` refuses at the call
@@ -209,7 +209,7 @@ fn a_clause_using_a_bare_native_field_refuses_at_the_projection() {
 #[trace("TC-897")]
 #[test]
 fn a_call_of_an_operation_with_a_bare_native_refuses_at_the_call() {
-    let document = note_document(false);
+    let document = note_document();
     assert_eq!(
         untyped(&document, &invariant("self.scale(self.count) = 1")),
         expect("ConfigVersion", "scale", "Operation.params[0].typeRef")
@@ -226,7 +226,7 @@ fn a_call_of_an_operation_with_a_bare_native_refuses_at_the_call() {
 #[trace("TC-897")]
 #[test]
 fn a_postcondition_over_a_bare_native_field_refuses_and_none_is_admitted() {
-    let document = note_document(false);
+    let document = note_document();
     assert_eq!(
         untyped(
             &document,
@@ -253,7 +253,6 @@ fn rational_value_type(name: &str, constraints: Vec<Value>) -> Value {
 fn an_unconstrained_rational_value_type_field_admits_and_refuses_where_used() {
     let raw = identity("Raw");
     let document = note_document_with(
-        false,
         vec![rational_value_type("Raw", Vec::new())],
         &[("raw", &raw)],
     );
@@ -297,7 +296,6 @@ fn adding_a_ratio_leaves_every_other_declaration_identity_unchanged() {
         (objects, scalars, has_ratio)
     };
     let without = note_document_with(
-        false,
         vec![rational_value_type("Raw", Vec::new())],
         &[("raw", &raw)],
     );
@@ -312,7 +310,6 @@ fn adding_a_ratio_leaves_every_other_declaration_identity_unchanged() {
         })
     };
     let with = note_document_with(
-        false,
         vec![
             rational_value_type("Raw", Vec::new()),
             rational_value_type(
@@ -343,7 +340,7 @@ fn adding_a_ratio_leaves_every_other_declaration_identity_unchanged() {
 #[trace("TC-897")]
 #[test]
 fn a_clause_naming_an_untyped_parameter_refuses_operator_ineligible() {
-    let document = note_document(false);
+    let document = note_document();
     assert_eq!(
         untyped(
             &document,
