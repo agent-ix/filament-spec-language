@@ -575,6 +575,8 @@ pub struct PackageModelInput<'p> {
     rewards: PackageRewards,
     terminals: Vec<fsl_package::BareTerminal>,
     state_clauses: Vec<StateClauseEntry>,
+    timed_models: Vec<TimedModel>,
+    time_sources: Vec<ModelTimeSource>,
 }
 
 impl<'p> PackageModelInput<'p> {
@@ -632,11 +634,9 @@ impl<'p> PackageModelInput<'p> {
         normalization: fsl_semantics::model::accounting::ModelNormalizationLimits,
         timed_trace: bool,
     ) -> Result<Self, PendingPackageForm> {
-        let unread = if timed_trace {
-            package.first_unread_timed_trace_form()
-        } else {
-            package.first_unread_model_form()
-        };
+        // Timed nodes are validated in full below before a simulation input
+        // is published. Supplied trace stamps keep their existing route.
+        let unread = package.first_unread_timed_trace_form();
         if let Some((form, node)) = unread {
             return Err(PendingPackageForm::Form {
                 form,
@@ -650,6 +650,16 @@ impl<'p> PackageModelInput<'p> {
             operations,
             probabilistic,
         } = ProbabilisticParts::read(package, packages, normalization, false)?;
+        let (timed_models, time_sources) = if timed_trace {
+            (Vec::new(), Vec::new())
+        } else {
+            package
+                .direct_dense_tables(&model)
+                .map_err(|node| PendingPackageForm::Form {
+                    form: UnreadModelForm::TimedModel,
+                    node,
+                })?
+        };
         let rewards = PackageRewards::of(package, world.clone(), &probabilistic)?;
         // FR-940: the state clauses by their `claim_names` rows (FSpec
         // FR-322), in source order, as the source route lists them.
@@ -683,6 +693,8 @@ impl<'p> PackageModelInput<'p> {
             rewards,
             state_clauses,
             terminals,
+            timed_models,
+            time_sources,
         })
     }
 
@@ -911,8 +923,8 @@ impl<'p> PackageModelInput<'p> {
             operations: &self.operations,
             model_selections: &self.model_selections,
             source_packages: &[],
-            timed_models: &[],
-            time_sources: &[],
+            timed_models: &self.timed_models,
+            time_sources: &self.time_sources,
             probabilistic: &self.probabilistic,
             state_clauses: self.state_clauses.clone(),
             terminals: Ok(self

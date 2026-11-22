@@ -1410,6 +1410,61 @@ impl std::fmt::Debug for TimedModel {
 }
 
 impl TimedModel {
+    /// Rebuild the delay tables of an admitted model with required direct
+    /// clock fields and no timed clauses. Package readers attach the verified
+    /// clock-place nodes in runtime field order after joining their provenance.
+    pub(crate) fn direct_dense(
+        model: &AdmittedModel,
+        identity: String,
+        model_node: NodeKey,
+    ) -> Option<Self> {
+        let clocks = clock_fields(model);
+        if clocks
+            .iter()
+            .any(|clock| clock.guarded || !matches!(clock.path.as_slice(), [PlaceStep::Field(_)]))
+        {
+            return None;
+        }
+        let dimensions = model
+            .object_types()
+            .map(|(_, object)| {
+                let dimension = clocks
+                    .iter()
+                    .filter(|clock| model.conforms(object.clone(), clock.owner.clone()))
+                    .filter_map(ClockField::bound)
+                    .try_fold(0_u64, u64::checked_add);
+                (object, dimension)
+            })
+            .collect();
+        Some(Self {
+            model: identity,
+            model_node,
+            clocks,
+            clock_parameters: Vec::new(),
+            dimensions,
+            guards: Vec::new(),
+            resets: Vec::new(),
+            invariants: Vec::new(),
+            urgency: Vec::new(),
+            urgency_predicates: Vec::new(),
+            sites: Vec::new(),
+            clause_nodes: None,
+            place_nodes: Vec::new(),
+        })
+    }
+
+    /// Attach a package reader's bijectively verified clock-place nodes,
+    /// in the same order as [`Self::clocks`].
+    pub fn with_package_places(mut self, nodes: Vec<NodeKey>) -> Option<Self> {
+        if nodes.len() != self.clocks.len()
+            || nodes.iter().collect::<BTreeSet<_>>().len() != nodes.len()
+        {
+            return None;
+        }
+        self.place_nodes = nodes;
+        Some(self)
+    }
+
     /// The model alias.
     pub fn model(&self) -> &str {
         &self.model

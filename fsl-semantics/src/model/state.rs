@@ -327,6 +327,51 @@ pub struct StateModel {
 }
 
 impl StateModel {
+    /// Reconstruct a clause-free dense timed model from the selected domain
+    /// package whose actual object node is `node`. Returns no model for an
+    /// ambiguous selection or a clock place outside required direct fields.
+    pub fn direct_dense_model(
+        &self,
+        node: &filament_exact::NodeKey,
+    ) -> Option<crate::check::TimedModel> {
+        let mut matches = self
+            .views
+            .iter()
+            .filter(|view| !view.is_source())
+            .filter_map(|view| {
+                let model = crate::check::lowering::AdmittedModel::from_view(&view.view);
+                model
+                    .object_type_model_node_keys()
+                    .contains(node)
+                    .then_some((model, view))
+            });
+        let (model, view) = matches.next()?;
+        if matches.next().is_some() {
+            return None;
+        }
+        let package = view.view.domain_package();
+        let lookup =
+            |key: &DeclarationKey| package.records.iter().find(|record| record.key() == key);
+        if package.records.iter().any(|record| match record {
+            DomainPackageRecord::OperationMember(operation) => {
+                operation.parameters.iter().any(|parameter| {
+                    matches!(
+                        crate::model::domain_package::unaliased(&parameter.value_type, lookup),
+                        Some((crate::model::domain_package::ValueTypeRef::Clock, _))
+                    )
+                })
+            }
+            _ => false,
+        }) {
+            return None;
+        }
+        crate::check::timed_model::TimedModel::direct_dense(
+            &model,
+            view.view.domain_package().model_selection.identity.clone(),
+            node.clone(),
+        )
+    }
+
     /// Compare complete native type identities under the caller's work budget.
     ///
     /// # Errors

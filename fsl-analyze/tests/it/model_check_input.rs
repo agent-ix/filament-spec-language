@@ -11,6 +11,125 @@ use ix_trace_rs::trace;
 
 use crate::counter::{document, package_with_clauses, subject, Documents, CONTRACT, UNLIMITED};
 
+const DIRECT_DENSE: &str =
+    "dimension Time;\nunit ms : Time = rational(1, 1000);\ntime M dense unit ms;\n";
+
+/// Dense delay tables preserve the original clock identities and exact valuations.
+#[trace("FR-940-AC-6", "FR-120")]
+#[test]
+fn package_direct_dense_clocks_preserve_initial_and_delay_identity() {
+    use filament_exact::{Integer, Rational};
+    use fsl_eval::simulation::model::TimedSystem;
+    let world = crate::timed_world::world(
+        &crate::timed_world::document(&["z", "a"], &[]),
+        "",
+        DIRECT_DENSE,
+    );
+    let request = world.request();
+    let emission = fsl_package::emit_checked(&world.package, EmitLimits::fixture()).expect("emit");
+    let admitted = fsl_package::admit_checked_package(
+        emission.package().bytes(),
+        request.packages,
+        V2ReadLimits::fixture(),
+    )
+    .expect("admit bytes");
+    let identities = emission
+        .identity_rows(&admitted, &mut V2ReadLimits::fixture().native_join_budget())
+        .expect("identities");
+    let equality = emission
+        .equality_witness(&admitted, &mut V2ReadLimits::fixture().native_join_budget())
+        .expect("equality");
+    let handoff = Handoff {
+        admitted,
+        identities,
+        equality,
+    };
+    let bare = bare(&handoff);
+    let input = PackageModelInput::of(&bare, request.packages, ModelNormalizationLimits::default())
+        .expect("dense tables");
+    let source = world.system();
+    let mut bytes_request = request.clone();
+    bytes_request.input = input.input();
+    let bytes = ModelSystem::new(bytes_request).expect("bytes system");
+    let source = TimedSystem::new(&source, "M").expect("source timed");
+    let bytes = TimedSystem::new(&bytes, "test/timed").expect("bytes timed");
+    assert_eq!(source.places().len(), 2);
+    assert_eq!(source.model().place_nodes(), bytes.model().place_nodes());
+    assert_eq!(source.model().clocks(), bytes.model().clocks());
+    for (source, bytes) in source.places().iter().zip(bytes.places()) {
+        assert_eq!(source.object(), bytes.object());
+        assert_eq!(source.clock(), bytes.clock());
+    }
+    let source_initial = source.initial();
+    let bytes_initial = bytes.initial();
+    assert_eq!(source_initial.len(), 1);
+    assert_eq!(source_initial[0].clocks(), bytes_initial[0].clocks());
+    let delay = Rational::new(Integer::from(3_i64), Integer::from(2_i64)).expect("delay");
+    let source_delayed = source
+        .delay(&source_initial[0], &delay)
+        .expect("source delay")
+        .expect("admissible");
+    let bytes_delayed = bytes
+        .delay(&bytes_initial[0], &delay)
+        .expect("bytes delay")
+        .expect("admissible");
+    assert_eq!(source_delayed.clocks().values(), &[delay.clone(), delay]);
+    assert_eq!(source_delayed.clocks(), bytes_delayed.clocks());
+    assert_eq!(
+        input.input().time_sources[0].span,
+        world.package.graph().time_sources()[0].span
+    );
+    assert_eq!(
+        input.input().time_sources[0].nominal_nodes,
+        world.package.graph().time_sources()[0].nominal_nodes
+    );
+}
+
+/// Real analyze model items select the timed engine on both intake routes.
+#[trace("FR-850", "FR-940-AC-6")]
+#[test]
+fn package_direct_dense_model_items_match_source_cli_results() {
+    use crate::analyze_cli_support::{analyze, label, package_selection, request_over, Workspace};
+    use serde_json::json;
+    let body =
+        format!("{DIRECT_DENSE}possible Yes using v {{ true }}\npossible No using v {{ false }}\n");
+    let world = crate::timed_world::world(&crate::timed_world::document(&["x"], &[]), "", &body);
+    let ws = Workspace::new("package-direct-dense-items");
+    let path = request_over(
+        &ws,
+        std::str::from_utf8(&world.unit).expect("unit"),
+        &world.document,
+        &world.snapshots.values().cloned().collect::<Vec<_>>(),
+        json!({"items": [{"claim": "Yes"}, {"claim": "No"}]}),
+    );
+    let source = analyze(&path);
+    let document: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&path).expect("request")).expect("JSON");
+    let (selected, _) = package_selection(&ws, &document["request"]);
+    let package_path = ws.write(
+        "package-analyze.json",
+        json!({"format": "native-analyze/1", "request": selected})
+            .to_string()
+            .as_bytes(),
+    );
+    let bytes = analyze(&package_path);
+    assert_eq!(label(&source.item(0)), "proved", "{}", source.document());
+    assert_eq!(label(&source.item(1)), "refuted", "{}", source.document());
+    for index in 0..2 {
+        assert_eq!(
+            label(&bytes.item(index)),
+            label(&source.item(index)),
+            "{}",
+            bytes.document()
+        );
+        assert_eq!(
+            bytes.item(index)["record"]["method"],
+            source.item(index)["record"]["method"]
+        );
+    }
+    assert_eq!(bytes.exit, source.exit);
+}
+
 /// The Counter domain package with no operation.
 fn still_document() -> Vec<u8> {
     crate::model_world::still_counter().document
