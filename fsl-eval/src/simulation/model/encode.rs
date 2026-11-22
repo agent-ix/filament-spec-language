@@ -1206,13 +1206,16 @@ pub fn run_value_bytes(
     types: &TypeEnvironment,
     enums: &[EnumBinding],
     variants: &[VariantTypeDeclaration],
+    enum_members: Option<&filament_semantic_value::enumeration::EnumMemberIndex>,
     identity: fsl_foundation::IdentityLimits,
     budget: &mut dyn RunValueBudget,
     cancel: &filament_exact::Cancel,
 ) -> Result<Vec<u8>, super::ModelKeyError> {
     bounded::value_bytes(
         value,
-        Typing::with_variants(types, variants).with_enums(enums),
+        Typing::with_variants(types, variants)
+            .with_enums(enums)
+            .with_enum_members(enum_members),
         identity,
         budget,
         cancel,
