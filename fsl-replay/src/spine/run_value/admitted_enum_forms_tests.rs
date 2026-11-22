@@ -21,14 +21,15 @@ fn fixture(test: impl FnOnce(&fsl_package::CheckedPackage, &fsl_package::BareWor
         crate::spine::SpineLimits::default(),
     )
     .expect("the actual source checks");
-    let emission = fsl_package::emit_checked(&compiled.package).unwrap();
-    let wire: Json = serde_json::from_slice(emission.package.bytes()).unwrap();
+    let emission =
+        fsl_package::emit_checked(&compiled.package, fsl_package::EmitLimits::default()).unwrap();
+    let wire: Json = serde_json::from_slice(emission.package().bytes()).unwrap();
     let mut evidence = CheckedPackageEvidence::new();
     for feature in wire["lock"]["required_features"].as_array().unwrap() {
         evidence.support_feature(feature.as_str().unwrap());
     }
     let admitted = match CheckedPackageV2::read(
-        emission.package.bytes(),
+        emission.package().bytes(),
         CheckedPackageReadLimits::bounded(),
         &evidence,
     ) {
