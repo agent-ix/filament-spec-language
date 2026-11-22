@@ -1090,7 +1090,8 @@ fn a_pending_package_family_refuses_typed_naming_it() {
     let unit = crate::counter::unit_text(&bounded());
     {
         let (items, expected) = (
-            json!([{"claim": "Bounded"}, {"kind": "simulation"}]),
+            json!([{"claim": "Bounded"},
+                {"kind": "simulation", "simulation": {"mode": "enumerate"}}]),
             "items[1] names the simulation family, which has no package form yet",
         );
         let (_, package) = both_routes(
