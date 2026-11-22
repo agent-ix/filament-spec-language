@@ -193,7 +193,7 @@ fn two_step_named_reward_checks_minimum_maximum_and_both_workload_bounds() {
     }
 }
 
-#[trace("TC-636", "FR-201-AC-20", "FR-282-AC-16")]
+#[trace("TC-636", "FR-201-AC-20", "FR-201-AC-21", "FR-282-AC-16")]
 #[test]
 fn independent_draw_costs_accept_value_preserving_swap_and_reject_changed_equation() {
     let source = claim(
@@ -210,25 +210,31 @@ fn independent_draw_costs_accept_value_preserving_swap_and_reject_changed_equati
         ("if lost then 2 else 8", 1),
         ("1", 1),
     ] {
+        let edited = claim(&draws(cost), "every scheduler", ">=", "4", "m.attempts = 1");
         let mut changed = request.clone();
-        replace_source(
-            &mut changed,
-            &claim(&draws(cost), "every scheduler", ">=", "4", "m.attempts = 1"),
-        );
+        replace_source(&mut changed, &edited);
+        let (stale_code, stale) = run(&changed);
+        assert_eq!(stale_code, 2, "{cost}: {stale}");
+        assert_eq!(stale["status"], "refused");
+        assert_eq!(stale["reason"], "conflicting_identity: probability certificate");
+        super::bounded::replace_source_and_rebind(&mut changed, &edited);
         let (actual, output) = run(&changed);
         assert_eq!(actual, code, "{cost}: {output}");
         if code == 1 {
             assert_eq!(output["rule"], "inequality-fails");
         }
     }
-    let mut changed_weights = request.clone();
-    replace_source(
-        &mut changed_weights,
-        &source.replace(
-            "Msg::send_a(lost) ~ { true: 1, false: 1 }",
-            "Msg::send_a(lost) ~ { true: 3, false: 1 }",
-        ),
+    let edited_weights = source.replace(
+        "Msg::send_a(lost) ~ { true: 1, false: 1 }",
+        "Msg::send_a(lost) ~ { true: 3, false: 1 }",
     );
+    let mut changed_weights = request.clone();
+    replace_source(&mut changed_weights, &edited_weights);
+    let (stale_code, stale) = run(&changed_weights);
+    assert_eq!(stale_code, 2, "{stale}");
+    assert_eq!(stale["status"], "refused");
+    assert_eq!(stale["reason"], "conflicting_identity: probability certificate");
+    super::bounded::replace_source_and_rebind(&mut changed_weights, &edited_weights);
     let (code, output) = run(&changed_weights);
     assert_eq!(code, 1, "{output}");
     assert_eq!(output["rule"], "inequality-fails");
@@ -377,7 +383,8 @@ fn reward_objective_keys_coverage_heights_and_caller_stops_are_checked() {
     });
     let (code, output) = run(&missing_rank);
     assert_eq!(code, 1, "{output}");
-    assert_eq!(output["rule"], "rank-missing");
+    assert_eq!(output["rule"], "malformed");
+    assert_eq!(output["at"], json!({"member":"ranking"}));
     let zero = proof(&claim(
         &draws("0"),
         "every scheduler",
