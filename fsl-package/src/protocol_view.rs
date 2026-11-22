@@ -1701,7 +1701,7 @@ pub enum ControlBody<'n> {
         /// The operation anchor selected by the attempt.
         operation: &'n CheckedNodeId,
         /// The explicit memory ordering, or `None` when omitted.
-        ordering: Option<fsl_forms::AccessOrdering>,
+        ordering: Option<fsl_semantics::check::AccessOrdering>,
         /// The state clauses the attempt contracts, in authored order.
         contracts: Vec<&'n CheckedNodeId>,
         /// The attempt result binder.
@@ -1737,7 +1737,7 @@ pub enum ControlBody<'n> {
     /// A `fence` memory ordering.
     Fence {
         /// The fence ordering.
-        ordering: fsl_forms::AccessOrdering,
+        ordering: fsl_semantics::check::AccessOrdering,
     },
     /// Any other control: the operation names it.
     Other(ControlOperation),
@@ -1834,7 +1834,7 @@ pub fn control_body(node: &CheckedSemanticNodeV2) -> Result<ControlBody<'_>, Vie
 fn optional_ordering(
     node: &Node,
     member: &'static str,
-) -> Result<Option<fsl_forms::AccessOrdering>, ViewRefusal> {
+) -> Result<Option<fsl_semantics::check::AccessOrdering>, ViewRefusal> {
     optional_text(node, member)?
         .map(|word| ordering_word(node, member, word))
         .transpose()
@@ -1844,13 +1844,13 @@ fn ordering_word(
     node: &Node,
     member: &'static str,
     word: &str,
-) -> Result<fsl_forms::AccessOrdering, ViewRefusal> {
+) -> Result<fsl_semantics::check::AccessOrdering, ViewRefusal> {
     match word {
-        "relaxed" => Ok(fsl_forms::AccessOrdering::Relaxed),
-        "acquire" => Ok(fsl_forms::AccessOrdering::Acquire),
-        "release" => Ok(fsl_forms::AccessOrdering::Release),
-        "acq_rel" => Ok(fsl_forms::AccessOrdering::AcqRel),
-        "seq_cst" => Ok(fsl_forms::AccessOrdering::SeqCst),
+        "relaxed" => Ok(fsl_semantics::check::AccessOrdering::Relaxed),
+        "acquire" => Ok(fsl_semantics::check::AccessOrdering::Acquire),
+        "release" => Ok(fsl_semantics::check::AccessOrdering::Release),
+        "acq_rel" => Ok(fsl_semantics::check::AccessOrdering::AcqRel),
+        "seq_cst" => Ok(fsl_semantics::check::AccessOrdering::SeqCst),
         _ => Err(malformed(&node.node_id, member)),
     }
 }

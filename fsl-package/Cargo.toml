@@ -29,7 +29,7 @@ std = [
 # dependency that enables it.
 test-support = []
 
-# ADR-011 §6.1 layer 4 depends on "3, F, K; `filament-contract-model` for the
+# ADR-011 §6.1 layer 4 depends on "3, F, C, SV, K; `filament-contract-model` for the
 # v2 wire contract" (X-7). The root crate's
 # `tests/it/family_outcome_layering.rs` (TC-390) asserts that this table
 # names no other workspace crate.
@@ -53,8 +53,6 @@ filament-checked = { workspace = true }
 # ADR-011 §6.1 layer SV: the expression `Location` and the `CheckingLimits`
 # the emitter reads, and the `UnitTable` the emitter's tests build.
 filament-semantic-value = { workspace = true }
-# The protocol package view carries the shared admitted memory orderings.
-fsl-forms = { path = "../fsl-forms" }
 serde = { version = "1.0.228", features = ["derive"] }
 # The hybrid reader reads an application operation through its public
 # `Serialize` form (the typed carrier keeps its raw record internal).
@@ -67,6 +65,8 @@ filament-specification = { workspace = true }
 allocation-counter = "0.8.1"
 # The S1 -> S2 -> S3 -> S4 round trip (FR-091) parses its unit with S1.
 fsl-cst = { path = "../fsl-cst" }
+# Its tests build S2 forms; shipped views read declaration kinds through layer 3.
+fsl-forms = { path = "../fsl-forms" }
 # FR-400-AC-9: `filament-checked`'s `test-support` (`DeclarationKey::fixture`, ...). Only this
 # dev-dependency enables it; the root crate's `no_shipped_dependency_enables_test_support`
 # refuses a normal or build dependency that does.
