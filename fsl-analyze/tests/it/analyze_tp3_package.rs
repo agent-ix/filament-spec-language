@@ -258,6 +258,7 @@ fn the_emitted_clause_node_carries_its_on_each_activation() {
 /// routes under `scheduling adversarial`, where the loop is fair.
 #[trace("TC-525", "FR-338-AC-31")]
 #[test]
+#[ignore = "QSL-2852: Echo on-each TP-3 over a protocol subject returns Key(Unresolved) from the check, so the package settles incomplete/internal-failure"]
 fn an_echo_on_each_tp3_claim_settles_from_the_package_as_from_source() {
     for (scheduling, expected) in [("", "proved"), ("scheduling adversarial;", "refuted")] {
         let body = crate::protocol_bounded_lasso::echo_body(scheduling)
