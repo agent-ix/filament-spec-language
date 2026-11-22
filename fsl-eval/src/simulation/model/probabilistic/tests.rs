@@ -362,6 +362,98 @@ fn probability_candidate_then_claim_predicate_and_reward_use_the_same_allowance(
         assert_eq!(stopped.consumed_work(), expansion);
     };
     exercise("source", world.system());
+}
+
+/// Both model ports support current clauses; source-body probability claims
+/// additionally run through the source-only predicate port tested above.
+#[trace("FR-120-AC-35")]
+#[test]
+fn probability_candidate_then_current_clause_and_reward_share_scope_on_both_routes() {
+    use super::super::{contracts, walk, ClauseOutcome};
+    use crate::value::ClauseSetOutcome;
+    use filament_exact::{LimitKind, WorkScope};
+    let mut model = probability_link_fixture();
+    model.body.push_str("invariant Valid using v on M::Msg at current { self.attempts >= 0 }\nreward cost on Msg::send_a = 1 + 0;\n");
+    let world = World::new(&model);
+    let exercise = |route: &str, mut system: super::ModelSystem<'_>| {
+        let start = initial(&system);
+        let ample = WorkScope::new(system.meter_limits());
+        system.probability_work = Some(ample.clone());
+        let actions = system
+            .actions(&start)
+            .unwrap_or_else(|stop| {
+                panic!(
+                    "{route}: paid candidate expansion stopped: {stop:?}; work={}",
+                    ample.consumed_work()
+                )
+            })
+            .expect("the actual clauses decide");
+        assert_eq!(actions.len(), 2);
+        let expansion = ample.consumed_work();
+        let (name, observation) = {
+            let walk = walk::walk_of(&system, &start, None).unwrap();
+            let [clause] = system.clauses.invariants.as_slice() else {
+                panic!("one actual current clause")
+            };
+            (
+                clause.qualified.clone(),
+                contracts::invariant_observations(&walk, clause, 0),
+            )
+        };
+        let set = [(name, &observation)];
+        let control = system
+            .evaluator()
+            .evaluate_clause_set(&set, &mut || system.fresh_meter())
+            .expect("the real clause port evaluates");
+        assert_eq!(control.outcome, ClauseSetOutcome::True);
+        assert!(
+            ample.consumed_work() > expansion,
+            "{route}: the current clause performs real work after candidates"
+        );
+        let mut limits = system.meter_limits();
+        limits.work_units = expansion;
+        let scope = WorkScope::new(limits);
+        system.probability_work = Some(scope.clone());
+        let actions = system
+            .actions(&start)
+            .expect("one expansion fits B")
+            .expect("all clauses decide");
+        assert_eq!(actions.len(), 2);
+        assert_eq!(scope.consumed_work(), expansion);
+        let unpaid = system
+            .evaluator()
+            .evaluate_clause_set(&set, &mut || system.fresh_meter())
+            .expect("the unpaid clause retains its typed evaluation");
+        assert_eq!(unpaid.outcome, ClauseSetOutcome::Incomplete);
+        let [entry] = unpaid.results.as_slice() else {
+            panic!("one unpaid clause")
+        };
+        let contracts::Verdict::Undecided(ClauseOutcome::Incomplete(denied)) =
+            contracts::verdict(&entry.evaluation.evaluation.outcome)
+        else {
+            panic!("{route}: expected the original scalar stop")
+        };
+        assert_eq!(denied.limit_kind, LimitKind::WorkUnits);
+        assert_eq!(denied.limit, expansion);
+        assert_eq!(denied.consumed, expansion);
+        assert!(denied.next_charge > Integer::from(0_u64));
+        let reward = system.declared_rewards().next().unwrap();
+        let stopped = system
+            .reward_value_with_cancel(reward, vec![Value::Boolean(false)], None)
+            .expect_err("the reward shares the same spent allowance");
+        assert_eq!(
+            stopped.limit,
+            Some(crate::simulation::ExpansionLimit::EvaluationMeter(
+                LimitKind::WorkUnits
+            ))
+        );
+        assert_eq!(
+            scope.consumed_work(),
+            expansion,
+            "{route}: denied clause and reward add no work"
+        );
+    };
+    exercise("source", world.system());
     through_probability_wire(&world, |input| {
         exercise("package", world.admit_input(input, 1_000_000).unwrap())
     });
