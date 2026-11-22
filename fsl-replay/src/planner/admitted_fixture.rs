@@ -60,6 +60,10 @@ pub(super) enum CompositionCase {
     UnusedSupply,
     /// A source-admitted step-bounded clause in the composition.
     StepBounded,
+    /// An actual relied-on clause with no declared guarantee interface.
+    MissingInterface,
+    /// An actual fairness requirement with no composition supply.
+    MissingSupply,
 }
 
 /// Original producer inputs beside an independently byte-admitted root.
@@ -246,13 +250,25 @@ impl AdmittedCompositionFixture {
         let reverse = match case {
             CompositionCase::Acyclic
             | CompositionCase::UnusedSupply
-            | CompositionCase::StepBounded => "",
+            | CompositionCase::StepBounded
+            | CompositionCase::MissingInterface
+            | CompositionCase::MissingSupply => "",
             CompositionCase::Cyclic => "depends Producer::Sends on Consumer::Done;",
         };
         let unused_supply = if matches!(case, CompositionCase::UnusedSupply) {
             "supplies fair strong whole M::Consumer::receive;"
         } else {
             ""
+        };
+        let sends_guarantee = if matches!(case, CompositionCase::MissingInterface) {
+            ""
+        } else {
+            "guarantee Producer::Sends;"
+        };
+        let send_supply = if matches!(case, CompositionCase::MissingSupply) {
+            ""
+        } else {
+            "supplies fair weak each M::Producer::send;"
         };
         let source_text = format!(
             "language \"ix:native\" edition \"1-draft\";
@@ -264,10 +280,10 @@ function marker using q(): Boolean pure {{ true }}
 compose Sys rule assume-guarantee {{
  component Producer from P using M; component Consumer from Q using M;
  guarantee Consumer::Shared; guarantee Producer::Shared;
- guarantee Consumer::Done; guarantee Producer::Sends;
+ guarantee Consumer::Done; {sends_guarantee}
  rely Consumer::Done on Producer::Shared;
  depends Consumer::Done on Producer::Sends;
- supplies fair weak each M::Producer::send;
+ {send_supply}
  {unused_supply}
  {reverse}
 }}
