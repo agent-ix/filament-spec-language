@@ -260,7 +260,7 @@ fn same_width_float_equality_lowers_as_ieee_numeric_equal() {
         let source = format!(
             "{HEADER}function compare using v(a: {ty}, b: Int[0, 10]): Boolean pure {{ a = b }}"
         );
-        refusal(&source, Code::IllTyped, "operator-ineligible");
+        refusal(&source, Code::IllTyped, "type-mismatch");
     }
 }
 

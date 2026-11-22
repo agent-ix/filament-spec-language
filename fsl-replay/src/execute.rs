@@ -972,7 +972,7 @@ pub enum DependencySelectionsCause {
 /// #       parameter: site.site.parameters[0].1.clone(),
 /// #       value: WitnessValue::Integer(7),
 /// #   }]),
-/// #   obligation_identity: ObligationIdentity::new(NodeKey::new("fixture", vec![filament_exact::PathSegment::Text("0".to_owned())], 0).unwrap(), None, 0),
+/// #   obligation_identity: fsl_package::ObligationIdentity::new(NodeKey::new("fixture", vec![filament_exact::PathSegment::Text("0".to_owned())], 0).unwrap(), None, 0),
 /// #   backend: "kani-backend-1".to_owned(),
 /// #   state_environment: StateEnvironment::new(vec![]),
 /// #   accounting_limits: unlimited,
@@ -1029,7 +1029,7 @@ pub enum DependencySelectionsCause {
 /// #       parameter: site.site.parameters[0].1.clone(),
 /// #       value: WitnessValue::Integer(7),
 /// #   }]),
-/// #   obligation_identity: ObligationIdentity::new(NodeKey::new("fixture", vec![filament_exact::PathSegment::Text("0".to_owned())], 0).unwrap(), None, 0),
+/// #   obligation_identity: fsl_package::ObligationIdentity::new(NodeKey::new("fixture", vec![filament_exact::PathSegment::Text("0".to_owned())], 0).unwrap(), None, 0),
 /// #   backend: "kani-backend-1".to_owned(),
 /// #   state_environment: StateEnvironment::new(vec![]),
 /// #   accounting_limits: unlimited,
@@ -1976,14 +1976,18 @@ pub(crate) fn run_spine_with_temporal_selections_and_execution_points(
     SPINE_RUNS.with(|runs| runs.set(runs.get() + 1));
     let cancel = Cancel::new();
     let refusal = |failure: spine::FrontEndFailure| match failure {
-        fsl_foundation::diagnostic::StageFailure::RefusedWithPayload(refusal, protocol_results) => {
+        fsl_foundation::diagnostic::StageFailure::RefusedWithPayload(refusal, protocol_results)
+            if !protocol_results.protocol_results.is_empty() =>
+        {
             ReplayRefusal::RecompileWithProtocolResults {
                 refusal: *refusal,
                 protocol_results: protocol_results.protocol_results,
                 pointer: None,
             }
         }
-        fsl_foundation::diagnostic::StageFailure::LimitWithPayload(limit, protocol_results) => {
+        fsl_foundation::diagnostic::StageFailure::LimitWithPayload(limit, protocol_results)
+            if !protocol_results.protocol_results.is_empty() =>
+        {
             ReplayRefusal::RecompileWithProtocolResults {
                 refusal: Box::new(CompileRefusal::Limit(limit)),
                 protocol_results: protocol_results.protocol_results,
@@ -2509,14 +2513,18 @@ fn run_spine_units(
     SPINE_RUNS.with(|runs| runs.set(runs.get() + 1));
     let cancel = Cancel::new();
     let refusal = |failure: spine::FrontEndFailure| match failure {
-        fsl_foundation::diagnostic::StageFailure::RefusedWithPayload(refusal, protocol_results) => {
+        fsl_foundation::diagnostic::StageFailure::RefusedWithPayload(refusal, protocol_results)
+            if !protocol_results.protocol_results.is_empty() =>
+        {
             ReplayRefusal::RecompileWithProtocolResults {
                 refusal: *refusal,
                 protocol_results: protocol_results.protocol_results,
                 pointer: None,
             }
         }
-        fsl_foundation::diagnostic::StageFailure::LimitWithPayload(limit, protocol_results) => {
+        fsl_foundation::diagnostic::StageFailure::LimitWithPayload(limit, protocol_results)
+            if !protocol_results.protocol_results.is_empty() =>
+        {
             ReplayRefusal::RecompileWithProtocolResults {
                 refusal: Box::new(CompileRefusal::Limit(limit)),
                 protocol_results: protocol_results.protocol_results,

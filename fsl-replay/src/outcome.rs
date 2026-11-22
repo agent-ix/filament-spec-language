@@ -3792,7 +3792,7 @@ mod tests {
         let wire = json_of(&document);
         assert_eq!(wire["format"], "filament-outcome/1");
         assert_eq!(wire["category"], "refusal");
-        assert!(wire.get("result").is_none(), "{wire}");
+        assert_eq!(wire.get("result"), Some(&serde_json::Value::Null), "{wire}");
         assert_eq!(wire["diagnostics"][0]["code"], "invalid-request");
         assert_eq!(
             wire["diagnostics"][0]["details"]["path"],

@@ -352,6 +352,7 @@ fn execution_point_refuses_unknown_clause_keys_and_mismatched_operation_names() 
         matches!(
             ordinary.as_ref(),
             CompileRefusal::Check { refusals, .. }
+                | CompileRefusal::CheckDiagnostics { refusals, .. }
                 if refusals.iter().any(|refusal| matches!(
                     refusal.cause,
                     CheckCause::AmbiguousName { ref name, .. } if name == "Before"
@@ -362,7 +363,8 @@ fn execution_point_refuses_unknown_clause_keys_and_mismatched_operation_names() 
     let refusal = compile_text_with_execution_points(&collision_text, &packages, &unknown, limits)
         .expect_err("the existing clause/function ambiguity wins before bad map keys");
     match refusal.as_ref() {
-        CompileRefusal::Check { refusals, .. } => assert!(
+        CompileRefusal::Check { refusals, .. }
+        | CompileRefusal::CheckDiagnostics { refusals, .. } => assert!(
             refusals.iter().any(|refusal| {
                 matches!(
                     refusal.cause,
@@ -1207,7 +1209,9 @@ fn diamond() -> Vec<u8> {
 /// The failing subtypes of `refusal`, as `(operation, cause, subtype)` in
 /// report order.
 fn failures(refusal: &CompileRefusal) -> Vec<(String, &'static str, String)> {
-    let CompileRefusal::Check { refusals, .. } = refusal else {
+    let (CompileRefusal::Check { refusals, .. }
+    | CompileRefusal::CheckDiagnostics { refusals, .. }) = refusal
+    else {
         panic!("an S3 refusal, got {refusal:?}");
     };
     refusals

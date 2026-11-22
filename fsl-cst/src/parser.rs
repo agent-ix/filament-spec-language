@@ -2751,6 +2751,35 @@ impl<'a> Engine<'a> {
                             && !self.reserved_words.contains(token.spelling.as_ref())
                             && token.spelling.as_ref() != *except
                     }
+                    Terminal::EmptyCallEnd { namespace, names } => {
+                        let intrinsic = position
+                            .checked_sub(namespace.len() + 2)
+                            .and_then(|start| {
+                                self.tokens
+                                    .get(start..position)
+                                    .map(|prefix| (start, prefix))
+                            })
+                            .is_some_and(|(start, prefix)| {
+                                prefix
+                                    .iter()
+                                    .zip(namespace.iter())
+                                    .all(|(token, spelling)| token.spelling.as_ref() == *spelling)
+                                    && prefix
+                                        .get(namespace.len())
+                                        .is_some_and(|name| names.contains(&name.spelling.as_ref()))
+                                    && prefix
+                                        .get(namespace.len() + 1)
+                                        .is_some_and(|open| open.spelling.as_ref() == "(")
+                                    && start
+                                        .checked_sub(1)
+                                        .and_then(|before| self.tokens.get(before))
+                                        .is_none_or(|before| before.spelling.as_ref() != "::")
+                            });
+                        if intrinsic && token.spelling.as_ref() == ")" {
+                            return self.fail(Failure::expected(position, "an expression".into()));
+                        }
+                        token.spelling.as_ref() == ")"
+                    }
                     Terminal::ExtensionKeyword(word) | Terminal::ExtensionClause(word) => {
                         token.spelling.as_ref() == word.as_ref()
                     }
@@ -2784,6 +2813,7 @@ impl Terminal {
             Self::Bound => "unsigned 64-bit integer".into(),
             Self::ClockType { word, .. } => format!("`{word}`"),
             Self::TypeIdentifier { except } => format!("type name other than `{except}`"),
+            Self::EmptyCallEnd { .. } => "`)`".into(),
             Self::ExtensionKeyword(word) => format!("`{word}`"),
             Self::ExtensionClause(name) => format!("clause-name, the clause `{name}`"),
             Self::ExtensionSeparator(next) => format!("`,` before clause `{next}`"),

@@ -22,8 +22,8 @@ use crate::vault_world::{with_body, Build, World, SECURE};
 /// Reaches `holds(true)` at the initial state, so its graph is one state.
 const LIKELY: &str = "probabilistic Same using inf on V under every scheduler on origin \
                       { probability >= 0.5 [ eventually holds(true) ] }\n";
-/// The same name, never reaching its target from the initial state.
-const UNLIKELY: &str = "probabilistic Same using inf on V under every scheduler on origin \
+/// A distinct claim, never reaching its target from the initial state.
+const UNLIKELY: &str = "probabilistic Unlikely using inf on V under every scheduler on origin \
                         { probability >= 0.25 [ eventually holds(false) ] }\n";
 /// A false claim: the target is reached with probability 1, not at most 1/2.
 const FALSE_AT_MOST: &str = "probabilistic AtMost using inf on V under every scheduler on origin \
@@ -164,7 +164,7 @@ fn claim_binding_uses_the_checked_node_not_name_or_source_order() {
     let forward = world_with(&format!("{LIKELY}{UNLIKELY}"));
     let reversed = world_with(&format!("{UNLIKELY}{LIKELY}"));
 
-    // The same-named claims keep their NodeKeys when their order is swapped.
+    // The claims keep their NodeKeys when their order is swapped.
     let likely = node_of(threshold(&forward, at_least, 1, 2));
     let unlikely = node_of(threshold(&forward, at_least, 1, 4));
     assert_ne!(likely, unlikely);
