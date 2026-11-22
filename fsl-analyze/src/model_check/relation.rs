@@ -8,8 +8,8 @@ use filament_semantic_value::catalog::InternalFault;
 use filament_semantic_value::model_transition::ModelTransition;
 use fsl_eval::model_subject::ModelSubject;
 use fsl_eval::simulation::model::{
-    check_model_bounds, ModelFinding, ModelKey, ModelRelationTransition as RelationTransition,
-    ModelSimState, ModelSystem,
+    check_model_bounds, ModelEvaluator, ModelFinding, ModelKey, ModelRelationDescriptor,
+    ModelRelationTransition as RelationTransition, ModelRelationTuple, ModelSimState, ModelSystem,
 };
 use fsl_eval::simulation::{
     EncodingRefusal, Expansion, ExpansionStop, Outcome, StateKey, TransitionSystem,
@@ -68,6 +68,22 @@ pub struct ModelRelationCheckRequest<'a> {
     /// Optional per-subject breadth-first search horizon.
     pub max_depth: Option<usize>,
     /// The S6a budget for each relation-body evaluation.
+    pub meter: ScalarLimits,
+}
+
+/// Source-free inputs to the same EN-1 relation engine.
+pub struct ModelRelationInput<'a> {
+    /// The admitted claim's execution facts.
+    pub relation: &'a ModelRelationDescriptor,
+    /// The evaluator that owns that claim occurrence.
+    pub evaluator: &'a dyn ModelEvaluator,
+    /// One subject for each alias in declaration order.
+    pub subjects: Vec<ModelSubject<'a>>,
+    /// Graph and tuple budgets.
+    pub limits: fsl_replay::ModelCheckLimits,
+    /// Optional per-subject breadth-first search horizon.
+    pub max_depth: Option<usize>,
+    /// A fresh S6a budget for each body evaluation.
     pub meter: ScalarLimits,
 }
 
@@ -166,6 +182,30 @@ pub fn check_model_relation(
     request: ModelRelationCheckRequest<'_>,
     cancel: &Cancel,
 ) -> Result<ModelRelationOutcome, ModelRelationRefusal> {
+    let relation = ModelRelationDescriptor::of_source(request.package, request.relation)
+        .map_err(ModelRelationRefusal::Fault)?;
+    check_model_relation_input(
+        ModelRelationInput {
+            relation: &relation,
+            evaluator: request.package,
+            subjects: request.subjects,
+            limits: request.limits,
+            max_depth: request.max_depth,
+            meter: request.meter,
+        },
+        cancel,
+    )
+}
+
+/// Decide an admitted relation through its route's evaluator.
+///
+/// # Errors
+///
+/// As [`check_model_relation`], without requiring a source package.
+pub fn check_model_relation_input(
+    request: ModelRelationInput<'_>,
+    cancel: &Cancel,
+) -> Result<ModelRelationOutcome, ModelRelationRefusal> {
     let executions = request.relation.executions();
     let aliases = request.relation.aliases();
     if request.subjects.len() != aliases.len() {
@@ -180,16 +220,17 @@ pub fn check_model_relation(
     let mut stats = ModelRelationStats::default();
     let mut bounded_depth = None;
     for (subject, expected) in request.subjects.iter().zip(aliases) {
-        let system =
-            ModelSystem::for_alias(subject.simulation.clone(), expected).map_err(|failure| {
+        let expected_package = request
+            .relation
+            .model_package_identity(expected)
+            .ok_or_else(|| {
+                ModelRelationRefusal::Fault(InternalFault::new("EN-1", "relation-alias-selected"))
+            })?;
+        let system = ModelSystem::for_model_identity(subject.simulation.clone(), expected_package)
+            .map_err(|failure| {
                 ModelRelationRefusal::Model(ModelCheckRefusal::Admission(Box::new(failure)))
             })?;
         let found = system.model().unwrap_or_default();
-        let expected_package = request
-            .package
-            .graph()
-            .model_package_identity(expected)
-            .unwrap_or_default();
         if found != expected_package {
             return Err(ModelRelationRefusal::SubjectAlias {
                 execution: executions
@@ -393,16 +434,19 @@ pub fn check_model_relation(
         stats.relation_tuples = stats.relation_tuples.checked_add(1).ok_or_else(|| {
             ModelRelationRefusal::Fault(InternalFault::new("EN-1", "relation-count-fits"))
         })?;
-        let evaluation = fsl_eval::value::evaluate_model_relation_transitions(
-            request.package,
-            request.relation,
-            &transitions,
-            &results,
-            &pre,
-            &post,
-            &mut Meter::new(request.meter),
-        )
-        .map_err(ModelRelationRefusal::Fault)?;
+        let evaluation = request
+            .evaluator
+            .evaluate_model_relation(
+                request.relation,
+                ModelRelationTuple {
+                    transitions: &transitions,
+                    results: &results,
+                    pre: &pre,
+                    post: &post,
+                },
+                &mut Meter::new(request.meter),
+            )
+            .map_err(ModelRelationRefusal::Fault)?;
         match evaluation {
             fsl_eval::value::ModelRelationEvaluation::Holds => {}
             fsl_eval::value::ModelRelationEvaluation::Refuted => {
@@ -588,7 +632,7 @@ fn trace_to_edge(
 
 /// Write only the retained evidence; the independent checker recomputes it.
 fn certificate(
-    request: &ModelRelationCheckRequest<'_>,
+    request: &ModelRelationInput<'_>,
     graphs: &[RelationGraph],
 ) -> Result<fsl_replay::ProductClosureCertificate, ModelRelationRefusal> {
     let mut subjects = Vec::new();

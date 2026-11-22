@@ -348,7 +348,7 @@ fn a_handoff_directory_gives_a_bare_package_and_an_identity_file() {
     assert!(!charges.is_empty());
 
     let file: Value = serde_json::from_slice(&files["identities.json"]).expect("JSON");
-    assert_eq!(file["format"], "filament.checked-handoff.identities/5");
+    assert_eq!(file["format"], fsl_package::IDENTITIES_FORMAT);
     assert!(files["identities.json"].ends_with(b"}\n"));
     let rows = ReadIdentityRows::read(
         &files["identities.json"],
@@ -1655,6 +1655,9 @@ fn supply_on<'p>(
             }
             fsl_package::NativeJoinFailure::Rows(error) => {
                 panic!("retained identity-only supply performs no producer row copy: {error:?}")
+            }
+            fsl_package::NativeJoinFailure::SourceEnum(error) => {
+                panic!("identity-only fixture has no enum catalog defect: {error:?}")
             }
             fsl_package::NativeJoinFailure::UnitDefinitions { .. } => {
                 panic!("identity-only fixture has no unit rows")

@@ -27,7 +27,6 @@ use fsl_semantics::check::{
     Correspondence as SemCorrespondence, ExtentClass as SemExtent, GuaranteeSlot, ItemPlacement,
     SlotBacking as SemBacking, SlotKey as SemSlotKey, SlotRole as SemRole, Supplies,
 };
-use serde_json::{json, Value};
 
 use super::declaration::{
     ClauseFacts, ClauseForm, DerivedSlot, EnvSupplies, EnvironmentMember, ItemRole,
@@ -36,7 +35,7 @@ use super::declaration::{
 use super::json::canonical_text;
 use super::key::{
     ClaimKind, Correspondence, CorrespondenceRole, ExtentClass, FairnessKey, ItemKey, KeyWireError,
-    LocalKey, OperationRef, SlotKey, TemporalItemKind, TemporalKey,
+    LocalKey, OperationRef, SlotKey,
 };
 use super::mismatch::interface_mismatch;
 
@@ -87,20 +86,7 @@ pub enum DeclarationRefusal {
 /// slot's FR-176 assumption set, part of its slot key). A subject with no
 /// assumptions carries no `assumptions` member.
 pub fn subject_text(identity: &str, assumptions: &[NodeKey]) -> Result<String, KeyWireError> {
-    let mut subject = json!({
-        "identity": identity,
-        "initial_states": [],
-        "universes": [],
-        "proof_bounds": [],
-    });
-    if !assumptions.is_empty() {
-        let nodes: Result<Vec<Value>, KeyWireError> = assumptions
-            .iter()
-            .map(|node| Ok(fsl_foundation::node_wire::node_key_to_json(node)?))
-            .collect();
-        subject["assumptions"] = Value::Array(nodes?);
-    }
-    Ok(canonical_text(&subject))
+    super::key_build::subject_text(identity, assumptions)
 }
 
 impl PlannerDeclaration {
@@ -239,13 +225,24 @@ fn operation_ref(context: &NodeKey, operation: &str) -> OperationRef {
     }
 }
 
-fn sorted_fairness(constraints: &[FairnessConstraint]) -> Result<Vec<FairnessKey>, KeyWireError> {
-    let mut keys = constraints
-        .iter()
-        .map(FairnessKey::of)
-        .collect::<Result<Vec<_>, _>>()?;
-    keys.sort();
-    Ok(keys)
+fn fairness_keys(constraints: &[FairnessConstraint]) -> Result<Vec<FairnessKey>, KeyWireError> {
+    constraints.iter().map(FairnessKey::of).collect()
+}
+
+/// Neutral request identity inputs shared by source and admitted adapters.
+pub(super) struct ItemKeyInput<'a> {
+    pub claim: OccurrenceKey,
+    pub kind: ClaimKind,
+    pub subject_identity: &'a str,
+    pub assumptions: &'a [NodeKey],
+    pub fairness: Vec<FairnessKey>,
+    pub stutter_closure: bool,
+    pub correspondence: Option<Correspondence>,
+    pub extent: ExtentClass,
+}
+
+pub(super) fn item_key_from_input(input: ItemKeyInput<'_>) -> Result<ItemKey, KeyWireError> {
+    super::key_build::item_key(input, None).map_err(|_| KeyWireError)
 }
 
 /// The text of a constraint as a local slot key member.
@@ -261,15 +258,10 @@ fn item_key(key: &SemSlotKey, assumptions: &[NodeKey]) -> Result<ItemKey, Declar
         Capability::Composition => ClaimKind::Composition,
         _ => return Err(DeclarationRefusal::NotAPremiseKind),
     };
-    let temporal = if kind == ClaimKind::TemporalSatisfaction {
-        Some(TemporalKey {
-            subject: subject_text(&key.subject, assumptions)?,
-            item_kind: TemporalItemKind::Formula,
-            fairness: sorted_fairness(&key.fairness)?,
-            stutter_closure: key.stutter_closure,
-        })
+    let fairness = if kind == ClaimKind::TemporalSatisfaction {
+        fairness_keys(&key.fairness)?
     } else {
-        None
+        Vec::new()
     };
     let correspondence = key
         .correspondence
@@ -283,20 +275,22 @@ fn item_key(key: &SemSlotKey, assumptions: &[NodeKey]) -> Result<ItemKey, Declar
                     .map(|(context, name)| operation_ref(context, name.as_str())),
             })
         });
-    Ok(ItemKey {
+    Ok(item_key_from_input(ItemKeyInput {
         claim: OccurrenceKey::new(
             key.claim.clone(),
             Origin::new(Role::new("claim"), u64::from(key.ordinal)),
         ),
         kind,
-        temporal,
+        subject_identity: &key.subject,
+        assumptions,
+        fairness,
+        stutter_closure: key.stutter_closure,
         correspondence,
-        premises: Vec::new(),
         extent: match key.extent {
             SemExtent::Bounded => ExtentClass::Bounded,
             SemExtent::Unbounded => ExtentClass::Unbounded,
         },
-    })
+    })?)
 }
 
 fn local(role: SlotRole, members: Vec<String>) -> SlotKey {

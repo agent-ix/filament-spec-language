@@ -57,7 +57,29 @@ pub(crate) fn admit_initial_state(
     limits: ObservationLimits,
     ancestor_steps: u64,
 ) -> Result<(ModelState, SelectedAnchor), AdmissionFailure> {
-    let read = read_document(DocumentKind::Snapshot, provision, selected, limits, views)?;
+    admit_initial_state_scoped(
+        views,
+        None,
+        types,
+        provision,
+        selected,
+        limits,
+        ancestor_steps,
+    )
+}
+
+pub(crate) fn admit_initial_state_scoped(
+    views: &[ModelView],
+    all_views: Option<&[ModelView]>,
+    types: &TypeEnvironment,
+    provision: &BTreeMap<DocumentRef, Vec<u8>>,
+    selected: &DocumentRef,
+    limits: ObservationLimits,
+    ancestor_steps: u64,
+) -> Result<(ModelState, SelectedAnchor), AdmissionFailure> {
+    // Read and bound the original document before projecting any population.
+    // Duplicate members and all original shape/byte charges remain visible.
+    let mut read = read_document(DocumentKind::Snapshot, provision, selected, limits, views)?;
     let snapshot = read
         .as_snapshot()
         .ok_or_else(|| fault("expected-snapshot-document"))?;
@@ -87,6 +109,24 @@ pub(crate) fn admit_initial_state(
         name: anchor.name.clone(),
     };
 
+    let snapshot = read
+        .as_snapshot_mut()
+        .ok_or_else(|| fault("expected-snapshot-document"))?;
+    if let Some(all_views) = all_views {
+        check_model_any(all_views, &snapshot.model)?;
+        snapshot.populations.retain(|population| {
+            super::document::has_population(views, &population.population)
+                || !super::document::has_population(all_views, &population.population)
+        });
+        if let [view] = views
+            .iter()
+            .filter(|view| !view.is_source())
+            .collect::<Vec<_>>()
+            .as_slice()
+        {
+            snapshot.model.identity = Some(view.view.model_selection().identity.clone());
+        }
+    }
     check_model_any(views, &snapshot.model)?;
 
     let admitted_initial =

@@ -58,6 +58,7 @@ serde_json = "1.0.151"
 test-support = []
 
 [dev-dependencies]
+# FR-940-AC-24 compares complete tuple-evaluation charge logs on both routes.
 filament-exact = { workspace = true, features = ["test-support"] }
 filament-specification = { workspace = true }
 # The analyze request stubs (FR-620 to FR-636) read `native-analyze/1`

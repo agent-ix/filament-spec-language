@@ -243,6 +243,9 @@ pub(crate) struct LoweredClause {
     pub(crate) condition: NodeRef,
     /// Each parameter's `value`/`parameter` node, in slot order.
     pub(crate) parameters: Vec<NodeKey>,
+    /// The lowered body anchor: its context object for an invariant or
+    /// constraint, and its operation anchor for a pre/postcondition.
+    pub(crate) anchor: NodeKey,
     /// The anchor and frame nodes of the operation a `pre` or `post` clause
     /// names, and the frame's occurrence; `None` for an invariant.
     pub(crate) binding: Option<OperationBinding>,
@@ -381,7 +384,7 @@ impl Lowering<'_> {
                 boolean.clone(),
                 vec![
                     MemberTerm::Group(GroupTerm::references(parameters.iter().cloned())),
-                    MemberTerm::reference(anchor),
+                    MemberTerm::reference(anchor.clone()),
                     MemberTerm::Leaf(LeafTerm::reference_node(condition.clone())),
                 ],
             ),
@@ -399,6 +402,7 @@ impl Lowering<'_> {
             key,
             condition,
             parameters,
+            anchor,
             binding,
             boolean,
             population_objects,

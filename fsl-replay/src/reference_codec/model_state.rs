@@ -92,7 +92,7 @@ impl ReferenceScope<'_, '_, '_, '_> {
                 let key = s
                     .scope
                     .member("key", |scope| s.codec.value(&row["key"], restore, 0, scope))?;
-                let relationships = key.get("type").and_then(Value::as_str) == Some("text")
+                let relationships = key.get("type").and_then(Value::as_str) == Some("string")
                     && key
                         .get("value")
                         .and_then(Value::as_str)

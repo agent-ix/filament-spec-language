@@ -30,12 +30,15 @@ use fsl_route::{CandidateOutcome, Registry};
 use fsl_semantics::check::{Capability, DeclarationFamily};
 use serde_json::{json, Map};
 
+use super::super::hyper_route::PackageRelationSubject;
 use super::super::request::ProtocolBinding;
 use super::super::{
     AnalyzeItem, AnalyzeLimits, ClaimItem, ClauseItemRefusal, ClauseLimits, Engines, ItemForm,
     ItemOptions, NegotiatedItem, PackageClauseSubject, PackageDeadlockSubject,
     PackageInvariantSubject, PackageItemInputs, PackageStateGraphSubject, SubjectBinding,
 };
+mod schedule;
+
 use super::{
     candidate_list, invalid_kind, negotiate_items, negotiated_routes, temporal_settings,
     unknown_claim, unknown_option, write_run, AnalyzeDocumentError, ItemReads, ItemSelection,
@@ -57,9 +60,8 @@ pub struct PendingPackageFamily {
     pub family: PendingFamily,
     /// The package node that carries the pending fact, when one does.
     pub node: Option<CheckedNodeId>,
-    /// The words that name the claim a probabilistic refusal is at and, for
-    /// an unresolved claim, why it does not resolve; `None` for every other
-    /// family.
+    /// The selected claim's context for a probabilistic or operation-contract
+    /// refusal, including why an unresolved probabilistic claim does not resolve.
     pub note: Option<String>,
 }
 
@@ -100,6 +102,18 @@ impl PendingPackageFamily {
                 ": items[{}] names a temporal clause whose {fact} has no package form yet{at}",
                 index.get()
             ),
+            (Some(index), PendingFamily::OperationContractRequirementRecord) => format!(
+                ": items[{}] names the operation-contract claim {}, whose operation-contract requirement record has no package form yet{at}",
+                index.get(),
+                self.note.as_deref().unwrap_or_default()
+            ),
+            (Some(index), PendingFamily::CompositionOwningWorkPermission) => format!(
+                ": items[{}] composition owning execution is pending missing native before-work permission{at}",
+                index.get()
+            ),
+            (None, PendingFamily::CompositionOwningWorkPermission) => format!(
+                ": composition owning execution is pending missing native before-work permission{at}"
+            ),
             (Some(index), family) => format!(
                 ": items[{}] names the {} family, which has no package form yet{at}",
                 index.get(),
@@ -134,6 +148,9 @@ fn node_words(node: &CheckedNodeId) -> String {
 pub enum PendingFamily {
     /// A claimless `simulation` item (FR-634).
     Simulation,
+    /// A schedulability item an EN-6 task-product engine decides: the package
+    /// route reads no task-product input yet.
+    TaskProduct,
     /// A derived item other than a model subject's deadlock-freedom item
     /// (FSpec FR-368).
     Derived,
@@ -143,14 +160,18 @@ pub enum PendingFamily {
     LoopTermination,
     /// A named declaration.
     Declaration,
+    /// A selected operation contract needs the source requirement record,
+    /// whose operation-contract form the package wire contract does not carry.
+    OperationContractRequirementRecord,
     /// A name the package carries no row for while it holds a claim whose
     /// name it does not carry ([`fsl_package::AnalysisView::unnamed_claims`]):
     /// the name may be that claim's, so it is not settled `unknown-claim`.
     UnnamedClaim,
-    /// The default items of a package that holds a component composition,
-    /// whose derived slots and component packages have no package form yet
-    /// (FSL FR-1044).
+    /// A composition request whose runtime route is not yet available.
     Composition,
+    /// Owning composition execution requires the missing native before-work
+    /// permission hook in the type-environment builder.
+    CompositionOwningWorkPermission,
     /// A temporal clause fact its package form does not read yet.
     ClauseFact(&'static str),
     /// A form of the package its model-check input does not read yet.
@@ -171,12 +192,15 @@ impl PendingFamily {
     pub const fn name(self) -> &'static str {
         match self {
             Self::Simulation => "simulation",
+            Self::TaskProduct => "task-product",
             Self::Derived => "derived",
             Self::LoopInvariant => "loop-invariant",
             Self::LoopTermination => "loop-termination",
             Self::Declaration => "declaration",
+            Self::OperationContractRequirementRecord => "operation-contract-requirement-record",
             Self::UnnamedClaim => "unnamed-claim",
             Self::Composition => "composition",
+            Self::CompositionOwningWorkPermission => "composition-owning-work-permission",
             Self::ClauseFact(fact) => fact,
             Self::ModelForm(_) => "model-form",
             Self::ProbabilisticSourceModel => "probabilistic-source-model",
@@ -230,6 +254,13 @@ pub struct PackageRun<'a> {
 
 /// One item as the package's name tables resolve it.
 enum Named<'s> {
+    Relation {
+        index: RequestIndex,
+        name: &'s str,
+        declaration: CheckedNodeId,
+        ordinal: u64,
+        selection: &'s ItemSelection,
+    },
     Settled(ResolvedItem),
     Clause {
         index: RequestIndex,
@@ -273,6 +304,14 @@ enum Named<'s> {
         name: &'s str,
         selection: &'s ItemSelection,
     },
+    /// A `schedulability` item over a task-set claim (FR-246, FR-633).
+    Schedule {
+        index: RequestIndex,
+        name: &'s str,
+        declaration: CheckedNodeId,
+        ordinal: u64,
+        selection: &'s ItemSelection,
+    },
 }
 
 /// How a resolved package-route claim item runs.
@@ -286,7 +325,9 @@ enum Route<'a> {
     Deadlock,
     StateClause,
     StateGraph(Box<PackageStateGraphSubject<'a>>),
+    Relation(Box<PackageRelationSubject<'a>>),
     Value(Box<PackageValue<'a>>),
+    Schedule(Box<schedule::ScheduleRoute>),
 }
 
 /// A Boolean value clause's target over the package and the semantic type of
@@ -327,19 +368,20 @@ pub fn settle_package_run(
         engines,
         limits,
     } = run;
-    // FSL FR-1044: a package's component composition has no package form
-    // yet, so the default items of a package that holds one are refused
-    // whole rather than written without it.
+    // FSL FR-1044: admitted planner facts are available, but owning execution
+    // still requires native permission before type-environment work. Preserve
+    // the whole-request guard until that execution boundary is available.
     if items.is_none() {
         if let Some(node) = admitted_composition(package) {
             return Err(PackageRunError::Pending(PendingPackageFamily {
                 request_index: None,
                 note: None,
-                family: PendingFamily::Composition,
+                family: PendingFamily::CompositionOwningWorkPermission,
                 node: Some(node),
             }));
         }
     }
+    let explicit_items = items.is_some();
     let defaults = items.is_none().then(|| default_selections(package));
     let items: &[ItemSelection] = items.or(defaults.as_deref()).unwrap_or_default();
     if let Some(refusal) =
@@ -408,6 +450,7 @@ pub fn settle_package_run(
         limits,
         subject: &subject,
         registry: &registry,
+        explicit_items,
     };
     let mut resolved = Vec::with_capacity(named.len());
     let mut routes: BTreeMap<RequestIndex, Route<'_>> = BTreeMap::new();
@@ -417,8 +460,24 @@ pub fn settle_package_run(
     let mut graph_claims: Vec<OccurrenceKey> = Vec::new();
     let mut protocol_claims: Vec<OccurrenceKey> = Vec::new();
     let mut value_claims: Vec<OccurrenceKey> = Vec::new();
+    let mut relation_claims: Vec<OccurrenceKey> = Vec::new();
+    let mut schedule_claims: Vec<OccurrenceKey> = Vec::new();
     for item in named {
         match item {
+            Named::Relation {
+                index,
+                name,
+                declaration,
+                ordinal,
+                selection,
+            } => match reads.model_relation(index, name, &declaration, ordinal, selection)? {
+                Resolution::Settled(settled) => resolved.push(settled),
+                Resolution::Claim(claim, subject) => {
+                    relation_claims.push(claim.item.claim.clone());
+                    routes.insert(index, Route::Relation(subject));
+                    resolved.push(ResolvedItem::Claim(claim));
+                }
+            },
             Named::Settled(settled) => resolved.push(settled),
             Named::Clause {
                 index,
@@ -499,6 +558,20 @@ pub fn settle_package_run(
                     resolved.push(ResolvedItem::Claim(claim));
                 }
             },
+            Named::Schedule {
+                index,
+                name,
+                declaration,
+                ordinal,
+                selection,
+            } => match reads.schedule(index, name, &declaration, ordinal, selection)? {
+                Resolution::Settled(settled) => resolved.push(settled),
+                Resolution::Claim(claim, route) => {
+                    schedule_claims.push(claim.item.claim.clone());
+                    routes.insert(index, Route::Schedule(Box::new(route)));
+                    resolved.push(ResolvedItem::Claim(claim));
+                }
+            },
             Named::StateGraph {
                 index,
                 name,
@@ -546,6 +619,10 @@ pub fn settle_package_run(
     let family = |kind: ItemKind, claim: &OccurrenceKey| match kind {
         ItemKind::Formula if protocol_claims.contains(claim) => Some(DeclarationFamily::Protocol),
         ItemKind::Formula if value_claims.contains(claim) => Some(DeclarationFamily::Value),
+        ItemKind::Formula if schedule_claims.contains(claim) => Some(DeclarationFamily::RealTime),
+        ItemKind::Formula if relation_claims.contains(claim) => {
+            Some(DeclarationFamily::RelationClaim)
+        }
         ItemKind::Formula if invariant_claims.contains(claim) => {
             Some(DeclarationFamily::StateModel)
         }
@@ -604,6 +681,22 @@ pub fn settle_package_run(
                     .collect(),
             })
         });
+        // EN-6 decides a task set over a task-product input the package
+        // route does not read yet.
+        for item in &negotiated {
+            let zone = matches!(routes.get(&item.item.request_index), Some(Route::Schedule(_)))
+                && item.disposition.target().is_some_and(|backend| {
+                    backend.id().as_str() == crate::zone_check::manifest::BACKEND_ID
+                });
+            if zone {
+                return Err(PackageRunError::Pending(PendingPackageFamily {
+                    request_index: Some(item.item.request_index),
+                    note: None,
+                    family: PendingFamily::TaskProduct,
+                    node: None,
+                }));
+            }
+        }
         let work = WorkInputs {
             engines,
             admitted,
@@ -959,6 +1052,26 @@ fn resolve_names<'s>(
                 if derived {
                     return Err(pending(PendingFamily::Derived));
                 }
+                if view.package().resolved_graph().nodes.iter().any(|node| {
+                    node.node_id == found.declaration && node.step_relation_body().is_some()
+                }) {
+                    return Ok(Named::Relation {
+                        index,
+                        name,
+                        declaration: found.declaration,
+                        ordinal: found.occurrence.ordinal,
+                        selection,
+                    });
+                }
+                if is_schedulability(view, &found.declaration) {
+                    return Ok(Named::Schedule {
+                        index,
+                        name,
+                        declaration: found.declaration,
+                        ordinal: found.occurrence.ordinal,
+                        selection,
+                    });
+                }
                 if is_state_graph(view, &found.declaration) {
                     return Ok(Named::StateGraph {
                         index,
@@ -969,7 +1082,10 @@ fn resolve_names<'s>(
                     });
                 }
                 if !is_state_clause(view, &found.declaration) {
-                    return Err(pending(PendingFamily::Declaration));
+                    return Err(pending(declaration_pending_family(
+                        view,
+                        &found.declaration,
+                    )));
                 }
                 return Ok(Named::StateClause {
                     index,
@@ -979,20 +1095,22 @@ fn resolve_names<'s>(
                     selection,
                 });
             }
-            if declared.iter().any(|(declared, _)| declared == name) {
-                if !derived && selection.kind.as_deref() == Some(Capability::ValueValidity.to_wire()) {
+            if let Some((_, declaration)) = declared.iter().find(|(declared, _)| declared == name) {
+                if !derived
+                    && selection.kind.as_deref() == Some(Capability::ValueValidity.to_wire())
+                {
                     return Ok(Named::Value {
                         index,
                         name,
                         selection,
                     });
                 }
-                return Err(pending(PendingFamily::Declaration));
+                return Err(pending(declaration_pending_family(view, declaration)));
             }
             if derived {
                 let selected = models.iter().any(|identity| identity == name);
                 return match (item_kind, selected, models.len()) {
-                    (Some(ItemKind::DeadlockFreedom), true, 1) => Ok(Named::Deadlock {
+                    (Some(ItemKind::DeadlockFreedom), true, _) => Ok(Named::Deadlock {
                         index,
                         name,
                         selection,
@@ -1007,6 +1125,20 @@ fn resolve_names<'s>(
             Ok(Named::Settled(unknown_claim(index, name)))
         })
         .collect()
+}
+
+/// Refine only the pending diagnostic of an already resolved declaration.
+fn declaration_pending_family(view: &dyn AnalysisView, node: &CheckedNodeId) -> PendingFamily {
+    if matches!(
+        view.package().node_kind(node),
+        Some(filament_contract_model::CheckedNodeKind::Correspondence(
+            filament_contract_model::CorrespondenceForm::ComponentComposition
+        ))
+    ) {
+        PendingFamily::CompositionOwningWorkPermission
+    } else {
+        PendingFamily::Declaration
+    }
 }
 
 /// The protocol name of `name` when it names one of the package protocol's
@@ -1134,6 +1266,7 @@ struct ClaimReads<'r, 'a> {
     limits: AnalyzeLimits,
     subject: &'r SubjectSelection,
     registry: &'r Registry,
+    explicit_items: bool,
 }
 
 impl<'r, 'a: 'r> ClaimReads<'r, 'a> {
@@ -1342,12 +1475,14 @@ impl<'r, 'a: 'r> ClaimReads<'r, 'a> {
         let mut clauses: Vec<&OccurrenceKey> = body
             .occurrences
             .iter()
-            .filter(|occurrence| matches!(occurrence.origin().role().as_str(), "claim" | "declaration"))
+            .filter(|occurrence| {
+                matches!(occurrence.origin().role().as_str(), "claim" | "declaration")
+            })
             .collect();
         clauses.sort();
         let claim = clauses.first().copied().ok_or_else(pending)?;
-        let target = ValueTarget::select_package(self.package, name, claim)
-            .map_err(|_| pending())?;
+        let target =
+            ValueTarget::select_package(self.package, name, claim).map_err(|_| pending())?;
         // The package form spells Boolean and integer parameters only.
         if !target.parameters().iter().all(|parameter| {
             matches!(
@@ -1643,6 +1778,210 @@ impl<'r, 'a: 'r> ClaimReads<'r, 'a> {
         ))
     }
 
+    /// Resolve the HP-1 model capability against the admitted form's own record.
+    fn model_relation(
+        &self,
+        index: RequestIndex,
+        name: &str,
+        declaration: &CheckedNodeId,
+        ordinal: u64,
+        selection: &ItemSelection,
+    ) -> Result<Resolution<Box<PackageRelationSubject<'r>>>, PackageRunError> {
+        use filament_contract_model::{
+            CapabilityKind, DomainKey as WireDomain, DomainKind as WireKind, RequirementExtent,
+        };
+        use fsl_foundation::bound::{DomainKey, DomainKind};
+        use fsl_semantics::family::{ClaimExtent, Requirements};
+        let fault = || PackageRunError::Document(AnalyzeDocumentError::Fault);
+        let input = self.input.ok_or_else(fault)?;
+        let package = input.package();
+        let key = package.node_key(declaration).ok_or_else(fault)?;
+        let claim = OccurrenceKey::new(
+            key.clone(),
+            filament_exact::Origin::new(filament_exact::Role::new("claim"), ordinal),
+        );
+        let selected = fsl_package::ClaimOccurrence {
+            declaration: declaration.clone(),
+            occurrence: filament_contract_model::CheckedOccurrence {
+                role: filament_contract_model::CheckedOccurrenceRole::Claim,
+                ordinal,
+            },
+        };
+        let settled = |record| {
+            Resolution::Settled(ResolvedItem::Settled {
+                claim_name: Some(name.to_owned()),
+                record: Box::new(record),
+            })
+        };
+        let malformed = || {
+            settled(
+                TerminalRecord::failed_with(
+                    index,
+                    BackendId::new(crate::model_check::manifest::BACKEND_ID),
+                    super::super::items::BROKEN,
+                )
+                .with_diagnostic_detail(
+                    serde_json::json!({"node": declaration, "selection": "malformed-node"})
+                        .as_object()
+                        .cloned()
+                        .unwrap_or_default(),
+                ),
+            )
+        };
+        let form = match package.model_relation_form(&selected) {
+            Ok(form) => form,
+            Err(fsl_package::ModelRelationFormRefusal::MissingSubjectDeclarationOrder {
+                package,
+                node,
+            }) => {
+                let locus =
+                    fsl_foundation::node_wire::node_key_to_json(&key).map_err(|_| fault())?;
+                let detail = serde_json::json!({"package": package, "node": node, "locus": locus, "reason": "missing-subject-declaration-order"});
+                return Ok(settled(TerminalRecord::disposition_unsupported(
+                    index,
+                    CatalogCode::new("unknown_required_feature", "unsupported-feature"),
+                    detail.as_object().cloned().unwrap_or_default(),
+                )));
+            }
+            Err(_) => return Ok(malformed()),
+        };
+        let relation = match fsl_eval::simulation::model::ModelRelationDescriptor::of_package(
+            package, &form,
+        ) {
+            Ok(relation) => relation,
+            Err(failure) => {
+                let refused = super::super::items::package_projection_refusal(
+                    package.package().name(),
+                    "model-relation-body",
+                    serde_json::json!(declaration),
+                    &failure,
+                );
+                let record = match refused {
+                    super::super::Refusal::UnsupportedWithDetail(code, details) => {
+                        TerminalRecord::disposition_unsupported(index, code, details)
+                    }
+                    super::super::Refusal::FailedWithDetail(code, details) => {
+                        TerminalRecord::failed_with(
+                            index,
+                            BackendId::new(crate::model_check::manifest::BACKEND_ID),
+                            code,
+                        )
+                        .with_diagnostic_detail(details)
+                    }
+                    super::super::Refusal::Failed(code) => TerminalRecord::failed_with(
+                        index,
+                        BackendId::new(crate::model_check::manifest::BACKEND_ID),
+                        code,
+                    ),
+                    _ => return Ok(malformed()),
+                };
+                return Ok(settled(record));
+            }
+        };
+        let model_record = form.requirement();
+        let actual_extent = match &model_record.extent {
+            RequirementExtent::Unbounded(domains)
+                if domains.len() == 1
+                    && matches!(&domains[0],
+                (WireDomain::Node { node, path }, WireKind::InfiniteTrace) if node == declaration && path.is_empty()) =>
+            {
+                ClaimExtent::from_domains(
+                    [(
+                        DomainKey::Node {
+                            node: key.clone(),
+                            path: Vec::new(),
+                        },
+                        DomainKind::InfiniteTrace,
+                    )]
+                    .into_iter()
+                    .collect(),
+                )
+            }
+            _ => return Ok(malformed()),
+        };
+        if model_record.kind != CapabilityKind::TemporalSatisfaction {
+            return Ok(malformed());
+        }
+        let requirements =
+            Requirements::new(Capability::TemporalSatisfaction, actual_extent).over_model_subject();
+        let own_subject = self.own_subject(index, selection)?;
+        let temporal = selection.temporal.clone().unwrap_or_default();
+        let mut settings = temporal_settings(&temporal);
+        settings
+            .pending_reductions
+            .clone_from(&selection.reductions);
+        let kind = match selection.kind.as_deref() {
+            Some(label) => match Capability::from_wire(label) {
+                Ok(kind) => kind,
+                Err(_) => {
+                    return Ok(Resolution::Settled(invalid_kind(
+                        index,
+                        Some(name),
+                        "unknown-kind",
+                    )))
+                }
+            },
+            None => Capability::TemporalSatisfaction,
+        };
+        let named = selection.backend.as_deref().map(BackendId::new);
+        let backend_options = selection.options.clone().unwrap_or_default();
+        if let Some(refused) = unknown_option(
+            index,
+            Some(name),
+            self.registry,
+            named.as_ref(),
+            &backend_options,
+        ) {
+            return Ok(Resolution::Settled(refused));
+        }
+        let candidates = self.registry.restrict_to_timing(
+            if kind == Capability::TemporalSatisfaction {
+                fsl_route::request::requirement_candidates(
+                    &requirements,
+                    self.registry,
+                    named.as_ref(),
+                )
+            } else {
+                self.registry.candidates(kind, named.as_ref())
+            },
+            false,
+        );
+        let item = ClaimItem {
+            request_index: index,
+            claim,
+            kind,
+            extent: ExtentClassification::Unbounded {
+                finite_bound_available: false,
+            },
+            backend: named,
+            candidates: candidate_list(&candidates),
+            options: options(selection, backend_options),
+            form: (kind == Capability::TemporalSatisfaction)
+                .then_some(ItemForm::Temporal(settings)),
+        };
+        let unrouted = selection.unrouted_beyond_sampling()
+            || reads_no_clocks(selection)
+            || temporal
+                .limits
+                .is_some_and(|limits| limits.sets_memory_limits())
+            || !own_subject.same_model(self.subject);
+        Ok(Resolution::Claim(
+            Box::new(ResolvedClaim {
+                item,
+                claim_name: name.to_owned(),
+                candidates,
+                subject: own_subject,
+                unrouted,
+            }),
+            Box::new(PackageRelationSubject::new(
+                input,
+                relation,
+                self.binding.clone(),
+                self.limits,
+            )),
+        ))
+    }
+
     /// FR-620's item over the state-graph claim `name`, whose `claim_names`
     /// row is on `declaration` at `claim` occurrence `ordinal`, as the source
     /// route's `resolve_one` resolves it: the record's extent and candidates
@@ -1779,7 +2118,7 @@ impl<'r, 'a: 'r> ClaimReads<'r, 'a> {
         ))
     }
 
-    /// FR-626's derived deadlock-freedom item over the one model selection,
+    /// FR-626's derived deadlock-freedom item over the one model selection the subject reads,
     /// whose identity `name` is, as the source route's `resolve_derived`
     /// resolves it: at the selection's `model_root` anchor with the
     /// `generated` occurrence 0.
@@ -1813,6 +2152,72 @@ impl<'r, 'a: 'r> ClaimReads<'r, 'a> {
             root,
             filament_exact::Origin::new(filament_exact::Role::new("generated"), 0),
         );
+        // FSpec FR-368-AC-22, FR-124-AC-12: as on the source route's
+        // `resolve_derived`, a subject that reads several model selections has
+        // no anchor, so its item settles `unsupported` with no request item,
+        // and a subject that reads one selection has the item of that
+        // selection only.
+        let all: Vec<String> = AnalysisView::model_selections(self.package)
+            .into_iter()
+            .map(|selection| selection.identity)
+            .collect();
+        let read: Vec<&String> = all
+            .iter()
+            .filter(|identity| {
+                self.binding
+                    .universes
+                    .iter()
+                    .any(|universe| universe.population.package == **identity)
+            })
+            .collect();
+        let read = if read.is_empty() {
+            all.iter().collect()
+        } else {
+            read
+        };
+        match read.as_slice() {
+            [only] if *only == name => {
+                // FR-124: a model the subject reads that declares `terminal any`
+                // opts out of the item, so the source route writes none and
+                // settles `inapplicable-kind` (`SubjectReading::opted_out`).
+                let opted_out = self
+                    .package
+                    .terminal_declarations()
+                    .map_err(|_| AnalyzeDocumentError::Fault)?
+                    .iter()
+                    .any(|terminal| {
+                        terminal.model == name
+                            && matches!(
+                                terminal.declaration,
+                                fsl_package::BareTerminalDeclaration::Any
+                            )
+                    });
+                if opted_out {
+                    return Ok(Resolution::Settled(invalid_kind(
+                        index,
+                        Some(name),
+                        "inapplicable-kind",
+                    )));
+                }
+            }
+            [_] => {
+                return Ok(Resolution::Settled(invalid_kind(
+                    index,
+                    Some(name),
+                    "inapplicable-kind",
+                )));
+            }
+            _ => {
+                return Ok(Resolution::Settled(ResolvedItem::Settled {
+                    claim_name: Some(name.to_owned()),
+                    record: Box::new(TerminalRecord::disposition_unsupported(
+                        index,
+                        fsl_route::NegotiationOutcome::UnsupportedRequestedCapability.code(),
+                        Map::new(),
+                    )),
+                }));
+            }
+        }
         let own_subject = self.own_subject(index, selection)?;
         let named = selection.backend.as_deref().map(BackendId::new);
         let backend_options = selection.options.clone().unwrap_or_default();
@@ -1950,7 +2355,7 @@ impl<'r, 'a: 'r> ClaimReads<'r, 'a> {
             }
         }
         let model_subject = !own_subject.initial_states.is_empty();
-        if kind == Capability::OperationContract && !model_subject {
+        if !self.explicit_items && kind == Capability::OperationContract && !model_subject {
             return Err(pending(PendingFamily::Declaration));
         }
         let candidates = state_clause_tie(
@@ -1960,6 +2365,21 @@ impl<'r, 'a: 'r> ClaimReads<'r, 'a> {
             model_subject,
             clause.invariant,
         );
+        if self.explicit_items && kind == Capability::OperationContract {
+            if let CandidateOutcome::Candidates(set) = &candidates {
+                let native_invariant = clause.invariant
+                    && model_subject
+                    && matches!(set.candidates(), [candidate] if candidate.id().as_str() == crate::model_check::manifest::BACKEND_ID);
+                if matches!(set.candidates(), [_]) && !native_invariant {
+                    return Err(PackageRunError::Pending(PendingPackageFamily {
+                        request_index: Some(index),
+                        family: PendingFamily::OperationContractRequirementRecord,
+                        node: Some(declaration.clone()),
+                        note: Some(format!("`{name}` (claim occurrence {ordinal})")),
+                    }));
+                }
+            }
+        }
         let temporal = selection.temporal.clone().unwrap_or_default();
         let item = ClaimItem {
             request_index: index,
@@ -2161,6 +2581,11 @@ impl<'a> WorkInputs<'_, 'a> {
             ) if item.kind == Capability::TemporalSatisfaction => {
                 subject.configured(form.clone()).item(item.request_index)
             }
+            (Some(ItemForm::Temporal(form)), Some(Route::Relation(subject)))
+                if item.kind == Capability::TemporalSatisfaction =>
+            {
+                subject.configured(form.clone()).item(item.request_index)
+            }
             (Some(ItemForm::Temporal(form)), Some(Route::ProtocolFreedom(protocol)))
                 if item.kind == Capability::TemporalSatisfaction =>
             {
@@ -2232,9 +2657,10 @@ impl<'a> WorkInputs<'_, 'a> {
                     |subject| subject.item(item.request_index),
                 )
             }
-            (_, Some(Route::Value(value)))
-                if item.kind == Capability::ValueValidity =>
-            {
+            (_, Some(Route::Schedule(route))) if item.kind == Capability::Schedulability => {
+                route.item(item.request_index)
+            }
+            (_, Some(Route::Value(value))) if item.kind == Capability::ValueValidity => {
                 let PackageValue {
                     target,
                     result_bound,
@@ -2275,15 +2701,15 @@ impl<'a> WorkInputs<'_, 'a> {
                         },
                     )
                 } else {
-                crate::value_check::value_item_in(
-                    item.request_index,
-                    family,
-                    Ok(crate::value_check::ValueRequest {
-                        target,
-                        max_cases: item.options.max_cases,
-                        reported: None,
-                    }),
-                )
+                    crate::value_check::value_item_in(
+                        item.request_index,
+                        family,
+                        Ok(crate::value_check::ValueRequest {
+                            target,
+                            max_cases: item.options.max_cases,
+                            reported: None,
+                        }),
+                    )
                 }
             }
             _ => AnalyzeItem::unadapted(item.request_index, item.kind, family),
@@ -2332,10 +2758,8 @@ impl<'a> WorkInputs<'_, 'a> {
     }
 }
 
-/// The node of the first component composition the package holds. No name
-/// table row carries a composition, and the producer writes it as a
-/// declaration, not a claim occurrence, so [`AnalysisView::unnamed_claims`]
-/// never lists it.
+/// The first component-composition declaration in package graph order.
+/// The default runtime guard cannot omit it while owning execution is pending.
 fn admitted_composition(view: &dyn AnalysisView) -> Option<CheckedNodeId> {
     view.package()
         .resolved_graph()
@@ -2449,4 +2873,15 @@ fn is_schedulability(view: &dyn AnalysisView, node: &CheckedNodeId) -> bool {
         .is_some_and(|candidate| {
             &*candidate.node_tag == "claim" && candidate.semantic_form.as_ref() == "schedulability"
         })
+}
+
+/// The refusal of a declaration whose package rows the route cannot read as
+/// a closed-form subject: typed, naming the declaration.
+fn pending_declaration(index: RequestIndex, declaration: &CheckedNodeId) -> PackageRunError {
+    PackageRunError::Pending(PendingPackageFamily {
+        request_index: Some(index),
+        note: None,
+        family: PendingFamily::Declaration,
+        node: Some(declaration.clone()),
+    })
 }

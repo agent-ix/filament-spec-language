@@ -299,7 +299,7 @@ pub(crate) fn enum_member(
     text(budget, locus, value.variant.case())
 }
 
-fn integer(
+pub(crate) fn integer(
     budget: &mut NativeJoinBudget,
     locus: NativeJoinLocus,
     value: &Integer,

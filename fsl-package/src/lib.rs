@@ -19,6 +19,14 @@
 extern crate alloc;
 
 #[cfg(feature = "std")]
+mod source_enum_catalog;
+#[cfg(feature = "std")]
+pub use source_enum_catalog::{
+    EnumScope, SourceEnumCatalog, SourceEnumCatalogError, SourceEnumRowKind,
+    SourceEnumUnsupportedScope,
+};
+
+#[cfg(feature = "std")]
 mod reference_catalog;
 #[cfg(feature = "std")]
 pub use reference_catalog::{ReferenceCatalog, ReferenceCatalogError, ReferenceDeclaration};
@@ -33,11 +41,29 @@ pub const CATALOG_PAIRS: &[fsl_foundation::diagnostic::CatalogCode] = &[
 #[cfg(feature = "std")]
 mod analysis_view;
 #[cfg(feature = "std")]
+mod composition_context;
+#[cfg(feature = "std")]
+pub use composition_context::{CompositionModelContext, CompositionModelContextRefusal};
+#[cfg(feature = "std")]
+mod composition_view;
+#[cfg(feature = "std")]
+pub use composition_view::{
+    CompositionMember, CompositionMemberValue, CompositionView, CompositionViewRefusal,
+    OwnedNodeRef,
+};
+#[cfg(feature = "std")]
 pub mod occurrence_source;
+#[cfg(feature = "std")]
+mod model_relation_form;
 #[cfg(feature = "std")]
 pub use analysis_view::{AnalysisView, ClaimOccurrence, DependencyClosure};
 #[cfg(feature = "std")]
 pub use model_input_form::UnreadModelForm;
+#[cfg(feature = "std")]
+pub use model_relation_form::{
+    BareModelRelation, ModelRelationFormRefusal, ModelRelationRead, ModelRelationSubject,
+    PackageModelRelationForm,
+};
 #[cfg(feature = "std")]
 mod bare;
 #[cfg(feature = "std")]
@@ -121,8 +147,9 @@ pub use bare_slot::{BareSelectionFailure, BareSlot, BareSource};
 pub use bare_state_graph::BareStatePredicate;
 #[cfg(feature = "std")]
 pub use bare_term::{
-    BareClauseRefusal, BareClauseTerm, BareFrameOperation, BareStateClause,
-    BareStateClauseDeclaration, ClauseBinder, DeclaredComposite, DeclaredShape,
+    BareClauseConstraints, BareClauseFormRefusal, BareClauseRefusal, BareClauseTerm,
+    BareFairnessRefusal, BareFrameOperation, BareStateClause, BareStateClauseDeclaration,
+    ClauseBinder, DeclaredComposite, DeclaredShape,
 };
 #[cfg(feature = "std")]
 pub use bare_terminal::{BareTerminal, BareTerminalDeclaration, BareTerminalPredicate};

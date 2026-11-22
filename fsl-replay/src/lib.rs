@@ -176,11 +176,11 @@ pub use certificate::closure::{
     ClosureRefusal, ProductStateRef, ProtocolCertificateRequest, TemporalCertificateCheck,
 };
 pub use certificate::product::{
-    check_product_closure, product_certificate, product_state_key, HyperExecutionEdges,
-    HyperProductMember, HyperSubjectClosure, HyperTransitionEdge, HyperTransitionTuple,
-    HyperTupleStop, ProductClosure, ProductClosureCertificate, ProductClosureCheck,
-    ProductClosureClause, ProductClosureRefusal, ProductClosureRequest, ProductEvidence,
-    ProductStateKey,
+    check_model_relation_closure, check_product_closure, product_certificate, product_state_key,
+    HyperExecutionEdges, HyperProductMember, HyperSubjectClosure, HyperTransitionEdge,
+    HyperTransitionTuple, HyperTupleStop, ModelRelationClosureRequest, ProductClosure,
+    ProductClosureCertificate, ProductClosureCheck, ProductClosureClause, ProductClosureRefusal,
+    ProductClosureRequest, ProductEvidence, ProductStateKey,
 };
 pub use certificate::scc::{Component, ComponentCertificate, ComponentWitness, ProofCertificate};
 pub use certificate::simulation::{
@@ -313,11 +313,11 @@ pub use model_check::hyper_outcome::{
     BoundCovers, HyperOutcome, HyperReducedScope, HyperReductionCause,
 };
 pub use model_check::hyper_replay::{
-    check_match_witness, replay_hyper_trace_tuple, replay_model_relation_tuple, HyperReplay,
-    ModelRelationReplay,
+    check_match_witness, replay_hyper_trace_tuple, replay_model_relation_input,
+    replay_model_relation_tuple, HyperReplay, ModelRelationReplay, ModelRelationReplayInput,
 };
 pub use model_check::hyper_settle::{
-    settle_hyper_check, settle_hyper_form, settle_hyper_smt, HyperRecord, HyperSettleRefusal,
+    settle_hyper_check, settle_hyper_form, settle_hyper_smt, settle_model_relation_check, HyperRecord, HyperSettleRefusal,
     LimitOrigin, ProductMember, UsedLimit,
 };
 pub use model_check::hyper_smt_outcome::{HyperSmtOutcome, HyperSmtResult, SmtMethod};

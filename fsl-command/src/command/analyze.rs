@@ -659,6 +659,7 @@ mod package_intake_tests {
             trigger: None,
             captures: Vec::new(),
             populations: Vec::new(),
+            fairness: Vec::new(),
             formula: vec![fsl_semantics::check::PackageFormulaNode::Constant(true)],
         };
         let types = filament_semantic_value::declaration::TypeEnvironment::default();

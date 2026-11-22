@@ -23,10 +23,14 @@ fn source(file: &str) -> Value {
 /// Compiles `unit` in `directory` to `package.json` and the `handoff`
 /// directory, then removes the source.
 fn compile(directory: &Path, unit: &str) {
+    compile_named(directory, unit, "package-run-unit");
+}
+
+fn compile_named(directory: &Path, unit: &str, package_name: &str) {
     std::fs::write(directory.join("unit.native"), unit).unwrap();
     let request = json!({"models": [], "program": {"source": source("unit.native")},
         "output": {"package": "package.json"},
-        "handoff": {"directory": "handoff", "package_name": "package-run-unit",
+        "handoff": {"directory": "handoff", "package_name": package_name,
             "native_join": {"work_units": 1_u64 << 40, "storage": 1_u64 << 24}}});
     let path = directory.join("compile.json");
     std::fs::write(
@@ -485,5 +489,63 @@ fn a_package_that_cannot_run_refuses_at_the_request() {
         assert_eq!(value["stage"], "request", "{file}: {value}");
         names(&value, code);
         names(&value, locus);
+    }
+}
+
+/// The public source and source-free handoff calls preserve source enum
+/// arguments, canonical enum results and ordered comparison.
+#[test]
+#[trace("FR-531-AC-50", "FR-1039-AC-1")]
+fn source_enum_package_calls_match_source_canonical_values_without_source() {
+    const UNIT: &str = "language \"ix:native\" edition \"1-draft\";\n\
+        profile v = \"filament.value.complete/v1\";\n\
+        enum Status { READY, DONE }\n\
+        ordered enum Level { LOW, MID, HIGH }\n\
+        function ready using v(): Status pure { Status::READY }\n\
+        function echo using v(s: Status): Status pure { s }\n\
+        function later using v(): Boolean pure { Level::LOW < Level::HIGH }\n";
+    let directory = tempfile::tempdir().unwrap();
+    std::fs::write(directory.path().join("unit.native"), UNIT).unwrap();
+    let request = |call: Value| {
+        json!({"models": [],
+        "program": {"source": source("unit.native")}, "call": call})
+    };
+    let ready = json!({"function":"ready", "arguments":[]});
+    let (exit, original) = run(directory.path(), request(ready.clone()));
+    assert_eq!(exit, 0, "{original}");
+    let enum_value = original["outcome"]["value"].clone();
+    assert_eq!(enum_value["type"], "enum", "{original}");
+    assert_eq!(enum_value["member"], "READY", "{original}");
+    let echo = json!({"function":"echo", "arguments":[
+        {"parameter":"s", "value": enum_value}]});
+    let later = json!({"function":"later", "arguments":[]});
+    let mut expected = Vec::new();
+    for call in [ready, echo, later] {
+        let (exit, value) = run(directory.path(), request(call.clone()));
+        assert_eq!(exit, 0, "{value}");
+        expected.push((call, value["outcome"]["value"].clone()));
+    }
+    assert_eq!(expected[1].1, expected[0].1);
+    assert_eq!(expected[2].1, json!({"type":"boolean", "value":true}));
+    let selected_source = source("unit.native");
+    // The source command compiles under its actual identity label. Select
+    // that same package for the handoff instead of this file's other fixture name.
+    compile_named(
+        directory.path(),
+        UNIT,
+        selected_source["identity"]
+            .as_str()
+            .expect("source identity label"),
+    );
+    assert!(!directory.path().join("unit.native").exists());
+    for (call, canonical) in expected {
+        let (exit, value) = run(
+            directory.path(),
+            json!({"models":[],
+            "package":{"directory":"handoff"}, "call":call}),
+        );
+        assert_eq!(exit, 0, "{value}");
+        assert_eq!(value["outcome"]["value"], canonical, "{value}");
+        assert!(value.get("source").is_none(), "{value}");
     }
 }

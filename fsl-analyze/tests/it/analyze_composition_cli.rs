@@ -1519,30 +1519,34 @@ fn assert_package_pending(run: &crate::analyze_cli_support::Run, detail: &str) {
 
 /// FR-1044 "Current system behavior" (QSL-2739): a `package` handoff of a
 /// unit with composition declarations, requested with no `items`, is settled
-/// whole as the composition family and settles no item, `Local` included.
+/// whole at the missing native before-work permission boundary and settles
+/// no item, `Local` included.
 #[test]
 fn the_package_default_items_refuse_a_composition() {
     let ws = Workspace::new("compose-package-default");
     let path = request_for(&ws, &system(), BOUNDED, None);
     assert_package_pending(
         &analyze(&package_handoff(&ws, &path)),
-        ": the composition rule has no package form yet at",
+        ": composition owning execution is pending missing native before-work permission at",
     );
 }
 
-/// FR-1044 "Current system behavior" (QSL-2739): a named composition remains
-/// a pending declaration; a name no package row carries remains an unnamed
-/// claim. Neither selection settles `unknown-claim`.
+/// FR-1044 "Current system behavior" (QSL-2739): an authenticated named
+/// composition names the missing owning-work permission; an unresolved name
+/// remains an unnamed claim. Neither selection settles `unknown-claim`.
 #[test]
 fn a_package_item_naming_a_composition_is_refused() {
     // Each compile writes its own handoff directory, so each name gets its
     // own workspace.
-    for (name, family) in [("Sys", "declaration"), ("Typo", "unnamed-claim")] {
+    for (name, detail) in [
+        ("Sys", "items[0] composition owning execution is pending missing native before-work permission"),
+        ("Typo", "items[0] names the unnamed-claim family, which has no package form yet"),
+    ] {
         let ws = Workspace::new(&format!("compose-package-named-{name}"));
         let path = request_for(&ws, &system(), BOUNDED, Some(json!([composition(name)])));
         assert_package_pending(
             &analyze(&package_handoff(&ws, &path)),
-            &format!("items[0] names the {family} family, which has no package form yet"),
+            detail,
         );
     }
 }
@@ -1566,7 +1570,7 @@ fn a_package_item_naming_a_local_clause_beside_a_composition_settles() {
 /// FR-1044-AC-10, second half, once the package route reads a composition:
 /// the same items, records and exit code as the source request.
 #[test]
-#[ignore = "FR-1044-AC-10 stays OPEN with terra:QSL:package-consumer-api: the package route has no composition form"]
+#[ignore = "FR-1044-AC-10 execution remainder: owning worlds require the next library cohort's native before-work permission hook"]
 fn the_package_route_settles_the_same_items() {
     let ws = Workspace::new("compose-ac10-package-equal");
     let body = format!(

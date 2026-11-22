@@ -372,10 +372,7 @@ fn source_object_identity_rows_roundtrip_through_qc30_intake() {
     // local row decoder would allow a reduced encoder and decoder to agree
     // on the same non-normative schema.
     let identity_json: Value = serde_json::from_slice(&bytes).expect("identity JSON parses");
-    assert_eq!(
-        identity_json["format"],
-        "filament.checked-handoff.identities/5"
-    );
+    assert_eq!(identity_json["format"], crate::IDENTITIES_FORMAT);
     let objects_json = identity_json["source_objects"].as_array().expect("rows");
     assert_eq!(objects_json.len(), 1);
     let by_identity = |name: &str| {
@@ -1590,7 +1587,7 @@ time O dense unit ms;
 fn the_identity_file_carries_data_and_clock_member_entries() {
     let (_, package, bytes) = admitted_identity_file(CLOCK_ENTRIES);
     let file: Value = serde_json::from_slice(&bytes).expect("identity JSON parses");
-    assert_eq!(file["format"], "filament.checked-handoff.identities/5");
+    assert_eq!(file["format"], crate::IDENTITIES_FORMAT);
     let o = identity_row(&file, "source_objects", "O");
     let kinds: Vec<(&str, bool)> = o["members"]
         .as_array()

@@ -68,6 +68,25 @@ pub trait AnalysisView: sealed::Sealed {
     /// reader keeps nonempty (FR-940 `identity`).
     fn identity(&self) -> &LibraryName;
 
+    /// Read one admitted composition and its owner-bound member references.
+    /// The node is a document-held declaration ID from this package.
+    fn composition(
+        &self,
+        node: &CheckedNodeId,
+    ) -> Result<crate::CompositionView<'_>, crate::CompositionViewRefusal> {
+        crate::composition_view::composition_view(self.package(), node)
+    }
+
+    /// Read a composition under the invocation's cumulative native budget.
+    /// Its metered member and reference accessors continue that same budget.
+    fn composition_with_budget(
+        &self,
+        node: &CheckedNodeId,
+        budget: &mut filament_contract_model::NativeJoinBudget,
+    ) -> Result<crate::CompositionView<'_>, crate::CompositionViewRefusal> {
+        crate::composition_view::composition_view_with_budget(self.package(), node, budget)
+    }
+
     /// Resolve an explicitly selected occurrence against this owning package.
     /// An ambiguous multi-region occurrence requires an exact region selector.
     fn occurrence_source(
@@ -195,8 +214,15 @@ pub trait AnalysisView: sealed::Sealed {
         self.package().temporal_clause_names().unwrap_or_default()
     }
 
-    /// The admitted `claim_names` rows, in package order (FR-940 "Claim
-    /// names"). Empty when the package carries none.
+    /// Select the HP-1 model form from an already admitted claim occurrence.
+    fn model_relation_form(
+        &self,
+        claim: &ClaimOccurrence,
+    ) -> Result<crate::PackageModelRelationForm, crate::ModelRelationFormRefusal> {
+        crate::model_relation_form::model_relation_form(self.package(), claim)
+    }
+
+    /// The admitted claim-name rows, in package order.
     fn claim_names(&self) -> &[ClaimNameRow] {
         self.package().claim_names().unwrap_or_default()
     }

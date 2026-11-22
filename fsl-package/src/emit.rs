@@ -7736,6 +7736,7 @@ fn emit_package_inner(
         source_object_rows(graph, &emitted_node_ids)?;
     let selected_source_operation_rows = source_operation_rows(graph, &emitted_node_ids)?;
     let selected_source_tuple_rows = source_tuple_rows(graph, &emitted_node_ids)?;
+    let requirement_rows = model_relation_requirements::rows(graph, &emitted_node_ids)?;
     let selected_source_collection_rows = source_collection_rows(graph, &emitted_node_ids)?;
     let operation_effects = graph
         .operation_effects()
@@ -7777,7 +7778,7 @@ fn emit_package_inner(
                 schedulability_claims: (!schedulability_claim_rows.is_empty())
                     .then_some(schedulability_claim_rows.as_slice()),
             },
-            None,
+            (!requirement_rows.is_empty()).then_some(requirement_rows.as_slice()),
             Some(&correlation_rows),
             &capability_report,
             &diagnostics,
@@ -10298,6 +10299,7 @@ fn own_evidence(lock: &CheckedPackageLockV2) -> CheckedPackageEvidence {
     evidence
 }
 
+mod model_relation_requirements;
 mod probabilistic;
 mod selected_rows;
 

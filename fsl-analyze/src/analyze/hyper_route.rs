@@ -12,8 +12,8 @@ use fsl_eval::simulation::model::{
 use fsl_foundation::source::provenance::OccurrenceKey;
 use fsl_foundation::RequestIndex;
 use fsl_replay::{
-    replay_hyper_trace_tuple, replay_model_relation_tuple, settle_hyper_check, BoundCovers,
-    HyperOutcome, HyperReplay, IncompleteCause, ModelRelationReplay, RunStats, UndecidedCause,
+    replay_hyper_trace_tuple, settle_hyper_check, BoundCovers, HyperOutcome, HyperReplay,
+    IncompleteCause, RunStats, UndecidedCause,
 };
 use fsl_route::Mode;
 use fsl_semantics::check::{Capability, DeclarationFamily};
@@ -102,8 +102,8 @@ fn scoped_report<'s, 'm: 's>(
 }
 use super::{AnalyzeItem, AnalyzeLimits, EngineReport, Refusal, SubjectBinding, TemporalItem};
 use crate::model_check::{
-    alias_provisions, alias_system, check_hyper, check_model_relation, manifest, HyperCheckRequest,
-    ModelRelationCheckRequest, ModelRelationOutcome, ModelRelationRefusal, ModelRelationStats,
+    alias_provisions, alias_system, check_hyper, manifest, HyperCheckRequest, ModelRelationOutcome,
+    ModelRelationRefusal, ModelRelationStats,
 };
 
 /// The item that runs the checked hyper clause `key` names, or none when the
@@ -454,14 +454,54 @@ pub(super) fn relation_item<'a>(
     key: &OccurrenceKey,
     index: RequestIndex,
     form: &TemporalItem,
+    shared: Option<crate::provider::Shared<'_>>,
 ) -> Option<AnalyzeItem<'a>> {
-    let relation = analysis
+    let checked = analysis
         .package
         .graph()
         .step_relations()
         .iter()
         .find(|relation| relation.occurrence() == Some(key))?;
-    let package = analysis.package;
+    let relation = match shared {
+        Some(shared) => (|| {
+            use fsl_package::AnalysisView;
+            let view = fsl_package::BarePackage::new(shared.admitted);
+            let row = view.claim_names().iter().find(|row| {
+                view.node_key(&row.declaration).as_ref() == Some(key.node())
+                    && row.occurrence.ordinal == key.origin().ordinal()
+                    && row.occurrence.role == fsl_package::CheckedOccurrenceRole::Claim
+            })?;
+            let selected = fsl_package::ClaimOccurrence {
+                declaration: row.declaration.clone(),
+                occurrence: row.occurrence.clone(),
+            };
+            let package_form = view.model_relation_form(&selected).ok()?;
+            fsl_eval::simulation::model::ModelRelationDescriptor::of_source_form(
+                analysis.package,
+                checked,
+                &package_form,
+            )
+            .ok()
+        })(),
+        None => fsl_eval::simulation::model::ModelRelationDescriptor::of_source(
+            analysis.package,
+            checked,
+        )
+        .ok(),
+    };
+    let Some(relation) = relation else {
+        return Some(
+            AnalyzeItem::new(
+                index,
+                Capability::TemporalSatisfaction,
+                Some(DeclarationFamily::RelationClaim),
+                Mode::Bounded,
+                manifest::BACKEND_ID,
+                |_| EngineReport::Refused(Refusal::Failed(BROKEN)),
+            )
+            .claimed(key.clone()),
+        );
+    };
     let input = analysis.model.clone();
     let binding = binding.clone();
     let form = form.clone();
@@ -473,140 +513,215 @@ pub(super) fn relation_item<'a>(
             Some(DeclarationFamily::RelationClaim),
             Mode::Bounded,
             manifest::BACKEND_ID,
-            move |cancel: &Cancel| {
-                let simulation = ModelSimulationRequest {
-                    input: input.clone(),
-                    packages: binding.packages,
-                    normalization: limits.normalization,
-                    snapshots: binding.snapshots,
-                    initial: binding.initial.clone(),
-                    universes: binding.universes.clone(),
-                    observation: limits.observation,
-                    expansion: ExpansionLimits {
-                        max_candidates: form.max_candidates,
-                    },
-                    meter: limits.accounting,
-                    emit: limits.emit,
-                };
-                let subjects: Vec<_> = relation
-                    .aliases()
-                    .iter()
-                    .map(|_| ModelSubject {
-                        simulation: simulation.clone(),
-                        proof_bounds: form.proof_bounds.clone(),
-                    })
-                    .collect();
-                let outcome = match check_model_relation(
-                    ModelRelationCheckRequest {
-                        relation,
-                        package,
-                        subjects: subjects
-                            .iter()
-                            .map(|subject| ModelSubject {
-                                simulation: subject.simulation.clone(),
-                                proof_bounds: subject.proof_bounds.clone(),
-                            })
-                            .collect(),
-                        limits: form.limits,
-                        max_depth: form.max_depth,
-                        meter: limits.accounting,
-                    },
+            move |cancel| {
+                run_relation(
+                    &input,
+                    &binding,
+                    limits,
+                    &relation,
+                    &form,
+                    Some((normalization_owner, &claim)),
                     cancel,
-                ) {
-                    Ok(outcome) => outcome,
-                    Err(ModelRelationRefusal::Model(refusal)) => {
-                        return EngineReport::Refused(model_refusal(&refusal));
-                    }
-                    Err(_) => return EngineReport::Refused(Refusal::Failed(BROKEN)),
-                };
-                let counts = |stats: ModelRelationStats| RunStats {
-                    product_states: stats.states,
-                    product_edges: stats.transitions,
-                    ..RunStats::default()
-                };
-                let outcome = match outcome {
-                    ModelRelationOutcome::Holds { certificate, stats } => HyperOutcome::Holds {
-                        certificates: vec![certificate],
-                        stats: counts(stats),
-                    },
-                    ModelRelationOutcome::Refuted {
-                        counterexample,
-                        stats,
-                    } => HyperOutcome::Violated {
-                        counterexample,
-                        stats: counts(stats),
-                    },
-                    ModelRelationOutcome::BoundReached { depth, stats } => {
-                        HyperOutcome::BoundReached {
-                            depth,
-                            covers: BoundCovers::JointSteps,
-                            stats: counts(stats),
-                        }
-                    }
-                    ModelRelationOutcome::Stopped {
-                        limit,
-                        count,
-                        stats,
-                    } => HyperOutcome::Stopped {
-                        cause: match cancel.cause() {
-                            Some(source) if limit.is_none() => {
-                                IncompleteCause::Cancelled { source }
-                            }
-                            _ => IncompleteCause::ResourceExhausted,
-                        },
-                        limit,
-                        count,
-                        stats: counts(stats),
-                    },
-                    ModelRelationOutcome::Undecided { stats } => HyperOutcome::Undecided {
-                        cause: UndecidedCause::UndecidedSuccessor,
-                        stats: counts(stats),
-                    },
-                };
-                let mut systems = Vec::with_capacity(relation.executions().len());
-                for alias in relation.execution_aliases() {
-                    match ModelSystem::for_alias(simulation.clone(), alias) {
-                        Ok(system) => systems.push(system),
-                        Err(failure) => return EngineReport::Refused(admission(&failure)),
-                    }
-                }
-                let certificate = fsl_replay::ProductClosureRequest {
-                    package,
-                    clause: fsl_replay::ProductClosureClause::Relation(relation),
-                    subjects: &subjects,
-                    meter: limits.accounting,
-                };
-                let settled = settle_hyper_check(
-                    &outcome,
-                    &form.limits,
-                    &form.requested_limits,
-                    Some(&certificate),
-                    cancel,
-                    |payload| {
-                        replay_model_relation_tuple(
-                            &ModelRelationReplay {
-                                relation,
-                                package,
-                                systems: systems.iter().collect(),
-                                meter: limits.accounting,
-                                cancel,
-                            },
-                            payload,
-                        )
-                    },
-                );
-                match settled {
-                    Ok(record) => scoped_report(
-                        record,
-                        &|index| systems.get(index),
-                        normalization_owner,
-                        &claim,
-                        cancel,
-                    ),
-                    Err(_) => EngineReport::Refused(Refusal::Failed(BROKEN)),
-                }
+                )
             },
         )
         .claimed(key.clone()),
     )
+}
+
+fn run_relation(
+    input: &fsl_eval::simulation::model::ModelCheckInput<'_>,
+    binding: &SubjectBinding<'_>,
+    limits: AnalyzeLimits,
+    relation: &fsl_eval::simulation::model::ModelRelationDescriptor,
+    form: &TemporalItem,
+    source_output: Option<(
+        Option<&fsl_semantics::model::intake::SelectedModels>,
+        &OccurrenceKey,
+    )>,
+    cancel: &Cancel,
+) -> EngineReport {
+    let simulation = ModelSimulationRequest {
+        input: input.clone(),
+        packages: binding.packages,
+        normalization: limits.normalization,
+        snapshots: binding.snapshots,
+        initial: binding.initial.clone(),
+        universes: binding.universes.clone(),
+        observation: limits.observation,
+        expansion: ExpansionLimits {
+            max_candidates: form.max_candidates,
+        },
+        meter: limits.accounting,
+        emit: limits.emit,
+    };
+    let subjects: Vec<_> = relation
+        .aliases()
+        .iter()
+        .map(|_| ModelSubject {
+            simulation: simulation.clone(),
+            proof_bounds: form.proof_bounds.clone(),
+        })
+        .collect();
+    let outcome = match crate::model_check::check_model_relation_input(
+        crate::model_check::ModelRelationInput {
+            relation,
+            evaluator: input.evaluator,
+            subjects: subjects
+                .iter()
+                .map(|subject| ModelSubject {
+                    simulation: subject.simulation.clone(),
+                    proof_bounds: subject.proof_bounds.clone(),
+                })
+                .collect(),
+            limits: form.limits,
+            max_depth: form.max_depth,
+            meter: limits.accounting,
+        },
+        cancel,
+    ) {
+        Ok(outcome) => outcome,
+        Err(ModelRelationRefusal::Model(refusal)) => {
+            return EngineReport::Refused(model_refusal(&refusal));
+        }
+        Err(_) => return EngineReport::Refused(Refusal::Failed(BROKEN)),
+    };
+    let counts = |stats: ModelRelationStats| RunStats {
+        product_states: stats.states,
+        product_edges: stats.transitions,
+        ..RunStats::default()
+    };
+    let outcome = match outcome {
+        ModelRelationOutcome::Holds { certificate, stats } => HyperOutcome::Holds {
+            certificates: vec![certificate],
+            stats: counts(stats),
+        },
+        ModelRelationOutcome::Refuted {
+            counterexample,
+            stats,
+        } => HyperOutcome::Violated {
+            counterexample,
+            stats: counts(stats),
+        },
+        ModelRelationOutcome::BoundReached { depth, stats } => HyperOutcome::BoundReached {
+            depth,
+            covers: BoundCovers::JointSteps,
+            stats: counts(stats),
+        },
+        ModelRelationOutcome::Stopped {
+            limit,
+            count,
+            stats,
+        } => HyperOutcome::Stopped {
+            cause: match cancel.cause() {
+                Some(source) if limit.is_none() => IncompleteCause::Cancelled { source },
+                _ => IncompleteCause::ResourceExhausted,
+            },
+            limit,
+            count,
+            stats: counts(stats),
+        },
+        ModelRelationOutcome::Undecided { stats } => HyperOutcome::Undecided {
+            cause: UndecidedCause::UndecidedSuccessor,
+            stats: counts(stats),
+        },
+    };
+    let mut systems = Vec::with_capacity(relation.executions().len());
+    for alias in relation.execution_aliases() {
+        let Some(identity) = relation.model_package_identity(alias) else {
+            return EngineReport::Refused(Refusal::Failed(BROKEN));
+        };
+        match ModelSystem::for_model_identity(simulation.clone(), identity) {
+            Ok(system) => systems.push(system),
+            Err(failure) => return EngineReport::Refused(admission(&failure)),
+        }
+    }
+    let certificate = fsl_replay::ModelRelationClosureRequest {
+        evaluator: input.evaluator,
+        relation,
+        subjects: &subjects,
+        meter: limits.accounting,
+    };
+    let settled = fsl_replay::settle_model_relation_check(
+        &outcome,
+        &form.limits,
+        &form.requested_limits,
+        &certificate,
+        cancel,
+        |payload| {
+            fsl_replay::replay_model_relation_input(
+                &fsl_replay::ModelRelationReplayInput {
+                    relation,
+                    evaluator: input.evaluator,
+                    systems: systems.iter().collect(),
+                    meter: limits.accounting,
+                    cancel,
+                },
+                payload,
+            )
+        },
+    );
+    match settled {
+        Ok(record) => match source_output {
+            Some((owner, claim)) => {
+                scoped_report(record, &|index| systems.get(index), owner, claim, cancel)
+            }
+            None => EngineReport::Hyper(Box::new(record)),
+        },
+        Err(_) => EngineReport::Refused(Refusal::Failed(BROKEN)),
+    }
+}
+
+/// The package route's HP-1 subject, containing no checked source structures.
+pub(super) struct PackageRelationSubject<'a> {
+    input: fsl_eval::simulation::model::ModelCheckInput<'a>,
+    relation: fsl_eval::simulation::model::ModelRelationDescriptor,
+    binding: SubjectBinding<'a>,
+    limits: AnalyzeLimits,
+    form: TemporalItem,
+}
+
+impl<'a> PackageRelationSubject<'a> {
+    pub(super) fn new(
+        input: &'a fsl_eval::simulation::model::PackageModelInput<'a>,
+        relation: fsl_eval::simulation::model::ModelRelationDescriptor,
+        binding: SubjectBinding<'a>,
+        limits: AnalyzeLimits,
+    ) -> Self {
+        Self {
+            input: input.input(),
+            relation,
+            binding,
+            limits,
+            form: TemporalItem::default(),
+        }
+    }
+
+    pub(super) fn configured(mut self, form: TemporalItem) -> Self {
+        self.form = form;
+        self
+    }
+
+    pub(super) fn item(self, index: RequestIndex) -> AnalyzeItem<'a> {
+        let key = self.relation.occurrence().clone();
+        AnalyzeItem::new(
+            index,
+            Capability::TemporalSatisfaction,
+            Some(DeclarationFamily::RelationClaim),
+            Mode::Bounded,
+            manifest::BACKEND_ID,
+            move |cancel| {
+                run_relation(
+                    &self.input,
+                    &self.binding,
+                    self.limits,
+                    &self.relation,
+                    &self.form,
+                    None,
+                    cancel,
+                )
+            },
+        )
+        .claimed(key)
+    }
 }

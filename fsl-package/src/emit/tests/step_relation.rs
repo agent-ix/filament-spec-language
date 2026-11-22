@@ -53,7 +53,7 @@ fn checked_bound_graph() -> fsl_semantics::check::CheckedGraph {
 
 /// FR-180/FR-477: both execution binders remain distinct, their body is
 /// represented in the checked wire, and I2 admits the emitted package.
-#[trace("TC-1143", "FR-180-AC-2", "FR-180-AC-3")]
+#[trace("TC-1143", "FR-180-AC-2", "FR-180-AC-3", "FR-940-AC-23")]
 #[test]
 fn a_step_relation_emits_and_reads_back_its_execution_body() {
     let graph = checked_graph();
@@ -128,6 +128,28 @@ fn a_step_relation_emits_and_reads_back_its_execution_body() {
     assert_eq!(typed_body.executions.len(), 2);
     assert_eq!(typed_body.executions[0].variable.as_ref(), "x");
     assert_eq!(typed_body.executions[1].variable.as_ref(), "y");
+    use filament_contract_model::{
+        CapabilityKind, DomainKey, DomainKind, RequirementExtent, RequirementItemRow,
+    };
+    assert_eq!(
+        admitted.requirement_items(),
+        &[RequirementItemRow {
+            claim: typed.node_id.clone(),
+            occurrence: CheckedOccurrence {
+                role: CheckedOccurrenceRole::Claim,
+                ordinal: 0
+            },
+            kind: CapabilityKind::TemporalSatisfaction,
+            extent: RequirementExtent::Unbounded(vec![(
+                DomainKey::Node {
+                    node: typed.node_id.clone(),
+                    path: Vec::new()
+                },
+                DomainKind::InfiniteTrace
+            )]),
+            record: None,
+        }]
+    );
 }
 
 /// FSL FR-507-AC-7, FSpec FR-477/FR-485: a bound relation has one claim

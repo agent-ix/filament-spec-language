@@ -286,11 +286,18 @@ fn typed_value(value: &Value, pointer: &str, depth: usize) -> Result<(), TaskPro
             map.get("unit")
                 .map_or(Ok(()), |unit| text(unit, &at("unit")).map(drop))
         }
-        "text" => {
+        "string" | "json_object" => {
             let map = object(value, pointer, &["type", "value"], &[])?;
             match member(map, "value") {
                 Value::String(_) => Ok(()),
                 _ => refuse(&at("value"), TaskProductShapeReason::WrongKind),
+            }
+        }
+        "bytes" => {
+            object(value, pointer, &["type", "value"], &[])?;
+            match member_str(value, "value") {
+                Some(_) => hex("value", 0, true),
+                None => refuse(&at("value"), TaskProductShapeReason::WrongKind),
             }
         }
         "option" => {
@@ -1341,7 +1348,7 @@ mod tests {
                 {"name": "n", "value": {"type": "integer", "value": "1"}},
                 {"name": "m", "value": null}]}),
             json!([{"type": "option", "value": null},
-                   {"type": "set", "elements": [{"type": "text", "value": "x"}]},
+                   {"type": "set", "elements": [{"type": "string", "value": "x"}]},
                    {"type": "boolean", "value": true},
                    {"type": "float32", "bits": "3f800000"}]),
         );
@@ -1358,7 +1365,7 @@ mod tests {
             ),
             identity(
                 json!(null),
-                json!([{"type": "text", "value": "a", "extra": 1}]),
+                json!([{"type": "string", "value": "a", "extra": 1}]),
             ),
         ] {
             assert!(

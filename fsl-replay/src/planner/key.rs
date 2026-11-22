@@ -222,10 +222,14 @@ impl FairnessKey {
     ///
     /// [`KeyWireError`] when the constraint cannot be written.
     pub fn of(constraint: &FairnessConstraint) -> Result<Self, KeyWireError> {
-        let bytes = quire_canonical::to_vec(constraint, quire_canonical::Limits::new(u64::MAX))
-            .map_err(|_| KeyWireError)?;
-        let value: Value = serde_json::from_slice(&bytes).map_err(|_| KeyWireError)?;
-        Ok(Self(canonical_text(&value)))
+        super::key_build::fairness_key(constraint)
+    }
+
+    pub(super) fn from_canonical(text: String) -> Self {
+        Self(text)
+    }
+    pub(super) fn canonical(&self) -> &str {
+        &self.0
     }
 
     pub(crate) fn to_value(&self) -> Result<Value, KeyWireError> {

@@ -29,7 +29,7 @@ pub enum UnreadModelForm {
     /// a value's canonical form names. A payload-free model enumeration is
     /// read from its rows (FR-531) and is not one.
     Variant,
-    /// A source `enum` declaration, which the identity bytes carry no row of.
+    /// A source `enum` declaration without its complete joined identity rows.
     Enumeration,
     /// An `object` declaration of the unit's own source package (FR-569).
     SourceObject,
@@ -72,7 +72,13 @@ fn unread(package: &BarePackage<'_>, node: &CheckedSemanticNodeV2) -> Option<Unr
             (!read).then_some(UnreadModelForm::Variant)
         }
         CheckedNodeKind::CompositeType(CompositeTypeForm::Union) => Some(UnreadModelForm::Variant),
-        CheckedNodeKind::ScalarType(ScalarTypeForm::Enum) => Some(UnreadModelForm::Enumeration),
+        CheckedNodeKind::ScalarType(ScalarTypeForm::Enum) => {
+            let read = package.source_enums.is_some()
+                && package
+                    .supply()
+                    .is_some_and(|supply| supply.identities.holds_source_enum(&node.node_id));
+            (!read).then_some(UnreadModelForm::Enumeration)
+        }
         _ => None,
     }
 }

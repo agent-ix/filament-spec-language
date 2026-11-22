@@ -441,6 +441,7 @@ impl ReferenceScope<'_, '_, '_, '_> {
             types.types(),
             types.enums(),
             types.variant_types(),
+            Some(types.enum_member_index()),
             fsl_foundation::IdentityLimits::default(),
             &mut budget,
             self.scope.cancel,
@@ -1652,12 +1653,14 @@ impl<'c, 'm, 'r> ReferenceCodec<'c, 'm, 'r> {
         if kind == "reference" {
             return self.reference(value, restore, scope);
         }
+        if let Some(value) = canonical_scalar(value, kind, scope)? {
+            return Ok(value);
+        }
         let fields: &[&str] = match kind {
             "null" => &["type"],
-            "boolean" | "integer" | "text" | "option" | "uuid" => &["type", "value"],
+            "boolean" | "integer" | "option" | "uuid" => &["type", "value"],
             "timestamp" => &["type", "nanoseconds"],
             "float32" | "float64" => &["type", "bits"],
-            "bytes" | "json_object" => &["type", "text"],
             "set" | "bag" | "sequence" | "ordered-set" => &["type", "elements"],
             "map" => &["type", "entries"],
             "record" => &["type", "name", "fields"],
@@ -2370,6 +2373,38 @@ impl<'c, 'm, 'r> ReferenceCodec<'c, 'm, 'r> {
     }
 }
 
+fn canonical_scalar(
+    value: &Value,
+    kind: &str,
+    scope: &mut Scope<'_, '_>,
+) -> Result<Option<Value>, ReferenceCodecError> {
+    match kind {
+        "text" => return Err(scope.fail(ReferenceFailure::MalformedWire)),
+        "string" | "bytes" | "json_object" => {}
+        _ => return Ok(None),
+    }
+    let map = scope.closed(value, &["type", "value"])?;
+    let value = scope.member("value", |scope| {
+        let text = scope.string(&map["value"])?;
+        if kind == "bytes" {
+            scope.work(text.len())?;
+            if !text.len().is_multiple_of(2)
+                || !text
+                    .bytes()
+                    .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+            {
+                return Err(scope.fail(ReferenceFailure::MalformedWire));
+            }
+        }
+        scope.text(text).map(Value::String)
+    })?;
+    let tag = scope.text(kind)?;
+    let mut out = Map::new();
+    scope.put(&mut out, "type", Value::String(tag))?;
+    scope.put(&mut out, "value", value)?;
+    Ok(Some(Value::Object(out)))
+}
+
 fn integer_text(text: &str) -> bool {
     let digits = text.strip_prefix('-').unwrap_or(text);
     !digits.is_empty()
@@ -2680,6 +2715,55 @@ mod tests {
         Cancel, Integer, IntegerDecimalBudget, Meter, Reservation, ReservationDenied,
     };
     use fsl_eval::simulation::model::{ModelKeyBudget, ModelKeyError, ModelRestoreBudget};
+
+    /// Trace: FSpec-FR-181-AC-22, FSpec-FR-181-AC-26
+    #[test]
+    fn canonical_scalar_payloads_reject_legacy_string_tags_and_fields() {
+        use serde_json::json;
+        let cancel = Cancel::new();
+        let mut budget = Budget::new(100_000, 100_000);
+        let mut scope = Scope {
+            budget: &mut budget,
+            cancel: &cancel,
+            normalization_owner: None,
+            path: String::new(),
+            max_depth: usize::MAX,
+        };
+        for value in [
+            json!({"type":"string","value":"雪"}),
+            json!({"type":"bytes","value":"00ff"}),
+            json!({"type":"bytes","value":""}),
+            json!({"type":"json_object","value":"{\"a\":1}"}),
+        ] {
+            let kind = value["type"].as_str().unwrap();
+            assert_eq!(
+                super::canonical_scalar(&value, kind, &mut scope).unwrap(),
+                Some(value)
+            );
+        }
+        for value in [
+            json!({"type":"text","value":"old string"}),
+            json!({"type":"string","value":false}),
+            json!({"type":"bytes","text":"00ff"}),
+            json!({"type":"bytes","value":"0"}),
+            json!({"type":"bytes","value":"00FF"}),
+            json!({"type":"json_object","text":"{}"}),
+            json!({"type":"json_object","value":{}}),
+        ] {
+            scope.path.clear();
+            let kind = value["type"].as_str().unwrap();
+            assert!(
+                matches!(
+                    super::canonical_scalar(&value, kind, &mut scope),
+                    Err(ReferenceCodecError::Refused {
+                        reason: ReferenceFailure::MalformedWire,
+                        ..
+                    })
+                ),
+                "{value}"
+            );
+        }
+    }
 
     struct Budget {
         meter: Meter,

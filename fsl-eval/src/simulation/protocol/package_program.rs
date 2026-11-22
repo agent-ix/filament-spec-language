@@ -668,86 +668,88 @@ impl<'a> PackageProtocolProgram<'a> {
         let mut controls = BTreeMap::new();
         let mut related = BTreeMap::new();
         for control in &form.controls {
-            if matches!(
-                control.operation,
-                ControlOperation::Attempt | ControlOperation::Recommend
-            ) && matches!(member(&control.node.body, "related"), Some(fsl_package::CheckedTerm::Aggregate { members }) if !members.is_empty())
+            if control.operation == ControlOperation::Recommend
+                && matches!(member(&control.node.body, "related"), Some(fsl_package::CheckedTerm::Aggregate { members }) if !members.is_empty())
             {
                 return Err(PackageProgramRefusal::Correlation {
                     node: control.node.node_id.clone(),
                 });
             }
+            if matches!(
+                control.operation,
+                ControlOperation::Send | ControlOperation::Receive | ControlOperation::Attempt
+            ) {
+                let Some(fsl_package::CheckedTerm::Aggregate { members }) =
+                    member(&control.node.body, "related")
+                else {
+                    return Err(PackageProgramRefusal::MissingIdentity(
+                        control.node.node_id.clone(),
+                    ));
+                };
+                if !members.is_empty()
+                    && memory
+                        .parallels()
+                        .iter()
+                        .any(|parallel| parallel.model.is_weak())
+                {
+                    return Err(PackageProgramRefusal::Correlation {
+                        node: control.node.node_id.clone(),
+                    });
+                }
+                let clauses = admitted
+                    .protocol_correlation_clauses(&control.node.node_id)
+                    .map_err(|failure| match failure {
+                        fsl_package::ProtocolCorrelationReadError::Unavailable(cause) => {
+                            PackageProgramRefusal::CorrelationProvenance(cause)
+                        }
+                        fsl_package::ProtocolCorrelationReadError::NotAnEligibleControl => {
+                            PackageProgramRefusal::UnknownControl
+                        }
+                    })?;
+                let mut premises = Vec::with_capacity(clauses.len());
+                for clause in clauses {
+                    let missing =
+                        || PackageProgramRefusal::MissingIdentity(control.node.node_id.clone());
+                    let index = usize::try_from(clause.canonical_index).map_err(|_| missing())?;
+                    let record = members.get(index).ok_or_else(missing)?;
+                    let fsl_package::CheckedTerm::Reference { target, .. } =
+                        member(record, "relationship").ok_or_else(missing)?
+                    else {
+                        return Err(missing());
+                    };
+                    let relationship = admitted
+                        .resolved_graph()
+                        .nodes
+                        .iter()
+                        .find(|node| &node.node_id == target)
+                        .ok_or_else(missing)?;
+                    let Some(fsl_package::CheckedNodeOwner::Model { identity, node }) =
+                        relationship.owner.as_ref()
+                    else {
+                        return Err(missing());
+                    };
+                    let end = |member| {
+                        input
+                            .evaluator
+                            .package_protocol_slot(&control.node.node_id, member, Some(index))
+                            .ok_or_else(missing)
+                    };
+                    premises.push(PackageRelated {
+                        relationship: filament_checked::key::DeclarationKey {
+                            package: identity.to_string(),
+                            node: node.to_string(),
+                        },
+                        authored: clause,
+                        ends: [end("related.from")?, end("related.to")?],
+                    });
+                }
+                if !premises.is_empty() {
+                    related.insert(control.id, premises);
+                }
+            }
             let name = control.path.last().cloned().unwrap_or_default();
             let channel = match &control.body {
                 ControlBody::Send { channel, .. } | ControlBody::Receive { channel, .. } => {
-                    let Some(fsl_package::CheckedTerm::Aggregate { members }) =
-                        member(&control.node.body, "related")
-                    else {
-                        return Err(PackageProgramRefusal::MissingIdentity(
-                            control.node.node_id.clone(),
-                        ));
-                    };
-                    if !members.is_empty()
-                        && memory
-                            .parallels()
-                            .iter()
-                            .any(|parallel| parallel.model.is_weak())
-                    {
-                        return Err(PackageProgramRefusal::Correlation {
-                            node: control.node.node_id.clone(),
-                        });
-                    }
-                    let clauses = admitted
-                        .protocol_correlation_clauses(&control.node.node_id)
-                        .map_err(|failure| match failure {
-                            fsl_package::ProtocolCorrelationReadError::Unavailable(cause) => {
-                                PackageProgramRefusal::CorrelationProvenance(cause)
-                            }
-                            fsl_package::ProtocolCorrelationReadError::NotAnEligibleControl => {
-                                PackageProgramRefusal::UnknownControl
-                            }
-                        })?;
-                    let mut premises = Vec::with_capacity(clauses.len());
-                    for clause in clauses {
-                        let missing =
-                            || PackageProgramRefusal::MissingIdentity(control.node.node_id.clone());
-                        let index =
-                            usize::try_from(clause.canonical_index).map_err(|_| missing())?;
-                        let record = members.get(index).ok_or_else(missing)?;
-                        let fsl_package::CheckedTerm::Reference { target, .. } =
-                            member(record, "relationship").ok_or_else(missing)?
-                        else {
-                            return Err(missing());
-                        };
-                        let relationship = admitted
-                            .resolved_graph()
-                            .nodes
-                            .iter()
-                            .find(|node| &node.node_id == target)
-                            .ok_or_else(missing)?;
-                        let Some(fsl_package::CheckedNodeOwner::Model { identity, node }) =
-                            relationship.owner.as_ref()
-                        else {
-                            return Err(missing());
-                        };
-                        let end = |member| {
-                            input
-                                .evaluator
-                                .package_protocol_slot(&control.node.node_id, member, Some(index))
-                                .ok_or_else(missing)
-                        };
-                        premises.push(PackageRelated {
-                            relationship: filament_checked::key::DeclarationKey {
-                                package: identity.to_string(),
-                                node: node.to_string(),
-                            },
-                            authored: clause,
-                            ends: [end("related.from")?, end("related.to")?],
-                        });
-                    }
-                    if !premises.is_empty() {
-                        related.insert(control.id, premises);
-                    }
                     Some((*channel).clone())
                 }
                 _ => None,

@@ -34,7 +34,7 @@ use crate::check::hyper_clause::{
 };
 use crate::check::node_key::{
     AggregateTerm, Binding, BindingValue, BodyTerm, GroupMember, GroupTerm, LawRole, LeafTerm,
-    MemberTerm, NodeRef, NodeTag, Operation, OperationLaw, Operator, TupleMember, TupleTerm,
+    MemberTerm, NodeRef, NodeTag, Operation, OperationLaw, Operator, Owner, TupleMember, TupleTerm,
 };
 use crate::check::refusal::CheckRefusal;
 use crate::value::member::FairnessTarget;
@@ -267,13 +267,10 @@ impl Lowering<'_> {
             let mut postconditions = Vec::new();
             for (form, node) in input.state_forms.iter().zip(input.state_nodes) {
                 let Some(node) = node else { continue };
-                let Some(selected) = form.operation.as_ref() else {
-                    continue;
-                };
-                if form.selection.alias != *alias
-                    || selected.declaring != anchor.declaring
-                    || selected.declaration.name() != anchor.operation.name()
-                {
+                // `selection.alias` names the clause's profile, not its
+                // model. Join the already lowered clauses by the exact
+                // operation anchor shared with this execution instead.
+                if node.binding.as_ref().map(|clause| &clause.anchor) != Some(&binding.anchor) {
                     continue;
                 }
                 match form.kind {
@@ -288,7 +285,9 @@ impl Lowering<'_> {
                 }
             }
             preconditions.sort();
+            preconditions.dedup();
             postconditions.sort();
+            postconditions.dedup();
             let _ = operation;
             let implementation = BindingValue::Group(GroupTerm::new(Vec::new()));
             let alias = self.text_literal(alias, &at)?;
@@ -320,17 +319,32 @@ impl Lowering<'_> {
         }
 
         let mut invariant_terms = Vec::with_capacity(input.subjects.len());
-        for (alias, _) in input.subjects {
+        for (alias, root) in input.subjects {
             let mut invariants = Vec::new();
             for (form, node) in input.state_forms.iter().zip(input.state_nodes) {
                 let Some(node) = node else { continue };
-                if form.kind == fsl_forms::StateClauseKind::Invariant
-                    && form.selection.alias == *alias
-                {
+                if form.kind != fsl_forms::StateClauseKind::Invariant {
+                    continue;
+                }
+                // The actual lowered invariant anchor is a model-owned
+                // object. Its owner joins the selected root's canonical
+                // package identity, independently of profile/model aliases.
+                let Some(Owner::Model(owner)) = self
+                    .graph
+                    .node(node.anchor.clone())
+                    .and_then(|anchor| anchor.owner())
+                else {
+                    return Err(stage_fault(
+                        &claim,
+                        "relation-invariant-anchor-is-model-owned",
+                    ));
+                };
+                if owner.identity() == root.package() {
                     invariants.push(node.key.clone());
                 }
             }
             invariants.sort();
+            invariants.dedup();
             invariant_terms.push(MemberTerm::binding(
                 alias.clone(),
                 BindingValue::Group(GroupTerm::references_nodes(invariants)),
@@ -357,6 +371,49 @@ impl Lowering<'_> {
             .collect();
         let mut binders = Binders::new(&body_slot_names, &binders_scope);
         let body = self.expression(relation.typed_body().root(), &mut binders)?;
+        // FR-351 requires an expression root even when the Boolean body
+        // lowers directly to a literal or parameter. A reference carrier
+        // preserves the value and contributes no evaluator charge.
+        let body = match &body {
+            LeafTerm::Reference { target }
+                if target
+                    .admitted()
+                    .and_then(|key| self.graph.nodes.get(key))
+                    .is_some_and(|node| node.content.node_tag != NodeTag::Expression) =>
+            {
+                let location = relation.typed_body().root().location();
+                let expression = self.insert(
+                    location,
+                    NodeTag::Expression,
+                    "reference",
+                    Some(boolean.clone()),
+                    None,
+                    BodyTerm::Leaf(body.clone()),
+                )?;
+                self.record(
+                    expression.clone(),
+                    OccurrenceRole::Expression,
+                    location.clone(),
+                );
+                LeafTerm::reference(expression)
+            }
+            _ => body,
+        };
+        let subject_declaration_order = relation
+            .aliases()
+            .iter()
+            .map(|alias| {
+                let (_, model) = input
+                    .subjects
+                    .iter()
+                    .find(|(selected, _)| selected == alias)
+                    .ok_or_else(|| stage_fault(&claim, "step-relation-subject-selected"))?;
+                Ok(GroupMember::Binding(Binding::new(
+                    alias.clone(),
+                    LeafTerm::reference(model.clone()),
+                )))
+            })
+            .collect::<Result<Vec<_>, CheckRefusal>>()?;
         let declaration = Identifier::new(relation.name().to_owned())
             .map_err(|_| stage_fault(&claim, "step-relation-name-is-identifier"))?;
         let body = BodyTerm::aggregate(vec![
@@ -370,6 +427,10 @@ impl Lowering<'_> {
                 BindingValue::Aggregate(AggregateTerm::new(invariant_terms)),
             ),
             MemberTerm::bound("body", body),
+            MemberTerm::binding(
+                "subject_declaration_order",
+                BindingValue::Group(GroupTerm::new(subject_declaration_order)),
+            ),
         ]);
         Ok(LoweredStepRelation {
             boolean,

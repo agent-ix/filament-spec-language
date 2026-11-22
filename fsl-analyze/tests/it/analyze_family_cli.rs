@@ -206,6 +206,9 @@ fn a_refuted_refinement_names_its_first_failing_edge_and_abstract_images() {
         let populations = step["abstract_state"]["semantic"]["entries"]
             .as_array()
             .expect("semantic populations");
+        for population in populations {
+            assert_eq!(population["key"]["type"], "string", "{population}");
+        }
         let object = populations
             .iter()
             .find_map(|population| {
