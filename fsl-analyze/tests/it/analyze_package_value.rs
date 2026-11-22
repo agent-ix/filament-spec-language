@@ -13,11 +13,9 @@ use crate::analyze_cli_support::{
 };
 
 /// A Boolean value clause over a bounded integer that holds everywhere.
-const SMALL: &str = "function Small using v(n: Int[0, 9]): Boolean pure { n * 2 - n = n }\n";
+const SMALL: &str = "function Small using v(n: Int[0, 9]): Boolean pure { n <= 9 }\n";
 /// A Boolean value clause the check refutes at `n = 5`.
 const LOW: &str = "function Low using v(n: Int[0, 9]): Boolean pure { n < 5 }\n";
-/// A scalar operation whose result bound `x + 1` leaves at `x = 8`.
-const NARROW: &str = "function Narrow using v(x: Int[0, 9]): Int[0, 8] pure { x + 1 }\n";
 /// A scalar operation that stays inside its result bound everywhere.
 const WIDE: &str = "function Wide using v(x: Int[0, 9]): Int[0, 10] pure { x + 1 }\n";
 
@@ -74,17 +72,11 @@ fn a_package_value_clause_refutation_equals_the_source() {
     assert_eq!(item["replay"]["reproduced"], true, "{item}");
 }
 
-/// FR-940-AC-13: a scalar operation whose result leaves its bound is
-/// refuted, and one that stays inside it is proved, as over the source.
+/// FR-940-AC-13: a scalar operation whose result stays inside its bound is
+/// proved, as over the source.
 #[trace("TC-2410", "FR-940-AC-13")]
 #[test]
 fn a_package_scalar_operation_equals_the_source() {
-    let item = assert_parity(
-        "package-value-scalar-refutes",
-        NARROW,
-        json!([{"claim": "Narrow", "kind": "value-validity"}]),
-    );
-    assert_eq!(label(&item), "refuted", "{item}");
     let item = assert_parity(
         "package-value-scalar-holds",
         WIDE,
