@@ -104,10 +104,10 @@ impl BarePackage<'_> {
                     .to_owned();
                 fsl_semantics::check::ProbScheduler::Workload(workload)
             }
-            ProbabilisticScheduler::Every if read.fairness.is_empty() => {
+            ProbabilisticScheduler::Every(fairness) if fairness.is_empty() => {
                 fsl_semantics::check::ProbScheduler::Every
             }
-            ProbabilisticScheduler::Every => {
+            ProbabilisticScheduler::Every(_) => {
                 return Err(pending("probabilistic-exact-eventual-form"));
             }
         };
