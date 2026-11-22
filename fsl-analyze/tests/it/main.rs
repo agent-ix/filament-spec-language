@@ -89,6 +89,7 @@ mod monitor_inputs;
 mod monitor_plan;
 mod monitor_plan_vectors;
 mod monitor_root;
+mod native_correlation;
 mod observation_mapping;
 mod operation_contract;
 mod package_forms;
