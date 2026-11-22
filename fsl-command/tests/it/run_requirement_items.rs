@@ -70,6 +70,17 @@ fn documents(result: &command::RunResult) -> (Value, Value) {
     (value, outcome)
 }
 
+fn compile_handoff(directory: &Path) -> Vec<u8> {
+    let request = json!({"format":"native-compile/1", "request": {
+        "models": [], "program": {"source": source()},
+        "handoff": {"directory":"handoff", "package_name":"test:requirements",
+            "native_join": {"work_units":1_u64 << 40, "storage":1_u64 << 24}}
+    }});
+    let path = directory.join("compile.json");
+    std::fs::write(&path, request.to_string()).unwrap();
+    command::compile(&path).expect("the requirement package emits")
+}
+
 fn entries(document: &Value) -> Vec<Value> {
     document["requirements"]
         .as_array()
@@ -463,6 +474,133 @@ fn package_scalar_requirement_records_equal_the_source_run() {
                 seen.facts
             );
         }
+    }
+}
+
+/// Held aliases retain per-item selection and diagnostics; invalid calls
+/// refuse before any external provider receives requirement work.
+#[trace("FR-940-AC-13", "FR-961-AC-1", "FR-960-AC-4")]
+#[test]
+fn package_scalar_held_claims_and_bad_calls_preserve_admission() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = sq(directory.path(), Some(json!({})));
+    let baseline = command::run(&path, &Fr290).unwrap();
+    let held = entries(&documents(&baseline).0)[0]["request"]["claim"].clone();
+    let bytes = compile_handoff(directory.path());
+    let graph = fsl_semantics::check::wire_id::WireGraph::of_package_bytes(&bytes).unwrap();
+    let mut structural = held.clone();
+    structural["node"] = graph.structural_value(&held["node"]).unwrap();
+    assert_ne!(structural, held, "the fixture must exercise a held operand");
+    let original: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    let paired = |call: Value, provider: bool| {
+        let seen = Arc::new(Mutex::new(Seen::default()));
+        let run = |path: &Path| {
+            if provider {
+                command::run_with_providers(
+                    path,
+                    &Fr290,
+                    vec![recording_provider(
+                        &seen,
+                        fsl_analyze::provider::ProviderVerdict::Proved,
+                    )],
+                    &fsl_analyze::provider::ProviderOptions::default(),
+                    &filament_exact::Cancel::new(),
+                )
+            } else {
+                command::run(path, &Fr290)
+            }
+        };
+        let mut request = original.clone();
+        request["request"]["call"] = call;
+        std::fs::write(directory.path().join("unit.native"), SQ).unwrap();
+        std::fs::write(&path, request.to_string()).unwrap();
+        let source_run = run(&path);
+        request["request"]
+            .as_object_mut()
+            .unwrap()
+            .remove("program");
+        request["request"]["package"] = json!({"directory":"handoff"});
+        std::fs::write(&path, request.to_string()).unwrap();
+        std::fs::remove_file(directory.path().join("unit.native")).unwrap();
+        let package_run = run(&path);
+        let provider_calls = seen.lock().unwrap().settle_calls;
+        (source_run, package_run, provider_calls)
+    };
+    for claim in [&held, &structural] {
+        let mut call = original["request"]["call"].clone();
+        call["requirements"] = json!({"backend":"missing-backend", "items":[{"claim":claim,"backend":"value-checker"}]});
+        let (source_run, package_run, _) = paired(call, false);
+        let source_run = source_run.unwrap();
+        let package_run = package_run.unwrap();
+        assert_eq!(
+            documents(&package_run).0["requirements"],
+            documents(&source_run).0["requirements"]
+        );
+        assert_eq!(package_run.exit_code, source_run.exit_code);
+    }
+    let mut invalid = held.clone();
+    let segment = invalid["node"]["path"]
+        .as_array_mut()
+        .unwrap()
+        .iter_mut()
+        .find(|segment| segment.get("node").is_some())
+        .unwrap();
+    segment["node"] = json!(u64::MAX);
+    for (requirements, expected_pointer) in [
+        (
+            json!({"items":[{"claim":held},{"claim":structural}]}),
+            "/call/requirements/items/1",
+        ),
+        (
+            json!({"items":[{"claim":invalid}]}),
+            "/call/requirements/items/0/claim/node/path/",
+        ),
+    ] {
+        let mut call = original["request"]["call"].clone();
+        call["requirements"] = requirements;
+        let (source_run, package_run, calls) = paired(call, true);
+        let source_error = source_run.expect_err("source rejects malformed claim");
+        let package_error = package_run.expect_err("package rejects malformed claim");
+        assert_eq!(package_error.cause.code(), source_error.cause.code());
+        let command::RunCause::ClauseRequest {
+            member: source_member,
+            ..
+        } = &source_error.cause
+        else {
+            panic!("{source_error}")
+        };
+        let command::RunCause::ClauseRequest {
+            member: package_member,
+            ..
+        } = &package_error.cause
+        else {
+            panic!("{package_error}")
+        };
+        assert_eq!(package_member, source_member);
+        assert!(package_member.starts_with(expected_pointer));
+        assert_eq!(calls, 0);
+    }
+    for (function, arguments) in [
+        ("Missing", json!([])),
+        (
+            "sq",
+            json!([{"parameter":"x","value":{"type":"boolean","value":true}}]),
+        ),
+    ] {
+        let call = json!({"function":function, "arguments":arguments, "requirements":{"backend":PROVIDER}});
+        let (source_run, package_run, calls) = paired(call, true);
+        let source_error = source_run.expect_err("source rejects the call");
+        let package_error = package_run.expect_err("package rejects the call");
+        assert_eq!(
+            package_error.cause.code(),
+            source_error.cause.code(),
+            "{package_error}"
+        );
+        assert_eq!(
+            package_error.category().exit_code(),
+            source_error.category().exit_code()
+        );
+        assert_eq!(calls, 0, "no provider sees a call that did not admit");
     }
 }
 
