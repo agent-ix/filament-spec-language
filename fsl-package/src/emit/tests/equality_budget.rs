@@ -204,38 +204,44 @@ fn bare_admission_retains_equality_and_reports_its_denial_after_projection() {
         let error = BarePackage::new(&admitted)
             .with_supply(supply, &mut budget)
             .expect_err("one short of the complete admission pass");
-        if kind == NativeJoinChargeKind::Work {
-            let NativeJoinFailure::Rows(native) = error.native() else {
-                panic!("source enum index owns the work denial: {error:?}")
-            };
-            assert_eq!(native.code(), crate::NativeRowErrorCode::WorkLimit);
-            assert_eq!(native.configured_bound(), Some(work));
-            assert_eq!(native.denied(), budget.first_unpaid());
-            assert_eq!(native.locus(), budget.first_unpaid_locus());
-            let locus = native.locus().expect("original source enum index locus");
-            assert_eq!(
-                locus.source,
-                filament_contract_model::NativeJoinLocusSource::AdapterRow(0)
-            );
-            assert_eq!(locus.form, "source_enum_catalog_index");
-            let unpaid = budget.first_unpaid().expect("original unpaid work");
-            assert_eq!(unpaid.kind, NativeJoinChargeKind::Work);
-            assert_eq!(unpaid.amount, 1);
-            let diagnostic = error.limit().expect("original limit diagnostic");
-            assert_eq!(diagnostic.configured_bound(), work);
-            assert_eq!(
-                diagnostic.actual(),
-                u128::from(budget.consumed().work) + unpaid.amount
-            );
-            continue;
-        }
-        assert!(
-            matches!(error.native(), NativeJoinFailure::Projection(_)),
-            "native={:?}, limit={:?}, ceilings=({work}, {storage}), consumed={:?}, first_unpaid={:?}",
-            error.native(),
-            error.limit(),
-            budget.consumed(),
-            budget.first_unpaid(),
+        let NativeJoinFailure::Rows(native) = error.native() else {
+            panic!("source enum index owns the final denial: {error:?}")
+        };
+        let (code, setting, bound, consumed) = match kind {
+            NativeJoinChargeKind::Work => (
+                crate::NativeRowErrorCode::WorkLimit,
+                fsl_foundation::Setting::I2WorkUnits,
+                work,
+                budget.consumed().work,
+            ),
+            NativeJoinChargeKind::Storage => (
+                crate::NativeRowErrorCode::StorageLimit,
+                fsl_foundation::Setting::I2NativeJoinStorage,
+                storage,
+                budget.consumed().storage,
+            ),
+        };
+        assert_eq!(native.code(), code);
+        assert_eq!(native.configured_bound(), Some(bound));
+        assert_eq!(native.denied(), budget.first_unpaid());
+        assert_eq!(native.locus(), budget.first_unpaid_locus());
+        let locus = native.locus().expect("original source enum index locus");
+        assert_eq!(
+            locus.source,
+            filament_contract_model::NativeJoinLocusSource::AdapterRow(0)
+        );
+        assert_eq!(locus.form, "source_enum_catalog_index");
+        let unpaid = budget.first_unpaid().expect("original unpaid charge");
+        assert_eq!(unpaid.kind, kind);
+        assert_eq!(unpaid.amount, 1);
+        assert_eq!(budget.consumed().work, work);
+        assert_eq!(budget.consumed().storage, full.storage - 1);
+        let diagnostic = error.limit().expect("original limit diagnostic");
+        assert_eq!(diagnostic.setting(), setting);
+        assert_eq!(diagnostic.configured_bound(), bound);
+        assert_eq!(
+            diagnostic.actual(),
+            u128::from(consumed) + unpaid.amount
         );
     }
     for (work, storage, kind, code) in [
