@@ -1,0 +1,57 @@
+warning: missing documentation for a struct field
+   --> fsl-replay/src/planner/from_admitted.rs:116:16
+    |
+116 |     Property { component: String, clause: String },
+    |                ^^^^^^^^^^^^^^^^^
+    |
+    = note: requested on the command line with `-W missing-docs`
+
+warning: missing documentation for a struct field
+   --> fsl-replay/src/planner/from_admitted.rs:116:35
+    |
+116 |     Property { component: String, clause: String },
+    |                                   ^^^^^^^^^^^^^^
+
+warning: missing documentation for a struct field
+   --> fsl-replay/src/planner/from_admitted.rs:147:9
+    |
+147 |         denied: NativeJoinDeniedCharge,
+    |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a struct field
+   --> fsl-replay/src/planner/from_admitted.rs:148:9
+    |
+148 |         locus: Option<NativeJoinLocus>,
+    |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: missing documentation for a struct field
+   --> fsl-replay/src/planner/from_admitted.rs:149:9
+    |
+149 |         configured_bound: u64,
+    |         ^^^^^^^^^^^^^^^^^^^^^
+
+warning: `fsl-replay` (lib) generated 5 warnings
+   Compiling fsl-command v0.1.0 (/home/peter/dev/.worktrees/luna-qsl-2760-request-overrides/fsl-command)
+    Finished `test` profile [unoptimized] target(s) in 6.53s
+     Running tests/it/main.rs (target/debug/deps/it-af88c6698ad4bd92)
+
+running 1 test
+test cli_contract::run::caller_overrides_reach_plan_clocks_stages_and_observations ... FAILED
+
+failures:
+
+---- cli_contract::run::caller_overrides_reach_plan_clocks_stages_and_observations stdout ----
+
+thread 'cli_contract::run::caller_overrides_reach_plan_clocks_stages_and_observations' (3145482) panicked at fsl-command/tests/it/cli_contract/run.rs:352:5:
+assertion `left == right` failed: {"artifacts":[],"category":"refusal","diagnostics":[{"cause":"missing-member","code":"invalid_runtime_input","details":{"path":"/request/verification_plan/initial"},"hint":"Add the required member to the request document.","locus":null,"message":"invalid verification plan request member /request/verification_plan/initial: missing-member: no consuming step's model admits `initial`: no consuming model admits initial: Refused(AdmissionRecord { catalog: CatalogCode { code: \"invalid_runtime_input\", cause: \"missing-member\", prefix: None }, fields: {\"field\": \"anchor\"}, path: [], kernel: None })"}],"format":"filament-outcome/1","items":[],"last_stage":null,"operation":"execute","result":null}
+  left: 20
+ right: 0
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    cli_contract::run::caller_overrides_reach_plan_clocks_stages_and_observations
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 226 filtered out; finished in 0.02s
+
+error: test failed, to rerun pass `-p fsl-command --test it`

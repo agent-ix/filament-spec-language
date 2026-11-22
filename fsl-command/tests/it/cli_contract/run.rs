@@ -327,6 +327,10 @@ fn reference_call_world() -> (Case, Value, &'static str) {
 #[trace("FR-640-AC-14", "FR-001-AC-4", "FR-753-AC-1")]
 fn caller_overrides_reach_plan_clocks_stages_and_observations() {
     let (case, mut job, _) = reference_call_world();
+    let mut initial: Value =
+        serde_json::from_slice(&std::fs::read(case.path("current.json")).unwrap()).unwrap();
+    initial["anchor"] = json!({"kind":"initialization","name":"start"});
+    case.json("initial.json", &initial);
     case.write(
         "world.native",
         format!(
@@ -342,7 +346,7 @@ fn caller_overrides_reach_plan_clocks_stages_and_observations() {
     );
     job["request"].as_object_mut().unwrap().remove("call");
     job["request"]["verification_plan"] =
-        json!({"plan":"Release","initial":"current.json","emit":true,"execute":false});
+        json!({"plan":"Release","initial":"initial.json","emit":true,"execute":false});
     let path = case.json("plan.json", &job);
     let control = plain(&path);
     assert_eq!(control.exit, 0, "{}", control.document);
