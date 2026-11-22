@@ -25,9 +25,11 @@ pub enum UnreadModelForm {
     TimedModel,
     /// A hybrid model.
     Hybrid,
-    /// A variant or union type, which a value's canonical form names.
+    /// A variant or union type with no complete enumeration shape row, which
+    /// a value's canonical form names. A payload-free model enumeration is
+    /// read from its rows (FR-531) and is not one.
     Variant,
-    /// An enumeration, which a value's canonical form names.
+    /// A source `enum` declaration, which the identity bytes carry no row of.
     Enumeration,
     /// An `object` declaration of the unit's own source package (FR-569).
     SourceObject,
@@ -47,7 +49,7 @@ impl UnreadModelForm {
     }
 }
 
-fn unread(node: &CheckedSemanticNodeV2) -> Option<UnreadModelForm> {
+fn unread(package: &BarePackage<'_>, node: &CheckedSemanticNodeV2) -> Option<UnreadModelForm> {
     let kind = CheckedNodeTag::from_wire(&node.node_tag)
         .and_then(|tag| CheckedNodeKind::decode(tag, &node.semantic_form))?;
     match kind {
@@ -61,8 +63,15 @@ fn unread(node: &CheckedSemanticNodeV2) -> Option<UnreadModelForm> {
         // control/role surfaces in `protocol_view`.
         CheckedNodeKind::Protocol(_) => None,
         CheckedNodeKind::Hybrid(_) => Some(UnreadModelForm::Hybrid),
-        CheckedNodeKind::CompositeType(CompositeTypeForm::Union)
-        | CheckedNodeKind::Model(ModelForm::VariantType) => Some(UnreadModelForm::Variant),
+        CheckedNodeKind::Model(ModelForm::VariantType) => {
+            // A payload-free enumeration is read from its complete shape
+            // row (FR-531); a variant with payloads has none.
+            let read = package
+                .supply()
+                .is_some_and(|supply| supply.identities.holds_model_enum(&node.node_id));
+            (!read).then_some(UnreadModelForm::Variant)
+        }
+        CheckedNodeKind::CompositeType(CompositeTypeForm::Union) => Some(UnreadModelForm::Variant),
         CheckedNodeKind::ScalarType(ScalarTypeForm::Enum) => Some(UnreadModelForm::Enumeration),
         _ => None,
     }
@@ -77,7 +86,7 @@ impl BarePackage<'_> {
             .resolved_graph()
             .nodes
             .iter()
-            .find_map(|node| unread(node).map(|form| (form, &node.node_id)))
+            .find_map(|node| unread(self, node).map(|form| (form, &node.node_id)))
     }
 
     /// The first node, in the package's node order, of a form the package
@@ -104,7 +113,7 @@ impl BarePackage<'_> {
             .nodes
             .iter()
             .find_map(|node| {
-                unread(node)
+                unread(self, node)
                     .filter(|form| !(timed_trace && *form == UnreadModelForm::TimedModel))
                     .map(|form| (form, &node.node_id))
             });

@@ -1236,6 +1236,7 @@ pub(crate) fn run_compiled(
             package.graph().scope().types(),
             package.graph().scope().enums(),
             package.graph().scope().variant_types(),
+            None,
             references.as_ref(),
             &mut admission,
             cancel,

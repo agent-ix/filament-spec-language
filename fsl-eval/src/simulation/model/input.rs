@@ -158,6 +158,9 @@ pub struct ModelCheckInput<'a> {
     pub variant_types: &'a [VariantTypeDeclaration],
     /// The package's enumerations, which a value's canonical form names.
     pub enums: &'a [EnumBinding],
+    /// The package's model enumerations read from its rows, which a value's
+    /// canonical form names when it holds no `variant_types`.
+    pub enum_members: Option<&'a filament_semantic_value::enumeration::EnumMemberIndex>,
     /// The operations each object type declares.
     pub operations: &'a OperationTable,
     /// The domain packages the package selects, ascending by identity
@@ -210,6 +213,7 @@ impl<'a> ModelCheckInput<'a> {
             types: scope.types(),
             variant_types: scope.variant_types(),
             enums: scope.enums(),
+            enum_members: None,
             operations: scope.operations(),
             model_selections: graph.model_selections(),
             source_packages: graph.source_packages(),
@@ -906,6 +910,7 @@ impl<'p> PackageModelInput<'p> {
             types: self.world.types(),
             variant_types: &[],
             enums: &[],
+            enum_members: Some(self.world.enum_members()),
             operations: &self.operations,
             model_selections: &self.model_selections,
             source_packages: &[],

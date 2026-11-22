@@ -196,8 +196,9 @@ fn run_package_resolving(
         }
         _ => objects,
     };
-    // FR-533 "Types the bytes cannot project": the bytes carry no declared
-    // enumeration index, so the forms read no enumeration by name.
+    // FR-533 "Types the bytes cannot project": the bytes carry no source
+    // `enum` declaration, so the forms read no source enumeration by name; a
+    // selected model enumeration is read from its rows (FR-531).
     let universe_of = |declared: &filament_exact::EffectiveId| {
         objects.population_universe_for_type(declared).cloned()
     };
@@ -262,6 +263,7 @@ fn run_package_resolving(
             world.types(),
             &[],
             &[],
+            Some(world.enum_members()),
             references.as_ref(),
             &mut admission,
             cancel,

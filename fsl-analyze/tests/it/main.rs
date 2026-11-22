@@ -92,6 +92,7 @@ mod monitor_root;
 mod native_correlation;
 mod observation_mapping;
 mod operation_contract;
+mod package_enum;
 mod package_forms;
 mod package_probabilistic_source;
 mod package_recommendation_bridge;
