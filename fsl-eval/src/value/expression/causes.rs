@@ -366,11 +366,14 @@ impl CatalogCoded for ModelQueryRefusal {
 
 #[cfg(test)]
 mod tests {
-    use super::{ModelQueryRefusal, ProtocolClauseSnapshot};
+    use super::{
+        ClockIdentityAllocation, ClockOriginUnavailable, ModelQueryRefusal, ProtocolClauseSnapshot,
+    };
     use filament_semantic_value::catalog::{CatalogCode, CatalogCoded, Category};
     use fsl_foundation::diagnostic::{category_of, Code};
     use fsl_semantics::model::normalize::{ModelRefusal, ModelRefusalCause};
     use ix_trace_rs::trace;
+    use std::collections::BTreeMap;
 
     fn wrong_anchor() -> ProtocolClauseSnapshot {
         ProtocolClauseSnapshot::WrongAnchor {
