@@ -1996,7 +1996,7 @@ pub(crate) fn evaluate_model_relation_tuple(
         .into_iter()
         .map(|location| (location, Observation::Pre))
         .collect::<BTreeMap<_, _>>();
-    let evaluation = Machine::with_world(World::Bytes(&world), current, None, None, meter, &[])
+    let evaluation = Machine::from_bare_package(&world, current, meter)
         .with_components(super::evaluate::ComponentReads {
             environments: tuple.post,
             pre_environments: Some(tuple.pre),
