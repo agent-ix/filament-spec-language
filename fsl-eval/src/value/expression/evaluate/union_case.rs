@@ -29,11 +29,19 @@ struct World {
 }
 
 fn world() -> World {
-    let graph = PackageDeclarations::new(
-        fsl_semantics::check::fixture_source(),
-        "fixture".to_owned(),
-        fsl_foundation::IdentityLimits::default(),
-    )
+    let graph = {
+        let mut declarations = PackageDeclarations::new(
+            fsl_semantics::check::fixture_source(),
+            "fixture".to_owned(),
+            fsl_foundation::IdentityLimits::default(),
+        );
+        declarations.types = filament_semantic_value::declaration::TypeEnvironment::new(
+            [crate::test_ids::declared_type()],
+            [],
+        )
+        .unwrap();
+        declarations
+    }
     .check(
         CheckMode::Linked,
         CheckingLimits::default(),

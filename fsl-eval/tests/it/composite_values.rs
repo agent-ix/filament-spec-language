@@ -413,7 +413,7 @@ fn r07_absence_null_and_malformed_constructions_refuse_at_their_origin() {
 
 fn node_environment() -> TypeEnvironment {
     TypeEnvironment::new(
-        [],
+        [crate::support::ids::declared_type()],
         [ObjectTypeDeclaration::new(
             object_type("M::Node"),
             "Node",

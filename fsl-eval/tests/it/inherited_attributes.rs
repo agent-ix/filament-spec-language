@@ -69,7 +69,7 @@ fn object(
 }
 
 fn package(object_types: Vec<ObjectTypeDeclaration>) -> (CheckedPackage, TypeEnvironment) {
-    let types = TypeEnvironment::new([], object_types).unwrap();
+    let types = TypeEnvironment::new([crate::support::ids::declared_type()], object_types).unwrap();
     let graph = {
         let mut declarations = PackageDeclarations::new(
             fsl_semantics::check::fixture_source(),

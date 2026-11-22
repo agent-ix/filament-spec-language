@@ -6117,7 +6117,7 @@ mod tests {
                 fsl_foundation::IdentityLimits::default(),
             );
             declarations.types = TypeEnvironment::new(
-                [],
+                [crate::test_ids::declared_type()],
                 [ObjectTypeDeclaration::new(
                     context_type.clone(),
                     "Context",
@@ -7124,6 +7124,11 @@ mod tests {
                     "fixture".to_owned(),
                     fsl_foundation::IdentityLimits::default(),
                 );
+                declarations.types = filament_semantic_value::declaration::TypeEnvironment::new(
+                    [crate::test_ids::declared_type()],
+                    [],
+                )
+                .unwrap();
                 declarations.ieee_profile = Some(
                     admit_ieee_profile(&[DefinitionRole::IeeeProfile.reference()], &[]).unwrap(),
                 );
@@ -7224,11 +7229,19 @@ mod tests {
     fn a_connective_records_a_decision_by_its_origin_not_its_location() {
         use fsl_semantics::check::CheckedBody;
         let package = fsl_package::CheckedPackage::link(
-            PackageDeclarations::new(
-                fsl_semantics::check::fixture_source(),
-                "fixture".to_owned(),
-                fsl_foundation::IdentityLimits::default(),
-            )
+            {
+                let mut declarations = PackageDeclarations::new(
+                    fsl_semantics::check::fixture_source(),
+                    "fixture".to_owned(),
+                    fsl_foundation::IdentityLimits::default(),
+                );
+                declarations.types = filament_semantic_value::declaration::TypeEnvironment::new(
+                    [crate::test_ids::declared_type()],
+                    [],
+                )
+                .unwrap();
+                declarations
+            }
             .check(
                 CheckMode::Linked,
                 CheckingLimits::default(),

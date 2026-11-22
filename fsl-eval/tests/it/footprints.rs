@@ -990,6 +990,7 @@ fn gates_subject() -> Subject {
                         &frame(&json!({"modifies_receiver": [ident("Cell/v")]})),
                     )],
                 ),
+                object_type_extending("SpareCell", &["Cell"], vec![], vec![]),
                 object_type(
                     "Gate",
                     vec![
@@ -1016,7 +1017,7 @@ fn gates_subject() -> Subject {
                     ],
                 ),
             ],
-            &[("cells", "Cell"), ("gates", "Gate"), ("spares", "Cell")],
+            &[("cells", "Cell"), ("gates", "Gate"), ("spares", "SpareCell")],
         ),
         &[
             "post Disarmed using v on M::Gate::disarm { not self.armed }",
@@ -1057,7 +1058,7 @@ fn a_reference_literal_in_a_clause_reads_related_population_membership() {
             Obj {
                 population: "spares",
                 key: "c",
-                object_type: "Cell",
+                object_type: "SpareCell",
                 fields: json!({"v": integer(0)}),
             },
             Obj {
@@ -1131,7 +1132,7 @@ fn gates_start(subject: &mut Subject) -> DocumentRef {
             Obj {
                 population: "spares",
                 key: "c",
-                object_type: "Cell",
+                object_type: "SpareCell",
                 fields: json!({"v": integer(0)}),
             },
             Obj {

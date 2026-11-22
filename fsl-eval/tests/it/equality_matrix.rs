@@ -2232,6 +2232,16 @@ fn e_construction_refusals_are_located() {
 // ---- scalar operators through the expression checker and evaluator ----------
 
 fn expression_package(types: TypeEnvironment, ieee: bool) -> CheckedPackage {
+    let types = if types.composites().next().is_none() {
+        TypeEnvironment::new(
+            [crate::support::ids::declared_type()],
+            types.object_types().cloned(),
+        )
+        .unwrap()
+        .with_units(types.units().clone())
+    } else {
+        types
+    };
     let graph = {
         let mut declarations = PackageDeclarations::new(
             fsl_semantics::check::fixture_source(),
