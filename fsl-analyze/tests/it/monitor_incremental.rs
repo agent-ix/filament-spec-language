@@ -5101,17 +5101,37 @@ fn carried_and_batch_evaluation_answer_the_completeness_cases_alike() {
                 asserted(1, false),
                 Expect::Regressed(ProgressCompleteness::Incomplete),
             ));
-            cases.push((
-                "Complete through a lower bound",
-                at_index(&[1, 2]),
-                ProgressAssertion {
-                    completeness: ProgressCompleteness::Complete { through: 0 },
-                    ..asserted(1, true)
-                },
-                Expect::Regressed(ProgressCompleteness::Complete { through: 0 }),
-            ));
         }
         compare_cases(&world, false, &held, retained, &cases);
+        if retained_complete {
+            // A retained boundary above the watermark, then a lower one.
+            let wide = ProgressCompleteness::Complete { through: 2 };
+            let held_wide = batch_answer(
+                &world,
+                "Past",
+                None,
+                &progressed_under(
+                    &[1, 2],
+                    ProgressAssertion {
+                        completeness: wide,
+                        ..asserted(1, true)
+                    },
+                ),
+            )
+            .expect("the first request is accepted");
+            compare_cases(
+                &world,
+                false,
+                &held_wide,
+                wide,
+                &[(
+                    "Complete through a lower bound",
+                    at_index(&[1, 2]),
+                    asserted(1, true),
+                    Expect::Regressed(ProgressCompleteness::Complete { through: 1 }),
+                )],
+            );
+        }
         // The omitted position is supplied again by a later request.
         let omitted = batch_answer(
             &world,
@@ -5166,14 +5186,17 @@ fn a_re_stamped_timestamped_sample_is_the_same_member_in_batch_evaluation() {
         .flat_map(|(_, entry)| entry.covered())
         .map(|position| (position.identity.clone(), position.stamp))
         .collect();
+    let stamps: Vec<u64> = covered
+        .iter()
+        .filter(|(identity, _)| identity.ends_with(":1"))
+        .map(|(_, stamp)| *stamp)
+        .collect();
     assert_eq!(
-        covered
-            .iter()
-            .filter(|(identity, _)| identity == "1")
-            .collect::<Vec<_>>(),
-        [&("1".to_owned(), 1)],
+        stamps,
+        [1],
         "index 1 is listed once, at stamp 1: {covered:?}"
     );
+    assert_eq!(covered.len(), 2, "no entry is added: {covered:?}");
     let changed = batch_answer(
         &world,
         "Twos",
