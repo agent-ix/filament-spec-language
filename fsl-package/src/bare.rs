@@ -29,12 +29,14 @@ mod carried;
 mod model_enum;
 mod model_union;
 mod observation;
+mod source_enum;
 use crate::equality_file::OriginalValueType;
 use carried::{SourceRecordJson, SourceTupleJson, SourceUnionJson};
 use filament_exact::Presence;
+use source_enum::SourceEnumJson;
 
 /// The format of `identities.json` (FR-531 "The identity file").
-pub const IDENTITIES_FORMAT: &str = "filament.checked-handoff.identities/5";
+pub const IDENTITIES_FORMAT: &str = "filament.checked-handoff.identities/6";
 
 /// A checked package as a bytes-only consumer holds it (FR-531).
 ///
@@ -401,6 +403,9 @@ impl<'p> BarePackage<'p> {
             Err(IdentityJoinFailure::Exhausted(denial)) => {
                 return Err(crate::NativeJoinFailure::from(*denial).with_budget(budget));
             }
+            Err(IdentityJoinFailure::Rows(denial)) => {
+                return Err(crate::NativeJoinFailure::Rows(denial).with_budget(budget));
+            }
         };
         self.supply = Some(supply);
         if let Some(Ok(identities)) = &self.joined {
@@ -657,6 +662,7 @@ pub struct ReadIdentityRows {
     source_records: Vec<SelectedSourceRecordRow>,
     source_tuples: Vec<filament_contract_model::SelectedSourceTupleRow>,
     source_unions: Vec<SelectedSourceUnionRow>,
+    source_enums: Vec<filament_contract_model::SelectedSourceEnumRow>,
     source_objects: Vec<SelectedSourceObjectRow>,
     source_object_member_facts: Vec<Vec<crate::emit::SourceObjectMemberFacts>>,
     source_object_operations: Vec<Vec<crate::emit::SourceObjectOperationFacts>>,
@@ -728,6 +734,9 @@ pub enum IdentityMember {
     /// The required final-emission source-union rows.
     #[error("`source_unions`")]
     SourceUnions,
+    /// The required final-emission source-enum rows.
+    #[error("`source_enums`")]
+    SourceEnums,
     /// The required final-emission source-object rows.
     #[error("`source_objects`")]
     SourceObjects,
@@ -765,6 +774,7 @@ struct File {
     source_records: Vec<SourceRecordJson>,
     source_tuples: Vec<SourceTupleJson>,
     source_unions: Vec<SourceUnionJson>,
+    source_enums: Vec<SourceEnumJson>,
     source_objects: Vec<SourceObjectJson>,
     source_operations: Vec<SourceOperationJson>,
     model_enum_declarations: Vec<model_enum::DeclarationJson>,
@@ -1184,6 +1194,7 @@ impl<'de> serde::de::Visitor<'de> for TopVisitor<'_> {
         let mut source_records: Option<Vec<SourceRecordJson>> = None;
         let mut source_tuples: Option<Vec<SourceTupleJson>> = None;
         let mut source_unions: Option<Vec<SourceUnionJson>> = None;
+        let mut source_enums: Option<Vec<SourceEnumJson>> = None;
         let mut source_objects: Option<Vec<SourceObjectJson>> = None;
         let mut source_operations: Option<Vec<SourceOperationJson>> = None;
         let mut model_enum_declarations: Option<Vec<model_enum::DeclarationJson>> = None;
@@ -1244,6 +1255,14 @@ impl<'de> serde::de::Visitor<'de> for TopVisitor<'_> {
                         self.problem.set(Some(IdentityMember::SourceUnions));
                     })?);
                 }
+                "source_enums" => {
+                    if source_enums.is_some() {
+                        return Err(self.fail(IdentityMember::Repeated("source_enums")));
+                    }
+                    source_enums = Some(map.next_value().inspect_err(|_: &A::Error| {
+                        self.problem.set(Some(IdentityMember::SourceEnums));
+                    })?);
+                }
                 "source_objects" => {
                     if source_objects.is_some() {
                         return Err(self.fail(IdentityMember::Repeated("source_objects")));
@@ -1296,6 +1315,7 @@ impl<'de> serde::de::Visitor<'de> for TopVisitor<'_> {
                 other => return Err(self.fail(IdentityMember::Unknown(other.to_owned()))),
             }
         }
+        let source_enums = source_enums.ok_or_else(|| self.fail(IdentityMember::SourceEnums))?;
         let source_tuples = source_tuples.ok_or_else(|| self.fail(IdentityMember::SourceTuples))?;
         let model_enum_declarations =
             model_enum_declarations.ok_or_else(|| self.fail(IdentityMember::ModelEnums))?;
@@ -1328,6 +1348,7 @@ impl<'de> serde::de::Visitor<'de> for TopVisitor<'_> {
                 source_records,
                 source_tuples,
                 source_unions,
+                source_enums,
                 source_objects,
                 source_operations,
                 model_enum_declarations,
@@ -1422,6 +1443,17 @@ pub enum IdentityJoinFailure {
     /// The caller's native work or storage allowance was consumed.
     #[error("the native join budget was consumed: {0}")]
     Exhausted(Box<ExactTypeProjectionError>),
+    /// A source-enum input copy or coverage inspection was denied.
+    #[error(transparent)]
+    Rows(#[from] crate::NativeRowError),
+}
+
+#[derive(Debug, thiserror::Error)]
+enum IdentityRowsJoinError {
+    #[error(transparent)]
+    Projection(#[from] ExactTypeProjectionError),
+    #[error(transparent)]
+    Rows(#[from] crate::NativeRowError),
 }
 
 impl ReadIdentityRows {
@@ -1451,20 +1483,65 @@ impl ReadIdentityRows {
         if self.package != package.name() {
             return Err(IdentityWitnessRefusal::Foreign.into());
         }
-        self.join(package, budget).map_err(|refusal| {
-            if fsl_semantics::model::intake::is_native_budget_denial(&refusal) {
-                IdentityJoinFailure::Exhausted(Box::new(refusal))
-            } else {
-                IdentityWitnessRefusal::Unknown.into()
+        let selected = self
+            .join(package, budget)
+            .map_err(|refusal| match refusal {
+                IdentityRowsJoinError::Rows(error) => IdentityJoinFailure::Rows(error),
+                IdentityRowsJoinError::Projection(refusal) => {
+                    if fsl_semantics::model::intake::is_native_budget_denial(&refusal) {
+                        IdentityJoinFailure::Exhausted(Box::new(refusal))
+                    } else {
+                        IdentityWitnessRefusal::Unknown.into()
+                    }
+                }
+            })?;
+        self.source_enum_coverage(package, budget)
+            .map_err(|error| {
+                if error.denied().is_some() {
+                    IdentityJoinFailure::Rows(error)
+                } else {
+                    IdentityWitnessRefusal::Unknown.into()
+                }
+            })?;
+        Ok(selected)
+    }
+
+    fn source_enum_coverage(
+        &self,
+        package: &CheckedPackageV2,
+        budget: &mut NativeJoinBudget,
+    ) -> Result<(), crate::NativeRowError> {
+        let locus = crate::native_row::start(budget, "source_enum_coverage")?;
+        let mut required = 0_usize;
+        for node in &package.resolved_graph().nodes {
+            crate::native_row::work(budget, locus, 1)?;
+            if package.node_kind(&node.node_id)
+                == Some(filament_contract_model::CheckedNodeKind::ScalarType(
+                    filament_contract_model::ScalarTypeForm::Enum,
+                ))
+                && matches!(
+                    &node.owner,
+                    Some(filament_contract_model::CheckedNodeOwner::Source { .. })
+                )
+                && node.declaration.is_some()
+            {
+                required += 1;
             }
-        })
+        }
+        // The native join already proved each provided declaration is a
+        // unique member of this exact set. Equal cardinality proves coverage.
+        if required != self.source_enums.len() {
+            return Err(crate::NativeRowError::incomplete_enum(locus));
+        }
+        Ok(())
     }
 
     fn join(
         &self,
         package: &CheckedPackageV2,
         budget: &mut NativeJoinBudget,
-    ) -> Result<SelectedExactIdentities, ExactTypeProjectionError> {
+    ) -> Result<SelectedExactIdentities, IdentityRowsJoinError> {
+        let source_enums = source_enum::copy_rows(&self.source_enums, budget)?;
         let identities = SelectedExactIdentities::from_stage_rows(
             package,
             self.declarations.iter().cloned(),
@@ -1474,6 +1551,7 @@ impl ReadIdentityRows {
         .with_source_record_rows(package, self.source_records.iter().cloned(), budget)?
         .with_source_tuple_rows(package, self.source_tuples.iter().cloned(), budget)?
         .with_source_union_rows(package, self.source_unions.iter().cloned(), budget)?
+        .with_source_enum_rows(package, source_enums, budget)?
         .with_admitted_model_enum_rows(
             package,
             filament_contract_model::SelectedModelEnumRows {
@@ -1488,13 +1566,13 @@ impl ReadIdentityRows {
         if self.model_unions.is_empty() {
             return Ok(identities);
         }
-        identities.with_model_union_rows(
+        Ok(identities.with_model_union_rows(
             package,
             &[],
             &self.model_unions,
             filament_contract_model::ModelUnionScope::Full,
             budget,
-        )
+        )?)
     }
 
     /// The package the rows were produced for.
@@ -1530,6 +1608,11 @@ impl ReadIdentityRows {
     /// Original source-union producer rows, in declaration and payload order.
     pub fn source_unions(&self) -> &[SelectedSourceUnionRow] {
         &self.source_unions
+    }
+
+    /// Original source-enum declarations and canonical member rows.
+    pub fn source_enums(&self) -> &[filament_contract_model::SelectedSourceEnumRow] {
+        &self.source_enums
     }
 
     /// Original source-object rows, with final graph references.
@@ -1740,6 +1823,11 @@ impl ReadIdentityRows {
                 .into_iter()
                 .map(SourceUnionJson::row)
                 .collect::<Result<_, _>>()?,
+            source_enums: file
+                .source_enums
+                .into_iter()
+                .map(SourceEnumJson::row)
+                .collect::<Result<_, _>>()?,
             source_objects,
             source_object_member_facts,
             source_object_operations,
@@ -1769,8 +1857,12 @@ impl ReadIdentityRows {
                 .map(model_union::ModelUnionJson::row)
                 .collect::<Result<_, _>>()?,
         };
-        rows.join(package, budget)
-            .map_err(|error| IdentityFileRefusal::Native(Box::new(error)))?;
+        rows.join(package, budget).map_err(|error| match error {
+            IdentityRowsJoinError::Projection(error) => {
+                IdentityFileRefusal::Native(Box::new(error))
+            }
+            IdentityRowsJoinError::Rows(error) => IdentityFileRefusal::Rows(error),
+        })?;
         rows.selected_source_objects(package)?;
         rows.selected_source_operations(package, u64::MAX)?;
         Ok(rows)
@@ -1826,6 +1918,7 @@ impl ReadIdentityRows {
             source_records,
             source_tuples: Vec::new(),
             source_unions,
+            source_enums: Vec::new(),
             source_objects,
             source_object_member_facts,
             source_object_operations,
@@ -1835,6 +1928,14 @@ impl ReadIdentityRows {
             model_enum_shapes: Vec::new(),
             model_unions: Vec::new(),
         }
+    }
+
+    pub(crate) fn with_source_enums(
+        mut self,
+        enums: Vec<filament_contract_model::SelectedSourceEnumRow>,
+    ) -> Self {
+        self.source_enums = enums;
+        self
     }
 
     pub(crate) fn with_source_tuples(
@@ -1993,6 +2094,11 @@ impl ReadIdentityRows {
                 .source_unions
                 .iter()
                 .map(SourceUnionJson::of)
+                .collect::<Result<_, _>>()?,
+            source_enums: self
+                .source_enums
+                .iter()
+                .map(SourceEnumJson::of)
                 .collect::<Result<_, _>>()?,
             source_objects,
             source_operations: self
