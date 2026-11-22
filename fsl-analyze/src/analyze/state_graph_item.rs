@@ -135,14 +135,6 @@ struct Run<'r, 'a> {
 }
 
 impl<'a> Run<'_, 'a> {
-    /// The checked package of a source-route run; the package route has none.
-    fn package(&self) -> Option<&'a CheckedPackage> {
-        match self.source {
-            Source::Checked { package, .. } => Some(package),
-            Source::Bytes { .. } => None,
-        }
-    }
-
     fn simulation(&self) -> ModelSimulationRequest<'a> {
         ModelSimulationRequest {
             input: self.input.clone(),

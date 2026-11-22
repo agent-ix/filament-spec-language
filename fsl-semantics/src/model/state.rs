@@ -340,9 +340,7 @@ impl StateModel {
             .filter(|view| !view.is_source())
             .filter_map(|view| {
                 let model = crate::check::lowering::AdmittedModel::from_view(&view.view);
-                model
-                    .object_type_model_node_keys()
-                    .contains(node)
+                (model.object_type_model_node_keys().as_slice() == [node.clone()])
                     .then_some((model, view))
             });
         let (model, view) = matches.next()?;

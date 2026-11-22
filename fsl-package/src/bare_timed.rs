@@ -73,6 +73,18 @@ impl BarePackage<'_> {
                 return Err(bad());
             }
             let region = crate::checked_v2::source_region(region).map_err(|_| bad())?;
+            let Some(filament_contract_model::CheckedNodeOwner::Source {
+                authority,
+                identity,
+            }) = root.metadata.owner.as_ref()
+            else {
+                return Err(bad());
+            };
+            if region.source().authority() != authority.as_ref()
+                || region.source().identity() != identity.as_ref()
+            {
+                return Err(bad());
+            }
             let source = ModelTimeSource {
                 model: model.model().to_owned(),
                 model_node,

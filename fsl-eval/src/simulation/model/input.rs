@@ -591,7 +591,9 @@ impl<'p> PackageModelInput<'p> {
     /// `probabilistic` nodes carry, rebuilt as S3 records them against the
     /// selected domain packages (FSL FR-740), and its rewards are the ones
     /// its `reward` nodes carry, evaluated through their clause functions. It
-    /// carries no claim of the model, and its delay tables are empty.
+    /// carries no claim of the model. A dense time source with a source-owned
+    /// base Time dimension, direct unit and required direct clock fields is
+    /// read into delay tables; other timed forms refuse the input.
     ///
     /// # Errors
     ///
