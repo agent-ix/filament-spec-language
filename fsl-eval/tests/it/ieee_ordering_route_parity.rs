@@ -716,6 +716,7 @@ const SOURCE_OBJECT_UNIT: &str = "language \"ix:native\" edition \"1-draft\";\n\
     pre sqrtPre using v on Order::measure { \
     filament::value::ieee::sqrt(float64(bits: 0x4000000000000000)) <= \
     filament::value::ieee::sqrt(float64(bits: 0x4000000000000000)) }\n\
+    body B using v on Order::measure(n) { n }\n\
     invariant Sized using v on Order at current { self.measure(0) >= 0 }\n";
 
 /// QSL-2701 item 1 (FSpec FR-322): a source model's clause function is named
