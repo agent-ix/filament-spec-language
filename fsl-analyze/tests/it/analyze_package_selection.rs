@@ -670,8 +670,8 @@ fn an_invariant_named_over_a_package_is_never_an_unknown_claim() {
 }
 
 /// FR-940: package `claim_names` resolves named operation clauses to their
-/// claim occurrence, and FR-489 sends those operation-contract items through
-/// `contract-checker` instead of settling an unknown claim.
+/// claim occurrence, but cannot transport their operation-contract requirement
+/// records. Refuse that missing form before EN-2 can settle a fallback item.
 #[trace("TC-2702", "FR-489-AC-2")]
 #[test]
 fn named_operation_clauses_resolve_over_a_package() {
@@ -697,26 +697,31 @@ fn named_operation_clauses_resolve_over_a_package() {
         let source = analyze(&request);
         let (members, _) = package_selection(&ws, &request_of(&request));
         let run = analyze_members(&ws, &format!("analyze-{name}.json"), &members);
-        let item = run.item(0);
-        assert!(!item.to_string().contains("unknown-claim"), "{item}");
+        let item = source.item(0);
         assert_eq!(
             item["request"]["candidates"]["backends"],
             json!(["contract-checker"]),
             "{item}"
         );
-        assert_eq!(
-            item["request"]["candidates"],
-            source.item(0)["request"]["candidates"],
-            "source: {}; package: {}",
-            source.item(0),
-            item
+        let diagnostic = first_diagnostic(&run);
+        assert_eq!(diagnostic["cause"], "not-yet-implemented", "{diagnostic}");
+        let message = diagnostic["message"].as_str().expect("a refusal message");
+        assert!(
+            message.contains("operation-contract requirement record"),
+            "{message}"
         );
+        assert!(
+            message.contains(&format!("`{name}` (claim occurrence 0)")),
+            "{message}"
+        );
+        assert_eq!(run.document()["items"], json!([]));
     }
 }
 
 /// FR-940: package operation-contract claims with one shared structural node
 /// retain their distinct claim occurrence ordinals when names resolve. The
-/// later name must not fall back to the first state clause on that node.
+/// later name must not fall back to the first state clause on that node, even
+/// when the package route refuses the missing requirement-record form.
 #[trace("TC-2967", "FR-940-AC-7")]
 #[test]
 fn shared_operation_contract_node_keeps_each_named_occurrence() {
@@ -749,18 +754,26 @@ fn shared_operation_contract_node_keeps_each_named_occurrence() {
     assert_eq!(first["occurrence"]["ordinal"], 0);
     assert_eq!(second["occurrence"]["ordinal"], 1);
 
-    let run = analyze_members(&ws, "analyze-shared-operation-contract.json", &members);
-    assert_eq!(run.document()["items"], source.document()["items"]);
     for (index, expected_ordinal) in [0, 1].into_iter().enumerate() {
-        for (route, result) in [("source", &source), ("package", &run)] {
-            let item = result.item(index);
-            assert_eq!(item["claim_name"], items[index]["claim"], "{route}: {item}");
-            assert_eq!(
-                claim_ordinal(&item),
-                json!(expected_ordinal),
-                "{route}: {item}"
-            );
-        }
+        let item = source.item(index);
+        assert_eq!(item["claim_name"], items[index]["claim"]);
+        assert_eq!(claim_ordinal(&item), json!(expected_ordinal));
+        let mut selected = members.clone();
+        selected["items"] = json!([items[index].clone()]);
+        let run = analyze_members(&ws, &format!("analyze-shared-{index}.json"), &selected);
+        let diagnostic = first_diagnostic(&run);
+        assert_eq!(diagnostic["cause"], "not-yet-implemented", "{diagnostic}");
+        let message = diagnostic["message"].as_str().expect("a refusal message");
+        let name = items[index]["claim"].as_str().expect("the selected name");
+        assert!(
+            message.contains(&format!("`{name}` (claim occurrence {expected_ordinal})")),
+            "{message}"
+        );
+        assert!(
+            message.contains("operation-contract requirement record"),
+            "{message}"
+        );
+        assert_eq!(run.document()["items"], json!([]));
     }
 }
 
@@ -1563,8 +1576,11 @@ fn a_held_invariant_stays_proved_beside_a_refuted_one_over_a_package() {
     assert_eq!(label(&run.item(0)), "proved", "{}", run.document());
     assert_eq!(run.document()["items"], source.document()["items"]);
     for member in ["aggregate", "category"] {
-        assert_eq!(run.document()[member], source.document()[member], "{member}");
+        assert_eq!(
+            run.document()[member],
+            source.document()[member],
+            "{member}"
+        );
     }
     assert_eq!(run.exit, source.exit);
 }
-
