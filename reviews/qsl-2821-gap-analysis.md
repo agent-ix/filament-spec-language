@@ -86,3 +86,41 @@ Changed files examined:
 - FR-088-AC-8 — spec/functional/FR-088-clause-name-and-type-identity.md; role: examined; excerpt: `ValueTypeRef` is exactly the five-member union `{Clock, Native(NativeValueType), Package(DeclarationKey), Unit(String), Resolved(Box<ValueType>)}`; no sixth variant and no second definition exists, and no model field type is represented by a bare `NodeKey` or a raw string type name. `Clock` carries no fields (a place in a timed model, FR-230), and the `String` of `Unit` is a unit name the assembler resolves (FR-056-AC-42), not a type name. No production code outside the source-object assembler (FR-569 "The source model") constructs `Resolved`, domain package intake never does, and no serializ
 - FR-868-AC-3 — spec/functional/FR-868-refuse-a-version-or-digest-in-an-observation-document-s-model-header.md; role: examined; excerpt: An invocation document whose `model` carries `version` refuses the same way, naming `model.version`; and a compile request's `models` entry and an observation's `model` member each refuse an unknown member, so neither input accepts a member the other refuses.
 - spec/spec.md — spec/spec.md; role: examined; excerpt: name: filament-spec-language
+
+## Dispositions
+
+Round 1; inspected delta `04212f15809eef6cfdbf00935fbf955bef3369fb..1b5f2dd9189b7bc5c91bd61c31dd5ac79d320509`. Original findings above are unchanged.
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | The test module imports ix_trace_rs::trace; both cfg controls use the unqualified declared marker. The supplied Quire 0.52.0 trace result resolves FR-063-AC-3 with structural verifies claims for both exact test symbols. This is structural trace evidence, not runtime success. |
+| FND-002 | deferred | Inherited repository-wide traceability/extraction debt and exhaustive reverse inventory are outside this bounded red-main repair. The earlier repository audit remains FAIL; no new full matrix sweep was run and no repository-wide assurance PASS is claimed. This delivery only disposes the scoped source and new-control defects. |
+
+Current scoped disposition: **CONDITIONAL pending runtime**. No unresolved scoped source finding and no new finding in this confined fix delta. The ten original gate assertions and exact file/type/field classifications are unchanged. The delta touches only seam scan helpers, their controls and imported trace marker, plus custody copies of the original review artifacts. `git diff --check` passes. All builds, no-run compilations and the 32 exact named cases remain the lead/arch titan lane; none ran locally. No second full review or matrix sweep ran.
+
+The initial repository assurance verdict remains **FAIL** for the separately deferred baseline. The focused trace result is `/tmp/qsl-2821-fix-fr063-trace.json`; it has `resolved: true` and two structural verification claims. It establishes binding only.
+
+### Authorized runtime-fix round 2
+
+Authorized runtime-fix round 2, confined delta `1b5f2dd9189b7bc5c91bd61c31dd5ac79d320509..7e488e3f78111c940d9dc80024237a42e6ab9dc5`. No new finding in this delta. Earlier multiline cfg scanning and both declared trace markers remain unchanged; their prior fixed outcomes stand. Exact stage/diagnostic/wire exceptions are unchanged.
+
+- The profile call names its existing `value::definition` owner; the aggregate re-export points at that same function. The import gate is unchanged.
+- The full registry expectation adds exactly `en-7`, required by FR-489-AC-1/5 and the real Engines registrations. The separate exact OperationContract witness assertion remains `["contract-checker"]`; no capability rule changes.
+- The seam list names `convert_outcome_resolving`, which owns the exhaustive FamilyOutcome match and wildcard-denial attribute. `convert_outcome` delegates to that owner.
+- The qualification adapter sets the existing Call::canonical_values flag. FR-350 requires the public entry's typed result; FR-100/650 select the FR-181 owner writer. The existing runtime writes canonical completed values, and the existing adapter still takes the typed `result` from OutcomeDocument while retaining its complete native bytes separately for repeated-execution determinism. No translator, copied writer or new output grammar is introduced. The eight independently authored local expected-result literals and three integer value lookups follow the canonical Integer/Boolean shape. CallInput kind/decimal argument tags, wrong-result detection, retained bytes and determinism assertions remain intact. With no wire_arguments, the existing source call admission uses the already decoded native arguments; selecting canonical output does not reinterpret these corpus arguments.
+
+Current scoped disposition: **CONDITIONAL pending runtime** for the 39 exact queued cases and titan compile checks. No local builds, tests, repository executables or full matrix sweep ran. `git diff --check` passes. The earlier repository-wide gap verdict and deferred baseline remain unchanged. This round adds no new finding and no new finding-outcome row; every original finding already has a fixed or deferred disposition.
+
+Examined additional requirement scope:
+
+- FR-489-AC-1; spec/functional/FR-489-build-the-production-linked-provider-registry.md; role: examined; excerpt: A production snapshot built from `fsl_analyze::Engines::fsl()` contains exactly the engine descriptors that collection exposes, including EN-1, EN-4, EN-6, EN-7, `value-checker` and `contract-checker`, and no descriptor without its engine implementation.
+- FR-489-AC-5; spec/functional/FR-489-build-the-production-linked-provider-registry.md; role: examined; excerpt: `Engines::registrations()` yields exactly the descriptors owned by the EN-1, EN-4, EN-5, EN-6, EN-7 (`en-7`, advertising `schedulability`), `value-checker`, `contract-checker` and `protocol-analysis` engines in `Engines::fsl()`; `xtask` declares `fsl-analyze` as a normal dependency and its production factory registers each yielded descriptor once.
+- FR-350; spec/functional/FR-350-run-the-conformance-corpus-against-fsl.md; role: examined; excerpt: Settlement compares the subject's typed result with `expected.value`.
+- FR-100; spec/functional/FR-100-run-a-named-function-through-the-spine.md; role: examined; excerpt: A completed value is serialized in FSpec FR-181's tagged canonical form,
+- FR-650; spec/functional/FR-650-carry-every-argument-and-result-kind-of-a-run-in-the-native-value-grammar.md; role: examined; excerpt: The public `fsl_command::command::run` family SHALL read function-call arguments and write completed call values in FSpec FR-181's tagged canonical form.
+
+## Final acceptance
+
+**COMPLETE for this scoped delivery.** The code lead supplied final arch/titan evidence for source `7e488e3f78111c940d9dc80024237a42e6ab9dc5`, merged as `b3c06de73787bb573a354adfc15b01e4ffa94b10`: all compile checks exit 0; all 39 named cases pass (20 library, 2 consumer-facade, 1 facade-feature, 9 qualification-adapter and 7 outside-consumer cases); the merged workspace compile gate exits 0. This supersedes the earlier runtime-pending conditions. Earlier scoped findings remain fixed; no additional review, matrix sweep or local test ran for this evidence-only update.
+
+The separately deferred repository-wide assurance baseline remains unchanged; scoped completion does not claim a repository-wide gap-analysis PASS.
