@@ -556,7 +556,7 @@ mod tests {
             )
             .unwrap();
             evidence
-                .insert_domain_package_document(model_fixture::PACKAGE, &document)
+                .insert_domain_package_document(model_fixture::PACKAGE, document.as_slice())
                 .unwrap();
             crate::CheckedPackage::link(
                 declarations
@@ -942,17 +942,12 @@ mod tests {
     #[test]
     fn source_enum_catalog_nested_identity_scratch_denies_before_allocating() {
         let child = NodeKey::new(
-            "pkg".into(),
+            "pkg",
             vec![filament_exact::PathSegment::Text("decl".into())],
             0,
         )
         .unwrap();
-        let key = NodeKey::new(
-            "pkg".into(),
-            vec![filament_exact::PathSegment::Node(child)],
-            0,
-        )
-        .unwrap();
+        let key = NodeKey::new("pkg", vec![filament_exact::PathSegment::Node(child)], 0).unwrap();
         let mut budget = NativeJoinBudget::new(u64::MAX, 0);
         let error = node_equal(
             &key,
