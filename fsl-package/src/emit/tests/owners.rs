@@ -514,3 +514,87 @@ fn a_source_enum_and_member_carry_structural_ids_path_and_source_owner() {
         assert!(node.get("nominal_identity_preimage").is_none());
     }
 }
+
+/// FR-098-AC-34: the function ids and modes `function_check_modes` reads from
+/// the typed nodes spell exactly what the emitted bytes record, for a package
+/// with a declared function and clause functions (ids that hold operand
+/// slots), so a replay compares one id form on both sides.
+#[trace("FR-098-AC-34", "TC-1784")]
+#[test]
+fn function_check_modes_spell_the_ids_the_emitted_bytes_record() {
+    let emission = emit(&acme_dispatch_package("Order/count"));
+    let document = quire_canonical::read(emission.package().bytes(), u64::MAX).unwrap();
+    let root = document.root();
+    let nodes = match member(&root, "semantic_graph")
+        .and_then(|graph| member(&graph, "nodes"))
+        .map(|nodes| nodes.node())
+    {
+        Some(quire_canonical::Node::Array(nodes)) => nodes,
+        other => panic!("semantic_graph.nodes is an array: {other:?}"),
+    };
+    let recorded: Vec<(Vec<u8>, Option<String>)> = nodes
+        .filter(|node| {
+            matches!(
+                member(node, "node_tag").map(|tag| tag.node()),
+                Some(quire_canonical::Node::String("function"))
+            )
+        })
+        .map(|node| {
+            let id = quire_canonical::to_vec(
+                &member(&node, "node_id").expect("a node id"),
+                quire_canonical::Limits::new(u64::MAX),
+            )
+            .unwrap();
+            let mode = member(&node, "check_mode").and_then(|mode| match mode.node() {
+                quire_canonical::Node::String(mode) => Some(mode.to_owned()),
+                _ => None,
+            });
+            (id, mode)
+        })
+        .collect();
+    let typed: Vec<(Vec<u8>, Option<String>)> = emission
+        .function_check_modes(crate::EmitLimits::fixture())
+        .unwrap()
+        .into_iter()
+        .map(|(id, mode)| {
+            (
+                quire_canonical::to_vec(&id, quire_canonical::Limits::new(u64::MAX)).unwrap(),
+                mode.map(str::to_owned),
+            )
+        })
+        .collect();
+    assert!(
+        recorded.len() >= 4,
+        "a declared function and the clause functions: {}",
+        recorded.len()
+    );
+    let document_form: Vec<Vec<u8>> = emission
+        .wire_nodes
+        .iter()
+        .filter(|node| &*node.node_tag == "function")
+        .map(|node| {
+            quire_canonical::to_vec(&node.node_id, quire_canonical::Limits::new(u64::MAX)).unwrap()
+        })
+        .collect();
+    assert!(
+        document_form
+            .iter()
+            .zip(&recorded)
+            .any(|(document, (recorded, _))| document != recorded),
+        "some function id holds an operand slot, so the typed form differs from the bytes"
+    );
+    assert_eq!(typed, recorded);
+}
+
+fn member<'d>(
+    node: &quire_canonical::NodeRef<'d>,
+    name: &str,
+) -> Option<quire_canonical::NodeRef<'d>> {
+    match node.node() {
+        quire_canonical::Node::Object(members) => members
+            .into_iter()
+            .find(|(key, _)| *key == name)
+            .map(|(_, value)| value),
+        _ => None,
+    }
+}

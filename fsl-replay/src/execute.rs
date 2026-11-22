@@ -2213,21 +2213,11 @@ pub(crate) fn recompile_with_temporal_selections(
             ));
         }
     }
-    // The recompile's own typed nodes carry each function's mode; its bytes are
-    // not parsed again.
-    let recompiled_modes: std::collections::BTreeMap<Vec<u8>, Option<String>> = compiled
-        .emitted
-        .emission()
-        .function_check_modes()
-        .map(|(id, mode)| {
-            (
-                quire_canonical::to_vec(id, quire_canonical::Limits::new(u64::MAX))
-                    .unwrap_or_default(),
-                mode.map(str::to_owned),
-            )
-        })
-        .collect();
-    verify_recorded_modes(request.package().document(), &recompiled_modes)?;
+    check_recorded_modes(
+        request.package().document(),
+        compiled.emitted.emission(),
+        limits.spine.package.emit(),
+    )?;
     request
         .package()
         .admit(&evidence, limits.spine.imports.for_ir())
@@ -3206,22 +3196,30 @@ fn charges(consumed: impl IntoIterator<Item = (LimitKind, u64)>) -> ScalarLimits
     charges
 }
 
-/// FR-098-AC-34: [`verify_recorded_modes`] over the function records of the
-/// recompiled package bytes.
-#[cfg(test)]
+/// FR-098-AC-34: [`verify_recorded_modes`] over the recompile's function nodes,
+/// read from its typed nodes (not its bytes) with each id spelled as the
+/// emitted bytes spell it, the form `function_records` reads from the
+/// proving package.
 fn check_recorded_modes(
     recorded: &quire_canonical::Document,
-    recompiled: &[u8],
+    recompiled: &fsl_package::Emission,
+    limits: fsl_package::EmitLimits,
 ) -> Result<(), ReplayRefusal> {
-    let recompiled_modes: std::collections::BTreeMap<Vec<u8>, Option<String>> =
-        quire_canonical::read(recompiled, u64::MAX)
-            .ok()
-            .as_ref()
-            .map(crate::ReplayPackage::function_records)
-            .unwrap_or_default()
-            .into_iter()
-            .map(|record| (record.node_id, record.mode))
-            .collect();
+    let recompiled_modes = recompiled
+        .function_check_modes(limits)
+        .map_err(|refusal| ReplayRefusal::Recompile {
+            refusal: Box::new(CompileRefusal::Emit(refusal, None)),
+            pointer: None,
+        })?
+        .into_iter()
+        .map(|(id, mode)| {
+            (
+                quire_canonical::to_vec(&id, quire_canonical::Limits::new(u64::MAX))
+                    .unwrap_or_default(),
+                mode.map(str::to_owned),
+            )
+        })
+        .collect();
     verify_recorded_modes(recorded, &recompiled_modes)
 }
 

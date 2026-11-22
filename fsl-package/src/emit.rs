@@ -1557,15 +1557,32 @@ impl Emission {
     }
 
     /// The `function` nodes of the emitted graph in node order, each with its
-    /// node id and recorded `check_mode` spelling, read from the typed nodes
-    /// these bytes were encoded from so no reader parses the bytes again.
+    /// node id as the emitted bytes spell it (operand-slot segments) and its
+    /// recorded `check_mode` spelling, taken from the typed nodes these bytes
+    /// were encoded from so no reader parses the bytes again. The typed nodes
+    /// hold document indices; each function node is rewritten to operand
+    /// slots one at a time, by the same pass that wrote the bytes, so the id
+    /// is the one `function_records` reads back from the bytes.
+    ///
+    /// # Errors
+    ///
+    /// The canonical output-limit failure or an identity invariant refusal of
+    /// the operand-slot pass.
     pub fn function_check_modes(
         &self,
-    ) -> impl Iterator<Item = (&CheckedNodeId, Option<&'static str>)> + '_ {
-        self.wire_nodes
-            .iter()
-            .filter(|node| &*node.node_tag == "function")
-            .map(|node| (&node.node_id, node.check_mode.map(|mode| mode.as_str())))
+        limits: EmitLimits,
+    ) -> Result<Vec<(CheckedNodeId, Option<&'static str>)>, EmitRefusal> {
+        let mut modes = Vec::new();
+        for node in self.wire_nodes.iter() {
+            if CheckedNodeTag::from_wire(&node.node_tag) != Some(CheckedNodeTag::Function) {
+                continue;
+            }
+            let mut slotted = [node.clone()];
+            write_operand_slots(&mut slotted, limits)?;
+            let [slotted] = slotted;
+            modes.push((slotted.node_id, node.check_mode.map(|mode| mode.as_str())));
+        }
+        Ok(modes)
     }
 
     /// FSL-owned identity rows keyed by equality application and occurrence.
