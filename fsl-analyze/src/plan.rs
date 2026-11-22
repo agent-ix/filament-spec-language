@@ -935,8 +935,9 @@ fn simulate(
     };
     use crate::analyze::simulation_item::SimulationFault;
     use filament_semantic_value::catalog::Category;
+    let input = fsl_eval::simulation::model::ModelCheckInput::source(package);
     let (runs, category) =
-        match crate::analyze::simulation_item::simulate(package, binding, limits, &item, cancel) {
+        match crate::analyze::simulation_item::simulate(&input, binding, limits, &item, cancel) {
             Ok(done) => done,
             // The subject did not admit: that step is declined, and its
             // siblings still run (FSpec FR-824).
