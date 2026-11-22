@@ -432,3 +432,81 @@ fn an_equality_function_runs_over_a_file_with_its_equality_file() {
     names(&value, "missing-file");
     names(&value, "/request/package/equality");
 }
+
+/// FR-1039-AC-7 (the defect half): FR-1039-AC-6's `Low` package with its
+/// `temporal_clause_names` member removed refuses the whole request at stage
+/// `request`, exit 20, `invalid_package`/`invalid-value` at
+/// `/request/package/temporal_clause_names`; with the `temporal_profile` law of
+/// the `Low` node naming `filament.temporal.unknown/v1` it refuses
+/// `unknown_profile`/`unsupported-selection` at
+/// `/request/package/semantic_graph/nodes/{n}/body/operation/laws/0/definition`.
+/// Neither answer carries a `tl_lowering` record.
+#[test]
+#[trace("TC-3019", "FR-1039-AC-7")]
+fn a_defective_lowering_input_refuses_the_whole_request() {
+    let unit = "language \"ix:native\" edition \"1-draft\";\n\
+                profile t = \"filament.temporal.event-position.false-extension/v1\";\n\
+                model Config = \"example/config-version\";\n\
+                temporal Low using t over (c: Config::ConfigVersion) clock \"model-steps\" \
+                on origin { always [0, 3] holds(c.versionNumber <= 2) }\n";
+    let directory = tempfile::tempdir().unwrap();
+    crate::support::config_version_spine::spine::write(
+        directory.path(),
+        crate::support::config_version_spine::Case::Healthy,
+    )
+    .unwrap();
+    let models = json!([{"format": "semantic-ir/2.0.0",
+        "source": source("spine-model.semantic-ir.json")}]);
+    compile(directory.path(), unit, json!({"models": models}));
+    let wire: Value =
+        serde_json::from_slice(&std::fs::read(directory.path().join("package.json")).unwrap())
+            .unwrap();
+    let lower = |package: &str| {
+        run(
+            directory.path(),
+            json!({"models": models, "package": {"file": package},
+                "tl_lowering": {"clause": "Low"}}),
+        )
+    };
+    let (exit, value) = lower("package.json");
+    assert_eq!(exit, 0, "the undamaged package lowers: {value}");
+    assert!(value.get("tl_lowering").is_some(), "{value}");
+
+    let mut without_names = wire.clone();
+    without_names
+        .as_object_mut()
+        .unwrap()
+        .remove("temporal_clause_names");
+    std::fs::write(
+        directory.path().join("no-names.json"),
+        without_names.to_string(),
+    )
+    .unwrap();
+    let (exit, value) = lower("no-names.json");
+    assert_eq!(exit, 20, "{value}");
+    assert_eq!(value["stage"], "request", "{value}");
+    assert_eq!(value["code"], "invalid_package", "{value}");
+    assert_eq!(value["cause"], "invalid-value", "{value}");
+    names(&value, "/request/package/temporal_clause_names");
+    assert!(value.get("tl_lowering").is_none(), "{value}");
+
+    let mut unknown = wire.clone();
+    let nodes = unknown["semantic_graph"]["nodes"].as_array_mut().unwrap();
+    let index = nodes
+        .iter()
+        .position(|node| node["body"]["operation"]["laws"][0]["role"] == "temporal_profile")
+        .expect("the Low node carries a temporal_profile law");
+    nodes[index]["body"]["operation"]["laws"][0]["definition"]["identity"] =
+        json!("filament.temporal.unknown/v1");
+    std::fs::write(directory.path().join("unknown.json"), unknown.to_string()).unwrap();
+    let (exit, value) = lower("unknown.json");
+    assert_eq!(exit, 20, "{value}");
+    assert_eq!(value["stage"], "request", "{value}");
+    assert_eq!(value["code"], "unknown_profile", "{value}");
+    assert_eq!(value["cause"], "unsupported-selection", "{value}");
+    names(
+        &value,
+        &format!("/request/package/semantic_graph/nodes/{index}/body/operation/laws/0/definition"),
+    );
+    assert!(value.get("tl_lowering").is_none(), "{value}");
+}
