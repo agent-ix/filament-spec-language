@@ -38,7 +38,7 @@ use ix_trace_rs::trace;
 use crate::counter::UNLIMITED;
 use crate::fill::{attempt, contracts, document, instance, protocol, universe};
 use crate::model_settle::{envelope_at, request};
-use crate::protocol_counted_steps::{claim, Case, CellV};
+use crate::protocol_counted_steps::{claim, closure_check_over, tp3, Case, CellV};
 
 /// A `repeat` around a `parallel` of two empty branches: the loop is `fork`
 /// then `join`.
@@ -550,7 +550,7 @@ fn echo_infinite(scheduling: &str, formula: &str) -> Case {
 const ECHO_RUN: &str = "sequence Main { send Snd via ch as (s: Boolean) { s }; \
                        receive Rcv via ch of Snd as (r: Boolean) { r }; }";
 
-fn echo_body(scheduling: &str) -> String {
+pub(crate) fn echo_body(scheduling: &str) -> String {
     let members = format!(
         "channel ch from w to w carries Boolean ordering fifo by (m: Boolean) \
                    {{ true }} delivery unknown capacity 2 overflow block; {scheduling}"
@@ -1369,4 +1369,131 @@ fn a_protocol_subject_refuses_a_closure_step_before_executing_the_prefix() {
             }
         );
     }
+}
+
+/// FR-338-AC-31 (`Echo`): the `on each` clause `holds(k.v = 0) implies
+/// eventually[1,2] holds(k.v = 0)` has open debt only at an activation after
+/// the origin, because the counted `send` discharges the origin's. Its
+/// `duplicate` and `lose` steps are uncounted, so the loop they form keeps the
+/// later activations' debt open. The certificate holding every reached product
+/// state of the run is offered under two requests. The default package's root
+/// scheduler constraint never takes the loop while `Rcv` stays enabled, so the
+/// loop is unfair and the core accepts it, FR-127 settling `proved`,
+/// `Certified`. Under `scheduling adversarial` the loop is fair: the engine
+/// returns `Violated` with prefix `send` and loop `duplicate`, `lose`, which
+/// the production replay refutes, and the same certificate is rejected
+/// `WitnessFails` at the product state of the loop, not at the origin, which a
+/// checker that starts the negated root only at the origin would accept
+/// wrongly. `max_states` one below the closure stops `LimitReached{MaxStates}`.
+#[trace("TC-525", "FR-338-AC-31")]
+#[trace("TC-525", "FR-127-AC-1")]
+#[test]
+#[ignore = "QSL-2751 remainder (ARCH files): Echo on-each TP-3 protocol check returns Key(Unresolved), so the fair uncounted-loop judgement is not reached"]
+fn an_on_each_tp3_debt_after_the_origin_is_judged_by_the_fair_uncounted_loop() {
+    use fsl_replay::{
+        CertificateLocus, CertificateRejection, CertificateRule, Certification, ModelCheckLimit,
+        ModelCheckLimits, ProofBasis, ProofCertificate, ResultLabel, TemporalCertificateCheck,
+        TerminalValue,
+    };
+    let each = "holds(k.v = 0) implies eventually[1,2] holds(k.v = 0)";
+    let build = |scheduling: &str| {
+        Case::new(&(echo_body(scheduling) + &tp3("on each (q: M::Cell)", each)))
+    };
+    let letters = CellV(is_zero);
+
+    let fair = build("");
+    let outcome = fair.check("Echo", &letters);
+    let ModelCheckOutcome::Holds {
+        certificate: ProofCertificate::Closure(certificate),
+        ..
+    } = &outcome
+    else {
+        panic!("the default scheduler excludes the loop: {:?}", outcome.stats());
+    };
+    assert_eq!(
+        closure_check_over(&fair, "Echo", &letters, certificate),
+        TemporalCertificateCheck::Accepted
+    );
+    assert_eq!(
+        fair.record("Echo", &letters, &outcome).value,
+        TerminalValue::Proved {
+            basis: ProofBasis::Exhaustive,
+            certification: Certification::Certified,
+        }
+    );
+
+    let adversarial = build("scheduling adversarial;");
+    let outcome = adversarial.check("Echo", &letters);
+    let ModelCheckOutcome::Violated { counterexample, .. } = &outcome else {
+        panic!("the adversarial scheduler admits the loop: {:?}", outcome.stats());
+    };
+    let lasso = counterexample.lasso.as_ref().expect("a lasso");
+    let (stem, cycle) = counterexample.prefix.split_at(lasso.entry);
+    assert_eq!(
+        stem.iter()
+            .map(|step| step.transition.kind())
+            .collect::<Vec<_>>(),
+        [StepKind::Send]
+    );
+    assert_eq!(
+        cycle
+            .iter()
+            .map(|step| step.transition.kind())
+            .collect::<Vec<_>>(),
+        [StepKind::Duplicate, StepKind::Lose]
+    );
+    assert_eq!(
+        adversarial.label("Echo", &letters, &outcome),
+        ResultLabel::Refuted
+    );
+
+    let TemporalCertificateCheck::Rejected(CertificateRejection {
+        rule: CertificateRule::WitnessFails,
+        at: CertificateLocus::ProductState(at),
+    }) = closure_check_over(&adversarial, "Echo", &letters, certificate)
+    else {
+        panic!("the fair loop keeps a later activation's debt open");
+    };
+    let subject = adversarial.subject("Echo");
+    let system = crate::fill::sc_system(&subject).with_cycle_keys(BTreeSet::new());
+    let origin = system.initial().remove(0);
+    let (_, sent) = system
+        .successors(&origin)
+        .expect("expansion")
+        .successors
+        .into_iter()
+        .find(|(step, _)| step.kind() == StepKind::Send)
+        .expect("the send is enabled");
+    let key = |state| {
+        let (bytes, _) = system.state_key(state).expect("encodes");
+        fsl_eval::simulation::StateKey::from_canonical_bytes(bytes)
+    };
+    assert_ne!(at.model_state, key(&origin), "not at the origin");
+    assert_eq!(at.model_state, key(&sent), "at the loop's product state");
+
+    let mut limits = ModelCheckLimits::default();
+    limits.limits.max_states = certificate.states.len() - 1;
+    assert_eq!(
+        fsl_replay::check_protocol_closure(
+            &fsl_replay::ProtocolCertificateRequest {
+                temporal_clock_selections: &fair.temporal_clock_selections,
+                subject: fair.subject("Echo"),
+                item: fsl_replay::ModelCheckItem::Clause {
+                    clause: fair.clause(),
+                    letters: &letters,
+                },
+                max_store_buffer: None,
+                max_messages: None,
+                max_live_instances: None,
+            },
+            certificate,
+            &limits,
+            &filament_exact::Cancel::new(),
+        )
+        .expect("checked"),
+        TemporalCertificateCheck::Stopped(fsl_replay::IncompleteCause::LimitReached {
+            limit: ModelCheckLimit::MaxStates,
+            value: u64::try_from(certificate.states.len() - 1).expect("a small closure"),
+        })
+    );
 }

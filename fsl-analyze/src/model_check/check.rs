@@ -835,24 +835,14 @@ pub fn check_protocol_constrained(
             value: live_instances,
         });
     let (instances, root_cancelled) = if certified {
-        let instances = match request.item {
-            ModelCheckItem::LoopInvariant { .. } | ModelCheckItem::LoopTermination { .. } => {
-                request.item.instances_for(
-                    &subject.model,
-                    &model,
-                    request.temporal_clock_selections,
-                    cancel,
-                    SubjectKind::Protocol,
-                    max_automaton_states,
-                )
-            }
-            _ => request.item.instances(
-                &subject.model,
-                &model,
-                request.temporal_clock_selections,
-                cancel,
-            ),
-        };
+        let instances = request.item.instances_for(
+            &subject.model,
+            &model,
+            request.temporal_clock_selections,
+            cancel,
+            SubjectKind::Protocol,
+            max_automaton_states,
+        );
         match instances {
             Ok(instances) => (instances, None),
             Err(ItemRefusal::ClauseRoot(ClauseRootRefusal::Cancelled(cause))) => {
@@ -1804,13 +1794,13 @@ fn prepare(
     // certificate.
     let guarded = matches!(clause.activation(), Activation::Each { guarded: true });
     let each = matches!(clause.activation(), Activation::Each { .. });
-    // An infinite-trace TP-3 clause on origin over a model subject, whose
-    // steps all count, is keyed by its monitor's viable configurations (FR-338
-    // `["safety", branches]`). A protocol subject's steps that do not count
-    // need the non-progress search, so its TP-3 proof carries no certificate.
+    // An infinite-trace TP-3 clause, `on origin` or `on each` guarded or not,
+    // over a model or a protocol subject, is keyed by its monitor's viable
+    // configurations (FR-338 `["safety", branches]`). A protocol subject's
+    // steps that do not count are searched for a fair non-progress cycle
+    // before the run settles `Holds` (`zero_progress`), so its certificate is
+    // one the checker accepts only when that search finds none.
     let monitored = form == Some(PropertyForm::Safety)
-        && counting == Counting::Every
-        && clause.activation() == Activation::Origin
         && invariant_atom(clause).is_none()
         && is_safety_translated(clause);
     let certified = (!guarded

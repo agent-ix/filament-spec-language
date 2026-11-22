@@ -393,13 +393,13 @@ impl ModelCheckItem<'_> {
                                     clause, &context,
                                 )?)
                             }
-                        } else if invariant_atom(clause).is_none()
-                            && clause.activation() == Activation::Origin
-                            && tp4.is_some_and(|tp4| tp4.subject_kind == SubjectKind::Ordinary)
-                            && is_safety_translated(clause)
-                        {
+                        } else if let Some(tp4) = tp4.filter(|_| {
+                            invariant_atom(clause).is_none() && is_safety_translated(clause)
+                        }) {
+                            // An infinite-trace TP-3 clause under either
+                            // activation, over either subject kind.
                             Translation::Monitored(
-                                SafetyStates::clause(clause, &context, SubjectKind::Ordinary)
+                                SafetyStates::clause(clause, &context, tp4.subject_kind)
                                     .map_err(ItemRefusal::Translation)?,
                             )
                         } else {

@@ -16,7 +16,7 @@ use fsl_analyze::model_check::{
 use fsl_eval::model_subject::{AtomStop, ModelInstance, ModelLetters, ProtocolSubject};
 use fsl_eval::simulation::model::{ExpansionLimits, ModelSimState};
 use fsl_eval::simulation::protocol::{
-    PositionAnchor, ProtocolSystem, ProtocolTransition, Sc, StepKind,
+    PositionAnchor, ProtocolState, ProtocolSystem, ProtocolTransition, Sc, StepKind,
 };
 use fsl_eval::simulation::{SubjectSystem, TransitionSystem};
 use fsl_eval::temporal::{
@@ -27,10 +27,11 @@ use fsl_foundation::source::provenance::OccurrenceKey;
 use fsl_package::CheckedPackage;
 use fsl_replay::{
     check_protocol_closure, replay_protocol_trace_with_temporal_selections, settle_protocol_check,
-    CertificateLocus, CertificateRejection, CertificateRule, ModelCheckItem, ModelCheckLimits,
-    ModelCheckOutcome, ModelTraceSubject, ProductStateRef, ProofCertificate,
-    ProtocolCertificateRequest, ProtocolTraceSubject, ReplayLimits, ResultLabel,
-    TemporalCertificateCheck, TemporalCounterexample,
+    CertificateLocus, CertificateRejection, CertificateRule, Certification, ClauseIdentity,
+    ClosureCertificate, IncompleteCause, ModelCheckItem, ModelCheckLimit, ModelCheckLimits,
+    ModelCheckOutcome, ModelCheckRecord, ModelTraceSubject, ProductStateRef, ProofBasis,
+    ProofCertificate, ProtocolCertificateRequest, ProtocolTraceSubject, ReplayLimits, ResultLabel,
+    TemporalCertificateCheck, TemporalCounterexample, TerminalValue,
 };
 use fsl_semantics::check::{CheckedTemporalClause, FormulaNodeId};
 use fsl_semantics::model::observation::DocumentRef;
@@ -118,12 +119,22 @@ impl Case {
     }
 
     /// FR-127's label of `outcome`, its counterexample replayed by FR-217.
-    fn label(
+    pub(crate) fn label(
         &self,
         protocol: &str,
         letters: &dyn ModelLetters,
         outcome: &ModelCheckOutcome<ProtocolTransition>,
     ) -> ResultLabel {
+        self.record(protocol, letters, outcome).label
+    }
+
+    /// FR-127's record of `outcome`, its counterexample replayed by FR-217.
+    pub(crate) fn record(
+        &self,
+        protocol: &str,
+        letters: &dyn ModelLetters,
+        outcome: &ModelCheckOutcome<ProtocolTransition>,
+    ) -> ModelCheckRecord<ProtocolTransition> {
         let unit = unit_text(&self.body).into_bytes();
         let node = &self.checked.graph().temporal_clauses()[0];
         let clause_node = node.identity().clone();
@@ -163,7 +174,7 @@ impl Case {
                 ReplayLimits::default(),
             )
         };
-        let record = settle_protocol_check(
+        settle_protocol_check(
             outcome,
             &ModelCheckLimits::default(),
             &ProtocolCertificateRequest {
@@ -179,8 +190,7 @@ impl Case {
             },
             &Cancel::new(),
             replay,
-        );
-        record.label
+        )
     }
 }
 
@@ -855,20 +865,54 @@ fn closure_check(
     let ProofCertificate::Closure(certificate) = certificate else {
         panic!("a safety clause holds with a closure: {certificate:?}");
     };
+    closure_check_over(case, "P", letters, certificate)
+}
+
+/// [`closure_check`] over `protocol`, for a closure `certificate`.
+pub(crate) fn closure_check_over(
+    case: &Case,
+    protocol: &str,
+    letters: &dyn ModelLetters,
+    certificate: &ClosureCertificate,
+) -> TemporalCertificateCheck {
+    closure_check_with(case, protocol, letters, certificate, &ModelCheckLimits::default())
+}
+
+/// [`closure_check_over`] under `limits`.
+fn closure_check_with(
+    case: &Case,
+    protocol: &str,
+    letters: &dyn ModelLetters,
+    certificate: &ClosureCertificate,
+    limits: &ModelCheckLimits,
+) -> TemporalCertificateCheck {
+    closure_check_bounded(case, protocol, letters, certificate, limits, (None, None, None))
+}
+
+/// [`closure_check_with`] under the request bounds `(max_store_buffer,
+/// max_messages, max_live_instances)`.
+fn closure_check_bounded(
+    case: &Case,
+    protocol: &str,
+    letters: &dyn ModelLetters,
+    certificate: &ClosureCertificate,
+    limits: &ModelCheckLimits,
+    (max_store_buffer, max_messages, max_live_instances): (Option<u64>, Option<u64>, Option<u64>),
+) -> TemporalCertificateCheck {
     check_protocol_closure(
         &ProtocolCertificateRequest {
             temporal_clock_selections: &case.temporal_clock_selections,
-            subject: case.subject("P"),
+            subject: case.subject(protocol),
             item: ModelCheckItem::Clause {
                 clause: case.clause(),
                 letters,
             },
-            max_store_buffer: None,
-            max_messages: None,
-            max_live_instances: None,
+            max_store_buffer,
+            max_messages,
+            max_live_instances,
         },
         certificate,
-        &ModelCheckLimits::default(),
+        limits,
         &Cancel::new(),
     )
     .expect("the request is checked")
@@ -1072,17 +1116,19 @@ fn a_protocol_subject_certificate_with_the_bounded_each_translation_is_refused()
     );
 }
 
-/// FR-338-AC-29: a TP-3 clause over a protocol subject has no certificate.
-/// `always (p implies eventually[0,5] p)` holds over the repaired `Fill`
-/// with an empty closure certificate, which the core refuses to admit, so
-/// FR-127 settles it `failed`, never `proved`.
-#[trace("TC-525", "FR-338-AC-29")]
+/// FR-338-AC-31: a TP-3 clause over a protocol subject carries a certificate
+/// the core accepts. `always (p implies eventually[0,5] p)` holds over the
+/// repaired `Fill` with a non-empty closure certificate, and FR-127 settles it
+/// `proved`, `Certified`; the empty certificate is no proof of it.
+#[trace("TC-525", "FR-338-AC-31")]
 #[test]
-fn a_tp3_proof_over_a_protocol_subject_never_settles_proved() {
+fn a_tp3_proof_over_a_protocol_subject_settles_certified() {
     let case = Case::new(
         &(fill_unit("self.v <= 1", "")
-            + "temporal Claim using t0 over (k: M::Cell) clock \"model-steps\" on origin \
-               { always (holds(k.v <= 3) implies eventually[0,5] holds(k.v <= 3)) }\n"),
+            + &tp3(
+                "on origin",
+                "always (holds(k.v <= 3) implies eventually[0,5] holds(k.v <= 3))",
+            )),
     );
     let letters = CellV(|_| true);
     let outcome = case.check("Fill", &letters);
@@ -1092,9 +1138,514 @@ fn a_tp3_proof_over_a_protocol_subject_never_settles_proved() {
     let ProofCertificate::Closure(certificate) = certificate else {
         panic!("a safety clause holds with a closure: {certificate:?}");
     };
-    assert!(certificate.states.is_empty(), "{certificate:?}");
+    assert!(!certificate.states.is_empty(), "{certificate:?}");
     assert_eq!(
-        case.label("Fill", &letters, &outcome),
-        ResultLabel::Failed
+        closure_check_over(&case, "Fill", &letters, certificate),
+        TemporalCertificateCheck::Accepted
     );
+    assert_eq!(
+        case.record("Fill", &letters, &outcome).value,
+        TerminalValue::Proved {
+            basis: ProofBasis::Exhaustive,
+            certification: Certification::Certified,
+        }
+    );
+    let emptied = ClosureCertificate { states: Vec::new() };
+    assert!(matches!(
+        closure_check_over(&case, "Fill", &letters, &emptied),
+        TemporalCertificateCheck::Rejected(CertificateRejection {
+            rule: CertificateRule::InitialMissing,
+            ..
+        })
+    ));
+}
+
+/// A `Claim` over `k: M::Cell` under the infinite-trace profile, with
+/// `activation` (`on origin`, `on each (q: M::Cell)`).
+pub(crate) fn tp3(activation: &str, formula: &str) -> String {
+    format!(
+        "temporal Claim using t0 over (k: M::Cell) clock \"model-steps\" {activation} \
+         {{ {formula} }}\n"
+    )
+}
+
+fn at_least_one(value: i64) -> bool {
+    value >= 1
+}
+
+/// Letters whose atom `i` of the clause (in the clause's atom order) reads
+/// `reads[i]` of the bound cell's `v`.
+pub(crate) struct CellAtoms {
+    atoms: Vec<FormulaNodeId>,
+    reads: Vec<fn(i64) -> bool>,
+}
+
+impl CellAtoms {
+    pub(crate) fn of(clause: &CheckedTemporalClause, reads: &[fn(i64) -> bool]) -> Self {
+        let automaton =
+            fsl_eval::automaton::translate(clause, 256).expect("the clause translates");
+        assert_eq!(automaton.atoms().len(), reads.len(), "one reading per atom");
+        Self {
+            atoms: automaton.atoms().to_vec(),
+            reads: reads.to_vec(),
+        }
+    }
+
+    fn truth(&self, atom: FormulaNodeId, value: i64) -> bool {
+        let index = self
+            .atoms
+            .iter()
+            .position(|known| *known == atom)
+            .expect("the clause's own atom");
+        (self.reads[index])(value)
+    }
+}
+
+impl ModelLetters for CellAtoms {
+    crate::units::unguarded!();
+
+    fn reads(&self, _atom: FormulaNodeId) -> crate::units::Reads {
+        crate::units::unread()
+    }
+
+    fn atom(
+        &self,
+        atom: FormulaNodeId,
+        instance: &ModelInstance,
+        state: &ModelSimState,
+        _meter: &mut Meter,
+    ) -> Result<AtomReading, AtomStop> {
+        Ok(if self.truth(atom, v(state, &instance.key)) {
+            AtomReading::True
+        } else {
+            AtomReading::False
+        })
+    }
+}
+
+/// The JSON of the key `state` carries.
+pub(crate) fn key_json(state: &ProductStateRef) -> serde_json::Value {
+    serde_json::from_slice(state.automaton_state.as_bytes()).expect("engine JSON key")
+}
+
+/// The distances of every `distance-history` bucket the key carries, sorted.
+fn bucket_distances(state: &ProductStateRef) -> Vec<u64> {
+    let key = key_json(state);
+    let mut distances = Vec::new();
+    for branch in key[2][1].as_array().expect("safety branches") {
+        for memory in branch[1].as_array().expect("a branch's past memory") {
+            if memory[1] != "distance-history" {
+                continue;
+            }
+            for bucket in memory[2].as_array().expect("buckets") {
+                let distance = bucket[0].as_str().expect("a decimal distance");
+                distances.push(distance.parse().expect("a small distance"));
+            }
+        }
+    }
+    distances.sort_unstable();
+    distances
+}
+
+/// The entries of `certificate` whose model state is `state`'s, under the
+/// cycle keys the checker writes.
+fn entries_at(
+    certificate: &ClosureCertificate,
+    system: &ProtocolSystem<'_, Sc>,
+    state: &ProtocolState<Sc>,
+) -> Vec<ProductStateRef> {
+    let (key, _) = system.state_key(state).expect("encodes");
+    let key = fsl_eval::simulation::StateKey::from_canonical_bytes(key);
+    certificate
+        .states
+        .iter()
+        .filter(|entry| entry.model_state == key)
+        .cloned()
+        .collect()
+}
+
+/// The initial state of `system` and the one `kind` step from `state`.
+fn after(
+    system: &ProtocolSystem<'_, Sc>,
+    state: &ProtocolState<Sc>,
+    kind: StepKind,
+) -> ProtocolState<Sc> {
+    system
+        .successors(state)
+        .expect("expansion")
+        .successors
+        .into_iter()
+        .find(|(step, _)| step.kind() == kind)
+        .unwrap_or_else(|| panic!("a {kind:?} step is enabled"))
+        .1
+}
+
+/// The product states of `case`'s TP-3 clause over `protocol` that a
+/// breadth-first walk of the protocol system reaches before the clause's
+/// monitor rejects, each keyed under the clause's own context, and the
+/// rejecting key `["safety",[]]`: a certificate that holds every state the
+/// walk of a violated clause reached, which the checker rejects `BadState`.
+fn walked_before_violation(
+    case: &Case,
+    protocol: &str,
+    reads: &[fn(i64) -> bool],
+) -> (ClosureCertificate, fsl_eval::automaton::AutomatonStateKey) {
+    use fsl_eval::automaton::{
+        translate_counted, Atom, ContextBinding, Letter, Monitor, SafetyStates, StateContext,
+        SubjectKind,
+    };
+    let subject = case.subject(protocol);
+    let system = sc_system(&subject).with_cycle_keys(std::collections::BTreeSet::new());
+    let clause = case.clause();
+    let identity = ClauseIdentity::resolve(
+        &case.checked,
+        &case.documents.packages,
+        clause,
+        &case.temporal_clock_selections,
+        &Cancel::new(),
+        fsl_package::EmitLimits::fixture(),
+    )
+    .expect("the package declares the clause");
+    let binding = vec![ContextBinding::instance(
+        identity.over().expect("an over node"),
+        "c",
+    )];
+    let context = StateContext::clause(clause, identity.occurrence().clone(), binding);
+    let keys = SafetyStates::clause(clause, &context, SubjectKind::Protocol).expect("translates");
+    let mut monitor = Monitor::bad_prefix(
+        translate_counted(clause, 256).expect("translates"),
+        256,
+    )
+    .expect("a safety automaton");
+    let uncounted = monitor.automaton().uncounted();
+    let letter = |state: &ProtocolState<Sc>, counted: bool| {
+        let model = system.atom_state(state).into_owned();
+        let mut letter = Letter::default();
+        for (index, read) in reads.iter().enumerate() {
+            if read(v(&model, "c")) {
+                letter = letter.with(Atom::new(index).expect("an atom"));
+            }
+        }
+        match uncounted {
+            Some(uncounted) if !counted => letter.with(uncounted),
+            _ => letter,
+        }
+    };
+    let model_key = |state: &ProtocolState<Sc>| {
+        let (key, _) = system.state_key(state).expect("encodes");
+        fsl_eval::simulation::StateKey::from_canonical_bytes(key)
+    };
+    let rejecting = keys.key(&[]).expect("encodes");
+    let start = monitor.initial().expect("initial state");
+    let mut states = std::collections::BTreeSet::new();
+    let mut seen = std::collections::BTreeSet::new();
+    let mut queue = std::collections::VecDeque::new();
+    let mut reach = |monitor: &mut Monitor<fsl_eval::automaton::PropertyAutomaton>,
+                     state: ProtocolState<Sc>,
+                     before: fsl_eval::automaton::StateId,
+                     counted: bool,
+                     queue: &mut std::collections::VecDeque<(
+        ProtocolState<Sc>,
+        fsl_eval::automaton::StateId,
+    )>| {
+        let next = monitor
+            .step(before, letter(&state, counted))
+            .expect("steps");
+        if monitor.is_rejecting(next).expect("a known state") {
+            return;
+        }
+        let configurations = monitor
+            .configurations(next, keys.max_key_bytes())
+            .expect("resolves");
+        let at = ProductStateRef {
+            model_state: model_key(&state),
+            automaton_state: keys.key(&configurations).expect("encodes"),
+        };
+        if seen.insert(at.clone()) {
+            states.insert(at);
+            queue.push_back((state, next));
+        }
+    };
+    for initial in system.initial() {
+        reach(&mut monitor, initial, start, true, &mut queue);
+    }
+    while let Some((state, at)) = queue.pop_front() {
+        let successors = system.successors(&state).expect("expansion").successors;
+        if successors.is_empty() {
+            reach(&mut monitor, state, at, true, &mut queue);
+            continue;
+        }
+        for (transition, next) in successors {
+            reach(&mut monitor, next, at, transition.counts(), &mut queue);
+        }
+    }
+    (
+        ClosureCertificate {
+            states: states.into_iter().collect(),
+        },
+        rejecting,
+    )
+}
+
+/// The canonical protocol keys of every state `system` reaches, under the
+/// cycle keys the checker writes.
+fn reachable_keys(
+    system: &ProtocolSystem<'_, Sc>,
+) -> std::collections::BTreeSet<fsl_eval::simulation::StateKey> {
+    let mut seen = std::collections::BTreeSet::new();
+    let mut frontier = system.initial();
+    while let Some(state) = frontier.pop() {
+        let (key, _) = system.state_key(&state).expect("encodes");
+        if !seen.insert(fsl_eval::simulation::StateKey::from_canonical_bytes(key)) {
+            continue;
+        }
+        frontier.extend(
+            system
+                .successors(&state)
+                .expect("expansion")
+                .successors
+                .into_iter()
+                .map(|(_, next)| next),
+        );
+    }
+    seen
+}
+
+/// FR-338-AC-31 (bounds): a request whose `max_store_buffer`, `max_messages`
+/// or `max_live_instances` differs from the run's is checked as FR-338-AC-21
+/// and AC-22 state. The certificate of the repaired `Fill` TP-3 clause is
+/// accepted under a request that carries the defaults explicitly (4, 4 and 3,
+/// the run's own) and every model state it holds is a canonical cycle key of a
+/// reached state. The repaired `Fill` on origin keeps one live instance, so a
+/// smaller instance bound does not reject it; bounds that do change the
+/// explored states are a follow-up.
+#[trace("TC-525", "FR-338-AC-31")]
+#[trace("TC-1230", "FR-338-AC-22")]
+#[test]
+fn a_tp3_certificate_is_checked_under_the_request_bounds() {
+    let case = repaired_tp3(
+        "on origin",
+        "always (holds(k.v = 0) implies eventually[0,2] holds(k.v >= 2))",
+    );
+    let letters = CellAtoms::of(case.clause(), &[is_zero, at_least_two]);
+    let outcome = case.check("Fill", &letters);
+    let ModelCheckOutcome::Holds {
+        certificate: ProofCertificate::Closure(certificate),
+        ..
+    } = &outcome
+    else {
+        panic!("{:?}", outcome.stats());
+    };
+    let subject = case.subject("Fill");
+    let system = sc_system(&subject).with_cycle_keys(std::collections::BTreeSet::new());
+    let held: std::collections::BTreeSet<_> = certificate
+        .states
+        .iter()
+        .map(|state| state.model_state.clone())
+        .collect();
+    assert_eq!(held, reachable_keys(&system));
+
+    let limits = ModelCheckLimits::default();
+    let check = |bounds| closure_check_bounded(&case, "Fill", &letters, certificate, &limits, bounds);
+    assert_eq!(check((None, None, None)), TemporalCertificateCheck::Accepted);
+    assert_eq!(
+        check((Some(4), Some(4), Some(3))),
+        TemporalCertificateCheck::Accepted
+    );
+}
+
+fn repaired_tp3(activation: &str, formula: &str) -> Case {
+    Case::new(&(fill_unit("self.v <= 1", "") + &tp3(activation, formula)))
+}
+
+/// FR-338-AC-31 (past): over the repaired `Fill`, whose counted steps are
+/// `attempt(B)` and `attempt(A)` and whose `fork`, `join` and `finish` are
+/// uncounted, `always (holds(k.v = 0) implies not once[1,2] holds(k.v >= 1))`
+/// returns `Holds` with a certificate whose keys carry a `distance-history`
+/// entry for `once[1,2]` in the past memory, accepted by `check_protocol_closure`,
+/// so FR-127 settles `proved`, `Certified`. The key after `fork` is the key
+/// before it (an uncounted step keeps every bucket distance), the bucket
+/// distances the keys carry are `[]` before an attempt, `[0]` after one and
+/// `[0, 1]` after two (a counted step raises each by one and adds a
+/// distance-zero bucket), and the certificate with the key after an `attempt`
+/// replaced by the key before it is rejected `SuccessorMissing` at the reached
+/// state. `max_states` one below the closure's product states
+/// stops `LimitReached{MaxStates, ..}`, settled `incomplete`.
+#[trace("TC-525", "FR-338-AC-31")]
+#[trace("TC-525", "FR-127-AC-1")]
+#[test]
+fn a_past_tp3_clause_over_the_repaired_fill_keys_distance_history() {
+    let case = repaired_tp3(
+        "on origin",
+        "always (holds(k.v = 0) implies not once[1,2] holds(k.v >= 1))",
+    );
+    let letters = CellAtoms::of(case.clause(), &[is_zero, at_least_one]);
+    let outcome = case.check("Fill", &letters);
+    let ModelCheckOutcome::Holds {
+        certificate: ProofCertificate::Closure(certificate),
+        ..
+    } = &outcome
+    else {
+        panic!("{:?}", outcome.stats());
+    };
+    assert_eq!(
+        closure_check_over(&case, "Fill", &letters, certificate),
+        TemporalCertificateCheck::Accepted
+    );
+    assert_eq!(
+        case.record("Fill", &letters, &outcome).value,
+        TerminalValue::Proved {
+            basis: ProofBasis::Exhaustive,
+            certification: Certification::Certified,
+        }
+    );
+    assert!(certificate
+        .states
+        .iter()
+        .any(|state| String::from_utf8_lossy(state.automaton_state.as_bytes())
+            .contains("distance-history")));
+
+    let distances: std::collections::BTreeSet<Vec<u64>> =
+        certificate.states.iter().map(bucket_distances).collect();
+    for expected in [vec![], vec![0], vec![0, 1]] {
+        assert!(distances.contains(&expected), "{expected:?} in {distances:?}");
+    }
+
+    let subject = case.subject("Fill");
+    let system = sc_system(&subject).with_cycle_keys(std::collections::BTreeSet::new());
+    let origin = system.initial().remove(0);
+    let forked = after(&system, &origin, StepKind::Fork);
+    let at_origin = entries_at(certificate, &system, &origin);
+    let at_fork = entries_at(certificate, &system, &forked);
+    assert_eq!((at_origin.len(), at_fork.len()), (1, 1));
+    assert_eq!(at_origin[0].automaton_state, at_fork[0].automaton_state);
+
+    let before_attempt = certificate
+        .states
+        .iter()
+        .find(|state| bucket_distances(state).is_empty())
+        .expect("a state before an attempt")
+        .clone();
+    let after_attempt = certificate
+        .states
+        .iter()
+        .find(|state| bucket_distances(state) == [0])
+        .expect("a state after one attempt")
+        .clone();
+    let mut replaced = certificate.clone();
+    for state in &mut replaced.states {
+        if *state == after_attempt {
+            state.automaton_state = before_attempt.automaton_state.clone();
+        }
+    }
+    assert_eq!(
+        closure_check_over(&case, "Fill", &letters, &replaced),
+        TemporalCertificateCheck::Rejected(CertificateRejection {
+            rule: CertificateRule::SuccessorMissing,
+            at: CertificateLocus::ProductState(after_attempt),
+        })
+    );
+
+    let mut limits = ModelCheckLimits::default();
+    limits.limits.max_states = certificate.states.len() - 1;
+    let value = u64::try_from(certificate.states.len() - 1).expect("a small closure");
+    assert_eq!(
+        closure_check_with(&case, "Fill", &letters, certificate, &limits),
+        TemporalCertificateCheck::Stopped(IncompleteCause::LimitReached {
+            limit: ModelCheckLimit::MaxStates,
+            value,
+        })
+    );
+}
+
+/// FR-338-AC-31 (future): over the repaired `Fill`, `always (holds(k.v = 0)
+/// implies eventually[0,2] holds(k.v >= 2))` returns `Holds` whose key after
+/// `fork` carries the `deadline` window `"2"` of its older activation, equal
+/// to the initial key, accepted. The clause with `eventually[0,1] holds(k.v =
+/// 3)` returns `Violated`, refuted through the production replay, and the
+/// certificate a walk of it reached is rejected `BadState` under
+/// `["safety",[]]`. The accepted certificate with every key's activation
+/// replaced by `"each"` is rejected `ShapeMismatch`.
+#[trace("TC-525", "FR-338-AC-31")]
+#[test]
+fn a_future_tp3_clause_over_the_repaired_fill_keeps_the_older_deadline() {
+    let case = repaired_tp3(
+        "on origin",
+        "always (holds(k.v = 0) implies eventually[0,2] holds(k.v >= 2))",
+    );
+    let letters = CellAtoms::of(case.clause(), &[is_zero, at_least_two]);
+    let outcome = case.check("Fill", &letters);
+    let ModelCheckOutcome::Holds {
+        certificate: ProofCertificate::Closure(certificate),
+        ..
+    } = &outcome
+    else {
+        panic!("{:?}", outcome.stats());
+    };
+    assert_eq!(
+        closure_check_over(&case, "Fill", &letters, certificate),
+        TemporalCertificateCheck::Accepted
+    );
+    assert_eq!(
+        case.record("Fill", &letters, &outcome).value,
+        TerminalValue::Proved {
+            basis: ProofBasis::Exhaustive,
+            certification: Certification::Certified,
+        }
+    );
+    let subject = case.subject("Fill");
+    let system = sc_system(&subject).with_cycle_keys(std::collections::BTreeSet::new());
+    let origin = system.initial().remove(0);
+    let forked = after(&system, &origin, StepKind::Fork);
+    let at_origin = entries_at(certificate, &system, &origin);
+    let at_fork = entries_at(certificate, &system, &forked);
+    assert_eq!((at_origin.len(), at_fork.len()), (1, 1));
+    assert_eq!(at_origin[0].automaton_state, at_fork[0].automaton_state);
+    assert!(
+        String::from_utf8_lossy(at_fork[0].automaton_state.as_bytes())
+            .contains("\"deadline\",\"2\""),
+    );
+
+    let mut each = certificate.clone();
+    for state in &mut each.states {
+        let mut key = key_json(state);
+        key[1][2] = serde_json::json!("each");
+        state.automaton_state = fsl_eval::automaton::AutomatonStateKey::imported(
+            serde_json::to_vec(&key).expect("array-only key"),
+        );
+    }
+    let least = each.states.iter().min().cloned().expect("a state");
+    assert_eq!(
+        closure_check_over(&case, "Fill", &letters, &each),
+        TemporalCertificateCheck::Rejected(CertificateRejection {
+            rule: CertificateRule::ShapeMismatch,
+            at: CertificateLocus::ProductState(least),
+        })
+    );
+
+    let short = repaired_tp3(
+        "on origin",
+        "always (holds(k.v = 0) implies eventually[0,1] holds(k.v = 3))",
+    );
+    let reads: [fn(i64) -> bool; 2] = [is_zero, is_three];
+    let letters = CellAtoms::of(short.clause(), &reads);
+    let outcome = short.check("Fill", &letters);
+    assert!(
+        matches!(outcome, ModelCheckOutcome::Violated { .. }),
+        "{:?}",
+        outcome.stats()
+    );
+    assert_eq!(
+        short.label("Fill", &letters, &outcome),
+        ResultLabel::Refuted
+    );
+    let (walked, rejecting) = walked_before_violation(&short, "Fill", &reads);
+    let TemporalCertificateCheck::Rejected(CertificateRejection {
+        rule: CertificateRule::BadState,
+        at: CertificateLocus::ProductState(at),
+    }) = closure_check_over(&short, "Fill", &letters, &walked)
+    else {
+        panic!("the walked states end at a bad state");
+    };
+    assert_eq!(at.automaton_state, rejecting);
 }

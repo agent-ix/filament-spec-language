@@ -13,6 +13,7 @@ mod analyze_liveness_cli;
 mod analyze_package_protocol;
 mod analyze_package_selection;
 mod analyze_protocol_subject;
+mod analyze_tp3_package;
 mod analyze_reach_rulings;
 mod analyze_reduction_cli;
 mod analyze_request_wire;

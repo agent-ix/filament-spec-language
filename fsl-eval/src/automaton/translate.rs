@@ -921,7 +921,12 @@ fn translate_formula(
             Counting::ByKind => SubjectKind::Protocol,
         },
         accept_counted_intervals: kind == AutomatonKind::Liveness && uncounted.is_some(),
+        protocol_safety_debts: kind == AutomatonKind::Safety
+            && matches!(counting, Counting::ByKind),
         activation_root,
+        synthetic_root: (kind == AutomatonKind::Safety
+            && matches!(activation, Activation::Each { .. }))
+        .then_some(target),
         activation_guarded: match activation {
             Activation::Origin => None,
             Activation::Each { guarded } => Some(guarded),
@@ -1160,10 +1165,18 @@ struct Translator {
     /// FR-338's protocol non-progress acceptance applies to liveness
     /// translations; safety monitors keep finite interval debt in counters.
     accept_counted_intervals: bool,
+    /// A safety monitor over a protocol subject: its key carries the finite
+    /// `F`/`U` acceptance membership FR-338 gives that subject.
+    protocol_safety_debts: bool,
     /// The synthetic outer eventuality selecting an `on each` TP-4
     /// activation, if present.
     activation_root: Option<NodeId>,
     activation_guarded: Option<bool>,
+    /// The synthetic outer `always` an `on each` safety clause is wrapped in
+    /// (guard-or-body at every position). It stands for no source
+    /// occurrence, so a configuration key projects it away: the obligations
+    /// that remain are the clause body's own.
+    synthetic_root: Option<NodeId>,
 }
 
 impl Translator {
@@ -1208,7 +1221,7 @@ impl Translator {
         let mut branch = Configuration::default();
 
         for node in &config.must {
-            if Some(*node) == self.activation_root {
+            if Some(*node) == self.activation_root || Some(*node) == self.synthetic_root {
                 continue;
             }
             let occurrences = self
@@ -1325,6 +1338,39 @@ impl Translator {
             branch
                 .acceptance
                 .extend(occurrences.iter().map(|source| source.key.clone()));
+        }
+
+        // FR-338: on a protocol subject a finite `F`/`U` has an acceptance
+        // set in the `["safety", ..]` key too, though the safety monitor
+        // keeps its debt in counters and owns no Büchi set. Its membership
+        // is the occurrence not being carried: no current obligation, no
+        // pending shift and no pending window.
+        if self.protocol_safety_debts {
+            let mut finite = BTreeSet::new();
+            for id in &self.order {
+                if let Node::Future { kind, window, .. } = self.ir.node(*id)? {
+                    if kind.is_eventuality() && !matches!(window, Window::From { .. }) {
+                        finite.insert(self.ir.core(*id));
+                    }
+                }
+            }
+            for core in finite {
+                let pending = match config.counters.get(&core) {
+                    Some(Counter::Deadline(counter)) => counter.is_pending(),
+                    Some(Counter::Extent(counter)) => counter.is_pending(),
+                    None => false,
+                };
+                if pending || config.shifts.contains_key(&core) || config.must.contains(&core) {
+                    continue;
+                }
+                let occurrences = self
+                    .occurrences
+                    .get(&core)
+                    .ok_or_else(|| invariant("state-acceptance-has-source-occurrence"))?;
+                branch
+                    .acceptance
+                    .extend(occurrences.iter().map(|source| source.key.clone()));
+            }
         }
         Ok(branch)
     }

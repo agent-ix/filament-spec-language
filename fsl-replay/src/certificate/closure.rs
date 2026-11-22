@@ -44,11 +44,15 @@
 //! `InstanceBoundReached` with the distinct instance-limited model states
 //! (after `MemoryBoundReached`), never an acceptance.
 //!
-//! A TP-3 clause on origin over a model subject is closed over its bad-prefix
-//! monitor's states: the checker rebuilds the monitor from the recompiled
-//! clause, keys each reached monitor state by its viable elementary
-//! configurations (obligations, past memory, windows, acceptance), and a
-//! terminal model state stutters until its product state repeats.
+//! A TP-3 clause, `on origin` or `on each`, guarded or not, over a model or a
+//! protocol subject is closed over its bad-prefix monitor's states: the
+//! checker rebuilds the monitor from the recompiled clause (counting steps by
+//! kind over a protocol subject), keys each reached monitor state by its
+//! viable elementary configurations (obligations, past memory, windows,
+//! acceptance), and a terminal model state stutters until its product state
+//! repeats. Over a protocol subject a clause with a future interval is also
+//! searched for a fair cycle of uncounted steps among the product states
+//! whose monitor state owes an interval eventuality, as a TP-2 clause is.
 //!
 //! TP-1 and deadlock freedom have no future interval, so FR-338's
 //! non-progress acceptance check does not apply: they keep pure bad-prefix
@@ -69,9 +73,9 @@ use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use filament_exact::{Cancel, Meter, ScalarLimits};
 use filament_semantic_value::catalog::InternalFault;
 use fsl_eval::automaton::{
-    translate, Atom, AutomatonStateKey, BoundedKind, BoundedState, BoundedTranslation, Letter,
-    Monitor, PropertyAutomaton, SafetyItem, SafetyState, SafetyStates, SafetyTranslation, StateId,
-    SubjectKind,
+    translate, translate_counted, Atom, AutomatonStateKey, BoundedKind, BoundedState,
+    BoundedTranslation, Letter, Monitor, PropertyAutomaton, SafetyItem, SafetyState, SafetyStates,
+    SafetyTranslation, StateId, SubjectKind,
 };
 use fsl_eval::model_subject::{
     refused_invariant, AtomStop, ModelLetters, ModelSubject, ProtocolSubject,
@@ -736,6 +740,7 @@ fn check_system<S: SubjectSystem>(
     }
 
     let mut check = Check {
+        subject_kind,
         stutter_closure,
         system,
         model,
@@ -830,6 +835,9 @@ struct MonitoredRun<'k> {
     visited: BTreeSet<(StateKey, StateId)>,
 }
 
+/// A product state of a TP-3 instance, as the run tells two apart.
+type MonitoredKey = (StateKey, StateId);
+
 /// A reached TP-3 product state waiting to expand its model component.
 struct MonitoredPending<S: SubjectSystem> {
     state: S::State,
@@ -854,11 +862,20 @@ type Keyed<S> = (
 /// The steps that do not count between the product states of a bounded
 /// instance that hold an `eventually` debt open (FR-338 "Protocol
 /// non-progress acceptance"), with the model state of each end.
-struct ZeroEdges<S: SubjectSystem> {
+struct ZeroEdges<S: SubjectSystem, K> {
     /// The transitions each such state enables, from the expansion the run
     /// already charged.
-    enabled: BTreeMap<BoundedKey, Vec<S::TransitionId>>,
-    edges: Vec<(BoundedKey, BoundedKey, S::TransitionId)>,
+    enabled: BTreeMap<K, Vec<S::TransitionId>>,
+    edges: Vec<(K, K, S::TransitionId)>,
+}
+
+impl<S: SubjectSystem, K> ZeroEdges<S, K> {
+    fn new() -> Self {
+        Self {
+            enabled: BTreeMap::new(),
+            edges: Vec::new(),
+        }
+    }
 }
 
 /// What a bounded instance's run keeps: its translation, its `holds` atom's
@@ -883,6 +900,8 @@ type SubjectExpansion<S> = (
 );
 
 struct Check<'c, S: SubjectSystem> {
+    /// The subject's kind, which decides whether every step counts.
+    subject_kind: SubjectKind,
     /// Whether every model state with an enabled operation also has FSpec
     /// FR-380's unfair stutter edge, as the run being checked explored it.
     stutter_closure: bool,
@@ -1193,8 +1212,15 @@ impl<S: SubjectSystem> Check<'_, S> {
         };
         let binding = binding.ok_or_else(|| fault("monitored-clause-binding"))?;
         let max_states = self.limits.max_automaton_states;
-        let automaton =
-            translate(clause, max_states).map_err(|error| self.automaton_error(error))?;
+        let automaton = match self.subject_kind {
+            SubjectKind::Ordinary => translate(clause, max_states),
+            SubjectKind::Protocol => translate_counted(clause, max_states),
+        }
+        .map_err(|error| self.automaton_error(error))?;
+        // Only a clause that reads a protocol subject's step kinds can hold an
+        // interval debt open across steps that do not count.
+        let reads_uncounted = automaton.uncounted().is_some();
+        let mut zero = ZeroEdges::<S, MonitoredKey>::new();
         let mut run = MonitoredRun {
             monitor: Monitor::bad_prefix(automaton, max_states)
                 .map_err(|error| self.automaton_error(error))?,
@@ -1228,17 +1254,30 @@ impl<S: SubjectSystem> Check<'_, S> {
                     return Err(Self::reject(CertificateRule::BadState, at));
                 }
             };
-            queue.extend(self.reach_monitored(
-                &mut run,
-                state.clone(),
-                state_key.clone(),
-                after,
-                CertificateRule::InitialMissing,
-            )?);
+            queue.extend(
+                self.reach_monitored(
+                    &mut run,
+                    state.clone(),
+                    state_key.clone(),
+                    after,
+                    CertificateRule::InitialMissing,
+                )?
+                .0,
+            );
         }
         while let Some(pending) = queue.pop_front() {
             self.poll()?;
             let (expansion, cut) = self.expand(&pending.state, &pending.at)?;
+            let owing = reads_uncounted && Self::owes(&run, pending.monitor)?;
+            if owing {
+                let enabled = expansion
+                    .successors
+                    .iter()
+                    .map(|(transition, _)| transition.clone())
+                    .collect();
+                zero.enabled
+                    .insert((pending.at.model_state.clone(), pending.monitor), enabled);
+            }
             if expansion.successors.is_empty() {
                 // A state whose every step the memory or instance bound cut
                 // is a boundary state, never stuttered (ADR-025 MB-3,
@@ -1247,7 +1286,7 @@ impl<S: SubjectSystem> Check<'_, S> {
                 if cut.memory || cut.instances {
                     continue;
                 }
-                queue.extend(self.monitored_step(&mut run, &pending, None, true)?);
+                queue.extend(self.monitored_step(&mut run, &pending, None, true)?.0);
                 continue;
             }
             for (transition, state_key, state) in self.ordered(expansion.successors)? {
@@ -1255,10 +1294,39 @@ impl<S: SubjectSystem> Check<'_, S> {
                 self.charge_edge()?;
                 let counted = self.system.counts_step(&transition);
                 let edge = Some((&state, &state_key));
-                queue.extend(self.monitored_step(&mut run, &pending, edge, counted)?);
+                let (next, after) = self.monitored_step(&mut run, &pending, edge, counted)?;
+                queue.extend(next);
+                if owing && !counted && Self::owes(&run, after)? {
+                    let from = (pending.at.model_state.clone(), pending.monitor);
+                    zero.edges.push((from, (state_key, after), transition));
+                }
             }
         }
-        Ok(())
+        // FR-338: the first fair component by product-state order, which is
+        // the least product state of any fair component.
+        let mut least: Option<ProductStateRef> = None;
+        for (state_key, monitor) in self.fair_zero_states(zero)? {
+            let at = self.product_monitored(&run, state_key, monitor)?;
+            if least.as_ref().is_none_or(|held| at < *held) {
+                least = Some(at);
+            }
+        }
+        match least {
+            Some(at) => Err(Self::reject(CertificateRule::WitnessFails, at)),
+            None => Ok(()),
+        }
+    }
+
+    /// Whether monitor state `state` owes an interval eventuality that only a
+    /// counted step can close: some automaton state it stands for does.
+    fn owes(run: &MonitoredRun<'_>, state: StateId) -> Step<bool> {
+        let members = run
+            .monitor
+            .members(state)
+            .ok_or_else(|| fault("a-reached-monitor-state-has-members"))?;
+        Ok(members
+            .iter()
+            .any(|member| run.monitor.automaton().owes_eventuality(*member)))
     }
 
     /// Read the letter of the model state `edge` reaches from `pending` (its
@@ -1270,7 +1338,7 @@ impl<S: SubjectSystem> Check<'_, S> {
         pending: &MonitoredPending<S>,
         edge: Option<(&S::State, &StateKey)>,
         counted: bool,
-    ) -> Step<Option<MonitoredPending<S>>> {
+    ) -> Step<(Option<MonitoredPending<S>>, StateId)> {
         let ModelCheckItem::Clause { letters, clause } = self.item else {
             return Err(fault("monitored-clause-item").into());
         };
@@ -1311,7 +1379,7 @@ impl<S: SubjectSystem> Check<'_, S> {
         state_key: StateKey,
         after: StateId,
         missing: CertificateRule,
-    ) -> Step<Option<MonitoredPending<S>>> {
+    ) -> Step<(Option<MonitoredPending<S>>, StateId)> {
         let at = self.product_monitored(run, state_key.clone(), after)?;
         if run
             .monitor
@@ -1321,7 +1389,7 @@ impl<S: SubjectSystem> Check<'_, S> {
             return Err(Self::reject(CertificateRule::BadState, at));
         }
         if !run.visited.insert((state_key, after)) {
-            return Ok(None);
+            return Ok((None, after));
         }
         if self.reached >= self.limits.limits.max_states {
             return Err(stopped(
@@ -1333,11 +1401,12 @@ impl<S: SubjectSystem> Check<'_, S> {
         if !self.members.contains(&at) {
             return Err(Self::reject(missing, at));
         }
-        Ok(Some(MonitoredPending {
+        let pending = MonitoredPending {
             state,
             at,
             monitor: after,
-        }))
+        };
+        Ok((Some(pending), after))
     }
 
     /// The product state of `state_key` and the monitor state `state`, keyed
@@ -1619,10 +1688,7 @@ impl<S: SubjectSystem> Check<'_, S> {
             guards: BTreeMap::new(),
         };
         let mut queue = VecDeque::new();
-        let mut zero = ZeroEdges::<S> {
-            enabled: BTreeMap::new(),
-            edges: Vec::new(),
-        };
+        let mut zero = ZeroEdges::<S, BoundedKey>::new();
         for (_, _, state_key, state) in initial {
             let (pending, _, _) = self.reach_bounded(
                 &mut run,
@@ -1703,25 +1769,28 @@ impl<S: SubjectSystem> Check<'_, S> {
                 }
             }
         }
-        if let Some(at) = self.zero_progress(&run, zero)? {
-            return Err(Self::reject(CertificateRule::WitnessFails, at));
+        let mut least: Option<ProductStateRef> = None;
+        for key in self.fair_zero_states(zero)? {
+            let at = self.bounded_ref(&run, &key)?;
+            if least.as_ref().is_none_or(|held| at < *held) {
+                least = Some(at);
+            }
         }
-        Ok(())
+        match least {
+            Some(at) => Err(Self::reject(CertificateRule::WitnessFails, at)),
+            None => Ok(()),
+        }
     }
 
     /// FR-338 "Protocol non-progress acceptance": a cycle of steps that do
     /// not count among the product states that hold an `eventually` debt
     /// open, fair under the subject's scheduler constraints and the item's
     /// own (ADR-019), is a behaviour that never meets the interval, so the
-    /// closure is no proof. The product state of the least state of the
-    /// first such component, by product state, is where the check fails.
-    fn zero_progress(
-        &mut self,
-        run: &BoundedRun<'_>,
-        zero: ZeroEdges<S>,
-    ) -> Step<Option<ProductStateRef>> {
+    /// closure is no proof. The product states of every fair component, which
+    /// the caller orders to find where the check fails.
+    fn fair_zero_states<K: Ord + Clone>(&mut self, zero: ZeroEdges<S, K>) -> Step<Vec<K>> {
         if zero.edges.is_empty() {
-            return Ok(None);
+            return Ok(Vec::new());
         }
         let ModelCheckItem::Clause { clause, .. } = self.item else {
             return Err(fault("clause-item-translation").into());
@@ -1754,21 +1823,17 @@ impl<S: SubjectSystem> Check<'_, S> {
             }
         };
         let Some(found) = found else {
-            return Ok(None);
+            return Ok(Vec::new());
         };
-        // FR-338: the first fair component by product-state order, which is
-        // the least product state of any fair component.
-        let mut least: Option<ProductStateRef> = None;
-        for vertex in &found.fair_vertices {
-            let key = keys
-                .get(vertex.index())
-                .ok_or_else(|| fault("a-vertex-is-a-state"))?;
-            let at = self.bounded_ref(run, key)?;
-            if least.as_ref().is_none_or(|held| at < *held) {
-                least = Some(at);
-            }
-        }
-        Ok(least)
+        found
+            .fair_vertices
+            .iter()
+            .map(|vertex| {
+                keys.get(vertex.index())
+                    .cloned()
+                    .ok_or_else(|| fault("a-vertex-is-a-state").into())
+            })
+            .collect()
     }
 
     /// Whether the `on each` activation of the clause holds at `state`

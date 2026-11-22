@@ -345,6 +345,34 @@ pub(crate) fn clause_text(name: &str, fairness: &str, formula: &str) -> String {
     )
 }
 
+/// [`clause_text`] activated by `activation`, such as `on each (q: M::Counter)`.
+pub(crate) fn clause_text_on(name: &str, activation: &str, formula: &str) -> String {
+    format!(
+        "temporal {name} using t0 over (c: M::Counter) clock \"model-steps\" {activation} {{ {formula} }}\n"
+    )
+}
+
+/// The checked package of `body` over `document` declaring the one clause
+/// `name`, activated by `activation`, and that clause.
+pub(crate) fn package_with_activated_clause(
+    document: &[u8],
+    body: &str,
+    name: &str,
+    activation: &str,
+    formula: &str,
+) -> (CheckedPackage, CheckedTemporalClause) {
+    let body = body.to_owned() + &clause_text_on(name, activation, formula);
+    let graph = declarations(document, &body)
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &fsl_eval::value::S6aRewardEvaluator,
+        )
+        .unwrap_or_else(|refusals| panic!("{body}: the unit checks: {refusals:?}"));
+    let clause = graph.temporal_clauses()[0].clause().clone();
+    (CheckedPackage::link(graph), clause)
+}
+
 /// The checked package of `body` over `document` with the clauses `declared`
 /// (name, fairness, formula) written after it, and each clause the package
 /// declares, in declaration order.
