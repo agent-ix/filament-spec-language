@@ -748,7 +748,7 @@ fn tso_event_correlation_only_field_read_records_relaxed_access() {
             }
             branch other sequence Other {
                 attempt Store by w on M::Cell::flag contracts [FlagPost]
-                    as (worked: Boolean) { worked };
+                    as (worked: Boolean) { true };
             }
         } join all [idle, other];",
         true,
