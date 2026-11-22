@@ -104,6 +104,7 @@ mod package_enum;
 mod package_forms;
 mod package_model_relation;
 mod package_simulation;
+mod package_dense_timed_clauses;
 mod package_step_relation_parity;
 mod package_probabilistic_source;
 mod package_probabilistic_parity;
