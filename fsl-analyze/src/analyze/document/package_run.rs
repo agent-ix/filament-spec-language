@@ -1090,7 +1090,7 @@ fn resolve_names<'s>(
             if derived {
                 let selected = models.iter().any(|identity| identity == name);
                 return match (item_kind, selected, models.len()) {
-                    (Some(ItemKind::DeadlockFreedom), true, 1) => Ok(Named::Deadlock {
+                    (Some(ItemKind::DeadlockFreedom), true, _) => Ok(Named::Deadlock {
                         index,
                         name,
                         selection,
@@ -2097,7 +2097,7 @@ impl<'r, 'a: 'r> ClaimReads<'r, 'a> {
         ))
     }
 
-    /// FR-626's derived deadlock-freedom item over the one model selection,
+    /// FR-626's derived deadlock-freedom item over the one model selection the subject reads,
     /// whose identity `name` is, as the source route's `resolve_derived`
     /// resolves it: at the selection's `model_root` anchor with the
     /// `generated` occurrence 0.
@@ -2131,6 +2131,72 @@ impl<'r, 'a: 'r> ClaimReads<'r, 'a> {
             root,
             filament_exact::Origin::new(filament_exact::Role::new("generated"), 0),
         );
+        // FSpec FR-368-AC-22, FR-124-AC-12: as on the source route's
+        // `resolve_derived`, a subject that reads several model selections has
+        // no anchor, so its item settles `unsupported` with no request item,
+        // and a subject that reads one selection has the item of that
+        // selection only.
+        let all: Vec<String> = AnalysisView::model_selections(self.package)
+            .into_iter()
+            .map(|selection| selection.identity)
+            .collect();
+        let read: Vec<&String> = all
+            .iter()
+            .filter(|identity| {
+                self.binding
+                    .universes
+                    .iter()
+                    .any(|universe| universe.population.package == **identity)
+            })
+            .collect();
+        let read = if read.is_empty() {
+            all.iter().collect()
+        } else {
+            read
+        };
+        match read.as_slice() {
+            [only] if *only == name => {
+                // FR-124: a model the subject reads that declares `terminal any`
+                // opts out of the item, so the source route writes none and
+                // settles `inapplicable-kind` (`SubjectReading::opted_out`).
+                let opted_out = self
+                    .package
+                    .terminal_declarations()
+                    .map_err(|_| AnalyzeDocumentError::Fault)?
+                    .iter()
+                    .any(|terminal| {
+                        terminal.model == name
+                            && matches!(
+                                terminal.declaration,
+                                fsl_package::BareTerminalDeclaration::Any
+                            )
+                    });
+                if opted_out {
+                    return Ok(Resolution::Settled(invalid_kind(
+                        index,
+                        Some(name),
+                        "inapplicable-kind",
+                    )));
+                }
+            }
+            [_] => {
+                return Ok(Resolution::Settled(invalid_kind(
+                    index,
+                    Some(name),
+                    "inapplicable-kind",
+                )));
+            }
+            _ => {
+                return Ok(Resolution::Settled(ResolvedItem::Settled {
+                    claim_name: Some(name.to_owned()),
+                    record: Box::new(TerminalRecord::disposition_unsupported(
+                        index,
+                        fsl_route::NegotiationOutcome::UnsupportedRequestedCapability.code(),
+                        Map::new(),
+                    )),
+                }));
+            }
+        }
         let own_subject = self.own_subject(index, selection)?;
         let named = selection.backend.as_deref().map(BackendId::new);
         let backend_options = selection.options.clone().unwrap_or_default();

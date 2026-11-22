@@ -10,6 +10,7 @@ mod analyze_coverage_cli;
 mod analyze_family_cli;
 mod analyze_last_stage;
 mod analyze_liveness_cli;
+mod analyze_package_deadlock_models;
 mod analyze_package_protocol;
 mod analyze_package_selection;
 mod analyze_package_provider;
