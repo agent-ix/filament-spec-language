@@ -19,6 +19,10 @@ relationships:
     type: depends_on
   - target: ix://agent-ix/filament-spec-language/FR-075
     type: depends_on
+  - target: ix://agent-ix/filament-spec-language/FR-495
+    type: depends_on
+  - target: ix://agent-ix/filament-spec-language/FR-952
+    type: depends_on
   - target: ix://agent-ix/filament-spec-language/ADR-013
     type: depends_on
   - target: ix://agent-ix/filament-spec-language/ADR-011
@@ -172,11 +176,24 @@ another run's package is refused.
 ## Acceptance Criteria
 
 Fixture **R** is one `1-draft` unit under profile alias `v`
-(`filament.value.complete/v1`) with the functions of FR-290-AC-12 and AC-15:
+(`filament.value.complete/v1`) with `p` and `q` from FR-290-AC-12 and the
+Linked-safe public-entry variant of FR-290-AC-15's `r`:
 
 - `function p using v(x: Int[0, 9]): Boolean pure { x > 3 }`;
 - `function q using v(x: Int[0, 9]): Integer pure { x + 1 }`;
-- `function r using v(x: Int[0, 9]): Integer pure { 10 mod x }`.
+- `function r using v(x: Int[0, 9]): Integer pure { 10 mod (x + 1) }`.
+
+This public-entry fixture is checked `Linked`: `x + 1` excludes zero.
+Fixture **RK** replaces only `r`'s body with `10 mod x`. The default public
+entry refuses RK as `undefined_expression`/`unproved-nonzero` at `mod`
+before a call runs. The runtime-undefined case instead prepares RK's `r`
+body under `CheckMode::Kernel` at the existing internal checked-call seam,
+then runs the same call/member/context coordinator with those genuine checked
+units. The context and replay request retain that compile's source, owner,
+occurrence and mode. This is the function-body boundary of
+[FR-495](./FR-495-reach-the-integer-division-zero-divisor-and-state-core-rows-from-fsl-source.md)
+and [FR-952](./FR-952-record-each-function-body-s-check-mode-and-replay-under-it.md), not a public
+mode argument or a consumer-constructed replay context.
 
 Fixture **R2** is R with `function s using v(x: Int[0, 9]): Integer pure { x + 2 }`
 appended. The plugin is `BackendId` `acme`. Unless an AC says otherwise, the
@@ -188,7 +205,7 @@ of the item that `items_from_requirements` writes for the member.
 |----|----------|--------------|
 | FR-404-AC-1 | Over R, `q` with `x = 3` returns outcome `completed` `4`, one member, and a context whose `package_id` equals the result's; the `package_id`, outcome and members equal those `run_with_requirements` returns for the same inputs with `CallerLimits::default().spine` as its `SpineLimits`, and the `package_id` equals `compile_package`'s over the same source. | Test (TC-1173) |
 | FR-404-AC-2 | Over AC-1's run, `request` for `q`'s member with assignment `x = 9` returns a request equal, member by member, to what `PluginReplayContext::request` returns for the member's occurrence key and the same other arguments over a context built by `PluginReplayContext::new` from a separate `parse`, `select`, `check` and `package` of R under the same limits. Its `package_id` is the run's, its `selected_function` is `q` and its `occurrence_key` is the member's. `replay` of it under the `CallerLimits`' `replay` limits settles `inconclusive` with cause `Verdicts` (`violation`/`success`) and evaluated value `true`, the application claim's Boolean (FR-098-AC-22's `q` request: `9 + 1` is `10`, inside the result bound `Integer`), and the item settles `inconclusive` with cause `replay-parity`, naming `acme`. | Test (TC-1173) |
-| FR-404-AC-3 | Over R, `r` with `x = 0` returns outcome `undefined` with one member and a context. `request` for that member with assignment `x = 0` gives a request whose `selected_function` is `r` and whose `obligation_identity` is the `process-provider` identity of the member's node and occurrence; `replay` finds the application undefined, and `TerminalRecord::from_plugin_counterexample` settles `refuted`, naming `acme`. `q` with `x = 3` under call accounting `work_units = 0` returns outcome `incomplete` on `work_units` and a context whose request for `q`'s member with assignment `x = 9` equals AC-2's. | Test (TC-1173) |
+| FR-404-AC-3 | The public entry over RK refuses `undefined_expression`/`unproved-nonzero` before evaluation and returns no outcome, members or context. Through RK's internal Kernel-prepared checked-call coordinator, `r` with `x = 0` returns outcome `undefined`, cause `division-by-zero`, with one member and a context from that same compile. `request` for that member with assignment `x = 0` gives a request whose `selected_function` is `r` and whose `obligation_identity` is the `process-provider` identity of the member's node and occurrence; `replay` finds the application undefined, and `TerminalRecord::from_plugin_counterexample` settles `refuted`, naming `acme`. Separately, the public entry over R with `q`, `x = 3` and call accounting `work_units = 0` returns outcome `incomplete` on `work_units` and a context whose request for `q`'s member with assignment `x = 9` equals AC-2's. | Test (TC-1173) |
 | FR-404-AC-4 | The context of AC-1's run refuses `NotACallItem` (`missing_declaration`/`missing-name`), retaining the index, for the run's `package_id` with `r`'s member's request index (a record of R owned by `r`) and with request index 99; each refusal settles the item `failed`, naming `acme`. | Test (TC-1173) |
 | FR-404-AC-5 | Over R and R2, the runs of `q` with `x = 3` return different `package_id`s and members with equal occurrence keys. The context of R's `q` run refuses `ForeignRun` (`invalid-request`), retaining both `package_id`s, for the pairing key of R2's `q` member, and builds no request; each context's request for its own `q` member carries its own run's `package_id` and sources. The refusal settles the item `failed`, naming `acme`. | Test (TC-1173) |
 | FR-404-AC-6 | Over R, `q` with `x = 3` under `CallerLimits` whose `s1.tokens` is 200000, whose `library.definitions` is 9000 and whose accounting `work_units` is 5000 completes, and the request for its member holds `s1.tokens` 200000 and `library.definitions` 9000 in `stage_limits` and `work_units` 5000 in `accounting_limits`. The same call under `CallerLimits` whose `s1.tokens` is 1 refuses `Compile` at the S1 token limit with no context, while `run_with_requirements` over the same inputs with `SpineLimits::default()` completes. | Test (TC-1173) |
