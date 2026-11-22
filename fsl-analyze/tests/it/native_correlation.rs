@@ -580,6 +580,7 @@ fn replay_both(
     let trace = fsl_replay::ProtocolTraceSubject {
         model: fsl_replay::ModelTraceSubject {
             timed: None,
+            stutter_closure: false,
             initial: subject.model.simulation.initial.clone(),
             universes: subject.model.simulation.universes.clone(),
             expansion: subject.model.simulation.expansion,
