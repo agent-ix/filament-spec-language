@@ -1053,8 +1053,10 @@ fn deep_projection(
                     &fsl_semantics::check::test_support::ZeroRewardEvaluator,
                 )
                 .expect("the deep unit checks");
+            crate::checked_v2::tphase("checked");
             let package = CheckedPackage::link(graph);
             let emission = emit_checked(&package).expect("the deep unit emits");
+            crate::checked_v2::tphase("emitted");
             let name = emission.package.name().to_owned();
             let limits = V2ReadLimits {
                 artifact_bytes: emission.package.bytes().len(),
@@ -1075,6 +1077,7 @@ fn deep_projection(
                 crate::SourceWitnessSupplier::new(&emission),
             )
             .expect("the I2 reader admits the deep package");
+            crate::checked_v2::tphase("read-returned");
             let view = read.evaluation_view().expect("the deep view is created");
             let slots = view.reader_slots().expect("a reader-backed view");
             let Some(crate::ReaderSlot::Projected(projection)) =
@@ -1343,4 +1346,26 @@ fn supplied_identities_are_validated_against_the_admitted_package() {
         }),
         UnsupportedReason::UnknownIdentityWitness
     );
+}
+
+/// TEMPORARY (QSL-2825): scaling probe.
+#[test]
+fn zz_qsl_2825_scaling_probe() {
+    for terms in [5_000_usize, 10_000, 20_000] {
+        eprintln!("TIME ===== terms={terms}");
+        crate::checked_v2::tphase("start");
+        let function = format!(
+            "function f using v(x: Integer): Integer pure {{ {}x }}\n",
+            "x + ".repeat(terms - 1)
+        );
+        deep_projection(
+            with_deep_control(&function, "f(dm.count + 1) >= 1"),
+            512 * 1024,
+            move |projection| {
+                crate::checked_v2::tphase("view-returned");
+                let f = projection.function(0).expect("f");
+                assert_eq!(left_depth(projection, f.body), terms - 1);
+            },
+        );
+    }
 }

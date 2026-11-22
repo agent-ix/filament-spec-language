@@ -846,7 +846,11 @@ pub(crate) fn project_package(
     budget: &mut filament_contract_model::NativeJoinBudget,
 ) -> Result<ReaderProtocolSlots, PackageRefusal> {
     use crate::checked_v2::EvaluationWitnessSupplier;
+    #[cfg(test)]
+    crate::checked_v2::tphase("project_package-begin");
     let mut index = source_index(admitted, emission, identities, budget)?;
+    #[cfg(test)]
+    crate::checked_v2::tphase("source_index-done");
     for (admitted, emission) in dependencies {
         let supplied = crate::checked_v2::SourceWitnessSupplier::new(emission)
             .supply(admitted, budget)
@@ -872,7 +876,10 @@ pub(crate) fn project_package(
             .dependencies
             .push(source_index(admitted, emission, identities, budget)?);
     }
-    project_index(&index, admitted, package, requests)
+    let projected = project_index(&index, admitted, package, requests);
+    #[cfg(test)]
+    crate::checked_v2::tphase("project_index-done");
+    projected
 }
 
 fn source_index<'wire>(
