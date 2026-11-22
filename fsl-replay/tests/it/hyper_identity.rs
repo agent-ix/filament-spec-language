@@ -206,17 +206,27 @@ fn a_missing_or_foreign_subject_names_its_alias() {
 #[test]
 fn a_package_with_no_emission_names_product_identity() {
     let world = World::new(&["v"], false, &non_interference(EQUAL_INPUTS, ""));
-    let graph = PackageDeclarations::new(
+    let mut declarations = PackageDeclarations::new(
         admitted_source(fsl_foundation::SourceIdentity::new("a", "u"), b""),
         "fixture",
         fsl_foundation::IdentityLimits::default(),
+    );
+    declarations.types = filament_semantic_value::declaration::TypeEnvironment::new(
+        [filament_semantic_value::declaration::CompositeDeclaration::new(
+            fixture_node(255),
+            "FixturePlaceholder",
+            filament_semantic_value::declaration::CompositeShape::Record(vec![]),
+        )],
+        [],
     )
-    .check(
-        CheckMode::Linked,
-        CheckingLimits::default(),
-        &fsl_eval::value::S6aRewardEvaluator,
-    )
-    .expect("an empty package checks");
+    .unwrap();
+    let graph = declarations
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &fsl_eval::value::S6aRewardEvaluator,
+        )
+        .expect("an empty package checks");
     let empty = CheckedPackage::link(graph);
     let subjects = [world.subject_over(&empty, Vec::new())];
     let mut meter = Meter::new(UNLIMITED);

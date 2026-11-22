@@ -537,6 +537,10 @@ fn objects(scenario: &Scenario) -> ObjectEnvironment {
     )
     .with_population(scenario.binding.clone())
     .unwrap()
+    .with_population_completeness(std::collections::BTreeMap::from([(
+        p1_population_key().node,
+        true,
+    )]))
 }
 
 /// FR-089: the `Value::Population` argument a real source expression's `p`
@@ -556,6 +560,10 @@ fn population_environment(scenario: &Scenario) -> ObjectEnvironment {
     ObjectEnvironment::default()
         .with_population(scenario.binding.clone())
         .unwrap()
+        .with_population_completeness(std::collections::BTreeMap::from([(
+            p1_population_key().node,
+            true,
+        )]))
 }
 
 fn check(
@@ -3243,7 +3251,11 @@ fn tc_293_evaluator_resolves_population_id_through_recorded_correspondence() {
         .with_population(b1_binding)
         .unwrap()
         .with_population(b2_binding)
-        .unwrap();
+        .unwrap()
+        .with_population_completeness(std::collections::BTreeMap::from([
+            (p1_population_key().node, true),
+            (p2_population_key().node, true),
+        ]));
     let package = package(&scenario);
     let parameters = [("p", ValueType::Population(Some(3)))];
     let expression = all_instances(ValueType::Reference(a.clone()));
@@ -3407,7 +3419,11 @@ fn tc_295_population_type_pairing_checks_the_resolved_maximum() {
     };
     let environment = ObjectEnvironment::default()
         .with_population(binding)
-        .unwrap();
+        .unwrap()
+        .with_population_completeness(std::collections::BTreeMap::from([(
+            p1_population_key().node,
+            true,
+        )]));
     let package = package(&scenario);
     let expression = all_instances(ValueType::Reference(a));
 
@@ -3837,7 +3853,11 @@ fn tc_441_all_instances_over_an_unbounded_population_is_unbounded() {
 
     let objects = ObjectEnvironment::default()
         .with_population(binding.clone())
-        .unwrap();
+        .unwrap()
+        .with_population_completeness(std::collections::BTreeMap::from([(
+            p1_population_key().node,
+            true,
+        )]));
     let (outcome, _) = run(
         &package,
         &parameters,

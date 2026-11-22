@@ -6465,7 +6465,11 @@ mod tests {
         let population_id = binding.population_id();
         let objects = ObjectEnvironment::default()
             .with_population(binding)
-            .expect("the admitted population binds cleanly");
+            .expect("the admitted population binds cleanly")
+            .with_population_completeness(std::collections::BTreeMap::from([(
+                "model.pop.p1".to_owned(),
+                true,
+            )]));
         let reads: std::collections::BTreeMap<
             Location,
             fsl_semantics::model::clause_observation::Observation,
