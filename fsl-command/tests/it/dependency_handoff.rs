@@ -340,8 +340,8 @@ fn replay_boundary(
     );
     let total = baseline.checked_add(external_bytes).unwrap();
     // FR-255-AC-1: `actual` is the count the refused charge would have reached.
-    // The source route charges the supplied artifacts together before the
-    // recompile (`total`); the package route charges each library package as it
+    // The package route charges the supplied artifacts together before any
+    // recompile (`total`); the source route charges each library package as it
     // is emitted, so its refused charge is the first emitted library (`test/a`,
     // which `test/z` imports).
     let crossing = baseline.checked_add(refused_external_bytes).unwrap();
@@ -465,7 +465,7 @@ fn transitive_library_claim_analysis_and_replay_equal_source_after_source_deleti
         &source_result,
         root_bytes,
         external_bytes,
-        external_bytes,
+        first_external_bytes,
     );
     let package_request = json!({"package": {"directory": "handoff"}, "models": models, "documents": [{"file": "start.json"}], "items": [{"claim": "LibraryBound"}, {"claim": "Bounded"}]});
     std::fs::remove_dir_all(directory.join("handoff/sources")).unwrap();
@@ -481,7 +481,7 @@ fn transitive_library_claim_analysis_and_replay_equal_source_after_source_deleti
         &result,
         root_bytes,
         external_bytes,
-        first_external_bytes,
+        external_bytes,
     );
     assert!(
         source_baseline > package_baseline,
