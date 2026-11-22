@@ -1660,6 +1660,9 @@ impl Pass<'_, '_> {
                 let fsl_forms::TemporalNodeForm::Operator(operator) = node else {
                     continue;
                 };
+                if !super::super::temporal_clause::is_temporal(operator.operator) {
+                    continue;
+                }
                 match &operator.interval {
                     None => causes.push(TemporalCause::MissingInterval {
                         span: operator.operator_span,

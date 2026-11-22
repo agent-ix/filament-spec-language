@@ -165,7 +165,10 @@ fn advertising(
             .map(|(kind, mode)| (Some(kind.to_wire()), Some(mode.to_wire())))
             .collect::<Vec<_>>(),
         fsl_route::ManifestMembers {
-            domains: None,
+            domains: pairs
+                .iter()
+                .any(|(_, mode)| *mode == fsl_route::Mode::Bounded)
+                .then_some(&["population"]),
             fairness_kinds: None,
             evidence_kinds: None,
             memory_models: None,
