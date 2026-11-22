@@ -815,7 +815,10 @@ fn a_package_route_finds_the_terminal_whose_predicate_is_at_a_locus() {
 /// populations, on the package route as on the source route. Here `Aaa`,
 /// `Counter` and `Zeta` are object types and the one population holds
 /// `Counter` and `Zeta`: its canonical member `Counter` (the least) is the
-/// terminal object, not the least object type `Aaa`.
+/// terminal object, not the least object type `Aaa`. A predicate that reads `self`
+/// is refused at assembly unless the populations cover one object type, so
+/// the predicate here reads nothing; the context type is still the one the
+/// source lowering names.
 #[trace("TC-2958", "FR-940-AC-6")]
 #[test]
 fn a_package_route_terminal_self_is_the_populations_canonical_member() {
@@ -839,7 +842,7 @@ fn a_package_route_terminal_self_is_the_populations_canonical_member() {
         serde_json::json!(["ix://test/counter/Counter", "ix://test/counter/Zeta"]);
     let model = serde_json::to_vec(&model).expect("model bytes");
 
-    let body = "terminal Done using v on M when { self.value = 3 };\n";
+    let body = "terminal Done using v on M when { true };\n";
     let (package, _) = package_with_clauses(&model, body, &[]);
     let mut documents = Documents::new(model);
     let start = documents.start("start", &[("a", 3), ("b", 1)]);
