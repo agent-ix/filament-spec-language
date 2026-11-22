@@ -205,7 +205,7 @@ impl Case {
         written.obligation(index).cloned().expect("an obligation")
     }
 
-    /// The protocol system of `SB` under `memory`.
+    /// The protocol system of `SB` under `memory`, using the checker's cycle keys.
     pub(crate) fn system<M: MemoryModel>(
         &self,
         selection: &[MemorySelection],
@@ -299,6 +299,7 @@ impl Case {
     ) -> Result<ProtocolSystem<'s, M>, ProtocolRefusal> {
         let model = ModelSystem::new(subject.model.simulation.clone()).expect("admits");
         ProtocolSystem::new(model, subject, memory)
+            .map(|system| system.with_cycle_keys(BTreeSet::new()))
     }
 
     /// EN-1 over `SB` with `item`, the selection and the store buffer bound.
