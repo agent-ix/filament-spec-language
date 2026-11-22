@@ -35,7 +35,7 @@ use super::refusal::{
 };
 use crate::model::clause_observation::Observation;
 use filament_exact::{ArithmeticOperator, OrderingOperator};
-use filament_exact::{CollectionType, MapType, QuantityCarrier, Value, ValueType};
+use filament_exact::{CollectionKind, CollectionType, MapType, QuantityCarrier, Value, ValueType};
 use filament_exact::{
     DecimalType, Integer, IntegerInterval, NonZeroInteger, Rational, RationalDomain,
 };
@@ -1275,6 +1275,19 @@ impl<'a> Definedness<'a> {
                 _ => return None,
             }
         }
+        match filter.kind() {
+            NodeKind::RemoveOne(collection, item) => {
+                return self.one_occurrence_removal(
+                    filter.at(*collection),
+                    filter.at(*item),
+                    facts,
+                );
+            }
+            NodeKind::DropFirst(collection) => {
+                return self.tail(filter.at(*collection), facts);
+            }
+            _ => {}
+        }
         let NodeKind::Query {
             visit: Visit::Filter,
             slot: binder,
@@ -1338,6 +1351,62 @@ impl<'a> Definedness<'a> {
             _ => false,
         };
         removal.then_some(path.root)
+    }
+
+    /// FSpec FR-146 "one-occurrence removal": `removeOne(p, e)` for a
+    /// parameter `p` of any collection kind and a stable path `e` with the
+    /// membership fact `contains(p, e)` at this call site. Its bound count is
+    /// `size(p) - 1`.
+    fn one_occurrence_removal(
+        &self,
+        collection: CheckedNode<'_>,
+        item: CheckedNode<'_>,
+        facts: &Facts,
+    ) -> Option<Slot> {
+        let ValueType::Collection(_) = collection.value_type() else {
+            return None;
+        };
+        let path = self.stable_path(collection, facts)?;
+        if !path.steps.is_empty() || path.root >= self.parameters {
+            return None;
+        }
+        let item = self.stable_path(item, facts)?;
+        facts
+            .members
+            .get(&path)
+            .is_some_and(|members| members.contains(&item))
+            .then_some(path.root)
+    }
+
+    /// FSpec FR-146 "tail": `dropFirst(p)` for a parameter `p` of `Sequence`
+    /// or `OrderedSet` kind whose size interval at this call site (declared
+    /// bound intersected with the proved facts) excludes `0`. Its bound count
+    /// is `size(p) - 1`.
+    fn tail(&self, collection: CheckedNode<'_>, facts: &Facts) -> Option<Slot> {
+        let ValueType::Collection(collection_type) = collection.value_type() else {
+            return None;
+        };
+        if !matches!(
+            collection_type.kind(),
+            CollectionKind::Sequence | CollectionKind::OrderedSet
+        ) {
+            return None;
+        }
+        let path = self.stable_path(collection, facts)?;
+        if !path.steps.is_empty() || path.root >= self.parameters {
+            return None;
+        }
+        let declared = cardinality(collection_type);
+        let size = facts
+            .intervals
+            .get(&Subject::Size(path.clone()))
+            .map_or(declared.clone(), Interval::of_proved)
+            .intersect(&declared);
+        let at_least_one = Interval {
+            lower: End::Finite(Integer::one()),
+            upper: End::PositiveInfinity,
+        };
+        (size.lower >= at_least_one.lower && !size.is_empty()).then_some(path.root)
     }
 
     /// FSpec FR-146 "Accepted proof forms": the rational stable path `x` of
