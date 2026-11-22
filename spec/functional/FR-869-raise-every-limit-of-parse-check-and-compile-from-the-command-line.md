@@ -3,6 +3,8 @@ id: FR-869
 title: "Raise every limit of parse, check and compile from the command line"
 type: FR
 relationships:
+  - target: ix://agent-ix/filament-spec-language/FR-002
+    type: depends_on
   - target: ix://agent-ix/filament-spec-language/US-027
     type: traces_to
   - target: ix://agent-ix/filament-spec-language/FR-255
@@ -62,6 +64,11 @@ A program whose models and libraries exceed 8 MiB could then be compiled
 only from the library. `compile` takes the same `--request-bytes` and
 `--dependent-bytes` options as `run`, with the same defaults and no ceiling
 of their own, and a refusal at either names the option that raises it.
+The aggregate `dependent_bytes` ceiling and
+[FR-002](FR-002-parse-native-units.md)'s per-source
+`s1.input_bytes` ceiling remain independent: raising one does not raise the
+other, and every parsed source must fit its S1 ceiling as well as the
+dependent files fitting their aggregate ceiling.
 
 ### The library entry
 
@@ -105,7 +112,7 @@ The command's outcome under the configured limits.
 
 | ID | Criteria | Verification |
 | --- | --- | --- |
-| FR-869-AC-1 | A compile request whose request file is one byte over 1 MiB stops at intake and settles `incomplete` with `resource_exhausted` (FR-026 Outputs) naming `request_bytes`, its maximum and the option `--request-bytes`; through `compile_outcome_with_limits_and_overrides` with `RunLimits::request_bytes` at the file's size it compiles. FR-027-AC-13's request one byte over `dependent_bytes` settles `incomplete` naming `--dependent-bytes` and compiles with `dependent_bytes` raised to fit. | Test (TC-2461) |
+| FR-869-AC-1 | A compile request whose request file is one byte over 1 MiB stops at intake and settles `incomplete` with `resource_exhausted` (FR-026 Outputs) naming `request_bytes`, its maximum and the option `--request-bytes`; through `compile_outcome_with_limits_and_overrides` with `RunLimits::request_bytes` at the file's size it compiles. With `RequestOverrides::limits` carrying `s1.input_bytes` large enough for every parsed source, FR-027-AC-13's request one byte over `dependent_bytes` settles `incomplete` naming `--dependent-bytes` and compiles with `dependent_bytes` raised to fit. Keeping that raised aggregate ceiling but setting `s1.input_bytes` below one parsed source's size still stops at S1 naming `s1.input_bytes`; raising S1 to fit restores compilation. Both independently binding ceilings are retained. | Test (TC-2461) |
 | FR-869-AC-2 | `compile_outcome_with_limits_and_overrides` over a program holding a 6,000-deep parenthesis nest refuses `stage_limit_exceeded` naming `s1.nodes` under the default limits and compiles with `RequestOverrides::limits` carrying `s1.nodes` 1000000 and the `s1.tokens` and `s1.work_units` it needs; `emit.output_bytes` set to one below the package's byte length refuses naming `emit.output_bytes`. | Test (TC-2461) |
 | FR-869-AC-3 | `fsl parse a b deep.fsl --limit s1.nodes=1000000` over the 6,000-deep nest exits 0, and without `--limit` exits 22 naming `s1.nodes`; `fsl check deep.fsl --limit s1.nodes=1000000` exits 0; `fsl compile req.json --limit s1.nodes=1000000` over a request selecting it exits 0. | Driver test (TC-2462): the `fsl` binary parses the options, so the code ticket adds the test in the filament-driver repository. |
 | FR-869-AC-4 | `fsl parse a b x.fsl --limit s3.nodes=5`, `fsl check x.fsl --limit accounting.work_units=5`, `fsl check x.fsl --limit emit.output_bytes=5` and `fsl compile req.json --limit admission.work_units=5` each exit 20 `invalid-request` naming the setting and the command's accepted settings, before reading a file; `--limit s9.nodes=1`, `--limit s1.nodes=ten` and `--limit s1.nodes=5 --limit s1.nodes=6` each refuse with FR-255 Behavior 6's usage refusal naming the operand. | Driver test (TC-2462) |
