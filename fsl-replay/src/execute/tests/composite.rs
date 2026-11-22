@@ -759,7 +759,8 @@ fn tc_736_a_100000_term_source_and_list_replay_to_the_proving_verdict() {
             )],
             documents: vec![],
         };
-        let raised = ReplayLimits::default().with_input_bytes(1 << 29);
+        // IR-1582 adds per-operation validity records: main measured 624,761,043 bytes (FR-263-AC-1).
+        let raised = ReplayLimits::default().with_input_bytes(1 << 30);
         let limits: BTreeMap<String, u64> = BTreeMap::from(
             [
                 "s1.input_bytes",
