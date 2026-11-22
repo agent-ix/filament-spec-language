@@ -61,7 +61,7 @@ fn weak_strong_whole_each_preserve_actual_minimum_and_both_bounded_extrema() {
         assert_eq!(code, 0, "{fairness}: {out}");
         assert_eq!(out["value"], json!({"numerator":"24","denominator":"25"}));
         let mut beyond = request.clone();
-        replace_source(
+        super::bounded::replace_source_and_rebind(
             &mut beyond,
             &src.replace("rational(19,20)", "rational(97,100)"),
         );
@@ -82,7 +82,10 @@ fn weak_strong_whole_each_preserve_actual_minimum_and_both_bounded_extrema() {
         json!({"numerator":"4","denominator":"5"})
     );
     let mut miss = request.clone();
-    replace_source(&mut miss, &src.replace("rational(9,10)", "rational(3,4)"));
+    super::bounded::replace_source_and_rebind(
+        &mut miss,
+        &src.replace("rational(9,10)", "rational(3,4)"),
+    );
     assert_eq!(run(&miss).1["rule"], "threshold-missed");
 }
 

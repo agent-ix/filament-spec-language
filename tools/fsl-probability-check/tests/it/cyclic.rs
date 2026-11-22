@@ -68,8 +68,7 @@ fn accepted(request: &Value, n: &str, d: &str) {
 }
 
 fn replace_source(request: &mut Value, source: &str) {
-    request["source"]["content"] = json!(source);
-    request["byte_provision"][0][2] = json!(source.as_bytes());
+    super::bounded::replace_source_and_rebind(request, source);
 }
 
 #[trace("TC-636", "FR-201-AC-23", "FR-201-AC-24", "FR-282-AC-18")]

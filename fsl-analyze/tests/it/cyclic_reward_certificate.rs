@@ -220,6 +220,9 @@ fn predicate_undefined_only_after_target_is_not_evaluated() {
         ),
         CheckMode::Kernel,
     );
+    let item = fsl_replay::probabilistic_claim_identity(relevant.claim("Cost")).unwrap();
+    let mut document = document;
+    document.identity = item.clone();
     let bytes = write_probability_certificate(&document, limits(), &Cancel::new()).unwrap();
     let rejection = check(&relevant, &bytes, &Cancel::new(), limits());
     assert!(matches!(

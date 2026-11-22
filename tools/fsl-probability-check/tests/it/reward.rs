@@ -145,7 +145,7 @@ fn two_step_named_reward_checks_minimum_maximum_and_both_workload_bounds() {
             );
         }
         let mut stronger = request.clone();
-        replace_source(
+        super::bounded::replace_source_and_rebind(
             &mut stronger,
             &claim(&two_step(), scheduler, op, beyond, "m.delivered"),
         );
@@ -169,7 +169,7 @@ fn two_step_named_reward_checks_minimum_maximum_and_both_workload_bounds() {
             let changed_model =
                 two_step().replace("weight Msg::send_a = 1", "weight Msg::send_a = 3");
             let mut changed_workload = request.clone();
-            replace_source(
+            super::bounded::replace_source_and_rebind(
                 &mut changed_workload,
                 &claim(&changed_model, scheduler, op, threshold, "m.delivered"),
             );
@@ -438,7 +438,7 @@ fn nonreaching_terminals_hidden_raw_cycles_and_negative_rewards_never_accept() {
         "m.attempts = 1",
     ));
     let mut nonreaching = request.clone();
-    replace_source(
+    super::bounded::replace_source_and_rebind(
         &mut nonreaching,
         &claim(&model, "every scheduler", ">=", "4", "m.delivered"),
     );
@@ -450,7 +450,7 @@ fn nonreaching_terminals_hidden_raw_cycles_and_negative_rewards_never_accept() {
         .replace("post B_done using v on M::Msg::send_b { self.attempts = 2 and self.delivered }", "post B_done using v on M::Msg::send_b { self.attempts = 1 and self.delivered = pre(self.delivered) }")
         .replace("terminal Stop using v on M when { self.attempts = 1 }", "terminal Stop using v on M when { self.attempts = 2 }");
     let mut cyclic = request.clone();
-    replace_source(
+    super::bounded::replace_source_and_rebind(
         &mut cyclic,
         &claim(&cycle, "every scheduler", ">=", "4", "m.attempts = 1"),
     );
@@ -463,6 +463,12 @@ fn nonreaching_terminals_hidden_raw_cycles_and_negative_rewards_never_accept() {
             &mut invalid,
             &claim(&draws(cost), "every scheduler", ">=", "4", "m.attempts = 1"),
         );
+        if cost == "-1" {
+            super::bounded::replace_source_and_rebind(
+                &mut invalid,
+                &claim(&draws(cost), "every scheduler", ">=", "4", "m.attempts = 1"),
+            );
+        }
         let (code, output) = run(&invalid);
         assert_eq!(code, 2, "{output}");
         assert!(output.get("value").is_none());

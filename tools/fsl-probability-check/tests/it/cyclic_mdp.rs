@@ -42,8 +42,7 @@ fn proof(source: &str) -> Value {
     request.unwrap_or_else(|| panic!("expected MDP proof: {settlement:?}\n{source}"))
 }
 fn replace_source(request: &mut Value, source: &str) {
-    request["source"]["content"] = json!(source);
-    request["byte_provision"][0][2] = json!(source.as_bytes());
+    super::bounded::replace_source_and_rebind(request, source);
 }
 fn initial(row: &Value) -> bool {
     row["value"]["denominator"] != "1"

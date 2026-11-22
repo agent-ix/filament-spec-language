@@ -37,10 +37,14 @@ fn in_horizon_undefined_preserves_the_actual_owner_predicate_cause() {
     let system = ModelSystem::new(undefined.subject().simulation).unwrap();
     let claim = undefined.claim("Likely");
     let item = probabilistic_claim_identity(claim).unwrap();
-    assert_eq!(
+    assert_ne!(
         item,
         probabilistic_claim_identity(valid.claim("Likely")).unwrap()
     );
+    let mut document = read_probability_proof_document(&bytes, limits(), &Cancel::new()).unwrap();
+    document.document_mut().identity = item.clone();
+    let bytes =
+        fsl_replay::write_probability_proof_document(&document, limits(), &Cancel::new()).unwrap();
     let binding = fsl_replay::claim_binding(&system, claim).unwrap().unwrap();
     let ProbForm::Probability {
         event: Event::Formula { formula, .. },

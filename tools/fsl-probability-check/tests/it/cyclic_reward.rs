@@ -16,8 +16,7 @@ fn proof(source: &str) -> Value {
     request.unwrap_or_else(|| panic!("expected cyclic reward proof {settlement:?}\n{source}"))
 }
 fn replace_source(request: &mut Value, source: &str) {
-    request["source"]["content"] = json!(source);
-    request["byte_provision"][0][2] = json!(source.as_bytes());
+    super::bounded::replace_source_and_rebind(request, source);
 }
 #[trace("TC-1403", "FR-201-AC-35", "FR-201-AC-36", "FR-201-AC-37")]
 #[test]

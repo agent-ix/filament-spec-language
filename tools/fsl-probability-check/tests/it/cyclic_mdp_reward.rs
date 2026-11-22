@@ -24,8 +24,7 @@ fn proof(source: &str) -> Value {
     request.unwrap_or_else(|| panic!("expected finite reward proof: {settlement:?}\n{source}"))
 }
 fn replace_source(request: &mut Value, source: &str) {
-    request["source"]["content"] = json!(source);
-    request["byte_provision"][0][2] = json!(source.as_bytes());
+    super::bounded::replace_source_and_rebind(request, source);
 }
 fn non_target(doc: &Value) -> Value {
     doc["values"]
