@@ -324,9 +324,11 @@ fn an_enumeration_argument_and_result_run_from_a_package_as_from_source() {
     );
     let (package_request, _) = package_selection(&ws, &request_of(&path));
     let source_request = request_of(&path);
-    let mode = ident("Mode");
+    // FR-120: the typed canonical form of an enum value names the declaration
+    // by its identity text.
+    let mode = json!({"node": ident("Mode"), "package": PACKAGE}).to_string();
     let argument = |case: &str| {
-        json!([{"parameter": "a", "value": {"variant": {"type": mode, "case": case}}}])
+        json!([{"parameter": "a", "value": {"type": "enum", "name": mode, "member": case}}])
     };
     let run_both = |function: &str, arguments: Value| {
         let call = json!({"function": function, "snapshot": "snapshot-0.json",
