@@ -42,6 +42,10 @@ fair accepting cycle. The engine returns a `ModelCheckOutcome`
 (`fsl-replay`, ADR-018 LA-3) that FR-127 settles; a proof carries the
 certificate FR-338's or FR-339's core checker verifies (ADR-018 PC-3, PC-4).
 
+This requirement also governs the state budget of the direct protocol
+reachable-state search, `ProtocolSystem::reachable`, in `fsl-eval`; that
+search enumerates protocol states without a property automaton.
+
 ## Use case
 
 A verification operator requests a liveness claim with weak fairness over a
@@ -162,6 +166,25 @@ Each variant carries the run's statistics: product states, product edges,
 automaton states and the depth reached.
 
 ## Behavior
+
+### Direct protocol reachable-state search
+
+`ProtocolSystem::reachable` SHALL require a caller-supplied `max_states`
+budget, admit each distinct canonical state at most once including initial
+states, and before admitting a state beyond that budget return
+`ReachRefusal::Limit(Limit::States(max_states))` with no partial successful
+graph, independently of worker count.
+
+The call takes `reachable(worker_limit, max_states)`, where `worker_limit`
+is a nonzero worker count and `max_states` is a `usize`. Every caller supplies
+the budget explicitly; this API has no default state budget. `Limit` is the
+existing `fsl_eval::simulation::frontier::Limit` type. State equality is
+equality of the full canonical state key under the supplied protocol
+system's key policy; a second occurrence of an admitted key consumes no
+additional state budget. An empty frontier completes the search successfully
+when the number of distinct admitted states is at most `max_states`,
+including exactly the budget. With a nonempty initial set and `max_states`
+zero, the first distinct initial state causes the limit refusal.
 
 ### Pre-check
 
@@ -580,6 +603,10 @@ automaton states and the depth reached.
 | FR-126-AC-18 | Certificate order. AC-1's weak `each` proof returns a `ComponentCertificate` whose closure `states` are ascending by `ProductStateRef` with no duplicate, every component of binding `a` listed before every component of binding `b`, each component's `states` ascending by `ProductStateRef`, and each binding's components in the order the "Components within a binding" rule computes from the retained product graph; running the request twice gives byte-equal certificates. The `Fork` unit (population `forks`, field `phase: Int[0, 2]`, universe `{f}`, initial phase 0, operations `left` from phase 0 to 1, `right` from phase 0 to 2 and `back` from phase 2 to 1, no `terminal` declaration) with `always eventually holds(f.phase = 1)` and no fairness constraint returns `Holds{Exhaustive}` over the five product states `(0,q0)`, `(0,q1)`, `(1,q0)`, `(2,q0)`, `(2,q1)` (the negation automaton's `q0` reads any letter, its accepting `q1` reads only letters in which `f.phase = 1` is false, and a product state reads the letter of its own model state), with canonical breadth-first indices 0, 1, 2, 3, 4 in that order, and a certificate whose five singleton components are listed `(0,q0)`, `(0,q1)`, `(2,q0)`, `(1,q0)`, `(2,q1)`: the edge `(2,q0)` to `(1,q0)` lists `(2,q0)` before `(1,q0)` although `(1,q0)` has the smaller vertex index, and `(2,q1)`, which no edge leaves, is listed last, after the phase-1 component. The only component with a self-edge, `(1,q0)` (the terminal stutter edge), carries `MissingAcceptance`, every other component carries `Trivial`, and FR-339's checker accepts it. FR-130-AC-5's entry lists `acq(1)` before `acq(2)`. | Test (TC-521) |
 | FR-126-AC-19 | Over the `Counter` subject and the `DeadlockFreedom` claim, a meter budget whose `work_units` is 0 and every other counter at its FR-255 accounting-table default stops the run with `Stopped{ResourceExhausted, {EvaluationMeter{work_units}, 0}}` at the `inc` precondition's evaluation, the counter the precondition's `Incomplete` names. Over a `Counter` variant whose `inc` has no precondition, under `work_units` 0, `always holds(c.value <= 3)` stops with `Stopped{ResourceExhausted, {EvaluationMeter{work_units}, 0}}` at the letter of position 0, with no counterexample and no certificate. Over the example subject of AC-1 and the `DeadlockFreedom` claim with `max_candidates` 1, the run stops with `Stopped{ResourceExhausted, {MaxCandidates, 1}}`. Each `ReachedLimit` names its limit's FR-255 setting: `accounting.work_units` for the meter stops and `expansion.max_candidates` for the candidate stop, and the settings operation given `accounting.work_units=1000000` or `expansion.max_candidates=1000000` raises the bound that stopped the run. | Test (TC-521) |
 | FR-126-AC-20 | Over a `Counter` subject whose product has at least 50 states, `check_model` with `workers` 1, 2, 4 and 64 returns, for a `Violated` claim, a `Holds` claim with a certificate and a claim stopped by `max_states` 5, the same verdict, the same counterexample states and loop in the same order, byte-equal certificates and, for the stopped claim, `Stopped{ResourceExhausted, {MaxStates, 5}}` with equal counts. With `max_candidates` set to the first charge that the one-worker run's seventh expanded state exceeds, every `workers` value stops at that same seventh state with the same `MaxCandidates` limit, equal states and transitions counts and an equal frontier, although a later state's expansion is made to finish first. A run whose `Cancel` handle is cancelled after a delay, with `workers` 4, returns `Stopped{Cancelled, None}` whose counts and frontier equal the one-worker run cancelled after the merge of the same number `n` of states, for some `n`. `workers` 0 returns `ModelCheckRefusal::Workers`. | Test (TC-1417) |
+| FR-126-AC-21 | `ProtocolSystem::reachable(worker_limit, max_states)` requires an explicit `usize` state budget at every caller and reuses `simulation::frontier::Limit`; there is no overload or default that omits the budget. | Inspection |
+| FR-126-AC-22 | In the direct reachable-state search, a nonempty initial set with `max_states` 0 returns `ReachRefusal::Limit(Limit::States(0))`, and two distinct initial keys with budget 1 return the corresponding limit refusal before the second key is admitted. Repeated initial or successor keys consume one slot per distinct full canonical key. No limit refusal returns a partial successful graph. | Test |
+| FR-126-AC-23 | A finite direct protocol search with `n > 0` distinct reachable canonical states completes with exactly `n` states at budget `n`; at budget `n - 1` it returns `ReachRefusal::Limit(Limit::States(n - 1))`. With worker limits 1, 2 and 4 the limit refusal and its value are identical, including when later breadth-first expansions finish first. | Test |
+| FR-126-AC-24 | A concrete protocol system with an unordered Boolean channel declared `delivery unknown capacity 2 overflow block`, a send on that channel, and enabled duplicate and lose steps, using its concrete delivery indices without cycle-key canonicalization, returns `ReachRefusal::Limit(Limit::States(16))` from the direct reachable-state search with `max_states` 16 and worker limits 1 and 4. The run returns no partial successful graph; the test remains bounded even though repeated duplicate/lose steps can produce indefinitely fresh concrete keys. | Test |
 
 ## Dependencies
 
