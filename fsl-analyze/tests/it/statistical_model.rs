@@ -1069,7 +1069,10 @@ fn an_undecided_contract_conjunction_leaves_its_test_undecided() {
     let claim = "probabilistic Safe using ev on M over (c: M::Cell) under Even on origin \
          with alpha 0.01, beta 0.01, indifference 0.1 \
          { probability >= 0.5 [ always[0,3] holds(c.v >= 0) ] }";
-    let world = World::with_value_profile(&prob_world::undetermined(claim));
+    let world = World::new_with_mode(
+        &prob_world::undetermined(claim),
+        fsl_semantics::check::CheckMode::Kernel,
+    );
     let verdict = decided(&world, "Safe", StatisticalMethod::Okamoto);
     let undecided = Decision::Undecided(UndecidedCause::UndecidedSuccessor);
     assert_eq!(verdict.decision, undecided);
