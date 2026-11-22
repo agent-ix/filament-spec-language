@@ -849,7 +849,8 @@ fn undefined_replay_distinguishes_workload_repeated_keys_and_scheduler_choices()
             RequestIndex::new(0),
             world.request(name, ModelCheckLimits::default()),
             move |path| {
-                path.scheduler[0].1 = fsl_replay::ProbabilisticSchedulerChoice::Deterministic(choice.clone());
+                path.scheduler[0].1 =
+                    fsl_replay::ProbabilisticSchedulerChoice::Deterministic(choice.clone());
             },
         );
         let record = analyze_items(&Engines::fsl().unwrap(), vec![item], &Cancel::new()).remove(0);
@@ -864,7 +865,7 @@ fn undefined_replay_distinguishes_workload_repeated_keys_and_scheduler_choices()
     for mut wrong in [every.clone(), bounded] {
         wrong.path.scheduler[0].1 = fsl_replay::ProbabilisticSchedulerChoice::Deterministic(
             fsl_replay::ProductAction::Identity(
-            fsl_replay::Schedule::of(&system, &keep.identity).unwrap(),
+                fsl_replay::Schedule::of(&system, &keep.identity).unwrap(),
             ),
         );
         assert!(matches!(

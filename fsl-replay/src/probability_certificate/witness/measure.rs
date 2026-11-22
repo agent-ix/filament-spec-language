@@ -625,13 +625,7 @@ pub(super) fn replay_undefined(
         return Err(ProbabilityWitnessError::Refused);
     }
     let deterministic = super::deterministic_scheduler_rows(&evidence.scheduler)?;
-    let scheduler = step::scheduler(
-        &deterministic,
-        limits,
-        &mut meter,
-        &mut storage,
-        cancel,
-    )?;
+    let scheduler = step::scheduler(&deterministic, limits, &mut meter, &mut storage, cancel)?;
     let initials = system.initial();
     let [initial] = initials.as_slice() else {
         return Err(ExactProbabilityGraphError::UnsupportedInitial.into());

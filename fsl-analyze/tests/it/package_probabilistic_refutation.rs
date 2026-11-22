@@ -339,8 +339,9 @@ fn source_enum_scheduler_evidence_encodes_with_the_package_member_index() {
     assert!(!witness.paths.is_empty());
     let mut scheduler = Vec::new();
     for (key, action) in &witness.scheduler {
-        let fsl_replay::ProbabilisticSchedulerChoice::Deterministic(ProductAction::Identity(schedule)) =
-            action
+        let fsl_replay::ProbabilisticSchedulerChoice::Deterministic(ProductAction::Identity(
+            schedule,
+        )) = action
         else {
             continue;
         };
