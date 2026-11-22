@@ -1104,12 +1104,8 @@ fn clause_overrides_reach_accounting_and_stages(extracted: bool) {
             ..Default::default()
         },
     );
-    assert_ne!(limited.exit, 0, "{}", limited.document);
-    assert!(
-        limited.document.to_string().contains("work_units"),
-        "{}",
-        limited.document
-    );
+    let document = limited.expect("monitor", "incomplete", 22);
+    assert_eq!(document["items"][0]["cause"], json!("PROBE"), "{document}");
 
     let mut stages = fsl_replay::spine::SpineLimits::default();
     stages.source.source_bytes = 1;
@@ -1121,12 +1117,10 @@ fn clause_overrides_reach_accounting_and_stages(extracted: bool) {
             ..Default::default()
         },
     );
-    assert_ne!(staged.exit, 0, "{}", staged.document);
-    assert!(
-        staged.document.to_string().contains("stage_limit_exceeded"),
-        "{}",
-        staged.document
-    );
+    let document = staged.expect("monitor", "incomplete", 22);
+    let cause = &document["items"][0]["cause"];
+    assert_eq!(cause["code"], "stage_limit_exceeded", "{document}");
+    assert_eq!(cause["kind"], "input-bytes-exceeded", "{document}");
 
     // A caller's clocks beside the request's own are refused on this path too.
     let mut doubled = job.clone();
