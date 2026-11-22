@@ -1319,8 +1319,6 @@ pub fn replay_with_cancel_and_temporal_selections(
     replay_limits: ReplayLimits,
     cancel: &Cancel,
 ) -> Result<ReplayResult, ReplayRefusal> {
-    #[cfg(test)]
-    tphase("replay-begin");
     let request = ReplayRequest::decode(wire, replay_limits)?;
     if matches!(request.source(), ReplaySource::ProtocolAnalysis(_)) {
         return Err(ReplayRefusal::WrongProtocolAnalysisEntry);
@@ -1349,8 +1347,6 @@ pub fn replay_with_cancel_and_temporal_selections(
         let counterexample = (**counterexample).clone();
         return replay_hybrid(request, &compiled, &counterexample);
     }
-    #[cfg(test)]
-    tphase("recompiled");
     let (function, owner) = function.ok_or_else(|| {
         ReplayRefusal::Fault(InternalFault::new(
             "replay",
@@ -1407,8 +1403,6 @@ pub fn replay_with_cancel_and_temporal_selections(
     } else {
         ObjectEnvironment::default().with_unresolved_references()
     };
-    #[cfg(test)]
-    tphase("converted");
     let mut meter = Meter::new(limits).with_cancel(cancel.clone());
     let evaluation = match package.call_supplied(
         &call.name,
@@ -2219,8 +2213,6 @@ pub(crate) fn recompile_with_temporal_selections(
             ));
         }
     }
-    #[cfg(test)]
-    tphase("run_spine_units-returned");
     // The recompile's own typed nodes carry each function's mode; its bytes are
     // not parsed again.
     let recompiled_modes: std::collections::BTreeMap<Vec<u8>, Option<String>> = compiled
@@ -2236,8 +2228,6 @@ pub(crate) fn recompile_with_temporal_selections(
         })
         .collect();
     verify_recorded_modes(request.package().document(), &recompiled_modes)?;
-    #[cfg(test)]
-    tphase("modes-checked");
     request
         .package()
         .admit(&evidence, limits.spine.imports.for_ir())
@@ -2251,8 +2241,6 @@ pub(crate) fn recompile_with_temporal_selections(
                 .ok()
             }),
         })?;
-    #[cfg(test)]
-    tphase("package-admitted");
     request.check_external_package_bytes(
         compiled
             .checked
@@ -2562,8 +2550,6 @@ fn run_spine_units(
             Err(fault) => ReplayRefusal::Fault(fault),
         },
     };
-    #[cfg(test)]
-    tphase("spine-begin");
     let requests = units
         .iter()
         .map(|(identity, path, bytes)| ParseRequest {
@@ -2629,8 +2615,6 @@ fn run_spine_units(
     )
     .map_err(&refusal)?
     .into_value();
-    #[cfg(test)]
-    tphase("spine-checked");
     let checked = checked.into_iter().next().ok_or_else(|| {
         ReplayRefusal::Fault(InternalFault::new(
             "replay",
@@ -2657,8 +2641,6 @@ fn run_spine_units(
     )
     .map_err(&refusal)?
     .into_value();
-    #[cfg(test)]
-    tphase("spine-emitted");
     let evidence = spine::admission_evidence(
         &models,
         &checked,
@@ -3311,23 +3293,4 @@ mod carried_quantity_tests {
             }))
         ));
     }
-}
-
-/// TEMPORARY (QSL-2825): phase memory.
-#[cfg(test)]
-pub(crate) fn tphase(label: &str) {
-    let status = std::fs::read_to_string("/proc/self/status").unwrap_or_default();
-    let field = |name: &str| {
-        status
-            .lines()
-            .find(|line| line.starts_with(name))
-            .and_then(|line| line.split_whitespace().nth(1))
-            .unwrap_or("0")
-            .to_owned()
-    };
-    eprintln!(
-        "MEM label={label} rss_kib={} hwm_kib={}",
-        field("VmRSS:"),
-        field("VmHWM:")
-    );
 }

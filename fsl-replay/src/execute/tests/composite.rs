@@ -722,7 +722,6 @@ fn tc_736_a_100000_term_source_and_list_replay_to_the_proving_verdict() {
                 "record List {{ head: Int[0, 9]; tail: List?; }}\n\
                  function small using v(l: List): Boolean pure {{ {sum} < 5 }}\n"
             ));
-            crate::execute::tphase("t-fixture-compiled");
             let target = crate::RequestTargetWire::function(
                 name(&["small"]),
                 declaration_key(&fixture.compiled, &name(&["small"])),
@@ -737,7 +736,6 @@ fn tc_736_a_100000_term_source_and_list_replay_to_the_proving_verdict() {
                 record,
             )
         };
-        crate::execute::tphase("t-fixture-dropped");
         let request = |source| ReplayRequestWire {
             package: crate::ReplayPackage::read(&package_bytes, 1 << 30)
                 .expect("actual emitted replay package"),
@@ -796,7 +794,6 @@ fn tc_736_a_100000_term_source_and_list_replay_to_the_proving_verdict() {
             };
             let mut wire = request(ReplaySource::Witness(Witness::parse(transcript).unwrap()));
             wire.stage_limits = limits.clone();
-            crate::execute::tphase("t-request-built");
             wire
         };
         // Step 2: the default limits stop the recompile at a named stage.
