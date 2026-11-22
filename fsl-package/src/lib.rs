@@ -28,6 +28,10 @@ pub const CATALOG_PAIRS: &[fsl_foundation::diagnostic::CatalogCode] = &[
 #[cfg(feature = "std")]
 mod analysis_view;
 #[cfg(feature = "std")]
+mod composition_context;
+#[cfg(feature = "std")]
+pub use composition_context::{CompositionModelContext, CompositionModelContextRefusal};
+#[cfg(feature = "std")]
 mod composition_view;
 #[cfg(feature = "std")]
 pub use composition_view::{
