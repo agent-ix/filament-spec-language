@@ -56,6 +56,10 @@ pub(super) enum CompositionCase {
     Acyclic,
     /// A mutual dependency between two distinct declared components.
     Cyclic,
+    /// A genuine supplied operation with no clause fairness on that operation.
+    UnusedSupply,
+    /// A source-admitted step-bounded clause in the composition.
+    StepBounded,
 }
 
 /// Original producer inputs beside an independently byte-admitted root.
@@ -229,11 +233,26 @@ impl AdmittedCompositionFixture {
     pub fn new(case: CompositionCase) -> Self {
         let document = serde_json::to_vec(&model_fixture::document()).unwrap();
         let documents = intake::package_input([document.as_slice()]).unwrap();
-        let producer = dependency(PRODUCER, PRODUCER_CLAUSES, &documents);
+        let producer_source = if matches!(case, CompositionCase::StepBounded) {
+            PRODUCER_CLAUSES.replace(
+                "always holds(p.sent_count >= 0)",
+                "always[0,1] holds(p.sent_count >= 0)",
+            )
+        } else {
+            PRODUCER_CLAUSES.to_owned()
+        };
+        let producer = dependency(PRODUCER, &producer_source, &documents);
         let consumer = dependency(CONSUMER, CONSUMER_CLAUSES, &documents);
         let reverse = match case {
-            CompositionCase::Acyclic => "",
+            CompositionCase::Acyclic
+            | CompositionCase::UnusedSupply
+            | CompositionCase::StepBounded => "",
             CompositionCase::Cyclic => "depends Producer::Sends on Consumer::Done;",
+        };
+        let unused_supply = if matches!(case, CompositionCase::UnusedSupply) {
+            "supplies fair strong whole M::Consumer::receive;"
+        } else {
+            ""
         };
         let source_text = format!(
             "language \"ix:native\" edition \"1-draft\";
@@ -249,6 +268,7 @@ compose Sys rule assume-guarantee {{
  rely Consumer::Done on Producer::Shared;
  depends Consumer::Done on Producer::Sends;
  supplies fair weak each M::Producer::send;
+ {unused_supply}
  {reverse}
 }}
 "

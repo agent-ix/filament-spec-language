@@ -1037,6 +1037,52 @@ mod tests {
         );
     }
 
+    /// Trace: FR-1044-AC-10, FR-515-AC-1
+    #[test]
+    fn admitted_step_intervals_use_the_run_form_and_source_slot_keys() {
+        let fixture = AdmittedCompositionFixture::new(CompositionCase::StepBounded);
+        let mut budget = NativeJoinBudget::new(10_000_000, 10_000_000);
+        let bare = fixture.bare(&mut budget).expect("genuine owners");
+        let named = bare.claim_name("Sys").expect("actual composition");
+        let view = bare
+            .composition_with_budget(&named.declaration, &mut budget)
+            .expect("actual view");
+        let projected = PackageComposition::from_view(&bare, &view, &mut budget)
+            .expect("bounded run form remains supported");
+        let source = fixture
+            .source
+            .graph()
+            .compositions()
+            .iter()
+            .find(|c| c.name() == "Sys")
+            .expect("source oracle");
+        let expected = super::super::composition_premises(&fixture.source, source.node())
+            .expect("source slots");
+        assert_eq!(projected.slots().len(), expected.len());
+        for (actual, expected) in projected.slots().iter().zip(expected) {
+            assert_eq!(actual.derived.key, expected.derived.key);
+        }
+        let clause = projected
+            .clauses()
+            .iter()
+            .find(|c| c.component == "Producer" && c.name.name.as_ref() == "Shared")
+            .expect("bounded owner clause");
+        assert!(clause
+            .form
+            .as_ref()
+            .expect("run form")
+            .formula
+            .iter()
+            .any(|node| matches!(
+                node,
+                fsl_semantics::check::PackageFormulaNode::Unary {
+                    interval: Some(_),
+                    ..
+                }
+            )));
+        assert_eq!(clause.property, Some(PropertyForm::Safety));
+    }
+
     /// Trace: FR-1044-AC-6, FR-1044-AC-10
     #[test]
     fn admitted_cycles_match_actual_source_tail_and_first_authored_edge() {
