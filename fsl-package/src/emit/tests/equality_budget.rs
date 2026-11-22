@@ -244,7 +244,7 @@ fn bare_admission_retains_equality_and_reports_its_denial_after_projection() {
             u128::from(consumed) + unpaid.amount
         );
     }
-    for (work, storage, kind, code) in [
+    let denials: Vec<_> = [
         (
             need.work - 1,
             full.storage,
@@ -257,11 +257,28 @@ fn bare_admission_retains_equality_and_reports_its_denial_after_projection() {
             NativeJoinChargeKind::Storage,
             Code::StorageLimit,
         ),
-    ] {
+    ]
+    .into_iter()
+    .map(|(work, storage, kind, code)| {
         let mut budget = NativeJoinBudget::new(work, storage);
-        let error = BarePackage::new(&admitted)
-            .with_supply(supply, &mut budget)
-            .expect_err("one short in equality");
+        let outcome = BarePackage::new(&admitted).with_supply(supply, &mut budget);
+        eprintln!(
+            "equality denial probe: resource={kind:?}, native={:?}, limit={:?}, \
+             ceilings=({work}, {storage}), consumed={:?}, first_unpaid={:?}, \
+             first_unpaid_locus={:?}, full={full:?}, declarations={declarations:?}, \
+             need={need:?}, admitted={}",
+            outcome.as_ref().err().map(NativeJoinFailure::native),
+            outcome.as_ref().err().and_then(NativeJoinFailure::limit),
+            budget.consumed(),
+            budget.first_unpaid(),
+            budget.first_unpaid_locus(),
+            outcome.is_ok(),
+        );
+        (work, storage, kind, code, budget, outcome)
+    })
+    .collect();
+    for (work, storage, kind, code, budget, outcome) in denials {
+        let error = outcome.expect_err("one short in equality");
         let NativeJoinFailure::Equality(native) = error.native() else {
             panic!(
                 "actual equality cause after identity/type prefix: native={:?}, limit={:?}, \
