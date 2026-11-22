@@ -305,6 +305,7 @@ struct Seen {
     max_frame_bytes: u64,
     /// The FR-331 `options` of every request item the provider received.
     options: Vec<Value>,
+    requests: Vec<Value>,
 }
 
 /// A process provider that records each request and answers every item
@@ -326,6 +327,7 @@ impl fsl_analyze::provider::ExternalProvider for Recording {
         seen.deadline_ms = request.deadline_ms();
         seen.max_frame_bytes = request.limits().max_frame_bytes;
         let wire = serde_json::to_value(request).expect("the request serializes");
+        seen.requests.push(wire.clone());
         seen.options.extend(
             wire["items"]
                 .as_array()
@@ -344,6 +346,112 @@ fn recording_provider(
     verdict: fsl_analyze::provider::ProviderVerdict,
 ) -> fsl_analyze::analyze::Engine {
     publishing_provider(seen, verdict, &[])
+}
+
+/// The real run requirement consumer reads scalar records from admitted bytes,
+/// retaining guards, bounds, row indices, candidate order and provider requests.
+#[trace("FR-940-AC-13", "FR-961-AC-1")]
+#[test]
+fn package_scalar_requirement_records_equal_the_source_run() {
+    use fsl_analyze::provider::ProviderVerdict;
+    let unit = "language \"ix:native\" edition \"1-draft\";\nprofile v = \"filament.value.complete/v1\";\nfunction Guarded using v(x: Int[0, 9], p: Boolean): Integer pure { if p then x + 1 else x * 2 }\nfunction Other using v(x: Int[0, 9]): Integer pure { x + 1 }\n";
+    for provider in [false, true] {
+        let directory = tempfile::tempdir().unwrap();
+        let requirements = if provider {
+            json!({"backend": PROVIDER})
+        } else {
+            json!({})
+        };
+        let path = write(
+            directory.path(),
+            "Guarded",
+            json!([
+                {"parameter": "x", "value": {"type": "integer", "value": "3"}},
+                {"parameter": "p", "value": {"type": "boolean", "value": true}}
+            ]),
+            Some(requirements),
+        );
+        std::fs::write(directory.path().join("unit.native"), unit).unwrap();
+        let seen = Arc::new(Mutex::new(Seen::default()));
+        let execute = |path: &Path| {
+            if provider {
+                command::run_with_providers(
+                    path,
+                    &Fr290,
+                    vec![recording_provider(&seen, ProviderVerdict::Proved)],
+                    &command::ProviderOptions::default(),
+                    &filament_exact::Cancel::new(),
+                )
+                .unwrap()
+            } else {
+                command::run(path, &Fr290).unwrap()
+            }
+        };
+        let source_run = execute(&path);
+        let source_requests = std::mem::take(&mut seen.lock().unwrap().requests);
+        let compile = json!({"format": "native-compile/1", "request": {
+            "models": [], "program": {"source": source()},
+            "handoff": {"directory": "handoff", "package_name": "test:requirements",
+                "native_join": {"work_units": 1_u64 << 40, "storage": 1_u64 << 24}}
+        }});
+        let compile_path = directory.path().join("compile.json");
+        std::fs::write(&compile_path, compile.to_string()).unwrap();
+        command::compile(&compile_path).unwrap();
+        let mut request: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        request["request"]
+            .as_object_mut()
+            .unwrap()
+            .remove("program");
+        request["request"]["package"] = json!({"directory": "handoff"});
+        std::fs::write(&path, request.to_string()).unwrap();
+        std::fs::remove_file(directory.path().join("unit.native")).unwrap();
+        let package = execute(&path);
+        let (source_value, source_outcome) = documents(&source_run);
+        let (package_value, package_outcome) = documents(&package);
+        assert_eq!(
+            package_value["requirements"], source_value["requirements"],
+            "{package_value}"
+        );
+        assert_eq!(
+            package_value["registry"], source_value["registry"],
+            "{package_value}"
+        );
+        assert_eq!(
+            package_value["outcome"], source_value["outcome"],
+            "{package_value}"
+        );
+        assert_eq!(
+            package_outcome["items"], source_outcome["items"],
+            "{package_outcome}"
+        );
+        assert_eq!(package.exit_code, source_run.exit_code);
+        let items = entries(&package_value);
+        assert_eq!(
+            items.len(),
+            2,
+            "only Guarded's two scalar operations: {items:?}"
+        );
+        assert!(
+            items
+                .iter()
+                .all(|item| item["request"]["claim"]["occurrence"]["role"] == "expression"),
+            "{items:?}"
+        );
+        if provider {
+            let package_requests = &seen.lock().unwrap().requests;
+            assert_eq!(package_requests, &source_requests);
+            assert_eq!(package_requests.len(), 2);
+            for request in package_requests {
+                let item = &request["items"][0];
+                assert_eq!(
+                    item["path_condition"].as_array().map(Vec::len),
+                    Some(1),
+                    "{item}"
+                );
+                assert!(item.get("result_bound").is_some(), "{item}");
+            }
+        }
+    }
 }
 
 /// The recording provider whose manifest publishes the option `published`.
@@ -1058,8 +1166,8 @@ fn settled(directory: &Path, requirements: Value) -> Vec<Value> {
 
 /// The refusal envelope of `sq` run with `requirements`.
 fn refusal(directory: &Path, requirements: Value) -> (Value, u8) {
-    let error = command::run(&sq(directory, Some(requirements)), &Fr290)
-        .expect_err("the request refuses");
+    let error =
+        command::run(&sq(directory, Some(requirements)), &Fr290).expect_err("the request refuses");
     (
         error.value().expect("refusal envelope").clone(),
         error.category().exit_code(),
@@ -1077,7 +1185,11 @@ fn a_claim_written_by_a_result_names_its_item_when_supplied_back() {
         directory.path(),
         json!({"backend": "fsl.absent", "items": [{"claim": claim, "backend": "value-checker"}]}),
     );
-    assert_eq!(items[0]["record"]["backend"], "value-checker", "{}", items[0]);
+    assert_eq!(
+        items[0]["record"]["backend"], "value-checker",
+        "{}",
+        items[0]
+    );
     assert_eq!(items[0]["record"]["result"], "proved", "{}", items[0]);
 }
 
@@ -1092,8 +1204,16 @@ fn a_structural_claim_names_its_item() {
         directory.path(),
         json!({"backend": "fsl.absent", "items": [{"claim": claim, "backend": "value-checker"}]}),
     );
-    assert_eq!(items[0]["record"]["backend"], "value-checker", "{}", items[0]);
-    assert!(items[1].to_string().contains("unknown-backend"), "{}", items[1]);
+    assert_eq!(
+        items[0]["record"]["backend"], "value-checker",
+        "{}",
+        items[0]
+    );
+    assert!(
+        items[1].to_string().contains("unknown-backend"),
+        "{}",
+        items[1]
+    );
 }
 
 /// FR-960 "Inputs": a held entry and a structural entry naming two different
@@ -1110,9 +1230,21 @@ fn a_held_entry_and_a_structural_entry_name_their_own_items() {
             {"claim": claims[0], "backend": "value-checker"},
             {"claim": second, "backend": "value-checker"}]}),
     );
-    assert_eq!(items[0]["record"]["backend"], "value-checker", "{}", items[0]);
-    assert_eq!(items[1]["record"]["backend"], "value-checker", "{}", items[1]);
-    assert!(items[2].to_string().contains("unknown-backend"), "{}", items[2]);
+    assert_eq!(
+        items[0]["record"]["backend"], "value-checker",
+        "{}",
+        items[0]
+    );
+    assert_eq!(
+        items[1]["record"]["backend"], "value-checker",
+        "{}",
+        items[1]
+    );
+    assert!(
+        items[2].to_string().contains("unknown-backend"),
+        "{}",
+        items[2]
+    );
 }
 
 /// FR-960 "Refusals before the call": one claim written in both forms is two
