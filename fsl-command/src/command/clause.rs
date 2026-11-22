@@ -32,6 +32,7 @@ pub(super) fn read(
     request: &wire::Request,
     clause: &wire::ClauseRun,
     source: FormalSource,
+    limits: SpineLimits,
     observation_override: Option<fsl_semantics::model::observation::ObservationLimits>,
 ) -> Result<ClauseRunRequest> {
     let source_identity = source.source().identity().clone();
@@ -46,6 +47,7 @@ pub(super) fn read(
         clause,
         source_identity,
         run_source,
+        limits,
         observation_override,
     )
 }
@@ -57,6 +59,7 @@ pub(super) fn read_extracted(
     clause: &wire::ClauseRun,
     source: FormalSource,
     extracted: fsl_source::ExtractedSource,
+    limits: SpineLimits,
     observation_override: Option<fsl_semantics::model::observation::ObservationLimits>,
 ) -> Result<ClauseRunRequest> {
     let source_identity = source.source().identity().clone();
@@ -66,6 +69,7 @@ pub(super) fn read_extracted(
         clause,
         source_identity,
         ClauseRunSource::Extracted(extracted),
+        limits,
         observation_override,
     )
 }
@@ -76,6 +80,7 @@ fn read_with_source(
     clause: &wire::ClauseRun,
     source_identity: SourceIdentity,
     source: ClauseRunSource,
+    limits: SpineLimits,
     observation_override: Option<fsl_semantics::model::observation::ObservationLimits>,
 ) -> Result<ClauseRunRequest> {
     if observation_override.is_some() && clause.observation_limits.is_some() {
@@ -183,7 +188,7 @@ fn read_with_source(
         dependencies,
         observations,
         selection,
-        limits: SpineLimits::default(),
+        limits,
         observation_limits,
         accounting: super::call_accounting(&clause.accounting),
         clocks: request.clocks.clone(),
