@@ -5209,7 +5209,6 @@ fn a_re_stamped_timestamped_sample_is_the_same_member_in_batch_evaluation() {
 /// The carried side of the re-stamp case above.
 #[test]
 #[trace("TC-2624", "FR-944-AC-16", "FR-820-AC-1")]
-#[ignore = "blocked by the #3346 provisional-advance watermark defect on main; owner terra:QSL:codex"]
 fn a_re_stamped_timestamped_sample_is_the_same_member_in_carried_evaluation() {
     let world = world();
     let retained = ProgressCompleteness::Complete { through: 5 };
