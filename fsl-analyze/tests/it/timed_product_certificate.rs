@@ -1631,3 +1631,27 @@ fn cancelling_a_timed_refutation_at_any_poll_settles_cancelled_or_refuted() {
     }
     assert!(cancelled > 0, "some poll must land inside the run");
 }
+
+/// FR-281 "Engine refusals": a document-storage budget that stops a timed
+/// refutation's replay is `incomplete`, at every size, never
+/// `unsupported`/`not-yet-implemented` and never a fault.
+#[trace("TC-2492", "FR-281-AC-6")]
+#[test]
+fn a_timed_refutations_replay_stopped_by_a_storage_budget_is_never_unsupported_or_failed() {
+    let world = retx(GUARD, true, TWO_DELAYS, &every_deadlines());
+    let engines = Engines::fsl().expect("the linked engines are admitted");
+    let mut stopped = 0_u32;
+    for bytes in [0_u64, 1, 16, 64, 256, 1024, 4096, 16_384, 65_536, 1 << 20] {
+        let mut request = request(&world, "Strict");
+        request.limits.document.storage_bytes = bytes;
+        let item = exact_probabilistic_item(RequestIndex::new(0), request);
+        let record = analyze_items(&engines, vec![item], &Cancel::new()).remove(0);
+        let value = record.terminal().expect("a terminal record").value();
+        assert!(
+            matches!(value, TerminalValue::Refuted | TerminalValue::Incomplete(_)),
+            "storage {bytes}: {record:#?}"
+        );
+        stopped += u32::from(matches!(value, TerminalValue::Incomplete(_)));
+    }
+    assert!(stopped > 0, "some storage budget must stop the replay");
+}
