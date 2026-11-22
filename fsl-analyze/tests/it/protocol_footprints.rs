@@ -319,7 +319,7 @@ fn one_completed(system: &ProtocolSystem<'_, Sc>, reached: &[Reached]) -> usize 
 #[test]
 fn a_cancelling_join_writes_its_branches_and_a_queue_orders_its_steps() {
     let branches = [branch("a"), branch("b")];
-    for (outstanding, cancels) in [("cancel", true), ("continue", false)] {
+    for (outstanding, cancels, expected_states) in [("cancel", true, 7), ("continue", false, 9)] {
         let run = format!(
             "sequence Main {{ parallel Both {{ branch a {} branch b {} }} \
              join any [a, b] outstanding {outstanding}; }}",
@@ -333,6 +333,7 @@ fn a_cancelling_join_writes_its_branches_and_a_queue_orders_its_steps() {
         let subject = unit.subject("P");
         let system = sc_system(&subject);
         let reached = reachable(&system);
+        assert_eq!(reached.len(), expected_states, "{outstanding}");
         let at = one_completed(&system, &reached);
         let (_, join, _) = step(&system, &reached, at, StepKind::Join, "Both");
         for thread in &branches {
@@ -358,6 +359,7 @@ fn a_cancelling_join_writes_its_branches_and_a_queue_orders_its_steps() {
     let subject = unit.subject("Chatter");
     let system = sc_system(&subject);
     let reached = reachable(&system);
+    assert_eq!(reached.len(), 18);
     let s1 = forked(&system, &reached);
     let queue = Location::Protocol(ProtocolLocation::Queue {
         instance: 0,
@@ -480,6 +482,7 @@ fn an_enabling_footprint_holds_exactly_what_enables_the_step() {
     let subject = unit.subject("P");
     let system = sc_system(&subject);
     let reached = reachable(&system);
+    assert_eq!(reached.len(), 16);
     let (c, d) = (cell(&system, "c"), cell(&system, "d"));
     let bound = step(&system, &reached, 0, StepKind::Event, "E").2;
     // One identity, with one step per post-state of `c.v`.
@@ -526,6 +529,7 @@ fn an_enabling_footprint_holds_exactly_what_enables_the_step() {
     let subject = unit.subject("P");
     let system = sc_system(&subject);
     let reached = reachable(&system);
+    assert_eq!(reached.len(), 5);
     let (send, sending, sent) = step(&system, &reached, 0, StepKind::Send, "Tx");
     let naming = |channel: &str| ClaimReads {
         locations: BTreeSet::new(),
@@ -893,12 +897,17 @@ fn every_independent_pair_of_steps_commutes() {
             vec!["c"],
         ),
     ];
+    let expected_states = [
+        7, 18, 24, 9, 7, 9, 58, 18, 33, 136, 32, 12, 17, 202, 63, 1537, 45, 33, 27,
+    ];
+    assert_eq!(units.len(), expected_states.len());
     let mut total = 0;
     for (index, (body, name, keys)) in units.iter().enumerate() {
         let unit = Cells::new(body, keys);
         let subject = unit.subject(name);
         let system = sc_system(&subject);
         let reached = reachable(&system);
+        assert_eq!(reached.len(), expected_states[index], "{body}");
         let pairs = commuting_pairs(&system, &reached);
         let checked = pairs.len();
         // Beside the compensation thread, its `cattempt` and `cend` commute
@@ -969,6 +978,7 @@ fn records_guards_and_channel_anchors_are_read() {
     let subject = unit.subject("P");
     let system = sc_system(&subject);
     let reached = reachable(&system);
+    assert_eq!(reached.len(), 9);
     let bound = steps(&system, &reached, 0, StepKind::Event, "F")[0].2;
     let any_cell = Location::AnyMembership {
         population: key("cells"),
@@ -993,6 +1003,7 @@ fn records_guards_and_channel_anchors_are_read() {
     let subject = unit.subject("P");
     let system = sc_system(&subject);
     let reached = reachable(&system);
+    assert_eq!(reached.len(), 5);
     let (send, sending, sent) = step(&system, &reached, 0, StepKind::Send, "Tx");
     let naming = |channel: &str| ClaimReads {
         locations: BTreeSet::new(),

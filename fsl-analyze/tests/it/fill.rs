@@ -847,7 +847,6 @@ pub(crate) fn reachable_with_workers<M: Explored>(
     worker_limit: NonZeroUsize,
 ) -> (Vec<Reached<M>>, usize) {
     let reached = M::reach(system, worker_limit);
-    eprintln!("reachable states: {}", reached.states.len());
     (reached.states, reached.workers)
 }
 

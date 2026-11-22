@@ -1099,13 +1099,16 @@ fn every_independent_pair_of_ra_steps_commutes() {
             "SB::Main::Both",
         ),
     ];
+    let expected_states = [23, 20, 32, 20, 16, 8, 105, 190];
+    assert_eq!(units.len(), expected_states.len());
     let mut independent_pairs = 0;
-    for (body, parallel) in &units {
+    for ((body, parallel), expected) in units.iter().zip(expected_states) {
         let case = Case::new(body);
         let system = case
             .system(&[select(parallel, MemoryModelName::Ra)], Ra::default())
             .expect("builds");
         let reached = reachable(&system);
+        assert_eq!(reached.len(), expected, "{body}");
         independent_pairs +=
             crate::protocol_footprints::assert_independent_steps_commute(&system, &reached);
     }
