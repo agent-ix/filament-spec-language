@@ -18,26 +18,21 @@ use crate::reader_protocol_projection::{BareWalker, UnsupportedView};
 use crate::{AnalysisView, BarePackage, BareStatePredicate};
 
 impl BarePackage<'_> {
-    /// Read one exact, untimed `eventually` claim with an origin activation
-    /// and a declared workload. Unsupported probability forms remain typed
-    /// pending selections; this never reconstructs a source checked body.
-    ///
-    /// # Errors
-    ///
-    /// A selection fault for inconsistent admitted facts, or a pending fact
-    /// for a probability form outside this package projection.
-    pub fn probability_claim_form(
+    fn probability_claim_read(
         &self,
         claim: &OccurrenceKey,
-    ) -> Result<PackageProbabilityClaimForm, BareClauseRefusal> {
+    ) -> Result<
+        (
+            &filament_contract_model::CheckedSemanticNodeV2,
+            &filament_contract_model::CheckedProbabilisticClaimNode,
+            &filament_contract_model::ClaimNameRow,
+        ),
+        BareSelectionFailure,
+    > {
         let malformed = || {
             BareSelectionFailure::from(SlotSelectionFailure::MalformedNode(claim.node().clone()))
         };
         let node = self.node_by_key(claim.node())?.ok_or_else(malformed)?;
-        let pending = || BareClauseRefusal::Pending {
-            fact: "probabilistic-exact-eventual-form",
-            node: node.node_id.clone(),
-        };
         let row = self
             .package()
             .claim_names()
@@ -53,8 +48,31 @@ impl BarePackage<'_> {
             .package()
             .probabilistic_claims()
             .iter()
-            .find(|read| read.node == node.node_id)
+            .find(|read| self.node_key(&read.node).as_ref() == Some(claim.node()))
             .ok_or_else(malformed)?;
+        Ok((node, read, row))
+    }
+
+    /// Read one exact, untimed `eventually` claim with an origin activation
+    /// and a declared workload. Unsupported probability forms remain typed
+    /// pending selections; this never reconstructs a source checked body.
+    ///
+    /// # Errors
+    ///
+    /// A selection fault for inconsistent admitted facts, or a pending fact
+    /// for a probability form outside this package projection.
+    pub fn probability_claim_form(
+        &self,
+        claim: &OccurrenceKey,
+    ) -> Result<PackageProbabilityClaimForm, BareClauseRefusal> {
+        let malformed = || {
+            BareSelectionFailure::from(SlotSelectionFailure::MalformedNode(claim.node().clone()))
+        };
+        let (node, read, row) = self.probability_claim_read(claim)?;
+        let pending = || BareClauseRefusal::Pending {
+            fact: "probabilistic-exact-eventual-form",
+            node: node.node_id.clone(),
+        };
         let ProbabilisticClaimForm::Reach {
             target: ProbabilisticReachTarget::Eventually(predicate),
             bound,
@@ -86,12 +104,9 @@ impl BarePackage<'_> {
             profile.definition.identity.to_string(),
         )
         .map_err(|_| malformed())?;
+        let workload = self.node_key(workload).ok_or_else(malformed)?;
         let workload = self
-            .package()
-            .resolved_graph()
-            .nodes
-            .iter()
-            .find(|node| &node.node_id == workload)
+            .node_by_key(&workload)?
             .and_then(|node| group_member(&node.body, "name"))
             .and_then(text)
             .ok_or_else(malformed)?
@@ -106,20 +121,15 @@ impl BarePackage<'_> {
             .over
             .as_ref()
             .map(|over| {
-                let parameter = self
-                    .package()
-                    .resolved_graph()
-                    .nodes
-                    .iter()
-                    .find(|node| &node.node_id == over)
-                    .ok_or_else(malformed)?;
+                let key = self.node_key(over).ok_or_else(malformed)?;
+                let parameter = self.node_by_key(&key)?.ok_or_else(malformed)?;
                 let name = group_member(&parameter.body, "name")
                     .and_then(text)
                     .ok_or_else(malformed)?
                     .to_owned();
                 let object = self
                     .exact_type_projections()
-                    .get(over)
+                    .get(&parameter.node_id)
                     .and_then(|projection| projection.as_ref().ok())
                     .and_then(|projection| match projection.value_type() {
                         ValueType::Reference(object) => Some(object.clone()),
@@ -226,13 +236,7 @@ impl BarePackage<'_> {
         let malformed = || {
             BareSelectionFailure::from(SlotSelectionFailure::MalformedNode(claim.node().clone()))
         };
-        let node = self.node_by_key(claim.node())?.ok_or_else(malformed)?;
-        let read = self
-            .package()
-            .probabilistic_claims()
-            .iter()
-            .find(|read| read.node == node.node_id)
-            .ok_or_else(malformed)?;
+        let (_, read, _) = self.probability_claim_read(claim)?;
         let ProbabilisticClaimForm::Reach {
             target: ProbabilisticReachTarget::Eventually(predicate),
             ..
@@ -257,13 +261,7 @@ impl BarePackage<'_> {
         let malformed = || {
             BareSelectionFailure::from(SlotSelectionFailure::MalformedNode(claim.node().clone()))
         };
-        let node = self.node_by_key(claim.node())?.ok_or_else(malformed)?;
-        let read = self
-            .package()
-            .probabilistic_claims()
-            .iter()
-            .find(|read| read.node == node.node_id)
-            .ok_or_else(malformed)?;
+        let (_, read, _) = self.probability_claim_read(claim)?;
         let mut keys = Vec::new();
         let mut names = Vec::new();
         if let Some(over) = read.over.as_ref() {

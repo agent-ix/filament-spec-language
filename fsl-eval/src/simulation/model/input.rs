@@ -658,12 +658,10 @@ impl<'p> PackageModelInput<'p> {
             unit_names,
         } = ProbabilisticParts::read(package, packages, normalization, false)?;
         for row in package.package().claim_names().unwrap_or_default() {
-            if !package
-                .package()
-                .probabilistic_claims()
-                .iter()
-                .any(|claim| claim.node == row.declaration)
-            {
+            if !package.package().resolved_graph().nodes.iter().any(|node| {
+                node.node_id == row.declaration
+                    && node.semantic_form.as_ref() == "probabilistic_claim"
+            }) {
                 continue;
             }
             let node = package.node_key(&row.declaration).ok_or_else(|| {

@@ -1180,12 +1180,10 @@ fn resolve_names<'s>(
                 if derived {
                     return Err(pending(PendingFamily::Derived));
                 }
-                if view
-                    .package()
-                    .probabilistic_claims()
-                    .iter()
-                    .any(|claim| claim.node == found.declaration)
-                {
+                if view.package().resolved_graph().nodes.iter().any(|node| {
+                    node.node_id == found.declaration
+                        && node.semantic_form.as_ref() == "probabilistic_claim"
+                }) {
                     return Ok(Named::Probability {
                         index,
                         name,
