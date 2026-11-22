@@ -127,6 +127,135 @@ impl Sink for Output<'_, '_> {
     }
 }
 
+// Display spelling is a semantic value in the existing scheduling fallback.
+// The shared traversal admits its own stack instead of invoking Display's
+// private, allocating traversal.
+struct DisplayProjection<'s, 'b> {
+    output: Output<'s, 'b>,
+    ordinals: Vec<u64>,
+    package: bool,
+}
+fn reserve_display<T>(
+    scope: &Scope<'_>,
+    values: &mut Vec<T>,
+) -> Result<(), quire_canonical::Error> {
+    if values.len() == values.capacity() {
+        let target = values.capacity().saturating_mul(2).max(1);
+        scope.charge(NativeJoinChargeKind::Storage, 1 + target as u128)?;
+        values
+            .try_reserve_exact(target - values.len())
+            .map_err(|_| quire_canonical::Error::Allocation { requested: target })?;
+    }
+    Ok(())
+}
+struct DisplayOutput<'a, 's, 'b> {
+    output: &'a mut Output<'s, 'b>,
+    error: Option<quire_canonical::Error>,
+}
+impl std::fmt::Write for DisplayOutput<'_, '_, '_> {
+    fn write_str(&mut self, text: &str) -> std::fmt::Result {
+        match self.output.write_bytes(text.as_bytes()) {
+            Ok(()) => Ok(()),
+            Err(error) => {
+                self.error = Some(error);
+                Err(std::fmt::Error)
+            }
+        }
+    }
+}
+impl DisplayProjection<'_, '_> {
+    fn formatted(&mut self, args: std::fmt::Arguments<'_>) -> Result<(), quire_canonical::Error> {
+        let mut writer = DisplayOutput {
+            output: &mut self.output,
+            error: None,
+        };
+        let _ = std::fmt::write(&mut writer, args);
+        if let Some(error) = writer.error {
+            return Err(error);
+        }
+        // Borrowed str Debug and integer Display have no independent failure.
+        // The paid sink records their only possible formatting refusal.
+        Ok(())
+    }
+}
+impl NodeIdentitySink for DisplayProjection<'_, '_> {
+    type Error = quire_canonical::Error;
+    fn visit(&mut self) -> Result<(), Self::Error> {
+        self.output.scope.work(1)
+    }
+    fn begin_object(&mut self) -> Result<(), Self::Error> {
+        if !self.ordinals.is_empty() {
+            self.output.write_bytes(b"node(")?;
+        }
+        reserve_display(self.output.scope, &mut self.ordinals)?;
+        self.ordinals.push(0);
+        Ok(())
+    }
+    fn name(&mut self, name: &'static str) -> Result<(), Self::Error> {
+        self.package = name == "package";
+        Ok(())
+    }
+    fn ordinal(&mut self, ordinal: u64) -> Result<(), Self::Error> {
+        self.output.scope.work(1)?;
+        if let Some(frame) = self.ordinals.last_mut() {
+            *frame = ordinal;
+        }
+        Ok(())
+    }
+    fn text(&mut self, text: &str) -> Result<(), Self::Error> {
+        self.output.scope.text(text)?;
+        if self.package {
+            self.output.write_bytes(text.as_bytes())?;
+            self.output.write_bytes(b":[")
+        } else {
+            self.formatted(format_args!("{text:?},"))
+        }
+    }
+    fn begin_array(&mut self) -> Result<(), Self::Error> {
+        Ok(())
+    }
+    fn end_array(&mut self) -> Result<(), Self::Error> {
+        Ok(())
+    }
+    fn end_object(&mut self) -> Result<(), Self::Error> {
+        if let Some(ordinal) = self.ordinals.pop() {
+            self.formatted(format_args!("]:{ordinal}"))?;
+        }
+        if !self.ordinals.is_empty() {
+            self.output.write_bytes(b"),")?;
+        }
+        self.package = false;
+        Ok(())
+    }
+    fn push_path<'a>(
+        &mut self,
+        stack: &mut Vec<NodePathIter<'a>>,
+        path: NodePathIter<'a>,
+    ) -> Result<(), Self::Error> {
+        reserve_display(self.output.scope, stack)?;
+        stack.push(path);
+        Ok(())
+    }
+}
+pub(super) fn node_display_text(
+    node: &NodeKey,
+    budget: Option<&mut NativeJoinBudget>,
+) -> Result<String, KeyBuildRefusal> {
+    let scope = Scope::new(budget, locus())?;
+    let mut projection = DisplayProjection {
+        output: Output {
+            scope: &scope,
+            bytes: Vec::new(),
+        },
+        ordinals: Vec::new(),
+        package: false,
+    };
+    let result = project_node_key(node, &mut projection);
+    scope.finish(result)?;
+    scope.finish(scope.work(projection.output.bytes.len() as u128))?;
+    String::from_utf8(projection.output.bytes).map_err(|_| KeyWireError.into())
+}
+
 struct NodeProjection<'w, 's, 'b, S: Sink + ?Sized> {
     writer: &'w mut Writer<'s, S>,
     scope: &'w Scope<'b>,
@@ -416,6 +545,103 @@ mod tests {
             correspondence: None,
             extent: ExtentClass::Unbounded,
         }
+    }
+
+    /// Trace: FR-1044-AC-10, FR-251-AC-49
+    #[test]
+    fn original_declaration_display_preserves_spelling_and_paid_scratch() {
+        let leaf = NodeKey::new(
+            "pkg:α",
+            vec![PathSegment::Text("quote\"\n\t\0μ".into())],
+            filament_exact::MAX_NODE_ORDINAL,
+        )
+        .expect("leaf");
+        let root = NodeKey::new(
+            "outer",
+            vec![
+                PathSegment::Text("first".into()),
+                PathSegment::Node(leaf.clone()),
+                PathSegment::Text("tail".into()),
+            ],
+            0,
+        )
+        .expect("root");
+        let simple = NodeKey::new("p", vec![PathSegment::Text("x".into())], 0).expect("simple");
+        assert_eq!(
+            node_display_text(&simple, None).expect("frozen"),
+            r#"p:["x",]:0"#
+        );
+        assert_eq!(
+            node_display_text(&assumption(), None).expect("nested frozen"),
+            r#"owner:["clause",node(child:["μ",]:0),]:3"#
+        );
+        for node in [&simple, &leaf, &root] {
+            let expected = node.to_string();
+            assert_eq!(
+                node_display_text(node, None).expect("source spelling"),
+                expected
+            );
+            let mut budget = NativeJoinBudget::new(1_000_000, 1_000_000);
+            assert_eq!(
+                node_display_text(node, Some(&mut budget)).expect("native spelling"),
+                expected
+            );
+            let paid = budget.consumed();
+            let mut exact = NativeJoinBudget::new(paid.work, paid.storage);
+            assert_eq!(
+                node_display_text(node, Some(&mut exact)).expect("exact"),
+                expected
+            );
+            for (work, storage) in [(paid.work - 1, paid.storage), (paid.work, paid.storage - 1)] {
+                let mut short = NativeJoinBudget::new(work, storage);
+                let KeyBuildRefusal::Native {
+                    denied,
+                    locus,
+                    configured_bound,
+                } = node_display_text(node, Some(&mut short))
+                    .expect_err("first unpaid spelling operation")
+                else {
+                    panic!("native metadata");
+                };
+                assert_eq!(Some(denied), short.first_unpaid());
+                assert_eq!(locus, short.first_unpaid_locus());
+                assert_eq!(
+                    configured_bound,
+                    match denied.kind {
+                        NativeJoinChargeKind::Work => work,
+                        NativeJoinChargeKind::Storage => storage,
+                    }
+                );
+            }
+        }
+        // A frame must be admitted before even the first output byte; output
+        // formatting cannot conceal the traversal's private storage.
+        let mut budget = NativeJoinBudget::new(1_000_000, 0);
+        let scope = Scope::new(Some(&mut budget), locus()).expect("scope");
+        let mut projection = DisplayProjection {
+            output: Output {
+                scope: &scope,
+                bytes: Vec::new(),
+            },
+            ordinals: Vec::new(),
+            package: false,
+        };
+        assert!(projection.begin_object().is_err());
+        assert!(projection.ordinals.is_empty());
+        assert!(projection.output.bytes.is_empty());
+        let mut budget = NativeJoinBudget::new(1_000_000, 2);
+        let scope = Scope::new(Some(&mut budget), locus()).expect("scope");
+        let mut projection = DisplayProjection {
+            output: Output {
+                scope: &scope,
+                bytes: Vec::new(),
+            },
+            ordinals: Vec::new(),
+            package: false,
+        };
+        projection.begin_object().expect("exact one frame");
+        assert!(projection.output.write_bytes(b"p").is_err());
+        assert!(projection.output.bytes.is_empty());
     }
 
     /// Trace: FR-1044-AC-10, FR-251-AC-49
