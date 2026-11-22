@@ -12,6 +12,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
+use crate::SourceEnumCatalog;
 use filament_contract_model::{
     CheckedNodeId, CheckedNodeKind, CheckedNodePathSegment, CompositeTypeForm, ModelForm,
     SelectedExactIdentity, SelectedModelUnionPayload,
@@ -30,7 +31,7 @@ use crate::bare_slot::BareSelectionFailure;
 #[derive(Clone, Debug)]
 pub struct BareWorld {
     types: TypeEnvironment,
-    enum_members: EnumMemberIndex,
+    source_enums: SourceEnumCatalog,
     ieee_profile: bool,
 }
 
@@ -40,10 +41,15 @@ impl BareWorld {
         &self.types
     }
 
-    /// Every selected model enum member authenticated by the package-local
-    /// identity join, including members of unused selected declarations.
+    /// Every source and selected-model enum member retained by the native
+    /// identity join, including members of unused declarations.
     pub fn enum_members(&self) -> &EnumMemberIndex {
-        &self.enum_members
+        self.source_enums.enum_members()
+    }
+
+    /// The immutable source/model enum catalog retained by the native join.
+    pub fn source_enums(&self) -> &SourceEnumCatalog {
+        &self.source_enums
     }
 
     /// Whether the package's lock selects the IEEE profile law.
@@ -400,7 +406,11 @@ impl BarePackage<'_> {
         let ieee = fsl_semantics::value::DefinitionRole::IeeeProfile.identity();
         Ok(BareWorld {
             types,
-            enum_members: self.enum_members.clone(),
+            source_enums: self
+                .source_enums
+                .as_ref()
+                .ok_or_else(|| fault("joined-world-retains-enum-catalog"))?
+                .clone(),
             ieee_profile: package
                 .lock()
                 .definition_selections

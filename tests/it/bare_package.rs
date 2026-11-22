@@ -1656,6 +1656,9 @@ fn supply_on<'p>(
             fsl_package::NativeJoinFailure::Rows(error) => {
                 panic!("retained identity-only supply performs no producer row copy: {error:?}")
             }
+            fsl_package::NativeJoinFailure::SourceEnum(error) => {
+                panic!("identity-only fixture has no enum catalog defect: {error:?}")
+            }
             fsl_package::NativeJoinFailure::UnitDefinitions { .. } => {
                 panic!("identity-only fixture has no unit rows")
             }

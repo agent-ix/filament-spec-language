@@ -203,6 +203,7 @@ impl NativeJoinLimits {
             crate::NativeJoinFailure::Rows(error) => error.configured_bound().unwrap_or(bound),
             crate::NativeJoinFailure::Equality(_)
             | crate::NativeJoinFailure::Limit(_)
+            | crate::NativeJoinFailure::SourceEnum(_)
             | crate::NativeJoinFailure::UnitDefinitions { .. }
             | crate::NativeJoinFailure::PopulationCatalog { .. } => bound,
         };

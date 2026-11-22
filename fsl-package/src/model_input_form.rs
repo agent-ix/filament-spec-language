@@ -72,7 +72,13 @@ fn unread(package: &BarePackage<'_>, node: &CheckedSemanticNodeV2) -> Option<Unr
             (!read).then_some(UnreadModelForm::Variant)
         }
         CheckedNodeKind::CompositeType(CompositeTypeForm::Union) => Some(UnreadModelForm::Variant),
-        CheckedNodeKind::ScalarType(ScalarTypeForm::Enum) => Some(UnreadModelForm::Enumeration),
+        CheckedNodeKind::ScalarType(ScalarTypeForm::Enum) => {
+            let read = package.source_enums.is_some()
+                && package
+                    .supply()
+                    .is_some_and(|supply| supply.identities.holds_source_enum(&node.node_id));
+            (!read).then_some(UnreadModelForm::Enumeration)
+        }
         _ => None,
     }
 }

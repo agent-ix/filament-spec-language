@@ -91,7 +91,7 @@ pub struct BarePackage<'p> {
     /// The selected object declarations the bare environment declares, or
     /// the refusal of their projection, retained for admission (FR-533).
     objects: Result<Vec<filament_semantic_value::declaration::ObjectTypeDeclaration>, ()>,
-    pub(crate) enum_members: filament_semantic_value::enumeration::EnumMemberIndex,
+    pub(crate) source_enums: Option<crate::SourceEnumCatalog>,
     /// The population catalog: the declaration and member types of each
     /// selected population node, or the refusal of the read.
     populations: Result<BTreeMap<NodeKey, PopulationTypes>, ()>,
@@ -125,7 +125,7 @@ impl<'p> BarePackage<'p> {
             units: crate::bare_units::UnitDefinitions::default(),
             owner: std::sync::Arc::new(()),
             objects: Ok(Vec::new()),
-            enum_members: filament_semantic_value::enumeration::EnumMemberIndex::default(),
+            source_enums: None,
             populations: Ok(BTreeMap::new()),
         }
     }
@@ -414,14 +414,18 @@ impl<'p> BarePackage<'p> {
             )
             .map_err(|failure| failure.with_budget(budget))?;
             self.read_selected_objects(budget)?;
-            if self.objects.is_err() {
-                // The same complete native join authenticated these original
-                // shapes. An unrelated unsupported object projection must not
-                // erase the package's admitted enum members.
-                self.enum_members =
-                    model_enum::runtime_members(&supply.identities.model_enum_shapes, budget)
-                        .map_err(|failure| failure.with_budget(budget))?;
-            }
+            let identities = self
+                .identities()
+                .ok_or(crate::SourceEnumCatalogError::MissingIdentityWitness)
+                .map_err(crate::NativeJoinFailure::from)?;
+            self.source_enums = Some(
+                crate::SourceEnumCatalog::from_joined(
+                    identities,
+                    &supply.identities.model_enum_shapes,
+                    budget,
+                )
+                .map_err(|error| crate::NativeJoinFailure::from(error).with_budget(budget))?,
+            );
             self.read_population_catalog(budget)?;
         }
         Ok(self)
@@ -448,8 +452,6 @@ impl<'p> BarePackage<'p> {
             .project_selected_type_declarations(identities, &[], source_units, budget)
         {
             Ok(declarations) => {
-                self.enum_members = model_enum::runtime_members(declarations.enums(), budget)
-                    .map_err(|failure| failure.with_budget(budget))?;
                 self.objects = Ok(declarations
                     .objects()
                     .iter()
@@ -1445,6 +1447,13 @@ impl ReadIdentityRows {
         self.model_enum_shapes
             .iter()
             .any(|row| &row.structural_node == node)
+    }
+
+    /// Whether the successful native join can supply this source declaration.
+    pub(crate) fn holds_source_enum(&self, node: &CheckedNodeId) -> bool {
+        self.source_enums
+            .iter()
+            .any(|row| &row.declaration.structural_node == node)
     }
 
     /// The identity witness these rows give `package`, joined by IR's
