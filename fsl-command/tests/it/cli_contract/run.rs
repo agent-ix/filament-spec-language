@@ -48,6 +48,74 @@ fn plain(path: &std::path::Path) -> Outcome {
     run(path, RunLimits::default(), &RequestOverrides::default())
 }
 
+fn with_provider_context(path: &std::path::Path, overrides: &RequestOverrides<'_>) -> Outcome {
+    let cancel = filament_exact::Cancel::new();
+    let options = fsl_analyze::provider::ProviderOptions::default();
+    match fsl_command::command::run_with_providers_and_limits_and_overrides(
+        path,
+        RunLimits::default(),
+        overrides,
+        &crate::negotiation::Fr290,
+        Vec::new(),
+        &options,
+        &cancel,
+    ) {
+        Ok(result) => match &result.outcome {
+            Some(document) => Outcome::from_document(document, result.exit_code),
+            None => Outcome::from_value(result.value.as_value(), result.exit_code),
+        },
+        Err(error) => Outcome::refusal(&error, fsl_replay::Operation::Execute),
+    }
+}
+
+/// A driver's effective accounting budget is used by calls and each item.
+#[test]
+#[trace("FR-100-AC-1", "FR-651-AC-1")]
+fn caller_overrides_reach_call_and_items_accounting() {
+    let (case, _) = remaining();
+    let mut job = request(
+        "packing.fsl",
+        "Remaining",
+        &[
+            ("total", json!({"type":"integer","value":"17"})),
+            ("held", json!({"type":"integer","value":"5"})),
+        ],
+    );
+    job["request"]["call"]["accounting"] = json!({"work_units":u64::MAX});
+    let path = case.json("accounting.json", &job);
+    assert_eq!(plain(&path).exit, 0);
+    let mut accounting = fsl_replay::AccountingLimits::default().0;
+    accounting.work_units = 0;
+    let overrides = RequestOverrides {
+        accounting: Some(&accounting),
+        ..Default::default()
+    };
+    let call = with_provider_context(&path, &overrides);
+    call.expect("execute", "incomplete", 22);
+    assert!(
+        call.document.to_string().contains("work_units"),
+        "{}",
+        call.document
+    );
+
+    let selected = job["request"]
+        .as_object_mut()
+        .unwrap()
+        .remove("call")
+        .unwrap();
+    job["request"]["items"] = json!({"selections":[{"call":selected.clone()},{"call":selected}]});
+    let path = case.json("accounting-items.json", &job);
+    assert_eq!(plain(&path).exit, 0);
+    let items = with_provider_context(&path, &overrides);
+    assert_eq!(items.exit, 22, "{}", items.document);
+    let rows = items.document["items"].as_array().unwrap();
+    assert_eq!(rows.len(), 2);
+    for (index, row) in rows.iter().enumerate() {
+        assert_eq!(row["selection"], index);
+        assert!(row["result"].to_string().contains("work_units"), "{row}");
+    }
+}
+
 fn remaining() -> (Case, std::path::PathBuf) {
     packing(
         "Remaining",
@@ -252,6 +320,93 @@ fn reference_call_world() -> (Case, Value, &'static str) {
         "document":"Domain","formal_revision":1
     }}]);
     (case, job, population)
+}
+
+/// Caller settings reach the existing plan compiler and initial-state reader.
+#[test]
+#[trace("FR-640-AC-14", "FR-001-AC-4", "FR-753-AC-1")]
+fn caller_overrides_reach_plan_clocks_stages_and_observations() {
+    let (case, mut job, _) = reference_call_world();
+    let mut initial: Value =
+        serde_json::from_slice(&std::fs::read(case.path("current.json")).unwrap()).unwrap();
+    initial["anchor"] = json!({"kind":"initialization","name":"start"});
+    case.json("initial.json", &initial);
+    case.write(
+        "world.native",
+        format!(
+            "language \"ix:native\" edition \"1-draft\";\n\
+             profile v = \"filament.model.complete/v1\";\n\
+             profile inf = \"filament.temporal.infinite-trace/v1\";\n\
+             model Config = {:?};\n\
+             temporal Safe using inf over (c: Config::ConfigVersion) clock \"model-steps\" on origin {{ always holds(c.versionNumber >= 0) }}\n\
+             verify Release using v {{ check safe claim Safe method model_check domain Config::ConfigVersion bound 2; }}\n",
+            config_domain::PACKAGE_IDENTITY
+        )
+        .as_bytes(),
+    );
+    job["request"].as_object_mut().unwrap().remove("call");
+    job["request"]["verification_plan"] =
+        json!({"plan":"Release","initial":"initial.json","emit":true,"execute":false});
+    let path = case.json("plan.json", &job);
+    let control = plain(&path);
+    assert_eq!(control.exit, 0, "{}", control.document);
+
+    let mut stages = fsl_replay::spine::SpineLimits::default();
+    stages.source.source_bytes = 1;
+    let stage = run(
+        &path,
+        RunLimits::default(),
+        &RequestOverrides {
+            limits: Some(&stages),
+            ..Default::default()
+        },
+    );
+    let diagnostic = stage.refused("execute", 22, "stage_limit_exceeded");
+    assert!(diagnostic.to_string().contains("s1.input_bytes"));
+
+    let observation =
+        fsl_semantics::model::observation::ObservationLimits::default().with_document_bytes(1);
+    let initial = run(
+        &path,
+        RunLimits::default(),
+        &RequestOverrides {
+            observation: Some(&observation),
+            ..Default::default()
+        },
+    );
+    let diagnostic = initial.refused("execute", 22, "stage_limit_exceeded");
+    assert!(diagnostic.to_string().contains("observation.input_bytes"));
+
+    let mut executing = job.clone();
+    executing["request"]["verification_plan"]["execute"] = json!(true);
+    executing["request"]["requirements"] = json!({"backend":"en-1"});
+    let mut accounting = fsl_replay::AccountingLimits::default().0;
+    accounting.work_units = 0;
+    let budgeted = with_provider_context(
+        &case.json("plan-accounting.json", &executing),
+        &RequestOverrides {
+            accounting: Some(&accounting),
+            ..Default::default()
+        },
+    );
+    assert_eq!(budgeted.exit, 22, "{}", budgeted.document);
+    assert!(
+        budgeted.document.to_string().contains("work_units"),
+        "{}",
+        budgeted.document
+    );
+
+    job["request"]["clocks"] = json!({});
+    let clocks = RawValue::from_string("{}".to_owned()).unwrap();
+    run(
+        &case.json("duplicate-clocks.json", &job),
+        RunLimits::default(),
+        &RequestOverrides {
+            clocks: Some(&clocks),
+            ..Default::default()
+        },
+    )
+    .refused("execute", 20, "invalid-request");
 }
 
 /// Population materialization keeps document order internally, while native
