@@ -224,7 +224,7 @@ fn typed_format_limits_publish_a_replaceable_default() {
     }
 }
 
-#[trace("TC-016", "FR-003-AC-4", "FR-003-AC-5", "FR-003-AC-6")]
+#[trace("TC-016", "FR-003-AC-4", "FR-003-AC-5", "FR-003-AC-6", "FR-003-AC-12")]
 #[test]
 fn formatter_byte_ceiling_is_inclusive_and_counts_final_newline() {
     let parsed = parse_complete(COMPLETE);
@@ -232,8 +232,8 @@ fn formatter_byte_ceiling_is_inclusive_and_counts_final_newline() {
         "language \"ix:native\" edition \"1-draft\";\n",
         "// café: a multibyte comment counts in bytes\n",
         "profile v = \"filament.value.complete/v1\";\n",
-        "type Digit = Int [0, 9];\n",
-        "function inc using v (x : Digit) : Int [0, 10] pure {\n  x + 1\n}\n",
+        "type Digit = Int[0, 9];\n",
+        "function inc using v(x: Digit): Int[0, 10] pure {\n  x + 1\n}\n",
     );
     assert_eq!(format(&parsed).unwrap(), expected);
     assert!(expected.ends_with('\n'));
@@ -260,7 +260,7 @@ fn formatter_byte_ceiling_is_inclusive_and_counts_final_newline() {
     }
 }
 
-#[trace("TC-016", "FR-003-AC-4", "FR-003-AC-6")]
+#[trace("TC-016", "FR-003-AC-4", "FR-003-AC-6", "FR-003-AC-12")]
 #[test]
 fn formatter_uses_a_raised_content_ceiling_as_given() {
     let header = concat!(
@@ -284,7 +284,7 @@ fn formatter_uses_a_raised_content_ceiling_as_given() {
     let expected_header = concat!(
         "language \"ix:native\" edition \"1-draft\";\n",
         "profile v = \"filament.value.complete/v1\";\n",
-        "type Digit = Int [0, 9];\n",
+        "type Digit = Int[0, 9];\n",
     );
     let expected = format!(
         "{expected_header}//{}\n",
@@ -376,7 +376,7 @@ fn format_takes_the_cst_and_depends_on_layer_1_and_f_only() {
     // path; only standard-library macros are invoked.
     for name in invoked_macros(&code) {
         assert!(
-            ["matches", "format"].contains(&name.as_str()),
+            ["matches", "format", "vec"].contains(&name.as_str()),
             "fsl-cst/src/format.rs invokes {name}!"
         );
     }

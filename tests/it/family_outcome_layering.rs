@@ -591,7 +591,7 @@ fn no_crate_below_layer_three_depends_on_the_check_core() {
 }
 
 /// The FCD crates `fsl-semantics` depends on are named by
-/// `fsl-semantics/src/model/intake.rs` and by no other file of that crate
+/// `fsl-semantics/src/model/intake.rs` and its child modules only
 /// (ADR-011 §6.1: FCD from `model::intake` only). A plain text search for
 /// each crate's Rust name, so a `use`, an inline path and a macro argument
 /// are all caught.
@@ -619,10 +619,17 @@ fn fcd_is_named_by_model_intake_only(dependencies: &[String]) {
             }
         }
     }
-    assert_eq!(
-        naming.into_iter().collect::<Vec<_>>(),
-        ["model/intake.rs"],
-        "files of fsl-semantics naming an FCD crate"
+    assert!(
+        !naming.is_empty(),
+        "the source scan finds no model intake use of an FCD crate"
+    );
+    let outside_intake: Vec<_> = naming
+        .iter()
+        .filter(|path| path.as_str() != "model/intake.rs" && !path.starts_with("model/intake/"))
+        .collect();
+    assert!(
+        outside_intake.is_empty(),
+        "files outside model::intake name an FCD crate: {outside_intake:?}"
     );
 }
 
