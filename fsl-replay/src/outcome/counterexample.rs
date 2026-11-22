@@ -2019,11 +2019,54 @@ pub fn probabilistic_wire(
         fsl_eval::simulation::model::ScheduledIdentity,
     )],
 ) -> Result<Json, CounterexampleWireError> {
-    use CounterexampleWireError::Unspelled;
-    let typed = |value: &Value| {
+    probabilistic_wire_using(witness, bound, state_key, scheduler, |value| {
         fsl_eval::simulation::model::typed_value_json(value, types, variants)
-            .ok_or(Unspelled("probabilistic value"))
-    };
+    })
+}
+
+/// A probabilistic path set with enum identities from its authenticated owner.
+///
+/// # Errors
+///
+/// As [`probabilistic_wire`], including values absent from the owner's enum index.
+pub fn probabilistic_wire_with_enum_members(
+    witness: &crate::ProbabilisticCounterexample,
+    bound: &fsl_semantics::check::Bound,
+    types: &filament_semantic_value::declaration::TypeEnvironment,
+    variants: &[fsl_semantics::check::VariantTypeDeclaration],
+    enum_members: &filament_semantic_value::enumeration::EnumMemberIndex,
+    state_key: &dyn Fn(
+        &fsl_eval::simulation::model::ModelSimState,
+    ) -> Option<fsl_eval::simulation::StateKey>,
+    scheduler: &[(
+        fsl_eval::simulation::StateKey,
+        fsl_eval::simulation::model::ScheduledIdentity,
+    )],
+) -> Result<Json, CounterexampleWireError> {
+    probabilistic_wire_using(witness, bound, state_key, scheduler, |value| {
+        fsl_eval::simulation::model::typed_value_json_with_enum_members(
+            value,
+            types,
+            variants,
+            enum_members,
+        )
+    })
+}
+
+fn probabilistic_wire_using(
+    witness: &crate::ProbabilisticCounterexample,
+    bound: &fsl_semantics::check::Bound,
+    state_key: &dyn Fn(
+        &fsl_eval::simulation::model::ModelSimState,
+    ) -> Option<fsl_eval::simulation::StateKey>,
+    scheduler: &[(
+        fsl_eval::simulation::StateKey,
+        fsl_eval::simulation::model::ScheduledIdentity,
+    )],
+    encode: impl Fn(&Value) -> Option<Json>,
+) -> Result<Json, CounterexampleWireError> {
+    use CounterexampleWireError::Unspelled;
+    let typed = |value: &Value| encode(value).ok_or(Unspelled("probabilistic value"));
     let key = |at: &fsl_eval::simulation::model::ModelSimState| {
         state_key(at)
             .ok_or(Unspelled("probabilistic state"))

@@ -437,7 +437,8 @@ pub use outcome::undefined_reason;
 pub use outcome::{
     assignments_wire, assignments_wire_with_enum_members, certificate_identity_wire,
     claim_locus_wire, graph_evidence_wire, hyper_counterexample_wire, omitted_witnesses,
-    probabilistic_undefined_wire, probabilistic_wire, protocol_temporal_wire,
+    probabilistic_undefined_wire, probabilistic_wire, probabilistic_wire_with_enum_members,
+    protocol_temporal_wire,
     read_outcome_diagnostics, read_task_temporal_counterexample, read_task_temporal_document,
     read_temporal_counterexample, replay_model_trace_document, replay_task_product_trace,
     sampled_witness_wire, state_key_wire, task_product_transition_wire,
@@ -481,6 +482,7 @@ pub use probability_certificate::{
     read_measure_probability_certificate, read_probability_certificate,
     read_probability_proof_document, read_weighted_long_run_probability_certificate,
     region_probability_product_key, replay_probabilistic_undefined, replay_probabilistic_witness,
+    replay_probabilistic_witness_from_package,
     vacuous_measure_probability_certificate_document,
     weighted_long_run_probability_certificate_document, write_long_run_probability_certificate,
     write_measure_probability_certificate, write_probability_certificate,

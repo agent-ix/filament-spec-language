@@ -30,7 +30,8 @@ use fsl_replay::{
     TimedProbabilityRoute,
 };
 use fsl_replay::{
-    replay_probabilistic_witness, ProbabilisticCounterexample, ProbabilityWitnessError,
+    replay_probabilistic_witness, replay_probabilistic_witness_from_package,
+    ProbabilisticCounterexample, ProbabilityWitnessError,
     ProbabilityWitnessPath, ProbabilityWitnessReplay, ProbabilityWitnessStep,
     ReproducedProbabilityWitness,
 };
@@ -2343,11 +2344,8 @@ fn replay_produced_witness(
     if let Some(tamper) = tamper {
         tamper(&mut witness);
     }
-    let Some(package) = system.source_package() else {
-        return not_yet();
-    };
     finish_replay(
-        replay_probabilistic_witness(package, system, &item, &witness, limits, cancel),
+        replay_witness(system, &item, &witness, limits, cancel),
         claim,
         system,
         &witness,
@@ -2355,6 +2353,23 @@ fn replay_produced_witness(
         limits,
         subject,
     )
+}
+
+fn replay_witness(
+    system: &ModelSystem<'_>,
+    item: &fsl_package::ObligationIdentity,
+    witness: &ProbabilisticCounterexample,
+    limits: &crate::exact_probabilistic::ExactProbLimits,
+    cancel: &Cancel,
+) -> Result<ProbabilityWitnessReplay, ProbabilityWitnessError> {
+    if let Some(package) = system.source_package() {
+        return replay_probabilistic_witness(package, system, item, witness, limits, cancel);
+    }
+    let owner = system
+        .input()
+        .package_owner()
+        .ok_or(ProbabilityWitnessError::Refused)?;
+    replay_probabilistic_witness_from_package(owner, system, item, witness, limits, cancel)
 }
 
 /// The report a witness replay settles: refuted on a reproduction, otherwise
@@ -2371,33 +2386,45 @@ fn finish_replay(
     limits: &crate::exact_probabilistic::ExactProbLimits,
     subject: SubjectLimits<'_>,
 ) -> EngineReport {
-    let Some(package) = system.source_package() else {
-        return not_yet();
-    };
     match replayed {
         Ok(ProbabilityWitnessReplay::Reproduced(token)) => {
-            let scope = package.graph().scope();
+            let input = system.input();
             let quantile_bound;
-            let wire = fsl_replay::probabilistic_wire(
-                witness,
-                match &claim.form {
-                    ProbForm::Reach { bound, .. }
-                    | ProbForm::Probability { bound, .. }
-                    | ProbForm::MeanOfFraction { bound, .. } => bound,
-                    ProbForm::Quantile { q, threshold, .. } => {
-                        quantile_bound = match threshold {
-                            Bound::AtMost(_) => Bound::AtLeast(q.clone()),
-                            Bound::AtLeast(_) => Bound::AtMost(q.clone()),
-                        };
-                        &quantile_bound
-                    }
-                    _ => return not_yet(),
-                },
-                scope.types(),
-                scope.variant_types(),
-                &|state| system.state_key(state).ok().map(|(_, key)| key),
-                spelled_scheduler,
-            );
+            let bound = match &claim.form {
+                ProbForm::Reach { bound, .. }
+                | ProbForm::Probability { bound, .. }
+                | ProbForm::MeanOfFraction { bound, .. } => bound,
+                ProbForm::Quantile { q, threshold, .. } => {
+                    quantile_bound = match threshold {
+                        Bound::AtMost(_) => Bound::AtLeast(q.clone()),
+                        Bound::AtLeast(_) => Bound::AtMost(q.clone()),
+                    };
+                    &quantile_bound
+                }
+                _ => return not_yet(),
+            };
+            let state_key = |state: &fsl_eval::simulation::model::ModelSimState| {
+                system.state_key(state).ok().map(|(_, key)| key)
+            };
+            let wire = match input.enum_members {
+                Some(enum_members) => fsl_replay::probabilistic_wire_with_enum_members(
+                    witness,
+                    bound,
+                    input.types,
+                    input.variant_types,
+                    enum_members,
+                    &state_key,
+                    spelled_scheduler,
+                ),
+                None => fsl_replay::probabilistic_wire(
+                    witness,
+                    bound,
+                    input.types,
+                    input.variant_types,
+                    &state_key,
+                    spelled_scheduler,
+                ),
+            };
             EngineReport::Exact(Box::new(ExactReport::Refuted(token, Box::new(wire))))
         }
         Ok(ProbabilityWitnessReplay::Parity) => {
@@ -2770,11 +2797,8 @@ fn replay_timed_refutation(
     if let Some(tamper) = tamper {
         tamper(&mut witness);
     }
-    let Some(package) = system.source_package() else {
-        return not_yet();
-    };
     finish_replay(
-        replay_probabilistic_witness(package, system, &item, &witness, limits, cancel),
+        replay_witness(system, &item, &witness, limits, cancel),
         claim,
         system,
         &witness,
