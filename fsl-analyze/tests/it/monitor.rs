@@ -43,9 +43,9 @@ pub(super) fn observed_counterexample(
 
 const ALWAYS_SMALL: &str = "always holds(c.value < 2)";
 const ALWAYS_EVENTUALLY_THREE: &str = "always eventually holds(c.value = 3)";
-const DIVIDES: &str = "always holds(3 mod (2 - c.value) >= 0)";
+const DIVIDES: &str = "always holds(monitor_remainder(3, 2 - c.value) >= 0)";
 /// Undefined where `c.value` is 0 (FR-283-AC-5's `10 / x` at `x` = 0).
-const DIVIDES_BY_VALUE: &str = "always holds(10 mod c.value >= 0)";
+const DIVIDES_BY_VALUE: &str = "always holds(monitor_remainder(10, c.value) >= 0)";
 const REACH_TWO: &str = "eventually[0,2] holds(c.value = 2)";
 const REACH_ONE: &str = "eventually[0,1] holds(c.value = 2)";
 
@@ -57,6 +57,20 @@ struct World {
 fn world(clauses: &[(&str, &str, &str)]) -> World {
     let document = document(false);
     let (package, _) = package_with_clauses(&document, "", clauses);
+    World {
+        package,
+        documents: Documents::new(document),
+    }
+}
+
+fn kernel_world(clauses: &[(&str, &str, &str)]) -> World {
+    let document = document(false);
+    let (package, _) = crate::counter::package_with_clauses_mode(
+        &document,
+        "function monitor_remainder using v(n: Integer, d: Integer): Integer pure { n mod d }\n",
+        clauses,
+        filament_semantic_value::checking::CheckMode::Kernel,
+    );
     World {
         package,
         documents: Documents::new(document),
@@ -286,7 +300,7 @@ fn an_unadmitted_position_or_an_empty_loop_refuses_the_request() {
 #[trace("TC-765", "FR-283-AC-5")]
 #[test]
 fn an_undefined_evaluation_is_a_violation() {
-    let mut world = world(&[("D", "", DIVIDES_BY_VALUE)]);
+    let mut world = kernel_world(&[("D", "", DIVIDES_BY_VALUE)]);
     let outcome = world.finite(&["D"], &[1, 0, 1]);
     let record = &outcome.records[0];
     assert_eq!(record.verdict, MonitorVerdict::Undefined);
@@ -498,7 +512,7 @@ fn a_defective_trace_document_is_refused_at_its_first_defect() {
 #[trace("TC-765", "FR-283-AC-9")]
 #[test]
 fn records_come_in_request_order() {
-    let mut world = world(&[("P", "", ALWAYS_SMALL), ("D", "", DIVIDES)]);
+    let mut world = kernel_world(&[("P", "", ALWAYS_SMALL), ("D", "", DIVIDES)]);
     let outcome = world.finite(&["D", "P"], &[0, 1, 2]);
     let verdicts: Vec<_> = outcome
         .records
@@ -575,7 +589,7 @@ fn a_violation_carries_the_decisive_position_of_its_atom() {
 #[trace("TC-765", "FR-283-AC-14")]
 #[test]
 fn each_record_renders_as_the_item_the_document_holds() {
-    let mut world = world(&[("P", "", ALWAYS_SMALL), ("D", "", DIVIDES)]);
+    let mut world = kernel_world(&[("P", "", ALWAYS_SMALL), ("D", "", DIVIDES)]);
     let outcome = world.finite(&["D", "P"], &[0, 1, 2]);
     let items: Vec<OutcomeItem> = outcome
         .records

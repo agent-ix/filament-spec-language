@@ -31,7 +31,7 @@ use crate::counter::{
     document, document_with_ranged_parameter, package_from_text, subject, unit_text, universe,
     Documents, Letters, CONTRACT, UNLIMITED,
 };
-use crate::liveness::{counter, fixture, is_zero, Fixture};
+use crate::liveness::{counter, fixture, fixture_in_mode, is_zero, Fixture};
 use crate::model_settle::{envelope_at, request};
 
 const FORMULA: &str = "always eventually holds(c.value = 3)";
@@ -682,13 +682,15 @@ fn an_authored_clauses_letter_is_read_before_its_contract_conjunctions() {
     fn undefined(_: i64) -> Option<bool> {
         None
     }
-    let guarded = "pre CanInc using v on M::Counter::inc { 6 mod (2 - self.value) >= 0 }\n";
-    let fixture = fixture(
+    let guarded = "function undefined_remainder using v(x: Integer): Integer pure { 6 mod x }\n\
+        pre CanInc using v on M::Counter::inc { undefined_remainder(2 - self.value) >= 0 }\n";
+    let fixture = fixture_in_mode(
         document(false),
         guarded,
         "",
         "always holds(c.value >= 0)",
         &[("c", 2)],
+        filament_semantic_value::checking::CheckMode::Kernel,
     );
     let at_guard = found(&fixture, defined);
     let fsl_replay::CounterexampleKind::UndefinedEvaluation(guard) = at_guard.kind.clone() else {

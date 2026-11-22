@@ -29,7 +29,9 @@ use fsl_semantics::check::{Capability, DeclarationFamily};
 use ix_trace_rs::trace;
 
 use crate::counter::UNLIMITED;
-use crate::graph_world::{config_version, config_world_over, World, CONFIG_CONTRACT};
+use crate::graph_world::{
+    config_kernel_world_over, config_version, config_world_over, World, CONFIG_CONTRACT,
+};
 
 /// The world with `extra` declarations and one initial state `a` at
 /// `start`.
@@ -278,10 +280,12 @@ fn an_initial_state_that_breaks_an_invariant_is_refuted_with_no_operation() {
 #[test]
 fn an_unbound_postcondition_undefined_at_a_case_is_refuted_for_definedness() {
     // 2 div (2 - v) is undefined at the post-state v = 2.
-    let world = world(
+    let world = config_kernel_world_over(
+        "",
         "post Ratio using v on Config::ConfigVersion::attemptUpdate \
-         { 2 div (2 - self.versionNumber) >= 0 }\n",
-        0,
+         { quotient(2 - self.versionNumber) >= 0 }\n",
+        &["a"],
+        &[vec![0]],
     );
     let record = run(&world, &clause(&world, "Ratio"), None);
     let counterexample = refuted(&record);
@@ -299,10 +303,12 @@ fn an_unbound_postcondition_undefined_at_a_case_is_refuted_for_definedness() {
 #[trace("FSpec-TC-974", "FSpec-FR-485-AC-4")]
 #[test]
 fn an_unbound_precondition_undefined_at_a_pre_state_is_refuted_for_definedness() {
-    let world = world(
+    let world = config_kernel_world_over(
+        "",
         "pre Ratio using v on Config::ConfigVersion::attemptUpdate \
-         { 2 div (2 - self.versionNumber) >= 0 }\n",
-        0,
+         { quotient(2 - self.versionNumber) >= 0 }\n",
+        &["a"],
+        &[vec![0]],
     );
     let record = run(&world, &clause(&world, "Ratio"), None);
     let counterexample = refuted(&record);

@@ -38,7 +38,7 @@ const HEADER: &str = "language \"ix:native\" edition \"1-draft\";\n\
     profile v = \"filament.value.complete/v1\";\n";
 const R: &str = "function p using v(x: Int[0, 9]): Boolean pure { x > 3 }\n\
     function q using v(x: Int[0, 9]): Integer pure { x + 1 }\n\
-    function r using v(x: Int[0, 9]): Integer pure { 10 mod x }\n";
+    function r using v(x: Int[0, 9]): Integer pure { 10 mod (x + 1) }\n";
 
 fn unit(extra: &str) -> String {
     format!("{HEADER}{R}{extra}")
@@ -348,45 +348,26 @@ fn a_completed_members_request_settles_replay_parity() {
     assert_eq!(record.backend(), Some(&plugin()));
 }
 
-/// FR-404-AC-3: `r` at `x = 0` returns `undefined`, and its member's request
-/// replays to the application undefined, which refutes the item; `q` under
-/// no work budget returns `incomplete` and builds AC-2's request.
+/// The public Linked entry rejects RK before it can return a replay context.
+/// Its Kernel runtime controls live at the existing internal coordinator seam.
 #[trace("TC-1173", "FR-404-AC-3")]
 #[test]
-fn an_undefined_calls_member_refutes_and_an_incomplete_calls_request_is_unchanged() {
-    let source = unit("");
-    let undefined = run(
+fn an_unproved_divisor_refuses_the_public_call_context_before_evaluation() {
+    let source = unit("").replace("10 mod (x + 1)", "10 mod x");
+    let refused = run(
         &source,
         &call("r", integer(0), 1_000_000),
         CallerLimits::default(),
         &Cancel::new(),
     )
-    .expect("runs");
-    assert!(matches!(undefined.outcome(), CallOutcome::Undefined { .. }));
-    let record = settle(member_request(&source, &undefined, "r", 0));
-    assert_eq!(record.value(), &TerminalValue::Refuted);
-    assert_eq!(record.backend(), Some(&plugin()));
-    let r_x = member_request(&source, &undefined, "r", 3);
-    assert!(matches!(
-        settle(r_x).value(),
-        TerminalValue::Inconclusive(InconclusiveCause::ReplayParity(_))
-    ));
-
-    let incomplete = run(
-        &source,
-        &call("q", integer(3), 0),
-        CallerLimits::default(),
-        &Cancel::new(),
-    )
-    .expect("runs");
-    assert!(matches!(incomplete.outcome(), CallOutcome::Incomplete(_)));
-    let completed = run_q(&source);
-    let expected = member_request(&source, &completed, "q", 9);
-    let built = member_request(&source, &incomplete, "q", 9);
-    assert_eq!(built.package, expected.package);
-    assert_eq!(built.obligation_identity, expected.obligation_identity);
-    assert_eq!(built.replay_target, expected.replay_target);
-    assert_eq!(built.byte_provision, expected.byte_provision);
+    .expect_err("Linked compilation refuses an unproved divisor");
+    let RunRefusal::Compile(spine::CompileRefusal::Check { refusals, .. }) = refused.as_ref() else {
+        panic!("the source fails at S3: {refused:?}");
+    };
+    assert!(refusals.iter().any(|refusal| {
+        refusal.cause.code().as_str() == "undefined_expression"
+            && refusal.cause.cause() == Some("unproved-nonzero")
+    }));
 }
 
 fn bound_at(node: NodeKey) -> ProofBound {

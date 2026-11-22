@@ -602,7 +602,7 @@ fn an_undefined_letter_is_reported_for_the_copies_as_they_stepped() {
 /// enabled, with a value, only where `l` is 1: at `l = 0` its precondition
 /// divides by zero.
 const DIVIDING: Vault = Vault::Custom(
-    "pre Positive using v on V::Vault::step { (1 div self.l) = 1 }\n\
+    "pre Positive using v on V::Vault::step { quotient(self.l) = 1 }\n\
      post Step using v on V::Vault::step { (i = 0 and self.l = 1) or (i = 1 and self.l = 0) }\n",
 );
 
@@ -614,7 +614,13 @@ const DIVIDING: Vault = Vault::Custom(
 #[trace("TC-599", "FR-174-AC-3")]
 #[test]
 fn an_undefined_contract_names_the_variable_of_the_concrete_tuple() {
-    let world = World::new(DIVIDING, false, &[(0, 1)], &non_interference(""));
+    let world = World::new_with_kernel_function(
+        DIVIDING,
+        false,
+        &[(0, 1)],
+        &non_interference(""),
+        "function quotient using v(x: Integer): Integer pure { 1 div x }\n",
+    );
     assert!(!world.clause.copy_group().classes.is_empty());
     let counterexample = refuted(run(&world));
     let HyperCounterexampleKind::Undefined(undefined) = &counterexample.kind else {

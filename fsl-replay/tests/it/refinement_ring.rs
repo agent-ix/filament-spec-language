@@ -361,7 +361,10 @@ fn an_undefined_step_row_argument_is_undefined() {
         "function g using v(i: Int[0, 1]): Int[0, 1] pure {{ if 1 mod i = 0 then 0 else 1 }}\n{}",
         ring_is_queue(items).replace("enq(self.ring, x)", "enq(self.ring, g(self.index))")
     );
-    let world = RingWorld::with(Variant::default(), &refinement);
+    let world = RingWorld::with_mode(
+        filament_semantic_value::checking::CheckMode::Kernel,
+        Variant::default(), &refinement,
+    );
     let concrete = world.concrete_system(UNLIMITED);
     let StepVerdict::Undefined(undefined) = verdict(
         &world,
@@ -398,7 +401,10 @@ fn a_defined_step_row_argument_is_judged_against_the_post_state() {
         "function g using v(i: Int[0, 1]): Int[0, 1] pure {{ if 1 mod i = 0 then 0 else 1 }}\n{}",
         ring_is_queue(items).replace("enq(self.ring, x)", "enq(self.ring, g(self.index))")
     );
-    let world = RingWorld::with(Variant::default(), &refinement);
+    let world = RingWorld::with_mode(
+        filament_semantic_value::checking::CheckMode::Kernel,
+        Variant::default(), &refinement,
+    );
     let concrete = world.concrete_system(UNLIMITED);
     let StepVerdict::Fails(failure) = verdict(
         &world,

@@ -630,6 +630,31 @@ impl World {
         )
     }
 
+    /// A busy world with an additional Kernel-checked helper body.
+    pub(crate) fn busy_with_kernel_function(
+        vault: Vault,
+        starts: &[(i64, i64, i64)],
+        declaration: &str,
+        function: &str,
+    ) -> Self {
+        let snapshots = starts
+            .iter()
+            .map(|(h, l, _)| vec![(KEY, (*h, *l))])
+            .collect();
+        let flags = starts.iter().map(|(_, _, busy)| *busy).collect();
+        Self::assemble_with_mode(
+            vault,
+            false,
+            snapshots,
+            None,
+            flags,
+            vec![KEY.to_owned()],
+            declaration,
+            function,
+            CheckMode::Kernel,
+        )
+    }
+
     fn build(
         vault: Vault,
         reset: bool,

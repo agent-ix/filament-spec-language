@@ -57,6 +57,11 @@ fn clause(fair: &str, body: &str) -> String {
 
 const SETTLES: &str = "eventually always holds(v.l @ b = 1)";
 
+const KERNEL_REMAINDER: &str =
+    "function remainder using v(x: Integer): Integer pure { 1 mod x }\n";
+const KERNEL_QUOTIENT: &str =
+    "function quotient using v(x: Integer): Integer pure { 1 div x }\n";
+
 fn weak() -> &'static str {
     "fair weak V::Vault::reset;"
 }
@@ -676,8 +681,10 @@ fn witnessed_or_unchecked(outcome: &ExistentialOutcome) -> &[LassoWitness] {
 #[trace("TC-615", "FR-181-AC-5")]
 #[test]
 fn an_undefined_letter_refutes_although_every_initial_state_has_a_witness() {
-    let body = "eventually always holds(1 mod (1 - v.l @ b) = 0 and v.l @ b = 0)";
-    let world = World::new(Vault::Secure, false, &STARTS, &clause("", body));
+    let body = "eventually always holds(remainder(1 - v.l @ b) = 0 and v.l @ b = 0)";
+    let world = World::new_with_kernel_function(
+        Vault::Secure, false, &STARTS, &clause("", body), KERNEL_REMAINDER,
+    );
     for limits in [unsampled(), ModelCheckLimits::default()] {
         let result = single(&world, limits);
         let ExistentialOutcome::Undefined { stem, undefined } = &result.outcome else {
@@ -694,7 +701,7 @@ fn an_undefined_letter_refutes_although_every_initial_state_has_a_witness() {
         };
         assert_eq!(
             world.atom_text(atom),
-            "holds(1 mod (1 - v.l @ b) = 0 and v.l @ b = 0)"
+            "holds(remainder(1 - v.l @ b) = 0 and v.l @ b = 0)"
         );
         assert_eq!(
             undefined.cause,
@@ -723,8 +730,10 @@ fn an_undefined_letter_refutes_although_every_initial_state_has_a_witness() {
 #[trace("TC-615", "FR-181-AC-5")]
 #[test]
 fn an_undefined_letter_at_a_trapped_start_is_undefined_not_trapped() {
-    let body = "always holds(1 mod (1 - v.l @ b) = 0 and v.l @ b = 0)";
-    let world = World::new(Vault::Secure, false, &[(0, 0), (0, 1)], &clause("", body));
+    let body = "always holds(remainder(1 - v.l @ b) = 0 and v.l @ b = 0)";
+    let world = World::new_with_kernel_function(
+        Vault::Secure, false, &[(0, 0), (0, 1)], &clause("", body), KERNEL_REMAINDER,
+    );
     let result = single(&world, unsampled());
     let ExistentialOutcome::Undefined { stem, undefined } = &result.outcome else {
         panic!("expected Undefined, got {:?}", result.outcome);
@@ -742,8 +751,10 @@ fn an_undefined_letter_at_a_trapped_start_is_undefined_not_trapped() {
 #[trace("TC-615", "FR-181-AC-5")]
 #[test]
 fn a_trap_comes_before_a_later_undefined_letter() {
-    let body = "holds(v.l @ b = 1) and always holds(1 mod (1 - v.l @ b) = 0 and v.l @ b = 0)";
-    let world = World::new(Vault::Secure, false, &STARTS, &clause("", body));
+    let body = "holds(v.l @ b = 1) and always holds(remainder(1 - v.l @ b) = 0 and v.l @ b = 0)";
+    let world = World::new_with_kernel_function(
+        Vault::Secure, false, &STARTS, &clause("", body), KERNEL_REMAINDER,
+    );
     let result = single(&world, unsampled());
     assert_eq!(
         result.outcome,
@@ -1000,7 +1011,7 @@ fn a_clause_that_is_not_single_existential_is_refused() {
 /// The leaky `step`, with a precondition that has no value in the state
 /// `(0, 1)`.
 const GUARDED: Vault = Vault::Custom(
-    "pre Guard using v on V::Vault::step { 1 div (1 - self.l + self.h) >= 0 }\n\
+    "pre Guard using v on V::Vault::step { quotient(1 - self.l + self.h) >= 0 }\n\
      post Step using v on V::Vault::step { (i = self.h and self.l = 0) or (i != self.h and self.l = 1) }\n",
 );
 
@@ -1011,11 +1022,12 @@ const GUARDED: Vault = Vault::Custom(
 #[trace("TC-616")]
 #[test]
 fn a_contract_with_no_value_leaves_its_state_open() {
-    let world = World::new(
+    let world = World::new_with_kernel_function(
         GUARDED,
         false,
         &[(0, 0)],
         &clause("", "eventually holds(v.l @ b = 1)"),
+        KERNEL_QUOTIENT,
     );
     let result = single(&world, unsampled());
     // `(0, 1)` looks terminal, but whether its `step` is enabled is unknown,
@@ -1247,7 +1259,7 @@ fn the_engine_agrees_with_a_brute_force_search_of_lassos() {
 /// with a `reset` that keeps `l` at 1, so `(0, 1)` has a model loop whose
 /// state also enables a `step` the contracts cannot decide.
 const GUARDED_RESET: Vault = Vault::Custom(
-    "pre Guard using v on V::Vault::step { 1 div (1 - self.l + self.h) >= 0 }\n\
+    "pre Guard using v on V::Vault::step { quotient(1 - self.l + self.h) >= 0 }\n\
      post Step using v on V::Vault::step { self.l = i }\n\
      post Reset using v on V::Vault::reset { self.l = 1 }\n",
 );
@@ -1260,11 +1272,12 @@ const GUARDED_RESET: Vault = Vault::Custom(
 #[trace("TC-606")]
 #[test]
 fn a_loop_through_an_undecided_state_is_not_a_witness() {
-    let world = World::new(
+    let world = World::new_with_kernel_function(
         GUARDED_RESET,
         true,
         &[(0, 1)],
         &clause("fair weak V::Vault::step;", "always holds(v.l @ b = 1)"),
+        KERNEL_QUOTIENT,
     );
     let undecided = ExistentialOutcome::NoDecision {
         end: RunEnd::Completed,
