@@ -224,46 +224,47 @@ fn bare_admission_retains_equality_and_reports_its_denial_after_projection() {
         &expected
     );
     assert_eq!(exact.consumed(), full);
-    for (work, storage, kind) in [
-        (full.work - 1, full.storage, NativeJoinChargeKind::Work),
-        (full.work, full.storage - 1, NativeJoinChargeKind::Storage),
+    for (work, storage, kind, code) in [
+        (
+            prefix.work - 1,
+            full.storage,
+            NativeJoinChargeKind::Work,
+            filament_contract_model::ExactTypeProjectionErrorCode::ExhaustedWork,
+        ),
+        (
+            full.work,
+            prefix.storage - 1,
+            NativeJoinChargeKind::Storage,
+            filament_contract_model::ExactTypeProjectionErrorCode::ExhaustedStorage,
+        ),
     ] {
         let mut budget = NativeJoinBudget::new(work, storage);
         let error = BarePackage::new(&admitted)
             .with_supply(supply, &mut budget)
-            .expect_err("one short of the complete admission pass");
-        let NativeJoinFailure::Rows(native) = error.native() else {
-            panic!("source enum index owns the final denial: {error:?}")
+            .expect_err("one short in the measured projection phase");
+        let NativeJoinFailure::Projection(native) = error.native() else {
+            panic!("the projection phase retains its typed denial: {error:?}")
         };
-        let (code, setting, bound, consumed) = match kind {
+        let (setting, bound, consumed) = match kind {
             NativeJoinChargeKind::Work => (
-                crate::NativeRowErrorCode::WorkLimit,
                 fsl_foundation::Setting::I2WorkUnits,
                 work,
                 budget.consumed().work,
             ),
             NativeJoinChargeKind::Storage => (
-                crate::NativeRowErrorCode::StorageLimit,
                 fsl_foundation::Setting::I2NativeJoinStorage,
                 storage,
                 budget.consumed().storage,
             ),
         };
-        assert_eq!(native.code(), code);
-        assert_eq!(native.configured_bound(), Some(bound));
-        assert_eq!(native.denied(), budget.first_unpaid());
-        assert_eq!(native.locus(), budget.first_unpaid_locus());
-        let locus = native.locus().expect("original source enum index locus");
-        assert_eq!(
-            locus.source,
-            filament_contract_model::NativeJoinLocusSource::AdapterRow(0)
-        );
-        assert_eq!(locus.form, "source_enum_catalog_index");
+        assert_eq!(native.code, code);
+        assert_eq!(native.configured_bound, Some(bound));
+        assert_eq!(native.denied, budget.first_unpaid());
         let unpaid = budget.first_unpaid().expect("original unpaid charge");
         assert_eq!(unpaid.kind, kind);
-        assert_eq!(unpaid.amount, 1);
-        assert_eq!(budget.consumed().work, work);
-        assert_eq!(budget.consumed().storage, full.storage - 1);
+        let locus = budget
+            .first_unpaid_locus()
+            .expect("the actual native projection locus is retained");
         let diagnostic = error.limit().expect("original limit diagnostic");
         assert_eq!(diagnostic.setting(), setting);
         assert_eq!(diagnostic.configured_bound(), bound);
@@ -271,6 +272,11 @@ fn bare_admission_retains_equality_and_reports_its_denial_after_projection() {
             diagnostic.actual(),
             u128::from(consumed) + unpaid.amount
         );
+        let admitted_prefix = budget.consumed();
+        assert_eq!(budget.accounted_charge(kind, unpaid.amount, locus), Err(unpaid));
+        assert_eq!(budget.first_unpaid(), Some(unpaid));
+        assert_eq!(budget.first_unpaid_locus(), Some(locus));
+        assert_eq!(budget.consumed(), admitted_prefix);
     }
     for (work, storage, kind, code) in [
         (
