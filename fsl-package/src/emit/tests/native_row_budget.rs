@@ -811,7 +811,7 @@ fn synthesized_value_validity_region_names_its_application_occurrence() {
     // source-backed case also checks that the record is narrower than its
     // owning function's declaration region.
     let declarations = "record R { amount: Int[0, 9]; }\n\
-        function same using v(r: R): Boolean pure { r.amount = r.amount }";
+        function same using v(r: R): Boolean pure { r.amount = r.amount and true }";
     let source_text = format!("{HEADER}{declarations}\n");
     let graph = super::converted_equality::checked_graph(declarations);
     let function = graph
@@ -917,7 +917,14 @@ fn shared_value_validity_application_uses_each_occurrence_region() {
                 .iter()
                 .find(|entry| entry["role"] == "generated" && entry["node_id"] == node["node_id"])
                 .and_then(|entry| entry["regions"].as_array()?.first())
-                .and_then(|region| Some((region["start"].as_u64()?, region["end"].as_u64()?)))
+                .and_then(|region| {
+                    let start = region["start"].as_u64()?;
+                    let end = region["end"].as_u64()?;
+                    let text = source_text
+                        .as_bytes()
+                        .get(usize::try_from(start).ok()?..usize::try_from(end).ok()?)?;
+                    (text == b"x + 1").then_some((start, end))
+                })
         })
         .collect();
     let expression_regions: HashSet<_> = entries
