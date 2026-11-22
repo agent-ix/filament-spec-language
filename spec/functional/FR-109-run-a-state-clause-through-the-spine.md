@@ -56,11 +56,15 @@ A `ClauseRunRequest`:
 - a selection: `Clause(ClauseSelection)` (FR-106), `Frame { operation,
   invocation }` (FR-115), or `Function { name,
   arguments, snapshot }`. `name` follows FR-100's `function` rule.
-  `arguments` are this claim runner's `{parameter, value}` pairs, one per
-  parameter, in any order, whose `value` is the file-assignment form of
-  FR-100's canonical integer, or
-  `{"reference": {"population": ..., "key": ...}}` for a parameter of a
-  model object type, resolved in the current snapshot `snapshot` names;
+  For a function selection read from a request file, `arguments` are
+  `{parameter, value}` pairs, one per parameter, in any order. Each `value`
+  uses FR-100's public command encoding: FSpec FR-181's tagged canonical
+  form for a value type, or FR-650's `{"population": P}` selection for a
+  population parameter. A `Reference<T>` uses FR-181's tagged `reference`
+  form, including its universe, most-specific object type and identity.
+  References and population selections resolve against the current snapshot
+  named by `snapshot`; FR-106 and FR-650 own their admission and refusal
+  behavior;
 - `SpineLimits`, `ObservationLimits` and the evaluation meter budget
   (FR-100's `accounting`).
 
