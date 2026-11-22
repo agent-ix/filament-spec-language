@@ -145,6 +145,20 @@ pub enum ClauseRunSelection {
         /// The caller's path for the snapshot, when retained by its adapter.
         snapshot_path: Option<String>,
     },
+    /// A public-command function claim with canonical arguments and the
+    /// caller's supplied-value limits and cancellation handle.
+    CanonicalFunction {
+        /// The selected predicate's name.
+        name: String,
+        /// Canonical values exactly as the public request supplied them.
+        arguments: Vec<super::WireArgument>,
+        /// The caller's current snapshot, including its genuine document bytes.
+        snapshot: super::SuppliedObservation,
+        /// The caller's cumulative supplied-value ceilings.
+        supplied: filament_semantic_value::supplied_stop::SuppliedLimits,
+        /// The handle shared by compilation, conversion and execution.
+        cancel: Cancel,
+    },
     /// FR-115: an operation's frame, checked over one invocation. The
     /// request carries no frame and no permission: the frame comes only from
     /// the compiled package (FSpec FR-013-AC-3).
@@ -192,7 +206,8 @@ impl ClauseRunSelection {
             Self::Clause(selection) | Self::ClauseWithPath { selection, .. } => {
                 selection.name.clone()
             }
-            Self::Function { name, .. }
+            Self::CanonicalFunction { name, .. }
+            | Self::Function { name, .. }
             | Self::Temporal { name, .. }
             | Self::SampledTemporal { name, .. } => name.clone(),
             Self::Frame { operation, .. } => format!(
@@ -215,6 +230,7 @@ impl ClauseRunSelection {
             Self::Clause(_)
             | Self::ClauseWithPath { .. }
             | Self::Function { .. }
+            | Self::CanonicalFunction { .. }
             | Self::Frame { .. } => None,
         }
     }
@@ -1801,7 +1817,15 @@ fn run_clause_reading(
         }
     }
 
-    let cancel = Cancel::new();
+    let cancel = match &request.selection {
+        ClauseRunSelection::CanonicalFunction { cancel, .. } => cancel.clone(),
+        ClauseRunSelection::Clause(_)
+        | ClauseRunSelection::ClauseWithPath { .. }
+        | ClauseRunSelection::Function { .. }
+        | ClauseRunSelection::Frame { .. }
+        | ClauseRunSelection::Temporal { .. }
+        | ClauseRunSelection::SampledTemporal { .. } => Cancel::new(),
+    };
     let front_end = || -> Result<_, front_end::FrontEndFailure> {
         let parsed = front_end::parse(
             &front_end::ParseRequest {
@@ -1875,6 +1899,9 @@ fn run_clause_reading(
         Ok(Ok(compiled)) => compiled,
         Ok(Err(actual)) => {
             return Ok(report(ClauseDisposition::ExtractionClauseCount { actual }));
+        }
+        Err(fsl_foundation::diagnostic::StageFailure::Cancelled(cause)) => {
+            return Ok(report(ClauseDisposition::ArgumentRefusal(Box::new(RunRefusal::Cancelled(cause)))));
         }
         Err(failure) => {
             let disposition = match front_end::refusal_or_fault(failure) {
@@ -1998,6 +2025,9 @@ fn run_clause_reading(
             snapshot,
             snapshot_path.as_deref(),
         ),
+        ClauseRunSelection::CanonicalFunction { ref name, ref arguments, ref snapshot, supplied, ref cancel } => {
+            Ok(run_canonical_function(&run, &models, name, arguments, snapshot, supplied, cancel))
+        }
         ClauseRunSelection::Frame {
             ref operation,
             ref invocation,
@@ -2641,6 +2671,9 @@ fn run_compiled_clause_selection(
                 ),
             ))
         }),
+        ClauseRunSelection::CanonicalFunction { name, arguments, snapshot, supplied, cancel } => {
+            run_canonical_function(&run, &compiled.models, name, arguments, snapshot, *supplied, cancel)
+        }
         ClauseRunSelection::Frame {
             operation,
             invocation,
@@ -3331,6 +3364,88 @@ fn evaluate_operation_contracts(
         }
     }
     None
+}
+
+#[allow(clippy::too_many_arguments)]
+fn run_canonical_function(
+    run: &CompiledRun<'_>,
+    models: &super::AdmittedModels,
+    name: &str,
+    arguments: &[super::WireArgument],
+    snapshot: &super::SuppliedObservation,
+    supplied: filament_semantic_value::supplied_stop::SuppliedLimits,
+    cancel: &Cancel,
+) -> ClauseRunReport {
+    use fsl_eval::value::CheckedPackageEvaluation;
+
+    let not_a_predicate = |function: &str| {
+        let callable = run.package.graph().callable(function);
+        let declared = function_result_type_locus(run.sources, function);
+        ClauseDisposition::NotAPredicate {
+            name: function.to_owned(),
+            actual: declared.as_ref().map_or_else(
+                || callable.as_ref().map_or_else(
+                    || "unknown".to_owned(),
+                    |callable| checker_type_spelling(callable.result),
+                ),
+                |(_, _, spelling)| spelling.clone(),
+            ),
+            result_type_locus: declared.map(|(file, span, _)| (file, span)),
+        }
+    };
+    let selected = match select(run.package, name) {
+        Ok(selected) => selected,
+        Err(refusal) => return run.report(match *refusal {
+            RunRefusal::MissingDeclaration { function } => ClauseDisposition::MissingName { name: function },
+            RunRefusal::UnsupportedResult { function } => not_a_predicate(&function),
+            other => ClauseDisposition::ArgumentRefusal(Box::new(other)),
+        }),
+    };
+    if run.package.graph().callable(name).is_some_and(|callable| !matches!(callable.result, ValueType::Boolean)) {
+        return run.report(not_a_predicate(name));
+    }
+    let (environment, admission_usage) = match admit_current_snapshot(
+        run.package.graph().model_inputs(), run.package.graph().scope().types(),
+        run.packages, run.model_limits, run.provisions.snapshots,
+        &snapshot.reference, run.observation_limits,
+    ) {
+        Ok(admitted) => admitted,
+        Err(failure) => return run.report(ClauseDisposition::SnapshotAdmission {
+            failure, document: snapshot.reference.clone(), path: snapshot.path.clone(),
+        }),
+    };
+    let mut call = super::Call::new(name.to_owned(), Vec::new(), run.accounting, supplied);
+    call.canonical_values = true;
+    call.wire_arguments = arguments.to_vec();
+    call.snapshot = Some(super::CallSnapshot {
+        observation: snapshot.clone(), limits: run.observation_limits,
+        relationship_selection: None, relationship_extents: None, relationship_navigation: None,
+    });
+    let mut meter = Meter::new(run.accounting).with_cancel(cancel.clone());
+    let outcome = super::call::with_admitted_call(
+        run.package, models,
+        super::call::CallSources {
+            package_name: run.package_name, packages: run.packages, model_limits: run.model_limits,
+        },
+        &call, &selected, &environment, cancel,
+        |_, bound, objects, supplied_run| {
+            let evaluation = run.package.call_supplied(
+                &selected.name, bound, objects, &mut meter,
+                &mut supplied_run.lock().expect("conversion and execution do not unwind"),
+            ).map_err(convert_call_failure)?;
+            convert_outcome(evaluation, run.package.graph(), run.sources)
+        },
+    );
+    let disposition = match outcome {
+        Ok(outcome) => ClauseDisposition::Evaluate(outcome),
+        Err(refusal) => match *refusal {
+            RunRefusal::Fault(fault) => ClauseDisposition::EvaluateFault(fault),
+            other => ClauseDisposition::ArgumentRefusal(Box::new(other)),
+        },
+    };
+    let mut report = run.report(disposition);
+    report.usage = ClauseRunUsage::from_meter(&meter, admission_usage);
+    report
 }
 
 fn run_function(

@@ -410,6 +410,7 @@ fn prepare_clause(
         ClauseRunSelection::Clause(_)
         | ClauseRunSelection::ClauseWithPath { .. }
         | ClauseRunSelection::Function { .. }
+        | ClauseRunSelection::CanonicalFunction { .. }
         | ClauseRunSelection::Frame { .. } => return Err(not_read("clause.selection")),
     };
     // FR-106: the snapshot documents the trace names, as `read_clause_run_request`
