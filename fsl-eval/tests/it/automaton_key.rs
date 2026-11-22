@@ -1440,11 +1440,13 @@ fn reached_on_each_tp3_monitor_states_resolve_to_fr338_keys() {
 #[trace("TC-525", "FR-338-AC-31")]
 #[test]
 fn reached_protocol_tp3_monitor_states_resolve_to_normal_form_keys() {
-    for body in [
-        "holds(p) implies eventually[0,2] holds(q)",
-        "holds(p) implies eventually[1,2] holds(q)",
+    for (activation, body) in [
+        ("on origin", "holds(p) implies eventually[0,2] holds(q)"),
+        ("on origin", "holds(p) implies eventually[1,2] holds(q)"),
+        ("on each (t: Counter)", "holds(p) implies eventually[0,2] holds(q)"),
+        ("on each (t: Counter)", "holds(p) implies eventually[1,2] holds(q)"),
     ] {
-        let fixture = fixture(INFINITE, "c: Counter", "on origin", body);
+        let fixture = fixture(INFINITE, "c: Counter", activation, body);
         let context = StateContext::clause(&fixture.clause, occurrence(0), Vec::new());
         let keys = SafetyStates::clause(&fixture.clause, &context, SubjectKind::Protocol)
             .expect("the TP-3 key context translates");
@@ -1464,17 +1466,17 @@ fn reached_protocol_tp3_monitor_states_resolve_to_normal_form_keys() {
             }
             let configurations = monitor
                 .configurations(from, keys.max_key_bytes())
-                .unwrap_or_else(|error| panic!("{body}: {error:?}"));
+                .unwrap_or_else(|error| panic!("{activation} {body}: {error:?}"));
             let key = keys
                 .key(&configurations)
-                .unwrap_or_else(|error| panic!("{body} state {configurations:?}: {error}"));
+                .unwrap_or_else(|error| panic!("{activation} {body} state {configurations:?}: {error}"));
             keys.admit(key.as_bytes())
-                .unwrap_or_else(|error| panic!("{body}: the key is normal form: {error}"));
+                .unwrap_or_else(|error| panic!("{activation} {body}: the key is normal form: {error}"));
             for bits in 0..4 {
                 pending.push(monitor.step(from, Letter::from_bits(bits)).expect("steps"));
             }
         }
-        assert!(reached.len() > 1, "{body}");
+        assert!(reached.len() > 1, "{activation} {body}");
     }
 }
 
