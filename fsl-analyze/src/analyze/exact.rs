@@ -42,7 +42,7 @@ use fsl_semantics::check::{
     Bound, Capability, DeclarationFamily, Event, ProbForm, ProbScheduler, ReachTarget,
 };
 
-use super::items::{admission, BROKEN, NOT_YET};
+use super::items::{admission, BROKEN, INVALID_VALUE, NOT_YET};
 use super::{AnalyzeItem, EngineReport, Refusal};
 use crate::exact_probabilistic::{
     build_retaining_monitor, decide_always, decide_bounded_event, decide_expected_reward,
@@ -264,6 +264,45 @@ fn broken() -> EngineReport {
     EngineReport::Refused(Refusal::Failed(BROKEN))
 }
 
+/// A finite-horizon solve that held its probabilities only as outward-rounded
+/// intervals: the certificate carries exact rationals, so the run stopped at
+/// the caller's `max_rational_bits`.
+fn rational_bits_limit(
+    limits: &crate::exact_probabilistic::ExactProbLimits,
+    subject: SubjectLimits<'_>,
+) -> EngineReport {
+    settled(
+        &ExactProbBuildIssue::Limit {
+            limit: ModelCheckLimit::ExactProbMaxRationalBits,
+            value: limits.max_rational_bits,
+        },
+        subject,
+    )
+}
+
+/// How a timed subject that cannot be built settles. A subject with no timed
+/// model is a request defect and an unclassifiable extent an engine fault; an
+/// unbounded extent requires a bound. The guard and clock-universe forms the
+/// timed product does not build yet stay `not-yet-implemented`.
+fn timed_subject_refusal(
+    refusal: &fsl_eval::simulation::model::TimedSubjectRefusal,
+) -> EngineReport {
+    use fsl_eval::simulation::model::TimedSubjectRefusal;
+    use fsl_eval::simulation::NotSimulated;
+    match refusal {
+        TimedSubjectRefusal::NotSimulated(NotSimulated::RequiresBound(_)) => {
+            EngineReport::Refused(Refusal::RequiresBound)
+        }
+        TimedSubjectRefusal::NotSimulated(_) => broken(),
+        TimedSubjectRefusal::NoTimedModel { .. } => {
+            EngineReport::Refused(Refusal::Failed(INVALID_VALUE))
+        }
+        TimedSubjectRefusal::ParameterizedGuard { .. }
+        | TimedSubjectRefusal::NestedUnboundedCollection { .. }
+        | TimedSubjectRefusal::Unbounded { .. } => not_yet(),
+    }
+}
+
 fn settled(issue: &ExactProbBuildIssue, subject: SubjectLimits<'_>) -> EngineReport {
     EngineReport::Exact(Box::new(ExactReport::Settled(
         fsl_replay::settle_exact_prob_build_issue(issue, subject),
@@ -312,7 +351,7 @@ fn run_timed(
         claim.subject.alias.as_str(),
     ) {
         Ok(timed) => timed,
-        Err(_) => return not_yet(),
+        Err(refusal) => return timed_subject_refusal(&refusal),
     };
     let route = if crate::exact_probabilistic::timed_region_route(&timed, claim) {
         TimedProbabilityRoute::Region
@@ -351,8 +390,15 @@ fn run_timed(
                 subject,
             );
         }
-        Ok(FhResult::Bounds { .. } | FhResult::PrecisionBudget { .. }) | Err(FhError::Cycle) => {
-            return not_yet();
+        Ok(FhResult::Bounds { .. }) => return rational_bits_limit(&limits, subject),
+        Ok(FhResult::PrecisionBudget { lower, upper, .. }) => {
+            return settled(
+                &ExactProbBuildIssue::PrecisionBudget {
+                    lower: lower.rational(),
+                    upper: upper.rational(),
+                },
+                subject,
+            );
         }
         Err(_) => return broken(),
     };
@@ -645,7 +691,7 @@ fn run_timed_mean(
         claim.subject.alias.as_str(),
     ) {
         Ok(timed) => timed,
-        Err(_) => return not_yet(),
+        Err(refusal) => return timed_subject_refusal(&refusal),
     };
     let route = if crate::exact_probabilistic::timed_region_route(&timed, claim) {
         TimedProbabilityRoute::Region
@@ -1056,7 +1102,7 @@ fn run(
                 values.into_iter().map(ExtRational::Finite).collect(),
                 policy,
             ),
-            Ok(FhResult::Bounds { .. }) => return not_yet(),
+            Ok(FhResult::Bounds { .. }) => return rational_bits_limit(&limits, subject),
             Ok(FhResult::PrecisionBudget { lower, upper, .. }) => {
                 return settled(
                     &ExactProbBuildIssue::PrecisionBudget {
@@ -2661,11 +2707,11 @@ fn replay_timed_refutation(
     let produced = match produce_witness(product, policy, scope, initial, &accepting, &past, limits)
     {
         Ok(Some(produced)) => produced,
-        Ok(None) => return not_yet(),
+        Ok(None) => return broken(),
         Err(crate::exact_probabilistic::WitnessError::Limit { limit, value }) => {
             return settled(&ExactProbBuildIssue::Limit { limit, value }, subject);
         }
-        Err(_) => return not_yet(),
+        Err(_) => return broken(),
     };
     let Ok(item) = fsl_replay::probabilistic_claim_identity(claim) else {
         return not_yet();
@@ -2710,9 +2756,16 @@ fn replay_timed_refutation(
                 ProductAction::Identity(identity)
                 | ProductAction::WorkloadResolve { identity, .. } => {
                     let wanted = timed_key_discrete(&post_key);
-                    let actions = match system.actions_with_cancel(&state, cancel) {
+                    let result = system.actions_with_cancel(&state, cancel);
+                    if let Some(cause) = cancel.tripped() {
+                        return settled(&ExactProbBuildIssue::Cancelled(cause), subject);
+                    }
+                    let actions = match result {
                         Ok(Ok(actions)) => actions,
-                        _ => return not_yet(),
+                        Err(stop) => {
+                            return settled(&ExactProbBuildIssue::Expansion(stop), subject);
+                        }
+                        Ok(Err(_)) => return broken(),
                     };
                     let found = actions
                         .into_iter()
