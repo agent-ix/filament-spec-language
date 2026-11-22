@@ -196,7 +196,13 @@ impl Run<'_, '_> {
                 meter: self.request.meter,
                 cancel: self.cancel,
             };
-            let scope = match self.enumerate_closed_joint(&inputs, depth, &mut totals, &mut meter) {
+            let scope = match self.enumerate_closed_joint(
+                &inputs,
+                depth,
+                &mut totals,
+                &mut meter,
+                &mut matched,
+            ) {
                 Ok(scope) => scope,
                 Err(stop) => return self.closed_graph_stop(stop, &totals),
             };
@@ -205,11 +211,7 @@ impl Run<'_, '_> {
                     return Err(fault("a-canonical-cut-predecessor-was-actually-traversed"));
                 }
             }
-            let complete = match self.ordered_closed(scope.complete, selected, &mut meter) {
-                Ok(complete) => complete,
-                Err(stop) => return self.closed_graph_stop(stop, &totals),
-            };
-            for (canonical, representative) in complete {
+            for (canonical, representative) in scope.complete {
                 if self.cancel.poll() {
                     return self.cancelled(&totals);
                 }
@@ -217,26 +219,6 @@ impl Run<'_, '_> {
                     return Err(fault(
                         "a-canonical-closed-representative-was-actually-traversed",
                     ));
-                }
-                let tuple = representative.paths.iter().collect::<Vec<_>>();
-                match self.tuple_reading(
-                    judge_closed_tuple(&inputs, &tuple),
-                    &mut matched,
-                    &totals,
-                )? {
-                    Reading::Continue => {}
-                    Reading::Ended(outcome) => return Ok(outcome),
-                    Reading::Refuted(position) => {
-                        return Ok(HyperOutcome::Violated {
-                            counterexample: Box::new(HyperCounterexample {
-                                kind: HyperCounterexampleKind::Closed,
-                                instance: Self::instance_of(instance),
-                                traces: self.closed_traces(&tuple)?,
-                                trace_position: position,
-                            }),
-                            stats: totals.stats(),
-                        });
-                    }
                 }
             }
             if self.symmetric {

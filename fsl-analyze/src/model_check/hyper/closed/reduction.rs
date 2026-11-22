@@ -3,6 +3,7 @@
 //! scalar work meter, independently of the joint-move and stored-state limits.
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::ops::Range;
 
 use filament_exact::{Cancel, Charge, ChargePoint, LimitKind, Meter};
 use fsl_eval::hyper::{ClosedExecution, ParameterBinding};
@@ -50,7 +51,8 @@ pub(super) fn charge(meter: &mut Meter, cancel: &Cancel) -> Result<(), Stop> {
         })
 }
 
-struct Member {
+#[derive(Clone, Eq, PartialEq)]
+pub(super) struct Member {
     positions: Vec<usize>,
     renaming: Permutation,
 }
@@ -66,6 +68,17 @@ pub(super) struct Representative {
 pub(super) struct Scope {
     pub(super) complete: BTreeMap<TupleKey, Representative>,
     pub(super) boundaries: BTreeMap<TupleKey, Representative>,
+    pub(super) judged: BTreeSet<TupleKey>,
+}
+
+type ComponentOrder = (usize, Vec<(Vec<u8>, Vec<u8>)>);
+
+/// A prefix is a lower bound on every completion below it. Ordinary order
+/// is component-major; selected order is the least joint-position orbit key.
+#[derive(Clone, Eq, Ord, PartialEq, PartialOrd)]
+pub(super) enum Order {
+    Ordinary(Vec<ComponentOrder>),
+    Selected(TupleKey),
 }
 
 #[derive(Clone, Copy)]
@@ -75,49 +88,123 @@ pub(super) enum Admission {
 }
 
 impl Run<'_, '_> {
-    /// Keep the unreduced route's established order: initial indices, then
-    /// each component's transition/state-key path, first variable slowest.
-    /// Reduced members already have their least-orbit ordering in the map.
-    pub(super) fn ordered_closed(
+    /// Full actions are needed for a choice box: an action fixing today's
+    /// prefix can still exchange its different future successors. Deduping
+    /// actions by that prefix's image would discard those future orderings.
+    pub(super) fn closed_order_members(
         &self,
-        members: BTreeMap<TupleKey, Representative>,
+        instance: &[ParameterBinding],
         selected: bool,
         meter: &mut Meter,
-    ) -> Result<Vec<(TupleKey, Representative)>, Stop> {
-        if selected {
-            return Ok(members.into_iter().collect());
+    ) -> Result<Vec<Member>, Stop> {
+        let mut members = vec![Member {
+            positions: (0..self.slots.len()).collect(),
+            renaming: Permutation::identity(),
+        }];
+        if !selected {
+            return Ok(members);
         }
-        let mut ordered = Vec::with_capacity(members.len());
-        for (key, representative) in members {
-            let mut order = Vec::with_capacity(representative.paths.len());
-            for (component, path) in representative.paths.iter().enumerate() {
+        let generators = reduce::generators(&self.stabiliser_of(instance));
+        let mut next = 0;
+        while let Some(member) = members.get(next).cloned() {
+            let mut following = Vec::new();
+            for generator in &self.copy.generators {
                 charge(meter, self.cancel)?;
-                let system = self
-                    .slots
-                    .get(component)
-                    .and_then(|slot| self.systems.get(*slot))
-                    .ok_or_else(|| fault("a-closed-order-has-a-component-system"))?;
-                let mut steps = Vec::with_capacity(path.steps.len());
-                for step in &path.steps {
-                    charge(meter, self.cancel)?;
-                    steps.push((
-                        system
-                            .transition_key(&step.transition)
-                            .map_err(ModelCheckRefusal::Encoding)?,
-                        step.post_state.as_bytes().to_vec(),
-                    ));
-                }
-                order.push((path.initial, steps));
+                let mut image = member.clone();
+                image.positions.swap(generator.first, generator.second);
+                following.push(image);
             }
-            ordered.push((order, key, representative));
+            for (_, generator) in &generators {
+                charge(meter, self.cancel)?;
+                following.push(Member {
+                    positions: member.positions.clone(),
+                    renaming: generator.compose(&member.renaming),
+                });
+            }
+            for image in following {
+                let mut known = false;
+                for existing in &members {
+                    charge(meter, self.cancel)?;
+                    if *existing == image {
+                        known = true;
+                        break;
+                    }
+                }
+                if !known {
+                    members.push(image);
+                }
+            }
+            next += 1;
         }
-        ordered.sort_by(|left, right| left.0.cmp(&right.0));
-        Ok(ordered
-            .into_iter()
-            .map(|(_, key, representative)| (key, representative))
-            .collect())
+        Ok(members)
     }
 
+    /// Exact minimum key of a compact Cartesian choice box, without building
+    /// its joint tuples. For each fixed group action choices are independent,
+    /// so their component minima give the minimum image of the entire box.
+    pub(super) fn closed_choice_order(
+        &self,
+        choices: &[Vec<ClosedExecution>],
+        ranges: &[Range<usize>],
+        members: &[Member],
+        selected: bool,
+        meter: &mut Meter,
+    ) -> Result<Order, Stop> {
+        if !selected {
+            let mut order = Vec::with_capacity(choices.len());
+            for (component, paths) in choices.iter().enumerate() {
+                let mut least = None;
+                for index in ranges[component].clone() {
+                    let path = &paths[index];
+                    let system = &self.systems[self.slots[component]];
+                    let mut steps = Vec::with_capacity(path.steps.len());
+                    for step in &path.steps {
+                        charge(meter, self.cancel)?;
+                        steps.push((
+                            system
+                                .transition_key(&step.transition)
+                                .map_err(ModelCheckRefusal::Encoding)?,
+                            step.post_state.as_bytes().to_vec(),
+                        ));
+                    }
+                    charge(meter, self.cancel)?;
+                    let key = (path.initial, steps);
+                    if least.as_ref().is_none_or(|known| key < *known) {
+                        least = Some(key);
+                    }
+                }
+                order.push(least.ok_or_else(|| fault("a-frontier-range-is-nonempty"))?);
+            }
+            return Ok(Order::Ordinary(order));
+        }
+        let mut least = None;
+        for member in members {
+            charge(meter, self.cancel)?;
+            let mut components = Vec::with_capacity(choices.len());
+            for (component, original) in member.positions.iter().copied().enumerate() {
+                let mut minimum = None;
+                for index in ranges[original].clone() {
+                    let positions = self.closed_component_key(
+                        &choices[original][index],
+                        component,
+                        &member.renaming,
+                        meter,
+                    )?;
+                    if minimum.as_ref().is_none_or(|known| positions < *known) {
+                        minimum = Some(positions);
+                    }
+                }
+                components.push(minimum.ok_or_else(|| fault("a-frontier-range-is-nonempty"))?);
+            }
+            let key = Self::joint_key(components);
+            if least.as_ref().is_none_or(|known| key < *known) {
+                least = Some(key);
+            }
+        }
+        Ok(Order::Selected(least.ok_or_else(|| {
+            fault("a-frontier-has-an-identity-action")
+        })?))
+    }
     /// Retain one genuine completed tuple or cut predecessor per orbit. Only
     /// a newly retained complete member consumes the stored-state allowance.
     pub(super) fn retain_closed(
@@ -128,7 +215,7 @@ impl Run<'_, '_> {
         scope: &mut Scope,
         totals: &mut Totals,
         meter: &mut Meter,
-    ) -> Result<(), Stop> {
+    ) -> Result<TupleKey, Stop> {
         let actual = self.closed_key(paths, meter)?;
         let selected = self.symmetric || self.request.reductions.constraint.is_some();
         let canonical = if selected {
@@ -145,7 +232,7 @@ impl Run<'_, '_> {
                 known.actual = actual;
                 known.paths = paths.to_vec();
             }
-            return Ok(());
+            return Ok(canonical);
         }
         match admission {
             Admission::Complete => {
@@ -158,13 +245,13 @@ impl Run<'_, '_> {
             Admission::Boundary => totals.boundary = totals.boundary.saturating_add(1),
         }
         members.insert(
-            canonical,
+            canonical.clone(),
             Representative {
                 actual,
                 paths: paths.to_vec(),
             },
         );
-        Ok(())
+        Ok(canonical)
     }
 
     /// The actual key of a concrete prefix, with no action applied.
@@ -258,47 +345,59 @@ impl Run<'_, '_> {
             let path = tuple
                 .get(*original)
                 .ok_or_else(|| fault("a-closed-image-names-an-actual-path"))?;
-            let system = self
-                .slots
-                .get(component)
-                .and_then(|slot| self.systems.get(*slot))
-                .ok_or_else(|| fault("a-closed-image-has-a-component-system"))?;
-            let mut positions = Vec::with_capacity(path.states.len());
-            for (position, state) in path.states.iter().enumerate() {
-                charge(meter, self.cancel)?;
-                let state = system
-                    .permute(state, &member.renaming)
-                    .map_err(|_| fault("a-closed-key-permutation-preserves-state-encoding"))?;
-                let key = system
-                    .state_key(&state)
-                    .map_err(ModelCheckRefusal::Encoding)?
-                    .0;
-                let incoming = position
-                    .checked_sub(1)
-                    .and_then(|index| path.steps.get(index))
-                    .map(|step| -> Result<_, ModelCheckRefusal> {
-                        let transition = system
-                            .permute_transition(&step.transition, &member.renaming)
-                            .map_err(|_| {
-                                fault("a-closed-key-permutation-preserves-step-encoding")
-                            })?;
-                        Ok((
-                            system
-                                .transition_key(&transition)
-                                .map_err(ModelCheckRefusal::Encoding)?,
-                            step.skipped,
-                        ))
-                    })
-                    .transpose()?;
-                positions.push((key, incoming));
-            }
-            if positions.is_empty() {
-                return Err(fault("a-closed-path-has-an-initial-state").into());
-            }
-            components.push(positions);
+            components.push(self.closed_component_key(path, component, &member.renaming, meter)?);
         }
+        Ok(Self::joint_key(components))
+    }
+
+    fn closed_component_key(
+        &self,
+        path: &ClosedExecution,
+        component: usize,
+        renaming: &Permutation,
+        meter: &mut Meter,
+    ) -> Result<Vec<Position>, Stop> {
+        let system = self
+            .slots
+            .get(component)
+            .and_then(|slot| self.systems.get(*slot))
+            .ok_or_else(|| fault("a-closed-image-has-a-component-system"))?;
+        let mut positions = Vec::with_capacity(path.states.len());
+        for (position, state) in path.states.iter().enumerate() {
+            charge(meter, self.cancel)?;
+            let state = system
+                .permute(state, renaming)
+                .map_err(|_| fault("a-closed-key-permutation-preserves-state-encoding"))?;
+            let key = system
+                .state_key(&state)
+                .map_err(ModelCheckRefusal::Encoding)?
+                .0;
+            let incoming = position
+                .checked_sub(1)
+                .and_then(|index| path.steps.get(index))
+                .map(|step| -> Result<_, ModelCheckRefusal> {
+                    let transition = system
+                        .permute_transition(&step.transition, renaming)
+                        .map_err(|_| fault("a-closed-key-permutation-preserves-step-encoding"))?;
+                    Ok((
+                        system
+                            .transition_key(&transition)
+                            .map_err(ModelCheckRefusal::Encoding)?,
+                        step.skipped,
+                    ))
+                })
+                .transpose()?;
+            positions.push((key, incoming));
+        }
+        if positions.is_empty() {
+            return Err(fault("a-closed-path-has-an-initial-state").into());
+        }
+        Ok(positions)
+    }
+
+    fn joint_key(components: Vec<Vec<Position>>) -> TupleKey {
         let length = components.iter().map(Vec::len).max().unwrap_or(0);
-        Ok(TupleKey(
+        TupleKey(
             (0..length)
                 .map(|position| {
                     components
@@ -307,6 +406,6 @@ impl Run<'_, '_> {
                         .collect()
                 })
                 .collect(),
-        ))
+        )
     }
 }
