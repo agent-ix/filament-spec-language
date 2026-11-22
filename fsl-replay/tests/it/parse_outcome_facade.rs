@@ -156,13 +156,14 @@ fn a_driver_serializes_parse_refusals_with_the_original_locus() {
             SpineLimits::default().source,
             &Cancel::new(),
         );
-        let (refusal, report) = match result.as_ref().expect_err("the source refuses") {
-            StageFailure::Refused(refusal) => (refusal.as_ref(), None),
-            StageFailure::RefusedWithPayload(refusal, payload) => {
-                (refusal.as_ref(), payload.parsed.as_deref())
-            }
-            other => panic!("the source must produce a typed refusal: {other:?}"),
-        };
+        let (refusal, report): (&CompileRefusal, Option<&fsl_replay::spine::ParseReport>) =
+            match result.as_ref().expect_err("the source refuses") {
+                StageFailure::Refused(refusal) => (refusal.as_ref(), None),
+                StageFailure::RefusedWithPayload(refusal, payload) => {
+                    (refusal.as_ref().as_ref(), payload.parsed.as_deref())
+                }
+                other => panic!("the source must produce a typed refusal: {other:?}"),
+            };
         assert_eq!(refusal.code().as_str(), code);
         assert_eq!(refusal.stage(), stage);
         let region = refusal.region().expect("the actual refusal is located");
