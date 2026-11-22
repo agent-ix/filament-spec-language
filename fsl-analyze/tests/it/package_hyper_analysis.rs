@@ -106,3 +106,61 @@ fn universal_package_proof_matches_source_without_source() {
 fn universal_package_refutation_replays_without_source() {
     universal_parity(2, "refuted");
 }
+
+/// Prepare genuine inputs for the separately run production-driver smoke
+/// check. The driver must create the handoff itself from these originals.
+#[trace("FR-940-AC-24", "FR-631-AC-1")]
+#[test]
+fn prepare_hp1_production_cli_fixture() {
+    let ws = Workspace::new("hp1-production-cli-inputs");
+    let (unit, model, snapshots) = crate::hyper_world::request_files_over_starts(
+        crate::hyper_world::Vault::Secure,
+        false,
+        &crate::hyper_world::STARTS,
+        crate::relation_claims::DETERMINISTIC,
+    );
+    let path = crate::analyze_cli_support::request_over(
+        &ws,
+        &unit,
+        &model,
+        &snapshots,
+        json!({"items": [{"claim": "Det", "kind": "temporal-satisfaction", "backend": "en-1"}]}),
+    );
+    assert_eq!(
+        snapshots.len(),
+        2,
+        "the CLI command block copies both initial snapshots"
+    );
+    let source = analyze(&path);
+    assert_eq!(source.exit, 0, "{}", source.document());
+    assert_eq!(source.item(0)["record"]["result"], "proved");
+    assert_eq!(source.item(0)["record"]["certification"], "certified");
+    assert_eq!(source.item(0)["certificate"]["accepted"], true);
+    let source_request: Value =
+        serde_json::from_slice(&std::fs::read(&path).expect("source request"))
+            .expect("request JSON");
+    ws.write("analyze-source.json", source_request.to_string().as_bytes());
+    let request = &source_request["request"];
+    ws.write(
+        "compile.json",
+        json!({"format": "native-compile/1", "request": {
+            "models": request["models"], "program": request["program"],
+            "handoff": {"directory": "handoff", "package_name": "analyze-unit",
+                "native_join": {"work_units": 1_u64 << 40, "storage": 1_u64 << 24}}
+        }})
+        .to_string()
+        .as_bytes(),
+    );
+    let mut package = source_request;
+    package["request"]
+        .as_object_mut()
+        .expect("request members")
+        .remove("program");
+    package["request"]["package"] = json!({"directory": "handoff"});
+    ws.write("analyze-package.json", package.to_string().as_bytes());
+    assert!(
+        !ws.path(HANDOFF).exists(),
+        "only the production CLI creates this acceptance handoff"
+    );
+    println!("HP1_FIXTURE={}", ws.path(".").display());
+}
