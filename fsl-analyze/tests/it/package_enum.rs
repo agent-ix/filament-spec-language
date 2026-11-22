@@ -277,3 +277,95 @@ fn malformed_enumeration_rows_refuse_invalid_package() {
         assert_eq!(run.document()["items"], json!([]), "{name}");
     }
 }
+
+/// The `native-run/1` request `members` run, as its exit code and its result
+/// or refusal document.
+fn run_members(ws: &Workspace, name: &str, members: &Value) -> (u8, Value) {
+    let document = json!({"format": "native-run/1", "request": members});
+    let path = ws.write(name, document.to_string().as_bytes());
+    match fsl_command::command::run(&path, &crate::analyze_cli_support::Fr290) {
+        Ok(result) => (result.exit_code, result.value.as_value().clone()),
+        Err(error) => (
+            error.category().exit_code(),
+            error.value().expect("a refusal document"),
+        ),
+    }
+}
+
+/// The document of a run less the members that name its route.
+fn route_free(mut document: Value) -> Value {
+    for member in ["package", "program", "source"] {
+        document.as_object_mut().expect("a document").remove(member);
+    }
+    document
+}
+
+/// FR-650-AC-12, FR-1039, FR-850 (QSL-2765): a function whose argument and
+/// result are an enumeration of the model runs from the checked package with
+/// the source route's whole document, outcome and charges included, and an
+/// unknown case refuses with the source route's refusal.
+#[trace("TC-2373", "FR-650-AC-12")]
+#[trace("TC-3019", "FR-1039-AC-1")]
+#[test]
+fn an_enumeration_argument_and_result_run_from_a_package_as_from_source() {
+    let functions = "function pick using v(): M::Mode pure { M::Mode::Busy }\n\
+         function pass using v(a: M::Mode): M::Mode pure { a }\n\
+         function next using v(a: M::Mode): M::Mode pure \
+         { if a = M::Mode::Idle then M::Mode::Busy else M::Mode::Done }\n\
+         function is_idle using v(a: M::Mode): Boolean pure { a = M::Mode::Idle }\n";
+    let items = json!([]);
+    let ws = Workspace::new("package-enum-run");
+    let path = request_over(
+        &ws,
+        &unit(functions),
+        &document(),
+        &[snapshot("Idle")],
+        json!({"items": items}),
+    );
+    let (package_request, _) = package_selection(&ws, &request_of(&path));
+    let source_request = request_of(&path);
+    let mode = ident("Mode");
+    let argument = |case: &str| {
+        json!([{"parameter": "a", "value": {"variant": {"type": mode, "case": case}}}])
+    };
+    let run_both = |function: &str, arguments: Value| {
+        let call = json!({"function": function, "snapshot": "snapshot-0.json",
+            "arguments": arguments});
+        let source = run_members(
+            &ws,
+            "run-source.json",
+            &json!({"models": source_request["models"], "program": source_request["program"],
+                "call": call}),
+        );
+        let package = run_members(
+            &ws,
+            "run-package.json",
+            &json!({"models": package_request["models"],
+                "package": {"directory": HANDOFF}, "call": call}),
+        );
+        (source, package)
+    };
+    for (function, arguments) in [
+        ("pick", json!([])),
+        ("pass", argument("Idle")),
+        ("pass", argument("Done")),
+        ("next", argument("Idle")),
+        ("next", argument("Busy")),
+        ("is_idle", argument("Idle")),
+        ("is_idle", argument("Busy")),
+    ] {
+        let (source, package) = run_both(function, arguments);
+        assert_eq!(source.0, 0, "{function}: {}", source.1);
+        assert_eq!(source.1["outcome"]["kind"], "completed", "{function}: {}", source.1);
+        assert_eq!(package.0, source.0, "{function}: {}", package.1);
+        assert_eq!(
+            route_free(package.1),
+            route_free(source.1),
+            "{function}"
+        );
+    }
+    let (source, package) = run_both("pass", argument("Nope"));
+    assert_eq!(source.0, 20, "{}", source.1);
+    assert_eq!(package.0, source.0, "{}", package.1);
+    assert_eq!(route_free(package.1), route_free(source.1));
+}
