@@ -49,7 +49,10 @@ struct Parts<'p> {
 
 /// A predicate node's shape.
 enum Shape {
+    /// A written predicate, projected for evaluation: an `expression` node
+    /// or the Boolean `false` literal.
     Expression,
+    /// The Boolean `true` literal.
     ConstantTrue,
 }
 
@@ -129,11 +132,11 @@ impl<'p> BarePackage<'p> {
             return Some(Shape::Expression);
         }
         let read = node.body.literal_read()?;
-        matches!(
-            (read.kind, read.value),
-            (LiteralKind::Boolean, CheckedLiteralValue::Boolean(true))
-        )
-        .then_some(Shape::ConstantTrue)
+        match (read.kind, read.value) {
+            (LiteralKind::Boolean, CheckedLiteralValue::Boolean(true)) => Some(Shape::ConstantTrue),
+            (LiteralKind::Boolean, CheckedLiteralValue::Boolean(false)) => Some(Shape::Expression),
+            _ => None,
+        }
     }
 
     /// FR-940: the package form of the state-graph claim declared at the

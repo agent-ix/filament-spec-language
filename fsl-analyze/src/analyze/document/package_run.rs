@@ -2724,6 +2724,11 @@ impl<'a> WorkInputs<'_, 'a> {
             {
                 Some(crate::protocol_analysis::manifest::BACKEND_ID)
             }
+            // A timed model's graph item is EN-6's, as the source route's
+            // `state_graph_item` selects it; an untimed one is EN-1's.
+            Some(ItemForm::Temporal(_)) if !self.input.input().time_sources.is_empty() => {
+                Some(crate::zone_check::manifest::BACKEND_ID)
+            }
             Some(ItemForm::Temporal(_)) => Some(crate::model_check::manifest::BACKEND_ID),
             Some(
                 ItemForm::FiniteHyper(_)
