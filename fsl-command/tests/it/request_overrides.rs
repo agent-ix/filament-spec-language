@@ -48,7 +48,7 @@ fn compile_request(clocks: Option<Value>) -> Value {
 /// program declares, so the run refuses the selection by name.
 fn run_request(clocks: Option<Value>) -> Value {
     let mut request = json!({"models": [], "program": {"source": source()}, "call": {
-        "function": "lt", "arguments": [{"parameter": "a", "value": 2}, {"parameter": "b", "value": 5}],
+        "function": "lt", "arguments": [{"parameter": "a", "value": {"type": "integer", "value": "2"}}, {"parameter": "b", "value": {"type": "integer", "value": "5"}}],
         "accounting": {"work_units": 100_000}}});
     if let Some(clocks) = clocks {
         request["clocks"] = clocks;

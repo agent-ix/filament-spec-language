@@ -215,7 +215,7 @@ fn read_with_source(
     {
         timestamped.late.evidence_ledger = evidence_ledger;
     }
-    fsl_replay::spine::read_clause_run_request(ClauseRequestParts {
+    fsl_replay::spine::read_canonical_clause_run_request(ClauseRequestParts {
         package_name: super::package_name(&source_identity),
         source,
         packages,
@@ -227,6 +227,6 @@ fn read_with_source(
         accounting: super::call_accounting(&clause.accounting),
         clocks: request.clocks.clone(),
         ledger,
-    })
+    }, request.limits.supplied.unwrap_or_default(), filament_exact::Cancel::new())
     .map_err(|error| invalid(error.member, error.reason))
 }

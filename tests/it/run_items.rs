@@ -205,15 +205,32 @@ fn child() -> Value {
     json!({"population": population(), "key": "child"})
 }
 
+fn canonical_child() -> Value {
+    let declaration = json!({
+        "package": spine::PACKAGE_IDENTITY,
+        "path": ["model", "object_type", format!("ix://{}/ConfigVersion", spine::PACKAGE_IDENTITY)],
+        "ordinal": 0
+    });
+    json!({"type": "reference", "universe": declaration.clone(),
+        "object_type": declaration, "identity": "6368696c64"})
+}
+
 /// A native-run/1 request over the spine files carrying `body` as its
 /// selection member (`call`, `clause` or `items`).
 fn request(directory: &Path, member: &str, body: Value) -> Output {
+    request_with_supplied(directory, member, body, None)
+}
+
+fn request_with_supplied(directory: &Path, member: &str, body: Value, supplied: Option<Value>) -> Output {
     let mut inner = json!({
         "models": [{"format":"semantic-ir/2.0.0", "source":
             source("spine-model.semantic-ir.json", "SpineModel")}],
         "program": {"source": source("spine-unit.native", "SpineUnit")},
     });
     inner[member] = body;
+    if let Some(supplied) = supplied {
+        inner["limits"] = json!({"supplied": supplied});
+    }
     let request = json!({"format": "native-run/1", "request": inner});
     std::fs::write(
         directory.join("request.json"),
@@ -749,7 +766,7 @@ fn reference_argument_without_a_snapshot_refuses() {
     extend_unit(directory.path(), SAME);
     let call = |snapshot: Option<&str>| {
         let mut call = json!({"function": "same", "arguments": [
-            {"parameter": "r", "value": {"reference": child()}}]});
+            {"parameter": "r", "value": canonical_child()}]});
         if let Some(snapshot) = snapshot {
             call["snapshot"] = json!(snapshot);
         }
@@ -758,7 +775,7 @@ fn reference_argument_without_a_snapshot_refuses() {
     let output = request(directory.path(), "call", call(Some("spine-snapshot.json")));
     assert_eq!(output.status.code(), Some(0), "{output:?}");
     let document: Value = serde_json::from_slice(&output.stdout).unwrap();
-    assert!(document["outcome"]["value"]["reference"]["object_identity"].is_string());
+    assert!(document["outcome"]["value"]["identity"].is_string());
     let output = request(directory.path(), "call", call(None));
     assert_eq!(output.status.code(), Some(20), "{output:?}");
     let failure: Value = serde_json::from_slice(&output.stderr).unwrap();
@@ -808,13 +825,16 @@ fn reference_result_passes_back_as_an_argument() {
     let directory = tempfile::tempdir().unwrap();
     write_cases(directory.path());
     extend_unit(directory.path(), SAME);
-    let first = same_of(directory.path(), json!({"reference": child()}));
-    let triple = &first["reference"];
+    let first = same_of(directory.path(), canonical_child());
+    let triple = &first;
     assert!(triple["universe"]["package"].is_string(), "{first}");
     assert!(triple["universe"]["path"].is_array(), "{first}");
     assert!(triple["universe"]["ordinal"].is_u64(), "{first}");
-    assert!(triple["type"]["original"]["node"].is_string(), "{first}");
-    assert!(triple["object_identity"].is_string(), "{first}");
+    assert!(triple["object_type"]["package"].is_string(), "{first}");
+    assert!(triple["object_type"]["path"].is_array(), "{first}");
+    assert!(triple["object_type"]["ordinal"].is_u64(), "{first}");
+    assert!(triple["identity"].is_string(), "{first}");
+    assert_eq!(triple["identity"], "6368696c64");
     assert_eq!(same_of(directory.path(), first.clone()), first);
 }
 
@@ -825,14 +845,14 @@ fn function_selection_admits_an_identity_reference() {
     let directory = tempfile::tempdir().unwrap();
     write_cases(directory.path());
     extend_unit(directory.path(), SAME);
-    let identity = same_of(directory.path(), json!({"reference": child()}));
+    let identity = same_of(directory.path(), canonical_child());
     let output = request(
         directory.path(),
         "clause",
         json!({"observations": observations(), "selection": {"function": {
             "name": "sameIdentity", "snapshot": "current", "arguments": [
                 {"parameter": "a", "value": identity},
-                {"parameter": "b", "value": {"reference": child()}}]}}}),
+                {"parameter": "b", "value": canonical_child()}]}}}),
     );
     assert_eq!(output.status.code(), Some(0), "{output:?}");
     let document: Value = serde_json::from_slice(&output.stdout).unwrap();
@@ -873,6 +893,147 @@ fn function_selection_requires_a_current_snapshot() {
     }
 }
 
+fn canonical_function_claim(directory: &Path, name: &str, arguments: Value, supplied: Option<Value>) -> Output {
+    request_with_supplied(directory, "clause", json!({
+        "observations": observations(), "selection": {"function": {
+            "name": name, "snapshot": "current", "arguments": arguments
+        }}
+    }), supplied)
+}
+
+const CANONICAL_CLAIMS: &str = "function short using v(t: Text[0, 8; nfc]): Boolean pure { size(t) < 3 }\n\
+    function bothShort using v(a: Text[0, 8; nfc], b: Text[0, 8; nfc]): Boolean pure { size(a) < 3 and size(b) < 3 }\n\
+    function positive using v(n: Integer): Boolean pure { n > 0 }\n";
+
+#[test]
+#[trace("FR-650-AC-7", "FR-650-AC-9", "FR-650-AC-15")]
+fn canonical_function_selection_authenticates_references_and_scalar_kinds() {
+    let directory = tempfile::tempdir().unwrap();
+    write_cases(directory.path());
+    extend_unit(directory.path(), CANONICAL_CLAIMS);
+    let good = canonical_function_claim(directory.path(), "short", json!([
+        {"parameter": "t", "value": {"type": "text", "value": "ab"}}
+    ]), None);
+    assert_eq!(good.status.code(), Some(0), "{good:?}");
+    let document: Value = serde_json::from_slice(&good.stdout).unwrap();
+    assert_eq!(document["disposition"]["truth"], true, "{document}");
+
+    let mut foreign = canonical_child();
+    foreign["universe"] = json!({"package": "other/package", "path": ["ConfigVersion"], "ordinal": 0});
+    let mut malformed = canonical_child();
+    malformed["universe"] = json!("0".repeat(64));
+    for (name, arguments, code, cause, path) in [
+        ("sameIdentity", json!([
+            {"parameter": "a", "value": foreign}, {"parameter": "b", "value": canonical_child()}
+        ]), "foreign_reference", "foreign-universe", "/universe"),
+        ("sameIdentity", json!([
+            {"parameter": "a", "value": malformed}, {"parameter": "b", "value": canonical_child()}
+        ]), "invalid_runtime_input", "wrong-value-kind", "/universe"),
+        ("short", json!([
+            {"parameter": "t", "value": {"type": "integer", "value": "1"}}
+        ]), "invalid_runtime_input", "wrong-value-kind", ""),
+    ] {
+        let output = canonical_function_claim(directory.path(), name, arguments, None);
+        assert_eq!(output.status.code(), Some(20), "{output:?}");
+        let document: Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert!(document["disposition"]["truth"].is_null(), "{document}");
+        let refusal = &document["disposition"]["refusal"];
+        assert_eq!(refusal["code"], code, "{document}");
+        assert_eq!(refusal["cause"], cause, "{document}");
+        assert_eq!(refusal["fields"]["path"], path, "{document}");
+    }
+}
+
+#[test]
+#[trace("FR-650-AC-7", "FR-650-AC-19")]
+fn canonical_function_selection_refuses_native_argument_shortcuts() {
+    let directory = tempfile::tempdir().unwrap();
+    write_cases(directory.path());
+    extend_unit(directory.path(), CANONICAL_CLAIMS);
+    let bare = canonical_function_claim(directory.path(), "positive", json!([
+        {"parameter": "n", "value": 1}
+    ]), None);
+    assert_eq!(bare.status.code(), Some(20), "{bare:?}");
+    assert!(bare.stdout.is_empty());
+    let failure: Value = serde_json::from_slice(&bare.stderr).unwrap();
+    assert_eq!(failure["code"], "invalid-request", "{failure}");
+    assert_eq!(failure["stage"], "request", "{failure}");
+    for (name, arguments) in [
+        ("positive", json!([{"parameter": "n", "value": {"integer": "1"}}])),
+        ("sameIdentity", json!([
+            {"parameter": "a", "value": {"reference": child()}},
+            {"parameter": "b", "value": canonical_child()}
+        ])),
+    ] {
+        let output = canonical_function_claim(directory.path(), name, arguments, None);
+        assert_eq!(output.status.code(), Some(20), "{output:?}");
+        let document: Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(document["disposition"]["refusal"]["code"], "invalid_runtime_input", "{document}");
+        assert_eq!(document["disposition"]["refusal"]["cause"], "wrong-value-kind", "{document}");
+        assert!(document["disposition"]["truth"].is_null(), "{document}");
+    }
+    let canonical = canonical_function_claim(directory.path(), "positive", json!([
+        {"parameter": "n", "value": {"type": "integer", "value": "1"}}
+    ]), None);
+    assert_eq!(canonical.status.code(), Some(0), "{canonical:?}");
+}
+
+#[test]
+#[trace("FR-650-AC-7", "FR-277")]
+fn canonical_function_selection_spends_one_cumulative_supplied_allowance() {
+    let directory = tempfile::tempdir().unwrap();
+    write_cases(directory.path());
+    extend_unit(directory.path(), CANONICAL_CLAIMS);
+    let limits = |conversion, admission| json!({
+        "conversion_work_units": conversion, "admission_work_units": admission,
+        "numeric_magnitude_bits": 4096
+    });
+    let one = json!([{"parameter": "t", "value": {"type": "text", "value": "ab"}}]);
+    let two = json!([
+        {"parameter": "a", "value": {"type": "text", "value": "ab"}},
+        {"parameter": "b", "value": {"type": "text", "value": "ab"}}
+    ]);
+    // One form fits H=17. The same allowance cannot pay for two forms.
+    for (name, arguments, conversion, admission, expected) in [
+        ("short", one.clone(), 17_u64, 1_000_u64, 0),
+        ("bothShort", two.clone(), 17, 1_000, 22),
+        ("bothShort", two, 34, 1_000, 0),
+        ("short", one, 17, 0, 22),
+    ] {
+        let output = canonical_function_claim(directory.path(), name, arguments, Some(limits(conversion, admission)));
+        assert_eq!(output.status.code(), Some(expected), "{output:?}");
+        let document: Value = serde_json::from_slice(&output.stdout).unwrap();
+        if expected == 0 {
+            assert_eq!(document["disposition"]["truth"], true, "{document}");
+        } else {
+            assert_eq!(document["disposition"]["category"], "incomplete", "{document}");
+            assert!(document["disposition"]["truth"].is_null(), "{document}");
+            assert!(document["disposition"]["outcome"].is_null(), "{document}");
+        }
+    }
+}
+
+#[test]
+#[trace("FR-650-AC-7", "FR-277")]
+fn canonical_function_selection_retains_the_prepared_cancellation_handle() {
+    let directory = tempfile::tempdir().unwrap();
+    write_cases(directory.path());
+    extend_unit(directory.path(), CANONICAL_CLAIMS);
+    let output = canonical_function_claim(directory.path(), "short", json!([
+        {"parameter": "t", "value": {"type": "text", "value": "ab"}}
+    ]), None);
+    assert_eq!(output.status.code(), Some(0), "{output:?}");
+    let prepared = fsl_command::command::prepare_run(&directory.path().join("request.json"), fsl_command::command::RunLimits::default()).unwrap();
+    let fsl_command::command::PreparedRun::Clause(prepared) = prepared else { panic!("a clause request"); };
+    let request = *prepared.into_request();
+    let fsl_replay::spine::ClauseRunSelection::CanonicalFunction { cancel, .. } = &request.selection else { panic!("a canonical function selection"); };
+    cancel.cancel(filament_exact::CancelCause::Requested);
+    let report = fsl_replay::spine::run_clause(request).unwrap();
+    assert_eq!(report.disposition.category().exit_code(), 22);
+    assert!(report.disposition.truth().is_none());
+    let fsl_replay::spine::ClauseDisposition::ArgumentRefusal(refusal) = report.disposition else { panic!("original cancellation refusal"); };
+    assert_eq!(refusal.cancel_cause(), Some(filament_exact::CancelCause::Requested));
+}
 /// FR-651-AC-4: the most severe item decides the exit, and an item's budget
 /// is its own.
 #[test]
@@ -1095,7 +1256,7 @@ fn call_item_settles_requirements_from_its_shared_compilation() {
         "items",
         json!({"observations": observations(), "selections": [
             {"call": {"function": "sq", "arguments": [
-                {"parameter": "x", "value": 3}
+                {"parameter": "x", "value": {"type": "integer", "value": "3"}}
             ], "requirements": {}}}
         ]}),
     );

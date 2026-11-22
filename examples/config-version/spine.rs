@@ -311,6 +311,12 @@ pub fn write(directory: &Path, case: Case) -> io::Result<()> {
             "kind": "frame",
             "operation": operation.to_string(),
         }),
+        ClauseRunSelection::CanonicalFunction { .. } => {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "a canonical function selection requires the native-run/1 wire form",
+            ));
+        }
         // The `clause-run/1` corpus form names state clauses, functions and
         // frames; a temporal selection has no such form.
         ClauseRunSelection::Temporal { .. } | ClauseRunSelection::SampledTemporal { .. } => {

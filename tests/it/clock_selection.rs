@@ -520,7 +520,7 @@ fn a_run_request_compiles_under_its_clocks() {
     let document: Value = serde_json::from_slice(&completed.stdout).expect("a result");
     assert_eq!(
         document["outcome"],
-        json!({"kind": "completed", "value": {"integer": "7"}}),
+        json!({"kind": "completed", "value": {"type": "integer", "value": "7"}}),
         "{document}"
     );
     let output = run("without.json", None);

@@ -41,6 +41,17 @@ pub struct SuppliedObservation {
     pub bytes: Vec<u8>,
 }
 
+impl std::fmt::Debug for SuppliedObservation {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.debug_struct("SuppliedObservation")
+            .field("reference", &self.reference)
+            .field("path", &self.path)
+            .field("format", &self.format)
+            .field("role", &self.role)
+            .finish_non_exhaustive()
+    }
+}
+
 impl SuppliedObservation {
     /// Read one FR-106 observation document from its exact bytes: its
     /// declared format, identity labels and role. `key`
@@ -1890,6 +1901,55 @@ fn trace_binding(wire: BindingWire) -> TraceBinding {
         clock_name: wire.clock,
         parameters: wire.parameters,
     }
+}
+
+/// Reconstruct a public-command clause request. Function arguments retain
+/// their canonical objects and use the caller's supplied-value allowance
+/// and cancellation handle; other selections keep their native reader.
+///
+/// # Errors
+/// A malformed canonical argument, unbound observation or invalid selection.
+pub fn read_canonical_clause_run_request(
+    parts: ClauseRequestParts,
+    supplied: filament_semantic_value::supplied_stop::SuppliedLimits,
+    cancel: filament_exact::Cancel,
+) -> Result<ClauseRunRequest, ClauseRequestReadError> {
+    let canonical = match &parts.selection {
+        ClauseSelectionPartsKind::Function { name, arguments, snapshot } => {
+            let observation = named(&parts.observations, snapshot)?;
+            if observation.format != "filament.state.snapshot/v1"
+                || observation.role.as_deref() != Some("current")
+            {
+                return Err(invalid("snapshot", "function requires a current snapshot"));
+            }
+            let wire_arguments = arguments.iter().enumerate().map(|(index, (parameter, value))| {
+                let value: serde_json::Value = serde_json::from_str(value.get())
+                    .map_err(|error| invalid("arguments.value", error.to_string()))?;
+                if !value.is_object() {
+                    return Err(invalid(
+                        format!("clause.selection.function.arguments/{index}/value"),
+                        "expected a typed canonical value object",
+                    ));
+                }
+                Ok(super::WireArgument {
+                    parameter: parameter.clone(), value, selected_object: None,
+                })
+            }).collect::<Result<Vec<_>, ClauseRequestReadError>>()?;
+            Some(ClauseRunSelection::CanonicalFunction {
+                name: name.clone(), arguments: wire_arguments,
+                snapshot: observation.clone(), supplied, cancel,
+            })
+        }
+        ClauseSelectionPartsKind::Clause(_)
+        | ClauseSelectionPartsKind::Frame { .. }
+        | ClauseSelectionPartsKind::Temporal { .. }
+        | ClauseSelectionPartsKind::Context { .. } => None,
+    };
+    let mut request = read_clause_run_request(parts)?;
+    if let Some(selection) = canonical {
+        request.selection = selection;
+    }
+    Ok(request)
 }
 
 /// Reconstruct the FR-109 request from file-admitted, typed parts. The root

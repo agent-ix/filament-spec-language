@@ -1,1 +1,1 @@
-{"verb":"run","exit_code":0,"category":"success","last_stage":"S6a","result":{"set":[{"integer":"1"},{"integer":"2"}]}}
+{"verb":"run","exit_code":0,"category":"success","last_stage":"S6a","result":{"type":"set","elements":[{"type":"integer","value":"1"},{"type":"integer","value":"2"}]}}

@@ -1126,7 +1126,7 @@ pub(crate) fn run_compiled(
         .map_err(|entry| Box::new(RunRefusal::Unsupported(entry)))?;
     let package = checked.package();
     let CallSources {
-        package_name: own_package,
+        package_name: _,
         packages,
         model_limits,
     } = sources;
@@ -1205,6 +1205,102 @@ pub(crate) fn run_compiled(
             }
         }
     }
+    with_admitted_call(
+        package, models, sources, call, &selected, objects, cancel,
+        |forms, arguments, objects, supplied_run| {
+            let evaluation = execute(
+                package,
+                &ExecuteRequest {
+                    selection: ExecuteSelection::Function {
+                        name: selected.name.clone(),
+                        arguments,
+                        environment: objects.clone(),
+                    },
+                    backend: call.backend,
+                },
+                backends,
+                &ExecuteLimits {
+                    accounting: call.accounting,
+                    prepare: *prepare,
+                    session: SessionLimits {
+                        live_occurrences: call.live_occurrences,
+                        held: 0,
+                    },
+                },
+                &mut supplied_run
+                    .lock()
+                    .expect("conversion and execution do not unwind"),
+                cancel,
+            )
+            .map_err(|failure| match failure {
+                filament_eval::CallFailure::Cancelled(cause) => Box::new(RunRefusal::Cancelled(cause)),
+                other => convert_call_failure(other),
+            })?;
+            // FND-016: the unit's and every resolved library's source, reused
+            // exactly as the check already read them (FR-100: a locus is resolved
+            // over "the `Source` whose reference equals the region's reference").
+            // Never re-read: a completed call must never turn into a fault because
+            // of I/O that a second read of already-admitted bytes could raise.
+            let mut sources = Vec::with_capacity(1 + checked.libraries().len());
+            sources.push(checked.source().clone());
+            sources.extend(checked.libraries().iter().cloned());
+            let outcome = match &evaluation.outcome {
+                FamilyOutcome::Evaluated(Outcome::Completed(value))
+                    if call.canonical_values
+                        || !matches!(
+                            value,
+                            Value::Boolean(_) | Value::Integer(_) | Value::Reference(_)
+                        ) =>
+                {
+                    match if call.canonical_values {
+                        forms.write_canonical(value)
+                    } else {
+                        forms.write(value)
+                    } {
+                        Ok(form) => CallOutcome::Completed(CallValue::Written(form)),
+                        Err(super::run_value::WriteStop::NoForm) => {
+                            return Err(Box::new(RunRefusal::UnsupportedResult {
+                                function: call.function.clone(),
+                            }));
+                        }
+                        Err(super::run_value::WriteStop::Fault(invariant)) => {
+                            return Err(Box::new(RunRefusal::Fault(InternalFault::new(
+                                "call", invariant,
+                            ))));
+                        }
+                        Err(super::run_value::WriteStop::Refusal(refusal)) => return Err(refusal),
+                    }
+                }
+                _ => convert_outcome(evaluation, package.graph(), &sources)?,
+            };
+            Ok(outcome)
+        },
+    )
+}
+
+/// Admit a checked call's arguments under their actual model owners and one
+/// supplied-value run, then let the caller execute before choosing a wire form.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn with_admitted_call<T>(
+    package: &CheckedPackage,
+    models: &super::AdmittedModels,
+    sources: CallSources<'_>,
+    call: &Call,
+    selected: &Selected<'_>,
+    objects: &ObjectEnvironment,
+    cancel: &Cancel,
+    complete: impl FnOnce(
+        &Forms<'_>,
+        Vec<Value>,
+        &ObjectEnvironment,
+        &std::sync::Mutex<filament_semantic_value::supplied_stop::SuppliedRun>,
+    ) -> Result<T, Box<RunRefusal>>,
+) -> Result<T, Box<RunRefusal>> {
+    let CallSources {
+        package_name: own_package,
+        packages,
+        model_limits,
+    } = sources;
     let bound_world;
     let objects = if call.snapshot.is_some() {
         bound_world = bind_snapshot_populations(
@@ -1325,72 +1421,8 @@ pub(crate) fn run_compiled(
         &arguments,
         objects,
     )?;
-    let evaluation = execute(
-        package,
-        &ExecuteRequest {
-            selection: ExecuteSelection::Function {
-                name: selected.name.clone(),
-                arguments,
-                environment: objects.clone(),
-            },
-            backend: call.backend,
-        },
-        backends,
-        &ExecuteLimits {
-            accounting: call.accounting,
-            prepare: *prepare,
-            session: SessionLimits {
-                live_occurrences: call.live_occurrences,
-                held: 0,
-            },
-        },
-        &mut supplied_run
-            .lock()
-            .expect("conversion and execution do not unwind"),
-        cancel,
-    )
-    .map_err(|failure| match failure {
-        filament_eval::CallFailure::Cancelled(cause) => Box::new(RunRefusal::Cancelled(cause)),
-        other => convert_call_failure(other),
-    })?;
-    // FND-016: the unit's and every resolved library's source, reused
-    // exactly as the check already read them (FR-100: a locus is resolved
-    // over "the `Source` whose reference equals the region's reference").
-    // Never re-read: a completed call must never turn into a fault because
-    // of I/O that a second read of already-admitted bytes could raise.
-    let mut sources = Vec::with_capacity(1 + checked.libraries().len());
-    sources.push(checked.source().clone());
-    sources.extend(checked.libraries().iter().cloned());
-    let outcome = match &evaluation.outcome {
-        FamilyOutcome::Evaluated(Outcome::Completed(value))
-            if call.canonical_values
-                || !matches!(
-                    value,
-                    Value::Boolean(_) | Value::Integer(_) | Value::Reference(_)
-                ) =>
-        {
-            match if call.canonical_values {
-                forms.write_canonical(value)
-            } else {
-                forms.write(value)
-            } {
-                Ok(form) => CallOutcome::Completed(CallValue::Written(form)),
-                Err(super::run_value::WriteStop::NoForm) => {
-                    return Err(Box::new(RunRefusal::UnsupportedResult {
-                        function: call.function.clone(),
-                    }));
-                }
-                Err(super::run_value::WriteStop::Fault(invariant)) => {
-                    return Err(Box::new(RunRefusal::Fault(InternalFault::new(
-                        "call", invariant,
-                    ))));
-                }
-                Err(super::run_value::WriteStop::Refusal(refusal)) => return Err(refusal),
-            }
-        }
-        _ => convert_outcome(evaluation, package.graph(), &sources)?,
-    };
-    Ok(outcome)
+
+    complete(&forms, arguments, objects, &supplied_run)
 }
 
 fn relationship_package_selection(

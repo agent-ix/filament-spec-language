@@ -218,7 +218,10 @@ fn write_run(directory: &Path, complete_refunds: bool, add_contradictory_refund:
         "models": [{"format": "semantic-ir/2.0.0", "source": source("model.semantic-ir.json", "WorkflowModel")}],
         "program": {"source": source("workflow.native", "WorkflowUnit")},
         "call": {"function": "recovered", "snapshot": "snapshot.json", "arguments": [
-            {"parameter": "order", "value": {"reference": {"population": ORDERS, "key": "o1"}}},
+            {"parameter": "order", "value": {"type": "reference",
+                "universe": {"package": PACKAGE, "path": ["model", "object_type", ORDER], "ordinal": 0},
+                "object_type": {"package": PACKAGE, "path": ["model", "object_type", ORDER], "ordinal": 0},
+                "identity": "6f31"}},
             {"parameter": "reservations", "value": {"population": RESERVATIONS}},
             {"parameter": "refunds", "value": {"population": REFUNDS}},
             {"parameter": "receipts", "value": {"population": DELIVERY_RECEIPTS}}
@@ -267,7 +270,7 @@ fn source_aggregates_count_effects_not_duplicate_delivery_receipts() {
     assert_eq!(document["outcome"]["kind"], "completed", "{document}");
     assert_eq!(
         document["outcome"]["value"],
-        json!({"boolean": true}),
+        json!({"type": "boolean", "value": true}),
         "{document}"
     );
 }
@@ -311,7 +314,7 @@ fn a_contradictory_refund_total_does_not_pass_recovery() {
     assert_eq!(document["outcome"]["kind"], "completed", "{document}");
     assert_eq!(
         document["outcome"]["value"],
-        json!({"boolean": false}),
+        json!({"type": "boolean", "value": false}),
         "{document}"
     );
 }

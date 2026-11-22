@@ -842,14 +842,16 @@ fn a_function_selection_reads_a_quantity_in_a_source_declared_unit() {
         "dimension Time;\n\
          unit s : Time = rational(1, 1);\n\
          unit ms : Time = rational(1, 1000) * s;\n\
-         function short using v(a: Quantity<ms>): Boolean pure { true }\n",
+         function short using v(a: Quantity<ms>): Boolean pure { true }\n\
+         function give using v(): Quantity<ms> pure { 3 ms / 2 }\n",
     );
+    let unit = completed(&spine_call(directory.path(), "give", json!([])))["unit"].clone();
     let output = spine_request(
         directory.path(),
         "clause",
         json!({
             "selection": {"function": {"name": "short", "snapshot": "current", "arguments": [
-                {"parameter": "a", "value": quantity("ms", rational("3", "2"))}]}},
+                {"parameter": "a", "value": {"type": "rational", "numerator": "3", "denominator": "2", "unit": unit}}]}},
             "observations": {"current": "spine-snapshot.json"},
         }),
     );

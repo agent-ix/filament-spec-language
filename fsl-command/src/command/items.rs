@@ -244,7 +244,7 @@ pub(super) fn run_bytes(
     let mut selection_counts = Vec::with_capacity(normalized.len());
     for (index, kind, value) in normalized {
         let selector = find_selector_for(&kind, &value).map(str::to_owned);
-        if selector.is_some() && kind == "call" {
+        if selector.is_some() && matches!(kind.as_str(), "call" | "function") {
             let parameter = value
                 .get("arguments")
                 .and_then(Value::as_array)
@@ -398,7 +398,15 @@ pub(super) fn run_bytes(
         } else {
             match prepare_run_bytes(directory, &single_bytes, limits.dependent_bytes, overrides) {
                 Ok(super::PreparedRun::Clause(request)) => {
-                    let request = *request.into_request();
+                    let mut request = *request.into_request();
+                    if let (Some(parameter), Some(object)) =
+                        (population_parameters.get(&index), object.as_ref())
+                    {
+                        let fsl_replay::spine::ClauseRunSelection::CanonicalFunction { arguments, .. } = &mut request.selection else {
+                            return Err(refused("function", "an expanded function has canonical arguments"));
+                        };
+                        bind_population_wire_argument(arguments, parameter, object)?;
+                    }
                     let candidate = compilation_from_clause(&request)?;
                     set_compilation(&mut compilation, candidate)?;
                     ItemExecution::Batch {
@@ -1124,8 +1132,15 @@ fn bind_population_argument(
     parameter: &str,
     object: &Value,
 ) -> Result<()> {
-    let argument = call
-        .wire_arguments
+    bind_population_wire_argument(&mut call.wire_arguments, parameter, object)
+}
+
+fn bind_population_wire_argument(
+    arguments: &mut [fsl_replay::spine::WireArgument],
+    parameter: &str,
+    object: &Value,
+) -> Result<()> {
+    let argument = arguments
         .iter_mut()
         .find(|argument| argument.parameter == parameter)
         .ok_or_else(|| refused("parameter", "the expanded argument names its parameter"))?;

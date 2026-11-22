@@ -96,7 +96,7 @@ fn run_applies_request_extension_definitions() {
     let result = fsl_command::command::run(&request, &crate::negotiation::Fr290)
         .unwrap_or_else(|error| panic!("{}", error.value().unwrap()));
     assert_eq!(result.exit_code, 0, "{}", result.value);
-    assert!(result.value.to_string().contains("\"integer\":\"7\""));
+    assert!(result.value.to_string().contains("\"type\":\"integer\",\"value\":\"7\""));
 }
 
 /// FR-660: source-only check admits the extension form supplied in its check
@@ -1012,7 +1012,7 @@ fn an_extension_document_is_charged_against_dependent_bytes() {
         "models": [],
         "program": {"source": {"file": "unit.native", "authority": "agent-ix",
             "identity": "test:extension-run", "document": "Ext", "formal_revision": 1}},
-        "call": {"function": "Keep", "arguments": [{"parameter": "x", "value": 1}]},
+        "call": {"function": "Keep", "arguments": [{"parameter": "x", "value": {"type": "integer", "value": "1"}}]},
         "extensions": [{"authority": "agent-ix", "identity": "ext.retention",
             "file": "retention.json"}]
     }});

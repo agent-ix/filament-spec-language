@@ -305,18 +305,7 @@ fn assert_value(function: &str, input_key: &str, expected: Value) {
 }
 
 pub(super) fn canonical_reference(type_identity: &str, object_identity: &str) -> Value {
-    json!({"reference": {
-        "universe": {
-            "package": PACKAGE,
-            "path": ["model", "object_type", type_identity],
-            "ordinal": 0
-        },
-        "type": {
-            "owner_effective_type": null,
-            "original": {"package": PACKAGE, "node": type_identity}
-        },
-        "object_identity": object_identity
-    }})
+    canonical_argument_reference(type_identity, object_identity)
 }
 
 #[test]
@@ -325,12 +314,12 @@ fn source_relationship_members_return_concrete_workflow_references() {
     assert_value(
         "shipments",
         "o1",
-        json!({"set": [canonical_reference(SHIPMENT, "s1"), canonical_reference(SHIPMENT, "s2")]}),
+        json!({"type": "set", "elements": [canonical_reference(SHIPMENT, "s1"), canonical_reference(SHIPMENT, "s2")]}),
     );
     assert_value(
         "shipments",
         "o2",
-        json!({"set": [canonical_reference(SHIPMENT, "s3")]}),
+        json!({"type": "set", "elements": [canonical_reference(SHIPMENT, "s3")]}),
     );
     assert_value(
         "paymentAttempts",
@@ -345,27 +334,27 @@ fn source_relationship_members_return_concrete_workflow_references() {
     assert_value(
         "refunds",
         "o1",
-        json!({"present": canonical_reference(REFUND, "r1")}),
+        json!({"type": "option", "value": canonical_reference(REFUND, "r1")}),
     );
     assert_value(
         "refunds",
         "o2",
-        json!({"present": canonical_reference(REFUND, "r2")}),
+        json!({"type": "option", "value": canonical_reference(REFUND, "r2")}),
     );
     assert_value(
         "provider",
         "o1",
-        json!({"present": canonical_reference(PROVIDER, "provider0")}),
+        json!({"type": "option", "value": canonical_reference(PROVIDER, "provider0")}),
     );
     assert_value(
         "provider",
         "o2",
-        json!({"present": canonical_reference(PROVIDER, "provider0")}),
+        json!({"type": "option", "value": canonical_reference(PROVIDER, "provider0")}),
     );
     assert_value(
         "providerOrders",
         "provider0",
-        json!({"set": [canonical_reference(ORDER, "o1"), canonical_reference(ORDER, "o2")]}),
+        json!({"type": "set", "elements": [canonical_reference(ORDER, "o1"), canonical_reference(ORDER, "o2")]}),
     );
 }
 
@@ -382,7 +371,7 @@ fn source_relationship_members_distinguish_empty_and_incomplete_extents() {
     assert_eq!(document["outcome"]["kind"], "completed", "{document}");
     assert_eq!(
         document["outcome"]["value"],
-        json!({"absent": {}}),
+        json!({"type": "option", "value": null}),
         "{document}"
     );
 

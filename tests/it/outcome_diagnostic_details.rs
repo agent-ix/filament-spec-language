@@ -79,15 +79,16 @@ fn argument_diagnostics_carry_position_and_path() {
     for (function, value, cause, details) in [
         (
             "id_rec",
-            json!({"record": {"type": "P", "fields": {"x": {"integer": "1"}}}}),
-            "missing-member",
-            json!({"path": "/record/fields", "position": 0}),
+            json!({"type": "record", "name": r#"{"node":"P","package":"test:diagnostic-details"}"#,
+                "fields": [{"name": "x", "value": {"type": "integer", "value": "1"}}]}),
+            "invalid-value",
+            json!({"path": "/fields", "position": 0}),
         ),
         (
             "id_set",
-            json!({"set": [{"integer": "1"}, {"integer": "1"}]}),
+            json!({"type": "set", "elements": [{"type": "integer", "value": "1"}, {"type": "integer", "value": "1"}]}),
             "duplicate-member",
-            json!({"path": "/set/1", "position": 0}),
+            json!({"path": "/elements/1", "position": 0}),
         ),
     ] {
         let (document, envelope) = refused(UNIT, function, argument(value));
@@ -110,7 +111,7 @@ fn function_and_request_diagnostics_carry_details() {
     let (document, _) = refused(
         UNIT,
         "id_rec",
-        json!([{"parameter": "zz", "value": {"integer": "1"}}]),
+        json!([{"parameter": "zz", "value": {"type": "integer", "value": "1"}}]),
     );
     assert_eq!(
         only_diagnostic(&document)["details"],

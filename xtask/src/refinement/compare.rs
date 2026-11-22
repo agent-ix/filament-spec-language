@@ -30,7 +30,8 @@ impl SelectionKind {
             ClauseRunSelection::Temporal { .. } | ClauseRunSelection::SampledTemporal { .. } => {
                 Self::Temporal
             }
-            ClauseRunSelection::Function { .. } => Self::Function,
+            ClauseRunSelection::Function { .. }
+            | ClauseRunSelection::CanonicalFunction { .. } => Self::Function,
             ClauseRunSelection::Frame { .. } => Self::Frame,
         }
     }
