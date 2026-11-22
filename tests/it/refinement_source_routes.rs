@@ -231,7 +231,7 @@ fn identity_refinement_package_matches_source_without_source() {
         "certified"
     );
     assert_eq!(
-        source_value["items"][0]["backend"],
+        source_value["items"][0]["record"]["backend"],
         fsl_analyze::model_check::manifest::BACKEND_ID,
         "the fixture selects EN-1's actual refinement checker: {source_value}"
     );
