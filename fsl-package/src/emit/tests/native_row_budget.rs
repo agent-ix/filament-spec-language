@@ -750,11 +750,10 @@ fn cold_integer_emission() -> Emission {
     cold_integer_emission_with_bounds("0", "340282366920938463463374607431768211457")
 }
 
-const COLD_INTEGER_SOURCE: &str = "function same(r: R): Boolean pure { r.value = r.value }";
-
 fn cold_integer_emission_with_bounds(lower: &str, upper: &str) -> Emission {
-    // Keep the Exact endpoints wider than source Int syntax while giving the
-    // equality application an authored source occurrence for FR-825.
+    // The source syntax deliberately limits Int bounds to i128. The typed
+    // composer accepts the Exact interval directly, through the same genuine
+    // declaration/check/emission route as the source collection fixtures.
     let handle = NodeKey::new(
         "pkg",
         vec![filament_exact::PathSegment::Text("R".into())],
@@ -775,56 +774,12 @@ fn cold_integer_emission_with_bounds(lower: &str, upper: &str) -> Emission {
             Presence::Required,
         )]),
     );
-    let source = fsl_foundation::Source::read(
-        fsl_foundation::SourceIdentity::new("agent-ix", "test:native-row-budget"),
-        "native-row-budget.native",
-        COLD_INTEGER_SOURCE.as_bytes(),
-        COLD_INTEGER_SOURCE.len(),
-    )
-    .expect("the synthesized source is admitted");
-    let expression_text = "r.value = r.value";
-    let expression_start = COLD_INTEGER_SOURCE
-        .find(expression_text)
-        .expect("the synthesized source contains the equality");
-    let left_end = expression_start + "r.value".len();
-    let right_start = left_end + " = ".len();
-    let expression_span = fsl_foundation::Span {
-        start: expression_start,
-        end: expression_start + expression_text.len(),
-    };
-    let mut body_spans = ExpressionSpans::new(expression_span).expect("body span is ordered");
-    let body_root = body_spans.root();
-    let left = body_spans
-        .push_child(
-            body_root,
-            fsl_foundation::Span {
-                start: expression_start,
-                end: left_end,
-            },
-        )
-        .expect("left operand is in the body");
-    let right = body_spans
-        .push_child(
-            body_root,
-            fsl_foundation::Span {
-                start: right_start,
-                end: expression_span.end,
-            },
-        )
-        .expect("right operand follows the left");
-    for (parent, start) in [(left, expression_start), (right, right_start)] {
-        body_spans
-            .push_child(
-                parent,
-                fsl_foundation::Span {
-                    start,
-                    end: start + 1,
-                },
-            )
-            .expect("field receiver is in its operand");
-    }
+    let mut declarations = fsl_semantics::check::depth_forms::declarations(
+        fsl_semantics::check::depth_forms::Form::And,
+        1,
+    );
     let operand = || Expression::field(Expression::name("r"), "value");
-    let function = fsl_semantics::check::depth_forms::function(
+    declarations.functions = vec![fsl_semantics::check::depth_forms::function(
         "same",
         &[(
             "r",
@@ -833,22 +788,8 @@ fn cold_integer_emission_with_bounds(lower: &str, upper: &str) -> Emission {
         fsl_semantics::check::depth_forms::boolean(),
         None,
         Expression::binary(BinaryOperator::Equal, operand(), operand()),
-    )
-    .with_spans(DeclarationSpans {
-        declaration: fsl_foundation::Span {
-            start: 0,
-            end: COLD_INTEGER_SOURCE.len(),
-        },
-        body: body_spans,
-        measure: None,
-    })
-    .expect("the synthesized declaration spans fit its expression tree");
-    let mut declarations = PackageDeclarations::new(
-        source.reference().clone(),
-        "pkg",
-        fsl_foundation::IdentityLimits::default(),
-    );
-    declarations.functions = vec![function];
+    )];
+    declarations.package_name = "pkg".into();
     declarations.types = TypeEnvironment::new([record], []).expect("owner admits the record type");
     let graph = declarations
         .check(
@@ -857,22 +798,41 @@ fn cold_integer_emission_with_bounds(lower: &str, upper: &str) -> Emission {
             &fsl_semantics::check::test_support::ZeroRewardEvaluator,
         )
         .unwrap_or_else(|refusals| panic!("typed Exact interval checks: {refusals:?}"));
-    let source = source.reference().clone();
-    let source_end = u64::try_from(COLD_INTEGER_SOURCE.len())
-        .expect("synthesized source length fits a source region");
-    emit_package(&CheckedPackage::link(graph), move |_| {
-        Some(
-            SourceRegion::new(source.clone(), 0, source_end)
-                .expect("the synthesized source region is ordered"),
-        )
-    })
-    .expect("genuine checked numeric emission")
+    emit_package(&CheckedPackage::link(graph), whole_unit)
+        .expect("genuine checked numeric emission")
 }
 
-#[trace("FR-531-AC-30")]
+#[trace("FR-825-AC-1")]
 #[test]
 fn synthesized_value_validity_region_names_its_application_occurrence() {
-    let emission = cold_integer_emission();
+    const HEADER: &str = "language \"ix:native\" edition \"1-draft\";\n\
+                      profile v = \"filament.value.complete/v1\";\n";
+    let declarations = "record R { value: Int[0, 9]; }\n\
+        function same using v(r: R): Boolean pure { r.value = r.value }";
+    let source_text = format!("{HEADER}{declarations}\n");
+    let graph = super::converted_equality::checked_graph(declarations);
+    let function = graph
+        .function_identity("same")
+        .expect("the synthesized function has an identity");
+    let declaration_origin = filament_exact::Origin::new(Role::new("declaration"), 0);
+    let declaration_location = graph
+        .occurrence(function, &declaration_origin)
+        .expect("the synthesized function has a declaration occurrence");
+    let declaration_region = graph
+        .region(declaration_location)
+        .expect("the synthesized function has a source region");
+    let placements: HashMap<_, _> = graph
+        .occurrences()
+        .filter_map(|(_, _, location)| {
+            graph
+                .region(location)
+                .map(|region| (location.clone(), region))
+        })
+        .collect();
+    let emission = emit_package(&CheckedPackage::link(graph), |location| {
+        placements.get(location).cloned()
+    })
+    .expect("the synthesized source emits");
     let wire = wire(&emission);
     let entries = wire["source_map"]
         .as_array()
@@ -897,8 +857,16 @@ fn synthesized_value_validity_region_names_its_application_occurrence() {
     .expect("region start fits usize");
     let end = usize::try_from(region["end"].as_u64().expect("region end is an integer"))
         .expect("region end fits usize");
+    assert_ne!(
+        (start, end),
+        (
+            usize::try_from(declaration_region.start()).expect("declaration start fits usize"),
+            usize::try_from(declaration_region.end()).expect("declaration end fits usize"),
+        ),
+        "the record region names the application rather than its function",
+    );
     assert_eq!(
-        COLD_INTEGER_SOURCE
+        source_text
             .as_bytes()
             .get(start..end)
             .expect("the generated region is within the synthesized source"),

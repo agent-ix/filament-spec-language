@@ -1851,6 +1851,25 @@ struct Candidate<'g> {
     occurrences: Recorded<'g>,
 }
 
+impl Candidate<'_> {
+    fn expression_region(
+        &self,
+        ordinal: u64,
+        regions: &impl Fn(&Location) -> Option<SourceRegion>,
+    ) -> Option<SourceRegion> {
+        self.occurrences
+            .iter()
+            .find(|(occurrence, _)| {
+                occurrence.role == CheckedOccurrenceRole::Expression
+                    && occurrence.ordinal == ordinal
+            })
+            .and_then(|(_, location)| match location {
+                RecordedLocation::Expression(location) => regions(location),
+                RecordedLocation::Parameter(_) | RecordedLocation::Captured(_) => None,
+            })
+    }
+}
+
 impl<'g> Candidate<'g> {
     fn of(
         ids: &StructuralIds,
@@ -6853,6 +6872,10 @@ impl<'g> Candidates<'g> {
         self.index.contains_key(key)
     }
 
+    fn get(&self, key: &NodeKey) -> Option<&Candidate<'g>> {
+        self.index.get(key).and_then(|index| self.order.get(*index))
+    }
+
     fn values(&self) -> std::slice::Iter<'_, Candidate<'g>> {
         self.order.iter()
     }
@@ -7560,8 +7583,24 @@ fn emit_package_inner(
         &mut nodes,
         &mut source_map,
     )?;
-    let value_validity_records =
-        value_validity_requirements::append(ids, graph, &mut nodes, &mut source_map, &regions)?;
+    // Use the same recorded expression placement that supplies the
+    // application's source-map occurrence; `CheckedGraph::occurrence` is
+    // not the placement source for caller-built, spanless forms.
+    let value_validity_region = |claim: &OccurrenceKey| {
+        if claim.origin().role().as_str() != "expression" {
+            return None;
+        }
+        candidates
+            .get(claim.node())?
+            .expression_region(claim.origin().ordinal(), &regions)
+    };
+    let value_validity_records = value_validity_requirements::append(
+        ids,
+        graph,
+        &mut nodes,
+        &mut source_map,
+        &value_validity_region,
+    )?;
     let (mut profile_selections, mut laws) = split_laws(&order);
     for refinement in emitted_refinements {
         let selection = CheckedSelection {
