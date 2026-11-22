@@ -1008,13 +1008,13 @@ fn package_repeat_blocked_attempt_preserves_replay_refusal() {
     }
 }
 
-/// Proof-bearing repeats never execute as if their authored proof were absent.
+/// Application-bearing proofs retain their explicit unsupported disposition.
 #[trace("TC-2958", "FR-940-AC-6", "FR-730")]
 #[test]
 fn package_repeat_proof_refuses_before_execution() {
     let ws = Workspace::new("package-repeat-proof");
     let controls = format!(
-        "repeat Again by Machining visible () invariant {{ true }} variant {{ 1 }} while {{ false }} {}",
+        "repeat Again by Machining visible () invariant {{ 1 = 1 }} variant {{ 1 }} while {{ false }} {}",
         repeat_attempt("Remachined", "again", "true")
     );
     let path = repeat_request(&ws, &controls, "closing");

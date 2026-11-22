@@ -1065,12 +1065,22 @@ fn resolve_names<'s>(
                 .as_ref()
                 .and_then(|temporal| temporal.item_kind)
                 .map(super::ItemKindSelection::kind);
-            // FR-730 runs from checked source. Its loop item kinds have no
-            // admitted package wire contract yet, regardless of the claim.
             match item_kind {
-                Some(ItemKind::LoopInvariant) => return Err(pending(PendingFamily::LoopInvariant)),
+                Some(ItemKind::LoopInvariant) => {
+                    if let Some(name) = selection.claim.as_deref() {
+                        if let Some(protocol) = protocol_literal_repeat_name(view, name) {
+                            return Ok(Named::ProtocolFreedom {
+                                index,
+                                name,
+                                protocol,
+                                selection,
+                            });
+                        }
+                    }
+                    return Err(pending(PendingFamily::LoopInvariant));
+                }
                 Some(ItemKind::LoopTermination) => {
-                    return Err(pending(PendingFamily::LoopTermination))
+                    return Err(pending(PendingFamily::LoopTermination));
                 }
                 Some(
                     ItemKind::Formula
@@ -1323,6 +1333,51 @@ fn protocol_parallel_name(view: &dyn AnalysisView, name: &str) -> Option<String>
                 && control.path.join("::") == path
         })
         .then(|| protocol.to_owned())
+}
+
+/// Resolve only literal Boolean invariants, before model/type work begins.
+fn protocol_literal_repeat_name(view: &dyn AnalysisView, name: &str) -> Option<String> {
+    fn member<'a>(
+        term: &'a fsl_package::CheckedTerm,
+        selected: &str,
+    ) -> Option<&'a fsl_package::CheckedTerm> {
+        use fsl_package::CheckedTerm;
+        let terms = match term {
+            CheckedTerm::Application { arguments, .. } => arguments,
+            CheckedTerm::Aggregate { members } => members,
+            _ => return None,
+        };
+        terms.iter().find_map(|term| match term {
+            CheckedTerm::Binding { name, value, .. } if &**name == selected => Some(&**value),
+            _ => None,
+        })
+    }
+    let (protocol, path) = name.split_once("::")?;
+    let form = view.protocol_execution_named(protocol).ok().flatten()?;
+    let repeat = form.controls.iter().find(|control| {
+        control.operation == fsl_package::protocol_view::ControlOperation::Repeat
+            && control.path.join("::") == path
+    })?;
+    let invariant =
+        member(&repeat.node.body, "proof").and_then(|proof| member(proof, "invariant"))?;
+    let invariant = match invariant {
+        fsl_package::CheckedTerm::Reference { target } => {
+            if view.package().node_kind(target)
+                != Some(fsl_package::CheckedNodeKind::Value(
+                    fsl_package::ValueForm::Literal,
+                ))
+            {
+                return None;
+            }
+            view.package().term(target)?
+        }
+        term => term,
+    };
+    matches!(
+        invariant.literal_read()?.value,
+        fsl_package::CheckedLiteralValue::Boolean(_)
+    )
+    .then(|| protocol.to_owned())
 }
 
 /// The checked protocol binding carried by an item subject, if it is a
@@ -2043,7 +2098,41 @@ impl<'r, 'a: 'r> ClaimReads<'r, 'a> {
             .package()
             .node_key(form.protocol.clause())
             .ok_or(PackageRunError::Document(AnalyzeDocumentError::Fault))?;
-        let claim = OccurrenceKey::declaration(key);
+        let claim = if selection
+            .temporal
+            .as_ref()
+            .and_then(|temporal| temporal.item_kind)
+            == Some(super::ItemKindSelection::LoopInvariant)
+        {
+            if selection
+                .temporal
+                .as_ref()
+                .is_some_and(|temporal| temporal.max_depth.is_some())
+            {
+                return Ok(Resolution::Settled(super::invalid_value(
+                    index,
+                    name,
+                    "temporal.max_depth",
+                )));
+            }
+            let Some((_, path)) = name.split_once("::") else {
+                return Ok(Resolution::Settled(unknown_claim(index, name)));
+            };
+            let Some(repeat) = form.controls.iter().find(|control| {
+                control.operation == fsl_package::protocol_view::ControlOperation::Repeat
+                    && control.path.join("::") == path
+            }) else {
+                return Ok(Resolution::Settled(unknown_claim(index, name)));
+            };
+            let ordinal = u64::try_from(repeat.id.0)
+                .map_err(|_| PackageRunError::Document(AnalyzeDocumentError::Fault))?;
+            OccurrenceKey::new(
+                key,
+                filament_exact::Origin::new(filament_exact::Role::new("repeat"), ordinal),
+            )
+        } else {
+            OccurrenceKey::declaration(key)
+        };
         let temporal = selection.temporal.clone().unwrap_or_default();
         let form = temporal_settings(&temporal);
         let named = selection.backend.as_deref().map(BackendId::new);

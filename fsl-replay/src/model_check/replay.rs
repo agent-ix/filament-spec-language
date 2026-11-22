@@ -1600,16 +1600,44 @@ pub fn replay_protocol_trace_from_package(
     let payload = envelope.family_payload();
     let (for_deadlock, for_race) = derived_items(payload);
     let for_lock = matches!(payload.kind, CounterexampleKind::TimeLock);
-    let clause = if for_deadlock || for_race || for_lock {
+    let loop_proof_target = match &payload.kind {
+        CounterexampleKind::LoopProof(proof) => Some(ProtocolLoopProofTarget {
+            repeat: fsl_semantics::check::ProtocolNodeId(proof.repeat),
+            kind: match proof.obligation {
+                crate::model_check::counterexample::LoopProofObligation::Invariant => {
+                    ProtocolLoopProofKind::Invariant
+                }
+                crate::model_check::counterexample::LoopProofObligation::Termination => {
+                    ProtocolLoopProofKind::Termination
+                }
+            },
+        }),
+        _ => None,
+    };
+    let clause = if for_deadlock || for_race || for_lock || loop_proof_target.is_some() {
         if *envelope.clause_node() != protocol_node {
             return Err(refused(ModelTraceRefusal::UnknownTemporalClause {
                 clause_node: envelope.clause_node().clone(),
             }));
         }
-        let expected = OccurrenceKey::new(
-            protocol_node.clone(),
-            filament_exact::Origin::new(filament_exact::Role::new("declaration"), 0),
-        );
+        let origin = if let Some(target) = loop_proof_target {
+            let repeat = protocol_form
+                .controls
+                .iter()
+                .find(|control| {
+                    control.id == target.repeat
+                        && control.operation == fsl_package::protocol_view::ControlOperation::Repeat
+                })
+                .ok_or_else(|| fault("package-loop-proof-repeat-identity"))?;
+            filament_exact::Origin::new(
+                filament_exact::Role::new("repeat"),
+                u64::try_from(repeat.id.0)
+                    .map_err(|_| fault("package-loop-proof-repeat-ordinal"))?,
+            )
+        } else {
+            filament_exact::Origin::new(filament_exact::Role::new("declaration"), 0)
+        };
+        let expected = OccurrenceKey::new(protocol_node.clone(), origin);
         if expected != *envelope.occurrence_key() {
             return Err(refused(ModelTraceRefusal::ItemIdentity {
                 clause_node: protocol_node.clone(),
@@ -1672,19 +1700,34 @@ pub fn replay_protocol_trace_from_package(
         subject.max_messages,
     ) {
         SubjectMemory::Sc => replayed.settle(
-            &ProtocolSystem::new_package(model, &protocol_subject, Sc)
-                .map_err(built)?
-                .with_max_live_instances(live_instances),
+            &ProtocolSystem::new_package_with_loop_proof(
+                model,
+                &protocol_subject,
+                Sc,
+                loop_proof_target,
+            )
+            .map_err(built)?
+            .with_max_live_instances(live_instances),
         )?,
         SubjectMemory::Tso(tso) => replayed.settle(
-            &ProtocolSystem::new_package(model, &protocol_subject, tso)
-                .map_err(built)?
-                .with_max_live_instances(live_instances),
+            &ProtocolSystem::new_package_with_loop_proof(
+                model,
+                &protocol_subject,
+                tso,
+                loop_proof_target,
+            )
+            .map_err(built)?
+            .with_max_live_instances(live_instances),
         )?,
         SubjectMemory::Ra(ra) => replayed.settle(
-            &ProtocolSystem::new_package(model, &protocol_subject, ra)
-                .map_err(built)?
-                .with_max_live_instances(live_instances),
+            &ProtocolSystem::new_package_with_loop_proof(
+                model,
+                &protocol_subject,
+                ra,
+                loop_proof_target,
+            )
+            .map_err(built)?
+            .with_max_live_instances(live_instances),
         )?,
     };
     Ok(ModelTraceReplayResult {

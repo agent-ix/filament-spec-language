@@ -211,7 +211,9 @@ pub use evaluation_view::{
 };
 pub use export::{export_bindings, BoundItem, ExportRefusal, UnboundElement};
 #[cfg(feature = "std")]
-pub use filament_contract_model::{CheckedBindingNameKind, CheckedLiteralValue, CheckedTerm};
+pub use filament_contract_model::{
+    CheckedBindingNameKind, CheckedLiteralValue, CheckedNodeKind, CheckedTerm, ValueForm,
+};
 #[cfg(feature = "std")]
 pub use native_row::{NativeRowError, NativeRowErrorCode};
 pub use obligation_identity::{ModelIdentity, ObligationIdentity};

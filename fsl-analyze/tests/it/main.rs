@@ -78,6 +78,7 @@ mod litmus;
 mod liveness;
 mod load_buffering;
 mod loop_proof;
+mod package_loop_invariant;
 mod model_check;
 mod model_check_captures;
 mod model_check_input;
