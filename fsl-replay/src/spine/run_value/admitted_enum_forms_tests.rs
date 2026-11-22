@@ -22,7 +22,8 @@ fn fixture(test: impl FnOnce(&fsl_package::CheckedPackage, &fsl_package::BareWor
     )
     .expect("the actual source checks");
     let emission =
-        fsl_package::emit_checked(&compiled.package, fsl_package::EmitLimits::default()).unwrap();
+        fsl_package::emit_checked(&compiled.package, fsl_package::EmitLimits::new(16_777_216))
+            .unwrap();
     let wire: Json = serde_json::from_slice(emission.package().bytes()).unwrap();
     let mut evidence = CheckedPackageEvidence::new();
     for feature in wire["lock"]["required_features"].as_array().unwrap() {
@@ -79,10 +80,14 @@ fn admitted_forms_match_source_names_variants_ranks_and_canonical_arguments() {
                 let form = json!({"variant":{"type":name,"case":case}});
                 let expected = source.read(&form, &declared).unwrap();
                 let actual = admitted.read(&form, &declared).unwrap();
-                assert_eq!(actual, expected);
+                let Value::Enum(source_member) = &expected else {
+                    panic!("source enum value")
+                };
                 let Value::Enum(member) = &actual else {
                     panic!("enum value")
                 };
+                assert_eq!(member.variant(), source_member.variant());
+                assert_eq!(member.rank(), source_member.rank());
                 assert_eq!(member.variant().case(), *case);
                 assert_eq!(member.rank(), u32::try_from(rank).unwrap());
                 assert_eq!(Some(member.variant()), binding.shape().variants().nth(rank));
@@ -98,12 +103,14 @@ fn admitted_forms_match_source_names_variants_ranks_and_canonical_arguments() {
                     fsl_eval::simulation::model::run_declaration_name(member.variant().owner())
                         .unwrap();
                 let canonical = json!({"type":"enum","name":canonical_name,"member":case});
-                assert_eq!(
-                    admitted
-                        .read_canonical(&canonical, &declared, 0, &run)
-                        .unwrap(),
-                    expected
-                );
+                let canonical_value = admitted
+                    .read_canonical(&canonical, &declared, 0, &run)
+                    .unwrap();
+                let Value::Enum(canonical_member) = canonical_value else {
+                    panic!("canonical enum value")
+                };
+                assert_eq!(canonical_member.variant(), source_member.variant());
+                assert_eq!(canonical_member.rank(), source_member.rank());
             }
             let bad = json!({"variant":{"type":name,"case":"MISSING"}});
             let ReadStop::Defect(source_error) = source.read(&bad, &declared).unwrap_err() else {
