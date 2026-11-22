@@ -12,7 +12,7 @@ use ix_trace_rs::trace;
 use crate::counter::{document, package_with_clauses, subject, Documents, CONTRACT, UNLIMITED};
 
 const DIRECT_DENSE: &str =
-    "dimension Time;\nunit ms : Time = rational(1, 1000);\ntime M dense unit ms;\n";
+    "dimension Time;\nunit ms : Time = rational(1, 1);\ntime M dense unit ms;\n";
 
 /// Dense delay tables preserve the original clock identities and exact valuations.
 #[trace("FR-940-AC-6", "FR-120")]
