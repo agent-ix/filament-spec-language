@@ -34,7 +34,7 @@ enum Reads {
 
 /// Both routes' runs over a unit that selects `test/vault` as `V` and
 /// `test/vault-other` as `N`, whose subject reads `reads`, for `items`; the
-/// authored unit, model and snapshot files are deleted before the package run.
+/// authored unit text is deleted before the package run.
 fn both_routes(name: &str, vault: Vault, reads: Reads, items: &Value) -> (Run, Run) {
     let first = hyper_world::document(false, false);
     let other = hyper_world::other_document(&first);
@@ -68,7 +68,7 @@ fn both_routes(name: &str, vault: Vault, reads: Reads, items: &Value) -> (Run, R
     let request: Value =
         serde_json::from_slice(&std::fs::read(&path).expect("request")).expect("JSON");
     let (members, _) = package_selection(&ws, &request["request"]);
-    for file in ["program.fsl", "model.json", "other.json", "snapshot-0.json"] {
+    for file in ["program.fsl"] {
         std::fs::remove_file(ws.path(file)).expect("the authored file is removed");
     }
     let document = json!({"format": "native-analyze/1", "request": members});
