@@ -45,6 +45,9 @@ use crate::value::{
 /// Why a clause has no [`ClauseLetters`].
 #[derive(Clone, Debug, Eq, PartialEq, thiserror::Error)]
 pub enum LettersRefusal {
+    /// Package hyper reference literals need an authenticated binding projection.
+    #[error("package hyper reference literal bindings are not implemented")]
+    PackageHyperReferences,
     /// The clause's `over` parameter is not an object reference, so the
     /// clause has no instance (FR-125 Instancing).
     #[error("the clause's `over` parameter is not an object reference")]

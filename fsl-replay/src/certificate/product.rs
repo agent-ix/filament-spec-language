@@ -245,6 +245,98 @@ impl<'a> ProductClosureRequest<'a> {
     }
 }
 
+/// Authenticated package originals for independent universal hyper checking.
+/// The clause is rebuilt from the admitted package, never supplied by the engine.
+pub struct PackageHyperClosureRequest<'a> {
+    clause: CheckedHyperClause,
+    evaluator: &'a dyn ModelEvaluator,
+    subjects: &'a [ModelSubject<'a>],
+    meter: ScalarLimits,
+}
+
+impl<'a> PackageHyperClosureRequest<'a> {
+    /// Re-read the selected admitted universal clause and bind its original subjects.
+    ///
+    /// # Errors
+    /// Refuses unsupported forms, multiple models, or a malformed occurrence.
+    pub fn new(
+        package: &'a fsl_package::BarePackage<'_>,
+        occurrence: &fsl_foundation::source::provenance::OccurrenceKey,
+        subjects: &'a [ModelSubject<'a>],
+        meter: ScalarLimits,
+        position_limit: u64,
+    ) -> Result<Self, ProductClosureRefusal> {
+        use fsl_package::AnalysisView;
+        if package.model_selections().len() != 1 {
+            return Err(ProductClosureRefusal::Input("package-hyper-model-scope"));
+        }
+        let form = package
+            .hyper_clause_form(occurrence)
+            .map_err(|_| ProductClosureRefusal::Input("package-hyper-form"))?;
+        let world = package
+            .world()
+            .map_err(|_| ProductClosureRefusal::Input("package-world"))?;
+        let clause = CheckedHyperClause::of_package_form(form, world.types(), position_limit)
+            .map_err(|_| ProductClosureRefusal::Input("package-hyper-clause"))?;
+        package
+            .hyper_reference_literals(&clause)
+            .map_err(|_| ProductClosureRefusal::Input("package-hyper-reference-bindings"))?;
+        Ok(Self {
+            clause,
+            evaluator: package,
+            subjects,
+            meter,
+        })
+    }
+
+    /// The independently reconstructed clause.
+    pub fn clause(&self) -> &CheckedHyperClause {
+        &self.clause
+    }
+
+    fn originals(&self) -> HyperOriginals<'_, 'a> {
+        HyperOriginals {
+            clause: &self.clause,
+            evaluator: self.evaluator,
+            subjects: self.subjects,
+            meter: self.meter,
+        }
+    }
+}
+
+struct HyperOriginals<'c, 'a> {
+    clause: &'c CheckedHyperClause,
+    evaluator: &'a dyn ModelEvaluator,
+    subjects: &'a [ModelSubject<'a>],
+    meter: ScalarLimits,
+}
+
+impl HyperOriginals<'_, '_> {
+    fn hyper_clause(&self) -> Result<&CheckedHyperClause, ProductClosureRefusal> {
+        Ok(self.clause)
+    }
+}
+
+/// Independently reconstruct a package hyper proof through the shared checker.
+///
+/// # Errors
+/// Preserves original-input and product reconstruction refusals.
+pub fn check_package_hyper_closure(
+    request: &PackageHyperClosureRequest<'_>,
+    certificate: &ProductClosureCertificate,
+    limits: &ModelCheckLimits,
+    cancel: &Cancel,
+) -> Result<ProductClosureCheck, ProductClosureRefusal> {
+    checked_hyper(&request.originals(), certificate, limits, cancel)
+}
+
+pub(crate) fn complete_package_hyper_scope(
+    request: &PackageHyperClosureRequest<'_>,
+    certificates: &[ProductClosureCertificate],
+) -> Result<(), ProductClosureRefusal> {
+    complete_hyper_scope(&request.originals(), certificates)
+}
+
 /// A malformed original input or an invariant failure while reconstructing.
 #[derive(Clone, Debug, Eq, PartialEq, thiserror::Error)]
 pub enum ProductClosureRefusal {
@@ -287,8 +379,8 @@ fn rejected(rule: CertificateRule, key: ProductStateKey) -> TemporalCertificateC
 /// # Errors
 ///
 /// A subject that does not admit.
-pub(crate) fn alias_systems<'a>(
-    request: &ProductClosureRequest<'a>,
+fn alias_systems<'a>(
+    request: &HyperOriginals<'_, 'a>,
 ) -> Result<Vec<ModelSystem<'a>>, ProductClosureRefusal> {
     let clause = request.hyper_clause()?;
     request
@@ -314,6 +406,21 @@ pub(crate) fn complete_scope(
             Err(ProductClosureRefusal::Input("certificate-scope"))
         };
     }
+    complete_hyper_scope(
+        &HyperOriginals {
+            clause: request.hyper_clause()?,
+            evaluator: request.package,
+            subjects: request.subjects,
+            meter: request.meter,
+        },
+        certificates,
+    )
+}
+
+fn complete_hyper_scope(
+    request: &HyperOriginals<'_, '_>,
+    certificates: &[ProductClosureCertificate],
+) -> Result<(), ProductClosureRefusal> {
     let clause = request.hyper_clause()?;
     let systems = alias_systems(request)?;
     let mut domains = Vec::new();
@@ -392,23 +499,17 @@ pub fn check_product_closure(
                 cancel,
             )
         }
-        ProductClosureClause::Hyper(_) => {
-            check(request, certificate, limits, cancel).and_then(|check| {
-                Ok(match check {
-                    TemporalCertificateCheck::Accepted => ProductClosureCheck::Accepted,
-                    TemporalCertificateCheck::Rejected(rejection) => {
-                        ProductClosureCheck::Rejected(rejection)
-                    }
-                    TemporalCertificateCheck::Stopped(cause) => {
-                        ProductClosureCheck::Stopped { cause, tuple: None }
-                    }
-                    TemporalCertificateCheck::MemoryBoundReached { .. }
-                    | TemporalCertificateCheck::InstanceBoundReached { .. } => {
-                        return Err(ProductClosureRefusal::Recompute("unexpected-product-check"))
-                    }
-                })
-            })
-        }
+        ProductClosureClause::Hyper(clause) => checked_hyper(
+            &HyperOriginals {
+                clause,
+                evaluator: request.package,
+                subjects: request.subjects,
+                meter: request.meter,
+            },
+            certificate,
+            limits,
+            cancel,
+        ),
     };
     match result {
         Err(ProductClosureRefusal::Stopped(cause)) => {
@@ -418,8 +519,31 @@ pub fn check_product_closure(
     }
 }
 
+fn checked_hyper(
+    request: &HyperOriginals<'_, '_>,
+    certificate: &ProductClosureCertificate,
+    limits: &ModelCheckLimits,
+    cancel: &Cancel,
+) -> Result<ProductClosureCheck, ProductClosureRefusal> {
+    match check(request, certificate, limits, cancel) {
+        Ok(TemporalCertificateCheck::Accepted) => Ok(ProductClosureCheck::Accepted),
+        Ok(TemporalCertificateCheck::Rejected(rejection)) => {
+            Ok(ProductClosureCheck::Rejected(rejection))
+        }
+        Ok(TemporalCertificateCheck::Stopped(cause))
+        | Err(ProductClosureRefusal::Stopped(cause)) => {
+            Ok(ProductClosureCheck::Stopped { cause, tuple: None })
+        }
+        Ok(
+            TemporalCertificateCheck::MemoryBoundReached { .. }
+            | TemporalCertificateCheck::InstanceBoundReached { .. },
+        ) => Err(ProductClosureRefusal::Recompute("unexpected-product-check")),
+        Err(failure) => Err(failure),
+    }
+}
+
 fn check(
-    request: &ProductClosureRequest<'_>,
+    request: &HyperOriginals<'_, '_>,
     certificate: &ProductClosureCertificate,
     limits: &ModelCheckLimits,
     cancel: &Cancel,
@@ -487,9 +611,10 @@ fn check(
             instance: found,
         });
     }
-    let letters = CheckedHyperLetters::new(request.package, clause, variable_systems.clone())
-        .map_err(|_| ProductClosureRefusal::Input("letters"))?;
-    let matcher = CheckedStepMatch::new(request.package, clause);
+    let letters =
+        CheckedHyperLetters::for_evaluator(request.evaluator, clause, variable_systems.clone())
+            .map_err(|_| ProductClosureRefusal::Input("letters"))?;
+    let matcher = CheckedStepMatch::for_evaluator(request.evaluator, clause);
     let copy = certificate.reduction.as_ref();
     if let Some(copy) = copy {
         if copy != &fsl_eval::hyper::fairness_preserving_copy_group(clause) {
@@ -792,7 +917,7 @@ impl<'r, 's> Product<'r, 's> {
 
 fn product_stop(
     product: &Product<'_, '_>,
-    request: &ProductClosureRequest<'_>,
+    request: &HyperOriginals<'_, '_>,
     limits: &ModelCheckLimits,
 ) -> Result<ProductClosureRefusal, ProductClosureRefusal> {
     use fsl_eval::hyper::Halt;

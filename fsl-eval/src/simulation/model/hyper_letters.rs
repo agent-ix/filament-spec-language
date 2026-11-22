@@ -26,12 +26,12 @@ use super::contracts::{verdict, Verdict};
 use super::letters::{LettersRefusal, Observed};
 use super::reference_bindings::{ReferenceBindings, ReferenceLiteralKey};
 use super::walk::{rows_of, stop};
+use super::ModelEvaluator;
 use super::{state_document, ClauseOutcome, ModelSimState, ModelSystem, BROKEN};
 use crate::hyper::{HyperLetters, HyperSlot, ParameterBinding};
 use crate::model_subject::{AtomStop, ModelInstance};
 use crate::simulation::StateKey;
 use crate::temporal::AtomReading;
-use crate::value::evaluate_hyper_holds_with_component_bindings;
 
 /// A component's observation of the state it was last read at.
 type Cached = Option<(StateKey, Rc<Observed>)>;
@@ -46,7 +46,7 @@ type Cached = Option<(StateKey, Rc<Observed>)>;
 /// component, which is kept for the reads that follow. The observation is not
 /// charged to the engine's meter.
 pub struct CheckedHyperLetters<'s, 'a> {
-    package: &'s CheckedPackage,
+    package: &'s dyn ModelEvaluator,
     clause: &'s CheckedHyperClause,
     /// One system per trace variable, in quantifier order.
     systems: Vec<&'s ModelSystem<'a>>,
@@ -76,46 +76,44 @@ impl<'s, 'a> CheckedHyperLetters<'s, 'a> {
         clause: &'s CheckedHyperClause,
         systems: Vec<&'s ModelSystem<'a>>,
     ) -> Result<Self, LettersRefusal> {
+        Self::for_evaluator(package, clause, systems)
+    }
+
+    /// Read letters through either authenticated evaluator route.
+    ///
+    /// # Errors
+    /// Preserves component, reference binding and population admission refusals.
+    pub fn for_evaluator(
+        package: &'s dyn ModelEvaluator,
+        clause: &'s CheckedHyperClause,
+        systems: Vec<&'s ModelSystem<'a>>,
+    ) -> Result<Self, LettersRefusal> {
         if systems.len() != clause.quantifiers().len() {
             return Err(LettersRefusal::ComponentsMismatch);
         }
         let mut reference_bindings = Vec::with_capacity(systems.len());
         for system in &systems {
-            let extended = ReferenceBindings::with_hyper_clause(
-                &system.reference_bindings,
-                package.graph(),
-                clause,
-                &system.model,
-                system.types,
-                &system.populations,
-                &system.universes,
-                &system.initial,
-            )
-            .map_err(LettersRefusal::ReferenceBindingsAdmission)?;
+            let extended = package.hyper_reference_bindings(clause, system)?;
             reference_bindings.push(extended);
         }
-        let literals = reference_literals(package.graph(), clause);
-        for literal in &literals {
+        let literals = package.hyper_reference_literals(clause)?;
+        for (object_type, identity) in &literals {
             let mut first_declaring: Option<(usize, String)> = None;
             for (component, (system, bindings)) in
                 systems.iter().zip(&reference_bindings).enumerate()
             {
-                if system.model.type_key(literal.object_type.clone()).is_none() {
+                if system.model.type_key(object_type.clone()).is_none() {
                     continue;
                 }
-                let current = format!(
-                    "{:?}",
-                    bindings.get(&literal.object_type, &literal.identity)
-                );
+                let current = format!("{:?}", bindings.get(&object_type, &identity));
                 if let Some((first_component, first_binding)) = &first_declaring {
                     if *first_binding != current {
-                        let identity = literal
-                            .identity
+                        let identity = identity
                             .iter()
                             .map(|byte| format!("{byte:02x}"))
                             .collect::<String>();
                         return Err(LettersRefusal::ReferenceBindingsDisagree {
-                            object_type: format!("{:?}", literal.object_type),
+                            object_type: format!("{:?}", object_type),
                             identity,
                             components: vec![*first_component, component],
                             bindings: vec![first_binding.clone(), current],
@@ -242,7 +240,7 @@ impl<'s, 'a> CheckedHyperLetters<'s, 'a> {
 }
 
 /// The reference literals whose subject binding affects this hyper clause.
-fn reference_literals(
+pub(super) fn reference_literals(
     graph: &fsl_semantics::check::CheckedGraph,
     clause: &CheckedHyperClause,
 ) -> BTreeSet<ReferenceLiteralKey> {
@@ -322,19 +320,20 @@ impl HyperLetters for CheckedHyperLetters<'_, '_> {
             .map(|observed| &observed.observation.environment)
             .collect();
         let reference_bindings: Vec<_> = self.reference_bindings.iter().collect();
-        let evaluation = evaluate_hyper_holds_with_component_bindings(
-            self.package,
-            self.clause,
-            atom,
-            slots,
-            &environments,
-            &reference_bindings,
-            meter,
-        )
-        .map_err(|failure| match failure {
-            CallFailure::Fault(internal) => AtomStop::Fault(internal),
-            _ => fault("the-evaluation-is-admitted"),
-        })?;
+        let evaluation = self
+            .package
+            .evaluate_bound_hyper_holds(
+                self.clause,
+                atom,
+                slots,
+                &environments,
+                &reference_bindings,
+                meter,
+            )
+            .map_err(|failure| match failure {
+                CallFailure::Fault(internal) => AtomStop::Fault(internal),
+                _ => fault("the-evaluation-is-admitted"),
+            })?;
         match verdict(&evaluation.outcome) {
             Verdict::True => Ok(AtomReading::True),
             Verdict::False => Ok(AtomReading::False),

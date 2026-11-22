@@ -245,9 +245,32 @@ pub fn settle_model_relation_check(
     )
 }
 
+/// Settle package universal hyper evidence through the shared certificate and replay gates.
+///
+/// # Errors
+/// As [`settle_hyper_check`], using independently rebuilt package originals.
+pub fn settle_package_hyper_check(
+    outcome: &HyperOutcome,
+    limits: &ModelCheckLimits,
+    requested: &[ModelCheckLimit],
+    certificate: &crate::PackageHyperClosureRequest<'_>,
+    cancel: &Cancel,
+    replay: impl FnOnce(&HyperCounterexample) -> Result<ModelTraceSettlement, ReplayRefusal>,
+) -> Result<HyperRecord, HyperSettleRefusal> {
+    settle_hyper_check_with(
+        outcome,
+        limits,
+        requested,
+        Some(CertificateInputs::PackageHyper(certificate)),
+        cancel,
+        replay,
+    )
+}
+
 #[derive(Clone, Copy)]
 enum CertificateInputs<'a, 'p> {
     Product(&'a crate::ProductClosureRequest<'p>),
+    PackageHyper(&'a crate::PackageHyperClosureRequest<'p>),
     Relation(&'a crate::ModelRelationClosureRequest<'p>),
 }
 
@@ -292,6 +315,12 @@ fn settle_hyper_check_with(
         | HyperOutcome::HoldsReduced { certificates, .. } => {
             let request = certificate.ok_or(HyperSettleRefusal::CertificateRequestMissing)?;
             match request {
+                CertificateInputs::PackageHyper(originals) => {
+                    crate::certificate::product::complete_package_hyper_scope(
+                        originals,
+                        certificates,
+                    )?
+                }
                 CertificateInputs::Product(originals) => {
                     crate::certificate::product::complete_scope(originals, certificates)?
                 }
@@ -307,6 +336,9 @@ fn settle_hyper_check_with(
             let mut stopped = None;
             for proof in certificates {
                 let checked = match request {
+                    CertificateInputs::PackageHyper(originals) => {
+                        crate::check_package_hyper_closure(originals, proof, limits, cancel)?
+                    }
                     CertificateInputs::Product(originals) => {
                         crate::check_product_closure(originals, proof, limits, cancel)?
                     }

@@ -1163,6 +1163,52 @@ pub trait ModelEvaluator: sealed::Sealed + Sync {
         meter: &mut Meter,
     ) -> Result<Evaluation, CallFailure>;
 
+    /// Bind this clause's authenticated reference literals to a component.
+    ///
+    /// # Errors
+    /// Refuses an unsupported package literal form or failed subject admission.
+    fn hyper_reference_bindings(
+        &self,
+        clause: &CheckedHyperClause,
+        system: &super::ModelSystem<'_>,
+    ) -> Result<super::ReferenceBindings, super::LettersRefusal>;
+
+    /// Literal identities whose bindings must agree across components.
+    ///
+    /// # Errors
+    /// Refuses package literal forms without an authenticated binding projection.
+    fn hyper_reference_literals(
+        &self,
+        clause: &CheckedHyperClause,
+    ) -> Result<Vec<(EffectiveId, Vec<u8>)>, super::LettersRefusal>;
+
+    /// Evaluate a hyper atom with the component's admitted reference bindings.
+    ///
+    /// # Errors
+    /// Preserves the clause evaluator's admission and internal failures.
+    fn evaluate_bound_hyper_holds(
+        &self,
+        clause: &CheckedHyperClause,
+        atom: FormulaNodeId,
+        slots: Vec<crate::hyper::HyperSlot>,
+        components: &[&ObjectEnvironment],
+        bindings: &[&super::ReferenceBindings],
+        meter: &mut Meter,
+    ) -> Result<Evaluation, CallFailure>;
+
+    /// Evaluate one authenticated match conjunct.
+    ///
+    /// # Errors
+    /// Preserves the selected route's step predicate refusal.
+    fn evaluate_hyper_match(
+        &self,
+        clause: &CheckedHyperClause,
+        part: crate::hyper::MatchPart,
+        conjunct: usize,
+        labels: &[crate::hyper::StepLabel<'_>],
+        meter: &mut Meter,
+    ) -> Result<Evaluation, CallFailure>;
+
     /// [`crate::value::evaluate_state_predicate_with`].
     ///
     /// # Errors
@@ -1808,6 +1854,63 @@ impl ModelEvaluator for CheckedPackage {
         CheckedPackageEvaluation::evaluate_hyper_holds(self, clause, atom, slots, components, meter)
     }
 
+    fn hyper_reference_bindings(
+        &self,
+        clause: &CheckedHyperClause,
+        system: &super::ModelSystem<'_>,
+    ) -> Result<super::ReferenceBindings, super::LettersRefusal> {
+        super::ReferenceBindings::with_hyper_clause(
+            &system.reference_bindings,
+            self.graph(),
+            clause,
+            &system.model,
+            system.types,
+            &system.populations,
+            &system.universes,
+            &system.initial,
+        )
+        .map_err(super::LettersRefusal::ReferenceBindingsAdmission)
+    }
+
+    fn hyper_reference_literals(
+        &self,
+        clause: &CheckedHyperClause,
+    ) -> Result<Vec<(EffectiveId, Vec<u8>)>, super::LettersRefusal> {
+        Ok(
+            super::hyper_letters::reference_literals(self.graph(), clause)
+                .into_iter()
+                .map(|literal| (literal.object_type, literal.identity))
+                .collect(),
+        )
+    }
+
+    fn evaluate_bound_hyper_holds(
+        &self,
+        clause: &CheckedHyperClause,
+        atom: FormulaNodeId,
+        slots: Vec<crate::hyper::HyperSlot>,
+        components: &[&ObjectEnvironment],
+        bindings: &[&super::ReferenceBindings],
+        meter: &mut Meter,
+    ) -> Result<Evaluation, CallFailure> {
+        crate::value::evaluate_hyper_holds_with_component_bindings(
+            self, clause, atom, slots, components, bindings, meter,
+        )
+    }
+
+    fn evaluate_hyper_match(
+        &self,
+        clause: &CheckedHyperClause,
+        part: crate::hyper::MatchPart,
+        conjunct: usize,
+        labels: &[crate::hyper::StepLabel<'_>],
+        meter: &mut Meter,
+    ) -> Result<Evaluation, CallFailure> {
+        CheckedPackageEvaluation::evaluate_step_predicate(
+            self, clause, part, conjunct, labels, meter,
+        )
+    }
+
     fn evaluate_state_predicate(
         &self,
         predicate: &dyn StatePredicate,
@@ -2335,6 +2438,69 @@ impl ModelEvaluator for BarePackage<'_> {
         meter: &mut Meter,
     ) -> Result<Evaluation, CallFailure> {
         CheckedPackageEvaluation::evaluate_hyper_holds(self, clause, atom, slots, components, meter)
+    }
+
+    fn hyper_reference_bindings(
+        &self,
+        clause: &CheckedHyperClause,
+        system: &super::ModelSystem<'_>,
+    ) -> Result<super::ReferenceBindings, super::LettersRefusal> {
+        self.hyper_reference_literals(clause)?;
+        Ok(system.reference_bindings.clone())
+    }
+
+    fn hyper_reference_literals(
+        &self,
+        clause: &CheckedHyperClause,
+    ) -> Result<Vec<(EffectiveId, Vec<u8>)>, super::LettersRefusal> {
+        let claim = clause
+            .assembled_occurrence()
+            .ok_or(super::LettersRefusal::PackageHyperReferences)?;
+        for (index, formula) in clause.body().nodes().iter().enumerate() {
+            if !matches!(formula, fsl_semantics::check::FormulaNode::Holds { .. }) {
+                continue;
+            }
+            let term = self
+                .project_hyper_holds(claim, index)
+                .map_err(|_| super::LettersRefusal::PackageHyperReferences)?;
+            let mut index = 0;
+            while let Some(kind) = term.projection().kind(index) {
+                if matches!(
+                    kind,
+                    filament_checked::node::NodeKind::ReferenceLiteral { .. }
+                ) {
+                    return Err(super::LettersRefusal::PackageHyperReferences);
+                }
+                index += 1;
+            }
+        }
+        Ok(Vec::new())
+    }
+
+    fn evaluate_bound_hyper_holds(
+        &self,
+        clause: &CheckedHyperClause,
+        atom: FormulaNodeId,
+        slots: Vec<crate::hyper::HyperSlot>,
+        components: &[&ObjectEnvironment],
+        _bindings: &[&super::ReferenceBindings],
+        meter: &mut Meter,
+    ) -> Result<Evaluation, CallFailure> {
+        // Package hyper forms with literal bindings refuse during letter admission.
+        CheckedPackageEvaluation::evaluate_hyper_holds(self, clause, atom, slots, components, meter)
+    }
+
+    fn evaluate_hyper_match(
+        &self,
+        clause: &CheckedHyperClause,
+        part: crate::hyper::MatchPart,
+        conjunct: usize,
+        labels: &[crate::hyper::StepLabel<'_>],
+        meter: &mut Meter,
+    ) -> Result<Evaluation, CallFailure> {
+        CheckedPackageEvaluation::evaluate_step_predicate(
+            self, clause, part, conjunct, labels, meter,
+        )
     }
 
     fn evaluate_state_predicate(
