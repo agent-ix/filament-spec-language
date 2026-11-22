@@ -159,3 +159,35 @@ fn malformed_package_bytes_refuse_a_value_item_typed() {
         assert_eq!(run.exit, 20, "{name}");
     }
 }
+
+/// FR-940-AC-13, FR-484: an evaluation that is undefined (a division by
+/// zero at `b = 0`) settles the source route's `refuted` item at the same
+/// locus over the package.
+#[trace("TC-2410", "FR-940-AC-13")]
+#[test]
+fn a_package_value_clause_with_an_undefined_evaluation_equals_the_source() {
+    let declarations =
+        "function Quotient using v(a: Int[0, 9], b: Int[0, 3]): Boolean pure { a div b >= 0 }\n";
+    let item = assert_parity(
+        "package-value-undefined",
+        declarations,
+        json!([{"claim": "Quotient", "kind": "value-validity"}]),
+    );
+    assert_eq!(label(&item), "refuted", "{item}");
+}
+
+/// FR-940-AC-13: a Boolean parameter's counterexample is spelled and
+/// replayed as the source route does.
+#[trace("TC-2410", "FR-940-AC-13")]
+#[test]
+fn a_package_value_clause_over_a_boolean_parameter_equals_the_source() {
+    let declarations =
+        "function Flagged using v(p: Boolean, n: Int[0, 3]): Boolean pure { (not p) or n <= 2 }\n";
+    let item = assert_parity(
+        "package-value-boolean-parameter",
+        declarations,
+        json!([{"claim": "Flagged", "kind": "value-validity"}]),
+    );
+    assert_eq!(label(&item), "refuted", "{item}");
+    assert_eq!(item["replay"]["reproduced"], true, "{item}");
+}
