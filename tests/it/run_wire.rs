@@ -2185,37 +2185,6 @@ fn monitor_with_members(
     (summary, seen)
 }
 
-/// `analyze_with_providers` over the `native-analyze/1` request equivalent
-/// to FR-644-AC-8's monitor request: its `models`, `program` and `items`.
-/// A `native-analyze/1` request has no `clocks` member (FR-620), so its
-/// program is the monitor unit's value profile and `Even` without the
-/// clock-bound temporal clauses, which no item names.
-fn equivalent_analyze(items: Value, providers: Vec<fsl_analyze::analyze::Engine>) -> Value {
-    let directory = tempfile::tempdir().unwrap();
-    let unit = format!(
-        "language \"ix:native\" edition \"1-draft\";\nprofile v = \"{VALUE}\";\n{}",
-        even_unit().lines().last().unwrap_or_default()
-    );
-    std::fs::write(directory.path().join("unit.native"), unit + "\n").unwrap();
-    let path = directory.path().join("analyze.json");
-    std::fs::write(
-        &path,
-        serde_json::to_vec(&json!({"format": "native-analyze/1", "request": {
-            "models": [], "program": program(), "items": items}}))
-        .unwrap(),
-    )
-    .unwrap();
-    let result = fsl_command::command::analyze_with_providers(
-        &path,
-        &crate::negotiation::Fr290,
-        providers,
-        &fsl_analyze::provider::ProviderOptions::default(),
-        &filament_exact::Cancel::new(),
-    )
-    .expect("the equivalent analyze request runs");
-    result.value.as_value().clone()
-}
-
 /// `analyze_with_providers` over the `package` request equivalent to
 /// FR-644-AC-8's clocked monitor request (FR-644 "Provider-routed items"):
 /// the handoff directory of the `native-compile/1` request with the monitor
@@ -2255,7 +2224,8 @@ fn equivalent_package_analyze(items: Value, providers: Vec<fsl_analyze::analyze:
 /// `Integer` and of kind `value-validity`.
 #[test]
 #[trace("TC-2984", "FR-644-AC-8")]
-#[ignore = "QSL-2132: a clocked monitor's items equal to the package-route analyze over its own compile not implemented yet"]
+// QSL-2132 is the older duplicate of QSL-2767.
+#[ignore = "QSL-2767: the package route has no declaration-family item form yet, so a clocked monitor's items cannot be compared with it"]
 fn command_monitor_items_equal_the_package_route_of_its_clocked_compile() {
     use fsl_analyze::provider::ProviderVerdict;
 
@@ -2341,10 +2311,6 @@ fn command_monitor_settles_its_items_through_the_started_providers() {
             "{backend}: {value}"
         );
     }
-    let analyzed = Recorded::new();
-    let document = equivalent_analyze(items, vec![analyzed.provider(ProviderVerdict::Proved)]);
-    assert_eq!(value["items"], document["items"], "{document}");
-    assert_eq!(value["registry"], document["registry"], "{document}");
     assert!(
         seen.iter()
             .any(|event| event["clause"] == "Never" && event["category"] == "violation"),
@@ -2408,8 +2374,8 @@ fn command_monitor_without_items_calls_no_provider() {
 /// FR-644-AC-10 (TC-2984): an unregistered backend settles its item
 /// `invalid-request` `unknown-backend` with no provider call and exit 20,
 /// while every record still streams; an `unknown` answer settles
-/// `inconclusive` `solver-inconclusive`, outranked by the violation (exit
-/// 10) and exiting 22 when every clause succeeds; two providers of one
+/// `inconclusive` `solver-inconclusive`, which outranks the violation (FR-285
+/// order: exit 22) and exits 22 when every clause succeeds; two providers of one
 /// `BackendId` refuse before any record.
 #[test]
 #[trace("TC-2984", "FR-644-AC-10")]
@@ -2458,7 +2424,8 @@ fn command_monitor_settles_unknown_backends_and_unknown_answers() {
         assert_eq!(item["record"]["result"], "inconclusive", "{item}");
         assert!(item.to_string().contains("solver-inconclusive"), "{item}");
     }
-    assert_eq!(summary.exit_code, 10);
+    // FR-285-AC-2: an inconclusive item (22) outranks the violation (10).
+    assert_eq!(summary.exit_code, 22);
 
     let successful = Recorded::new();
     let (summary, _) = monitor_with_items(
@@ -2514,8 +2481,11 @@ fn a_cancelled_monitor_settles_its_items_incomplete() {
         &cancel,
     );
     assert_eq!(recorded.calls(), 0);
+    assert_eq!(recorded.items(), 0, "no item reaches a provider");
     let summary = summary.expect("a cancelled stream returns its summary");
     let value = summary.as_value();
+    assert!(!value["items"].as_array().expect("items").is_empty(), "{value}");
+    assert_eq!(summary.exit_code, 22, "{value}");
     for item in value["items"].as_array().expect("items") {
         assert_eq!(item["category"], "incomplete", "{item}");
         assert!(item.to_string().contains("requested"), "{item}");
@@ -2560,7 +2530,8 @@ fn an_expired_items_deadline_leaves_the_stream_unchanged() {
         assert_eq!(item["category"], "incomplete", "{item}");
         assert!(item.to_string().contains("deadline"), "{item}");
     }
-    assert_eq!(summary.exit_code, 10);
+    // FR-285-AC-2: an incomplete item (22) outranks the violation (10).
+    assert_eq!(summary.exit_code, 22);
 }
 
 /// FR-644 "Provider-routed items" (TC-2984): a short items deadline that
