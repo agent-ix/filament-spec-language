@@ -416,7 +416,8 @@ fn task_search_evidence(
             let depth = u64::try_from(index + 1).ok()?;
             // The path ends at the open node, which is not expanded.
             let next = add(states.get(index + 1)?, depth, index + 1 < total)?;
-            let transition = fsl_replay::task_product_transition_wire(&step.transition).ok()?;
+            let transition: fsl_replay::TaskProductTransition = step.transition.clone().into();
+            let transition = fsl_replay::task_product_transition_wire(&transition).ok()?;
             let edge = json!({"node": previous, "transition": transition, "target": next});
             // Frontier paths share prefixes; each edge is written once.
             if !edges.contains(&edge) {
