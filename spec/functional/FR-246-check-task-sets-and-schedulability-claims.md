@@ -105,6 +105,8 @@ pub enum ScheduleClaim { Schedulable(SchedulingPolicy), Response { task: Name, b
   one invalid task set refuses under one code.
 - Two tasks with one name SHALL refuse `conflicting_declaration`/
   `duplicate-declaration`.
+- For tasks in the same task set, a lower numeric priority value SHALL denote
+  a higher priority than a higher numeric priority value.
 - When a `fixed_priority`, `amc` or `response` claim is over a task set where
   two tasks share a priority, the checker SHALL refuse `invalid_timed_model`/
   `invalid-task-set`, naming both tasks; when a task has no priority, the
