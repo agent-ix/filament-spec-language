@@ -748,13 +748,43 @@ fn tc_736_a_100000_term_source_and_list_replay_to_the_proving_verdict() {
         const CONTEXT: &str = "tc_736_source_and_list";
         memory_phase(CONTEXT, "START");
         let sum = vec!["l.head"; TERMS].join(" + ");
-        let fixture = fixture_with_raised_limits(&format!(
+        let body = format!(
             "record List {{ head: Int[0, 9]; tail: List?; }}\n\
              function small using v(l: List): Boolean pure {{ {sum} < 5 }}\n"
-        ));
+        );
+        let fixture = fixture_with_raised_limits(&body);
         memory_phase(CONTEXT, "EMITTED");
-        let value = list(fixture.record_id("List"), TERMS);
-        memory_phase(CONTEXT, "VALUE");
+        let source_bytes = fixture.source.as_bytes().to_vec();
+        let package_bytes = fixture.compiled.emitted.bytes().to_vec();
+        let function = name(&["small"]);
+        let declaration = declaration_key(&fixture.compiled, &function);
+        let parameter = fixture.parameter("small");
+        let list_type = fixture.record_id("List");
+        drop(fixture);
+        drop(body);
+        drop(sum);
+        memory_phase(CONTEXT, "FIXTURE_DROPPED_KEEPING_ONLY_WIRE_BYTES");
+
+        let make_witness = |value: &WitnessValue| {
+            let text = value.to_value_text().unwrap();
+            let transcript = format!("<<<assertion|small|c|{}={text}>>>", crate::pn(&parameter));
+            request_from_package_bytes(
+                &source_bytes,
+                &package_bytes,
+                function.clone(),
+                declaration.clone(),
+                ReplaySource::Witness(Witness::parse(transcript).unwrap()),
+            )
+        };
+        let make_input = |value: WitnessValue| {
+            request_from_package_bytes(
+                &source_bytes,
+                &package_bytes,
+                function.clone(),
+                declaration.clone(),
+                typed_input(parameter.clone(), value),
+            )
+        };
         let raised = ReplayLimits::default().with_input_bytes(1 << 29);
         let limits: BTreeMap<String, u64> = BTreeMap::from(
             [
@@ -781,29 +811,66 @@ fn tc_736_a_100000_term_source_and_list_replay_to_the_proving_verdict() {
                 (name.to_owned(), bound)
             }),
         );
-        let witness = |fixture: &Fixture, limits: &BTreeMap<String, u64>| {
-            let mut wire = fixture.witness("small", &value);
-            wire.stage_limits = limits.clone();
-            wire
-        };
         // Step 2: the default limits stop the recompile at a named stage.
-        let refused = replay(witness(&fixture, &BTreeMap::new()), raised);
-        memory_phase(CONTEXT, "DEFAULT_STAGE_REFUSAL");
+        let default_value = list(list_type.clone(), TERMS);
+        let default_wire = make_witness(&default_value);
+        drop(default_value);
+        memory_phase(CONTEXT, "DEFAULT_REFUSAL_REQUEST_BUILT_VALUE_DROPPED");
+        let refused = replay(default_wire, raised);
         assert!(
-            matches!(refused, Err(ReplayRefusal::Recompile { .. })),
+            matches!(&refused, Err(ReplayRefusal::Recompile { .. })),
             "{refused:?}"
         );
+        memory_phase(CONTEXT, "DEFAULT_REFUSAL_RESULT_HELD");
+        drop(refused);
+        memory_phase(CONTEXT, "DEFAULT_REFUSAL_DROPPED");
         // The raised settings replay, from the witness and from the input.
-        let wire = witness(&fixture, &limits);
-        eprintln!("REQUEST context={CONTEXT} package_bytes={} source_bytes={} replay_source_bytes={} provision_bytes={}", wire.package.bytes().len(), fixture.source.len(), wire.source.measured_bytes(), wire.byte_provision.iter().map(|(_, _, bytes)| bytes.len()).sum::<usize>());
+        let witness_value = list(list_type.clone(), TERMS);
+        let mut wire = make_witness(&witness_value);
+        drop(witness_value);
+        wire.stage_limits = limits.clone();
+        eprintln!(
+            "REQUEST context={CONTEXT} package_bytes={} source_bytes={} replay_source_bytes={} provision_bytes={}",
+            wire.package.bytes().len(),
+            source_bytes.len(),
+            wire.source.measured_bytes(),
+            wire.byte_provision
+                .iter()
+                .map(|(_, _, bytes)| bytes.len())
+                .sum::<usize>()
+        );
         memory_phase(CONTEXT, "WITNESS_REQUEST");
-        assert_reproduced(replay(wire, raised));
+        let witness_result = replay(wire, raised);
+        memory_phase(CONTEXT, "WITNESS_RESULT_HELD");
+        assert_reproduced(witness_result);
         memory_phase(CONTEXT, "WITNESS_REPLAYED");
-        let mut input = fixture.input("small", value.clone());
+        let input_value = list(list_type, TERMS);
+        let mut input = make_input(input_value);
         input.stage_limits = limits;
         memory_phase(CONTEXT, "INPUT_REQUEST");
-        assert_reproduced(replay(input, raised));
+        let input_result = replay(input, raised);
+        memory_phase(CONTEXT, "INPUT_RESULT_HELD");
+        assert_reproduced(input_result);
         memory_phase(CONTEXT, "INPUT_REPLAYED");
+        drop(make_witness);
+        drop(make_input);
+        drop((
+            source_bytes,
+            package_bytes,
+            function,
+            declaration,
+            parameter,
+        ));
+        memory_phase(CONTEXT, "REQUEST_SOURCE_AND_PACKAGE_BYTES_DROPPED");
+        let rebuild_sum = vec!["l.head"; TERMS].join(" + ");
+        let rebuild_body = format!(
+            "record List {{ head: Int[0, 9]; tail: List?; }}\n\
+             function small using v(l: List): Boolean pure {{ {rebuild_sum} < 5 }}\n"
+        );
+        let rebuilt = fixture_with_raised_limits(&rebuild_body);
+        memory_phase(CONTEXT, "FIXTURE_REBUILT_WITH_NO_REQUEST_LIVE");
+        drop(rebuilt);
+        memory_phase(CONTEXT, "REBUILT_FIXTURE_DROPPED");
     });
 }
 

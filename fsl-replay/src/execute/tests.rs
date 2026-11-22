@@ -166,16 +166,47 @@ fn request(
     function: QualifiedName,
     source: ReplaySource,
 ) -> ReplayRequestWire {
+    request_from_parts(
+        bytes,
+        crate::ReplayPackage::read(compiled.emitted.bytes(), 1 << 30)
+            .expect("actual emitted replay package"),
+        function.clone(),
+        declaration_key(compiled, &function),
+        source,
+    )
+}
+
+/// A request built from the source and emitted package bytes after dropping
+/// the producer's in-memory checked graph.
+fn request_from_package_bytes(
+    bytes: &[u8],
+    package_bytes: &[u8],
+    function: QualifiedName,
+    declaration: OccurrenceKey,
+    source: ReplaySource,
+) -> ReplayRequestWire {
+    request_from_parts(
+        bytes,
+        crate::ReplayPackage::read(package_bytes, 1 << 30).expect("actual emitted replay package"),
+        function,
+        declaration,
+        source,
+    )
+}
+
+fn request_from_parts(
+    bytes: &[u8],
+    package: crate::ReplayPackage,
+    function: QualifiedName,
+    declaration: OccurrenceKey,
+    source: ReplaySource,
+) -> ReplayRequestWire {
     ReplayRequestWire {
         certificate: None,
         profile_selections: vec![],
-        package: crate::ReplayPackage::read(compiled.emitted.bytes(), 1 << 30)
-            .expect("actual emitted replay package"),
+        package,
         dependencies: Vec::new(),
-        replay_target: crate::RequestTargetWire::function(
-            function.clone(),
-            declaration_key(compiled, &function),
-        ),
+        replay_target: crate::RequestTargetWire::function(function.clone(), declaration),
         source,
         obligation_identity: crate::ObligationIdentity::new(crate::fixture_node(2), None, 0),
         backend: "kani-backend-1".to_owned(),
