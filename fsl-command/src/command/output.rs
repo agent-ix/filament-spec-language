@@ -943,6 +943,15 @@ pub(super) fn spine_run_result_for_package(
     spine_run_document(RunEcho::Package(package), function, outcome, None)
 }
 
+pub(super) fn spine_run_result_for_package_with_items(
+    package: &serde_json::Value,
+    function: &str,
+    outcome: fsl_replay::spine::CallOutcome,
+    settled: Option<fsl_analyze::analyze::document::SettledRun>,
+) -> super::Result<RunResult> {
+    spine_run_document(RunEcho::Package(package), function, outcome, settled)
+}
+
 /// What a run result names its run's selection by.
 enum RunEcho<'a> {
     Source(types::RunSource<'a>),

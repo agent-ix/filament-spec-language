@@ -4771,7 +4771,9 @@ fn execute_prepared(prepared: PreparedRun, settle: &settle::Settle<'_>) -> Resul
     let prepared = match prepared {
         PreparedRun::Function(prepared) => prepared,
         PreparedRun::TlLowering(prepared) => return execute_lowering(*prepared),
-        PreparedRun::Package(prepared) => return package_run::execute(*prepared),
+        PreparedRun::Package(prepared) => {
+            return package_run::execute_with_settle(*prepared, settle)
+        }
         PreparedRun::ModelBasedTest(prepared) => {
             return Ok(RunResult {
                 exit_code: prepared.exit_code,

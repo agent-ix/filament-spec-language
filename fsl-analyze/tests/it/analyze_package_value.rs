@@ -41,6 +41,7 @@ fn assert_parity(name: &str, declarations: &str, items: Value) -> Value {
     let (source, source_exit, package, package_exit) = both(name, declarations, &items);
     assert_eq!(package["items"], source["items"], "{package}");
     assert_eq!(package["registry"], source["registry"], "{package}");
+    assert_eq!(package["aggregate"], source["aggregate"], "{package}");
     assert_eq!(package_exit, source_exit, "{package}");
     package["items"][0].clone()
 }
@@ -72,29 +73,31 @@ fn a_package_value_clause_refutation_equals_the_source() {
     assert_eq!(item["replay"]["reproduced"], true, "{item}");
 }
 
-/// FR-940: a value item over a function that is no Boolean value clause has
-/// no package form yet: the request is refused whole, typed
-/// `not-yet-implemented`, and no item settles `unsupported`.
+/// A non-Boolean function declaration is inapplicable on both routes;
+/// its owned scalar operation records are distinct claims.
 #[trace("TC-2410", "FR-940-AC-13")]
 #[test]
-fn a_package_value_item_over_a_scalar_function_is_refused_typed() {
-    let body = format!("{WIDE}{}", bounded());
-    let ws = Workspace::new("package-value-scalar-refused");
-    let items = json!([{"claim": "Wide", "kind": "value-validity"}]);
-    let _ = counter_request(&ws, &body, items.clone());
-    let (members, _) = package_selection(&ws, &request_members(Some(items)));
-    let document = json!({"format": "native-analyze/1", "request": members});
-    let run = analyze(&ws.write("analyze-package.json", document.to_string().as_bytes()));
-    let document = run.document();
-    assert_eq!(document["items"], json!([]), "{document}");
-    assert_eq!(
-        document["diagnostics"][0]["code"], "unsupported_construct",
-        "{document}"
+fn a_package_value_item_over_a_scalar_function_is_inapplicable() {
+    let item = assert_parity(
+        "package-value-scalar-inapplicable",
+        WIDE,
+        json!([{"claim": "Wide", "kind": "value-validity"}]),
     );
-    assert_eq!(
-        document["diagnostics"][0]["cause"], "not-yet-implemented",
-        "{document}"
+    assert_eq!(item["disposition"]["cause"], "inapplicable-kind", "{item}");
+}
+
+/// An enum parameter enumerates and spells the same first counterexample
+/// from authenticated package identities, including canonical member order.
+#[trace("TC-2410", "FR-940-AC-13")]
+#[test]
+fn a_package_value_clause_over_an_enum_parameter_equals_the_source() {
+    let item = assert_parity(
+        "package-value-enum-parameter",
+        "enum Status { READY, DONE }\nfunction Ready using v(s: Status): Boolean pure { s = Status::READY }\n",
+        json!([{"claim": "Ready", "kind": "value-validity"}]),
     );
+    assert_eq!(label(&item), "refuted", "{item}");
+    assert_eq!(item["replay"]["reproduced"], true, "{item}");
 }
 
 /// FR-940-AC-13: value items mixed with a temporal clause keep the request's
@@ -159,7 +162,6 @@ fn malformed_package_bytes_refuse_a_value_item_typed() {
         assert_eq!(run.exit, 20, "{name}");
     }
 }
-
 
 /// FR-940-AC-13: a Boolean parameter's counterexample is spelled and
 /// replayed as the source route does.

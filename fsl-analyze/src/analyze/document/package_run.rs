@@ -314,6 +314,7 @@ enum Named<'s> {
         index: RequestIndex,
         name: &'s str,
         selection: &'s ItemSelection,
+        claim: Option<OccurrenceKey>,
     },
     /// A `schedulability` item over a task-set claim (FR-246, FR-633).
     Schedule {
@@ -347,6 +348,7 @@ enum Route<'a> {
 struct PackageValue<'a> {
     target: ValueTarget<'a>,
     result_bound: Option<filament_exact::NodeKey>,
+    record: Option<fsl_route::request::RequirementItem>,
 }
 
 /// An authored clause and the optional protocol subject it runs over.
@@ -367,6 +369,27 @@ struct ClauseRoute<'a> {
 /// [`PackageRunError::Document`] as [`super::settle_run`] refuses or faults.
 pub fn settle_package_run(
     run: PackageRun<'_>,
+    negotiate: &dyn Negotiate,
+    cancel: &Cancel,
+) -> Result<SettledRun, PackageRunError> {
+    settle_package_run_inner(run, None, negotiate, cancel)
+}
+
+/// Settle the value-validity records owned by a package call (FR-961).
+/// Each call item retains its admitted row index and expression occurrence.
+pub fn settle_package_call(
+    run: PackageRun<'_>,
+    function: &str,
+    call_items: &[super::CallItem],
+    negotiate: &dyn Negotiate,
+    cancel: &Cancel,
+) -> Result<SettledRun, PackageRunError> {
+    settle_package_run_inner(run, Some((function, call_items)), negotiate, cancel)
+}
+
+fn settle_package_run_inner(
+    run: PackageRun<'_>,
+    call: Option<(&str, &[super::CallItem])>,
     negotiate: &dyn Negotiate,
     cancel: &Cancel,
 ) -> Result<SettledRun, PackageRunError> {
@@ -401,7 +424,23 @@ pub fn settle_package_run(
     {
         return Err(PackageRunError::Pending(refusal));
     }
-    let named = resolve_names(package, items)?;
+    let named = if let Some((function, call_items)) = call {
+        if call_items.len() != items.len() {
+            return Err(AnalyzeDocumentError::Fault.into());
+        }
+        call_items
+            .iter()
+            .zip(items)
+            .map(|(item, selection)| Named::Value {
+                index: item.request_index,
+                name: function,
+                selection,
+                claim: Some(item.claim.clone()),
+            })
+            .collect()
+    } else {
+        resolve_names(package, items)?
+    };
     let runnable = named
         .iter()
         .any(|named| !matches!(named, Named::Settled(_)));
@@ -579,7 +618,8 @@ pub fn settle_package_run(
                 index,
                 name,
                 selection,
-            } => match reads.value(index, name, selection)? {
+                claim,
+            } => match reads.value(index, name, selection, claim.as_ref())? {
                 Resolution::Settled(settled) => resolved.push(settled),
                 Resolution::Claim(claim, target) => {
                     value_claims.push(claim.item.claim.clone());
@@ -1168,6 +1208,7 @@ fn resolve_names<'s>(
                         index,
                         name,
                         selection,
+                        claim: None,
                     });
                 }
                 return Err(pending(declaration_pending_family(view, declaration)));
@@ -1531,6 +1572,7 @@ impl<'r, 'a: 'r> ClaimReads<'r, 'a> {
         index: RequestIndex,
         name: &str,
         selection: &ItemSelection,
+        selected_claim: Option<&OccurrenceKey>,
     ) -> Result<Resolution<PackageValue<'a>>, PackageRunError> {
         let pending = || {
             PackageRunError::Pending(PendingPackageFamily {
@@ -1546,24 +1588,6 @@ impl<'r, 'a: 'r> ClaimReads<'r, 'a> {
             .ok()
             .flatten()
             .ok_or_else(pending)?;
-        if let Err(fsl_replay::value_check::PackageSelection::Selection(
-            fsl_replay::value_check::Selection::NoForm,
-        )) = body
-            .occurrences
-            .iter()
-            .find(|occurrence| {
-                matches!(occurrence.origin().role().as_str(), "claim" | "declaration")
-            })
-            .map_or(Ok(None), |claim| {
-                ValueTarget::select_package(self.package, name, claim).map(Some)
-            })
-        {
-            return Ok(Resolution::Settled(invalid_kind(
-                index,
-                Some(name),
-                "inapplicable-kind",
-            )));
-        }
         let mut clauses: Vec<&OccurrenceKey> = body
             .occurrences
             .iter()
@@ -1572,9 +1596,29 @@ impl<'r, 'a: 'r> ClaimReads<'r, 'a> {
             })
             .collect();
         clauses.sort();
-        let claim = clauses.first().copied().ok_or_else(pending)?;
-        let target =
-            ValueTarget::select_package(self.package, name, claim).map_err(|_| pending())?;
+        let claim = selected_claim
+            .or_else(|| clauses.first().copied())
+            .ok_or_else(pending)?;
+        let target = match ValueTarget::select_package(self.package, name, claim) {
+            Ok(target) => target,
+            Err(fsl_replay::value_check::PackageSelection::Selection(
+                fsl_replay::value_check::Selection::NoForm,
+            )) if selected_claim.is_none() => {
+                return Ok(Resolution::Settled(invalid_kind(
+                    index,
+                    Some(name),
+                    "inapplicable-kind",
+                )));
+            }
+            Err(refusal) => {
+                return Err(PackageRunError::Pending(PendingPackageFamily {
+                    request_index: Some(index),
+                    note: Some(format!("value-validity: {refusal:?}")),
+                    family: PendingFamily::Declaration,
+                    node: None,
+                }));
+            }
+        };
         // The package form spells Boolean and integer parameters only.
         if !target.parameters().iter().all(|parameter| {
             matches!(
@@ -1585,7 +1629,23 @@ impl<'r, 'a: 'r> ClaimReads<'r, 'a> {
                     | fsl_replay::value_check::ParameterDomain::Values(_)
             )
         }) {
-            return Err(pending());
+            let shape = target
+                .parameters()
+                .iter()
+                .find_map(|parameter| match parameter.domain() {
+                    fsl_replay::value_check::ParameterDomain::Union(_) => Some("union"),
+                    fsl_replay::value_check::ParameterDomain::Unsupported(_) => {
+                        Some("parameter-type")
+                    }
+                    _ => None,
+                })
+                .unwrap_or("parameter-type");
+            return Err(PackageRunError::Pending(PendingPackageFamily {
+                request_index: Some(index),
+                note: Some(format!("value-validity unsupported shape: {shape}")),
+                family: PendingFamily::Declaration,
+                node: None,
+            }));
         }
         let kind = Capability::ValueValidity;
         let named = selection.backend.as_deref().map(BackendId::new);
@@ -1601,9 +1661,39 @@ impl<'r, 'a: 'r> ClaimReads<'r, 'a> {
                 return Ok(Resolution::Settled(refused));
             }
         }
-        let extent = target
-            .clause_extent()
-            .map_or(ExtentClassification::Bounded, ExtentClassification::of);
+        let record = if selected_claim.is_some() {
+            let rows = self
+                .package
+                .requirement_items()
+                .iter()
+                .filter(|row| {
+                    super::package_value::occurrence(self.package, row).as_ref() == Some(claim)
+                })
+                .collect::<Vec<_>>();
+            let [row] = rows.as_slice() else {
+                return Err(pending());
+            };
+            Some(
+                super::package_value::requirement_item(
+                    self.package,
+                    row,
+                    index,
+                    self.registry,
+                    named.as_ref(),
+                )
+                .map_err(|_| pending())?,
+            )
+        } else {
+            None
+        };
+        let extent = record.as_ref().map_or_else(
+            || {
+                target
+                    .clause_extent()
+                    .map_or(ExtentClassification::Bounded, ExtentClassification::of)
+            },
+            |record| record.extent(),
+        );
         let candidates = tie(
             self.registry.candidates(kind, named.as_ref()),
             kind,
@@ -1639,6 +1729,7 @@ impl<'r, 'a: 'r> ClaimReads<'r, 'a> {
             PackageValue {
                 target,
                 result_bound: body.semantic_type.clone(),
+                record,
             },
         ))
     }
@@ -2903,6 +2994,7 @@ impl<'a> WorkInputs<'_, 'a> {
                 let PackageValue {
                     target,
                     result_bound,
+                    record,
                 } = *value;
                 let target =
                     target.with_limits(fsl_replay::AccountingLimits(self.limits.accounting));
@@ -2914,17 +3006,17 @@ impl<'a> WorkInputs<'_, 'a> {
                 if let (Some(backend), Some(admitted)) = (backend, &self.admitted) {
                     // FR-644-AC-8: the provider is sent the request the
                     // source route sends, over the admitted bytes.
-                    let routed = target
-                        .clause_extent()
-                        .zip(result_bound)
-                        .and_then(|bounds| {
-                            crate::provider::routed_package_clause_item(
-                                self.engines.registrations(),
-                                item.request_index,
-                                &item.claim,
-                                bounds,
-                                item.backend.as_ref(),
-                            )
+                    let routed = record
+                        .or_else(|| {
+                            target.clause_extent().zip(result_bound).and_then(|bounds| {
+                                crate::provider::routed_package_clause_item(
+                                    self.engines.registrations(),
+                                    item.request_index,
+                                    &item.claim,
+                                    bounds,
+                                    item.backend.as_ref(),
+                                )
+                            })
                         })
                         .map(|routed| routed.with_options(item.options.backend_options.clone()));
                     crate::provider::package_provider_item(

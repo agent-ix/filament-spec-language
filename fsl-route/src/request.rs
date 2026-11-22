@@ -837,6 +837,22 @@ pub struct RequirementItem {
 }
 
 impl RequirementItem {
+    /// An admitted scalar-operation item with its recorded bound and guards.
+    pub fn value_operation(
+        index: RequestIndex,
+        occurrence: OccurrenceKey,
+        extent: &ClaimExtent,
+        result_bound: NodeKey,
+        conversion_context: Option<OccurrenceKey>,
+        path_condition: Vec<PathGuard>,
+        candidates: CandidateOutcome,
+    ) -> Self {
+        let mut item = Self::value_clause(index, occurrence, extent, result_bound, candidates);
+        item.conversion_context = conversion_context;
+        item.path_condition = path_condition;
+        item
+    }
+
     /// The `value-validity` item of a `Boolean` value clause at
     /// `occurrence`, which has no requirement record: the clause is a
     /// `Boolean` function's body, and its extent is the domains of that
