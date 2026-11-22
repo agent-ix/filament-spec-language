@@ -242,28 +242,45 @@ impl ReplayPackage {
     /// recorded `check_mode` spelling. A node id leaves out `check_mode`, so
     /// the same function has the same id in the proving package and in its
     /// recompile.
-    pub(crate) fn function_records(bytes: &[u8]) -> Vec<FunctionRecord> {
-        let Ok(document) = serde_json::from_slice::<serde_json::Value>(bytes) else {
+    pub(crate) fn function_records(document: &Document) -> Vec<FunctionRecord> {
+        let Some(Node::Array(nodes)) = member(document.root(), "semantic_graph")
+            .and_then(|graph| member(graph, "nodes"))
+            .map(|nodes| nodes.node())
+        else {
             return Vec::new();
         };
-        let nodes = document["semantic_graph"]["nodes"]
-            .as_array()
-            .map_or(&[][..], Vec::as_slice);
         nodes
-            .iter()
             .enumerate()
-            .filter(|(_, node)| node["node_tag"] == "function")
+            .filter(|(_, node)| {
+                matches!(
+                    member(*node, "node_tag").map(|tag| tag.node()),
+                    Some(Node::String("function"))
+                )
+            })
             .map(|(position, node)| FunctionRecord {
                 position,
-                node_id: node["node_id"].to_string(),
-                name: match node["declaration"]["qualified_name"]
-                    .as_array()
-                    .map(Vec::as_slice)
-                {
-                    Some([name]) => name.as_str().map(str::to_owned),
+                // Only the small identity subtree is encoded. An encoding failure
+                // cannot match a genuine emitted function ID.
+                node_id: member(node, "node_id")
+                    .map(|id| {
+                        quire_canonical::to_vec(&id, quire_canonical::Limits::new(u64::MAX))
+                            .unwrap_or_default()
+                    })
+                    .unwrap_or_else(|| b"null".to_vec()),
+                name: member(node, "declaration")
+                    .and_then(|declaration| member(declaration, "qualified_name"))
+                    .and_then(|names| match names.node() {
+                        Node::Array(mut names) if names.len() == 1 => names.next(),
+                        _ => None,
+                    })
+                    .and_then(|name| match name.node() {
+                        Node::String(name) => Some(name.to_owned()),
+                        _ => None,
+                    }),
+                mode: member(node, "check_mode").and_then(|mode| match mode.node() {
+                    Node::String(mode) => Some(mode.to_owned()),
                     _ => None,
-                },
-                mode: node["check_mode"].as_str().map(str::to_owned),
+                }),
             })
             .collect()
     }
@@ -276,7 +293,7 @@ impl ReplayPackage {
         &self,
     ) -> std::collections::BTreeMap<String, filament_semantic_value::checking::CheckMode> {
         use filament_semantic_value::checking::CheckMode;
-        Self::function_records(&self.bytes)
+        Self::function_records(&self.document)
             .into_iter()
             .filter_map(|record| {
                 let mode = match record.mode.as_deref()? {
@@ -572,8 +589,8 @@ mod tests;
 pub(crate) struct FunctionRecord {
     /// The node's position in `/semantic_graph/nodes`.
     pub(crate) position: usize,
-    /// The node id, as its JSON spelling.
-    pub(crate) node_id: String,
+    /// The node id, as its canonical JSON spelling.
+    pub(crate) node_id: Vec<u8>,
     /// The name a declared function declares; `None` for a clause function.
     pub(crate) name: Option<String>,
     /// The recorded `check_mode` spelling, when present.

@@ -2214,7 +2214,7 @@ pub(crate) fn recompile_with_temporal_selections(
         }
     }
     check_recorded_modes(
-        request.package().bytes(),
+        request.package().document(),
         compiled.emitted.package().bytes(),
     )?;
     request
@@ -3198,9 +3198,17 @@ fn charges(consumed: impl IntoIterator<Item = (LimitKind, u64)>) -> ScalarLimits
 /// FR-098-AC-34: every function the proving package records is rechecked
 /// under exactly the mode it records; a function whose recompile records
 /// another mode, or none, is refused at its node.
-fn check_recorded_modes(recorded: &[u8], recompiled: &[u8]) -> Result<(), ReplayRefusal> {
-    let recompiled_modes: std::collections::BTreeMap<String, Option<String>> =
-        crate::ReplayPackage::function_records(recompiled)
+fn check_recorded_modes(
+    recorded: &quire_canonical::Document,
+    recompiled: &[u8],
+) -> Result<(), ReplayRefusal> {
+    // Read the emitted side once; the recorded side already owns a flat document.
+    let recompiled_modes: std::collections::BTreeMap<Vec<u8>, Option<String>> =
+        quire_canonical::read(recompiled, u64::MAX)
+            .ok()
+            .as_ref()
+            .map(crate::ReplayPackage::function_records)
+            .unwrap_or_default()
             .into_iter()
             .map(|record| (record.node_id, record.mode))
             .collect();

@@ -715,13 +715,51 @@ fn list(declaration: NodeKey, depth: usize) -> WitnessValue {
 fn tc_736_a_100000_term_source_and_list_replay_to_the_proving_verdict() {
     on_small_stack(|| {
         const TERMS: usize = 100_000;
-        let sum = vec!["l.head"; TERMS].join(" + ");
-        let fixture = fixture_with_raised_limits(&format!(
-            "record List {{ head: Int[0, 9]; tail: List?; }}\n\
-             function small using v(l: List): Boolean pure {{ {sum} < 5 }}\n"
-        ));
-        let value = list(fixture.record_id("List"), TERMS);
-        let raised = ReplayLimits::default().with_input_bytes(1 << 28);
+        // Retain the replay inputs, not the compiler graph, during replay.
+        let (source_bytes, package_bytes, target, parameter, record) = {
+            let sum = vec!["l.head"; TERMS].join(" + ");
+            let fixture = fixture_with_raised_limits(&format!(
+                "record List {{ head: Int[0, 9]; tail: List?; }}\n\
+                 function small using v(l: List): Boolean pure {{ {sum} < 5 }}\n"
+            ));
+            let target = crate::RequestTargetWire::function(
+                name(&["small"]),
+                declaration_key(&fixture.compiled, &name(&["small"])),
+            );
+            let parameter = fixture.parameter("small");
+            let record = fixture.record_id("List");
+            (
+                fixture.source.into_bytes(),
+                fixture.compiled.emitted.bytes().to_vec(),
+                target,
+                parameter,
+                record,
+            )
+        };
+        let request = |source| ReplayRequestWire {
+            package: crate::ReplayPackage::read(&package_bytes, 1 << 30)
+                .expect("actual emitted replay package"),
+            replay_target: target.clone(),
+            source,
+            certificate: None,
+            profile_selections: vec![],
+            dependencies: vec![],
+            obligation_identity: crate::ObligationIdentity::new(crate::fixture_node(2), None, 0),
+            backend: "kani-backend-1".to_owned(),
+            state_environment: StateEnvironment::new(vec![]),
+            accounting_limits: UNLIMITED,
+            stage_limits: BTreeMap::new(),
+            supplied_limits: None,
+            object_environment: None,
+            declared_domains: vec![],
+            byte_provision: vec![(
+                AUTHORITY.to_owned(),
+                IDENTITY.to_owned(),
+                source_bytes.clone(),
+            )],
+            documents: vec![],
+        };
+        let raised = ReplayLimits::default().with_input_bytes(1 << 29);
         let limits: BTreeMap<String, u64> = BTreeMap::from(
             [
                 "s1.input_bytes",
@@ -747,21 +785,26 @@ fn tc_736_a_100000_term_source_and_list_replay_to_the_proving_verdict() {
                 (name.to_owned(), bound)
             }),
         );
-        let witness = |fixture: &Fixture, limits: &BTreeMap<String, u64>| {
-            let mut wire = fixture.witness("small", &value);
+        let witness = |limits: &BTreeMap<String, u64>| {
+            let transcript = {
+                let value = list(record.clone(), TERMS);
+                let text = value.to_value_text().unwrap();
+                format!("<<<assertion|small|c|{}={text}>>>", crate::pn(&parameter))
+            };
+            let mut wire = request(ReplaySource::Witness(Witness::parse(transcript).unwrap()));
             wire.stage_limits = limits.clone();
             wire
         };
         // Step 2: the default limits stop the recompile at a named stage.
-        let refused = replay(witness(&fixture, &BTreeMap::new()), raised);
+        let refused = replay(witness(&BTreeMap::new()), raised);
         assert!(
             matches!(refused, Err(ReplayRefusal::Recompile { .. })),
             "{refused:?}"
         );
         // The raised settings replay, from the witness and from the input.
-        let wire = witness(&fixture, &limits);
+        let wire = witness(&limits);
         assert_reproduced(replay(wire, raised));
-        let mut input = fixture.input("small", value.clone());
+        let mut input = request(typed_input(parameter.clone(), list(record.clone(), TERMS)));
         input.stage_limits = limits;
         assert_reproduced(replay(input, raised));
     });
