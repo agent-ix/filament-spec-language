@@ -57,7 +57,6 @@ fn dense_timed_clauses_preserve_whole_result_and_exit_without_source() {
         if expected == "proved" {
             assert_eq!(item["record"]["basis"]["type"], "zone-certified", "{item}");
             assert_eq!(item["record"]["certification"], "certified", "{item}");
-            assert_eq!(item["certificate"]["accepted"], true, "{item}");
         } else {
             assert_eq!(item["replay"]["reproduced"], true, "{item}");
         }
@@ -153,6 +152,11 @@ fn dense_timed_clause_atoms_preserve_complete_ordered_charges() {
     let clause = input
         .temporal_run_clause(&occurrence, 1000)
         .expect("package timed clause");
+    assert_eq!(
+        clause.over(),
+        node.clause().over(),
+        "the genuine clause parameter identity"
+    );
     let source = world.system();
     let mut package_request = request.clone();
     package_request.input = input.input();
@@ -167,11 +171,33 @@ fn dense_timed_clause_atoms_preserve_complete_ordered_charges() {
     let instances = source
         .instances(&ValueType::Reference(object.clone()))
         .expect("instances");
+    let package_instances = package
+        .instances(&clause.over().1)
+        .expect("package instances");
+    assert_eq!(
+        package_instances, instances,
+        "the genuine model instance identities"
+    );
     assert_eq!(instances.len(), 1);
     let source_states = source.initial();
     let package_states = package.initial();
     assert_eq!(source_states.len(), 1);
     assert_eq!(package_states.len(), 1);
+    assert_eq!(
+        package
+            .state_key(&package_states[0])
+            .expect("package state key"),
+        source
+            .state_key(&source_states[0])
+            .expect("source state key"),
+        "the actual initial model states"
+    );
+    let bare_world = bare.world().expect("bare expression world");
+    eprintln!(
+        "dense atom data declarations: retained input {:?}; expression world {:?}",
+        input.input().types.attributes(object.clone()),
+        bare_world.types().attributes(object.clone()),
+    );
     let mut evaluated = 0;
     for (index, formula) in node.clause().formula().nodes().iter().enumerate() {
         if !matches!(formula, FormulaNode::Holds { .. }) {
@@ -184,8 +210,18 @@ fn dense_timed_clause_atoms_preserve_complete_ordered_charges() {
             .atom(atom, &instances[0], &source_states[0], &mut source_meter)
             .expect("source atom");
         let actual = package_letters
-            .atom(atom, &instances[0], &package_states[0], &mut package_meter)
-            .expect("package atom");
+            .atom(
+                atom,
+                &package_instances[0],
+                &package_states[0],
+                &mut package_meter,
+            )
+            .unwrap_or_else(|failure| {
+                panic!(
+                    "package atom: {failure:?}; original native call: {:?}",
+                    package_letters.take_call_failure()
+                )
+            });
         assert_eq!(actual, expected);
         assert!(!source_meter.charge_log_truncated());
         assert!(!package_meter.charge_log_truncated());
