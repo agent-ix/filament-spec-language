@@ -6564,10 +6564,21 @@ pub fn emit_timed_models(
             .write_nodes()
             .map_err(EmitRefusal::TimedModelWriterInvariant)?;
         for node in written {
-            if CheckedNodeTag::from_wire(&node.node_tag) != Some(CheckedNodeTag::TimedModel)
-                || timed.insert(node.node_id.clone(), node).is_some()
-            {
+            if CheckedNodeTag::from_wire(&node.node_tag) != Some(CheckedNodeTag::TimedModel) {
                 return Err(EmitRefusal::TimedModelNodeSetMismatch);
+            }
+            // Equal declarations share one node (FR-322), so each model
+            // writes its copy; a repeat is accepted only when it equals the
+            // node already held.
+            match timed.entry(node.node_id.clone()) {
+                std::collections::btree_map::Entry::Vacant(slot) => {
+                    slot.insert(node);
+                }
+                std::collections::btree_map::Entry::Occupied(held) => {
+                    if *held.get() != node {
+                        return Err(EmitRefusal::TimedModelNodeSetMismatch);
+                    }
+                }
             }
         }
     }
@@ -7522,7 +7533,7 @@ fn emit_package_inner(
             &mut source_map,
             &mut None,
         )?);
-        merge_equal_timed_nodes(&mut nodes, &mut source_map);
+        merge_equal_timed_nodes(&mut nodes, &mut source_map)?;
         // FSpec FR-322 "Aggregate order": the lists are written in declared
         // order, which reads the nodes' regions and structure alone, and
         // the nodes whose lists moved are rekeyed.
@@ -7535,6 +7546,7 @@ fn emit_package_inner(
                 &mut source_map,
                 &mut None,
             )?);
+            merge_equal_timed_nodes(&mut nodes, &mut source_map)?;
         }
         #[cfg(test)]
         TIMED_GRAPH.with(|held| *held.borrow_mut() = Some((nodes.clone(), source_map.clone())));
@@ -10378,36 +10390,66 @@ fn collection_layers(
 }
 
 /// FSpec FR-322 "Timed-model nodes" and "Every node has one or more exact
-/// source occurrences": timed nodes of equal content are one node, so two
-/// declarations that write one body (two `time` declarations of one kind and
-/// unit) are one node with one occurrence at each declaration. Each later
-/// node of an id is dropped, and its source-map entries continue the
-/// occurrence ordinals of the node kept, per role, in the declared order
-/// they were written.
-fn merge_equal_timed_nodes(
+/// source occurrences": derived timed nodes of equal content are one node, so
+/// two declarations that write one body (two `time` declarations of one kind
+/// and unit, or `urgent when` over one predicate) are one node with one
+/// occurrence per declaration. A repeated id is merged only when the nodes are
+/// derived (no declaration) and equal apart from `occurrences`; any other
+/// repeat is a producer disagreement. The kept node's entries are numbered per
+/// role in ascending (source identity, start, end) order, as the urgency path
+/// orders its declarations.
+pub(crate) fn merge_equal_timed_nodes(
     nodes: &mut Vec<CheckedSemanticNodeV2>,
     source_map: &mut [CheckedSourceMapEntry],
-) {
-    let mut seen: BTreeSet<CheckedNodeId> = BTreeSet::new();
+) -> Result<(), EmitRefusal> {
+    let mut first_at: BTreeMap<CheckedNodeId, usize> = BTreeMap::new();
     let mut repeated: BTreeSet<CheckedNodeId> = BTreeSet::new();
-    for node in nodes.iter().filter(|node| {
-        CheckedNodeTag::from_wire(&node.node_tag) == Some(CheckedNodeTag::TimedModel)
-    }) {
-        if !seen.insert(node.node_id.clone()) {
-            repeated.insert(node.node_id.clone());
+    for (at, node) in nodes.iter().enumerate() {
+        if CheckedNodeTag::from_wire(&node.node_tag) != Some(CheckedNodeTag::TimedModel) {
+            continue;
+        }
+        match first_at.get(&node.node_id) {
+            None => {
+                first_at.insert(node.node_id.clone(), at);
+            }
+            Some(&held) => {
+                let mut left = nodes[held].clone();
+                let mut right = node.clone();
+                left.occurrences.clear();
+                right.occurrences.clear();
+                if left != right || node.declaration.is_some() {
+                    return Err(EmitRefusal::TimedModelWriterInvariant(
+                        "unequal or declared timed nodes share one id",
+                    ));
+                }
+                repeated.insert(node.node_id.clone());
+            }
         }
     }
     if repeated.is_empty() {
-        return;
+        return Ok(());
     }
+    // Keep the first node of each repeated id; drop the equal later ones.
     let mut kept: BTreeSet<CheckedNodeId> = BTreeSet::new();
     nodes.retain(|node| !repeated.contains(&node.node_id) || kept.insert(node.node_id.clone()));
     for id in &repeated {
-        let mut next: BTreeMap<String, u64> = BTreeMap::new();
-        let mut occurrences = Vec::new();
-        for entry in source_map.iter_mut().filter(|entry| entry.node_id == *id) {
+        let mut entries: Vec<&mut CheckedSourceMapEntry> = source_map
+            .iter_mut()
+            .filter(|entry| entry.node_id == *id)
+            .collect();
+        let order_key = |entry: &CheckedSourceMapEntry| {
+            entry
+                .regions
+                .iter()
+                .map(|region| (region.source.identity.clone(), region.start, region.end))
+                .min()
+        };
+        entries.sort_by_cached_key(|entry| order_key(entry));
+        let mut next: BTreeMap<&'static str, u64> = BTreeMap::new();
+        let mut occurrences = Vec::with_capacity(entries.len());
+        for entry in entries {
             let counter = next
-                .entry(crate::checked_v2::role_spelling(&entry.role).to_owned())
+                .entry(crate::checked_v2::role_spelling(&entry.role))
                 .or_default();
             entry.ordinal = *counter;
             *counter += 1;
@@ -10420,4 +10462,5 @@ fn merge_equal_timed_nodes(
             node.occurrences = occurrences;
         }
     }
+    Ok(())
 }

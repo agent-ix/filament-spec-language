@@ -1365,20 +1365,15 @@ fn a_timed_predicate_population_is_the_one_shared_reference_node() {
     assert_eq!((timed.invariants.len(), timed.urgencies.len()), (1, 2));
 }
 
-/// QSL-2768, FSpec FR-322 "Timed-model nodes": a model-document `time Config
-/// dense unit ms` and a source `time Order dense unit ms` have one content
-/// (`kind`, `unit`), so they are ONE `time_source` node with one `expression`
-/// occurrence at each declaration, and the one package emits and strictly
-/// reads.
-#[trace("TC-685")]
-#[test]
-fn two_time_declarations_of_equal_content_are_one_source_with_two_occurrences() {
+/// The package over the model document `Config` and the source object
+/// `Order`, each under `time <name> dense unit ms`, with `body` after them.
+fn two_time_package(body: &str) -> (Vec<u8>, String, CheckedPackage) {
     let document = clocked_document_with(false);
     let packages = fsl_semantics::model::intake::package_input([document.as_slice()]).unwrap();
-    let unit = clocked_unit(
-        "object Order { n: Integer; operation step() modifies self.n; }\n\
-         time Order dense unit ms;\n",
-    );
+    let unit = clocked_unit(&format!(
+        "object Order {{ n: Integer; operation step() modifies self.n; }}\n\
+         time Order dense unit ms;\n{body}"
+    ));
     let graph = assemble_with_models(unit.as_bytes(), &packages)
         .expect("the unit assembles")
         .check(
@@ -1388,7 +1383,26 @@ fn two_time_declarations_of_equal_content_are_one_source_with_two_occurrences() 
         )
         .unwrap_or_else(|refusals| panic!("two time declarations check: {refusals:?}"));
     assert_eq!(graph.time_sources().len(), 2);
-    let emission = emit_checked(&CheckedPackage::link(graph)).expect("the package emits");
+    (document, unit, CheckedPackage::link(graph))
+}
+
+/// The source text of `entry`'s first region.
+fn entry_text<'u>(unit: &'u str, entry: &Value) -> &'u str {
+    let region = &entry["regions"][0];
+    &unit[region["start"].as_u64().unwrap() as usize..region["end"].as_u64().unwrap() as usize]
+}
+
+/// QSL-2768, FSpec FR-322 "Timed-model nodes": a model-document `time Config
+/// dense unit ms` and a source `time Order dense unit ms` have one content
+/// (`kind`, `unit`), so they are ONE `time_source` node with one `expression`
+/// occurrence at each declaration, both roots reference it, each root keeps
+/// its own declaration region, and the one package emits, strictly reads and
+/// re-emits.
+#[trace("TC-685")]
+#[test]
+fn two_time_declarations_of_equal_content_are_one_source_with_two_occurrences() {
+    let (document, unit, package) = two_time_package("");
+    let emission = emit_checked(&package).expect("the package emits");
     let wire = wire(&emission);
     let sources: Vec<&Value> = nodes(&wire)
         .iter()
@@ -1396,36 +1410,49 @@ fn two_time_declarations_of_equal_content_are_one_source_with_two_occurrences() 
         .collect();
     assert_eq!(sources.len(), 1, "equal content is one node");
     let id = &sources[0]["node_id"];
-    let mut regions: Vec<(u64, u64, u64)> = wire["source_map"]
-        .as_array()
-        .expect("source_map")
-        .iter()
-        .filter(|entry| &entry["node_id"] == id)
-        .map(|entry| {
-            assert_eq!(entry["role"], "expression");
-            let region = &entry["regions"][0];
-            (
-                entry["ordinal"].as_u64().unwrap(),
-                region["start"].as_u64().unwrap(),
-                region["end"].as_u64().unwrap(),
-            )
-        })
-        .collect();
-    regions.sort();
+    let entries_of = |id: &Value, role: &str| -> Vec<&Value> {
+        wire["source_map"]
+            .as_array()
+            .expect("source_map")
+            .iter()
+            .filter(|entry| &entry["node_id"] == id && entry["role"] == role)
+            .collect()
+    };
+    let mut occurrences = entries_of(id, "expression");
+    occurrences.sort_by_key(|entry| entry["ordinal"].as_u64().unwrap());
     assert_eq!(
-        regions.iter().map(|r| r.0).collect::<Vec<_>>(),
-        [0, 1],
-        "{regions:?}"
+        occurrences
+            .iter()
+            .map(|entry| entry["ordinal"].as_u64().unwrap())
+            .collect::<Vec<_>>(),
+        [0, 1]
     );
-    assert_ne!((regions[0].1, regions[0].2), (regions[1].1, regions[1].2));
-    for (_, start, end) in &regions {
-        let text = &unit.as_bytes()[*start as usize..*end as usize];
-        assert!(
-            String::from_utf8_lossy(text).starts_with("time "),
-            "{}",
-            String::from_utf8_lossy(text)
-        );
+    // Ordinal 0 is the declaration that starts first (FR-322 order key).
+    let starts: Vec<u64> = occurrences
+        .iter()
+        .map(|entry| entry["regions"][0]["start"].as_u64().unwrap())
+        .collect();
+    assert!(starts[0] < starts[1], "{starts:?}");
+    assert!(entry_text(&unit, occurrences[0]).starts_with("time Config"));
+    assert!(entry_text(&unit, occurrences[1]).starts_with("time Order"));
+    // Each root's `source` is the one node and its declaration region is its
+    // own `time` declaration.
+    let roots: Vec<&Value> = nodes(&wire)
+        .iter()
+        .filter(|node| node["semantic_form"] == "timed_model")
+        .collect();
+    assert_eq!(roots.len(), 2);
+    let mut declared = Vec::new();
+    for root in &roots {
+        assert_eq!(&member(&root["body"], "source")["target"], id);
+        let entries = entries_of(&root["node_id"], "declaration");
+        assert_eq!(entries.len(), 1, "{entries:?}");
+        declared.push(entry_text(&unit, entries[0]).to_owned());
     }
+    declared.sort();
+    assert!(declared[0].starts_with("time Config"), "{declared:?}");
+    assert!(declared[1].starts_with("time Order"), "{declared:?}");
+
     let mut evidence = CheckedPackageEvidence::new();
     for feature in wire["lock"]["required_features"].as_array().unwrap() {
         evidence.support_feature(feature.as_str().unwrap());
@@ -1440,6 +1467,93 @@ fn two_time_declarations_of_equal_content_are_one_source_with_two_occurrences() 
         &evidence,
     )
     .unwrap_or_else(|failure| panic!("the strict read admits the package: {failure:?}"));
-    let typed = CheckedTimedModel::from_admitted(&read.into_value().admitted).expect("read back");
+    let admitted = read.into_value().admitted;
+    let typed = CheckedTimedModel::from_admitted(&admitted).expect("read back");
     assert_eq!(typed.len(), 2);
+    let re_emitted =
+        crate::emit::emit_timed_models(&admitted, &typed, crate::EmitLimits::fixture())
+            .expect("the typed models re-emit with the shared source");
+    let again: Value = serde_json::from_slice(re_emitted.package().bytes()).expect("JSON");
+    assert_eq!(
+        nodes(&again)
+            .iter()
+            .filter(|node| node["semantic_form"] == "time_source")
+            .count(),
+        1
+    );
+}
+
+/// The merge numbers three equal declarations 0..2 in region order, keeps a
+/// node with another id separate, and refuses an unequal or a declared node
+/// that shares an id.
+#[trace("TC-685")]
+#[test]
+fn equal_timed_nodes_merge_by_region_and_unequal_ones_are_refused() {
+    let (_, _, package) = two_time_package("");
+    emit_checked(&package).expect("the package emits");
+    let (nodes, map) = crate::emit::TIMED_GRAPH
+        .with(|held| held.borrow().clone())
+        .expect("a timed graph");
+    let source = nodes
+        .iter()
+        .find(|node| node.semantic_form.as_ref() == "time_source")
+        .expect("the source")
+        .clone();
+    let entry = map
+        .iter()
+        .find(|entry| entry.node_id == source.node_id)
+        .expect("its entry")
+        .clone();
+    let at = |start: u64| {
+        let mut entry = entry.clone();
+        entry.regions[0].start = start;
+        entry.regions[0].end = start + 1;
+        entry
+    };
+    // Written out of region order; the later start is pushed first.
+    let mut three = vec![source.clone(), source.clone(), source.clone()];
+    let mut entries = vec![at(30), at(10), at(20)];
+    crate::emit::merge_equal_timed_nodes(&mut three, &mut entries).expect("equal nodes merge");
+    assert_eq!(three.len(), 1);
+    let ordinals: Vec<(u64, u64)> = entries
+        .iter()
+        .map(|entry| (entry.regions[0].start, entry.ordinal))
+        .collect();
+    assert_eq!(ordinals, [(30, 2), (10, 0), (20, 1)]);
+    assert_eq!(three[0].occurrences.len(), 3);
+
+    // A node with another id (a different unit or kind) stays separate.
+    let mut odd = source.clone();
+    odd.node_id = nodes
+        .iter()
+        .find(|node| node.semantic_form.as_ref() == "timed_model")
+        .expect("a root")
+        .node_id
+        .clone();
+    let mut mixed = vec![source.clone(), odd, source.clone()];
+    let mut entries = vec![at(10), at(20)];
+    crate::emit::merge_equal_timed_nodes(&mut mixed, &mut entries).expect("merge");
+    assert_eq!(mixed.len(), 2);
+
+    // Same id, different body: refused, not merged.
+    let mut unequal = source.clone();
+    unequal.semantic_form = "time_invariant".into();
+    let mut pair = vec![source.clone(), unequal];
+    assert!(matches!(
+        crate::emit::merge_equal_timed_nodes(&mut pair, &mut []),
+        Err(EmitRefusal::TimedModelWriterInvariant(_))
+    ));
+
+    // Two declared roots of one id (one alias over two packages): refused.
+    let root = nodes
+        .iter()
+        .find(|node| node.semantic_form.as_ref() == "timed_model")
+        .expect("a root")
+        .clone();
+    assert!(root.declaration.is_some());
+    let mut roots = vec![root.clone(), root];
+    assert!(matches!(
+        crate::emit::merge_equal_timed_nodes(&mut roots, &mut []),
+        Err(EmitRefusal::TimedModelWriterInvariant(_))
+    ));
 }
