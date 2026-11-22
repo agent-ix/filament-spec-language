@@ -47,14 +47,10 @@ default = []
 checked-handoff = []
 # `population_fixtures`, the writer of the `Population<T>[N]` Contract IR v2
 # packages the admission corpus emits (QSL-771). It embeds the spine-model
-# fixtures under `tests/fixtures/`, so the default build leaves it out. It
-# enables the optional `fsl-eval` dependency.
-population-fixtures = ["dep:fsl-eval"]
+# fixtures under `tests/fixtures/`, so the default build leaves it out.
+population-fixtures = []
 
 [dependencies]
-# `population_fixtures` checks its spine model through the evaluator's S6a reward
-# evaluator; only the `population-fixtures` feature pulls it in.
-fsl-eval = { path = "fsl-eval", optional = true }
 # ADR-013 O-05: only `model` calls the kernel `EffectiveId` constructor,
 # enforced by the ADR-011 T-12 arch-lint `api-surface` check (`tools/arch-lint`),
 # not by this dependency edge itself -- every crate that depends on
@@ -109,8 +105,8 @@ filament-observation = { workspace = true }
 filament-specification = { workspace = true }
 # Non-core request-file intake exercised by the root acceptance tests.
 fsl-command = { path = "fsl-command" }
-# The integration tests drive the checked-package temporal evidence call. No
-# shipped module of this crate uses it.
+# Tests drive the checked-package temporal evidence call, and the population
+# fixture example supplies S3's reward evaluator. No shipped module uses it.
 fsl-eval = { path = "fsl-eval" }
 serde_json_canonicalizer = "0.3.2"
 # FR-515-AC-20, FR-516-AC-32: `Emission::with_package_bytes` presents the twin

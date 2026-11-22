@@ -9,6 +9,8 @@
 //! bytes, for [`CASES`], into a new directory so IR's conformance gate can
 //! read them without depending on FSL.
 //! The `population_v2_fixtures` example is a thin caller of [`write()`].
+//! Callers supply S3's reward-evaluation port; the example and unit tests
+//! use the real S6a evaluator through the root crate's dev-dependency.
 //!
 //! Beside each case the directory holds the domain package document the
 //! reader needs as evidence, under [`DOMAIN_PACKAGE_FILE`].
@@ -39,7 +41,10 @@ use filament_semantic_value::checking::CheckingLimits;
 use fsl_forms::{BuiltinType, Expression, FunctionDeclaration, TypeForm, TypeFormHead};
 use fsl_foundation::{source::provenance::SourceRegion, Span};
 use fsl_package::{read_import_view, AdmittedPackages, CheckedPackage, V2ReadLimits};
-use fsl_semantics::{check::PackageDeclarations, library::LibraryName};
+use fsl_semantics::{
+    check::{PackageDeclarations, RewardEvaluator},
+    library::LibraryName,
+};
 
 #[path = "../tests/support/spine_model.rs"]
 mod spine_model;
@@ -202,6 +207,7 @@ pub fn file_name(bounds: &[u64]) -> String {
 /// package is lent, not returned).
 fn with_population_package<T>(
     bindings: &[Binding],
+    reward_evaluator: &dyn RewardEvaluator,
     with: impl FnOnce(&CheckedPackage) -> Result<T, Error>,
 ) -> Result<T, Error> {
     let span = Span { start: 0, end: 0 };
@@ -230,7 +236,7 @@ fn with_population_package<T>(
         .check(
             CheckMode::Linked,
             CheckingLimits::default(),
-            &fsl_eval::value::S6aRewardEvaluator,
+            reward_evaluator,
         )
         .map_err(|refusal| Error::Check(format!("{refusal:?}")))?;
     with(&CheckedPackage::link(graph))
@@ -275,12 +281,15 @@ pub struct Fixture {
 /// `bounds`' package through the v2 emitter, with nothing omitted, and read
 /// back through FSL's I2 read, which runs IR's checked-package v2 reader and
 /// refuses unless it admits the bytes.
-pub fn fixture(bounds: &[u64]) -> Result<Fixture, Error> {
+/// The caller supplies S3's reward-evaluation port for checking the package.
+pub fn fixture(bounds: &[u64], reward_evaluator: &dyn RewardEvaluator) -> Result<Fixture, Error> {
     let bindings: Vec<Binding> = bounds
         .iter()
         .map(|bound| binding("M::Gadget", *bound))
         .collect();
-    with_population_package(&bindings, |package| Ok(emit_and_read(package)?.fixture))
+    with_population_package(&bindings, reward_evaluator, |package| {
+        Ok(emit_and_read(package)?.fixture)
+    })
 }
 
 /// A [`Variant`]'s package as the bytes IR's reader admitted and the typed
@@ -296,8 +305,12 @@ pub struct VariantFixture {
 /// `variant`'s package. The first two variants are emitted and read back as
 /// [`fixture`] does; the third is the first with a parameter retargeted and
 /// read by IR's public reader.
-pub fn variant_fixture(variant: Variant) -> Result<VariantFixture, Error> {
-    with_population_package(variant.bindings(), |package| {
+/// The caller supplies S3's reward-evaluation port for checking the package.
+pub fn variant_fixture(
+    variant: Variant,
+    reward_evaluator: &dyn RewardEvaluator,
+) -> Result<VariantFixture, Error> {
+    with_population_package(variant.bindings(), reward_evaluator, |package| {
         let read = emit_and_read(package)?;
         match variant {
             Variant::SameTypeAndOtherType | Variant::ChangedMax => Ok(VariantFixture {
@@ -475,15 +488,16 @@ fn retarget(
 /// [`VARIANTS`] and the domain package document into `directory`, which must not exist. Every package is emitted
 /// before the directory is created, so an emitter refusal leaves nothing
 /// behind.
-pub fn write(directory: &Path) -> Result<(), Error> {
+/// The caller's reward evaluator checks every case and variant.
+pub fn write(directory: &Path, reward_evaluator: &dyn RewardEvaluator) -> Result<(), Error> {
     let mut files = vec![(DOMAIN_PACKAGE_FILE.to_owned(), DOMAIN_PACKAGE.to_vec())];
     for bounds in CASES {
-        files.push((file_name(bounds), fixture(bounds)?.bytes));
+        files.push((file_name(bounds), fixture(bounds, reward_evaluator)?.bytes));
     }
     for variant in VARIANTS {
         files.push((
             variant.file_name().to_owned(),
-            variant_fixture(variant)?.bytes,
+            variant_fixture(variant, reward_evaluator)?.bytes,
         ));
     }
     fs::create_dir(directory).map_err(|source| match source.kind() {
@@ -513,12 +527,13 @@ mod tests {
         BoundedDomainForm, CheckedNodeId, CheckedOccurrenceRole, CheckedPackageV2,
         CheckedSemanticNodeV2,
     };
+    use fsl_eval::value::S6aRewardEvaluator;
     use ix_trace_rs::trace;
 
     fn written() -> (tempfile::TempDir, PathBuf) {
         let parent = tempfile::tempdir().unwrap();
         let output = parent.path().join("population");
-        write(&output).expect("the fixture set is written");
+        write(&output, &S6aRewardEvaluator).expect("the fixture set is written");
         (parent, output)
     }
 
@@ -548,13 +563,13 @@ mod tests {
         let (_parent, output) = written();
         for bounds in CASES {
             // `fixture` fails unless IR's reader admits the bytes.
-            let fixture =
-                super::fixture(bounds).unwrap_or_else(|refusal| panic!("{bounds:?}: {refusal}"));
+            let fixture = super::fixture(bounds, &S6aRewardEvaluator)
+                .unwrap_or_else(|refusal| panic!("{bounds:?}: {refusal}"));
             let on_disk = fs::read(output.join(file_name(bounds))).unwrap();
             assert_eq!(on_disk, fixture.bytes, "{bounds:?}");
             assert_eq!(
                 fixture,
-                super::fixture(bounds).unwrap(),
+                super::fixture(bounds, &S6aRewardEvaluator).unwrap(),
                 "{bounds:?}: emission is deterministic"
             );
         }
@@ -570,7 +585,7 @@ mod tests {
     #[test]
     fn ir_admits_one_model_population_node_per_bound() {
         for bounds in CASES {
-            let admitted = fixture(bounds)
+            let admitted = fixture(bounds, &S6aRewardEvaluator)
                 .unwrap()
                 .node_kinds
                 .iter()
@@ -589,7 +604,8 @@ mod tests {
     fn each_bound_is_a_typed_population_node() {
         for bounds in CASES {
             let wire: serde_json::Value =
-                serde_json::from_slice(&fixture(bounds).unwrap().bytes).unwrap();
+                serde_json::from_slice(&fixture(bounds, &S6aRewardEvaluator).unwrap().bytes)
+                    .unwrap();
             let nodes = wire["semantic_graph"]["nodes"].as_array().unwrap();
             let mut maxima: Vec<u64> = Vec::new();
             for node in nodes.iter().filter(|node| {
@@ -695,7 +711,7 @@ mod tests {
     #[trace("FR-093-AC-19", "TC-416")]
     #[test]
     fn two_same_type_bindings_and_a_second_object_type_are_admitted() {
-        let package = variant_fixture(Variant::SameTypeAndOtherType)
+        let package = variant_fixture(Variant::SameTypeAndOtherType, &S6aRewardEvaluator)
             .unwrap()
             .package;
         assert_eq!(maxima(&package), [0, 3, 5]);
@@ -717,8 +733,8 @@ mod tests {
     #[trace("FR-093-AC-19", "TC-416")]
     #[test]
     fn a_changed_maximum_regenerates_an_admitted_package() {
-        let base = variant_fixture(Variant::SameTypeAndOtherType).unwrap();
-        let changed = variant_fixture(Variant::ChangedMax).unwrap();
+        let base = variant_fixture(Variant::SameTypeAndOtherType, &S6aRewardEvaluator).unwrap();
+        let changed = variant_fixture(Variant::ChangedMax, &S6aRewardEvaluator).unwrap();
         assert_eq!(maxima(&changed.package), [0, 3, 6]);
         assert_ne!(base.bytes, changed.bytes);
         // The zero and the other-type bindings keep their nodes.
@@ -739,8 +755,9 @@ mod tests {
     #[trace("FR-093-AC-19", "TC-416")]
     #[test]
     fn a_retargeted_parameter_is_admitted() {
-        let base = variant_fixture(Variant::SameTypeAndOtherType).unwrap();
-        let retargeted = variant_fixture(Variant::RetargetedParameter).unwrap();
+        let base = variant_fixture(Variant::SameTypeAndOtherType, &S6aRewardEvaluator).unwrap();
+        let retargeted =
+            variant_fixture(Variant::RetargetedParameter, &S6aRewardEvaluator).unwrap();
         let (base, retargeted) = (&base.package, &retargeted.package);
         let first = population_with_max(base, 0).node_id.clone();
         let second = population_with_max(base, 5).node_id.clone();
@@ -779,8 +796,11 @@ mod tests {
     fn variants_are_deterministic_and_written_beside_the_cases() {
         let (_parent, output) = written();
         for variant in VARIANTS {
-            let fixture = variant_fixture(variant).unwrap();
-            assert_eq!(fixture.bytes, variant_fixture(variant).unwrap().bytes);
+            let fixture = variant_fixture(variant, &S6aRewardEvaluator).unwrap();
+            assert_eq!(
+                fixture.bytes,
+                variant_fixture(variant, &S6aRewardEvaluator).unwrap().bytes
+            );
             assert_eq!(
                 fs::read(output.join(variant.file_name())).unwrap(),
                 fixture.bytes
@@ -795,7 +815,7 @@ mod tests {
         let existing = parent.path().join("existing");
         fs::create_dir(&existing).unwrap();
         fs::write(existing.join("keep"), b"kept").unwrap();
-        match write(&existing) {
+        match write(&existing, &S6aRewardEvaluator) {
             Err(Error::OutputExists { path }) => assert_eq!(path, existing),
             other => panic!("expected OutputExists, got {other:?}"),
         }
@@ -804,7 +824,10 @@ mod tests {
 
         let file = parent.path().join("file");
         fs::write(&file, b"kept").unwrap();
-        assert!(matches!(write(&file), Err(Error::OutputExists { .. })));
+        assert!(matches!(
+            write(&file, &S6aRewardEvaluator),
+            Err(Error::OutputExists { .. })
+        ));
     }
 
     #[trace("FR-093-AC-19", "TC-416")]
@@ -812,7 +835,7 @@ mod tests {
     fn an_output_path_under_a_missing_parent_is_a_typed_io_refusal() {
         let parent = tempfile::tempdir().unwrap();
         let output = parent.path().join("missing").join("population");
-        match write(&output) {
+        match write(&output, &S6aRewardEvaluator) {
             Err(Error::Io { path, source }) => {
                 assert_eq!(path, output);
                 assert_eq!(source.kind(), io::ErrorKind::NotFound);
