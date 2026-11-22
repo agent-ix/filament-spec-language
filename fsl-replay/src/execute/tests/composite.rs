@@ -721,7 +721,7 @@ fn tc_736_a_100000_term_source_and_list_replay_to_the_proving_verdict() {
              function small using v(l: List): Boolean pure {{ {sum} < 5 }}\n"
         ));
         let value = list(fixture.record_id("List"), TERMS);
-        let raised = ReplayLimits::default().with_input_bytes(1 << 28);
+        let raised = ReplayLimits::default().with_input_bytes(1 << 29);
         let limits: BTreeMap<String, u64> = BTreeMap::from(
             [
                 "s1.input_bytes",
