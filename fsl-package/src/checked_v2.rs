@@ -59,7 +59,8 @@ pub use terminal::{
 };
 pub use timed_model::{
     CheckedClockConstraint, CheckedClockGuard, CheckedClockPlace, CheckedClockReset,
-    CheckedConstraintTarget, CheckedGuardPart, CheckedResetTarget, CheckedTimeInvariant,
+    CheckedConstraintTarget, CheckedGuardPart, CheckedGuardQuantifier, CheckedResetTarget,
+    CheckedTimeInvariant,
     CheckedTimeSource, CheckedTimeSourceKind, CheckedTimedModel, CheckedUrgency, ClockComparison,
     ClockPathStep, ResolvedClockPathStep, TimedLiteralTypes, TimedNodeMetadata,
 };

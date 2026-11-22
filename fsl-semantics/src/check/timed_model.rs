@@ -1085,8 +1085,21 @@ pub struct PartNodes {
     pub predicate: NodeKey,
     /// The typed slot parameters quantified by this part, in slot order.
     pub binders: Vec<NodeKey>,
+    /// Whether the guard part is instantiated once for every member of an
+    /// unbounded clock collection (`Each`) or when some member enables it
+    /// (`Some`).
+    pub quantifier: Option<GuardPartQuantifier>,
     /// The part's constraints, in source order.
     pub constraints: Vec<ConstraintNodes>,
+}
+
+/// The collection quantifier carried by a family guard part.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum GuardPartQuantifier {
+    /// Every member of the collection must enable this part.
+    Each,
+    /// At least one member of the collection must enable this part.
+    Some,
 }
 
 impl DebugWith for PartNodes {
@@ -1094,11 +1107,13 @@ impl DebugWith for PartNodes {
         let Self {
             predicate,
             binders,
+            quantifier,
             constraints,
         } = self;
         f.debug_struct("PartNodes")
             .field("predicate", &NodeKeyDebug(predicate, table))
             .field("binders", &NodeList(binders.iter(), table))
+            .field("quantifier", quantifier)
             .field("constraints", &constraints)
             .finish()
     }
@@ -1552,7 +1567,20 @@ impl TimedModel {
         use UnwrittenTimedMember as Member;
         for (at, guard) in self.guards.iter().enumerate() {
             for (index, part) in guard.parts.iter().enumerate() {
-                if !part.elements.is_empty() || !part.families.is_empty() {
+                if !part.elements.is_empty()
+                    || part.families.len() > 1
+                    || part.families.iter().any(|family| {
+                        family.parts.len() != 1
+                            || family.parts.iter().any(|family_part| {
+                                !family_part.elements.is_empty() || !family_part.families.is_empty()
+                            })
+                    })
+                    || (!part.families.is_empty()
+                        && (part.data.is_some()
+                            || !part.presences.is_empty()
+                            || !part.clocks.is_empty()
+                            || part.empty_collection_branch))
+                {
                     return Some((Unwritten(Member::QuantifiedClause), guard.span));
                 }
                 if part.clocks.is_empty() && !guard.covered() && !part.empty_collection_branch {

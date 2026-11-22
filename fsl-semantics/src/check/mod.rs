@@ -631,7 +631,8 @@ pub use temporal_clause::{
 pub use timed_model::{
     CheckedTimedPredicate, ClockConstraint, ClockField, ClockGuard, ClockId, ClockOp,
     ClockParameterRange, ClockReset, ClockResets, CollectionWrite, ConstraintNodes,
-    ConstraintTargetNodes, ConvexPart, ElementBinding, GuardNodes, InvariantNodes, PartNodes,
+    ConstraintTargetNodes, ConvexPart, ElementBinding, GuardNodes, GuardPartQuantifier,
+    InvariantNodes, PartNodes,
     QuantifiedFamily, ResetNodes, ResetTargetNodes, SlotRef, SlotSelection, StateAlternative,
     TimeInvariant, TimedClauseNodes, TimedModel, Urgency, Written,
 };
