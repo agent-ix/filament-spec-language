@@ -7,6 +7,7 @@ mod projection;
 pub use projection::BareHyperTerm;
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::sync::Arc;
 
 use filament_contract_model::{
     CheckedLiteralValue, CheckedNodeId, CheckedOccurrenceRole, CheckedSemanticNodeV2, CheckedTerm,
@@ -176,24 +177,38 @@ impl BarePackage<'_> {
         let mut aliases = Vec::new();
         let mut subject_roots = BTreeMap::new();
         let mut subject_models = BTreeMap::new();
+        let selected_models = self.model_selections();
+        let selected_identities: BTreeSet<&str> = selected_models
+            .iter()
+            .map(|model| model.identity.as_str())
+            .collect();
+        // An alias may repeat a large model identity already present once in
+        // the admitted graph. Keep one allocation per root, not one per alias.
+        let mut model_identities: BTreeMap<&CheckedNodeId, Arc<str>> = BTreeMap::new();
         for entry in group_member(&node.body, "subjects")
             .and_then(members)
             .ok_or_else(|| malformed(claim))?
         {
             let (alias, root) = binding(entry).ok_or_else(|| malformed(claim))?;
             let root = reference(root).ok_or_else(|| malformed(claim))?;
-            let selected = nodes.get(root).copied().ok_or_else(|| malformed(claim))?;
-            let Some(filament_contract_model::CheckedNodeOwner::ModelRoot { identity }) =
-                &selected.owner
-            else {
-                return Err(malformed(claim));
+            let identity = match model_identities.get(root) {
+                Some(identity) => Arc::clone(identity),
+                None => {
+                    let selected = nodes.get(root).copied().ok_or_else(|| malformed(claim))?;
+                    let Some(filament_contract_model::CheckedNodeOwner::ModelRoot { identity }) =
+                        &selected.owner
+                    else {
+                        return Err(malformed(claim));
+                    };
+                    if !selected_identities.contains(identity.as_ref()) {
+                        return Err(malformed(claim));
+                    }
+                    let identity: Arc<str> = Arc::from(identity.as_ref());
+                    model_identities.insert(root, Arc::clone(&identity));
+                    identity
+                }
             };
-            let identity = identity.to_string();
-            if !self
-                .model_selections()
-                .iter()
-                .any(|model| model.identity == identity)
-                || subject_roots.insert(alias.to_owned(), root).is_some()
+            if subject_roots.insert(alias.to_owned(), root).is_some()
                 || subject_models.insert(alias.to_owned(), identity).is_some()
             {
                 return Err(malformed(claim));

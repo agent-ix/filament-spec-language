@@ -1318,12 +1318,12 @@ impl<'a> ModelSystem<'a> {
             .input
             .model_selections
             .iter()
-            .any(|model| &model.identity == identity)
+            .any(|model| model.identity.as_str() == identity.as_ref())
         {
             return Err(refused(
                 Code::InvalidRuntimeInput,
                 "wrong-role-mapping",
-                &[("model", identity.clone())],
+                &[("model", identity.to_string())],
             ));
         }
         Self::for_model_identity(request, identity)

@@ -16,6 +16,7 @@
 
 use fsl_foundation::source::node_table::{standalone, DebugTable, DebugWith, NodeKeyDebug};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
+use std::sync::Arc;
 
 use crate::model::clause_observation::Observation;
 use filament_exact::{CollectionKind, EffectiveId, Identifier, NodeKey, ValueType};
@@ -428,7 +429,7 @@ pub struct CheckedHyperClause {
     aliases: Vec<ModelAlias>,
     /// Package subject aliases joined to their authenticated model-root identities.
     /// Source clauses resolve their aliases through the source package instead.
-    package_subject_models: Option<BTreeMap<String, String>>,
+    package_subject_models: Option<BTreeMap<String, Arc<str>>>,
     parameters: Vec<ObjectParameter>,
     quantifiers: Vec<CheckedQuantifier>,
     match_expression: Option<Expression>,
@@ -501,7 +502,8 @@ pub struct PackageHyperForm {
     /// Subject aliases, in their package order.
     pub aliases: Vec<String>,
     /// Each subject alias's normalized model identity, from its admitted root.
-    pub subject_models: BTreeMap<String, String>,
+    /// Aliases of one root share the identity bytes.
+    pub subject_models: BTreeMap<String, Arc<str>>,
     /// Object parameters, in declaration order.
     pub parameters: Vec<PackageHyperParameter>,
     /// Trace quantifiers, in declaration order.
@@ -637,10 +639,11 @@ impl CheckedHyperClause {
             return Err(super::PackageClauseRefusal::Profile(form.profile));
         }
         if form.subject_models.len() != form.aliases.len()
-            || form
-                .aliases
-                .iter()
-                .any(|alias| form.subject_models.get(alias).is_none_or(String::is_empty))
+            || form.aliases.iter().any(|alias| {
+                form.subject_models
+                    .get(alias)
+                    .is_none_or(|identity| identity.is_empty())
+            })
         {
             return Err(Shape);
         }
@@ -870,7 +873,7 @@ impl CheckedHyperClause {
 
     /// Authenticated model identities of a package form's subject aliases.
     /// Source clauses retain no package mapping and resolve through their graph.
-    pub fn package_subject_models(&self) -> Option<&BTreeMap<String, String>> {
+    pub fn package_subject_models(&self) -> Option<&BTreeMap<String, Arc<str>>> {
         self.package_subject_models.as_ref()
     }
 
