@@ -202,7 +202,7 @@ impl ReferenceScope<'_, '_, '_, '_> {
     pub(crate) fn metadata_state(
         &mut self,
         value: &Value,
-    ) -> Result<crate::StateKey, ReferenceCodecError> {
+    ) -> Result<fsl_eval::simulation::StateKey, ReferenceCodecError> {
         use base64::Engine as _;
         let map = self.scope.closed(value, &["key"])?;
         self.scope.member("key", |scope| {
@@ -230,7 +230,9 @@ impl ReferenceScope<'_, '_, '_, '_> {
                 .decode_slice(text, &mut bytes)
                 .map_err(|_| scope.fail(ReferenceFailure::MalformedWire))?;
             bytes.truncate(decoded);
-            Ok(crate::StateKey::from_canonical_bytes(bytes))
+            Ok(fsl_eval::simulation::StateKey::from_canonical_bytes(
+                bytes,
+            ))
         })
     }
     pub(crate) fn metadata_text(&mut self, value: &Value) -> Result<String, ReferenceCodecError> {
