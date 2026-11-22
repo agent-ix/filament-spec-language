@@ -303,7 +303,6 @@ impl FamilyContract for StateModelFamily {
                             return Err(
                                 match scope.untyped_member(object, field, UntypedKind::Field) {
                                     Some(untyped) => refuse(location, untyped_cause(untyped)),
-                                    None if *derefed => mismatch(location),
                                     None => refuse(
                                         location,
                                         CheckCause::UnknownField {

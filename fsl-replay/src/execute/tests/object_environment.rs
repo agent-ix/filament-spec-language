@@ -960,6 +960,28 @@ fn tc_1042_row_26_an_ill_typed_field_is_refused() {
         },
         graph.node("a"),
     );
+    let record = admission(&shape, false, Code::InvalidRuntimeInput, "missing-member");
+    assert_eq!(
+        record.fields.get("member").map(String::as_str),
+        Some("sequence")
+    );
+    assert_eq!(
+        record.fields.get("path").map(String::as_str),
+        Some("/populations/0/objects/0/fields/items")
+    );
+    assert_eq!(record.fields.get("object").map(String::as_str), Some("a"));
+    assert_eq!(
+        record.fields.get("field").map(String::as_str),
+        Some("items")
+    );
+    let shape = admit_variant(
+        &graph,
+        Variant {
+            a_items: Some(json!(3)),
+            ..Variant::default()
+        },
+        graph.node("a"),
+    );
     let record = admission(&shape, false, Code::InvalidRuntimeInput, "wrong-value-kind");
     assert_eq!(record.fields.get("object").map(String::as_str), Some("a"));
     assert_eq!(
